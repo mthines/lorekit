@@ -1,0 +1,10 @@
+{
+  "backend": "mcp",
+  "mcp": {
+    "server": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
+    "auth": {
+      "type": "bearer",
+      "token": "<your-supabase-jwt>"
+    }
+  }
+}
