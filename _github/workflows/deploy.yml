@@ -97,22 +97,8 @@ jobs:
         with:
           version: latest
 
-      - name: Set VCS resource attributes as Supabase secrets
-        # Inject git identity into Edge Function secrets so the hand-rolled
-        # OTLP exporter (supabase/functions/_shared/otel.ts) can emit vcs.*
-        # resource attributes on every span — mirrors the yourstory-ai pattern.
-        run: |
-          supabase secrets set \
-            VCS_REPOSITORY_URL_FULL="https://github.com/${{ github.repository }}" \
-            VCS_REF_HEAD_NAME="${{ github.ref_name }}" \
-            VCS_REF_HEAD_REVISION="${{ github.sha }}" \
-            VCS_REPOSITORY_NAME="${{ github.repository }}" \
-            --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-
-      - name: Deploy mcp function
-        run: supabase functions deploy mcp --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+      - name: Deploy mcp function (no JWT verification — auth is handled by the function itself)
+        run: supabase functions deploy mcp --no-verify-jwt --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 
