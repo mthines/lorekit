@@ -1,11 +1,20 @@
 'use client';
 
 import { useState } from 'react';
-import { Copy, CheckCheck, ExternalLink, Terminal, Webhook, Link2 } from 'lucide-react';
+import { Copy, CheckCheck, ExternalLink, Terminal, Webhook, Link2, Key } from 'lucide-react';
+import { TokenManager } from './TokenManager';
+import type { ApiToken } from '@/lib/tokens';
+import type { TokenPermission } from '@/lib/tokens';
 
 // ── Reusable copy-button code block ──────────────────────────────────────────
 
-function CodeBlock({ code, language = 'bash' }: { code: string; language?: string }) {
+function CodeBlock({
+  code,
+  language = 'bash',
+}: {
+  code: string;
+  language?: string;
+}) {
   const [copied, setCopied] = useState(false);
 
   function handleCopy() {
@@ -70,33 +79,48 @@ function SectionLabel({ icon, children }: { icon: React.ReactNode; children: Rea
 
 // ── Step: Connect your agent ──────────────────────────────────────────────────
 
-function ConnectStep({ mcpUrl }: { mcpUrl: string }) {
-  const persistentMemoryConfig = `{
+function ConnectStep({
+  mcpUrl,
+  initialTokens,
+}: {
+  mcpUrl: string;
+  initialTokens: ApiToken[];
+}) {
+  const [activeToken, setActiveToken] = useState<string>(
+    initialTokens.length > 0 ? `<your-lorekit-token>` : '<your-lorekit-token>',
+  );
+
+  // When a new token is generated, fill it into the config snippet automatically
+  function handleNewToken(token: string) {
+    setActiveToken(token);
+  }
+
+  const configSnippet = `{
   "backend": "mcp",
   "mcp": {
     "server": "${mcpUrl}",
     "auth": {
       "type": "bearer",
-      "token": "<your-supabase-jwt>"
+      "token": "${activeToken}"
     }
   }
 }`;
 
-  const awCliCommand = `# In any project using mthines/agent-skills:
-# Update .claude/skills/persistent-memory/config.json
-
-# Or set via environment variable:
-export LOREKIT_MCP_URL="${mcpUrl}"`;
-
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
       <p className="text-sm text-[var(--color-content-secondary)]">
-        Your MCP server is ready. Point the{' '}
-        <code className="rounded bg-[var(--color-bg)] px-1 py-0.5 font-mono text-xs">
+        Generate a token below, then paste it into your{' '}
+        <code className="rounded bg-[var(--color-bg)] px-1 font-mono text-xs">
           persistent-memory
         </code>{' '}
-        skill at it to start writing lessons.
+        config. No DevTools digging required.
       </p>
+
+      {/* Token manager — inline */}
+      <div>
+        <SectionLabel icon={<Key className="size-3" />}>API tokens</SectionLabel>
+        <TokenManager initialTokens={initialTokens} onNewToken={handleNewToken} />
+      </div>
 
       {/* MCP URL */}
       <div>
@@ -104,32 +128,17 @@ export LOREKIT_MCP_URL="${mcpUrl}"`;
         <InlineCode>{mcpUrl}</InlineCode>
       </div>
 
-      {/* Config snippet */}
+      {/* Config snippet — auto-filled when token is generated */}
       <div>
         <SectionLabel icon={<Terminal className="size-3" />}>
-          persistent-memory config (.claude/skills/persistent-memory/config.json)
+          .claude/skills/persistent-memory/config.json
         </SectionLabel>
-        <CodeBlock code={persistentMemoryConfig} language="json" />
-      </div>
-
-      {/* Get a JWT */}
-      <div className="rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg)] p-3">
-        <p className="text-xs font-medium text-[var(--color-content-secondary)]">
-          Getting your Supabase JWT
-        </p>
-        <p className="mt-1 text-xs text-[var(--color-content-tertiary)]">
-          After logging in, open DevTools → Application → Local Storage →{' '}
-          <code className="font-mono">sb-*-auth-token</code> → copy the{' '}
-          <code className="font-mono">access_token</code> value. For CI, use your service-role key instead.
-        </p>
-      </div>
-
-      {/* CLI shortcut */}
-      <div>
-        <SectionLabel icon={<Terminal className="size-3" />}>
-          Or use via CLI
-        </SectionLabel>
-        <CodeBlock code={awCliCommand} language="bash" />
+        <CodeBlock code={configSnippet} language="json" />
+        {activeToken === '<your-lorekit-token>' && (
+          <p className="mt-1.5 text-[10px] text-[var(--color-content-tertiary)]">
+            Generate a token above and it will fill in automatically.
+          </p>
+        )}
       </div>
     </div>
   );
@@ -139,35 +148,34 @@ export LOREKIT_MCP_URL="${mcpUrl}"`;
 
 function WebhookStep({ webhookUrl }: { webhookUrl: string }) {
   const webhookGuide = `# 1. Go to your repo → Settings → Webhooks → Add webhook
-# 2. Set Payload URL to:
+# 2. Payload URL:
 ${webhookUrl}
 
 # 3. Content type: application/json
 # 4. Secret: your GITHUB_WEBHOOK_SECRET value
-# 5. Events: select "Pull request review comments"
+# 5. Events: "Pull request review comments"
 #            and "Pull request reviews"`;
 
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-[var(--color-content-secondary)]">
-        Once connected, every resolved PR review comment becomes a candidate lesson —
-        tagged <code className="rounded bg-[var(--color-bg)] px-1 py-0.5 font-mono text-xs">source::pr-webhook</code> and
-        visible in Lore Explorer.
+        Every resolved PR review comment becomes a candidate lesson — tagged{' '}
+        <code className="rounded bg-[var(--color-bg)] px-1 font-mono text-xs">
+          source::pr-webhook
+        </code>{' '}
+        and visible in Lore Explorer.
       </p>
 
-      {/* Webhook URL */}
       <div>
         <SectionLabel icon={<Webhook className="size-3" />}>Webhook payload URL</SectionLabel>
         <InlineCode>{webhookUrl}</InlineCode>
       </div>
 
-      {/* Setup steps */}
       <div>
         <SectionLabel icon={<Terminal className="size-3" />}>Setup steps</SectionLabel>
         <CodeBlock code={webhookGuide} language="bash" />
       </div>
 
-      {/* Link to GitHub */}
       <a
         href="https://github.com/settings/apps"
         target="_blank"
@@ -181,16 +189,33 @@ ${webhookUrl}
   );
 }
 
-// ── Exported component (wraps the right content per step) ─────────────────────
+// ── Exported component ────────────────────────────────────────────────────────
 
 interface OnboardingStepContentProps {
   step: 'connect' | 'webhook';
   mcpUrl: string;
   webhookUrl?: string;
+  initialTokens?: Array<{
+    id: string;
+    name: string;
+    token_prefix: string;
+    permissions: TokenPermission[];
+    last_used_at: string | null;
+    created_at: string;
+  }>;
 }
 
-export function OnboardingStepContent({ step, mcpUrl, webhookUrl }: OnboardingStepContentProps) {
-  if (step === 'connect') return <ConnectStep mcpUrl={mcpUrl} />;
-  if (step === 'webhook') return <WebhookStep webhookUrl={webhookUrl ?? mcpUrl} />;
+export function OnboardingStepContent({
+  step,
+  mcpUrl,
+  webhookUrl,
+  initialTokens = [],
+}: OnboardingStepContentProps) {
+  if (step === 'connect') {
+    return <ConnectStep mcpUrl={mcpUrl} initialTokens={initialTokens as ApiToken[]} />;
+  }
+  if (step === 'webhook') {
+    return <WebhookStep webhookUrl={webhookUrl ?? mcpUrl} />;
+  }
   return null;
 }
