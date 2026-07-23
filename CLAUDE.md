@@ -9,7 +9,9 @@ NX monorepo containing a Supabase-backed MCP server for shared, persistent agent
 | Package | Path | Role |
 | ------- | ---- | ---- |
 | `@lorekit/core` | `packages/mcp-core/` | Tool handlers, scope validator, DB client, telemetry getters |
-| `@lorekit/server` | `packages/mcp-server/` | HTTP server, auth middleware, webhook handler, OTel SDK init |
+| `@lorekit/server` | `packages/mcp-server/` | HTTP server (Node.js/Fly.io), auth middleware, OTel SDK init |
+| `@lorekit/web` | `packages/web/` | Next.js 15 dashboard (login, lore explorer, activity feed, overview) |
+| `supabase` | `supabase/` | Migrations, Edge Functions (mcp + health), NX deploy targets |
 
 ## Key files
 
@@ -18,15 +20,59 @@ NX monorepo containing a Supabase-backed MCP server for shared, persistent agent
 | `packages/mcp-server/src/instrumentation.ts` | **First import in index.ts** — OTel SDK init, OTLP exporter, forceFlushAll |
 | `packages/mcp-core/src/scope.ts` | Canonical scope validation and wildcard expansion |
 | `packages/mcp-core/src/telemetry.ts` | Shared tracer/meter getters, `lorekit.tool.duration` histogram |
+| `packages/web/src/lib/scope.ts` | Lightweight copy of scopeType for Next.js (no heavy deps in browser bundle) |
 | `supabase/migrations/00001_memories.sql` | Full DB schema with FTS, indexes, RLS policies |
+| `supabase/functions/mcp/index.ts` | Self-contained Deno MCP server + webhook handler |
+| `supabase/functions/health/index.ts` | Public health check (no JWT) — for uptime monitors |
+| `supabase/project.json` | NX targets for all Supabase operations |
+
+## Endpoints
+
+| URL | Auth | Purpose |
+| --- | ---- | ------- |
+| `https://<ref>.supabase.co/functions/v1/mcp` | Bearer JWT or service-role key | MCP server for agents |
+| `https://<ref>.supabase.co/functions/v1/health` | None (public) | Uptime monitoring |
+| `https://<your-vercel>.vercel.app` | GitHub OAuth | Web dashboard |
 
 ## NX commands
 
+### Dev & CI
+
 ```bash
-pnpm nx run-many -t typecheck,test,lint --all   # full CI gate
-pnpm nx typecheck mcp-core                       # fast type check
-pnpm nx test mcp-server                          # server tests
-pnpm nx serve mcp-server                         # dev server with watch
+pnpm nx run-many -t typecheck,test,lint --all   # full CI gate (all packages)
+pnpm nx typecheck mcp-core                       # fast typecheck
+pnpm nx typecheck web
+pnpm nx test mcp-core                            # unit/integration tests (needs supabase start)
+pnpm nx serve mcp-server                         # run Node.js MCP server locally
+pnpm nx serve web                                # run Next.js dev server
+```
+
+### Supabase — local development
+
+```bash
+pnpm nx start supabase      # start local Supabase (Postgres + Auth + Edge Functions)
+pnpm nx stop supabase       # stop local Supabase
+pnpm nx status supabase     # show local Supabase status + connection strings
+pnpm nx fn:dev supabase     # run Edge Functions locally with hot-reload
+pnpm nx db:reset supabase   # reset local DB (re-applies all migrations from scratch)
+pnpm nx db:diff supabase    # diff local schema vs remote (linked project)
+```
+
+### Supabase — production (needs SUPABASE_PROJECT_REF in .env.local)
+
+```bash
+pnpm nx db:push supabase    # typecheck all → apply pending migrations to production
+pnpm nx fn:deploy supabase  # typecheck → deploy mcp + health functions
+pnpm nx db:types supabase   # generate TypeScript types from live DB schema
+pnpm nx health supabase     # curl the /health endpoint and pretty-print the response
+```
+
+### Full deploy pipeline
+
+```bash
+# Runs: typecheck (all) + test (mcp-core + mcp-server)
+#       → db push → fn:deploy (mcp + health)
+pnpm nx deploy supabase
 ```
 
 ## Scope format (canonical)

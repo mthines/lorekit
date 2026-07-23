@@ -1,0 +1,116 @@
+{
+  "name": "supabase",
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "tags": ["type:infra"],
+  "targets": {
+
+    "start": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "supabase start",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+
+    "stop": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "supabase stop",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+
+    "status": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "supabase status",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+
+    "db:push": {
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        { "projects": ["mcp-core", "mcp-server", "web"], "target": "typecheck" }
+      ],
+      "options": {
+        "command": "supabase db push --project-ref $SUPABASE_PROJECT_REF",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+
+    "db:reset": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "supabase db reset",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+
+    "db:diff": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "supabase db diff --linked",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+
+    "db:types": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "supabase gen types typescript --project-ref $SUPABASE_PROJECT_REF > packages/mcp-core/src/database.types.ts",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+
+    "fn:deploy": {
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        { "projects": ["mcp-core", "mcp-server"], "target": "typecheck" }
+      ],
+      "options": {
+        "commands": [
+          "supabase functions deploy mcp --project-ref $SUPABASE_PROJECT_REF",
+          "supabase functions deploy health --no-verify-jwt --project-ref $SUPABASE_PROJECT_REF"
+        ],
+        "parallel": false,
+        "cwd": "{workspaceRoot}"
+      }
+    },
+
+    "fn:dev": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "supabase functions serve",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+
+    "health": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "curl -sf https://$SUPABASE_PROJECT_REF.supabase.co/functions/v1/health | jq .",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+
+    "deploy": {
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        { "projects": ["mcp-core", "mcp-server", "web"], "target": "typecheck" },
+        { "projects": ["mcp-core", "mcp-server"], "target": "test" }
+      ],
+      "options": {
+        "commands": [
+          "supabase db push --project-ref $SUPABASE_PROJECT_REF",
+          "supabase functions deploy mcp --project-ref $SUPABASE_PROJECT_REF",
+          "supabase functions deploy health --no-verify-jwt --project-ref $SUPABASE_PROJECT_REF"
+        ],
+        "parallel": false,
+        "cwd": "{workspaceRoot}"
+      }
+    }
+
+  }
+}
