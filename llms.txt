@@ -1,0 +1,85 @@
+# LoreKit
+
+> Shared, persistent memory for AI coding agents. Agents learn lessons across sessions, machines, and CI runs — stored in a central Supabase database and served over the MCP protocol.
+
+## What it does
+
+LoreKit gives any MCP-compatible agent a `memory.write / memory.read / memory.list / memory.delete / memory.search` interface backed by Supabase Postgres. Lessons are scoped (global → project → repo → branch) so an agent working on a feature branch inherits repo- and global-level context without polluting it.
+
+## Quick start (5 minutes)
+
+1. Clone and install: `git clone https://github.com/mthines/lorekit && cd lorekit && pnpm install`
+2. Deploy to your own Supabase project: `supabase link --project-ref <ref> && pnpm nx deploy supabase`
+3. Generate a token in the web dashboard: Overview → Step 2 → Generate new token
+4. Add the MCP config to your agent — see the Installation Guide below
+
+Full step-by-step: https://github.com/mthines/lorekit/blob/main/docs/deployment.md
+
+## Installation Guide (for agents)
+
+See: https://github.com/mthines/lorekit/blob/main/docs/install.md
+
+This file is structured so an AI agent can execute every step autonomously or paste the config snippet and finish in seconds.
+
+## MCP endpoint
+
+```
+https://<project-ref>.supabase.co/functions/v1/mcp
+```
+
+Auth: `Authorization: Bearer lk_rw_<token>` (read+write) or `lk_ro_<token>` (read-only)
+
+## MCP tools
+
+| Tool | Token required | Description |
+|------|---------------|-------------|
+| `memory.write` | `lk_rw_` | Store or update a lesson |
+| `memory.read` | either | Read one lesson by scope + key |
+| `memory.list` | either | List lessons for a scope (tag-filterable) |
+| `memory.delete` | `lk_rw_` | Delete a lesson |
+| `memory.search` | either | Full-text search; supports `repo::owner/*` wildcard |
+
+## Scope format
+
+```
+global                                   # universal lessons
+project::{name}                          # monorepo-level
+repo::{owner}/{repo}                     # repository-level
+branch::{owner}/{repo}::{branch}         # branch-level (short-lived)
+```
+
+`::` is the only valid separator. Segments are lowercased on ingest.
+
+## Token formats
+
+```
+lk_rw_<32 chars>   # read + write
+lk_ro_<32 chars>   # read only
+```
+
+Tokens never expire and are stored as SHA-256 hashes. Generate and revoke in the dashboard.
+
+## Architecture
+
+- **MCP server** — Supabase Edge Function (Deno), endpoint `/functions/v1/mcp`
+- **Web dashboard** — Next.js 15 on Vercel (`lorekit-io.vercel.app`)
+- **Database** — Supabase Postgres, row-level security, full-text search
+
+## Key documentation
+
+- MCP tools reference: https://github.com/mthines/lorekit/blob/main/docs/mcp-tools.md
+- Scope format: https://github.com/mthines/lorekit/blob/main/docs/scope-format.md
+- API tokens: https://github.com/mthines/lorekit/blob/main/docs/api-tokens.md
+- Deployment: https://github.com/mthines/lorekit/blob/main/docs/deployment.md
+- Architecture: https://github.com/mthines/lorekit/blob/main/docs/architecture.md
+- Observability setup: https://github.com/mthines/lorekit/blob/main/docs/otel.md
+- Installation guide: https://github.com/mthines/lorekit/blob/main/docs/install.md
+
+## Error codes
+
+| JSON-RPC code | Meaning |
+|---------------|---------|
+| `-32001` | Unauthorized (missing/invalid token, or read-only token on a write) |
+| `-32603` | Execution error (DB error, scope validation failure) |
+| `-32700` | Malformed JSON |
+| `-32601` | Unknown tool name |
