@@ -25,15 +25,17 @@ const SUPPORTED_EVENTS = new Set([
 /**
  * Verify a GitHub webhook HMAC-SHA256 signature using the Web Crypto API.
  *
- * Uses crypto.subtle.verify (HMAC verify operation) instead of signing and
- * comparing hex strings — this avoids the manual timing-safe XOR loop and
- * is the correct idiomatic approach for the Web Crypto API.
+ * Accepts the raw body bytes (not a decoded string) to avoid any encoding
+ * round-trip loss: req.text() decodes bytes → string, then TextEncoder
+ * re-encodes string → bytes. If the HTTP layer (Kong/Supabase) normalises
+ * line endings or strips a trailing newline during that round-trip, the
+ * computed HMAC will diverge from the one GitHub signed over the original
+ * wire bytes. Accepting ArrayBuffer bypasses that entirely.
  *
  * The WEBHOOK_SECRET is read inside this function (not at module load time)
- * so that Supabase propagates the secret before the first verification runs,
- * even on a fresh cold-start after deployment.
+ * so that it is always available even on a fresh cold-start after deployment.
  */
-async function verifyHmac(body: string, signature: string | null): Promise<boolean> {
+async function verifyHmac(bodyBytes: ArrayBuffer, signature: string | null): Promise<boolean> {
   const secret = Deno.env.get('GITHUB_WEBHOOK_SECRET') ?? '';
   if (!signature || !secret) return false;
 
@@ -53,17 +55,22 @@ async function verifyHmac(body: string, signature: string | null): Promise<boole
     ['verify'],
   );
 
-  return crypto.subtle.verify('HMAC', key, sigBytes, new TextEncoder().encode(body));
+  // Verify directly over the raw wire bytes — no text decode/re-encode round-trip
+  return crypto.subtle.verify('HMAC', key, sigBytes, bodyBytes);
 }
 
 async function processWebhook(req: Request, span: Span): Promise<Response> {
   const event = req.headers.get('x-github-event') ?? 'unknown';
   const signature = req.headers.get('x-hub-signature-256');
-  const body = await req.text();
 
   span.setAttributes({ 'lorekit.webhook.event': event });
 
-  if (!await verifyHmac(body, signature)) {
+  // Read body once as raw bytes; derive the string for JSON parsing from the
+  // same buffer so both operations see identical byte content.
+  const bodyBytes = await req.arrayBuffer();
+  const body = new TextDecoder().decode(bodyBytes);
+
+  if (!await verifyHmac(bodyBytes, signature)) {
     span.error('HmacError: signature mismatch');
     return new Response('Unauthorized', { status: 401 });
   }
