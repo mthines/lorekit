@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Copy, CheckCheck, ExternalLink, Terminal, Webhook, Link2, Key } from 'lucide-react';
+import { Copy, CheckCheck, ExternalLink, Terminal, Webhook, Link2, Key, RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { TokenManager } from './TokenManager';
 import type { ApiToken } from '@/lib/tokens';
 import type { TokenPermission } from '@/lib/tokens';
@@ -280,19 +280,105 @@ function ConnectStep({
 }
 
 // ── Step: GitHub webhook ──────────────────────────────────────────────────────
+//
+// UX principle: the user needs a secret value they don't have yet.
+// Generate it here so they can copy it into both places without guessing.
+// Pattern mirrors the MCP token step: generate → amber banner → two-destination guide.
 
-function WebhookStep({ webhookUrl }: { webhookUrl: string }) {
-  const webhookGuide = `# 1. Go to your repo → Settings → Webhooks → Add webhook
-# 2. Payload URL:
-${webhookUrl}
+function generateWebhookSecret(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
 
-# 3. Content type: application/json
-# 4. Secret: your GITHUB_WEBHOOK_SECRET value
-# 5. Events: "Pull request review comments"
-#            and "Pull request reviews"`;
+interface SecretDisplayProps {
+  secret: string;
+  onRegenerate: () => void;
+}
+
+function SecretDisplay({ secret, onRegenerate }: SecretDisplayProps) {
+  const [copied, setCopied] = useState(false);
+  const [visible, setVisible] = useState(false);
+
+  function handleCopy() {
+    navigator.clipboard.writeText(secret).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    });
+  }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+      {/* Thin accent strip */}
+      <div className="h-0.5 w-full bg-[var(--color-accent)]" aria-hidden />
+      <div className="p-4">
+        <div className="mb-2 flex items-center gap-2">
+          <Key className="size-4 shrink-0 text-[var(--color-accent)]" aria-hidden />
+          <p className="text-sm font-semibold text-[var(--color-content-primary)]">
+            Your webhook secret — copy it now
+          </p>
+        </div>
+        <p className="mb-3 text-xs text-[var(--color-content-secondary)]">
+          Set this value as <code className="rounded bg-[var(--color-bg)] px-1 font-mono">GITHUB_WEBHOOK_SECRET</code> in your
+          server environment, then paste it into GitHub&apos;s &ldquo;Secret&rdquo; field below.
+          It isn&apos;t stored by LoreKit — if you lose it, generate a new one here and update both places.
+        </p>
+
+        {/* Secret display */}
+        <div className="flex items-center gap-2 overflow-hidden rounded-lg border border-[var(--color-accent)] bg-[var(--color-bg)] p-3">
+          <code className={[
+            'min-w-0 flex-1 overflow-x-auto font-mono text-xs text-[var(--color-content-primary)] select-all',
+            !visible ? 'blur-sm select-none' : '',
+          ].join(' ')}>
+            {secret}
+          </code>
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              onClick={() => setVisible((v) => !v)}
+              aria-label={visible ? 'Hide secret' : 'Show secret'}
+              className="flex size-8 items-center justify-center rounded text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]"
+            >
+              {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+            </button>
+            <button
+              onClick={handleCopy}
+              aria-label="Copy webhook secret"
+              className="flex items-center gap-1 rounded-md border border-[var(--color-accent)] bg-[var(--color-accent-subtle)] px-2.5 py-1 text-xs font-medium text-[var(--color-accent)] transition-all duration-150 hover:bg-[var(--color-accent)] hover:text-[#000]"
+            >
+              {copied ? <><CheckCheck className="size-3" /> Copied!</> : <><Copy className="size-3" /> Copy</>}
+            </button>
+          </div>
+        </div>
+
+        <button
+          onClick={onRegenerate}
+          className="mt-3 inline-flex items-center gap-1 text-xs text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)] transition-colors duration-150"
+        >
+          <RefreshCw className="size-3" />
+          Generate a different secret
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function WebhookStep({ webhookUrl }: { webhookUrl: string }) {
+  const [secret, setSecret] = useState<string>(() => generateWebhookSecret());
+
+  // Step 1: set the env var on the server
+  const envSnippet = `GITHUB_WEBHOOK_SECRET=${secret}`;
+
+  // Step 2: GitHub webhook settings — secret is filled in so the user just copies
+  const githubGuide = `# In your repo → Settings → Webhooks → Add webhook:
+#
+# Payload URL:    ${webhookUrl}
+# Content type:  application/json
+# Secret:        ${secret}
+# Events:        ✓ Pull request review comments
+#                ✓ Pull request reviews`;
+
+  return (
+    <div className="flex flex-col gap-5">
       <p className="text-sm text-[var(--color-content-secondary)]">
         Every resolved PR review comment becomes a candidate lesson — tagged{' '}
         <code className="rounded bg-[var(--color-bg)] px-1 font-mono text-xs">
@@ -301,25 +387,37 @@ ${webhookUrl}
         and visible in Lore Explorer.
       </p>
 
+      {/* Generated secret — prominently first so users know what they're setting */}
+      <SecretDisplay secret={secret} onRegenerate={() => setSecret(generateWebhookSecret())} />
+
+      {/* Step 1 — server env */}
       <div>
-        <SectionLabel icon={<Webhook className="size-3" />}>Webhook payload URL</SectionLabel>
-        <InlineCode>{webhookUrl}</InlineCode>
+        <SectionLabel icon={<Key className="size-3" />}>
+          Step 1 — add to your server environment
+        </SectionLabel>
+        <CodeBlock code={envSnippet} filename=".env / Supabase secret" />
+        <p className="mt-1.5 text-[10px] text-[var(--color-content-tertiary)]">
+          In Supabase: Dashboard → Edge Functions → Manage secrets → add{' '}
+          <code className="font-mono">GITHUB_WEBHOOK_SECRET</code>.
+        </p>
       </div>
 
+      {/* Step 2 — GitHub */}
       <div>
-        <SectionLabel icon={<Terminal className="size-3" />}>Setup steps</SectionLabel>
-        <CodeBlock code={webhookGuide} filename="bash" />
+        <SectionLabel icon={<Webhook className="size-3" />}>
+          Step 2 — add the webhook on GitHub
+        </SectionLabel>
+        <CodeBlock code={githubGuide} filename="GitHub webhook settings" />
+        <a
+          href="https://github.com/settings/hooks"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 inline-flex items-center gap-1.5 text-xs text-[var(--color-content-tertiary)] transition-colors duration-150 hover:text-[var(--color-accent)]"
+        >
+          <ExternalLink className="size-3" />
+          Open GitHub webhook settings
+        </a>
       </div>
-
-      <a
-        href="https://github.com/settings/apps"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex items-center gap-1.5 text-xs text-[var(--color-content-tertiary)] transition-colors duration-150 hover:text-[var(--color-accent)]"
-      >
-        <ExternalLink className="size-3" />
-        Open GitHub webhook settings
-      </a>
     </div>
   );
 }
