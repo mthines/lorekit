@@ -1,0 +1,42 @@
+{
+  "name": "web",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "packages/web/src",
+  "tags": ["app:web", "type:app", "platform:web"],
+  "targets": {
+    "build": {
+      "executor": "@nx/next:build",
+      "outputs": ["{options.outputPath}"],
+      "defaultConfiguration": "production",
+      "options": {
+        "outputPath": "dist/packages/web"
+      },
+      "configurations": {
+        "development": { "outputPath": "dist/packages/web" },
+        "production": {}
+      }
+    },
+    "serve": {
+      "executor": "@nx/next:server",
+      "defaultConfiguration": "development",
+      "options": {},
+      "configurations": {
+        "development": { "buildTarget": "web:build:development", "dev": true },
+        "production": { "buildTarget": "web:build:production", "dev": false }
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc --noEmit --project packages/web/tsconfig.json"
+      }
+    },
+    "lint": {
+      "executor": "@nx/eslint:lint",
+      "options": {
+        "lintFilePatterns": ["packages/web/**/*.{ts,tsx,js,jsx}"]
+      }
+    }
+  }
+}

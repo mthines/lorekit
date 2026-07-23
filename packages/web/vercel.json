@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "cd ../.. && pnpm nx build web",
+  "outputDirectory": "../../dist/packages/web/.next",
+  "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
+  "framework": "nextjs",
+  "env": {
+    "NEXT_PUBLIC_SUPABASE_URL": "@lorekit-supabase-url",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY": "@lorekit-supabase-anon-key"
+  }
+}
