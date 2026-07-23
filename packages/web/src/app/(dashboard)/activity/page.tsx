@@ -1,46 +1,26 @@
-import type { Metadata } from 'next';
-import { createServerClient } from '@/lib/supabase/server';
+'use client';
+
 import { ContributionHeatmap } from '@/components/activity/ContributionHeatmap';
-import { ActivityFeed, type ActivityEvent } from '@/components/activity/ActivityFeed';
-import { scopeType } from '@/lib/scope';
+import { ActivityFeed } from '@/components/activity/ActivityFeed';
+import { useActivityData } from '@/lib/queries/activity';
+import ActivityLoading from './loading';
 
-export const metadata: Metadata = { title: 'Activity' };
+export default function ActivityPage() {
+  const { data, isLoading, isError } = useActivityData();
 
-async function fetchActivityData(supabase: Awaited<ReturnType<typeof createServerClient>>) {
-  const { data, error } = await supabase
-    .from('memories')
-    .select('id,scope,key,value,tags,source_agent,trigger,created_at')
-    .order('created_at', { ascending: false })
-    .limit(200);
+  if (isLoading) return <ActivityLoading />;
 
-  if (error || !data) return { events: [], heatmapData: [] };
-
-  const events: ActivityEvent[] = data.map((row: Record<string, unknown>) => ({
-    id: row.id as string,
-    scope: row.scope as string,
-    scope_type: scopeType(row.scope as string),
-    key: row.key as string,
-    value_preview: ((row.value as string) ?? '').slice(0, 120),
-    source_agent: row.source_agent as string | null,
-    trigger: row.trigger as string | null,
-    tags: (row.tags as string[]) ?? [],
-    created_at: row.created_at as string,
-  }));
-
-  // Aggregate by day for heatmap
-  const dayCounts = new Map<string, number>();
-  for (const e of events) {
-    const day = e.created_at.slice(0, 10);
-    dayCounts.set(day, (dayCounts.get(day) ?? 0) + 1);
+  if (isError || !data) {
+    return (
+      <div className="flex flex-col gap-6">
+        <p className="text-sm text-[var(--color-content-secondary)]">
+          Failed to load activity data. Please refresh the page.
+        </p>
+      </div>
+    );
   }
-  const heatmapData = Array.from(dayCounts.entries()).map(([date, count]) => ({ date, count }));
 
-  return { events, heatmapData };
-}
-
-export default async function ActivityPage() {
-  const supabase = await createServerClient();
-  const { events, heatmapData } = await fetchActivityData(supabase);
+  const { events, heatmapData } = data;
 
   return (
     <div className="flex flex-col gap-6">

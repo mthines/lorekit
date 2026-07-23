@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { Dash0Provider } from '@/components/providers/Dash0Provider';
+import { ReactQueryProvider } from '@/components/providers/ReactQueryProvider';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -27,7 +28,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* Dash0 Web SDK — initialised here so it covers login page too.
             userId is passed from dashboard layout after auth. */}
         <Dash0Provider />
-        {children}
+        {/* ReactQueryProvider wraps everything so all client components below
+            can call useQuery / useSuspenseQuery without their own provider. */}
+        <ReactQueryProvider>{children}</ReactQueryProvider>
       </body>
     </html>
   );

@@ -1,49 +1,17 @@
 import type { Metadata } from 'next';
 import { Bot, Webhook, Zap } from 'lucide-react';
-import { createServerClient } from '@/lib/supabase/server';
-import { ScopeHealthGrid, type ScopeHealth } from '@/components/dashboard/ScopeHealthCard';
 import { OnboardingChecklist, type OnboardingStep } from '@/components/dashboard/OnboardingChecklist';
 import { OnboardingStepContent } from '@/components/dashboard/OnboardingStepContent';
 import { listTokens } from '@/lib/tokens';
-import { scopeType } from '@/lib/scope';
+import { DashboardStats } from '@/components/dashboard/DashboardStats';
 
 export const metadata: Metadata = { title: 'Overview' };
 
-async function fetchDashboardData(supabase: Awaited<ReturnType<typeof createServerClient>>) {
-  const { data, error } = await supabase
-    .from('memories')
-    .select('scope,created_at,updated_at')
-    .order('created_at', { ascending: false })
-    .limit(1000);
+async function fetchOnboardingState() {
+  // Server-side: import createServerClient lazily so this stays an RSC.
+  const { createServerClient } = await import('@/lib/supabase/server');
+  const supabase = await createServerClient();
 
-  if (error || !data) return { scopes: [], totalLessons: 0 };
-
-  const scopeMap = new Map<string, { total: number; lastActivity: string }>();
-  for (const row of data) {
-    const scope = row.scope as string;
-    const existing = scopeMap.get(scope);
-    const ts = row.created_at as string;
-    if (!existing || ts > existing.lastActivity) {
-      scopeMap.set(scope, { total: (existing?.total ?? 0) + 1, lastActivity: ts });
-    } else {
-      existing.total++;
-    }
-  }
-
-  const scopes: ScopeHealth[] = Array.from(scopeMap.entries())
-    .sort(([, a], [, b]) => b.lastActivity.localeCompare(a.lastActivity))
-    .map(([scope, { total, lastActivity }]) => ({
-      scope,
-      type: scopeType(scope),
-      label: scope.split('::').pop() ?? scope,
-      total,
-      lastActivity,
-    }));
-
-  return { scopes, totalLessons: data.length };
-}
-
-async function fetchOnboardingState(supabase: Awaited<ReturnType<typeof createServerClient>>) {
   const [lessonsRes, webhookRes] = await Promise.all([
     supabase.from('memories').select('id', { count: 'exact', head: true }),
     supabase
@@ -58,10 +26,8 @@ async function fetchOnboardingState(supabase: Awaited<ReturnType<typeof createSe
 }
 
 export default async function DashboardPage() {
-  const supabase = await createServerClient();
-  const [{ scopes, totalLessons }, { hasLessons, hasWebhook }, tokens] = await Promise.all([
-    fetchDashboardData(supabase),
-    fetchOnboardingState(supabase),
+  const [{ hasLessons, hasWebhook }, tokens] = await Promise.all([
+    fetchOnboardingState(),
     listTokens(),
   ]);
 
@@ -122,30 +88,9 @@ export default async function DashboardPage() {
 
       <OnboardingChecklist steps={steps} />
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {[
-          { label: 'Total lessons', value: totalLessons },
-          { label: 'Scopes', value: scopes.length },
-          {
-            label: 'Active today',
-            value: scopes.filter((s) =>
-              s.lastActivity?.startsWith(new Date().toISOString().slice(0, 10)),
-            ).length,
-          },
-        ].map(({ label, value }) => (
-          <div key={label} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
-            <p className="text-xs text-[var(--color-content-tertiary)]">{label}</p>
-            <p className="mt-1 text-2xl font-bold tabular-nums text-[var(--color-content-primary)]">{value}</p>
-          </div>
-        ))}
-      </div>
-
-      <div>
-        <p className="mb-3 text-xs font-medium text-[var(--color-content-tertiary)]">
-          Scope health · sorted by recent activity
-        </p>
-        <ScopeHealthGrid scopes={scopes} />
-      </div>
+      {/* Scope health stats — fetched client-side with TanStack Query so
+          navigation back to this page is instant after the first load. */}
+      <DashboardStats />
     </div>
   );
 }
