@@ -11,7 +11,7 @@ Your agents learn things — the right worktree naming convention, the DB migrat
   in a session      │  memory.list { scope }    │←── memories table
                    └───────────────────────────┘
                               ↕ HTTPS + Bearer token
-                   https://<project>.supabase.co/functions/v1/mcp
+                   https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp
 ```
 
 ## What it solves
