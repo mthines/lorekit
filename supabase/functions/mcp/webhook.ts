@@ -26,25 +26,32 @@ const SUPPORTED_EVENTS = new Set([
  * Verify a GitHub webhook HMAC-SHA256 signature using the Web Crypto API.
  *
  * Accepts the raw body bytes (not a decoded string) to avoid any encoding
- * round-trip loss: req.text() decodes bytes → string, then TextEncoder
- * re-encodes string → bytes. If the HTTP layer (Kong/Supabase) normalises
- * line endings or strips a trailing newline during that round-trip, the
- * computed HMAC will diverge from the one GitHub signed over the original
- * wire bytes. Accepting ArrayBuffer bypasses that entirely.
- *
- * The WEBHOOK_SECRET is read inside this function (not at module load time)
- * so that it is always available even on a fresh cold-start after deployment.
+ * round-trip loss. Returns a result object with diagnostic fields so the
+ * caller can surface them as span attributes for observability.
  */
-async function verifyHmac(bodyBytes: ArrayBuffer, signature: string | null): Promise<boolean> {
+async function verifyHmac(
+  bodyBytes: ArrayBuffer,
+  signature: string | null,
+): Promise<{ ok: boolean; secretConfigured: boolean; signaturePresent: boolean; failReason?: string }> {
   const secret = Deno.env.get('GITHUB_WEBHOOK_SECRET') ?? '';
-  if (!signature || !secret) return false;
+  const secretConfigured = secret.length > 0;
+  const signaturePresent = !!signature && signature.length > 0;
 
-  // GitHub sends: sha256=<64-hex-chars>
-  if (!signature.startsWith('sha256=')) return false;
-  const hexSig = signature.slice(7);
+  if (!signaturePresent) {
+    return { ok: false, secretConfigured, signaturePresent, failReason: 'no_signature_header' };
+  }
+  if (!secretConfigured) {
+    return { ok: false, secretConfigured, signaturePresent, failReason: 'secret_not_configured' };
+  }
+  if (!signature!.startsWith('sha256=')) {
+    return { ok: false, secretConfigured, signaturePresent, failReason: 'invalid_signature_format' };
+  }
 
-  // Decode the hex signature to raw bytes for crypto.subtle.verify
-  if (hexSig.length !== 64 || !/^[0-9a-f]+$/i.test(hexSig)) return false;
+  const hexSig = signature!.slice(7);
+  if (hexSig.length !== 64 || !/^[0-9a-f]+$/i.test(hexSig)) {
+    return { ok: false, secretConfigured, signaturePresent, failReason: 'invalid_signature_hex' };
+  }
+
   const sigBytes = new Uint8Array(hexSig.match(/.{2}/g)!.map((h) => parseInt(h, 16)));
 
   const key = await crypto.subtle.importKey(
@@ -55,8 +62,9 @@ async function verifyHmac(bodyBytes: ArrayBuffer, signature: string | null): Pro
     ['verify'],
   );
 
-  // Verify directly over the raw wire bytes — no text decode/re-encode round-trip
-  return crypto.subtle.verify('HMAC', key, sigBytes, bodyBytes);
+  // Verify directly over raw wire bytes — no text decode/re-encode round-trip
+  const ok = await crypto.subtle.verify('HMAC', key, sigBytes, bodyBytes);
+  return { ok, secretConfigured, signaturePresent, failReason: ok ? undefined : 'hmac_mismatch' };
 }
 
 async function processWebhook(req: Request, span: Span): Promise<Response> {
@@ -70,8 +78,19 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
   const bodyBytes = await req.arrayBuffer();
   const body = new TextDecoder().decode(bodyBytes);
 
-  if (!await verifyHmac(bodyBytes, signature)) {
-    span.error('HmacError: signature mismatch');
+  const hmac = await verifyHmac(bodyBytes, signature);
+
+  // Always record diagnostic attributes — these are the ground truth for
+  // debugging HMAC failures without guessing.
+  span.setAttributes({
+    'lorekit.webhook.secret_configured': hmac.secretConfigured,
+    'lorekit.webhook.signature_present': hmac.signaturePresent,
+    'lorekit.webhook.body_bytes': bodyBytes.byteLength,
+  });
+
+  if (!hmac.ok) {
+    span.setAttributes({ 'lorekit.webhook.hmac_fail_reason': hmac.failReason ?? 'unknown' });
+    span.error(`HmacError: ${hmac.failReason ?? 'signature mismatch'}`);
     return new Response('Unauthorized', { status: 401 });
   }
 
