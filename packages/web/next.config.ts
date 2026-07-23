@@ -13,6 +13,13 @@ const nextConfig: NextConfig = {
     // Vercel injects VERCEL_ENV = 'production' | 'preview' | 'development'.
     // Absent locally → map to 'local' in instrumentation-client.ts.
     NEXT_PUBLIC_VERCEL_ENV: process.env['VERCEL_ENV'] ?? '',
+    // VERCEL_URL is the deployment-specific hostname (no protocol, no trailing slash).
+    // It's unique per deployment — preview builds get the preview URL automatically.
+    // Used by LoginButton to build the correct redirectTo for Supabase OAuth.
+    // Falls back to NEXT_PUBLIC_APP_URL (production) when not on Vercel.
+    NEXT_PUBLIC_VERCEL_URL: process.env['VERCEL_URL']
+      ? `https://${process.env['VERCEL_URL']}`
+      : (process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3001'),
   },
 
   // Allow Supabase + Dash0 to receive trace context headers from the browser.
