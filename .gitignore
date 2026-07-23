@@ -11,6 +11,7 @@ supabase/.temp
 .nx/workspace-data
 tmp/
 **/.next/
+**/.vercel/
 **/next-env.d.ts
 **/*.tsbuildinfo
 
