@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+.env.local
+.env
+*.env
+.supabase/
+supabase/.branches
+supabase/.temp
+.nx/cache
+.nx/workspace-data
+tmp/

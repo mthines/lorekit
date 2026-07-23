@@ -1,0 +1,23 @@
+{
+  "name": "mcp-server",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/mcp-server/src",
+  "projectType": "application",
+  "tags": [],
+  "targets": {
+    "serve": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --env-file=.env.local --watch packages/mcp-server/src/index.js",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+    "dev": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --env-file=.env.local packages/mcp-server/src/index.js",
+        "cwd": "{workspaceRoot}"
+      }
+    }
+  }
+}

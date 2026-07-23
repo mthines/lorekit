@@ -1,0 +1,130 @@
+# .agent/feat/initial-plan/checks.yaml — executable acceptance criteria.
+# Derived from plan.v3.md. Statuses reset to pending on this iteration.
+# EXECUTOR CONTRACT: only `status:` may be flipped freely.
+# `id:`, `requirement:`, `ears:`, `expect:` are IMMUTABLE to the executor.
+
+- id: AC-1
+  requirement: R1, R2
+  ears: "When a persistent-memory-compatible client sends memory.write over HTTPS with a valid JWT, the server shall persist the entry and return the record ID"
+  kind: command
+  setup: "supabase start; export TEST_SUPABASE_URL TEST_SERVICE_ROLE_KEY"
+  run: "nx test mcp-core --testNamePattern='write stores entry'"
+  expect: "1 passed"
+  status: pending
+
+- id: AC-2
+  requirement: R2
+  ears: "When a client calls memory.read with an existing canonical scope + key, the server shall return the stored value and updated_at"
+  kind: command
+  setup: "supabase start; pre-seed one entry"
+  run: "nx test mcp-core --testNamePattern='read returns stored value'"
+  expect: "1 passed"
+  status: pending
+
+- id: AC-3
+  requirement: R3
+  ears: "When entries are written with four canonical scopes, the server shall return each only for its exact scope; non-canonical separators shall return 400"
+  kind: command
+  setup: "supabase start"
+  run: "nx test mcp-core --testNamePattern='scope isolation|invalid scope'"
+  expect: "2 passed"
+  status: pending
+
+- id: AC-4
+  requirement: R4
+  ears: "When two skills write different keys at the same scope, the server shall return both entries via memory.list"
+  kind: command
+  setup: "supabase start"
+  run: "nx test mcp-core --testNamePattern='cross-skill list'"
+  expect: "1 passed"
+  status: pending
+
+- id: AC-5
+  requirement: R5
+  ears: "When a GitHub Actions workflow authenticates with a service-role token, the server shall accept the request and write the entry"
+  kind: command
+  setup: "supabase start; export SERVICE_ROLE_TOKEN"
+  run: "nx test mcp-server --testNamePattern='service-role accepted'"
+  expect: "1 passed"
+  status: pending
+
+- id: AC-6
+  requirement: R6
+  ears: "When an unauthenticated request reaches /mcp, the server shall return JSON-RPC error -32001 and HTTP 401"
+  kind: command
+  setup: "supabase start"
+  run: "nx test mcp-server --testNamePattern='unauthenticated returns 401'"
+  expect: "1 passed"
+  status: pending
+
+- id: AC-7
+  requirement: R7
+  ears: "When GitHub sends a valid HMAC-signed pull_request_review_comment event, the handler shall create a memory entry tagged source::pr-webhook"
+  kind: command
+  setup: "export GITHUB_WEBHOOK_SECRET=test-secret"
+  run: "nx test mcp-server --testNamePattern='PR comment creates memory entry'"
+  expect: "1 passed"
+  status: pending
+
+- id: AC-8
+  requirement: R8
+  ears: "When deployed to Supabase Edge Functions, cold-start shall complete within 2s and memory.list shall respond under 500ms for 1000 rows"
+  kind: judge
+  setup: "deploy to Supabase Edge Functions staging; seed 1000 rows"
+  run: "manually invoke endpoint; observe cold-start and p99 in Supabase dashboard logs"
+  expect: "cold-start < 2000ms; list query < 500ms at 1000 rows"
+  status: pending
+
+- id: AC-9
+  requirement: R10
+  ears: "When user A reads a memory entry owned by user B with no shared org_id, the server shall return null without leaking the entry"
+  kind: command
+  setup: "supabase start; create two test users with separate JWTs"
+  run: "nx test mcp-server --testNamePattern='cross-user read returns null'"
+  expect: "1 passed"
+  status: pending
+
+- id: AC-10
+  requirement: R3
+  ears: "When memory.search is called with scope wildcard repo::mthines/*, the server shall return all matching entries ranked by full-text relevance"
+  kind: command
+  setup: "supabase start; seed entries under repo::mthines/gw-tools and repo::mthines/agent-skills"
+  run: "nx test mcp-core --testNamePattern='owner wildcard search'"
+  expect: "1 passed"
+  status: pending
+
+- id: AC-11
+  requirement: R11
+  ears: "When nx run-many -t typecheck,test,lint is run from the repo root, both mcp-core and mcp-server shall pass with zero errors"
+  kind: command
+  setup: "supabase start; pnpm install"
+  run: "nx run-many -t typecheck,test,lint --all"
+  expect: "Successfully ran targets typecheck, test, lint for 2 projects"
+  status: pending
+
+- id: AC-12
+  requirement: R12
+  ears: "When memory.write is called, a lorekit.memory.write span shall appear in Dash0 with attributes lorekit.scope, lorekit.scope.type, lorekit.key, and span status UNSET on success"
+  kind: command
+  setup: "supabase start; InMemorySpanExporter configured in test"
+  run: "nx test mcp-server --testNamePattern='lorekit.memory.write span'"
+  expect: "1 passed"
+  status: pending
+
+- id: AC-13
+  requirement: R12
+  ears: "When any MCP tool is called, the lorekit.tool.duration histogram shall record a value with lorekit.tool.name attribute"
+  kind: command
+  setup: "supabase start"
+  run: "nx test mcp-server --testNamePattern='lorekit.tool.duration histogram'"
+  expect: "1 passed"
+  status: pending
+
+- id: AC-14
+  requirement: R12
+  ears: "When the server emits log records, they shall include trace_id and span_id correlating to the active span"
+  kind: command
+  setup: "supabase start"
+  run: "nx test mcp-server --testNamePattern='log records include trace_id'"
+  expect: "1 passed"
+  status: pending
