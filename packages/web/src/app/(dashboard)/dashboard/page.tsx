@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { createServerClient } from '@/lib/supabase/server';
 import { ScopeHealthGrid, type ScopeHealth } from '@/components/dashboard/ScopeHealthCard';
 import { OnboardingChecklist } from '@/components/dashboard/OnboardingChecklist';
-import { scopeType } from '@lorekit/core';
+import { scopeType } from '@/lib/scope';
 
 export const metadata: Metadata = { title: 'Overview' };
 

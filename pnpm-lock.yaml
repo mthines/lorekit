@@ -145,9 +145,6 @@ importers:
 
   packages/web:
     dependencies:
-      '@lorekit/core':
-        specifier: workspace:*
-        version: link:../mcp-core
       '@supabase/ssr':
         specifier: ^0.6.0
         version: 0.6.1(@supabase/supabase-js@2.110.8)

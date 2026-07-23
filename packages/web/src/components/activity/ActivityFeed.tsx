@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { motion } from 'motion/react';
 import { Bot, Zap, GitBranch, Globe, FolderGit2, Layers, Webhook } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
-import type { ScopePrefix } from '@lorekit/core';
+import type { ScopePrefix } from '@/lib/scope';
 
 export interface ActivityEvent {
   id: string;

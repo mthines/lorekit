@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { ChevronRight, Globe, FolderGit2, GitBranch, Layers } from 'lucide-react';
-import type { ScopePrefix } from '@lorekit/core';
+import type { ScopePrefix } from '@/lib/scope';
 
 export interface ScopeNode {
   scope: string;

@@ -10,3 +10,6 @@ supabase/.temp
 .nx/cache
 .nx/workspace-data
 tmp/
+**/.next/
+**/next-env.d.ts
+**/*.tsbuildinfo

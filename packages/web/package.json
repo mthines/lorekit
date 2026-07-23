@@ -9,7 +9,6 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@lorekit/core": "workspace:*",
     "@supabase/ssr": "^0.6.0",
     "@supabase/supabase-js": "^2.0.0",
     "lucide-react": "^0.525.0",

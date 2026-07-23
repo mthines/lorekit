@@ -4,7 +4,7 @@ import { motion } from 'motion/react';
 import Link from 'next/link';
 import { FolderGit2, GitBranch, Globe, Layers, ArrowRight, BookOpen } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
-import type { ScopePrefix } from '@lorekit/core';
+import type { ScopePrefix } from '@/lib/scope';
 
 export interface ScopeHealth {
   scope: string;
