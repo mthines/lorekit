@@ -76,8 +76,8 @@ function StepRow({ step, index, isOpen, onToggle }: StepRowProps) {
         step.done
           ? 'border-[var(--color-border-subtle)] bg-[var(--color-bg)]'
           : isOpen
-            ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)]'
-            : 'border-[var(--color-border)] bg-[var(--color-bg-raised)]',
+            ? 'border-[var(--color-border)] bg-[var(--color-bg-elevated)]'
+            : 'border-[var(--color-border)] bg-[var(--color-bg-raised)] hover:bg-[var(--color-bg-elevated)]',
       ].join(' ')}
     >
       {/* Row header */}
@@ -94,7 +94,7 @@ function StepRow({ step, index, isOpen, onToggle }: StepRowProps) {
             step.done
               ? 'border-[var(--color-success)] bg-[var(--color-success)]'
               : isOpen
-                ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
+                ? 'border-[var(--color-border)] bg-[var(--color-bg-raised)] text-[var(--color-content-secondary)]'
                 : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-tertiary)]',
           ].join(' ')}
           aria-hidden
@@ -146,7 +146,7 @@ function StepRow({ step, index, isOpen, onToggle }: StepRowProps) {
             transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
             className="overflow-hidden"
           >
-            <div className="border-t border-[var(--color-accent)] border-opacity-30 px-4 pb-4 pt-3">
+            <div className="border-t border-[var(--color-border)] px-4 pb-4 pt-3">
               {step.content}
             </div>
           </motion.div>
