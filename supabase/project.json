@@ -70,7 +70,11 @@
         { "projects": ["mcp-core", "mcp-server"], "target": "typecheck" }
       ],
       "options": {
-        "command": "supabase functions deploy mcp --project-ref $SUPABASE_PROJECT_REF",
+        "commands": [
+          "supabase functions deploy mcp --project-ref $SUPABASE_PROJECT_REF",
+          "supabase functions deploy health --no-verify-jwt --project-ref $SUPABASE_PROJECT_REF"
+        ],
+        "parallel": false,
         "cwd": "{workspaceRoot}"
       }
     },
@@ -79,6 +83,14 @@
       "executor": "nx:run-commands",
       "options": {
         "command": "supabase functions serve",
+        "cwd": "{workspaceRoot}"
+      }
+    },
+
+    "health": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "curl -sf https://$SUPABASE_PROJECT_REF.supabase.co/functions/v1/health | jq .",
         "cwd": "{workspaceRoot}"
       }
     },
@@ -92,7 +104,8 @@
       "options": {
         "commands": [
           "supabase db push --project-ref $SUPABASE_PROJECT_REF",
-          "supabase functions deploy mcp --project-ref $SUPABASE_PROJECT_REF"
+          "supabase functions deploy mcp --project-ref $SUPABASE_PROJECT_REF",
+          "supabase functions deploy health --no-verify-jwt --project-ref $SUPABASE_PROJECT_REF"
         ],
         "parallel": false,
         "cwd": "{workspaceRoot}"
