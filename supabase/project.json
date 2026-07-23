@@ -71,7 +71,7 @@
       ],
       "options": {
         "commands": [
-          "supabase functions deploy mcp",
+          "supabase functions deploy mcp --no-verify-jwt",
           "supabase functions deploy health --no-verify-jwt"
         ],
         "parallel": false,
@@ -104,7 +104,7 @@
       "options": {
         "commands": [
           "supabase db push",
-          "supabase functions deploy mcp",
+          "supabase functions deploy mcp --no-verify-jwt",
           "supabase functions deploy health --no-verify-jwt --project-ref $SUPABASE_PROJECT_REF"
         ],
         "parallel": false,

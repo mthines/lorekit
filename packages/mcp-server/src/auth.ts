@@ -64,3 +64,15 @@ export function sendUnauthorized(res: import('http').ServerResponse): void {
   res.writeHead(401, { 'Content-Type': 'application/json' });
   res.end(body);
 }
+
+/**
+ * Returns a JSON-RPC 2.0 Unauthorized error as a Web API Response.
+ * Useful for environments that work with the Fetch API (tests, edge runtimes).
+ * For Node.js HTTP servers use sendUnauthorized() instead.
+ */
+export function unauthorizedResponse(): Response {
+  return new Response(
+    JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32001, message: 'Unauthorized' } }),
+    { status: 401, headers: { 'Content-Type': 'application/json' } },
+  );
+}
