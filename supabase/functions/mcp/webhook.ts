@@ -1,7 +1,7 @@
 /**
  * GitHub webhook handler.
  * Listens for pull_request_review_comment, pull_request_review, and
- * issue_comment events (the last covers PR inline comments) and creates
+ * issue_comment events (all issue and PR comments) and creates
  * candidate memory entries tagged source::pr-webhook.
  *
  * Unsupported event types return 200 OK but are marked with
@@ -123,11 +123,9 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
     commentBody = payload['review']?.body;
     commentUrl = payload['review']?.html_url;
   } else if (event === 'issue_comment') {
-    // issue_comment fires for both issue and PR comments; only capture PR comments
-    if (payload['issue']?.pull_request) {
-      commentBody = payload['comment']?.body;
-      commentUrl = payload['comment']?.html_url;
-    }
+    // Capture all issue comments (plain issues and PR comments alike)
+    commentBody = payload['comment']?.body;
+    commentUrl = payload['comment']?.html_url;
   }
 
   if (!commentBody?.trim()) {
@@ -162,3 +160,4 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
 export function handleWebhook(req: Request): Promise<Response> {
   return traceRequest(req, 'lorekit.webhook.github', (span) => processWebhook(req, span));
 }
+
