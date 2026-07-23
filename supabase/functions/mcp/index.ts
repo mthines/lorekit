@@ -10,6 +10,8 @@
  *   SUPABASE_ANON_KEY
  *   SUPABASE_SERVICE_ROLE_KEY
  *   GITHUB_WEBHOOK_SECRET
+ *   OTEL_EXPORTER_OTLP_ENDPOINT   e.g. https://ingress.us-east-1.aws.dash0.com
+ *   OTEL_EXPORTER_OTLP_HEADERS    e.g. Authorization=Bearer <DASH0_AUTH_TOKEN>
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
@@ -21,6 +23,100 @@ const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const WEBHOOK_SECRET = Deno.env.get('GITHUB_WEBHOOK_SECRET') ?? '';
 const MAX_VALUE_BYTES = 65_536;
+
+// ── OTel — lightweight OTLP/JSON span sender ──────────────────────────────────
+// No SDK needed: read env vars, build a minimal OTLP/JSON payload, fire-and-forget.
+
+const OTLP_ENDPOINT = Deno.env.get('OTEL_EXPORTER_OTLP_ENDPOINT');
+const OTLP_HEADERS_RAW = Deno.env.get('OTEL_EXPORTER_OTLP_HEADERS') ?? '';
+
+/** Parse "Authorization=Bearer tok,X-Other=val" → { Authorization: "Bearer tok" } */
+function parseOtlpHeaders(raw: string): Record<string, string> {
+  if (!raw) return {};
+  return Object.fromEntries(
+    raw.split(',').map((pair) => {
+      const idx = pair.indexOf('=');
+      return [pair.slice(0, idx).trim(), pair.slice(idx + 1).trim()];
+    }),
+  );
+}
+
+const OTLP_PARSED_HEADERS = parseOtlpHeaders(OTLP_HEADERS_RAW);
+
+/** Random 32-hex-char trace ID */
+function newTraceId(): string {
+  return crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '').slice(0, 0);
+}
+/** Random 16-hex-char span ID */
+function newSpanId(): string {
+  return crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+}
+
+type SpanStatus = 'ok' | 'error';
+
+interface SpanOptions {
+  name: string;
+  traceId: string;
+  startMs: number;
+  endMs: number;
+  status: SpanStatus;
+  statusMessage?: string;
+  attributes: Record<string, string | number | boolean>;
+}
+
+/**
+ * Fire-and-forget: send a single OTLP/JSON span to Dash0.
+ * Uses `fetch()` — Deno/Edge runtime supports it natively.
+ * Errors are swallowed so telemetry failures never affect the MCP response.
+ */
+function sendSpan(opts: SpanOptions): void {
+  if (!OTLP_ENDPOINT) return;
+
+  const spanId = newSpanId();
+  const startNs = String(opts.startMs * 1_000_000);
+  const endNs = String(opts.endMs * 1_000_000);
+
+  const body = JSON.stringify({
+    resourceSpans: [{
+      resource: {
+        attributes: [
+          { key: 'service.name', value: { stringValue: 'lorekit-mcp' } },
+          { key: 'deployment.environment.name', value: { stringValue: 'production' } },
+        ],
+      },
+      scopeSpans: [{
+        scope: { name: 'lorekit-mcp', version: '1.0.0' },
+        spans: [{
+          traceId: opts.traceId,
+          spanId,
+          name: opts.name,
+          kind: 1, // INTERNAL
+          startTimeUnixNano: startNs,
+          endTimeUnixNano: endNs,
+          attributes: Object.entries(opts.attributes).map(([key, value]) => ({
+            key,
+            value: typeof value === 'number'
+              ? { intValue: value }
+              : typeof value === 'boolean'
+                ? { boolValue: value }
+                : { stringValue: String(value) },
+          })),
+          status: {
+            code: opts.status === 'error' ? 2 : 1, // ERROR=2, OK=1
+            ...(opts.statusMessage ? { message: opts.statusMessage } : {}),
+          },
+        }],
+      }],
+    }],
+  });
+
+  // Fire-and-forget — never await, never throw
+  fetch(`${OTLP_ENDPOINT}/v1/traces`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...OTLP_PARSED_HEADERS },
+    body,
+  }).catch(() => { /* swallow */ });
+}
 
 // ── Scope utilities ───────────────────────────────────────────────────────────
 
@@ -235,12 +331,36 @@ async function handleMcp(req: Request, auth: AuthContext): Promise<Response> {
     const toolArgs = params.arguments ?? {};
     const tool = TOOLS[toolName];
     if (!tool) return jsonrpcError(id, -32601, `Unknown tool: ${toolName}`);
+
+    const startMs = Date.now();
+    const traceId = newTraceId();
+    let status: SpanStatus = 'ok';
+    let statusMessage: string | undefined;
+
     try {
       const db = getDb(auth);
       const result = await tool(db, toolArgs);
       return jsonrpc(id, { content: [{ type: 'text', text: JSON.stringify(result) }] });
     } catch (err) {
+      status = 'error';
+      statusMessage = `${(err as Error).name}: ${(err as Error).message}`;
       return jsonrpcError(id, -32603, (err as Error).message);
+    } finally {
+      const scopeRaw = (toolArgs as Params)['scope'] as string | undefined;
+      sendSpan({
+        name: `lorekit.${toolName}`,
+        traceId,
+        startMs,
+        endMs: Date.now(),
+        status,
+        statusMessage,
+        attributes: {
+          'lorekit.tool.name': toolName,
+          ...(scopeRaw ? { 'lorekit.scope': scopeRaw } : {}),
+          ...(scopeRaw ? { 'lorekit.scope.type': scopeRaw.split('::')[0] ?? 'unknown' } : {}),
+          ...((toolArgs as Params)['key'] ? { 'lorekit.key': String((toolArgs as Params)['key']) } : {}),
+        },
+      });
     }
   }
 
@@ -272,6 +392,8 @@ async function handleWebhook(req: Request): Promise<Response> {
   const event = req.headers.get('x-github-event') ?? 'unknown';
   const signature = req.headers.get('x-hub-signature-256');
   const body = await req.text();
+  const startMs = Date.now();
+  const traceId = newTraceId();
 
   if (!await verifyHmac(body, signature)) {
     return new Response('Unauthorized', { status: 401 });
@@ -295,6 +417,9 @@ async function handleWebhook(req: Request): Promise<Response> {
 
   if (!commentBody?.trim()) return new Response('OK', { status: 200 });
 
+  let status: SpanStatus = 'ok';
+  let statusMessage: string | undefined;
+
   try {
     const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
@@ -309,7 +434,24 @@ async function handleWebhook(req: Request): Promise<Response> {
       trigger: `${event}.${action}`,
     });
   } catch (err) {
+    status = 'error';
+    statusMessage = `${(err as Error).name}: ${(err as Error).message}`;
     console.error('webhook write failed:', (err as Error).message);
+  } finally {
+    sendSpan({
+      name: 'lorekit.webhook.github',
+      traceId,
+      startMs,
+      endMs: Date.now(),
+      status,
+      statusMessage,
+      attributes: {
+        'lorekit.webhook.event': event,
+        'lorekit.webhook.action': action,
+        'lorekit.scope': `repo::${repo}`,
+        'lorekit.scope.type': 'repo',
+      },
+    });
   }
 
   return new Response('OK', { status: 200 });
