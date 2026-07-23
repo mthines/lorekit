@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { Dash0Provider } from '@/components/providers/Dash0Provider';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -22,7 +23,12 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="dark">
-      <body className="min-h-screen antialiased">{children}</body>
+      <body className="min-h-screen antialiased">
+        {/* Dash0 Web SDK — initialised here so it covers login page too.
+            userId is passed from dashboard layout after auth. */}
+        <Dash0Provider />
+        {children}
+      </body>
     </html>
   );
 }

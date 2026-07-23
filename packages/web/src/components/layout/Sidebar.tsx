@@ -38,6 +38,7 @@ export function Sidebar({ user }: SidebarProps) {
             <Link
               key={href}
               href={href}
+              prefetch={true}
               className={[
                 'flex h-9 items-center gap-2.5 rounded-lg px-3 text-sm transition-all duration-150',
                 active
