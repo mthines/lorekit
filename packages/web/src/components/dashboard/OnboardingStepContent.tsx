@@ -1,40 +1,27 @@
 'use client';
 
 import { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
 import { Copy, CheckCheck, ExternalLink, Terminal, Webhook, Link2, Key } from 'lucide-react';
 import { TokenManager } from './TokenManager';
 import type { ApiToken } from '@/lib/tokens';
 import type { TokenPermission } from '@/lib/tokens';
 
-// ── Easing constants (matching globals.css tokens) ───────────────────────────
-
-const EASE_STANDARD = [0.2, 0.8, 0.2, 1] as const;
-const EASE_IN       = [0.4, 0, 1, 1]     as const;
-
 // ── MCP client definitions ────────────────────────────────────────────────────
 //
-// Each client entry drives the filename, config snippet shape, and guidance.
-// Adding a new client here is the only change needed to support it everywhere.
+// Each entry drives the filename, config snippet, and guidance.
+// Adding a new client is the only change needed to support it everywhere.
 
 type InstallScope = 'project' | 'global';
 
 interface McpClient {
   id: string;
   name: string;
-  /** Short glyph / abbreviation shown in the selector card */
-  glyph: string;
   scope: InstallScope;
-  /** Relative or absolute path shown under the code block */
+  /** File path shown in footnote and CodeBlock header */
   configPath: string;
-  /** Short copy shown under the selector */
-  hint: string;
-  /** Full path label displayed in the CodeBlock header */
   filename: string;
-  /**
-   * Given the mcp-remote URL, produce the JSON config string.
-   * All clients use the same shape; some (e.g. Cursor) wrap it in `mcpServers`.
-   */
+  /** One-line hint shown under the selector */
+  hint: string;
   buildConfig: (mcpUrlWithToken: string) => string;
 }
 
@@ -42,11 +29,10 @@ const MCP_CLIENTS: McpClient[] = [
   {
     id: 'claude-code',
     name: 'Claude Code',
-    glyph: 'CC',
     scope: 'project',
     configPath: '.mcp.json',
     filename: '.mcp.json',
-    hint: 'Project-local. Add to .gitignore — the token is in the URL.',
+    hint: 'Project-local. Add .mcp.json to .gitignore — the token is in the URL.',
     buildConfig: (url) => JSON.stringify({
       mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', url] } },
     }, null, 2),
@@ -54,11 +40,10 @@ const MCP_CLIENTS: McpClient[] = [
   {
     id: 'opencode',
     name: 'opencode',
-    glyph: 'OC',
     scope: 'project',
     configPath: '.opencode/mcp.json',
     filename: '.opencode/mcp.json',
-    hint: 'Project-local. opencode reads this automatically from the project root.',
+    hint: 'Project-local. opencode picks this up automatically from the project root.',
     buildConfig: (url) => JSON.stringify({
       mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', url] } },
     }, null, 2),
@@ -66,7 +51,6 @@ const MCP_CLIENTS: McpClient[] = [
   {
     id: 'cursor',
     name: 'Cursor',
-    glyph: 'Cu',
     scope: 'project',
     configPath: '.cursor/mcp.json',
     filename: '.cursor/mcp.json',
@@ -78,11 +62,10 @@ const MCP_CLIENTS: McpClient[] = [
   {
     id: 'windsurf',
     name: 'Windsurf',
-    glyph: 'WS',
     scope: 'global',
     configPath: '~/.codeium/windsurf/mcp_config.json',
-    filename: 'mcp_config.json (Windsurf global)',
-    hint: 'Global. Windsurf reads MCP config from ~/.codeium/windsurf/mcp_config.json.',
+    filename: 'mcp_config.json',
+    hint: 'Global. Save to ~/.codeium/windsurf/mcp_config.json.',
     buildConfig: (url) => JSON.stringify({
       mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', url] } },
     }, null, 2),
@@ -90,11 +73,10 @@ const MCP_CLIENTS: McpClient[] = [
   {
     id: 'codex-cli',
     name: 'Codex CLI',
-    glyph: 'Cx',
     scope: 'global',
     configPath: '~/.codex/config.yaml',
-    filename: 'config.yaml (Codex CLI global)',
-    hint: 'Global. Codex CLI reads MCP servers from ~/.codex/config.yaml.',
+    filename: 'config.yaml',
+    hint: 'Global. Add to ~/.codex/config.yaml.',
     buildConfig: (url) => `mcp:
   servers:
     lorekit:
@@ -118,9 +100,6 @@ function CodeBlock({ code, filename }: { code: string; filename: string }) {
     });
   }
 
-  // Detect language from filename extension
-  const lang = filename.endsWith('.yaml') || filename.endsWith('.yml') ? 'yaml' : 'json';
-
   return (
     <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
       <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)] px-3 py-1.5">
@@ -130,17 +109,14 @@ function CodeBlock({ code, filename }: { code: string; filename: string }) {
         <button
           onClick={handleCopy}
           aria-label="Copy to clipboard"
-          className="flex items-center gap-1 rounded px-2 py-0.5 text-[10px] text-[var(--color-content-tertiary)] transition-all duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-accent)] active:[transform:scale(0.97)]"
+          className="flex items-center gap-1 rounded px-2 py-0.5 text-[10px] text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-accent)]"
         >
           {copied
             ? <><CheckCheck className="size-3" /> Copied!</>
             : <><Copy className="size-3" /> Copy</>}
         </button>
       </div>
-      <pre
-        className="overflow-x-auto p-3 font-mono text-xs leading-relaxed text-[var(--color-content-secondary)] whitespace-pre"
-        data-language={lang}
-      >
+      <pre className="overflow-x-auto p-3 font-mono text-xs leading-relaxed text-[var(--color-content-secondary)] whitespace-pre">
         {code.trim()}
       </pre>
     </div>
@@ -158,7 +134,7 @@ function InlineCode({ children }: { children: string }) {
         });
       }}
       title="Click to copy"
-      className="group inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-0.5 font-mono text-xs text-[var(--color-content-secondary)] transition-all duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] active:[transform:scale(0.97)]"
+      className="group inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-0.5 font-mono text-xs text-[var(--color-content-secondary)] transition-colors duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
     >
       {children}
       {copied
@@ -179,9 +155,8 @@ function SectionLabel({ icon, children }: { icon: React.ReactNode; children: Rea
 
 // ── Client selector ───────────────────────────────────────────────────────────
 //
-// Horizontal row of glyph cards. The active card has an amber glow + accent
-// border — the LoreKit signature. Motion `layoutId` slides the indicator pill
-// underneath (Tab-switch catalog row: 200–280 ms, cubic-bezier(0.2,0.8,0.2,1)).
+// A compact pill-strip placed below the code block so it reads as a secondary
+// "change config for a different client" affordance rather than a primary choice.
 
 function ClientSelector({
   clients,
@@ -194,16 +169,10 @@ function ClientSelector({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
-        MCP client
+      <p className="text-[10px] text-[var(--color-content-tertiary)]">
+        Using a different client?
       </p>
-
-      {/* Selector row */}
-      <div
-        role="radiogroup"
-        aria-label="MCP client"
-        className="flex gap-2 flex-wrap"
-      >
+      <div role="radiogroup" aria-label="MCP client" className="flex flex-wrap gap-1.5">
         {clients.map((client) => {
           const isActive = client.id === active;
           return (
@@ -213,73 +182,17 @@ function ClientSelector({
               aria-checked={isActive}
               onClick={() => onChange(client.id)}
               className={[
-                'relative flex flex-col items-center gap-1 rounded-xl border px-3 py-2.5',
-                'text-center',
-                'focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] focus-visible:outline-offset-2',
-                // CSS-only press: scale(0.97) on :active, 80 ms ease-out
-                '[transition:border-color_150ms,background-color_150ms,transform_80ms_ease-out] active:[transform:scale(0.97)]',
+                'rounded-md border px-2.5 py-1 text-xs font-medium transition-colors duration-150',
                 isActive
-                  ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)]'
-                  : 'border-[var(--color-border)] bg-[var(--color-bg-raised)] hover:border-[var(--color-border-subtle)] hover:bg-[var(--color-bg-elevated)]',
+                  ? 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-primary)]'
+                  : 'border-transparent text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]',
               ].join(' ')}
-              style={isActive ? {
-                boxShadow: '0 0 18px -2px var(--color-accent-glow)',
-              } : undefined}
             >
-              {/* Glyph */}
-              <span
-                className={[
-                  'font-mono text-xs font-bold tracking-tight',
-                  isActive
-                    ? 'text-[var(--color-accent)]'
-                    : 'text-[var(--color-content-tertiary)]',
-                ].join(' ')}
-                aria-hidden
-              >
-                {client.glyph}
-              </span>
-
-              {/* Name */}
-              <span
-                className={[
-                  'text-[10px] font-medium whitespace-nowrap',
-                  isActive
-                    ? 'text-[var(--color-content-primary)]'
-                    : 'text-[var(--color-content-tertiary)]',
-                ].join(' ')}
-              >
-                {client.name}
-              </span>
-
-              {/* Scope badge */}
-              <span
-                className={[
-                  'rounded-full px-1.5 py-px text-[8px] font-semibold uppercase tracking-wider',
-                  client.scope === 'project'
-                    ? 'bg-emerald-500/10 text-[var(--color-scope-project)]'
-                    : 'bg-violet-500/10 text-[var(--color-scope-global)]',
-                ].join(' ')}
-              >
-                {client.scope}
-              </span>
+              {client.name}
             </button>
           );
         })}
       </div>
-
-      {/* Hint text — cross-fades when client changes */}
-      <AnimatePresence mode="wait">
-        <motion.p
-          key={active}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.15, ease: EASE_IN }}
-          className="text-[10px] text-[var(--color-content-tertiary)]"
-        >
-          {clients.find((c) => c.id === active)?.hint}
-        </motion.p>
-      </AnimatePresence>
     </div>
   );
 }
@@ -300,43 +213,31 @@ function ConnectStep({
   );
   const [activeClientId, setActiveClientId] = useState<string>(MCP_CLIENTS[0].id);
 
-  function handleNewToken(token: string) {
-    setActiveToken(token);
-  }
-
   const mcpUrlWithToken = `${mcpUrl}?token=${activeToken}`;
   const activeClient = MCP_CLIENTS.find((c) => c.id === activeClientId) ?? MCP_CLIENTS[0];
   const configSnippet = activeClient.buildConfig(mcpUrlWithToken);
-
   const tokenPlaceholder = activeToken === '<your-lorekit-token>';
 
   return (
     <div className="flex flex-col gap-5">
       <p className="text-sm text-[var(--color-content-secondary)]">
         {autoGeneratedToken
-          ? <>
-              We created a read+write token for you. Select your MCP client below,
-              then copy the config — the token is already filled in.
-            </>
+          ? 'We created a read+write token for you. Copy it from the banner below, then add the config to your agent.'
           : <>
-              Choose your MCP client, generate a token, and copy the ready-to-use config
-              into the file shown. Works with any MCP-compatible agent.
+              Generate a token below, then add the config to your agent&apos;s{' '}
+              <code className="rounded bg-[var(--color-bg)] px-1 font-mono text-xs">
+                {activeClient.filename}
+              </code>{' '}
+              file. Works with Claude Code, opencode, and any MCP-compatible client.
             </>}
       </p>
-
-      {/* Client selector */}
-      <ClientSelector
-        clients={MCP_CLIENTS}
-        active={activeClientId}
-        onChange={setActiveClientId}
-      />
 
       {/* Token manager */}
       <div>
         <SectionLabel icon={<Key className="size-3" />}>API tokens</SectionLabel>
         <TokenManager
           initialTokens={initialTokens}
-          onNewToken={handleNewToken}
+          onNewToken={(token) => setActiveToken(token)}
           initialNewToken={autoGeneratedToken}
         />
       </div>
@@ -347,23 +248,12 @@ function ConnectStep({
         <InlineCode>{mcpUrl}</InlineCode>
       </div>
 
-      {/* Config snippet — cross-fades when client or token changes */}
+      {/* Config snippet */}
       <div>
         <SectionLabel icon={<Terminal className="size-3" />}>
           {activeClient.filename}
         </SectionLabel>
-
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={activeClientId}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.18, ease: EASE_IN }}
-          >
-            <CodeBlock code={configSnippet} filename={activeClient.filename} />
-          </motion.div>
-        </AnimatePresence>
+        <CodeBlock code={configSnippet} filename={activeClient.filename} />
 
         {tokenPlaceholder && (
           <p className="mt-1.5 text-[10px] text-[var(--color-content-tertiary)]">
@@ -372,16 +262,19 @@ function ConnectStep({
         )}
 
         <p className="mt-1.5 text-[10px] text-[var(--color-content-tertiary)]">
-          File path:{' '}
-          <code className="font-mono">{activeClient.configPath}</code>.
-          {' '}Requires Node.js —{' '}
+          {activeClient.hint}{' '}
+          Requires Node.js —{' '}
           <code className="font-mono">npx</code> will download{' '}
           <code className="font-mono">mcp-remote</code> on first run.
-          {activeClient.scope === 'project' && (
-            <> Add the file to <code className="font-mono">.gitignore</code> — the token is in the URL.</>
-          )}
         </p>
       </div>
+
+      {/* Client selector — secondary, below the code */}
+      <ClientSelector
+        clients={MCP_CLIENTS}
+        active={activeClientId}
+        onChange={setActiveClientId}
+      />
     </div>
   );
 }
