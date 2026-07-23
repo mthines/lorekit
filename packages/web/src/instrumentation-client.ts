@@ -27,10 +27,17 @@ const AUTH_TOKEN = process.env['NEXT_PUBLIC_DASH0_AUTH_TOKEN'];
 // without breaking the app.
 if (ENDPOINT && AUTH_TOKEN) {
   init({
-    serviceName: process.env['OTEL_SERVICE_NAME'] ?? 'lorekit-web',
+    serviceName: 'web',
     endpoint: {
       url: ENDPOINT,
       authToken: AUTH_TOKEN,
+    },
+    // service.namespace groups this signal alongside the mcp and health
+    // functions under the "lorekit" namespace in Dash0.
+    additionalSignalAttributes: {
+      'service.namespace': 'lorekit',
+      'service.version': process.env['NEXT_PUBLIC_OTEL_SERVICE_VERSION'] ?? 'unknown',
+      'deployment.environment.name': process.env['NODE_ENV'] ?? 'development',
     },
     // Propagate W3C trace context to Supabase API calls so server spans
     // are linked to the browser span that initiated them.
@@ -39,17 +46,6 @@ if (ENDPOINT && AUTH_TOKEN) {
       new RegExp(`https://${process.env['NEXT_PUBLIC_SUPABASE_PROJECT_REF'] ?? '[^.]+'}\\.(supabase\\.co|supabase\\.in)/.*`),
     ],
   });
-
-  // Attributes added to every span and log emitted by this page
-  addSignalAttribute(
-    'service.version',
-    process.env['NEXT_PUBLIC_OTEL_SERVICE_VERSION'] ?? 'unknown',
-  );
-  addSignalAttribute(
-    'deployment.environment.name',
-    process.env['NODE_ENV'] ?? 'development',
-  );
-  addSignalAttribute('app.name', 'lorekit-web');
 }
 
 /**
