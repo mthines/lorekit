@@ -7,7 +7,7 @@ import { useDashboardData } from '@/lib/queries/dashboard';
 function DashboardStatsSkeleton() {
   return (
     <>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
         {Array.from({ length: 3 }).map((_, i) => (
           <div
             key={i}
@@ -52,7 +52,7 @@ export function DashboardStats() {
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
         {[
           { label: 'Total lessons', value: totalLessons },
           { label: 'Scopes', value: scopes.length },

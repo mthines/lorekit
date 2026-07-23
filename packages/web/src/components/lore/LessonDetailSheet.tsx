@@ -77,7 +77,7 @@ export function LessonDetailSheet({ lesson, onClose }: LessonDetailSheetProps) {
                 ref={closeRef}
                 onClick={onClose}
                 aria-label="Close detail panel"
-                className="flex size-8 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-all duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-secondary)]"
+                className="flex size-11 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-all duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-secondary)]"
               >
                 <X className="size-4" aria-hidden />
               </button>

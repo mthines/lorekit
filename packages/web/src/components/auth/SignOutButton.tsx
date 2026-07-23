@@ -23,7 +23,7 @@ export function SignOutButton() {
       disabled={loading}
       aria-label="Sign out"
       title="Sign out"
-      className="flex size-8 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-all duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-secondary)] disabled:opacity-50"
+      className="flex size-11 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-all duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-secondary)] disabled:opacity-50"
     >
       <LogOut className="size-4" aria-hidden />
     </button>
