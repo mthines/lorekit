@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
-import { BookOpen, Activity, LayoutDashboard, Settings } from 'lucide-react';
+import { BookOpen, Activity, LayoutDashboard } from 'lucide-react';
 
 const NAV = [
   { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },

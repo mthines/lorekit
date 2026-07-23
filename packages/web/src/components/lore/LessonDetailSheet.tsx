@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, Bot, Zap, Tag, Calendar, Clock } from 'lucide-react';
+import { X, Bot, Zap, Tag, Clock } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import type { LessonEntry } from './LessonCard';
 
@@ -20,6 +20,7 @@ export function LessonDetailSheet({ lesson, onClose }: LessonDetailSheetProps) {
       const timer = setTimeout(() => closeRef.current?.focus(), 80);
       return () => clearTimeout(timer);
     }
+    return undefined;
   }, [lesson]);
 
   // Close on Escape

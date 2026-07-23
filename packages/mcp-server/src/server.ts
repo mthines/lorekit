@@ -15,7 +15,6 @@ import {
   createServiceClient,
 } from '@lorekit/core';
 import { type AuthContext } from './auth.js';
-import { logger } from './logger.js';
 
 const SUPABASE_URL = process.env['SUPABASE_URL'] ?? '';
 const SUPABASE_ANON_KEY = process.env['SUPABASE_ANON_KEY'] ?? '';
@@ -104,11 +103,14 @@ export function createMcpServer(auth: AuthContext): McpServer {
   return server;
 }
 
-export async function handleMcpRequest(req: Request, auth: AuthContext): Promise<Response> {
+export async function handleMcpRequest(
+  req: import('http').IncomingMessage & { body?: unknown },
+  res: import('http').ServerResponse,
+  auth: AuthContext,
+  parsedBody?: unknown,
+): Promise<void> {
   const server = createMcpServer(auth);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
-
-  const response = await transport.handleRequest(req);
-  return response ?? new Response('', { status: 204 });
+  await transport.handleRequest(req, res, parsedBody);
 }

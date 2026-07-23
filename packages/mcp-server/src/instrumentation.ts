@@ -25,7 +25,7 @@ import {
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION,
 } from '@opentelemetry/semantic-conventions';
-import { trace, context } from '@opentelemetry/api';
+import { trace } from '@opentelemetry/api';
 
 // Read service version from package.json at startup
 const SERVICE_VERSION = process.env['npm_package_version'] ?? '0.0.1';
@@ -38,13 +38,16 @@ const resource = new Resource({
   // per otel-instrumentation/rules/sdks/nodejs.md
 });
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const metricReader = new PeriodicExportingMetricReader({
+  exporter: new OTLPMetricExporter(),
+  exportIntervalMillis: 60_000,
+}) as any;
+
 const sdk = new NodeSDK({
   resource,
   traceExporter: new OTLPTraceExporter(),
-  metricReader: new PeriodicExportingMetricReader({
-    exporter: new OTLPMetricExporter(),
-    exportIntervalMillis: 60_000,
-  }),
+  metricReader,
   instrumentations: [
     getNodeAutoInstrumentations({
       // Disable noisy instrumentations not needed for this server
@@ -60,18 +63,19 @@ sdk.start();
  * Flush all providers before process exit.
  * Per otel-instrumentation/rules/sdks/nodejs.md — prevents span loss on crash.
  */
+type MaybeFlushable = { forceFlush?: () => Promise<void>; getDelegate?: () => unknown };
+
 function forceFlushAll(): Promise<PromiseSettledResult<void>[]> {
   const promises: Promise<void>[] = [];
-  let tp = trace.getTracerProvider();
+  let tp: unknown = trace.getTracerProvider();
   // Unwrap ProxyTracerProvider to reach NodeTracerProvider.forceFlush()
-  if (
-    typeof (tp as { forceFlush?: unknown }).forceFlush !== 'function' &&
-    typeof (tp as { getDelegate?: () => unknown }).getDelegate === 'function'
-  ) {
-    tp = (tp as { getDelegate: () => typeof tp }).getDelegate();
+  const tpTyped = tp as MaybeFlushable;
+  if (typeof tpTyped.forceFlush !== 'function' && typeof tpTyped.getDelegate === 'function') {
+    tp = tpTyped.getDelegate();
   }
-  if (typeof (tp as { forceFlush?: () => Promise<void> }).forceFlush === 'function') {
-    promises.push((tp as { forceFlush: () => Promise<void> }).forceFlush());
+  const flusher = tp as MaybeFlushable;
+  if (typeof flusher.forceFlush === 'function') {
+    promises.push(flusher.forceFlush());
   }
   return Promise.allSettled(promises);
 }

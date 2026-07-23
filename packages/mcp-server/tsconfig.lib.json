@@ -10,8 +10,10 @@
     "resolveJsonModule": true,
     "module": "nodenext",
     "target": "ES2022",
-    "moduleResolution": "nodenext"
+    "moduleResolution": "nodenext",
+    "rootDir": "../../",
+    "composite": false
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.spec.ts", "src/**/*.test.ts"]
+  "include": ["src/**/*.ts", "../mcp-core/src/**/*.ts"],
+  "exclude": ["src/**/*.spec.ts", "src/**/*.test.ts", "../mcp-core/src/**/*.spec.ts", "../mcp-core/src/**/*.test.ts"]
 }

@@ -1,4 +1,4 @@
-import { SpanStatusCode, context, trace } from '@opentelemetry/api';
+import { SpanStatusCode } from '@opentelemetry/api';
 import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
 import { ScopeSchema, scopeType } from '../scope.js';

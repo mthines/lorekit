@@ -11,6 +11,7 @@
   "include": [],
   "references": [
     { "path": "./tsconfig.lib.json" },
-    { "path": "./tsconfig.spec.json" }
+    { "path": "./tsconfig.spec.json" },
+    { "path": "../mcp-core/tsconfig.lib.json" }
   ]
 }

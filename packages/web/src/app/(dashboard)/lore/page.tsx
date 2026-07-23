@@ -16,7 +16,7 @@ async function fetchScopesAndLessons(supabase: Awaited<ReturnType<typeof createS
 
   if (error || !data) return { scopes: [], lessons: [] };
 
-  const lessons: LessonEntry[] = data.map((row) => ({
+  const lessons: LessonEntry[] = data.map((row: Record<string, unknown>) => ({
     scope: row.scope as string,
     scope_type: scopeType(row.scope as string),
     key: row.key as string,

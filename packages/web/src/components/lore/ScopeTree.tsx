@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { ChevronRight, Globe, FolderGit2, GitBranch, Layers } from 'lucide-react';
-import { Badge } from '@/components/ui/Badge';
 import type { ScopePrefix } from '@lorekit/core';
 
 export interface ScopeNode {

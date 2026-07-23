@@ -15,7 +15,7 @@ async function fetchActivityData(supabase: Awaited<ReturnType<typeof createServe
 
   if (error || !data) return { events: [], heatmapData: [] };
 
-  const events: ActivityEvent[] = data.map((row) => ({
+  const events: ActivityEvent[] = data.map((row: Record<string, unknown>) => ({
     id: row.id as string,
     scope: row.scope as string,
     scope_type: scopeType(row.scope as string),

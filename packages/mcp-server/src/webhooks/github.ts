@@ -77,10 +77,6 @@ export async function handleGitHubWebhook(req: Request): Promise<Response> {
       }
 
       const db = createServiceClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-      const prNumber = (
-        (payload['pull_request'] as { number?: number } | undefined) ??
-        (payload['comment'] as { pull_request_url?: string } | undefined)
-      );
       const key = `pr-webhook::${repo}::${Date.now()}`;
 
       await write(db, {
