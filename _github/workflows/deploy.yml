@@ -1,0 +1,116 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false  # Never cancel an in-flight deploy
+
+jobs:
+  # ── 1. Typecheck + Test + Lint ────────────────────────────────────────────
+  check:
+    name: Typecheck, Test & Lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: NX — typecheck, test, lint (all packages)
+        run: pnpm nx run-many -t typecheck,test,lint --parallel=3
+        env:
+          NX_BASE: HEAD~1
+          NX_HEAD: ${{ github.sha }}
+
+  # ── 2. Run Supabase Migrations ────────────────────────────────────────────
+  migrate:
+    name: Supabase — Run Migrations
+    runs-on: ubuntu-latest
+    needs: check
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Push database migrations
+        run: supabase db push --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+  # ── 3. Deploy Supabase Edge Functions ────────────────────────────────────
+  deploy-functions:
+    name: Supabase — Deploy Edge Functions
+    runs-on: ubuntu-latest
+    needs: migrate
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Deploy mcp function
+        run: supabase functions deploy mcp --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Deploy health function (no JWT verification)
+        run: supabase functions deploy health --no-verify-jwt --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Smoke-test health endpoint
+        run: |
+          echo "### Deploy result" >> $GITHUB_STEP_SUMMARY
+          STATUS=$(curl -sf "https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/health" | jq -r '.status // "unknown"')
+          echo "Health endpoint status: **${STATUS}**" >> $GITHUB_STEP_SUMMARY
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
