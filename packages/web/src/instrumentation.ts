@@ -5,8 +5,8 @@
  * seamlessly with Vercel's infrastructure.
  *
  * Required env vars (set in Vercel dashboard):
- *   OTEL_EXPORTER_OTLP_ENDPOINT   e.g. https://ingress.europe-west4.gcp.dash0-dev.com
- *   OTEL_EXPORTER_OTLP_HEADERS    e.g. Authorization=Bearer <DASH0_AUTH_TOKEN>
+ *   OTEL_EXPORTER_OTLP_ENDPOINT   https://ingress.europe-west4.gcp.dash0-dev.com
+ *   OTEL_EXPORTER_OTLP_HEADERS    Authorization=Bearer <DASH0_AUTH_TOKEN>
  *
  * deployment.environment.name values:
  *   'production'  — Vercel production (VERCEL_ENV=production)
@@ -24,7 +24,13 @@ function resolveDeploymentEnv(): string {
   return 'local';
 }
 
-export function register() {
+export async function register() {
+  // CRITICAL: guard on the nodejs runtime.
+  // Next.js calls register() for BOTH the Node.js and Edge runtimes.
+  // Without this guard @vercel/otel tries to initialise the Node SDK
+  // in the Deno/Edge runtime, throws silently, and nothing is emitted.
+  if (process.env['NEXT_RUNTIME'] !== 'nodejs') return;
+
   registerOTel({
     serviceName: 'web',
     attributes: {
