@@ -75,9 +75,14 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
     }
 
     // Create a child span for the tool call
+    const rawScope = toolArgs['scope'] as string | undefined;
+    const scopeType = rawScope
+      ? (rawScope.split('::')[0] ?? 'unknown')
+      : 'unknown';
     const toolSpan = span.child(`lorekit.${toolName}`, {
       'lorekit.tool.name': toolName,
-      'lorekit.scope.type': (toolArgs['scope'] as string ?? '').split('::')[0] || 'unknown',
+      'lorekit.scope.type': scopeType,
+      ...(rawScope ? { 'lorekit.scope': rawScope } : {}),
     });
 
     try {

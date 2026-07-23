@@ -68,13 +68,8 @@ export async function resolveAuth(authHeader: string | null): Promise<AuthContex
 }
 
 export function getDb(auth: AuthContext) {
-  if (auth.type === 'service') {
-    return createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-  }
-  if (auth.type === 'api_key') {
-    // Service-role client bypasses RLS — ALL queries must add .eq('user_id', userId)
+  // service + api_key both use service-role; api_key queries MUST add .eq('user_id', userId)
+  if (auth.type === 'service' || auth.type === 'api_key') {
     return createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
     });

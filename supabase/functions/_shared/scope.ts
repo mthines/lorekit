@@ -4,7 +4,7 @@
  */
 
 export type ScopePrefix = 'global' | 'project' | 'repo' | 'branch';
-const VALID_PREFIXES: ScopePrefix[] = ['global', 'project', 'repo', 'branch'];
+const VALID_PREFIXES = new Set<string>(['global', 'project', 'repo', 'branch']);
 
 export function validateScope(raw: string): string {
   if (!raw) throw new Error('scope must be a non-empty string');

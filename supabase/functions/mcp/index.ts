@@ -1,8 +1,7 @@
 /**
  * LoreKit MCP Edge Function — entry point.
  *
- * Routes requests to the appropriate handler.
- * All business logic lives in co-located modules:
+ * Routes all requests to co-located handlers:
  *   auth.ts         — resolveAuth, getDb, canWrite, getUserId
  *   tools.ts        — memory.write/read/list/delete/search handlers
  *   webhook.ts      — GitHub PR comment → lesson creation

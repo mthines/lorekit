@@ -8,7 +8,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { validateScope } from '../_shared/scope.ts';
-import { traceRequest, createTracedClient, type Span } from '../_shared/otel.ts';
+import { createTracedClient, type Span } from '../_shared/otel.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 
@@ -26,9 +26,12 @@ export async function toolWrite(
   if (value.length > MAX_VALUE_BYTES) throw new Error(`value exceeds ${MAX_VALUE_BYTES} bytes`);
   const scope = validateScope(rawScope);
 
-  span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
-  if (source_agent) span.setAttributes({ 'lorekit.source_agent': source_agent });
-  if (trigger) span.setAttributes({ 'lorekit.trigger': trigger });
+  span.setAttributes({
+    'lorekit.scope': scope,
+    'lorekit.key': key,
+    ...(source_agent ? { 'lorekit.source_agent': source_agent } : {}),
+    ...(trigger ? { 'lorekit.trigger': trigger } : {}),
+  });
 
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb
