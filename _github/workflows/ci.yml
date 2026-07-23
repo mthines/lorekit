@@ -1,0 +1,88 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ACTIVATION: rename the parent folder from "_github" to ".github"
+# The leading underscore prevents GitHub from reading this as a workflow
+# until you are ready. Once renamed, this file runs on every push and PR.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Typecheck + Test + Lint (all NX packages) ────────────────────────────
+  check:
+    name: Typecheck, Test, Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # NX affected — only re-runs targets for changed packages on PRs
+      - name: NX — typecheck, test, lint (affected)
+        run: pnpm nx affected -t typecheck,test,lint --parallel=3
+        env:
+          NX_BASE: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
+          NX_HEAD: ${{ github.sha }}
+
+  # ── Next.js build check ───────────────────────────────────────────────────
+  build-web:
+    name: Build web
+    runs-on: ubuntu-latest
+    needs: check
+    env:
+      # Dummy values — real values are in Vercel; this just proves the build compiles
+      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+      NEXT_PUBLIC_APP_URL: https://localhost:3001
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Next.js app
+        run: pnpm nx build web --configuration=production
+
+  # ── Supabase migrations (main only) ───────────────────────────────────────
+  migrate:
+    name: Supabase migrations
+    runs-on: ubuntu-latest
+    needs: check
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Push migrations to Supabase
+        run: supabase db push --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
