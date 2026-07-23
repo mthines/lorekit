@@ -3,7 +3,7 @@ import { createServerClient } from '@/lib/supabase/server';
 import { LoreExplorer } from '@/components/lore/LoreExplorer';
 import type { ScopeNode } from '@/components/lore/ScopeTree';
 import type { LessonEntry } from '@/components/lore/LessonCard';
-import { scopeType } from '@lorekit/core';
+import { scopeType } from '@/lib/scope';
 
 export const metadata: Metadata = { title: 'Lore Explorer' };
 

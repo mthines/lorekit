@@ -4,7 +4,7 @@ import { memo } from 'react';
 import { motion } from 'motion/react';
 import { Clock, Bot, Zap } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
-import type { ScopePrefix } from '@lorekit/core';
+import type { ScopePrefix } from '@/lib/scope';
 
 export interface LessonEntry {
   key: string;

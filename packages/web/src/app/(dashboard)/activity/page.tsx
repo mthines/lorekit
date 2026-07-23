@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { createServerClient } from '@/lib/supabase/server';
 import { ContributionHeatmap } from '@/components/activity/ContributionHeatmap';
 import { ActivityFeed, type ActivityEvent } from '@/components/activity/ActivityFeed';
-import { scopeType } from '@lorekit/core';
+import { scopeType } from '@/lib/scope';
 
 export const metadata: Metadata = { title: 'Activity' };
 
