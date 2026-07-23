@@ -11,6 +11,7 @@ export interface LessonEntry {
   value: string;
   tags: string[];
   updated_at: string;
+  archived_at?: string | null;
   source_agent?: string | null;
   trigger?: string | null;
   scope: string;

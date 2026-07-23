@@ -12,6 +12,8 @@ export interface Memory {
   trigger: string | null;
   created_at: string;
   updated_at: string;
+  /** ISO-8601 UTC timestamp set when the memory is soft-archived. Null for active memories. */
+  archived_at: string | null;
 }
 
 /**
