@@ -16,6 +16,8 @@ export function validateScope(raw: string): string {
   const sepIdx = normalized.indexOf('::');
   if (sepIdx === -1) throw new Error(`Invalid scope "${raw}": unknown scope type`);
   const prefix = normalized.slice(0, sepIdx) as ScopePrefix;
-  if (!VALID_PREFIXES.includes(prefix)) throw new Error(`Invalid scope prefix "${prefix}"`);
+  if (!VALID_PREFIXES.has(prefix)) throw new Error(`Invalid scope prefix "${prefix}"`);
   return normalized;
 }
+
+
