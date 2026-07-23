@@ -3,6 +3,9 @@
  * Listens for pull_request_review_comment, pull_request_review, and
  * issue_comment events (the last covers PR inline comments) and creates
  * candidate memory entries tagged source::pr-webhook.
+ *
+ * Unsupported event types return 200 OK but are marked with
+ * lorekit.webhook.skipped=true on the span so they are visible in Dash0.
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
@@ -12,6 +15,12 @@ import { toolWrite } from './tools.ts';
 
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
+
+const SUPPORTED_EVENTS = new Set([
+  'pull_request_review_comment',
+  'pull_request_review',
+  'issue_comment',
+]);
 
 /**
  * Verify a GitHub webhook HMAC-SHA256 signature using the Web Crypto API.
@@ -59,6 +68,17 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
     return new Response('Unauthorized', { status: 401 });
   }
 
+  // Report unsupported event types so they are visible in Dash0 rather than
+  // silently discarded. We still return 200 OK — GitHub retries on 4xx/5xx
+  // which would flood the delivery log for every push, star, etc.
+  if (!SUPPORTED_EVENTS.has(event)) {
+    span.setAttributes({
+      'lorekit.webhook.skipped': true,
+      'lorekit.webhook.skip_reason': 'unsupported_event',
+    });
+    return new Response('OK', { status: 200 });
+  }
+
   // deno-lint-ignore no-explicit-any
   const payload = JSON.parse(body) as Record<string, any>;
   const action = payload['action'] ?? 'unknown';
@@ -84,7 +104,10 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
     }
   }
 
-  if (!commentBody?.trim()) return new Response('OK', { status: 200 });
+  if (!commentBody?.trim()) {
+    span.setAttributes({ 'lorekit.webhook.skipped': true, 'lorekit.webhook.skip_reason': 'empty_body' });
+    return new Response('OK', { status: 200 });
+  }
 
   const scope = validateScope(`repo::${repo}`);
   span.setAttributes({ 'lorekit.scope': scope, 'lorekit.scope.type': 'repo' });
