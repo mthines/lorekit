@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useTransition } from 'react';
+import { useState, useMemo, useTransition, useCallback } from 'react';
 import { Search, BookOpen, ChevronDown } from 'lucide-react';
 import { ScopeTree, type ScopeNode } from './ScopeTree';
 import { LessonCard, type LessonEntry } from './LessonCard';
@@ -20,6 +20,14 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
   const [query, setQuery] = useState('');
   const [, startTransition] = useTransition();
   const [scopePanelOpen, setScopePanelOpen] = useState(true);
+
+  // Called after an archive/restore mutation so the query re-fetches.
+  // useCallback avoids recreating the function on every render.
+  const handleMutated = useCallback(() => {
+    // Close the sheet — the parent page's query hook will re-fetch
+    // automatically when the server action calls revalidatePath('/lore').
+    setSelectedLesson(null);
+  }, []);
 
   const filteredLessons = useMemo(() => {
     const scopeLessons = selectedScope
@@ -164,7 +172,11 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
         </div>
       </div>
 
-      <LessonDetailSheet lesson={selectedLesson} onClose={() => setSelectedLesson(null)} />
+      <LessonDetailSheet
+        lesson={selectedLesson}
+        onClose={() => setSelectedLesson(null)}
+        onMutated={handleMutated}
+      />
     </>
   );
 }

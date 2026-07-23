@@ -4,18 +4,40 @@
  */
 
 import { type AuthContext, getDb, canWrite, getUserId } from './auth.ts';
-import { toolWrite, toolRead, toolList, toolDelete, toolSearch, type Params } from './tools.ts';
+import {
+  toolWrite,
+  toolRead,
+  toolList,
+  toolDelete,
+  toolSearch,
+  toolArchive,
+  toolListArchived,
+  toolRestore,
+  toolPurge,
+  PURGE_RETENTION_DAYS_DEFAULT,
+  type Params,
+} from './tools.ts';
 import { type Span } from '../_shared/otel.ts';
 
 const TOOLS = {
-  'memory.write': toolWrite,
-  'memory.read': toolRead,
-  'memory.list': toolList,
-  'memory.delete': toolDelete,
-  'memory.search': toolSearch,
+  'memory.write':         toolWrite,
+  'memory.read':          toolRead,
+  'memory.list':          toolList,
+  'memory.delete':        toolDelete,
+  'memory.search':        toolSearch,
+  'memory.archive':       toolArchive,
+  'memory.list_archived': toolListArchived,
+  'memory.restore':       toolRestore,
+  'memory.purge':         toolPurge,
 } as const;
 
-const WRITE_TOOLS = new Set(['memory.write', 'memory.delete']);
+const WRITE_TOOLS = new Set([
+  'memory.write',
+  'memory.delete',
+  'memory.archive',
+  'memory.restore',
+  'memory.purge',
+]);
 
 function jsonrpc(id: unknown, result: unknown): Response {
   return new Response(JSON.stringify({ jsonrpc: '2.0', id, result }), {
@@ -41,8 +63,6 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
 
   const { id = null, method, params = {} } = body;
 
-  // Annotate the root span with the method on every path so every MCP request
-  // is queryable by method regardless of outcome.
   span.setAttributes({ 'mcp.method': method ?? 'unknown' });
 
   if (method === 'initialize') {
@@ -50,7 +70,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
     return jsonrpc(id, {
       protocolVersion: '2024-11-05',
       capabilities: { tools: {} },
-      serverInfo: { name: 'lorekit', version: '1.0.0' },
+      serverInfo: { name: 'lorekit', version: '1.1.0' },
     });
   }
 
@@ -61,11 +81,64 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
   if (method === 'tools/list') {
     return jsonrpc(id, {
       tools: [
-        { name: 'memory.write',  description: 'Store or update a lesson',         inputSchema: { type: 'object', required: ['scope', 'key', 'value'] } },
-        { name: 'memory.read',   description: 'Read a lesson by scope and key',    inputSchema: { type: 'object', required: ['scope', 'key'] } },
-        { name: 'memory.list',   description: 'List lessons for a scope',          inputSchema: { type: 'object', required: ['scope'] } },
-        { name: 'memory.delete', description: 'Delete a lesson',                   inputSchema: { type: 'object', required: ['scope', 'key'] } },
-        { name: 'memory.search', description: 'Full-text search across lessons',   inputSchema: { type: 'object', required: ['q'] } },
+        {
+          name: 'memory.write',
+          description: 'Store or update a lesson',
+          inputSchema: { type: 'object', required: ['scope', 'key', 'value'] },
+        },
+        {
+          name: 'memory.read',
+          description: 'Read a lesson by scope and key',
+          inputSchema: { type: 'object', required: ['scope', 'key'] },
+        },
+        {
+          name: 'memory.list',
+          description: 'List lessons for a scope',
+          inputSchema: { type: 'object', required: ['scope'] },
+        },
+        {
+          name: 'memory.delete',
+          description: 'Soft-archive a lesson (default) or hard-delete it (force: true). Archived lessons are hidden from reads but can be restored.',
+          inputSchema: {
+            type: 'object',
+            required: ['scope', 'key'],
+            properties: {
+              scope: { type: 'string' },
+              key: { type: 'string' },
+              force: { type: 'boolean', description: 'Hard-delete immediately (unrecoverable). Defaults to false (soft-archive).' },
+            },
+          },
+        },
+        {
+          name: 'memory.search',
+          description: 'Full-text search across lessons',
+          inputSchema: { type: 'object', required: ['q'] },
+        },
+        {
+          name: 'memory.archive',
+          description: 'Soft-archive a lesson. Archived lessons are hidden from reads but can be restored via memory.restore.',
+          inputSchema: { type: 'object', required: ['scope', 'key'] },
+        },
+        {
+          name: 'memory.list_archived',
+          description: 'List archived (soft-deleted) lessons for a scope',
+          inputSchema: { type: 'object', required: ['scope'] },
+        },
+        {
+          name: 'memory.restore',
+          description: 'Restore an archived lesson back to active',
+          inputSchema: { type: 'object', required: ['scope', 'key'] },
+        },
+        {
+          name: 'memory.purge',
+          description: `Permanently delete archived lessons older than retention_days (default ${PURGE_RETENTION_DAYS_DEFAULT}). Unrecoverable.`,
+          inputSchema: {
+            type: 'object',
+            properties: {
+              retention_days: { type: 'integer', minimum: 1, maximum: 365, default: PURGE_RETENTION_DAYS_DEFAULT },
+            },
+          },
+        },
       ],
     });
   }
@@ -85,7 +158,6 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
       return jsonrpcError(id, -32001, 'This token is read-only. Generate a read+write token in LoreKit.');
     }
 
-    // Create a child span for the tool call
     const rawScope = toolArgs['scope'] as string | undefined;
     const scopeType = rawScope
       ? (rawScope.split('::')[0] ?? 'unknown')
@@ -106,7 +178,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
     } catch (err) {
       const msg = `${(err as Error).name}: ${(err as Error).message}`;
       toolSpan.error(msg).end();
-      span.error(msg); // propagate to root span so it's also marked errored
+      span.error(msg);
       return jsonrpcError(id, -32603, (err as Error).message);
     }
   }

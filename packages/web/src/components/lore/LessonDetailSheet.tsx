@@ -1,18 +1,25 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, Bot, Zap, Tag, Clock } from 'lucide-react';
+import { X, Bot, Zap, Tag, Clock, Archive, RotateCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import type { LessonEntry } from './LessonCard';
+import { archiveLesson, restoreLesson } from '@/lib/lore';
 
 interface LessonDetailSheetProps {
   lesson: LessonEntry | null;
   onClose: () => void;
+  /** Called after a successful archive or restore so the parent can refresh its list. */
+  onMutated?: () => void;
 }
 
-export function LessonDetailSheet({ lesson, onClose }: LessonDetailSheetProps) {
+export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSheetProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  const [isPending, startTransition] = useTransition();
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const isArchived = Boolean(lesson?.archived_at);
 
   // Focus close button on open; restore on close
   useEffect(() => {
@@ -31,6 +38,22 @@ export function LessonDetailSheet({ lesson, onClose }: LessonDetailSheetProps) {
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [lesson, onClose]);
+
+  function handleArchive() {
+    if (!lesson) return;
+    setActionError(null);
+    startTransition(async () => {
+      const result = isArchived
+        ? await restoreLesson(lesson.scope, lesson.key)
+        : await archiveLesson(lesson.scope, lesson.key);
+      if (result.error) {
+        setActionError(result.error);
+      } else {
+        onMutated?.();
+        onClose();
+      }
+    });
+  }
 
   return (
     <AnimatePresence>
@@ -65,6 +88,11 @@ export function LessonDetailSheet({ lesson, onClose }: LessonDetailSheetProps) {
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-2">
                   <Badge variant={lesson.scope_type}>{lesson.scope_type}</Badge>
+                  {isArchived && (
+                    <span className="rounded-full bg-[var(--color-bg-elevated)] px-2 py-0.5 text-xs text-[var(--color-content-tertiary)]">
+                      archived
+                    </span>
+                  )}
                   <code className="text-xs text-[var(--color-content-tertiary)]">
                     {lesson.scope}
                   </code>
@@ -126,6 +154,15 @@ export function LessonDetailSheet({ lesson, onClose }: LessonDetailSheetProps) {
                       {new Date(lesson.updated_at).toLocaleString()}
                     </dd>
                   </div>
+                  {lesson.archived_at && (
+                    <div className="flex items-center gap-2 text-xs">
+                      <Archive className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                      <dt className="text-[var(--color-content-tertiary)]">Archived</dt>
+                      <dd className="ml-auto text-[var(--color-content-secondary)]">
+                        {new Date(lesson.archived_at).toLocaleString()}
+                      </dd>
+                    </div>
+                  )}
                 </dl>
               </section>
 
@@ -148,6 +185,36 @@ export function LessonDetailSheet({ lesson, onClose }: LessonDetailSheetProps) {
                   </div>
                 </section>
               )}
+            </div>
+
+            {/* Footer — actions */}
+            <div className="border-t border-[var(--color-border)] p-4 flex flex-col gap-2">
+              {actionError && (
+                <p className="text-xs text-red-500">{actionError}</p>
+              )}
+              <button
+                onClick={handleArchive}
+                disabled={isPending}
+                className={[
+                  'flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-all duration-150',
+                  isArchived
+                    ? 'border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-raised)]'
+                    : 'border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-secondary)] hover:border-amber-400/40 hover:bg-amber-400/10 hover:text-amber-400',
+                  isPending ? 'cursor-not-allowed opacity-50' : '',
+                ].join(' ')}
+              >
+                {isArchived ? (
+                  <>
+                    <RotateCcw className="size-4" aria-hidden />
+                    {isPending ? 'Restoring…' : 'Restore'}
+                  </>
+                ) : (
+                  <>
+                    <Archive className="size-4" aria-hidden />
+                    {isPending ? 'Archiving…' : 'Archive'}
+                  </>
+                )}
+              </button>
             </div>
           </motion.aside>
         </>

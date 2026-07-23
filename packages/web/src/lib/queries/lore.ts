@@ -14,7 +14,8 @@ async function fetchLoreData(): Promise<LoreData> {
 
   const { data, error } = await supabase
     .from('memories')
-    .select('scope,key,value,tags,updated_at,source_agent,trigger')
+    .select('scope,key,value,tags,updated_at,archived_at,source_agent,trigger')
+    .is('archived_at', null)
     .order('updated_at', { ascending: false })
     .limit(500);
 
@@ -27,6 +28,7 @@ async function fetchLoreData(): Promise<LoreData> {
     value: row.value as string,
     tags: (row.tags as string[]) ?? [],
     updated_at: row.updated_at as string,
+    archived_at: (row.archived_at as string | null) ?? null,
     source_agent: row.source_agent as string | null,
     trigger: row.trigger as string | null,
   }));
