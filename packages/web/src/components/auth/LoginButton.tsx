@@ -9,10 +9,14 @@ export function LoginButton() {
   async function handleLogin() {
     setLoading(true);
     const supabase = createClient();
+    // Prefer the build-time NEXT_PUBLIC_VERCEL_URL (set in next.config.ts from
+    // VERCEL_URL) so preview deployments redirect back to their own URL, not
+    // production. Falls back to window.location.origin for local dev.
+    const base = process.env['NEXT_PUBLIC_VERCEL_URL'] ?? window.location.origin;
     await supabase.auth.signInWithOAuth({
       provider: 'github',
       options: {
-        redirectTo: `${window.location.origin}/api/auth/callback`,
+        redirectTo: `${base}/api/auth/callback`,
       },
     });
     // Loading stays true — page will redirect
