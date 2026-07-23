@@ -8,8 +8,6 @@ import {
 } from 'lucide-react';
 import { generateToken, revokeToken, type ApiToken, type TokenPermission } from '@/lib/tokens';
 
-export type { ApiToken };
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function relativeTime(iso: string): string {
@@ -261,12 +259,23 @@ export function TokenManager({ initialTokens, onNewToken }: TokenManagerProps) {
   const [tokens, setTokens] = useState<ApiToken[]>(initialTokens);
   const [showForm, setShowForm] = useState(false);
   const [newToken, setNewToken] = useState<string | null>(null);
+  const [newTokenRecord, setNewTokenRecord] = useState<ApiToken | null>(null);
 
   function handleGenerated(token: string, record: ApiToken) {
     setTokens((prev) => [record, ...prev]);
     setNewToken(token);
+    setNewTokenRecord(record);
     setShowForm(false);
+    // Pass full token to parent so it auto-fills the config snippet while the banner is visible.
     onNewToken?.(token);
+  }
+
+  function handleDismissNewToken() {
+    setNewToken(null);
+    // After the user confirms they've saved the token, redact it in the config snippet
+    // so the full token doesn't remain visible after the banner is gone.
+    if (newTokenRecord) onNewToken?.(`<paste your ${newTokenRecord.token_prefix} token here>`);
+    setNewTokenRecord(null);
   }
 
   function handleRevoke(id: string) {
@@ -280,7 +289,7 @@ export function TokenManager({ initialTokens, onNewToken }: TokenManagerProps) {
         {newToken && (
           <NewTokenDisplay
             token={newToken}
-            onDismiss={() => setNewToken(null)}
+            onDismiss={handleDismissNewToken}
           />
         )}
       </AnimatePresence>

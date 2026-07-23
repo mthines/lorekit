@@ -37,6 +37,8 @@ async function sha256hex(text: string): Promise<string> {
  * Generate a new API token. Returns the full token string ONCE — it is not
  * stored in plain text and cannot be retrieved again.
  */
+const MAX_TOKENS_PER_USER = 20;
+
 export async function generateToken(
   name: string,
   permissions: TokenPermission[],
@@ -45,6 +47,16 @@ export async function generateToken(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Not authenticated' };
   if (!name.trim()) return { error: 'Token name is required' };
+
+  // Enforce per-user token cap
+  const { count, error: countError } = await supabase
+    .from('api_tokens')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', user.id);
+  if (countError) return { error: countError.message };
+  if ((count ?? 0) >= MAX_TOKENS_PER_USER) {
+    return { error: `Maximum ${MAX_TOKENS_PER_USER} tokens per user. Revoke an existing token first.` };
+  }
 
   // Build token: lk_rw_<32> or lk_ro_<32>
   const permSuffix = permissions.includes('write') ? 'rw' : 'ro';
@@ -71,18 +83,22 @@ export async function generateToken(
   return { token: fullToken, record: data as ApiToken };
 }
 
-/** List all tokens for the current user. */
+/** List all tokens for the current user. Returns [] on auth failure or DB error. */
 export async function listTokens(): Promise<ApiToken[]> {
   const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return [];
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('api_tokens')
     .select('id, name, token_prefix, permissions, last_used_at, created_at')
     .eq('user_id', user.id)
     .order('created_at', { ascending: false });
 
+  if (error) {
+    console.error('[listTokens] DB error:', error.message);
+    return [];
+  }
   return (data ?? []) as ApiToken[];
 }
 

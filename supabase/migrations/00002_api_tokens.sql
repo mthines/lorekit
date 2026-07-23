@@ -11,8 +11,8 @@ create table if not exists api_tokens (
   id           uuid primary key default gen_random_uuid(),
   user_id      uuid references auth.users on delete cascade not null,
   name         text not null check (length(name) >= 1 and length(name) <= 100),
-  -- First 12 chars of the token for display ("lk_rw_aBcD12...") — safe to store
-  token_prefix text not null,
+  -- First 12 chars + "..." for display ("lk_rw_aBcD1...") — safe to store, max 16 chars
+  token_prefix text not null check (length(token_prefix) <= 16),
   -- SHA-256 hex of the full token — used for lookup on every request
   token_hash   text not null unique,
   -- Array of granted permissions: 'read' | 'write'
