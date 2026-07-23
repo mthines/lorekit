@@ -88,13 +88,30 @@ function toOtlpValue(v: string | number | boolean) {
   return { stringValue: String(v) };
 }
 
+/**
+ * Resolve deployment environment from Supabase secrets.
+ * Set VERCEL_ENV as a Supabase secret matching the Vercel-injected value:
+ *   production  → production deployment
+ *   preview     → preview/staging deployment
+ *   development → local `vercel dev` or staging
+ *   (absent)    → 'local'
+ */
+function resolveDeploymentEnv(): string {
+  const env = Deno.env.get('VERCEL_ENV');
+  if (env === 'production') return 'production';
+  if (env === 'preview') return 'preview';
+  if (env === 'development') return 'development';
+  return 'local';
+}
+
 function buildOtlpPayload(spans: SpanPayload[]): unknown {
   return {
     resourceSpans: [{
       resource: {
         attributes: [
-          { key: 'service.name', value: { stringValue: 'lorekit-mcp' } },
-          { key: 'deployment.environment.name', value: { stringValue: Deno.env.get('DEPLOYMENT_ENV') ?? 'production' } },
+          { key: 'service.name', value: { stringValue: 'mcp' } },
+          { key: 'service.namespace', value: { stringValue: 'lorekit' } },
+          { key: 'deployment.environment.name', value: { stringValue: resolveDeploymentEnv() } },
         ],
       },
       scopeSpans: [{

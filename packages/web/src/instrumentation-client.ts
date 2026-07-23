@@ -23,6 +23,22 @@ import { init, addSignalAttribute, identify } from '@dash0/sdk-web';
 const ENDPOINT = process.env['NEXT_PUBLIC_DASH0_OTLP_ENDPOINT'];
 const AUTH_TOKEN = process.env['NEXT_PUBLIC_DASH0_AUTH_TOKEN'];
 
+/**
+ * Resolve the deployment environment name.
+ * VERCEL_ENV is injected by Vercel and exposed via next.config.ts:
+ *   'production'  → Vercel production deployment
+ *   'preview'     → Vercel preview deployment (PR, branch)
+ *   'development' → `vercel dev` locally
+ *   ''            → pure local dev (no Vercel CLI) → mapped to 'local'
+ */
+function resolveDeploymentEnv(): string {
+  const vercelEnv = process.env['NEXT_PUBLIC_VERCEL_ENV'];
+  if (vercelEnv === 'production') return 'production';
+  if (vercelEnv === 'preview') return 'preview';
+  if (vercelEnv === 'development') return 'development';
+  return 'local';
+}
+
 // Only initialise if the endpoint is configured — gracefully no-ops in dev
 // without breaking the app.
 if (ENDPOINT && AUTH_TOKEN) {
@@ -37,7 +53,7 @@ if (ENDPOINT && AUTH_TOKEN) {
     additionalSignalAttributes: {
       'service.namespace': 'lorekit',
       'service.version': process.env['NEXT_PUBLIC_OTEL_SERVICE_VERSION'] ?? 'unknown',
-      'deployment.environment.name': process.env['NODE_ENV'] ?? 'development',
+      'deployment.environment.name': resolveDeploymentEnv(),
     },
     // Propagate W3C trace context to Supabase API calls so server spans
     // are linked to the browser span that initiated them.

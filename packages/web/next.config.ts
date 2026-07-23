@@ -10,6 +10,9 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_SUPABASE_PROJECT_REF: process.env['NEXT_PUBLIC_SUPABASE_PROJECT_REF'] ?? '',
     // Vercel injects VERCEL_GIT_COMMIT_SHA server-side; expose to client for service.version
     NEXT_PUBLIC_OTEL_SERVICE_VERSION: process.env['VERCEL_GIT_COMMIT_SHA'] ?? 'unknown',
+    // Vercel injects VERCEL_ENV = 'production' | 'preview' | 'development'.
+    // Absent locally → map to 'local' in instrumentation-client.ts.
+    NEXT_PUBLIC_VERCEL_ENV: process.env['VERCEL_ENV'] ?? '',
   },
 
   // Allow Supabase + Dash0 to receive trace context headers from the browser.

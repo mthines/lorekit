@@ -5,25 +5,35 @@
  * seamlessly with Vercel's infrastructure.
  *
  * Required env vars (set in Vercel dashboard):
- *   OTEL_EXPORTER_OTLP_ENDPOINT   e.g. https://ingress.us-east-1.aws.dash0.com
+ *   OTEL_EXPORTER_OTLP_ENDPOINT   e.g. https://ingress.europe-west4.gcp.dash0-dev.com
  *   OTEL_EXPORTER_OTLP_HEADERS    e.g. Authorization=Bearer <DASH0_AUTH_TOKEN>
- *   OTEL_SERVICE_NAME              lorekit-web
- *   NEXT_PUBLIC_OTEL_SERVICE_VERSION  (injected by Vercel: VERCEL_GIT_COMMIT_SHA)
+ *
+ * deployment.environment.name values:
+ *   'production'  — Vercel production (VERCEL_ENV=production)
+ *   'preview'     — Vercel preview PR/branch (VERCEL_ENV=preview)
+ *   'development' — `vercel dev` (VERCEL_ENV=development)
+ *   'local'       — pure local dev (VERCEL_ENV absent)
  */
 import { registerOTel } from '@vercel/otel';
 
+function resolveDeploymentEnv(): string {
+  const vercelEnv = process.env['VERCEL_ENV'];
+  if (vercelEnv === 'production') return 'production';
+  if (vercelEnv === 'preview') return 'preview';
+  if (vercelEnv === 'development') return 'development';
+  return 'local';
+}
+
 export function register() {
   registerOTel({
-    serviceName: process.env['OTEL_SERVICE_NAME'] ?? 'lorekit-web',
+    serviceName: 'web',
     attributes: {
+      'service.namespace': 'lorekit',
       'service.version':
         process.env['VERCEL_GIT_COMMIT_SHA'] ??
         process.env['OTEL_SERVICE_VERSION'] ??
         'unknown',
-      'deployment.environment.name':
-        process.env['VERCEL_ENV'] ??
-        process.env['NODE_ENV'] ??
-        'development',
+      'deployment.environment.name': resolveDeploymentEnv(),
     },
   });
 }
