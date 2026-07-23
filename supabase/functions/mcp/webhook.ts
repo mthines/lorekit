@@ -1,7 +1,8 @@
 /**
  * GitHub webhook handler.
- * Listens for pull_request_review_comment and pull_request_review events
- * and creates candidate memory entries tagged source::pr-webhook.
+ * Listens for pull_request_review_comment, pull_request_review, and
+ * issue_comment events (the last covers PR inline comments) and creates
+ * candidate memory entries tagged source::pr-webhook.
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
@@ -11,24 +12,39 @@ import { toolWrite } from './tools.ts';
 
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
-const WEBHOOK_SECRET = Deno.env.get('GITHUB_WEBHOOK_SECRET') ?? '';
 
+/**
+ * Verify a GitHub webhook HMAC-SHA256 signature using the Web Crypto API.
+ *
+ * Uses crypto.subtle.verify (HMAC verify operation) instead of signing and
+ * comparing hex strings — this avoids the manual timing-safe XOR loop and
+ * is the correct idiomatic approach for the Web Crypto API.
+ *
+ * The WEBHOOK_SECRET is read inside this function (not at module load time)
+ * so that Supabase propagates the secret before the first verification runs,
+ * even on a fresh cold-start after deployment.
+ */
 async function verifyHmac(body: string, signature: string | null): Promise<boolean> {
-  if (!signature || !WEBHOOK_SECRET) return false;
+  const secret = Deno.env.get('GITHUB_WEBHOOK_SECRET') ?? '';
+  if (!signature || !secret) return false;
+
+  // GitHub sends: sha256=<64-hex-chars>
+  if (!signature.startsWith('sha256=')) return false;
+  const hexSig = signature.slice(7);
+
+  // Decode the hex signature to raw bytes for crypto.subtle.verify
+  if (hexSig.length !== 64 || !/^[0-9a-f]+$/i.test(hexSig)) return false;
+  const sigBytes = new Uint8Array(hexSig.match(/.{2}/g)!.map((h) => parseInt(h, 16)));
+
   const key = await crypto.subtle.importKey(
     'raw',
-    new TextEncoder().encode(WEBHOOK_SECRET),
+    new TextEncoder().encode(secret),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
-    ['sign'],
+    ['verify'],
   );
-  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(body));
-  const hex = Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, '0')).join('');
-  const expected = `sha256=${hex}`;
-  if (expected.length !== signature.length) return false;
-  let diff = 0;
-  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
-  return diff === 0;
+
+  return crypto.subtle.verify('HMAC', key, sigBytes, new TextEncoder().encode(body));
 }
 
 async function processWebhook(req: Request, span: Span): Promise<Response> {
@@ -60,6 +76,12 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
   } else if (event === 'pull_request_review') {
     commentBody = payload['review']?.body;
     commentUrl = payload['review']?.html_url;
+  } else if (event === 'issue_comment') {
+    // issue_comment fires for both issue and PR comments; only capture PR comments
+    if (payload['issue']?.pull_request) {
+      commentBody = payload['comment']?.body;
+      commentUrl = payload['comment']?.html_url;
+    }
   }
 
   if (!commentBody?.trim()) return new Response('OK', { status: 200 });
