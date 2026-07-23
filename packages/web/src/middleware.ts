@@ -1,6 +1,10 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
+/** 24 hours — matches the Supabase project jwt_expiry so the cookie
+ *  outlives the access token and the refresh token can be used. */
+const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24;
+
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request });
 
@@ -18,14 +22,20 @@ export async function middleware(request: NextRequest) {
           );
           response = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options),
+            response.cookies.set(name, value, {
+              ...options,
+              // Persist the session cookie across browser restarts so the
+              // refresh token survives and the user stays logged in for the day.
+              maxAge: SESSION_MAX_AGE_SECONDS,
+            }),
           );
         },
       },
     },
   );
 
-  // Refresh session
+  // Refresh session if the access token has expired; supabase-ssr will
+  // transparently use the refresh token and write new cookies via setAll.
   await supabase.auth.getUser();
   return response;
 }
