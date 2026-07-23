@@ -105,59 +105,69 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
     return new Response('OK', { status: 200 });
   }
 
-  // deno-lint-ignore no-explicit-any
-  const payload = JSON.parse(body) as Record<string, any>;
-  const action = payload['action'] ?? 'unknown';
-  const repo = payload['repository']?.full_name;
-  span.setAttributes({ 'lorekit.webhook.action': action });
+  try {
+    // deno-lint-ignore no-explicit-any
+    const payload = JSON.parse(body) as Record<string, any>;
+    const action = payload['action'] ?? 'unknown';
+    const repo = payload['repository']?.full_name;
+    span.setAttributes({ 'lorekit.webhook.action': action });
 
-  if (!repo) return new Response('OK', { status: 200 });
+    if (!repo) return new Response('OK', { status: 200 });
 
-  let commentBody: string | undefined;
-  let commentUrl: string | undefined;
+    let commentBody: string | undefined;
+    let commentUrl: string | undefined;
 
-  if (event === 'pull_request_review_comment') {
-    commentBody = payload['comment']?.body;
-    commentUrl = payload['comment']?.html_url;
-  } else if (event === 'pull_request_review') {
-    commentBody = payload['review']?.body;
-    commentUrl = payload['review']?.html_url;
-  } else if (event === 'issue_comment') {
-    // Capture all issue comments (plain issues and PR comments alike)
-    commentBody = payload['comment']?.body;
-    commentUrl = payload['comment']?.html_url;
-  }
+    if (event === 'pull_request_review_comment') {
+      commentBody = payload['comment']?.body;
+      commentUrl = payload['comment']?.html_url;
+    } else if (event === 'pull_request_review') {
+      commentBody = payload['review']?.body;
+      commentUrl = payload['review']?.html_url;
+    } else if (event === 'issue_comment') {
+      // Capture all issue comments (plain issues and PR comments alike)
+      commentBody = payload['comment']?.body;
+      commentUrl = payload['comment']?.html_url;
+    }
 
-  if (!commentBody?.trim()) {
-    span.setAttributes({ 'lorekit.webhook.skipped': true, 'lorekit.webhook.skip_reason': 'empty_body' });
+    if (!commentBody?.trim()) {
+      span.setAttributes({ 'lorekit.webhook.skipped': true, 'lorekit.webhook.skip_reason': 'empty_body' });
+      return new Response('OK', { status: 200 });
+    }
+
+    const scope = validateScope(`repo::${repo}`);
+    span.setAttributes({ 'lorekit.scope': scope, 'lorekit.scope.type': 'repo' });
+
+    const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
+    await toolWrite(db, {
+      scope,
+      key: `pr-webhook::${repo}::${Date.now()}`,
+      value: commentBody.trim(),
+      tags: [
+        'source::pr-webhook',
+        `event::${event}`,
+        `action::${action}`,
+        ...(commentUrl ? [`url::${commentUrl}`] : []),
+      ],
+      source_agent: 'github-webhook',
+      trigger: `${event}.${action}`,
+    }, null, span);
+
     return new Response('OK', { status: 200 });
+  } catch (err) {
+    const e = err as Error;
+    span.setAttributes({
+      'lorekit.webhook.error.type': e.name,
+      'lorekit.webhook.error.message': e.message,
+    });
+    span.error(`${e.name}: ${e.message}`);
+    return new Response('Internal Server Error', { status: 500 });
   }
-
-  const scope = validateScope(`repo::${repo}`);
-  span.setAttributes({ 'lorekit.scope': scope, 'lorekit.scope.type': 'repo' });
-
-  const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-
-  await toolWrite(db, {
-    scope,
-    key: `pr-webhook::${repo}::${Date.now()}`,
-    value: commentBody.trim(),
-    tags: [
-      'source::pr-webhook',
-      `event::${event}`,
-      `action::${action}`,
-      ...(commentUrl ? [`url::${commentUrl}`] : []),
-    ],
-    source_agent: 'github-webhook',
-    trigger: `${event}.${action}`,
-  }, null, span);
-
-  return new Response('OK', { status: 200 });
-}
 
 export function handleWebhook(req: Request): Promise<Response> {
   return traceRequest(req, 'lorekit.webhook.github', (span) => processWebhook(req, span));
 }
+
 
