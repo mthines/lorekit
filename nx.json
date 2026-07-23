@@ -55,5 +55,8 @@
       "inputs": ["production", "^production"]
     }
   },
-  "tui": { "enabled": false }
+  "tui": { "enabled": false },
+  "sync": {
+    "disabledTaskSyncGenerators": ["@nx/js:typescript-sync"]
+  }
 }
