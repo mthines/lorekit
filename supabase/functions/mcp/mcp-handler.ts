@@ -35,12 +35,18 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
   try {
     body = await req.json();
   } catch {
+    span.error('ParseError: invalid JSON body').setAttributes({ 'mcp.method': 'unknown' });
     return jsonrpcError(null, -32700, 'Parse error');
   }
 
   const { id = null, method, params = {} } = body;
 
+  // Annotate the root span with the method on every path so every MCP request
+  // is queryable by method regardless of outcome.
+  span.setAttributes({ 'mcp.method': method ?? 'unknown' });
+
   if (method === 'initialize') {
+    span.setAttributes({ 'mcp.protocol_version': '2024-11-05' });
     return jsonrpc(id, {
       protocolVersion: '2024-11-05',
       capabilities: { tools: {} },
@@ -68,9 +74,14 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
     const toolName = params.name as keyof typeof TOOLS;
     const toolArgs = params.arguments ?? {};
     const tool = TOOLS[toolName];
-    if (!tool) return jsonrpcError(id, -32601, `Unknown tool: ${toolName}`);
+
+    if (!tool) {
+      span.error(`UnknownTool: ${toolName}`).setAttributes({ 'mcp.tool.name': toolName ?? 'unknown' });
+      return jsonrpcError(id, -32601, `Unknown tool: ${toolName}`);
+    }
 
     if (WRITE_TOOLS.has(toolName) && !canWrite(auth)) {
+      span.error('PermissionDenied: read-only token').setAttributes({ 'mcp.tool.name': toolName });
       return jsonrpcError(id, -32001, 'This token is read-only. Generate a read+write token in LoreKit.');
     }
 
@@ -79,6 +90,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
     const scopeType = rawScope
       ? (rawScope.split('::')[0] ?? 'unknown')
       : 'unknown';
+    span.setAttributes({ 'mcp.tool.name': toolName });
     const toolSpan = span.child(`lorekit.${toolName}`, {
       'lorekit.tool.name': toolName,
       'lorekit.scope.type': scopeType,
@@ -92,10 +104,13 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
       toolSpan.end();
       return jsonrpc(id, { content: [{ type: 'text', text: JSON.stringify(result) }] });
     } catch (err) {
-      toolSpan.error(`${(err as Error).name}: ${(err as Error).message}`).end();
+      const msg = `${(err as Error).name}: ${(err as Error).message}`;
+      toolSpan.error(msg).end();
+      span.error(msg); // propagate to root span so it's also marked errored
       return jsonrpcError(id, -32603, (err as Error).message);
     }
   }
 
+  span.error(`MethodNotFound: ${method}`);
   return jsonrpcError(id, -32601, `Method not found: ${method}`);
 }

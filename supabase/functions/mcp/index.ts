@@ -40,13 +40,19 @@ Deno.serve(async (req: Request) => {
     return handleWebhook(req);
   }
 
-  // MCP endpoint — authenticate then dispatch
+  // MCP endpoint — all paths (including auth failures) are traced so every
+  // request produces at least one span. resolveAuth is intentionally inside
+  // traceRequest so unauthenticated calls are still visible in telemetry.
   return traceRequest(req, 'lorekit.mcp', async (span) => {
     // resolveAuth checks Authorization header first, then ?token= query param as fallback.
     const auth = await resolveAuth(req.headers.get('authorization'), url.searchParams.get('token'));
-    if (!auth) return jsonrpcError(null, -32001, 'Unauthorized');
+    if (!auth) {
+      span.error('Unauthorized').setAttributes({ 'auth.result': 'failed' });
+      return jsonrpcError(null, -32001, 'Unauthorized');
+    }
 
     span.setAttributes({
+      'auth.result': 'ok',
       'auth.type': auth.type,
       ...(auth.userId ? { 'auth.user_id': auth.userId } : {}),
     });
