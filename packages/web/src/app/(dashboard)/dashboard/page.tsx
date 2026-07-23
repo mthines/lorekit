@@ -4,6 +4,7 @@ import { createServerClient } from '@/lib/supabase/server';
 import { ScopeHealthGrid, type ScopeHealth } from '@/components/dashboard/ScopeHealthCard';
 import { OnboardingChecklist, type OnboardingStep } from '@/components/dashboard/OnboardingChecklist';
 import { OnboardingStepContent } from '@/components/dashboard/OnboardingStepContent';
+import { listTokens } from '@/lib/tokens';
 import { scopeType } from '@/lib/scope';
 
 export const metadata: Metadata = { title: 'Overview' };
@@ -58,12 +59,12 @@ async function fetchOnboardingState(supabase: Awaited<ReturnType<typeof createSe
 
 export default async function DashboardPage() {
   const supabase = await createServerClient();
-  const [{ scopes, totalLessons }, { hasLessons, hasWebhook }] = await Promise.all([
+  const [{ scopes, totalLessons }, { hasLessons, hasWebhook }, tokens] = await Promise.all([
     fetchDashboardData(supabase),
     fetchOnboardingState(supabase),
+    listTokens(),
   ]);
 
-  // Derive the MCP URL from the Supabase URL that's already in the environment
   const supabaseUrl = process.env['NEXT_PUBLIC_SUPABASE_URL'] ?? '';
   const projectRef = supabaseUrl.replace('https://', '').replace('.supabase.co', '');
   const mcpUrl = projectRef
@@ -83,10 +84,16 @@ export default async function DashboardPage() {
     {
       id: 'connect',
       title: 'Connect your agent',
-      subtitle: 'Point persistent-memory at your MCP endpoint to start writing lessons.',
+      subtitle: 'Generate a token and add it to your persistent-memory config.',
       done: hasLessons,
       icon: <Bot className="size-4" />,
-      content: <OnboardingStepContent step="connect" mcpUrl={mcpUrl} />,
+      content: (
+        <OnboardingStepContent
+          step="connect"
+          mcpUrl={mcpUrl}
+          initialTokens={tokens}
+        />
+      ),
     },
     {
       id: 'webhook',
@@ -94,7 +101,13 @@ export default async function DashboardPage() {
       subtitle: 'LoreKit will automatically create lessons from your PR review comments.',
       done: hasWebhook,
       icon: <Webhook className="size-4" />,
-      content: <OnboardingStepContent step="webhook" mcpUrl={mcpUrl} webhookUrl={webhookUrl} />,
+      content: (
+        <OnboardingStepContent
+          step="webhook"
+          mcpUrl={mcpUrl}
+          webhookUrl={webhookUrl}
+        />
+      ),
     },
   ];
 

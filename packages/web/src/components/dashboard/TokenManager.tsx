@@ -1,0 +1,330 @@
+'use client';
+
+import { useState, useTransition, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import {
+  Key, Plus, Trash2, Copy, CheckCheck, Eye, EyeOff,
+  ShieldCheck, ShieldAlert, Clock, Loader2
+} from 'lucide-react';
+import { generateToken, revokeToken, type ApiToken, type TokenPermission } from '@/lib/tokens';
+
+export type { ApiToken };
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const days = Math.floor(diff / 86_400_000);
+  if (days === 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function PermBadge({ permissions }: { permissions: TokenPermission[] }) {
+  const isWrite = permissions.includes('write');
+  return (
+    <span className={[
+      'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium',
+      isWrite
+        ? 'border-[var(--color-scope-repo)] bg-[#60a5fa1a] text-[var(--color-scope-repo)]'
+        : 'border-[var(--color-scope-global)] bg-[#a78bfa1a] text-[var(--color-scope-global)]',
+    ].join(' ')}>
+      {isWrite ? <ShieldCheck className="size-2.5" /> : <ShieldAlert className="size-2.5" />}
+      {isWrite ? 'read+write' : 'read-only'}
+    </span>
+  );
+}
+
+// ── Newly generated token — shown once ───────────────────────────────────────
+
+function NewTokenDisplay({ token, onDismiss }: { token: string; onDismiss: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const [visible, setVisible] = useState(false);
+
+  function handleCopy() {
+    navigator.clipboard.writeText(token).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    });
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -8, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+      className="rounded-xl border-2 border-[var(--color-accent)] bg-[var(--color-accent-subtle)] p-4"
+    >
+      <div className="mb-2 flex items-center gap-2">
+        <Key className="size-4 shrink-0 text-[var(--color-accent)]" aria-hidden />
+        <p className="text-sm font-semibold text-[var(--color-accent)]">
+          Copy your token now — it won&apos;t be shown again
+        </p>
+      </div>
+      <p className="mb-3 text-xs text-[var(--color-content-secondary)]">
+        Store it in a password manager or your agent config. Once you close this,
+        it cannot be recovered.
+      </p>
+
+      {/* Token display */}
+      <div className="flex items-center gap-2 overflow-hidden rounded-lg border border-[var(--color-accent)] bg-[var(--color-bg)] p-3">
+        <code className={[
+          'min-w-0 flex-1 overflow-x-auto font-mono text-xs text-[var(--color-content-primary)]',
+          !visible ? 'blur-sm select-none' : '',
+        ].join(' ')}>
+          {token}
+        </code>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            onClick={() => setVisible((v) => !v)}
+            aria-label={visible ? 'Hide token' : 'Show token'}
+            className="flex size-7 items-center justify-center rounded text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]"
+          >
+            {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+          </button>
+          <button
+            onClick={handleCopy}
+            aria-label="Copy token"
+            className="flex items-center gap-1 rounded-md border border-[var(--color-accent)] bg-[var(--color-accent-subtle)] px-2.5 py-1 text-xs font-medium text-[var(--color-accent)] transition-all duration-150 hover:bg-[var(--color-accent)] hover:text-[#000]"
+          >
+            {copied ? <><CheckCheck className="size-3" /> Copied!</> : <><Copy className="size-3" /> Copy</>}
+          </button>
+        </div>
+      </div>
+
+      <button
+        onClick={onDismiss}
+        className="mt-3 text-xs text-[var(--color-content-tertiary)] underline hover:text-[var(--color-content-secondary)]"
+      >
+        I&apos;ve saved it, dismiss
+      </button>
+    </motion.div>
+  );
+}
+
+// ── Generate form ─────────────────────────────────────────────────────────────
+
+function GenerateForm({ onGenerated }: { onGenerated: (token: string, record: ApiToken) => void }) {
+  const [name, setName] = useState('');
+  const [permission, setPermission] = useState<'rw' | 'ro'>('rw');
+  const [error, setError] = useState('');
+  const [pending, startTransition] = useTransition();
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError('');
+    startTransition(async () => {
+      const perms: TokenPermission[] = permission === 'rw' ? ['read', 'write'] : ['read'];
+      const result = await generateToken(name, perms);
+      if ('error' in result) { setError(result.error); return; }
+      onGenerated(result.token, result.record);
+      setName('');
+    });
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4">
+      <p className="text-xs font-medium text-[var(--color-content-secondary)]">New token</p>
+
+      {/* Name */}
+      <input
+        ref={inputRef}
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="e.g. aw-executor, local-dev, ci-github-actions"
+        maxLength={100}
+        required
+        className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none"
+      />
+
+      {/* Permission toggle */}
+      <div className="flex gap-2">
+        {([
+          { value: 'rw', label: 'Read + Write', desc: 'Agent can write and read memories', Icon: ShieldCheck, color: 'var(--color-scope-repo)' },
+          { value: 'ro', label: 'Read only', desc: 'Agent can read but not write', Icon: ShieldAlert, color: 'var(--color-scope-global)' },
+        ] as const).map(({ value, label, desc, Icon, color }) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setPermission(value)}
+            className={[
+              'flex flex-1 items-start gap-2 rounded-lg border p-3 text-left transition-all duration-150',
+              permission === value
+                ? 'border-current bg-opacity-10'
+                : 'border-[var(--color-border)] hover:border-[var(--color-border)]',
+            ].join(' ')}
+            style={permission === value ? { color, borderColor: color, backgroundColor: `${color}18` } : {}}
+          >
+            <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <div>
+              <p className="text-xs font-medium">{label}</p>
+              <p className="text-[10px] text-[var(--color-content-tertiary)]">{desc}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {error && <p className="text-xs text-[var(--color-error)]">{error}</p>}
+
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={pending || !name.trim()}
+          className="flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[#000] transition-opacity duration-150 disabled:opacity-50"
+        >
+          {pending ? <Loader2 className="size-4 animate-spin" /> : <Key className="size-4" />}
+          Generate token
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// ── Token row ─────────────────────────────────────────────────────────────────
+
+function TokenRow({ token, onRevoke }: { token: ApiToken; onRevoke: (id: string) => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [pending, startTransition] = useTransition();
+
+  function handleRevoke() {
+    startTransition(async () => {
+      await revokeToken(token.id);
+      onRevoke(token.id);
+    });
+  }
+
+  return (
+    <motion.div
+      layout
+      exit={{ opacity: 0, x: 20 }}
+      transition={{ duration: 0.2 }}
+      className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2.5"
+    >
+      <Key className="size-4 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium text-[var(--color-content-primary)]">{token.name}</span>
+          <PermBadge permissions={token.permissions} />
+          <code className="font-mono text-xs text-[var(--color-content-tertiary)]">{token.token_prefix}</code>
+        </div>
+        <div className="mt-0.5 flex items-center gap-1 text-[10px] text-[var(--color-content-tertiary)]">
+          <Clock className="size-2.5" aria-hidden />
+          Created {relativeTime(token.created_at)}
+          {token.last_used_at && <> · Last used {relativeTime(token.last_used_at)}</>}
+        </div>
+      </div>
+
+      {confirming ? (
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span className="text-xs text-[var(--color-error)]">Revoke?</span>
+          <button
+            onClick={handleRevoke}
+            disabled={pending}
+            className="rounded-md border border-[var(--color-error)] px-2 py-0.5 text-xs text-[var(--color-error)] transition-colors hover:bg-[var(--color-error)] hover:text-white"
+          >
+            {pending ? '…' : 'Yes'}
+          </button>
+          <button
+            onClick={() => setConfirming(false)}
+            className="rounded-md border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-content-tertiary)] transition-colors hover:text-[var(--color-content-primary)]"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => setConfirming(true)}
+          aria-label={`Revoke token ${token.name}`}
+          className="flex size-7 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-error)]"
+        >
+          <Trash2 className="size-3.5" aria-hidden />
+        </button>
+      )}
+    </motion.div>
+  );
+}
+
+// ── Main export ───────────────────────────────────────────────────────────────
+
+interface TokenManagerProps {
+  initialTokens: ApiToken[];
+  /** Called when a new token is generated so the parent can update the config snippet */
+  onNewToken?: (token: string) => void;
+}
+
+export function TokenManager({ initialTokens, onNewToken }: TokenManagerProps) {
+  const [tokens, setTokens] = useState<ApiToken[]>(initialTokens);
+  const [showForm, setShowForm] = useState(false);
+  const [newToken, setNewToken] = useState<string | null>(null);
+
+  function handleGenerated(token: string, record: ApiToken) {
+    setTokens((prev) => [record, ...prev]);
+    setNewToken(token);
+    setShowForm(false);
+    onNewToken?.(token);
+  }
+
+  function handleRevoke(id: string) {
+    setTokens((prev) => prev.filter((t) => t.id !== id));
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {/* New token banner */}
+      <AnimatePresence>
+        {newToken && (
+          <NewTokenDisplay
+            token={newToken}
+            onDismiss={() => setNewToken(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Generate form */}
+      <AnimatePresence>
+        {showForm && (
+          <motion.div
+            key="form"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+            className="overflow-hidden"
+          >
+            <GenerateForm onGenerated={handleGenerated} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Token list */}
+      {tokens.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
+            Your tokens
+          </p>
+          <AnimatePresence>
+            {tokens.map((t) => (
+              <TokenRow key={t.id} token={t} onRevoke={handleRevoke} />
+            ))}
+          </AnimatePresence>
+        </div>
+      )}
+
+      {/* Generate button */}
+      {!showForm && !newToken && (
+        <button
+          onClick={() => setShowForm(true)}
+          className="flex items-center gap-2 self-start rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2 text-sm text-[var(--color-content-secondary)] transition-all duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+        >
+          <Plus className="size-4" aria-hidden />
+          Generate new token
+        </button>
+      )}
+    </div>
+  );
+}

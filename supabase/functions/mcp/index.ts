@@ -2,20 +2,17 @@
  * LoreKit MCP Edge Function
  *
  * Self-contained Deno function — no cross-package imports.
- * OTel via _shared/otel.ts: traceRequest() root span, createTracedClient()
- * for automatic Postgres child spans, EdgeRuntime.waitUntil batch flush.
+ * Implements the MCP JSON-RPC protocol directly for the five memory tools
+ * and the GitHub webhook handler.
  *
- * Secrets required (supabase secrets set):
+ * Secrets required (set via `supabase secrets set`):
  *   SUPABASE_URL
  *   SUPABASE_ANON_KEY
  *   SUPABASE_SERVICE_ROLE_KEY
  *   GITHUB_WEBHOOK_SECRET
- *   OTEL_EXPORTER_OTLP_ENDPOINT   e.g. https://ingress.us-east-1.aws.dash0.com
- *   OTEL_EXPORTER_OTLP_HEADERS    e.g. Authorization=Bearer <DASH0_AUTH_TOKEN>
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { traceRequest, createTracedClient, type Span, type TracedSupabaseClient } from '../_shared/otel.ts';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -40,43 +37,70 @@ function validateScope(raw: string): string {
   const sepIdx = normalized.indexOf('::');
   if (sepIdx === -1) throw new Error(`Invalid scope "${raw}": unknown scope type`);
   const prefix = normalized.slice(0, sepIdx) as ScopePrefix;
-  if (!VALID_PREFIXES.includes(prefix)) throw new Error(`Invalid scope prefix "${prefix}"`);
+  if (!VALID_PREFIXES.includes(prefix)) {
+    throw new Error(`Invalid scope prefix "${prefix}"`);
+  }
   return normalized;
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 interface AuthContext {
-  type: 'user' | 'service';
+  type: 'user' | 'service' | 'api_key';
+  userId?: string;
   jwt?: string;
+  permissions?: string[]; // for api_key: ['read'] or ['read','write']
 }
 
-async function resolveAuth(authHeader: string | null, span: Span): Promise<AuthContext | null> {
+/** SHA-256 hex of a string — used to look up hashed tokens. */
+async function sha256hex(text: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function resolveAuth(authHeader: string | null): Promise<AuthContext | null> {
   if (!authHeader?.startsWith('Bearer ')) return null;
   const token = authHeader.slice(7);
 
-  if (SERVICE_ROLE_KEY && token === SERVICE_ROLE_KEY) {
-    span.setAttributes({ 'auth.type': 'service' });
-    return { type: 'service' };
+  // 1. Service-role key (CI / internal)
+  if (SERVICE_ROLE_KEY && token === SERVICE_ROLE_KEY) return { type: 'service' };
+
+  // 2. LoreKit API token (lk_rw_... or lk_ro_...)
+  if (token.startsWith('lk_')) {
+    const hash = await sha256hex(token);
+    const serviceDb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data } = await serviceDb
+      .from('api_tokens')
+      .select('user_id, permissions')
+      .eq('token_hash', hash)
+      .maybeSingle();
+    if (!data) return null;
+    // Fire-and-forget last_used_at update
+    void serviceDb.from('api_tokens').update({ last_used_at: new Date().toISOString() }).eq('token_hash', hash);
+    return { type: 'api_key', userId: data.user_id as string, permissions: data.permissions as string[] };
   }
 
-  const authSpan = span.child('supabase.auth.getUser', { 'auth.type': 'user' });
+  // 3. Supabase user JWT (web dashboard session — kept for completeness)
   const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: `Bearer ${token}` } },
     auth: { persistSession: false, autoRefreshToken: false },
   });
   const { data, error } = await client.auth.getUser(token);
-  if (error || !data.user) {
-    authSpan.error(`AuthError: ${error?.message ?? 'no user'}`).end();
-    return null;
-  }
-  authSpan.setAttributes({ 'auth.user_id': data.user.id }).end();
-  span.setAttributes({ 'auth.type': 'user', 'auth.user_id': data.user.id });
-  return { type: 'user', jwt: token };
+  if (error || !data.user) return null;
+  return { type: 'user', userId: data.user.id, jwt: token };
 }
 
-function getDb(auth: AuthContext): ReturnType<typeof createClient> {
+function getDb(auth: AuthContext) {
   if (auth.type === 'service') {
+    return createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+  }
+  if (auth.type === 'api_key') {
+    // Use service-role to bypass RLS, but ALL queries MUST add .eq('user_id', auth.userId!)
+    // to enforce row-level scoping. Never use this client without the userId filter.
     return createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
@@ -87,12 +111,20 @@ function getDb(auth: AuthContext): ReturnType<typeof createClient> {
   });
 }
 
-// ── Tool handlers (all accept TracedSupabaseClient) ───────────────────────────
+/** Returns true if the auth context has write permission. */
+function canWrite(auth: AuthContext): boolean {
+  if (auth.type === 'service' || auth.type === 'user') return true;
+  return (auth.permissions ?? []).includes('write');
+}
+
+// ── Tool handlers ─────────────────────────────────────────────────────────────
+// userId: when set (api_key auth), all queries MUST filter on user_id to prevent
+// cross-user data access — the service-role client bypasses RLS.
 
 // deno-lint-ignore no-explicit-any
 type Params = Record<string, any>;
 
-async function toolWrite(db: TracedSupabaseClient, params: Params) {
+async function toolWrite(db: ReturnType<typeof createClient>, params: Params, userId: string | null) {
   const { scope: rawScope, key, value, tags = [], source_agent, trigger } = params;
   if (!rawScope || !key || !value) throw new Error('scope, key, and value are required');
   if (value.length > MAX_VALUE_BYTES) throw new Error(`value exceeds ${MAX_VALUE_BYTES} bytes`);
@@ -100,7 +132,13 @@ async function toolWrite(db: TracedSupabaseClient, params: Params) {
   const { data, error } = await db
     .from('memories')
     .upsert(
-      { scope, key, value, tags, source_agent: source_agent ?? null, trigger: trigger ?? null, updated_at: new Date().toISOString() },
+      {
+        ...(userId ? { user_id: userId } : {}),
+        scope, key, value, tags,
+        source_agent: source_agent ?? null,
+        trigger: trigger ?? null,
+        updated_at: new Date().toISOString(),
+      },
       { onConflict: 'user_id,scope,key' },
     )
     .select('id,created_at')
@@ -109,21 +147,18 @@ async function toolWrite(db: TracedSupabaseClient, params: Params) {
   return data;
 }
 
-async function toolRead(db: TracedSupabaseClient, params: Params) {
+async function toolRead(db: ReturnType<typeof createClient>, params: Params, userId: string | null) {
   const { scope: rawScope, key } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
   const scope = validateScope(rawScope);
-  const { data, error } = await db
-    .from('memories')
-    .select('value,updated_at')
-    .eq('scope', scope)
-    .eq('key', key)
-    .maybeSingle();
+  let query = db.from('memories').select('value,updated_at').eq('scope', scope).eq('key', key);
+  if (userId) query = query.eq('user_id', userId);
+  const { data, error } = await query.maybeSingle();
   if (error) throw new Error(error.message);
   return data ?? null;
 }
 
-async function toolList(db: TracedSupabaseClient, params: Params) {
+async function toolList(db: ReturnType<typeof createClient>, params: Params, userId: string | null) {
   const { scope: rawScope, tags, limit = 50 } = params;
   if (!rawScope) throw new Error('scope is required');
   const scope = validateScope(rawScope);
@@ -133,26 +168,25 @@ async function toolList(db: TracedSupabaseClient, params: Params) {
     .eq('scope', scope)
     .order('updated_at', { ascending: false })
     .limit(Math.min(limit, 100));
+  if (userId) query = query.eq('user_id', userId);
   if (tags?.length) query = query.overlaps('tags', tags);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
   return { entries: data ?? [] };
 }
 
-async function toolDelete(db: TracedSupabaseClient, params: Params) {
+async function toolDelete(db: ReturnType<typeof createClient>, params: Params, userId: string | null) {
   const { scope: rawScope, key } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
   const scope = validateScope(rawScope);
-  const { error, count } = await db
-    .from('memories')
-    .delete({ count: 'exact' })
-    .eq('scope', scope)
-    .eq('key', key);
+  let query = db.from('memories').delete({ count: 'exact' }).eq('scope', scope).eq('key', key);
+  if (userId) query = query.eq('user_id', userId);
+  const { error, count } = await query;
   if (error) throw new Error(error.message);
   return { deleted: (count ?? 0) > 0 };
 }
 
-async function toolSearch(db: TracedSupabaseClient, params: Params) {
+async function toolSearch(db: ReturnType<typeof createClient>, params: Params, userId: string | null) {
   const { q, scopes, tags, limit = 20 } = params;
   if (!q) throw new Error('q is required');
   let query = db
@@ -160,23 +194,31 @@ async function toolSearch(db: TracedSupabaseClient, params: Params) {
     .select('key,value,scope,tags')
     .textSearch('fts', q, { type: 'websearch', config: 'english' })
     .limit(Math.min(limit, 100));
+  if (userId) query = query.eq('user_id', userId);
   if (tags?.length) query = query.overlaps('tags', tags);
   if (scopes?.length) {
-    const exact: string[] = [];
-    const like: string[] = [];
+    const exactScopes: string[] = [];
+    const likePatterns: string[] = [];
     for (const s of scopes) {
-      if (s.endsWith('/*') || s.endsWith('::*')) like.push(s.replace(/\*$/, '%'));
-      else { try { exact.push(validateScope(s)); } catch { /* skip */ } }
+      if (s.endsWith('/*') || s.endsWith('::*')) {
+        likePatterns.push(s.replace(/\*$/, '%'));
+      } else {
+        try { exactScopes.push(validateScope(s)); } catch { /* skip invalid */ }
+      }
     }
-    const or: string[] = [];
-    if (exact.length) or.push(`scope.in.(${exact.map((s) => `"${s}"`).join(',')})`);
-    like.forEach((p) => or.push(`scope.like.${p}`));
-    if (or.length) query = query.or(or.join(','));
+    const orParts: string[] = [];
+    if (exactScopes.length) orParts.push(`scope.in.(${exactScopes.map((s) => `"${s}"`).join(',')})`);
+    likePatterns.forEach((p) => orParts.push(`scope.like.${p}`));
+    if (orParts.length) query = query.or(orParts.join(','));
   }
   const { data, error } = await query;
   if (error) throw new Error(error.message);
-  return { entries: (data ?? []).map((row, i) => ({ ...row, rank: 1 - i * 0.05 })) };
+  return {
+    entries: (data ?? []).map((row, i) => ({ ...row, rank: 1 - i * 0.05 })),
+  };
 }
+
+// ── MCP JSON-RPC dispatcher ───────────────────────────────────────────────────
 
 const TOOLS = {
   'memory.write': toolWrite,
@@ -186,13 +228,12 @@ const TOOLS = {
   'memory.search': toolSearch,
 } as const;
 
-// ── JSON-RPC helpers ──────────────────────────────────────────────────────────
-
 function jsonrpc(id: unknown, result: unknown) {
   return new Response(JSON.stringify({ jsonrpc: '2.0', id, result }), {
     headers: { 'Content-Type': 'application/json' },
   });
 }
+
 function jsonrpcError(id: unknown, code: number, message: string) {
   return new Response(
     JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } }),
@@ -200,15 +241,17 @@ function jsonrpcError(id: unknown, code: number, message: string) {
   );
 }
 
-// ── MCP dispatcher ────────────────────────────────────────────────────────────
-
-async function handleMcp(req: Request, auth: AuthContext, span: Span): Promise<Response> {
+async function handleMcp(req: Request, auth: AuthContext): Promise<Response> {
   let body: { id?: unknown; method?: string; params?: Params };
-  try { body = await req.json(); }
-  catch { return jsonrpcError(null, -32700, 'Parse error'); }
+  try {
+    body = await req.json();
+  } catch {
+    return jsonrpcError(null, -32700, 'Parse error');
+  }
 
   const { id = null, method, params = {} } = body;
 
+  // Handle MCP initialize and notifications/initialized (handshake)
   if (method === 'initialize') {
     return jsonrpc(id, {
       protocolVersion: '2024-11-05',
@@ -216,40 +259,43 @@ async function handleMcp(req: Request, auth: AuthContext, span: Span): Promise<R
       serverInfo: { name: 'lorekit', version: '1.0.0' },
     });
   }
-  if (method === 'notifications/initialized') return new Response(null, { status: 204 });
+  if (method === 'notifications/initialized') {
+    return new Response(null, { status: 204 });
+  }
 
+  // tools/list — return available tools
   if (method === 'tools/list') {
     return jsonrpc(id, {
       tools: [
-        { name: 'memory.write',  description: 'Store or update a lesson',          inputSchema: { type: 'object', required: ['scope', 'key', 'value'] } },
-        { name: 'memory.read',   description: 'Read a lesson by scope and key',     inputSchema: { type: 'object', required: ['scope', 'key'] } },
-        { name: 'memory.list',   description: 'List lessons for a scope',           inputSchema: { type: 'object', required: ['scope'] } },
-        { name: 'memory.delete', description: 'Delete a lesson',                    inputSchema: { type: 'object', required: ['scope', 'key'] } },
-        { name: 'memory.search', description: 'Full-text search across lessons',    inputSchema: { type: 'object', required: ['q'] } },
+        { name: 'memory.write', description: 'Store or update a lesson', inputSchema: { type: 'object', required: ['scope', 'key', 'value'] } },
+        { name: 'memory.read', description: 'Read a lesson by scope and key', inputSchema: { type: 'object', required: ['scope', 'key'] } },
+        { name: 'memory.list', description: 'List lessons for a scope', inputSchema: { type: 'object', required: ['scope'] } },
+        { name: 'memory.delete', description: 'Delete a lesson', inputSchema: { type: 'object', required: ['scope', 'key'] } },
+        { name: 'memory.search', description: 'Full-text search across lessons', inputSchema: { type: 'object', required: ['q'] } },
       ],
     });
   }
 
+  // tools/call
   if (method === 'tools/call') {
     const toolName = params.name as keyof typeof TOOLS;
     const toolArgs = params.arguments ?? {};
     const tool = TOOLS[toolName];
     if (!tool) return jsonrpcError(id, -32601, `Unknown tool: ${toolName}`);
 
-    // Create a tool-level child span — its own DB calls will be grandchildren
-    const toolSpan = span.child(`lorekit.${toolName}`, {
-      'lorekit.tool.name': toolName,
-      ...(toolArgs['scope'] ? { 'lorekit.scope': String(toolArgs['scope']), 'lorekit.scope.type': String(toolArgs['scope']).split('::')[0] } : {}),
-      ...(toolArgs['key'] ? { 'lorekit.key': String(toolArgs['key']) } : {}),
-    });
+    // Enforce write permission for mutating tools
+    const writeTools = new Set(['memory.write', 'memory.delete']);
+    if (writeTools.has(toolName) && !canWrite(auth)) {
+      return jsonrpcError(id, -32001, 'This token is read-only. Generate a read+write token in LoreKit to write memories.');
+    }
 
     try {
-      const db = createTracedClient(getDb(auth), toolSpan);
-      const result = await tool(db, toolArgs);
-      toolSpan.end();
+      const db = getDb(auth);
+      // userId is null for service/user (RLS handles scoping); set for api_key (service-role bypasses RLS)
+      const userId = auth.type === 'api_key' ? (auth.userId ?? null) : null;
+      const result = await tool(db, toolArgs, userId);
       return jsonrpc(id, { content: [{ type: 'text', text: JSON.stringify(result) }] });
     } catch (err) {
-      toolSpan.error(`${(err as Error).name}: ${(err as Error).message}`).end();
       return jsonrpcError(id, -32603, (err as Error).message);
     }
   }
@@ -262,27 +308,28 @@ async function handleMcp(req: Request, auth: AuthContext, span: Span): Promise<R
 async function verifyHmac(body: string, signature: string | null): Promise<boolean> {
   if (!signature || !WEBHOOK_SECRET) return false;
   const key = await crypto.subtle.importKey(
-    'raw', new TextEncoder().encode(WEBHOOK_SECRET),
-    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+    'raw',
+    new TextEncoder().encode(WEBHOOK_SECRET),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
   );
   const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(body));
   const hex = Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, '0')).join('');
   const expected = `sha256=${hex}`;
+  // Timing-safe compare
   if (expected.length !== signature.length) return false;
   let diff = 0;
   for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
   return diff === 0;
 }
 
-async function handleWebhook(req: Request, span: Span): Promise<Response> {
+async function handleWebhook(req: Request): Promise<Response> {
   const event = req.headers.get('x-github-event') ?? 'unknown';
   const signature = req.headers.get('x-hub-signature-256');
   const body = await req.text();
 
-  span.setAttributes({ 'lorekit.webhook.event': event });
-
   if (!await verifyHmac(body, signature)) {
-    span.error('HmacError: signature mismatch');
     return new Response('Unauthorized', { status: 401 });
   }
 
@@ -290,34 +337,34 @@ async function handleWebhook(req: Request, span: Span): Promise<Response> {
   const payload = JSON.parse(body) as Record<string, any>;
   const action = payload['action'] ?? 'unknown';
   const repo = payload['repository']?.full_name;
-  span.setAttributes({ 'lorekit.webhook.action': action, ...(repo ? { 'lorekit.scope': `repo::${repo}` } : {}) });
-
   if (!repo) return new Response('OK', { status: 200 });
 
   let commentBody: string | undefined;
   let commentUrl: string | undefined;
-  if (event === 'pull_request_review_comment') { commentBody = payload['comment']?.body; commentUrl = payload['comment']?.html_url; }
-  else if (event === 'pull_request_review') { commentBody = payload['review']?.body; commentUrl = payload['review']?.html_url; }
+  if (event === 'pull_request_review_comment') {
+    commentBody = payload['comment']?.body;
+    commentUrl = payload['comment']?.html_url;
+  } else if (event === 'pull_request_review') {
+    commentBody = payload['review']?.body;
+    commentUrl = payload['review']?.html_url;
+  }
+
   if (!commentBody?.trim()) return new Response('OK', { status: 200 });
 
-  const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
-  const tracedDb = createTracedClient(db, span);
-
   try {
+    const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
     const scope = validateScope(`repo::${repo}`);
-    await tracedDb
-      .from('memories')
-      .upsert({
-        scope,
-        key: `pr-webhook::${repo}::${Date.now()}`,
-        value: commentBody.trim(),
-        tags: ['source::pr-webhook', `event::${event}`, `action::${action}`, ...(commentUrl ? [`url::${commentUrl}`] : [])],
-        source_agent: 'github-webhook',
-        trigger: `${event}.${action}`,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'user_id,scope,key' });
+    await toolWrite(db, {
+      scope,
+      key: `pr-webhook::${repo}::${Date.now()}`,
+      value: commentBody.trim(),
+      tags: ['source::pr-webhook', `event::${event}`, `action::${action}`, ...(commentUrl ? [`url::${commentUrl}`] : [])],
+      source_agent: 'github-webhook',
+      trigger: `${event}.${action}`,
+    });
   } catch (err) {
-    span.error(`${(err as Error).name}: ${(err as Error).message}`);
     console.error('webhook write failed:', (err as Error).message);
   }
 
@@ -334,13 +381,11 @@ Deno.serve(async (req: Request) => {
   }
 
   if (url.pathname.endsWith('/webhooks/github')) {
-    return traceRequest(req, 'lorekit.webhook.github', (span) => handleWebhook(req, span));
+    return handleWebhook(req);
   }
 
-  // MCP endpoint — auth then dispatch
-  return traceRequest(req, 'lorekit.mcp', async (span) => {
-    const auth = await resolveAuth(req.headers.get('authorization'), span);
-    if (!auth) return jsonrpcError(null, -32001, 'Unauthorized');
-    return handleMcp(req, auth, span);
-  });
+  // Default: MCP endpoint
+  const auth = await resolveAuth(req.headers.get('authorization'));
+  if (!auth) return jsonrpcError(null, -32001, 'Unauthorized');
+  return handleMcp(req, auth);
 });
