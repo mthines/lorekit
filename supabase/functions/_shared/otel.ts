@@ -15,6 +15,12 @@
  * Required secrets:
  *   OTEL_EXPORTER_OTLP_ENDPOINT   e.g. https://ingress.us-east-1.aws.dash0.com
  *   OTEL_EXPORTER_OTLP_HEADERS    e.g. Authorization=Bearer <token>
+ *
+ * VCS secrets (set via deploy-functions step in deploy.yml):
+ *   VCS_REPOSITORY_URL_FULL       e.g. https://github.com/mthines/lorekit
+ *   VCS_REF_HEAD_NAME             e.g. main
+ *   VCS_REF_HEAD_REVISION         e.g. <git SHA>
+ *   VCS_REPOSITORY_NAME           e.g. mthines/lorekit
  */
 
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
@@ -41,6 +47,55 @@ function getOtlpConfig(): { endpoint: string; headers: Record<string, string> } 
   if (dataset) headers['Dash0-Dataset'] = dataset;
 
   return { endpoint: endpoint.replace(/\/+$/, ''), headers };
+}
+
+// ── VCS resource attributes ───────────────────────────────────────────────────
+/**
+ * Resolve VCS identity from environment variables injected at deploy time.
+ *
+ * Priority per attribute:
+ *   1. `VCS_*` Supabase secrets — set by the deploy workflow step
+ *      "Set VCS resource attributes" (mirrors the yourstory-ai pattern).
+ *   2. Native GitHub Actions env vars — picked up automatically when running
+ *      `deno test` inside a CI runner.
+ *
+ * Attributes with no value are omitted so the OTLP payload never carries
+ * empty strings for VCS fields. Local development emits no vcs.* attributes
+ * (correct — Deno Edge Function isolates have no git access).
+ *
+ * @see https://opentelemetry.io/docs/specs/semconv/registry/attributes/vcs/
+ */
+function getVcsResourceAttributes(): Record<string, string> {
+  const repositoryUrlFull =
+    Deno.env.get('VCS_REPOSITORY_URL_FULL') ?? buildGitHubRepoUrl(Deno.env.get('GITHUB_REPOSITORY'));
+
+  const refHeadName =
+    Deno.env.get('VCS_REF_HEAD_NAME') ?? Deno.env.get('GITHUB_REF_NAME');
+
+  const refHeadRevision =
+    Deno.env.get('VCS_REF_HEAD_REVISION') ?? Deno.env.get('GITHUB_SHA');
+
+  const repositoryName =
+    Deno.env.get('VCS_REPOSITORY_NAME') ?? Deno.env.get('GITHUB_REPOSITORY');
+
+  const attrs: Record<string, string> = {};
+  if (repositoryUrlFull) attrs['vcs.repository.url.full'] = repositoryUrlFull;
+  if (refHeadName) {
+    attrs['vcs.ref.head.name'] = refHeadName;
+    // Only emit type when ref name is present; Edge Functions always deploy
+    // from a branch, never a tag.
+    attrs['vcs.ref.head.type'] = 'branch';
+  }
+  if (refHeadRevision) attrs['vcs.ref.head.revision'] = refHeadRevision;
+  if (repositoryName) attrs['vcs.repository.name'] = repositoryName;
+
+  return attrs;
+}
+
+/** Build the canonical GitHub HTTPS URL from a `GITHUB_REPOSITORY` value. */
+function buildGitHubRepoUrl(repository: string | undefined): string | undefined {
+  if (!repository) return undefined;
+  return `https://github.com/${repository}`;
 }
 
 // ── Trace context (W3C traceparent) ──────────────────────────────────────────
@@ -105,15 +160,23 @@ function resolveDeploymentEnv(): string {
 }
 
 function buildOtlpPayload(spans: SpanPayload[]): unknown {
+  // Build vcs.* resource attributes once per payload (they are constant for
+  // the lifetime of the isolate — resolved from Supabase secrets at startup).
+  const vcsAttrs = getVcsResourceAttributes();
+
+  const resourceAttributes = [
+    { key: 'service.name', value: { stringValue: 'mcp' } },
+    { key: 'service.namespace', value: { stringValue: 'lorekit' } },
+    { key: 'deployment.environment.name', value: { stringValue: resolveDeploymentEnv() } },
+    ...Object.entries(vcsAttrs).map(([key, value]) => ({
+      key,
+      value: { stringValue: value },
+    })),
+  ];
+
   return {
     resourceSpans: [{
-      resource: {
-        attributes: [
-          { key: 'service.name', value: { stringValue: 'mcp' } },
-          { key: 'service.namespace', value: { stringValue: 'lorekit' } },
-          { key: 'deployment.environment.name', value: { stringValue: resolveDeploymentEnv() } },
-        ],
-      },
+      resource: { attributes: resourceAttributes },
       scopeSpans: [{
         scope: { name: 'lorekit-mcp', version: '1.0.0' },
         spans: spans.map((s) => ({
