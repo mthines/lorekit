@@ -165,6 +165,7 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
     span.error(`${e.name}: ${e.message}`);
     return new Response('Internal Server Error', { status: 500 });
   }
+}
 
 export function handleWebhook(req: Request): Promise<Response> {
   return traceRequest(req, 'lorekit.webhook.github', (span) => processWebhook(req, span));
