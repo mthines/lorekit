@@ -11,8 +11,10 @@ export function LoginButton() {
     const supabase = createClient();
     // Prefer the build-time NEXT_PUBLIC_VERCEL_URL (set in next.config.ts from
     // VERCEL_URL) so preview deployments redirect back to their own URL, not
-    // production. Falls back to window.location.origin for local dev.
-    const base = process.env['NEXT_PUBLIC_VERCEL_URL'] ?? window.location.origin;
+    // production. Empty string means local dev — fall back to window.location.origin
+    // so any dev-server port (3000, 3001, …) works without hardcoding.
+    const vercelUrl = process.env['NEXT_PUBLIC_VERCEL_URL'];
+    const base = vercelUrl || window.location.origin;
     await supabase.auth.signInWithOAuth({
       provider: 'github',
       options: {
