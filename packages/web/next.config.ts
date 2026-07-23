@@ -16,10 +16,23 @@ const nextConfig: NextConfig = {
     // VERCEL_URL is the deployment-specific hostname (no protocol, no trailing slash).
     // It's unique per deployment — preview builds get the preview URL automatically.
     // Used by LoginButton to build the correct redirectTo for Supabase OAuth.
-    // Falls back to NEXT_PUBLIC_APP_URL (production) when not on Vercel.
-    NEXT_PUBLIC_VERCEL_URL: process.env['VERCEL_URL']
-      ? `https://${process.env['VERCEL_URL']}`
-      : (process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3001'),
+    //
+    // IMPORTANT: On production deployments VERCEL_URL is the deployment-specific
+    // URL (e.g. lorekit-abc123-mads-thines-projects.vercel.app), NOT the stable
+    // alias (lorekit-io.vercel.app). Using the deployment URL as the OAuth
+    // redirectTo causes Supabase to send the callback to the wrong origin, which
+    // makes the auth code exchange fail with "auth_failed" on the first attempt
+    // and lands the user on the preview deployment on the second attempt.
+    //
+    // Fix: prefer NEXT_PUBLIC_APP_URL on production so the redirectTo always
+    // points at the stable alias. Only fall back to VERCEL_URL for preview /
+    // development deployments where there is no stable alias.
+    NEXT_PUBLIC_VERCEL_URL:
+      process.env['VERCEL_ENV'] === 'production'
+        ? (process.env['NEXT_PUBLIC_APP_URL'] ?? `https://${process.env['VERCEL_URL']}`)
+        : process.env['VERCEL_URL']
+          ? `https://${process.env['VERCEL_URL']}`
+          : (process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3001'),
   },
 
   // Allow Supabase + Dash0 to receive trace context headers from the browser.
