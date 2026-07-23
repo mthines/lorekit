@@ -32,7 +32,7 @@ export default function LorePage() {
         </p>
       </div>
 
-      <div className="flex-1 overflow-hidden" style={{ height: 'calc(100vh - 11rem)' }}>
+      <div className="flex-1 overflow-hidden" style={{ minHeight: "400px" }}>
         <LoreExplorer scopes={scopes} lessons={lessons} />
       </div>
     </div>

@@ -91,7 +91,7 @@ function NewTokenDisplay({
           <button
             onClick={() => setVisible((v) => !v)}
             aria-label={visible ? 'Hide token' : 'Show token'}
-            className="flex size-7 items-center justify-center rounded text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]"
+            className="flex size-11 items-center justify-center rounded text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]"
           >
             {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
           </button>
@@ -253,7 +253,7 @@ function TokenRow({ token, onRevoke }: { token: ApiToken; onRevoke: (id: string)
         <button
           onClick={() => setConfirming(true)}
           aria-label={`Revoke token ${token.name}`}
-          className="flex size-7 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-error)]"
+          className="flex size-11 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-error)]"
         >
           <Trash2 className="size-3.5" aria-hidden />
         </button>
