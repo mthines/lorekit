@@ -13,6 +13,13 @@
  *   OTEL_EXPORTER_OTLP_ENDPOINT  e.g. https://ingress.us-east-1.aws.dash0.com
  *   OTEL_EXPORTER_OTLP_HEADERS   e.g. Authorization=Bearer <DASH0_AUTH_TOKEN>
  *   OTEL_RESOURCE_ATTRIBUTES     e.g. deployment.environment.name=production
+ *
+ * VCS resource attributes (set via CI / Fly.io secrets, mirrors yourstory-ai):
+ *   VCS_REPOSITORY_URL_FULL      e.g. https://github.com/mthines/lorekit
+ *   VCS_REF_HEAD_NAME            e.g. main
+ *   VCS_REF_HEAD_REVISION        e.g. <git SHA>
+ *   VCS_REPOSITORY_NAME          e.g. mthines/lorekit
+ *   Fallback: GITHUB_REPOSITORY, GITHUB_REF_NAME, GITHUB_SHA (CI env vars)
  */
 
 import { NodeSDK } from '@opentelemetry/sdk-node';
@@ -31,11 +38,57 @@ import { trace } from '@opentelemetry/api';
 const SERVICE_VERSION = process.env['npm_package_version'] ?? '0.0.1';
 const SERVICE_NAME = process.env['OTEL_SERVICE_NAME'] ?? 'lorekit';
 
+/**
+ * Resolve vcs.* OTel resource attributes from environment variables.
+ *
+ * Priority per attribute:
+ *   1. VCS_* env vars — set explicitly as secrets in CI / Fly.io deploy.
+ *      VCS_REPOSITORY_URL_FULL is the primary signal; VCS_REF_HEAD_NAME
+ *      maps from GITHUB_REF_NAME; VCS_REF_HEAD_REVISION from GITHUB_SHA.
+ *   2. Native GitHub Actions env vars — available on GitHub-hosted runners.
+ *
+ * Attributes with no value are omitted so the resource never carries blank
+ * VCS fields, which would pollute Dash0's version-control identity view.
+ *
+ * @see https://opentelemetry.io/docs/specs/semconv/registry/attributes/vcs/
+ */
+function buildVcsResourceAttributes(): Record<string, string> {
+  const attrs: Record<string, string> = {};
+
+  const githubRepo = process.env['GITHUB_REPOSITORY'];
+
+  const repositoryUrlFull =
+    process.env['VCS_REPOSITORY_URL_FULL'] ??
+    (githubRepo ? `https://github.com/${githubRepo}` : undefined);
+
+  const refHeadName =
+    process.env['VCS_REF_HEAD_NAME'] ?? process.env['GITHUB_REF_NAME'];
+
+  const refHeadRevision =
+    process.env['VCS_REF_HEAD_REVISION'] ?? process.env['GITHUB_SHA'];
+
+  const repositoryName =
+    process.env['VCS_REPOSITORY_NAME'] ?? githubRepo;
+
+  if (repositoryUrlFull) attrs['vcs.repository.url.full'] = repositoryUrlFull;
+  if (refHeadName) {
+    attrs['vcs.ref.head.name'] = refHeadName;
+    // Node.js MCP server deploys are always from a branch, never a tag.
+    attrs['vcs.ref.head.type'] = 'branch';
+  }
+  if (refHeadRevision) attrs['vcs.ref.head.revision'] = refHeadRevision;
+  if (repositoryName) attrs['vcs.repository.name'] = repositoryName;
+
+  return attrs;
+}
+
 const resource = new Resource({
   [ATTR_SERVICE_NAME]: SERVICE_NAME,
   [ATTR_SERVICE_VERSION]: SERVICE_VERSION,
   // deployment.environment.name is set via OTEL_RESOURCE_ATTRIBUTES env var
   // per otel-instrumentation/rules/sdks/nodejs.md
+  // vcs.* attributes resolved from VCS_* or GITHUB_* env vars at startup
+  ...buildVcsResourceAttributes(),
 });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
