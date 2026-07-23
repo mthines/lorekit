@@ -11,6 +11,10 @@ import {
   list,
   deleteMemory,
   search,
+  archiveMemory,
+  restoreMemory,
+  listArchived,
+  purgeArchived,
   createUserClient,
   createServiceClient,
 } from '@lorekit/core';
@@ -77,10 +81,60 @@ export function createMcpServer(auth: AuthContext): McpServer {
 
   server.tool(
     'memory.delete',
-    'Delete a memory entry by scope and key.',
-    { scope: z.string(), key: z.string() },
+    'Soft-archive a memory entry (default) or hard-delete it (force: true). Archived entries can be restored.',
+    {
+      scope: z.string(),
+      key: z.string(),
+      force: z.boolean().optional().describe('Hard-delete immediately (unrecoverable). Defaults to false.'),
+    },
     async (args) => {
       const result = await deleteMemory(db, args);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    },
+  );
+
+  server.tool(
+    'memory.archive',
+    'Soft-archive a memory entry. Archived entries are hidden from reads but restorable.',
+    { scope: z.string(), key: z.string() },
+    async (args) => {
+      const result = await archiveMemory(db, args);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    },
+  );
+
+  server.tool(
+    'memory.restore',
+    'Restore an archived memory entry back to active.',
+    { scope: z.string(), key: z.string() },
+    async (args) => {
+      const result = await restoreMemory(db, args);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    },
+  );
+
+  server.tool(
+    'memory.list_archived',
+    'List archived (soft-deleted) memory entries for a scope.',
+    {
+      scope: z.string(),
+      limit: z.number().int().min(1).max(100).optional(),
+    },
+    async (args) => {
+      const result = await listArchived(db, args);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    },
+  );
+
+  server.tool(
+    'memory.purge',
+    'Permanently delete archived entries older than retention_days (default 30). Unrecoverable.',
+    {
+      retention_days: z.number().int().min(1).max(365).optional(),
+    },
+    async (args) => {
+      const userId = auth.type === 'service' ? null : (auth.userId ?? null);
+      const result = await purgeArchived(db, args, userId);
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     },
   );
