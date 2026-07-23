@@ -190,6 +190,34 @@ export async function toolSearch(
   return { entries };
 }
 
+/** Soft-archive a memory by setting archived_at. */
+export async function toolArchive(
+  db: ReturnType<typeof createClient>,
+  params: Params,
+  userId: string | null,
+  span: Span,
+) {
+  const { scope: rawScope, key } = params;
+  if (!rawScope || !key) throw new Error('scope and key are required');
+  const scope = validateScope(rawScope);
+
+  span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
+
+  const tracedDb = createTracedClient(db, span);
+  let query = tracedDb
+    .from('memories')
+    .update({ archived_at: new Date().toISOString() }, { count: 'exact' })
+    .eq('scope', scope)
+    .eq('key', key)
+    .is('archived_at', null);
+  if (userId) query = query.eq('user_id', userId);
+  const { error, count } = await query;
+  if (error) throw new Error(error.message);
+  const archived = (count ?? 0) > 0;
+  span.setAttributes({ 'lorekit.result.archived': archived });
+  return { archived };
+}
+
 /** List archived memories for a scope. */
 export async function toolListArchived(
   db: ReturnType<typeof createClient>,
@@ -260,9 +288,14 @@ export async function toolPurge(
   const retentionDays = Math.min(Math.max(Number(params.retention_days ?? PURGE_RETENTION_DAYS_DEFAULT), 1), 365);
   if (!userId) throw new Error('memory.purge requires a user_id');
 
-  span.setAttributes({ 'lorekit.purge.retention_days': retentionDays });
+  span.setAttributes({
+    'lorekit.purge.retention_days': retentionDays,
+    'lorekit.scope.type': 'user',
+  });
 
-  const { data, error } = await db.rpc('purge_archived_memories', {
+  // Use createTracedClient so the RPC call appears as a child span in traces.
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb.rpc('purge_archived_memories', {
     p_user_id: userId,
     p_retention_days: retentionDays,
   });

@@ -10,9 +10,11 @@ import {
   toolList,
   toolDelete,
   toolSearch,
+  toolArchive,
   toolListArchived,
   toolRestore,
   toolPurge,
+  PURGE_RETENTION_DAYS_DEFAULT,
   type Params,
 } from './tools.ts';
 import { type Span } from '../_shared/otel.ts';
@@ -23,6 +25,7 @@ const TOOLS = {
   'memory.list':          toolList,
   'memory.delete':        toolDelete,
   'memory.search':        toolSearch,
+  'memory.archive':       toolArchive,
   'memory.list_archived': toolListArchived,
   'memory.restore':       toolRestore,
   'memory.purge':         toolPurge,
@@ -31,6 +34,7 @@ const TOOLS = {
 const WRITE_TOOLS = new Set([
   'memory.write',
   'memory.delete',
+  'memory.archive',
   'memory.restore',
   'memory.purge',
 ]);
@@ -111,6 +115,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
           inputSchema: { type: 'object', required: ['q'] },
         },
         {
+          name: 'memory.archive',
+          description: 'Soft-archive a lesson. Archived lessons are hidden from reads but can be restored via memory.restore.',
+          inputSchema: { type: 'object', required: ['scope', 'key'] },
+        },
+        {
           name: 'memory.list_archived',
           description: 'List archived (soft-deleted) lessons for a scope',
           inputSchema: { type: 'object', required: ['scope'] },
@@ -122,11 +131,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
         },
         {
           name: 'memory.purge',
-          description: `Permanently delete archived lessons older than retention_days (default ${30}). Unrecoverable.`,
+          description: `Permanently delete archived lessons older than retention_days (default ${PURGE_RETENTION_DAYS_DEFAULT}). Unrecoverable.`,
           inputSchema: {
             type: 'object',
             properties: {
-              retention_days: { type: 'integer', minimum: 1, maximum: 365, default: 30 },
+              retention_days: { type: 'integer', minimum: 1, maximum: 365, default: PURGE_RETENTION_DAYS_DEFAULT },
             },
           },
         },
