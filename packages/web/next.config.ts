@@ -27,12 +27,17 @@ const nextConfig: NextConfig = {
     // Fix: prefer NEXT_PUBLIC_APP_URL on production so the redirectTo always
     // points at the stable alias. Only fall back to VERCEL_URL for preview /
     // development deployments where there is no stable alias.
+    //
+    // Local dev: VERCEL_URL is absent and we intentionally leave
+    // NEXT_PUBLIC_VERCEL_URL empty so LoginButton falls back to
+    // window.location.origin — this correctly picks up whatever port the dev
+    // server is running on (3000, 3001, etc.) without hardcoding it here.
     NEXT_PUBLIC_VERCEL_URL:
       process.env['VERCEL_ENV'] === 'production'
         ? (process.env['NEXT_PUBLIC_APP_URL'] ?? `https://${process.env['VERCEL_URL']}`)
         : process.env['VERCEL_URL']
           ? `https://${process.env['VERCEL_URL']}`
-          : (process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3001'),
+          : '',
 
     // ── VCS resource attributes (OTel semantic conventions) ─────────────────
     // Vercel injects VERCEL_GIT_* system env vars into the build process.
