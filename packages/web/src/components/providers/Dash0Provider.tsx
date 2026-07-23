@@ -10,6 +10,9 @@
  *
  * Also tracks client-side route changes so every navigation emits a page-view
  * span (mirrors the YouStory TrackPageUpdate pattern).
+ *
+ * VCS resource attributes are read from NEXT_PUBLIC_VCS_* env vars baked in at
+ * build time via next.config.ts (sourced from Vercel system env vars).
  */
 
 import { useEffect, useRef } from 'react';
@@ -29,6 +32,36 @@ function resolveDeploymentEnv(): string {
   return 'local';
 }
 
+/**
+ * Build vcs.* OTel resource attributes from NEXT_PUBLIC_VCS_* env vars
+ * baked in at build time (sourced from Vercel system env vars via next.config.ts).
+ * Attributes are omitted when absent so no blank VCS fields pollute the resource.
+ *
+ * @see https://opentelemetry.io/docs/specs/semconv/registry/attributes/vcs/
+ */
+function buildVcsSignalAttributes(): Record<string, string> {
+  const attrs: Record<string, string> = {};
+
+  const owner = process.env['NEXT_PUBLIC_VCS_REPO_OWNER'];
+  const slug = process.env['NEXT_PUBLIC_VCS_REPO_SLUG'];
+  const refHeadName = process.env['NEXT_PUBLIC_VCS_REF_HEAD_NAME'];
+  const refHeadRevision = process.env['NEXT_PUBLIC_VCS_REF_HEAD_REVISION'];
+
+  if (owner && slug) {
+    attrs['vcs.repository.url.full'] = `https://github.com/${owner}/${slug}`;
+    attrs['vcs.repository.name'] = `${owner}/${slug}`;
+  }
+  if (refHeadName) {
+    attrs['vcs.ref.head.name'] = refHeadName;
+    attrs['vcs.ref.head.type'] = 'branch';
+  }
+  if (refHeadRevision) {
+    attrs['vcs.ref.head.revision'] = refHeadRevision;
+  }
+
+  return attrs;
+}
+
 function initDash0() {
   if (initialized || !ENDPOINT || !AUTH_TOKEN) return;
   initialized = true;
@@ -40,6 +73,7 @@ function initDash0() {
       'service.namespace': 'lorekit',
       'service.version': process.env['NEXT_PUBLIC_OTEL_SERVICE_VERSION'] ?? 'unknown',
       'deployment.environment.name': resolveDeploymentEnv(),
+      ...buildVcsSignalAttributes(),
     },
     propagateTraceHeadersCorsURLs: [
       // Propagate W3C trace context to Supabase — links browser spans to Edge Function spans

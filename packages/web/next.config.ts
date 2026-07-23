@@ -33,6 +33,19 @@ const nextConfig: NextConfig = {
         : process.env['VERCEL_URL']
           ? `https://${process.env['VERCEL_URL']}`
           : (process.env['NEXT_PUBLIC_APP_URL'] ?? 'http://localhost:3001'),
+
+    // ── VCS resource attributes (OTel semantic conventions) ─────────────────
+    // Vercel injects VERCEL_GIT_* system env vars into the build process.
+    // We expose them as NEXT_PUBLIC_VCS_* so instrumentation-client.ts and
+    // Dash0Provider can attach them to every browser span/log as resource
+    // attributes, matching the server-side vcs.* attributes from instrumentation.ts.
+    //
+    // @see https://opentelemetry.io/docs/specs/semconv/registry/attributes/vcs/
+    // @see https://vercel.com/docs/projects/environment-variables/system-environment-variables
+    NEXT_PUBLIC_VCS_REPO_OWNER: process.env['VERCEL_GIT_REPO_OWNER'] ?? '',
+    NEXT_PUBLIC_VCS_REPO_SLUG: process.env['VERCEL_GIT_REPO_SLUG'] ?? '',
+    NEXT_PUBLIC_VCS_REF_HEAD_NAME: process.env['VERCEL_GIT_COMMIT_REF'] ?? '',
+    NEXT_PUBLIC_VCS_REF_HEAD_REVISION: process.env['VERCEL_GIT_COMMIT_SHA'] ?? '',
   },
 
   // Allow Supabase + Dash0 to receive trace context headers from the browser.
