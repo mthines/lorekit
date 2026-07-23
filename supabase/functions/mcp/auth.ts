@@ -26,9 +26,18 @@ async function sha256hex(text: string): Promise<string> {
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export async function resolveAuth(authHeader: string | null): Promise<AuthContext | null> {
-  if (!authHeader?.startsWith('Bearer ')) return null;
-  const token = authHeader.slice(7);
+export async function resolveAuth(authHeader: string | null, queryToken: string | null = null): Promise<AuthContext | null> {
+  // Accept token from Authorization header OR ?token= query param.
+  // Query-param auth exists specifically for MCP clients (e.g. mcp-remote) that
+  // cannot inject custom request headers — the token is embedded in the server URL.
+  let token: string;
+  if (authHeader?.startsWith('Bearer ')) {
+    token = authHeader.slice(7);
+  } else if (queryToken) {
+    token = queryToken;
+  } else {
+    return null;
+  }
 
   // 1. Service-role key — CI / internal use only
   if (SERVICE_ROLE_KEY && token === SERVICE_ROLE_KEY) return { type: 'service' };

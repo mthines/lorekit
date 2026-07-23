@@ -42,7 +42,8 @@ Deno.serve(async (req: Request) => {
 
   // MCP endpoint — authenticate then dispatch
   return traceRequest(req, 'lorekit.mcp', async (span) => {
-    const auth = await resolveAuth(req.headers.get('authorization'));
+    // resolveAuth checks Authorization header first, then ?token= query param as fallback.
+    const auth = await resolveAuth(req.headers.get('authorization'), url.searchParams.get('token'));
     if (!auth) return jsonrpcError(null, -32001, 'Unauthorized');
 
     span.setAttributes({

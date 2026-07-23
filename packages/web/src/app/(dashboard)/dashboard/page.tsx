@@ -72,7 +72,7 @@ export default async function DashboardPage() {
     {
       id: 'connect',
       title: 'Connect your agent',
-      subtitle: 'Generate a token and add it to your persistent-memory config.',
+      subtitle: 'Generate a token and add it to your .mcp.json file.',
       done: hasLessons,
       icon: <Bot className="size-4" />,
       content: (
