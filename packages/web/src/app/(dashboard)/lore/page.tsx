@@ -1,57 +1,25 @@
-import type { Metadata } from 'next';
-import { createServerClient } from '@/lib/supabase/server';
+'use client';
+
 import { LoreExplorer } from '@/components/lore/LoreExplorer';
-import type { ScopeNode } from '@/components/lore/ScopeTree';
-import type { LessonEntry } from '@/components/lore/LessonCard';
-import { scopeType } from '@/lib/scope';
+import { useLoreData } from '@/lib/queries/lore';
+import LoreLoading from './loading';
 
-export const metadata: Metadata = { title: 'Lore Explorer' };
+export default function LorePage() {
+  const { data, isLoading, isError } = useLoreData();
 
-async function fetchScopesAndLessons(supabase: Awaited<ReturnType<typeof createServerClient>>) {
-  const { data, error } = await supabase
-    .from('memories')
-    .select('scope,key,value,tags,updated_at,source_agent,trigger')
-    .order('updated_at', { ascending: false })
-    .limit(500);
+  if (isLoading) return <LoreLoading />;
 
-  if (error || !data) return { scopes: [], lessons: [] };
-
-  const lessons: LessonEntry[] = data.map((row: Record<string, unknown>) => ({
-    scope: row.scope as string,
-    scope_type: scopeType(row.scope as string),
-    key: row.key as string,
-    value: row.value as string,
-    tags: (row.tags as string[]) ?? [],
-    updated_at: row.updated_at as string,
-    source_agent: row.source_agent as string | null,
-    trigger: row.trigger as string | null,
-  }));
-
-  // Build scope tree from unique scopes
-  const scopeCounts = new Map<string, number>();
-  for (const l of lessons) {
-    scopeCounts.set(l.scope, (scopeCounts.get(l.scope) ?? 0) + 1);
+  if (isError || !data) {
+    return (
+      <div className="flex flex-col gap-4">
+        <p className="text-sm text-[var(--color-content-secondary)]">
+          Failed to load lore data. Please refresh the page.
+        </p>
+      </div>
+    );
   }
 
-  // Group: global → projects → repos → branches (simplified flat tree for now)
-  const scopeNodes: ScopeNode[] = Array.from(scopeCounts.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([scope, count]) => {
-      const parts = scope.split('::');
-      return {
-        scope,
-        type: scopeType(scope),
-        label: parts[parts.length - 1] ?? scope,
-        count,
-      };
-    });
-
-  return { scopes: scopeNodes, lessons };
-}
-
-export default async function LorePage() {
-  const supabase = await createServerClient();
-  const { scopes, lessons } = await fetchScopesAndLessons(supabase);
+  const { scopes, lessons } = data;
 
   return (
     <div className="flex h-full flex-col gap-4">
