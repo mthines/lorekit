@@ -6,9 +6,19 @@
 import { createClient } from '@supabase/supabase-js';
 import { logger } from './logger.js';
 
-const SUPABASE_URL = process.env['SUPABASE_URL'] ?? '';
-const SUPABASE_ANON_KEY = process.env['SUPABASE_ANON_KEY'] ?? '';
-const SERVICE_ROLE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? '';
+// Read lazily (not as module-level consts) so tests that set process.env in
+// beforeEach — after this module has already been imported — see the value
+// they configured, and so a real process picks up env changes without a
+// restart-order dependency either way.
+function getSupabaseUrl(): string {
+  return process.env['SUPABASE_URL'] ?? '';
+}
+function getSupabaseAnonKey(): string {
+  return process.env['SUPABASE_ANON_KEY'] ?? '';
+}
+function getServiceRoleKey(): string {
+  return process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? '';
+}
 
 export interface AuthContext {
   type: 'user' | 'service';
@@ -26,19 +36,22 @@ export async function resolveAuth(authHeader: string | undefined): Promise<AuthC
   }
 
   const token = authHeader.slice(7);
+  const serviceRoleKey = getServiceRoleKey();
+  const supabaseUrl = getSupabaseUrl();
+  const supabaseAnonKey = getSupabaseAnonKey();
 
   // Service-role token check (exact match against the configured key)
-  if (SERVICE_ROLE_KEY && token === SERVICE_ROLE_KEY) {
+  if (serviceRoleKey && token === serviceRoleKey) {
     return { type: 'service' };
   }
 
   // User JWT — validate via Supabase Auth
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  if (!supabaseUrl || !supabaseAnonKey) {
     logger.error('SUPABASE_URL or SUPABASE_ANON_KEY not configured');
     return null;
   }
 
-  const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  const client = createClient(supabaseUrl, supabaseAnonKey, {
     global: { headers: { Authorization: `Bearer ${token}` } },
     auth: { persistSession: false, autoRefreshToken: false },
   });

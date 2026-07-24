@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHmac } from 'crypto';
 import { handleGitHubWebhook } from './github.js';
+import { write } from '@lorekit/core';
 
 // Mock @lorekit/core write to avoid needing a real DB
 vi.mock('@lorekit/core', async (importOriginal) => {
@@ -46,7 +47,6 @@ describe('handleGitHubWebhook', () => {
   });
 
   it('creates a memory entry tagged source::pr-webhook for PR comment event', async () => {
-    const { write } = await import('@lorekit/core');
     const payload = {
       action: 'created',
       repository: { full_name: 'mthines/gw-tools' },
@@ -71,7 +71,6 @@ describe('handleGitHubWebhook', () => {
   });
 
   it('skips and returns 200 for empty comment body', async () => {
-    const { write } = await import('@lorekit/core');
     vi.clearAllMocks();
     const payload = {
       action: 'created',
@@ -87,7 +86,6 @@ describe('handleGitHubWebhook', () => {
   });
 
   it('creates a memory entry for pull_request_review event', async () => {
-    const { write } = await import('@lorekit/core');
     vi.clearAllMocks();
     const payload = {
       action: 'submitted',
@@ -113,7 +111,6 @@ describe('handleGitHubWebhook', () => {
   });
 
   it('skips pull_request_review with an empty review body', async () => {
-    const { write } = await import('@lorekit/core');
     vi.clearAllMocks();
     const payload = {
       action: 'submitted',
@@ -129,7 +126,6 @@ describe('handleGitHubWebhook', () => {
   });
 
   it('returns 200 and skips write when payload has no repository field', async () => {
-    const { write } = await import('@lorekit/core');
     vi.clearAllMocks();
     const payload = { action: 'created', comment: { body: 'x', html_url: 'https://github.com' } };
     const body = JSON.stringify(payload);
@@ -141,7 +137,6 @@ describe('handleGitHubWebhook', () => {
   });
 
   it('returns 200 and skips write for an unhandled event type', async () => {
-    const { write } = await import('@lorekit/core');
     vi.clearAllMocks();
     const payload = {
       action: 'labeled',
