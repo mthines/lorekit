@@ -85,4 +85,73 @@ describe('handleGitHubWebhook', () => {
     expect(res.status).toBe(200);
     expect(write).not.toHaveBeenCalled();
   });
+
+  it('creates a memory entry for pull_request_review event', async () => {
+    const { write } = await import('@lorekit/core');
+    vi.clearAllMocks();
+    const payload = {
+      action: 'submitted',
+      repository: { full_name: 'mthines/gw-tools' },
+      review: {
+        body: 'Consider extracting this into a shared helper',
+        html_url: 'https://github.com/mthines/gw-tools/pull/2#pullrequestreview-1',
+      },
+    };
+    const body = JSON.stringify(payload);
+    const req = makeSignedRequest('pull_request_review', body);
+    const res = await handleGitHubWebhook(req);
+
+    expect(res.status).toBe(200);
+    expect(write).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        scope: 'repo::mthines/gw-tools',
+        value: 'Consider extracting this into a shared helper',
+        tags: expect.arrayContaining(['source::pr-webhook', 'event::pull_request_review']),
+      }),
+    );
+  });
+
+  it('skips pull_request_review with an empty review body', async () => {
+    const { write } = await import('@lorekit/core');
+    vi.clearAllMocks();
+    const payload = {
+      action: 'submitted',
+      repository: { full_name: 'mthines/gw-tools' },
+      review: { body: '', html_url: 'https://github.com/mthines/gw-tools/pull/2#review-1' },
+    };
+    const body = JSON.stringify(payload);
+    const req = makeSignedRequest('pull_request_review', body);
+    const res = await handleGitHubWebhook(req);
+
+    expect(res.status).toBe(200);
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('returns 200 and skips write when payload has no repository field', async () => {
+    const { write } = await import('@lorekit/core');
+    vi.clearAllMocks();
+    const payload = { action: 'created', comment: { body: 'x', html_url: 'https://github.com' } };
+    const body = JSON.stringify(payload);
+    const req = makeSignedRequest('pull_request_review_comment', body);
+    const res = await handleGitHubWebhook(req);
+
+    expect(res.status).toBe(200);
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('returns 200 and skips write for an unhandled event type', async () => {
+    const { write } = await import('@lorekit/core');
+    vi.clearAllMocks();
+    const payload = {
+      action: 'labeled',
+      repository: { full_name: 'mthines/gw-tools' },
+    };
+    const body = JSON.stringify(payload);
+    const req = makeSignedRequest('issues', body);
+    const res = await handleGitHubWebhook(req);
+
+    expect(res.status).toBe(200);
+    expect(write).not.toHaveBeenCalled();
+  });
 });

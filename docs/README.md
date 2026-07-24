@@ -3,7 +3,7 @@
 | Document | Audience | What it covers |
 |----------|----------|----------------|
 | [architecture.md](./architecture.md) | All | System diagram, package map, auth tiers, data model |
-| [mcp-tools.md](./mcp-tools.md) | Agents + developers | All 5 MCP tools with request/response examples |
+| [mcp-tools.md](./mcp-tools.md) | Agents + developers | All 9 MCP tools with request/response examples |
 | [scope-format.md](./scope-format.md) | Agents + developers | Canonical scope string spec and resolution strategy |
 | [api-tokens.md](./api-tokens.md) | Developers | Token types, permissions, generation, CI usage |
 | [otel.md](./otel.md) | Developers | Dash0 setup, custom spans, environment variables |
