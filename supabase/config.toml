@@ -51,6 +51,16 @@ enabled = true
 policy = "oneshot"
 inspector_port = 8083
 
+# Both functions handle their own auth (API tokens / JWT inside the function),
+# so the gateway must not require a JWT. This mirrors the `--no-verify-jwt` flag
+# used when deploying, and lets `supabase start` serve them for CI integration
+# tests without a gateway 401.
+[functions.mcp]
+verify_jwt = false
+
+[functions.health]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

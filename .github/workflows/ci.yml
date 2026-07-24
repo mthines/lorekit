@@ -54,6 +54,71 @@ jobs:
           NX_BASE: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
           NX_HEAD: ${{ github.sha }}
 
+  # ── Integration test — live MCP endpoint on a local Supabase ─────────────────
+  #    Boots a full local stack (migrations applied), which serves the real Edge
+  #    Functions, then runs the one live-endpoint spec (smoke.integration) that
+  #    the unit run skips. This is the pre-merge integration gate: the same test
+  #    the deploy pipeline later runs against staging, but here against localhost.
+  integration:
+    name: Integration tests (local Supabase)
+    runs-on: ubuntu-latest
+    needs: check
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start local Supabase (applies migrations, serves functions)
+        run: supabase start
+
+      - name: Lint database schema (informational)
+        run: supabase db lint --level warning || true
+
+      - name: Capture local service-role key
+        id: supabase
+        run: echo "service_role_key=$(supabase status -o json | jq -r '.SERVICE_ROLE_KEY')" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for edge functions to be ready
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:54321/functions/v1/health >/dev/null 2>&1; then
+              echo "Edge functions ready"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Edge functions did not become ready in time"
+          exit 1
+
+      - name: Run integration test against local MCP endpoint
+        run: pnpm nx test mcp-server -- smoke.integration
+        env:
+          LOREKIT_SMOKE_URL: http://127.0.0.1:54321/functions/v1/mcp
+          LOREKIT_SMOKE_TOKEN: ${{ steps.supabase.outputs.service_role_key }}
+
+      - name: Stop local Supabase
+        if: always()
+        run: supabase stop --no-backup
+
   # ── Next.js production build compiles ────────────────────────────────────────
   build-web:
     name: Build web
@@ -86,32 +151,3 @@ jobs:
 
       - name: Build Next.js app (production)
         run: pnpm nx build web --configuration=production
-
-  # ── Migrations apply cleanly against an ephemeral local database ─────────────
-  #    This is the pre-merge migration gate: if a migration is broken it fails
-  #    here, before it can ever reach staging or production. Enable this job as a
-  #    required status check on `main` so bad migrations cannot be merged.
-  migrations:
-    name: Validate migrations (local)
-    runs-on: ubuntu-latest
-    needs: check
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Supabase CLI
-        uses: supabase/setup-cli@v1
-        with:
-          version: latest
-
-      - name: Start local Supabase (applies every migration)
-        run: supabase start
-
-      - name: Lint database schema (informational)
-        run: supabase db lint --level warning || true
-
-      - name: Stop local Supabase
-        if: always()
-        run: supabase stop --no-backup

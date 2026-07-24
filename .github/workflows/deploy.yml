@@ -1,12 +1,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Deploy — staging-first promotion pipeline, runs on merge to main.
 #
-#   test ─▶ deploy-staging ─▶ smoke-staging ─▶ deploy-production ─▶ smoke-production
-#                                                        └─▶ rollback-production (on failure)
+#   deploy-staging ─▶ smoke-staging ─▶ deploy-production ─▶ smoke-production
+#                                              └─▶ rollback-production (on failure)
 #
-# Production is never touched until the full suite is green AND staging has been
-# deployed and smoke-tested. Each job `needs:` the previous one, so a red step is
-# a hard gate — nothing downstream runs.
+# Tests are NOT re-run here — the merged commit already passed the required PR
+# checks in ci.yml (unit + integration + build). Production is never touched
+# until staging has been deployed and smoke-tested. Each job `needs:` the
+# previous one, so a red step is a hard gate — nothing downstream runs.
 #
 # Environments (Settings ▸ Environments) scope the secrets by target:
 #   staging    → SUPABASE_PROJECT_REF, SUPABASE_DB_PASSWORD, LOREKIT_SMOKE_TOKEN (staging values)
@@ -30,47 +31,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # ── 1. Full test gate (all packages, not just affected) ──────────────────────
-  test:
-    name: Typecheck, Test & Lint (all)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    env:
-      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
-      NEXT_PUBLIC_APP_URL: https://localhost:3001
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: NX — typecheck, test, lint (all packages)
-        run: pnpm nx run-many -t typecheck,test,lint --all --parallel=3
-
-      - name: Build Next.js app (production)
-        run: pnpm nx build web --configuration=production
-
-  # ── 2. Deploy to STAGING (migrations, then functions) ────────────────────────
+  # ── 1. Deploy to STAGING (migrations, then functions) ────────────────────────
+  #    No test job here: the commit on main already passed the required PR checks
+  #    in ci.yml (unit + integration + build + migration gate). Re-running them
+  #    would just duplicate that work. Protect main with those required checks so
+  #    only verified commits ever reach this pipeline.
   deploy-staging:
     name: Deploy → staging
     runs-on: ubuntu-latest
-    needs: test
     environment: staging
     permissions:
       contents: read
@@ -102,7 +70,7 @@ jobs:
       - name: Deploy edge functions (mcp + health)
         run: supabase functions deploy --no-verify-jwt --project-ref "$PROJECT_REF"
 
-  # ── 3. Migration/smoke tests against STAGING (the gate before prod) ──────────
+  # ── 2. Integration test against STAGING (the gate before prod) ───────────────
   smoke-staging:
     name: Smoke tests → staging
     runs-on: ubuntu-latest
@@ -128,13 +96,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run MCP smoke + integration tests against staging
-        run: pnpm nx test mcp-server
+      - name: Run integration test against staging endpoint
+        run: pnpm nx test mcp-server -- smoke.integration
         env:
           LOREKIT_SMOKE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
 
-  # ── 4. Deploy to PRODUCTION (only reached if staging is green) ───────────────
+  # ── 3. Deploy to PRODUCTION (only reached if staging is green) ───────────────
   deploy-production:
     name: Deploy → production
     runs-on: ubuntu-latest
@@ -170,7 +138,7 @@ jobs:
       - name: Deploy edge functions (mcp + health)
         run: supabase functions deploy --no-verify-jwt --project-ref "$PROJECT_REF"
 
-  # ── 5. Post-deploy verification against PRODUCTION ───────────────────────────
+  # ── 4. Post-deploy verification against PRODUCTION ───────────────────────────
   smoke-production:
     name: Smoke test → production
     runs-on: ubuntu-latest
@@ -205,7 +173,7 @@ jobs:
             exit 1
           fi
 
-  # ── 6. Rollback PRODUCTION functions on any post-deploy failure ──────────────
+  # ── 5. Rollback PRODUCTION functions on any post-deploy failure ──────────────
   #    Redeploys the previous commit's edge functions. Migrations are forward-only
   #    (expand/contract + PITR is the DB safety net) so they are intentionally not
   #    reverted here. Runs only when a production job was attempted and failed.

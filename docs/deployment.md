@@ -24,8 +24,21 @@ Two GitHub Actions workflows own the lifecycle:
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `.github/workflows/ci.yml` | PRs to `main`, pushes to non-`main` branches | Validation only: affected typecheck/test/lint, web build, and a **migration gate** that applies every migration to an ephemeral local Supabase (`supabase start`). |
-| `.github/workflows/deploy.yml` | push to `main`, `workflow_dispatch` | Staging-first promotion pipeline. |
+| `.github/workflows/ci.yml` | PRs to `main`, pushes to non-`main` branches | **Verify before merge.** `check` (affected typecheck/test/lint — unit tests, all mocked), `integration` (boots a local Supabase, serves the real Edge Functions, runs the live `smoke.integration` spec + schema lint), and `build-web`. |
+| `.github/workflows/deploy.yml` | push to `main`, `workflow_dispatch` | **Deploy the already-verified commit.** No test re-run — staging-first promotion only. |
+
+### Tests run once, on the PR
+
+Unit and integration tests run in `ci.yml` on every PR (and feature-branch
+push), so a commit cannot reach `main` unverified. The deploy pipeline
+deliberately does **not** re-run them — it trusts the required PR checks and
+only verifies the *live deployment* via smoke tests. Make the `check` and
+`integration` jobs [required status checks](#recommended-branch-protection) so
+this guarantee holds.
+
+The `integration` job is the pre-merge equivalent of `smoke-staging`: it runs
+the exact same `smoke.integration` spec, against a local Supabase instead of the
+staging project.
 
 ### The deploy pipeline (on merge to `main`)
 
@@ -33,16 +46,14 @@ Each job `needs:` the previous one, so a red step is a hard gate — nothing
 downstream runs:
 
 ```
-test (all packages)
-  └─▶ deploy-staging      db push + functions deploy → STAGING project
-        └─▶ smoke-staging   nx test mcp-server against STAGING (the "migration tests")
-              └─▶ deploy-production   db push + functions deploy → PRODUCTION project
-                    └─▶ smoke-production   health + MCP tools/list against PRODUCTION
-                          └─▶ rollback-production   (only on failure)
+deploy-staging          db push + functions deploy → STAGING project
+  └─▶ smoke-staging      smoke.integration spec against STAGING
+        └─▶ deploy-production     db push + functions deploy → PRODUCTION project
+              └─▶ smoke-production   health + MCP tools/list against PRODUCTION
+                    └─▶ rollback-production   (only on failure)
 ```
 
-Production is never touched until the full suite is green **and** staging has
-been deployed and smoke-tested.
+Production is never touched until staging has been deployed and smoke-tested.
 
 ### Rollback behaviour
 
@@ -71,8 +82,10 @@ manual approval gate before prod is touched.
 
 ### Recommended branch protection
 
-Mark the `ci.yml` **`Validate migrations (local)`** job as a required status
-check on `main` so a broken migration cannot be merged.
+Require a PR to `main` and mark the `ci.yml` **`Typecheck, Test & Lint
+(affected)`** and **`Integration tests (local Supabase)`** jobs as required
+status checks. Because `deploy.yml` no longer re-runs tests, these checks are
+the sole gate that keeps unverified (or migration-breaking) code off `main`.
 
 ---
 
