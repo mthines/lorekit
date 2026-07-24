@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-LoreKit exposes five tools via the MCP protocol. All tools require a valid API token (see [api-tokens.md](./api-tokens.md)).
+LoreKit exposes nine tools via the MCP protocol. All tools require a valid API token (see [api-tokens.md](./api-tokens.md)).
 
 **Endpoint:** `https://<project-ref>.supabase.co/functions/v1/mcp`
 
@@ -91,7 +91,7 @@ List all lessons for a scope, newest first.
 
 ## memory.delete
 
-Delete a single lesson. Requires a **read+write** token.
+Soft-archive a lesson (default) or hard-delete it immediately. Requires a **read+write** token.
 
 ```json
 {
@@ -99,13 +99,23 @@ Delete a single lesson. Requires a **read+write** token.
     "name": "memory.delete",
     "arguments": {
       "scope": "branch::mthines/gw-tools::feat/old-experiment",
-      "key": "aw-lessons::stash-workaround"
+      "key": "aw-lessons::stash-workaround",
+      "force": false
     }
   }
 }
 ```
 
-**Returns:** `{ "deleted": true }` or `{ "deleted": false }` if not found.
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `scope` | required | Canonical scope string |
+| `key` | required | Lesson identifier |
+| `force` | `false` | When `true`, permanently hard-deletes the row (unrecoverable). When `false` (default), soft-archives the row — it is hidden from reads but can be listed via `memory.list_archived` and restored via `memory.restore`. |
+
+**Returns:** `{ "deleted": boolean, "archived": boolean }`
+
+- Soft-archive (default): `{ "deleted": false, "archived": true }` if found, `{ "deleted": false, "archived": false }` if already archived or missing.
+- Hard-delete (`force: true`): `{ "deleted": true, "archived": false }` if found, `{ "deleted": false, "archived": false }` if not found.
 
 ---
 
@@ -135,6 +145,99 @@ Full-text search across all lessons. Supports owner-level scope wildcards.
 | `limit` | `20` | Max results (cap: 100) |
 
 **Returns:** `{ "entries": [{ "key", "value", "scope", "tags", "rank" }] }`
+
+---
+
+## memory.archive
+
+Soft-archive a lesson. Archived entries are hidden from normal reads (`memory.read`, `memory.list`) but
+can be listed via `memory.list_archived` and fully restored via `memory.restore`. Requires a **read+write** token.
+
+```json
+{
+  "params": {
+    "name": "memory.archive",
+    "arguments": {
+      "scope": "global",
+      "key": "aw-lessons::old-tip"
+    }
+  }
+}
+```
+
+**Returns:** `{ "archived": true }` if the row was found and archived, `{ "archived": false }` if it was already archived or not found.
+
+---
+
+## memory.restore
+
+Restore a soft-archived lesson back to active. Requires a **read+write** token.
+
+```json
+{
+  "params": {
+    "name": "memory.restore",
+    "arguments": {
+      "scope": "global",
+      "key": "aw-lessons::old-tip"
+    }
+  }
+}
+```
+
+**Returns:** `{ "restored": true }` if the row was found in the archive and cleared, `{ "restored": false }` if it was already active or not found.
+
+---
+
+## memory.list_archived
+
+List soft-archived lessons for a scope, newest archived first. Requires a **read+write** or **read-only** token.
+
+```json
+{
+  "params": {
+    "name": "memory.list_archived",
+    "arguments": {
+      "scope": "global",
+      "limit": 20
+    }
+  }
+}
+```
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `scope` | required | Scope to list archived entries for |
+| `limit` | `50` | Max results (cap: 100) |
+
+**Returns:** `{ "entries": [{ "key", "value", "tags", "updated_at", "archived_at" }] }`
+
+---
+
+## memory.purge
+
+Permanently delete archived lessons whose `archived_at` timestamp is older than `retention_days`.
+This operation is unrecoverable. Requires a **read+write** token.
+
+> **Note:** Service-role callers (CI) cannot call this tool — the purge is always scoped to a specific user.
+> Use the Supabase RPC `purge_archived_memories` directly for admin purges.
+
+```json
+{
+  "params": {
+    "name": "memory.purge",
+    "arguments": {
+      "retention_days": 30
+    }
+  }
+}
+```
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `retention_days` | `30` | Minimum age (in days) since archiving before a row becomes eligible. Min: 1, Max: 365. |
+
+**Returns:** `{ "purged": number }` — count of permanently deleted rows.
 
 ---
 
