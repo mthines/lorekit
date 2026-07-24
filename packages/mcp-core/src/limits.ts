@@ -45,26 +45,6 @@ export function rateLimitMessage(retryAfterSeconds: number): string {
 }
 
 /**
- * Pure decision for a fixed-window rate limit — no I/O, easily unit-testable.
- * `count` is the request count already recorded for the current window
- * (inclusive of the current request, as returned by lorekit_check_rate_limit).
- */
-export function rateLimitDecision(
-  count: number,
-  limit: number,
-  windowSeconds: number,
-  now: Date = new Date(),
-): { allowed: boolean; retryAfterSeconds: number } {
-  const allowed = count <= limit;
-  if (allowed) return { allowed: true, retryAfterSeconds: 0 };
-
-  const nowSeconds = now.getTime() / 1000;
-  const windowStart = Math.floor(nowSeconds / windowSeconds) * windowSeconds;
-  const retryAfterSeconds = Math.max(0, Math.ceil(windowStart + windowSeconds - nowSeconds));
-  return { allowed: false, retryAfterSeconds };
-}
-
-/**
  * Translate a DB error into an actionable LimitError when it was raised by
  * the enforce_memory_cap() trigger (SQLSTATE 'LK001'). Any other error is
  * returned unchanged so callers can rethrow it as-is.

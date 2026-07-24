@@ -27,7 +27,6 @@ export {
   MEMORY_CAP_SQLSTATE,
   memoryCapMessage,
   rateLimitMessage,
-  rateLimitDecision,
   translateCapError,
   checkRateLimit,
 } from './limits.js';

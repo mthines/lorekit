@@ -172,3 +172,43 @@ begin
   return query select (v_count <= v_limit), v_count, v_limit, v_retry_after;
 end;
 $$;
+
+-- 7. Reaper for stale rate-limit windows. rate_limit_counters gains one row per
+--    (user, window) on every request, but only the current window is ever read
+--    — anything older is dead weight that bloats the table and its index and
+--    slowly degrades the RPC above (which runs on every authenticated request).
+--    Hard-delete windows older than p_older_than. Mirrors purge_archived_memories
+--    in 00003_archive.sql. Returns the count of deleted rows.
+create or replace function lorekit_purge_rate_limit_counters(
+  p_older_than interval default interval '1 hour'
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_count integer;
+begin
+  delete from rate_limit_counters
+   where window_start < now() - p_older_than;
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+-- Schedule the reaper every 15 minutes when pg_cron is available. Guarded so
+-- the migration still applies on instances without the extension — the function
+-- above can then be driven by an external scheduler or the dashboard instead.
+-- Idempotent: cron.schedule() upserts by job name.
+do $$
+begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.schedule(
+      'lorekit-purge-rate-limit-counters',
+      '*/15 * * * *',
+      $cron$select lorekit_purge_rate_limit_counters()$cron$
+    );
+  end if;
+end;
+$$;

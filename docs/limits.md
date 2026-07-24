@@ -58,6 +58,12 @@ with a JSON-RPC body describing the limit and how to raise it. Service-role
 blip), the request is allowed through rather than returning a 500 — the
 memory cap still protects storage during an outage.
 
+**Counter cleanup:** every request writes a `(user_id, window_start)` row, but
+only the current window is ever read. `lorekit_purge_rate_limit_counters()`
+hard-deletes windows older than an hour and is scheduled every 15 minutes via
+pg_cron (when the extension is available), so the counter table and its index
+stay small. Without pg_cron, drive the function from an external scheduler.
+
 ## Config source & per-user overrides
 
 Both guardrails read their limits through a single function,
@@ -94,7 +100,7 @@ only needs to write to `user_limits`.
 |---|---|---|---|
 | Config + enforcement | — (DB-side) | — (DB-side) | `supabase/migrations/00004_limits.sql` |
 | Cap error translation | `supabase/functions/mcp/limits.ts` → wired in `tools.ts` (`toolWrite`) | `packages/mcp-core/src/limits.ts` → wired in `tools/write.ts` | `LimitError`, `translateCapError` |
-| Rate-limit check + 429 | `supabase/functions/mcp/index.ts` (post-`resolveAuth`) | `packages/mcp-server/src/server.ts` (`handleMcpRequest`) | `checkRateLimit`, `rateLimitDecision` |
+| Rate-limit check + 429 | `supabase/functions/mcp/index.ts` (post-`resolveAuth`) | `packages/mcp-server/src/server.ts` (`handleMcpRequest`) | `checkRateLimit` |
 | MCP error mapping | `supabase/functions/mcp/mcp-handler.ts` (distinct JSON-RPC code) | `server.ts` `memory.write` tool handler (`isError: true`) | `LimitError.code` |
 
 The Deno module is a **self-contained mirror** of `packages/mcp-core/src/limits.ts`
