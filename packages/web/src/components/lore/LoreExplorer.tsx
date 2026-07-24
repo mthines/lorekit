@@ -10,11 +10,13 @@ import { EmptyState } from '@/components/ui/EmptyState';
 interface LoreExplorerProps {
   scopes: ScopeNode[];
   lessons: LessonEntry[];
+  /** Pre-select a specific scope on first render (e.g. from a URL query param). */
+  initialScope?: string | null;
 }
 
-export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
+export function LoreExplorer({ scopes, lessons, initialScope }: LoreExplorerProps) {
   const [selectedScope, setSelectedScope] = useState<string | null>(
-    scopes[0]?.scope ?? null,
+    initialScope ?? scopes[0]?.scope ?? null,
   );
   const [selectedLesson, setSelectedLesson] = useState<LessonEntry | null>(null);
   const [query, setQuery] = useState('');

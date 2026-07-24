@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { createClient } from '@/lib/supabase/client';
 import { scopeType } from '@/lib/scope';
+import { aggregateByScope } from '@/lib/aggregations';
 import type { ScopeHealth } from '@/components/dashboard/ScopeHealthCard';
 
 export interface DashboardData {
@@ -19,31 +20,20 @@ async function fetchDashboardData(): Promise<DashboardData> {
 
   if (error || !data) return { scopes: [], totalLessons: 0 };
 
-  // Aggregate per scope.
-  const scopeMap = new Map<string, { total: number; lastActivity: string }>();
-  for (const row of data) {
-    const scope = row.scope as string;
-    const existing = scopeMap.get(scope);
-    const ts = row.created_at as string;
-    if (!existing || ts > existing.lastActivity) {
-      scopeMap.set(scope, {
-        total: (existing?.total ?? 0) + 1,
-        lastActivity: ts,
-      });
-    } else {
-      existing.total++;
-    }
-  }
+  const aggregated = aggregateByScope(
+    data.map((row) => ({
+      scope: row.scope as string,
+      created_at: row.created_at as string,
+    })),
+  );
 
-  const scopes: ScopeHealth[] = Array.from(scopeMap.entries())
-    .sort(([, a], [, b]) => b.lastActivity.localeCompare(a.lastActivity))
-    .map(([scope, { total, lastActivity }]) => ({
-      scope,
-      type: scopeType(scope),
-      label: scope.split('::').pop() ?? scope,
-      total,
-      lastActivity,
-    }));
+  const scopes: ScopeHealth[] = aggregated.map(({ scope, total, lastActivity }) => ({
+    scope,
+    type: scopeType(scope),
+    label: scope.split('::').pop() ?? scope,
+    total,
+    lastActivity,
+  }));
 
   return { scopes, totalLessons: data.length };
 }

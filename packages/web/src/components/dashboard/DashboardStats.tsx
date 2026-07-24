@@ -1,5 +1,6 @@
 'use client';
 
+import { BookOpen, Layers, Zap } from 'lucide-react';
 import { ScopeHealthGrid } from '@/components/dashboard/ScopeHealthCard';
 import { useDashboardData } from '@/lib/queries/dashboard';
 
@@ -7,11 +8,11 @@ import { useDashboardData } from '@/lib/queries/dashboard';
 function DashboardStatsSkeleton() {
   return (
     <>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {Array.from({ length: 3 }).map((_, i) => (
           <div
             key={i}
-            className="h-20 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
+            className="h-24 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
           />
         ))}
       </div>
@@ -49,28 +50,50 @@ export function DashboardStats() {
   }
 
   const { scopes, totalLessons } = data;
+  const todayPrefix = new Date().toISOString().slice(0, 10);
+  const activeToday = scopes.filter((s) => s.lastActivity?.startsWith(todayPrefix)).length;
+
+  const stats = [
+    {
+      icon: BookOpen,
+      label: 'Total lessons',
+      value: totalLessons,
+      description: 'across all scopes',
+    },
+    {
+      icon: Layers,
+      label: 'Scopes',
+      value: scopes.length,
+      description: 'active memory namespaces',
+    },
+    {
+      icon: Zap,
+      label: 'Active today',
+      value: activeToday,
+      description: 'scopes with new writes',
+    },
+  ];
 
   return (
     <>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
-        {[
-          { label: 'Total lessons', value: totalLessons },
-          { label: 'Scopes', value: scopes.length },
-          {
-            label: 'Active today',
-            value: scopes.filter((s) =>
-              s.lastActivity?.startsWith(new Date().toISOString().slice(0, 10)),
-            ).length,
-          },
-        ].map(({ label, value }) => (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {stats.map(({ icon: Icon, label, value, description }) => (
           <div
             key={label}
-            className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4"
+            className="flex flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5"
           >
-            <p className="text-xs text-[var(--color-content-tertiary)]">{label}</p>
-            <p className="mt-1 text-2xl font-bold tabular-nums text-[var(--color-content-primary)]">
-              {value}
-            </p>
+            <div className="flex size-9 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+              <Icon className="size-4 text-[var(--color-accent)]" aria-hidden />
+            </div>
+            <div>
+              <p className="text-2xl font-bold tabular-nums text-[var(--color-content-primary)]">
+                {value}
+              </p>
+              <p className="text-xs text-[var(--color-content-tertiary)]">{label}</p>
+              <p className="mt-0.5 text-[10px] text-[var(--color-content-tertiary)] opacity-70">
+                {description}
+              </p>
+            </div>
           </div>
         ))}
       </div>

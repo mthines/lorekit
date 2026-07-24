@@ -37,6 +37,13 @@
       "options": {
         "lintFilePatterns": ["packages/web/**/*.{ts,tsx,js,jsx}"]
       }
+    },
+    "test": {
+      "executor": "@nx/vitest:test",
+      "options": {
+        "configFile": "packages/web/vitest.config.ts"
+      },
+      "outputs": ["{workspaceRoot}/coverage/packages/web"]
     }
   }
 }

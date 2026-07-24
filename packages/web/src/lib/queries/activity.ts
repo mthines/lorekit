@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { createClient } from '@/lib/supabase/client';
 import { scopeType } from '@/lib/scope';
+import { aggregateByDay } from '@/lib/aggregations';
 import type { ActivityEvent } from '@/components/activity/ActivityFeed';
 
 export interface ActivityData {
@@ -31,13 +32,8 @@ async function fetchActivityData(): Promise<ActivityData> {
     created_at: row.created_at as string,
   }));
 
-  // Aggregate by day for the contribution heatmap.
-  const dayCounts = new Map<string, number>();
-  for (const e of events) {
-    const day = e.created_at.slice(0, 10);
-    dayCounts.set(day, (dayCounts.get(day) ?? 0) + 1);
-  }
-  const heatmapData = Array.from(dayCounts.entries()).map(([date, count]) => ({ date, count }));
+  // Aggregate by day for the contribution heatmap using the shared helper.
+  const heatmapData = aggregateByDay(events.map((e) => ({ created_at: e.created_at })));
 
   return { events, heatmapData };
 }
