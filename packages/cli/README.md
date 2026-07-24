@@ -40,10 +40,14 @@ Verifies the setup and prints a status report:
 
 - Node runtime is 18+
 - the `lorekit-memory` skill is installed
-- `.mcp.json` has a `lorekit` server
-- endpoint is real (not the `<project-ref>` placeholder)
-- token is present and its permission tier (`lk_rw_*` vs `lk_ro_*`)
-- the MCP endpoint is reachable and the token is accepted
+- the **resolved memory mode and which source decided it**, plus any active
+  deny constraints
+- for `local`: the store path, entry count, and whether it is committed or
+  gitignored
+- for `remote`: `.mcp.json` has a `lorekit` server, the endpoint is real (not
+  the `<project-ref>` placeholder), the token and its permission tier
+  (`lk_rw_*` vs `lk_ro_*`), and that the endpoint is reachable
+- for `off`: a note that memory is disabled
 - the git-derived read/write scopes for the current directory
 
 ```bash
@@ -68,6 +72,72 @@ lorekit hook --adapter <claude|cursor|codex> --event <SessionStart|Stop|…>
 One engine serves all three hosts; each `--adapter` only reshapes input/output
 to that host's contract. See [`plugins/`](../../plugins/) for the bundles.
 
+## Memory modes & the control model
+
+Memory has a controllable backend. Three **modes**:
+
+| Mode | Where lessons live | Notes |
+|------|--------------------|-------|
+| `off` | nowhere | Memory is disabled — every hook event and store op is a silent no-op. |
+| `local` | markdown files under a store dir (default `.lore/`) | **Local means _not_ on the hosted website** — local lessons never sync to the LoreKit dashboard. That is the point of local: private-by-default, greppable, git-native. |
+| `remote` | the LoreKit MCP server (hosted) | The shared, cross-machine backend. Reads stay silent until an endpoint + token are configured. This is the default. |
+
+### Local store layout
+
+One markdown file per lesson, foldered by canonical scope, with YAML
+frontmatter (`scope, key, tags, source_agent, trigger, created, updated,
+archived_at`) and the lesson as the body:
+
+```
+.lore/
+├── global/
+├── repo/<owner>/<repo>/
+└── branch/<owner>/<repo>/<branch>/
+    └── <slug-of-key>.md
+```
+
+Commit `.lore/` to share lessons with your team (git-native sharing); add it to
+`.gitignore` to keep them private to your checkout.
+
+### The control model — two layers, deny-wins
+
+Two config layers decide the mode:
+
+- **User / machine** — env `LOREKIT_MODE`, `LOREKIT_STORE`, `LOREKIT_DENY`
+  (and `LOREKIT_MCP_URL` / `LOREKIT_TOKEN` for remote), plus a user config file
+  `~/.agent-memory/config.json`.
+- **Repo / team** — a `.lorekit.json` at the repo root (and/or the existing
+  `lorekit` block in `.mcp.json` for the connection).
+
+Both files share one schema:
+
+```jsonc
+{
+  "mode": "local",        // select a mode (off | local | remote)
+  "store": ".lore",       // local store dir (relative to repo root, or absolute)
+  "deny": ["remote"]      // forbid modes outright — deny always wins
+}
+```
+
+**Precedence (a _selection_ within what is allowed):**
+`env LOREKIT_MODE` → user config `mode` → repo config `mode` → built-in default
+(`remote`).
+
+**Constraints (`deny`) always win.** Denies are a **union** across every source
+and only ever accumulate — a user-level hard opt-out is a **ceiling the repo
+cannot override**:
+
+- A user who declares `"deny": ["remote"]` (privacy / compliance) can never be
+  flipped to remote by any repo default or env flag — they resolve to `local`
+  (if they selected it) or `off`, never `remote`.
+- A repo or CI job that declares `"deny": ["local"]` (no `.lore/` in the tree)
+  makes local unselectable there — an env `LOREKIT_MODE=local` is capped, and
+  resolution falls through to `remote`, or `off` if both are denied.
+
+`off` is never deniable, so it is always the terminal fallback. Run
+`lorekit doctor` to see the resolved mode, **which source decided it**, and any
+active deny constraints.
+
 ## Options
 
 | Flag | Meaning |
@@ -75,6 +145,8 @@ to that host's contract. See [`plugins/`](../../plugins/) for the bundles.
 | `-d, --dir <path>` | Target project root (default: cwd) |
 | `-e, --endpoint <url>` | LoreKit MCP endpoint |
 | `-t, --token <token>` | LoreKit token |
+| `--mode <mode>` | Memory mode override for `doctor`: `off` / `local` / `remote` |
+| `--store <path>` | Local store directory (default `.lore`) |
 | `-y, --yes` | Non-interactive; never prompt |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
@@ -87,6 +159,9 @@ to that host's contract. See [`plugins/`](../../plugins/) for the bundles.
 
 | Variable | Purpose |
 |----------|---------|
+| `LOREKIT_MODE` | select a mode: `off` / `local` / `remote` |
+| `LOREKIT_DENY` | comma-separated modes to forbid (deny-wins); e.g. `remote` |
+| `LOREKIT_STORE` | local store directory (default `.lore`) |
 | `LOREKIT_MCP_URL` / `LOREKIT_ENDPOINT` | endpoint fallback |
 | `LOREKIT_TOKEN` | token fallback |
 | `NO_COLOR` | disable colored output |
