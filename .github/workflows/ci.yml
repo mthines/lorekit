@@ -149,6 +149,19 @@ jobs:
           echo "::add-mask::$KEY"
           echo "service_role_key=$KEY" >> "$GITHUB_OUTPUT"
 
+      - name: DEBUG — keys, role resolution, grants (temporary)
+        env:
+          KEY: ${{ steps.supabase.outputs.service_role_key }}
+        run: |
+          echo "== status.json keys =="; jq -r 'keys[]' /tmp/status.json
+          echo "== captured key: prefix ${KEY:0:12} len ${#KEY} =="
+          echo "== JWT role claim (if JWT) =="; echo "$KEY" | cut -d. -f2 | base64 -d 2>/dev/null | jq -r '.role // "n/a"' 2>/dev/null || echo "not-a-jwt"
+          PGURL="$(jq -r '.DB_URL // empty' /tmp/status.json)"; PGURL="${PGURL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}"
+          echo "== grants on memories =="; psql "$PGURL" -Atc "select grantee, string_agg(privilege_type,',') from information_schema.role_table_grants where table_name='memories' group by grantee;" || true
+          echo "== constraints on memories =="; psql "$PGURL" -Atc "select conname||' '||contype from pg_constraint where conrelid='public.memories'::regclass;" || true
+          echo "== PostgREST direct select as captured key =="
+          curl -s -w '\nHTTP %{http_code}\n' "http://127.0.0.1:54321/rest/v1/memories?select=id&limit=1" -H "apikey: $KEY" -H "Authorization: Bearer $KEY" | head -c 400
+
       - name: Wait for the MCP endpoint to authenticate
         env:
           TOKEN: ${{ steps.supabase.outputs.service_role_key }}
