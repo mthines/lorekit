@@ -17,6 +17,9 @@ import {
   purgeArchived,
   createUserClient,
   createServiceClient,
+  checkRateLimit,
+  rateLimitMessage,
+  LimitError,
 } from '@lorekit/core';
 import { type AuthContext } from './auth.js';
 
@@ -47,8 +50,15 @@ export function createMcpServer(auth: AuthContext): McpServer {
       trigger: z.string().optional().describe('What triggered this write e.g. "stuck-loop"'),
     },
     async (args) => {
-      const result = await write(db, args);
-      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+      try {
+        const result = await write(db, args);
+        return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+      } catch (err) {
+        if (err instanceof LimitError) {
+          return { content: [{ type: 'text', text: err.message }], isError: true };
+        }
+        throw err;
+      }
     },
   );
 
@@ -163,6 +173,27 @@ export async function handleMcpRequest(
   auth: AuthContext,
   parsedBody?: unknown,
 ): Promise<void> {
+  // Per-user request rate limit — applied before dispatch, all MCP methods.
+  // Service-role (CI/internal) is exempt.
+  if (auth.type !== 'service' && auth.userId) {
+    const db = getDb(auth);
+    const { allowed, retryAfterSeconds } = await checkRateLimit(db, auth.userId);
+    if (!allowed) {
+      res.writeHead(429, {
+        'Content-Type': 'application/json',
+        'Retry-After': String(retryAfterSeconds),
+      });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: null,
+          error: { code: -32029, message: rateLimitMessage(retryAfterSeconds) },
+        }),
+      );
+      return;
+    }
+  }
+
   const server = createMcpServer(auth);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
