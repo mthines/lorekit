@@ -60,6 +60,28 @@ In `.claude/skills/persistent-memory/config.json`:
 
 That's it. Your agent's lessons now survive every run and session.
 
+## Agent memory skill + CLI
+
+Prefer a one-command setup? The [`@lorekit/cli`](./packages/cli/) package
+installs a companion skill that makes agents use LoreKit autonomously —
+reading lessons when they start a task or navigate new code, and writing a
+lesson whenever something goes wrong (a stuck loop, a repeated failure, a
+gotcha, a costly wrong assumption). It mirrors the read-on-start /
+write-on-failure loop of the `aw` autonomous-workflow agent.
+
+```bash
+# Scaffold the lorekit-memory skill into .claude/skills and wire .mcp.json
+npx @lorekit/cli install \
+  --endpoint https://<project-ref>.supabase.co/functions/v1/mcp \
+  --token    lk_rw_<your-token>
+
+# Verify connectivity, token permission, and the git-derived scopes
+npx @lorekit/cli doctor
+```
+
+→ See [packages/cli/README.md](./packages/cli/README.md) for all commands and
+flags, and the installed skill's `SKILL.md` for the read/write protocol.
+
 ## Architecture
 
 LoreKit is an NX monorepo with three deployable pieces:

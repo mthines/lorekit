@@ -16,6 +16,7 @@ lets humans browse, search, and manage those lessons.
 | `@lorekit/core` | `packages/mcp-core/` | Scope validator, DB client, 5 tool handlers, OTel tracer/meter |
 | `@lorekit/server` | `packages/mcp-server/` | Node.js HTTP server for Fly.io (OTel SDK init, auth, webhook) |
 | `@lorekit/web` | `packages/web/` | Next.js 15 dashboard (Vercel) |
+| `@lorekit/cli` | `packages/cli/` | Zero-dep Node CLI: `install` (scaffolds the `lorekit-memory` skill + `.mcp.json`) and `doctor` (connectivity/token/scope health checks). Ships the skill under `skill/lorekit-memory/`. |
 | `supabase` | `supabase/` | Edge Functions (production MCP server), migrations, NX targets |
 
 The **production MCP server** is `supabase/functions/mcp/index.ts` (Deno, self-contained).

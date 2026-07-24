@@ -1,0 +1,33 @@
+{
+  "name": "@lorekit/cli",
+  "version": "1.0.0",
+  "description": "Install the LoreKit shared-memory skill and run health checks for the LoreKit MCP server.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "lorekit": "bin/lorekit.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "skill",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "lorekit",
+    "mcp",
+    "claude",
+    "agent",
+    "memory",
+    "skill",
+    "cli"
+  ],
+  "scripts": {
+    "start": "node bin/lorekit.mjs",
+    "doctor": "node bin/lorekit.mjs doctor",
+    "test": "node --test test/*.test.mjs"
+  }
+}
