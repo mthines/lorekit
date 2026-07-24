@@ -20,12 +20,27 @@ export function skillInstallDir(root) {
   return path.join(root, '.claude', 'skills', SKILL_NAME);
 }
 
+// Throwing read — used by `install` so a corrupt .mcp.json aborts the write
+// instead of silently clobbering the user's file.
 export function readJsonIfExists(file) {
   if (!fs.existsSync(file)) return null;
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch (e) {
     throw new Error(`Failed to parse ${file}: ${e.message}`);
+  }
+}
+
+// Non-throwing read — used by the diagnostic (doctor) and hook read paths,
+// which must degrade gracefully rather than crash on a malformed file.
+// Distinguishes absent from present-but-invalid so callers can report it.
+export function readMcpConfig(root) {
+  const file = mcpJsonPath(root);
+  if (!fs.existsSync(file)) return { present: false, valid: false, config: null };
+  try {
+    return { present: true, valid: true, config: JSON.parse(fs.readFileSync(file, 'utf8')) };
+  } catch {
+    return { present: true, valid: false, config: null };
   }
 }
 
@@ -46,8 +61,10 @@ export function upsertMcpServer(root, remoteUrl) {
 }
 
 // Pull the configured lorekit remote URL out of .mcp.json, if present.
+// Non-throwing: returns null when the file is absent, invalid, or has no
+// lorekit server. Callers that need to distinguish those use readMcpConfig.
 export function readLorekitServer(root) {
-  const config = readJsonIfExists(mcpJsonPath(root));
+  const { config } = readMcpConfig(root);
   const server = config && config.mcpServers && config.mcpServers.lorekit;
   if (!server) return null;
   const args = Array.isArray(server.args) ? server.args : [];
@@ -55,20 +72,25 @@ export function readLorekitServer(root) {
   return { server, url: url || null };
 }
 
-// Recursively copy the skill source into the target, skipping when present
-// unless `force` is set.
+// Recursively copy the skill source into the target, skipping files that
+// already exist unless `force` is set. Returns the number of files actually
+// written, so the caller can report "installed" / "updated" / "unchanged"
+// honestly instead of guessing from whether the directory pre-existed.
 export function copyDir(src, dest, { force = false } = {}) {
   fs.mkdirSync(dest, { recursive: true });
+  let written = 0;
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
     const from = path.join(src, entry.name);
     const to = path.join(dest, entry.name);
     if (entry.isDirectory()) {
-      copyDir(from, to, { force });
+      written += copyDir(from, to, { force });
     } else {
       if (fs.existsSync(to) && !force) continue;
       fs.copyFileSync(from, to);
+      written++;
     }
   }
+  return written;
 }
 
 // Resolve endpoint + token from flags, then env, in that order.

@@ -53,7 +53,7 @@ export async function install(args) {
   // 2. Install the skill files.
   const dest = skillInstallDir(root);
   const skillExisted = fs.existsSync(path.join(dest, 'SKILL.md'));
-  copyDir(SKILL_SOURCE, dest, { force: Boolean(args.force) });
+  const written = copyDir(SKILL_SOURCE, dest, { force: Boolean(args.force) });
 
   // 3. Wire .mcp.json.
   const remoteUrl = buildRemoteUrl(endpoint, token);
@@ -61,7 +61,12 @@ export async function install(args) {
 
   // 4. Report.
   heading('Done');
-  status('pass', `skill ${SKILL_NAME}`, `${skillExisted ? 'updated' : 'installed'} → ${path.relative(root, dest) || dest}`);
+  const skillState = !skillExisted
+    ? 'installed'
+    : written > 0
+      ? `updated (${written} file(s) written)`
+      : 'unchanged — pass --force to overwrite';
+  status(skillExisted && written === 0 ? 'info' : 'pass', `skill ${SKILL_NAME}`, `${skillState} → ${path.relative(root, dest) || dest}`);
   status('pass', '.mcp.json', `${existed ? 'updated' : 'created'} lorekit server → ${path.relative(root, file) || file}`);
 
   const kind = tokenKind(token);

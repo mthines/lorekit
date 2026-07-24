@@ -7,6 +7,7 @@ import {
   resolveProjectRoot,
   skillInstallDir,
   readLorekitServer,
+  readMcpConfig,
   resolveConnection,
   tokenKind,
 } from './config.mjs';
@@ -43,13 +44,16 @@ export async function doctor(args) {
 
   // 3. Connection config: prefer explicit flags/env, else .mcp.json.
   const override = resolveConnection(args);
-  const configured = readLorekitServer(root);
+  const mcp = readMcpConfig(root);
+  const configured = mcp.valid ? readLorekitServer(root) : null;
   const fromMcp = configured ? splitEndpoint(configured.url) : { endpoint: null, token: null };
 
   const endpoint = override.endpoint || fromMcp.endpoint;
   const token = override.token || fromMcp.token;
 
-  if (configured) {
+  if (mcp.present && !mcp.valid) {
+    record('fail', '.mcp.json', 'invalid JSON — fix it or re-run `lorekit install`');
+  } else if (configured) {
     record('pass', '.mcp.json', 'lorekit server configured');
   } else {
     record('warn', '.mcp.json', 'no lorekit server entry — run `lorekit install`');
