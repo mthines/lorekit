@@ -46,7 +46,10 @@ export function ScopeHealthCard({ health, index }: ScopeHealthCardProps) {
       transition={{ delay: index * 0.06, duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
     >
       <Link
-        href={`/lore?scope=${encodeURIComponent(health.scope)}`}
+        // useUrlState('scope') reads the param via JSON.parse, so the value must
+        // be JSON-encoded (quoted) here — a raw `?scope=global` fails to parse
+        // and falls back to null, leaving the deep link with no scope selected.
+        href={`/lore?scope=${encodeURIComponent(JSON.stringify(health.scope))}`}
         className="group flex flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5 transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-elevated)] hover:shadow-[0_0_0_1px_var(--color-accent-glow)]"
         aria-label={`${health.label} — ${health.total} lessons, ${freshness.label}`}
       >

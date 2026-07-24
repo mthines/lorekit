@@ -18,6 +18,33 @@ import { init, addSignalAttribute } from '@dash0/sdk-web';
 const ENDPOINT = process.env['NEXT_PUBLIC_DASH0_OTLP_ENDPOINT'];
 const AUTH_TOKEN = process.env['NEXT_PUBLIC_DASH0_AUTH_TOKEN'];
 
+/**
+ * Validates that the OTLP endpoint is an absolute HTTPS URL that is NOT
+ * the same origin as the current page. This prevents a misconfigured env var
+ * (e.g. NEXT_PUBLIC_DASH0_OTLP_ENDPOINT set to '/' or the Vercel deployment
+ * URL) from causing the SDK to POST telemetry back to the app itself, which
+ * would trigger CORS preflights against the app that fail with 400.
+ */
+function isValidOtlpEndpoint(url: string | undefined): url is string {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    // Must be an absolute HTTPS URL (or HTTP in local dev).
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    // Must not point back at the current page's origin.
+    if (typeof window !== 'undefined' && parsed.origin === window.location.origin) {
+      console.warn(
+        '[Dash0] NEXT_PUBLIC_DASH0_OTLP_ENDPOINT points to the app origin — ' +
+        'SDK initialisation skipped. Check Vercel env var configuration.',
+      );
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function resolveDeploymentEnv(): string {
   const env = process.env['NEXT_PUBLIC_VERCEL_ENV'];
   if (env === 'production') return 'production';
@@ -57,7 +84,7 @@ function buildVcsSignalAttributes(): Record<string, string> {
   return attrs;
 }
 
-if (ENDPOINT && AUTH_TOKEN) {
+if (isValidOtlpEndpoint(ENDPOINT) && AUTH_TOKEN) {
   init({
     serviceName: 'web',
     endpoint: { url: ENDPOINT, authToken: AUTH_TOKEN },

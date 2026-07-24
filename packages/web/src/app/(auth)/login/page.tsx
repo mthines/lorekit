@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import { LoginButton } from '@/components/auth/LoginButton';
 import { BookOpen, Brain, GitBranch, Zap } from 'lucide-react';
@@ -69,8 +70,12 @@ export default function LoginPage() {
           <span className="text-sm font-semibold text-[var(--color-content-primary)]">LoreKit</span>
         </div>
 
-        {/* Login in top-right, always visible */}
-        <LoginButton compact />
+        {/* Login in top-right, always visible.
+            Suspense required because LoginButton reads useSearchParams() to pick up
+            the ?next= redirect param set by the dashboard layout. */}
+        <Suspense fallback={null}>
+          <LoginButton compact />
+        </Suspense>
       </header>
 
       {/* ── Hero ─────────────────────────────────────────────────────────────── */}
@@ -96,7 +101,9 @@ export default function LoginPage() {
 
         {/* Primary CTA */}
         <div className="flex flex-col items-center gap-3">
-          <LoginButton />
+          <Suspense fallback={null}>
+            <LoginButton />
+          </Suspense>
           <p className="text-xs text-[var(--color-content-tertiary)]">
             Authenticates via GitHub OAuth — no password required.
           </p>

@@ -62,8 +62,31 @@ function buildVcsSignalAttributes(): Record<string, string> {
   return attrs;
 }
 
+/**
+ * Validates that the OTLP endpoint is an absolute HTTPS URL that is NOT
+ * the same origin as the current page. See instrumentation-client.ts for
+ * the full rationale.
+ */
+function isValidOtlpEndpoint(url: string | undefined): url is string {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    if (typeof window !== 'undefined' && parsed.origin === window.location.origin) {
+      console.warn(
+        '[Dash0] NEXT_PUBLIC_DASH0_OTLP_ENDPOINT points to the app origin — ' +
+        'SDK initialisation skipped. Check Vercel env var configuration.',
+      );
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function initDash0() {
-  if (initialized || !ENDPOINT || !AUTH_TOKEN) return;
+  if (initialized || !isValidOtlpEndpoint(ENDPOINT) || !AUTH_TOKEN) return;
   initialized = true;
 
   init({

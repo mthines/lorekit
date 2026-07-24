@@ -11,6 +11,10 @@ interface DayData {
 interface ContributionHeatmapProps {
   data: DayData[];
   weeks?: number;
+  /** Currently selected date range (UTC day strings), highlighted in the grid. */
+  selectedRange?: { from: string; to: string } | null;
+  /** Click handler for a cell — used to drive the date-range filter. */
+  onSelectDate?: (day: string) => void;
 }
 
 const DAYS = ['', 'Mon', '', 'Wed', '', 'Fri', ''];
@@ -33,17 +37,27 @@ const INTENSITY_STYLES: Record<0 | 1 | 2 | 3 | 4, string> = {
   4: 'bg-[var(--color-accent)] border-[var(--color-accent)]',
 };
 
-export function ContributionHeatmap({ data, weeks = 26 }: ContributionHeatmapProps) {
+export function ContributionHeatmap({
+  data,
+  weeks = 26,
+  selectedRange = null,
+  onSelectDate,
+}: ContributionHeatmapProps) {
   const { grid, monthLabels, maxCount } = useMemo(() => {
     const today = new Date();
-    const totalDays = weeks * 7;
-    const start = new Date(today);
-    start.setDate(start.getDate() - totalDays + 1);
 
-    // Normalise start to the nearest Monday
-    const dayOfWeek = start.getDay();
-    const offset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-    start.setDate(start.getDate() + offset);
+    // Anchor the grid so its LAST column is the current week (the one that
+    // contains today). Previously the grid was anchored to `today - weeks*7`
+    // and snapped backward to a Monday, which made it end ~a week before today
+    // — so lessons written this week fell past the final cell and never showed.
+    //
+    // Steps: find the Monday of the current week, then walk back (weeks - 1)
+    // weeks to get the first column's Monday. Building `weeks` columns forward
+    // then lands the final column on the current week.
+    const dayOfWeek = today.getDay(); // 0 = Sun … 6 = Sat
+    const toMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const start = new Date(today);
+    start.setDate(today.getDate() + toMonday - (weeks - 1) * 7);
 
     // Build date → count map
     const countMap = new Map<string, number>();
@@ -74,7 +88,18 @@ export function ContributionHeatmap({ data, weeks = 26 }: ContributionHeatmapPro
       cols.push(week);
     }
 
-    return { grid: cols, monthLabels: months, maxCount: max };
+    // Drop a month label when the next one is within MIN_LABEL_GAP columns.
+    // This happens when the grid starts (or ends) mid-month — e.g. a 1-week
+    // sliver of January sitting directly under February's label, which then
+    // overlap since each column is only ~13px wide. We keep the later, more
+    // representative label (Feb over the January sliver).
+    const MIN_LABEL_GAP = 3;
+    const monthLabels = months.filter((m, i) => {
+      const next = months[i + 1];
+      return !next || next.col - m.col >= MIN_LABEL_GAP;
+    });
+
+    return { grid: cols, monthLabels, maxCount: max };
   }, [data, weeks]);
 
   return (
@@ -112,9 +137,14 @@ export function ContributionHeatmap({ data, weeks = 26 }: ContributionHeatmapPro
             <div key={wi} className="flex flex-col gap-0.5">
               {week.map(({ date, count }) => {
                 const intensity = getIntensity(count, maxCount);
+                const inRange =
+                  !!selectedRange && date >= selectedRange.from && date <= selectedRange.to;
                 return (
-                  <motion.div
+                  <motion.button
                     key={date}
+                    type="button"
+                    onClick={onSelectDate ? () => onSelectDate(date) : undefined}
+                    disabled={!onSelectDate}
                     initial={{ opacity: 0, scale: 0.6 }}
                     animate={{ opacity: 1, scale: 1 }}
                     transition={{
@@ -124,11 +154,13 @@ export function ContributionHeatmap({ data, weeks = 26 }: ContributionHeatmapPro
                     }}
                     title={count > 0 ? `${count} lesson${count > 1 ? 's' : ''} on ${date}` : date}
                     className={[
-                      'size-[11px] rounded-[2px] border transition-all duration-100 hover:scale-125',
+                      'size-[11px] rounded-[2px] border transition-all duration-100',
                       INTENSITY_STYLES[intensity],
+                      onSelectDate ? 'cursor-pointer hover:scale-125 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]' : '',
+                      inRange ? 'ring-1 ring-inset ring-[var(--color-accent)]' : '',
                     ].join(' ')}
-                    role="img"
-                    aria-label={`${date}: ${count} lessons`}
+                    aria-label={`${date}: ${count} lessons${inRange ? ' (selected)' : ''}`}
+                    aria-pressed={onSelectDate ? inRange : undefined}
                   />
                 );
               })}
@@ -137,13 +169,27 @@ export function ContributionHeatmap({ data, weeks = 26 }: ContributionHeatmapPro
         </div>
       </div>
 
-      {/* Legend */}
-      <div className="mt-2 flex items-center gap-1.5" aria-hidden>
-        <span className="text-[10px] text-[var(--color-content-tertiary)]">Less</span>
+      {/* Legend — the scale runs from 0 lessons (empty) to the busiest day. */}
+      <div
+        className="mt-2 flex items-center gap-1.5"
+        aria-label={`Scale from 0 to ${maxCount} lesson${maxCount === 1 ? '' : 's'} per day`}
+      >
+        <span className="text-[10px] text-[var(--color-content-tertiary)]" aria-hidden>
+          0
+        </span>
         {([0, 1, 2, 3, 4] as const).map((i) => (
-          <div key={i} className={`size-[11px] rounded-[2px] border ${INTENSITY_STYLES[i]}`} />
+          <div
+            key={i}
+            className={`size-[11px] rounded-[2px] border ${INTENSITY_STYLES[i]}`}
+            aria-hidden
+          />
         ))}
-        <span className="text-[10px] text-[var(--color-content-tertiary)]">More</span>
+        <span className="text-[10px] text-[var(--color-content-tertiary)]" aria-hidden>
+          {maxCount}
+        </span>
+        <span className="ml-1 text-[10px] text-[var(--color-content-tertiary)]" aria-hidden>
+          lessons / day
+        </span>
       </div>
     </div>
   );
