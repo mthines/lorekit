@@ -4,6 +4,7 @@ import process from 'node:process';
 import { parseArgs, log, err, c } from '../src/util.mjs';
 import { install } from '../src/install.mjs';
 import { doctor } from '../src/doctor.mjs';
+import { hook } from '../src/hook.mjs';
 
 const VERSION = '1.0.0';
 
@@ -16,6 +17,9 @@ ${c.bold('Commands')}
   install     Scaffold the lorekit-memory skill into .claude/skills and
               add the LoreKit server to .mcp.json.
   doctor      Verify the skill install, MCP connectivity, token, and scope.
+  hook        Hook engine for Claude Code / Cursor / Codex. Reads the host's
+              JSON on stdin and injects lessons or a retrospective nudge.
+              Not run by hand — wired into a plugin's hook config.
 
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
@@ -24,6 +28,8 @@ ${c.bold('Options')}
   -y, --yes               Non-interactive; never prompt
       --force             Overwrite existing skill files (install)
       --deep              Do a write→read→delete round-trip (doctor, needs lk_rw_*)
+      --adapter <name>    Host framework for hook: claude | cursor | codex
+      --event <name>      Host hook event (else read from stdin payload)
   -h, --help              Show this help
   -v, --version           Print the version
 
@@ -43,6 +49,13 @@ async function main() {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
     booleans: ['yes', 'force', 'deep', 'help', 'version'],
   });
+
+  // `hook` is machine-facing: it must never print help/errors to stdout
+  // (that would corrupt the JSON the host parses). Handle it before the
+  // help/usage branch and always resolve to exit 0.
+  if (args._[0] === 'hook') {
+    return hook(args);
+  }
 
   if (args.version) {
     log(VERSION);

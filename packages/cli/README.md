@@ -53,6 +53,21 @@ lorekit doctor --deep     # also does a write → read → delete round-trip (ne
 
 Exit code is non-zero if any check fails, so it fits CI gates.
 
+### `lorekit hook`
+
+The **shared hook engine** behind the Claude Code / Cursor / Codex plugins.
+It is not run by hand — the plugins wire it into their hook config. It reads
+the host framework's JSON on stdin and prints that host's injection format on
+stdout (lessons at session start; a nudge on failure or at end of turn),
+always exiting 0 so it can never block the host agent.
+
+```bash
+lorekit hook --adapter <claude|cursor|codex> --event <SessionStart|Stop|…>
+```
+
+One engine serves all three hosts; each `--adapter` only reshapes input/output
+to that host's contract. See [`plugins/`](../../plugins/) for the bundles.
+
 ## Options
 
 | Flag | Meaning |
@@ -63,6 +78,8 @@ Exit code is non-zero if any check fails, so it fits CI gates.
 | `-y, --yes` | Non-interactive; never prompt |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
+| `--adapter <name>` | Host framework for `hook`: `claude` / `cursor` / `codex` |
+| `--event <name>` | Host hook event for `hook` (else read from the stdin payload) |
 | `-h, --help` | Help |
 | `-v, --version` | Version |
 
@@ -87,6 +104,13 @@ The installed `lorekit-memory` skill teaches an agent to:
 This mirrors the read-on-start / write-on-failure loop of the `aw`
 autonomous-workflow agent. See the skill's own `SKILL.md` for the full
 protocol.
+
+The **skill** is model-invoked (the agent chooses to use it). For a
+**deterministic** guarantee — lessons injected on every session start, a nudge
+on every tool failure — use the framework plugins in [`plugins/`](../../plugins/),
+which fire the `lorekit hook` engine on host lifecycle events. The skill and
+the hooks compose: hooks guarantee the *timing*, the skill supplies the
+*authoring judgment*.
 
 ## Security note
 

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeSubmitPrompt": [
+      { "command": "npx -y @lorekit/cli hook --adapter cursor --event beforeSubmitPrompt" }
+    ],
+    "stop": [
+      { "command": "npx -y @lorekit/cli hook --adapter cursor --event stop" }
+    ]
+  }
+}

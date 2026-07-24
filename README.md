@@ -82,6 +82,19 @@ npx @lorekit/cli doctor
 → See [packages/cli/README.md](./packages/cli/README.md) for all commands and
 flags, and the installed skill's `SKILL.md` for the read/write protocol.
 
+For a **deterministic** version that fires on host lifecycle events (no
+reliance on the agent invoking the skill), install a framework plugin. All
+three share one engine — the `lorekit hook` command — and differ only in thin
+per-host config:
+
+- **Claude Code** — a marketplace plugin (skill + `SessionStart` / failure /
+  `Stop` hooks + MCP): `/plugin marketplace add mthines/lorekit` then
+  `/plugin install lorekit-memory@lorekit`
+- **Cursor** — a rule + `stop` hook
+- **Codex** — feature-flagged hooks + an `AGENTS.md` fallback (experimental)
+
+→ See [plugins/README.md](./plugins/README.md).
+
 ## Architecture
 
 LoreKit is an NX monorepo with three deployable pieces:

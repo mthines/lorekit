@@ -1,0 +1,13 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "command": ["npx", "-y", "@lorekit/cli", "hook", "--adapter", "codex", "--event", "SessionStart"] }
+    ],
+    "PostToolUse": [
+      { "command": ["npx", "-y", "@lorekit/cli", "hook", "--adapter", "codex", "--event", "PostToolUse"] }
+    ],
+    "Stop": [
+      { "command": ["npx", "-y", "@lorekit/cli", "hook", "--adapter", "codex", "--event", "Stop"] }
+    ]
+  }
+}

@@ -91,3 +91,20 @@ export function tokenKind(token) {
   if (token.startsWith('lk_ro_')) return 'read-only';
   return 'unknown';
 }
+
+// For hooks: resolve the connection from the project's .mcp.json first
+// (that is where `lorekit install` wrote the token), then fall back to env.
+// `splitEndpoint` is passed in to avoid a circular import with mcp.mjs.
+export function resolveProjectConnection(root, splitEndpoint) {
+  const configured = readLorekitServer(root);
+  if (configured && configured.url) {
+    const { endpoint, token } = splitEndpoint(configured.url);
+    if (endpoint && !endpoint.includes('<project-ref>')) {
+      return {
+        endpoint,
+        token: token || process.env.LOREKIT_TOKEN || null,
+      };
+    }
+  }
+  return resolveConnection({});
+}
