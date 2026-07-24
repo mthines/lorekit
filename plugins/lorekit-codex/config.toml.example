@@ -1,0 +1,26 @@
+# LoreKit for Codex CLI — add to ~/.codex/config.toml
+#
+# Codex hooks are EXPERIMENTAL: they require the feature flag below, are
+# disabled on Windows, and first shipped in Codex v0.114. The exact hook key
+# layout may change between Codex versions — check the Codex docs if a hook
+# does not fire, and adjust the [hooks.*] tables to match.
+
+[features]
+codex_hooks = true
+
+# --- MCP server -------------------------------------------------------------
+# Replace <project-ref> and <your-lorekit-token>.
+[mcp_servers.lorekit]
+command = "npx"
+args = ["-y", "mcp-remote", "https://<project-ref>.supabase.co/functions/v1/mcp?token=<your-lorekit-token>"]
+
+# --- Hooks ------------------------------------------------------------------
+# Codex mirrors Claude Code's event model, so the same adapter is used.
+[[hooks.SessionStart]]
+command = ["npx", "-y", "@lorekit/cli", "hook", "--adapter", "codex", "--event", "SessionStart"]
+
+[[hooks.PostToolUse]]
+command = ["npx", "-y", "@lorekit/cli", "hook", "--adapter", "codex", "--event", "PostToolUse"]
+
+[[hooks.Stop]]
+command = ["npx", "-y", "@lorekit/cli", "hook", "--adapter", "codex", "--event", "Stop"]

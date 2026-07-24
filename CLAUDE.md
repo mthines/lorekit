@@ -16,10 +16,23 @@ lets humans browse, search, and manage those lessons.
 | `@lorekit/core` | `packages/mcp-core/` | Scope validator, DB client, 5 tool handlers, OTel tracer/meter |
 | `@lorekit/server` | `packages/mcp-server/` | Node.js HTTP server for Fly.io (OTel SDK init, auth, webhook) |
 | `@lorekit/web` | `packages/web/` | Next.js 15 dashboard (Vercel) |
+| `@lorekit/cli` | `packages/cli/` | Zero-dep Node CLI: `install` (scaffolds the `lorekit-memory` skill + `.mcp.json`), `doctor` (connectivity/token/scope health checks), and `hook` (the shared hook engine behind the plugins). Ships the skill under `skill/lorekit-memory/`. Verified by its own `node:test` suite; excluded from the NX TS lint gate. |
+| `plugins/` | `plugins/` | Per-framework deterministic bundles: `lorekit-claude` (marketplace plugin: skill + hooks + MCP), `lorekit-cursor` (rule + `stop` hook), `lorekit-codex` (feature-flagged hooks + `AGENTS.md` fallback, experimental). Root `.claude-plugin/marketplace.json` lists the Claude plugin. |
 | `supabase` | `supabase/` | Edge Functions (production MCP server), migrations, NX targets |
 
 The **production MCP server** is `supabase/functions/mcp/index.ts` (Deno, self-contained).
 `packages/mcp-server/` is the Node.js variant for Fly.io with full OTel.
+
+**Shared hook engine:** `lorekit hook --adapter <claude|cursor|codex> --event <name>` reads the host's
+JSON on stdin and injects lessons / a retrospective nudge on stdout, always exiting 0. Logic lives once
+in `packages/cli/src/{core,adapters}/`; each adapter reshapes I/O to its host. The Claude plugin's skill
+copy is vendored from `packages/cli/skill/` — keep in sync via `node scripts/sync-plugin-skill.mjs` (a
+`--check` mode guards drift).
+
+**Cross-framework validation:** `packages/cli/test/frameworks.test.mjs` replays payload fixtures
+(`test/fixtures/<adapter>-<event>.json`) through the binary and asserts each host's output contract, runs
+`claude plugin validate` (skips if the CLI is absent), and structurally checks the Cursor/Codex configs.
+Harvest real fixtures with `LOREKIT_HOOK_RECORD=<dir>` set on the hook command (one run per framework).
 
 ---
 

@@ -1,0 +1,44 @@
+---
+description: Read and write shared lessons via LoreKit at the start of a task and when something goes wrong.
+alwaysApply: true
+---
+
+# LoreKit shared memory
+
+You have access to LoreKit, a shared persistent memory, through its MCP tools
+(`memory.list`, `memory.search`, `memory.read`, `memory.write`).
+
+Cursor cannot inject lessons automatically at session start, so it is your
+job to use LoreKit at the right moments:
+
+## Read at the start of a task
+
+Before planning a non-trivial change, and the first time you open an
+unfamiliar part of the codebase, read prior lessons narrow-to-broad and merge
+them (more specific scope wins):
+
+1. `memory.list { scope: "branch::{owner}/{repo}::{branch}" }`
+2. `memory.list { scope: "repo::{owner}/{repo}" }`
+3. `memory.list { scope: "global" }`
+
+Derive `{owner}/{repo}` from the git `origin` remote and `{branch}` from the
+current branch, all lowercased. Treat lessons as considerations, not rules —
+trust the current code if they conflict.
+
+## Write when something goes wrong
+
+When a run hits a stuck loop, a repeated command failure, a surprising
+gotcha, a near-miss, or a wrong assumption that cost time, record it:
+
+```text
+memory.write {
+  scope: "repo::{owner}/{repo}",
+  key:   "lorekit-memory::<short-slug>",
+  value: "<what happened, phrased as an observation>",
+  tags:  ["skill::lorekit-memory", "source::gotcha"]
+}
+```
+
+Pick the narrowest scope that fits (branch / repo / project / global), and
+search first (`memory.search`) so you update a near-duplicate instead of
+creating a new one. If nothing durable happened, write nothing.

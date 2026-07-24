@@ -5,7 +5,10 @@ export default [
   ...nx.configs['flat/typescript'],
   ...nx.configs['flat/javascript'],
   {
-    ignores: ['**/dist', '**/node_modules'],
+    // @lorekit/cli is a standalone, zero-dependency Node package (no TS build);
+    // it is verified by its own `node:test` suite, not the monorepo TS lint gate.
+    // `plugins/` and `scripts/` are template bundles and tooling, not app code.
+    ignores: ['**/dist', '**/node_modules', 'packages/cli/**', 'plugins/**', 'scripts/**'],
   },
   {
     files: ['**/*.ts', '**/*.tsx'],

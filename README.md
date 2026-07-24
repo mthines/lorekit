@@ -60,6 +60,41 @@ In `.claude/skills/persistent-memory/config.json`:
 
 That's it. Your agent's lessons now survive every run and session.
 
+## Agent memory skill + CLI
+
+Prefer a one-command setup? The [`@lorekit/cli`](./packages/cli/) package
+installs a companion skill that makes agents use LoreKit autonomously —
+reading lessons when they start a task or navigate new code, and writing a
+lesson whenever something goes wrong (a stuck loop, a repeated failure, a
+gotcha, a costly wrong assumption). It mirrors the read-on-start /
+write-on-failure loop of the `aw` autonomous-workflow agent.
+
+```bash
+# Scaffold the lorekit-memory skill into .claude/skills and wire .mcp.json
+npx @lorekit/cli install \
+  --endpoint https://<project-ref>.supabase.co/functions/v1/mcp \
+  --token    lk_rw_<your-token>
+
+# Verify connectivity, token permission, and the git-derived scopes
+npx @lorekit/cli doctor
+```
+
+→ See [packages/cli/README.md](./packages/cli/README.md) for all commands and
+flags, and the installed skill's `SKILL.md` for the read/write protocol.
+
+For a **deterministic** version that fires on host lifecycle events (no
+reliance on the agent invoking the skill), install a framework plugin. All
+three share one engine — the `lorekit hook` command — and differ only in thin
+per-host config:
+
+- **Claude Code** — a marketplace plugin (skill + `SessionStart` / failure /
+  `Stop` hooks + MCP): `/plugin marketplace add mthines/lorekit` then
+  `/plugin install lorekit-memory@lorekit`
+- **Cursor** — a rule + `stop` hook
+- **Codex** — feature-flagged hooks + an `AGENTS.md` fallback (experimental)
+
+→ See [plugins/README.md](./plugins/README.md).
+
 ## Architecture
 
 LoreKit is an NX monorepo with three deployable pieces:

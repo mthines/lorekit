@@ -1,0 +1,8 @@
+{
+  "adapter": "cursor",
+  "event": "stop",
+  "stdin": {
+    "hook_event_name": "stop",
+    "generation_id": "fx-cu-stop"
+  }
+}

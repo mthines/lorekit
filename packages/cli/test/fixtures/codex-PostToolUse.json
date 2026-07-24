@@ -1,0 +1,12 @@
+{
+  "adapter": "codex",
+  "event": "PostToolUse",
+  "stdin": {
+    "hook_event_name": "PostToolUse",
+    "session_id": "fx-cx-fail",
+    "tool_name": "shell",
+    "tool_response": {
+      "is_error": true
+    }
+  }
+}

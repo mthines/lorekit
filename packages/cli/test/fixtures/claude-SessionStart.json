@@ -1,0 +1,11 @@
+{
+  "adapter": "claude",
+  "event": "SessionStart",
+  "stdin": {
+    "hook_event_name": "SessionStart",
+    "session_id": "fx-cc-ss",
+    "cwd": "/repo",
+    "source": "startup",
+    "model": "claude-sonnet-5"
+  }
+}

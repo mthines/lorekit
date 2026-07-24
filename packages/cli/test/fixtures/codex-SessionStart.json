@@ -1,0 +1,9 @@
+{
+  "adapter": "codex",
+  "event": "SessionStart",
+  "stdin": {
+    "hook_event_name": "SessionStart",
+    "session_id": "fx-cx-ss",
+    "cwd": "/repo"
+  }
+}
