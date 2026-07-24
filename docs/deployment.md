@@ -24,7 +24,7 @@ Two GitHub Actions workflows own the lifecycle:
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `.github/workflows/ci.yml` | PRs to `main` | **Verify before merge.** `check` (affected typecheck/test/lint — unit tests, all mocked) and `integration` (boots a local Supabase, serves the real Edge Functions, runs the live `smoke.integration` spec + schema lint). `integration` only runs when API/backend paths change (see [below](#only-runs-when-relevant)); the web build is verified by Vercel's own PR check. |
+| `.github/workflows/ci.yml` | PRs to `main` | **Verify before merge.** `check` (affected typecheck/test/lint — unit tests, all mocked) and `integration` (boots a local Supabase → migrations apply → serves the real Edge Functions → asserts an authenticated MCP `tools/list` returns 200, plus schema lint). `integration` only runs when API/backend paths change (see [below](#only-runs-when-relevant)); the web build is verified by Vercel's own PR check. |
 | `.github/workflows/deploy.yml` | push to `main`, `workflow_dispatch` | **Deploy the already-verified commit.** No test re-run — staging-first promotion only. |
 
 ### Tests run once, on the PR
@@ -36,9 +36,15 @@ only verifies the *live deployment* via smoke tests. Make the `check` and
 `integration` jobs [required status checks](#recommended-branch-protection) so
 this guarantee holds.
 
-The `integration` job is the pre-merge equivalent of `smoke-staging`: it runs
-the exact same `smoke.integration` spec, against a local Supabase instead of the
-staging project.
+The `integration` job asserts the whole stack wires up locally: migrations
+apply, the Edge Functions boot and serve, and an authenticated MCP `tools/list`
+returns 200. The full write/read/list/search/delete round-trip (the
+`smoke.integration` spec) runs in `smoke-staging` against the real staging
+project — it is intentionally not run locally, because the local edge runtime
+bundles an older PostgREST that can't resolve the `UNIQUE NULLS NOT DISTINCT`
+upsert arbiter for service-role writes (`user_id` null). Real writes use a
+non-null `user_id` (an `lk_rw_` token or a JWT), which `mcp-core`'s unit tests
+cover here and `smoke-staging` exercises end-to-end against current PostgREST.
 
 #### Only runs when relevant
 
