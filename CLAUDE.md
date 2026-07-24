@@ -71,6 +71,26 @@ Write tools require `lk_rw_*`. Read tools accept both.
 
 ---
 
+## Limits & rate limiting
+
+Two abuse guardrails, both free-tier defaults, config-driven, per-user
+overridable (no billing built yet — see [docs/limits.md](./docs/limits.md)):
+
+- **Memory cap** (default 1000 active memories/user) — enforced authoritatively
+  by a `BEFORE INSERT` trigger on `memories` (`enforce_memory_cap()`,
+  `supabase/migrations/00004_limits.sql`). Rejections are translated into an
+  actionable `LimitError` (code `memory_cap`) by the app layer.
+- **Rate limit** (default 120 req/min/user, all MCP methods) — a Postgres-backed
+  fixed-window RPC (`lorekit_check_rate_limit()`), called by the transport layer
+  right after auth resolves. Blocked requests get HTTP `429` + `Retry-After`.
+- Both read their limits through `lorekit_get_limit(user_id, key)` =
+  `COALESCE(user_limits override, lorekit_default_limit(key))` — no numeric
+  limit is hardcoded in app code. Raising a user's limit is a `user_limits` row
+  upsert (SQL) for now.
+- Service-role (CI, `user_id IS NULL`) is exempt from both guardrails.
+
+---
+
 ## Key files
 
 | File | Purpose |
@@ -85,6 +105,8 @@ Write tools require `lk_rw_*`. Read tools accept both.
 | `supabase/functions/_shared/otel.ts` | Reusable OTel for Edge Functions: `traceRequest()`, `createTracedClient()` |
 | `supabase/migrations/00001_memories.sql` | `memories` table, FTS, RLS |
 | `supabase/migrations/00002_api_tokens.sql` | `api_tokens` table, RLS |
+| `supabase/migrations/00004_limits.sql` | Memory cap trigger (`enforce_memory_cap`), rate-limit RPC (`lorekit_check_rate_limit`), `user_limits` override table, `lorekit_get_limit`/`lorekit_default_limit` config source |
+| `packages/mcp-core/src/limits.ts` | `LimitError`, `translateCapError`, `checkRateLimit`, `rateLimitDecision` — mirrored self-contained in `supabase/functions/mcp/limits.ts` for the Deno edge function |
 
 ---
 
@@ -122,3 +144,6 @@ Metric: `lorekit.tool.duration` histogram (unit `s`) with `lorekit.tool.name` + 
 - `Dash0Provider` React component is the primary RUM init path (explicit, visible in component tree)
 - Edge Function is self-contained Deno (no cross-package imports) — Node.js MCP SDK incompatible with Deno
 - NX 22.4.0 — matches `gw-tools` exactly; bump both together
+- Memory cap enforced by a DB trigger (not app-side counting) — the write-path `userId` is auth-type-sensitive (null for JWT users, RLS-scoped), so only a `NEW.user_id`-keyed trigger is auth-agnostic and unbypassable
+- Rate limiting is a Postgres-backed fixed-window counter (not in-memory or Redis) — edge isolates are stateless/short-lived; no new infra required
+- Limits config lives in one DB function (`lorekit_default_limit`) + one override table (`user_limits`) — no numeric limit hardcoded in app code, so raising a user's ceiling is a single row upsert (paid-tier-ready, no billing built now)

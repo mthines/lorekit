@@ -6,6 +6,7 @@
 | [mcp-tools.md](./mcp-tools.md) | Agents + developers | All 9 MCP tools with request/response examples |
 | [scope-format.md](./scope-format.md) | Agents + developers | Canonical scope string spec and resolution strategy |
 | [api-tokens.md](./api-tokens.md) | Developers | Token types, permissions, generation, CI usage |
+| [limits.md](./limits.md) | Agents + developers | Memory cap, rate limiting, per-user overrides, 429 semantics |
 | [otel.md](./otel.md) | Developers | Dash0 setup, custom spans, environment variables |
 | [deployment.md](./deployment.md) | Developers | Step-by-step deployment for all three pieces |
 
