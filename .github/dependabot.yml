@@ -1,0 +1,10 @@
+# Keeps GitHub Actions versions current. Once actions are SHA-pinned with a
+# trailing `# vX.Y.Z` comment, Dependabot proposes SHA bumps automatically.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
