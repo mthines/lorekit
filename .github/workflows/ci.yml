@@ -136,17 +136,39 @@ jobs:
 
       - name: Capture local service-role key
         id: supabase
-        run: echo "service_role_key=$(supabase status -o json | jq -r '.SERVICE_ROLE_KEY')" >> "$GITHUB_OUTPUT"
-
-      - name: Wait for edge functions to be ready
         run: |
-          for i in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:54321/functions/v1/health >/dev/null 2>&1; then
-              echo "Edge functions ready"; exit 0
+          supabase status -o json > /tmp/status.json
+          # The service-role key the edge runtime injects as SUPABASE_SERVICE_ROLE_KEY.
+          # Field name varies by CLI version (legacy SERVICE_ROLE_KEY vs newer SECRET_KEY).
+          KEY="$(jq -r '.SERVICE_ROLE_KEY // .SECRET_KEY // .service_role_key // empty' /tmp/status.json)"
+          if [ -z "$KEY" ]; then
+            echo "::error::No service-role/secret key in supabase status. Available keys:"
+            jq -r 'keys[]' /tmp/status.json
+            exit 1
+          fi
+          echo "::add-mask::$KEY"
+          echo "service_role_key=$KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the MCP endpoint to authenticate
+        env:
+          TOKEN: ${{ steps.supabase.outputs.service_role_key }}
+        run: |
+          for i in $(seq 1 40); do
+            CODE=$(curl -s --max-time 30 -o /tmp/mcp.out -w '%{http_code}' \
+              -X POST http://127.0.0.1:54321/functions/v1/mcp \
+              -H "Authorization: Bearer ${TOKEN}" \
+              -H "Content-Type: application/json" \
+              -H "Accept: application/json, text/event-stream" \
+              -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' || echo 000)
+            if [ "$CODE" = "200" ]; then
+              echo "MCP endpoint ready (tools/list → 200)"; exit 0
             fi
-            sleep 2
+            echo "attempt $i: HTTP $CODE"
+            sleep 3
           done
-          echo "::error::Edge functions did not become ready in time"
+          echo "::error::MCP endpoint did not return 200 for an authenticated tools/list"
+          echo '--- last response body ---'; cat /tmp/mcp.out || true
+          echo '--- edge runtime logs ---'; docker logs supabase_edge_runtime_lorekit 2>&1 | tail -80 || true
           exit 1
 
       - name: Run integration test against local MCP endpoint
@@ -154,6 +176,10 @@ jobs:
         env:
           LOREKIT_SMOKE_URL: http://127.0.0.1:54321/functions/v1/mcp
           LOREKIT_SMOKE_TOKEN: ${{ steps.supabase.outputs.service_role_key }}
+
+      - name: Edge runtime logs (on failure)
+        if: failure()
+        run: docker logs supabase_edge_runtime_lorekit 2>&1 | tail -120 || true
 
       - name: Stop local Supabase
         if: always()

@@ -48,7 +48,11 @@ redirect_uri = ""
 
 [edge_runtime]
 enabled = true
-policy = "oneshot"
+# per_worker keeps one warm worker instead of cold-starting on every request
+# (the "oneshot" dev default), which is what CI integration tests need — the
+# smoke suite makes many sequential calls and oneshot re-downloads deps each
+# time. Hot-reload local dev uses `supabase functions serve` instead.
+policy = "per_worker"
 inspector_port = 8083
 
 # Both functions handle their own auth (API tokens / JWT inside the function),
