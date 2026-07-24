@@ -10,6 +10,94 @@ LoreKit has three deployable pieces. Each has its own deployment path.
 | Web dashboard | Vercel | Auto-deploy on `git push main` |
 | Database migrations | Supabase | `pnpm nx db:push supabase` |
 
+**In normal operation you do not run these by hand.** Merging to `main` triggers
+the [automated CI/CD pipeline](#automated-deployment-cicd), which promotes
+migrations + Edge Functions **staging → production** with smoke gates and
+automatic function rollback. The manual commands below are for first-time
+project setup and local operations.
+
+---
+
+## Automated deployment (CI/CD)
+
+Two GitHub Actions workflows own the lifecycle:
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `.github/workflows/ci.yml` | PRs to `main` | **Verify before merge.** `check` (affected typecheck/test/lint — unit tests, all mocked) and `integration` (boots a local Supabase, serves the real Edge Functions, runs the live `smoke.integration` spec + schema lint). `integration` only runs when API/backend paths change (see [below](#only-runs-when-relevant)); the web build is verified by Vercel's own PR check. |
+| `.github/workflows/deploy.yml` | push to `main`, `workflow_dispatch` | **Deploy the already-verified commit.** No test re-run — staging-first promotion only. |
+
+### Tests run once, on the PR
+
+Unit and integration tests run in `ci.yml` on every PR (and feature-branch
+push), so a commit cannot reach `main` unverified. The deploy pipeline
+deliberately does **not** re-run them — it trusts the required PR checks and
+only verifies the *live deployment* via smoke tests. Make the `check` and
+`integration` jobs [required status checks](#recommended-branch-protection) so
+this guarantee holds.
+
+The `integration` job is the pre-merge equivalent of `smoke-staging`: it runs
+the exact same `smoke.integration` spec, against a local Supabase instead of the
+staging project.
+
+#### Only runs when relevant
+
+Booting a local Supabase is expensive, so a `changes` job diffs the PR and the
+`integration` job only runs when API/backend paths change — `packages/mcp-core/`,
+`packages/mcp-server/`, `supabase/functions/`, `supabase/migrations/`,
+`supabase/config.toml`, `package.json`, `pnpm-lock.yaml`, or `ci.yml` itself. A
+docs- or web-only PR skips it. Unit typecheck/test/lint (`check`) is not gated
+this way — `nx affected` already scopes itself to the changed packages. A
+skipped required check is treated as passing by branch protection, so gating
+`integration` does not block unrelated PRs from merging.
+
+### The deploy pipeline (on merge to `main`)
+
+Each job `needs:` the previous one, so a red step is a hard gate — nothing
+downstream runs:
+
+```
+deploy-staging          db push + functions deploy → STAGING project
+  └─▶ smoke-staging      smoke.integration spec against STAGING
+        └─▶ deploy-production     db push + functions deploy → PRODUCTION project
+              └─▶ smoke-production   health + MCP tools/list against PRODUCTION
+                    └─▶ rollback-production   (only on failure)
+```
+
+Production is never touched until staging has been deployed and smoke-tested.
+
+### Rollback behaviour
+
+On any post-deploy failure, `rollback-production` redeploys the **previous
+commit's** Edge Functions and fails the run loudly with a step summary.
+Database migrations are **forward-only** and intentionally *not* reverted —
+keep migrations backward-compatible (expand/contract) and enable **PITR**
+(Point-in-Time Recovery) in the Supabase dashboard as the database safety net.
+
+### Environments and secrets
+
+The pipeline targets **two Supabase projects** (a dedicated staging project +
+production) via GitHub **Environments** (Settings ▸ Environments). Secrets share
+the same *names* across environments; the `environment:` on each job selects the
+right values:
+
+| Secret | `staging` environment | `production` environment |
+|--------|-----------------------|--------------------------|
+| `SUPABASE_PROJECT_REF` | staging project ref | production project ref |
+| `SUPABASE_DB_PASSWORD` | staging DB password | production DB password |
+| `LOREKIT_SMOKE_TOKEN` | staging `lk_rw_*` token | production `lk_rw_*` token |
+
+Repo-level secret shared by both: `SUPABASE_ACCESS_TOKEN` (a Supabase personal
+access token). Add a **required reviewer** on the `production` environment for a
+manual approval gate before prod is touched.
+
+### Recommended branch protection
+
+Require a PR to `main` and mark the `ci.yml` **`Typecheck, Test & Lint
+(affected)`** and **`Integration tests (local Supabase)`** jobs as required
+status checks. Because `deploy.yml` no longer re-runs tests, these checks are
+the sole gate that keeps unverified (or migration-breaking) code off `main`.
+
 ---
 
 ## Prerequisites

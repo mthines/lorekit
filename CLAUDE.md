@@ -36,6 +36,9 @@ pnpm nx test mcp-core          # needs supabase start
 pnpm nx serve web              # Next.js dev server
 
 # Supabase (needs SUPABASE_PROJECT_REF in .env.local)
+# NOTE: these are for local/first-time setup. Merging to main runs the
+# staging-first CI/CD pipeline (.github/workflows/deploy.yml) automatically.
+# See docs/deployment.md → "Automated deployment (CI/CD)".
 pnpm nx deploy supabase        # typecheck + test → db push → fn:deploy
 pnpm nx db:push supabase       # push migrations
 pnpm nx fn:deploy supabase     # deploy mcp + health Edge Functions
@@ -147,3 +150,4 @@ Metric: `lorekit.tool.duration` histogram (unit `s`) with `lorekit.tool.name` + 
 - Memory cap enforced by a DB trigger (not app-side counting) — the write-path `userId` is auth-type-sensitive (null for JWT users, RLS-scoped), so only a `NEW.user_id`-keyed trigger is auth-agnostic and unbypassable
 - Rate limiting is a Postgres-backed fixed-window counter (not in-memory or Redis) — edge isolates are stateless/short-lived; no new infra required
 - Limits config lives in one DB function (`lorekit_default_limit`) + one override table (`user_limits`) — no numeric limit hardcoded in app code, so raising a user's ceiling is a single row upsert (paid-tier-ready, no billing built now)
+- CI/CD is split: `ci.yml` **verifies before merge** (PRs + non-main branches) — `check` runs mocked unit tests, `integration` boots a local Supabase and runs the live `smoke.integration` spec (the web build is covered by Vercel's own PR check, not CI). `deploy.yml` owns `main` and **deploys the already-verified commit** (no test re-run) as a **staging-first promotion pipeline** (deploy-staging → smoke-staging → deploy-production → smoke-production → rollback-on-failure). Tests run once, on the PR; the deploy path only smoke-tests the live deployment. Make `check` + `integration` required status checks — they are the sole gate keeping unverified code off main. Two Supabase projects, secrets scoped via `staging`/`production` GitHub Environments. Migrations are forward-only (expand/contract + PITR); only Edge Functions auto-rollback. `[functions.*] verify_jwt = false` in config.toml mirrors the deploy `--no-verify-jwt` flag and lets `supabase start` serve functions for the integration test. Do not re-merge the workflows or re-add a deploy-time test job — the split is what removed the old double test + double `db push`. See docs/deployment.md.
