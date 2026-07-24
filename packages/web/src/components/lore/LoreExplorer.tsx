@@ -7,7 +7,8 @@
  *
  * ## URL state strategy
  * - `scope` param:   which scope is selected. Shareable, survives refresh.
- * - `q` param:       the active search query. Survives refresh.
+ * - `q` param:       the active search query. Shareable, survives refresh, but
+ *   written to the URL debounced (~300ms) — see the search-input note below.
  * - `scopePanelOpen`: local useState — ephemeral accordion state, NOT in URL.
  *   Putting accordion visibility in the URL clutters the address bar and the
  *   share link with low-value UI state. It also fires a router.replace on every
@@ -31,6 +32,7 @@ import { ScopeTree, type ScopeNode } from './ScopeTree';
 import { LessonCard, type LessonEntry } from './LessonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useUrlState } from '@/lib/hooks/useUrlState';
+import { useDebouncedUrlState } from '@/lib/hooks/useDebouncedUrlState';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 
 interface LoreExplorerProps {
@@ -42,10 +44,15 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
   const { openLesson, openLessonById, closeLesson } = useMemorySidebar();
   const [, startTransition] = useTransition();
 
-  // URL-backed: scope selection and search query survive refreshes and are
-  // shareable. The optimistic layer in useUrlState ensures immediate feedback.
+  // URL-backed: scope selection survives refreshes and is shareable. Scope is a
+  // discrete click, so it writes the URL immediately (no debounce).
   const [selectedScope, setSelectedScope] = useUrlState<string | null>('scope', null);
-  const [query, setQuery] = useUrlState<string>('q', '');
+
+  // Search is high-frequency input: the returned `query` stays instantly
+  // responsive (local state) and drives client-side filtering, while the
+  // shareable `?q=` param is written on a trailing debounce so we don't fire a
+  // router.replace per keystroke. See useDebouncedUrlState for the full rationale.
+  const [query, setQuery] = useDebouncedUrlState<string>('q', '');
 
   // Local-only: mobile accordion state. Ephemeral UI — not shareable, not
   // persisted. Putting this in URL state would pollute every share link and
@@ -120,7 +127,7 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
                 type="search"
                 placeholder="Search lessons…"
                 value={query}
-                onChange={(e) => startTransition(() => setQuery(e.target.value))}
+                onChange={(e) => setQuery(e.target.value)}
                 aria-label="Search lessons"
                 className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] py-2 pl-8 pr-3 text-xs text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none transition-colors duration-150"
               />

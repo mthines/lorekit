@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import { Bot, Zap, GitBranch, Globe, FolderGit2, Layers, Webhook } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
+import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import type { ScopePrefix } from '@/lib/scope';
 
 export interface ActivityEvent {
@@ -75,18 +76,28 @@ function DateLabel({ date }: { date: string }) {
 interface ActivityEventRowProps {
   event: ActivityEvent;
   index: number;
+  selected: boolean;
+  onSelect: (ref: { scope: string; key: string }) => void;
 }
 
-function ActivityEventRow({ event, index }: ActivityEventRowProps) {
+function ActivityEventRow({ event, index, selected, onSelect }: ActivityEventRowProps) {
   const ScopeIcon = SCOPE_ICONS[event.scope_type];
   const TriggerIcon = event.trigger ? (TRIGGER_ICONS[event.trigger] ?? Bot) : Bot;
 
   return (
-    <motion.article
+    <motion.button
+      type="button"
+      onClick={() => onSelect({ scope: event.scope, key: event.key })}
+      aria-pressed={selected}
       initial={{ opacity: 0, x: -8 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay: index * 0.03, duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-      className="flex gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-3 transition-colors duration-150 hover:bg-[var(--color-bg-elevated)]"
+      className={[
+        'flex w-full gap-3 rounded-lg border p-3 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]',
+        selected
+          ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)]'
+          : 'border-[var(--color-border)] bg-[var(--color-bg-raised)] hover:bg-[var(--color-bg-elevated)]',
+      ].join(' ')}
     >
       {/* Icon */}
       <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
@@ -128,7 +139,7 @@ function ActivityEventRow({ event, index }: ActivityEventRowProps) {
           <code className="ml-auto truncate opacity-50">{event.scope}</code>
         </div>
       </div>
-    </motion.article>
+    </motion.button>
   );
 }
 
@@ -136,39 +147,62 @@ interface ActivityFeedProps {
   events: ActivityEvent[];
 }
 
-const FILTERS = ['all', 'aw-executor', 'fix-bug', 'pr-webhook', 'manual'] as const;
+/** Friendly label for a scope filter pill — last segment, matching the Lore Explorer. */
+function scopeLabel(scope: string): string {
+  return scope.split('::').pop() ?? scope;
+}
 
 export function ActivityFeed({ events }: ActivityFeedProps) {
   const [filter, setFilter] = useState<string>('all');
+  const { openLessonRef, openLessonById, closeLesson } = useMemorySidebar();
 
-  const filtered = filter === 'all'
-    ? events
-    : events.filter(
-        (e) => e.source_agent === filter || e.trigger === filter,
-      );
+  function handleSelect(ref: { scope: string; key: string }) {
+    if (openLessonRef?.scope === ref.scope && openLessonRef?.key === ref.key) {
+      closeLesson();
+    } else {
+      openLessonById(ref);
+    }
+  }
+
+  // Filter pills are derived from the scopes actually present in the events —
+  // dynamic and relevant to this user's data, rather than a hardcoded list of
+  // agent/trigger names. Ordered by frequency (most active scope first), then
+  // alphabetically for a stable tie-break.
+  const scopeFilters = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const e of events) counts.set(e.scope, (counts.get(e.scope) ?? 0) + 1);
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([scope]) => scope);
+  }, [events]);
+
+  const filtered = filter === 'all' ? events : events.filter((e) => e.scope === filter);
 
   const grouped = groupByDate(filtered);
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Filter pills */}
-      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by source">
-        {FILTERS.map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            aria-pressed={filter === f}
-            className={[
-              'rounded-full px-3 py-1 text-xs font-medium transition-all duration-150',
-              filter === f
-                ? 'bg-[var(--color-accent)] text-[#000]'
-                : 'border border-[var(--color-border)] bg-[var(--color-bg-raised)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
-            ].join(' ')}
-          >
-            {f}
-          </button>
-        ))}
-      </div>
+      {/* Filter pills — dynamic, one per scope present in the events. */}
+      {scopeFilters.length > 0 && (
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by scope">
+          {['all', ...scopeFilters].map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              aria-pressed={filter === f}
+              title={f === 'all' ? undefined : f}
+              className={[
+                'rounded-full px-3 py-1 font-mono text-xs font-medium transition-all duration-150',
+                filter === f
+                  ? 'bg-[var(--color-accent)] text-[#000]'
+                  : 'border border-[var(--color-border)] bg-[var(--color-bg-raised)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
+              ].join(' ')}
+            >
+              {f === 'all' ? 'all' : scopeLabel(f)}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Grouped events */}
       {grouped.size > 0 ? (
@@ -178,7 +212,13 @@ export function ActivityFeed({ events }: ActivityFeedProps) {
               <DateLabel date={date} />
               <div className="flex flex-col gap-1.5">
                 {dayEvents.map((e, i) => (
-                  <ActivityEventRow key={e.id} event={e} index={i} />
+                  <ActivityEventRow
+                    key={e.id}
+                    event={e}
+                    index={i}
+                    selected={openLessonRef?.scope === e.scope && openLessonRef?.key === e.key}
+                    onSelect={handleSelect}
+                  />
                 ))}
               </div>
             </div>
