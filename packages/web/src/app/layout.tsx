@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from 'next';
-import { Dash0Provider } from '@/components/providers/Dash0Provider';
 import { ReactQueryProvider } from '@/components/providers/ReactQueryProvider';
 import './globals.css';
 
@@ -25,11 +24,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className="dark">
       <body className="min-h-screen antialiased">
-        {/* Dash0 Web SDK — initialised here so it covers login page too.
-            userId is passed from dashboard layout after auth. */}
-        <Dash0Provider />
-        {/* ReactQueryProvider wraps everything so all client components below
-            can call useQuery / useSuspenseQuery without their own provider. */}
+        {/*
+         * Dash0Provider is intentionally NOT mounted here.
+         * The dashboard layout mounts it with the authenticated userId so RUM
+         * telemetry is correctly attributed. The login page has no user to
+         * identify, so mounting an unauthenticated instance here would create
+         * a duplicate initialisation on every dashboard page load.
+         */}
         <ReactQueryProvider>{children}</ReactQueryProvider>
       </body>
     </html>
