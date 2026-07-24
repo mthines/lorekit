@@ -11,7 +11,7 @@
  * Mirrored (self-contained, no cross-package import) in
  * supabase/functions/mcp/limits.ts for the Deno edge function.
  */
-import { SpanStatusCode } from '@opentelemetry/api';
+import { SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getTracer, getToolDurationHistogram } from './telemetry.js';
 
@@ -74,7 +74,7 @@ export async function checkRateLimit(
   const hist = getToolDurationHistogram();
   const startTime = Date.now();
 
-  return tracer.startActiveSpan('lorekit.rate_limit.check', { kind: 0 }, async (span) => {
+  return tracer.startActiveSpan('lorekit.rate_limit.check', { kind: SpanKind.INTERNAL }, async (span) => {
     span.setAttribute('lorekit.tool.name', 'rate_limit.check');
     try {
       const { data, error } = await db.rpc('lorekit_check_rate_limit', {
@@ -107,3 +107,4 @@ export async function checkRateLimit(
     }
   });
 }
+
