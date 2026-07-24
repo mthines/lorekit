@@ -1,3 +1,20 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Deploy — staging-first promotion pipeline, runs on merge to main.
+#
+#   test ─▶ deploy-staging ─▶ smoke-staging ─▶ deploy-production ─▶ smoke-production
+#                                                        └─▶ rollback-production (on failure)
+#
+# Production is never touched until the full suite is green AND staging has been
+# deployed and smoke-tested. Each job `needs:` the previous one, so a red step is
+# a hard gate — nothing downstream runs.
+#
+# Environments (Settings ▸ Environments) scope the secrets by target:
+#   staging    → SUPABASE_PROJECT_REF, SUPABASE_DB_PASSWORD, LOREKIT_SMOKE_TOKEN (staging values)
+#   production → SUPABASE_PROJECT_REF, SUPABASE_DB_PASSWORD, LOREKIT_SMOKE_TOKEN (production values)
+# Repo-level secret shared by both: SUPABASE_ACCESS_TOKEN (personal access token).
+# Add a required reviewer on the `production` environment for a manual gate.
+# ─────────────────────────────────────────────────────────────────────────────
+
 name: Deploy
 
 on:
@@ -7,17 +24,22 @@ on:
 
 permissions: {}
 
+# Never cancel an in-flight deploy — a half-applied migration is worse than a queue.
 concurrency:
   group: deploy-${{ github.ref }}
-  cancel-in-progress: false # Never cancel an in-flight deploy
+  cancel-in-progress: false
 
 jobs:
-  # ── 1. Typecheck + Test + Lint ────────────────────────────────────────────
-  check:
-    name: Typecheck, Test & Lint
+  # ── 1. Full test gate (all packages, not just affected) ──────────────────────
+  test:
+    name: Typecheck, Test & Lint (all)
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+      NEXT_PUBLIC_APP_URL: https://localhost:3001
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -39,17 +61,53 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: NX — typecheck, test, lint (all packages)
-        run: pnpm nx run-many -t typecheck,test,lint --parallel=3
-        env:
-          NX_BASE: HEAD~1
-          NX_HEAD: ${{ github.sha }}
+        run: pnpm nx run-many -t typecheck,test,lint --all --parallel=3
 
-  # ── 2. Run Supabase Migrations ────────────────────────────────────────────
-  migrate:
-    name: Supabase — Run Migrations
+      - name: Build Next.js app (production)
+        run: pnpm nx build web --configuration=production
+
+  # ── 2. Deploy to STAGING (migrations, then functions) ────────────────────────
+  deploy-staging:
+    name: Deploy → staging
     runs-on: ubuntu-latest
-    needs: check
-    environment: production
+    needs: test
+    environment: staging
+    permissions:
+      contents: read
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Tag deploy in Dash0 (VCS resource attributes)
+        run: |
+          supabase secrets set \
+            VCS_REPOSITORY_URL_FULL="https://github.com/${{ github.repository }}" \
+            VCS_REF_HEAD_NAME="${{ github.ref_name }}" \
+            VCS_REF_HEAD_REVISION="${{ github.sha }}" \
+            VCS_REPOSITORY_NAME="${{ github.repository }}" \
+            --project-ref "$PROJECT_REF"
+
+      - name: Push database migrations
+        run: supabase db push --project-ref "$PROJECT_REF"
+
+      - name: Deploy edge functions (mcp + health)
+        run: supabase functions deploy --no-verify-jwt --project-ref "$PROJECT_REF"
+
+  # ── 3. Migration/smoke tests against STAGING (the gate before prod) ──────────
+  smoke-staging:
+    name: Smoke tests → staging
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    environment: staging
     permissions:
       contents: read
     steps:
@@ -70,24 +128,24 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install Supabase CLI
-        uses: supabase/setup-cli@v1
-        with:
-          version: latest
-
-      - name: Push database migrations
-        run: supabase db push --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
+      - name: Run MCP smoke + integration tests against staging
+        run: pnpm nx test mcp-server
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          LOREKIT_SMOKE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
+          LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
 
-  # ── 3. Deploy Supabase Edge Functions ────────────────────────────────────
-  deploy-functions:
-    name: Supabase — Deploy Edge Functions
+  # ── 4. Deploy to PRODUCTION (only reached if staging is green) ───────────────
+  deploy-production:
+    name: Deploy → production
     runs-on: ubuntu-latest
-    needs: migrate
+    needs: smoke-staging
     environment: production
     permissions:
       contents: read
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -97,31 +155,93 @@ jobs:
         with:
           version: latest
 
-      - name: Set VCS resource attributes as Supabase secrets
+      - name: Tag deploy in Dash0 (VCS resource attributes)
         run: |
           supabase secrets set \
             VCS_REPOSITORY_URL_FULL="https://github.com/${{ github.repository }}" \
             VCS_REF_HEAD_NAME="${{ github.ref_name }}" \
             VCS_REF_HEAD_REVISION="${{ github.sha }}" \
             VCS_REPOSITORY_NAME="${{ github.repository }}" \
-            --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+            --project-ref "$PROJECT_REF"
 
-      - name: Deploy mcp function (no JWT verification — auth is handled by the function itself)
-        run: supabase functions deploy mcp --no-verify-jwt --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      - name: Push database migrations
+        run: supabase db push --project-ref "$PROJECT_REF"
 
-      - name: Deploy health function (no JWT verification)
-        run: supabase functions deploy health --no-verify-jwt --project-ref ${{ secrets.SUPABASE_PROJECT_REF }}
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      - name: Deploy edge functions (mcp + health)
+        run: supabase functions deploy --no-verify-jwt --project-ref "$PROJECT_REF"
 
-      - name: Smoke-test health endpoint
+  # ── 5. Post-deploy verification against PRODUCTION ───────────────────────────
+  smoke-production:
+    name: Smoke test → production
+    runs-on: ubuntu-latest
+    needs: deploy-production
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - name: Verify health endpoint
         run: |
-          echo "### Deploy result" >> $GITHUB_STEP_SUMMARY
-          STATUS=$(curl -sf "https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/health" | jq -r '.status // "unknown"')
-          echo "Health endpoint status: **${STATUS}**" >> $GITHUB_STEP_SUMMARY
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          URL="https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/health"
+          STATUS=$(curl -sf "$URL" | jq -r '.status // "unknown"')
+          echo "### Production deploy" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Health endpoint status: **${STATUS}**" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$STATUS" != "ok" ]; then
+            echo "::error::Production health check returned '${STATUS}'"
+            exit 1
+          fi
+
+      - name: Verify MCP endpoint responds (tools/list)
+        run: |
+          URL="https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp"
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" \
+            -H "Authorization: Bearer ${{ secrets.LOREKIT_SMOKE_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
+          echo "- MCP tools/list HTTP: **${CODE}**" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::Production MCP endpoint returned HTTP ${CODE} for tools/list"
+            exit 1
+          fi
+
+  # ── 6. Rollback PRODUCTION functions on any post-deploy failure ──────────────
+  #    Redeploys the previous commit's edge functions. Migrations are forward-only
+  #    (expand/contract + PITR is the DB safety net) so they are intentionally not
+  #    reverted here. Runs only when a production job was attempted and failed.
+  rollback-production:
+    name: Rollback → production functions
+    runs-on: ubuntu-latest
+    needs: [deploy-production, smoke-production]
+    if: failure()
+    environment: production
+    permissions:
+      contents: read
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - name: Checkout repository (with previous commit)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Restore previous commit's function code
+        run: git checkout HEAD~1 -- supabase/functions supabase/config.toml
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Redeploy previous edge functions
+        run: supabase functions deploy --no-verify-jwt --project-ref "$PROJECT_REF"
+
+      - name: Report rollback
+        run: |
+          echo "### ⚠️ Production rollback executed" >> "$GITHUB_STEP_SUMMARY"
+          echo "Edge functions were rolled back to \`$(git rev-parse HEAD~1)\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "Database migrations were **not** reverted (forward-only)." >> "$GITHUB_STEP_SUMMARY"
+          echo "Inspect the failing job above and, if a migration is at fault, restore via PITR." >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::Production deploy failed — functions rolled back to the previous commit."
+          exit 1
