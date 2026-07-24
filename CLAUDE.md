@@ -106,7 +106,7 @@ overridable (no billing built yet — see [docs/limits.md](./docs/limits.md)):
 | `supabase/migrations/00001_memories.sql` | `memories` table, FTS, RLS |
 | `supabase/migrations/00002_api_tokens.sql` | `api_tokens` table, RLS |
 | `supabase/migrations/00004_limits.sql` | Memory cap trigger (`enforce_memory_cap`), rate-limit RPC (`lorekit_check_rate_limit`), `user_limits` override table, `lorekit_get_limit`/`lorekit_default_limit` config source |
-| `packages/mcp-core/src/limits.ts` | `LimitError`, `translateCapError`, `checkRateLimit`, `rateLimitDecision` — mirrored self-contained in `supabase/functions/mcp/limits.ts` for the Deno edge function |
+| `packages/mcp-core/src/limits.ts` | `LimitError`, `translateCapError`, `checkRateLimit`, `rateLimitMessage` — mirrored self-contained in `supabase/functions/mcp/limits.ts` for the Deno edge function |
 
 ---
 

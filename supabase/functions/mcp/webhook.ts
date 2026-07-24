@@ -170,5 +170,3 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
 export function handleWebhook(req: Request): Promise<Response> {
   return traceRequest(req, 'lorekit.webhook.github', (span) => processWebhook(req, span));
 }
-
-
