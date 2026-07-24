@@ -46,6 +46,17 @@ Both jobs run through LoreKit's `memory.*` MCP tools.
 If those tools are not connected, this skill is a no-op — say so once and
 continue the task; never block work because memory is unavailable.
 
+> **Modes.** Memory has a controllable backend (`lorekit doctor` shows the
+> resolved one): `remote` (the hosted LoreKit server — the default), `local`
+> (markdown files in two tiers — a per-user **home** tier at `~/.lorekit/` and
+> an opt-in per-repo **project** tier at `<repo>/.lorekit/`), or `off`
+> (disabled). **`local` means _not_ on the hosted website** — local lessons stay
+> on disk and never sync to the LoreKit dashboard. `global` lessons go to home;
+> `repo`/`branch` lessons go to the project tier once you create `<repo>/.lorekit/`
+> (commit it to share with your team, or gitignore it to keep it private), else
+> home. See the `@lorekit/cli` README for the control model, the two-tier merge,
+> and precedence/deny rules.
+
 ---
 
 ## When to read (intake)

@@ -5,6 +5,7 @@ import { parseArgs, log, err, c } from '../src/util.mjs';
 import { install } from '../src/install.mjs';
 import { doctor } from '../src/doctor.mjs';
 import { hook } from '../src/hook.mjs';
+import { migrate } from '../src/migrate.mjs';
 
 const VERSION = '1.0.0';
 
@@ -17,6 +18,8 @@ ${c.bold('Commands')}
   install     Scaffold the lorekit-memory skill into .claude/skills and
               add the LoreKit server to .mcp.json.
   doctor      Verify the skill install, MCP connectivity, token, and scope.
+  migrate     Relocate a LoreKit-format local store into the current layout.
+              Dry-run by default; pass --yes to apply. Idempotent.
   hook        Hook engine for Claude Code / Cursor / Codex. Reads the host's
               JSON on stdin and injects lessons or a retrospective nudge.
               Not run by hand — wired into a plugin's hook config.
@@ -25,15 +28,25 @@ ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
   -e, --endpoint <url>    LoreKit MCP endpoint
   -t, --token <token>     LoreKit token (lk_rw_* to allow writes, lk_ro_* read-only)
-  -y, --yes               Non-interactive; never prompt
+      --mode <mode>       Memory mode: off | local | remote (doctor override)
+      --store <path>      Local project-tier store directory (default: .lorekit)
+      --from <path>       Source store to migrate from (migrate)
+      --to <tier>         Migration destination tier: home | project (migrate;
+                          default routes each entry by scope)
+      --apply             Apply the migration (alias of --yes) (migrate)
+  -y, --yes               Non-interactive / apply; never prompt
       --force             Overwrite existing skill files (install)
-      --deep              Do a write→read→delete round-trip (doctor, needs lk_rw_*)
+      --deep              Do a write→read→delete round-trip (doctor)
       --adapter <name>    Host framework for hook: claude | cursor | codex
       --event <name>      Host hook event (else read from stdin payload)
   -h, --help              Show this help
   -v, --version           Print the version
 
 ${c.bold('Environment')}
+  LOREKIT_MODE                         off | local | remote (select a mode)
+  LOREKIT_DENY                         comma list of forbidden modes (deny-wins)
+  LOREKIT_HOME                         home-tier root + config dir (default ~/.lorekit)
+  LOREKIT_STORE                        project-tier store directory (default .lorekit)
   LOREKIT_MCP_URL / LOREKIT_ENDPOINT   endpoint fallback
   LOREKIT_TOKEN                        token fallback
   NO_COLOR                             disable colored output
@@ -41,13 +54,15 @@ ${c.bold('Environment')}
 ${c.bold('Examples')}
   npx @lorekit/cli install --endpoint https://ref.supabase.co/functions/v1/mcp --token lk_rw_xxx
   npx @lorekit/cli doctor --deep
+  npx @lorekit/cli migrate --from .lore                 # preview a rename
+  npx @lorekit/cli migrate --from .lore --to project --yes
 `;
 
 async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'help', 'version'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version'],
   });
 
   // `hook` is machine-facing: it must never print help/errors to stdout
@@ -74,6 +89,8 @@ async function main() {
       return install(args);
     case 'doctor':
       return doctor(args);
+    case 'migrate':
+      return migrate(args);
     default:
       err(`${c.red('Unknown command:')} ${command}\n`);
       log(HELP);
