@@ -3,9 +3,10 @@
 // logic, and prints the framework-shaped injection on stdout. Always exits 0 —
 // a memory hook must never block or break the host agent.
 import process from 'node:process';
-import { resolveProjectRoot, resolveProjectConnection } from './config.mjs';
-import { splitEndpoint } from './mcp.mjs';
+import { resolveProjectRoot } from './config.mjs';
 import { deriveScope } from './scope.mjs';
+import { loadControl } from './control.mjs';
+import { createStore } from './store/index.mjs';
 import { fetchLessons, formatLessons, retrospectiveNudge, failureNudge } from './core/lessons.mjs';
 import { isFailure } from './core/failure.mjs';
 import { firstTimeThisSession } from './core/state.mjs';
@@ -68,15 +69,21 @@ async function run(args) {
     args.dir || process.env.CLAUDE_PROJECT_DIR || parsed.cwd || undefined,
   );
   const scope = deriveScope(root);
+
+  // Resolve the control model once. `off` disables every hook event — no read,
+  // no nudges — so memory can be turned off entirely without touching config.
+  const control = loadControl(root);
+  if (control.mode === 'off') return 0;
+
   const emit = (text) => {
     if (text) process.stdout.write(adapter.emit(event, text));
   };
 
   if (intent === 'read') {
     if (!firstTimeThisSession(parsed.sessionId, 'read')) return 0;
-    const { endpoint, token } = resolveProjectConnection(root, splitEndpoint);
-    if (!endpoint || !token) return 0; // memory not configured — stay silent
-    const { scope: readScope, lessons } = await fetchLessons(endpoint, token, root);
+    const store = createStore(control);
+    if (!store) return 0; // unconfigured/unusable — stay silent
+    const { scope: readScope, lessons } = await fetchLessons(store, root);
     emit(formatLessons(lessons, readScope));
     return 0;
   }

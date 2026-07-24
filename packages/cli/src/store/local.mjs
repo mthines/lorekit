@@ -1,0 +1,313 @@
+// Local file store: markdown lessons under a store directory (default
+// `.lorekit/`). One file per scope+key. Implements the common store contract
+// over the filesystem. Zero-dependency (node built-ins only).
+//
+// A `TwoTierStore` (below) composes two `LocalStore`s — a per-user `home` tier
+// and an opt-in per-repo `project` tier — behind the same contract, so callers
+// (`core/lessons`, `hook`, `doctor`, `migrate`) keep talking to one interface.
+import fs from 'node:fs';
+import path from 'node:path';
+import { serializeEntry, parseEntry, slugify, scopeToDir } from './format.mjs';
+
+export function createLocalStore(baseDir) {
+  return new LocalStore(baseDir);
+}
+
+class LocalStore {
+  constructor(baseDir) {
+    this.baseDir = baseDir;
+    this.mode = 'local';
+  }
+
+  _dir(scope) {
+    return scopeToDir(this.baseDir, scope);
+  }
+
+  _files(scope) {
+    const dir = this._dir(scope);
+    let names;
+    try {
+      names = fs.readdirSync(dir);
+    } catch {
+      return [];
+    }
+    return names.filter((n) => n.endsWith('.md')).map((n) => path.join(dir, n));
+  }
+
+  _readAll(scope) {
+    const out = [];
+    for (const file of this._files(scope)) {
+      try {
+        const entry = parseEntry(fs.readFileSync(file, 'utf8'));
+        if (entry) out.push({ entry, file });
+      } catch {
+        // Skip an unreadable file rather than fail the whole listing.
+      }
+    }
+    return out;
+  }
+
+  _findByKey(scope, key) {
+    return this._readAll(scope).find((r) => r.entry.key === key) || null;
+  }
+
+  // Raw lookup by scope+key — returns the stored entry regardless of archived
+  // state (unlike read(), which hides archived). Synchronous; used by migrate
+  // to classify ADD / UPDATE / NOOP without reviving archived entries.
+  getEntry({ scope, key } = {}) {
+    const found = this._findByKey(scope, key);
+    return found ? found.entry : null;
+  }
+
+  // list({ scope, tags, limit }) → { ok, entries } — newest-first, tag-filtered,
+  // archived hidden.
+  async list({ scope, tags, limit } = {}) {
+    let rows = this._readAll(scope)
+      .map((r) => r.entry)
+      .filter((e) => !e.archived_at);
+    if (Array.isArray(tags) && tags.length) {
+      rows = rows.filter((e) => tags.every((t) => (e.tags || []).includes(t)));
+    }
+    rows.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));
+    if (limit) rows = rows.slice(0, limit);
+    return { ok: true, entries: rows };
+  }
+
+  // read({ scope, key }) → { ok, entry } — null when absent or archived.
+  async read({ scope, key } = {}) {
+    const found = this._findByKey(scope, key);
+    const entry = found && !found.entry.archived_at ? found.entry : null;
+    return { ok: true, entry };
+  }
+
+  // write(...) → { ok, entry } — upsert by scope+key. Preserves `created` and
+  // refreshes `updated`; writing an archived key revives it.
+  async write({ scope, key, value, tags, source_agent, trigger } = {}) {
+    const dir = this._dir(scope);
+    fs.mkdirSync(dir, { recursive: true });
+    const now = new Date().toISOString();
+    const existing = this._findByKey(scope, key);
+    const entry = {
+      scope,
+      key,
+      tags: Array.isArray(tags) ? tags : [],
+      source_agent: source_agent || null,
+      trigger: trigger || null,
+      created: existing ? existing.entry.created || now : now,
+      updated: now,
+      archived_at: null,
+      value: value == null ? '' : String(value),
+    };
+    const file = existing ? existing.file : this._freshPath(dir, key);
+    fs.writeFileSync(file, serializeEntry(entry));
+    return { ok: true, entry };
+  }
+
+  // putEntry(entry) — verbatim upsert by scope+key. Unlike write(), it does NOT
+  // synthesize timestamps or clear archived_at: every field of the given entry
+  // is preserved as-is. This is the lossless primitive migrate uses to relocate
+  // a store (including archived entries) idempotently.
+  async putEntry(entry = {}) {
+    const scope = entry.scope;
+    const dir = this._dir(scope);
+    fs.mkdirSync(dir, { recursive: true });
+    const now = new Date().toISOString();
+    const existing = this._findByKey(scope, entry.key);
+    const full = {
+      scope,
+      key: entry.key,
+      tags: Array.isArray(entry.tags) ? entry.tags : [],
+      source_agent: entry.source_agent ?? null,
+      trigger: entry.trigger ?? null,
+      created: entry.created ?? now,
+      updated: entry.updated ?? now,
+      archived_at: entry.archived_at ?? null,
+      value: entry.value == null ? '' : String(entry.value),
+    };
+    const file = existing ? existing.file : this._freshPath(dir, entry.key);
+    fs.writeFileSync(file, serializeEntry(full));
+    return { ok: true, entry: full };
+  }
+
+  _freshPath(dir, key) {
+    const base = slugify(key);
+    let name = `${base}.md`;
+    let i = 2;
+    while (fs.existsSync(path.join(dir, name))) name = `${base}-${i++}.md`;
+    return path.join(dir, name);
+  }
+
+  // delete({ scope, key, force }) — force removes the file; soft-delete archives.
+  async delete({ scope, key, force } = {}) {
+    const found = this._findByKey(scope, key);
+    if (!found) return { ok: true, deleted: false };
+    if (force) {
+      try {
+        fs.unlinkSync(found.file);
+      } catch {
+        // Already gone — treat as deleted.
+      }
+      return { ok: true, deleted: true };
+    }
+    return this.archive({ scope, key });
+  }
+
+  async archive({ scope, key } = {}) {
+    return this._setArchived(scope, key, new Date().toISOString());
+  }
+
+  async restore({ scope, key } = {}) {
+    return this._setArchived(scope, key, null);
+  }
+
+  _setArchived(scope, key, ts) {
+    const found = this._findByKey(scope, key);
+    if (!found) return { ok: true, archived: false };
+    const entry = { ...found.entry, archived_at: ts, updated: new Date().toISOString() };
+    fs.writeFileSync(found.file, serializeEntry(entry));
+    return { ok: true, archived: ts != null, entry };
+  }
+
+  // search({ q, scopes, tags }) → { ok, entries } — keyword over key/tags/body.
+  async search({ q, scopes, tags } = {}) {
+    const needle = String(q || '').toLowerCase();
+    const out = [];
+    for (const scope of scopes || []) {
+      const { entries } = await this.list({ scope, tags });
+      for (const e of entries) {
+        const hay = `${e.key}\n${(e.tags || []).join(' ')}\n${e.value || ''}`.toLowerCase();
+        if (!needle || hay.includes(needle)) out.push(e);
+      }
+    }
+    return { ok: true, entries: out };
+  }
+
+  // Total non-archived entries across the given scopes (doctor uses this).
+  async count(scopes) {
+    let n = 0;
+    for (const scope of scopes || []) n += (await this.list({ scope })).entries.length;
+    return n;
+  }
+}
+
+// A scope string is global when its type segment is `global`.
+function isGlobalScope(scope) {
+  return String(scope).split('::')[0] === 'global';
+}
+
+// Union two entry lists, keyed by `keyFn`. The first list (winners) shadows the
+// second (losers) on a key collision — so passing the project tier first makes
+// the closer scope win, mirroring the remote narrow→broad merge in fetchLessons.
+function mergeByKey(winners, losers, keyFn) {
+  const seen = new Set();
+  const out = [];
+  for (const list of [winners, losers]) {
+    for (const e of list) {
+      const k = keyFn(e);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(e);
+    }
+  }
+  return out;
+}
+
+export function createTwoTierStore({ home, project } = {}) {
+  return new TwoTierStore({ home, project });
+}
+
+// Two-tier local store: a per-user `home` tier (always available) and an opt-in
+// per-repo `project` tier (active only when its directory exists). Presents the
+// same contract as a single LocalStore:
+//   - reads (list / read / search) union both tiers, project shadowing home;
+//   - writes route by scope — global → home, everything else → project when
+//     opted-in, else home;
+//   - delete / archive / restore act on the tier that holds the visible entry
+//     (project first, then home).
+class TwoTierStore {
+  constructor({ home, project } = {}) {
+    this.mode = 'local';
+    this.homeDir = home;
+    this.projectDir = project || null;
+    this.home = new LocalStore(home);
+    this.project = this.projectDir ? new LocalStore(this.projectDir) : null;
+  }
+
+  // The project tier is opted-in when its directory exists (checked live, so a
+  // freshly-created `.lorekit/` or a migrate --to project takes effect at once).
+  projectActive() {
+    return Boolean(this.project && this.projectDir && fs.existsSync(this.projectDir));
+  }
+
+  // The LocalStore a write for `scope` should target.
+  tierFor(scope) {
+    if (isGlobalScope(scope)) return this.home;
+    return this.projectActive() ? this.project : this.home;
+  }
+
+  async list({ scope, tags, limit } = {}) {
+    const homeRes = await this.home.list({ scope, tags });
+    const projRes = this.projectActive()
+      ? await this.project.list({ scope, tags })
+      : { entries: [] };
+    const merged = mergeByKey(projRes.entries, homeRes.entries, (e) => e.key);
+    merged.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));
+    return { ok: true, entries: limit ? merged.slice(0, limit) : merged };
+  }
+
+  async read({ scope, key } = {}) {
+    if (this.projectActive()) {
+      const r = await this.project.read({ scope, key });
+      if (r.entry) return r;
+    }
+    return this.home.read({ scope, key });
+  }
+
+  async write(args = {}) {
+    return this.tierFor(args.scope).write(args);
+  }
+
+  async putEntry(entry = {}) {
+    return this.tierFor(entry.scope).putEntry(entry);
+  }
+
+  async delete({ scope, key, force } = {}) {
+    if (this.projectActive()) {
+      const r = await this.project.delete({ scope, key, force });
+      if (r.deleted || r.archived) return r;
+    }
+    return this.home.delete({ scope, key, force });
+  }
+
+  async archive({ scope, key } = {}) {
+    if (this.projectActive()) {
+      const r = await this.project.archive({ scope, key });
+      if (r.entry) return r;
+    }
+    return this.home.archive({ scope, key });
+  }
+
+  async restore({ scope, key } = {}) {
+    if (this.projectActive()) {
+      const r = await this.project.restore({ scope, key });
+      if (r.entry) return r;
+    }
+    return this.home.restore({ scope, key });
+  }
+
+  async search({ q, scopes, tags } = {}) {
+    const homeRes = await this.home.search({ q, scopes, tags });
+    const projRes = this.projectActive()
+      ? await this.project.search({ q, scopes, tags })
+      : { entries: [] };
+    const merged = mergeByKey(projRes.entries, homeRes.entries, (e) => `${e.scope} ${e.key}`);
+    return { ok: true, entries: merged };
+  }
+
+  // Merged, de-duplicated non-archived count across the given scopes.
+  async count(scopes) {
+    let n = 0;
+    for (const scope of scopes || []) n += (await this.list({ scope })).entries.length;
+    return n;
+  }
+}

@@ -39,6 +39,13 @@ Set `LOREKIT_MCP_URL` and `LOREKIT_TOKEN` in your environment, or run
 `npx @lorekit/cli install` in the project to write a `.mcp.json`. Then
 `npx @lorekit/cli doctor` to verify.
 
+> **Local mode.** No hosted server needed — set `LOREKIT_MODE=local` and lessons
+> live in markdown files in two tiers: a per-user home tier at `~/.lorekit/` and
+> an opt-in per-repo project tier at `<repo>/.lorekit/` (created when you want to
+> commit or gitignore repo/branch lessons). See the
+> [`@lorekit/cli` README](../packages/cli/README.md#memory-modes--the-control-model)
+> for the control model and the two-tier merge / write-routing rules.
+
 ## Cursor / Codex
 
 See each bundle's README for copy-in instructions:

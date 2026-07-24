@@ -40,10 +40,14 @@ Verifies the setup and prints a status report:
 
 - Node runtime is 18+
 - the `lorekit-memory` skill is installed
-- `.mcp.json` has a `lorekit` server
-- endpoint is real (not the `<project-ref>` placeholder)
-- token is present and its permission tier (`lk_rw_*` vs `lk_ro_*`)
-- the MCP endpoint is reachable and the token is accepted
+- the **resolved memory mode and which source decided it**, plus any active
+  deny constraints
+- for `local`: the store path, entry count, and whether it is committed or
+  gitignored
+- for `remote`: `.mcp.json` has a `lorekit` server, the endpoint is real (not
+  the `<project-ref>` placeholder), the token and its permission tier
+  (`lk_rw_*` vs `lk_ro_*`), and that the endpoint is reachable
+- for `off`: a note that memory is disabled
 - the git-derived read/write scopes for the current directory
 
 ```bash
@@ -68,6 +72,120 @@ lorekit hook --adapter <claude|cursor|codex> --event <SessionStart|Stop|…>
 One engine serves all three hosts; each `--adapter` only reshapes input/output
 to that host's contract. See [`plugins/`](../../plugins/) for the bundles.
 
+## Memory modes & the control model
+
+Memory has a controllable backend. Three **modes**:
+
+| Mode | Where lessons live | Notes |
+|------|--------------------|-------|
+| `off` | nowhere | Memory is disabled — every hook event and store op is a silent no-op. |
+| `local` | markdown files in two tiers (see below) | **Local means _not_ on the hosted website** — local lessons never sync to the LoreKit dashboard. That is the point of local: private-by-default, greppable, git-native. |
+| `remote` | the LoreKit MCP server (hosted) | The shared, cross-machine backend. Reads stay silent until an endpoint + token are configured. This is the default. |
+
+### Local store layout — two tiers
+
+Local mode mirrors the two-tier model used by the `aw` / persistent-memory
+loops: a per-user **home** tier plus an opt-in per-repo **project** tier.
+
+| Tier | Path | Availability |
+|------|------|--------------|
+| **home** | `~/.lorekit/` (override with `LOREKIT_HOME`) | Always available — per-user, cross-repo. |
+| **project** | `<repo>/.lorekit/` (override with `LOREKIT_STORE`) | **Opt-in:** active only when the directory exists. Create it once to start persisting repo/branch lessons in the project. |
+
+Each tier is foldered by canonical scope, one markdown file per lesson, with
+YAML frontmatter (`scope, key, tags, source_agent, trigger, created, updated,
+archived_at`) and the lesson as the body:
+
+```
+~/.lorekit/            <repo>/.lorekit/     (opt-in)
+├── config.json        ├── global/
+├── global/            ├── repo/<owner>/<repo>/
+├── repo/<o>/<r>/      └── branch/<owner>/<repo>/<branch>/
+└── branch/<o>/<r>/…       └── <slug-of-key>.md
+```
+
+**Read = two-tier merge.** For each scope in the read order, entries from both
+tiers are unioned and the **project tier wins on a key collision** (closer scope
+wins), consistent with the remote narrow→broad merge.
+
+**Write routing by scope:**
+
+- `global` → **home** tier.
+- `repo::` / `branch::` → **project** tier when it exists (opted-in), else the
+  **home** tier.
+
+To start persisting repo/branch lessons in the project, create
+`<repo>/.lorekit/` (or run `lorekit migrate --to project --yes`). Commit it to
+share lessons with your team (git-native sharing); add it to `.gitignore` to
+keep them private to your checkout.
+
+**Delete / archive across tiers.** Deleting or archiving a key removes the
+closest (project) copy first; a broader **home** copy, if any, remains and takes
+a second delete. This is deliberate — one `delete` never reaches through and
+erases your cross-repo home lesson.
+
+> **Same tiering, two realizations (local ⟷ remote).** The tiered, closer-wins
+> merge-read is identical in both backends. Local expresses "universal vs
+> team-shared" as two physical **locations** (home dir vs committed project
+> dir); remote expresses the same distinction through the canonical **scopes**
+> in one shared DB (`global` ≈ your cross-repo home, `repo::` ≈ team-shared) —
+> sharing comes from the account/token, so remote needs no second location.
+> Different mechanism, same concept.
+
+### `lorekit migrate` — relocation / rename tool
+
+Moved or renamed a local store (e.g. an old `.lore/`)? `migrate` re-writes its
+entries into the current two-tier layout so lessons are never stranded:
+
+```bash
+lorekit migrate --from .lore              # dry-run: preview counts per scope
+lorekit migrate --from .lore --yes        # apply, routing each entry by scope
+lorekit migrate --from .lore --to project --yes   # force all entries into the project tier
+```
+
+Dry-run (preview) by default; `--yes` (or `--apply`) applies. Idempotent — a
+re-run is a no-op. It reads LoreKit's own on-disk format only (it does **not**
+import persistent-memory's `~/.agent-memory/<bucket>/` format).
+
+### The control model — two layers, deny-wins
+
+Two config layers decide the mode:
+
+- **User / machine** — env `LOREKIT_MODE`, `LOREKIT_HOME`, `LOREKIT_STORE`,
+  `LOREKIT_DENY` (and `LOREKIT_MCP_URL` / `LOREKIT_TOKEN` for remote), plus a
+  user config file `~/.lorekit/config.json`.
+- **Repo / team** — a `.lorekit.json` at the repo root (and/or the existing
+  `lorekit` block in `.mcp.json` for the connection).
+
+Both files share one schema:
+
+```jsonc
+{
+  "mode": "local",        // select a mode (off | local | remote)
+  "store": ".lorekit",    // project-tier store dir (relative to repo root, or absolute)
+  "deny": ["remote"]      // forbid modes outright — deny always wins
+}
+```
+
+**Precedence (a _selection_ within what is allowed):**
+`env LOREKIT_MODE` → user config `mode` → repo config `mode` → built-in default
+(`remote`).
+
+**Constraints (`deny`) always win.** Denies are a **union** across every source
+and only ever accumulate — a user-level hard opt-out is a **ceiling the repo
+cannot override**:
+
+- A user who declares `"deny": ["remote"]` (privacy / compliance) can never be
+  flipped to remote by any repo default or env flag — they resolve to `local`
+  (if they selected it) or `off`, never `remote`.
+- A repo or CI job that declares `"deny": ["local"]` (no `.lorekit/` in the tree)
+  makes local unselectable there — an env `LOREKIT_MODE=local` is capped, and
+  resolution falls through to `remote`, or `off` if both are denied.
+
+`off` is never deniable, so it is always the terminal fallback. Run
+`lorekit doctor` to see the resolved mode, **which source decided it**, and any
+active deny constraints.
+
 ## Options
 
 | Flag | Meaning |
@@ -75,7 +193,12 @@ to that host's contract. See [`plugins/`](../../plugins/) for the bundles.
 | `-d, --dir <path>` | Target project root (default: cwd) |
 | `-e, --endpoint <url>` | LoreKit MCP endpoint |
 | `-t, --token <token>` | LoreKit token |
-| `-y, --yes` | Non-interactive; never prompt |
+| `--mode <mode>` | Memory mode override for `doctor`: `off` / `local` / `remote` |
+| `--store <path>` | Local project-tier store directory (default `.lorekit`) |
+| `--from <path>` | Source store to migrate from (`migrate`) |
+| `--to <tier>` | Migration destination tier: `home` / `project` (`migrate`; default routes by scope) |
+| `--apply` | Apply the migration — alias of `--yes` (`migrate`) |
+| `-y, --yes` | Non-interactive / apply; never prompt |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
 | `--adapter <name>` | Host framework for `hook`: `claude` / `cursor` / `codex` |
@@ -87,6 +210,10 @@ to that host's contract. See [`plugins/`](../../plugins/) for the bundles.
 
 | Variable | Purpose |
 |----------|---------|
+| `LOREKIT_MODE` | select a mode: `off` / `local` / `remote` |
+| `LOREKIT_DENY` | comma-separated modes to forbid (deny-wins); e.g. `remote` |
+| `LOREKIT_HOME` | home-tier root + config directory (default `~/.lorekit`) |
+| `LOREKIT_STORE` | project-tier store directory (default `.lorekit`) |
 | `LOREKIT_MCP_URL` / `LOREKIT_ENDPOINT` | endpoint fallback |
 | `LOREKIT_TOKEN` | token fallback |
 | `NO_COLOR` | disable colored output |
