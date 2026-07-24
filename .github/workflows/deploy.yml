@@ -76,8 +76,11 @@ jobs:
             VCS_REPOSITORY_NAME="${{ github.repository }}" \
             --project-ref "$PROJECT_REF"
 
+      - name: Link the Supabase project
+        run: supabase link --project-ref "$PROJECT_REF"
+
       - name: Push database migrations
-        run: supabase db push --project-ref "$PROJECT_REF"
+        run: supabase db push
 
       - name: Deploy edge functions (mcp + health)
         run: supabase functions deploy --no-verify-jwt --project-ref "$PROJECT_REF"
@@ -152,8 +155,11 @@ jobs:
             VCS_REPOSITORY_NAME="${{ github.repository }}" \
             --project-ref "$PROJECT_REF"
 
+      - name: Link the Supabase project
+        run: supabase link --project-ref "$PROJECT_REF"
+
       - name: Push database migrations
-        run: supabase db push --project-ref "$PROJECT_REF"
+        run: supabase db push
 
       - name: Deploy edge functions (mcp + health)
         run: supabase functions deploy --no-verify-jwt --project-ref "$PROJECT_REF"
