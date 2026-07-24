@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Check, ChevronDown, ChevronRight, Copy, CheckCheck,
-  ExternalLink, Terminal, Webhook, Zap, X
+  ExternalLink, Terminal, Webhook, Zap, X, Sparkles
 } from 'lucide-react';
 
 const DISMISSED_KEY = 'lorekit:onboarding-dismissed';
@@ -183,7 +183,8 @@ export function OnboardingChecklist({ steps }: OnboardingChecklistProps) {
     }
   }, []);
 
-  if (allDone || dismissed) return null;
+  // Nothing left to set up — hide entirely, no way (or need) to bring it back.
+  if (allDone) return null;
 
   function handleToggle(i: number) {
     setOpenIndex(openIndex === i ? -1 : i);
@@ -193,6 +194,33 @@ export function OnboardingChecklist({ steps }: OnboardingChecklistProps) {
     e.stopPropagation();
     localStorage.setItem(DISMISSED_KEY, '1');
     setDismissed(true);
+  }
+
+  function handleRestore() {
+    localStorage.removeItem(DISMISSED_KEY);
+    setDismissed(false);
+  }
+
+  // Dismissed but still incomplete — collapse to a compact button the user can
+  // click to bring the full checklist back.
+  if (dismissed) {
+    return (
+      <motion.button
+        initial={{ opacity: 0, y: -4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+        onClick={handleRestore}
+        className="group flex items-center gap-2 self-start rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2 text-left transition-colors duration-150 hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-elevated)]"
+      >
+        <Sparkles className="size-4 shrink-0 text-[var(--color-accent)]" aria-hidden />
+        <span className="text-sm font-medium text-[var(--color-content-secondary)] transition-colors duration-150 group-hover:text-[var(--color-content-primary)]">
+          Finish setting up LoreKit
+        </span>
+        <span className="rounded-md bg-[var(--color-bg-elevated)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--color-content-tertiary)]">
+          {completedCount}/{steps.length}
+        </span>
+      </motion.button>
+    );
   }
 
   return (
