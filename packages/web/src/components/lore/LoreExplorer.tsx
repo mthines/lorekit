@@ -1,35 +1,31 @@
 'use client';
 
-import { useState, useMemo, useTransition, useCallback } from 'react';
+import { useMemo, useTransition } from 'react';
 import { Search, BookOpen, ChevronDown } from 'lucide-react';
 import { ScopeTree, type ScopeNode } from './ScopeTree';
 import { LessonCard, type LessonEntry } from './LessonCard';
-import { LessonDetailSheet } from './LessonDetailSheet';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { useUrlState } from '@/lib/hooks/useUrlState';
+import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 
 interface LoreExplorerProps {
   scopes: ScopeNode[];
   lessons: LessonEntry[];
-  /** Pre-select a specific scope on first render (e.g. from a URL query param). */
-  initialScope?: string | null;
 }
 
-export function LoreExplorer({ scopes, lessons, initialScope }: LoreExplorerProps) {
-  const [selectedScope, setSelectedScope] = useState<string | null>(
-    initialScope ?? scopes[0]?.scope ?? null,
-  );
-  const [selectedLesson, setSelectedLesson] = useState<LessonEntry | null>(null);
-  const [query, setQuery] = useState('');
+export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
+  const { openLesson, openLessonById, closeLesson } = useMemorySidebar();
   const [, startTransition] = useTransition();
-  const [scopePanelOpen, setScopePanelOpen] = useState(true);
 
-  // Called after an archive/restore mutation so the query re-fetches.
-  // useCallback avoids recreating the function on every render.
-  const handleMutated = useCallback(() => {
-    // Close the sheet — the parent page's query hook will re-fetch
-    // automatically when the server action calls revalidatePath('/lore').
-    setSelectedLesson(null);
-  }, []);
+  // Scope and query are stored in URL state so they survive page refreshes.
+  const [selectedScope, setSelectedScope] = useUrlState<string | null>(
+    'scope',
+    scopes[0]?.scope ?? null,
+  );
+
+  const [query, setQuery] = useUrlState<string>('q', '');
+
+  const [scopePanelOpen, setScopePanelOpen] = useUrlState<boolean>('scopePanel', true);
 
   const filteredLessons = useMemo(() => {
     const scopeLessons = selectedScope
@@ -50,7 +46,9 @@ export function LoreExplorer({ scopes, lessons, initialScope }: LoreExplorerProp
   function handleScopeSelect(scope: string) {
     startTransition(() => {
       setSelectedScope(scope);
-      setSelectedLesson(null);
+      // Close the sidebar when switching scope – the previous lesson may not
+      // exist in the new scope.
+      closeLesson();
       setScopePanelOpen(false);
     });
   }
@@ -97,8 +95,16 @@ export function LoreExplorer({ scopes, lessons, initialScope }: LoreExplorerProp
                   <div key={`${lesson.scope}::${lesson.key}`} role="listitem">
                     <LessonCard
                       lesson={lesson}
-                      selected={selectedLesson?.key === lesson.key && selectedLesson?.scope === lesson.scope}
-                      onClick={() => setSelectedLesson(lesson)}
+                      selected={
+                        openLesson?.key === lesson.key &&
+                        openLesson?.scope === lesson.scope
+                      }
+                      onClick={() =>
+                        openLesson?.key === lesson.key &&
+                        openLesson?.scope === lesson.scope
+                          ? closeLesson()
+                          : openLessonById({ scope: lesson.scope, key: lesson.key })
+                      }
                       index={i}
                     />
                   </div>
@@ -157,8 +163,16 @@ export function LoreExplorer({ scopes, lessons, initialScope }: LoreExplorerProp
                 <div key={`${lesson.scope}::${lesson.key}`} role="listitem">
                   <LessonCard
                     lesson={lesson}
-                    selected={selectedLesson?.key === lesson.key && selectedLesson?.scope === lesson.scope}
-                    onClick={() => setSelectedLesson(lesson)}
+                    selected={
+                      openLesson?.key === lesson.key &&
+                      openLesson?.scope === lesson.scope
+                    }
+                    onClick={() =>
+                      openLesson?.key === lesson.key &&
+                      openLesson?.scope === lesson.scope
+                        ? closeLesson()
+                        : openLessonById({ scope: lesson.scope, key: lesson.key })
+                    }
                     index={i}
                   />
                 </div>
@@ -173,12 +187,6 @@ export function LoreExplorer({ scopes, lessons, initialScope }: LoreExplorerProp
           )}
         </div>
       </div>
-
-      <LessonDetailSheet
-        lesson={selectedLesson}
-        onClose={() => setSelectedLesson(null)}
-        onMutated={handleMutated}
-      />
     </>
   );
 }
