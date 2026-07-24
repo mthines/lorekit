@@ -21,9 +21,10 @@
  */
 
 import { traceRequest } from '../_shared/otel.ts';
-import { resolveAuth } from './auth.ts';
+import { resolveAuth, getDb } from './auth.ts';
 import { handleMcp, jsonrpcError } from './mcp-handler.ts';
 import { handleWebhook } from './webhook.ts';
+import { checkRateLimit, rateLimitMessage } from './limits.ts';
 
 Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
@@ -56,6 +57,28 @@ Deno.serve(async (req: Request) => {
       'auth.type': auth.type,
       ...(auth.userId ? { 'auth.user_id': auth.userId } : {}),
     });
+
+    // Per-user request rate limit — transport layer, all MCP methods.
+    // Service-role (CI/internal) is exempt; unauthenticated requests never
+    // reach this point (handled above).
+    if (auth.type !== 'service' && auth.userId) {
+      const db = getDb(auth);
+      const { allowed, retryAfterSeconds } = await checkRateLimit(db, auth.userId, span);
+      span.setAttributes({ 'rate_limit.allowed': allowed });
+      if (!allowed) {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: null,
+            error: { code: -32029, message: rateLimitMessage(retryAfterSeconds) },
+          }),
+          {
+            status: 429,
+            headers: { 'Content-Type': 'application/json', 'Retry-After': String(retryAfterSeconds) },
+          },
+        );
+      }
+    }
 
     return handleMcp(req, auth, span);
   });

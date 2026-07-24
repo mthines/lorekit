@@ -1,0 +1,9 @@
+{
+  "name": "lorekit-memory",
+  "description": "Shared persistent memory for coding agents. Reads scoped lessons at session start and nudges a retrospective when a tool fails, backed by the LoreKit MCP server.",
+  "version": "1.0.0",
+  "author": { "name": "mthines" },
+  "homepage": "https://github.com/mthines/lorekit",
+  "license": "MIT",
+  "keywords": ["memory", "mcp", "lessons", "lorekit", "self-improvement"]
+}

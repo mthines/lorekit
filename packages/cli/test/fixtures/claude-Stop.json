@@ -1,0 +1,10 @@
+{
+  "adapter": "claude",
+  "event": "Stop",
+  "stdin": {
+    "hook_event_name": "Stop",
+    "session_id": "fx-cc-stop",
+    "last_assistant_message": "done",
+    "stop_reason": "end_turn"
+  }
+}

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
 import { ScopeSchema, scopeType } from '../scope.js';
 import { getTracer, getToolDurationHistogram } from '../telemetry.js';
+import { translateCapError } from '../limits.js';
 
 const MAX_VALUE_BYTES = 65_536;
 
@@ -55,7 +56,7 @@ export async function write(
           .select('id,created_at')
           .single();
 
-        if (error) throw error;
+        if (error) throw translateCapError(error);
 
         span.setStatus({ code: SpanStatusCode.UNSET });
         return data as { id: string; created_at: string };

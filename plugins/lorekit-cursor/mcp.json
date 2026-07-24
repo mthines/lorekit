@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "lorekit": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://<project-ref>.supabase.co/functions/v1/mcp?token=<your-lorekit-token>"]
+    }
+  }
+}

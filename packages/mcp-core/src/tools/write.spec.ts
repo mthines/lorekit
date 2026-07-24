@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { write } from './write.js';
+import { LimitError, MEMORY_CAP_SQLSTATE } from '../limits.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 vi.mock('../telemetry.js', () => ({
@@ -14,7 +15,10 @@ vi.mock('../telemetry.js', () => ({
 
 const fakeResult = { id: 'uuid-1', created_at: '2026-01-01T00:00:00Z' };
 
-function makeDb(data: null | { id: string; created_at: string }, error: null | { message: string } = null) {
+function makeDb(
+  data: null | { id: string; created_at: string },
+  error: null | { message: string; code?: string } = null,
+) {
   return {
     from: vi.fn().mockReturnValue({
       upsert: vi.fn().mockReturnValue({
@@ -105,6 +109,14 @@ describe('write', () => {
   it('throws when the DB returns an error', async () => {
     const db = makeDb(null, { message: 'unique violation' });
     await expect(write(db, { scope: 'global', key: 'k', value: 'v' })).rejects.toThrow('unique violation');
+  });
+
+  it('throws a translated LimitError when the DB rejects the write via the cap trigger', async () => {
+    const db = makeDb(null, { message: 'memory_cap_exceeded: limit=1000', code: MEMORY_CAP_SQLSTATE });
+    const promise = write(db, { scope: 'global', key: 'k', value: 'v' });
+    await expect(promise).rejects.toBeInstanceOf(LimitError);
+    await expect(promise).rejects.toMatchObject({ code: 'memory_cap' });
+    await expect(promise).rejects.toThrow(/1000/);
   });
 
   it('normalises scope to lowercase', async () => {

@@ -10,13 +10,23 @@ import { createServiceClient, getTracer, write, validateScope } from '@lorekit/c
 import { logger } from '../logger.js';
 import { createHmac, timingSafeEqual } from 'crypto';
 
-const WEBHOOK_SECRET = process.env['GITHUB_WEBHOOK_SECRET'] ?? '';
-const SUPABASE_URL = process.env['SUPABASE_URL'] ?? '';
-const SUPABASE_SERVICE_ROLE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? '';
+// Read lazily (not as module-level consts) so tests that set process.env in
+// beforeEach — after this module has already been imported — see the value
+// they configured.
+function getWebhookSecret(): string {
+  return process.env['GITHUB_WEBHOOK_SECRET'] ?? '';
+}
+function getSupabaseUrl(): string {
+  return process.env['SUPABASE_URL'] ?? '';
+}
+function getSupabaseServiceRoleKey(): string {
+  return process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? '';
+}
 
 function verifyHmac(body: string, signature: string | null): boolean {
-  if (!signature || !WEBHOOK_SECRET) return false;
-  const expected = `sha256=${createHmac('sha256', WEBHOOK_SECRET).update(body).digest('hex')}`;
+  const webhookSecret = getWebhookSecret();
+  if (!signature || !webhookSecret) return false;
+  const expected = `sha256=${createHmac('sha256', webhookSecret).update(body).digest('hex')}`;
   try {
     return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
   } catch {
@@ -76,7 +86,7 @@ export async function handleGitHubWebhook(req: Request): Promise<Response> {
         return new Response('OK', { status: 200 });
       }
 
-      const db = createServiceClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+      const db = createServiceClient(getSupabaseUrl(), getSupabaseServiceRoleKey());
       const key = `pr-webhook::${repo}::${Date.now()}`;
 
       await write(db, {

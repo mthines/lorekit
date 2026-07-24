@@ -28,6 +28,7 @@ import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 // ── Supabase Edge Runtime global ──────────────────────────────────────────────
 declare global {
   // deno-lint-ignore no-var
+  // eslint-disable-next-line no-var -- `declare global` ambient vars require `var`, not let/const
   var EdgeRuntime: { waitUntil?: (p: Promise<unknown>) => void } | undefined;
 }
 

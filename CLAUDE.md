@@ -16,10 +16,23 @@ lets humans browse, search, and manage those lessons.
 | `@lorekit/core` | `packages/mcp-core/` | Scope validator, DB client, 5 tool handlers, OTel tracer/meter |
 | `@lorekit/server` | `packages/mcp-server/` | Node.js HTTP server for Fly.io (OTel SDK init, auth, webhook) |
 | `@lorekit/web` | `packages/web/` | Next.js 15 dashboard (Vercel) |
+| `@lorekit/cli` | `packages/cli/` | Zero-dep Node CLI: `install` (scaffolds the `lorekit-memory` skill + `.mcp.json`), `doctor` (connectivity/token/scope health checks), and `hook` (the shared hook engine behind the plugins). Ships the skill under `skill/lorekit-memory/`. Verified by its own `node:test` suite; excluded from the NX TS lint gate. |
+| `plugins/` | `plugins/` | Per-framework deterministic bundles: `lorekit-claude` (marketplace plugin: skill + hooks + MCP), `lorekit-cursor` (rule + `stop` hook), `lorekit-codex` (feature-flagged hooks + `AGENTS.md` fallback, experimental). Root `.claude-plugin/marketplace.json` lists the Claude plugin. |
 | `supabase` | `supabase/` | Edge Functions (production MCP server), migrations, NX targets |
 
 The **production MCP server** is `supabase/functions/mcp/index.ts` (Deno, self-contained).
 `packages/mcp-server/` is the Node.js variant for Fly.io with full OTel.
+
+**Shared hook engine:** `lorekit hook --adapter <claude|cursor|codex> --event <name>` reads the host's
+JSON on stdin and injects lessons / a retrospective nudge on stdout, always exiting 0. Logic lives once
+in `packages/cli/src/{core,adapters}/`; each adapter reshapes I/O to its host. The Claude plugin's skill
+copy is vendored from `packages/cli/skill/` — keep in sync via `node scripts/sync-plugin-skill.mjs` (a
+`--check` mode guards drift).
+
+**Cross-framework validation:** `packages/cli/test/frameworks.test.mjs` replays payload fixtures
+(`test/fixtures/<adapter>-<event>.json`) through the binary and asserts each host's output contract, runs
+`claude plugin validate` (skips if the CLI is absent), and structurally checks the Cursor/Codex configs.
+Harvest real fixtures with `LOREKIT_HOOK_RECORD=<dir>` set on the hook command (one run per framework).
 
 ---
 
@@ -71,6 +84,26 @@ Write tools require `lk_rw_*`. Read tools accept both.
 
 ---
 
+## Limits & rate limiting
+
+Two abuse guardrails, both free-tier defaults, config-driven, per-user
+overridable (no billing built yet — see [docs/limits.md](./docs/limits.md)):
+
+- **Memory cap** (default 1000 active memories/user) — enforced authoritatively
+  by a `BEFORE INSERT` trigger on `memories` (`enforce_memory_cap()`,
+  `supabase/migrations/00004_limits.sql`). Rejections are translated into an
+  actionable `LimitError` (code `memory_cap`) by the app layer.
+- **Rate limit** (default 120 req/min/user, all MCP methods) — a Postgres-backed
+  fixed-window RPC (`lorekit_check_rate_limit()`), called by the transport layer
+  right after auth resolves. Blocked requests get HTTP `429` + `Retry-After`.
+- Both read their limits through `lorekit_get_limit(user_id, key)` =
+  `COALESCE(user_limits override, lorekit_default_limit(key))` — no numeric
+  limit is hardcoded in app code. Raising a user's limit is a `user_limits` row
+  upsert (SQL) for now.
+- Service-role (CI, `user_id IS NULL`) is exempt from both guardrails.
+
+---
+
 ## Key files
 
 | File | Purpose |
@@ -85,6 +118,8 @@ Write tools require `lk_rw_*`. Read tools accept both.
 | `supabase/functions/_shared/otel.ts` | Reusable OTel for Edge Functions: `traceRequest()`, `createTracedClient()` |
 | `supabase/migrations/00001_memories.sql` | `memories` table, FTS, RLS |
 | `supabase/migrations/00002_api_tokens.sql` | `api_tokens` table, RLS |
+| `supabase/migrations/00004_limits.sql` | Memory cap trigger (`enforce_memory_cap`), rate-limit RPC (`lorekit_check_rate_limit`), `user_limits` override table, `lorekit_get_limit`/`lorekit_default_limit` config source |
+| `packages/mcp-core/src/limits.ts` | `LimitError`, `translateCapError`, `checkRateLimit`, `rateLimitMessage` — mirrored self-contained in `supabase/functions/mcp/limits.ts` for the Deno edge function |
 
 ---
 
@@ -122,3 +157,6 @@ Metric: `lorekit.tool.duration` histogram (unit `s`) with `lorekit.tool.name` + 
 - `Dash0Provider` React component is the primary RUM init path (explicit, visible in component tree)
 - Edge Function is self-contained Deno (no cross-package imports) — Node.js MCP SDK incompatible with Deno
 - NX 22.4.0 — matches `gw-tools` exactly; bump both together
+- Memory cap enforced by a DB trigger (not app-side counting) — the write-path `userId` is auth-type-sensitive (null for JWT users, RLS-scoped), so only a `NEW.user_id`-keyed trigger is auth-agnostic and unbypassable
+- Rate limiting is a Postgres-backed fixed-window counter (not in-memory or Redis) — edge isolates are stateless/short-lived; no new infra required
+- Limits config lives in one DB function (`lorekit_default_limit`) + one override table (`user_limits`) — no numeric limit hardcoded in app code, so raising a user's ceiling is a single row upsert (paid-tier-ready, no billing built now)

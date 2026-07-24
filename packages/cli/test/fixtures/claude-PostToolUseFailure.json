@@ -1,0 +1,16 @@
+{
+  "adapter": "claude",
+  "event": "PostToolUseFailure",
+  "stdin": {
+    "hook_event_name": "PostToolUseFailure",
+    "session_id": "fx-cc-fail",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "npm test"
+    },
+    "tool_response": {
+      "exit_code": 1,
+      "stderr": "boom"
+    }
+  }
+}

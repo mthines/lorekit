@@ -91,7 +91,7 @@ describe.skipIf(SKIP)('LoreKit MCP smoke tests (integration)', () => {
   // Best-effort cleanup — runs regardless of pass/fail.
   afterAll(async () => {
     for (const key of [KEY_A, KEY_B]) {
-      await mcpCall('memory.delete', { scope: SCOPE, key }).catch(() => {});
+      await mcpCall('memory.delete', { scope: SCOPE, key }).catch(() => undefined);
     }
   });
 

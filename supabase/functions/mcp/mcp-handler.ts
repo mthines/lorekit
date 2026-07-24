@@ -18,6 +18,7 @@ import {
   type Params,
 } from './tools.ts';
 import { type Span } from '../_shared/otel.ts';
+import { LimitError } from './limits.ts';
 
 const TOOLS = {
   'memory.write':         toolWrite,
@@ -179,6 +180,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
       const msg = `${(err as Error).name}: ${(err as Error).message}`;
       toolSpan.error(msg).end();
       span.error(msg);
+      if (err instanceof LimitError) {
+        // Distinct JSON-RPC error code for the memory cap — an actionable,
+        // MCP-appropriate error rather than the generic -32603 internal error.
+        return jsonrpcError(id, -32040, err.message);
+      }
       return jsonrpcError(id, -32603, (err as Error).message);
     }
   }
