@@ -5,7 +5,7 @@
 #                                              └─▶ rollback-production (on failure)
 #
 # Tests are NOT re-run here — the merged commit already passed the required PR
-# checks in ci.yml (unit + integration + build). Production is never touched
+# checks in ci.yml (unit + integration). Production is never touched
 # until staging has been deployed and smoke-tested. Each job `needs:` the
 # previous one, so a red step is a hard gate — nothing downstream runs.
 #
@@ -33,7 +33,7 @@ concurrency:
 jobs:
   # ── 1. Deploy to STAGING (migrations, then functions) ────────────────────────
   #    No test job here: the commit on main already passed the required PR checks
-  #    in ci.yml (unit + integration + build + migration gate). Re-running them
+  #    in ci.yml (unit + integration, incl. the local-migration gate). Re-running them
   #    would just duplicate that work. Protect main with those required checks so
   #    only verified commits ever reach this pipeline.
   deploy-staging:
