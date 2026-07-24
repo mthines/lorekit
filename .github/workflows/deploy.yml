@@ -242,3 +242,72 @@ jobs:
           echo "Inspect the failing job above and, if a migration is at fault, restore via PITR." >> "$GITHUB_STEP_SUMMARY"
           echo "::error::Production deploy failed — functions rolled back to the previous commit."
           exit 1
+
+  # ── 6. Publish @lorekit/cli to npm (independent of the Supabase pipeline) ─────
+  #    Runs in parallel with the deploy jobs — the CLI is a standalone npm
+  #    package with no Supabase dependency, so it neither gates nor is gated by
+  #    the edge-function deploy. Publishes only when packages/cli actually
+  #    changed in the merged commit AND the package.json version is new, so a
+  #    merge that leaves the CLI untouched (or forgets to bump) is a clean no-op
+  #    rather than an error. Bump packages/cli/package.json version to release.
+  publish-cli:
+    name: Publish @lorekit/cli to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository (with previous commit)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Did the CLI project change?
+        id: changed
+        run: |
+          if git diff --name-only HEAD^ HEAD -- packages/cli | grep -q .; then
+            echo "cli=true" >> "$GITHUB_OUTPUT"
+            echo "packages/cli changed in this commit."
+          else
+            echo "cli=false" >> "$GITHUB_OUTPUT"
+            echo "packages/cli unchanged — skipping publish."
+          fi
+
+      - name: Set up Node
+        if: steps.changed.outputs.cli == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Is this version already published?
+        if: steps.changed.outputs.cli == 'true'
+        id: ver
+        working-directory: packages/cli
+        run: |
+          V="$(node -p "require('./package.json').version")"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if npm view "@lorekit/cli@$V" version >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "@lorekit/cli@$V already on npm — skipping (bump the version to release)."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "@lorekit/cli@$V is new — will test and publish."
+          fi
+
+      - name: Test
+        if: steps.changed.outputs.cli == 'true' && steps.ver.outputs.exists == 'false'
+        working-directory: packages/cli
+        run: node --test test/*.test.mjs
+
+      - name: Publish
+        if: steps.changed.outputs.cli == 'true' && steps.ver.outputs.exists == 'false'
+        working-directory: packages/cli
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Report publish
+        if: steps.changed.outputs.cli == 'true' && steps.ver.outputs.exists == 'false'
+        run: |
+          echo "### 📦 Published @lorekit/cli@${{ steps.ver.outputs.version }} to npm" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`npx @lorekit/cli@${{ steps.ver.outputs.version }} install\`" >> "$GITHUB_STEP_SUMMARY"
