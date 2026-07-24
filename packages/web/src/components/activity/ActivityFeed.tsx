@@ -1,10 +1,12 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { motion } from 'motion/react';
 import { Bot, Zap, GitBranch, Globe, FolderGit2, Layers, Webhook } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
+import { useUrlState } from '@/lib/hooks/useUrlState';
+import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
 import type { ScopePrefix } from '@/lib/scope';
 
 export interface ActivityEvent {
@@ -145,6 +147,9 @@ function ActivityEventRow({ event, index, selected, onSelect }: ActivityEventRow
 
 interface ActivityFeedProps {
   events: ActivityEvent[];
+  /** Selected date range (UTC day strings), or null for all time. */
+  range: DateRange | null;
+  onRangeChange: (range: DateRange | null) => void;
 }
 
 /** Friendly label for a scope filter pill — last segment, matching the Lore Explorer. */
@@ -152,8 +157,12 @@ function scopeLabel(scope: string): string {
   return scope.split('::').pop() ?? scope;
 }
 
-export function ActivityFeed({ events }: ActivityFeedProps) {
-  const [filter, setFilter] = useState<string>('all');
+export function ActivityFeed({ events, range, onRangeChange }: ActivityFeedProps) {
+  // URL-backed so a filtered view is shareable and survives refresh. Scoped to
+  // /activity via cleanOnPathname so the param doesn't linger on other pages.
+  const [filter, setFilter] = useUrlState<string>('filter', 'all', {
+    cleanOnPathname: '/activity',
+  });
   const { openLessonRef, openLessonById, closeLesson } = useMemorySidebar();
 
   function handleSelect(ref: { scope: string; key: string }) {
@@ -176,33 +185,51 @@ export function ActivityFeed({ events }: ActivityFeedProps) {
       .map(([scope]) => scope);
   }, [events]);
 
-  const filtered = filter === 'all' ? events : events.filter((e) => e.scope === filter);
+  // Apply both the scope pill and the date range. Event day is derived in UTC
+  // (toISOString) so it matches the heatmap cells the range can be set from.
+  const filtered = useMemo(() => {
+    let out = events;
+    if (filter !== 'all') out = out.filter((e) => e.scope === filter);
+    if (range) {
+      out = out.filter((e) => {
+        const day = new Date(e.created_at).toISOString().slice(0, 10);
+        return day >= range.from && day <= range.to;
+      });
+    }
+    return out;
+  }, [events, filter, range]);
 
   const grouped = groupByDate(filtered);
+  const isFiltered = filter !== 'all' || range !== null;
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Filter pills — dynamic, one per scope present in the events. */}
-      {scopeFilters.length > 0 && (
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by scope">
-          {['all', ...scopeFilters].map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              aria-pressed={filter === f}
-              title={f === 'all' ? undefined : f}
-              className={[
-                'rounded-full px-3 py-1 font-mono text-xs font-medium transition-all duration-150',
-                filter === f
-                  ? 'bg-[var(--color-accent)] text-[#000]'
-                  : 'border border-[var(--color-border)] bg-[var(--color-bg-raised)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
-              ].join(' ')}
-            >
-              {f === 'all' ? 'all' : scopeLabel(f)}
-            </button>
-          ))}
-        </div>
-      )}
+      {/* Filters: scope pills (left) + date-range picker (right). */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {scopeFilters.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by scope">
+            {['all', ...scopeFilters].map((f) => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                aria-pressed={filter === f}
+                title={f === 'all' ? undefined : f}
+                className={[
+                  'rounded-full px-3 py-1 font-mono text-xs font-medium transition-all duration-150',
+                  filter === f
+                    ? 'bg-[var(--color-accent)] text-[#000]'
+                    : 'border border-[var(--color-border)] bg-[var(--color-bg-raised)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
+                ].join(' ')}
+              >
+                {f === 'all' ? 'all' : scopeLabel(f)}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <span />
+        )}
+        <DateRangePicker value={range} onChange={onRangeChange} className="ml-auto" />
+      </div>
 
       {/* Grouped events */}
       {grouped.size > 0 ? (
@@ -226,9 +253,11 @@ export function ActivityFeed({ events }: ActivityFeedProps) {
         </div>
       ) : (
         <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
-          <p className="text-sm text-[var(--color-content-secondary)]">No activity yet</p>
+          <p className="text-sm text-[var(--color-content-secondary)]">
+            {isFiltered ? 'No activity matches these filters' : 'No activity yet'}
+          </p>
           <p className="text-xs text-[var(--color-content-tertiary)]">
-            Agent writes will appear here.
+            {isFiltered ? 'Try widening the date range or clearing the scope filter.' : 'Agent writes will appear here.'}
           </p>
         </div>
       )}

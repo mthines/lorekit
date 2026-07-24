@@ -11,6 +11,10 @@ interface DayData {
 interface ContributionHeatmapProps {
   data: DayData[];
   weeks?: number;
+  /** Currently selected date range (UTC day strings), highlighted in the grid. */
+  selectedRange?: { from: string; to: string } | null;
+  /** Click handler for a cell — used to drive the date-range filter. */
+  onSelectDate?: (day: string) => void;
 }
 
 const DAYS = ['', 'Mon', '', 'Wed', '', 'Fri', ''];
@@ -33,7 +37,12 @@ const INTENSITY_STYLES: Record<0 | 1 | 2 | 3 | 4, string> = {
   4: 'bg-[var(--color-accent)] border-[var(--color-accent)]',
 };
 
-export function ContributionHeatmap({ data, weeks = 26 }: ContributionHeatmapProps) {
+export function ContributionHeatmap({
+  data,
+  weeks = 26,
+  selectedRange = null,
+  onSelectDate,
+}: ContributionHeatmapProps) {
   const { grid, monthLabels, maxCount } = useMemo(() => {
     const today = new Date();
 
@@ -128,9 +137,14 @@ export function ContributionHeatmap({ data, weeks = 26 }: ContributionHeatmapPro
             <div key={wi} className="flex flex-col gap-0.5">
               {week.map(({ date, count }) => {
                 const intensity = getIntensity(count, maxCount);
+                const inRange =
+                  !!selectedRange && date >= selectedRange.from && date <= selectedRange.to;
                 return (
-                  <motion.div
+                  <motion.button
                     key={date}
+                    type="button"
+                    onClick={onSelectDate ? () => onSelectDate(date) : undefined}
+                    disabled={!onSelectDate}
                     initial={{ opacity: 0, scale: 0.6 }}
                     animate={{ opacity: 1, scale: 1 }}
                     transition={{
@@ -140,11 +154,13 @@ export function ContributionHeatmap({ data, weeks = 26 }: ContributionHeatmapPro
                     }}
                     title={count > 0 ? `${count} lesson${count > 1 ? 's' : ''} on ${date}` : date}
                     className={[
-                      'size-[11px] rounded-[2px] border transition-all duration-100 hover:scale-125',
+                      'size-[11px] rounded-[2px] border transition-all duration-100',
                       INTENSITY_STYLES[intensity],
+                      onSelectDate ? 'cursor-pointer hover:scale-125 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]' : '',
+                      inRange ? 'ring-1 ring-inset ring-[var(--color-accent)]' : '',
                     ].join(' ')}
-                    role="img"
-                    aria-label={`${date}: ${count} lessons`}
+                    aria-label={`${date}: ${count} lessons${inRange ? ' (selected)' : ''}`}
+                    aria-pressed={onSelectDate ? inRange : undefined}
                   />
                 );
               })}

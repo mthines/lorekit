@@ -1,7 +1,7 @@
 'use client';
 
 import { memo } from 'react';
-import { motion } from 'motion/react';
+import { motion, useReducedMotion } from 'motion/react';
 import { Clock, Bot, Zap } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import type { ScopePrefix } from '@/lib/scope';
@@ -43,13 +43,17 @@ export const LessonCard = memo(function LessonCard({
 }: LessonCardProps) {
   const preview = lesson.value.slice(0, 160).replace(/\n/g, ' ');
   const truncated = lesson.value.length > 160;
+  const reduceMotion = useReducedMotion();
 
   return (
     <motion.button
       onClick={onClick}
-      initial={{ opacity: 0, y: 8 }}
+      // Subtle fade + 4px rise. Uses a plain ease-out (not a front-loaded expo
+      // curve) so opacity and position settle together — otherwise the card
+      // reads as "appears, then slides up". Reduced-motion → pure fade, no rise.
+      initial={{ opacity: 0, y: reduceMotion ? 0 : 4 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.04, duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+      transition={{ delay: index * 0.03, duration: 0.25, ease: 'easeOut' }}
       className={[
         'group w-full rounded-xl border p-4 text-left transition-all duration-150',
         selected

@@ -3,6 +3,8 @@
 import { ContributionHeatmap } from '@/components/activity/ContributionHeatmap';
 import { ActivityFeed } from '@/components/activity/ActivityFeed';
 import { useActivityData } from '@/lib/queries/activity';
+import { useUrlState } from '@/lib/hooks/useUrlState';
+import type { DateRange } from '@/components/ui/DateRangePicker';
 
 const FETCH_LIMIT = 200;
 
@@ -32,6 +34,15 @@ function FeedSkeleton() {
 
 export default function ActivityPage() {
   const { data, isLoading, isError } = useActivityData();
+
+  // Date range lives in a single URL param ({ from, to }) so it's shareable and
+  // survives refresh. One param → one router.replace, so a heatmap click that
+  // sets both endpoints can't clobber itself (two separate params would race).
+  // Shared by the heatmap (click a day → set range) and the feed (filter +
+  // picker). Scoped to /activity so it doesn't leak to other pages.
+  const [range, setRange] = useUrlState<DateRange | null>('range', null, {
+    cleanOnPathname: '/activity',
+  });
 
   return (
     <div className="flex flex-col gap-6">
@@ -68,7 +79,22 @@ export default function ActivityPage() {
                 </p>
               )}
             </div>
-            <ContributionHeatmap data={data.heatmapData} weeks={26} />
+            <ContributionHeatmap
+              data={data.heatmapData}
+              weeks={26}
+              selectedRange={range}
+              onSelectDate={(day) => {
+                // Two-click range: the first click drops an anchor (single day);
+                // the second extends it — later dates set `to`, earlier dates set
+                // `from`. A third click (range already complete) starts over.
+                if (range && range.from === range.to) {
+                  const anchor = range.from;
+                  setRange(day >= anchor ? { from: anchor, to: day } : { from: day, to: anchor });
+                } else {
+                  setRange({ from: day, to: day });
+                }
+              }}
+            />
           </div>
 
           {/* Feed */}
@@ -82,7 +108,7 @@ export default function ActivityPage() {
                 {data.events.length >= FETCH_LIMIT ? ` (latest ${FETCH_LIMIT})` : ' total'}
               </p>
             </div>
-            <ActivityFeed events={data.events} />
+            <ActivityFeed events={data.events} range={range} onRangeChange={setRange} />
           </div>
         </>
       )}

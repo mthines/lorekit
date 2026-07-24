@@ -99,7 +99,15 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
     [setLessonRef],
   );
 
-  const closeLesson = useCallback(() => setLessonRef(null), [setLessonRef]);
+  // Only write the URL when a lesson is actually open. Calling this
+  // unconditionally (e.g. from LoreExplorer's scope-select handler, which
+  // closes any open lesson while also setting ?scope) would fire a second
+  // router.replace built from the *pre-scope* search params, clobbering the
+  // scope param that was set in the same tick. Guarding on lessonRef makes the
+  // close a no-op navigation when nothing is open.
+  const closeLesson = useCallback(() => {
+    if (lessonRef !== null) setLessonRef(null);
+  }, [lessonRef, setLessonRef]);
 
   const contextValue = useMemo<MemorySidebarContextValue>(
     () => ({

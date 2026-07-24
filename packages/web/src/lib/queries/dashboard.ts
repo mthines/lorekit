@@ -1,34 +1,20 @@
 import { useQuery } from '@tanstack/react-query';
 import { createClient } from '@/lib/supabase/client';
 import { scopeType } from '@/lib/scope';
-import { aggregateByScope } from '@/lib/aggregations';
+import { aggregateByScope, computeStatTrends, type StatTrends } from '@/lib/aggregations';
 import type { ScopeHealth } from '@/components/dashboard/ScopeHealthCard';
 
-/** Lesson count aggregated per ISO week (YYYY-Www). */
-export interface WeekCount {
-  week: string; // e.g. "2026-W29"
-  count: number;
-}
+export type { StatTrends };
 
 export interface DashboardData {
   scopes: ScopeHealth[];
   totalLessons: number;
-  /** Last 12 weeks of lesson counts for the sparkline chart. */
-  weeklyActivity: WeekCount[];
-  /** The 5 most-recently active lessons for the quick-access list. */
-  recentLessons: { scope: string; key: string; created_at: string }[];
+  /** Per-stat-card trend series (daily / hourly buckets). */
+  trends: StatTrends;
 }
 
-/** Return the ISO week string (YYYY-Www) for a UTC date. */
-function isoWeek(utcIso: string): string {
-  const d = new Date(utcIso);
-  // Thursday of the current week (ISO 8601: weeks start on Monday)
-  const thursday = new Date(d);
-  thursday.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
-  const yearStart = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 1));
-  const week = Math.ceil(((thursday.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
-  return `${thursday.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
-}
+const EMPTY_TREND = { points: [], changePct: 0 };
+const EMPTY_TRENDS: StatTrends = { lessons: EMPTY_TREND, scopes: EMPTY_TREND, activity: EMPTY_TREND };
 
 async function fetchDashboardData(): Promise<DashboardData> {
   const supabase = createClient();
@@ -40,7 +26,7 @@ async function fetchDashboardData(): Promise<DashboardData> {
     .limit(1000);
 
   if (error || !data) {
-    return { scopes: [], totalLessons: 0, weeklyActivity: [], recentLessons: [] };
+    return { scopes: [], totalLessons: 0, trends: EMPTY_TRENDS };
   }
 
   // Normalise timestamps to UTC ISO once, reuse everywhere.
@@ -60,29 +46,10 @@ async function fetchDashboardData(): Promise<DashboardData> {
     lastActivity,
   }));
 
-  // Weekly activity — last 12 weeks.
-  const weekMap = new Map<string, number>();
-  for (const row of rows) {
-    const w = isoWeek(row.created_at);
-    weekMap.set(w, (weekMap.get(w) ?? 0) + 1);
-  }
-  // Build a full grid of the last 12 weeks so empty weeks appear as zero bars.
-  const today = new Date();
-  const weeklyActivity: WeekCount[] = Array.from({ length: 12 }, (_, i) => {
-    const d = new Date(today);
-    d.setUTCDate(today.getUTCDate() - i * 7);
-    const w = isoWeek(d.toISOString());
-    return { week: w, count: weekMap.get(w) ?? 0 };
-  }).reverse();
+  // Per-stat-card trend series (daily / hourly buckets).
+  const trends = computeStatTrends(rows, new Date().toISOString());
 
-  // 5 most-recent lessons (already ordered desc from the query)
-  const recentLessons = rows.slice(0, 5).map(({ scope, key, created_at }) => ({
-    scope,
-    key,
-    created_at,
-  }));
-
-  return { scopes, totalLessons: data.length, weeklyActivity, recentLessons };
+  return { scopes, totalLessons: data.length, trends };
 }
 
 export function useDashboardData() {

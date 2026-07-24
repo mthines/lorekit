@@ -64,3 +64,116 @@ export function aggregateByDay(rows: ActivityRow[]): DayCount[] {
     .map(([date, count]) => ({ date, count }))
     .sort((a, b) => a.date.localeCompare(b.date));
 }
+
+// ── Stat-card trend series (dashboard sparkbars) ──────────────────────────────
+
+/** A row needed for trend computation. */
+export interface TrendRow {
+  scope: string;
+  created_at: string; // UTC ISO
+}
+
+/** One bar in a sparkbar: a display-ready label + numeric value. */
+export interface BucketPoint {
+  label: string;
+  value: number;
+}
+
+/** A metric's trend: its bucketed series + a period-over-period % change. */
+export interface StatTrend {
+  points: BucketPoint[];
+  /** Percentage change of the recent window vs. the preceding window. */
+  changePct: number;
+}
+
+export interface StatTrends {
+  /** Lessons written per day, last 30 days. */
+  lessons: StatTrend;
+  /** Distinct scopes active per day, last 30 days. */
+  scopes: StatTrend;
+  /** Lessons written per hour, last 24 hours. */
+  activity: StatTrend;
+}
+
+const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
+
+/** Rounded percentage change of `recent` vs `prev`. Growth from zero → +100%. */
+export function pctChange(recent: number, prev: number): number {
+  if (prev === 0) return recent === 0 ? 0 : 100;
+  return Math.round(((recent - prev) / prev) * 100);
+}
+
+/** % change of the sum of the last `k` values vs. the preceding `k` values. */
+function windowChange(values: number[], k: number): number {
+  const n = values.length;
+  const recent = values.slice(Math.max(0, n - k)).reduce((a, b) => a + b, 0);
+  const prev = values
+    .slice(Math.max(0, n - 2 * k), Math.max(0, n - k))
+    .reduce((a, b) => a + b, 0);
+  return pctChange(recent, prev);
+}
+
+/**
+ * Build the three dashboard stat-card trend series, each in its own bucket
+ * granularity (all UTC-aligned, oldest → newest):
+ *
+ * - `lessons`  — lessons written per day, last 30 days.
+ * - `scopes`   — distinct scopes active per day, last 30 days.
+ * - `activity` — lessons written per hour, last 24 hours.
+ *
+ * Each carries a `changePct`: day series compare the last 7 days vs. the prior
+ * 7; the hourly series compares the last 12 hours vs. the prior 12.
+ *
+ * `nowIso` is injected rather than read from the clock so the function is pure
+ * and deterministic for tests.
+ */
+export function computeStatTrends(rows: TrendRow[], nowIso: string): StatTrends {
+  const now = Date.parse(nowIso);
+  const parsed = rows.map((r) => ({ t: Date.parse(r.created_at), scope: r.scope }));
+
+  // ── Daily buckets: last 30 days, UTC-day aligned. ──
+  const DAYS = 30;
+  const nowDate = new Date(now);
+  const todayMidnight = Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth(), nowDate.getUTCDate());
+  const lessonsPerDay: BucketPoint[] = [];
+  const scopesPerDay: BucketPoint[] = [];
+  for (let i = DAYS - 1; i >= 0; i--) {
+    const start = todayMidnight - i * DAY_MS;
+    const end = start + DAY_MS;
+    let count = 0;
+    const seen = new Set<string>();
+    for (const p of parsed) {
+      if (p.t >= start && p.t < end) {
+        count++;
+        seen.add(p.scope);
+      }
+    }
+    const label = new Date(start).toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      timeZone: 'UTC',
+    });
+    lessonsPerDay.push({ label, value: count });
+    scopesPerDay.push({ label, value: seen.size });
+  }
+
+  // ── Hourly buckets: last 24 hours, UTC-hour aligned. ──
+  const HOURS = 24;
+  const thisHour = Math.floor(now / HOUR_MS) * HOUR_MS;
+  const lessonsPerHour: BucketPoint[] = [];
+  for (let i = HOURS - 1; i >= 0; i--) {
+    const start = thisHour - i * HOUR_MS;
+    const end = start + HOUR_MS;
+    let count = 0;
+    for (const p of parsed) if (p.t >= start && p.t < end) count++;
+    const label = `${String(new Date(start).getUTCHours()).padStart(2, '0')}:00`;
+    lessonsPerHour.push({ label, value: count });
+  }
+
+  return {
+    lessons: { points: lessonsPerDay, changePct: windowChange(lessonsPerDay.map((p) => p.value), 7) },
+    scopes: { points: scopesPerDay, changePct: windowChange(scopesPerDay.map((p) => p.value), 7) },
+    activity: { points: lessonsPerHour, changePct: windowChange(lessonsPerHour.map((p) => p.value), 12) },
+  };
+}
