@@ -1,0 +1,15 @@
+{
+  "name": "lorekit",
+  "owner": { "name": "mthines", "url": "https://github.com/mthines" },
+  "metadata": {
+    "description": "LoreKit — shared persistent memory for coding agents.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "lorekit-memory",
+      "source": "./plugins/lorekit-claude",
+      "description": "Reads scoped lessons at session start and nudges a retrospective when a tool fails, backed by the LoreKit MCP server. Requires LOREKIT_MCP_URL and LOREKIT_TOKEN in the environment (or a project .mcp.json written by `npx @lorekit/cli install`)."
+    }
+  ]
+}
