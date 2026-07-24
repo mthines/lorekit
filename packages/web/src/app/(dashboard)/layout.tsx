@@ -36,7 +36,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           sheet is available site-wide. It uses useSearchParams internally, which
           requires a Suspense boundary in Next.js App Router.
         */}
-        <Suspense>
+        <Suspense fallback={null}>
           <MemorySidebarProvider>
             <main className="flex-1 overflow-y-auto p-4 pb-20 md:pb-6 md:p-6">{children}</main>
           </MemorySidebarProvider>
