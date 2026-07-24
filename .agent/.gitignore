@@ -1,0 +1,3 @@
+# Workflow artifacts (per-developer, not committed)
+*
+!.gitignore

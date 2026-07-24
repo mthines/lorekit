@@ -21,3 +21,12 @@ export {
   type PurgeInput,
   PURGE_RETENTION_DAYS_DEFAULT,
 } from './tools/purge.js';
+export {
+  LimitError,
+  type LimitErrorCode,
+  MEMORY_CAP_SQLSTATE,
+  memoryCapMessage,
+  rateLimitMessage,
+  translateCapError,
+  checkRateLimit,
+} from './limits.js';
