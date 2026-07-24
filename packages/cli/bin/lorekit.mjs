@@ -25,15 +25,20 @@ ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
   -e, --endpoint <url>    LoreKit MCP endpoint
   -t, --token <token>     LoreKit token (lk_rw_* to allow writes, lk_ro_* read-only)
+      --mode <mode>       Memory mode: off | local | remote (doctor override)
+      --store <path>      Local store directory (default: .lore)
   -y, --yes               Non-interactive; never prompt
       --force             Overwrite existing skill files (install)
-      --deep              Do a write→read→delete round-trip (doctor, needs lk_rw_*)
+      --deep              Do a write→read→delete round-trip (doctor)
       --adapter <name>    Host framework for hook: claude | cursor | codex
       --event <name>      Host hook event (else read from stdin payload)
   -h, --help              Show this help
   -v, --version           Print the version
 
 ${c.bold('Environment')}
+  LOREKIT_MODE                         off | local | remote (select a mode)
+  LOREKIT_DENY                         comma list of forbidden modes (deny-wins)
+  LOREKIT_STORE                        local store directory
   LOREKIT_MCP_URL / LOREKIT_ENDPOINT   endpoint fallback
   LOREKIT_TOKEN                        token fallback
   NO_COLOR                             disable colored output

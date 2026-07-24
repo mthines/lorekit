@@ -1,37 +1,20 @@
 // Shared hook logic: fetch and format lessons; build the nudge text.
 // Framework-agnostic — adapters shape these strings into each tool's contract.
-import { mcpCall } from '../mcp.mjs';
+// Storage is reached through the resolved store (local | remote), never a
+// backend directly, so the same read path serves every mode.
 import { deriveScope } from '../scope.mjs';
 
 const MAX_LESSONS = 15;
 
-// Pull the JSON payload out of an MCP tools/call result envelope.
-// LoreKit returns tool output as { content: [{ type: 'text', text: '<json>' }] }.
-function unwrap(result) {
-  if (!result) return null;
-  if (Array.isArray(result.content)) {
-    const text = result.content.map((c) => (c && c.text) || '').join('');
-    try {
-      return JSON.parse(text);
-    } catch {
-      return null;
-    }
-  }
-  return result;
-}
-
-// Read lessons narrow-to-broad and merge; more specific scope wins on key.
-export async function fetchLessons(endpoint, token, cwd) {
+// Read lessons narrow-to-broad through the store and merge; more specific
+// scope wins on key. Any per-scope failure is skipped (memory is best-effort).
+export async function fetchLessons(store, cwd) {
   const scope = deriveScope(cwd);
   const byKey = new Map();
   for (const s of scope.readOrder) {
-    const res = await mcpCall(endpoint, token, 'tools/call', {
-      name: 'memory.list',
-      arguments: { scope: s, limit: 25 },
-    });
-    if (!res.ok) continue;
-    const payload = unwrap(res.result);
-    const entries = payload && Array.isArray(payload.entries) ? payload.entries : [];
+    const res = await store.list({ scope: s, limit: 25 });
+    if (!res || !res.ok) continue;
+    const entries = Array.isArray(res.entries) ? res.entries : [];
     for (const e of entries) {
       if (e && e.key && !byKey.has(e.key)) byKey.set(e.key, { ...e, scope: s });
     }
