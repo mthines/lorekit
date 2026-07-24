@@ -9,6 +9,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { validateScope } from '../_shared/scope.ts';
 import { createTracedClient, type Span } from '../_shared/otel.ts';
+import { translateCapError } from './limits.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
@@ -49,7 +50,10 @@ export async function toolWrite(
     )
     .select('id,created_at')
     .single();
-  if (error) throw new Error(error.message);
+  if (error) {
+    const translated = translateCapError(error);
+    throw translated instanceof Error ? translated : new Error(error.message);
+  }
   return data;
 }
 
