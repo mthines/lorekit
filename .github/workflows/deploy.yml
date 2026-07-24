@@ -55,6 +55,16 @@ jobs:
         with:
           version: latest
 
+      - name: Verify staging environment secrets are set
+        run: |
+          missing=""
+          [ -z "$PROJECT_REF" ] && missing="$missing SUPABASE_PROJECT_REF"
+          [ -z "$SUPABASE_DB_PASSWORD" ] && missing="$missing SUPABASE_DB_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secrets for the 'staging' environment:$missing. Add them under Settings ▸ Environments ▸ staging."
+            exit 1
+          fi
+
       - name: Tag deploy in Dash0 (VCS resource attributes)
         run: |
           supabase secrets set \
@@ -121,6 +131,16 @@ jobs:
         with:
           version: latest
 
+      - name: Verify production environment secrets are set
+        run: |
+          missing=""
+          [ -z "$PROJECT_REF" ] && missing="$missing SUPABASE_PROJECT_REF"
+          [ -z "$SUPABASE_DB_PASSWORD" ] && missing="$missing SUPABASE_DB_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secrets for the 'production' environment:$missing. Add them under Settings ▸ Environments ▸ production."
+            exit 1
+          fi
+
       - name: Tag deploy in Dash0 (VCS resource attributes)
         run: |
           supabase secrets set \
@@ -171,15 +191,18 @@ jobs:
             exit 1
           fi
 
-  # ── 5. Rollback PRODUCTION functions on any post-deploy failure ──────────────
+  # ── 5. Rollback PRODUCTION functions on a production failure ──────────────────
   #    Redeploys the previous commit's edge functions. Migrations are forward-only
   #    (expand/contract + PITR is the DB safety net) so they are intentionally not
-  #    reverted here. Runs only when a production job was attempted and failed.
+  #    reverted here. Gated strictly on a PRODUCTION-job failure: a failure earlier
+  #    in the pipeline (test/staging) skips deploy-production, so neither prod job
+  #    reports 'failure' and this rollback does NOT run — prod is never touched
+  #    unless a prod deploy was actually attempted.
   rollback-production:
     name: Rollback → production functions
     runs-on: ubuntu-latest
     needs: [deploy-production, smoke-production]
-    if: failure()
+    if: always() && (needs.deploy-production.result == 'failure' || needs.smoke-production.result == 'failure')
     environment: production
     permissions:
       contents: read
