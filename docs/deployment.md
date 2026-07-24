@@ -12,7 +12,7 @@ LoreKit has three deployable pieces. Each has its own deployment path.
 
 **In normal operation you do not run these by hand.** Merging to `main` triggers
 the [automated CI/CD pipeline](#automated-deployment-cicd), which promotes
-migrations + Edge Functions **staging → production** with smoke gates and
+migrations + Edge Functions **preview → production** with smoke gates and
 automatic function rollback. The manual commands below are for first-time
 project setup and local operations.
 
@@ -25,7 +25,7 @@ Two GitHub Actions workflows own the lifecycle:
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
 | `.github/workflows/ci.yml` | PRs to `main` | **Verify before merge.** `check` (affected typecheck/test/lint — unit tests, all mocked) and `integration` (boots a local Supabase → migrations apply → serves the real Edge Functions → asserts an authenticated MCP `tools/list` returns 200, plus schema lint). `integration` only runs when API/backend paths change (see [below](#only-runs-when-relevant)); the web build is verified by Vercel's own PR check. |
-| `.github/workflows/deploy.yml` | push to `main`, `workflow_dispatch` | **Deploy the already-verified commit.** No test re-run — staging-first promotion only. |
+| `.github/workflows/deploy.yml` | push to `main`, `workflow_dispatch` | **Deploy the already-verified commit.** No test re-run — preview-first promotion only. |
 
 ### Tests run once, on the PR
 
@@ -39,12 +39,12 @@ this guarantee holds.
 The `integration` job asserts the whole stack wires up locally: migrations
 apply, the Edge Functions boot and serve, and an authenticated MCP `tools/list`
 returns 200. The full write/read/list/search/delete round-trip (the
-`smoke.integration` spec) runs in `smoke-staging` against the real staging
+`smoke.integration` spec) runs in `smoke-preview` against the real preview
 project — it is intentionally not run locally, because the local edge runtime
 bundles an older PostgREST that can't resolve the `UNIQUE NULLS NOT DISTINCT`
 upsert arbiter for service-role writes (`user_id` null). Real writes use a
 non-null `user_id` (an `lk_rw_` token or a JWT), which `mcp-core`'s unit tests
-cover here and `smoke-staging` exercises end-to-end against current PostgREST.
+cover here and `smoke-preview` exercises end-to-end against current PostgREST.
 
 #### Only runs when relevant
 
@@ -63,14 +63,14 @@ Each job `needs:` the previous one, so a red step is a hard gate — nothing
 downstream runs:
 
 ```
-deploy-staging          db push + functions deploy → STAGING project
-  └─▶ smoke-staging      smoke.integration spec against STAGING
+deploy-preview          db push + functions deploy → PREVIEW project
+  └─▶ smoke-preview      smoke.integration spec against PREVIEW
         └─▶ deploy-production     db push + functions deploy → PRODUCTION project
               └─▶ smoke-production   health + MCP tools/list against PRODUCTION
                     └─▶ rollback-production   (only on failure)
 ```
 
-Production is never touched until staging has been deployed and smoke-tested.
+Production is never touched until preview has been deployed and smoke-tested.
 
 ### Rollback behaviour
 
@@ -82,16 +82,16 @@ keep migrations backward-compatible (expand/contract) and enable **PITR**
 
 ### Environments and secrets
 
-The pipeline targets **two Supabase projects** (a dedicated staging project +
+The pipeline targets **two Supabase projects** (a dedicated preview project +
 production) via GitHub **Environments** (Settings ▸ Environments). Secrets share
 the same *names* across environments; the `environment:` on each job selects the
 right values:
 
-| Secret | `staging` environment | `production` environment |
+| Secret | `preview` environment | `production` environment |
 |--------|-----------------------|--------------------------|
-| `SUPABASE_PROJECT_REF` | staging project ref | production project ref |
-| `SUPABASE_DB_PASSWORD` | staging DB password | production DB password |
-| `LOREKIT_SMOKE_TOKEN` | staging `lk_rw_*` token | production `lk_rw_*` token |
+| `SUPABASE_PROJECT_REF` | preview project ref | production project ref |
+| `SUPABASE_DB_PASSWORD` | preview DB password | production DB password |
+| `LOREKIT_SMOKE_TOKEN` | preview `lk_rw_*` token | production `lk_rw_*` token |
 
 Repo-level secret shared by both: `SUPABASE_ACCESS_TOKEN` (a Supabase personal
 access token). Add a **required reviewer** on the `production` environment for a
