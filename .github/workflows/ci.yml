@@ -1,10 +1,10 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# CI — validation gate for pull requests and feature branches.
+# CI — validation gate for pull requests.
 #
-# This is where tests run. `main` is deliberately excluded: merges to main are
-# handled by deploy.yml, which trusts these required checks and does NOT re-run
-# the suite. Keeping main out of this workflow is what removes the old duplicate
-# "check + migrate" runs on every merge.
+# This is where tests run, on PRs targeting main. It runs on `pull_request`
+# only (not `push`) so a PR branch is validated exactly once per commit instead
+# of twice (a push event + a pull_request event both firing). `main` is handled
+# by deploy.yml, which trusts these required checks and does NOT re-run the suite.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: CI
@@ -12,10 +12,8 @@ name: CI
 on:
   pull_request:
     branches: [main]
-  push:
-    branches-ignore: [main]
 
-# One run per ref; a newer push cancels an in-flight PR run to save minutes.
+# One run per PR; a newer push cancels the in-flight run to save minutes.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
