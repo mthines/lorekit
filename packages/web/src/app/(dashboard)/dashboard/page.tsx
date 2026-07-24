@@ -60,6 +60,11 @@ export default async function DashboardPage() {
     : 'https://<project-ref>.supabase.co/functions/v1/mcp';
   const webhookUrl = `${mcpUrl}/webhooks/github`;
 
+  // Detect whether the operator has already set GITHUB_WEBHOOK_SECRET in their
+  // server environment. We only pass the boolean — never the secret value — so
+  // it does not appear in client-rendered HTML.
+  const webhookSecretConfigured = Boolean(process.env['GITHUB_WEBHOOK_SECRET']);
+
   const steps: OnboardingStep[] = [
     {
       id: 'server',
@@ -95,6 +100,7 @@ export default async function DashboardPage() {
           step="webhook"
           mcpUrl={mcpUrl}
           webhookUrl={webhookUrl}
+          webhookSecretConfigured={webhookSecretConfigured}
         />
       ),
     },
