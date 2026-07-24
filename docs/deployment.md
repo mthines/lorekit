@@ -100,7 +100,7 @@ manual approval gate before prod is touched.
 ### Recommended branch protection
 
 Require a PR to `main` and mark the `ci.yml` **`Typecheck, Test & Lint
-(affected)`** and **`Integration tests (local Supabase)`** jobs as required
+(affected)`** and **`Integration smoke (local Supabase)`** jobs as required
 status checks. Because `deploy.yml` no longer re-runs tests, these checks are
 the sole gate that keeps unverified (or migration-breaking) code off `main`.
 
