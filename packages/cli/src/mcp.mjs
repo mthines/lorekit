@@ -28,10 +28,12 @@ let idCounter = 0;
 
 // Returns { ok, httpStatus, result, error, networkError }.
 export async function mcpCall(endpoint, token, method, params = {}, { timeoutMs = 10000 } = {}) {
-  const url = buildRemoteUrl(endpoint, token);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    // Inside the try so a malformed endpoint yields the documented
+    // { ok:false, networkError } shape instead of throwing at the call site.
+    const url = buildRemoteUrl(endpoint, token);
     const res = await fetch(url, {
       method: 'POST',
       headers: {
