@@ -39,12 +39,28 @@ Set `LOREKIT_MCP_URL` and `LOREKIT_TOKEN` in your environment, or run
 `npx @lorekit/cli install` in the project to write a `.mcp.json`. Then
 `npx @lorekit/cli doctor` to verify.
 
-> **Local mode.** No hosted server needed — set `LOREKIT_MODE=local` and lessons
-> live in markdown files in two tiers: a per-user home tier at `~/.lorekit/` and
-> an opt-in per-repo project tier at `<repo>/.lorekit/` (created when you want to
-> commit or gitignore repo/branch lessons). See the
-> [`@lorekit/cli` README](../packages/cli/README.md#memory-modes--the-control-model)
-> for the control model and the two-tier merge / write-routing rules.
+### Local mode (offline, no hosted server)
+
+Set `LOREKIT_MODE=local` and lessons live in markdown files in two tiers: a
+per-user home tier at `~/.lorekit/` and an opt-in per-repo project tier at
+`<repo>/.lorekit/` (commit or gitignore it to share or keep private). See the
+[`@lorekit/cli` README](../packages/cli/README.md#memory-modes--the-control-model)
+for the two-tier merge / write-routing / control model.
+
+To give the **model** `memory.*` tool calls against that local store (offline,
+Bash-restricted contexts included) instead of the hosted endpoint, point the
+`lorekit` MCP server at the CLI's own stdio server rather than `mcp-remote`:
+
+```jsonc
+{
+  "mcpServers": {
+    "lorekit": { "command": "npx", "args": ["-y", "@lorekit/cli", "mcp"] }
+  }
+}
+```
+
+`lorekit mcp` resolves the same control model, so `LOREKIT_MODE=local` (or a
+`.lorekit.json`) serves the `.lorekit/` files with no network.
 
 ## Cursor / Codex
 
