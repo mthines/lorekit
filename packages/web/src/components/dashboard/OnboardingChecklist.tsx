@@ -1,11 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Check, ChevronDown, ChevronRight, Copy, CheckCheck,
-  ExternalLink, Terminal, Webhook, Zap
+  ExternalLink, Terminal, Webhook, Zap, X
 } from 'lucide-react';
+
+const DISMISSED_KEY = 'lorekit:onboarding-dismissed';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -171,20 +173,35 @@ export function OnboardingChecklist({ steps }: OnboardingChecklistProps) {
   const firstIncompleteIndex = steps.findIndex((s) => !s.done);
   const [openIndex, setOpenIndex] = useState<number>(firstIncompleteIndex);
   const [headerExpanded, setHeaderExpanded] = useState(true);
+  // Dismissed state — persisted in localStorage so closing survives page reloads.
+  const [dismissed, setDismissed] = useState(false);
 
-  if (allDone) return null;
+  // Read localStorage after mount (SSR-safe).
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setDismissed(localStorage.getItem(DISMISSED_KEY) === '1');
+    }
+  }, []);
+
+  if (allDone || dismissed) return null;
 
   function handleToggle(i: number) {
     setOpenIndex(openIndex === i ? -1 : i);
   }
 
+  function handleDismiss(e: React.MouseEvent) {
+    e.stopPropagation();
+    localStorage.setItem(DISMISSED_KEY, '1');
+    setDismissed(true);
+  }
+
   return (
-    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]">
+    <div className="relative rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]">
       {/* Header */}
       <button
         onClick={() => setHeaderExpanded((v) => !v)}
         aria-expanded={headerExpanded}
-        className="flex w-full items-center gap-3 p-4 text-left"
+        className="flex w-full items-center gap-3 p-4 pr-14 text-left"
       >
         {/* Progress ring */}
         <div className="relative size-9 shrink-0" aria-hidden>
@@ -223,6 +240,18 @@ export function OnboardingChecklist({ steps }: OnboardingChecklistProps) {
           aria-hidden
         />
       </button>
+
+      {/* Dismiss button — shown outside the toggle button so it doesn't collapse the list */}
+      <div className="absolute right-4 top-4 flex items-center gap-1">
+        <button
+          onClick={handleDismiss}
+          aria-label="Dismiss onboarding checklist"
+          title="Dismiss"
+          className="flex size-7 items-center justify-center rounded-md text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-secondary)]"
+        >
+          <X className="size-3.5" aria-hidden />
+        </button>
+      </div>
 
       {/* Step list */}
       <AnimatePresence initial={false}>

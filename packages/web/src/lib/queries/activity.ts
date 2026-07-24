@@ -33,7 +33,14 @@ async function fetchActivityData(): Promise<ActivityData> {
   }));
 
   // Aggregate by day for the contribution heatmap using the shared helper.
-  const heatmapData = aggregateByDay(events.map((e) => ({ created_at: e.created_at })));
+  // Normalise created_at to a UTC ISO date before slicing so that timestamps
+  // with timezone offsets (e.g. "2026-07-24T09:42:57+02:00") don't produce
+  // a mismatched date vs the heatmap grid which always uses UTC keys.
+  const heatmapData = aggregateByDay(
+    events.map((e) => ({
+      created_at: new Date(e.created_at).toISOString(),
+    })),
+  );
 
   return { events, heatmapData };
 }

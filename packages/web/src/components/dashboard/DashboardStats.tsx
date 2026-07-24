@@ -2,6 +2,8 @@
 
 import { BookOpen, Layers, Zap } from 'lucide-react';
 import { ScopeHealthGrid } from '@/components/dashboard/ScopeHealthCard';
+import { ActivitySparkline } from '@/components/dashboard/ActivitySparkline';
+import { RecentLessons } from '@/components/dashboard/RecentLessons';
 import { useDashboardData } from '@/lib/queries/dashboard';
 
 /** Skeleton that matches the real layout to prevent CLS while the query loads. */
@@ -14,6 +16,14 @@ function DashboardStatsSkeleton() {
             key={i}
             className="h-24 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
           />
+        ))}
+      </div>
+      {/* Sparkline skeleton */}
+      <div className="h-36 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]" />
+      {/* Recent lessons skeleton */}
+      <div className="flex flex-col gap-1.5">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="h-10 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)]" />
         ))}
       </div>
       <div>
@@ -49,7 +59,8 @@ export function DashboardStats() {
     );
   }
 
-  const { scopes, totalLessons } = data;
+  const { scopes, totalLessons, weeklyActivity, recentLessons } = data;
+  // UTC date prefix — lastActivity is already normalised to UTC in fetchDashboardData.
   const todayPrefix = new Date().toISOString().slice(0, 10);
   const activeToday = scopes.filter((s) => s.lastActivity?.startsWith(todayPrefix)).length;
 
@@ -97,6 +108,16 @@ export function DashboardStats() {
           </div>
         ))}
       </div>
+
+      {/* Weekly activity sparkline */}
+      {weeklyActivity.length > 0 && (
+        <ActivitySparkline data={weeklyActivity} />
+      )}
+
+      {/* Recent lessons quick-access list */}
+      {recentLessons.length > 0 && (
+        <RecentLessons lessons={recentLessons} />
+      )}
 
       <div>
         <p className="mb-3 text-xs font-medium text-[var(--color-content-tertiary)]">
