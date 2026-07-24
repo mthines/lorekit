@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 
 // GitHub wordmark SVG — inlined to avoid extra network requests.
@@ -28,6 +29,11 @@ interface LoginButtonProps {
 
 export function LoginButton({ compact = false }: LoginButtonProps) {
   const [loading, setLoading] = useState(false);
+  // Read the ?next= param set by the dashboard layout when redirecting unauthenticated
+  // users to /login. After OAuth callback, /api/auth/callback will redirect there
+  // instead of /dashboard, preserving shared URLs (e.g. ?lesson=…).
+  const searchParams = useSearchParams();
+  const nextParam = searchParams.get('next');
 
   async function handleLogin() {
     setLoading(true);
@@ -38,10 +44,18 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     // so any dev-server port (3000, 3001, …) works without hardcoding.
     const vercelUrl = process.env['NEXT_PUBLIC_VERCEL_URL'];
     const base = vercelUrl || window.location.origin;
+
+    // Thread the ?next= param through to the callback so post-login navigation
+    // returns to the originally-requested URL (including any search params).
+    const callbackUrl = new URL(`${base}/api/auth/callback`);
+    if (nextParam) {
+      callbackUrl.searchParams.set('next', nextParam);
+    }
+
     await supabase.auth.signInWithOAuth({
       provider: 'github',
       options: {
-        redirectTo: `${base}/api/auth/callback`,
+        redirectTo: callbackUrl.toString(),
       },
     });
     // Loading stays true — page will redirect

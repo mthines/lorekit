@@ -6,7 +6,19 @@ import { NextResponse, type NextRequest } from 'next/server';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24;
 
 export async function middleware(request: NextRequest) {
-  let response = NextResponse.next({ request });
+  // Forward the pathname + search string as a request header so RSC layouts
+  // can read the full URL without accessing the raw Request object.
+  // Used by the dashboard layout to preserve shared URLs (e.g. ?lesson=…)
+  // through the unauthenticated → login → callback → original URL flow.
+  let response = NextResponse.next({
+    request: {
+      headers: new Headers({
+        ...Object.fromEntries(request.headers),
+        'x-pathname': request.nextUrl.pathname,
+        'x-search': request.nextUrl.search,
+      }),
+    },
+  });
 
   const supabase = createServerClient(
     process.env['NEXT_PUBLIC_SUPABASE_URL']!,
@@ -20,7 +32,15 @@ export async function middleware(request: NextRequest) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value),
           );
-          response = NextResponse.next({ request });
+          response = NextResponse.next({
+            request: {
+              headers: new Headers({
+                ...Object.fromEntries(request.headers),
+                'x-pathname': request.nextUrl.pathname,
+                'x-search': request.nextUrl.search,
+              }),
+            },
+          });
           cookiesToSet.forEach(({ name, value, options }) =>
             response.cookies.set(name, value, {
               ...options,

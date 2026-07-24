@@ -1,5 +1,6 @@
 import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
+import { headers } from 'next/headers';
 import { createServerClient } from '@/lib/supabase/server';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
@@ -9,7 +10,18 @@ import { MemorySidebarProvider } from '@/components/providers/MemorySidebarProvi
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect('/login');
+
+  if (!user) {
+    // Preserve the full requested URL (path + search params like ?lesson=…) so
+    // that after login, /api/auth/callback redirects back to the exact shared URL.
+    // The middleware forwards x-pathname and x-search from request.nextUrl so we
+    // don't need to parse the raw request here.
+    const headersList = await headers();
+    const pathname = headersList.get('x-pathname') ?? '/dashboard';
+    const search = headersList.get('x-search') ?? '';
+    const next = encodeURIComponent(`${pathname}${search}`);
+    redirect(`/login?next=${next}`);
+  }
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[var(--color-bg)] md:flex-row">
