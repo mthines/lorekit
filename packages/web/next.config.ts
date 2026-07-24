@@ -13,30 +13,34 @@ const nextConfig: NextConfig = {
     // Vercel injects VERCEL_ENV = 'production' | 'preview' | 'development'.
     // Absent locally → map to 'local' in instrumentation-client.ts.
     NEXT_PUBLIC_VERCEL_ENV: process.env['VERCEL_ENV'] ?? '',
-    // VERCEL_URL is the deployment-specific hostname (no protocol, no trailing slash).
-    // It's unique per deployment — preview builds get the preview URL automatically.
-    // Used by LoginButton to build the correct redirectTo for Supabase OAuth.
+    // NEXT_PUBLIC_VERCEL_URL is the canonical origin used by LoginButton to build
+    // the Supabase OAuth redirectTo. It must be a URL that Supabase's "Allow list"
+    // recognises — so it must be a stable alias, never the per-deployment URL.
     //
-    // IMPORTANT: On production deployments VERCEL_URL is the deployment-specific
-    // URL (e.g. lorekit-abc123-mads-thines-projects.vercel.app), NOT the stable
-    // alias (lorekit-io.vercel.app). Using the deployment URL as the OAuth
-    // redirectTo causes Supabase to send the callback to the wrong origin, which
-    // makes the auth code exchange fail with "auth_failed" on the first attempt
-    // and lands the user on the preview deployment on the second attempt.
+    // Vercel exposes three relevant env vars (all server-side only):
+    //   VERCEL_URL        — deployment-specific hostname, unique per build
+    //                       (e.g. lorekit-3zw28wfrv-mads-thines-projects.vercel.app)
+    //   VERCEL_BRANCH_URL — stable per-branch alias (preview only)
+    //                       (e.g. lorekit-git-feat-ux-overhaul-mads-thines-projects.vercel.app)
+    //   VERCEL_ENV        — 'production' | 'preview' | 'development'
     //
-    // Fix: prefer NEXT_PUBLIC_APP_URL on production so the redirectTo always
-    // points at the stable alias. Only fall back to VERCEL_URL for preview /
-    // development deployments where there is no stable alias.
+    // Strategy (in priority order):
+    //   1. production  → NEXT_PUBLIC_APP_URL (the custom domain / stable alias)
+    //   2. preview     → VERCEL_BRANCH_URL   (stable branch alias, constant for the branch's life)
+    //   3. local dev   → '' (empty) so LoginButton falls back to window.location.origin,
+    //                    picking up whatever port the dev server uses without hardcoding.
     //
-    // Local dev: VERCEL_URL is absent and we intentionally leave
-    // NEXT_PUBLIC_VERCEL_URL empty so LoginButton falls back to
-    // window.location.origin — this correctly picks up whatever port the dev
-    // server is running on (3000, 3001, etc.) without hardcoding it here.
+    // Why NOT VERCEL_URL for previews: VERCEL_URL changes on every deployment.
+    // If the user visits the branch alias (e.g. lorekit-git-feat-*) but the
+    // OAuth redirectTo points at the deployment URL (lorekit-3zw28wfrv-*),
+    // Supabase rejects the callback and the auth fails with "auth_failed".
     NEXT_PUBLIC_VERCEL_URL:
       process.env['VERCEL_ENV'] === 'production'
         ? (process.env['NEXT_PUBLIC_APP_URL'] ?? `https://${process.env['VERCEL_URL']}`)
-        : process.env['VERCEL_URL']
-          ? `https://${process.env['VERCEL_URL']}`
+        : process.env['VERCEL_ENV'] === 'preview'
+          ? process.env['VERCEL_BRANCH_URL']
+            ? `https://${process.env['VERCEL_BRANCH_URL']}`
+            : `https://${process.env['VERCEL_URL']}`
           : '',
 
     // ── VCS resource attributes (OTel semantic conventions) ─────────────────
