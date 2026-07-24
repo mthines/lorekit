@@ -16,7 +16,7 @@ lets humans browse, search, and manage those lessons.
 | `@lorekit/core` | `packages/mcp-core/` | Scope validator, DB client, 5 tool handlers, OTel tracer/meter |
 | `@lorekit/server` | `packages/mcp-server/` | Node.js HTTP server for Fly.io (OTel SDK init, auth, webhook) |
 | `@lorekit/web` | `packages/web/` | Next.js 15 dashboard (Vercel) |
-| `@lorekit/cli` | `packages/cli/` | Zero-dep Node CLI: `install` (scaffolds the `lorekit-memory` skill + `.mcp.json`), `doctor` (connectivity/token/scope health checks), and `hook` (the shared hook engine behind the plugins). Ships the skill under `skill/lorekit-memory/`. Verified by its own `node:test` suite; excluded from the NX TS lint gate. |
+| `@lorekit/cli` | `packages/cli/` | Zero-dep Node CLI: `install` (scaffolds the `lorekit-memory` skill + `.mcp.json`), `doctor` (connectivity/token/scope health checks), `hook` (the shared hook engine behind the plugins), and `mcp` (a hand-rolled local stdio MCP server exposing `memory.*` from the resolved store — lets `.mcp.json` point at the CLI instead of `mcp-remote`, for offline local-mode tool calls). Ships the skill under `skill/lorekit-memory/`. Verified by its own `node:test` suite; excluded from the NX TS lint gate. |
 | `plugins/` | `plugins/` | Per-framework deterministic bundles: `lorekit-claude` (marketplace plugin: skill + hooks + MCP), `lorekit-cursor` (rule + `stop` hook), `lorekit-codex` (feature-flagged hooks + `AGENTS.md` fallback, experimental). Root `.claude-plugin/marketplace.json` lists the Claude plugin. |
 | `supabase` | `supabase/` | Edge Functions (production MCP server), migrations, NX targets |
 

@@ -72,6 +72,41 @@ lorekit hook --adapter <claude|cursor|codex> --event <SessionStart|Stop|…>
 One engine serves all three hosts; each `--adapter` only reshapes input/output
 to that host's contract. See [`plugins/`](../../plugins/) for the bundles.
 
+### `lorekit mcp`
+
+A **local stdio MCP server**. It exposes LoreKit's `memory.*` tools backed by
+the store the [control model](#memory-modes--the-control-model) resolves, so an
+agent's `.mcp.json` can point at the CLI instead of `mcp-remote <url>` — giving
+the model discoverable, autonomous `memory.*` tool calls **offline against the
+local `.lore/` store** (no network, Bash-restricted contexts included).
+
+```bash
+lorekit mcp                 # serve on stdin/stdout using the resolved mode
+lorekit mcp --mode local --store .lore
+```
+
+It speaks JSON-RPC 2.0 over newline-delimited stdin/stdout (the MCP stdio
+transport, hand-rolled — zero dependencies) and is **not run by hand**: only
+JSON-RPC frames reach stdout. It serves whatever mode resolves — `local` serves
+the `.lore/` files directly, `remote` passes calls through to the hosted
+endpoint, and `off` advertises no tools. Tools advertised: `memory.write`,
+`memory.read`, `memory.list`, `memory.search`, `memory.delete`,
+`memory.archive`.
+
+Wire it into `.mcp.json` as an alternative to the `mcp-remote <url>` transport —
+this variant needs no endpoint or token for local mode:
+
+```jsonc
+{
+  "mcpServers": {
+    "lorekit": {
+      "command": "npx",
+      "args": ["-y", "@lorekit/cli", "mcp"]
+    }
+  }
+}
+```
+
 ## Memory modes & the control model
 
 Memory has a controllable backend. Three **modes**:

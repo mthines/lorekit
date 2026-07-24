@@ -5,6 +5,7 @@ import { parseArgs, log, err, c } from '../src/util.mjs';
 import { install } from '../src/install.mjs';
 import { doctor } from '../src/doctor.mjs';
 import { hook } from '../src/hook.mjs';
+import { mcpServer } from '../src/mcp-server.mjs';
 
 const VERSION = '1.0.0';
 
@@ -20,6 +21,10 @@ ${c.bold('Commands')}
   hook        Hook engine for Claude Code / Cursor / Codex. Reads the host's
               JSON on stdin and injects lessons or a retrospective nudge.
               Not run by hand — wired into a plugin's hook config.
+  mcp         Local stdio MCP server. Exposes the memory.* tools backed by the
+              resolved store (local .lore/ offline, or remote passthrough) so
+              .mcp.json can point at the CLI instead of mcp-remote. Speaks
+              JSON-RPC on stdin/stdout — not run by hand.
 
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
@@ -60,6 +65,12 @@ async function main() {
   // help/usage branch and always resolve to exit 0.
   if (args._[0] === 'hook') {
     return hook(args);
+  }
+
+  // `mcp` is machine-facing too: only JSON-RPC frames may reach stdout, so it
+  // must bypass the help/usage branch. It serves stdio until the client closes.
+  if (args._[0] === 'mcp') {
+    return mcpServer(args);
   }
 
   if (args.version) {

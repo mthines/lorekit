@@ -39,6 +39,24 @@ Set `LOREKIT_MCP_URL` and `LOREKIT_TOKEN` in your environment, or run
 `npx @lorekit/cli install` in the project to write a `.mcp.json`. Then
 `npx @lorekit/cli doctor` to verify.
 
+### Local mode (offline, no hosted server)
+
+To give the model `memory.*` tool calls against a local `.lore/` store instead
+of the hosted endpoint, point the `lorekit` MCP server at the CLI's own stdio
+server rather than `mcp-remote`:
+
+```jsonc
+{
+  "mcpServers": {
+    "lorekit": { "command": "npx", "args": ["-y", "@lorekit/cli", "mcp"] }
+  }
+}
+```
+
+`lorekit mcp` resolves the same [control model](../packages/cli/README.md#memory-modes--the-control-model)
+as the hooks, so `LOREKIT_MODE=local` (or a `.lorekit.json`) serves the `.lore/`
+files with no network — the model path for Bash-restricted, offline contexts.
+
 ## Cursor / Codex
 
 See each bundle's README for copy-in instructions:
