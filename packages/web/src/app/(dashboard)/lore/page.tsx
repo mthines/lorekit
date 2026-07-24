@@ -1,15 +1,10 @@
 'use client';
 
-import { useSearchParams } from 'next/navigation';
 import { LoreExplorer } from '@/components/lore/LoreExplorer';
 import { useLoreData } from '@/lib/queries/lore';
 import LoreLoading from './loading';
 
 export default function LorePage() {
-  // Read ?scope= from the URL so links from the dashboard pre-select a scope.
-  const searchParams = useSearchParams();
-  const initialScope = searchParams.get('scope');
-
   const { data, isLoading, isError } = useLoreData();
 
   if (isLoading) return <LoreLoading />;
@@ -38,7 +33,10 @@ export default function LorePage() {
       </div>
 
       <div className="flex-1 overflow-hidden" style={{ minHeight: '400px' }}>
-        <LoreExplorer scopes={scopes} lessons={lessons} initialScope={initialScope} />
+        {/* LoreExplorer reads ?scope= from URL via useUrlState internally,
+            so ScopeHealthCard links like /lore?scope=my-scope auto-select
+            the correct scope without any prop drilling. */}
+        <LoreExplorer scopes={scopes} lessons={lessons} />
       </div>
     </div>
   );

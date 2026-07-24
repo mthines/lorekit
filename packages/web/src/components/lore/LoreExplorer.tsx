@@ -17,19 +17,22 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
   const { openLesson, openLessonById, closeLesson } = useMemorySidebar();
   const [, startTransition] = useTransition();
 
-  // Scope and query are stored in URL state so they survive page refreshes.
-  const [selectedScope, setSelectedScope] = useUrlState<string | null>(
-    'scope',
-    scopes[0]?.scope ?? null,
-  );
-
+  // Scope, query, and mobile scope-panel state live in the URL so they survive
+  // page refreshes and the back button correctly restores explorer state.
+  // Default is null (show all); the first available scope is only auto-selected
+  // at render time when neither the URL param nor a user interaction has set it.
+  const [selectedScope, setSelectedScope] = useUrlState<string | null>('scope', null);
   const [query, setQuery] = useUrlState<string>('q', '');
-
   const [scopePanelOpen, setScopePanelOpen] = useUrlState<boolean>('scopePanel', true);
 
+  // When no scope is stored in the URL, fall back to the first available scope
+  // in the current data set. We don't write this back to the URL automatically
+  // so the URL stays clean for unauthenticated/deep links.
+  const effectiveScope = selectedScope ?? scopes[0]?.scope ?? null;
+
   const filteredLessons = useMemo(() => {
-    const scopeLessons = selectedScope
-      ? lessons.filter((l) => l.scope === selectedScope)
+    const scopeLessons = effectiveScope
+      ? lessons.filter((l) => l.scope === effectiveScope)
       : lessons;
 
     if (!query.trim()) return scopeLessons;
@@ -41,7 +44,7 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
         l.value.toLowerCase().includes(q) ||
         l.tags.some((t) => t.toLowerCase().includes(q)),
     );
-  }, [lessons, selectedScope, query]);
+  }, [lessons, effectiveScope, query]);
 
   function handleScopeSelect(scope: string) {
     startTransition(() => {
@@ -54,7 +57,7 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
   }
 
   const selectedScopeLabel =
-    scopes.find((s) => s.scope === selectedScope)?.label ?? selectedScope ?? 'All scopes';
+    scopes.find((s) => s.scope === effectiveScope)?.label ?? effectiveScope ?? 'All scopes';
 
   return (
     <>
@@ -66,7 +69,7 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
           </div>
           <div className="flex-1 overflow-y-auto">
             {scopes.length > 0 ? (
-              <ScopeTree nodes={scopes} selected={selectedScope} onSelect={handleScopeSelect} />
+              <ScopeTree nodes={scopes} selected={effectiveScope} onSelect={handleScopeSelect} />
             ) : (
               <EmptyState icon={BookOpen} title="No scopes yet" description="Run an agent to create your first lesson." />
             )}
@@ -139,7 +142,7 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
           </button>
           {scopePanelOpen && scopes.length > 0 && (
             <div className="border-t border-[var(--color-border)] max-h-52 overflow-y-auto">
-              <ScopeTree nodes={scopes} selected={selectedScope} onSelect={handleScopeSelect} />
+              <ScopeTree nodes={scopes} selected={effectiveScope} onSelect={handleScopeSelect} />
             </div>
           )}
         </div>

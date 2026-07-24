@@ -81,25 +81,21 @@ export function useUrlState<T>(
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  // Current value decoded from URL. Re-computes only when `searchParams` or
-  // `key` change – unrelated param changes don't trigger a re-render of the
-  // value returned from this hook.
-  const value = useMemo<T>(
-    () => deserialise<T>(searchParams.get(key), defaultValue),
-    // defaultValue is intentionally excluded: it is expected to be a stable
-    // literal or constant defined outside the render cycle.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [searchParams, key],
-  );
-
-  // Keep a ref to the navigate fn so setState doesn't need to be recreated when
-  // navigationMode changes between renders.
-  const navigateRef = useRef<typeof router.push | typeof router.replace>(
+  // Keep a ref to the navigate function. Updated synchronously during render
+  // so the ref is always fresh when setState is called within the same cycle.
+  const navigateRef = useRef<ReturnType<typeof useRouter>['push']>(
     navigationMode === 'push' ? router.push : router.replace,
   );
-  useEffect(() => {
-    navigateRef.current = navigationMode === 'push' ? router.push : router.replace;
-  }, [router, navigationMode]);
+  // Synchronous update (no useEffect) ensures there is never a stale-closure window.
+  navigateRef.current = navigationMode === 'push' ? router.push : router.replace;
+
+  // Current value decoded from URL. Re-computes only when `searchParams` or
+  // `key` change – unrelated param changes don't trigger a re-render of the
+  // consumer. `defaultValue` is intentionally omitted from deps: it should be
+  // a stable literal/constant defined outside the render cycle; if it isn't,
+  // the caller should memoize it themselves.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const value = useMemo<T>(() => deserialise<T>(searchParams.get(key), defaultValue), [searchParams, key]);
 
   const setState = useCallback<UrlStateDispatch<T>>(
     (valueOrUpdater) => {
@@ -145,8 +141,7 @@ export function useUrlState<T>(
   }, [pathname, cleanOnPathname, key, searchParams, router]);
 
   // ── cleanOnUnmount effect ──────────────────────────────────────────────────
-  // Use refs so the cleanup closure always sees the latest values without
-  // being re-registered on every render.
+  // Refs capture the latest values so the cleanup closure never stale-closes.
   const pathnameRef = useRef(pathname);
   pathnameRef.current = pathname;
   const searchParamsRef = useRef(searchParams);
@@ -161,7 +156,6 @@ export function useUrlState<T>(
       const qs = params.toString();
       router.replace(`${pathnameRef.current}${qs ? `?${qs}` : ''}`, { scroll: false });
     };
-    // Only depends on stable values – key and cleanOnUnmount are call-site constants.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cleanOnUnmount, key]);
 
