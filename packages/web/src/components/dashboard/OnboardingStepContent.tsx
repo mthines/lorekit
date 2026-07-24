@@ -15,8 +15,10 @@ interface McpClient {
   id: string;
   name: string;
   scope: InstallScope;
+  /** File path shown in footnote and CodeBlock header. */
   configPath: string;
   filename: string;
+  /** One-line hint shown below the config snippet. */
   hint: string;
   buildConfig: (mcpUrlWithToken: string) => string;
 }
@@ -225,6 +227,7 @@ function ConnectStep({
             </>}
       </p>
 
+      {/* Token manager */}
       <div>
         <SectionLabel icon={<Key className="size-3" />}>API tokens</SectionLabel>
         <TokenManager
@@ -234,11 +237,13 @@ function ConnectStep({
         />
       </div>
 
+      {/* MCP endpoint */}
       <div>
         <SectionLabel icon={<Link2 className="size-3" />}>Your MCP endpoint</SectionLabel>
         <InlineCode>{mcpUrl}</InlineCode>
       </div>
 
+      {/* Config snippet */}
       <div>
         <SectionLabel icon={<Terminal className="size-3" />}>
           {activeClient.filename}
@@ -259,6 +264,7 @@ function ConnectStep({
         </p>
       </div>
 
+      {/* Client selector — secondary, below the code */}
       <ClientSelector
         clients={MCP_CLIENTS}
         active={activeClientId}

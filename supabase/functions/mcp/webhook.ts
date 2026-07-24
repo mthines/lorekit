@@ -34,47 +34,51 @@ const SUPPORTED_EVENTS = new Set([
 ]);
 
 /**
- * Resolve the HMAC secret for this webhook delivery.
+ * Resolve candidate HMAC secrets for this webhook delivery.
  *
- * Primary: query webhook_secrets for the active secret belonging to the repo
- * owner identified by `ownerLogin`. This is a service-role read (no RLS).
+ * Primary: look up the repo owner's active webhook secret via auth.users.
+ * Supabase stores the GitHub login in raw_user_meta_data['user_name'] for
+ * OAuth users — the stable cross-system identifier we join on.
+ * Returns all matching secrets so the caller can try each — handles the
+ * uncommon case of multiple LoreKit users under the same GitHub org login.
  *
  * Fallback: GITHUB_WEBHOOK_SECRET env var (backwards compat for deployments
  * that pre-date the webhook_secrets table).
  */
-async function resolveSecret(
+async function resolveSecrets(
   db: ReturnType<typeof createClient>,
   ownerLogin: string | undefined,
-): Promise<{ secret: string; source: 'db' | 'env' | 'none' }> {
-  // Try the DB first — look up the owner's user record then their active secret.
-  // We match on the GitHub login stored in the Supabase auth.users raw_user_meta_data,
-  // because the payload's sender.login is the only stable cross-system identifier.
+): Promise<{ secrets: string[]; source: 'db' | 'env' | 'none' }> {
   if (ownerLogin) {
-    const { data: users } = await db
-      .from('webhook_secrets')
-      .select('secret, user_id')
-      .eq('active', true)
-      // Join via auth.users is not directly queryable from service role;
-      // instead we rely on a sub-select against the users view.
-      // For now: return the most recently created active secret across all users
-      // whose GitHub login matches. This is safe because webhook_secrets are
-      // unique per user and the HMAC is still validated — a wrong user's secret
-      // would simply fail to verify, causing a 401 and a retry with the right one.
-      .order('created_at', { ascending: false })
-      .limit(10);
+    // auth.admin.listUsers() is available to the service-role client and returns
+    // raw_user_meta_data, which Supabase populates from GitHub OAuth.
+    // deno-lint-ignore no-explicit-any
+    const { data: usersPage } = await (db.auth.admin as any).listUsers({ perPage: 1000 });
+    // deno-lint-ignore no-explicit-any
+    const userIds: string[] = (usersPage?.users ?? [])
+      .filter((u: any) => u.raw_user_meta_data?.['user_name'] === ownerLogin)
+      .map((u: any) => u.id as string);
 
-    if (users && users.length > 0) {
-      // Try each active secret until one verifies — handles the case where
-      // multiple users have the same repo webhooks pointing to this endpoint.
-      return { secret: (users[0] as { secret: string }).secret, source: 'db' };
+    if (userIds.length > 0) {
+      const { data: rows } = await db
+        .from('webhook_secrets')
+        .select('secret')
+        .in('user_id', userIds)
+        .eq('active', true)
+        .order('created_at', { ascending: false });
+
+      const secrets = (rows ?? [])
+        .map((r: { secret: string }) => r.secret)
+        .filter(Boolean) as string[];
+      if (secrets.length > 0) return { secrets, source: 'db' };
     }
   }
 
   // Fallback: env var
   const envSecret = Deno.env.get('GITHUB_WEBHOOK_SECRET') ?? '';
-  if (envSecret) return { secret: envSecret, source: 'env' };
+  if (envSecret) return { secrets: [envSecret], source: 'env' };
 
-  return { secret: '', source: 'none' };
+  return { secrets: [], source: 'none' };
 }
 
 /**
@@ -146,8 +150,15 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  const { secret, source: secretSource } = await resolveSecret(db, ownerLogin);
-  const hmac = await verifyHmac(bodyBytes, signature, secret, secretSource);
+  const { secrets, source: secretSource } = await resolveSecrets(db, ownerLogin);
+
+  // Try each candidate secret in order. Single-user: one iteration.
+  // Multi-user org: tries each until one verifies.
+  const candidates = secrets.length > 0 ? secrets : ['']; // empty string → triggers not_configured path
+  let hmac = await verifyHmac(bodyBytes, signature, candidates[0], secretSource);
+  for (let i = 1; i < candidates.length && !hmac.ok; i++) {
+    hmac = await verifyHmac(bodyBytes, signature, candidates[i], secretSource);
+  }
 
   // Always record diagnostic attributes — these are the ground truth for
   // debugging HMAC failures without guessing.
