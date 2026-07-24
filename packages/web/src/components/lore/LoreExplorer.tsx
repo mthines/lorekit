@@ -84,6 +84,14 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
     });
   }
 
+  function handleLessonClick(lesson: LessonEntry) {
+    if (openLesson?.key === lesson.key && openLesson?.scope === lesson.scope) {
+      closeLesson();
+    } else {
+      openLessonById({ scope: lesson.scope, key: lesson.key });
+    }
+  }
+
   const selectedScopeLabel =
     scopes.find((s) => s.scope === effectiveScope)?.label ?? effectiveScope ?? 'All scopes';
 
@@ -126,16 +134,8 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
                   <div key={`${lesson.scope}::${lesson.key}`} role="listitem">
                     <LessonCard
                       lesson={lesson}
-                      selected={
-                        openLesson?.key === lesson.key &&
-                        openLesson?.scope === lesson.scope
-                      }
-                      onClick={() =>
-                        openLesson?.key === lesson.key &&
-                        openLesson?.scope === lesson.scope
-                          ? closeLesson()
-                          : openLessonById({ scope: lesson.scope, key: lesson.key })
-                      }
+                      selected={openLesson?.key === lesson.key && openLesson?.scope === lesson.scope}
+                      onClick={() => handleLessonClick(lesson)}
                       index={i}
                     />
                   </div>
@@ -194,16 +194,8 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
                 <div key={`${lesson.scope}::${lesson.key}`} role="listitem">
                   <LessonCard
                     lesson={lesson}
-                    selected={
-                      openLesson?.key === lesson.key &&
-                      openLesson?.scope === lesson.scope
-                    }
-                    onClick={() =>
-                      openLesson?.key === lesson.key &&
-                      openLesson?.scope === lesson.scope
-                        ? closeLesson()
-                        : openLessonById({ scope: lesson.scope, key: lesson.key })
-                    }
+                    selected={openLesson?.key === lesson.key && openLesson?.scope === lesson.scope}
+                    onClick={() => handleLessonClick(lesson)}
                     index={i}
                   />
                 </div>
