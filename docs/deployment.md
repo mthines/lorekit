@@ -24,7 +24,7 @@ Two GitHub Actions workflows own the lifecycle:
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `.github/workflows/ci.yml` | PRs to `main`, pushes to non-`main` branches | **Verify before merge.** `check` (affected typecheck/test/lint — unit tests, all mocked) and `integration` (boots a local Supabase, serves the real Edge Functions, runs the live `smoke.integration` spec + schema lint). The web build is verified by Vercel's own PR check. |
+| `.github/workflows/ci.yml` | PRs to `main`, pushes to non-`main` branches | **Verify before merge.** `check` (affected typecheck/test/lint — unit tests, all mocked) and `integration` (boots a local Supabase, serves the real Edge Functions, runs the live `smoke.integration` spec + schema lint). `integration` only runs when API/backend paths change (see [below](#only-runs-when-relevant)); the web build is verified by Vercel's own PR check. |
 | `.github/workflows/deploy.yml` | push to `main`, `workflow_dispatch` | **Deploy the already-verified commit.** No test re-run — staging-first promotion only. |
 
 ### Tests run once, on the PR
@@ -39,6 +39,17 @@ this guarantee holds.
 The `integration` job is the pre-merge equivalent of `smoke-staging`: it runs
 the exact same `smoke.integration` spec, against a local Supabase instead of the
 staging project.
+
+#### Only runs when relevant
+
+Booting a local Supabase is expensive, so a `changes` job diffs the PR and the
+`integration` job only runs when API/backend paths change — `packages/mcp-core/`,
+`packages/mcp-server/`, `supabase/functions/`, `supabase/migrations/`,
+`supabase/config.toml`, `package.json`, `pnpm-lock.yaml`, or `ci.yml` itself. A
+docs- or web-only PR skips it. Unit typecheck/test/lint (`check`) is not gated
+this way — `nx affected` already scopes itself to the changed packages. A
+skipped required check is treated as passing by branch protection, so gating
+`integration` does not block unrelated PRs from merging.
 
 ### The deploy pipeline (on merge to `main`)
 

@@ -1,9 +1,10 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # CI — validation gate for pull requests and feature branches.
 #
-# `main` is deliberately excluded here: merges to main are handled by
-# deploy.yml, which re-runs the full suite before deploying. Keeping main out
-# of this workflow is what removes the old duplicate "check + migrate" runs.
+# This is where tests run. `main` is deliberately excluded: merges to main are
+# handled by deploy.yml, which trusts these required checks and does NOT re-run
+# the suite. Keeping main out of this workflow is what removes the old duplicate
+# "check + migrate" runs on every merge.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: CI
@@ -22,6 +23,48 @@ concurrency:
 permissions: {}
 
 jobs:
+  # ── Detect whether API/backend code changed ──────────────────────────────────
+  #    Gates the (expensive) integration job so a docs- or web-only change does
+  #    not boot a local Supabase. Unit typecheck/test/lint is NOT gated here —
+  #    `nx affected` in `check` already scopes itself to the changed packages.
+  changes:
+    name: Detect API changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compare changed paths against the API globs
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            BASE="$PR_BASE"
+          else
+            BASE="$BEFORE"
+          fi
+          # Fall back to the parent commit for first pushes / missing base SHAs.
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            BASE="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+          fi
+          echo "Comparing ${BASE}...HEAD"
+          CHANGED="$(git diff --name-only "${BASE}" HEAD)"
+          echo "$CHANGED"
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/mcp-core/|packages/mcp-server/|supabase/functions/|supabase/migrations/|supabase/config\.toml|package\.json|pnpm-lock\.yaml|\.github/workflows/ci\.yml)'; then
+            echo "api=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "api=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # ── Typecheck + Test + Lint (only affected packages) ─────────────────────────
   check:
     name: Typecheck, Test & Lint (affected)
@@ -36,8 +79,6 @@ jobs:
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -62,7 +103,10 @@ jobs:
   integration:
     name: Integration tests (local Supabase)
     runs-on: ubuntu-latest
-    needs: check
+    needs: [check, changes]
+    # Only run when API/backend code changed. A skipped required check is treated
+    # as passing by branch protection, so this does not block docs/web-only PRs.
+    if: needs.changes.outputs.api == 'true'
     permissions:
       contents: read
     steps:
@@ -71,8 +115,6 @@ jobs:
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
