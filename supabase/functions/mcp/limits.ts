@@ -51,12 +51,11 @@ export function rateLimitMessage(retryAfterSeconds: number): string {
  * the enforce_memory_cap() trigger (SQLSTATE 'LK001'). Any other error is
  * returned unchanged so callers can rethrow/wrap it as before.
  */
-// deno-lint-ignore no-explicit-any
-export function translateCapError(err: any, limit?: number): unknown {
-  const code = err?.code as string | undefined;
+export function translateCapError(err: unknown, limit?: number): unknown {
+  const code = (err as { code?: string } | null | undefined)?.code;
   if (code !== MEMORY_CAP_SQLSTATE) return err;
 
-  const message = (err?.message as string | undefined) ?? '';
+  const message = (err as { message?: string } | null | undefined)?.message ?? '';
   const parsedLimit = message.match(/limit=(\d+)/)?.[1];
   const effectiveLimit = parsedLimit ? Number(parsedLimit) : limit;
 
@@ -96,3 +95,4 @@ export async function checkRateLimit(
     return { allowed: true, retryAfterSeconds: 0 };
   }
 }
+

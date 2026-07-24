@@ -23,15 +23,17 @@ import {
 } from '@lorekit/core';
 import { type AuthContext } from './auth.js';
 
-const SUPABASE_URL = process.env['SUPABASE_URL'] ?? '';
-const SUPABASE_ANON_KEY = process.env['SUPABASE_ANON_KEY'] ?? '';
-const SUPABASE_SERVICE_ROLE_KEY = process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? '';
+// Read lazily so tests that set process.env in beforeEach (after import)
+// see the configured value — mirrors the same fix in auth.ts and github.ts.
+function getSupabaseUrl(): string { return process.env['SUPABASE_URL'] ?? ''; }
+function getSupabaseAnonKey(): string { return process.env['SUPABASE_ANON_KEY'] ?? ''; }
+function getSupabaseServiceRoleKey(): string { return process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? ''; }
 
 function getDb(auth: AuthContext) {
   if (auth.type === 'service') {
-    return createServiceClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    return createServiceClient(getSupabaseUrl(), getSupabaseServiceRoleKey());
   }
-  return createUserClient(SUPABASE_URL, SUPABASE_ANON_KEY, auth.jwt!);
+  return createUserClient(getSupabaseUrl(), getSupabaseAnonKey(), auth.jwt!);
 }
 
 export function createMcpServer(auth: AuthContext): McpServer {
@@ -199,3 +201,4 @@ export async function handleMcpRequest(
   await server.connect(transport);
   await transport.handleRequest(req, res, parsedBody);
 }
+
