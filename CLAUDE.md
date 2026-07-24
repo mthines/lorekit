@@ -29,6 +29,11 @@ in `packages/cli/src/{core,adapters}/`; each adapter reshapes I/O to its host. T
 copy is vendored from `packages/cli/skill/` — keep in sync via `node scripts/sync-plugin-skill.mjs` (a
 `--check` mode guards drift).
 
+**Cross-framework validation:** `packages/cli/test/frameworks.test.mjs` replays payload fixtures
+(`test/fixtures/<adapter>-<event>.json`) through the binary and asserts each host's output contract, runs
+`claude plugin validate` (skips if the CLI is absent), and structurally checks the Cursor/Codex configs.
+Harvest real fixtures with `LOREKIT_HOOK_RECORD=<dir>` set on the hook command (one run per framework).
+
 ---
 
 ## NX commands

@@ -9,6 +9,7 @@ import { deriveScope } from './scope.mjs';
 import { fetchLessons, formatLessons, retrospectiveNudge, failureNudge } from './core/lessons.mjs';
 import { isFailure } from './core/failure.mjs';
 import { firstTimeThisSession } from './core/state.mjs';
+import { recordFixture } from './core/record.mjs';
 import { claude } from './adapters/claude.mjs';
 import { cursor } from './adapters/cursor.mjs';
 import { codex } from './adapters/codex.mjs';
@@ -54,6 +55,10 @@ async function run(args) {
 
   const parsed = adapter.parse(input);
   const event = args.event || parsed.event;
+
+  // Harvest the real payload when recording is enabled (opt-in via env).
+  recordFixture(args.adapter, event, raw);
+
   if (!event) return 0;
 
   const intent = adapter.intentFor(event);

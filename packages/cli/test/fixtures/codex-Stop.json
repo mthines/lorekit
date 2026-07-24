@@ -1,0 +1,8 @@
+{
+  "adapter": "codex",
+  "event": "Stop",
+  "stdin": {
+    "hook_event_name": "Stop",
+    "session_id": "fx-cx-stop"
+  }
+}

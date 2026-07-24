@@ -112,6 +112,46 @@ which fire the `lorekit hook` engine on host lifecycle events. The skill and
 the hooks compose: hooks guarantee the *timing*, the skill supplies the
 *authoring judgment*.
 
+## Testing & validating across frameworks
+
+`npm test` (or `node --test test/*.test.mjs`) runs four layers, so you can
+validate all three integrations without launching each agent by hand:
+
+1. **Unit** — scope parsing, failure heuristic, lesson formatting, adapter
+   mapping/emit.
+2. **Engine end-to-end** — spawns the real `lorekit hook` binary for every
+   adapter/event, including a mock MCP server that proves the `SessionStart`
+   read path injects lessons, plus throttling and bad-input handling.
+3. **Cross-framework conformance** — replays payload **fixtures** through the
+   binary and asserts the stdout matches each host's documented contract
+   (`hookSpecificOutput.additionalContext` for Claude/Codex, `followup_message`
+   for Cursor).
+4. **Wiring** — runs `claude plugin validate` on the Claude bundle (skipped if
+   the `claude` CLI is absent) and structurally validates the Cursor and Codex
+   configs; also asserts the vendored skill is in sync with its source.
+
+### Harvesting real fixtures (one run per framework)
+
+Layer 3 ships with documented seed fixtures under `test/fixtures/`. To prove
+conformance against what each framework *actually* sends, record real payloads
+once by pointing its hook command at the recorder:
+
+```bash
+# Temporarily set this env for the hook command in the framework's config,
+# then drive the agent through a session start, a failing command, and a stop:
+LOREKIT_HOOK_RECORD=/abs/path/to/packages/cli/test/fixtures \
+  npx @lorekit/cli hook --adapter claude --event SessionStart
+```
+
+Each invocation overwrites `test/fixtures/<adapter>-<event>.json` with the real
+payload. Commit the updated fixtures; the conformance tests then run offline
+forever. This reduces manual validation to a single capture pass per tool.
+
+> The one thing no offline test can cover is a real model loop (the agent
+> actually consuming the injected context). `claude plugin validate` confirms
+> the real Claude CLI accepts the wiring; for a true live check, install the
+> plugin and start one session per tool.
+
 ## Security note
 
 `install` writes your token into `.mcp.json`. Keep that file out of version

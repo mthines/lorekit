@@ -1,0 +1,12 @@
+{
+  "adapter": "cursor",
+  "event": "beforeSubmitPrompt",
+  "stdin": {
+    "hook_event_name": "beforeSubmitPrompt",
+    "generation_id": "fx-cu-read",
+    "workspace_roots": [
+      "/repo"
+    ],
+    "prompt": "add a feature"
+  }
+}
