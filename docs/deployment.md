@@ -10,6 +10,70 @@ LoreKit has three deployable pieces. Each has its own deployment path.
 | Web dashboard | Vercel | Auto-deploy on `git push main` |
 | Database migrations | Supabase | `pnpm nx db:push supabase` |
 
+**In normal operation you do not run these by hand.** Merging to `main` triggers
+the [automated CI/CD pipeline](#automated-deployment-cicd), which promotes
+migrations + Edge Functions **staging → production** with smoke gates and
+automatic function rollback. The manual commands below are for first-time
+project setup and local operations.
+
+---
+
+## Automated deployment (CI/CD)
+
+Two GitHub Actions workflows own the lifecycle:
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `.github/workflows/ci.yml` | PRs to `main`, pushes to non-`main` branches | Validation only: affected typecheck/test/lint, web build, and a **migration gate** that applies every migration to an ephemeral local Supabase (`supabase start`). |
+| `.github/workflows/deploy.yml` | push to `main`, `workflow_dispatch` | Staging-first promotion pipeline. |
+
+### The deploy pipeline (on merge to `main`)
+
+Each job `needs:` the previous one, so a red step is a hard gate — nothing
+downstream runs:
+
+```
+test (all packages)
+  └─▶ deploy-staging      db push + functions deploy → STAGING project
+        └─▶ smoke-staging   nx test mcp-server against STAGING (the "migration tests")
+              └─▶ deploy-production   db push + functions deploy → PRODUCTION project
+                    └─▶ smoke-production   health + MCP tools/list against PRODUCTION
+                          └─▶ rollback-production   (only on failure)
+```
+
+Production is never touched until the full suite is green **and** staging has
+been deployed and smoke-tested.
+
+### Rollback behaviour
+
+On any post-deploy failure, `rollback-production` redeploys the **previous
+commit's** Edge Functions and fails the run loudly with a step summary.
+Database migrations are **forward-only** and intentionally *not* reverted —
+keep migrations backward-compatible (expand/contract) and enable **PITR**
+(Point-in-Time Recovery) in the Supabase dashboard as the database safety net.
+
+### Environments and secrets
+
+The pipeline targets **two Supabase projects** (a dedicated staging project +
+production) via GitHub **Environments** (Settings ▸ Environments). Secrets share
+the same *names* across environments; the `environment:` on each job selects the
+right values:
+
+| Secret | `staging` environment | `production` environment |
+|--------|-----------------------|--------------------------|
+| `SUPABASE_PROJECT_REF` | staging project ref | production project ref |
+| `SUPABASE_DB_PASSWORD` | staging DB password | production DB password |
+| `LOREKIT_SMOKE_TOKEN` | staging `lk_rw_*` token | production `lk_rw_*` token |
+
+Repo-level secret shared by both: `SUPABASE_ACCESS_TOKEN` (a Supabase personal
+access token). Add a **required reviewer** on the `production` environment for a
+manual approval gate before prod is touched.
+
+### Recommended branch protection
+
+Mark the `ci.yml` **`Validate migrations (local)`** job as a required status
+check on `main` so a broken migration cannot be merged.
+
 ---
 
 ## Prerequisites
