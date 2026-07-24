@@ -5,16 +5,29 @@
  *
  * A useState-compatible hook that persists state in the URL search params.
  *
- * Features:
- * - Reads from / writes to URLSearchParams via Next.js useSearchParams / useRouter.
- * - Serialises via JSON – any JSON-serialisable value is supported.
- * - When the value equals defaultValue, the param is removed to keep URLs clean.
- * - `cleanOnUnmount`: removes the param when the owning component unmounts.
- * - `cleanOnPathname`: removes the param whenever the current pathname does not
- *   match the provided path(s). Useful for scoping state to one section of the app.
- * - Defaults to `router.replace` so back-button history isn't polluted.
+ * ## SSR behaviour
+ * Next.js App Router renders components without access to search params on the
+ * server (the `useSearchParams()` hook returns an empty object server-side).
+ * Components using this hook MUST be wrapped in a `<Suspense>` boundary so that
+ * Next.js renders a shell on the server and fills in the real URL-derived value
+ * on the client, avoiding hydration mismatches.
  *
- * Usage (mirrors useState exactly):
+ * ## Optimistic updates
+ * URL navigation via `router.replace` is asynchronous: the new search params do
+ * not appear in `useSearchParams()` until the router has completed the navigation
+ * cycle (a React transition). Without optimistic state, users would see the old
+ * value for tens of milliseconds between clicking and the URL updating — causing
+ * perceived lag and flicker.
+ *
+ * This hook solves it with a local `optimistic` state that is updated
+ * synchronously on every `setState` call, while the URL write happens in the
+ * background. When the URL finally reflects the new value (next render after
+ * navigation), `optimistic` is reset to `null` so the URL is once again the
+ * source of truth. External URL changes (browser back/forward, direct link
+ * visits) are reflected immediately because they change `searchParams`, which
+ * resets the optimistic layer.
+ *
+ * ## Usage (mirrors useState exactly)
  *
  *   const [open, setOpen] = useUrlState('sidebarOpen', false);
  *
@@ -24,7 +37,7 @@
  *   });
  */
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
 export type UrlStateDispatch<S> = (value: S | ((prev: S) => S)) => void;
@@ -49,23 +62,60 @@ export interface UseUrlStateOptions {
   navigationMode?: 'push' | 'replace';
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+// ── Pure helpers (exported for testing) ───────────────────────────────────────
 
-function toAbsolute(p: string) {
+/** Normalise a path so it always starts with '/'. */
+export function toAbsolute(p: string): string {
   return p.startsWith('/') ? p : `/${p}`;
 }
 
-function serialise<T>(value: T): string {
+/** JSON-serialise a value to a URL param string. */
+export function serialise<T>(value: T): string {
   return JSON.stringify(value);
 }
 
-function deserialise<T>(raw: string | null, fallback: T): T {
+/** JSON-deserialise a URL param string, returning `fallback` on null or parse error. */
+export function deserialise<T>(raw: string | null, fallback: T): T {
   if (raw === null) return fallback;
   try {
     return JSON.parse(raw) as T;
   } catch {
     return fallback;
   }
+}
+
+/**
+ * Build the new URL string after updating a single search param.
+ * When `next` equals `defaultValue` (by JSON equality), the param is removed
+ * to keep URLs clean.
+ */
+export function buildUrl<T>(
+  pathname: string,
+  currentParams: URLSearchParams,
+  key: string,
+  next: T,
+  defaultValue: T,
+): string {
+  const params = new URLSearchParams(currentParams.toString());
+  if (serialise(next) === serialise(defaultValue)) {
+    params.delete(key);
+  } else {
+    params.set(key, serialise(next));
+  }
+  const qs = params.toString();
+  return `${pathname}${qs ? `?${qs}` : ''}`;
+}
+
+/**
+ * Whether `pathname` matches any of the `allowed` paths (exact or prefix match).
+ * All inputs are normalised to start with '/'.
+ */
+export function isPathnameAllowed(pathname: string, allowed: string | string[]): boolean {
+  const normalised = toAbsolute(pathname);
+  const allowedList = (Array.isArray(allowed) ? allowed : [allowed]).map(toAbsolute);
+  return allowedList.some(
+    (p) => p === '/' || normalised === p || normalised.startsWith(`${p}/`),
+  );
 }
 
 // ── hook ──────────────────────────────────────────────────────────────────────
@@ -81,80 +131,89 @@ export function useUrlState<T>(
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  // Keep a ref to the navigate function. Updated synchronously during render
-  // so the ref is always fresh when setState is called within the same cycle.
+  // ── True URL value ─────────────────────────────────────────────────────────
+  // Re-derives from `searchParams` whenever the router navigation completes.
+  // `defaultValue` is intentionally omitted from deps: callers are expected to
+  // pass a stable reference. Mutable defaults should be memoized at the call site.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const urlValue = useMemo<T>(() => deserialise<T>(searchParams.get(key), defaultValue), [searchParams, key]);
+
+  // ── Optimistic state ───────────────────────────────────────────────────────
+  // `null` means "use the URL value". Set to a concrete value immediately on
+  // setState, then cleared once the URL catches up (i.e. once urlValue changes
+  // to match the optimistic value).
+  const [optimisticValue, setOptimisticValue] = useState<T | null>(null);
+
+  // Once the URL reflects the optimistic value, drop the optimistic layer.
+  useEffect(() => {
+    if (optimisticValue !== null && serialise(urlValue) === serialise(optimisticValue)) {
+      setOptimisticValue(null);
+    }
+  }, [urlValue, optimisticValue]);
+
+  // The value exposed to callers: optimistic takes priority while the URL is
+  // catching up; falls back to the true URL value otherwise.
+  const value = optimisticValue !== null ? optimisticValue : urlValue;
+
+  // ── Navigate ref ───────────────────────────────────────────────────────────
+  // Updated synchronously during render (no useEffect) so there is never a
+  // stale-closure window where setState uses the wrong navigate function.
   const navigateRef = useRef<ReturnType<typeof useRouter>['push']>(
     navigationMode === 'push' ? router.push : router.replace,
   );
-  // Synchronous update (no useEffect) ensures there is never a stale-closure window.
   navigateRef.current = navigationMode === 'push' ? router.push : router.replace;
 
-  // Current value decoded from URL. Re-computes only when `searchParams` or
-  // `key` change – unrelated param changes don't trigger a re-render of the
-  // consumer. `defaultValue` is intentionally omitted from deps: it should be
-  // a stable literal/constant defined outside the render cycle; if it isn't,
-  // the caller should memoize it themselves.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const value = useMemo<T>(() => deserialise<T>(searchParams.get(key), defaultValue), [searchParams, key]);
-
+  // ── setState ───────────────────────────────────────────────────────────────
   const setState = useCallback<UrlStateDispatch<T>>(
     (valueOrUpdater) => {
+      const prev = optimisticValue !== null ? optimisticValue : deserialise<T>(searchParams.get(key), defaultValue);
       const next =
         typeof valueOrUpdater === 'function'
-          ? (valueOrUpdater as (prev: T) => T)(
-              deserialise<T>(searchParams.get(key), defaultValue),
-            )
+          ? (valueOrUpdater as (prev: T) => T)(prev)
           : valueOrUpdater;
 
-      const params = new URLSearchParams(searchParams.toString());
+      // 1. Optimistic: immediate UI update, no wait for navigation round-trip.
+      setOptimisticValue(next);
 
-      if (serialise(next) === serialise(defaultValue)) {
-        params.delete(key);
-      } else {
-        params.set(key, serialise(next));
-      }
-
-      const qs = params.toString();
-      navigateRef.current(`${pathname}${qs ? `?${qs}` : ''}`, { scroll: false });
+      // 2. Persist: update the URL asynchronously via the router.
+      const url = buildUrl(pathname, searchParams, key, next, defaultValue);
+      navigateRef.current(url, { scroll: false });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [searchParams, pathname, key, defaultValue],
+    [searchParams, pathname, key, defaultValue, optimisticValue],
   );
 
   // ── cleanOnPathname effect ─────────────────────────────────────────────────
   useEffect(() => {
     if (!cleanOnPathname || !searchParams.has(key)) return;
-
-    const allowed = (Array.isArray(cleanOnPathname) ? cleanOnPathname : [cleanOnPathname]).map(
-      toAbsolute,
-    );
-
-    const current = toAbsolute(pathname);
-    const isAllowed = allowed.some((p) => current === p || current.startsWith(`${p}/`));
-
-    if (!isAllowed) {
-      const params = new URLSearchParams(searchParams.toString());
-      params.delete(key);
-      const qs = params.toString();
-      router.replace(`${pathname}${qs ? `?${qs}` : ''}`, { scroll: false });
+    if (!isPathnameAllowed(pathname, cleanOnPathname)) {
+      const url = buildUrl(pathname, searchParams, key, defaultValue, defaultValue);
+      router.replace(url, { scroll: false });
     }
-  }, [pathname, cleanOnPathname, key, searchParams, router]);
+  }, [pathname, cleanOnPathname, key, searchParams, router, defaultValue]);
 
   // ── cleanOnUnmount effect ──────────────────────────────────────────────────
-  // Refs capture the latest values so the cleanup closure never stale-closes.
+  // Refs capture latest values so the cleanup closure is always current.
   const pathnameRef = useRef(pathname);
   pathnameRef.current = pathname;
   const searchParamsRef = useRef(searchParams);
   searchParamsRef.current = searchParams;
+  const defaultValueRef = useRef(defaultValue);
+  defaultValueRef.current = defaultValue;
 
   useEffect(() => {
     if (!cleanOnUnmount) return;
     return () => {
       const params = new URLSearchParams(searchParamsRef.current.toString());
       if (!params.has(key)) return;
-      params.delete(key);
-      const qs = params.toString();
-      router.replace(`${pathnameRef.current}${qs ? `?${qs}` : ''}`, { scroll: false });
+      const url = buildUrl(
+        pathnameRef.current,
+        searchParamsRef.current,
+        key,
+        defaultValueRef.current,
+        defaultValueRef.current,
+      );
+      router.replace(url, { scroll: false });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cleanOnUnmount, key]);

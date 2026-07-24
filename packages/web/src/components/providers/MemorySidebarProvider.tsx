@@ -8,14 +8,23 @@
  * sidebar survives page refreshes and is shareable via URL.
  *
  * URL params used:
- *   lesson   – JSON-encoded object { scope, key } identifying the open lesson
- *              (absent when no lesson is selected).
+ *   lesson  – JSON-encoded { scope, key } identifying the open lesson.
+ *             Absent (not in URL) when no lesson is selected.
  *
- * Param lifecycle:
- *   - Persists across navigation within the dashboard (hard refresh reopens it).
- *   - Automatically cleaned when no lesson is selected (value equals default).
+ * ## SSR & hydration
+ * `useUrlState` reads from `useSearchParams()`, which is empty on the server.
+ * This component must be inside a <Suspense> boundary (handled in layout.tsx)
+ * so Next.js can shell-render on the server and fill the real value on the
+ * client without a hydration mismatch.
  *
- * Consuming components call `useMemorySidebar()` to read and drive the sidebar.
+ * ## Optimistic open state
+ * `useUrlState` already provides an optimistic local value so the UI reacts
+ * immediately to setState calls. Additionally, `isOpen` is derived from the
+ * lessonRef (the URL-or-optimistic value) rather than from `openLesson` (the
+ * resolved LessonEntry), so the sidebar renders as "open" immediately even
+ * while the lore data query is loading in the background. The `LessonDetailSheet`
+ * gracefully handles `lesson={null}` by rendering nothing, so there is no
+ * visible gap.
  */
 
 import { createContext, useCallback, useContext, useMemo } from 'react';
@@ -32,13 +41,19 @@ interface LessonRef {
 }
 
 interface MemorySidebarContextValue {
-  /** The currently open lesson, or null. */
+  /** The fully-resolved open lesson, or null while loading or when closed. */
   openLesson: LessonEntry | null;
-  /** Open the sidebar for a specific lesson. */
+  /** The raw lesson reference (scope + key) even while data is loading. */
+  openLessonRef: LessonRef | null;
+  /** Open the sidebar for a specific lesson. Reacts immediately (optimistic). */
   openLessonById: (ref: LessonRef) => void;
-  /** Close the sidebar. */
+  /** Close the sidebar. Reacts immediately (optimistic). */
   closeLesson: () => void;
-  /** Whether the sidebar is currently open. */
+  /**
+   * True whenever a lesson ref is held — even while the lore query is still
+   * resolving. Use this for opening animations and aria-expanded rather than
+   * `openLesson !== null`, which would lag behind by one data-load cycle.
+   */
   isOpen: boolean;
 }
 
@@ -56,22 +71,18 @@ export function useMemorySidebar(): MemorySidebarContextValue {
 
 // ── Provider ──────────────────────────────────────────────────────────────────
 
-const DEFAULT_LESSON_REF: LessonRef | null = null;
-const LESSON_URL_KEY = 'lesson';
-
 interface MemorySidebarProviderProps {
   children: React.ReactNode;
 }
 
 export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) {
-  // Stored in URL as JSON: null when no lesson is selected, { scope, key } when open.
-  const [lessonRef, setLessonRef] = useUrlState<LessonRef | null>(
-    LESSON_URL_KEY,
-    DEFAULT_LESSON_REF,
-  );
+  // Stored in URL as JSON: null when closed, { scope, key } when open.
+  // useUrlState provides optimistic local state so open/close is immediate
+  // without waiting for the router navigation round-trip.
+  const [lessonRef, setLessonRef] = useUrlState<LessonRef | null>('lesson', null);
 
-  // Resolve the lesson ref to a full LessonEntry using the cached query data.
-  // The lore query is shared with the Lore Explorer – no extra network request.
+  // Resolve the ref to a full LessonEntry using the shared TanStack Query cache.
+  // The same query is used by the Lore Explorer — zero extra network requests.
   const { data } = useLoreData();
 
   const openLesson = useMemo<LessonEntry | null>(() => {
@@ -93,17 +104,20 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
   const contextValue = useMemo<MemorySidebarContextValue>(
     () => ({
       openLesson,
+      openLessonRef: lessonRef,
       openLessonById,
       closeLesson,
-      isOpen: openLesson !== null,
+      // isOpen derives from the ref, not the resolved lesson, so it is truthy
+      // immediately after openLessonById() — even before the lore data loads.
+      isOpen: lessonRef !== null,
     }),
-    [openLesson, openLessonById, closeLesson],
+    [openLesson, lessonRef, openLessonById, closeLesson],
   );
 
   return (
     <MemorySidebarContext.Provider value={contextValue}>
       {children}
-      {/* The sheet renders at the top of the tree so it overlays any page */}
+      {/* Sheet renders at the top of the tree so it overlays every page. */}
       <LessonDetailSheet
         lesson={openLesson}
         onClose={closeLesson}

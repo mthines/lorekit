@@ -1,6 +1,31 @@
 'use client';
 
-import { useMemo, useTransition } from 'react';
+/**
+ * LoreExplorer
+ *
+ * Browseable two-panel layout (scope tree + lesson list) for the Lore page.
+ *
+ * ## URL state strategy
+ * - `scope` param:   which scope is selected. Shareable, survives refresh.
+ * - `q` param:       the active search query. Survives refresh.
+ * - `scopePanelOpen`: local useState — ephemeral accordion state, NOT in URL.
+ *   Putting accordion visibility in the URL clutters the address bar and the
+ *   share link with low-value UI state. It also fires a router.replace on every
+ *   mobile accordion tap, which is expensive and unnecessary.
+ *
+ * ## SSR note
+ * This component uses `useUrlState` which calls `useSearchParams()`. It must be
+ * wrapped in a <Suspense> boundary (via the dashboard layout). On the server,
+ * `scope` and `q` default to null / '' and the first scope is shown; on the
+ * client, the real URL values hydrate without mismatch.
+ *
+ * ## Optimistic state
+ * `useUrlState` provides immediate UI feedback on scope/query changes via its
+ * internal optimistic layer. Switching scope feels instant; the URL update
+ * happens in the background.
+ */
+
+import { useMemo, useTransition, useState } from 'react';
 import { Search, BookOpen, ChevronDown } from 'lucide-react';
 import { ScopeTree, type ScopeNode } from './ScopeTree';
 import { LessonCard, type LessonEntry } from './LessonCard';
@@ -17,17 +42,20 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
   const { openLesson, openLessonById, closeLesson } = useMemorySidebar();
   const [, startTransition] = useTransition();
 
-  // Scope, query, and mobile scope-panel state live in the URL so they survive
-  // page refreshes and the back button correctly restores explorer state.
-  // Default is null (show all); the first available scope is only auto-selected
-  // at render time when neither the URL param nor a user interaction has set it.
+  // URL-backed: scope selection and search query survive refreshes and are
+  // shareable. The optimistic layer in useUrlState ensures immediate feedback.
   const [selectedScope, setSelectedScope] = useUrlState<string | null>('scope', null);
   const [query, setQuery] = useUrlState<string>('q', '');
-  const [scopePanelOpen, setScopePanelOpen] = useUrlState<boolean>('scopePanel', true);
 
-  // When no scope is stored in the URL, fall back to the first available scope
-  // in the current data set. We don't write this back to the URL automatically
-  // so the URL stays clean for unauthenticated/deep links.
+  // Local-only: mobile accordion state. Ephemeral UI — not shareable, not
+  // persisted. Putting this in URL state would pollute every share link and
+  // fire a router.replace on every tap.
+  const [scopePanelOpen, setScopePanelOpen] = useState(true);
+
+  // When no scope is stored in the URL, fall back to the first available scope.
+  // We do NOT write this back to the URL so that clean URLs stay clean (i.e.
+  // navigating to /lore without a ?scope= shows all lessons in the first scope
+  // without adding a param to the URL).
   const effectiveScope = selectedScope ?? scopes[0]?.scope ?? null;
 
   const filteredLessons = useMemo(() => {
