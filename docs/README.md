@@ -9,6 +9,7 @@
 | [limits.md](./limits.md) | Agents + developers | Memory cap, rate limiting, per-user overrides, 429 semantics |
 | [otel.md](./otel.md) | Developers | Dash0 setup, custom spans, environment variables |
 | [deployment.md](./deployment.md) | Developers | Step-by-step deployment for all three pieces |
+| [releasing.md](./releasing.md) | Developers | Automated `@lorekit/cli` npm releases via release-please + conventional commits |
 
 ---
 

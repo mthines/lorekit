@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // LoreKit CLI — install the shared-memory skill and run health checks.
 import process from 'node:process';
+import { readFileSync } from 'node:fs';
 import { parseArgs, log, err, c } from '../src/util.mjs';
 import { install } from '../src/install.mjs';
 import { doctor } from '../src/doctor.mjs';
@@ -8,7 +9,11 @@ import { hook } from '../src/hook.mjs';
 import { migrate } from '../src/migrate.mjs';
 import { mcpServer } from '../src/mcp-server.mjs';
 
-const VERSION = '1.0.0';
+// Read the version from package.json so it always matches the published
+// package — release-please bumps package.json, and this tracks it for free.
+const VERSION = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+).version;
 
 const HELP = `${c.bold('lorekit')} — shared persistent memory for coding agents
 
