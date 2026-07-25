@@ -76,6 +76,7 @@ test('install wires the three lifecycle hooks into project settings.json', async
 
   const settings = JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8'));
   for (const event of ['SessionStart', 'PostToolUseFailure', 'Stop']) {
+    assert.ok(settings.hooks[event]?.length, `${event} hook group present`);
     const cmd = settings.hooks[event][0].hooks[0].command;
     assert.match(cmd, /lorekit(\/cli)? hook --adapter claude --event /);
     assert.match(cmd, new RegExp(`--event ${event}\\b`));
