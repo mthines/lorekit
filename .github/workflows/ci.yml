@@ -32,6 +32,7 @@ jobs:
       contents: read
     outputs:
       api: ${{ steps.filter.outputs.api }}
+      plugin: ${{ steps.filter.outputs.plugin }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -61,6 +62,13 @@ jobs:
             echo "api=true" >> "$GITHUB_OUTPUT"
           else
             echo "api=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Plugin smoke gate: the Claude marketplace bundle, its vendored skill
+          # source, the hook engine it shells out to, and the sync/smoke scripts.
+          if printf '%s\n' "$CHANGED" | grep -qE '^(plugins/|\.claude-plugin/|packages/cli/skill/|packages/cli/src/|packages/cli/bin/|scripts/sync-plugin-skill\.mjs|scripts/smoke-plugin\.sh|\.github/workflows/ci\.yml)'; then
+            echo "plugin=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "plugin=false" >> "$GITHUB_OUTPUT"
           fi
 
   # ── Typecheck + Test + Lint (only affected packages) ─────────────────────────
@@ -92,6 +100,35 @@ jobs:
         env:
           NX_BASE: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
           NX_HEAD: ${{ github.sha }}
+
+  # ── Plugin smoke — the Claude marketplace plugin installs + enables ──────────
+  #    Runs the real `claude` CLI install flow end-to-end (validate → marketplace
+  #    add → install → assert enabled → hook engine smoke) via
+  #    scripts/smoke-plugin.sh. Gated on plugin-relevant paths so unrelated PRs
+  #    skip it; a skipped required check is treated as passing by branch
+  #    protection. The frameworks unit test only *validates* the manifest (and
+  #    skips when the CLI is absent) — this job proves an actual install works.
+  plugin:
+    name: Plugin smoke (install + enable)
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.plugin == 'true'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install the Claude CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Plugin install smoke
+        run: bash scripts/smoke-plugin.sh
 
   # ── Integration smoke — live stack wiring on a local Supabase ────────────────
   #    Boots a full local stack (migrations applied → serves the real Edge
