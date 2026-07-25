@@ -9,12 +9,29 @@ CI included. This CLI wires an agent up to it in two commands.
 
 ## Install
 
+Install it globally — recommended. You get one pinned version, the `lorekit`
+command stays on your `PATH`, and the plugin hooks (which call `lorekit hook`
+on every lifecycle event) fire instantly instead of paying an `npx` resolution
+cost each time:
+
+```bash
+npm install -g @lorekit/cli
+lorekit install
+lorekit doctor
+```
+
+Upgrade later with `npm install -g @lorekit/cli@latest`.
+
+Prefer not to install anything? Run it on demand with `npx` — same commands,
+always the latest version, fetched and cached per use:
+
 ```bash
 npx @lorekit/cli install
 npx @lorekit/cli doctor
 ```
 
-Requires Node 18+ (for the built-in `fetch`). No dependencies.
+Requires Node 18+ (for the built-in `fetch`). No dependencies. Works on macOS,
+Linux, and Windows (npm creates the `lorekit` shim on every platform).
 
 ## Commands
 
