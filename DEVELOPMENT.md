@@ -30,14 +30,14 @@ Vercel bits are only needed when you touch those pieces.
 
 ## Repo layout
 
-| Path | What |
-|------|------|
-| `packages/mcp-core/` | Scope validator, DB client, tool handlers, OTel |
-| `packages/mcp-server/` | Node.js MCP server (Fly.io variant) |
-| `packages/web/` | Next.js dashboard (Vercel) |
-| `packages/cli/` | Zero-dep `@lorekit/cli` — `install` / `doctor` / `hook` / `migrate` / `mcp` |
-| `plugins/` | Per-framework bundles (Claude / Cursor / Codex) |
-| `supabase/` | Edge Functions (production MCP server), migrations |
+| Path                   | What                                                                        |
+| ---------------------- | --------------------------------------------------------------------------- |
+| `packages/mcp-core/`   | Scope validator, DB client, tool handlers, OTel                             |
+| `packages/mcp-server/` | Node.js MCP server (Fly.io variant)                                         |
+| `packages/web/`        | Next.js dashboard (Vercel)                                                  |
+| `packages/cli/`        | Zero-dep `@lorekit/cli` — `install` / `doctor` / `hook` / `migrate` / `mcp` |
+| `plugins/`             | Per-framework bundles (Claude / Cursor / Codex)                             |
+| `supabase/`            | Edge Functions (production MCP server), migrations                          |
 
 See [CLAUDE.md](./CLAUDE.md) for the full package map and key decisions.
 
@@ -66,7 +66,7 @@ command against your working copy.
 
 ```bash
 cd packages/cli
-npm link
+pnpm link --global
 ```
 
 This creates a global `lorekit` that points at `packages/cli/bin/lorekit.mjs` in
@@ -86,7 +86,7 @@ lorekit doctor       # run it against the current directory
 ### Remove the symlink
 
 ```bash
-npm rm -g @lorekit/cli     # or: npm unlink -g @lorekit/cli
+pnpm unlink --global @lorekit/cli
 ```
 
 ### Run it without linking
