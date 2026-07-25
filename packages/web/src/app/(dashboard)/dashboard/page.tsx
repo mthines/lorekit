@@ -3,7 +3,7 @@ import { Bot, Webhook, Zap } from 'lucide-react';
 import { OnboardingChecklist, type OnboardingStep } from '@/components/dashboard/OnboardingChecklist';
 import { OnboardingStepContent } from '@/components/dashboard/OnboardingStepContent';
 import { listTokens, generateToken } from '@/lib/tokens';
-import { getActiveWebhookSecret, generateWebhookSecret } from '@/lib/webhook-secrets';
+import { listWebhookSecrets } from '@/lib/webhook-secrets';
 import { DashboardStats } from '@/components/dashboard/DashboardStats';
 
 export const metadata: Metadata = { title: 'Overview' };
@@ -27,10 +27,10 @@ async function fetchOnboardingState() {
 }
 
 export default async function DashboardPage() {
-  const [{ hasLessons, hasWebhook }, existingTokens, existingSecret] = await Promise.all([
+  const [{ hasLessons, hasWebhook }, existingTokens, webhookSecrets] = await Promise.all([
     fetchOnboardingState(),
     listTokens(),
-    getActiveWebhookSecret(),
+    listWebhookSecrets(),
   ]);
 
   // First login: no tokens yet → auto-generate a read+write token so the
@@ -50,24 +50,6 @@ export default async function DashboardPage() {
       }
     } catch {
       // Non-fatal — page renders without auto-generated token
-    }
-  }
-
-  // First visit: no webhook secret yet → auto-generate one server-side so the
-  // user can copy the pre-filled value directly into Supabase secrets + GitHub.
-  // Subsequent visits: existingSecret is non-null; the dashboard shows it masked
-  // with a "Regenerate" option (same pattern as api_tokens).
-  let webhookSecret = existingSecret?.secret ?? null;
-  let isNewSecret = false;
-  if (!existingSecret) {
-    try {
-      const result = await generateWebhookSecret();
-      if ('secret' in result) {
-        webhookSecret = result.secret;
-        isNewSecret = true;
-      }
-    } catch {
-      // Non-fatal — page renders with a "Generate secret" button instead
     }
   }
 
@@ -113,8 +95,7 @@ export default async function DashboardPage() {
           step="webhook"
           mcpUrl={mcpUrl}
           webhookUrl={webhookUrl}
-          webhookSecret={webhookSecret ?? undefined}
-          isNewWebhookSecret={isNewSecret}
+          webhookSecrets={webhookSecrets}
         />
       ),
     },

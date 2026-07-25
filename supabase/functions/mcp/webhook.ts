@@ -8,21 +8,35 @@
  * lorekit.webhook.skipped=true on the span so they are visible in Dash0.
  *
  * Secret lookup strategy:
- *   1. Look up the repo owner's active webhook secret from the webhook_secrets
- *      table (keyed by user_id, matched via the sender.login claim in the payload).
- *      This is the primary path — secrets are stored server-side and owned per user.
- *   2. Fall back to the GITHUB_WEBHOOK_SECRET env var for backwards compatibility
- *      (existing deployments that set the env var before the DB-backed flow was added).
+ *   1. Look up active webhook_secrets rows matching the delivery's
+ *      repository.full_name directly (repo-scoped secrets). This is the
+ *      primary path and is deterministic — no join on any user's GitHub
+ *      login, so it works for org-owned repos where the owner login is the
+ *      org, not any LoreKit user's personal login.
+ *   2. Fall back to a null-`repo` legacy row (pre-dates per-repo secrets).
+ *   3. Fall back to the GITHUB_WEBHOOK_SECRET env var for backwards
+ *      compatibility (deployments that set the env var before the DB-backed
+ *      flow was added).
  *
- * This replaces the previous approach where the secret was generated client-side
- * (ephemeral, not stored) and the user had to manually copy it into env vars.
- * See: optimize-approach analysis — codebase-fit + robustness axes both fired.
+ * Previously this joined on repository.owner.login via an
+ * auth.admin.listUsers({ perPage: 1000 }) scan — which fails for org-owned
+ * repos (owner login is the org, not a personal login) and is O(all users),
+ * capped at 1000. Matching by full_name against a stored `repo` column
+ * removes both problems.
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { validateScope } from '../_shared/scope.ts';
 import { traceRequest, type Span } from '../_shared/otel.ts';
 import { toolWrite } from './tools.ts';
+import {
+  selectWebhookSecrets,
+  type WebhookSecretRow,
+  type WebhookSecretSource,
+} from './webhook-secret-select.ts';
+
+/** Delivery full_name must look like a plausible owner/repo before it touches a DB filter. */
+const SAFE_FULL_NAME = /^[a-z0-9._/-]+$/;
 
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
@@ -36,49 +50,41 @@ const SUPPORTED_EVENTS = new Set([
 /**
  * Resolve candidate HMAC secrets for this webhook delivery.
  *
- * Primary: look up the repo owner's active webhook secret via auth.users.
- * Supabase stores the GitHub login in raw_user_meta_data['user_name'] for
- * OAuth users — the stable cross-system identifier we join on.
- * Returns all matching secrets so the caller can try each — handles the
- * uncommon case of multiple LoreKit users under the same GitHub org login.
+ * Queries active webhook_secrets rows matching the delivery's full_name
+ * directly (repo-scoped, deterministic — no user-login join), falls back to
+ * a legacy null-repo row, then to the GITHUB_WEBHOOK_SECRET env var. See
+ * selectWebhookSecrets for the precedence and OTel source values.
  *
- * Fallback: GITHUB_WEBHOOK_SECRET env var (backwards compat for deployments
- * that pre-date the webhook_secrets table).
+ * `fullName` must already be lowercased and pass the SAFE_FULL_NAME guard
+ * before this is called — untrusted, pre-HMAC-verification input never
+ * reaches a PostgREST filter unescaped.
  */
 async function resolveSecrets(
   db: ReturnType<typeof createClient>,
-  ownerLogin: string | undefined,
-): Promise<{ secrets: string[]; source: 'db' | 'env' | 'none' }> {
-  if (ownerLogin) {
-    // auth.admin.listUsers() is available to the service-role client and returns
-    // raw_user_meta_data, which Supabase populates from GitHub OAuth.
-    // deno-lint-ignore no-explicit-any
-    const { data: usersPage } = await (db.auth.admin as any).listUsers({ perPage: 1000 });
-    // deno-lint-ignore no-explicit-any
-    const userIds: string[] = (usersPage?.users ?? [])
-      .filter((u: any) => u.raw_user_meta_data?.['user_name'] === ownerLogin)
-      .map((u: any) => u.id as string);
+  fullName: string | undefined,
+) {
+  let rows: WebhookSecretRow[] = [];
 
-    if (userIds.length > 0) {
-      const { data: rows } = await db
+  if (fullName && SAFE_FULL_NAME.test(fullName)) {
+    const { data: repoRows } = await db
+      .from('webhook_secrets')
+      .select('secret, repo')
+      .eq('active', true)
+      .eq('repo', fullName);
+    rows = (repoRows ?? []) as WebhookSecretRow[];
+
+    if (rows.length === 0) {
+      const { data: legacyRows } = await db
         .from('webhook_secrets')
-        .select('secret')
-        .in('user_id', userIds)
+        .select('secret, repo')
         .eq('active', true)
-        .order('created_at', { ascending: false });
-
-      const secrets = (rows ?? [])
-        .map((r: { secret: string }) => r.secret)
-        .filter(Boolean) as string[];
-      if (secrets.length > 0) return { secrets, source: 'db' };
+        .is('repo', null);
+      rows = (legacyRows ?? []) as WebhookSecretRow[];
     }
   }
 
-  // Fallback: env var
   const envSecret = Deno.env.get('GITHUB_WEBHOOK_SECRET') ?? '';
-  if (envSecret) return { secrets: [envSecret], source: 'env' };
-
-  return { secrets: [], source: 'none' };
+  return selectWebhookSecrets(rows, fullName, envSecret);
 }
 
 /**
@@ -92,7 +98,7 @@ async function verifyHmac(
   bodyBytes: ArrayBuffer,
   signature: string | null,
   secret: string,
-  secretSource: 'db' | 'env' | 'none',
+  secretSource: WebhookSecretSource,
 ): Promise<{ ok: boolean; secretConfigured: boolean; signaturePresent: boolean; secretSource: string; failReason?: string }> {
   const secretConfigured = secret.length > 0;
   const signaturePresent = !!signature && signature.length > 0;
@@ -138,19 +144,20 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
   const bodyBytes = await req.arrayBuffer();
   const body = new TextDecoder().decode(bodyBytes);
 
-  // Parse enough of the payload to identify the repo owner before HMAC verification.
-  // We need the owner login to look up the correct secret from the DB.
+  // Parse enough of the payload to identify the repo before HMAC verification.
+  // We need repository.full_name to look up the correct secret from the DB.
   // deno-lint-ignore no-explicit-any
   let earlyPayload: Record<string, any> = {};
   try { earlyPayload = JSON.parse(body); } catch { /* handled below */ }
 
-  const ownerLogin = earlyPayload['repository']?.owner?.login as string | undefined;
+  const fullNameRaw = earlyPayload['repository']?.full_name as string | undefined;
+  const fullName = fullNameRaw?.toLowerCase();
 
   const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  const { secrets, source: secretSource } = await resolveSecrets(db, ownerLogin);
+  const { secrets, source: secretSource, matchedRepo } = await resolveSecrets(db, fullName);
 
   // Try each candidate secret in order. Single-user: one iteration.
   // Multi-user org: tries each until one verifies.
@@ -167,6 +174,7 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
     'lorekit.webhook.secret_source': hmac.secretSource,
     'lorekit.webhook.signature_present': hmac.signaturePresent,
     'lorekit.webhook.body_bytes': bodyBytes.byteLength,
+    'lorekit.webhook.matched_repo': matchedRepo ?? '',
   });
 
   if (!hmac.ok) {

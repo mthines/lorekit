@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useTransition } from 'react';
-import { Copy, CheckCheck, ExternalLink, Terminal, Webhook, Link2, Key, RefreshCw, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { useState } from 'react';
+import { Copy, CheckCheck, ExternalLink, Terminal, Webhook, Link2, Key } from 'lucide-react';
 import { TokenManager } from './TokenManager';
-import { generateWebhookSecret } from '@/lib/webhook-secrets';
+import { WebhookSecretManager } from './WebhookSecretManager';
+import type { WebhookSecret } from '@/lib/webhook-secrets';
 import type { ApiToken } from '@/lib/tokens';
 import type { TokenPermission } from '@/lib/tokens';
 
@@ -276,139 +277,24 @@ function ConnectStep({
 
 // ── Step: GitHub webhook ──────────────────────────────────────────────────────
 //
-// The secret is generated server-side on first dashboard visit and stored in
-// webhook_secrets (mirroring api_tokens). The RSC passes it as a prop so the
-// value is always real — no client-side generation, no ephemeral browser state.
-//
-// isNew = true  → show the amber "copy now" banner (first visit, just generated)
-// isNew = false → show the masked existing secret with a "Regenerate" option
-
-interface WebhookSecretDisplayProps {
-  secret: string;
-  isNew: boolean;
-  onRegenerate: (newSecret: string) => void;
-}
-
-function WebhookSecretDisplay({ secret, isNew, onRegenerate }: WebhookSecretDisplayProps) {
-  const [visible, setVisible] = useState(isNew); // show on first visit, hidden on return
-  const [copied, setCopied] = useState(false);
-  const [pending, startTransition] = useTransition();
-  const [error, setError] = useState('');
-
-  function handleCopy() {
-    navigator.clipboard.writeText(secret).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-    });
-  }
-
-  function handleRegenerate() {
-    setError('');
-    startTransition(async () => {
-      const result = await generateWebhookSecret();
-      if ('error' in result) {
-        setError(result.error);
-        return;
-      }
-      onRegenerate(result.secret);
-    });
-  }
-
-  return (
-    <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-      {/* Thin accent strip — signals this requires action */}
-      <div className="h-0.5 w-full bg-[var(--color-accent)]" aria-hidden />
-      <div className="p-4">
-        <div className="mb-2 flex items-center gap-2">
-          <Key className="size-4 shrink-0 text-[var(--color-accent)]" aria-hidden />
-          <p className="text-sm font-semibold text-[var(--color-content-primary)]">
-            {isNew ? 'Your webhook secret — copy it now' : 'Your webhook secret'}
-          </p>
-        </div>
-
-        {isNew && (
-          <p className="mb-3 text-xs text-[var(--color-content-secondary)]">
-            We generated this server-side and stored it securely. Set it as{' '}
-            <code className="rounded bg-[var(--color-bg)] px-1 font-mono">GITHUB_WEBHOOK_SECRET</code>{' '}
-            in Supabase secrets, then paste it into GitHub&apos;s &ldquo;Secret&rdquo; field below.
-          </p>
-        )}
-
-        {!isNew && (
-          <p className="mb-3 text-xs text-[var(--color-content-secondary)]">
-            This is the secret currently set for your webhook. If you need to rotate it, click
-            &ldquo;Regenerate&rdquo; and update both Supabase secrets and the GitHub webhook.
-          </p>
-        )}
-
-        {/* Secret display */}
-        <div className="flex items-center gap-2 overflow-hidden rounded-lg border border-[var(--color-accent)] bg-[var(--color-bg)] p-3">
-          <code className={[
-            'min-w-0 flex-1 overflow-x-auto font-mono text-xs text-[var(--color-content-primary)] select-all',
-            !visible ? 'blur-sm select-none' : '',
-          ].join(' ')}>
-            {secret}
-          </code>
-          <div className="flex shrink-0 items-center gap-1">
-            <button
-              onClick={() => setVisible((v) => !v)}
-              aria-label={visible ? 'Hide secret' : 'Show secret'}
-              className="flex size-8 items-center justify-center rounded text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]"
-            >
-              {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-            </button>
-            <button
-              onClick={handleCopy}
-              aria-label="Copy webhook secret"
-              className="flex items-center gap-1 rounded-md border border-[var(--color-accent)] bg-[var(--color-accent-subtle)] px-2.5 py-1 text-xs font-medium text-[var(--color-accent)] transition-all duration-150 hover:bg-[var(--color-accent)] hover:text-[#000]"
-            >
-              {copied ? <><CheckCheck className="size-3" /> Copied!</> : <><Copy className="size-3" /> Copy</>}
-            </button>
-          </div>
-        </div>
-
-        {error && <p className="mt-2 text-xs text-[var(--color-error)]">{error}</p>}
-
-        <button
-          onClick={handleRegenerate}
-          disabled={pending}
-          className="mt-3 inline-flex items-center gap-1 text-xs text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)] transition-colors duration-150 disabled:opacity-50"
-        >
-          {pending
-            ? <Loader2 className="size-3 animate-spin" />
-            : <RefreshCw className="size-3" />}
-          Regenerate secret
-        </button>
-      </div>
-    </div>
-  );
-}
+// Secrets are per-repo (see WebhookSecretManager) — a user adds a secret for
+// each owner/repo they want to webhook. The RSC passes the current list of
+// active secrets; the manager handles adding, listing, and regenerating them
+// client-side. There is no maintainer-owned Supabase infra for the end user
+// to configure — the edge function reads webhook_secrets directly.
 
 function WebhookStep({
   webhookUrl,
-  webhookSecret,
-  isNewWebhookSecret,
+  webhookSecrets,
 }: {
   webhookUrl: string;
-  webhookSecret?: string;
-  isNewWebhookSecret?: boolean;
+  webhookSecrets: WebhookSecret[];
 }) {
-  // Client-side state: the secret may be regenerated by the user after initial load.
-  // Starts from the server-provided value; updates on regeneration.
-  const [secret, setSecret] = useState<string | null>(webhookSecret ?? null);
-  const isNew = isNewWebhookSecret ?? false;
-
-  // Step 1 snippet — filled with real secret if available
-  const envSnippet = secret
-    ? `GITHUB_WEBHOOK_SECRET=${secret}`
-    : `GITHUB_WEBHOOK_SECRET=<copy your secret above>`;
-
-  // Step 2 snippet — all fields pre-filled
   const githubGuide = `# In your repo → Settings → Webhooks → Add webhook:
 #
 # Payload URL:    ${webhookUrl}
 # Content type:  application/json
-# Secret:        ${secret ?? '<copy your secret above>'}
+# Secret:        <the secret shown above for this repo>
 # Events:        ✓ Pull request review comments
 #                ✓ Pull request reviews`;
 
@@ -422,37 +308,16 @@ function WebhookStep({
         and visible in Lore Explorer.
       </p>
 
-      {/* Secret display — server-generated, persistently stored */}
-      {secret ? (
-        <WebhookSecretDisplay
-          secret={secret}
-          isNew={isNew}
-          onRegenerate={(newSecret) => setSecret(newSecret)}
-        />
-      ) : (
-        <p className="text-xs text-[var(--color-content-tertiary)]">
-          Secret could not be generated. Reload the page to try again.
-        </p>
-      )}
-
-      {/* Step 1 — server env */}
+      {/* Per-repo secret manager — add a repo, list existing secrets, regenerate */}
       <div>
-        <SectionLabel icon={<Key className="size-3" />}>
-          Step 1 — add to your Supabase Edge Function secrets
-        </SectionLabel>
-        <CodeBlock code={envSnippet} filename="Supabase secrets" />
-        <p className="mt-1.5 text-[10px] text-[var(--color-content-tertiary)]">
-          Dashboard → Edge Functions → Manage secrets → add{' '}
-          <code className="font-mono">GITHUB_WEBHOOK_SECRET</code>.
-          Or via CLI:{' '}
-          <code className="font-mono">supabase secrets set GITHUB_WEBHOOK_SECRET=&lt;value&gt;</code>
-        </p>
+        <SectionLabel icon={<Key className="size-3" />}>Webhook secrets</SectionLabel>
+        <WebhookSecretManager initialSecrets={webhookSecrets} />
       </div>
 
-      {/* Step 2 — GitHub */}
+      {/* Add the webhook on GitHub */}
       <div>
         <SectionLabel icon={<Webhook className="size-3" />}>
-          Step 2 — add the webhook on GitHub
+          Add the webhook on GitHub
         </SectionLabel>
         <CodeBlock code={githubGuide} filename="GitHub webhook settings" />
         <a
@@ -475,8 +340,7 @@ interface OnboardingStepContentProps {
   step: 'connect' | 'webhook';
   mcpUrl: string;
   webhookUrl?: string;
-  webhookSecret?: string;
-  isNewWebhookSecret?: boolean;
+  webhookSecrets?: WebhookSecret[];
   autoGeneratedToken?: string;
   initialTokens?: Array<{
     id: string;
@@ -492,8 +356,7 @@ export function OnboardingStepContent({
   step,
   mcpUrl,
   webhookUrl,
-  webhookSecret,
-  isNewWebhookSecret,
+  webhookSecrets = [],
   autoGeneratedToken,
   initialTokens = [],
 }: OnboardingStepContentProps) {
@@ -510,8 +373,7 @@ export function OnboardingStepContent({
     return (
       <WebhookStep
         webhookUrl={webhookUrl ?? mcpUrl}
-        webhookSecret={webhookSecret}
-        isNewWebhookSecret={isNewWebhookSecret}
+        webhookSecrets={webhookSecrets}
       />
     );
   }
