@@ -120,4 +120,39 @@ describe('write', () => {
     const result = await write(db, { scope: 'GLOBAL', key: 'k', value: 'v' });
     expect(result).toEqual(fakeResult);
   });
+
+  it('passes a null p_created_at to the RPC when created_at is omitted', async () => {
+    const db = makeDb(fakeResult);
+    await write(db, { scope: 'global', key: 'k', value: 'v' });
+    expect(db.rpc).toHaveBeenCalledWith(
+      'memory_write',
+      expect.objectContaining({ p_created_at: null }),
+    );
+  });
+
+  it('forwards a valid created_at override as a normalised ISO string', async () => {
+    const db = makeDb(fakeResult);
+    await write(db, { scope: 'global', key: 'k', value: 'v', created_at: '2020-06-15T08:30:00Z' });
+    expect(db.rpc).toHaveBeenCalledWith(
+      'memory_write',
+      expect.objectContaining({ p_created_at: '2020-06-15T08:30:00.000Z' }),
+    );
+  });
+
+  it('rejects an invalid created_at before touching the DB', async () => {
+    const db = makeDb(fakeResult);
+    await expect(
+      write(db, { scope: 'global', key: 'k', value: 'v', created_at: 'not-a-date' }),
+    ).rejects.toThrow(/valid date-time/);
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects a future created_at', async () => {
+    const db = makeDb(fakeResult);
+    const future = new Date(Date.now() + 3_600_000).toISOString();
+    await expect(
+      write(db, { scope: 'global', key: 'k', value: 'v', created_at: future }),
+    ).rejects.toThrow(/future/);
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
 });

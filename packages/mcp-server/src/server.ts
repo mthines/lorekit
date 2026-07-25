@@ -50,6 +50,7 @@ export function createMcpServer(auth: AuthContext): McpServer {
       tags: z.array(z.string()).optional().describe('Optional tags e.g. ["skill::aw", "source::manual"]'),
       source_agent: z.string().optional().describe('Agent that wrote this lesson'),
       trigger: z.string().optional().describe('What triggered this write e.g. "stuck-loop"'),
+      created_at: z.string().optional().describe('Optional ISO 8601 creation date. Use when migrating a pre-existing memory so it is dated by its original time instead of now. Rejected if invalid or in the future. Applies only when the memory is first created.'),
     },
     async (args) => {
       try {

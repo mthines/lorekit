@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { serializeEntry, parseEntry, slugify, scopeToDir } from './format.mjs';
+import { normalizeCreatedAt } from './created-at.mjs';
 
 export function createLocalStore(baseDir) {
   return new LocalStore(baseDir);
@@ -82,19 +83,34 @@ class LocalStore {
 
   // write(...) → { ok, entry } — upsert by scope+key. Preserves `created` and
   // refreshes `updated`; writing an archived key revives it.
-  async write({ scope, key, value, tags, source_agent, trigger } = {}) {
+  //
+  // `created_at` is an optional ISO 8601 override for migrating a pre-existing
+  // memory (mirrors the hosted memory.write param). It applies only when the
+  // entry is first created — on both `created` and `updated`, so a migrated
+  // memory is dated by its original time everywhere — and is ignored for an
+  // existing key (a creation date never moves). Returns { ok:false, error } on
+  // an invalid or future-dated value rather than throwing, matching the store
+  // contract's error surfacing.
+  async write({ scope, key, value, tags, source_agent, trigger, created_at } = {}) {
+    let override;
+    try {
+      override = normalizeCreatedAt(created_at);
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
     const dir = this._dir(scope);
     fs.mkdirSync(dir, { recursive: true });
     const now = new Date().toISOString();
     const existing = this._findByKey(scope, key);
+    const created = existing ? existing.entry.created || now : override || now;
     const entry = {
       scope,
       key,
       tags: Array.isArray(tags) ? tags : [],
       source_agent: source_agent || null,
       trigger: trigger || null,
-      created: existing ? existing.entry.created || now : now,
-      updated: now,
+      created,
+      updated: existing ? now : override || now,
       archived_at: null,
       value: value == null ? '' : String(value),
     };

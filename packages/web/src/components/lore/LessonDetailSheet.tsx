@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, Bot, Zap, Tag, Clock, Archive, RotateCcw } from 'lucide-react';
+import { X, Bot, Zap, Tag, Clock, CalendarClock, Archive, RotateCcw } from 'lucide-react';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import type { LessonEntry } from './LessonCard';
 import { archiveLesson, restoreLesson } from '@/lib/lore';
@@ -145,6 +145,13 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
                       </dd>
                     </div>
                   )}
+                  <div className="flex items-center gap-2 text-xs">
+                    <CalendarClock className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                    <dt className="text-[var(--color-content-tertiary)]">Created</dt>
+                    <dd className="ml-auto text-[var(--color-content-secondary)]">
+                      {new Date(lesson.created_at).toLocaleString()}
+                    </dd>
+                  </div>
                   <div className="flex items-center gap-2 text-xs">
                     <Clock className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                     <dt className="text-[var(--color-content-tertiary)]">Last updated</dt>

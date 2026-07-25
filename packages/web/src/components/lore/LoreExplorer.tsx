@@ -56,7 +56,7 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
   const [query, setQuery] = useDebouncedUrlState<string>('q', '');
 
   // URL-backed date range (single param, shareable). Scoped to /lore so the
-  // param doesn't linger on other pages. Filters lessons by last-updated day.
+  // param doesn't linger on other pages. Filters lessons by creation day.
   const [range, setRange] = useUrlState<DateRange | null>('range', null, {
     cleanOnPathname: '/lore',
   });
@@ -77,11 +77,11 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
       ? lessons.filter((l) => l.scope === effectiveScope)
       : lessons;
 
-    // Date range filters on the lesson's last-updated day (UTC), matching the
-    // DateRangePicker's UTC day strings.
+    // Date range filters on the lesson's creation day (UTC), matching the
+    // DateRangePicker's UTC day strings and the created_at ordering.
     if (range) {
       out = out.filter((l) => {
-        const day = new Date(l.updated_at).toISOString().slice(0, 10);
+        const day = new Date(l.created_at).toISOString().slice(0, 10);
         return day >= range.from && day <= range.to;
       });
     }

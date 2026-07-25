@@ -97,6 +97,20 @@ describe('memory.write', () => {
       expect.objectContaining({ tags: ['skill::aw'], source_agent: 'aw-executor', trigger: 'stuck-loop' }),
     );
   });
+
+  it('forwards optional created_at for backdated migration writes', async () => {
+    mockWrite.mockResolvedValue({ id: 'uuid-3', created_at: '2020-06-01T00:00:00Z' });
+    await callTool('memory.write', {
+      scope: 'global',
+      key: 'migrated',
+      value: 'body',
+      created_at: '2020-06-01T00:00:00Z',
+    });
+    expect(mockWrite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ created_at: '2020-06-01T00:00:00Z' }),
+    );
+  });
 });
 
 // ── memory.read ───────────────────────────────────────────────────────────────

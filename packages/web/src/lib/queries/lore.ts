@@ -14,9 +14,11 @@ async function fetchLoreData(): Promise<LoreData> {
 
   const { data, error } = await supabase
     .from('memories')
-    .select('scope,key,value,tags,updated_at,archived_at,source_agent,trigger')
+    .select('scope,key,value,tags,created_at,updated_at,archived_at,source_agent,trigger')
     .is('archived_at', null)
-    .order('updated_at', { ascending: false })
+    // Order by creation date so memories migrated with a backdated created_at
+    // appear at their correct original position, not the migration time.
+    .order('created_at', { ascending: false })
     .limit(500);
 
   if (error || !data) return { scopes: [], lessons: [] };
@@ -27,6 +29,7 @@ async function fetchLoreData(): Promise<LoreData> {
     key: row.key as string,
     value: row.value as string,
     tags: (row.tags as string[]) ?? [],
+    created_at: row.created_at as string,
     updated_at: row.updated_at as string,
     archived_at: (row.archived_at as string | null) ?? null,
     source_agent: row.source_agent as string | null,
