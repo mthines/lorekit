@@ -34,6 +34,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDebouncedUrlState } from '@/lib/hooks/useDebouncedUrlState';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
+import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
 
 interface LoreExplorerProps {
   scopes: ScopeNode[];
@@ -54,6 +55,12 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
   // router.replace per keystroke. See useDebouncedUrlState for the full rationale.
   const [query, setQuery] = useDebouncedUrlState<string>('q', '');
 
+  // URL-backed date range (single param, shareable). Scoped to /lore so the
+  // param doesn't linger on other pages. Filters lessons by last-updated day.
+  const [range, setRange] = useUrlState<DateRange | null>('range', null, {
+    cleanOnPathname: '/lore',
+  });
+
   // Local-only: mobile accordion state. Ephemeral UI — not shareable, not
   // persisted. Putting this in URL state would pollute every share link and
   // fire a router.replace on every tap.
@@ -66,20 +73,33 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
   const effectiveScope = selectedScope ?? scopes[0]?.scope ?? null;
 
   const filteredLessons = useMemo(() => {
-    const scopeLessons = effectiveScope
+    let out = effectiveScope
       ? lessons.filter((l) => l.scope === effectiveScope)
       : lessons;
 
-    if (!query.trim()) return scopeLessons;
+    // Date range filters on the lesson's last-updated day (UTC), matching the
+    // DateRangePicker's UTC day strings.
+    if (range) {
+      out = out.filter((l) => {
+        const day = new Date(l.updated_at).toISOString().slice(0, 10);
+        return day >= range.from && day <= range.to;
+      });
+    }
 
-    const q = query.toLowerCase();
-    return scopeLessons.filter(
-      (l) =>
-        l.key.toLowerCase().includes(q) ||
-        l.value.toLowerCase().includes(q) ||
-        l.tags.some((t) => t.toLowerCase().includes(q)),
-    );
-  }, [lessons, effectiveScope, query]);
+    if (query.trim()) {
+      const q = query.toLowerCase();
+      out = out.filter(
+        (l) =>
+          l.key.toLowerCase().includes(q) ||
+          l.value.toLowerCase().includes(q) ||
+          l.tags.some((t) => t.toLowerCase().includes(q)),
+      );
+    }
+
+    return out;
+  }, [lessons, effectiveScope, query, range]);
+
+  const isFiltered = query.trim() !== '' || range !== null;
 
   function handleScopeSelect(scope: string) {
     startTransition(() => {
@@ -120,8 +140,8 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
         </div>
 
         <div className="flex flex-1 flex-col overflow-hidden">
-          <div className="border-b border-[var(--color-border)] p-3">
-            <div className="relative">
+          <div className="flex items-center gap-2 border-b border-[var(--color-border)] p-3">
+            <div className="relative flex-1">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-content-tertiary)]" aria-hidden />
               <input
                 type="search"
@@ -132,6 +152,7 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
                 className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] py-2 pl-8 pr-3 text-xs text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none transition-colors duration-150"
               />
             </div>
+            <DateRangePicker value={range} onChange={setRange} className="shrink-0" />
           </div>
 
           <div className="flex-1 overflow-y-auto p-3" role="list" aria-label="Lessons">
@@ -151,8 +172,8 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
             ) : (
               <EmptyState
                 icon={BookOpen}
-                title={query ? 'No matching lessons' : 'No lessons in this scope'}
-                description={query ? 'Try a different search term.' : 'Lessons will appear here once your agents start writing.'}
+                title={isFiltered ? 'No matching lessons' : 'No lessons in this scope'}
+                description={isFiltered ? 'Try a different search term or date range.' : 'Lessons will appear here once your agents start writing.'}
               />
             )}
           </div>
@@ -182,16 +203,19 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
           )}
         </div>
 
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-content-tertiary)]" aria-hidden />
-          <input
-            type="search"
-            placeholder="Search lessons…"
-            value={query}
-            onChange={(e) => startTransition(() => setQuery(e.target.value))}
-            aria-label="Search lessons"
-            className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] py-2 pl-8 pr-3 text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none transition-colors duration-150"
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-content-tertiary)]" aria-hidden />
+            <input
+              type="search"
+              placeholder="Search lessons…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              aria-label="Search lessons"
+              className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] py-2 pl-8 pr-3 text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none transition-colors duration-150"
+            />
+          </div>
+          <DateRangePicker value={range} onChange={setRange} className="shrink-0" />
         </div>
 
         <div role="list" aria-label="Lessons">
@@ -211,8 +235,8 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
           ) : (
             <EmptyState
               icon={BookOpen}
-              title={query ? 'No matching lessons' : 'No lessons in this scope'}
-              description={query ? 'Try a different search term.' : 'Lessons will appear here once your agents start writing.'}
+              title={isFiltered ? 'No matching lessons' : 'No lessons in this scope'}
+              description={isFiltered ? 'Try a different search term or date range.' : 'Lessons will appear here once your agents start writing.'}
             />
           )}
         </div>
