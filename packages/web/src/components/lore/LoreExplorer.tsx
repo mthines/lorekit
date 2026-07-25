@@ -56,7 +56,7 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
   const [query, setQuery] = useDebouncedUrlState<string>('q', '');
 
   // URL-backed date range (single param, shareable). Scoped to /lore so the
-  // param doesn't linger on other pages. Filters lessons by last-updated day.
+  // param doesn't linger on other pages. Filters lessons by creation day.
   const [range, setRange] = useUrlState<DateRange | null>('range', null, {
     cleanOnPathname: '/lore',
   });
