@@ -12,12 +12,28 @@ import { createTracedClient, type Span } from '../_shared/otel.ts';
 import { translateCapError } from './limits.ts';
 import { parseCreatedAt } from './created-at.ts';
 import { recordAudit } from './audit.ts';
+import { applyTenantScope } from './tenant-scope.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
 
 // deno-lint-ignore no-explicit-any
 export type Params = Record<string, any>;
+
+/**
+ * Resolve the org ids a user is a member of via the single membership-truth
+ * RPC (lorekit_member_org_ids, 00012_orgs.sql) — never re-derives membership
+ * itself. Used only by the api_key read handlers below; the JWT/dashboard
+ * path gets identical widening for free through RLS (00013_memories_org_fk.sql).
+ *
+ * Fails closed: an RPC error resolves to no orgs (personal-only), never to
+ * broader access than intended.
+ */
+async function memberOrgIds(db: ReturnType<typeof createClient>, userId: string): Promise<string[]> {
+  const { data, error } = await db.rpc('lorekit_member_org_ids', { p_user_id: userId });
+  if (error) return [];
+  return (data ?? []) as string[];
+}
 
 export async function toolWrite(
   db: ReturnType<typeof createClient>,
@@ -94,7 +110,7 @@ export async function toolRead(
 
   const tracedDb = createTracedClient(db, span);
   let query = tracedDb.from('memories').select('value,updated_at').eq('scope', scope).eq('key', key).is('archived_at', null);
-  if (userId) query = query.eq('user_id', userId);
+  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
   const { data, error } = await query.maybeSingle();
   if (error) throw new Error(error.message);
   return data ?? null;
@@ -120,7 +136,7 @@ export async function toolList(
     .is('archived_at', null)
     .order('updated_at', { ascending: false })
     .limit(Math.min(limit, 100));
-  if (userId) query = query.eq('user_id', userId);
+  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
   if (tags?.length) query = query.overlaps('tags', tags);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
@@ -207,7 +223,10 @@ export async function toolSearch(
     .textSearch('fts', q, { type: 'websearch', config: 'english' })
     .is('archived_at', null)
     .limit(Math.min(limit, 100));
-  if (userId) query = query.eq('user_id', userId);
+  // Tenant .or() and the scope-glob .or() below are applied as two separate
+  // .or() calls, which PostgREST ANDs together — never merged into one
+  // filter (see tenant-scope.ts and the Edge Cases note in plan.md).
+  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
   if (tags?.length) query = query.overlaps('tags', tags);
   if (scopes?.length) {
     const exactScopes: string[] = [];
@@ -287,7 +306,7 @@ export async function toolListArchived(
     .not('archived_at', 'is', null)
     .order('archived_at', { ascending: false })
     .limit(Math.min(limit, 100));
-  if (userId) query = query.eq('user_id', userId);
+  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
   const { data, error } = await query;
   if (error) throw new Error(error.message);
   const entries = data ?? [];

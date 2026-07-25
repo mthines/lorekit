@@ -193,6 +193,162 @@ begin
 end;
 $$;
 
+-- ── 6. memories.org_id FK: a bogus org_id must be rejected (00013) ──────────
+do $$
+declare v_fk_violation boolean := false;
+begin
+  begin
+    insert into memories (user_id, org_id, scope, key, value)
+    values (null, gen_random_uuid(), 'global', 'fk-bogus-key', 'v');
+  exception when foreign_key_violation then
+    v_fk_violation := true;
+  end;
+  assert v_fk_violation,
+    'memories.org_id: an org_id not present in orgs must raise a foreign_key_violation';
+end;
+$$;
+
+-- ── 7. orgs / org_members: role CHECK + membership-row RLS (00012) ──────────
+-- User A and user D are members of a shared test org; user B stays a
+-- non-member (used by section 8's read-widening assertions below).
+insert into orgs (id, slug, name, created_by) values
+  ('00000000-0000-0000-0000-0000000000f1', 'test-org', 'Test Org', '00000000-0000-0000-0000-0000000000a1');
+
+insert into org_members (org_id, user_id, role) values
+  ('00000000-0000-0000-0000-0000000000f1', '00000000-0000-0000-0000-0000000000a1', 'owner'),
+  ('00000000-0000-0000-0000-0000000000f1', '00000000-0000-0000-0000-0000000000d4', 'member');
+
+do $$
+declare v_bad_role boolean := false;
+begin
+  begin
+    insert into org_members (org_id, user_id, role)
+    values ('00000000-0000-0000-0000-0000000000f1', '00000000-0000-0000-0000-0000000000c3', 'superadmin');
+  exception when check_violation then
+    v_bad_role := true;
+  end;
+  assert v_bad_role, 'org_members: role must be constrained to owner|admin|member';
+end;
+$$;
+
+do $$
+declare v_own int;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
+  select count(*) into v_own from org_members where org_id = '00000000-0000-0000-0000-0000000000f1';
+
+  reset role;
+
+  assert v_own = 1,
+    format('org_members RLS: user A should see only its own membership row (of 2 seeded), saw %s', v_own);
+end;
+$$;
+
+-- ── 8. Widened memories RLS: member sees org rows, non-member does not (00013) ─
+-- The row is org-owned only (user_id null, org_id set) — visible to any
+-- member of the org, to nobody else.
+insert into memories (user_id, org_id, scope, key, value) values
+  (null, '00000000-0000-0000-0000-0000000000f1', 'global', 'org-shared-key', 'shared value');
+
+do $$
+declare
+  v_member_ids   uuid[];
+  v_member_sees  int;
+  v_other_member_sees int;
+  v_nonmember_sees int;
+begin
+  select array_agg(org_id) into v_member_ids
+    from lorekit_member_org_ids('00000000-0000-0000-0000-0000000000a1') as org_id;
+  assert v_member_ids = array['00000000-0000-0000-0000-0000000000f1']::uuid[],
+    format('lorekit_member_org_ids: user A should resolve to org f1 only, got %s', v_member_ids);
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  select count(*) into v_member_sees from memories where key = 'org-shared-key';
+  reset role;
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000d4","role":"authenticated"}', true);
+  select count(*) into v_other_member_sees from memories where key = 'org-shared-key';
+  reset role;
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}', true);
+  select count(*) into v_nonmember_sees from memories where key = 'org-shared-key';
+  reset role;
+
+  assert v_member_sees = 1, format('org RLS: member A should see the org-owned row, saw %s', v_member_sees);
+  assert v_other_member_sees = 1, format('org RLS: member D should see the org-owned row, saw %s', v_other_member_sees);
+  assert v_nonmember_sees = 0, format('org RLS: non-member B must NOT see the org-owned row, saw %s', v_nonmember_sees);
+end;
+$$;
+
+-- The unsafe client-asserted JWT claim policy must be gone: forging an
+-- org_id claim for a non-member must NOT grant visibility (membership-join
+-- only, never the JWT claim itself — this is the exact vulnerability 00013
+-- replaces).
+do $$
+declare v_forged int;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated","org_id":"00000000-0000-0000-0000-0000000000f1"}', true);
+  select count(*) into v_forged from memories where key = 'org-shared-key';
+  reset role;
+
+  assert v_forged = 0,
+    'org RLS: a forged org_id JWT claim must not grant visibility';
+end;
+$$;
+
+-- ── 9. Org-aware unique arbiter: org / personal / service partitions never
+--       collide with each other, but do collide within themselves (00014) ───
+do $$
+declare v_org_dup boolean := false;
+begin
+  insert into memories (user_id, org_id, scope, key, value) values
+    (null, '00000000-0000-0000-0000-0000000000f1', 'global', 'arb-key', 'v1');
+  begin
+    insert into memories (user_id, org_id, scope, key, value) values
+      (null, '00000000-0000-0000-0000-0000000000f1', 'global', 'arb-key', 'v2');
+  exception when unique_violation then
+    v_org_dup := true;
+  end;
+  assert v_org_dup, 'arbiter: two org rows sharing (org_id, scope, key) must collide';
+end;
+$$;
+
+do $$
+begin
+  -- A personal row and a service row sharing (scope, key) with the org row
+  -- inserted above must NOT collide with it, or with each other — the three
+  -- partial indexes partition on org_id/user_id nullability.
+  insert into memories (user_id, org_id, scope, key, value) values
+    ('00000000-0000-0000-0000-0000000000a1', null, 'global', 'arb-key', 'personal');
+  insert into memories (user_id, org_id, scope, key, value) values
+    (null, null, 'global', 'arb-key', 'service');
+  -- Reaching here without an exception is the assertion.
+end;
+$$;
+
+-- ── 10. memory_write stays personal-only: org_id is always NULL (00014) ─────
+do $$
+declare v_row memories%rowtype;
+begin
+  select * into v_row from memories where id = (
+    select id from memory_write('00000000-0000-0000-0000-0000000000a1', 'global', 'phase1-write-key', 'v', '{}'::text[])
+  );
+  assert v_row.org_id is null,
+    'memory_write: Phase 1 writes must always leave org_id NULL (writes stay personal-only)';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
