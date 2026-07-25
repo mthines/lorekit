@@ -209,36 +209,46 @@ export const MemoryCard = memo(function MemoryCard({
     </code>
   );
 
-  // ── Compact (dropdown row) ──────────────────────────────────────────────────
-  // Selection is announced by the parent listbox option (aria-selected), so the
-  // inner button intentionally omits aria-pressed to avoid a double announcement.
-  if (density === 'compact') {
-    return (
-      <button
-        type="button"
-        onClick={onClick}
-        className={[
-          'flex w-full flex-col gap-0.5 px-4 py-2.5 text-left transition-colors duration-100',
-          selected ? 'bg-[var(--color-accent-subtle)]' : 'hover:bg-[var(--color-bg-elevated)]',
-          className,
-        ].join(' ')}
-      >
-        {keyCode}
-        {showPreview && (
-          <span className="line-clamp-1 text-xs text-[var(--color-content-tertiary)]">
-            {preview}
-          </span>
-        )}
-      </button>
-    );
-  }
-
   const timeEl = showTimestamp && timestamp && (
     <span className="flex shrink-0 items-center gap-1 text-xs text-[var(--color-content-tertiary)]">
       <Clock className="size-3" aria-hidden />
       {formatRelativeTime(timestamp)}
     </span>
   );
+
+  // ── Compact (dropdown row) ──────────────────────────────────────────────────
+  // Mirrors the card/row element set (scope pill + key + preview + timestamp) at
+  // list density. Selection is announced by the parent listbox option
+  // (aria-selected), so the inner button omits aria-pressed to avoid a double
+  // announcement.
+  if (density === 'compact') {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={[
+          'flex w-full flex-col gap-1 px-4 py-2.5 text-left transition-colors duration-100',
+          selected ? 'bg-[var(--color-accent-subtle)]' : 'hover:bg-[var(--color-bg-elevated)]',
+          className,
+        ].join(' ')}
+      >
+        <div className="flex items-center justify-between gap-2">
+          {keyCode}
+          {showScope && <ScopeBadge scope={scope} type={type} className="shrink-0" />}
+        </div>
+        {(showPreview || timeEl) && (
+          <div className="flex items-center justify-between gap-2">
+            {showPreview && (
+              <span className="min-w-0 flex-1 truncate text-xs text-[var(--color-content-tertiary)]">
+                {preview}
+              </span>
+            )}
+            {timeEl}
+          </div>
+        )}
+      </button>
+    );
+  }
 
   const motionProps = animate
     ? {
@@ -250,7 +260,10 @@ export const MemoryCard = memo(function MemoryCard({
 
   // ── Row (activity feed) ─────────────────────────────────────────────────────
   if (layout === 'row') {
-    const withPath = showScopePath ?? true;
+    // Scope is already shown as the pill in the header, so the canonical path is
+    // off by default — opt in with showScopePath when the extra detail is wanted.
+    const withPath = showScopePath ?? false;
+    const hasMeta = showMeta && Boolean(sourceAgent || trigger);
     return (
       <motion.button
         type="button"
@@ -281,7 +294,7 @@ export const MemoryCard = memo(function MemoryCard({
               {preview}
             </p>
           )}
-          {(showMeta || withPath) && (
+          {(hasMeta || withPath) && (
             <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-content-tertiary)]">
               {showMeta && sourceAgent && <MetaChip icon={Bot}>{sourceAgent}</MetaChip>}
               {showMeta && trigger && <MetaChip icon={Zap}>{trigger}</MetaChip>}
