@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { selectWebhookSecrets, type WebhookSecretRow } from './webhook-secret-select.js';
 
 describe('selectWebhookSecrets', () => {
-  it('repo match: returns db_repo secrets and the matched repo (case-insensitive)', () => {
+  it('repo match: returns db_repo secrets and the matched repo (caller must lowercase both sides)', () => {
     const rows: WebhookSecretRow[] = [
       { secret: 'secret-a', repo: 'mthines/lorekit' },
       { secret: 'secret-b', repo: 'someone/other-repo' },

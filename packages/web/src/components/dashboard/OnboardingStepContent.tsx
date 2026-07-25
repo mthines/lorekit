@@ -5,8 +5,7 @@ import { Copy, CheckCheck, ExternalLink, Terminal, Webhook, Link2, Key } from 'l
 import { TokenManager } from './TokenManager';
 import { WebhookSecretManager } from './WebhookSecretManager';
 import type { WebhookSecret } from '@/lib/webhook-secrets';
-import type { ApiToken } from '@/lib/tokens';
-import type { TokenPermission } from '@/lib/tokens';
+import type { ApiToken, TokenPermission } from '@/lib/tokens';
 
 // ── MCP client definitions ────────────────────────────────────────────────────
 

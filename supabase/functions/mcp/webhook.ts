@@ -109,11 +109,11 @@ async function verifyHmac(
   if (!secretConfigured) {
     return { ok: false, secretConfigured, signaturePresent, secretSource, failReason: 'secret_not_configured' };
   }
-  if (!signature!.startsWith('sha256=')) {
+  if (!signature.startsWith('sha256=')) {
     return { ok: false, secretConfigured, signaturePresent, secretSource, failReason: 'invalid_signature_format' };
   }
 
-  const hexSig = signature!.slice(7);
+  const hexSig = signature.slice(7);
   if (hexSig.length !== 64 || !/^[0-9a-f]+$/i.test(hexSig)) {
     return { ok: false, secretConfigured, signaturePresent, secretSource, failReason: 'invalid_signature_hex' };
   }
