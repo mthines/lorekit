@@ -70,14 +70,21 @@ gotcha, a costly wrong assumption). It mirrors the read-on-start /
 write-on-failure loop of the `aw` autonomous-workflow agent.
 
 ```bash
+# Install the CLI globally (recommended — pinned version, always on PATH,
+# so the plugin hooks fire instantly instead of re-fetching via npx each time)
+npm install -g @lorekit/cli
+
 # Scaffold the lorekit-memory skill into .claude/skills and wire .mcp.json
-npx @lorekit/cli install \
+lorekit install \
   --endpoint https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp \
   --token    lk_rw_<your-token>
 
 # Verify connectivity, token permission, and the git-derived scopes
-npx @lorekit/cli doctor
+lorekit doctor
 ```
+
+> No global install? Swap `lorekit` for `npx @lorekit/cli` in the commands
+> above to run it on demand instead.
 
 → See [packages/cli/README.md](./packages/cli/README.md) for all commands and
 flags, and the installed skill's `SKILL.md` for the read/write protocol.
