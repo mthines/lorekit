@@ -1,12 +1,13 @@
 'use client';
 
+import type { ReactNode } from 'react';
 import { motion, MotionConfig } from 'motion/react';
 
 interface SectionPanelProps {
-  icon: React.ReactNode;
+  icon: ReactNode;
   title: string;
   subtitle?: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }
 
 /**
