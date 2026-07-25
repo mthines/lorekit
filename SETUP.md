@@ -39,7 +39,7 @@ supabase secrets set \
   OTEL_EXPORTER_OTLP_ENDPOINT=https://ingress.europe-west4.gcp.dash0-dev.com \
   OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <dash0-token>" \
   VERCEL_ENV=production \
-  --project-ref <your-project-ref>
+  --project-ref pqokxlhvnosogizsjztg
 ```
 
 ---
@@ -50,7 +50,7 @@ supabase secrets set \
 
 ```bash
 # 1. Link Supabase project
-supabase link --project-ref <your-project-ref>
+supabase link --project-ref pqokxlhvnosogizsjztg
 
 # 2. Apply migrations + deploy functions
 pnpm nx deploy supabase

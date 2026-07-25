@@ -1,5 +1,5 @@
 # Supabase local development configuration.
-# Run `supabase link --project-ref <ref>` to link to your remote project.
+# Run `supabase link --project-ref pqokxlhvnosogizsjztg` to link to your remote project.
 # This file is used by the Supabase CLI for local development.
 # See: https://supabase.com/docs/guides/cli/config
 

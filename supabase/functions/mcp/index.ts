@@ -11,7 +11,7 @@
  *   traceRequest()           wraps each request in a root span
  *   createTracedClient()     creates child spans per Postgres query (in tools.ts)
  *
- * Required secrets (supabase secrets set --project-ref <ref>):
+ * Required secrets (supabase secrets set --project-ref pqokxlhvnosogizsjztg):
  *   SUPABASE_URL
  *   SUPABASE_ANON_KEY
  *   SUPABASE_SERVICE_ROLE_KEY

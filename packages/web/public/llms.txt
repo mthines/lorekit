@@ -9,7 +9,7 @@ LoreKit gives any MCP-compatible agent a `memory.write / memory.read / memory.li
 ## Quick start (5 minutes)
 
 1. Clone and install: `git clone https://github.com/mthines/lorekit && cd lorekit && pnpm install`
-2. Deploy to your own Supabase project: `supabase link --project-ref <ref> && pnpm nx deploy supabase`
+2. Deploy to your own Supabase project: `supabase link --project-ref pqokxlhvnosogizsjztg && pnpm nx deploy supabase`
 3. Generate a token in the web dashboard: Overview → Step 2 → Generate new token
 4. Add the MCP config to your agent — see the Installation Guide below
 
