@@ -140,6 +140,7 @@ export function ActivityFeed({ events, range, onRangeChange }: ActivityFeedProps
             {['all', ...scopeFilters].map((f) => (
               <button
                 key={f}
+                type="button"
                 onClick={() => setFilter(f)}
                 aria-pressed={filter === f}
                 title={f === 'all' ? undefined : f}

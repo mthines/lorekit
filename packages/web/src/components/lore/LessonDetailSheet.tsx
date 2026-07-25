@@ -100,6 +100,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
               </div>
               <button
                 ref={closeRef}
+                type="button"
                 onClick={onClose}
                 aria-label="Close detail panel"
                 className="flex size-11 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-all duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-secondary)]"
@@ -190,6 +191,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
                 <p className="text-xs text-red-500">{actionError}</p>
               )}
               <button
+                type="button"
                 onClick={handleArchive}
                 disabled={isPending}
                 className={[

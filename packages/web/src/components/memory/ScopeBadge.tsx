@@ -51,7 +51,7 @@ export function ScopeBadge({
       {showBadge && (
         <Badge variant={resolvedType}>
           {showIcon && (
-            <Icon className={['size-2.5', showType ? 'mr-1' : '', 'inline shrink-0'].join(' ')} aria-hidden />
+            <Icon className={['size-2.5', showType ? 'mr-1' : '', 'inline shrink-0'].filter(Boolean).join(' ')} aria-hidden />
           )}
           {showType && resolvedType}
         </Badge>

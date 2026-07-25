@@ -56,12 +56,13 @@ export function MemoryExpandButton({
 
   // Close on Escape.
   useEffect(() => {
+    if (!isDropdownOpen) return;
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') setIsDropdownOpen(false);
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [isDropdownOpen]);
 
   const lessons = useMemo<LessonEntry[]>(() => {
     if (!data?.lessons) return [];

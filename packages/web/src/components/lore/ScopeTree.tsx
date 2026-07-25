@@ -29,6 +29,7 @@ function ScopeTreeItem({ node, depth, selected, onSelect }: ScopeTreeItemProps) 
   return (
     <li>
       <button
+        type="button"
         onClick={() => {
           onSelect(node.scope);
           if (hasChildren) setExpanded((v) => !v);
@@ -41,7 +42,7 @@ function ScopeTreeItem({ node, depth, selected, onSelect }: ScopeTreeItemProps) 
         ].join(' ')}
         style={{ paddingLeft: `${(depth + 1) * 12}px` }}
         aria-expanded={hasChildren ? expanded : undefined}
-        aria-current={isSelected ? 'true' : undefined}
+        aria-selected={isSelected}
       >
         {hasChildren ? (
           <ChevronRight
