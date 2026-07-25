@@ -316,7 +316,10 @@ export const MemoryCard = memo(function MemoryCard({
   }
 
   // ── Card (lore explorer) ────────────────────────────────────────────────────
+  // Header mirrors the row layout — [scope pill] key … timestamp — so the card
+  // and the activity row read the same; only the leading icon and density differ.
   const withPath = showScopePath ?? false;
+  const hasMeta = showMeta && Boolean(sourceAgent || trigger);
   return (
     <motion.button
       type="button"
@@ -331,23 +334,23 @@ export const MemoryCard = memo(function MemoryCard({
         className,
       ].join(' ')}
     >
-      <div className="mb-2 flex items-start justify-between gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        {showScope && <ScopeBadge scope={scope} type={type} />}
         {keyCode}
-        {showScope && <ScopeBadge scope={scope} type={type} className="shrink-0" />}
+        {timeEl && <span className="ml-auto">{timeEl}</span>}
       </div>
 
       {showPreview && (
         <p className="mb-3 line-clamp-2 text-xs text-[var(--color-content-secondary)]">{preview}</p>
       )}
 
-      {(showMeta || withPath || timeEl) && (
+      {(hasMeta || withPath) && (
         <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-content-tertiary)]">
           {showMeta && sourceAgent && <MetaChip icon={Bot}>{sourceAgent}</MetaChip>}
           {showMeta && trigger && <MetaChip icon={Zap}>{trigger}</MetaChip>}
           {withPath && (
             <ScopeBadge scope={scope} type={type} showBadge={false} showPath className="min-w-0" />
           )}
-          {timeEl && <span className="ml-auto">{timeEl}</span>}
         </div>
       )}
 
