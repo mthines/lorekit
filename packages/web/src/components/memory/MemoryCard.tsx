@@ -46,6 +46,7 @@ export function memoryFromLesson(lesson: {
   key: string;
   value: string;
   tags?: string[];
+  created_at: string;
   updated_at: string;
   source_agent?: string | null;
   trigger?: string | null;
@@ -59,7 +60,9 @@ export function memoryFromLesson(lesson: {
     sourceAgent: lesson.source_agent,
     trigger: lesson.trigger,
     tags: lesson.tags,
-    timestamp: lesson.updated_at,
+    // Date the card by creation date so a backdated (migrated) memory shows its
+    // original time rather than the migration wall-clock.
+    timestamp: lesson.created_at,
     archived: Boolean(lesson.archived_at),
   };
 }

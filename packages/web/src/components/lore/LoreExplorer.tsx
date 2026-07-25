@@ -77,11 +77,11 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
       ? lessons.filter((l) => l.scope === effectiveScope)
       : lessons;
 
-    // Date range filters on the lesson's last-updated day (UTC), matching the
-    // DateRangePicker's UTC day strings.
+    // Date range filters on the lesson's creation day (UTC), matching the
+    // DateRangePicker's UTC day strings and the created_at ordering.
     if (range) {
       out = out.filter((l) => {
-        const day = new Date(l.updated_at).toISOString().slice(0, 10);
+        const day = new Date(l.created_at).toISOString().slice(0, 10);
         return day >= range.from && day <= range.to;
       });
     }

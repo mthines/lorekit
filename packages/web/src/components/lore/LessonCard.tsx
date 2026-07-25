@@ -12,6 +12,7 @@ export interface LessonEntry {
   key: string;
   value: string;
   tags: string[];
+  created_at: string;
   updated_at: string;
   archived_at?: string | null;
   source_agent?: string | null;
