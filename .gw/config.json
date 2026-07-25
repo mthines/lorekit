@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/mthines/gw-tools/main/packages/gw-tool/schemas/gw-config.schema.json",
+  "configVersion": 3,
+  "defaultBranch": "main",
+  "cleanThreshold": 7,
+  "hooks": {
+    "checkout": {
+      "post": ["pnpm install"]
+    }
+  }
+}

@@ -104,5 +104,8 @@ export async function generateWebhookSecret(
   if (error) return { error: error.message };
 
   revalidatePath('/dashboard');
+  // 'layout' so nested /settings/* pages (where secrets render) revalidate,
+  // not just the /settings redirect page.
+  revalidatePath('/settings', 'layout');
   return { secret, id: (data as { id: string }).id, repo };
 }

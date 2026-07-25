@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
-import { BookOpen, Activity, LayoutDashboard } from 'lucide-react';
+import { BookOpen, Activity, LayoutDashboard, Settings } from 'lucide-react';
 
 const NAV = [
   { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
@@ -11,12 +11,18 @@ const NAV = [
   { href: '/activity', label: 'Activity', icon: Activity },
 ] as const;
 
+// Settings sits apart from the primary content nav — it's a destination, not a
+// content view. Desktop renders it in the footer; mobile appends it as a tab.
+const SETTINGS = { href: '/settings', label: 'Settings', icon: Settings } as const;
+
 interface SidebarProps {
   user: User;
 }
 
 export function Sidebar({ user }: SidebarProps) {
   const pathname = usePathname();
+  const isSettingsActive =
+    pathname === SETTINGS.href || pathname.startsWith(SETTINGS.href + '/');
 
   return (
     <>
@@ -57,6 +63,24 @@ export function Sidebar({ user }: SidebarProps) {
           })}
         </nav>
 
+        {/* Settings — separated from primary content nav, pinned above the user row */}
+        <div className="p-2">
+          <Link
+            href={SETTINGS.href}
+            prefetch={true}
+            className={[
+              'flex min-h-11 items-center gap-2.5 rounded-lg px-3 text-sm transition-all duration-150',
+              isSettingsActive
+                ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)] font-medium'
+                : 'text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]',
+            ].join(' ')}
+            aria-current={isSettingsActive ? 'page' : undefined}
+          >
+            <SETTINGS.icon className="size-4 shrink-0" aria-hidden />
+            {SETTINGS.label}
+          </Link>
+        </div>
+
         {/* User */}
         <div className="border-t border-[var(--color-border)] p-2">
           <div className="flex min-h-11 items-center gap-2.5 rounded-lg px-3 text-sm text-[var(--color-content-secondary)]">
@@ -83,7 +107,7 @@ export function Sidebar({ user }: SidebarProps) {
         className="fixed inset-x-0 bottom-0 z-40 flex border-t border-[var(--color-border)] bg-[var(--color-bg-raised)] md:hidden"
         aria-label="Main navigation"
       >
-        {NAV.map(({ href, label, icon: Icon }) => {
+        {[...NAV, SETTINGS].map(({ href, label, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(href + '/');
           return (
             <Link

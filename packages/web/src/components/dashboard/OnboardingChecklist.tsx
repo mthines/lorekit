@@ -68,6 +68,10 @@ interface StepRowProps {
 }
 
 function StepRow({ step, index, isOpen, onToggle }: StepRowProps) {
+  // A step is expandable when it has content to reveal. Completed steps stay
+  // expandable (collapsed by default) so their instructions and tokens remain
+  // reachable — only steps with no content (e.g. "server is live") are inert.
+  const expandable = step.content != null;
   return (
     <motion.div
       initial={{ opacity: 0, x: -8 }}
@@ -75,18 +79,18 @@ function StepRow({ step, index, isOpen, onToggle }: StepRowProps) {
       transition={{ delay: index * 0.06, duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
       className={[
         'rounded-xl border transition-all duration-200',
-        step.done
-          ? 'border-[var(--color-border-subtle)] bg-[var(--color-bg)]'
-          : isOpen
-            ? 'border-[var(--color-border)] bg-[var(--color-bg-elevated)]'
+        isOpen && expandable
+          ? 'border-[var(--color-border)] bg-[var(--color-bg-elevated)]'
+          : step.done
+            ? 'border-[var(--color-border-subtle)] bg-[var(--color-bg)] hover:bg-[var(--color-bg-raised)]'
             : 'border-[var(--color-border)] bg-[var(--color-bg-raised)] hover:bg-[var(--color-bg-elevated)]',
       ].join(' ')}
     >
       {/* Row header */}
       <button
         onClick={onToggle}
-        disabled={step.done}
-        aria-expanded={isOpen}
+        disabled={!expandable}
+        aria-expanded={expandable ? isOpen : undefined}
         className="flex w-full items-center gap-3 p-4 text-left disabled:cursor-default"
       >
         {/* Check / icon */}
@@ -126,7 +130,7 @@ function StepRow({ step, index, isOpen, onToggle }: StepRowProps) {
           )}
         </div>
 
-        {!step.done && (
+        {expandable && (
           <ChevronRight
             className={[
               'size-4 shrink-0 text-[var(--color-content-tertiary)] transition-transform duration-200',
@@ -139,7 +143,7 @@ function StepRow({ step, index, isOpen, onToggle }: StepRowProps) {
 
       {/* Expandable content */}
       <AnimatePresence initial={false}>
-        {isOpen && !step.done && (
+        {isOpen && expandable && (
           <motion.div
             key="content"
             initial={{ height: 0, opacity: 0 }}
