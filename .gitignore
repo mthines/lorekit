@@ -17,5 +17,10 @@ tmp/
 
 .mcp.json
 
+# Local LoreKit install artifacts (skill copy + hooks) scaffolded by
+# `lorekit install`. The committed integration ships via plugins/lorekit-claude;
+# this per-environment install is local, like .mcp.json above.
+.claude/
+
 # Autonomous workflow artifacts
 .agent/
