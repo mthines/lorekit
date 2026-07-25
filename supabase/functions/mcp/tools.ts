@@ -74,7 +74,10 @@ export async function toolWrite(
     },
     userId,
   );
-  return row;
+  // `inserted` is an internal audit-classification signal (D4), not part of
+  // the memory.write response contract — keep the same {id, created_at}
+  // shape the Node (mcp-core) path returns so both production surfaces agree.
+  return { id: row.id, created_at: row.created_at };
 }
 
 export async function toolRead(
