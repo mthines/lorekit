@@ -21,10 +21,12 @@ ${c.bold('Usage')}
   npx @lorekit/cli <command> [options]
 
 ${c.bold('Commands')}
-  install     Scaffold the lorekit-memory skill + wire the LoreKit MCP server.
-              Prompts to install for this project (.claude/skills + .mcp.json)
-              or globally for every project (~/.claude); --project / --global
-              choose non-interactively.
+  install     Scaffold the lorekit-memory skill, wire the LoreKit MCP server,
+              and install the deterministic hooks (lessons on SessionStart, a
+              nudge on tool failure + at Stop). Prompts to install for this
+              project (.claude) or globally for every project (~/.claude);
+              --project / --global choose non-interactively, --no-hooks skips
+              the hooks (skill stays model-invoked only).
   doctor      Verify the skill install, MCP connectivity, token, and scope.
   migrate     Relocate a LoreKit-format local store into the current layout.
               Dry-run by default; pass --yes to apply. Idempotent.
@@ -49,6 +51,7 @@ ${c.bold('Options')}
                           default routes each entry by scope)
       --apply             Apply the migration (alias of --yes) (migrate)
   -y, --yes               Non-interactive / apply; never prompt
+      --no-hooks          Skip wiring the lifecycle hooks (install)
       --force             Overwrite existing skill files (install)
       --deep              Do a write→read→delete round-trip (doctor)
       --adapter <name>    Host framework for hook: claude | cursor | codex
@@ -77,7 +80,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks'],
   });
 
   // `hook` is machine-facing: it must never print help/errors to stdout

@@ -37,15 +37,24 @@ Linux, and Windows (npm creates the `lorekit` shim on every platform).
 
 ### `lorekit install`
 
-Scaffolds the `lorekit-memory` skill and wires a `lorekit` MCP server,
-preserving any other servers already configured. It first asks **where** to
-install:
+Sets up the full memory loop — the same three parts as the Claude plugin,
+without needing a marketplace:
 
-- **project** (default) — `.claude/skills/lorekit-memory/` + the project's
-  `.mcp.json`. Scoped to this repo; commit it to share with your team.
-- **global** — `~/.claude/skills/lorekit-memory/` + `~/.claude.json`. Applies to
-  every project you open. Your token lands in `~/.claude.json`, so keep that
-  file private.
+1. **Skill** (`lorekit-memory`) — the model-invoked authoring judgment.
+2. **MCP server** (`lorekit`) — the connection to your lessons, merged into the
+   MCP config (preserving any other servers).
+3. **Hooks** — the *deterministic* layer: lessons injected on every
+   `SessionStart`, a nudge on tool failure (`PostToolUseFailure`), and a
+   retrospective nudge on `Stop`. These fire the shared `lorekit hook` engine
+   and are merged into `settings.json` (existing hooks preserved).
+
+It first asks **where** to install:
+
+- **project** (default) — `.claude/skills/`, `.mcp.json`, `.claude/settings.json`.
+  Scoped to this repo; commit it to share with your team.
+- **global** — `~/.claude/skills/`, `~/.claude.json`, `~/.claude/settings.json`.
+  Applies to every project you open. Your token lands in `~/.claude.json`, so
+  keep that file private.
 
 ```bash
 lorekit install \
@@ -56,9 +65,16 @@ lorekit install --global      # set it up for every project
 ```
 
 In a TTY it prompts for the scope (and for `--endpoint` / `--token` if missing).
-Use `--project` / `--global` to pick the scope non-interactively, `--yes` for
-non-interactive runs (endpoint required via flag/env; scope defaults to
-project), and `--force` to overwrite an existing skill copy.
+Flags: `--project` / `--global` pick the scope non-interactively; `--no-hooks`
+installs the skill + MCP only (memory stays model-invoked); `--yes` runs
+non-interactively (endpoint required via flag/env; scope defaults to project);
+`--force` overwrites an existing skill copy. Re-running is idempotent — the hook
+entries are updated in place, never duplicated.
+
+> The hook command uses a global `lorekit` when one is on your `PATH` (fast),
+> otherwise `npx -y @lorekit/cli`. Installing the CLI globally
+> (`npm i -g @lorekit/cli`) is recommended so hooks fire without an npx
+> resolution each time.
 
 ### `lorekit doctor`
 
@@ -262,6 +278,7 @@ active deny constraints.
 | `--to <tier>` | Migration destination tier: `home` / `project` (`migrate`; default routes by scope) |
 | `--apply` | Apply the migration — alias of `--yes` (`migrate`) |
 | `-y, --yes` | Non-interactive / apply; never prompt |
+| `--no-hooks` | Skip wiring the lifecycle hooks; skill + MCP only (`install`) |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
 | `--adapter <name>` | Host framework for `hook`: `claude` / `cursor` / `codex` |

@@ -10,6 +10,9 @@ import {
   skillInstallDir,
   copyDir,
   upsertMcpServer,
+  upsertClaudeHooks,
+  resolveHookRunner,
+  CLAUDE_HOOK_EVENTS,
   resolveConnection,
   tokenKind,
   homeDir,
@@ -79,6 +82,16 @@ export async function install(args) {
   const remoteUrl = buildRemoteUrl(endpoint, token);
   const { file, existed } = upsertMcpServer(root, remoteUrl, scope);
 
+  // 4b. Wire the deterministic hooks (unless --no-hooks). This is the layer the
+  //     Claude plugin adds on top of the skill: lessons injected on every
+  //     SessionStart, a nudge on tool failure, a retrospective nudge on Stop —
+  //     firing the shared `lorekit hook` engine, which reads the same config.
+  const wireHooks = !args['no-hooks'];
+  let hooks = null;
+  if (wireHooks) {
+    hooks = upsertClaudeHooks(root, scope, resolveHookRunner());
+  }
+
   // Show global paths relative to ~ (a repo-relative path would be a mess of
   // ../../); project paths stay repo-relative.
   const display = (p) =>
@@ -94,6 +107,18 @@ export async function install(args) {
       : 'unchanged — pass --force to overwrite';
   status(skillExisted && written === 0 ? 'info' : 'pass', `skill ${SKILL_NAME}`, `${skillState} → ${display(dest)}`);
   status('pass', mcpLabel, `${existed ? 'updated' : 'created'} lorekit server → ${display(file)}`);
+
+  const settingsLabel = scope === 'global' ? '~/.claude/settings.json' : '.claude/settings.json';
+  if (!wireHooks) {
+    status('info', 'hooks', 'skipped (--no-hooks) — the skill still works, but lessons are model-invoked only');
+  } else {
+    const n = hooks.added + hooks.updated;
+    const hookState =
+      n === 0
+        ? 'unchanged — already wired'
+        : `${hooks.added ? `${hooks.added} added` : ''}${hooks.added && hooks.updated ? ', ' : ''}${hooks.updated ? `${hooks.updated} updated` : ''}`;
+    status(n === 0 ? 'info' : 'pass', 'hooks', `${hookState} → ${display(hooks.file)} (${CLAUDE_HOOK_EVENTS.join(', ')})`);
+  }
 
   const kind = tokenKind(token);
   if (kind === 'none') {
