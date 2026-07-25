@@ -4,6 +4,11 @@ const nextConfig: NextConfig = {
   // Disable Next.js's built-in ESLint step — NX runs it separately via nx lint
   eslint: { ignoreDuringBuilds: true },
 
+  // Enable the React Compiler (babel-plugin-react-compiler) so components are
+  // auto-memoized at build time — removes the need for most manual useMemo/
+  // useCallback/React.memo. Requires the babel-plugin-react-compiler devDep.
+  experimental: { reactCompiler: true },
+
   // Expose Supabase project ref to the browser so instrumentation-client.ts
   // can build the correct CORS URL pattern for W3C trace propagation headers.
   env: {
