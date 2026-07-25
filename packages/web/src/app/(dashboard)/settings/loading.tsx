@@ -2,6 +2,10 @@
 // layout and stay put; only the content pane shows a skeleton matching a card.
 export default function SettingsLoading() {
   return (
-    <div className="h-72 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]" />
+    <div
+      role="status"
+      aria-label="Loading settings section"
+      className="h-72 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
+    />
   );
 }
