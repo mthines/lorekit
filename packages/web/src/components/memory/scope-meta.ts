@@ -11,8 +11,12 @@
 import { Globe, Layers, FolderGit2, GitBranch, type LucideIcon } from 'lucide-react';
 import { scopeType, type ScopePrefix } from '@/lib/scope';
 
-/** Icon per scope type. Previously duplicated across three components. */
-export const SCOPE_ICONS: Record<ScopePrefix, LucideIcon> = {
+/**
+ * Icon per scope type. Previously duplicated across three components.
+ * Internal — consumers use {@link scopeIcon}, so this stays unexported to keep
+ * the module's public surface to the two helpers.
+ */
+const SCOPE_ICONS: Record<ScopePrefix, LucideIcon> = {
   global: Globe,
   project: Layers,
   repo: FolderGit2,
