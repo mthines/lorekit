@@ -35,20 +35,21 @@ export async function toolWrite(
     ...(trigger ? { 'lorekit.trigger': trigger } : {}),
   });
 
+  // 00003 replaced the plain unique constraint with PARTIAL indexes
+  // (WHERE archived_at IS NULL), which `.upsert(onConflict)` cannot target.
+  // The memory_write RPC (00007) performs the correct partial-index upsert,
+  // branching on whether user_id is null.
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb
-    .from('memories')
-    .upsert(
-      {
-        ...(userId ? { user_id: userId } : {}),
-        scope, key, value, tags,
-        source_agent: source_agent ?? null,
-        trigger: trigger ?? null,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'user_id,scope,key' },
-    )
-    .select('id,created_at')
+    .rpc('memory_write', {
+      p_user_id: userId,
+      p_scope: scope,
+      p_key: key,
+      p_value: value,
+      p_tags: tags,
+      p_source_agent: source_agent ?? null,
+      p_trigger: trigger ?? null,
+    })
     .single();
   if (error) {
     const translated = translateCapError(error);

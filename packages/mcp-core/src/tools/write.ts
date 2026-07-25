@@ -39,21 +39,19 @@ export async function write(
       if (input.trigger) span.setAttribute('lorekit.trigger', input.trigger);
 
       try {
+        // 00003 replaced the plain unique constraint with PARTIAL indexes
+        // (WHERE archived_at IS NULL), which `.upsert(onConflict)` cannot target.
+        // Writes go through the memory_write RPC (00007) instead.
         const { data, error } = await db
-          .from('memories')
-          .upsert(
-            {
-              scope: input.scope,
-              key: input.key,
-              value: input.value,
-              tags: input.tags,
-              source_agent: input.source_agent ?? null,
-              trigger: input.trigger ?? null,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: 'user_id,scope,key' },
-          )
-          .select('id,created_at')
+          .rpc('memory_write', {
+            p_user_id: null,
+            p_scope: input.scope,
+            p_key: input.key,
+            p_value: input.value,
+            p_tags: input.tags,
+            p_source_agent: input.source_agent ?? null,
+            p_trigger: input.trigger ?? null,
+          })
           .single();
 
         if (error) throw translateCapError(error);
