@@ -11,6 +11,7 @@ import { validateScope } from '../_shared/scope.ts';
 import { createTracedClient, type Span } from '../_shared/otel.ts';
 import { translateCapError } from './limits.ts';
 import { parseCreatedAt } from './created-at.ts';
+import { recordAudit } from './audit.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
@@ -61,7 +62,22 @@ export async function toolWrite(
     const translated = translateCapError(error);
     throw translated instanceof Error ? translated : new Error(error.message);
   }
-  return data;
+  const row = data as { id: string; created_at: string; inserted?: boolean };
+  await recordAudit(
+    db,
+    {
+      action: row.inserted === false ? 'memory.update' : 'memory.create',
+      resourceType: 'memory',
+      resourceId: row.id,
+      target: key,
+      metadata: { scope, key },
+    },
+    userId,
+  );
+  // `inserted` is an internal audit-classification signal (D4), not part of
+  // the memory.write response contract — keep the same {id, created_at}
+  // shape the Node (mcp-core) path returns so both production surfaces agree.
+  return { id: row.id, created_at: row.created_at };
 }
 
 export async function toolRead(
@@ -142,6 +158,13 @@ export async function toolDelete(
     if (error) throw new Error(error.message);
     const deleted = (count ?? 0) > 0;
     span.setAttributes({ 'lorekit.result.deleted': deleted, 'lorekit.result.archived': false });
+    if (deleted) {
+      await recordAudit(
+        db,
+        { action: 'memory.delete', resourceType: 'memory', target: key, metadata: { scope, key, force: true } },
+        userId,
+      );
+    }
     return { deleted, archived: false };
   } else {
     let query = tracedDb
@@ -155,6 +178,13 @@ export async function toolDelete(
     if (error) throw new Error(error.message);
     const archived = (count ?? 0) > 0;
     span.setAttributes({ 'lorekit.result.deleted': false, 'lorekit.result.archived': archived });
+    if (archived) {
+      await recordAudit(
+        db,
+        { action: 'memory.archive', resourceType: 'memory', target: key, metadata: { scope, key, force: false } },
+        userId,
+      );
+    }
     return { deleted: false, archived };
   }
 }
@@ -226,6 +256,13 @@ export async function toolArchive(
   if (error) throw new Error(error.message);
   const archived = (count ?? 0) > 0;
   span.setAttributes({ 'lorekit.result.archived': archived });
+  if (archived) {
+    await recordAudit(
+      db,
+      { action: 'memory.archive', resourceType: 'memory', target: key, metadata: { scope, key } },
+      userId,
+    );
+  }
   return { archived };
 }
 
@@ -283,6 +320,13 @@ export async function toolRestore(
   if (error) throw new Error(error.message);
   const restored = (count ?? 0) > 0;
   span.setAttributes({ 'lorekit.result.restored': restored });
+  if (restored) {
+    await recordAudit(
+      db,
+      { action: 'memory.restore', resourceType: 'memory', target: key, metadata: { scope, key } },
+      userId,
+    );
+  }
   return { restored };
 }
 
@@ -313,5 +357,19 @@ export async function toolPurge(
   if (error) throw new Error(error.message);
   const purged = (data as number) ?? 0;
   span.setAttributes({ 'lorekit.result.purged': purged });
+  if (purged > 0) {
+    // One summary event per purge run (D6) — the RPC returns only a count,
+    // not the purged rows, so a per-row audit event isn't possible.
+    await recordAudit(
+      db,
+      {
+        action: 'memory.delete',
+        resourceType: 'memory',
+        target: `${purged} archived memories`,
+        metadata: { purged, retention_days: retentionDays },
+      },
+      userId,
+    );
+  }
   return { purged };
 }

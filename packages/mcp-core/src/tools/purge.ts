@@ -2,6 +2,7 @@ import { SpanStatusCode } from '@opentelemetry/api';
 import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
 import { getTracer, getToolDurationHistogram } from '../telemetry.js';
+import { recordAudit } from '../audit.js';
 
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
 
@@ -61,6 +62,20 @@ export async function purgeArchived(
       if (error) throw error;
       const purged = (data as number) ?? 0;
       span.setAttribute('lorekit.result.purged', purged);
+      if (purged > 0) {
+        // One summary event per purge run (D6) — the RPC returns only a
+        // count, not the purged rows, so a per-row audit event isn't possible.
+        await recordAudit(
+          db,
+          {
+            action: 'memory.delete',
+            resourceType: 'memory',
+            target: `${purged} archived memories`,
+            metadata: { purged, retention_days: input.retention_days },
+          },
+          userId,
+        );
+      }
       return { purged };
     } catch (err) {
       const e = err as Error;

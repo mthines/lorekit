@@ -16,13 +16,16 @@ vi.mock('../telemetry.js', () => ({
 const fakeResult = { id: 'uuid-1', created_at: '2026-01-01T00:00:00Z' };
 
 function makeDb(
-  data: null | { id: string; created_at: string },
+  data: null | { id: string; created_at: string; inserted?: boolean },
   error: null | { message: string; code?: string } = null,
 ) {
   return {
     rpc: vi.fn().mockReturnValue({
       single: vi.fn().mockResolvedValue({ data, error }),
     }),
+    // audit_log insert — always succeeds so the write path's recordAudit call
+    // doesn't log noise for these tests; see audit.spec.ts for its own coverage.
+    from: vi.fn().mockReturnValue({ insert: vi.fn().mockResolvedValue({ error: null }) }),
   } as unknown as SupabaseClient;
 }
 
@@ -154,5 +157,26 @@ describe('write', () => {
       write(db, { scope: 'global', key: 'k', value: 'v', created_at: future }),
     ).rejects.toThrow(/future/);
     expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it('records a memory.create audit event when the RPC reports a fresh insert', async () => {
+    const db = makeDb({ ...fakeResult, inserted: true });
+    await write(db, { scope: 'global', key: 'k', value: 'v' });
+    const insertMock = (db.from as ReturnType<typeof vi.fn>).mock.results[0].value.insert;
+    expect(insertMock).toHaveBeenCalledWith(expect.objectContaining({ action: 'memory.create' }));
+  });
+
+  it('records a memory.update audit event when the RPC reports an upsert-update', async () => {
+    const db = makeDb({ ...fakeResult, inserted: false });
+    await write(db, { scope: 'global', key: 'k', value: 'v' });
+    const insertMock = (db.from as ReturnType<typeof vi.fn>).mock.results[0].value.insert;
+    expect(insertMock).toHaveBeenCalledWith(expect.objectContaining({ action: 'memory.update' }));
+  });
+
+  it('records the audit event with the resolved userId', async () => {
+    const db = makeDb(fakeResult);
+    await write(db, { scope: 'global', key: 'k', value: 'v' }, 'user-9');
+    const insertMock = (db.from as ReturnType<typeof vi.fn>).mock.results[0].value.insert;
+    expect(insertMock).toHaveBeenCalledWith(expect.objectContaining({ user_id: 'user-9' }));
   });
 });

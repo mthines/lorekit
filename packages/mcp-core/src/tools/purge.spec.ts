@@ -11,9 +11,13 @@ vi.mock('../telemetry.js', () => ({
 }));
 
 function makeRpcDb(rpcResult: { data: unknown; error: null | { message: string } }) {
-  return {
+  const auditInsert = vi.fn().mockResolvedValue({ error: null });
+  const db = {
     rpc: vi.fn().mockResolvedValue(rpcResult),
-  } as unknown as SupabaseClient;
+    from: vi.fn().mockReturnValue({ insert: auditInsert }),
+  } as unknown as SupabaseClient & { auditInsert: typeof auditInsert };
+  db.auditInsert = auditInsert;
+  return db;
 }
 
 describe('purgeArchived', () => {
@@ -27,6 +31,25 @@ describe('purgeArchived', () => {
     const db = makeRpcDb({ data: 0, error: null });
     const result = await purgeArchived(db, {}, 'user-abc');
     expect(result).toEqual({ purged: 0 });
+  });
+
+  it('records a single memory.delete audit summary event when rows were purged', async () => {
+    const db = makeRpcDb({ data: 5, error: null });
+    await purgeArchived(db, { retention_days: 14 }, 'user-abc');
+    expect(db.auditInsert).toHaveBeenCalledTimes(1);
+    expect(db.auditInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'memory.delete',
+        user_id: 'user-abc',
+        metadata: { purged: 5, retention_days: 14 },
+      }),
+    );
+  });
+
+  it('does not record an audit event when no rows were purged', async () => {
+    const db = makeRpcDb({ data: 0, error: null });
+    await purgeArchived(db, {}, 'user-abc');
+    expect(db.auditInsert).not.toHaveBeenCalled();
   });
 
   it('calls rpc with purge_archived_memories and correct params', async () => {

@@ -1,4 +1,4 @@
-import { Key, Webhook } from 'lucide-react';
+import { Key, Webhook, ShieldCheck } from 'lucide-react';
 import type { SectionNavItem } from '@/components/ui/SectionNav';
 
 /**
@@ -9,4 +9,5 @@ import type { SectionNavItem } from '@/components/ui/SectionNav';
 export const SETTINGS_SECTIONS: readonly SectionNavItem[] = [
   { id: 'api-keys', label: 'API keys', href: '/settings/api-keys', icon: Key },
   { id: 'webhooks', label: 'Webhooks', href: '/settings/webhooks', icon: Webhook },
+  { id: 'audit', label: 'Audit Logs', href: '/settings/audit', icon: ShieldCheck },
 ];

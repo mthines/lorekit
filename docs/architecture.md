@@ -117,6 +117,26 @@ Unique constraint: `(user_id, scope, key)`.
 | `permissions` | text[] | `["read", "write"]`, `["read"]`, or `["write"]` |
 | `last_used_at` | timestamptz | Updated fire-and-forget on auth |
 
+### `audit_log` table
+
+Append-only trail of security/data-affecting actions, surfaced at
+**Settings → Audit Logs**. See [limits.md](./limits.md#config-source--per-user-overrides)
+for the one deliberate app-layer-capture exception.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | uuid | PK |
+| `user_id` | uuid | References `auth.users`. Null for service-role/CI writes and JWT-authenticated MCP calls (never surfaced to any user — RLS SELECT requires a matching `auth.uid()`) |
+| `action` | text | Bounded CHECK — one of 11 values, e.g. `api_key.create`, `memory.archive`, `limit.override` |
+| `resource_type` / `resource_id` | text | What was acted on, e.g. `memory` / the memory's id |
+| `target` | text | Human-readable label (a key, a repo, a token name) |
+| `metadata` | jsonb | Action-specific extra detail (never a raw token or hash) |
+| `created_at` | timestamptz | |
+
+RLS: users SELECT only their own rows; a scoped INSERT policy backs the
+authenticated dashboard writer; **no update/delete policy** — immutable via
+the API surface.
+
 ---
 
 ## Request lifecycle (MCP tool call)

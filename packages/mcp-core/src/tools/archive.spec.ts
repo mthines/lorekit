@@ -14,32 +14,44 @@ vi.mock('../telemetry.js', () => ({
 
 /** Build an update-chain mock that resolves to the given result on the final .is() call. */
 function updateDb(result: { error: null | { message: string }; count: number }) {
-  return {
-    from: vi.fn().mockReturnValue({
-      update: vi.fn().mockReturnValue({
+  const memoriesTable = {
+    update: vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            is: vi.fn().mockResolvedValue(result),
-          }),
+          is: vi.fn().mockResolvedValue(result),
         }),
       }),
     }),
-  } as unknown as SupabaseClient;
+  };
+  const auditInsert = vi.fn().mockResolvedValue({ error: null });
+  const db = {
+    from: vi.fn().mockImplementation((table: string) =>
+      table === 'audit_log' ? { insert: auditInsert } : memoriesTable,
+    ),
+  } as unknown as SupabaseClient & { auditInsert: typeof auditInsert };
+  db.auditInsert = auditInsert;
+  return db;
 }
 
 /** Build an update-chain mock that resolves on the final .not() call (used by restore). */
 function restoreDb(result: { error: null | { message: string }; count: number }) {
-  return {
-    from: vi.fn().mockReturnValue({
-      update: vi.fn().mockReturnValue({
+  const memoriesTable = {
+    update: vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            not: vi.fn().mockResolvedValue(result),
-          }),
+          not: vi.fn().mockResolvedValue(result),
         }),
       }),
     }),
-  } as unknown as SupabaseClient;
+  };
+  const auditInsert = vi.fn().mockResolvedValue({ error: null });
+  const db = {
+    from: vi.fn().mockImplementation((table: string) =>
+      table === 'audit_log' ? { insert: auditInsert } : memoriesTable,
+    ),
+  } as unknown as SupabaseClient & { auditInsert: typeof auditInsert };
+  db.auditInsert = auditInsert;
+  return db;
 }
 
 /** Build a select-chain mock for listArchived. */
@@ -72,6 +84,20 @@ describe('archiveMemory', () => {
     expect(await archiveMemory(db, { scope: 'global', key: 'missing' })).toEqual({ archived: false });
   });
 
+  it('records a memory.archive audit event when a row is actually archived', async () => {
+    const db = updateDb({ error: null, count: 1 });
+    await archiveMemory(db, { scope: 'global', key: 'k1' }, 'user-1');
+    expect(db.auditInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'memory.archive', user_id: 'user-1' }),
+    );
+  });
+
+  it('does not record an audit event when no row was archived (no-op)', async () => {
+    const db = updateDb({ error: null, count: 0 });
+    await archiveMemory(db, { scope: 'global', key: 'missing' });
+    expect(db.auditInsert).not.toHaveBeenCalled();
+  });
+
   it('throws on DB error', async () => {
     const db = updateDb({ error: { message: 'timeout' }, count: 0 });
     await expect(archiveMemory(db, { scope: 'global', key: 'k' })).rejects.toThrow('timeout');
@@ -94,6 +120,20 @@ describe('restoreMemory', () => {
   it('returns { restored: false } when row not found (already active or missing)', async () => {
     const db = restoreDb({ error: null, count: 0 });
     expect(await restoreMemory(db, { scope: 'global', key: 'missing' })).toEqual({ restored: false });
+  });
+
+  it('records a memory.restore audit event when a row is actually restored', async () => {
+    const db = restoreDb({ error: null, count: 1 });
+    await restoreMemory(db, { scope: 'global', key: 'k1' }, 'user-1');
+    expect(db.auditInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'memory.restore', user_id: 'user-1' }),
+    );
+  });
+
+  it('does not record an audit event when no row was restored (no-op)', async () => {
+    const db = restoreDb({ error: null, count: 0 });
+    await restoreMemory(db, { scope: 'global', key: 'missing' });
+    expect(db.auditInsert).not.toHaveBeenCalled();
   });
 
   it('throws on DB error', async () => {

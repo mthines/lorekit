@@ -23,6 +23,7 @@
 import { createServerClient } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
 import { normalizeRepo } from '@/lib/repo-format';
+import { recordAuditEvent } from '@/lib/audit-log';
 
 export interface WebhookSecret {
   id: string;
@@ -86,10 +87,12 @@ export async function generateWebhookSecret(
 
   const secret = randomHex64();
 
-  // Deactivate only the prior active secret for this (user, repo) pair.
-  await supabase
+  // Deactivate only the prior active secret for this (user, repo) pair. The
+  // deactivated row count (D10) distinguishes a rotate from a first-create —
+  // the request-scoped `{ count: 'exact' }` option is required to read it.
+  const { count: deactivatedCount } = await supabase
     .from('webhook_secrets')
-    .update({ active: false })
+    .update({ active: false }, { count: 'exact' })
     .eq('user_id', user.id)
     .eq('repo', repo)
     .eq('active', true);
@@ -103,9 +106,18 @@ export async function generateWebhookSecret(
 
   if (error) return { error: error.message };
 
+  const id = (data as { id: string }).id;
+  await recordAuditEvent({
+    action: (deactivatedCount ?? 0) > 0 ? 'webhook_secret.rotate' : 'webhook_secret.create',
+    resourceType: 'webhook_secret',
+    resourceId: id,
+    target: repo,
+    metadata: { repo },
+  });
+
   revalidatePath('/dashboard');
   // 'layout' so nested /settings/* pages (where secrets render) revalidate,
   // not just the /settings redirect page.
   revalidatePath('/settings', 'layout');
-  return { secret, id: (data as { id: string }).id, repo };
+  return { secret, id, repo };
 }

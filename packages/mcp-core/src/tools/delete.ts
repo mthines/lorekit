@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
 import { ScopeSchema, scopeType } from '../scope.js';
 import { getTracer, getToolDurationHistogram } from '../telemetry.js';
+import { recordAudit } from '../audit.js';
 
 export const DeleteInputSchema = z.object({
   scope: ScopeSchema,
@@ -28,6 +29,7 @@ export const DeleteInputSchema = z.object({
 export async function deleteMemory(
   db: SupabaseClient,
   raw: unknown,
+  userId: string | null = null,
 ): Promise<{ deleted: boolean; archived: boolean }> {
   const input = DeleteInputSchema.parse(raw);
   const tracer = getTracer();
@@ -54,6 +56,18 @@ export async function deleteMemory(
         const deleted = (count ?? 0) > 0;
         span.setAttribute('lorekit.result.deleted', deleted);
         span.setAttribute('lorekit.result.archived', false);
+        if (deleted) {
+          await recordAudit(
+            db,
+            {
+              action: 'memory.delete',
+              resourceType: 'memory',
+              target: input.key,
+              metadata: { scope: input.scope, key: input.key, force: true },
+            },
+            userId,
+          );
+        }
         return { deleted, archived: false };
       } else {
         // Soft-archive — set archived_at, hide from normal reads.
@@ -68,6 +82,18 @@ export async function deleteMemory(
         const archived = (count ?? 0) > 0;
         span.setAttribute('lorekit.result.deleted', false);
         span.setAttribute('lorekit.result.archived', archived);
+        if (archived) {
+          await recordAudit(
+            db,
+            {
+              action: 'memory.archive',
+              resourceType: 'memory',
+              target: input.key,
+              metadata: { scope: input.scope, key: input.key, force: false },
+            },
+            userId,
+          );
+        }
         return { deleted: false, archived };
       }
     } catch (err) {

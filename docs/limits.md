@@ -94,6 +94,18 @@ There is no admin UI for this yet — it's deliberately deferred until a paid
 tier is built. The schema already supports it: a future billing integration
 only needs to write to `user_limits`.
 
+**Audit trail exception:** every other sensitive action in LoreKit (API-key
+create/revoke, webhook-secret create/rotate, memory create/update/archive/
+restore/delete) is recorded in `audit_log` by an explicit app-layer call —
+see `packages/mcp-core/src/audit.ts` and CLAUDE.md's "Key decisions". Because
+no app-layer code path writes `user_limits` today, that one table is audited
+by a DB trigger instead (`audit_user_limits()`, in
+`supabase/migrations/00010_audit_log.sql`), which fires on every insert,
+update, or delete and records a `limit.override` row. This is a deliberate,
+narrowly-scoped exception to the app-layer capture rule — if an admin UI or
+server action for `user_limits` is ever built, instrument that call site
+directly rather than relying solely on the trigger.
+
 ## Where the code lives
 
 | Concern | Deno edge function (production) | Node.js (`mcp-server`) | Shared logic |
