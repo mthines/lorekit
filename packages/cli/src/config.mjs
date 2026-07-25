@@ -1,5 +1,6 @@
 // Project layout + .mcp.json read/merge helpers.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,12 +13,29 @@ export function resolveProjectRoot(dir) {
   return path.resolve(dir || process.cwd());
 }
 
+// The user's home directory. Honors $HOME / %USERPROFILE% (so it can be
+// redirected in tests) and falls back to the OS lookup.
+export function homeDir() {
+  return process.env.HOME || process.env.USERPROFILE || os.homedir();
+}
+
 export function mcpJsonPath(root) {
   return path.join(root, '.mcp.json');
 }
 
-export function skillInstallDir(root) {
-  return path.join(root, '.claude', 'skills', SKILL_NAME);
+// Where the MCP server entry is written for a given scope:
+//   project → <root>/.mcp.json          (Claude Code project config)
+//   global  → ~/.claude.json            (Claude Code user config, all projects)
+export function mcpConfigPath(root, scope = 'project') {
+  return scope === 'global' ? path.join(homeDir(), '.claude.json') : mcpJsonPath(root);
+}
+
+// Where the skill is scaffolded for a given scope:
+//   project → <root>/.claude/skills/…   (this repo only)
+//   global  → ~/.claude/skills/…        (personal skills, all projects)
+export function skillInstallDir(root, scope = 'project') {
+  const base = scope === 'global' ? homeDir() : root;
+  return path.join(base, '.claude', 'skills', SKILL_NAME);
 }
 
 // Throwing read — used by `install` so a corrupt .mcp.json aborts the write
@@ -44,9 +62,10 @@ export function readMcpConfig(root) {
   }
 }
 
-// Merge a lorekit server entry into .mcp.json, preserving any other servers.
-export function upsertMcpServer(root, remoteUrl) {
-  const file = mcpJsonPath(root);
+// Merge a lorekit server entry into the scope's MCP config, preserving any
+// other servers (and, for the global ~/.claude.json, all other user settings).
+export function upsertMcpServer(root, remoteUrl, scope = 'project') {
+  const file = mcpConfigPath(root, scope);
   const config = readJsonIfExists(file) || {};
   if (!config.mcpServers || typeof config.mcpServers !== 'object') {
     config.mcpServers = {};

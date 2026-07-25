@@ -37,19 +37,28 @@ Linux, and Windows (npm creates the `lorekit` shim on every platform).
 
 ### `lorekit install`
 
-Scaffolds the `lorekit-memory` skill into `.claude/skills/lorekit-memory/` and
-adds (or updates) a `lorekit` server in the project's `.mcp.json`, preserving
-any other MCP servers already configured.
+Scaffolds the `lorekit-memory` skill and wires a `lorekit` MCP server,
+preserving any other servers already configured. It first asks **where** to
+install:
+
+- **project** (default) — `.claude/skills/lorekit-memory/` + the project's
+  `.mcp.json`. Scoped to this repo; commit it to share with your team.
+- **global** — `~/.claude/skills/lorekit-memory/` + `~/.claude.json`. Applies to
+  every project you open. Your token lands in `~/.claude.json`, so keep that
+  file private.
 
 ```bash
 lorekit install \
   --endpoint https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp \
   --token    lk_rw_your_token
+
+lorekit install --global      # set it up for every project
 ```
 
-If run in a TTY without `--endpoint` / `--token`, it prompts for them.
-Use `--yes` for non-interactive environments (endpoint required via flag/env).
-Use `--force` to overwrite an existing skill copy.
+In a TTY it prompts for the scope (and for `--endpoint` / `--token` if missing).
+Use `--project` / `--global` to pick the scope non-interactively, `--yes` for
+non-interactive runs (endpoint required via flag/env; scope defaults to
+project), and `--force` to overwrite an existing skill copy.
 
 ### `lorekit doctor`
 
@@ -243,6 +252,8 @@ active deny constraints.
 | Flag | Meaning |
 |------|---------|
 | `-d, --dir <path>` | Target project root (default: cwd) |
+| `--project` | Install into this repo: `.claude/skills` + `.mcp.json` (`install`; default) |
+| `--global` | Install for every project: `~/.claude/skills` + `~/.claude.json` (`install`) |
 | `-e, --endpoint <url>` | LoreKit MCP endpoint |
 | `-t, --token <token>` | LoreKit token |
 | `--mode <mode>` | Memory mode override for `doctor`: `off` / `local` / `remote` |
