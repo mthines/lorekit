@@ -190,7 +190,7 @@ importers:
         version: 12.42.2(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       next:
         specifier: ^15.3.8
-        version: 15.5.21(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(sass@1.69.0)
+        version: 15.5.21(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(sass@1.69.0)
       react:
         specifier: ^19.0.0
         version: 19.2.8
@@ -203,7 +203,7 @@ importers:
         version: 15.5.21
       '@nx/next':
         specifier: 22.4.0
-        version: 22.4.0(@babel/core@7.29.7)(@babel/traverse@7.29.7)(@rspack/core@1.6.8(@swc/helpers@0.5.23))(@swc-node/register@1.9.2(@swc/core@1.5.29(@swc/helpers@0.5.23))(@swc/types@0.1.27)(typescript@5.9.3))(@swc/core@1.5.29(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@zkochan/js-yaml@0.0.7)(eslint@8.57.1)(lightningcss@1.32.0)(next@15.5.21(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(sass@1.69.0))(nx@22.4.0(@swc-node/register@1.9.2(@swc/core@1.5.29(@swc/helpers@0.5.23))(@swc/types@0.1.27)(typescript@5.9.3))(@swc/core@1.5.29(@swc/helpers@0.5.23)))(postcss@8.4.30)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3)(vite@7.3.6(@types/node@20.19.9)(jiti@2.7.0)(less@4.7.0)(lightningcss@1.32.0)(sass-embedded@1.100.0)(sass@1.69.0)(terser@5.49.0)(yaml@2.9.0))(vitest@4.0.9)(webpack@5.108.4(@swc/core@1.5.29(@swc/helpers@0.5.23))(lightningcss@1.32.0)(postcss@8.4.30))
+        version: 22.4.0(@babel/core@7.29.7)(@babel/traverse@7.29.7)(@rspack/core@1.6.8(@swc/helpers@0.5.23))(@swc-node/register@1.9.2(@swc/core@1.5.29(@swc/helpers@0.5.23))(@swc/types@0.1.27)(typescript@5.9.3))(@swc/core@1.5.29(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@zkochan/js-yaml@0.0.7)(eslint@8.57.1)(lightningcss@1.32.0)(next@15.5.21(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(sass@1.69.0))(nx@22.4.0(@swc-node/register@1.9.2(@swc/core@1.5.29(@swc/helpers@0.5.23))(@swc/types@0.1.27)(typescript@5.9.3))(@swc/core@1.5.29(@swc/helpers@0.5.23)))(postcss@8.4.30)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3)(vite@7.3.6(@types/node@20.19.9)(jiti@2.7.0)(less@4.7.0)(lightningcss@1.32.0)(sass-embedded@1.100.0)(sass@1.69.0)(terser@5.49.0)(yaml@2.9.0))(vitest@4.0.9)(webpack@5.108.4(@swc/core@1.5.29(@swc/helpers@0.5.23))(lightningcss@1.32.0)(postcss@8.4.30))
       '@tailwindcss/postcss':
         specifier: ^4.1.11
         version: 4.3.3
@@ -216,6 +216,9 @@ importers:
       '@types/react-dom':
         specifier: ^19.0.0
         version: 19.2.3(@types/react@19.2.17)
+      babel-plugin-react-compiler:
+        specifier: ^1.0.0
+        version: 1.0.0
       eslint-plugin-react-hooks:
         specifier: ^5.2.0
         version: 5.2.0(eslint@8.57.1)
@@ -3507,6 +3510,9 @@ packages:
     resolution: {integrity: sha512-M762rNHfSF1EV3SLtnCJXFoQbbIIz0OyRwnCmV0KPC7qosSfCO0QLTSuJX3ayAebubhE6oYBAYPrBA5ljowaZg==}
     peerDependencies:
       '@babel/core': ^7.4.0 || ^8.0.0-0 <8.0.0
+
+  babel-plugin-react-compiler@1.0.0:
+    resolution: {integrity: sha512-Ixm8tFfoKKIPYdCCKYTsqv+Fd4IJ0DQqMyEimo+pxUOMUR9cVPlwTrFt9Avu+3cb6Zp3mAzl+t1MrG2fxxKsxw==}
 
   babel-plugin-transform-typescript-metadata@0.3.2:
     resolution: {integrity: sha512-mWEvCQTgXQf48yDqgN7CH50waTyYBeP2Lpqx4nNWab9sxEpdXVeKgfj1qYI2/TgUPQtNFZ85i3PemRtnXVYYJg==}
@@ -8815,7 +8821,7 @@ snapshots:
       - vue-tsc
       - webpack-cli
 
-  '@nx/next@22.4.0(@babel/core@7.29.7)(@babel/traverse@7.29.7)(@rspack/core@1.6.8(@swc/helpers@0.5.23))(@swc-node/register@1.9.2(@swc/core@1.5.29(@swc/helpers@0.5.23))(@swc/types@0.1.27)(typescript@5.9.3))(@swc/core@1.5.29(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@zkochan/js-yaml@0.0.7)(eslint@8.57.1)(lightningcss@1.32.0)(next@15.5.21(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(sass@1.69.0))(nx@22.4.0(@swc-node/register@1.9.2(@swc/core@1.5.29(@swc/helpers@0.5.23))(@swc/types@0.1.27)(typescript@5.9.3))(@swc/core@1.5.29(@swc/helpers@0.5.23)))(postcss@8.4.30)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3)(vite@7.3.6(@types/node@20.19.9)(jiti@2.7.0)(less@4.7.0)(lightningcss@1.32.0)(sass-embedded@1.100.0)(sass@1.69.0)(terser@5.49.0)(yaml@2.9.0))(vitest@4.0.9)(webpack@5.108.4(@swc/core@1.5.29(@swc/helpers@0.5.23))(lightningcss@1.32.0)(postcss@8.4.30))':
+  '@nx/next@22.4.0(@babel/core@7.29.7)(@babel/traverse@7.29.7)(@rspack/core@1.6.8(@swc/helpers@0.5.23))(@swc-node/register@1.9.2(@swc/core@1.5.29(@swc/helpers@0.5.23))(@swc/types@0.1.27)(typescript@5.9.3))(@swc/core@1.5.29(@swc/helpers@0.5.23))(@swc/helpers@0.5.23)(@zkochan/js-yaml@0.0.7)(eslint@8.57.1)(lightningcss@1.32.0)(next@15.5.21(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(sass@1.69.0))(nx@22.4.0(@swc-node/register@1.9.2(@swc/core@1.5.29(@swc/helpers@0.5.23))(@swc/types@0.1.27)(typescript@5.9.3))(@swc/core@1.5.29(@swc/helpers@0.5.23)))(postcss@8.4.30)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3)(vite@7.3.6(@types/node@20.19.9)(jiti@2.7.0)(less@4.7.0)(lightningcss@1.32.0)(sass-embedded@1.100.0)(sass@1.69.0)(terser@5.49.0)(yaml@2.9.0))(vitest@4.0.9)(webpack@5.108.4(@swc/core@1.5.29(@swc/helpers@0.5.23))(lightningcss@1.32.0)(postcss@8.4.30))':
     dependencies:
       '@babel/plugin-proposal-decorators': 7.29.7(@babel/core@7.29.7)
       '@nx/devkit': 22.4.0(nx@22.4.0(@swc-node/register@1.9.2(@swc/core@1.5.29(@swc/helpers@0.5.23))(@swc/types@0.1.27)(typescript@5.9.3))(@swc/core@1.5.29(@swc/helpers@0.5.23)))
@@ -8829,7 +8835,7 @@ snapshots:
       copy-webpack-plugin: 10.2.4(webpack@5.108.4(@swc/core@1.5.29(@swc/helpers@0.5.23))(lightningcss@1.32.0)(postcss@8.4.30))
       file-loader: 6.2.0(webpack@5.108.4(@swc/core@1.5.29(@swc/helpers@0.5.23))(lightningcss@1.32.0)(postcss@8.4.30))
       ignore: 5.3.2
-      next: 15.5.21(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(sass@1.69.0)
+      next: 15.5.21(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(sass@1.69.0)
       semver: 7.8.5
       tslib: 2.8.1
       webpack-merge: 5.10.0
@@ -10988,7 +10994,6 @@ snapshots:
       magic-string: 0.30.21
     optionalDependencies:
       vite: 7.3.6(@types/node@20.19.9)(jiti@2.7.0)(less@4.7.0)(lightningcss@1.32.0)(sass-embedded@1.100.0)(sass@1.69.0)(terser@5.49.0)(yaml@2.9.0)
-    optional: true
 
   '@vitest/pretty-format@4.0.9':
     dependencies:
@@ -11016,7 +11021,7 @@ snapshots:
       sirv: 3.0.2
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.0
-      vitest: 4.0.9(@types/node@20.19.9)(@vitest/ui@4.0.9)(jiti@2.4.2)(less@4.7.0)(lightningcss@1.32.0)(sass-embedded@1.100.0)(sass@1.69.0)(terser@5.49.0)(yaml@2.9.0)
+      vitest: 4.0.9(@types/node@20.19.9)(@vitest/ui@4.0.9)(jiti@2.7.0)(less@4.7.0)(lightningcss@1.32.0)(sass-embedded@1.100.0)(sass@1.69.0)(terser@5.49.0)(yaml@2.9.0)
 
   '@vitest/utils@4.0.9':
     dependencies:
@@ -11310,6 +11315,10 @@ snapshots:
       '@babel/helper-define-polyfill-provider': 0.6.8(@babel/core@7.29.7)
     transitivePeerDependencies:
       - supports-color
+
+  babel-plugin-react-compiler@1.0.0:
+    dependencies:
+      '@babel/types': 7.29.7
 
   babel-plugin-transform-typescript-metadata@0.3.2(@babel/core@7.29.7)(@babel/traverse@7.29.7):
     dependencies:
@@ -13210,7 +13219,7 @@ snapshots:
 
   neo-async@2.6.2: {}
 
-  next@15.5.21(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(sass@1.69.0):
+  next@15.5.21(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(sass@1.69.0):
     dependencies:
       '@next/env': 15.5.21
       '@swc/helpers': 0.5.15
@@ -13229,6 +13238,7 @@ snapshots:
       '@next/swc-win32-arm64-msvc': 15.5.21
       '@next/swc-win32-x64-msvc': 15.5.21
       '@opentelemetry/api': 1.9.1
+      babel-plugin-react-compiler: 1.0.0
       sass: 1.69.0
       sharp: 0.34.5
     transitivePeerDependencies:
@@ -14720,7 +14730,6 @@ snapshots:
       sass-embedded: 1.100.0
       terser: 5.49.0
       yaml: 2.9.0
-    optional: true
 
   vitest@4.0.9(@types/node@20.19.9)(@vitest/ui@4.0.9)(jiti@2.4.2)(less@4.7.0)(lightningcss@1.32.0)(sass-embedded@1.100.0)(sass@1.69.0)(terser@5.49.0)(yaml@2.9.0):
     dependencies:
@@ -14799,7 +14808,6 @@ snapshots:
       - terser
       - tsx
       - yaml
-    optional: true
 
   watchpack@2.5.2:
     dependencies:
