@@ -58,7 +58,7 @@ jobs:
           echo "Comparing ${BASE}...HEAD"
           CHANGED="$(git diff --name-only "${BASE}" HEAD)"
           echo "$CHANGED"
-          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/mcp-core/|packages/mcp-server/|supabase/functions/|supabase/migrations/|supabase/config\.toml|package\.json|pnpm-lock\.yaml|\.github/workflows/ci\.yml)'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/mcp-core/|packages/mcp-server/|supabase/functions/|supabase/migrations/|supabase/tests/|supabase/config\.toml|package\.json|pnpm-lock\.yaml|\.github/workflows/ci\.yml)'; then
             echo "api=true" >> "$GITHUB_OUTPUT"
           else
             echo "api=false" >> "$GITHUB_OUTPUT"
@@ -216,6 +216,18 @@ jobs:
           echo '--- last response body ---'; cat /tmp/mcp.out || true
           echo '--- edge runtime logs ---'; docker logs supabase_edge_runtime_lorekit 2>&1 | tail -80 || true
           exit 1
+
+      # Assert the business rules that live only in SQL — the cap/rate triggers
+      # and RPCs, RLS isolation, memory_write's created_at semantics, and the
+      # webhook-secret constraints. Runs directly on Postgres (not PostgREST),
+      # so it exercises the raw migration logic the mocked unit tests can only
+      # assume. See supabase/tests/migrations.test.sql.
+      - name: Migration DB tests (triggers, RPCs, RLS, constraints)
+        run: |
+          DB_URL="$(supabase status -o json | jq -r '.DB_URL // empty')"
+          [ -n "$DB_URL" ] || DB_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+          echo "Running supabase/tests/migrations.test.sql against the local database"
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/migrations.test.sql
 
       - name: Stop local Supabase
         if: always()
