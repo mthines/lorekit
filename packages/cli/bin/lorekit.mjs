@@ -16,8 +16,10 @@ ${c.bold('Usage')}
   npx @lorekit/cli <command> [options]
 
 ${c.bold('Commands')}
-  install     Scaffold the lorekit-memory skill into .claude/skills and
-              add the LoreKit server to .mcp.json.
+  install     Scaffold the lorekit-memory skill + wire the LoreKit MCP server.
+              Prompts to install for this project (.claude/skills + .mcp.json)
+              or globally for every project (~/.claude); --project / --global
+              choose non-interactively.
   doctor      Verify the skill install, MCP connectivity, token, and scope.
   migrate     Relocate a LoreKit-format local store into the current layout.
               Dry-run by default; pass --yes to apply. Idempotent.
@@ -31,6 +33,8 @@ ${c.bold('Commands')}
 
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
+      --project           Install into this project: .claude/skills + .mcp.json (default)
+      --global            Install for every project: ~/.claude/skills + ~/.claude.json
   -e, --endpoint <url>    LoreKit MCP endpoint
   -t, --token <token>     LoreKit token (lk_rw_* to allow writes, lk_ro_* read-only)
       --mode <mode>       Memory mode: off | local | remote (doctor override)
@@ -58,6 +62,7 @@ ${c.bold('Environment')}
 
 ${c.bold('Examples')}
   npx @lorekit/cli install --endpoint https://ref.supabase.co/functions/v1/mcp --token lk_rw_xxx
+  npx @lorekit/cli install --global    # set up memory for every project (~/.claude)
   npx @lorekit/cli doctor --deep
   npx @lorekit/cli migrate --from .lore                 # preview a rename
   npx @lorekit/cli migrate --from .lore --to project --yes
@@ -67,7 +72,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project'],
   });
 
   // `hook` is machine-facing: it must never print help/errors to stdout
