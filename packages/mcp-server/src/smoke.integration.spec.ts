@@ -170,10 +170,13 @@ describe.skipIf(SKIP)('LoreKit MCP smoke tests (integration)', () => {
       'memory.delete',
       { scope: SCOPE, key: KEY_A },
     );
+    // memory.delete defaults to a soft-delete (archive), which reports
+    // { deleted: false, archived: true }. Accept any of the success shapes.
     const deleted =
       result === true ||
       (result as { deleted?: boolean })?.deleted === true ||
-      (result as { ok?: boolean })?.ok === true;
+      (result as { ok?: boolean })?.ok === true ||
+      (result as { archived?: boolean })?.archived === true;
     expect(deleted, `expected delete success; got: ${JSON.stringify(result)}`).toBe(true);
   });
 

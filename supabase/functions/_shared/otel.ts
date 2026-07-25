@@ -419,10 +419,12 @@ export class TracedQuery<T = any> {
     return this;
   }
   // deno-lint-ignore no-explicit-any
-  update(data: any): this {
+  update(data: any, opts?: { count?: 'exact' | 'planned' | 'estimated' }): this {
     this.state.op = 'UPDATE';
     this.state.columns = Object.keys(data).join(', ');
-    this.state.qb = this.state.qb.update(data);
+    // Forward opts (e.g. { count: 'exact' }) — without this the row count is
+    // dropped, so soft-delete/archive report archived:false even on success.
+    this.state.qb = this.state.qb.update(data, opts);
     return this;
   }
   // deno-lint-ignore no-explicit-any
