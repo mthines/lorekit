@@ -52,9 +52,12 @@ A GitHub App mints a short-lived token per run (no long-lived PAT to rotate).
 - Create a GitHub App (org or personal) with **Repository permissions →
   Contents: Read and write** and **Pull requests: Read and write**.
 - Install it on `mthines/lorekit`.
-- Add repo secrets/variables:
-  - `RELEASE_APP_ID` — the App's numeric ID.
-  - `RELEASE_APP_PRIVATE_KEY` — the App's generated private key (`.pem` contents).
+- Add, under **Settings → Secrets and variables → Actions**:
+  - `RELEASE_APP_ID` — a repository **variable** (Variables tab) holding the
+    App's numeric ID. It's a variable, not a secret, so `release.yml` can gate
+    on it — until it's set, the whole workflow no-ops instead of failing.
+  - `RELEASE_APP_PRIVATE_KEY` — a repository **secret** holding the App's
+    generated private key (`.pem` contents).
 
 > Lighter alternative: a fine-grained PAT with the same two permissions, passed
 > as `token:` directly. The App is preferred — it isn't tied to a person and the

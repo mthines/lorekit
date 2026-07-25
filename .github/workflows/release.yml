@@ -24,8 +24,9 @@
 #
 # One-time setup (see docs/releasing.md):
 #   • GitHub App with contents:write + pull-requests:write, installed on the
-#     repo; store its id as var/secret RELEASE_APP_ID and its private key as
-#     secret RELEASE_APP_PRIVATE_KEY.
+#     repo; store its id as repo VARIABLE RELEASE_APP_ID (a variable so this
+#     workflow can gate on it) and its private key as secret
+#     RELEASE_APP_PRIVATE_KEY. Until the variable is set, this workflow no-ops.
 #   • npm ▸ @lorekit/cli ▸ Settings ▸ Trusted Publisher ▸ GitHub Actions:
 #     repo mthines/lorekit, workflow release.yml.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -48,6 +49,11 @@ jobs:
   release-please:
     name: Release please
     runs-on: ubuntu-latest
+    # No-op until the release credentials exist. RELEASE_APP_ID is a repo
+    # *variable* (not a secret) precisely so it can gate here — secrets can't be
+    # read in `if:`. Before setup this job (and publish-cli, which needs it)
+    # skips cleanly instead of failing red on every push to main.
+    if: ${{ vars.RELEASE_APP_ID != '' }}
     permissions:
       contents: write # create tags + GitHub releases
       pull-requests: write # open/update the release PR
@@ -59,7 +65,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v2
         with:
-          app-id: ${{ secrets.RELEASE_APP_ID }}
+          app-id: ${{ vars.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
       - name: Run release-please
