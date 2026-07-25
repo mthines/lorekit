@@ -242,3 +242,90 @@ jobs:
           echo "Inspect the failing job above and, if a migration is at fault, restore via PITR." >> "$GITHUB_STEP_SUMMARY"
           echo "::error::Production deploy failed — functions rolled back to the previous commit."
           exit 1
+
+  # ── 6. Publish @lorekit/cli to npm (independent of the Supabase pipeline) ─────
+  #    Runs in parallel with the deploy jobs — the CLI is a standalone npm
+  #    package with no Supabase dependency, so it neither gates nor is gated by
+  #    the edge-function deploy. Publishes only when packages/cli actually
+  #    changed in the merged commit AND the package.json version is new, so a
+  #    merge that leaves the CLI untouched (or forgets to bump) is a clean no-op
+  #    rather than an error. Bump packages/cli/package.json version to release.
+  #
+  #    Auth is npm Trusted Publishing (OIDC) — no long-lived NPM_TOKEN secret.
+  #    Each run mints a short-lived OIDC token from `id-token: write`, and npm
+  #    trades it for publish rights based on the trusted publisher configured on
+  #    the package (npmjs.com ▸ @lorekit/cli ▸ Settings ▸ Trusted Publisher:
+  #    GitHub Actions, repo mthines/lorekit, workflow deploy.yml). Provenance is
+  #    attached automatically. One-time prerequisite: the package must already
+  #    exist on npm (do the first publish by hand), then add the trusted
+  #    publisher — after that every release here is token-free.
+  publish-cli:
+    name: Publish @lorekit/cli to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # mint the OIDC token npm trades for publish rights
+    steps:
+      - name: Checkout repository (with previous commit)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Did the CLI project change?
+        id: changed
+        run: |
+          if git diff --name-only HEAD^ HEAD -- packages/cli | grep -q .; then
+            echo "cli=true" >> "$GITHUB_OUTPUT"
+            echo "packages/cli changed in this commit."
+          else
+            echo "cli=false" >> "$GITHUB_OUTPUT"
+            echo "packages/cli unchanged — skipping publish."
+          fi
+
+      - name: Set up Node.js
+        if: steps.changed.outputs.cli == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+
+      # Pinned, not @latest: Trusted Publishing landed in 11.5.1, and a pinned
+      # version keeps the publish step reproducible — @latest would silently
+      # move on every run and could change the OIDC flow out from under us.
+      - name: Upgrade npm for Trusted Publishing (needs >= 11.5.1)
+        if: steps.changed.outputs.cli == 'true'
+        run: npm install -g npm@11.5.1
+
+      - name: Is this version already published?
+        if: steps.changed.outputs.cli == 'true'
+        id: ver
+        working-directory: packages/cli
+        run: |
+          V="$(node -p "require('./package.json').version")"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if npm view "@lorekit/cli@$V" version >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "@lorekit/cli@$V already on npm — skipping (bump the version to release)."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "@lorekit/cli@$V is new — will test and publish."
+          fi
+
+      - name: Test
+        if: steps.changed.outputs.cli == 'true' && steps.ver.outputs.exists == 'false'
+        working-directory: packages/cli
+        run: node --test test/*.test.mjs
+
+      # No NODE_AUTH_TOKEN: npm detects the Actions OIDC environment and
+      # authenticates via the trusted publisher. --provenance is implied by
+      # trusted publishing; passed explicitly for clarity.
+      - name: Publish (Trusted Publishing / OIDC)
+        if: steps.changed.outputs.cli == 'true' && steps.ver.outputs.exists == 'false'
+        working-directory: packages/cli
+        run: npm publish --access public --provenance
+
+      - name: Report publish
+        if: steps.changed.outputs.cli == 'true' && steps.ver.outputs.exists == 'false'
+        run: |
+          echo "### 📦 Published @lorekit/cli@${{ steps.ver.outputs.version }} to npm" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`npx @lorekit/cli@${{ steps.ver.outputs.version }} install\`" >> "$GITHUB_STEP_SUMMARY"
