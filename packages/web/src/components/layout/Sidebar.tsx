@@ -21,6 +21,8 @@ interface SidebarProps {
 
 export function Sidebar({ user }: SidebarProps) {
   const pathname = usePathname();
+  const isSettingsActive =
+    pathname === SETTINGS.href || pathname.startsWith(SETTINGS.href + '/');
 
   return (
     <>
@@ -63,26 +65,20 @@ export function Sidebar({ user }: SidebarProps) {
 
         {/* Settings — separated from primary content nav, pinned above the user row */}
         <div className="p-2">
-          {(() => {
-            const isSettingsActive =
-              pathname === SETTINGS.href || pathname.startsWith(SETTINGS.href + '/');
-            return (
-              <Link
-                href={SETTINGS.href}
-                prefetch={true}
-                className={[
-                  'flex min-h-11 items-center gap-2.5 rounded-lg px-3 text-sm transition-all duration-150',
-                  isSettingsActive
-                    ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)] font-medium'
-                    : 'text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]',
-                ].join(' ')}
-                aria-current={isSettingsActive ? 'page' : undefined}
-              >
-                <SETTINGS.icon className="size-4 shrink-0" aria-hidden />
-                {SETTINGS.label}
-              </Link>
-            );
-          })()}
+          <Link
+            href={SETTINGS.href}
+            prefetch={true}
+            className={[
+              'flex min-h-11 items-center gap-2.5 rounded-lg px-3 text-sm transition-all duration-150',
+              isSettingsActive
+                ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)] font-medium'
+                : 'text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]',
+            ].join(' ')}
+            aria-current={isSettingsActive ? 'page' : undefined}
+          >
+            <SETTINGS.icon className="size-4 shrink-0" aria-hidden />
+            {SETTINGS.label}
+          </Link>
         </div>
 
         {/* User */}
