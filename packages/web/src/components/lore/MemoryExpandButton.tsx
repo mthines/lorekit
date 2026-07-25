@@ -16,6 +16,7 @@ import { BookOpen, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useLoreData } from '@/lib/queries/lore';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
+import { MemoryCard, memoryFromLesson } from '@/components/memory/MemoryCard';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 
 interface MemoryExpandButtonProps {
@@ -55,12 +56,13 @@ export function MemoryExpandButton({
 
   // Close on Escape.
   useEffect(() => {
+    if (!isDropdownOpen) return;
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') setIsDropdownOpen(false);
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [isDropdownOpen]);
 
   const lessons = useMemo<LessonEntry[]>(() => {
     if (!data?.lessons) return [];
@@ -131,8 +133,10 @@ export function MemoryExpandButton({
                     openLesson?.key === lesson.key && openLesson?.scope === lesson.scope;
                   return (
                     <li key={`${lesson.scope}::${lesson.key}`} role="option" aria-selected={isSelected}>
-                      <button
-                        type="button"
+                      <MemoryCard
+                        memory={memoryFromLesson(lesson)}
+                        density="compact"
+                        selected={isSelected}
                         onClick={() => {
                           if (isSelected) {
                             closeLesson();
@@ -141,28 +145,7 @@ export function MemoryExpandButton({
                           }
                           setIsDropdownOpen(false);
                         }}
-                        className={[
-                          'flex w-full flex-col gap-0.5 px-4 py-2.5 text-left transition-colors duration-100',
-                          isSelected
-                            ? 'bg-[var(--color-accent-subtle)]'
-                            : 'hover:bg-[var(--color-bg-elevated)]',
-                        ].join(' ')}
-                      >
-                        <code
-                          className={[
-                            'truncate font-mono text-xs font-medium',
-                            isSelected
-                              ? 'text-[var(--color-accent)]'
-                              : 'text-[var(--color-content-primary)]',
-                          ].join(' ')}
-                        >
-                          {lesson.key}
-                        </code>
-                        <span className="line-clamp-1 text-xs text-[var(--color-content-tertiary)]">
-                          {lesson.value.slice(0, 80)}
-                          {lesson.value.length > 80 ? '…' : ''}
-                        </span>
-                      </button>
+                      />
                     </li>
                   );
                 })}

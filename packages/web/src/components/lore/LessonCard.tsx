@@ -1,11 +1,13 @@
 'use client';
 
-import { memo } from 'react';
-import { motion, useReducedMotion } from 'motion/react';
-import { Clock, Bot, Zap } from 'lucide-react';
-import { Badge } from '@/components/ui/Badge';
+import { MemoryCard, memoryFromLesson } from '@/components/memory/MemoryCard';
 import type { ScopePrefix } from '@/lib/scope';
 
+/**
+ * Canonical shape of a memory as stored/queried. Kept here as the app's shared
+ * lesson type (imported across the lore, activity, and dashboard queries); the
+ * visual rendering is delegated to the shared {@link MemoryCard}.
+ */
 export interface LessonEntry {
   key: string;
   value: string;
@@ -18,16 +20,6 @@ export interface LessonEntry {
   scope_type: ScopePrefix;
 }
 
-function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
-
 interface LessonCardProps {
   lesson: LessonEntry;
   selected: boolean;
@@ -35,90 +27,14 @@ interface LessonCardProps {
   index: number;
 }
 
-export const LessonCard = memo(function LessonCard({
-  lesson,
-  selected,
-  onClick,
-  index,
-}: LessonCardProps) {
-  const preview = lesson.value.slice(0, 160).replace(/\n/g, ' ');
-  const truncated = lesson.value.length > 160;
-  const reduceMotion = useReducedMotion();
-
+export function LessonCard({ lesson, selected, onClick, index }: LessonCardProps) {
   return (
-    <motion.button
+    <MemoryCard
+      memory={memoryFromLesson(lesson)}
+      layout="card"
+      selected={selected}
       onClick={onClick}
-      // Subtle fade + 4px rise. Uses a plain ease-out (not a front-loaded expo
-      // curve) so opacity and position settle together — otherwise the card
-      // reads as "appears, then slides up". Reduced-motion → pure fade, no rise.
-      initial={{ opacity: 0, y: reduceMotion ? 0 : 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.03, duration: 0.25, ease: 'easeOut' }}
-      className={[
-        'group w-full rounded-xl border p-4 text-left transition-all duration-150',
-        selected
-          ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)]'
-          : 'border-[var(--color-border)] bg-[var(--color-bg-raised)] hover:border-[var(--color-border)] hover:bg-[var(--color-bg-elevated)]',
-      ].join(' ')}
-      aria-pressed={selected}
-    >
-      {/* Key */}
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <code
-          className={[
-            'truncate font-mono text-xs font-medium',
-            selected ? 'text-[var(--color-accent)]' : 'text-[var(--color-content-primary)]',
-          ].join(' ')}
-        >
-          {lesson.key}
-        </code>
-        <Badge variant={lesson.scope_type}>{lesson.scope_type}</Badge>
-      </div>
-
-      {/* Value preview */}
-      <p className="mb-3 line-clamp-2 text-xs text-[var(--color-content-secondary)]">
-        {preview}
-        {truncated && '…'}
-      </p>
-
-      {/* Footer */}
-      <div className="flex flex-wrap items-center gap-2">
-        {lesson.source_agent && (
-          <span className="flex items-center gap-1 text-xs text-[var(--color-content-tertiary)]">
-            <Bot className="size-3" aria-hidden />
-            {lesson.source_agent}
-          </span>
-        )}
-        {lesson.trigger && (
-          <span className="flex items-center gap-1 text-xs text-[var(--color-content-tertiary)]">
-            <Zap className="size-3" aria-hidden />
-            {lesson.trigger}
-          </span>
-        )}
-        <span className="ml-auto flex items-center gap-1 text-xs text-[var(--color-content-tertiary)]">
-          <Clock className="size-3" aria-hidden />
-          {relativeTime(lesson.updated_at)}
-        </span>
-      </div>
-
-      {/* Tags */}
-      {lesson.tags.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1">
-          {lesson.tags.slice(0, 4).map((tag) => (
-            <span
-              key={tag}
-              className="rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg)] px-1.5 py-0.5 font-mono text-xs text-[var(--color-content-tertiary)]"
-            >
-              {tag}
-            </span>
-          ))}
-          {lesson.tags.length > 4 && (
-            <span className="rounded-md px-1.5 py-0.5 text-xs text-[var(--color-content-tertiary)]">
-              +{lesson.tags.length - 4}
-            </span>
-          )}
-        </div>
-      )}
-    </motion.button>
+      index={index}
+    />
   );
-});
+}

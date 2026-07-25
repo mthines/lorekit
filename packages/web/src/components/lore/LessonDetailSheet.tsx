@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { X, Bot, Zap, Tag, Clock, Archive, RotateCcw } from 'lucide-react';
-import { Badge } from '@/components/ui/Badge';
+import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import type { LessonEntry } from './LessonCard';
 import { archiveLesson, restoreLesson } from '@/lib/lore';
 
@@ -87,15 +87,12 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
             <div className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] p-5">
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-2">
-                  <Badge variant={lesson.scope_type}>{lesson.scope_type}</Badge>
+                  <ScopeBadge scope={lesson.scope} type={lesson.scope_type} showPath />
                   {isArchived && (
                     <span className="rounded-full bg-[var(--color-bg-elevated)] px-2 py-0.5 text-xs text-[var(--color-content-tertiary)]">
                       archived
                     </span>
                   )}
-                  <code className="text-xs text-[var(--color-content-tertiary)]">
-                    {lesson.scope}
-                  </code>
                 </div>
                 <code className="font-mono text-sm font-medium text-[var(--color-content-primary)]">
                   {lesson.key}
@@ -103,6 +100,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
               </div>
               <button
                 ref={closeRef}
+                type="button"
                 onClick={onClose}
                 aria-label="Close detail panel"
                 className="flex size-11 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-all duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-secondary)]"
@@ -193,6 +191,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
                 <p className="text-xs text-red-500">{actionError}</p>
               )}
               <button
+                type="button"
                 onClick={handleArchive}
                 disabled={isPending}
                 className={[

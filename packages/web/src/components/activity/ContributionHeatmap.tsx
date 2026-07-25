@@ -68,7 +68,7 @@ export function ContributionHeatmap({
     // Build week columns
     const cols: Array<Array<{ date: string; count: number }>> = [];
     const months: Array<{ label: string; col: number }> = [];
-    let seenMonths = new Set<string>();
+    const seenMonths = new Set<string>();
 
     for (let w = 0; w < weeks; w++) {
       const week: Array<{ date: string; count: number }> = [];

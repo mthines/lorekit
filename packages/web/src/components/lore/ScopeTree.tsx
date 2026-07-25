@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronRight, Globe, FolderGit2, GitBranch, Layers } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
+import { scopeIcon } from '@/components/memory/scope-meta';
 import type { ScopePrefix } from '@/lib/scope';
 
 export interface ScopeNode {
@@ -12,13 +13,6 @@ export interface ScopeNode {
   children?: ScopeNode[];
 }
 
-const SCOPE_ICONS: Record<ScopePrefix, typeof Globe> = {
-  global: Globe,
-  project: Layers,
-  repo: FolderGit2,
-  branch: GitBranch,
-};
-
 interface ScopeTreeItemProps {
   node: ScopeNode;
   depth: number;
@@ -28,13 +22,14 @@ interface ScopeTreeItemProps {
 
 function ScopeTreeItem({ node, depth, selected, onSelect }: ScopeTreeItemProps) {
   const [expanded, setExpanded] = useState(depth === 0);
-  const Icon = SCOPE_ICONS[node.type];
+  const Icon = scopeIcon(node.type);
   const hasChildren = (node.children?.length ?? 0) > 0;
   const isSelected = selected === node.scope;
 
   return (
     <li>
       <button
+        type="button"
         onClick={() => {
           onSelect(node.scope);
           if (hasChildren) setExpanded((v) => !v);
@@ -47,7 +42,7 @@ function ScopeTreeItem({ node, depth, selected, onSelect }: ScopeTreeItemProps) 
         ].join(' ')}
         style={{ paddingLeft: `${(depth + 1) * 12}px` }}
         aria-expanded={hasChildren ? expanded : undefined}
-        aria-current={isSelected ? 'true' : undefined}
+        aria-selected={isSelected}
       >
         {hasChildren ? (
           <ChevronRight

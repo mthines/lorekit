@@ -34,13 +34,13 @@ pnpm install
 Your project ref is the subdomain of your Supabase URL: `https://pqokxlhvnosogizsjztg.supabase.co`
 
 ```bash
-supabase link --project-ref <your-project-ref>
+supabase link --project-ref pqokxlhvnosogizsjztg
 ```
 
 Create a `.env.local` file in the repo root (needed for NX targets):
 
 ```bash
-echo "SUPABASE_PROJECT_REF=<your-project-ref>" > .env.local
+echo "SUPABASE_PROJECT_REF=pqokxlhvnosogizsjztg" > .env.local
 ```
 
 ---
@@ -78,7 +78,7 @@ supabase secrets set \
   OTEL_EXPORTER_OTLP_ENDPOINT=https://ingress.europe-west4.gcp.dash0-dev.com \
   OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <dash0-token>" \
   VERCEL_ENV=production \
-  --project-ref <your-project-ref>
+  --project-ref pqokxlhvnosogizsjztg
 ```
 
 Find the Supabase keys in: Supabase dashboard → Project Settings → API

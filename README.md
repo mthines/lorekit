@@ -34,7 +34,7 @@ git clone https://github.com/mthines/lorekit && cd lorekit
 pnpm install
 
 # Link to your Supabase project and apply migrations
-supabase link --project-ref <your-project-ref>
+supabase link --project-ref pqokxlhvnosogizsjztg
 pnpm nx deploy supabase
 ```
 

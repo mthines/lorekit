@@ -69,7 +69,7 @@ Add two Supabase secrets:
 supabase secrets set \
   OTEL_EXPORTER_OTLP_ENDPOINT=https://ingress.europe-west4.gcp.dash0-dev.com \
   OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <DASH0_AUTH_TOKEN> \
-  --project-ref <your-project-ref>
+  --project-ref pqokxlhvnosogizsjztg
 ```
 
 Then redeploy: `pnpm nx fn:deploy supabase`
@@ -92,7 +92,7 @@ Add to Vercel → Environment Variables (all environments):
 ```
 NEXT_PUBLIC_DASH0_OTLP_ENDPOINT   https://ingress.europe-west4.gcp.dash0-dev.com
 NEXT_PUBLIC_DASH0_AUTH_TOKEN      <ingesting-only-token>
-NEXT_PUBLIC_SUPABASE_PROJECT_REF  <your-project-ref>
+NEXT_PUBLIC_SUPABASE_PROJECT_REF  pqokxlhvnosogizsjztg
 ```
 
 > **Security:** `NEXT_PUBLIC_DASH0_AUTH_TOKEN` is embedded in the browser bundle. Create a **separate** auth token in Dash0 with **Ingesting only** permissions, scoped to the `lorekit` dataset.

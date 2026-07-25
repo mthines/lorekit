@@ -118,7 +118,7 @@ the sole gate that keeps unverified (or migration-breaking) code off `main`.
 ## 1. Link to your Supabase project
 
 ```bash
-supabase link --project-ref <your-project-ref>
+supabase link --project-ref pqokxlhvnosogizsjztg
 ```
 
 Your project ref is the subdomain of your Supabase URL: `https://pqokxlhvnosogizsjztg.supabase.co`.
@@ -130,7 +130,7 @@ Your project ref is the subdomain of your Supabase URL: `https://pqokxlhvnosogiz
 ```bash
 pnpm nx db:push supabase
 # or directly:
-supabase db push --project-ref <your-project-ref>
+supabase db push --project-ref pqokxlhvnosogizsjztg
 ```
 
 This applies:
@@ -157,7 +157,7 @@ supabase secrets set \
   OTEL_EXPORTER_OTLP_ENDPOINT=https://ingress.europe-west4.gcp.dash0-dev.com \
   OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <DASH0_AUTH_TOKEN>" \
   VERCEL_ENV=production \
-  --project-ref <your-project-ref>
+  --project-ref pqokxlhvnosogizsjztg
 ```
 
 > `GITHUB_WEBHOOK_SECRET` is not needed here — webhook secrets are
@@ -173,8 +173,8 @@ supabase secrets set \
 pnpm nx fn:deploy supabase
 
 # Or directly:
-supabase functions deploy mcp --project-ref <your-project-ref>
-supabase functions deploy health --no-verify-jwt --project-ref <your-project-ref>
+supabase functions deploy mcp --project-ref pqokxlhvnosogizsjztg
+supabase functions deploy health --no-verify-jwt --project-ref pqokxlhvnosogizsjztg
 ```
 
 **Note:** `health` is deployed with `--no-verify-jwt` so uptime monitors can call it without authentication.
