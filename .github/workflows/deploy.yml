@@ -250,11 +250,21 @@ jobs:
   #    changed in the merged commit AND the package.json version is new, so a
   #    merge that leaves the CLI untouched (or forgets to bump) is a clean no-op
   #    rather than an error. Bump packages/cli/package.json version to release.
+  #
+  #    Auth is npm Trusted Publishing (OIDC) — no long-lived NPM_TOKEN secret.
+  #    Each run mints a short-lived OIDC token from `id-token: write`, and npm
+  #    trades it for publish rights based on the trusted publisher configured on
+  #    the package (npmjs.com ▸ @lorekit/cli ▸ Settings ▸ Trusted Publisher:
+  #    GitHub Actions, repo mthines/lorekit, workflow deploy.yml). Provenance is
+  #    attached automatically. One-time prerequisite: the package must already
+  #    exist on npm (do the first publish by hand), then add the trusted
+  #    publisher — after that every release here is token-free.
   publish-cli:
     name: Publish @lorekit/cli to npm
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write # mint the OIDC token npm trades for publish rights
     steps:
       - name: Checkout repository (with previous commit)
         uses: actions/checkout@v4
@@ -279,6 +289,10 @@ jobs:
           node-version: 20
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Upgrade npm for Trusted Publishing (needs >= 11.5.1)
+        if: steps.changed.outputs.cli == 'true'
+        run: npm install -g npm@latest
+
       - name: Is this version already published?
         if: steps.changed.outputs.cli == 'true'
         id: ver
@@ -299,12 +313,13 @@ jobs:
         working-directory: packages/cli
         run: node --test test/*.test.mjs
 
-      - name: Publish
+      # No NODE_AUTH_TOKEN: npm detects the Actions OIDC environment and
+      # authenticates via the trusted publisher. --provenance is implied by
+      # trusted publishing; passed explicitly for clarity.
+      - name: Publish (Trusted Publishing / OIDC)
         if: steps.changed.outputs.cli == 'true' && steps.ver.outputs.exists == 'false'
         working-directory: packages/cli
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
 
       - name: Report publish
         if: steps.changed.outputs.cli == 'true' && steps.ver.outputs.exists == 'false'
