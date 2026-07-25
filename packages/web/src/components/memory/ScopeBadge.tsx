@@ -27,8 +27,6 @@ export interface ScopeBadgeProps {
   showType?: boolean;
   /** Append the full canonical scope string after the pill. @default false */
   showPath?: boolean;
-  /** Pill sizing. @default 'sm' */
-  size?: 'sm' | 'md';
   /** Class applied to the wrapper. */
   className?: string;
   /** Class applied to the canonical-path `<code>` (e.g. margins, colour). */
@@ -42,20 +40,18 @@ export function ScopeBadge({
   showIcon = true,
   showType = true,
   showPath = false,
-  size = 'sm',
   className = '',
   pathClassName = '',
 }: ScopeBadgeProps) {
   const resolvedType = type ?? scopeType(scope);
   const Icon = scopeIcon(resolvedType);
-  const iconSize = size === 'md' ? 'size-3' : 'size-2.5';
 
   return (
     <span className={['inline-flex min-w-0 items-center gap-1.5', className].join(' ')}>
       {showBadge && (
         <Badge variant={resolvedType}>
           {showIcon && (
-            <Icon className={[iconSize, showType ? 'mr-1' : '', 'inline shrink-0'].join(' ')} aria-hidden />
+            <Icon className={['size-2.5', showType ? 'mr-1' : '', 'inline shrink-0'].join(' ')} aria-hidden />
           )}
           {showType && resolvedType}
         </Badge>

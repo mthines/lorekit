@@ -210,12 +210,13 @@ export const MemoryCard = memo(function MemoryCard({
   );
 
   // ── Compact (dropdown row) ──────────────────────────────────────────────────
+  // Selection is announced by the parent listbox option (aria-selected), so the
+  // inner button intentionally omits aria-pressed to avoid a double announcement.
   if (density === 'compact') {
     return (
       <button
         type="button"
         onClick={onClick}
-        aria-pressed={selected}
         className={[
           'flex w-full flex-col gap-0.5 px-4 py-2.5 text-left transition-colors duration-100',
           selected ? 'bg-[var(--color-accent-subtle)]' : 'hover:bg-[var(--color-bg-elevated)]',
