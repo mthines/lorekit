@@ -108,7 +108,6 @@ export async function install(args) {
   status(skillExisted && written === 0 ? 'info' : 'pass', `skill ${SKILL_NAME}`, `${skillState} → ${display(dest)}`);
   status('pass', mcpLabel, `${existed ? 'updated' : 'created'} lorekit server → ${display(file)}`);
 
-  const settingsLabel = scope === 'global' ? '~/.claude/settings.json' : '.claude/settings.json';
   if (!wireHooks) {
     status('info', 'hooks', 'skipped (--no-hooks) — the skill still works, but lessons are model-invoked only');
   } else {
