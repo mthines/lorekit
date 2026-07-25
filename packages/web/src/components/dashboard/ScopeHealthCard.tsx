@@ -2,8 +2,9 @@
 
 import { motion } from 'motion/react';
 import Link from 'next/link';
-import { FolderGit2, GitBranch, Globe, Layers, ArrowRight, BookOpen } from 'lucide-react';
-import { Badge } from '@/components/ui/Badge';
+import { ArrowRight, BookOpen } from 'lucide-react';
+import { ScopeBadge } from '@/components/memory/ScopeBadge';
+import { scopeIcon } from '@/components/memory/scope-meta';
 import type { ScopePrefix } from '@/lib/scope';
 
 export interface ScopeHealth {
@@ -13,13 +14,6 @@ export interface ScopeHealth {
   total: number;
   lastActivity: string | null; // ISO date
 }
-
-const SCOPE_ICONS: Record<ScopePrefix, typeof Globe> = {
-  global: Globe,
-  project: Layers,
-  repo: FolderGit2,
-  branch: GitBranch,
-};
 
 function freshnessLabel(lastActivity: string | null): { label: string; color: string } {
   if (!lastActivity) return { label: 'No activity', color: 'text-[var(--color-content-tertiary)]' };
@@ -36,7 +30,7 @@ interface ScopeHealthCardProps {
 }
 
 export function ScopeHealthCard({ health, index }: ScopeHealthCardProps) {
-  const Icon = SCOPE_ICONS[health.type];
+  const Icon = scopeIcon(health.type);
   const freshness = freshnessLabel(health.lastActivity);
 
   return (
@@ -59,7 +53,8 @@ export function ScopeHealthCard({ health, index }: ScopeHealthCardProps) {
             <div className="flex size-8 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] transition-colors duration-200 group-hover:border-[var(--color-accent-glow)] group-hover:bg-[var(--color-accent-subtle)]">
               <Icon className="size-4 text-[var(--color-content-secondary)] transition-colors duration-200 group-hover:text-[var(--color-accent)]" aria-hidden />
             </div>
-            <Badge variant={health.type}>{health.type}</Badge>
+            {/* Icon already shown in the box above, so the pill omits it. */}
+            <ScopeBadge scope={health.scope} type={health.type} showIcon={false} />
           </div>
           <ArrowRight className="size-4 shrink-0 text-[var(--color-content-tertiary)] opacity-0 transition-all duration-200 group-hover:translate-x-0.5 group-hover:opacity-100" aria-hidden />
         </div>

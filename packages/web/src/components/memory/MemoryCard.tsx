@@ -1,0 +1,343 @@
+'use client';
+
+/**
+ * MemoryCard — the one component for rendering a memory (lesson).
+ *
+ * Every surface that shows a memory renders it through here so the key, scope
+ * pill, value preview, agent/trigger metadata, timestamp, and tags stay
+ * visually identical:
+ *   - the Lore Explorer list        → `layout="card"`   (vertical, full detail)
+ *   - the Activity feed rows        → `layout="row"`     (horizontal, leading icon)
+ *   - the "N memories" dropdown     → `density="compact"` (key + one-line preview)
+ *
+ * Callers pass a normalised {@link MemoryCardModel}. Two adapters are provided
+ * for the app's two source shapes; build one inline for anything else.
+ */
+
+import type { ReactNode } from 'react';
+import { memo } from 'react';
+import { motion, useReducedMotion } from 'motion/react';
+import { Clock, Bot, Zap } from 'lucide-react';
+import { ScopeBadge } from './ScopeBadge';
+import type { ScopePrefix } from './scope-meta';
+
+// ── Model ───────────────────────────────────────────────────────────────────
+
+/** Layout-agnostic shape every memory surface maps onto. */
+export interface MemoryCardModel {
+  scope: string;
+  scopeType?: ScopePrefix;
+  /** The lesson key (rendered as the title). */
+  memoryKey: string;
+  /** Full or already-truncated value text; the card clamps it visually. */
+  preview: string;
+  sourceAgent?: string | null;
+  trigger?: string | null;
+  tags?: string[];
+  /** ISO timestamp shown as relative time. */
+  timestamp?: string | null;
+  archived?: boolean;
+}
+
+/** Adapt a Lore Explorer lesson (LessonEntry-shaped) into the card model. */
+export function memoryFromLesson(lesson: {
+  scope: string;
+  scope_type: ScopePrefix;
+  key: string;
+  value: string;
+  tags?: string[];
+  updated_at: string;
+  source_agent?: string | null;
+  trigger?: string | null;
+  archived_at?: string | null;
+}): MemoryCardModel {
+  return {
+    scope: lesson.scope,
+    scopeType: lesson.scope_type,
+    memoryKey: lesson.key,
+    preview: lesson.value,
+    sourceAgent: lesson.source_agent,
+    trigger: lesson.trigger,
+    tags: lesson.tags,
+    timestamp: lesson.updated_at,
+    archived: Boolean(lesson.archived_at),
+  };
+}
+
+/** Adapt an Activity event into the card model. */
+export function memoryFromEvent(event: {
+  scope: string;
+  scope_type: ScopePrefix;
+  key: string;
+  value_preview: string;
+  tags?: string[];
+  created_at: string;
+  source_agent?: string | null;
+  trigger?: string | null;
+}): MemoryCardModel {
+  return {
+    scope: event.scope,
+    scopeType: event.scope_type,
+    memoryKey: event.key,
+    preview: event.value_preview,
+    sourceAgent: event.source_agent,
+    trigger: event.trigger,
+    tags: event.tags,
+    timestamp: event.created_at,
+  };
+}
+
+// ── Time ────────────────────────────────────────────────────────────────────
+
+/** Shared relative-time formatter used by every memory surface. */
+export function formatRelativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+// ── Shared pieces ───────────────────────────────────────────────────────────
+
+function MetaChip({ icon: Icon, children }: { icon: typeof Bot; children: ReactNode }) {
+  return (
+    <span className="flex items-center gap-1">
+      <Icon className="size-3" aria-hidden />
+      {children}
+    </span>
+  );
+}
+
+function Tags({ tags, max = 4 }: { tags: string[]; max?: number }) {
+  if (tags.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1">
+      {tags.slice(0, max).map((tag) => (
+        <span
+          key={tag}
+          className="rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg)] px-1.5 py-0.5 font-mono text-xs text-[var(--color-content-tertiary)]"
+        >
+          {tag}
+        </span>
+      ))}
+      {tags.length > max && (
+        <span className="rounded-md px-1.5 py-0.5 text-xs text-[var(--color-content-tertiary)]">
+          +{tags.length - max}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ── Props ───────────────────────────────────────────────────────────────────
+
+export interface MemoryCardProps {
+  memory: MemoryCardModel;
+  /** Visual arrangement. @default 'card' */
+  layout?: 'card' | 'row';
+  /** `compact` collapses to key + one-line preview (dropdown rows). @default 'default' */
+  density?: 'default' | 'compact';
+  selected?: boolean;
+  onClick?: () => void;
+  /** Stagger index for the enter animation. */
+  index?: number;
+  /** Icon rendered in a bordered box before the content (row layout). */
+  leadingIcon?: ReactNode;
+  /** Scope pill. @default true (false in compact) */
+  showScope?: boolean;
+  /** Append the full canonical scope path in the footer. @default true in row layout */
+  showScopePath?: boolean;
+  /** Value preview. @default true */
+  showPreview?: boolean;
+  /** Agent / trigger metadata. @default true (false in compact) */
+  showMeta?: boolean;
+  /** Relative timestamp. @default true (false in compact) */
+  showTimestamp?: boolean;
+  /** Tag chips. @default true in card layout */
+  showTags?: boolean;
+  /** Enter animation. @default true (ignored in compact) */
+  animate?: boolean;
+  className?: string;
+}
+
+const SELECTED_CARD = 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)]';
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
+export const MemoryCard = memo(function MemoryCard({
+  memory,
+  layout = 'card',
+  density = 'default',
+  selected = false,
+  onClick,
+  index = 0,
+  leadingIcon,
+  showScope = true,
+  showScopePath,
+  showPreview = true,
+  showMeta = true,
+  showTimestamp = true,
+  showTags = true,
+  animate = true,
+  className = '',
+}: MemoryCardProps) {
+  const reduceMotion = useReducedMotion();
+  const {
+    memoryKey,
+    scope,
+    scopeType: type,
+    preview,
+    sourceAgent,
+    trigger,
+    tags = [],
+    timestamp,
+  } = memory;
+
+  const keyCode = (
+    <code
+      className={[
+        'truncate font-mono text-xs font-medium',
+        selected ? 'text-[var(--color-accent)]' : 'text-[var(--color-content-primary)]',
+      ].join(' ')}
+    >
+      {memoryKey}
+    </code>
+  );
+
+  // ── Compact (dropdown row) ──────────────────────────────────────────────────
+  if (density === 'compact') {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        aria-pressed={selected}
+        className={[
+          'flex w-full flex-col gap-0.5 px-4 py-2.5 text-left transition-colors duration-100',
+          selected ? 'bg-[var(--color-accent-subtle)]' : 'hover:bg-[var(--color-bg-elevated)]',
+          className,
+        ].join(' ')}
+      >
+        {keyCode}
+        {showPreview && (
+          <span className="line-clamp-1 text-xs text-[var(--color-content-tertiary)]">
+            {preview}
+          </span>
+        )}
+      </button>
+    );
+  }
+
+  const timeEl = showTimestamp && timestamp && (
+    <span className="flex shrink-0 items-center gap-1 text-xs text-[var(--color-content-tertiary)]">
+      <Clock className="size-3" aria-hidden />
+      {formatRelativeTime(timestamp)}
+    </span>
+  );
+
+  const motionProps = animate
+    ? {
+        initial: { opacity: 0, y: reduceMotion ? 0 : 4 },
+        animate: { opacity: 1, y: 0 },
+        transition: { delay: index * 0.03, duration: 0.25, ease: 'easeOut' as const },
+      }
+    : {};
+
+  // ── Row (activity feed) ─────────────────────────────────────────────────────
+  if (layout === 'row') {
+    const withPath = showScopePath ?? true;
+    return (
+      <motion.button
+        type="button"
+        onClick={onClick}
+        aria-pressed={selected}
+        {...motionProps}
+        className={[
+          'flex w-full gap-3 rounded-lg border p-3 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]',
+          selected
+            ? SELECTED_CARD
+            : 'border-[var(--color-border)] bg-[var(--color-bg-raised)] hover:bg-[var(--color-bg-elevated)]',
+          className,
+        ].join(' ')}
+      >
+        {leadingIcon && (
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+            {leadingIcon}
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex flex-wrap items-center gap-1.5">
+            {showScope && <ScopeBadge scope={scope} type={type} />}
+            {keyCode}
+            {timeEl && <span className="ml-auto">{timeEl}</span>}
+          </div>
+          {showPreview && (
+            <p className="mb-1.5 line-clamp-1 text-xs text-[var(--color-content-secondary)]">
+              {preview}
+            </p>
+          )}
+          {(showMeta || withPath) && (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-content-tertiary)]">
+              {showMeta && sourceAgent && <MetaChip icon={Bot}>{sourceAgent}</MetaChip>}
+              {showMeta && trigger && <MetaChip icon={Zap}>{trigger}</MetaChip>}
+              {withPath && (
+                <ScopeBadge
+                  scope={scope}
+                  type={type}
+                  showBadge={false}
+                  showPath
+                  className="ml-auto min-w-0"
+                  pathClassName="opacity-50"
+                />
+              )}
+            </div>
+          )}
+        </div>
+      </motion.button>
+    );
+  }
+
+  // ── Card (lore explorer) ────────────────────────────────────────────────────
+  const withPath = showScopePath ?? false;
+  return (
+    <motion.button
+      type="button"
+      onClick={onClick}
+      aria-pressed={selected}
+      {...motionProps}
+      className={[
+        'group w-full rounded-xl border p-4 text-left transition-all duration-150',
+        selected
+          ? SELECTED_CARD
+          : 'border-[var(--color-border)] bg-[var(--color-bg-raised)] hover:bg-[var(--color-bg-elevated)]',
+        className,
+      ].join(' ')}
+    >
+      <div className="mb-2 flex items-start justify-between gap-2">
+        {keyCode}
+        {showScope && <ScopeBadge scope={scope} type={type} className="shrink-0" />}
+      </div>
+
+      {showPreview && (
+        <p className="mb-3 line-clamp-2 text-xs text-[var(--color-content-secondary)]">{preview}</p>
+      )}
+
+      {(showMeta || withPath || timeEl) && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-content-tertiary)]">
+          {showMeta && sourceAgent && <MetaChip icon={Bot}>{sourceAgent}</MetaChip>}
+          {showMeta && trigger && <MetaChip icon={Zap}>{trigger}</MetaChip>}
+          {withPath && (
+            <ScopeBadge scope={scope} type={type} showBadge={false} showPath className="min-w-0" />
+          )}
+          {timeEl && <span className="ml-auto">{timeEl}</span>}
+        </div>
+      )}
+
+      {showTags && <Tags tags={tags} />}
+    </motion.button>
+  );
+});

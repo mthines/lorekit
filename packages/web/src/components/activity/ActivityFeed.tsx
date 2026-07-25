@@ -1,9 +1,9 @@
 'use client';
 
 import { useMemo } from 'react';
-import { motion } from 'motion/react';
-import { Bot, Zap, GitBranch, Globe, FolderGit2, Layers, Webhook } from 'lucide-react';
-import { Badge } from '@/components/ui/Badge';
+import { Bot, Zap, Webhook } from 'lucide-react';
+import { MemoryCard, memoryFromEvent } from '@/components/memory/MemoryCard';
+import { scopeLabel } from '@/components/memory/scope-meta';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
@@ -21,29 +21,11 @@ export interface ActivityEvent {
   created_at: string;
 }
 
-const SCOPE_ICONS: Record<ScopePrefix, typeof Globe> = {
-  global: Globe,
-  project: Layers,
-  repo: FolderGit2,
-  branch: GitBranch,
-};
-
 const TRIGGER_ICONS: Record<string, typeof Bot> = {
   'stuck-loop': Zap,
   'pr-webhook': Webhook,
   'manual': Bot,
 };
-
-function formatDateTime(iso: string) {
-  const date = new Date(iso);
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  const minutes = Math.floor(diff / 60_000);
-
-  if (minutes < 60) return `${minutes}m ago`;
-  if (minutes < 1440) return `${Math.floor(minutes / 60)}h ago`;
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
 
 function groupByDate(events: ActivityEvent[]): Map<string, ActivityEvent[]> {
   const groups = new Map<string, ActivityEvent[]>();
@@ -83,65 +65,17 @@ interface ActivityEventRowProps {
 }
 
 function ActivityEventRow({ event, index, selected, onSelect }: ActivityEventRowProps) {
-  const ScopeIcon = SCOPE_ICONS[event.scope_type];
   const TriggerIcon = event.trigger ? (TRIGGER_ICONS[event.trigger] ?? Bot) : Bot;
 
   return (
-    <motion.button
-      type="button"
+    <MemoryCard
+      memory={memoryFromEvent(event)}
+      layout="row"
+      index={index}
+      selected={selected}
       onClick={() => onSelect({ scope: event.scope, key: event.key })}
-      aria-pressed={selected}
-      initial={{ opacity: 0, x: -8 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={{ delay: index * 0.03, duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-      className={[
-        'flex w-full gap-3 rounded-lg border p-3 text-left transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]',
-        selected
-          ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)]'
-          : 'border-[var(--color-border)] bg-[var(--color-bg-raised)] hover:bg-[var(--color-bg-elevated)]',
-      ].join(' ')}
-    >
-      {/* Icon */}
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-        <TriggerIcon className="size-3.5 text-[var(--color-content-tertiary)]" aria-hidden />
-      </div>
-
-      {/* Content */}
-      <div className="min-w-0 flex-1">
-        <div className="mb-1 flex flex-wrap items-center gap-1.5">
-          <Badge variant={event.scope_type}>
-            <ScopeIcon className="mr-1 inline size-2.5" aria-hidden />
-            {event.scope_type}
-          </Badge>
-          <code className="truncate font-mono text-xs text-[var(--color-content-primary)]">
-            {event.key}
-          </code>
-          <span className="ml-auto shrink-0 text-xs text-[var(--color-content-tertiary)]">
-            {formatDateTime(event.created_at)}
-          </span>
-        </div>
-
-        <p className="mb-1.5 line-clamp-1 text-xs text-[var(--color-content-secondary)]">
-          {event.value_preview}
-        </p>
-
-        <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--color-content-tertiary)]">
-          {event.source_agent && (
-            <span className="flex items-center gap-1">
-              <Bot className="size-3" aria-hidden />
-              {event.source_agent}
-            </span>
-          )}
-          {event.trigger && (
-            <span className="flex items-center gap-1">
-              <Zap className="size-3" aria-hidden />
-              {event.trigger}
-            </span>
-          )}
-          <code className="ml-auto truncate opacity-50">{event.scope}</code>
-        </div>
-      </div>
-    </motion.button>
+      leadingIcon={<TriggerIcon className="size-3.5 text-[var(--color-content-tertiary)]" aria-hidden />}
+    />
   );
 }
 
@@ -150,11 +84,6 @@ interface ActivityFeedProps {
   /** Selected date range (UTC day strings), or null for all time. */
   range: DateRange | null;
   onRangeChange: (range: DateRange | null) => void;
-}
-
-/** Friendly label for a scope filter pill — last segment, matching the Lore Explorer. */
-function scopeLabel(scope: string): string {
-  return scope.split('::').pop() ?? scope;
 }
 
 export function ActivityFeed({ events, range, onRangeChange }: ActivityFeedProps) {
