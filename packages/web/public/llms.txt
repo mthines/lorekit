@@ -27,17 +27,17 @@ This file is structured so an AI agent can execute every step autonomously or pa
 https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp
 ```
 
-Auth: `Authorization: Bearer lk_rw_<token>` (read+write) or `lk_ro_<token>` (read-only)
+Auth: `Authorization: Bearer lk_rw_<token>` (read+write), `lk_ro_<token>` (read-only), or `lk_wo_<token>` (write-only)
 
 ## MCP tools
 
 | Tool | Token required | Description |
 |------|---------------|-------------|
-| `memory.write` | `lk_rw_` | Store or update a lesson |
-| `memory.read` | either | Read one lesson by scope + key |
-| `memory.list` | either | List lessons for a scope (tag-filterable) |
-| `memory.delete` | `lk_rw_` | Delete a lesson |
-| `memory.search` | either | Full-text search; supports `repo::owner/*` wildcard |
+| `memory.write` | `lk_rw_` or `lk_wo_` | Store or update a lesson |
+| `memory.read` | `lk_rw_` or `lk_ro_` | Read one lesson by scope + key |
+| `memory.list` | `lk_rw_` or `lk_ro_` | List lessons for a scope (tag-filterable) |
+| `memory.delete` | `lk_rw_` or `lk_wo_` | Delete a lesson |
+| `memory.search` | `lk_rw_` or `lk_ro_` | Full-text search; supports `repo::owner/*` wildcard |
 
 ## Scope format
 
@@ -55,6 +55,7 @@ branch::{owner}/{repo}::{branch}         # branch-level (short-lived)
 ```
 lk_rw_<32 chars>   # read + write
 lk_ro_<32 chars>   # read only
+lk_wo_<32 chars>   # write only
 ```
 
 Tokens never expire and are stored as SHA-256 hashes. Generate and revoke in the dashboard.
@@ -79,7 +80,7 @@ Tokens never expire and are stored as SHA-256 hashes. Generate and revoke in the
 
 | JSON-RPC code | Meaning |
 |---------------|---------|
-| `-32001` | Unauthorized (missing/invalid token, or read-only token on a write) |
+| `-32001` | Unauthorized (missing/invalid token, a read-only token on a write, or a write-only token on a read) |
 | `-32603` | Execution error (DB error, scope validation failure) |
 | `-32700` | Malformed JSON |
 | `-32601` | Unknown tool name |

@@ -163,7 +163,8 @@ async function checkRemote(control, root, args, record) {
   const kind = tokenKind(token);
   if (kind === 'none') record('fail', 'token', 'none configured');
   else if (kind === 'read-only') record('warn', 'token', 'read-only (lk_ro_*) — reads only, no writes');
-  else if (kind === 'unknown') record('warn', 'token', 'unrecognized prefix (expected lk_rw_* / lk_ro_*)');
+  else if (kind === 'write-only') record('warn', 'token', 'write-only (lk_wo_*) — writes only, no reads');
+  else if (kind === 'unknown') record('warn', 'token', 'unrecognized prefix (expected lk_rw_* / lk_ro_* / lk_wo_*)');
   else record('pass', 'token', 'read+write (lk_rw_*)');
 
   // Connectivity, through the store.

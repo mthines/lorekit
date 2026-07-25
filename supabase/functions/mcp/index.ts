@@ -2,7 +2,8 @@
  * LoreKit MCP Edge Function — entry point.
  *
  * Routes all requests to co-located handlers:
- *   auth.ts         — resolveAuth, getDb, canWrite, getUserId
+ *   auth.ts         — resolveAuth, getDb, canWrite, canRead, getUserId
+ *   permissions.ts  — READ_TOOLS/WRITE_TOOLS, toolRequires, tokenPrefixFor
  *   tools.ts        — memory.write/read/list/delete/search handlers
  *   webhook.ts      — GitHub PR comment → lesson creation
  *   mcp-handler.ts  — MCP JSON-RPC dispatcher (initialize, tools/list, tools/call)

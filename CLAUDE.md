@@ -79,11 +79,17 @@ Single `:` → 400 error. All segments lowercased. See [docs/scope-format.md](./
 ## Auth tiers (MCP server)
 
 1. `SUPABASE_SERVICE_ROLE_KEY` → full access, bypasses RLS (CI only)
-2. `lk_rw_*` / `lk_ro_*` API token → service-role client + **mandatory `user_id` filter** on every query
+2. `lk_rw_*` / `lk_ro_*` / `lk_wo_*` API token → service-role client + **mandatory `user_id` filter** on every query
 3. Supabase JWT → user-scoped client, RLS enforced automatically
 
 **Critical:** `api_key` auth uses service-role. ALL queries must `.eq('user_id', userId)`.
-Write tools require `lk_rw_*`. Read tools accept both.
+Write tools require write permission (`lk_rw_*` / `lk_wo_*`); read tools require read
+permission (`lk_rw_*` / `lk_ro_*`). `lk_ro_*` is denied on write tools; `lk_wo_*` is denied
+on read tools — both with the standard `-32001` permission-denied error. The gating logic
+(`READ_TOOLS`/`WRITE_TOOLS`/`toolRequires`/`tokenPrefixFor`) is a shared pure module,
+`packages/mcp-core/src/permissions.ts`, mirrored self-contained into
+`supabase/functions/mcp/permissions.ts` (the `limits.ts` pattern) — the Node.js
+`mcp-server` has no API-token auth path today and is out of scope for this gating.
 
 ---
 
@@ -123,6 +129,7 @@ overridable (no billing built yet — see [docs/limits.md](./docs/limits.md)):
 | `supabase/migrations/00002_api_tokens.sql` | `api_tokens` table, RLS |
 | `supabase/migrations/00004_limits.sql` | Memory cap trigger (`enforce_memory_cap`), rate-limit RPC (`lorekit_check_rate_limit`), `user_limits` override table, `lorekit_get_limit`/`lorekit_default_limit` config source |
 | `packages/mcp-core/src/limits.ts` | `LimitError`, `translateCapError`, `checkRateLimit`, `rateLimitMessage` — mirrored self-contained in `supabase/functions/mcp/limits.ts` for the Deno edge function |
+| `packages/mcp-core/src/permissions.ts` | `READ_TOOLS`/`WRITE_TOOLS`, `toolRequires`, `tokenPrefixFor` — the `lk_rw_`/`lk_ro_`/`lk_wo_` prefix derivation and read/write tool-gating switch. Mirrored self-contained in `supabase/functions/mcp/permissions.ts` (edge) and lightly in `packages/web/src/lib/token-permission.ts` (web, `permissionSuffix`/`tierFor`/`PERMISSION_TIERS`) — the `limits.ts` pattern |
 | `supabase/migrations/00008_webhook_secrets_repo.sql` | Adds nullable `repo` column (`owner/name`, CHECK-constrained) to `webhook_secrets`; partial unique index `(user_id, coalesce(repo,'')) where active` — one active secret per `(user, repo)` |
 | `packages/mcp-core/src/webhook-secret-select.ts` | Pure `selectWebhookSecrets` — matches active rows by `repository.full_name`, falls back to a legacy null-`repo` row, then `GITHUB_WEBHOOK_SECRET` — mirrored self-contained in `supabase/functions/mcp/webhook-secret-select.ts` for the Deno edge function |
 | `supabase/migrations/00009_memory_write_created_at.sql` | Drops + recreates the `memory_write` RPC with an optional `p_created_at timestamptz default null`; INSERT uses `coalesce(p_created_at, now())` for both `created_at` and `updated_at` (conflict-update never touches `created_at`). Lets `memory.write` backdate a migrated memory. No table change — `created_at` already existed |
@@ -161,6 +168,7 @@ Metric: `lorekit.tool.duration` histogram (unit `s`) with `lorekit.tool.name` + 
 
 - `::` separator avoids collision with `/` in repo paths and `:` in branch names
 - `lk_rw_` prefix encodes permission visibly in config files
+- Write-only tokens (`lk_wo_*`) store `permissions: ['write']` in the existing `text[]` column — zero migration. Prefix derivation and tool gating (`READ_TOOLS`/`WRITE_TOOLS`/`toolRequires`/`tokenPrefixFor`) are consolidated into a shared pure module (`packages/mcp-core/src/permissions.ts`), mirrored self-contained into the edge function and lightly into web — the same reasoning as `limits.ts`/`webhook-secret-select.ts`: the edge function has no test harness, so the pure module is the only unit-testable home for gating logic. The Node.js `mcp-server` gets no gating — it has no API-token auth path at all, and adding one is out of scope.
 - Token SHA-256 hash in DB — shown once, never stored in plain text
 - `AlwaysOn` OTel sampler — sampling deferred to Dash0 pipeline, never SDK-side
 - `instrumentation.ts` must be `async function register()` with `NEXT_RUNTIME === 'nodejs'` guard

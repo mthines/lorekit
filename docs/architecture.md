@@ -74,7 +74,7 @@ Authorization: Bearer <token>
        │
        ├─ token starts with "lk_"?
        │    → look up SHA-256(token) in api_tokens table
-       │    → returns user_id + permissions (read | read+write)
+       │    → returns user_id + permissions (read | write | read+write)
        │    → service-role DB client + explicit user_id filter on every query
        │
        └─ else: validate as Supabase JWT via auth.getUser()
@@ -114,7 +114,7 @@ Unique constraint: `(user_id, scope, key)`.
 | `name` | text | Human label (e.g. `aw-executor`) |
 | `token_prefix` | text | First 12 chars + `...` for display (e.g. `lk_rw_aBcD1...`) |
 | `token_hash` | text | SHA-256 of the full token — never stored in plain text |
-| `permissions` | text[] | `["read", "write"]` or `["read"]` |
+| `permissions` | text[] | `["read", "write"]`, `["read"]`, or `["write"]` |
 | `last_used_at` | timestamptz | Updated fire-and-forget on auth |
 
 ---

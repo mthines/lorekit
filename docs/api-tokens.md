@@ -12,6 +12,7 @@ lk_{perm}_{32 random alphanumeric chars}
 |--------|-------------|---------|
 | `lk_rw_` | Read + Write | `lk_rw_aBcDeFgH1234...` |
 | `lk_ro_` | Read only | `lk_ro_xYzAbCdE5678...` |
+| `lk_wo_` | Write only | `lk_wo_mNoPqRsT9012...` |
 
 The prefix encodes the permission so it's visible in config files at a glance.
 
@@ -23,18 +24,22 @@ Tokens are stored as **SHA-256 hashes** in the database. The full token is shown
 2. Expand **Step 2: Connect your agent**
 3. Click **Generate new token**
 4. Enter a name (e.g. `aw-executor`, `ci-github-actions`, `local-dev`)
-5. Choose **Read + Write** or **Read only**
+5. Choose **Read + Write**, **Read only**, or **Write only**
 6. Copy the token from the amber banner — it won't be shown again
 
 ## Permission matrix
 
-| Tool | Read + Write (`lk_rw_`) | Read only (`lk_ro_`) |
-|------|------------------------|---------------------|
-| `memory.write` | ✓ | ✗ (returns -32001) |
-| `memory.read` | ✓ | ✓ |
-| `memory.list` | ✓ | ✓ |
-| `memory.delete` | ✓ | ✗ (returns -32001) |
-| `memory.search` | ✓ | ✓ |
+| Tool | Read + Write (`lk_rw_`) | Read only (`lk_ro_`) | Write only (`lk_wo_`) |
+|------|------------------------|---------------------|------------------------|
+| `memory.write` | ✓ | ✗ (returns -32001) | ✓ |
+| `memory.read` | ✓ | ✓ | ✗ (returns -32001) |
+| `memory.list` | ✓ | ✓ | ✗ (returns -32001) |
+| `memory.delete` | ✓ | ✗ (returns -32001) | ✓ |
+| `memory.search` | ✓ | ✓ | ✗ (returns -32001) |
+| `memory.archive` | ✓ | ✗ (returns -32001) | ✓ |
+| `memory.restore` | ✓ | ✗ (returns -32001) | ✓ |
+| `memory.purge` | ✓ | ✗ (returns -32001) | ✓ |
+| `memory.list_archived` | ✓ | ✓ | ✗ (returns -32001) |
 
 ## Using a token
 

@@ -30,3 +30,10 @@ export {
   translateCapError,
   checkRateLimit,
 } from './limits.js';
+export {
+  type Permission,
+  READ_TOOLS,
+  WRITE_TOOLS,
+  toolRequires,
+  tokenPrefixFor,
+} from './permissions.js';

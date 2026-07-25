@@ -114,8 +114,9 @@ Full resolution rules: [references/scope-resolution.md](./references/scope-resol
 | `memory.read` | Read one lesson by scope + key | read |
 | `memory.write` | Store or update a lesson (same scope+key updates in place) | read+write |
 
-Write tools need an `lk_rw_*` token; read tools accept `lk_rw_*` or `lk_ro_*`.
-A read-only token cannot write — if a write fails with an authorization error,
+Write tools need write permission (`lk_rw_*` or `lk_wo_*`); read tools need read
+permission (`lk_rw_*` or `lk_ro_*`). A read-only token cannot write and a
+write-only token cannot read — if a call fails with an authorization error,
 report it and move on; do not retry.
 
 Every lesson this skill writes carries the tag `skill::lorekit-memory` plus a

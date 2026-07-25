@@ -7,6 +7,7 @@
 
 import { createServerClient } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
+import { permissionSuffix } from '@/lib/token-permission';
 
 export type TokenPermission = 'read' | 'write';
 
@@ -58,8 +59,8 @@ export async function generateToken(
     return { error: `Maximum ${MAX_TOKENS_PER_USER} tokens per user. Revoke an existing token first.` };
   }
 
-  // Build token: lk_rw_<32> or lk_ro_<32>
-  const permSuffix = permissions.includes('write') ? 'rw' : 'ro';
+  // Build token: lk_rw_<32>, lk_ro_<32>, or lk_wo_<32>
+  const permSuffix = permissionSuffix(permissions);
   const random = randomAlphanumeric(32);
   const fullToken = `lk_${permSuffix}_${random}`;
   const prefix = fullToken.slice(0, 12) + '...'; // "lk_rw_aBcD1..."
