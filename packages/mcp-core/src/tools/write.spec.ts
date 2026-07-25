@@ -20,12 +20,8 @@ function makeDb(
   error: null | { message: string; code?: string } = null,
 ) {
   return {
-    from: vi.fn().mockReturnValue({
-      upsert: vi.fn().mockReturnValue({
-        select: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue({ data, error }),
-        }),
-      }),
+    rpc: vi.fn().mockReturnValue({
+      single: vi.fn().mockResolvedValue({ data, error }),
     }),
   } as unknown as SupabaseClient;
 }
@@ -39,7 +35,7 @@ describe('write', () => {
     expect(result).toEqual(fakeResult);
   });
 
-  it('passes optional tags, source_agent and trigger to upsert', async () => {
+  it('passes optional tags, source_agent and trigger to the write RPC', async () => {
     const db = makeDb(fakeResult);
     await write(db, {
       scope: 'global',
@@ -49,7 +45,7 @@ describe('write', () => {
       source_agent: 'aw-executor',
       trigger: 'stuck-loop',
     });
-    // upsert was called — just verify no error thrown
+    // the RPC was called — just verify no error thrown
   });
 
   it('defaults tags to empty array when not provided', async () => {
