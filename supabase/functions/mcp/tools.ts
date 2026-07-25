@@ -159,7 +159,11 @@ export async function toolDelete(
     const deleted = (count ?? 0) > 0;
     span.setAttributes({ 'lorekit.result.deleted': deleted, 'lorekit.result.archived': false });
     if (deleted) {
-      await recordAudit(db, { action: 'memory.delete', resourceType: 'memory', target: key, metadata: { scope, key, force: true } }, userId);
+      await recordAudit(
+        db,
+        { action: 'memory.delete', resourceType: 'memory', target: key, metadata: { scope, key, force: true } },
+        userId,
+      );
     }
     return { deleted, archived: false };
   } else {
@@ -175,7 +179,11 @@ export async function toolDelete(
     const archived = (count ?? 0) > 0;
     span.setAttributes({ 'lorekit.result.deleted': false, 'lorekit.result.archived': archived });
     if (archived) {
-      await recordAudit(db, { action: 'memory.archive', resourceType: 'memory', target: key, metadata: { scope, key, force: false } }, userId);
+      await recordAudit(
+        db,
+        { action: 'memory.archive', resourceType: 'memory', target: key, metadata: { scope, key, force: false } },
+        userId,
+      );
     }
     return { deleted: false, archived };
   }
@@ -249,7 +257,11 @@ export async function toolArchive(
   const archived = (count ?? 0) > 0;
   span.setAttributes({ 'lorekit.result.archived': archived });
   if (archived) {
-    await recordAudit(db, { action: 'memory.archive', resourceType: 'memory', target: key, metadata: { scope, key } }, userId);
+    await recordAudit(
+      db,
+      { action: 'memory.archive', resourceType: 'memory', target: key, metadata: { scope, key } },
+      userId,
+    );
   }
   return { archived };
 }
@@ -309,7 +321,11 @@ export async function toolRestore(
   const restored = (count ?? 0) > 0;
   span.setAttributes({ 'lorekit.result.restored': restored });
   if (restored) {
-    await recordAudit(db, { action: 'memory.restore', resourceType: 'memory', target: key, metadata: { scope, key } }, userId);
+    await recordAudit(
+      db,
+      { action: 'memory.restore', resourceType: 'memory', target: key, metadata: { scope, key } },
+      userId,
+    );
   }
   return { restored };
 }
@@ -346,7 +362,12 @@ export async function toolPurge(
     // not the purged rows, so a per-row audit event isn't possible.
     await recordAudit(
       db,
-      { action: 'memory.delete', resourceType: 'memory', target: `${purged} archived memories`, metadata: { purged, retention_days: retentionDays } },
+      {
+        action: 'memory.delete',
+        resourceType: 'memory',
+        target: `${purged} archived memories`,
+        metadata: { purged, retention_days: retentionDays },
+      },
       userId,
     );
   }
