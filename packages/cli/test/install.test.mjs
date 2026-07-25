@@ -143,3 +143,15 @@ test('global install writes hooks into ~/.claude/settings.json', async () => {
     else process.env.USERPROFILE = prevProfile;
   }
 });
+
+test('install rejects on a corrupt settings.json instead of clobbering it', async () => {
+  const root = tmp('lk-corrupt-');
+  fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'settings.json'), '{ not json');
+  // Fail-fast clobber-guard, same as a corrupt .mcp.json: abort with a parse
+  // error rather than silently overwrite the user's settings.
+  await assert.rejects(
+    install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true }),
+    /Failed to parse/,
+  );
+});
