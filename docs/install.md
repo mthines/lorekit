@@ -75,7 +75,6 @@ supabase secrets set \
   SUPABASE_URL=https://pqokxlhvnosogizsjztg.supabase.co \
   SUPABASE_ANON_KEY=<publishable-key> \
   SUPABASE_SERVICE_ROLE_KEY=<service-role-key> \
-  GITHUB_WEBHOOK_SECRET=$(openssl rand -hex 32) \
   OTEL_EXPORTER_OTLP_ENDPOINT=https://ingress.europe-west4.gcp.dash0-dev.com \
   OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <dash0-token>" \
   VERCEL_ENV=production \
@@ -83,6 +82,12 @@ supabase secrets set \
 ```
 
 Find the Supabase keys in: Supabase dashboard → Project Settings → API
+
+> `GITHUB_WEBHOOK_SECRET` is **not required** — webhook secrets are now
+> per-repository and generated from the dashboard (Step 10). The env var is
+> a legacy fallback only, for deployments that pre-date per-repo secrets; set
+> it (`GITHUB_WEBHOOK_SECRET=$(openssl rand -hex 32)`) only if you need that
+> compatibility path.
 
 ---
 
@@ -172,13 +177,20 @@ For any other MCP-compatible agent, point the client at the same endpoint with t
 
 ## Step 10 — (Optional) Set up the GitHub webhook
 
-To have LoreKit learn from PR review comments automatically:
+To have LoreKit learn from PR review comments automatically. Webhook secrets
+are **per-repository** — generate one for each repo you want to webhook:
 
-1. Go to your repo → Settings → Webhooks → Add webhook
-2. **Payload URL:** `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp/webhooks/github`
-3. **Content type:** `application/json`
-4. **Secret:** the value of `GITHUB_WEBHOOK_SECRET` you set in Step 5
-5. **Events:** Pull request review comments + Pull request reviews
+1. Open the web dashboard → **Overview → Set up the GitHub webhook**
+2. Under **Webhook secrets**, add the repo (`owner/repo`) and copy the
+   generated secret — it's shown once
+3. Go to that repo on GitHub → Settings → Webhooks → Add webhook
+4. **Payload URL:** `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp/webhooks/github`
+5. **Content type:** `application/json`
+6. **Secret:** the value you copied in step 2
+7. **Events:** Pull request review comments + Pull request reviews
+
+Regenerating a repo's secret from the dashboard only affects that repo —
+other repos' secrets are untouched.
 
 ---
 
