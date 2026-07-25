@@ -17,7 +17,6 @@ const REPO_FORMAT = /^[a-z0-9._-]+\/[a-z0-9._-]+$/;
  */
 export function normalizeRepo(input: string): string | null {
   const trimmed = input.trim().toLowerCase();
-  if (!trimmed) return null;
-  if (!REPO_FORMAT.test(trimmed)) return null;
+  if (!trimmed || !REPO_FORMAT.test(trimmed)) return null;
   return trimmed;
 }

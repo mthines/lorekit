@@ -101,7 +101,7 @@ async function verifyHmac(
   secretSource: WebhookSecretSource,
 ): Promise<{ ok: boolean; secretConfigured: boolean; signaturePresent: boolean; secretSource: string; failReason?: string }> {
   const secretConfigured = secret.length > 0;
-  const signaturePresent = !!signature && signature.length > 0;
+  const signaturePresent = !!signature;
 
   if (!signaturePresent) {
     return { ok: false, secretConfigured, signaturePresent, secretSource, failReason: 'no_signature_header' };
