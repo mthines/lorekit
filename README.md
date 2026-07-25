@@ -173,4 +173,5 @@ Every signal carries `service.namespace=lorekit` and `deployment.environment.nam
 | [docs/api-tokens.md](./docs/api-tokens.md) | Token system |
 | [docs/otel.md](./docs/otel.md) | Observability setup |
 | [docs/deployment.md](./docs/deployment.md) | Full deployment guide |
+| [DEVELOPMENT.md](./DEVELOPMENT.md) | Local dev setup, CLI symlink, running the checks |
 | [CLAUDE.md](./CLAUDE.md) | Agent context (NX commands, key decisions) |
