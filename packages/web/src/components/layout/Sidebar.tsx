@@ -103,6 +103,7 @@ export function Sidebar({ user }: SidebarProps) {
       </aside>
 
       {/* ── Mobile bottom tab bar (<md) ──────────────────────────────────── */}
+      {/* Settings is appended after NAV, so it renders as the last (rightmost) tab. */}
       <nav
         className="fixed inset-x-0 bottom-0 z-40 flex border-t border-[var(--color-border)] bg-[var(--color-bg-raised)] md:hidden"
         aria-label="Main navigation"
