@@ -12,7 +12,7 @@
  */
 
 import { Badge } from '@/components/ui/Badge';
-import { scopeIcon, scopeType, type ScopePrefix } from './scope-meta';
+import { scopeIcon, scopeLabel, scopeType, type ScopePrefix } from './scope-meta';
 
 export interface ScopeBadgeProps {
   /** Canonical scope string, e.g. `project::lorekit` or `global`. */
@@ -25,6 +25,12 @@ export interface ScopeBadgeProps {
   showIcon?: boolean;
   /** Show the type label ("project") inside the pill. @default true */
   showType?: boolean;
+  /**
+   * Show the friendly scope label (last segment, e.g. `lorekit`) inside the pill
+   * instead of the type. Identifies the specific scope; takes precedence over
+   * `showType`. @default false
+   */
+  label?: boolean;
   /** Append the full canonical scope string after the pill. @default false */
   showPath?: boolean;
   /** Class applied to the wrapper. */
@@ -39,21 +45,23 @@ export function ScopeBadge({
   showBadge = true,
   showIcon = true,
   showType = true,
+  label = false,
   showPath = false,
   className = '',
   pathClassName = '',
 }: ScopeBadgeProps) {
   const resolvedType = type ?? scopeType(scope);
   const Icon = scopeIcon(resolvedType);
+  const pillText = label ? scopeLabel(scope) : showType ? resolvedType : null;
 
   return (
     <span className={['inline-flex min-w-0 items-center gap-1.5', className].join(' ')}>
       {showBadge && (
         <Badge variant={resolvedType}>
           {showIcon && (
-            <Icon className={['size-2.5', showType ? 'mr-1' : '', 'inline shrink-0'].filter(Boolean).join(' ')} aria-hidden />
+            <Icon className={['size-2.5', pillText ? 'mr-1' : '', 'inline shrink-0'].filter(Boolean).join(' ')} aria-hidden />
           )}
-          {showType && resolvedType}
+          {pillText}
         </Badge>
       )}
       {showPath && (

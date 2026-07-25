@@ -236,7 +236,7 @@ export const MemoryCard = memo(function MemoryCard({
       >
         <div className="flex items-center justify-between gap-2">
           {keyCode}
-          {showScope && <ScopeBadge scope={scope} type={type} className="shrink-0" />}
+          {showScope && <ScopeBadge scope={scope} type={type} label className="shrink-0" />}
         </div>
         {(showPreview || timeEl) && (
           <div className="flex items-center justify-between gap-2">
@@ -287,7 +287,7 @@ export const MemoryCard = memo(function MemoryCard({
         )}
         <div className="min-w-0 flex-1">
           <div className="mb-1 flex flex-wrap items-center gap-1.5">
-            {showScope && <ScopeBadge scope={scope} type={type} />}
+            {showScope && <ScopeBadge scope={scope} type={type} label />}
             {keyCode}
             {timeEl && <span className="ml-auto">{timeEl}</span>}
           </div>
@@ -337,7 +337,7 @@ export const MemoryCard = memo(function MemoryCard({
       ].join(' ')}
     >
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
-        {showScope && <ScopeBadge scope={scope} type={type} />}
+        {showScope && <ScopeBadge scope={scope} type={type} label />}
         {keyCode}
         {timeEl && <span className="ml-auto">{timeEl}</span>}
       </div>
