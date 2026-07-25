@@ -167,11 +167,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
     const requiredPermission = toolRequires(toolName);
     if (requiredPermission === 'write' && !canWrite(auth)) {
       span.error('PermissionDenied: read-only token').setAttributes({ 'mcp.tool.name': toolName });
-      return jsonrpcError(id, -32001, 'This token is read-only. Generate a read+write token in LoreKit.');
+      return jsonrpcError(id, -32001, 'This token does not have write permission. Use a read+write (lk_rw_) or write-only (lk_wo_) token.');
     }
     if (requiredPermission === 'read' && !canRead(auth)) {
       span.error('PermissionDenied: write-only token').setAttributes({ 'mcp.tool.name': toolName });
-      return jsonrpcError(id, -32001, 'This token is write-only. Generate a read+write token in LoreKit.');
+      return jsonrpcError(id, -32001, 'This token does not have read permission. Use a read+write (lk_rw_) or read-only (lk_ro_) token.');
     }
 
     const rawScope = toolArgs['scope'] as string | undefined;
