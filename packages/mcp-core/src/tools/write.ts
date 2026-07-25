@@ -5,6 +5,7 @@ import { ScopeSchema, scopeType } from '../scope.js';
 import { getTracer, getToolDurationHistogram } from '../telemetry.js';
 import { translateCapError } from '../limits.js';
 import { parseCreatedAt } from '../created-at.js';
+import { recordAudit } from '../audit.js';
 
 const MAX_VALUE_BYTES = 65_536;
 
@@ -27,6 +28,7 @@ export type WriteInput = z.infer<typeof WriteInputSchema>;
 export async function write(
   db: SupabaseClient,
   raw: unknown,
+  userId: string | null = null,
 ): Promise<{ id: string; created_at: string }> {
   const input = WriteInputSchema.parse(raw);
   const createdAt = parseCreatedAt(input.created_at);
@@ -65,8 +67,21 @@ export async function write(
 
         if (error) throw translateCapError(error);
 
+        const row = data as { id: string; created_at: string; inserted?: boolean };
+        await recordAudit(
+          db,
+          {
+            action: row.inserted === false ? 'memory.update' : 'memory.create',
+            resourceType: 'memory',
+            resourceId: row.id,
+            target: input.key,
+            metadata: { scope: input.scope, key: input.key },
+          },
+          userId,
+        );
+
         span.setStatus({ code: SpanStatusCode.UNSET });
-        return data as { id: string; created_at: string };
+        return { id: row.id, created_at: row.created_at };
       } catch (err) {
         const e = err as Error;
         span.setStatus({

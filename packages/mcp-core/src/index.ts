@@ -30,3 +30,11 @@ export {
   translateCapError,
   checkRateLimit,
 } from './limits.js';
+export {
+  AUDIT_ACTIONS,
+  type AuditAction,
+  type AuditEntryInput,
+  type AuditRow,
+  buildAuditEntry,
+  recordAudit,
+} from './audit.js';
