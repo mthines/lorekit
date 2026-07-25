@@ -47,7 +47,10 @@ begin
       source_agent = excluded.source_agent,
       trigger      = excluded.trigger,
       updated_at   = now()
-    returning memories.id, memories.created_at, (xmax = 0) as inserted;
+    -- xmax is an xid; compare its text form to '0' so the insert-vs-update
+    -- discriminator reads explicitly rather than relying on an implicit
+    -- xid-to-integer cast (see the header comment for the idiom).
+    returning memories.id, memories.created_at, (xmax::text = '0') as inserted;
   else
     -- user-scoped writes (api_key / user): (user_id, scope, key) partial index
     return query
@@ -61,7 +64,10 @@ begin
       source_agent = excluded.source_agent,
       trigger      = excluded.trigger,
       updated_at   = now()
-    returning memories.id, memories.created_at, (xmax = 0) as inserted;
+    -- xmax is an xid; compare its text form to '0' so the insert-vs-update
+    -- discriminator reads explicitly rather than relying on an implicit
+    -- xid-to-integer cast (see the header comment for the idiom).
+    returning memories.id, memories.created_at, (xmax::text = '0') as inserted;
   end if;
 end;
 $$;

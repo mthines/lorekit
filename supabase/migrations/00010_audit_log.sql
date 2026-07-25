@@ -104,6 +104,10 @@ begin
     'requests_per_minute', case when tg_op = 'DELETE' then old.requests_per_minute else new.requests_per_minute end
   );
 
+  -- user_limits is keyed by user_id (it IS the row's primary key), so the row
+  -- identity (resource_id) and the affected subject (target) are intentionally
+  -- the same value here — not a copy-paste. The actual changed limit values
+  -- live in metadata, not target.
   insert into audit_log (user_id, action, resource_type, resource_id, target, metadata)
   values (null, 'limit.override', 'user_limits', v_row_user_id::text, v_row_user_id::text, v_metadata);
 
