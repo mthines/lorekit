@@ -44,9 +44,14 @@ function makeDb(overrides: {
     }),
   });
 
-  return {
-    from: vi.fn().mockReturnValue({ update, delete: del }),
-  } as unknown as SupabaseClient;
+  const auditInsert = vi.fn().mockResolvedValue({ error: null });
+  const db = {
+    from: vi.fn().mockImplementation((table: string) =>
+      table === 'audit_log' ? { insert: auditInsert } : { update, delete: del },
+    ),
+  } as unknown as SupabaseClient & { auditInsert: typeof auditInsert };
+  db.auditInsert = auditInsert;
+  return db;
 }
 
 describe('deleteMemory — soft-archive (default)', () => {
@@ -66,6 +71,20 @@ describe('deleteMemory — soft-archive (default)', () => {
     const db = makeDb({ updateResult: { error: { message: 'connection refused' }, count: 0 } });
     await expect(deleteMemory(db, { scope: 'global', key: 'any' })).rejects.toThrow('connection refused');
   });
+
+  it('records a memory.archive audit event when a row is actually soft-archived', async () => {
+    const db = makeDb({ updateResult: { error: null, count: 1 } });
+    await deleteMemory(db, { scope: 'global', key: 'my-key' }, 'user-1');
+    expect(db.auditInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'memory.archive', user_id: 'user-1' }),
+    );
+  });
+
+  it('does not record an audit event when no row was soft-archived (no-op)', async () => {
+    const db = makeDb({ updateResult: { error: null, count: 0 } });
+    await deleteMemory(db, { scope: 'global', key: 'missing-key' });
+    expect(db.auditInsert).not.toHaveBeenCalled();
+  });
 });
 
 describe('deleteMemory — force hard-delete', () => {
@@ -84,6 +103,20 @@ describe('deleteMemory — force hard-delete', () => {
   it('throws when the DB returns an error', async () => {
     const db = makeDb({ deleteResult: { error: { message: 'permission denied' }, count: 0 } });
     await expect(deleteMemory(db, { scope: 'global', key: 'any', force: true })).rejects.toThrow('permission denied');
+  });
+
+  it('records a memory.delete audit event when a row is actually hard-deleted', async () => {
+    const db = makeDb({ deleteResult: { error: null, count: 1 } });
+    await deleteMemory(db, { scope: 'global', key: 'my-key', force: true }, 'user-1');
+    expect(db.auditInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'memory.delete', user_id: 'user-1' }),
+    );
+  });
+
+  it('does not record an audit event when no row was hard-deleted (no-op)', async () => {
+    const db = makeDb({ deleteResult: { error: null, count: 0 } });
+    await deleteMemory(db, { scope: 'global', key: 'gone', force: true });
+    expect(db.auditInsert).not.toHaveBeenCalled();
   });
 });
 

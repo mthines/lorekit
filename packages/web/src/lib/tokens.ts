@@ -7,6 +7,7 @@
 
 import { createServerClient } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
+import { recordAuditEvent } from '@/lib/audit-log';
 
 export type TokenPermission = 'read' | 'write';
 
@@ -79,11 +80,22 @@ export async function generateToken(
 
   if (error) return { error: error.message };
 
+  const record = data as ApiToken;
+  // Audit metadata is limited to the name + prefix — NEVER the raw token or
+  // its hash, so the trail can never leak a usable credential.
+  await recordAuditEvent({
+    action: 'api_key.create',
+    resourceType: 'api_token',
+    resourceId: record.id,
+    target: record.name,
+    metadata: { name: record.name, token_prefix: record.token_prefix },
+  });
+
   revalidatePath('/dashboard');
   // 'layout' so nested /settings/* pages (where tokens actually render) revalidate,
   // not just the /settings redirect page.
   revalidatePath('/settings', 'layout');
-  return { token: fullToken, record: data as ApiToken };
+  return { token: fullToken, record };
 }
 
 /** List all tokens for the current user. Returns [] on auth failure or DB error. */
@@ -111,6 +123,15 @@ export async function revokeToken(tokenId: string): Promise<{ error?: string }> 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Not authenticated' };
 
+  // Fetch name + prefix before the delete so the audit event has a
+  // human-readable target — the row is gone by the time we'd otherwise ask.
+  const { data: existing } = await supabase
+    .from('api_tokens')
+    .select('name, token_prefix')
+    .eq('id', tokenId)
+    .eq('user_id', user.id)
+    .maybeSingle();
+
   const { error } = await supabase
     .from('api_tokens')
     .delete()
@@ -118,6 +139,17 @@ export async function revokeToken(tokenId: string): Promise<{ error?: string }> 
     .eq('user_id', user.id); // Ensure ownership
 
   if (error) return { error: error.message };
+
+  if (existing) {
+    await recordAuditEvent({
+      action: 'api_key.revoke',
+      resourceType: 'api_token',
+      resourceId: tokenId,
+      target: existing.name as string,
+      metadata: { name: existing.name, token_prefix: existing.token_prefix },
+    });
+  }
+
   revalidatePath('/dashboard');
   revalidatePath('/settings', 'layout');
   return {};

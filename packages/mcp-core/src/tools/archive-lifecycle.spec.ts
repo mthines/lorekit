@@ -99,6 +99,13 @@ function makeInMemoryDb(initialRows: Row[] = []): SupabaseClient {
 
   // Simplified proxy — captures update/select calls and resolves via the chain.
   const from = vi.fn((_table: string) => {
+    // audit_log inserts (recordAudit, fired after every successful mutation)
+    // aren't modelled by this memories-only in-memory DB — stub a
+    // never-fails insert so the lifecycle tests exercise the real
+    // archive/restore/purge behaviour without unrelated audit-write noise.
+    if (_table === 'audit_log') {
+      return { insert: vi.fn().mockResolvedValue({ error: null }) };
+    }
     const chain = buildChain({});
     let pendingPatch: Partial<Row> | null = null;
     let pendingCols: string[] | null = null;

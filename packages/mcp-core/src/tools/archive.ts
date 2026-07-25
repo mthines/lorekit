@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
 import { ScopeSchema, scopeType } from '../scope.js';
 import { getTracer, getToolDurationHistogram } from '../telemetry.js';
+import { recordAudit } from '../audit.js';
 
 export const ArchiveInputSchema = z.object({
   scope: ScopeSchema,
@@ -34,6 +35,7 @@ export interface ArchivedEntry {
 export async function archiveMemory(
   db: SupabaseClient,
   raw: unknown,
+  userId: string | null = null,
 ): Promise<{ archived: boolean }> {
   const input = ArchiveInputSchema.parse(raw);
   const tracer = getTracer();
@@ -57,6 +59,18 @@ export async function archiveMemory(
       if (error) throw error;
       const archived = (count ?? 0) > 0;
       span.setAttribute('lorekit.result.archived', archived);
+      if (archived) {
+        await recordAudit(
+          db,
+          {
+            action: 'memory.archive',
+            resourceType: 'memory',
+            target: input.key,
+            metadata: { scope: input.scope, key: input.key },
+          },
+          userId,
+        );
+      }
       return { archived };
     } catch (err) {
       const e = err as Error;
@@ -78,6 +92,7 @@ export async function archiveMemory(
 export async function restoreMemory(
   db: SupabaseClient,
   raw: unknown,
+  userId: string | null = null,
 ): Promise<{ restored: boolean }> {
   const input = RestoreInputSchema.parse(raw);
   const tracer = getTracer();
@@ -101,6 +116,18 @@ export async function restoreMemory(
       if (error) throw error;
       const restored = (count ?? 0) > 0;
       span.setAttribute('lorekit.result.restored', restored);
+      if (restored) {
+        await recordAudit(
+          db,
+          {
+            action: 'memory.restore',
+            resourceType: 'memory',
+            target: input.key,
+            metadata: { scope: input.scope, key: input.key },
+          },
+          userId,
+        );
+      }
       return { restored };
     } catch (err) {
       const e = err as Error;
