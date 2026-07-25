@@ -7,7 +7,7 @@ import { BookOpen, Activity, LayoutDashboard } from 'lucide-react';
 
 const NAV = [
   { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
-  { href: '/lore', label: 'Lore Explorer', icon: BookOpen },
+  { href: '/lore', label: 'Explorer', icon: BookOpen },
   { href: '/activity', label: 'Activity', icon: Activity },
 ] as const;
 
