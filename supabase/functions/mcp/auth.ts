@@ -3,7 +3,7 @@
  *
  * Three-tier auth, evaluated in order:
  *   1. SUPABASE_SERVICE_ROLE_KEY — full access, bypasses RLS (CI/internal)
- *   2. lk_rw_* / lk_ro_* API tokens — user-scoped via SHA-256 lookup
+ *   2. lk_rw_* / lk_ro_* / lk_wo_* API tokens — user-scoped via SHA-256 lookup
  *   3. Supabase JWT — user-scoped via auth.getUser()
  */
 
@@ -17,7 +17,7 @@ export interface AuthContext {
   type: 'user' | 'service' | 'api_key';
   userId?: string;
   jwt?: string;
-  /** api_key only: ['read'] or ['read', 'write'] */
+  /** api_key only: ['read'], ['write'], or ['read', 'write'] */
   permissions?: string[];
 }
 
@@ -42,7 +42,7 @@ export async function resolveAuth(authHeader: string | null, queryToken: string 
   // 1. Service-role key — CI / internal use only
   if (SERVICE_ROLE_KEY && token === SERVICE_ROLE_KEY) return { type: 'service' };
 
-  // 2. LoreKit API token (lk_rw_... or lk_ro_...)
+  // 2. LoreKit API token (lk_rw_..., lk_ro_..., or lk_wo_...)
   if (token.startsWith('lk_')) {
     const hash = await sha256hex(token);
     const serviceDb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
@@ -94,6 +94,12 @@ export function getDb(auth: AuthContext) {
 export function canWrite(auth: AuthContext): boolean {
   if (auth.type === 'service' || auth.type === 'user') return true;
   return (auth.permissions ?? []).includes('write');
+}
+
+/** Returns true if the auth context allows read operations. */
+export function canRead(auth: AuthContext): boolean {
+  if (auth.type === 'service' || auth.type === 'user') return true;
+  return (auth.permissions ?? []).includes('read');
 }
 
 /** userId to pass to tool handlers — null means RLS handles scoping. */

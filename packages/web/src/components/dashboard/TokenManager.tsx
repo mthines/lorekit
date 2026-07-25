@@ -4,9 +4,16 @@ import { useState, useTransition, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Key, Plus, Trash2, Copy, CheckCheck, Eye, EyeOff,
-  ShieldCheck, ShieldAlert, Clock, Loader2
+  ShieldCheck, ShieldAlert, Pencil, Clock, Loader2
 } from 'lucide-react';
 import { generateToken, revokeToken, type ApiToken, type TokenPermission } from '@/lib/tokens';
+import { PERMISSION_TIERS, tierFor, type PermissionTierValue } from '@/lib/token-permission';
+
+const TIER_ICONS: Record<PermissionTierValue, typeof ShieldCheck> = {
+  rw: ShieldCheck,
+  ro: ShieldAlert,
+  wo: Pencil,
+};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -20,16 +27,16 @@ function relativeTime(iso: string): string {
 }
 
 function PermBadge({ permissions }: { permissions: TokenPermission[] }) {
-  const isWrite = permissions.includes('write');
+  const tierValue = tierFor(permissions);
+  const tier = PERMISSION_TIERS.find((t) => t.value === tierValue)!;
+  const Icon = TIER_ICONS[tierValue];
   return (
-    <span className={[
-      'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium',
-      isWrite
-        ? 'border-[var(--color-scope-repo)] bg-[#60a5fa1a] text-[var(--color-scope-repo)]'
-        : 'border-[var(--color-scope-global)] bg-[#a78bfa1a] text-[var(--color-scope-global)]',
-    ].join(' ')}>
-      {isWrite ? <ShieldCheck className="size-2.5" /> : <ShieldAlert className="size-2.5" />}
-      {isWrite ? 'read+write' : 'read-only'}
+    <span
+      className={['inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px] font-medium', tier.bg].join(' ')}
+      style={{ borderColor: tier.color, color: tier.color }}
+    >
+      <Icon className="size-2.5" />
+      {tier.badgeLabel}
     </span>
   );
 }
@@ -120,7 +127,7 @@ function NewTokenDisplay({
 
 function GenerateForm({ onGenerated }: { onGenerated: (token: string, record: ApiToken) => void }) {
   const [name, setName] = useState('');
-  const [permission, setPermission] = useState<'rw' | 'ro'>('rw');
+  const [permission, setPermission] = useState<PermissionTierValue>('rw');
   const [error, setError] = useState('');
   const [pending, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -131,8 +138,8 @@ function GenerateForm({ onGenerated }: { onGenerated: (token: string, record: Ap
     e.preventDefault();
     setError('');
     startTransition(async () => {
-      const perms: TokenPermission[] = permission === 'rw' ? ['read', 'write'] : ['read'];
-      const result = await generateToken(name, perms);
+      const tier = PERMISSION_TIERS.find((t) => t.value === permission)!;
+      const result = await generateToken(name, tier.perms);
       if ('error' in result) { setError(result.error); return; }
       onGenerated(result.token, result.record);
       setName('');
@@ -155,30 +162,30 @@ function GenerateForm({ onGenerated }: { onGenerated: (token: string, record: Ap
       />
 
       {/* Permission toggle */}
-      <div className="flex gap-2">
-        {([
-          { value: 'rw', label: 'Read + Write', desc: 'Agent can write and read memories', Icon: ShieldCheck, color: 'var(--color-scope-repo)' },
-          { value: 'ro', label: 'Read only', desc: 'Agent can read but not write', Icon: ShieldAlert, color: 'var(--color-scope-global)' },
-        ] as const).map(({ value, label, desc, Icon, color }) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => setPermission(value)}
-            className={[
-              'flex flex-1 items-start gap-2 rounded-lg border p-3 text-left transition-all duration-150',
-              permission === value
-                ? 'bg-[var(--color-bg-raised)]'
-                : 'border-[var(--color-border)] bg-[var(--color-bg)] hover:bg-[var(--color-bg-raised)]',
-            ].join(' ')}
-            style={permission === value ? { borderColor: color, color } : {}}
-          >
-            <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
-            <div>
-              <p className="text-xs font-medium">{label}</p>
-              <p className="text-[10px] text-[var(--color-content-tertiary)]">{desc}</p>
-            </div>
-          </button>
-        ))}
+      <div className="flex flex-wrap gap-2">
+        {PERMISSION_TIERS.map(({ value, label, desc, color }) => {
+          const Icon = TIER_ICONS[value];
+          return (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setPermission(value)}
+              className={[
+                'flex flex-1 items-start gap-2 rounded-lg border p-3 text-left transition-all duration-150',
+                permission === value
+                  ? 'bg-[var(--color-bg-raised)]'
+                  : 'border-[var(--color-border)] bg-[var(--color-bg)] hover:bg-[var(--color-bg-raised)]',
+              ].join(' ')}
+              style={permission === value ? { borderColor: color, color } : {}}
+            >
+              <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
+              <div>
+                <p className="text-xs font-medium">{label}</p>
+                <p className="text-[10px] text-[var(--color-content-tertiary)]">{desc}</p>
+              </div>
+            </button>
+          );
+        })}
       </div>
 
       {error && <p className="text-xs text-[var(--color-error)]">{error}</p>}

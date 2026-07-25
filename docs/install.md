@@ -116,12 +116,14 @@ pnpm nx health supabase
 2. Go to **Overview → Step 2: Connect your agent**
 3. Click **Generate new token**
 4. Enter a name (e.g. `claude-local`, `ci-github-actions`)
-5. Choose **Read + Write** for agents that learn, **Read only** for CI context injection
+5. Choose **Read + Write** for agents that learn, **Read only** for CI context injection,
+   or **Write only** for a one-way lesson feeder that should never read
 6. Copy the token — it is shown **once only**
 
 Token formats:
 - `lk_rw_<32 chars>` — read + write
 - `lk_ro_<32 chars>` — read only
+- `lk_wo_<32 chars>` — write only
 
 ---
 
@@ -240,8 +242,8 @@ Store a read+write token as `LOREKIT_TOKEN` in your repo secrets, then use it in
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| `{"code":-32001}` on write | Read-only token | Generate a `lk_rw_` token |
-| `{"code":-32001}` on read | Missing or wrong token | Check the `Authorization` header |
+| `{"code":-32001}` on write | Read-only (`lk_ro_`) token | Generate a `lk_rw_` or `lk_wo_` token |
+| `{"code":-32001}` on read | Write-only (`lk_wo_`) token, or missing/wrong token | Generate a `lk_rw_` or `lk_ro_` token; check the `Authorization` header |
 | `{"code":-32603}` | Scope validation error | Use `::` as separator; check scope format |
 | `{"db":false}` on health check | DB not reachable from Edge Function | Verify Supabase secrets in Step 5 |
 | Dashboard auth loop | Redirect URL not set | Add your URL in Supabase Auth settings (Step 8) |

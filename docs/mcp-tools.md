@@ -8,7 +8,7 @@ LoreKit exposes nine tools via the MCP protocol. All tools require a valid API t
 
 ## memory.write
 
-Store or update a lesson. Requires a **read+write** token (`lk_rw_*`).
+Store or update a lesson. Requires a token with write permission (`lk_rw_*` or `lk_wo_*`).
 
 ```json
 {
@@ -91,7 +91,7 @@ List all lessons for a scope, newest first.
 
 ## memory.delete
 
-Soft-archive a lesson (default) or hard-delete it immediately. Requires a **read+write** token.
+Soft-archive a lesson (default) or hard-delete it immediately. Requires a token with write permission (`lk_rw_*` or `lk_wo_*`).
 
 ```json
 {
@@ -151,7 +151,7 @@ Full-text search across all lessons. Supports owner-level scope wildcards.
 ## memory.archive
 
 Soft-archive a lesson. Archived entries are hidden from normal reads (`memory.read`, `memory.list`) but
-can be listed via `memory.list_archived` and fully restored via `memory.restore`. Requires a **read+write** token.
+can be listed via `memory.list_archived` and fully restored via `memory.restore`. Requires a token with write permission (`lk_rw_*` or `lk_wo_*`).
 
 ```json
 {
@@ -171,7 +171,7 @@ can be listed via `memory.list_archived` and fully restored via `memory.restore`
 
 ## memory.restore
 
-Restore a soft-archived lesson back to active. Requires a **read+write** token.
+Restore a soft-archived lesson back to active. Requires a token with write permission (`lk_rw_*` or `lk_wo_*`).
 
 ```json
 {
@@ -191,7 +191,7 @@ Restore a soft-archived lesson back to active. Requires a **read+write** token.
 
 ## memory.list_archived
 
-List soft-archived lessons for a scope, newest archived first. Requires a **read+write** or **read-only** token.
+List soft-archived lessons for a scope, newest archived first. Requires a token with read permission (`lk_rw_*` or `lk_ro_*`).
 
 ```json
 {
@@ -217,7 +217,7 @@ List soft-archived lessons for a scope, newest archived first. Requires a **read
 ## memory.purge
 
 Permanently delete archived lessons whose `archived_at` timestamp is older than `retention_days`.
-This operation is unrecoverable. Requires a **read+write** token.
+This operation is unrecoverable. Requires a token with write permission (`lk_rw_*` or `lk_wo_*`).
 
 > **Note:** Service-role callers (CI) cannot call this tool — the purge is always scoped to a specific user.
 > Use the Supabase RPC `purge_archived_memories` directly for admin purges.
@@ -246,7 +246,7 @@ This operation is unrecoverable. Requires a **read+write** token.
 | JSON-RPC code | Meaning |
 |---------------|---------|
 | `-32001` | Unauthorized — missing, invalid, or expired token |
-| `-32001` | Read-only token attempted a write operation |
+| `-32001` | Read-only token attempted a write operation, or a write-only token attempted a read operation |
 | `-32603` | Tool execution error (DB error, scope validation failure) |
 | `-32700` | Parse error — malformed JSON body |
 | `-32601` | Unknown method or tool name |

@@ -34,6 +34,7 @@ test('buildRemoteUrl round-trips with splitEndpoint', () => {
 test('tokenKind classifies by prefix', () => {
   assert.equal(tokenKind('lk_rw_abc'), 'read-write');
   assert.equal(tokenKind('lk_ro_abc'), 'read-only');
+  assert.equal(tokenKind('lk_wo_abc'), 'write-only');
   assert.equal(tokenKind('sbp_xyz'), 'unknown');
   assert.equal(tokenKind(null), 'none');
 });

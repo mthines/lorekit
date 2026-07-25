@@ -3,7 +3,7 @@
  * Handles initialize, tools/list, and tools/call.
  */
 
-import { type AuthContext, getDb, canWrite, getUserId } from './auth.ts';
+import { type AuthContext, getDb, canWrite, canRead, getUserId } from './auth.ts';
 import {
   toolWrite,
   toolRead,
@@ -19,6 +19,7 @@ import {
 } from './tools.ts';
 import { type Span } from '../_shared/otel.ts';
 import { LimitError } from './limits.ts';
+import { toolRequires } from './permissions.ts';
 
 const TOOLS = {
   'memory.write':         toolWrite,
@@ -31,14 +32,6 @@ const TOOLS = {
   'memory.restore':       toolRestore,
   'memory.purge':         toolPurge,
 } as const;
-
-const WRITE_TOOLS = new Set([
-  'memory.write',
-  'memory.delete',
-  'memory.archive',
-  'memory.restore',
-  'memory.purge',
-]);
 
 function jsonrpc(id: unknown, result: unknown): Response {
   return new Response(JSON.stringify({ jsonrpc: '2.0', id, result }), {
@@ -171,9 +164,14 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
       return jsonrpcError(id, -32601, `Unknown tool: ${toolName}`);
     }
 
-    if (WRITE_TOOLS.has(toolName) && !canWrite(auth)) {
+    const requiredPermission = toolRequires(toolName);
+    if (requiredPermission === 'write' && !canWrite(auth)) {
       span.error('PermissionDenied: read-only token').setAttributes({ 'mcp.tool.name': toolName });
-      return jsonrpcError(id, -32001, 'This token is read-only. Generate a read+write token in LoreKit.');
+      return jsonrpcError(id, -32001, 'This token does not have write permission. Use a read+write (lk_rw_) or write-only (lk_wo_) token.');
+    }
+    if (requiredPermission === 'read' && !canRead(auth)) {
+      span.error('PermissionDenied: write-only token').setAttributes({ 'mcp.tool.name': toolName });
+      return jsonrpcError(id, -32001, 'This token does not have read permission. Use a read+write (lk_rw_) or read-only (lk_ro_) token.');
     }
 
     const rawScope = toolArgs['scope'] as string | undefined;

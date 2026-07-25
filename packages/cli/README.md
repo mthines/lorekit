@@ -88,7 +88,7 @@ Verifies the setup and prints a status report:
   gitignored
 - for `remote`: `.mcp.json` has a `lorekit` server, the endpoint is real (not
   the `<project-ref>` placeholder), the token and its permission tier
-  (`lk_rw_*` vs `lk_ro_*`), and that the endpoint is reachable
+  (`lk_rw_*` / `lk_ro_*` / `lk_wo_*`), and that the endpoint is reachable
 - for `off`: a note that memory is disabled
 - the git-derived read/write scopes for the current directory
 

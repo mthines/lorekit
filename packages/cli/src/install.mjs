@@ -124,8 +124,10 @@ export async function install(args) {
     status('warn', 'token', 'none configured — reads/writes will fail until a token is set');
   } else if (kind === 'read-only') {
     status('warn', 'token', 'read-only (lk_ro_*) — the skill can read lessons but not write them');
+  } else if (kind === 'write-only') {
+    status('warn', 'token', 'write-only (lk_wo_*) — the skill can write lessons but not read them');
   } else if (kind === 'unknown') {
-    status('warn', 'token', 'unrecognized prefix — expected lk_rw_* or lk_ro_*');
+    status('warn', 'token', 'unrecognized prefix — expected lk_rw_*, lk_ro_*, or lk_wo_*');
   } else {
     status('pass', 'token', 'read+write (lk_rw_*)');
   }

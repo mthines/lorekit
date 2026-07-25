@@ -31,6 +31,13 @@ export {
   checkRateLimit,
 } from './limits.js';
 export {
+  type Permission,
+  READ_TOOLS,
+  WRITE_TOOLS,
+  toolRequires,
+  tokenPrefixFor,
+} from './permissions.js';
+export {
   AUDIT_ACTIONS,
   type AuditAction,
   type AuditEntryInput,

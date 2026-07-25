@@ -222,6 +222,7 @@ export function tokenKind(token) {
   if (!token) return 'none';
   if (token.startsWith('lk_rw_')) return 'read-write';
   if (token.startsWith('lk_ro_')) return 'read-only';
+  if (token.startsWith('lk_wo_')) return 'write-only';
   return 'unknown';
 }
 
