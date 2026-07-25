@@ -80,6 +80,9 @@ export async function generateToken(
   if (error) return { error: error.message };
 
   revalidatePath('/dashboard');
+  // 'layout' so nested /settings/* pages (where tokens actually render) revalidate,
+  // not just the /settings redirect page.
+  revalidatePath('/settings', 'layout');
   return { token: fullToken, record: data as ApiToken };
 }
 
@@ -116,5 +119,6 @@ export async function revokeToken(tokenId: string): Promise<{ error?: string }> 
 
   if (error) return { error: error.message };
   revalidatePath('/dashboard');
+  revalidatePath('/settings', 'layout');
   return {};
 }
