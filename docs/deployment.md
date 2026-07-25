@@ -121,7 +121,7 @@ the sole gate that keeps unverified (or migration-breaking) code off `main`.
 supabase link --project-ref <your-project-ref>
 ```
 
-Your project ref is the subdomain of your Supabase URL: `https://<project-ref>.supabase.co`.
+Your project ref is the subdomain of your Supabase URL: `https://pqokxlhvnosogizsjztg.supabase.co`.
 
 ---
 
@@ -142,7 +142,7 @@ This applies:
 ## 3. Configure GitHub OAuth
 
 1. Create an OAuth app at [github.com/settings/developers](https://github.com/settings/developers):
-   - **Callback URL:** `https://<project-ref>.supabase.co/auth/v1/callback`
+   - **Callback URL:** `https://pqokxlhvnosogizsjztg.supabase.co/auth/v1/callback`
 2. In Supabase → Auth → Providers → GitHub: enable and paste Client ID + Secret
 
 ---
@@ -151,7 +151,7 @@ This applies:
 
 ```bash
 supabase secrets set \
-  SUPABASE_URL=https://<project-ref>.supabase.co \
+  SUPABASE_URL=https://pqokxlhvnosogizsjztg.supabase.co \
   SUPABASE_ANON_KEY=<publishable-key> \
   SUPABASE_SERVICE_ROLE_KEY=<service-role-key> \
   GITHUB_WEBHOOK_SECRET=$(openssl rand -hex 32) \
@@ -192,9 +192,9 @@ In your Vercel project → Settings → General:
 Environment variables to add:
 
 ```
-NEXT_PUBLIC_SUPABASE_URL          https://<project-ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_URL          https://pqokxlhvnosogizsjztg.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY     <publishable-key>
-NEXT_PUBLIC_SUPABASE_PROJECT_REF  <project-ref>
+NEXT_PUBLIC_SUPABASE_PROJECT_REF  pqokxlhvnosogizsjztg
 NEXT_PUBLIC_APP_URL               https://<your-vercel-url>.vercel.app
 NEXT_PUBLIC_DASH0_OTLP_ENDPOINT   https://ingress.europe-west4.gcp.dash0-dev.com
 NEXT_PUBLIC_DASH0_AUTH_TOKEN      <ingesting-only-dash0-token>
@@ -214,7 +214,7 @@ Also add your Vercel URL to Supabase → Auth → URL Configuration:
 For LoreKit to learn from PR review comments:
 
 1. Repo → Settings → Webhooks → Add webhook
-2. Payload URL: `https://<project-ref>.supabase.co/functions/v1/mcp/webhooks/github`
+2. Payload URL: `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp/webhooks/github`
 3. Content type: `application/json`
 4. Secret: the value of `GITHUB_WEBHOOK_SECRET` you set in step 4
 5. Events: **Pull request review comments** + **Pull request reviews**

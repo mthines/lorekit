@@ -31,7 +31,7 @@ pnpm install
 
 ## Step 2 — Link to your Supabase project
 
-Your project ref is the subdomain of your Supabase URL: `https://<project-ref>.supabase.co`
+Your project ref is the subdomain of your Supabase URL: `https://pqokxlhvnosogizsjztg.supabase.co`
 
 ```bash
 supabase link --project-ref <your-project-ref>
@@ -62,7 +62,7 @@ This creates two tables:
 1. Go to https://github.com/settings/developers → OAuth Apps → New OAuth App
    - **Application name:** LoreKit (or any name)
    - **Homepage URL:** `https://<your-vercel-url>.vercel.app` (or `http://localhost:3000` for local dev)
-   - **Authorization callback URL:** `https://<project-ref>.supabase.co/auth/v1/callback`
+   - **Authorization callback URL:** `https://pqokxlhvnosogizsjztg.supabase.co/auth/v1/callback`
 2. Note the **Client ID** and generate a **Client Secret**
 3. In Supabase → Auth → Providers → GitHub: enable and paste both values
 
@@ -72,7 +72,7 @@ This creates two tables:
 
 ```bash
 supabase secrets set \
-  SUPABASE_URL=https://<project-ref>.supabase.co \
+  SUPABASE_URL=https://pqokxlhvnosogizsjztg.supabase.co \
   SUPABASE_ANON_KEY=<publishable-key> \
   SUPABASE_SERVICE_ROLE_KEY=<service-role-key> \
   GITHUB_WEBHOOK_SECRET=$(openssl rand -hex 32) \
@@ -133,9 +133,9 @@ If you want your own dashboard instance (rather than using `lorekit-io.vercel.ap
 3. Add environment variables:
 
 ```
-NEXT_PUBLIC_SUPABASE_URL          https://<project-ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_URL          https://pqokxlhvnosogizsjztg.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY     <publishable-key>
-NEXT_PUBLIC_SUPABASE_PROJECT_REF  <project-ref>
+NEXT_PUBLIC_SUPABASE_PROJECT_REF  pqokxlhvnosogizsjztg
 NEXT_PUBLIC_APP_URL               https://<your-vercel-url>.vercel.app
 NEXT_PUBLIC_DASH0_OTLP_ENDPOINT   https://ingress.europe-west4.gcp.dash0-dev.com
 NEXT_PUBLIC_DASH0_AUTH_TOKEN      <ingesting-only-dash0-token>
@@ -157,7 +157,7 @@ Add the MCP config to your agent. For Claude Code (`.claude/skills/persistent-me
 {
   "backend": "mcp",
   "mcp": {
-    "server": "https://<project-ref>.supabase.co/functions/v1/mcp",
+    "server": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
     "auth": {
       "type": "bearer",
       "token": "lk_rw_<your-token>"
@@ -175,7 +175,7 @@ For any other MCP-compatible agent, point the client at the same endpoint with t
 To have LoreKit learn from PR review comments automatically:
 
 1. Go to your repo → Settings → Webhooks → Add webhook
-2. **Payload URL:** `https://<project-ref>.supabase.co/functions/v1/mcp/webhooks/github`
+2. **Payload URL:** `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp/webhooks/github`
 3. **Content type:** `application/json`
 4. **Secret:** the value of `GITHUB_WEBHOOK_SECRET` you set in Step 5
 5. **Events:** Pull request review comments + Pull request reviews
@@ -186,18 +186,18 @@ To have LoreKit learn from PR review comments automatically:
 
 ```bash
 # 1. Health check
-curl https://<project-ref>.supabase.co/functions/v1/health
+curl https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/health
 # → {"status":"ok","db":true}
 
 # 2. Write a test lesson
-curl -X POST https://<project-ref>.supabase.co/functions/v1/mcp \
+curl -X POST https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp \
   -H "Authorization: Bearer lk_rw_<your-token>" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory.write","arguments":{"scope":"global","key":"install-test","value":"LoreKit is working."}}}'
 # → {"jsonrpc":"2.0","id":1,"result":{"id":"...","created_at":"..."}}
 
 # 3. Read it back
-curl -X POST https://<project-ref>.supabase.co/functions/v1/mcp \
+curl -X POST https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp \
   -H "Authorization: Bearer lk_ro_<your-token>" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"memory.read","arguments":{"scope":"global","key":"install-test"}}}'
@@ -218,7 +218,7 @@ Store a read+write token as `LOREKIT_TOKEN` in your repo secrets, then use it in
       -H "Content-Type: application/json" \
       -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory.list","arguments":{"scope":"repo::${{ github.repository }}"}}}'
   env:
-    LOREKIT_MCP_URL: https://<project-ref>.supabase.co/functions/v1/mcp
+    LOREKIT_MCP_URL: https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp
     LOREKIT_TOKEN: ${{ secrets.LOREKIT_TOKEN }}
 ```
 

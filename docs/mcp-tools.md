@@ -2,7 +2,7 @@
 
 LoreKit exposes nine tools via the MCP protocol. All tools require a valid API token (see [api-tokens.md](./api-tokens.md)).
 
-**Endpoint:** `https://<project-ref>.supabase.co/functions/v1/mcp`
+**Endpoint:** `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp`
 
 ---
 
@@ -261,7 +261,7 @@ In your project's `.claude/skills/persistent-memory/config.json`:
 {
   "backend": "mcp",
   "mcp": {
-    "server": "https://<project-ref>.supabase.co/functions/v1/mcp",
+    "server": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
     "auth": {
       "type": "bearer",
       "token": "lk_rw_<your-token>"

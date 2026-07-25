@@ -26,7 +26,7 @@ any other MCP servers already configured.
 
 ```bash
 lorekit install \
-  --endpoint https://<project-ref>.supabase.co/functions/v1/mcp \
+  --endpoint https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp \
   --token    lk_rw_your_token
 ```
 

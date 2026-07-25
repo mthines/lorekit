@@ -22,7 +22,7 @@ function ask(question) {
   return new Promise((resolve) => rl.question(question, (a) => { rl.close(); resolve(a.trim()); }));
 }
 
-const DEFAULT_ENDPOINT_HINT = 'https://<project-ref>.supabase.co/functions/v1/mcp';
+const DEFAULT_ENDPOINT_HINT = 'https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp';
 
 export async function install(args) {
   const root = resolveProjectRoot(args.dir);

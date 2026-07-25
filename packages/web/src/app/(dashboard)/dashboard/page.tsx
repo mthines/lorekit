@@ -75,7 +75,7 @@ export default async function DashboardPage() {
   const projectRef = supabaseUrl.replace('https://', '').replace('.supabase.co', '');
   const mcpUrl = projectRef
     ? `https://${projectRef}.supabase.co/functions/v1/mcp`
-    : 'https://<project-ref>.supabase.co/functions/v1/mcp';
+    : 'https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp';
   const webhookUrl = `${mcpUrl}/webhooks/github`;
 
   const steps: OnboardingStep[] = [

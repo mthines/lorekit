@@ -9,10 +9,10 @@
 codex_hooks = true
 
 # --- MCP server -------------------------------------------------------------
-# Replace <project-ref> and <your-lorekit-token>.
+# Replace pqokxlhvnosogizsjztg and <your-lorekit-token>.
 [mcp_servers.lorekit]
 command = "npx"
-args = ["-y", "mcp-remote", "https://<project-ref>.supabase.co/functions/v1/mcp?token=<your-lorekit-token>"]
+args = ["-y", "mcp-remote", "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp?token=<your-lorekit-token>"]
 
 # --- Hooks ------------------------------------------------------------------
 # Codex mirrors Claude Code's event model, so the same adapter is used.

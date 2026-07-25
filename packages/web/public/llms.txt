@@ -24,7 +24,7 @@ This file is structured so an AI agent can execute every step autonomously or pa
 ## MCP endpoint
 
 ```
-https://<project-ref>.supabase.co/functions/v1/mcp
+https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp
 ```
 
 Auth: `Authorization: Bearer lk_rw_<token>` (read+write) or `lk_ro_<token>` (read-only)

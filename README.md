@@ -52,7 +52,7 @@ In `.claude/skills/persistent-memory/config.json`:
 {
   "backend": "mcp",
   "mcp": {
-    "server": "https://<project-ref>.supabase.co/functions/v1/mcp",
+    "server": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
     "auth": { "type": "bearer", "token": "lk_rw_<your-token>" }
   }
 }
@@ -72,7 +72,7 @@ write-on-failure loop of the `aw` autonomous-workflow agent.
 ```bash
 # Scaffold the lorekit-memory skill into .claude/skills and wire .mcp.json
 npx @lorekit/cli install \
-  --endpoint https://<project-ref>.supabase.co/functions/v1/mcp \
+  --endpoint https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp \
   --token    lk_rw_<your-token>
 
 # Verify connectivity, token permission, and the git-derived scopes

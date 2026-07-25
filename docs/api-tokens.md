@@ -41,7 +41,7 @@ Tokens are stored as **SHA-256 hashes** in the database. The full token is shown
 Pass the token as a Bearer header:
 
 ```bash
-curl -X POST https://<project-ref>.supabase.co/functions/v1/mcp \
+curl -X POST https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp \
   -H "Authorization: Bearer lk_rw_<your-token>" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory.list","arguments":{"scope":"global"}}}'
@@ -53,7 +53,7 @@ In `persistent-memory` config:
 {
   "backend": "mcp",
   "mcp": {
-    "server": "https://<project-ref>.supabase.co/functions/v1/mcp",
+    "server": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
     "auth": { "type": "bearer", "token": "lk_rw_<your-token>" }
   }
 }
@@ -71,7 +71,7 @@ Use a **read+write** token stored as a GitHub Actions secret:
       -H "Content-Type: application/json" \
       -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory.write","arguments":{"scope":"repo::${{ github.repository }}","key":"ci-lesson","value":"...","tags":["source::ci"]}}}'
   env:
-    LOREKIT_MCP_URL: https://<project-ref>.supabase.co/functions/v1/mcp
+    LOREKIT_MCP_URL: https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp
     LOREKIT_TOKEN: ${{ secrets.LOREKIT_TOKEN }}
 ```
 
