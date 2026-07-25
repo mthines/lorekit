@@ -10,6 +10,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { validateScope } from '../_shared/scope.ts';
 import { createTracedClient, type Span } from '../_shared/otel.ts';
 import { translateCapError } from './limits.ts';
+import { parseCreatedAt } from './created-at.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
@@ -23,16 +24,20 @@ export async function toolWrite(
   userId: string | null,
   span: Span,
 ) {
-  const { scope: rawScope, key, value, tags = [], source_agent, trigger } = params;
+  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at } = params;
   if (!rawScope || !key || !value) throw new Error('scope, key, and value are required');
   if (value.length > MAX_VALUE_BYTES) throw new Error(`value exceeds ${MAX_VALUE_BYTES} bytes`);
   const scope = validateScope(rawScope);
+  // Optional creation-date override (migration use case). Validates + rejects
+  // future dates; null when omitted so the DB applies its now() default.
+  const createdAt = parseCreatedAt(created_at);
 
   span.setAttributes({
     'lorekit.scope': scope,
     'lorekit.key': key,
     ...(source_agent ? { 'lorekit.source_agent': source_agent } : {}),
     ...(trigger ? { 'lorekit.trigger': trigger } : {}),
+    ...(createdAt ? { 'lorekit.created_at': createdAt } : {}),
   });
 
   // 00003 replaced the plain unique constraint with PARTIAL indexes
@@ -49,6 +54,7 @@ export async function toolWrite(
       p_tags: tags,
       p_source_agent: source_agent ?? null,
       p_trigger: trigger ?? null,
+      p_created_at: createdAt,
     })
     .single();
   if (error) {

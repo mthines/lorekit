@@ -16,3 +16,6 @@ tmp/
 **/*.tsbuildinfo
 
 .mcp.json
+
+# Autonomous workflow artifacts
+.agent/

@@ -30,7 +30,24 @@ export const TOOL_DEFS = [
   {
     name: 'memory.write',
     description: 'Store or update a lesson',
-    inputSchema: { type: 'object', required: ['scope', 'key', 'value'] },
+    inputSchema: {
+      type: 'object',
+      required: ['scope', 'key', 'value'],
+      properties: {
+        scope: { type: 'string' },
+        key: { type: 'string' },
+        value: { type: 'string' },
+        tags: { type: 'array', items: { type: 'string' } },
+        source_agent: { type: 'string' },
+        trigger: { type: 'string' },
+        created_at: {
+          type: 'string',
+          format: 'date-time',
+          description:
+            'Optional ISO 8601 creation date for migrating a pre-existing memory. Rejected if invalid or in the future. Applies only when the memory is first created.',
+        },
+      },
+    },
   },
   {
     name: 'memory.read',
