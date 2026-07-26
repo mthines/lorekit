@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronRight, ExternalLink } from 'lucide-react';
+import { ChevronRight, ExternalLink, LayoutList } from 'lucide-react';
 import { scopeIcon } from '@/components/memory/scope-meta';
 import { scopeRepoUrl, type ScopePrefix } from '@/lib/scope';
 
@@ -104,24 +104,55 @@ function ScopeTreeItem({ node, depth, selected, onSelect }: ScopeTreeItemProps) 
 
 interface ScopeTreeProps {
   nodes: ScopeNode[];
+  /** The currently-selected scope, or null for "all scopes". */
   selected: string | null;
-  onSelect: (scope: string) => void;
+  onSelect: (scope: string | null) => void;
+  /** Total active memory count across all scopes (for the "All" row). */
+  totalCount?: number;
 }
 
-export function ScopeTree({ nodes, selected, onSelect }: ScopeTreeProps) {
+export function ScopeTree({ nodes, selected, onSelect, totalCount }: ScopeTreeProps) {
+  const allSelected = selected === null;
+  const allCount = totalCount ?? nodes.reduce((sum, n) => sum + n.count, 0);
+
   return (
     <nav aria-label="Scope tree" className="flex flex-col gap-0.5 py-2">
-      <ul role="tree" aria-label="Memory scopes">
-        {nodes.map((node) => (
-          <ScopeTreeItem
-            key={node.scope}
-            node={node}
-            depth={0}
-            selected={selected}
-            onSelect={onSelect}
-          />
-        ))}
-      </ul>
+      {/* "All scopes" row — always first, selects null (no scope filter). */}
+      <div className="px-1">
+        <button
+          type="button"
+          onClick={() => onSelect(null)}
+          className={[
+            'flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left transition-all duration-150',
+            allSelected
+              ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
+              : 'text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]',
+          ].join(' ')}
+          aria-selected={allSelected}
+        >
+          <span className="size-3 shrink-0" aria-hidden />
+          <LayoutList className="size-3.5 shrink-0 opacity-70" aria-hidden />
+          <span className="min-w-0 flex-1 truncate font-mono text-xs">all</span>
+          <span className="ml-auto shrink-0 text-xs tabular-nums opacity-50">{allCount}</span>
+        </button>
+      </div>
+
+      {nodes.length > 0 && (
+        <>
+          <div className="mx-3 my-1 border-t border-[var(--color-border)]" aria-hidden />
+          <ul role="tree" aria-label="Memory scopes">
+            {nodes.map((node) => (
+              <ScopeTreeItem
+                key={node.scope}
+                node={node}
+                depth={0}
+                selected={selected}
+                onSelect={onSelect}
+              />
+            ))}
+          </ul>
+        </>
+      )}
     </nav>
   );
 }

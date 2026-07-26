@@ -43,6 +43,21 @@ const ROLE_LABEL: Record<OrgRole, string> = {
   viewer: 'Viewer',
 };
 
+// Only render an avatar <img> when the URL is a GitHub avatar host. The handle
+// and avatar come from `auth.users.raw_user_meta_data` (OAuth-provider-set, not
+// user-editable via our app), but gating the `src` on a known host is a cheap
+// defense-in-depth: a value that ever became attacker-controlled still can't
+// point the browser at an arbitrary origin. Anything else falls back to the
+// placeholder glyph.
+function isTrustedAvatarUrl(url: string | null | undefined): url is string {
+  if (!url) return false;
+  try {
+    return new URL(url).hostname === 'avatars.githubusercontent.com';
+  } catch {
+    return false;
+  }
+}
+
 const ASSIGNABLE_ROLE_HELPER: Record<Exclude<OrgRole, 'owner'>, string> = {
   admin: 'Manages members and org settings.',
   member: 'Reads and writes shared lore.',
@@ -494,6 +509,12 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                     : identity?.handle
                       ? `@${identity.handle}`
                       : `Member ${member.user_id.slice(0, 8)}`;
+                  // Trusted-host-gated avatar (see isTrustedAvatarUrl) — null
+                  // when absent or from an unexpected origin, so the <img> only
+                  // renders a known-safe src.
+                  const avatarUrl = isTrustedAvatarUrl(identity?.avatar_url)
+                    ? identity.avatar_url
+                    : null;
 
                   return (
                     <motion.div
@@ -503,10 +524,10 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                       transition={{ duration: 0.2 }}
                       className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2.5"
                     >
-                      {identity?.avatar_url ? (
+                      {avatarUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
-                          src={identity.avatar_url}
+                          src={avatarUrl}
                           alt=""
                           className="size-6 shrink-0 rounded-full object-cover"
                         />

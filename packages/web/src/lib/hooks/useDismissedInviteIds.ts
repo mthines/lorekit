@@ -14,6 +14,12 @@ import { useCallback, useEffect, useState } from 'react';
 
 const STORAGE_KEY = 'lorekit:dismissed-invite-ids';
 
+// Cap the persisted list so a long-lived browser can't grow it without bound
+// (every dismissed invite id would otherwise accumulate in localStorage
+// forever). 200 is far more than any realistic pending-invite backlog; older
+// ids fall off the front — a re-surfaced ancient invite is harmless.
+const MAX_DISMISSED = 200;
+
 function readDismissedIds(): string[] {
   if (typeof window === 'undefined') return [];
   try {
@@ -55,7 +61,7 @@ export function useDismissedInviteIds(): [string[], (id: string) => void, boolea
   const dismiss = useCallback((id: string) => {
     setIds((prev) => {
       if (prev.includes(id)) return prev;
-      const next = [...prev, id];
+      const next = [...prev, id].slice(-MAX_DISMISSED);
       writeDismissedIds(next);
       return next;
     });

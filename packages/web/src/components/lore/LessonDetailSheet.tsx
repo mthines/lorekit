@@ -1,36 +1,57 @@
 'use client';
 
-import { useEffect, useRef, useState, useTransition } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, Bot, Zap, Tag, Clock, CalendarClock, Archive, RotateCcw, Users, UserCircle } from 'lucide-react';
+import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle } from 'lucide-react';
+import { Controller } from 'react-hook-form';
+import { useQueryClient } from '@tanstack/react-query';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { OwnershipBadge } from '@/components/memory/OwnershipBadge';
+import { EditableField } from '@/components/ui/EditableField';
+import { TagsField } from '@/components/ui/TagsField';
+import { FormActionBar } from '@/components/ui/FormActionBar';
+import { useEditableForm } from '@/lib/hooks/useEditableForm';
+import { useArchiveLesson, useRestoreLesson } from '@/lib/queries/lore';
 import type { LessonEntry } from './LessonCard';
-import { archiveLesson, restoreLesson } from '@/lib/lore';
-import { listMembers } from '@/lib/orgs';
+import { updateLesson } from '@/lib/lore';
 import { listMemberIdentities } from '@/lib/org-members';
+import { scopeRepoUrl } from '@/lib/scope';
+import { toast } from 'sonner';
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface LessonDetailSheetProps {
   lesson: LessonEntry | null;
   onClose: () => void;
-  /** Called after a successful archive or restore so the parent can refresh its list. */
+  /** Called after a successful archive, restore, or save so the parent can refresh its list. */
   onMutated?: () => void;
 }
 
+interface LessonFormValues {
+  value: string;
+  tags: string[];
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSheetProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
-  const [isPending, startTransition] = useTransition();
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [memberCount, setMemberCount] = useState<number | null>(null);
-  const [updatedByHandle, setUpdatedByHandle] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const archiveMutation = useArchiveLesson();
+  const restoreMutation = useRestoreLesson();
+  const isPending = archiveMutation.isPending || restoreMutation.isPending;
 
   const isArchived = Boolean(lesson?.archived_at);
 
-  // Org-owned lore: resolve "Visible to N members" (D8 — reuses listMembers)
-  // and, where resolvable, the last-updated-by author's real GitHub handle
-  // via the Phase 4 `lorekit_org_members_list` identity RPC. Falls back to a
-  // generic "a team member" when the author can't be resolved (e.g. they've
-  // since left the org) — never fabricates a handle.
+  const [memberCount, setMemberCount] = useState<number | null>(null);
+  const [updatedByHandle, setUpdatedByHandle] = useState<string | null>(null);
+
+  // Org-owned lore: resolve "Visible to N members" and, where resolvable, the
+  // last-updated-by author's real GitHub handle from the single Phase 4
+  // identity RPC (`lorekit_org_members_list`, via `listMemberIdentities`). The
+  // member count is just that list's length — no separate `listMembers`
+  // round-trip. Falls back to a generic "a team member" when the author can't
+  // be resolved (e.g. they've since left the org) — never fabricates a handle.
   useEffect(() => {
     const org = lesson?.org;
     if (!org) {
@@ -41,12 +62,9 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
     let cancelled = false;
     const updatedBy = lesson?.updated_by ?? null;
     (async () => {
-      const [members, identities] = await Promise.all([
-        listMembers(org.id),
-        listMemberIdentities(org.id),
-      ]);
+      const identities = await listMemberIdentities(org.id);
       if (cancelled) return;
-      setMemberCount(members.length);
+      setMemberCount(identities.length);
       const author = updatedBy ? identities.find((i) => i.user_id === updatedBy) : undefined;
       setUpdatedByHandle(author?.handle ?? null);
     })();
@@ -59,7 +77,40 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lesson?.org?.id, lesson?.updated_by]);
 
-  // Focus close button on open; restore on close
+  // Derive default form values from the current lesson. Changing lesson (user
+  // opens a different entry) resets the form automatically inside useEditableForm.
+  const defaultValues = useMemo<LessonFormValues>(
+    () => ({
+      value: lesson?.value ?? '',
+      tags: lesson?.tags ?? [],
+    }),
+    // Deliberately key on lesson identity (scope + key) so that opening the same
+    // lesson again after a save does not reset the form.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lesson?.scope, lesson?.key, lesson?.value, lesson?.tags],
+  );
+
+  const editForm = useEditableForm<LessonFormValues>({
+    defaultValues,
+    onSave: async (data) => {
+      if (!lesson) return 'No lesson selected';
+      const result = await updateLesson(lesson.scope, lesson.key, {
+        value: data.value,
+        tags: data.tags,
+      });
+      if (result.error) return result.error;
+      // Keep the sidebar open — the user may want to keep reading or editing.
+      // Invalidate the list caches so the updated value/tags appear behind the
+      // panel without requiring a page refresh.
+      void queryClient.invalidateQueries({ queryKey: ['memories'] });
+      void queryClient.invalidateQueries({ queryKey: ['lore'] });
+      toast.success('Memory saved', { description: lesson.key });
+    },
+  });
+
+  const { form, isSaving, saveError, isDirty, handleSubmit, discard } = editForm;
+
+  // Focus close button on open; restore on close.
   useEffect(() => {
     if (lesson) {
       const timer = setTimeout(() => closeRef.current?.focus(), 80);
@@ -68,29 +119,44 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
     return undefined;
   }, [lesson]);
 
-  // Close on Escape
+  // Close on Escape — but only when the form is clean (the useEditableForm hook
+  // captures Escape first when the form is dirty to trigger a discard).
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape' && lesson) onClose();
+      if (e.key === 'Escape' && lesson && !isDirty) onClose();
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [lesson, onClose]);
+  }, [lesson, onClose, isDirty]);
 
   function handleArchive() {
     if (!lesson) return;
-    setActionError(null);
-    startTransition(async () => {
-      const result = isArchived
-        ? await restoreLesson(lesson.scope, lesson.key)
-        : await archiveLesson(lesson.scope, lesson.key);
-      if (result.error) {
-        setActionError(result.error);
-      } else {
-        onMutated?.();
-        onClose();
-      }
-    });
+    const { scope, key } = lesson;
+    if (isArchived) {
+      restoreMutation.mutate({ scope, key }, {
+        onSuccess: (result) => {
+          if (result.error) {
+            toast.error('Failed to restore', { description: result.error });
+            return;
+          }
+          toast.success('Memory restored', { description: key });
+          onMutated?.();
+          onClose();
+        },
+      });
+    } else {
+      archiveMutation.mutate({ scope, key }, {
+        onSuccess: (result) => {
+          if (result.error) {
+            toast.error('Failed to archive', { description: result.error });
+            return;
+          }
+          toast.success('Memory archived', { description: key });
+          onMutated?.();
+          onClose();
+        },
+      });
+    }
   }
 
   return (
@@ -132,6 +198,19 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
                       archived
                     </span>
                   )}
+                  {isDirty && (
+                    <motion.span
+                      key="unsaved-badge"
+                      initial={{ opacity: 0, scale: 0.85 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.85 }}
+                      transition={{ duration: 0.15 }}
+                      className="rounded-full bg-[var(--color-accent-subtle)] border border-[var(--color-accent-glow)] px-2 py-0.5 text-xs text-[var(--color-accent)]"
+                      aria-live="polite"
+                    >
+                      unsaved
+                    </motion.span>
+                  )}
                 </div>
                 <code className="font-mono text-sm font-medium text-[var(--color-content-primary)]">
                   {lesson.key}
@@ -148,146 +227,189 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
               </button>
             </div>
 
-            {/* Body */}
-            <div className="flex flex-1 flex-col gap-5 overflow-y-auto p-5">
-              {/* Value */}
-              <section aria-label="Lesson content">
-                <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
-                  Content
-                </h2>
-                <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4 font-mono text-xs leading-relaxed text-[var(--color-content-secondary)] whitespace-pre-wrap">
-                  {lesson.value}
-                </div>
-              </section>
+            {/* Body — scrollable */}
+            <form
+              onSubmit={handleSubmit}
+              className="flex flex-1 flex-col overflow-hidden"
+              aria-label="Edit lesson"
+            >
+              <div className="group flex flex-1 flex-col gap-5 overflow-y-auto p-5">
+                {/* Content — editable */}
+                <Controller
+                  name="value"
+                  control={form.control}
+                  rules={{ required: 'Content is required', minLength: { value: 1, message: 'Content cannot be empty' } }}
+                  render={({ field, fieldState }) => (
+                    <EditableField
+                      label="Content"
+                      value={field.value}
+                      onChange={field.onChange}
+                      onEditEnd={field.onBlur}
+                      isEditing={!isArchived}
+                      readOnly={isArchived}
+                      placeholder="Enter memory content…"
+                      minRows={4}
+                      error={fieldState.error?.message}
+                    />
+                  )}
+                />
 
-              {/* Metadata */}
-              <section aria-label="Metadata">
-                <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
-                  Metadata
-                </h2>
-                <dl className="flex flex-col gap-2">
-                  {lesson.org && (
-                    <div className="flex items-center gap-2 text-xs">
-                      <Users className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                      <dt className="text-[var(--color-content-tertiary)]">Owner</dt>
-                      <dd className="ml-auto font-medium text-[var(--color-content-secondary)]">
-                        {lesson.org.name}
-                      </dd>
-                    </div>
+                {/* Tags — editable */}
+                <Controller
+                  name="tags"
+                  control={form.control}
+                  render={({ field }) => (
+                    <TagsField
+                      label="Tags"
+                      tags={field.value}
+                      onChange={field.onChange}
+                      editable={!isArchived}
+                    />
                   )}
-                  {lesson.org && (
-                    <div className="flex items-center gap-2 text-xs">
-                      <UserCircle className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                      <dt className="text-[var(--color-content-tertiary)]">Last updated by</dt>
-                      <dd className="ml-auto text-[var(--color-content-secondary)]">
-                        {updatedByHandle ? `@${updatedByHandle}` : 'a team member'}
-                      </dd>
-                    </div>
-                  )}
-                  {lesson.org && memberCount !== null && (
-                    <div className="flex items-center gap-2 text-xs">
-                      <Users className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                      <dt className="text-[var(--color-content-tertiary)]">Visible to</dt>
-                      <dd className="ml-auto text-[var(--color-content-secondary)]">
-                        {memberCount} {memberCount === 1 ? 'member' : 'members'}
-                      </dd>
-                    </div>
-                  )}
-                  {lesson.source_agent && (
-                    <div className="flex items-center gap-2 text-xs">
-                      <Bot className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                      <dt className="text-[var(--color-content-tertiary)]">Source agent</dt>
-                      <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
-                        {lesson.source_agent}
-                      </dd>
-                    </div>
-                  )}
-                  {lesson.trigger && (
-                    <div className="flex items-center gap-2 text-xs">
-                      <Zap className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                      <dt className="text-[var(--color-content-tertiary)]">Trigger</dt>
-                      <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
-                        {lesson.trigger}
-                      </dd>
-                    </div>
-                  )}
-                  <div className="flex items-center gap-2 text-xs">
-                    <CalendarClock className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                    <dt className="text-[var(--color-content-tertiary)]">Created</dt>
-                    <dd className="ml-auto text-[var(--color-content-secondary)]">
-                      {new Date(lesson.created_at).toLocaleString()}
-                    </dd>
-                  </div>
-                  <div className="flex items-center gap-2 text-xs">
-                    <Clock className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                    <dt className="text-[var(--color-content-tertiary)]">Last updated</dt>
-                    <dd className="ml-auto text-[var(--color-content-secondary)]">
-                      {new Date(lesson.updated_at).toLocaleString()}
-                    </dd>
-                  </div>
-                  {lesson.archived_at && (
-                    <div className="flex items-center gap-2 text-xs">
-                      <Archive className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                      <dt className="text-[var(--color-content-tertiary)]">Archived</dt>
-                      <dd className="ml-auto text-[var(--color-content-secondary)]">
-                        {new Date(lesson.archived_at).toLocaleString()}
-                      </dd>
-                    </div>
-                  )}
-                </dl>
-              </section>
+                />
 
-              {/* Tags */}
-              {lesson.tags.length > 0 && (
-                <section aria-label="Tags">
-                  <h2 className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
-                    <Tag className="size-3" aria-hidden />
-                    Tags
+                {/* Metadata — read-only */}
+                <section aria-label="Metadata">
+                  <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
+                    Metadata
                   </h2>
-                  <div className="flex flex-wrap gap-1.5">
-                    {lesson.tags.map((tag) => (
-                      <span
-                        key={tag}
-                        className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-1 font-mono text-xs text-[var(--color-content-secondary)]"
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
+                  <dl className="flex flex-col gap-2">
+                    {/* Ownership (org-owned lore only) — Owner, last-updated-by
+                        author, and "Visible to N members", resolved from the
+                        Phase 4 identity RPC above. */}
+                    {lesson.org && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <Users className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                        <dt className="text-[var(--color-content-tertiary)]">Owner</dt>
+                        <dd className="ml-auto font-medium text-[var(--color-content-secondary)]">
+                          {lesson.org.name}
+                        </dd>
+                      </div>
+                    )}
+                    {lesson.org && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <UserCircle className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                        <dt className="text-[var(--color-content-tertiary)]">Last updated by</dt>
+                        <dd className="ml-auto text-[var(--color-content-secondary)]">
+                          {updatedByHandle ? `@${updatedByHandle}` : 'a team member'}
+                        </dd>
+                      </div>
+                    )}
+                    {lesson.org && memberCount !== null && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <Users className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                        <dt className="text-[var(--color-content-tertiary)]">Visible to</dt>
+                        <dd className="ml-auto text-[var(--color-content-secondary)]">
+                          {memberCount} {memberCount === 1 ? 'member' : 'members'}
+                        </dd>
+                      </div>
+                    )}
+                    {lesson.source_agent && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <Bot className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                        <dt className="text-[var(--color-content-tertiary)]">Source agent</dt>
+                        <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
+                          {lesson.source_agent}
+                        </dd>
+                      </div>
+                    )}
+                    {lesson.trigger && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <Zap className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                        <dt className="text-[var(--color-content-tertiary)]">Trigger</dt>
+                        <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
+                          {lesson.trigger}
+                        </dd>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2 text-xs">
+                      <CalendarClock className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                      <dt className="text-[var(--color-content-tertiary)]">Created</dt>
+                      <dd className="ml-auto text-[var(--color-content-secondary)]">
+                        {new Date(lesson.created_at).toLocaleString()}
+                      </dd>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <Clock className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                      <dt className="text-[var(--color-content-tertiary)]">Last updated</dt>
+                      <dd className="ml-auto text-[var(--color-content-secondary)]">
+                        {new Date(lesson.updated_at).toLocaleString()}
+                      </dd>
+                    </div>
+                    {lesson.archived_at && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <Archive className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                        <dt className="text-[var(--color-content-tertiary)]">Archived</dt>
+                        <dd className="ml-auto text-[var(--color-content-secondary)]">
+                          {new Date(lesson.archived_at).toLocaleString()}
+                        </dd>
+                      </div>
+                    )}
+                    {(() => {
+                      const repoUrl = scopeRepoUrl(lesson.scope);
+                      if (!repoUrl) return null;
+                      const display = lesson.scope.replace(/^(repo|branch)::/, '');
+                      return (
+                        <div className="flex items-center gap-2 text-xs">
+                          <Github className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                          <dt className="text-[var(--color-content-tertiary)]">Repo</dt>
+                          <dd className="ml-auto">
+                            <a
+                              href={repoUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="font-mono text-[var(--color-content-secondary)] hover:text-[var(--color-accent)] hover:underline transition-colors duration-150"
+                            >
+                              {display}
+                            </a>
+                          </dd>
+                        </div>
+                      );
+                    })()}
+                  </dl>
                 </section>
-              )}
-            </div>
+              </div>
 
-            {/* Footer — actions */}
-            <div className="border-t border-[var(--color-border)] p-4 flex flex-col gap-2">
-              {actionError && (
-                <p className="text-xs text-red-500">{actionError}</p>
-              )}
-              <button
-                type="button"
-                onClick={handleArchive}
-                disabled={isPending}
-                className={[
-                  'flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-all duration-150',
-                  isArchived
-                    ? 'border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-raised)]'
-                    : 'border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-secondary)] hover:border-amber-400/40 hover:bg-amber-400/10 hover:text-amber-400',
-                  isPending ? 'cursor-not-allowed opacity-50' : '',
-                ].join(' ')}
-              >
-                {isArchived ? (
-                  <>
-                    <RotateCcw className="size-4" aria-hidden />
-                    {isPending ? 'Restoring…' : 'Restore'}
-                  </>
-                ) : (
-                  <>
-                    <Archive className="size-4" aria-hidden />
-                    {isPending ? 'Archiving…' : 'Archive'}
-                  </>
-                )}
-              </button>
-            </div>
+              {/* Sticky footer — archive action + save/discard bar */}
+              <div className="shrink-0">
+                {/* Archive / restore button */}
+                <div className="border-t border-[var(--color-border)] p-4">
+                  <button
+                    type="button"
+                    onClick={handleArchive}
+                    disabled={isPending || isSaving}
+                    className={[
+                      'flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium transition-all duration-150',
+                      isArchived
+                        ? 'border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-raised)]'
+                        : 'border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-secondary)] hover:border-amber-400/40 hover:bg-amber-400/10 hover:text-amber-400',
+                      isPending || isSaving ? 'cursor-not-allowed opacity-50' : '',
+                    ].join(' ')}
+                  >
+                    {isArchived ? (
+                      <>
+                        <RotateCcw className="size-4" aria-hidden />
+                        {isPending ? 'Restoring…' : 'Restore'}
+                      </>
+                    ) : (
+                      <>
+                        <Archive className="size-4" aria-hidden />
+                        {isPending ? 'Archiving…' : 'Archive'}
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Animated save/discard bar — appears only when form is dirty */}
+                <FormActionBar
+                  isDirty={isDirty && !isArchived}
+                  isSaving={isSaving}
+                  saveError={saveError}
+                  onSave={handleSubmit}
+                  onDiscard={discard}
+                />
+              </div>
+            </form>
           </motion.aside>
         </>
       )}

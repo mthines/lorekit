@@ -9,6 +9,7 @@ import { MemorySidebarProvider } from '@/components/providers/MemorySidebarProvi
 import { ToastProvider } from '@/components/providers/ToastProvider';
 import { OnboardingProvider } from '@/components/providers/OnboardingProvider';
 import { getOnboardingState } from '@/lib/onboarding-server';
+import { Toaster } from 'sonner';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createServerClient();
@@ -57,6 +58,26 @@ export default async function DashboardLayout({ children }: { children: React.Re
           </MemorySidebarProvider>
         </Suspense>
       </div>
+      {/*
+        Sonner toast portal. Positioned bottom-right (default). The dark theme
+        matches the LoreKit "terminal-meets-editorial" design direction: deep
+        charcoal background, amber accent, mono font — all honoured by Sonner's
+        `theme="dark"` which inherits the page background colour.
+        richColors surfaces success in green and error in red without us having
+        to style anything custom; it stays readable against the dark base.
+      */}
+      <Toaster
+        theme="dark"
+        position="bottom-right"
+        richColors
+        toastOptions={{
+          style: {
+            fontFamily: 'var(--font-mono)',
+            fontSize: '0.75rem',
+          },
+          duration: 3000,
+        }}
+      />
     </OnboardingProvider>
     </ToastProvider>
   );

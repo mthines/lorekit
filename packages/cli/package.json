@@ -1,8 +1,12 @@
 {
   "name": "@lorekit/cli",
-  "version": "1.0.1",
+  "version": "1.2.0",
   "description": "Install the LoreKit shared-memory skill and run health checks for the LoreKit MCP server.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mthines/lorekit"
+  },
   "type": "module",
   "bin": {
     "lorekit": "bin/lorekit.mjs"

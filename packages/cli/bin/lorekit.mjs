@@ -4,6 +4,7 @@ import process from 'node:process';
 import { readFileSync } from 'node:fs';
 import { parseArgs, log, err, c } from '../src/util.mjs';
 import { install } from '../src/install.mjs';
+import { uninstall } from '../src/uninstall.mjs';
 import { doctor } from '../src/doctor.mjs';
 import { hook } from '../src/hook.mjs';
 import { migrate } from '../src/migrate.mjs';
@@ -27,6 +28,10 @@ ${c.bold('Commands')}
               project (.claude) or globally for every project (~/.claude);
               --project / --global choose non-interactively, --no-hooks skips
               the hooks (skill stays model-invoked only).
+  uninstall   Reverse install: remove the lorekit-memory skill, the MCP server
+              entry, and the lifecycle hooks for the chosen scope. Surgical —
+              other servers, hooks, and settings are left untouched. Prompts
+              project vs global; --project / --global choose non-interactively.
   doctor      Verify the skill install, MCP connectivity, token, and scope.
   migrate     Relocate a LoreKit-format local store into the current layout.
               Dry-run by default; pass --yes to apply. Idempotent.
@@ -71,6 +76,7 @@ ${c.bold('Environment')}
 ${c.bold('Examples')}
   npx @lorekit/cli install --endpoint https://ref.supabase.co/functions/v1/mcp --token lk_rw_xxx
   npx @lorekit/cli install --global    # set up memory for every project (~/.claude)
+  npx @lorekit/cli uninstall --global  # tear that global setup back down
   npx @lorekit/cli doctor --deep
   npx @lorekit/cli migrate --from .lore                 # preview a rename
   npx @lorekit/cli migrate --from .lore --to project --yes
@@ -111,6 +117,8 @@ async function main() {
   switch (command) {
     case 'install':
       return install(args);
+    case 'uninstall':
+      return uninstall(args);
     case 'doctor':
       return doctor(args);
     case 'migrate':

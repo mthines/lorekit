@@ -1131,13 +1131,13 @@ end;
 $$;
 
 -- ═════════════════════════════════════════════════════════════════════════
--- Phase 4 dashboard-UX addition — supabase/migrations/00022 (reverses
+-- Phase 4 dashboard-UX addition — supabase/migrations/00024 (reverses
 -- plan.md org-sharing-phase-4-dashboard Decision D1: real member identities
 -- instead of a bare user_id for other members).
 -- ═════════════════════════════════════════════════════════════════════════
 
 -- ── 30. lorekit_org_members_list: member sees co-members' real handles;
---       non-member sees nothing (Phase 4 addition, 00022) ────────────────────
+--       non-member sees nothing (Phase 4 addition, 00024) ────────────────────
 -- Reuses phase3-org (f3), whose final membership at this point in the file is
 -- owner A, admin E, member C (D left in §27; G was removed in §25; C was
 -- promoted viewer->member in §26).
