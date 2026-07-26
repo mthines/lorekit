@@ -108,8 +108,6 @@ export function select(question, options, { defaultIndex = 0 } = {}) {
           cleanup();
           resolve(options[index].value);
           break;
-        default:
-          break;
       }
     };
 
