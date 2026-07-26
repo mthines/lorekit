@@ -15,6 +15,8 @@ import {
 interface OnboardingContextValue {
   /** Effective completion — server signal OR a manual "mark as done". */
   isDone: (id: string) => boolean;
+  /** True when the server reports the step complete, ignoring manual overrides. */
+  isServerDone: (id: string) => boolean;
   /** True only when completion comes from a manual toggle (so it can be undone). */
   isManuallyDone: (id: string) => boolean;
   /** Whether this step can be marked complete by hand. */
@@ -26,7 +28,6 @@ interface OnboardingContextValue {
   /** Overview-only: hide the inline checklist (the sidebar stays the way back). */
   dismissed: boolean;
   dismiss: () => void;
-  restore: () => void;
   /** False until localStorage has been read, so SSR and first paint agree. */
   hydrated: boolean;
 }
@@ -64,17 +65,16 @@ export function OnboardingProvider({
 
   const isManuallyDone = useCallback((id: string) => manualDone.has(id), [manualDone]);
 
+  const isServerDone = useCallback(
+    (id: string) =>
+      (ONBOARDING_STEP_IDS as readonly string[]).includes(id) &&
+      serverDoneFor(id as OnboardingStepId, serverState),
+    [serverState],
+  );
+
   const isDone = useCallback(
-    (id: string) => {
-      if (
-        (ONBOARDING_STEP_IDS as readonly string[]).includes(id) &&
-        serverDoneFor(id as OnboardingStepId, serverState)
-      ) {
-        return true;
-      }
-      return manualDone.has(id);
-    },
-    [manualDone, serverState],
+    (id: string) => isServerDone(id) || manualDone.has(id),
+    [isServerDone, manualDone],
   );
 
   const toggleDone = useCallback((id: string) => {
@@ -100,15 +100,6 @@ export function OnboardingProvider({
     }
   }, []);
 
-  const restore = useCallback(() => {
-    setDismissed(false);
-    try {
-      localStorage.removeItem(ONBOARDING_DISMISSED_KEY);
-    } catch {
-      /* best-effort */
-    }
-  }, []);
-
   const completedCount = ONBOARDING_STEP_IDS.filter((id) => isDone(id)).length;
   const allDone = completedCount === ONBOARDING_TOTAL;
 
@@ -116,6 +107,7 @@ export function OnboardingProvider({
     <OnboardingContext.Provider
       value={{
         isDone,
+        isServerDone,
         isManuallyDone,
         isMarkable,
         toggleDone,
@@ -124,7 +116,6 @@ export function OnboardingProvider({
         allDone,
         dismissed,
         dismiss,
-        restore,
         hydrated,
       }}
     >

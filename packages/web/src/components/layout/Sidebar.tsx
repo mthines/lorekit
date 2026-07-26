@@ -166,11 +166,14 @@ export function Sidebar({ user }: SidebarProps) {
                 {withProgressDot && (
                   <span
                     className="absolute -right-1 -top-0.5 size-2 rounded-full bg-[var(--color-accent)]"
-                    aria-label={`${completedCount} of ${total} steps complete`}
+                    aria-hidden
                   />
                 )}
               </span>
               <span>{label}</span>
+              {withProgressDot && (
+                <span className="sr-only">{`, ${completedCount} of ${total} steps complete`}</span>
+              )}
             </Link>
           );
         })}

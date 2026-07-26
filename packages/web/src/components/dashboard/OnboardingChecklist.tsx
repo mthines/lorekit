@@ -21,13 +21,14 @@ interface StepRowProps {
 }
 
 function StepRow({ step, index, isOpen, onToggle }: StepRowProps) {
-  const { isDone, isManuallyDone, isMarkable, toggleDone } = useOnboarding();
+  const { isDone, isServerDone, isManuallyDone, isMarkable, toggleDone } = useOnboarding();
 
   const done = isDone(step.id);
   const manuallyDone = isManuallyDone(step.id);
-  // A markable step can be undone only while its completion is self-attested —
-  // once a real server signal lands we no longer offer to un-mark it.
-  const markable = isMarkable(step.id) && (!done || manuallyDone);
+  // Offer the self-attest toggle only while there's no real server signal —
+  // once a delivery actually lands, the step is genuinely done and un-marking
+  // it would be a confusing no-op.
+  const markable = isMarkable(step.id) && !isServerDone(step.id);
 
   // A step is expandable when it has content to reveal. Completed steps stay
   // expandable (collapsed by default) so their instructions and tokens remain

@@ -6,7 +6,9 @@ import { DashboardStats } from '@/components/dashboard/DashboardStats';
 export const metadata: Metadata = { title: 'Overview' };
 
 export default async function DashboardPage() {
-  const steps = await buildOnboardingSteps();
+  // Overview is the default landing route — the single place that mints a
+  // first token so brand-new users get a ready-to-copy config immediately.
+  const steps = await buildOnboardingSteps({ autoGenerateToken: true });
 
   return (
     <div className="flex flex-col gap-6">
