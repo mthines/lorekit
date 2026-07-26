@@ -12,6 +12,7 @@ import { useEditableForm } from '@/lib/hooks/useEditableForm';
 import type { LessonEntry } from './LessonCard';
 import { archiveLesson, restoreLesson, updateLesson } from '@/lib/lore';
 import { scopeRepoUrl } from '@/lib/scope';
+import { toast } from 'sonner';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -57,6 +58,12 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
         tags: data.tags,
       });
       if (result.error) return result.error;
+      // Show a success toast as the sidebar slides out. Fires concurrently with
+      // onMutated() so the toast appears during the exit animation — a natural
+      // confirmation that bridges the gap between "panel closed" and "did it save?".
+      toast.success('Memory saved', {
+        description: lesson.key,
+      });
       onMutated?.();
     },
   });
