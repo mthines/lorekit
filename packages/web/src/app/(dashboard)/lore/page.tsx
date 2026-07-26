@@ -2,10 +2,10 @@
 
 import { LoreExplorer } from '@/components/lore/LoreExplorer';
 import { LoreExplorerSkeleton } from '@/components/lore/LoreExplorerSkeleton';
-import { useLoreData } from '@/lib/queries/lore';
+import { useScopeTree } from '@/lib/queries/lore';
 
 export default function LorePage() {
-  const { data, isLoading, isError } = useLoreData();
+  const { data: scopes, isLoading, isError } = useScopeTree();
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -19,16 +19,19 @@ export default function LorePage() {
         </p>
       </div>
 
-      {/* Only the explorer shell waits on data */}
-      <div className="flex-1 overflow-hidden" style={{ minHeight: '400px' }}>
+      {/* Only the explorer shell waits on the scope tree; lessons load separately.
+          overflow-y-auto on mobile so the stacked lesson list is naturally
+          scrollable; overflow-hidden on desktop so the two-panel layout's own
+          inner scroll containers take over. */}
+      <div className="flex-1 overflow-y-auto md:overflow-hidden" style={{ minHeight: '400px' }}>
         {isLoading ? (
           <LoreExplorerSkeleton />
-        ) : isError || !data ? (
+        ) : isError || !scopes ? (
           <p className="text-sm text-[var(--color-content-secondary)]">
             Failed to load lore data. Please refresh the page.
           </p>
         ) : (
-          <LoreExplorer scopes={data.scopes} lessons={data.lessons} />
+          <LoreExplorer scopes={scopes} />
         )}
       </div>
     </div>
