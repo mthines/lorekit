@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github } from 'lucide-react';
 import { Controller } from 'react-hook-form';
+import { useQueryClient } from '@tanstack/react-query';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { EditableField } from '@/components/ui/EditableField';
 import { TagsField } from '@/components/ui/TagsField';
@@ -33,6 +34,7 @@ interface LessonFormValues {
 
 export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSheetProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  const queryClient = useQueryClient();
   const archiveMutation = useArchiveLesson();
   const restoreMutation = useRestoreLesson();
   const isPending = archiveMutation.isPending || restoreMutation.isPending;
@@ -61,13 +63,12 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
         tags: data.tags,
       });
       if (result.error) return result.error;
-      // Show a success toast as the sidebar slides out. Fires concurrently with
-      // onMutated() so the toast appears during the exit animation — a natural
-      // confirmation that bridges the gap between "panel closed" and "did it save?".
-      toast.success('Memory saved', {
-        description: lesson.key,
-      });
-      onMutated?.();
+      // Keep the sidebar open — the user may want to keep reading or editing.
+      // Invalidate the list caches so the updated value/tags appear behind the
+      // panel without requiring a page refresh.
+      void queryClient.invalidateQueries({ queryKey: ['memories'] });
+      void queryClient.invalidateQueries({ queryKey: ['lore'] });
+      toast.success('Memory saved', { description: lesson.key });
     },
   });
 
