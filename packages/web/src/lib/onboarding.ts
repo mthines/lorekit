@@ -10,7 +10,9 @@ import type { ReactNode } from 'react';
  * completion rules.
  */
 
-export const ONBOARDING_STEP_IDS = ['server', 'connect', 'webhook'] as const;
+// Only the steps a consumer actually performs. "MCP server is live" was an
+// operator-side status, not a setup action, so it isn't part of the checklist.
+export const ONBOARDING_STEP_IDS = ['connect', 'webhook'] as const;
 export type OnboardingStepId = (typeof ONBOARDING_STEP_IDS)[number];
 
 export const ONBOARDING_TOTAL = ONBOARDING_STEP_IDS.length;
@@ -39,8 +41,6 @@ export interface OnboardingServerState {
  */
 export function serverDoneFor(id: OnboardingStepId, state: OnboardingServerState): boolean {
   switch (id) {
-    case 'server':
-      return true;
     case 'connect':
       return state.hasLessons;
     case 'webhook':

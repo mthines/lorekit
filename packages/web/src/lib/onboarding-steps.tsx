@@ -1,4 +1,4 @@
-import { Bot, Webhook, Zap } from 'lucide-react';
+import { Bot, Webhook } from 'lucide-react';
 import type { OnboardingStep } from './onboarding';
 import { OnboardingStepContent } from '@/components/dashboard/OnboardingStepContent';
 import { listTokens, generateToken } from '@/lib/tokens';
@@ -47,13 +47,6 @@ export async function buildOnboardingSteps(
   const { mcpUrl, webhookUrl } = resolveMcpUrls();
 
   return [
-    {
-      id: 'server',
-      title: 'MCP server is live',
-      subtitle: 'Your LoreKit Edge Function is deployed and accepting connections.',
-      icon: <Zap className="size-4" />,
-      content: null,
-    },
     {
       id: 'connect',
       title: 'Connect your agent',
