@@ -82,6 +82,36 @@ class RemoteStore {
     return { ok: res.ok, error: res.error, networkError: res.networkError };
   }
 
+  // ── Org management ─────────────────────────────────────────────────────────
+  // These proxy to the hosted MCP endpoint's org.* tools. Auth is resolved
+  // server-side from the Bearer token; no user-id is passed by the caller.
+
+  async orgCreate({ slug, name } = {}) {
+    const res = await this._call('org.create', clean({ slug, name }));
+    if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
+    const payload = unwrap(res.result);
+    return { ok: true, org: payload };
+  }
+
+  async orgList() {
+    const res = await this._call('org.list', {});
+    return this._entries(res);
+  }
+
+  async orgRename({ slug, name } = {}) {
+    const res = await this._call('org.rename', clean({ slug, name }));
+    if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
+    const payload = unwrap(res.result);
+    return { ok: true, ...payload };
+  }
+
+  async orgDelete({ slug } = {}) {
+    const res = await this._call('org.delete', clean({ slug }));
+    if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
+    const payload = unwrap(res.result);
+    return { ok: true, ...payload };
+  }
+
   // Connectivity probe for doctor — a transport check, not a memory op.
   async ping() {
     if (!this.usable()) return { ok: false, unusable: true };

@@ -76,9 +76,14 @@ test('initialize → tools/list → write/read/list round-trip over stdio', asyn
   assert.deepEqual(init.result.capabilities, { tools: {} });
 
   const list = m.get(2);
-  assert.equal(list.result.tools.length, 6);
+  // 6 memory.* tools + 4 org.* tools
+  assert.equal(list.result.tools.length, 10);
   assert.ok(list.result.tools.some((t) => t.name === 'memory.write'));
   assert.ok(list.result.tools.some((t) => t.name === 'memory.archive'));
+  assert.ok(list.result.tools.some((t) => t.name === 'org.create'));
+  assert.ok(list.result.tools.some((t) => t.name === 'org.list'));
+  assert.ok(list.result.tools.some((t) => t.name === 'org.rename'));
+  assert.ok(list.result.tools.some((t) => t.name === 'org.delete'));
 
   // The notification produced no response — only ids 1..5 came back.
   assert.deepEqual([...m.keys()].sort((a, b) => a - b), [1, 2, 3, 4, 5]);
@@ -128,7 +133,7 @@ test('a malformed frame does not crash the server; later frames still work', asy
   assert.ok(messages.some((x) => x.id === 7 && x.result && x.result.protocolVersion === '2024-11-05'));
 });
 
-test('off mode advertises no tools and reports disabled on a call', async () => {
+test('off mode: memory tools are absent but org tools are still advertised', async () => {
   const store = tmpDir();
   const { messages } = await serve(
     [
@@ -138,8 +143,57 @@ test('off mode advertises no tools and reports disabled on a call', async () => 
     { store, mode: 'off' },
   );
   const m = byId(messages);
-  assert.deepEqual(m.get(1).result.tools, []);
+  const tools = m.get(1).result.tools;
+  // In off mode memory tools are not advertised, but org tools always are.
+  assert.ok(!tools.some((t) => t.name.startsWith('memory.')), 'memory tools should not appear in off mode');
+  assert.ok(tools.some((t) => t.name === 'org.create'), 'org.create should appear in off mode');
+  assert.ok(tools.some((t) => t.name === 'org.list'), 'org.list should appear in off mode');
+  assert.ok(tools.some((t) => t.name === 'org.rename'), 'org.rename should appear in off mode');
+  assert.ok(tools.some((t) => t.name === 'org.delete'), 'org.delete should appear in off mode');
+  // memory.list still returns the "disabled" error
   const call = m.get(2);
   assert.equal(call.result.isError, true);
   assert.match(JSON.parse(call.result.content[0].text).error, /disabled/);
+});
+
+test('local mode: org tools are advertised alongside memory tools', async () => {
+  const store = tmpDir();
+  const { messages } = await serve(
+    [{ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }],
+    { store, mode: 'local' },
+  );
+  const m = byId(messages);
+  const tools = m.get(1).result.tools;
+  const names = tools.map((t) => t.name);
+  assert.ok(names.includes('memory.write'));
+  assert.ok(names.includes('org.create'));
+  assert.ok(names.includes('org.list'));
+  assert.ok(names.includes('org.rename'));
+  assert.ok(names.includes('org.delete'));
+});
+
+test('org.* call without remote endpoint returns a clear error, not a crash', async () => {
+  const store = tmpDir();
+  // No LOREKIT_MCP_URL / LOREKIT_TOKEN configured — org call should return
+  // { ok: false, error: '...' } wrapped in isError rather than crashing.
+  const { messages } = await serve(
+    [{ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'org.create', arguments: { slug: 'x', name: 'X' } } }],
+    { store, mode: 'local' },
+  );
+  const m = byId(messages).get(1);
+  assert.equal(m.result.isError, true);
+  const payload = JSON.parse(m.result.content[0].text);
+  assert.equal(payload.ok, false);
+  assert.match(payload.error, /remote LoreKit endpoint/);
+});
+
+test('org.unknown tool returns a JSON-RPC error, not a crash', async () => {
+  const store = tmpDir();
+  const { messages } = await serve(
+    [{ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'org.nope', arguments: {} } }],
+    { store },
+  );
+  const m = byId(messages).get(1);
+  assert.equal(m.error.code, -32601);
+  assert.match(m.error.message, /Unknown tool/);
 });

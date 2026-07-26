@@ -10,6 +10,12 @@
 //   remote → pass tool calls through to the hosted HTTP endpoint
 //   off    → advertise no tools; a call reports "disabled"
 //
+// org.* tools are always advertised regardless of memory mode. They proxy to
+// the remote endpoint because org management requires a server-side session
+// (JWT auth, SECURITY DEFINER RPCs). In local/off mode a transient RemoteStore
+// is built from the configured endpoint + token. If no remote is configured,
+// a clear error is returned.
+//
 // Machine-facing: ONLY JSON-RPC frames go to stdout — any diagnostics go to
 // stderr. The server never throws on malformed or partial input; a bad frame
 // yields a JSON-RPC parse error and the loop keeps serving.
@@ -19,6 +25,7 @@ import process from 'node:process';
 import { resolveProjectRoot } from './config.mjs';
 import { loadControl } from './control.mjs';
 import { createStore } from './store/index.mjs';
+import { createRemoteStore } from './store/remote.mjs';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_INFO = { name: 'lorekit-local', version: '1.0.0' };
@@ -26,7 +33,7 @@ const SERVER_INFO = { name: 'lorekit-local', version: '1.0.0' };
 // Tool advertisements — names + input schemas mirror the production MCP server
 // (supabase/functions/mcp/mcp-handler.ts) so a client sees the same contract
 // whether it points at the hosted endpoint or this local server.
-export const TOOL_DEFS = [
+export const MEMORY_TOOL_DEFS = [
   {
     name: 'memory.write',
     description: 'Store or update a lesson',
@@ -86,15 +93,76 @@ export const TOOL_DEFS = [
   },
 ];
 
+// Org tools — always advertised regardless of memory mode. They always route
+// through the remote MCP endpoint because org management requires JWT auth
+// (SECURITY DEFINER RPCs resolve actor via auth.uid(), never a passed user_id).
+export const ORG_TOOL_DEFS = [
+  {
+    name: 'org.create',
+    description:
+      'Create a new organization. You become its owner automatically. ' +
+      'The slug must be globally unique and lowercase (letters, digits, hyphens).',
+    inputSchema: {
+      type: 'object',
+      required: ['slug', 'name'],
+      properties: {
+        slug: { type: 'string', description: 'Unique lowercase identifier, e.g. "my-team"' },
+        name: { type: 'string', description: 'Human-readable display name' },
+      },
+    },
+  },
+  {
+    name: 'org.list',
+    description: 'List all organizations you are a member of, with your role in each.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'org.rename',
+    description: 'Rename an organization\'s display name. Requires admin or owner role.',
+    inputSchema: {
+      type: 'object',
+      required: ['slug', 'name'],
+      properties: {
+        slug: { type: 'string', description: 'The org slug to update' },
+        name: { type: 'string', description: 'New display name' },
+      },
+    },
+  },
+  {
+    name: 'org.delete',
+    description:
+      'Permanently delete an organization. Requires owner role. ' +
+      'All org-owned memories and memberships are cascade-deleted. Unrecoverable.',
+    inputSchema: {
+      type: 'object',
+      required: ['slug'],
+      properties: {
+        slug: { type: 'string', description: 'The org slug to delete' },
+      },
+    },
+  },
+];
+
+// Legacy alias kept so existing code that imports TOOL_DEFS still compiles.
+export const TOOL_DEFS = [...MEMORY_TOOL_DEFS, ...ORG_TOOL_DEFS];
+
 // tool name → (store, args) → store result. The store destructures the args it
 // needs, so the raw `arguments` object is passed straight through.
-const DISPATCH = {
+const MEMORY_DISPATCH = {
   'memory.write': (store, a) => store.write(a),
   'memory.read': (store, a) => store.read(a),
   'memory.list': (store, a) => store.list(a),
   'memory.search': (store, a) => store.search(a),
   'memory.delete': (store, a) => store.delete(a),
   'memory.archive': (store, a) => store.archive(a),
+};
+
+// org.* dispatch — always routed to the remote store.
+const ORG_DISPATCH = {
+  'org.create': (remote, a) => remote.orgCreate(a),
+  'org.list': (remote) => remote.orgList(),
+  'org.rename': (remote, a) => remote.orgRename(a),
+  'org.delete': (remote, a) => remote.orgDelete(a),
 };
 
 function reply(id, result) {
@@ -117,10 +185,22 @@ function toolResult(id, payload) {
 }
 
 // Build the per-message handler over a resolved control model. `store` is null
-// when mode is `off`, in which case no tools are advertised.
+// when mode is `off`. Org tools are always advertised regardless of mode.
 export function createHandler(control) {
   const store = createStore(control);
-  const tools = store ? TOOL_DEFS : [];
+  const memoryTools = store ? MEMORY_TOOL_DEFS : [];
+
+  // For org.* calls: prefer the active remote store (already built if mode is
+  // remote); fall back to building one from control.connection so org management
+  // works even in local/off modes as long as a remote endpoint is configured.
+  function getOrgRemote() {
+    if (store && store.mode === 'remote') return store;
+    const conn = (control && control.connection) || {};
+    if (conn.endpoint && conn.token) {
+      return createRemoteStore({ endpoint: conn.endpoint, token: conn.token });
+    }
+    return null;
+  }
 
   // Returns a JSON-RPC response object, or null for a notification (no reply).
   return async function handle(msg) {
@@ -142,7 +222,7 @@ export function createHandler(control) {
     }
 
     if (method === 'tools/list') {
-      return reply(id, { tools });
+      return reply(id, { tools: [...memoryTools, ...ORG_TOOL_DEFS] });
     }
 
     if (method === 'tools/call') {
@@ -150,11 +230,29 @@ export function createHandler(control) {
       const name = params.name;
       const args = params.arguments || {};
 
+      // org.* tools — always proxy to remote.
+      if (name && name.startsWith('org.')) {
+        const fn = ORG_DISPATCH[name];
+        if (!fn) return errorReply(id, -32601, `Unknown tool: ${name}`);
+        const remote = getOrgRemote();
+        if (!remote) {
+          return toolResult(id, {
+            ok: false,
+            error:
+              'org.* tools require a remote LoreKit endpoint configured with a read-write token. ' +
+              'Set LOREKIT_MCP_URL and LOREKIT_TOKEN (lk_rw_*), or run `lorekit install --endpoint <url> --token <lk_rw_*>`.',
+          });
+        }
+        const result = await fn(remote, args);
+        return toolResult(id, result);
+      }
+
+      // memory.* tools
       if (!store) {
         return toolResult(id, { ok: false, error: `memory is disabled (mode: ${control.mode})` });
       }
 
-      const fn = DISPATCH[name];
+      const fn = MEMORY_DISPATCH[name];
       if (!fn) return errorReply(id, -32601, `Unknown tool: ${name}`);
 
       const result = await fn(store, args);

@@ -3,7 +3,7 @@
  * Handles initialize, tools/list, and tools/call.
  */
 
-import { type AuthContext, getDb, canWrite, canRead, getUserId } from './auth.ts';
+import { type AuthContext, getDb, canWrite, canRead, getUserId, isJwtAuth } from './auth.ts';
 import {
   toolWrite,
   toolRead,
@@ -14,6 +14,10 @@ import {
   toolListArchived,
   toolRestore,
   toolPurge,
+  toolOrgCreate,
+  toolOrgList,
+  toolOrgRename,
+  toolOrgDelete,
   PURGE_RETENTION_DAYS_DEFAULT,
   type Params,
 } from './tools.ts';
@@ -21,7 +25,8 @@ import { type Span } from '../_shared/otel.ts';
 import { LimitError } from './limits.ts';
 import { toolRequires } from './permissions.ts';
 
-const TOOLS = {
+// memory.* tools — dispatched with (db, args, userId, span)
+const MEMORY_TOOLS = {
   'memory.write':         toolWrite,
   'memory.read':          toolRead,
   'memory.list':          toolList,
@@ -32,6 +37,19 @@ const TOOLS = {
   'memory.restore':       toolRestore,
   'memory.purge':         toolPurge,
 } as const;
+
+// org.* tools — dispatched with (db, args, span). They require JWT auth
+// (auth.uid() inside the SECURITY DEFINER RPCs); api_key callers are rejected
+// before dispatch (see the tools/call branch below).
+const ORG_TOOLS = {
+  'org.create': toolOrgCreate,
+  'org.list':   toolOrgList,
+  'org.rename': toolOrgRename,
+  'org.delete': toolOrgDelete,
+} as const;
+
+// All known tool names — used only for the unknown-tool guard in tools/call.
+const ALL_TOOL_NAMES = new Set<string>([...Object.keys(MEMORY_TOOLS), ...Object.keys(ORG_TOOLS)]);
 
 function jsonrpc(id: unknown, result: unknown): Response {
   return new Response(JSON.stringify({ jsonrpc: '2.0', id, result }), {
@@ -69,17 +87,14 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
     });
   }
 
-  if (method?.startsWith('notifications/')) {
-    // All MCP notification methods (notifications/initialized, notifications/cancelled,
-    // notifications/progress, etc.) require no response body per the MCP spec.
-    // Previously only notifications/initialized was handled; any other notification
-    // fell through to the MethodNotFound error path, producing false-positive ERROR spans.
+  if (method === 'notifications/initialized') {
     return new Response(null, { status: 204 });
   }
 
   if (method === 'tools/list') {
     return jsonrpc(id, {
       tools: [
+        // ── memory.* ───────────────────────────────────────────────────────
         {
           name: 'memory.write',
           description: 'Store or update a lesson',
@@ -165,35 +180,99 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
             },
           },
         },
+        // ── org.* ──────────────────────────────────────────────────────────
+        // Require a Supabase user JWT (auth.uid() resolved inside SECURITY
+        // DEFINER RPCs). api_key callers receive -32001 before dispatch.
+        {
+          name: 'org.create',
+          description:
+            'Create a new organization. You become its owner automatically. ' +
+            'The slug must be globally unique and lowercase.',
+          inputSchema: {
+            type: 'object',
+            required: ['slug', 'name'],
+            properties: {
+              slug: { type: 'string', description: 'Unique lowercase org identifier, e.g. "my-team"' },
+              name: { type: 'string', description: 'Human-readable display name' },
+            },
+          },
+        },
+        {
+          name: 'org.list',
+          description: 'List all organizations you are a member of, with your role in each.',
+          inputSchema: { type: 'object', properties: {} },
+        },
+        {
+          name: 'org.rename',
+          description: 'Rename an organization\'s display name. Requires admin or owner role.',
+          inputSchema: {
+            type: 'object',
+            required: ['slug', 'name'],
+            properties: {
+              slug: { type: 'string', description: 'The org slug to update' },
+              name: { type: 'string', description: 'New display name' },
+            },
+          },
+        },
+        {
+          name: 'org.delete',
+          description:
+            'Delete an organization. Requires owner role. ' +
+            'Soft-deletes the org — all org lore is immediately hidden from reads. Unrecoverable via MCP.',
+          inputSchema: {
+            type: 'object',
+            required: ['slug'],
+            properties: {
+              slug: { type: 'string', description: 'The org slug to delete' },
+            },
+          },
+        },
       ],
     });
   }
 
   if (method === 'tools/call') {
-    const toolName = params.name as keyof typeof TOOLS;
+    const toolName = params.name as string;
     const toolArgs = params.arguments ?? {};
-    const tool = TOOLS[toolName];
 
-    if (!tool) {
+    if (!ALL_TOOL_NAMES.has(toolName)) {
       span.error(`UnknownTool: ${toolName}`).setAttributes({ 'mcp.tool.name': toolName ?? 'unknown' });
       return jsonrpcError(id, -32601, `Unknown tool: ${toolName}`);
     }
 
-    const requiredPermission = toolRequires(toolName);
-    if (requiredPermission === 'write' && !canWrite(auth)) {
-      span.error('PermissionDenied: read-only token').setAttributes({ 'mcp.tool.name': toolName });
-      return jsonrpcError(id, -32001, 'This token does not have write permission. Use a read+write (lk_rw_) or write-only (lk_wo_) token.');
-    }
-    if (requiredPermission === 'read' && !canRead(auth)) {
-      span.error('PermissionDenied: write-only token').setAttributes({ 'mcp.tool.name': toolName });
-      return jsonrpcError(id, -32001, 'This token does not have read permission. Use a read+write (lk_rw_) or read-only (lk_ro_) token.');
+    span.setAttributes({ 'mcp.tool.name': toolName });
+
+    const isOrgTool = toolName in ORG_TOOLS;
+
+    if (isOrgTool) {
+      // org.* tools require a Supabase user JWT so auth.uid() resolves inside
+      // the SECURITY DEFINER RPCs. Reject api_key and service callers.
+      if (!isJwtAuth(auth)) {
+        span.error('PermissionDenied: org.* requires JWT auth');
+        return jsonrpcError(
+          id,
+          -32001,
+          'org.* tools require Supabase JWT authentication. ' +
+            'They are not available via API token — connect via the dashboard or a Supabase user session.',
+        );
+      }
+    } else {
+      // memory.* permission check (api_key auth only; JWT auth is RLS-gated).
+      const requiredPermission = toolRequires(toolName as keyof typeof MEMORY_TOOLS);
+      if (requiredPermission === 'write' && !canWrite(auth)) {
+        span.error('PermissionDenied: read-only token');
+        return jsonrpcError(id, -32001, 'This token does not have write permission. Use a read+write (lk_rw_) or write-only (lk_wo_) token.');
+      }
+      if (requiredPermission === 'read' && !canRead(auth)) {
+        span.error('PermissionDenied: write-only token');
+        return jsonrpcError(id, -32001, 'This token does not have read permission. Use a read+write (lk_rw_) or read-only (lk_ro_) token.');
+      }
     }
 
     const rawScope = toolArgs['scope'] as string | undefined;
     const scopeType = rawScope
       ? (rawScope.split('::')[0] ?? 'unknown')
       : 'unknown';
-    span.setAttributes({ 'mcp.tool.name': toolName });
     const toolSpan = span.child(`lorekit.${toolName}`, {
       'lorekit.tool.name': toolName,
       'lorekit.scope.type': scopeType,
@@ -202,8 +281,19 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
 
     try {
       const db = getDb(auth);
-      const userId = getUserId(auth);
-      const result = await tool(db, toolArgs, userId, toolSpan);
+      let result: unknown;
+
+      if (isOrgTool) {
+        // org.* tools: (db, args, span) — no userId parameter; auth.uid()
+        // is resolved inside the SECURITY DEFINER RPCs from the JWT.
+        result = await ORG_TOOLS[toolName as keyof typeof ORG_TOOLS](db, toolArgs, toolSpan);
+      } else {
+        // memory.* tools: (db, args, userId, span)
+        result = await MEMORY_TOOLS[toolName as keyof typeof MEMORY_TOOLS](
+          db, toolArgs, getUserId(auth), toolSpan,
+        );
+      }
+
       toolSpan.end();
       return jsonrpc(id, { content: [{ type: 'text', text: JSON.stringify(result) }] });
     } catch (err) {

@@ -1,6 +1,10 @@
 # MCP Tools Reference
 
-LoreKit exposes nine tools via the MCP protocol. All tools require a valid API token (see [api-tokens.md](./api-tokens.md)).
+LoreKit exposes nine `memory.*` tools and four `org.*` tools via the MCP protocol.
+
+`memory.*` tools require a valid API token (see [api-tokens.md](./api-tokens.md)).
+
+`org.*` tools require a **Supabase user JWT** (browser/dashboard session) — they are not available via `lk_*` API tokens because org management RPCs derive the actor from `auth.uid()` inside `SECURITY DEFINER` functions.
 
 **Endpoint:** `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp`
 
@@ -275,3 +279,103 @@ In your project's `.claude/skills/persistent-memory/config.json`:
 ```
 
 Generate a token from the LoreKit dashboard: **Overview → Step 2 → Generate new token**.
+
+---
+
+## org.create
+
+Create a new organization. You become its `owner` automatically. The slug must be globally unique and lowercase.
+
+**Auth:** Supabase user JWT required. Not available via API token.
+
+```json
+{
+  "params": {
+    "name": "org.create",
+    "arguments": {
+      "slug": "my-team",
+      "name": "My Team"
+    }
+  }
+}
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `slug` | ✓ | Lowercase unique identifier for the org (letters, digits, hyphens) |
+| `name` | ✓ | Human-readable display name |
+
+**Returns:** `{ "id": "<uuid>", "slug": "<slug>", "name": "<name>" }`
+
+---
+
+## org.list
+
+List all organizations you are a member of, with your role in each.
+
+**Auth:** Supabase user JWT required. Not available via API token.
+
+```json
+{
+  "params": {
+    "name": "org.list",
+    "arguments": {}
+  }
+}
+```
+
+**Returns:** `{ "entries": [{ "id", "slug", "name", "role", "created_at" }] }`
+
+Roles: `owner`, `admin`, `member`, `viewer`.
+
+---
+
+## org.rename
+
+Rename an organization's display name. Requires `admin` or `owner` role.
+
+**Auth:** Supabase user JWT required. Not available via API token.
+
+```json
+{
+  "params": {
+    "name": "org.rename",
+    "arguments": {
+      "slug": "my-team",
+      "name": "My Team (renamed)"
+    }
+  }
+}
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `slug` | ✓ | The org slug to update |
+| `name` | ✓ | New display name |
+
+**Returns:** `{ "slug": "<slug>", "name": "<new-name>" }`
+
+---
+
+## org.delete
+
+Soft-delete an organization. Requires `owner` role. All org-owned lore is immediately hidden from all reads. The deletion is permanent from a user's perspective — no restore via MCP.
+
+**Auth:** Supabase user JWT required. Not available via API token.
+
+```json
+{
+  "params": {
+    "name": "org.delete",
+    "arguments": {
+      "slug": "my-old-team"
+    }
+  }
+}
+```
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `slug` | ✓ | The org slug to delete |
+
+**Returns:** `{ "deleted": true, "slug": "<slug>" }`

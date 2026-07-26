@@ -120,3 +120,12 @@ export function canRead(auth: AuthContext): boolean {
 export function getUserId(auth: AuthContext): string | null {
   return auth.type === 'api_key' ? (auth.userId ?? null) : null;
 }
+
+/**
+ * Returns true iff the caller has a Supabase user JWT session.
+ * org.* tools require this so auth.uid() resolves inside SECURITY DEFINER RPCs.
+ * api_key and service callers have no session JWT and must be rejected.
+ */
+export function isJwtAuth(auth: AuthContext): boolean {
+  return auth.type === 'user';
+}
