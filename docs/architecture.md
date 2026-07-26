@@ -115,7 +115,7 @@ Unique constraint: `(user_id, scope, key)`.
 | `token_prefix` | text | First 12 chars + `...` for display (e.g. `lk_rw_aBcD1...`) |
 | `token_hash` | text | SHA-256 of the full token — never stored in plain text |
 | `permissions` | text[] | `["read", "write"]`, `["read"]`, or `["write"]` |
-| `last_used_at` | timestamptz | Updated fire-and-forget on auth |
+| `last_used_at` | timestamptz | Updated on auth via `EdgeRuntime.waitUntil` (survives isolate teardown; non-blocking) |
 
 ### `audit_log` table
 
@@ -136,6 +136,27 @@ for the one deliberate app-layer-capture exception.
 RLS: users SELECT only their own rows; a scoped INSERT policy backs the
 authenticated dashboard writer; **no update/delete policy** — immutable via
 the API surface.
+
+**Reading it — keyset pagination + search.** `listAuditLog` (the dashboard's
+Settings → Audit Logs reader) pages the log with **keyset (cursor) pagination**,
+not `OFFSET`: rows are ordered `(created_at desc, id desc)` and each page
+returns an opaque `nextCursor` (base64url-encoded `{ created_at, id }`,
+`packages/web/src/lib/pagination/cursor.ts`) instead of a page number. The
+cursor carries no `user_id` — `listAuditLog` always applies its own
+`.eq('user_id', …)` regardless of what the cursor says — so a malformed or
+forged cursor can at worst mis-page the caller's own rows, never widen
+visibility; `decodeCursor` fails closed to `null` (treated as page one) on
+any decode error. Callers may combine three optional filters (AND'd): an
+action set, a case-insensitive substring on `target`, and an inclusive
+`from`/`to` date interval. The pure decision logic (cursor codec, page-size
+clamping, the keyset predicate, filter normalization/escaping, date-boundary
+math) lives in `packages/web/src/lib/pagination/` — audit-decoupled and unit
+tested — with a thin Supabase-boundary shell (`apply.ts`) as the only impure
+piece. Migration `00012_audit_log_search.sql` adds the supporting indexes: a
+`pg_trgm` GIN trigram index on `target` (so the `ilike` substring search
+doesn't degrade to a sequential scan) and a `(user_id, created_at desc, id)`
+index covering the keyset seek (00010's `(user_id, created_at desc)` index
+lacks the `id` tiebreaker the keyset predicate needs).
 
 ---
 

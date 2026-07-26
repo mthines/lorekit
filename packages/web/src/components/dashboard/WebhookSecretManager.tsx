@@ -4,8 +4,15 @@ import { useState, useTransition, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Key, Plus, Copy, CheckCheck, Eye, EyeOff, RefreshCw, Loader2, GitBranch,
+  ShieldCheck, CircleCheck, TriangleAlert, Trash2,
 } from 'lucide-react';
-import { generateWebhookSecret, type WebhookSecret } from '@/lib/webhook-secrets';
+import {
+  generateWebhookSecret,
+  verifyWebhookSecret,
+  deleteWebhookSecret,
+  type WebhookSecret,
+} from '@/lib/webhook-secrets';
+import type { VerifyResult } from '@/lib/webhook-verify';
 import { normalizeRepo } from '@/lib/repo-format';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -31,12 +38,21 @@ function NewSecretDisplay({
   onDismiss: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
   const [visible, setVisible] = useState(true);
 
   function handleCopy() {
     navigator.clipboard.writeText(secret).then(() => {
       setCopied(true);
+      setCopyError(false);
       setTimeout(() => setCopied(false), 2500);
+    }).catch(() => {
+      // Clipboard access may be denied (permissions policy, non-HTTPS). Reveal
+      // the secret and prompt a manual copy rather than failing silently.
+      console.warn('[webhook-secret] clipboard write failed; falling back to manual copy');
+      setVisible(true);
+      setCopyError(true);
+      setTimeout(() => setCopyError(false), 4000);
     });
   }
 
@@ -84,6 +100,13 @@ function NewSecretDisplay({
             </button>
           </div>
         </div>
+
+        {copyError && (
+          <p className="mt-2 text-xs text-[var(--color-content-secondary)]">
+            Couldn&apos;t copy automatically — select the secret above and press{' '}
+            <kbd className="rounded border border-[var(--color-border)] px-1 font-mono">⌘/Ctrl+C</kbd>.
+          </p>
+        )}
 
         <button
           onClick={onDismiss}
@@ -169,26 +192,46 @@ function AddRepoForm({
 function RepoSecretRow({
   webhookSecret,
   onRegenerate,
+  onDeleted,
 }: {
-  webhookSecret: WebhookSecret;
+  // A rendered row always has a repo — legacy null-repo rows are filtered out
+  // before we get here (see WebhookSecretManager).
+  webhookSecret: WebhookSecret & { repo: string };
   onRegenerate: (secret: string, record: WebhookSecret) => void;
+  onDeleted: (id: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
   const [visible, setVisible] = useState(false);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState('');
 
+  const [verifying, startVerify] = useTransition();
+  const [verifyResult, setVerifyResult] = useState<VerifyResult | null>(null);
+
+  const [deleting, startDelete] = useTransition();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   function handleCopy() {
     navigator.clipboard.writeText(webhookSecret.secret).then(() => {
       setCopied(true);
+      setCopyError(false);
       setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+      // Clipboard access may be denied (permissions policy, non-HTTPS). Reveal
+      // the secret and prompt a manual copy rather than failing silently.
+      console.warn('[webhook-secret] clipboard write failed; falling back to manual copy');
+      setVisible(true);
+      setCopyError(true);
+      setTimeout(() => setCopyError(false), 4000);
     });
   }
 
   function handleRegenerate() {
     setError('');
+    setVerifyResult(null);
     startTransition(async () => {
-      const result = await generateWebhookSecret(webhookSecret.repo ?? '');
+      const result = await generateWebhookSecret(webhookSecret.repo);
       if ('error' in result) { setError(result.error); return; }
       onRegenerate(result.secret, {
         id: result.id,
@@ -197,6 +240,23 @@ function RepoSecretRow({
         active: true,
         created_at: new Date().toISOString(),
       });
+    });
+  }
+
+  function handleVerify() {
+    setError('');
+    setVerifyResult(null);
+    startVerify(async () => {
+      setVerifyResult(await verifyWebhookSecret(webhookSecret.repo));
+    });
+  }
+
+  function handleDelete() {
+    setError('');
+    startDelete(async () => {
+      const result = await deleteWebhookSecret(webhookSecret.id);
+      if (result.error) { setError(result.error); setConfirmDelete(false); return; }
+      onDeleted(webhookSecret.id);
     });
   }
 
@@ -211,7 +271,7 @@ function RepoSecretRow({
         <GitBranch className="size-4 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
         <div className="min-w-0 flex-1">
           <span className="font-mono text-sm font-medium text-[var(--color-content-primary)]">
-            {webhookSecret.repo ?? 'legacy (all repos)'}
+            {webhookSecret.repo}
           </span>
           <div className="mt-0.5 text-[10px] text-[var(--color-content-tertiary)]">
             Created {relativeTime(webhookSecret.created_at)}
@@ -236,15 +296,15 @@ function RepoSecretRow({
           </button>
           <button
             onClick={handleCopy}
-            aria-label={`Copy secret for ${webhookSecret.repo ?? 'legacy'}`}
+            aria-label={`Copy secret for ${webhookSecret.repo}`}
             className="flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-content-tertiary)] transition-colors duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
           >
             {copied ? <><CheckCheck className="size-3" /> Copied!</> : <><Copy className="size-3" /> Copy</>}
           </button>
           <button
             onClick={handleRegenerate}
-            disabled={pending || !webhookSecret.repo}
-            aria-label={`Regenerate secret for ${webhookSecret.repo ?? 'legacy'}`}
+            disabled={pending}
+            aria-label={`Regenerate secret for ${webhookSecret.repo}`}
             className="flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-content-tertiary)] transition-colors duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
           >
             {pending ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
@@ -252,6 +312,83 @@ function RepoSecretRow({
           </button>
         </div>
       </div>
+
+      {/* Verify + Delete actions */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          onClick={handleVerify}
+          disabled={verifying}
+          aria-label={`Verify webhook for ${webhookSecret.repo}`}
+          className="flex items-center gap-1.5 rounded-md border border-[var(--color-border)] px-2.5 py-1 text-xs font-medium text-[var(--color-content-secondary)] transition-colors duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {verifying ? <Loader2 className="size-3 animate-spin" /> : <ShieldCheck className="size-3" />}
+          {verifying ? 'Verifying…' : 'Verify'}
+        </button>
+
+        <div className="flex-1" />
+
+        {confirmDelete ? (
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-[var(--color-content-tertiary)]">Delete this secret?</span>
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              aria-label={`Confirm delete secret for ${webhookSecret.repo}`}
+              className="flex items-center gap-1 rounded-md border border-[var(--color-error)] px-2 py-0.5 text-xs font-medium text-[var(--color-error)] transition-colors duration-150 hover:bg-[var(--color-error)] hover:text-[#000] disabled:opacity-50"
+            >
+              {deleting ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+              Delete
+            </button>
+            <button
+              onClick={() => setConfirmDelete(false)}
+              disabled={deleting}
+              className="rounded-md border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-content-tertiary)] transition-colors duration-150 hover:text-[var(--color-content-secondary)] disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setConfirmDelete(true)}
+            aria-label={`Delete secret for ${webhookSecret.repo}`}
+            className="flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-content-tertiary)] transition-colors duration-150 hover:border-[var(--color-error)] hover:text-[var(--color-error)]"
+          >
+            <Trash2 className="size-3" />
+            Delete
+          </button>
+        )}
+      </div>
+
+      {/* Verify result */}
+      <AnimatePresence>
+        {verifyResult && (
+          <motion.div
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.18 }}
+            role="status"
+            className={[
+              'flex items-start gap-2 rounded-lg border px-3 py-2 text-xs',
+              verifyResult.ok
+                ? 'border-[var(--color-success)]/40 bg-[var(--color-success)]/10 text-[var(--color-content-secondary)]'
+                : 'border-[var(--color-error)]/40 bg-[var(--color-error)]/10 text-[var(--color-content-secondary)]',
+            ].join(' ')}
+          >
+            {verifyResult.ok
+              ? <CircleCheck className="mt-0.5 size-3.5 shrink-0 text-[var(--color-success)]" aria-hidden />
+              : <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-[var(--color-error)]" aria-hidden />}
+            <span>{verifyResult.message}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {copyError && (
+        <p className="text-xs text-[var(--color-content-secondary)]">
+          Couldn&apos;t copy automatically — select the secret and press{' '}
+          <kbd className="rounded border border-[var(--color-border)] px-1 font-mono">⌘/Ctrl+C</kbd>.
+        </p>
+      )}
       {error && <p className="text-xs text-[var(--color-error)]">{error}</p>}
     </motion.div>
   );
@@ -264,20 +401,36 @@ interface WebhookSecretManagerProps {
 }
 
 export function WebhookSecretManager({ initialSecrets }: WebhookSecretManagerProps) {
-  const [secrets, setSecrets] = useState<WebhookSecret[]>(initialSecrets);
-  const [showForm, setShowForm] = useState(initialSecrets.length === 0);
+  // Webhook secrets are per-repo. Any null-repo row is a leftover from before
+  // repo scoping existed — it isn't part of the current setup flow, so we don't
+  // surface it. Every displayed secret therefore has a concrete owner/repo.
+  const repoSecrets = initialSecrets.filter(
+    (s): s is WebhookSecret & { repo: string } => Boolean(s.repo),
+  );
+  const [secrets, setSecrets] = useState<Array<WebhookSecret & { repo: string }>>(repoSecrets);
+  const [showForm, setShowForm] = useState(repoSecrets.length === 0);
   const [newSecret, setNewSecret] = useState<string | null>(null);
   const [newSecretRepo, setNewSecretRepo] = useState<string | null>(null);
 
-  function upsertSecret(record: WebhookSecret) {
-    setSecrets((prev) => [record, ...prev.filter((s) => s.repo !== record.repo)]);
+  function handleGenerated(secret: string, record: WebhookSecret) {
+    // The generate action always returns a concrete repo; guard for the type
+    // narrowing and skip the (impossible) null-repo case rather than widening
+    // the per-repo list.
+    if (!record.repo) {
+      // Unreachable in practice — generateWebhookSecret always returns a repo —
+      // but surface it rather than leaving the form silently open.
+      console.warn('[webhook-secret] generated secret had no repo; skipping list update');
+      return;
+    }
+    const withRepo = { ...record, repo: record.repo };
+    setSecrets((prev) => [withRepo, ...prev.filter((s) => s.repo !== withRepo.repo)]);
+    setNewSecret(secret);
+    setNewSecretRepo(withRepo.repo);
+    setShowForm(false);
   }
 
-  function handleGenerated(secret: string, record: WebhookSecret) {
-    upsertSecret(record);
-    setNewSecret(secret);
-    setNewSecretRepo(record.repo);
-    setShowForm(false);
+  function handleDeleted(id: string) {
+    setSecrets((prev) => prev.filter((s) => s.id !== id));
   }
 
   function handleDismissNewSecret() {
@@ -318,7 +471,12 @@ export function WebhookSecretManager({ initialSecrets }: WebhookSecretManagerPro
           </p>
           <AnimatePresence>
             {secrets.map((s) => (
-              <RepoSecretRow key={s.id} webhookSecret={s} onRegenerate={handleGenerated} />
+              <RepoSecretRow
+                key={s.id}
+                webhookSecret={s}
+                onRegenerate={handleGenerated}
+                onDeleted={handleDeleted}
+              />
             ))}
           </AnimatePresence>
         </div>

@@ -3,7 +3,7 @@
  *
  * The role -> capability matrix (viewer/member/admin/owner x
  * write/archive/restore/hard_delete) lives in EXACTLY ONE place: the
- * `lorekit_org_can` SQL function (supabase/migrations/00015_org_roles_and_author.sql).
+ * `lorekit_org_can` SQL function (supabase/migrations/00016_org_roles_and_author.sql).
  * This module does not re-derive that matrix — it only translates the
  * distinct SQLSTATE the DB raises when a caller is denied (a non-member or a
  * viewer attempting a write-capable action) into an actionable app-layer

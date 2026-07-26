@@ -1,9 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, ExternalLink } from 'lucide-react';
 import { scopeIcon } from '@/components/memory/scope-meta';
-import type { ScopePrefix } from '@/lib/scope';
+import { scopeRepoUrl, type ScopePrefix } from '@/lib/scope';
 
 export interface ScopeNode {
   scope: string;
@@ -25,40 +25,65 @@ function ScopeTreeItem({ node, depth, selected, onSelect }: ScopeTreeItemProps) 
   const Icon = scopeIcon(node.type);
   const hasChildren = (node.children?.length ?? 0) > 0;
   const isSelected = selected === node.scope;
+  const repoUrl = scopeRepoUrl(node.scope);
 
   return (
     <li>
-      <button
-        type="button"
-        onClick={() => {
-          onSelect(node.scope);
-          if (hasChildren) setExpanded((v) => !v);
-        }}
-        className={[
-          'group flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-sm transition-all duration-150',
-          isSelected
-            ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
-            : 'text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]',
-        ].join(' ')}
-        style={{ paddingLeft: `${(depth + 1) * 12}px` }}
-        aria-expanded={hasChildren ? expanded : undefined}
-        aria-selected={isSelected}
-      >
-        {hasChildren ? (
-          <ChevronRight
+      {/* Row: the select button fills the width; the GitHub link is a sibling
+          (not nested) so we never put an <a> inside a <button>. */}
+      <div className="group/row relative flex items-center">
+        <button
+          type="button"
+          onClick={() => {
+            onSelect(node.scope);
+            if (hasChildren) setExpanded((v) => !v);
+          }}
+          className={[
+            'group flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-sm transition-all duration-150',
+            isSelected
+              ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
+              : 'text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]',
+          ].join(' ')}
+          style={{ paddingLeft: `${(depth + 1) * 12}px` }}
+          aria-expanded={hasChildren ? expanded : undefined}
+          aria-selected={isSelected}
+        >
+          {hasChildren ? (
+            <ChevronRight
+              className={[
+                'size-3 shrink-0 transition-transform duration-150',
+                expanded ? 'rotate-90' : '',
+              ].join(' ')}
+              aria-hidden
+            />
+          ) : (
+            <span className="size-3 shrink-0" aria-hidden />
+          )}
+          <Icon className="size-3.5 shrink-0 opacity-70" aria-hidden />
+          <span className="min-w-0 flex-1 truncate font-mono text-xs">{node.label}</span>
+          <span
             className={[
-              'size-3 shrink-0 transition-transform duration-150',
-              expanded ? 'rotate-90' : '',
+              'ml-auto shrink-0 text-xs tabular-nums opacity-50',
+              repoUrl ? 'mr-6' : '',
             ].join(' ')}
-            aria-hidden
-          />
-        ) : (
-          <span className="size-3 shrink-0" aria-hidden />
+          >
+            {node.count}
+          </span>
+        </button>
+        {repoUrl && (
+          <a
+            href={repoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            aria-label={`Open ${node.label} on GitHub`}
+            title="Open on GitHub"
+            className="absolute right-2 flex size-5 items-center justify-center rounded text-[var(--color-content-tertiary)] opacity-0 transition-all duration-150 hover:text-[var(--color-content-primary)] focus-visible:opacity-100 group-hover/row:opacity-100"
+          >
+            <ExternalLink className="size-3" aria-hidden />
+          </a>
         )}
-        <Icon className="size-3.5 shrink-0 opacity-70" aria-hidden />
-        <span className="min-w-0 flex-1 truncate font-mono text-xs">{node.label}</span>
-        <span className="ml-auto shrink-0 text-xs tabular-nums opacity-50">{node.count}</span>
-      </button>
+      </div>
 
       {hasChildren && expanded && (
         <ul className="mt-0.5" role="group">
