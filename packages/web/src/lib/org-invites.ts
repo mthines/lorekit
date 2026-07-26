@@ -18,6 +18,8 @@ import { revalidatePath } from 'next/cache';
 import { recordAuditEvent } from '@/lib/audit-log';
 import { sendInviteEmail } from '@/lib/invite-email';
 import type { OrgRole } from '@/lib/orgs';
+import { withSpan, logger, getTraceContext, SpanStatusCode } from '@/lib/telemetry';
+import { ATTR_ERROR_TYPE } from '@opentelemetry/semantic-conventions';
 
 export type OrgInviteStatus = 'pending' | 'accepted' | 'declined' | 'revoked';
 
@@ -77,52 +79,84 @@ export async function inviteMember(
    */
   orgName?: string,
 ): Promise<{ inviteId: string } | { error: string }> {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Not authenticated' };
+  return withSpan(
+    'lorekit.org.invite.member',
+    {
+      // Bounded, non-PII attributes safe for span dimensions.
+      // org_id (UUID) is safe — not a user-identifying string.
+      'lorekit.org.id': orgId,
+      'lorekit.invite.role': role,
+    },
+    async (span) => {
+      const supabase = await createServerClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { error: 'Not authenticated' };
 
-  const trimmed = handleOrEmail.trim().toLowerCase();
-  if (!trimmed) return { error: 'An email or GitHub handle is required' };
-  const isEmail = trimmed.includes('@');
+      const trimmed = handleOrEmail.trim().toLowerCase();
+      if (!trimmed) return { error: 'An email or GitHub handle is required' };
+      const isEmail = trimmed.includes('@');
 
-  const { data: inviteId, error } = await supabase.rpc('lorekit_org_invite', {
-    p_org_id: orgId,
-    p_invitee_email: isEmail ? trimmed : null,
-    p_invitee_handle: isEmail ? null : trimmed,
-    p_role: role,
-  });
-  if (error) return { error: error.message };
+      // Distinguish email vs handle invites — useful for diagnosing email delivery gaps.
+      span.setAttribute('lorekit.invite.type', isEmail ? 'email' : 'handle');
 
-  await recordAuditEvent({
-    action: 'member.invite',
-    resourceType: 'org_invite',
-    resourceId: inviteId as string,
-    target: orgId,
-    metadata: { invitee: trimmed, role },
-  });
+      const { data: inviteId, error } = await supabase.rpc('lorekit_org_invite', {
+        p_org_id: orgId,
+        p_invitee_email: isEmail ? trimmed : null,
+        p_invitee_handle: isEmail ? null : trimmed,
+        p_role: role,
+      });
 
-  // Fire the notification email for email invites only (a handle-only invite
-  // has no address). Non-blocking and non-throwing — sendInviteEmail swallows
-  // every failure, so a bad key / unverified domain never breaks the invite
-  // that already succeeded above. Prefer the caller-supplied org name; only
-  // hit the DB when it wasn't passed.
-  if (isEmail) {
-    let resolvedName = orgName?.trim() ?? '';
-    if (!resolvedName) {
-      const { data: org } = await supabase
-        .from('orgs')
-        .select('name, slug')
-        .eq('id', orgId)
-        .maybeSingle();
-      resolvedName = org?.name ?? org?.slug ?? 'your organization';
-    }
-    const invitedByLabel =
-      (user.user_metadata?.user_name as string | undefined) ?? user.email ?? null;
-    await sendInviteEmail({ to: trimmed, orgName: resolvedName, role, invitedByLabel });
-  }
+      if (error) {
+        span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseRpcError');
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: `SupabaseRpcError: ${error.message}`,
+        });
+        logger.error('lorekit.org.invite.member.failed', {
+          ...getTraceContext(),
+          'exception.type': 'SupabaseRpcError',
+          'exception.message': error.message,
+          'lorekit.org.id': orgId,
+          'lorekit.invite.role': role,
+          'lorekit.invite.type': isEmail ? 'email' : 'handle',
+        });
+        return { error: error.message };
+      }
 
-  revalidatePath('/settings', 'layout');
-  return { inviteId: inviteId as string };
+      span.setAttribute('lorekit.invite.id', inviteId as string);
+
+      await recordAuditEvent({
+        action: 'member.invite',
+        resourceType: 'org_invite',
+        resourceId: inviteId as string,
+        target: orgId,
+        metadata: { invitee: trimmed, role },
+      });
+
+      // Fire the notification email for email invites only (a handle-only invite
+      // has no address). Non-blocking and non-throwing — sendInviteEmail swallows
+      // every failure, so a bad key / unverified domain never breaks the invite
+      // that already succeeded above. Prefer the caller-supplied org name; only
+      // hit the DB when it wasn't passed.
+      if (isEmail) {
+        let resolvedName = orgName?.trim() ?? '';
+        if (!resolvedName) {
+          const { data: org } = await supabase
+            .from('orgs')
+            .select('name, slug')
+            .eq('id', orgId)
+            .maybeSingle();
+          resolvedName = org?.name ?? org?.slug ?? 'your organization';
+        }
+        const invitedByLabel =
+          (user.user_metadata?.user_name as string | undefined) ?? user.email ?? null;
+        await sendInviteEmail({ to: trimmed, orgName: resolvedName, role, invitedByLabel });
+      }
+
+      revalidatePath('/settings', 'layout');
+      return { inviteId: inviteId as string };
+    },
+  );
 }
 
 /** List an org's invites (all statuses). Owner/admin visibility via RLS. */
@@ -138,7 +172,11 @@ export async function listInvites(orgId: string): Promise<OrgInvite[]> {
     .order('created_at', { ascending: false });
 
   if (error) {
-    console.error('[listInvites] DB error:', error.message);
+    logger.error('lorekit.org.list_invites.failed', {
+      'exception.type': 'SupabaseQueryError',
+      'exception.message': error.message,
+      'lorekit.org.id': orgId,
+    });
     return [];
   }
   return (data ?? []).map((row) => mapInviteRow(row as Record<string, unknown>));
@@ -146,16 +184,35 @@ export async function listInvites(orgId: string): Promise<OrgInvite[]> {
 
 /** Revoke a pending invite. Owner/admin only. */
 export async function revokeInvite(inviteId: string): Promise<{ error?: string }> {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Not authenticated' };
+  return withSpan(
+    'lorekit.org.invite.revoke',
+    { 'lorekit.invite.id': inviteId },
+    async (span) => {
+      const supabase = await createServerClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { error: 'Not authenticated' };
 
-  const { error } = await supabase.rpc('lorekit_org_invite_revoke', { p_invite_id: inviteId });
-  if (error) return { error: error.message };
+      const { error } = await supabase.rpc('lorekit_org_invite_revoke', { p_invite_id: inviteId });
+      if (error) {
+        span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseRpcError');
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: `SupabaseRpcError: ${error.message}`,
+        });
+        logger.error('lorekit.org.invite.revoke.failed', {
+          ...getTraceContext(),
+          'exception.type': 'SupabaseRpcError',
+          'exception.message': error.message,
+          'lorekit.invite.id': inviteId,
+        });
+        return { error: error.message };
+      }
 
-  await recordAuditEvent({ action: 'member.revoke', resourceType: 'org_invite', resourceId: inviteId });
-  revalidatePath('/settings', 'layout');
-  return {};
+      await recordAuditEvent({ action: 'member.revoke', resourceType: 'org_invite', resourceId: inviteId });
+      revalidatePath('/settings', 'layout');
+      return {};
+    },
+  );
 }
 
 /**
@@ -163,30 +220,68 @@ export async function revokeInvite(inviteId: string): Promise<{ error?: string }
  * the new membership row to auth.uid() — see the module doc comment.
  */
 export async function acceptInvite(inviteId: string): Promise<{ error?: string }> {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Not authenticated' };
+  return withSpan(
+    'lorekit.org.invite.accept',
+    { 'lorekit.invite.id': inviteId },
+    async (span) => {
+      const supabase = await createServerClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { error: 'Not authenticated' };
 
-  const { error } = await supabase.rpc('lorekit_org_invite_accept', { p_invite_id: inviteId });
-  if (error) return { error: error.message }; // LK002 message surfaced as-is
+      const { error } = await supabase.rpc('lorekit_org_invite_accept', { p_invite_id: inviteId });
+      if (error) {
+        span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseRpcError');
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: `SupabaseRpcError: ${error.message}`,
+        });
+        logger.error('lorekit.org.invite.accept.failed', {
+          ...getTraceContext(),
+          'exception.type': 'SupabaseRpcError',
+          'exception.message': error.message,
+          'lorekit.invite.id': inviteId,
+        });
+        return { error: error.message }; // LK002 message surfaced as-is
+      }
 
-  await recordAuditEvent({ action: 'member.accept', resourceType: 'org_invite', resourceId: inviteId });
-  revalidatePath('/settings', 'layout');
-  return {};
+      await recordAuditEvent({ action: 'member.accept', resourceType: 'org_invite', resourceId: inviteId });
+      revalidatePath('/settings', 'layout');
+      return {};
+    },
+  );
 }
 
 /** Decline a pending invite addressed to the caller. Creates no membership. */
 export async function declineInvite(inviteId: string): Promise<{ error?: string }> {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Not authenticated' };
+  return withSpan(
+    'lorekit.org.invite.decline',
+    { 'lorekit.invite.id': inviteId },
+    async (span) => {
+      const supabase = await createServerClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { error: 'Not authenticated' };
 
-  const { error } = await supabase.rpc('lorekit_org_invite_decline', { p_invite_id: inviteId });
-  if (error) return { error: error.message };
+      const { error } = await supabase.rpc('lorekit_org_invite_decline', { p_invite_id: inviteId });
+      if (error) {
+        span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseRpcError');
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: `SupabaseRpcError: ${error.message}`,
+        });
+        logger.error('lorekit.org.invite.decline.failed', {
+          ...getTraceContext(),
+          'exception.type': 'SupabaseRpcError',
+          'exception.message': error.message,
+          'lorekit.invite.id': inviteId,
+        });
+        return { error: error.message };
+      }
 
-  await recordAuditEvent({ action: 'member.decline', resourceType: 'org_invite', resourceId: inviteId });
-  revalidatePath('/settings', 'layout');
-  return {};
+      await recordAuditEvent({ action: 'member.decline', resourceType: 'org_invite', resourceId: inviteId });
+      revalidatePath('/settings', 'layout');
+      return {};
+    },
+  );
 }
 
 /**
@@ -221,7 +316,10 @@ export async function listPendingInvitesForMe(): Promise<OrgInvite[]> {
     .or(identityFilters.join(','));
 
   if (error) {
-    console.error('[listPendingInvitesForMe] DB error:', error.message);
+    logger.error('lorekit.org.list_pending_invites.failed', {
+      'exception.type': 'SupabaseQueryError',
+      'exception.message': error.message,
+    });
     return [];
   }
   return (data ?? []).map((row) => mapInviteRow(row as Record<string, unknown>));

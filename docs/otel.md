@@ -7,7 +7,7 @@ LoreKit emits traces, metrics, and logs to Dash0 from every layer of the stack.
 | Layer | SDK | Signals |
 |-------|-----|---------|
 | Edge Function (Deno) | Lightweight OTLP/JSON via `fetch()` | Traces per tool call + webhook; DB child spans named by SQL statement |
-| Next.js server | `@vercel/otel` | HTTP server spans, Supabase query spans |
+| Next.js server | `@vercel/otel` | HTTP server spans, Supabase query spans, custom INTERNAL spans for every mutating server action |
 | Browser (RUM) | `@dash0/sdk-web` | Page loads, navigation, Web Vitals, fetch tracing, errors, sessions |
 | CLI (`@lorekit/cli`) | Lightweight OTLP/JSON via `fetch()` (zero-dep, no SDK) | One span + one counter point per human-facing command (`install` / `uninstall` / `doctor` / `migrate`) |
 
@@ -84,6 +84,62 @@ never read/query/manage). Leave `DEFAULT_TOKEN` empty to keep default export off
 
 ---
 
+## Next.js server-action spans
+
+Every mutating server action in `packages/web/src/lib/` emits an `INTERNAL`
+span via the shared `withSpan` helper in `lib/telemetry.ts`.
+Auto-instrumentation from `@vercel/otel` already covers the HTTP server boundary
+and the outbound Supabase fetch calls; the custom spans add business context
+(org IDs, invite types, token permissions) to those auto-instrumented trees.
+
+### Org lifecycle (`lib/orgs.ts`)
+
+| Span name | Key attributes |
+|-----------|---------------|
+| `lorekit.org.create` | `lorekit.org.slug`, `lorekit.org.id` (on success) |
+| `lorekit.org.rename` | `lorekit.org.id` |
+| `lorekit.org.delete` | `lorekit.org.id` |
+| `lorekit.org.member.remove` | `lorekit.org.id` |
+| `lorekit.org.member.change_role` | `lorekit.org.id`, `lorekit.org.member.role` |
+| `lorekit.org.leave` | `lorekit.org.id` |
+
+### Invite lifecycle (`lib/org-invites.ts`)
+
+| Span name | Key attributes |
+|-----------|---------------|
+| `lorekit.org.invite.member` | `lorekit.org.id`, `lorekit.invite.role`, `lorekit.invite.type` (`email`\|`handle`), `lorekit.invite.id` (on success) |
+| `lorekit.org.invite.revoke` | `lorekit.invite.id` |
+| `lorekit.org.invite.accept` | `lorekit.invite.id` |
+| `lorekit.org.invite.decline` | `lorekit.invite.id` |
+
+### API token management (`lib/tokens.ts`)
+
+| Span name | Key attributes |
+|-----------|---------------|
+| `lorekit.api_token.generate` | `lorekit.api_token.permissions`, `lorekit.api_token.id` (on success), `lorekit.api_token.limit_reached` (when cap is hit) |
+| `lorekit.api_token.revoke` | `lorekit.api_token.id`, `lorekit.api_token.prefix` |
+
+### Webhook secrets (`lib/webhook-secrets.ts`)
+
+| Span name | Key attributes |
+|-----------|---------------|
+| `lorekit.webhook_secret.generate` | `vcs.repository.name`, `lorekit.webhook_secret.is_rotation`, `lorekit.webhook_secret.id` (on success) |
+| `lorekit.webhook_secret.verify` | `vcs.repository.name`, `lorekit.webhook_secret.verify.ok`, `lorekit.webhook_secret.verify.code`, `http.response.status_code` |
+| `lorekit.webhook_secret.delete` | `lorekit.webhook_secret.id`, `vcs.repository.name` |
+
+On **any RPC/DB failure** the span also carries:
+
+| Attribute | Value |
+|-----------|-------|
+| `error.type` | The error class (e.g. `SupabaseRpcError`, `SupabaseInsertError`) |
+| Span status | `ERROR` with `{ErrorClass}: {message}` |
+
+A structured error log record is emitted to stdout with `exception.type`,
+`exception.message`, `exception.stacktrace`, and `trace_id` + `span_id` for
+span↔log correlation.
+
+---
+
 ## Invite-email span
 
 The org-invite email send (`packages/web/src/lib/invite-email.ts`) is a
@@ -102,7 +158,10 @@ lorekit.invite.email.send   (INTERNAL — one per email-invite send attempt)
 | `lorekit.invite.email.outcome` | `sent` | Bounded: `sent` \| `skipped_no_recipient` \| `skipped_no_api_key` \| `error` |
 | `lorekit.invite.email.status_code` | `422` | Only on a non-2xx Resend response |
 
-On failure the span also records the exception and sets `ERROR` status. The
+On failure the span sets `ERROR` status and emits a structured error log record
+(not `span.recordException()` which uses the deprecated Span Event API — see
+[spans.md §"Recording exceptions"](https://github.com/dash0hq/agent-skills/blob/main/skills/otel-instrumentation/rules/spans.md)).
+The
 recipient email and org name are deliberately **not** attributed (PII). Group by
 `lorekit.invite.email.outcome` in Dash0 to watch send health; a rising `error`
 rate means the Resend key/domain needs attention.

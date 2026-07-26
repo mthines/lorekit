@@ -32,6 +32,8 @@ import {
   interpretVerifyStatus,
   type VerifyResult,
 } from '@/lib/webhook-verify';
+import { withSpan, logger, getTraceContext, SpanStatusCode } from '@/lib/telemetry';
+import { ATTR_ERROR_TYPE } from '@opentelemetry/semantic-conventions';
 
 export interface WebhookSecret {
   id: string;
@@ -66,7 +68,10 @@ export async function listWebhookSecrets(): Promise<WebhookSecret[]> {
     .order('created_at', { ascending: false });
 
   if (error) {
-    console.error('[listWebhookSecrets] DB error:', error.message);
+    logger.error('lorekit.webhook_secret.list.failed', {
+      'exception.type': 'SupabaseQueryError',
+      'exception.message': error.message,
+    });
     return [];
   }
   return (data ?? []) as WebhookSecret[];
@@ -86,48 +91,75 @@ export async function listWebhookSecrets(): Promise<WebhookSecret[]> {
 export async function generateWebhookSecret(
   repoInput: string,
 ): Promise<{ secret: string; id: string; repo: string } | { error: string }> {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Not authenticated' };
+  return withSpan(
+    'lorekit.webhook_secret.generate',
+    // repo is the user-supplied "owner/name" string — not PII but potentially
+    // high-cardinality. It is safe to record here because webhook secrets are
+    // already scoped per repo by design; this enables tracing secret rotation
+    // events directly to the affected repo.
+    { 'vcs.repository.name': repoInput.trim() },
+    async (span) => {
+      const supabase = await createServerClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { error: 'Not authenticated' };
 
-  const repo = normalizeRepo(repoInput);
-  if (!repo) return { error: 'Invalid repo — expected the format "owner/name"' };
+      const repo = normalizeRepo(repoInput);
+      if (!repo) return { error: 'Invalid repo — expected the format "owner/name"' };
 
-  const secret = randomHex64();
+      span.setAttribute('vcs.repository.name', repo);
 
-  // Deactivate only the prior active secret for this (user, repo) pair. The
-  // deactivated row count (D10) distinguishes a rotate from a first-create —
-  // the request-scoped `{ count: 'exact' }` option is required to read it.
-  const { count: deactivatedCount } = await supabase
-    .from('webhook_secrets')
-    .update({ active: false }, { count: 'exact' })
-    .eq('user_id', user.id)
-    .eq('repo', repo)
-    .eq('active', true);
+      const secret = randomHex64();
 
-  // Insert the new active row for this repo.
-  const { data, error } = await supabase
-    .from('webhook_secrets')
-    .insert({ user_id: user.id, secret, repo, active: true })
-    .select('id, created_at')
-    .single();
+      // Deactivate only the prior active secret for this (user, repo) pair. The
+      // deactivated row count (D10) distinguishes a rotate from a first-create —
+      // the request-scoped `{ count: 'exact' }` option is required to read it.
+      const { count: deactivatedCount } = await supabase
+        .from('webhook_secrets')
+        .update({ active: false }, { count: 'exact' })
+        .eq('user_id', user.id)
+        .eq('repo', repo)
+        .eq('active', true);
 
-  if (error) return { error: error.message };
+      const isRotation = (deactivatedCount ?? 0) > 0;
+      span.setAttribute('lorekit.webhook_secret.is_rotation', isRotation);
 
-  const id = (data as { id: string }).id;
-  await recordAuditEvent({
-    action: (deactivatedCount ?? 0) > 0 ? 'webhook_secret.rotate' : 'webhook_secret.create',
-    resourceType: 'webhook_secret',
-    resourceId: id,
-    target: repo,
-    metadata: { repo },
-  });
+      // Insert the new active row for this repo.
+      const { data, error } = await supabase
+        .from('webhook_secrets')
+        .insert({ user_id: user.id, secret, repo, active: true })
+        .select('id, created_at')
+        .single();
 
-  revalidatePath('/dashboard');
-  // 'layout' so nested /settings/* pages (where secrets render) revalidate,
-  // not just the /settings redirect page.
-  revalidatePath('/settings', 'layout');
-  return { secret, id, repo };
+      if (error) {
+        span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseInsertError');
+        span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseInsertError: ${error.message}` });
+        logger.error('lorekit.webhook_secret.generate.failed', {
+          ...getTraceContext(),
+          'exception.type': 'SupabaseInsertError',
+          'exception.message': error.message,
+          'vcs.repository.name': repo,
+        });
+        return { error: error.message };
+      }
+
+      const id = (data as { id: string }).id;
+      span.setAttribute('lorekit.webhook_secret.id', id);
+
+      await recordAuditEvent({
+        action: isRotation ? 'webhook_secret.rotate' : 'webhook_secret.create',
+        resourceType: 'webhook_secret',
+        resourceId: id,
+        target: repo,
+        metadata: { repo },
+      });
+
+      revalidatePath('/dashboard');
+      // 'layout' so nested /settings/* pages (where secrets render) revalidate,
+      // not just the /settings redirect page.
+      revalidatePath('/settings', 'layout');
+      return { secret, id, repo };
+    },
+  );
 }
 
 /**
@@ -146,52 +178,94 @@ export async function generateWebhookSecret(
  * repo-scoped ping for) — callers should disable the button for those rows.
  */
 export async function verifyWebhookSecret(repoInput: string): Promise<VerifyResult> {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ok: false, code: 'unreachable', message: 'Not authenticated' };
+  return withSpan(
+    'lorekit.webhook_secret.verify',
+    { 'vcs.repository.name': repoInput.trim() },
+    async (span) => {
+      const supabase = await createServerClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { ok: false, code: 'unreachable', message: 'Not authenticated' };
 
-  const repo = normalizeRepo(repoInput);
-  if (!repo) {
-    return { ok: false, code: 'unreachable', message: 'Invalid repo — expected the format "owner/name".' };
-  }
+      const repo = normalizeRepo(repoInput);
+      if (!repo) {
+        return { ok: false, code: 'unreachable', message: 'Invalid repo — expected the format "owner/name".' };
+      }
 
-  const { data, error } = await supabase
-    .from('webhook_secrets')
-    .select('secret')
-    .eq('user_id', user.id)
-    .eq('repo', repo)
-    .eq('active', true)
-    .maybeSingle();
+      span.setAttribute('vcs.repository.name', repo);
 
-  if (error || !data?.secret) {
-    return { ok: false, code: 'no_secret', message: 'No active secret for this repo — generate one first.' };
-  }
+      const { data, error } = await supabase
+        .from('webhook_secrets')
+        .select('secret')
+        .eq('user_id', user.id)
+        .eq('repo', repo)
+        .eq('active', true)
+        .maybeSingle();
 
-  const { webhookUrl } = resolveMcpUrls();
-  const body = buildVerifyPayload(repo);
-  const signature = await signBody(data.secret as string, body);
+      if (error || !data?.secret) {
+        return { ok: false, code: 'no_secret', message: 'No active secret for this repo — generate one first.' };
+      }
 
-  try {
-    const res = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-github-event': VERIFY_EVENT,
-        'x-github-delivery': crypto.randomUUID(),
-        'x-hub-signature-256': signature,
-      },
-      body,
-      // Never cache a verification probe — it must hit the live endpoint.
-      cache: 'no-store',
-    });
-    return interpretVerifyStatus(res.status);
-  } catch {
-    return {
-      ok: false,
-      code: 'unreachable',
-      message: 'Could not reach the webhook endpoint. Check that the MCP server is deployed.',
-    };
-  }
+      const { webhookUrl } = resolveMcpUrls();
+      const body = buildVerifyPayload(repo);
+      const signature = await signBody(data.secret as string, body);
+
+      try {
+        const res = await fetch(webhookUrl, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-github-event': VERIFY_EVENT,
+            'x-github-delivery': crypto.randomUUID(),
+            'x-hub-signature-256': signature,
+          },
+          body,
+          // Never cache a verification probe — it must hit the live endpoint.
+          cache: 'no-store',
+        });
+
+        const result = interpretVerifyStatus(res.status);
+        span.setAttribute('lorekit.webhook_secret.verify.ok', result.ok);
+        span.setAttribute('lorekit.webhook_secret.verify.code', result.code);
+        // Record the HTTP response code using the standard attribute.
+        span.setAttribute('http.response.status_code', res.status);
+
+        if (!result.ok) {
+          span.setAttribute(ATTR_ERROR_TYPE, 'WebhookVerifyFailed');
+          span.setStatus({
+            code: SpanStatusCode.ERROR,
+            message: `WebhookVerifyFailed: ${result.code} — ${result.message}`,
+          });
+          logger.warn('lorekit.webhook_secret.verify.failed', {
+            ...getTraceContext(),
+            'lorekit.webhook_secret.verify.code': result.code,
+            'http.response.status_code': res.status,
+            'vcs.repository.name': repo,
+          });
+        }
+
+        return result;
+      } catch (err) {
+        const error = err as Error;
+        span.setAttribute(ATTR_ERROR_TYPE, error.name);
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: `${error.name}: ${error.message}`,
+        });
+        logger.error('lorekit.webhook_secret.verify.failed', {
+          ...getTraceContext(),
+          'exception.type': error.name,
+          'exception.message': error.message,
+          'exception.stacktrace': error.stack ?? '',
+          'vcs.repository.name': repo,
+        });
+        return {
+          ok: false,
+          code: 'unreachable',
+          message: 'Could not reach the webhook endpoint. Check that the MCP server is deployed.',
+        };
+      }
+    },
+  );
 }
 
 /**
@@ -206,37 +280,55 @@ export async function verifyWebhookSecret(repoInput: string): Promise<VerifyResu
  * Works for any row the user owns, including the legacy null-repo secret.
  */
 export async function deleteWebhookSecret(id: string): Promise<{ error?: string }> {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Not authenticated' };
+  return withSpan(
+    'lorekit.webhook_secret.delete',
+    { 'lorekit.webhook_secret.id': id },
+    async (span) => {
+      const supabase = await createServerClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { error: 'Not authenticated' };
 
-  // Read the repo before deactivating so the audit event has a readable target.
-  const { data: existing } = await supabase
-    .from('webhook_secrets')
-    .select('repo')
-    .eq('id', id)
-    .eq('user_id', user.id)
-    .maybeSingle();
+      // Read the repo before deactivating so the audit event has a readable target.
+      const { data: existing } = await supabase
+        .from('webhook_secrets')
+        .select('repo')
+        .eq('id', id)
+        .eq('user_id', user.id)
+        .maybeSingle();
 
-  const { error } = await supabase
-    .from('webhook_secrets')
-    .update({ active: false })
-    .eq('id', id)
-    .eq('user_id', user.id) // Ensure ownership
-    .eq('active', true);
+      const { error } = await supabase
+        .from('webhook_secrets')
+        .update({ active: false })
+        .eq('id', id)
+        .eq('user_id', user.id) // Ensure ownership
+        .eq('active', true);
 
-  if (error) return { error: error.message };
+      if (error) {
+        span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseUpdateError');
+        span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseUpdateError: ${error.message}` });
+        logger.error('lorekit.webhook_secret.delete.failed', {
+          ...getTraceContext(),
+          'exception.type': 'SupabaseUpdateError',
+          'exception.message': error.message,
+          'lorekit.webhook_secret.id': id,
+        });
+        return { error: error.message };
+      }
 
-  const repo = (existing?.repo as string | null) ?? null;
-  await recordAuditEvent({
-    action: 'webhook_secret.deactivate',
-    resourceType: 'webhook_secret',
-    resourceId: id,
-    target: repo ?? 'legacy (all repos)',
-    metadata: repo ? { repo } : {},
-  });
+      const repo = (existing?.repo as string | null) ?? null;
+      if (repo) span.setAttribute('vcs.repository.name', repo);
 
-  revalidatePath('/dashboard');
-  revalidatePath('/settings', 'layout');
-  return {};
+      await recordAuditEvent({
+        action: 'webhook_secret.deactivate',
+        resourceType: 'webhook_secret',
+        resourceId: id,
+        target: repo ?? 'legacy (all repos)',
+        metadata: repo ? { repo } : {},
+      });
+
+      revalidatePath('/dashboard');
+      revalidatePath('/settings', 'layout');
+      return {};
+    },
+  );
 }
