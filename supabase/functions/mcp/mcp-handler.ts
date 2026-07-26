@@ -50,9 +50,10 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
   let body: { id?: unknown; method?: string; params?: Params };
   try {
     body = await req.json();
-  } catch {
-    span.error('ParseError: invalid JSON body').setAttributes({ 'mcp.method': 'unknown' });
-    return jsonrpcError(null, -32700, 'Parse error');
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    span.error(`ParseError: invalid JSON body — ${detail}`).setAttributes({ 'mcp.method': 'unknown', 'error.message': detail });
+    return jsonrpcError(null, -32700, `Parse error: ${detail}`);
   }
 
   const { id = null, method, params = {} } = body;
