@@ -1,19 +1,25 @@
+<div align="center">
+
+<img width="120" height="120" alt="LoreKit logo" src="https://github.com/user-attachments/assets/d65ac2d4-0a52-483b-9efe-427dfa45c026" />
+
 # LoreKit
 
-> Shared, persistent memory for your AI coding agents.
+**Shared, persistent memory for your AI coding agents.**
+
+Your agent solves something once — a migration gotcha, a flaky-test fix, why the
+build breaks only on CI — and **remembers it in every session after, on every
+machine, across every tool.** One `npx` command to connect; works with Claude
+Code, Cursor, Codex, or any MCP client.
 
 [![Deploy](https://github.com/mthines/lorekit/actions/workflows/deploy.yml/badge.svg?branch=main)](https://github.com/mthines/lorekit/actions/workflows/deploy.yml)
 [![npm](https://img.shields.io/npm/v/@lorekit/cli.svg)](https://www.npmjs.com/package/@lorekit/cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
-Your coding agent figures something out — the migration pattern you keep
-forgetting to mention, the fix for that flaky test, the reason a build breaks on
-CI but not locally. Then the session ends, and it forgets. Tomorrow you explain
-it again.
+</div>
 
-LoreKit gives your agents a memory that outlives the session. Lessons are
-written once and recalled everywhere: your machine, your teammates' machines,
-CI, and whichever tool you happen to be using that day.
+```bash
+npx @lorekit/cli install     # connect your agent — full setup below
+```
 
 ```
                    ┌─ your agent, any tool, any machine ─┐
@@ -23,9 +29,10 @@ CI, and whichever tool you happen to be using that day.
   time it needs it └─────────────────────────────────────┘
 ```
 
-## The problem you have right now
+## The problem: your agents forget everything
 
-If you use AI coding agents daily, you're paying a quiet tax:
+Every coding agent starts each session with total amnesia. If you use them
+daily, that costs you:
 
 - **Every session starts from zero.** The agent that just untangled a tricky bug
   has no memory of it an hour later. You re-explain the same context, over and
@@ -199,6 +206,4 @@ package, see [DEVELOPMENT.md](./DEVELOPMENT.md).
 ## License
 
 [MIT](./LICENSE) © LoreKit contributors.
-
-<img width="128" height="128" alt="lorekit-logo-2" src="https://github.com/user-attachments/assets/d65ac2d4-0a52-483b-9efe-427dfa45c026" />
 
