@@ -13,26 +13,33 @@ import type { OrgInvite } from './org-invites';
 describe('roleCapabilities', () => {
   it('viewer has no management capabilities', () => {
     expect(roleCapabilities.viewer).toEqual({
-      canInvite: false, canManageRoles: false, canRemoveMembers: false, canRename: false, canDelete: false,
+      canInvite: false, canManageRoles: false, canRemoveMembers: false, canRename: false, canDelete: false, canManageScopes: false,
     });
   });
 
   it('member has no management capabilities (read+write lore, not org management)', () => {
     expect(roleCapabilities.member).toEqual({
-      canInvite: false, canManageRoles: false, canRemoveMembers: false, canRename: false, canDelete: false,
+      canInvite: false, canManageRoles: false, canRemoveMembers: false, canRename: false, canDelete: false, canManageScopes: false,
     });
   });
 
-  it('admin can invite, manage roles, remove members, and rename — but not delete', () => {
+  it('admin can invite, manage roles, remove members, rename, and manage scopes — but not delete', () => {
     expect(roleCapabilities.admin).toEqual({
-      canInvite: true, canManageRoles: true, canRemoveMembers: true, canRename: true, canDelete: false,
+      canInvite: true, canManageRoles: true, canRemoveMembers: true, canRename: true, canDelete: false, canManageScopes: true,
     });
   });
 
-  it('owner can do everything, including delete', () => {
+  it('owner can do everything, including delete and manage scopes', () => {
     expect(roleCapabilities.owner).toEqual({
-      canInvite: true, canManageRoles: true, canRemoveMembers: true, canRename: true, canDelete: true,
+      canInvite: true, canManageRoles: true, canRemoveMembers: true, canRename: true, canDelete: true, canManageScopes: true,
     });
+  });
+
+  it('only admin and owner can manage scopes', () => {
+    expect(roleCapabilities.admin.canManageScopes).toBe(true);
+    expect(roleCapabilities.owner.canManageScopes).toBe(true);
+    expect(roleCapabilities.member.canManageScopes).toBe(false);
+    expect(roleCapabilities.viewer.canManageScopes).toBe(false);
   });
 });
 

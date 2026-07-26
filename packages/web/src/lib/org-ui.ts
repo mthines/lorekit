@@ -30,6 +30,8 @@ export interface OrgRoleCapabilities {
   canRemoveMembers: boolean;
   canRename: boolean;
   canDelete: boolean;
+  /** Can bind/unbind scopes to this org (mirrors `manage_scopes` in lorekit_org_can). */
+  canManageScopes: boolean;
 }
 
 /**
@@ -40,10 +42,10 @@ export interface OrgRoleCapabilities {
  * ONLY: the RPC remains the sole authorization gate, never re-derived here.
  */
 export const roleCapabilities: Record<OrgRole, OrgRoleCapabilities> = {
-  owner:  { canInvite: true,  canManageRoles: true,  canRemoveMembers: true,  canRename: true,  canDelete: true },
-  admin:  { canInvite: true,  canManageRoles: true,  canRemoveMembers: true,  canRename: true,  canDelete: false },
-  member: { canInvite: false, canManageRoles: false, canRemoveMembers: false, canRename: false, canDelete: false },
-  viewer: { canInvite: false, canManageRoles: false, canRemoveMembers: false, canRename: false, canDelete: false },
+  owner:  { canInvite: true,  canManageRoles: true,  canRemoveMembers: true,  canRename: true,  canDelete: true,  canManageScopes: true },
+  admin:  { canInvite: true,  canManageRoles: true,  canRemoveMembers: true,  canRename: true,  canDelete: false, canManageScopes: true },
+  member: { canInvite: false, canManageRoles: false, canRemoveMembers: false, canRename: false, canDelete: false, canManageScopes: false },
+  viewer: { canInvite: false, canManageRoles: false, canRemoveMembers: false, canRename: false, canDelete: false, canManageScopes: false },
 };
 
 /**

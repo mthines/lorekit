@@ -16,7 +16,7 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Users, Plus, Loader2, Mail, X, LogOut, Trash2, Download } from 'lucide-react';
+import { Users, Plus, Loader2, Mail, X, LogOut, Trash2, Download, Link, Unlink } from 'lucide-react';
 import {
   createOrg,
   listMembers,
@@ -31,6 +31,7 @@ import {
 } from '@/lib/orgs';
 import { inviteMember, listInvites, revokeInvite, type OrgInvite } from '@/lib/org-invites';
 import { listMemberIdentities, type OrgMemberIdentity } from '@/lib/org-members';
+import { listScopeBindings, bindScope, unbindScope, type ScopeBinding } from '@/lib/scope-bindings';
 import { normalizeSlug } from '@/lib/org-slug';
 import { roleCapabilities, canActOnOrgMember, classifyInviteInput, ORG_DELETE_RETENTION_DAYS } from '@/lib/org-ui';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -77,7 +78,8 @@ type ConfirmState =
   | { kind: 'leave' }
   | { kind: 'delete' }
   | { kind: 'revoke'; invite: OrgInvite }
-  | { kind: 'remove'; member: OrgMember; label: string };
+  | { kind: 'remove'; member: OrgMember; label: string }
+  | { kind: 'unbind'; binding: ScopeBinding };
 
 // ── Create-org form ───────────────────────────────────────────────────────────
 
@@ -293,6 +295,81 @@ function InviteForm({ orgId, orgName, onInvited }: { orgId: string; orgName: str
   );
 }
 
+// ── Bind-scope form ───────────────────────────────────────────────────────────
+
+function BindScopeForm({ orgId, orgName, onBound }: { orgId: string; orgName: string; onBound: (binding: ScopeBinding) => void }) {
+  const { showToast } = useToast();
+  const [scope, setScope] = useState('');
+  const [error, setError] = useState('');
+  const [pending, startTransition] = useTransition();
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError('');
+    const trimmed = scope.trim().toLowerCase();
+    if (!trimmed) {
+      setError('Scope is required');
+      return;
+    }
+
+    startTransition(async () => {
+      const result = await bindScope(orgId, trimmed);
+      if ('error' in result) {
+        setError(result.error);
+        return;
+      }
+      onBound({
+        id: result.id,
+        org_id: orgId,
+        scope: trimmed,
+        created_by: null,
+        created_at: new Date().toISOString(),
+      });
+      showToast(`Scope ${trimmed} bound to ${orgName}.`, 'success');
+      setScope('');
+    });
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="flex flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4"
+    >
+      <p className="text-xs font-medium text-[var(--color-content-secondary)]">Bind a scope</p>
+      <p className="text-[10px] text-[var(--color-content-tertiary)]">
+        Memories written under this scope are automatically shared with {orgName} for write-capable members.
+      </p>
+
+      <div className="flex flex-col gap-1">
+        <label htmlFor="bind-scope" className="text-xs text-[var(--color-content-secondary)]">
+          Scope (e.g. <code className="font-mono">repo::owner/name</code>)
+        </label>
+        <input
+          id="bind-scope"
+          value={scope}
+          onChange={(e) => setScope(e.target.value)}
+          placeholder="repo::owner/name"
+          maxLength={500}
+          className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm text-[var(--color-content-primary)] placeholder:font-mono placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none"
+        />
+      </div>
+
+      {error && <p className="text-xs text-[var(--color-error)]">{error}</p>}
+
+      <div>
+        <button
+          type="submit"
+          disabled={pending || !scope.trim()}
+          className="flex min-h-11 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[#000] transition-opacity duration-150 disabled:opacity-50"
+        >
+          {pending ? <Loader2 className="size-4 animate-spin" /> : <Link className="size-4" />}
+          Bind scope
+        </button>
+      </div>
+    </form>
+  );
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 interface OrganizationManagerProps {
@@ -307,6 +384,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
   const [members, setMembers] = useState<OrgMember[]>([]);
   const [identities, setIdentities] = useState<OrgMemberIdentity[]>([]);
   const [invites, setInvites] = useState<OrgInvite[]>([]);
+  const [bindings, setBindings] = useState<ScopeBinding[]>([]);
   const [loadingOrgData, setLoadingOrgData] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(initialOrgs.length === 0);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
@@ -322,20 +400,23 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
       setMembers([]);
       setIdentities([]);
       setInvites([]);
+      setBindings([]);
       return;
     }
     let cancelled = false;
     setLoadingOrgData(true);
     (async () => {
-      const [m, ids, inv] = await Promise.all([
+      const [m, ids, inv, binds] = await Promise.all([
         listMembers(selectedOrgId),
         listMemberIdentities(selectedOrgId),
         listInvites(selectedOrgId),
+        listScopeBindings(selectedOrgId),
       ]);
       if (cancelled) return;
       setMembers(m);
       setIdentities(ids);
       setInvites(inv);
+      setBindings(binds);
       setLoadingOrgData(false);
     })();
     return () => {
@@ -468,6 +549,20 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
 
   function handleInvited(invite: OrgInvite) {
     setInvites((prev) => [invite, ...prev]);
+  }
+
+  function handleUnbind(binding: ScopeBinding) {
+    if (!selectedOrgId) return;
+    startTransition(async () => {
+      const result = await unbindScope(selectedOrgId, binding.scope);
+      setConfirm(null);
+      if (result.error) {
+        showToast(result.error, 'error');
+        return;
+      }
+      setBindings((prev) => prev.filter((b) => b.id !== binding.id));
+      showToast(`Scope ${binding.scope} unbound.`, 'success');
+    });
   }
 
   const pendingInvites = invites.filter((i) => i.status === 'pending');
@@ -682,6 +777,58 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
             </div>
           )}
 
+          {/* Shared scopes — admin/owner only */}
+          {caps?.canManageScopes && (
+            <div className="flex flex-col gap-1.5">
+              <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
+                Shared scopes
+              </p>
+              <p className="text-[10px] text-[var(--color-content-tertiary)]">
+                Writes under a bound scope auto-route to {selectedOrg.name} for write-capable members.
+              </p>
+              {loadingOrgData ? (
+                <p className="text-xs text-[var(--color-content-tertiary)]">Loading scopes…</p>
+              ) : bindings.length === 0 ? (
+                <EmptyState
+                  icon={Link}
+                  title="No shared scopes"
+                  description="Bind a scope so agent writes under it are automatically attributed to this org."
+                />
+              ) : (
+                <AnimatePresence>
+                  {bindings.map((binding) => (
+                    <motion.div
+                      key={binding.id}
+                      layout
+                      exit={{ opacity: 0, x: 20 }}
+                      transition={{ duration: 0.2 }}
+                      className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2.5"
+                    >
+                      <Link className="size-4 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                      <span className="min-w-0 flex-1 truncate font-mono text-sm text-[var(--color-content-primary)]">
+                        {binding.scope}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setConfirm({ kind: 'unbind', binding })}
+                        aria-label={`Unbind scope ${binding.scope}`}
+                        className="flex min-h-11 items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 text-xs text-[var(--color-content-secondary)] transition-colors duration-150 hover:border-[var(--color-error)]/40 hover:text-[var(--color-error)]"
+                      >
+                        <Unlink className="size-3.5" aria-hidden />
+                        Unbind
+                      </button>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              )}
+              <BindScopeForm
+                orgId={selectedOrg.id}
+                orgName={selectedOrg.name}
+                onBound={(binding) => setBindings((prev) => [...prev, binding])}
+              />
+            </div>
+          )}
+
           {/* Leave / delete */}
           <div className="flex flex-wrap gap-2 border-t border-[var(--color-border)] pt-4">
             <button
@@ -728,7 +875,9 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                 ? `Revoke invite for ${confirm.invite.invitee_handle ?? confirm.invite.invitee_email}?`
                 : confirm?.kind === 'remove'
                   ? `Remove ${confirm.label}?`
-                  : ''
+                  : confirm?.kind === 'unbind'
+                    ? `Unbind scope ${confirm.binding.scope}?`
+                    : ''
         }
         description={
           confirm?.kind === 'leave'
@@ -739,7 +888,9 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                 ? 'The invited person will no longer be able to accept this invite. You can invite them again later.'
                 : confirm?.kind === 'remove'
                   ? "They'll lose access to this organization's shared lore. You can invite them back later."
-                  : ''
+                  : confirm?.kind === 'unbind'
+                    ? 'Writes under this scope will no longer auto-route to this organization. Existing shared memories are unaffected.'
+                    : ''
         }
         confirmLabel={
           confirm?.kind === 'leave'
@@ -748,7 +899,9 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
               ? 'Delete'
               : confirm?.kind === 'revoke'
                 ? 'Revoke'
-                : 'Remove'
+                : confirm?.kind === 'unbind'
+                  ? 'Unbind'
+                  : 'Remove'
         }
         destructive
         pending={pending}
@@ -758,6 +911,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
           else if (confirm?.kind === 'delete') handleDelete();
           else if (confirm?.kind === 'revoke') handleRevoke(confirm.invite);
           else if (confirm?.kind === 'remove') handleRemoveMember(confirm.member);
+          else if (confirm?.kind === 'unbind') handleUnbind(confirm.binding);
         }}
         onCancel={() => setConfirm(null)}
       />

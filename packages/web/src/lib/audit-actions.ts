@@ -35,6 +35,8 @@ import {
   UserMinus,
   ShieldCheck,
   LogOut,
+  Link,
+  Unlink,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -60,6 +62,8 @@ export const AUDIT_ACTIONS = [
   'member.remove',
   'member.role_change',
   'member.leave',
+  'scope.bind',
+  'scope.unbind',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -95,4 +99,6 @@ export const AUDIT_ACTION_META: Record<AuditAction, AuditActionMeta> = {
   'member.remove': { label: 'Member removed', badgeColor: 'red', icon: UserMinus },
   'member.role_change': { label: 'Member role changed', badgeColor: 'blue', icon: ShieldCheck },
   'member.leave': { label: 'Member left', badgeColor: 'amber', icon: LogOut },
+  'scope.bind': { label: 'Scope bound', badgeColor: 'green', icon: Link },
+  'scope.unbind': { label: 'Scope unbound', badgeColor: 'amber', icon: Unlink },
 };
