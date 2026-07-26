@@ -11,6 +11,8 @@ import {
   exportInvocation,
   traceCommand,
 } from '../src/telemetry.mjs';
+import { TELEMETRY_TOKEN } from '../src/telemetry-token.mjs';
+import { injectToken } from '../../../scripts/inject-telemetry-token.mjs';
 
 // A base env with the baked-in default endpoint authenticated via explicit
 // headers, so tests don't depend on whether DEFAULT_TOKEN is filled in.
@@ -40,6 +42,20 @@ test('explicit OTLP endpoint enables export even without headers', () => {
   assert.equal(cfg.endpoint, 'https://otel.example.com'); // trailing slash trimmed
 });
 
+test('LOREKIT_TELEMETRY_TOKEN sets the bearer against the default endpoint', () => {
+  const cfg = resolveTelemetryConfig({ LOREKIT_TELEMETRY_TOKEN: 'auth_env_tok' });
+  assert.equal(cfg.enabled, true);
+  assert.equal(cfg.headers['Authorization'], 'Bearer auth_env_tok');
+});
+
+test('OTEL_EXPORTER_OTLP_HEADERS wins over LOREKIT_TELEMETRY_TOKEN', () => {
+  const cfg = resolveTelemetryConfig({
+    OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer explicit',
+    LOREKIT_TELEMETRY_TOKEN: 'auth_env_tok',
+  });
+  assert.equal(cfg.headers['Authorization'], 'Bearer explicit');
+});
+
 test('OTEL_EXPORTER_OTLP_HEADERS is parsed and Dash0-Dataset applied', () => {
   const cfg = resolveTelemetryConfig({
     OTEL_EXPORTER_OTLP_ENDPOINT: 'https://otel.example.com',
@@ -49,6 +65,34 @@ test('OTEL_EXPORTER_OTLP_HEADERS is parsed and Dash0-Dataset applied', () => {
   assert.equal(cfg.headers['Authorization'], 'Bearer abc');
   assert.equal(cfg.headers['X-Extra'], 'y');
   assert.equal(cfg.headers['Dash0-Dataset'], 'my-set');
+});
+
+// ── build-time token injection ─────────────────────────────────────────────────
+
+test('committed TELEMETRY_TOKEN is empty (no secret in git)', () => {
+  assert.equal(TELEMETRY_TOKEN, '');
+});
+
+test('injectToken rewrites the exported literal with the given token', () => {
+  const source = [
+    '// comment block',
+    "export const TELEMETRY_TOKEN = '';",
+    '',
+  ].join('\n');
+  const out = injectToken(source, 'auth_abc123');
+  assert.match(out, /export const TELEMETRY_TOKEN = "auth_abc123";/);
+  assert.ok(out.includes('// comment block')); // surrounding content preserved
+});
+
+test('injectToken safely escapes the token into a string literal', () => {
+  const out = injectToken("export const TELEMETRY_TOKEN = '';", 'a"b\\c');
+  // The result must be valid JS — JSON.stringify handles quote/backslash escaping.
+  assert.match(out, /export const TELEMETRY_TOKEN = "a\\"b\\\\c";/);
+});
+
+test('injectToken returns source unchanged when the export is absent', () => {
+  const source = 'export const OTHER = 1;';
+  assert.equal(injectToken(source, 'auth_x'), source);
 });
 
 // ── attributes: bounded, no PII ────────────────────────────────────────────────

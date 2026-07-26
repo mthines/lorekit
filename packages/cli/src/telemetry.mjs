@@ -18,16 +18,18 @@
 // The default endpoint + token below are baked into the published package and
 // are therefore public by design. The token MUST be Dash0 ingestion-only
 // (write/POST spans, no read/query/manage) — anyone can unpack the npm tarball
-// and read it. Standard OTEL_EXPORTER_OTLP_* env vars override the defaults.
+// and read it. It is NOT committed to git: the release workflow injects it into
+// telemetry-token.mjs at publish time from a secret (see that file). Standard
+// OTEL_EXPORTER_OTLP_* env vars — or LOREKIT_TELEMETRY_TOKEN — override it.
 
 import process from 'node:process';
+import { TELEMETRY_TOKEN } from './telemetry-token.mjs';
 
 // ── Baked-in defaults (public by design) ──────────────────────────────────────
-// Fill these in to enable default phone-home telemetry from the published CLI.
-// TOKEN MUST BE INGESTION-ONLY — it ships in the npm tarball and is fully
-// exposed. Leave TOKEN empty to keep default export off until it is set.
+// The endpoint is a committed default; the token is injected at publish time
+// (empty in the source tree, so default export stays off until built/injected).
 const DEFAULT_ENDPOINT = 'https://ingress.us-east-1.aws.dash0.com';
-const DEFAULT_TOKEN = ''; // e.g. 'auth_xxx' — Dash0 ingestion-only token
+const DEFAULT_TOKEN = TELEMETRY_TOKEN; // injected from LOREKIT_TELEMETRY_TOKEN at publish
 const DEFAULT_DATASET = 'lorekit-cli';
 
 // Flags worth counting (e.g. how many installs are --global). Bounded on
@@ -58,14 +60,20 @@ export function resolveTelemetryConfig(env = process.env) {
   if (!endpoint) return { enabled: false };
 
   const headers = {};
-  // Explicit OTEL_EXPORTER_OTLP_HEADERS (comma list of key=value) wins; else the
-  // baked-in ingestion token, sent as Dash0's Authorization bearer.
+  // Auth header priority (highest first):
+  //   1. OTEL_EXPORTER_OTLP_HEADERS — explicit comma list of key=value.
+  //   2. LOREKIT_TELEMETRY_TOKEN    — a bare bearer token via env (e.g. set as a
+  //      GitHub Actions secret to inject the token, or for local testing).
+  //   3. DEFAULT_TOKEN              — baked into the tarball at publish time.
   const rawHeaders = env.OTEL_EXPORTER_OTLP_HEADERS;
+  const envToken = env.LOREKIT_TELEMETRY_TOKEN ? String(env.LOREKIT_TELEMETRY_TOKEN).trim() : '';
   if (rawHeaders) {
     for (const pair of String(rawHeaders).split(',')) {
       const idx = pair.indexOf('=');
       if (idx > 0) headers[pair.slice(0, idx).trim()] = pair.slice(idx + 1).trim();
     }
+  } else if (envToken) {
+    headers['Authorization'] = `Bearer ${envToken}`;
   } else if (DEFAULT_TOKEN) {
     headers['Authorization'] = `Bearer ${DEFAULT_TOKEN}`;
   }

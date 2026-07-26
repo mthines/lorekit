@@ -139,21 +139,27 @@ After adding variables, **Redeploy** in Vercel — `NEXT_PUBLIC_*` vars are bake
 
 ### CLI (`@lorekit/cli`)
 
-Set the default endpoint + ingesting-only token in `packages/cli/src/telemetry.mjs`:
+The token is **not committed to git** — it is injected into the published tarball
+at release time from a GitHub Actions secret, so it can be rotated without a code
+change. The endpoint (`DEFAULT_ENDPOINT`) and dataset (`DEFAULT_DATASET`) are
+committed defaults in `packages/cli/src/telemetry.mjs`.
 
-```js
-const DEFAULT_ENDPOINT = 'https://ingress.us-east-1.aws.dash0.com';
-const DEFAULT_TOKEN = 'auth_...'; // Dash0 INGESTING-ONLY token — public in the tarball
-const DEFAULT_DATASET = 'lorekit-cli';
-```
+1. Create a Dash0 token with **Ingesting only** permissions (it can `POST` spans
+   but cannot read, query, or manage anything — same reasoning as the browser
+   `NEXT_PUBLIC_DASH0_AUTH_TOKEN` above; it is public once published).
+2. Add it under **Settings → Secrets and variables → Actions** as the repository
+   secret **`LOREKIT_TELEMETRY_TOKEN`**.
 
-> **Security:** `DEFAULT_TOKEN` ships inside the published npm package and is fully
-> exposed. Create a **separate** Dash0 token with **Ingesting only** permissions —
-> it can `POST` spans but cannot read, query, or manage anything. Same reasoning as
-> the browser `NEXT_PUBLIC_DASH0_AUTH_TOKEN` above.
+The `publish-cli` job in `.github/workflows/release.yml` runs
+`scripts/inject-telemetry-token.mjs`, which rewrites the committed-empty
+`src/telemetry-token.mjs` with the secret just before `npm publish`. If the
+secret is unset the script no-ops and the CLI ships with default telemetry off.
 
-End users can opt out with `LOREKIT_TELEMETRY=0` or `DO_NOT_TRACK=1`, or point the
-CLI at their own collector with `OTEL_EXPORTER_OTLP_ENDPOINT` / `_HEADERS`.
+**Auth-header priority at runtime** (highest first): `OTEL_EXPORTER_OTLP_HEADERS`
+→ `LOREKIT_TELEMETRY_TOKEN` (bare bearer via env — handy for local testing) →
+the baked-in token. End users can opt out entirely with `LOREKIT_TELEMETRY=0` or
+`DO_NOT_TRACK=1`, or point the CLI at their own collector with
+`OTEL_EXPORTER_OTLP_ENDPOINT` / `_HEADERS`.
 
 ---
 

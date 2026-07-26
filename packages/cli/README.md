@@ -299,6 +299,7 @@ active deny constraints.
 | `NO_COLOR` | disable colored output |
 | `LOREKIT_TELEMETRY` | set to `0` / `off` / `false` to disable usage telemetry |
 | `DO_NOT_TRACK` | `1` also disables usage telemetry (cross-vendor standard) |
+| `LOREKIT_TELEMETRY_TOKEN` | bearer token for telemetry export (overrides the baked-in default) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS` | override the telemetry OTLP endpoint / headers |
 
 ## What the skill does
@@ -374,9 +375,11 @@ commands are never instrumented.
 
 Opt out any time with `LOREKIT_TELEMETRY=0` (or `off` / `false` / `no`) or the
 cross-vendor `DO_NOT_TRACK=1`. Point it at your own collector with
-`OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS`. Export is a no-op
-when no endpoint is configured. See [docs/otel.md](../../docs/otel.md) for the
-attribute list and setup.
+`OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS`, or set just the
+bearer via `LOREKIT_TELEMETRY_TOKEN`. Export is a no-op when no token is
+configured. The published package's default token is injected from a CI secret
+at release time and is never committed to git. See
+[docs/otel.md](../../docs/otel.md) for the attribute list and setup.
 
 ## Security note
 
