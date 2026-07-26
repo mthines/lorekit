@@ -63,3 +63,21 @@ export function applyAuditFilters<Q extends FilterBuilderLike>(q: Q, spec: Audit
 
   return next as Q;
 }
+
+/** The awaited `{ data, error }` shape a supabase-js query resolves to. */
+export interface QueryResult<T> {
+  data: T[] | null;
+  error: { message: string } | null;
+}
+
+/**
+ * Bridge a built query to its awaitable result. `FilterBuilderLike` models the
+ * chainable methods but deliberately omits the thenable surface, so awaiting a
+ * built query needs one cast from the builder to a `PromiseLike<QueryResult>`.
+ * Centralising it here keeps that cast in a single documented, testable place
+ * (rather than an ad-hoc `as unknown as` at every call site) — the one spot to
+ * revisit if a future supabase-js major changes the awaitable shape.
+ */
+export function runPaginatedQuery<T>(q: FilterBuilderLike): PromiseLike<QueryResult<T>> {
+  return q as unknown as PromiseLike<QueryResult<T>>;
+}

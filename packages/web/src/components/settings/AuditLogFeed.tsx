@@ -117,6 +117,17 @@ export function AuditLogFeed() {
     cleanOnPathname: AUDIT_ROUTE,
   });
 
+  // The *server query* must key off the settled (URL-committed) value, NOT the
+  // instant `name` above: `useDebouncedUrlState` debounces only the URL write,
+  // so passing `name` to useAuditLog would re-fire the server action on every
+  // keystroke — the debounce would gate the URL, not the endpoint. Reading the
+  // committed param back gives us the settled needle (it updates ~350ms after
+  // typing stops, when the debounced write lands), so the query is debounced
+  // for real. On a shared link / back-forward both seed from the URL at once.
+  const [committedName] = useUrlState<string>('name', '', {
+    cleanOnPathname: AUDIT_ROUTE,
+  });
+
   // Single shareable `range` param, mirroring activity/page.tsx.
   const [range, setRange] = useUrlState<DateRange | null>('range', null, {
     cleanOnPathname: AUDIT_ROUTE,
@@ -131,7 +142,7 @@ export function AuditLogFeed() {
     hasNextPage,
     isFetchingNextPage,
     fetchNextPage,
-  } = useAuditLog({ actions, name, range });
+  } = useAuditLog({ actions, name: committedName, range });
 
   const events = useMemo(() => data?.pages.flatMap((page) => page.rows) ?? [], [data]);
   const isFiltered = actions.length > 0 || name.trim() !== '' || range !== null;

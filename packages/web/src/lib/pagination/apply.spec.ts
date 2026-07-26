@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyKeyset, applyAuditFilters, type FilterBuilderLike } from './apply';
+import { applyKeyset, applyAuditFilters, runPaginatedQuery, type FilterBuilderLike } from './apply';
 
 /** Records every call made against it, chaining itself back (fluent fake). */
 function fakeBuilder(): FilterBuilderLike & { calls: [string, unknown[]][] } {
@@ -103,5 +103,21 @@ describe('applyAuditFilters', () => {
       bounds: { gte: 'a', lt: 'b' },
     });
     expect(b.calls.map(([name]) => name)).toEqual(['in', 'ilike', 'gte', 'lt']);
+  });
+});
+
+describe('runPaginatedQuery', () => {
+  it('awaits the built query and yields its { data, error } result', async () => {
+    // A supabase-js query builder is itself a thenable resolving to
+    // { data, error }; this fake mimics that terminal shape so the awaitable
+    // boundary the helper bridges is exercised, not just type-cast.
+    const resolved = { data: [{ id: '1' }], error: null };
+    const thenable = {
+      then: (onFulfilled: (v: unknown) => unknown) => Promise.resolve(resolved).then(onFulfilled),
+    } as unknown as FilterBuilderLike;
+
+    const { data, error } = await runPaginatedQuery<{ id: string }>(thenable);
+    expect(error).toBeNull();
+    expect(data).toEqual([{ id: '1' }]);
   });
 });

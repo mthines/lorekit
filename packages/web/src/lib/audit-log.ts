@@ -21,7 +21,7 @@ import { AUDIT_ACTIONS, type AuditAction } from '@/lib/audit-actions';
 import { decodeCursor } from '@/lib/pagination/cursor';
 import { clampPageSize, assemblePage, type Page } from '@/lib/pagination/keyset';
 import { normalizeActions, substringNeedle, dateRangeBounds, type DateRangeInput } from '@/lib/pagination/filters';
-import { applyKeyset, applyAuditFilters, type FilterBuilderLike } from '@/lib/pagination/apply';
+import { applyKeyset, applyAuditFilters, runPaginatedQuery, type FilterBuilderLike } from '@/lib/pagination/apply';
 
 export interface AuditLogEventInput {
   action: AuditAction;
@@ -138,7 +138,7 @@ export async function listAuditLog(filters: AuditLogFilters = {}): Promise<Audit
   const filtered = applyAuditFilters(base as unknown as FilterBuilderLike, { actions, needle, bounds });
   const query = applyKeyset(filtered, { cursor, pageSize });
 
-  const { data, error } = await (query as unknown as typeof base);
+  const { data, error } = await runPaginatedQuery<AuditLogRow>(query);
   if (error) {
     console.error('[listAuditLog] DB error:', error.message);
     return EMPTY_PAGE;
