@@ -59,6 +59,14 @@ $$;
 
 grant execute on function lorekit_get_org_limit(uuid, text) to anon, authenticated, service_role;
 
+-- Index backing the org branch's active-row count below
+-- (`where org_id = new.org_id and archived_at is null`), which runs on every
+-- org-owned INSERT. Without it large orgs seq-scan `memories` per write.
+-- Partial (archived_at is null) + org_id-keyed to match the count predicate.
+create index if not exists memories_org_id_active_idx
+  on memories (org_id)
+  where archived_at is null;
+
 -- Tenant-keyed cap trigger. Branch order: org -> service-exempt -> personal.
 -- The org branch must precede the service exemption because org rows have
 -- user_id IS NULL — checking `new.user_id is null` first would silently
