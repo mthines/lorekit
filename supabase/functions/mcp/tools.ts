@@ -1,9 +1,15 @@
 /**
- * MCP tool handlers — one function per memory.* tool.
+ * MCP tool handlers — one function per memory.* and org.* tool.
  *
  * SECURITY: When userId is provided (api_key auth), every query MUST include
  * .eq('user_id', userId). The service-role client bypasses RLS — without this
  * filter, users could access each other's memories.
+ *
+ * org.* tools REQUIRE a Supabase user JWT (auth.uid() is resolved inside the
+ * SECURITY DEFINER RPCs on the server). They are NOT accessible via api_key
+ * auth because the RPCs use auth.uid() — a service-role client has no session
+ * JWT and therefore no auth.uid(). Callers with api_key tokens receive a
+ * -32001 PermissionDenied response.
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
@@ -446,4 +452,152 @@ export async function toolPurge(
     );
   }
   return { purged };
+}
+
+// ── Org management tools ────────────────────────────────────────────────────
+//
+// All org.* tools require a Supabase user JWT — they route through SECURITY
+// DEFINER RPCs that resolve the actor from auth.uid(). api_key auth provides
+// no session JWT so auth.uid() is null inside the RPCs; callers using api_key
+// tokens receive a -32001 before reaching these handlers (enforced by the
+// dispatcher in mcp-handler.ts).
+
+/**
+ * Create a new organization. The calling user becomes the owner.
+ * Uses lorekit_org_create (00022_org_management_rpcs.sql).
+ */
+export async function toolOrgCreate(
+  db: ReturnType<typeof createClient>,
+  params: Params,
+  span: Span,
+) {
+  const { slug, name } = params;
+  if (!slug || !name) throw new Error('slug and name are required');
+
+  span.setAttributes({ 'lorekit.org.slug': slug });
+
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb
+    .rpc('lorekit_org_create', { p_slug: slug, p_name: name })
+    .single();
+
+  if (error) {
+    const translated = translateOrgPermissionError(error);
+    throw translated instanceof Error ? translated : new Error((error as { message: string }).message);
+  }
+
+  const orgId = data as string;
+  span.setAttributes({ 'lorekit.org.id': orgId });
+  return { id: orgId, slug, name };
+}
+
+/**
+ * List all organizations the calling user is a member of, with their role.
+ * Reads from org_members (RLS-gated to the authenticated user).
+ */
+export async function toolOrgList(
+  db: ReturnType<typeof createClient>,
+  _params: Params,
+  span: Span,
+) {
+  const tracedDb = createTracedClient(db, span);
+  // Join orgs to get name + slug alongside the role. RLS on org_members
+  // restricts rows to the authenticated user's own memberships; RLS on orgs
+  // restricts to orgs the user belongs to (00014_orgs.sql) and excludes
+  // soft-deleted orgs (00025_safe_org_deletion.sql).
+  const { data, error } = await tracedDb
+    .from('org_members')
+    .select('role, orgs(id, slug, name, created_at)')
+    .order('created_at', { referencedTable: 'orgs', ascending: false });
+
+  if (error) throw new Error((error as { message: string }).message);
+
+  const entries = (data ?? []).map((row) => {
+    const org = row.orgs as { id: string; slug: string; name: string; created_at: string } | null;
+    return {
+      id: org?.id ?? null,
+      slug: org?.slug ?? null,
+      name: org?.name ?? null,
+      role: row.role,
+      created_at: org?.created_at ?? null,
+    };
+  });
+
+  span.setAttributes({ 'lorekit.result.count': entries.length });
+  return { entries };
+}
+
+/**
+ * Rename an organization's display name. Requires admin or owner role.
+ * Uses lorekit_org_rename (00022_org_management_rpcs.sql).
+ */
+export async function toolOrgRename(
+  db: ReturnType<typeof createClient>,
+  params: Params,
+  span: Span,
+) {
+  const { slug, name } = params;
+  if (!slug || !name) throw new Error('slug and name are required');
+
+  span.setAttributes({ 'lorekit.org.slug': slug });
+
+  // Resolve org_id from slug so we can call the RPC.
+  const tracedDb = createTracedClient(db, span);
+  const { data: org, error: orgErr } = await tracedDb
+    .from('orgs')
+    .select('id')
+    .eq('slug', slug)
+    .is('deleted_at', null)
+    .maybeSingle();
+
+  if (orgErr) throw new Error((orgErr as { message: string }).message);
+  if (!org) throw new Error(`org not found: ${slug}`);
+
+  const { error } = await tracedDb
+    .rpc('lorekit_org_rename', { p_org_id: (org as { id: string }).id, p_name: name });
+
+  if (error) {
+    const translated = translateOrgPermissionError(error);
+    throw translated instanceof Error ? translated : new Error((error as { message: string }).message);
+  }
+
+  return { slug, name };
+}
+
+/**
+ * Delete an organization. Requires owner role. Soft-deletes the org
+ * (sets deleted_at). All org lore is hidden immediately from all reads.
+ * A separate purge RPC permanently cascades the delete after a retention
+ * window — lorekit_org_purge (00025_safe_org_deletion.sql), SQL-only for now.
+ */
+export async function toolOrgDelete(
+  db: ReturnType<typeof createClient>,
+  params: Params,
+  span: Span,
+) {
+  const { slug } = params;
+  if (!slug) throw new Error('slug is required');
+
+  span.setAttributes({ 'lorekit.org.slug': slug });
+
+  const tracedDb = createTracedClient(db, span);
+  const { data: org, error: orgErr } = await tracedDb
+    .from('orgs')
+    .select('id')
+    .eq('slug', slug)
+    .is('deleted_at', null)
+    .maybeSingle();
+
+  if (orgErr) throw new Error((orgErr as { message: string }).message);
+  if (!org) throw new Error(`org not found: ${slug}`);
+
+  const { error } = await tracedDb
+    .rpc('lorekit_org_delete', { p_org_id: (org as { id: string }).id });
+
+  if (error) {
+    const translated = translateOrgPermissionError(error);
+    throw translated instanceof Error ? translated : new Error((error as { message: string }).message);
+  }
+
+  return { deleted: true, slug };
 }
