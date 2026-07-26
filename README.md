@@ -2,7 +2,7 @@
 
 > Shared, persistent memory for your AI coding agents.
 
-[![CI](https://github.com/mthines/lorekit/actions/workflows/ci.yml/badge.svg)](https://github.com/mthines/lorekit/actions/workflows/ci.yml)
+[![Deploy](https://github.com/mthines/lorekit/actions/workflows/deploy.yml/badge.svg?branch=main)](https://github.com/mthines/lorekit/actions/workflows/deploy.yml)
 [![npm](https://img.shields.io/npm/v/@lorekit/cli.svg)](https://www.npmjs.com/package/@lorekit/cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
