@@ -2,7 +2,7 @@
  * The single widened tenant-visibility predicate for a memories query.
  *
  * Mirrors the sole SQL source of truth, lorekit_member_org_ids() (see
- * supabase/migrations/00013_orgs.sql): a caller sees their own rows OR any
+ * supabase/migrations/00014_orgs.sql): a caller sees their own rows OR any
  * row owned by an org they belong to. This module only shapes the
  * PostgREST filter from an already-resolved org-id list — it never
  * re-derives membership itself, so the predicate can never drift from the
