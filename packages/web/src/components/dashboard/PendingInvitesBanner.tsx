@@ -16,7 +16,7 @@ import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { Mail, X } from 'lucide-react';
 import { acceptInvite, declineInvite, type OrgInvite } from '@/lib/org-invites';
-import { usePendingInvitesForMe } from '@/lib/queries/pending-invites';
+import { usePendingInvitesForMe, PENDING_INVITES_QUERY_KEY } from '@/lib/queries/pending-invites';
 import { useDismissedInviteIds } from '@/lib/hooks/useDismissedInviteIds';
 import { visibleInvites } from '@/lib/org-ui';
 import { serialise } from '@/lib/hooks/useUrlState';
@@ -48,7 +48,7 @@ export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerPro
         showToast(result.error, 'error');
         return;
       }
-      await queryClient.invalidateQueries({ queryKey: ['pending-invites'] });
+      await queryClient.invalidateQueries({ queryKey: PENDING_INVITES_QUERY_KEY });
       const orgName = target.org?.name ?? 'the organization';
       showToast(`You joined ${orgName}. Their shared lore now appears in your Explorer.`, 'success');
       const ownerFilter: OwnerFilter = { orgId: target.org_id };
@@ -60,7 +60,7 @@ export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerPro
     startTransition(async () => {
       const result = await declineInvite(target.id);
       if (result.error) showToast(result.error, 'error');
-      await queryClient.invalidateQueries({ queryKey: ['pending-invites'] });
+      await queryClient.invalidateQueries({ queryKey: PENDING_INVITES_QUERY_KEY });
     });
   }
 

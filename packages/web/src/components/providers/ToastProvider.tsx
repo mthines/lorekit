@@ -35,16 +35,10 @@ export function useToast(): ToastContextValue {
   return ctx;
 }
 
-const VARIANT_ICON: Record<ToastVariant, typeof CheckCircle2> = {
-  success: CheckCircle2,
-  error: XCircle,
-  info: Info,
-};
-
-const VARIANT_STYLE: Record<ToastVariant, string> = {
-  success: 'border-[var(--color-success)]/40 text-[var(--color-success)]',
-  error: 'border-[var(--color-error)]/40 text-[var(--color-error)]',
-  info: 'border-[var(--color-info)]/40 text-[var(--color-info)]',
+const VARIANT_META: Record<ToastVariant, { icon: typeof CheckCircle2; style: string }> = {
+  success: { icon: CheckCircle2, style: 'border-[var(--color-success)]/40 text-[var(--color-success)]' },
+  error: { icon: XCircle, style: 'border-[var(--color-error)]/40 text-[var(--color-error)]' },
+  info: { icon: Info, style: 'border-[var(--color-info)]/40 text-[var(--color-info)]' },
 };
 
 const AUTO_DISMISS_MS = 4500;
@@ -88,7 +82,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       >
         <AnimatePresence>
           {toasts.map((toast) => {
-            const Icon = VARIANT_ICON[toast.variant];
+            const { icon: Icon, style } = VARIANT_META[toast.variant];
             return (
               <motion.div
                 key={toast.id}
@@ -98,7 +92,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
                 className={[
                   'pointer-events-auto flex max-w-sm items-center gap-2 rounded-lg border bg-[var(--color-bg-raised)] px-4 py-2.5 text-sm shadow-2xl',
-                  VARIANT_STYLE[toast.variant],
+                  style,
                 ].join(' ')}
               >
                 <Icon className="size-4 shrink-0" aria-hidden />
