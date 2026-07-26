@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { scopeType } from './scope';
+import { scopeType, scopeRepoUrl } from './scope';
 
 describe('scopeType', () => {
   it('returns "global" for the literal string "global"', () => {
@@ -24,5 +24,36 @@ describe('scopeType', () => {
     // The function does a simple split — upper-case is not normalised here;
     // that responsibility lives in mcp-core. Test documents current behaviour.
     expect(scopeType('project::MyProject')).toBe('project');
+  });
+});
+
+describe('scopeRepoUrl', () => {
+  it('builds a GitHub repo URL for repo scopes', () => {
+    expect(scopeRepoUrl('repo::mthines/lorekit')).toBe(
+      'https://github.com/mthines/lorekit',
+    );
+    expect(scopeRepoUrl('repo::mthines/gw-tools')).toBe(
+      'https://github.com/mthines/gw-tools',
+    );
+  });
+
+  it('builds a GitHub branch (tree) URL for branch scopes', () => {
+    expect(scopeRepoUrl('branch::mthines/gw-tools::feat/x')).toBe(
+      'https://github.com/mthines/gw-tools/tree/feat/x',
+    );
+    expect(scopeRepoUrl('branch::mthines/lorekit::main')).toBe(
+      'https://github.com/mthines/lorekit/tree/main',
+    );
+  });
+
+  it('returns null for scopes with no repository to point at', () => {
+    expect(scopeRepoUrl('global')).toBeNull();
+    expect(scopeRepoUrl('project::lorekit')).toBeNull();
+  });
+
+  it('returns null for malformed repo/branch scopes', () => {
+    expect(scopeRepoUrl('repo::not-a-repo')).toBeNull(); // missing owner/name split
+    expect(scopeRepoUrl('branch::owner/repo')).toBeNull(); // missing branch segment
+    expect(scopeRepoUrl('branch::not-a-repo::main')).toBeNull(); // bad owner/name
   });
 });

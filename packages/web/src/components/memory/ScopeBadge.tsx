@@ -11,7 +11,9 @@
  * works in both server and client components.
  */
 
+import { ExternalLink } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
+import { scopeRepoUrl } from '@/lib/scope';
 import { scopeIcon, scopeLabel, scopeType, type ScopePrefix } from './scope-meta';
 
 export interface ScopeBadgeProps {
@@ -33,6 +35,12 @@ export interface ScopeBadgeProps {
   label?: boolean;
   /** Append the full canonical scope string after the pill. @default false */
   showPath?: boolean;
+  /**
+   * For `repo` / `branch` scopes, render a trailing GitHub link icon that opens
+   * the repository (or branch tree) in a new tab. No-op for `global` / `project`
+   * scopes, which have no repository to point at. @default false
+   */
+  linkRepo?: boolean;
   /** Class applied to the wrapper. */
   className?: string;
   /** Class applied to the canonical-path `<code>` (e.g. margins, colour). */
@@ -47,12 +55,14 @@ export function ScopeBadge({
   showType = true,
   label = false,
   showPath = false,
+  linkRepo = false,
   className = '',
   pathClassName = '',
 }: ScopeBadgeProps) {
   const resolvedType = type ?? scopeType(scope);
   const Icon = scopeIcon(resolvedType);
   const pillText = label ? scopeLabel(scope) : showType ? resolvedType : null;
+  const repoUrl = linkRepo ? scopeRepoUrl(scope) : null;
 
   return (
     <span className={['inline-flex min-w-0 items-center gap-1.5', className].join(' ')}>
@@ -73,6 +83,19 @@ export function ScopeBadge({
         >
           {scope}
         </code>
+      )}
+      {repoUrl && (
+        <a
+          href={repoUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          aria-label={`Open ${scopeLabel(scope)} on GitHub`}
+          title="Open on GitHub"
+          className="inline-flex shrink-0 items-center text-[var(--color-content-tertiary)] transition-colors duration-150 hover:text-[var(--color-content-primary)]"
+        >
+          <ExternalLink className="size-3" aria-hidden />
+        </a>
       )}
     </span>
   );
