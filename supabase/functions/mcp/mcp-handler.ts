@@ -200,7 +200,8 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
         },
         // ── org.* ──────────────────────────────────────────────────────────
         // Require a Supabase user JWT (auth.uid() resolved inside SECURITY
-        // DEFINER RPCs). api_key callers receive -32001 before dispatch.
+        // DEFINER RPCs). api_key callers are rejected at dispatch with
+        // JSONRPC_FORBIDDEN (-32003, HTTP 200) — see the tools/call branch.
         {
           name: 'org.create',
           description:
