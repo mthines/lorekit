@@ -49,7 +49,7 @@ Deno.serve(async (req: Request) => {
     // resolveAuth checks Authorization header first, then ?token= query param as fallback.
     const auth = await resolveAuth(req.headers.get('authorization'), url.searchParams.get('token'));
     if (!auth) {
-      span.error('Unauthorized').setAttributes({ 'auth.result': 'failed' });
+      span.setAttributes({ 'auth.result': 'failed', 'http.response.status_code': 401 });
       return jsonrpcError(null, -32001, 'Unauthorized');
     }
 
