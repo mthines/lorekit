@@ -154,6 +154,11 @@ export interface MemoryFilters {
   pageSize?: number;
   /** Opaque keyset cursor from a previous page's `nextCursor`. */
   cursor?: string | null;
+  /**
+   * When true, returns only archived memories (archived_at IS NOT NULL).
+   * When false/absent, returns only active memories (archived_at IS NULL).
+   */
+  showArchived?: boolean;
 }
 
 export type MemoryPage = Page<LessonEntry>;
@@ -184,8 +189,14 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
   let base = supabase
     .from('memories')
     .select('id, scope, key, value, tags, created_at, updated_at, archived_at, source_agent, trigger')
-    .eq('user_id', user.id)
-    .is('archived_at', null);
+    .eq('user_id', user.id);
+
+  // archived_at filter: active (IS NULL) vs archived (IS NOT NULL).
+  if (filters.showArchived) {
+    base = base.not('archived_at', 'is', null);
+  } else {
+    base = base.is('archived_at', null);
+  }
 
   // Scope filter — absent / null means "all scopes".
   if (filters.scope) {

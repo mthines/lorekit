@@ -1,16 +1,18 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useTransition } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github } from 'lucide-react';
 import { Controller } from 'react-hook-form';
+import { useQueryClient } from '@tanstack/react-query';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { EditableField } from '@/components/ui/EditableField';
 import { TagsField } from '@/components/ui/TagsField';
 import { FormActionBar } from '@/components/ui/FormActionBar';
 import { useEditableForm } from '@/lib/hooks/useEditableForm';
+import { useArchiveLesson, useRestoreLesson } from '@/lib/queries/lore';
 import type { LessonEntry } from './LessonCard';
-import { archiveLesson, restoreLesson, updateLesson } from '@/lib/lore';
+import { updateLesson } from '@/lib/lore';
 import { scopeRepoUrl } from '@/lib/scope';
 import { toast } from 'sonner';
 
@@ -32,7 +34,10 @@ interface LessonFormValues {
 
 export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSheetProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
-  const [isPending, startTransition] = useTransition();
+  const queryClient = useQueryClient();
+  const archiveMutation = useArchiveLesson();
+  const restoreMutation = useRestoreLesson();
+  const isPending = archiveMutation.isPending || restoreMutation.isPending;
 
   const isArchived = Boolean(lesson?.archived_at);
 
@@ -58,13 +63,12 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
         tags: data.tags,
       });
       if (result.error) return result.error;
-      // Show a success toast as the sidebar slides out. Fires concurrently with
-      // onMutated() so the toast appears during the exit animation — a natural
-      // confirmation that bridges the gap between "panel closed" and "did it save?".
-      toast.success('Memory saved', {
-        description: lesson.key,
-      });
-      onMutated?.();
+      // Keep the sidebar open — the user may want to keep reading or editing.
+      // Invalidate the list caches so the updated value/tags appear behind the
+      // panel without requiring a page refresh.
+      void queryClient.invalidateQueries({ queryKey: ['memories'] });
+      void queryClient.invalidateQueries({ queryKey: ['lore'] });
+      toast.success('Memory saved', { description: lesson.key });
     },
   });
 
@@ -91,15 +95,32 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
 
   function handleArchive() {
     if (!lesson) return;
-    startTransition(async () => {
-      const result = isArchived
-        ? await restoreLesson(lesson.scope, lesson.key)
-        : await archiveLesson(lesson.scope, lesson.key);
-      if (!result.error) {
-        onMutated?.();
-        onClose();
-      }
-    });
+    const { scope, key } = lesson;
+    if (isArchived) {
+      restoreMutation.mutate({ scope, key }, {
+        onSuccess: (result) => {
+          if (result.error) {
+            toast.error('Failed to restore', { description: result.error });
+            return;
+          }
+          toast.success('Memory restored', { description: key });
+          onMutated?.();
+          onClose();
+        },
+      });
+    } else {
+      archiveMutation.mutate({ scope, key }, {
+        onSuccess: (result) => {
+          if (result.error) {
+            toast.error('Failed to archive', { description: result.error });
+            return;
+          }
+          toast.success('Memory archived', { description: key });
+          onMutated?.();
+          onClose();
+        },
+      });
+    }
   }
 
   return (
