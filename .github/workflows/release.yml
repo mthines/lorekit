@@ -133,6 +133,16 @@ jobs:
       - name: Smoke-test the packaged CLI (npx install wiring)
         run: node packages/cli/test/smoke-npx-install.mjs
 
+      # Bake the Dash0 ingesting-only telemetry token into the tarball. The token
+      # lives only in the LOREKIT_TELEMETRY_TOKEN secret, never in git — this
+      # rewrites src/telemetry-token.mjs in the checkout just before publish. If
+      # the secret is unset the script no-ops and the CLI publishes with default
+      # telemetry off.
+      - name: Inject telemetry token
+        env:
+          LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+        run: node scripts/inject-telemetry-token.mjs
+
       # No NODE_AUTH_TOKEN: npm authenticates via the Actions OIDC trusted
       # publisher. release-please guarantees the version is new, so no guard.
       - name: Publish (Trusted Publishing / OIDC)
