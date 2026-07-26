@@ -84,6 +84,31 @@ never read/query/manage). Leave `DEFAULT_TOKEN` empty to keep default export off
 
 ---
 
+## Invite-email span
+
+The org-invite email send (`packages/web/src/lib/invite-email.ts`) is a
+deliberately **non-throwing** side effect — it swallows every failure so a bad
+key or unverified domain can't break the invite. That makes telemetry the *only*
+way to see a failed or skipped send, so it carries an explicit span even though
+`@vercel/otel` already auto-instruments the outbound Resend `fetch`.
+
+```
+lorekit.invite.email.send   (INTERNAL — one per email-invite send attempt)
+```
+
+| Attribute | Example | Notes |
+|-----------|---------|-------|
+| `lorekit.invite.role` | `member` | Role the invitee was offered |
+| `lorekit.invite.email.outcome` | `sent` | Bounded: `sent` \| `skipped_no_recipient` \| `skipped_no_api_key` \| `error` |
+| `lorekit.invite.email.status_code` | `422` | Only on a non-2xx Resend response |
+
+On failure the span also records the exception and sets `ERROR` status. The
+recipient email and org name are deliberately **not** attributed (PII). Group by
+`lorekit.invite.email.outcome` in Dash0 to watch send health; a rising `error`
+rate means the Resend key/domain needs attention.
+
+---
+
 ## Resource attributes
 
 All signals carry these resource attributes:
