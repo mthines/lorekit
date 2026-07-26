@@ -70,6 +70,13 @@ export async function sendInviteEmail(input: InviteEmailInput): Promise<void> {
       }
 
       const from = process.env['RESEND_FROM'] ?? DEFAULT_FROM;
+      // NEXT_PUBLIC_APP_URL is the app's single canonical base URL. It's a
+      // NEXT_PUBLIC_* var (also readable in the browser bundle), but it holds
+      // the same public origin the email link needs, and it's already set to the
+      // real deployment URL in prod. Reusing it avoids a second server-only
+      // APP_URL that would have to be kept in sync; there's no secret here (the
+      // dashboard origin is public), so the client/server distinction doesn't
+      // matter for this value.
       const base = process.env['NEXT_PUBLIC_APP_URL'] ?? DEFAULT_APP_URL;
       const link = `${base}/dashboard`;
 

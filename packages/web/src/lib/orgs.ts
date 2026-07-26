@@ -181,24 +181,41 @@ export async function deleteOrg(orgId: string): Promise<{ error?: string }> {
 }
 
 /**
+ * Hard cap on rows returned by a single {@link exportOrgLore} call. Bounds the
+ * payload so a very large org can't produce a multi-MB response that times out
+ * the action or exhausts client memory. An org at the cap is an edge case
+ * (memory caps are far lower by default); if it's ever hit, `truncated` tells
+ * the caller the export is partial.
+ */
+export const ORG_EXPORT_ROW_LIMIT = 5000;
+
+/**
  * Export an org's shared lore as rows for a client-side JSON download, offered
  * before deletion so an owner can keep a copy. RLS-scoped: only a member of the
  * org gets rows back (both the active and archived read policies match org rows
- * for members, so this returns the full set). Read-only — never mutates.
+ * for members, so this returns the full set). Bounded to {@link
+ * ORG_EXPORT_ROW_LIMIT} rows — `truncated` is true if more exist. Read-only.
  */
-export async function exportOrgLore(orgId: string): Promise<{ rows: MemoryExportRow[] } | { error: string }> {
+export async function exportOrgLore(
+  orgId: string,
+): Promise<{ rows: MemoryExportRow[]; truncated: boolean } | { error: string }> {
   const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Not authenticated' };
 
+  // Fetch one past the cap so we can tell the caller the export was truncated
+  // without a separate count query.
   const { data, error } = await supabase
     .from('memories')
     .select('scope, key, value, tags, created_at, updated_at, archived_at, source_agent, trigger')
     .eq('org_id', orgId)
-    .order('created_at', { ascending: true });
+    .order('created_at', { ascending: true })
+    .limit(ORG_EXPORT_ROW_LIMIT + 1);
 
   if (error) return { error: error.message };
-  return { rows: (data ?? []) as MemoryExportRow[] };
+  const all = (data ?? []) as MemoryExportRow[];
+  const truncated = all.length > ORG_EXPORT_ROW_LIMIT;
+  return { rows: truncated ? all.slice(0, ORG_EXPORT_ROW_LIMIT) : all, truncated };
 }
 
 /**
