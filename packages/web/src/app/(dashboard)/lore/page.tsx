@@ -19,8 +19,11 @@ export default function LorePage() {
         </p>
       </div>
 
-      {/* Only the explorer shell waits on the scope tree; lessons load separately */}
-      <div className="flex-1 overflow-hidden" style={{ minHeight: '400px' }}>
+      {/* Only the explorer shell waits on the scope tree; lessons load separately.
+          overflow-y-auto on mobile so the stacked lesson list is naturally
+          scrollable; overflow-hidden on desktop so the two-panel layout's own
+          inner scroll containers take over. */}
+      <div className="flex-1 overflow-y-auto md:overflow-hidden" style={{ minHeight: '400px' }}>
         {isLoading ? (
           <LoreExplorerSkeleton />
         ) : isError || !scopes ? (

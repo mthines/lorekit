@@ -238,8 +238,9 @@ export function LoreExplorer({ scopes }: LoreExplorerProps) {
         </div>
       </div>
 
-      {/* Mobile: stacked layout */}
-      <div className="flex md:hidden flex-col gap-3">
+      {/* Mobile: stacked layout — pb-6 so the last card and "Load more" button
+          clear the bottom edge of the scroll container. */}
+      <div className="flex md:hidden flex-col gap-3 pb-6">
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] overflow-hidden">
           <button
             onClick={() => setScopePanelOpen((v) => !v)}
