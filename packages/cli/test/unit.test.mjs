@@ -50,6 +50,39 @@ test('parseArgs handles flags, values, =, and aliases', () => {
   assert.equal(args.yes, true);
 });
 
+test('parseArgs collects unknown flags when a known list is given', () => {
+  const args = parseArgs(['doctor', '--gloabl', '--mode', 'off', '-x'], {
+    aliases: { d: 'dir' },
+    booleans: ['global'],
+    known: ['dir', 'global', 'mode'],
+  });
+  assert.deepEqual(args._unknown, ['--gloabl', '-x']);
+  assert.equal(args.mode, 'off'); // known flags still parse normally
+});
+
+test('parseArgs reports no unknowns when every flag is recognized', () => {
+  const args = parseArgs(['install', '--global', '--yes'], {
+    booleans: ['global', 'yes'],
+    known: ['global', 'yes'],
+  });
+  assert.deepEqual(args._unknown, []);
+});
+
+test('parseArgs resolves an alias before the unknown check', () => {
+  // -d is an alias for the known `dir`, so it must not be flagged as unknown.
+  const args = parseArgs(['doctor', '-d', '/tmp'], {
+    aliases: { d: 'dir' },
+    known: ['dir'],
+  });
+  assert.deepEqual(args._unknown, []);
+  assert.equal(args.dir, '/tmp');
+});
+
+test('parseArgs omits _unknown entirely when no known list is given', () => {
+  const args = parseArgs(['doctor', '--whatever'], {});
+  assert.equal(args._unknown, undefined);
+});
+
 test('selectAction maps keys to list actions', () => {
   assert.equal(selectAction(''), 'cancel'); // Ctrl-C
   assert.equal(selectAction('\r'), 'submit');
