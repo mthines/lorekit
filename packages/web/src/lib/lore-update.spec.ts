@@ -23,11 +23,7 @@ vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 // the function body executes (it's async but the import of `createServerClient`
 // itself is hoisted).
 
-const mockRpc = vi.fn();
 const mockSingle = vi.fn();
-const mockSelect = vi.fn();
-const mockEq = vi.fn();
-const mockIs = vi.fn();
 
 // Chain: supabase.from(...).select(...).eq(...).eq(...).eq(...).is(...).single()
 // Each method returns an object with all other chain methods so any ordering works.

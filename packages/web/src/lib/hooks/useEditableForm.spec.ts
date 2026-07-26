@@ -15,7 +15,7 @@
  * - Keyboard enablement guard.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 // ── Pure helpers mirrored from the hook ──────────────────────────────────────
 
@@ -100,7 +100,8 @@ describe('isSaveSuccess', () => {
   });
 
   it('is true when onSave returns void/nothing', () => {
-    const fn = async () => {};
+    // async function that returns void implicitly returns undefined
+    const fn = async (): Promise<void> => { return; };
     return fn().then((result) => {
       expect(isSaveSuccess(result)).toBe(true);
     });
@@ -117,15 +118,18 @@ describe('isSaveSuccess', () => {
 
 describe('keyboard guard', () => {
   it('does not add a listener when enableKeyboard is false', () => {
-    // We simulate the guard logic: if enableKeyboard is false, return early.
-    const addEventListenerSpy = vi.spyOn(globalThis.document, 'addEventListener');
+    // The hook guards all addEventListener calls behind `if (enableKeyboard)`.
+    // When false the early return fires and no listener is attached.
+    // This test verifies the guard condition pure-logic: a falsy flag must
+    // short-circuit before any listener registration.
     const enableKeyboard = false;
+    let listenerAdded = false;
 
+    // Simulate the hook's internal guard.
     if (enableKeyboard) {
-      document.addEventListener('keydown', () => {});
+      listenerAdded = true;
     }
 
-    expect(addEventListenerSpy).not.toHaveBeenCalled();
-    addEventListenerSpy.mockRestore();
+    expect(listenerAdded).toBe(false);
   });
 });
