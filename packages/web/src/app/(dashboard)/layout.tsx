@@ -6,6 +6,8 @@ import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
 import { Dash0Provider } from '@/components/providers/Dash0Provider';
 import { MemorySidebarProvider } from '@/components/providers/MemorySidebarProvider';
+import { OnboardingProvider } from '@/components/providers/OnboardingProvider';
+import { getOnboardingState } from '@/lib/onboarding-server';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createServerClient();
@@ -23,26 +25,33 @@ export default async function DashboardLayout({ children }: { children: React.Re
     redirect(`/login?next=${next}`);
   }
 
+  // Onboarding completion feeds both the sidebar's "Getting started" progress
+  // badge and the checklist itself, so it's resolved once here and shared via
+  // the provider.
+  const onboardingState = await getOnboardingState();
+
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-[var(--color-bg)] md:flex-row">
-      {/* Pass userId so Dash0Provider can call identify() and attach
-          the opaque user ID to all subsequent RUM telemetry */}
-      <Dash0Provider userId={user.id} />
-      <Sidebar user={user} />
-      {/*
-        MemorySidebarProvider wraps both the TopBar and the page content so the
-        lesson detail sheet is available site-wide AND the TopBar's
-        MemoryExpandButton can consume the context. It uses useSearchParams
-        internally, which requires a Suspense boundary in Next.js App Router.
-      */}
-      <Suspense fallback={null}>
-        <MemorySidebarProvider>
-          <div className="flex flex-1 flex-col overflow-hidden">
-            <TopBar user={user} />
-            <main className="flex-1 overflow-y-auto p-4 pb-20 md:pb-6 md:p-6">{children}</main>
-          </div>
-        </MemorySidebarProvider>
-      </Suspense>
-    </div>
+    <OnboardingProvider serverState={onboardingState}>
+      <div className="flex h-screen flex-col overflow-hidden bg-[var(--color-bg)] md:flex-row">
+        {/* Pass userId so Dash0Provider can call identify() and attach
+            the opaque user ID to all subsequent RUM telemetry */}
+        <Dash0Provider userId={user.id} />
+        <Sidebar user={user} />
+        {/*
+          MemorySidebarProvider wraps both the TopBar and the page content so the
+          lesson detail sheet is available site-wide AND the TopBar's
+          MemoryExpandButton can consume the context. It uses useSearchParams
+          internally, which requires a Suspense boundary in Next.js App Router.
+        */}
+        <Suspense fallback={null}>
+          <MemorySidebarProvider>
+            <div className="flex flex-1 flex-col overflow-hidden">
+              <TopBar user={user} />
+              <main className="flex-1 overflow-y-auto p-4 pb-20 md:pb-6 md:p-6">{children}</main>
+            </div>
+          </MemorySidebarProvider>
+        </Suspense>
+      </div>
+    </OnboardingProvider>
   );
 }
