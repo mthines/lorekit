@@ -10,6 +10,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { validateScope } from '../_shared/scope.ts';
 import { createTracedClient, type Span } from '../_shared/otel.ts';
 import { translateCapError } from './limits.ts';
+import { translateOrgPermissionError } from './org-permissions.ts';
 import { parseCreatedAt } from './created-at.ts';
 import { recordAudit } from './audit.ts';
 import { applyTenantScope } from './tenant-scope.ts';
@@ -41,7 +42,7 @@ export async function toolWrite(
   userId: string | null,
   span: Span,
 ) {
-  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at } = params;
+  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org } = params;
   if (!rawScope || !key || !value) throw new Error('scope, key, and value are required');
   if (value.length > MAX_VALUE_BYTES) throw new Error(`value exceeds ${MAX_VALUE_BYTES} bytes`);
   const scope = validateScope(rawScope);
@@ -55,6 +56,7 @@ export async function toolWrite(
     ...(source_agent ? { 'lorekit.source_agent': source_agent } : {}),
     ...(trigger ? { 'lorekit.trigger': trigger } : {}),
     ...(createdAt ? { 'lorekit.created_at': createdAt } : {}),
+    ...(org ? { 'lorekit.org': org } : {}),
   });
 
   // 00003 replaced the plain unique constraint with PARTIAL indexes
@@ -72,10 +74,11 @@ export async function toolWrite(
       p_source_agent: source_agent ?? null,
       p_trigger: trigger ?? null,
       p_created_at: createdAt,
+      p_org_slug: org ?? null,
     })
     .single();
   if (error) {
-    const translated = translateCapError(error);
+    const translated = translateOrgPermissionError(translateCapError(error));
     throw translated instanceof Error ? translated : new Error(error.message);
   }
   const row = data as { id: string; created_at: string; inserted?: boolean };
@@ -159,13 +162,52 @@ export async function toolDelete(
   userId: string | null,
   span: Span,
 ) {
-  const { scope: rawScope, key, force = false } = params;
+  const { scope: rawScope, key, force = false, org } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
   const scope = validateScope(rawScope);
 
-  span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key, 'lorekit.delete.force': force });
+  span.setAttributes({
+    'lorekit.scope': scope,
+    'lorekit.key': key,
+    'lorekit.delete.force': force,
+    ...(org ? { 'lorekit.org': org } : {}),
+  });
 
   const tracedDb = createTracedClient(db, span);
+
+  if (org) {
+    // Org-owned delete: role-gated inside the memory_delete RPC (SECURITY
+    // DEFINER) — never a raw service-role .delete()/.update(), which would
+    // bypass the role gate entirely since this client bypasses RLS.
+    const { data, error } = await tracedDb
+      .rpc('memory_delete', {
+        p_user_id: userId,
+        p_org_slug: org,
+        p_scope: scope,
+        p_key: key,
+        p_force: force,
+      })
+      .single();
+    if (error) {
+      const translated = translateOrgPermissionError(error);
+      throw translated instanceof Error ? translated : new Error((error as { message: string }).message);
+    }
+    const row = data as { deleted: boolean; archived: boolean };
+    span.setAttributes({ 'lorekit.result.deleted': row.deleted, 'lorekit.result.archived': row.archived });
+    if (row.deleted || row.archived) {
+      await recordAudit(
+        db,
+        {
+          action: row.deleted ? 'memory.delete' : 'memory.archive',
+          resourceType: 'memory',
+          target: key,
+          metadata: { scope, key, force, org },
+        },
+        userId,
+      );
+    }
+    return { deleted: row.deleted, archived: row.archived };
+  }
 
   if (force) {
     let query = tracedDb.from('memories').delete({ count: 'exact' }).eq('scope', scope).eq('key', key);

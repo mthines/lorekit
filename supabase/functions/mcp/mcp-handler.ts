@@ -94,6 +94,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
                 description:
                   'Optional ISO 8601 creation date. Use when migrating a pre-existing memory so it is dated by its original time instead of now. Rejected if invalid or in the future. Applies only when the memory is first created.',
               },
+              org: {
+                type: 'string',
+                description:
+                  'Org slug to write under (org-owned write). Omit for a personal memory. You must be a write-capable member (member/admin/owner, not viewer) of the org, verified server-side — supplying an org slug you are not authorized for is rejected.',
+              },
             },
           },
         },
@@ -117,6 +122,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
               scope: { type: 'string' },
               key: { type: 'string' },
               force: { type: 'boolean', description: 'Hard-delete immediately (unrecoverable). Defaults to false (soft-archive).' },
+              org: {
+                type: 'string',
+                description:
+                  'Org slug to delete under (org-owned delete). Omit for a personal memory. Soft-archive requires a member/admin/owner role; hard-delete (force: true) requires admin/owner — verified server-side.',
+              },
             },
           },
         },

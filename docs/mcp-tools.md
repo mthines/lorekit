@@ -37,6 +37,7 @@ Store or update a lesson. Requires a token with write permission (`lk_rw_*` or `
 | `tags` | | Array of tag strings, e.g. `["skill::aw", "source::manual"]` |
 | `source_agent` | | Name of the agent writing this lesson |
 | `trigger` | | What triggered the write (`stuck-loop`, `pr-webhook`, `manual`) |
+| `org` | | Org slug to write under (org-owned write). Omit for a personal memory. You must be a write-capable member (`member`/`admin`/`owner`, not `viewer`) of the org — verified server-side; supplying an org you're not authorized for is rejected. |
 
 **Returns:** `{ "id": "<uuid>", "created_at": "<iso>" }`
 
@@ -111,6 +112,7 @@ Soft-archive a lesson (default) or hard-delete it immediately. Requires a token 
 | `scope` | required | Canonical scope string |
 | `key` | required | Lesson identifier |
 | `force` | `false` | When `true`, permanently hard-deletes the row (unrecoverable). When `false` (default), soft-archives the row — it is hidden from reads but can be listed via `memory.list_archived` and restored via `memory.restore`. |
+| `org` | | Org slug to delete under (org-owned delete). Omit for a personal memory. Soft-archive requires a `member`/`admin`/`owner` role; hard-delete (`force: true`) requires `admin`/`owner` — a `viewer` or non-member is rejected on either. |
 
 **Returns:** `{ "deleted": boolean, "archived": boolean }`
 
