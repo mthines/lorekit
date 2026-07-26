@@ -6,6 +6,7 @@
 | [mcp-tools.md](./mcp-tools.md) | Agents + developers | All 9 MCP tools with request/response examples |
 | [scope-format.md](./scope-format.md) | Agents + developers | Canonical scope string spec and resolution strategy |
 | [org-sharing.md](./org-sharing.md) | Users + operators | Organizations & shared lore: roles, invites, ownership, deletion + recovery, invite emails |
+| [github-app.md](./github-app.md) | Developers + operators | GitHub App integration: architecture, data model, fail-safe pending identity, Setup-URL bounce, post-merge operational runbook |
 | [api-tokens.md](./api-tokens.md) | Developers | Token types, permissions, generation, CI usage |
 | [limits.md](./limits.md) | Agents + developers | Memory cap, rate limiting, per-user overrides, 429 semantics |
 | [otel.md](./otel.md) | Developers | Dash0 setup, custom spans, environment variables |
