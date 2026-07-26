@@ -351,8 +351,11 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
         showToast(result.error, 'error');
         return;
       }
-      setOrgs((prev) => prev.filter((o) => o.id !== selectedOrgId));
-      setSelectedOrgId((prev) => orgs.find((o) => o.id !== prev)?.id ?? null);
+      setOrgs((prev) => {
+        const next = prev.filter((o) => o.id !== selectedOrgId);
+        setSelectedOrgId(next[0]?.id ?? null);
+        return next;
+      });
       showToast('You left the organization.', 'success');
     });
   }
@@ -366,8 +369,11 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
         showToast(result.error, 'error');
         return;
       }
-      setOrgs((prev) => prev.filter((o) => o.id !== selectedOrgId));
-      setSelectedOrgId((prev) => orgs.find((o) => o.id !== prev)?.id ?? null);
+      setOrgs((prev) => {
+        const next = prev.filter((o) => o.id !== selectedOrgId);
+        setSelectedOrgId(next[0]?.id ?? null);
+        return next;
+      });
       showToast('Organization deleted.', 'success');
     });
   }
@@ -474,7 +480,8 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
             <div className="min-w-0">
               <h3 className="text-sm font-semibold text-[var(--color-content-primary)]">{selectedOrg.name}</h3>
               <p className="text-xs text-[var(--color-content-tertiary)]">
-                You are {ROLE_LABEL[selectedOrg.role]}
+                You are {selectedOrg.role === 'owner' || selectedOrg.role === 'admin' ? 'an' : 'a'}{' '}
+                {ROLE_LABEL[selectedOrg.role]}
               </p>
             </div>
             {orgs.length > 0 && !showCreateForm && (

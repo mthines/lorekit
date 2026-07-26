@@ -59,7 +59,10 @@ export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerPro
   function handleDecline(target: OrgInvite) {
     startTransition(async () => {
       const result = await declineInvite(target.id);
-      if (result.error) showToast(result.error, 'error');
+      if (result.error) {
+        showToast(result.error, 'error');
+        return;
+      }
       await queryClient.invalidateQueries({ queryKey: PENDING_INVITES_QUERY_KEY });
     });
   }

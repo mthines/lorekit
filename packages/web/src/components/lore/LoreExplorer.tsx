@@ -459,6 +459,7 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
           <div className="flex md:hidden flex-col gap-3 pb-6">
             <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] overflow-hidden">
               <button
+                type="button"
                 onClick={() => setScopePanelOpen((v) => !v)}
                 aria-expanded={scopePanelOpen}
                 className="flex w-full min-h-11 items-center justify-between gap-2 px-4 py-2.5 text-sm text-[var(--color-content-primary)]"
