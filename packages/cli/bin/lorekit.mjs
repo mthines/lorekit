@@ -164,7 +164,6 @@ ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
       --from <path>       Source store to migrate from (required)
       --to <tier>         Destination tier: home | project (default routes by scope)
-      --store <path>      Local project-tier store directory (default: .lorekit)
       --apply             Apply the migration (alias of --yes)
   -y, --yes               Apply the migration; never prompt
 
