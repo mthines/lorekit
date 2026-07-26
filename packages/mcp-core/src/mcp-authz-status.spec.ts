@@ -4,65 +4,71 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 /**
- * Drift guard: post-authentication AUTHORIZATION denials in the edge tools/call
- * path must NOT answer HTTP 401.
+ * Drift guard: the edge MCP endpoint must never answer an auth error with HTTP
+ * 401, and must never emit an auth error with a null JSON-RPC id.
  *
- * Regression for the org.* hang: a valid api_key caller hitting an authz limit
- * (org.* requires JWT; read-only / write-only token) used to be rejected with
- * JSON-RPC code -32001, which jsonrpcError maps to HTTP 401. Over the
- * streamable-HTTP transport a 401 on a tools/call is read by mcp-remote as a
- * *session* auth failure — it silently retries/reconnects and the caller's
- * tool-call promise never resolves, so the client hangs (observed ~30 min).
+ * Why: this is a token-based MCP server (no OAuth). A 401 on the MCP endpoint is
+ * read by streamable-HTTP clients (mcp-remote) as a *session* auth failure —
+ * they silently retry/reconnect and the caller's promise never resolves, so the
+ * client hangs (observed ~30 min on org.* with a valid token, and again on a
+ * rotated token). A response with id:null can't be correlated to the pending
+ * call and hangs the same way. Both auth-family errors must therefore travel
+ * IN-BAND: HTTP 200 + a JSON-RPC error carrying the real request id, so the
+ * client surfaces "invalid token" / "requires JWT" fast instead of hanging.
  *
- * An authorization denial is an in-band response to an accepted call and must
- * travel as HTTP 200 with the error in the body (JSONRPC_FORBIDDEN). Only a
- * genuinely unauthenticated request (-32001, pre-dispatch, null id) may be 401.
+ *   -32001            unauthenticated (missing / invalid / rotated token)
+ *   JSONRPC_FORBIDDEN authenticated but not permitted (org.* JWT, token scope)
  *
- * This scans the edge `mcp-handler.ts` source (not mcp-core) because the Deno
- * edge function can't be imported under vitest — same approach as
- * tenant-scope-usage.spec.ts.
+ * These scan the Deno edge sources (which vitest can't import) — same approach
+ * as tenant-scope-usage.spec.ts.
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const handlerPath = path.resolve(here, '../../../supabase/functions/mcp/mcp-handler.ts');
-const source = readFileSync(handlerPath, 'utf8');
+const edge = (f: string) => readFileSync(path.resolve(here, '../../../supabase/functions/mcp/', f), 'utf8');
+const handler = edge('mcp-handler.ts');
+const index = edge('index.ts');
 
-/** Slice the body of the `if (method === 'tools/call')` block by brace-depth. */
-function extractToolsCallBlock(src: string): string {
-  const marker = src.indexOf("method === 'tools/call'");
-  if (marker === -1) throw new Error("tools/call branch not found in mcp-handler.ts");
-  const bodyStart = src.indexOf('{', marker);
+/** Slice a brace-delimited block starting at the first `{` after `marker`. */
+function blockAfter(src: string, marker: string, label: string): string {
+  const at = src.indexOf(marker);
+  if (at === -1) throw new Error(`${label} not found`);
+  const start = src.indexOf('{', at);
   let depth = 0;
-  for (let i = bodyStart; i < src.length; i++) {
+  for (let i = start; i < src.length; i++) {
     if (src[i] === '{') depth++;
-    if (src[i] === '}' && --depth === 0) return src.slice(bodyStart, i + 1);
+    if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
   }
-  throw new Error('could not find end of tools/call block');
+  throw new Error(`could not find end of ${label}`);
 }
 
-describe('mcp-handler authz status guard', () => {
-  it('maps only the unauthenticated code (-32001) to HTTP 401', () => {
-    // The 401 branch exists (drives OAuth retry) and is keyed on -32001 alone.
-    expect(source).toMatch(/code === -32001 \? 401/);
-  });
-
-  it('defines a distinct authorization-denied code mapped to HTTP 200', () => {
-    expect(source).toMatch(/const JSONRPC_FORBIDDEN = -32003;/);
-    // The status expression must send JSONRPC_FORBIDDEN to 200, not 400/401.
-    expect(source).toMatch(/code === JSONRPC_FORBIDDEN \? 200/);
+describe('mcp-handler auth status guard', () => {
+  it('maps both auth-family codes to HTTP 200 and never to 401', () => {
+    expect(handler).toMatch(/const JSONRPC_FORBIDDEN = -32003;/);
+    expect(handler).toMatch(
+      /const status = code === -32001 \|\| code === JSONRPC_FORBIDDEN \? 200 : 400;/,
+    );
+    // No status branch may yield 401 (comments may mention it; code may not).
+    expect(handler).not.toMatch(/[?:]\s*401/);
   });
 
   it('returns JSONRPC_FORBIDDEN (not -32001) for every authz denial in tools/call', () => {
-    const block = extractToolsCallBlock(source);
-
-    // The three post-auth authorization denials: org.* JWT requirement,
-    // write-permission-missing, read-permission-missing.
-    const forbiddenReturns = block.match(/jsonrpcError\(\s*id,\s*JSONRPC_FORBIDDEN/g) ?? [];
-    expect(forbiddenReturns.length).toBe(3);
-
-    // No authorization denial may fall back to the 401 code: no jsonrpcError
-    // call site in the tools/call block may pass -32001. (Comments referencing
-    // -32001 are fine — this targets actual return sites, not documentation.)
+    const block = blockAfter(handler, "method === 'tools/call'", 'tools/call block');
+    const forbidden = block.match(/jsonrpcError\(\s*id,\s*JSONRPC_FORBIDDEN/g) ?? [];
+    expect(forbidden.length).toBe(3); // org.* JWT, write-missing, read-missing
     expect(block).not.toMatch(/jsonrpcError\(\s*id,\s*-32001/);
+  });
+});
+
+describe('index.ts auth-failure guard', () => {
+  it('answers a bad/missing token in-band with a real id and HTTP 200, not 401', () => {
+    const block = blockAfter(index, 'if (!auth)', 'auth-failure block');
+    // Status recorded as 200, never 401.
+    expect(block).toMatch(/'http\.response\.status_code': 200/);
+    expect(block).not.toMatch(/'http\.response\.status_code': 401/);
+    // Echoes the real request id (peeked from the body) — never id:null, which
+    // the client can't correlate and would hang on.
+    expect(block).toMatch(/peekRequestId/);
+    expect(block).toMatch(/jsonrpcError\(\s*reqId,/);
+    expect(block).not.toMatch(/jsonrpcError\(\s*null/);
   });
 });
