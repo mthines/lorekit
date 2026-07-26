@@ -28,6 +28,7 @@
 import { createServerClient } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
 import { recordAuditEvent } from '@/lib/audit-log';
+import { normalizeSlug } from '@/lib/org-slug';
 
 export type OrgRole = 'owner' | 'admin' | 'member' | 'viewer';
 
@@ -56,8 +57,13 @@ export async function createOrg(slug: string, name: string): Promise<{ orgId: st
   if (!user) return { error: 'Not authenticated' };
   if (!name.trim()) return { error: 'Organization name is required' };
 
+  const normalizedSlug = normalizeSlug(slug);
+  if (!normalizedSlug) {
+    return { error: 'Invalid organization slug — use 2–48 lowercase letters, digits, or dashes.' };
+  }
+
   const { data: orgId, error } = await supabase.rpc('lorekit_org_create', {
-    p_slug: slug,
+    p_slug: normalizedSlug,
     p_name: name.trim(),
   });
   if (error) return { error: error.message };
@@ -67,7 +73,7 @@ export async function createOrg(slug: string, name: string): Promise<{ orgId: st
     resourceType: 'org',
     resourceId: orgId as string,
     target: name.trim(),
-    metadata: { slug },
+    metadata: { slug: normalizedSlug },
   });
 
   revalidatePath('/settings', 'layout');
