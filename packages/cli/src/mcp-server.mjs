@@ -160,7 +160,7 @@ const MEMORY_DISPATCH = {
 // org.* dispatch — always routed to the remote store.
 const ORG_DISPATCH = {
   'org.create': (remote, a) => remote.orgCreate(a),
-  'org.list':   (remote)    => remote.orgList(),
+  'org.list': (remote) => remote.orgList(),
   'org.rename': (remote, a) => remote.orgRename(a),
   'org.delete': (remote, a) => remote.orgDelete(a),
 };
