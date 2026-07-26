@@ -33,7 +33,6 @@ import {
   ATTR_SERVICE_VERSION,
 } from '@opentelemetry/semantic-conventions';
 import { SpanStatusCode, trace } from '@opentelemetry/api';
-import type * as http from 'http';
 
 // Read service version from package.json at startup
 const SERVICE_VERSION = process.env['npm_package_version'] ?? '0.0.1';
@@ -115,7 +114,7 @@ const sdk = new NodeSDK({
         applyCustomAttributesOnSpan: (
           span,
           _req,
-          res,
+          res: { statusCode?: number },
         ) => {
           const statusCode = res.statusCode;
           if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
