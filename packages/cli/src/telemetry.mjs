@@ -1,0 +1,291 @@
+// LoreKit CLI — self-contained OpenTelemetry export for command usage.
+//
+// The CLI is strictly zero-dependency (see packages/cli/package.json), so this
+// mirrors the Edge Function's SDK-free approach (supabase/functions/_shared/
+// otel.ts): OTLP/JSON over the global fetch (Node 18+), no @opentelemetry/*
+// packages. One span + one counter data point per human-facing command
+// (install / doctor / migrate), fired to Dash0 so the maintainers can see
+// which commands people actually run.
+//
+// Privacy — this runs on end-users' machines, so it is deliberately narrow:
+//   • Opt-out honored: LOREKIT_TELEMETRY=0|off|false|no|disable, or the
+//     cross-vendor DO_NOT_TRACK=1, disables all export.
+//   • No PII is ever attached: only the command name, a bounded allow-list of
+//     boolean flags, the CLI/runtime/OS identity, and the outcome. Never a
+//     path, cwd, token, endpoint, repo, or scope string.
+//   • Disabled outright when no OTLP endpoint resolves.
+//
+// The default endpoint + token below are baked into the published package and
+// are therefore public by design. The token MUST be Dash0 ingestion-only
+// (write/POST spans, no read/query/manage) — anyone can unpack the npm tarball
+// and read it. Standard OTEL_EXPORTER_OTLP_* env vars override the defaults.
+
+import process from 'node:process';
+
+// ── Baked-in defaults (public by design) ──────────────────────────────────────
+// Fill these in to enable default phone-home telemetry from the published CLI.
+// TOKEN MUST BE INGESTION-ONLY — it ships in the npm tarball and is fully
+// exposed. Leave TOKEN empty to keep default export off until it is set.
+const DEFAULT_ENDPOINT = 'https://ingress.us-east-1.aws.dash0.com';
+const DEFAULT_TOKEN = ''; // e.g. 'auth_xxx' — Dash0 ingestion-only token
+const DEFAULT_DATASET = 'lorekit-cli';
+
+// Flags worth counting (e.g. how many installs are --global). Bounded on
+// purpose: only these booleans are ever attached, never free-form values.
+const FLAG_ATTRS = ['global', 'project', 'deep', 'yes', 'force', 'no-hooks'];
+
+const OFF_VALUES = new Set(['0', 'off', 'false', 'no', 'disable', 'disabled']);
+
+// ── Config resolution ─────────────────────────────────────────────────────────
+
+/**
+ * Resolve telemetry config from env + baked-in defaults.
+ * Returns { enabled: false } when disabled or unconfigured, else the endpoint
+ * and headers to export with.
+ */
+export function resolveTelemetryConfig(env = process.env) {
+  const optOut = env.LOREKIT_TELEMETRY;
+  if (optOut !== undefined && OFF_VALUES.has(String(optOut).trim().toLowerCase())) {
+    return { enabled: false };
+  }
+  if (env.DO_NOT_TRACK && String(env.DO_NOT_TRACK).trim() !== '0') {
+    return { enabled: false };
+  }
+
+  const endpoint = (env.OTEL_EXPORTER_OTLP_ENDPOINT || DEFAULT_ENDPOINT || '')
+    .trim()
+    .replace(/\/+$/, '');
+  if (!endpoint) return { enabled: false };
+
+  const headers = {};
+  // Explicit OTEL_EXPORTER_OTLP_HEADERS (comma list of key=value) wins; else the
+  // baked-in ingestion token, sent as Dash0's Authorization bearer.
+  const rawHeaders = env.OTEL_EXPORTER_OTLP_HEADERS;
+  if (rawHeaders) {
+    for (const pair of String(rawHeaders).split(',')) {
+      const idx = pair.indexOf('=');
+      if (idx > 0) headers[pair.slice(0, idx).trim()] = pair.slice(idx + 1).trim();
+    }
+  } else if (DEFAULT_TOKEN) {
+    headers['Authorization'] = `Bearer ${DEFAULT_TOKEN}`;
+  }
+
+  // With the baked-in default endpoint we need the baked-in token (or explicit
+  // headers) to authenticate — no point exporting an unauthenticated request.
+  const usingDefaultEndpoint = !env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  if (usingDefaultEndpoint && Object.keys(headers).length === 0) {
+    return { enabled: false };
+  }
+
+  const dataset = env.DASH0_DATASET || DEFAULT_DATASET;
+  if (dataset) headers['Dash0-Dataset'] = dataset;
+
+  return { enabled: true, endpoint, headers };
+}
+
+// ── ID + value helpers (mirror _shared/otel.ts) ───────────────────────────────
+
+export function randHex(bytes) {
+  const b = new Uint8Array(bytes);
+  crypto.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+}
+
+function toOtlpValue(v) {
+  if (typeof v === 'number') return Number.isInteger(v) ? { intValue: String(v) } : { doubleValue: v };
+  if (typeof v === 'boolean') return { boolValue: v };
+  return { stringValue: String(v) };
+}
+
+function resourceAttributes(version) {
+  return [
+    { key: 'service.name', value: { stringValue: 'lorekit-cli' } },
+    { key: 'service.namespace', value: { stringValue: 'lorekit' } },
+    { key: 'service.version', value: { stringValue: String(version) } },
+    { key: 'process.runtime.name', value: { stringValue: 'nodejs' } },
+    { key: 'process.runtime.version', value: { stringValue: process.versions.node } },
+    { key: 'os.type', value: { stringValue: process.platform } },
+    { key: 'host.arch', value: { stringValue: process.arch } },
+  ];
+}
+
+// ── Payload builders (pure — unit-tested) ─────────────────────────────────────
+
+/**
+ * Collect the bounded, non-PII attributes for a command invocation. Only the
+ * command name, allow-listed boolean flags, the outcome and the exit code.
+ */
+export function commandAttributes({ command, args = {}, outcome, exitCode }) {
+  const attrs = { 'lorekit.cli.command': command, 'lorekit.cli.outcome': outcome };
+  if (typeof exitCode === 'number') attrs['lorekit.cli.exit_code'] = exitCode;
+  for (const flag of FLAG_ATTRS) {
+    if (args[flag]) attrs[`lorekit.cli.flag.${flag}`] = true;
+  }
+  return attrs;
+}
+
+export function buildTracePayload({ version, name, attributes, startMs, endMs, status, statusMessage }) {
+  return {
+    resourceSpans: [
+      {
+        resource: { attributes: resourceAttributes(version) },
+        scopeSpans: [
+          {
+            scope: { name: 'lorekit-cli', version: String(version) },
+            spans: [
+              {
+                traceId: randHex(16),
+                spanId: randHex(8),
+                name,
+                kind: 1, // INTERNAL
+                startTimeUnixNano: String(startMs * 1_000_000),
+                endTimeUnixNano: String(endMs * 1_000_000),
+                attributes: Object.entries(attributes).map(([key, value]) => ({
+                  key,
+                  value: toOtlpValue(value),
+                })),
+                status: {
+                  code: status === 'error' ? 2 : 1,
+                  ...(statusMessage ? { message: statusMessage } : {}),
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+export function buildMetricsPayload({ version, attributes, startMs, endMs }) {
+  return {
+    resourceMetrics: [
+      {
+        resource: { attributes: resourceAttributes(version) },
+        scopeMetrics: [
+          {
+            scope: { name: 'lorekit-cli', version: String(version) },
+            metrics: [
+              {
+                name: 'lorekit.cli.invocations',
+                description: 'Count of LoreKit CLI command invocations',
+                unit: '1',
+                sum: {
+                  aggregationTemporality: 1, // DELTA — a single-shot CLI reports +1
+                  isMonotonic: true,
+                  dataPoints: [
+                    {
+                      asInt: '1',
+                      startTimeUnixNano: String(startMs * 1_000_000),
+                      timeUnixNano: String(endMs * 1_000_000),
+                      attributes: Object.entries(attributes).map(([key, value]) => ({
+                        key,
+                        value: toOtlpValue(value),
+                      })),
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+// ── Export ────────────────────────────────────────────────────────────────────
+
+async function post(url, headers, payload, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } catch {
+    // Telemetry is best-effort — never surface a network/abort error.
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Export the trace + metric for one command. Best-effort and time-bounded so it
+ * can never delay or fail the CLI. Awaited before process exit (Node would
+ * otherwise drop the in-flight request), but capped at timeoutMs.
+ */
+export async function exportInvocation(config, { version, name, attributes, startMs, endMs, status, statusMessage }, { timeoutMs = 2000 } = {}) {
+  if (!config || !config.enabled) return;
+  const trace = buildTracePayload({ version, name, attributes, startMs, endMs, status, statusMessage });
+  const metric = buildMetricsPayload({ version, attributes, startMs, endMs });
+  await Promise.all([
+    post(`${config.endpoint}/v1/traces`, config.headers, trace, timeoutMs),
+    post(`${config.endpoint}/v1/metrics`, config.headers, metric, timeoutMs),
+  ]);
+}
+
+// ── Command wrapper ───────────────────────────────────────────────────────────
+
+/**
+ * Time a human-facing command, record its outcome, and export one span + one
+ * counter point. Returns the command's exit code unchanged. Telemetry failures
+ * are swallowed — the command result is never affected.
+ *
+ * @param {string} command  bounded: install | doctor | migrate
+ * @param {object} args     parsed CLI args (read for allow-listed flags only)
+ * @param {string} version  CLI version (from package.json)
+ * @param {() => Promise<number>} run  the command handler
+ */
+export async function traceCommand(command, args, version, run) {
+  let config;
+  try {
+    config = resolveTelemetryConfig();
+  } catch {
+    config = { enabled: false };
+  }
+
+  // Fast path: no export configured → run with zero overhead.
+  if (!config.enabled) return run();
+
+  const startMs = Date.now();
+  let exitCode = 0;
+  let status = 'ok';
+  let statusMessage;
+  try {
+    exitCode = await run();
+    if (typeof exitCode === 'number' && exitCode !== 0) {
+      status = 'error';
+      statusMessage = `exit ${exitCode}`;
+    }
+    return exitCode;
+  } catch (e) {
+    status = 'error';
+    statusMessage = e && e.message ? e.message : String(e);
+    exitCode = 1;
+    throw e;
+  } finally {
+    try {
+      const attributes = commandAttributes({
+        command,
+        args,
+        outcome: status === 'error' ? 'error' : 'ok',
+        exitCode: typeof exitCode === 'number' ? exitCode : undefined,
+      });
+      await exportInvocation(config, {
+        version,
+        name: `lorekit.cli.${command}`,
+        attributes,
+        startMs,
+        endMs: Date.now(),
+        status,
+        statusMessage,
+      });
+    } catch {
+      // never let telemetry break the CLI
+    }
+  }
+}

@@ -8,6 +8,7 @@ import { doctor } from '../src/doctor.mjs';
 import { hook } from '../src/hook.mjs';
 import { migrate } from '../src/migrate.mjs';
 import { mcpServer } from '../src/mcp-server.mjs';
+import { traceCommand } from '../src/telemetry.mjs';
 
 // Read the version from package.json so it always matches the published
 // package — release-please bumps package.json, and this tracks it for free.
@@ -67,6 +68,8 @@ ${c.bold('Environment')}
   LOREKIT_MCP_URL / LOREKIT_ENDPOINT   endpoint fallback
   LOREKIT_TOKEN                        token fallback
   NO_COLOR                             disable colored output
+  LOREKIT_TELEMETRY / DO_NOT_TRACK     set to 0/off (or DO_NOT_TRACK=1) to opt
+                                       out of anonymous command-usage telemetry
 
 ${c.bold('Examples')}
   npx @lorekit/cli install --endpoint https://ref.supabase.co/functions/v1/mcp --token lk_rw_xxx
@@ -108,13 +111,17 @@ async function main() {
     return command ? 0 : args.help ? 0 : 1;
   }
 
+  // Human-facing commands are wrapped so we can see which commands people run
+  // (one OTel span + counter per invocation). `hook` and `mcp` are handled
+  // above and stay uninstrumented — they are machine-facing, fire on every
+  // agent event, and must keep stdout to their host protocol.
   switch (command) {
     case 'install':
-      return install(args);
+      return traceCommand('install', args, VERSION, () => install(args));
     case 'doctor':
-      return doctor(args);
+      return traceCommand('doctor', args, VERSION, () => doctor(args));
     case 'migrate':
-      return migrate(args);
+      return traceCommand('migrate', args, VERSION, () => migrate(args));
     default:
       err(`${c.red('Unknown command:')} ${command}\n`);
       log(HELP);

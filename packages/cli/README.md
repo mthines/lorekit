@@ -297,6 +297,9 @@ active deny constraints.
 | `LOREKIT_MCP_URL` / `LOREKIT_ENDPOINT` | endpoint fallback |
 | `LOREKIT_TOKEN` | token fallback |
 | `NO_COLOR` | disable colored output |
+| `LOREKIT_TELEMETRY` | set to `0` / `off` / `false` to disable usage telemetry |
+| `DO_NOT_TRACK` | `1` also disables usage telemetry (cross-vendor standard) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS` | override the telemetry OTLP endpoint / headers |
 
 ## What the skill does
 
@@ -358,6 +361,22 @@ forever. This reduces manual validation to a single capture pass per tool.
 > actually consuming the injected context). `claude plugin validate` confirms
 > the real Claude CLI accepts the wiring; for a true live check, install the
 > plugin and start one session per tool.
+
+## Usage telemetry
+
+The human-facing commands (`install`, `doctor`, `migrate`) emit one
+OpenTelemetry span + one counter point per run so the maintainers can see which
+commands people use. It is zero-dependency (OTLP/JSON over `fetch`, no SDK) and
+deliberately narrow — it carries only the command name, a bounded set of boolean
+flags (`--global`, `--deep`, …), the CLI/runtime/OS identity, and the outcome.
+**No path, token, endpoint, repo, or scope is ever sent.** The `hook` and `mcp`
+commands are never instrumented.
+
+Opt out any time with `LOREKIT_TELEMETRY=0` (or `off` / `false` / `no`) or the
+cross-vendor `DO_NOT_TRACK=1`. Point it at your own collector with
+`OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS`. Export is a no-op
+when no endpoint is configured. See [docs/otel.md](../../docs/otel.md) for the
+attribute list and setup.
 
 ## Security note
 
