@@ -293,6 +293,11 @@ export async function traceCommand(command, args, version, run) {
     exitCode = 1;
     throw e;
   } finally {
+    // NOTE: on a thrown command error the `throw e` above is deferred until this
+    // finally settles, so a crash still awaits `exportInvocation` (up to
+    // timeoutMs, default 1500 ms) before propagating. This is intentional — the
+    // in-flight span would otherwise be dropped on exit. Do not shorten the
+    // timeout without weighing this "crash appears to hang ~1.5 s" trade-off.
     try {
       const attributes = commandAttributes({
         command,
