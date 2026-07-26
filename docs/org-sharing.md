@@ -83,9 +83,29 @@ Agents write org-owned memories by passing the org slug on `memory.write` (the
 writer is a write-capable member of that org; it is never trusted from the
 caller. The same applies to `memory.delete`.
 
-> **Planned:** *scope→org binding* — bind a scope (e.g. a repo) to an org so
-> writes under it are routed to the org automatically, without each write naming
-> the org. Not shipped yet; today the `org` slug is explicit per write.
+### Scope → org binding (auto-routing)
+
+Instead of naming the org on every write, an org **admin** can **bind a scope**
+(e.g. a repo) to the org. Then any write under that scope with no explicit `org`
+is routed to the org automatically:
+
+- A **write-capable member** writing under a bound scope → the memory is
+  org-owned, no `org` parameter needed.
+- A **non-member** (or a viewer) writing under a bound scope → the memory is
+  saved to **their personal lore** (never rejected), and `memory.write` returns
+  a `notice` explaining it's saved personal because they aren't a write-member,
+  and to ask an admin to add them. Never silent, never a hard failure.
+- An **explicit `org`** parameter always takes precedence over the binding.
+
+Binding is server-side truth (an `org_scope_bindings` row, globally unique per
+scope — a scope maps to at most one org), not the advisory
+`.lorekit/config.json`. Authorization to *create* a binding requires an
+admin/owner role (`manage_scopes`).
+
+> **Dashboard UI is a fast-follow.** The backend + MCP auto-routing ship first;
+> the **Settings → Shared scopes** management UI (bind / list / unbind) and the
+> Explorer's bound-scope badge land in the next PR. Until then bindings are
+> created via the `lorekit_scope_bind` RPC.
 
 ---
 
