@@ -362,7 +362,10 @@ begin
   );
   assert v_row.org_id is null,
     'memory_write: Phase 1 writes must always leave org_id NULL (writes stay personal-only)';
--- ── 6. audit_log search indexes present (00012) ─────────────────────────────
+end;
+$$;
+
+-- ── 11. audit_log search indexes present (00012) ────────────────────────────
 -- Covers the pg_trgm extension + both new indexes: index presence isn't a
 -- behavior the app-layer unit tests can assert, so this proves the migration
 -- actually created what packages/web/src/lib/pagination/ (name search +
