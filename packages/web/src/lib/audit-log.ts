@@ -17,7 +17,11 @@
  */
 
 import { createServerClient } from '@/lib/supabase/server';
-import type { AuditAction } from '@/lib/audit-actions';
+import { AUDIT_ACTIONS, type AuditAction } from '@/lib/audit-actions';
+import { decodeCursor } from '@/lib/pagination/cursor';
+import { clampPageSize, assemblePage, type Page } from '@/lib/pagination/keyset';
+import { normalizeActions, substringNeedle, dateRangeBounds, type DateRangeInput } from '@/lib/pagination/filters';
+import { applyKeyset, applyAuditFilters, runPaginatedQuery, type FilterBuilderLike } from '@/lib/pagination/apply';
 
 export interface AuditLogEventInput {
   action: AuditAction;
@@ -38,11 +42,27 @@ export interface AuditLogRow {
 }
 
 export interface AuditLogFilters {
+  /** @deprecated single-action back-compat — prefer `actions` (a SET). */
   action?: AuditAction;
+  /** A set of actions to filter by (OR'd together). */
+  actions?: AuditAction[];
+  /** Case-insensitive substring match on `target`. */
+  name?: string;
+  /** Inclusive `from`/`to` interval on `created_at`. */
+  range?: DateRangeInput | null;
+  /** Page size, default 50, hard max 100. */
+  pageSize?: number;
+  /** Opaque keyset cursor from a previous page's `nextCursor`. */
+  cursor?: string | null;
+  /** @deprecated back-compat — maps onto `pageSize` when `pageSize` is absent. */
   limit?: number;
 }
 
-const DEFAULT_LIST_LIMIT = 100;
+export type AuditLogPage = Page<AuditLogRow>;
+
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 100;
+const EMPTY_PAGE: AuditLogPage = { rows: [], nextCursor: null, hasMore: false };
 
 /**
  * Record one audit_log row for the current authenticated user. Never
@@ -76,28 +96,53 @@ export async function recordAuditEvent(input: AuditLogEventInput): Promise<void>
 }
 
 /**
- * List the current user's audit trail, newest first. RLS-scoped — returns
- * only rows this user is allowed to see. Returns [] on auth failure or DB
- * error (read-only surface; failing closed to an empty list is safe here).
+ * List a keyset page of the current user's audit trail, newest first, with
+ * optional combinable filters (action set / name substring / date interval).
+ * RLS-scoped — returns only rows this user is allowed to see. Fails closed to
+ * an empty page (`{ rows: [], nextCursor: null, hasMore: false }`) on auth
+ * failure or DB error; read-only surface, so failing closed is safe here.
+ *
+ * Pagination/filtering logic itself lives in the pure, audit-decoupled
+ * `lib/pagination/*` module — this function is the thin, audit-specific
+ * composition of it (decode cursor → normalize filters → build the query →
+ * assemble the page).
  */
-export async function listAuditLog(filters: AuditLogFilters = {}): Promise<AuditLogRow[]> {
+export async function listAuditLog(filters: AuditLogFilters = {}): Promise<AuditLogPage> {
   const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return [];
+  if (!user) return EMPTY_PAGE;
 
-  let query = supabase
+  const pageSize = clampPageSize(filters.pageSize ?? filters.limit, {
+    def: DEFAULT_PAGE_SIZE,
+    max: MAX_PAGE_SIZE,
+  });
+  const cursor = decodeCursor(filters.cursor);
+  const actions = normalizeActions(
+    filters.actions ?? (filters.action ? [filters.action] : undefined),
+    AUDIT_ACTIONS,
+  );
+  const needle = substringNeedle(filters.name);
+  const bounds = dateRangeBounds(filters.range);
+
+  const base = supabase
     .from('audit_log')
     .select('id, action, resource_type, resource_id, target, metadata, created_at')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false })
-    .limit(filters.limit ?? DEFAULT_LIST_LIMIT);
+    .eq('user_id', user.id);
 
-  if (filters.action) query = query.eq('action', filters.action);
+  // because: `apply.ts` is deliberately typed against the minimal
+  // `FilterBuilderLike` structural interface (order/limit/or/in/ilike/gte/lt)
+  // rather than supabase-js's generated `PostgrestFilterBuilder<...>` type, so
+  // the pure pagination module has no dependency on the generated DB types.
+  // The real builder has every one of those methods with a compatible runtime
+  // shape; the cast bridges the two type worlds at this single call site.
+  const filtered = applyAuditFilters(base as unknown as FilterBuilderLike, { actions, needle, bounds });
+  const query = applyKeyset(filtered, { cursor, pageSize });
 
-  const { data, error } = await query;
+  const { data, error } = await runPaginatedQuery<AuditLogRow>(query);
   if (error) {
     console.error('[listAuditLog] DB error:', error.message);
-    return [];
+    return EMPTY_PAGE;
   }
-  return (data ?? []) as AuditLogRow[];
+
+  return assemblePage((data ?? []) as AuditLogRow[], pageSize, (row) => ({ c: row.created_at, id: row.id }));
 }
