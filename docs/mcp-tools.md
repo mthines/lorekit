@@ -39,7 +39,9 @@ Store or update a lesson. Requires a token with write permission (`lk_rw_*` or `
 | `trigger` | | What triggered the write (`stuck-loop`, `pr-webhook`, `manual`) |
 | `org` | | Org slug to write under (org-owned write). Omit for a personal memory. You must be a write-capable member (`member`/`admin`/`owner`, not `viewer`) of the org — verified server-side; supplying an org you're not authorized for is rejected. |
 
-**Returns:** `{ "id": "<uuid>", "created_at": "<iso>" }`
+**Scope→org binding.** If you omit `org` but the scope is **bound to an org** (an admin set that up — see [org-sharing.md](./org-sharing.md#scope--org-binding-auto-routing)), the write auto-routes to that org **when you're a write-capable member**. If you're *not* a member, it's saved to your personal lore instead (never rejected) and the response carries a `notice` explaining that. An explicit `org` always overrides the binding.
+
+**Returns:** `{ "id": "<uuid>", "created_at": "<iso>" }` — plus an optional `"notice": "<string>"` when a write fell back to personal because the scope is bound to an org you can't write to.
 
 ---
 

@@ -1326,6 +1326,115 @@ begin
 end;
 $$;
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- Scope → org binding (00026)
+-- ═════════════════════════════════════════════════════════════════════════
+
+-- Fresh 'sb-org' (fb) with owner A + member B; C is a non-member.
+insert into orgs (id, slug, name, created_by) values
+  ('00000000-0000-0000-0000-0000000000fb', 'sb-org', 'Scope Bind Org', '00000000-0000-0000-0000-0000000000a1');
+insert into org_members (org_id, user_id, role) values
+  ('00000000-0000-0000-0000-0000000000fb', '00000000-0000-0000-0000-0000000000a1', 'owner'),
+  ('00000000-0000-0000-0000-0000000000fb', '00000000-0000-0000-0000-0000000000b2', 'member');
+
+-- ── 34. Bind is admin/owner-only (manage_scopes) ────────────────────────────
+do $$
+declare
+  v_bind_id uuid;
+  v_denied boolean;
+begin
+  -- A non-member (D) is denied.
+  v_denied := false;
+  set local role authenticated;
+  perform set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000d4","role":"authenticated"}', true);
+  begin
+    perform lorekit_scope_bind('00000000-0000-0000-0000-0000000000fb', 'repo::acme/sb');
+  exception when sqlstate 'LK002' then v_denied := true; end;
+  reset role;
+  assert v_denied, 'scope-bind: a non-member must be denied lorekit_scope_bind (LK002)';
+
+  -- A plain member (B) is also denied — manage_scopes needs admin/owner.
+  v_denied := false;
+  set local role authenticated;
+  perform set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}', true);
+  begin
+    perform lorekit_scope_bind('00000000-0000-0000-0000-0000000000fb', 'repo::acme/sb');
+  exception when sqlstate 'LK002' then v_denied := true; end;
+  reset role;
+  assert v_denied, 'scope-bind: a member (non-admin) must be denied lorekit_scope_bind';
+
+  -- The owner (A) binds successfully.
+  set local role authenticated;
+  perform set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  select lorekit_scope_bind('00000000-0000-0000-0000-0000000000fb', 'repo::acme/sb') into v_bind_id;
+  reset role;
+  assert v_bind_id is not null, 'scope-bind: the owner must bind successfully';
+  assert (select org_id from org_scope_bindings where scope = 'repo::acme/sb')
+         = '00000000-0000-0000-0000-0000000000fb',
+    'scope-bind: the binding row must point at the org';
+end;
+$$;
+
+-- ── 35. Bound-scope write: member routes to org, non-member falls back ───────
+do $$
+declare
+  v_org_routed boolean;
+  v_slug text;
+  v_row memories%rowtype;
+  v_id uuid;
+begin
+  -- Member B, no explicit org → routed to the bound org, author recorded.
+  select id, org_routed, binding_org_slug into v_id, v_org_routed, v_slug
+    from memory_write('00000000-0000-0000-0000-0000000000b2', 'repo::acme/sb', 'sb-key', 'v1');
+  assert v_org_routed,
+    'scope-bind: a write-capable member''s write under a bound scope must route to the org';
+  assert v_slug = 'sb-org', format('scope-bind: binding_org_slug should be sb-org, saw %s', v_slug);
+  select * into v_row from memories where id = v_id;
+  assert v_row.org_id = '00000000-0000-0000-0000-0000000000fb' and v_row.user_id is null,
+    'scope-bind: the routed row must be org-owned (org_id set, user_id null)';
+  assert v_row.created_by = '00000000-0000-0000-0000-0000000000b2',
+    'scope-bind: created_by must record the writer';
+
+  -- Non-member D → personal fallback, but the bound slug is reported (notice).
+  select id, org_routed, binding_org_slug into v_id, v_org_routed, v_slug
+    from memory_write('00000000-0000-0000-0000-0000000000d4', 'repo::acme/sb', 'sb-key-d', 'v1');
+  assert not v_org_routed,
+    'scope-bind: a non-member''s write under a bound scope must fall back to personal';
+  assert v_slug = 'sb-org',
+    'scope-bind: the fallback must still report the bound org slug for the notice';
+  select * into v_row from memories where id = v_id;
+  assert v_row.org_id is null and v_row.user_id = '00000000-0000-0000-0000-0000000000d4',
+    'scope-bind: the fallback row must be personal (user_id set, org_id null)';
+end;
+$$;
+
+-- ── 36. Explicit org slug bypasses the binding; unbind stops routing ─────────
+do $$
+declare
+  v_org_routed boolean;
+  v_slug text;
+begin
+  -- An explicit p_org_slug takes the explicit branch (binding lookup skipped),
+  -- so binding_org_slug is null even though the scope is bound.
+  select org_routed, binding_org_slug into v_org_routed, v_slug
+    from memory_write('00000000-0000-0000-0000-0000000000b2', 'repo::acme/sb', 'sb-key-explicit', 'v',
+                      '{}'::text[], null, null, null, 'sb-org');
+  assert v_org_routed and v_slug is null,
+    'scope-bind: an explicit org slug must route to the org and bypass the binding lookup';
+
+  -- After unbind, a member''s write under the (now unbound) scope is personal.
+  set local role authenticated;
+  perform set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  perform lorekit_scope_unbind('00000000-0000-0000-0000-0000000000fb', 'repo::acme/sb');
+  reset role;
+
+  select org_routed, binding_org_slug into v_org_routed, v_slug
+    from memory_write('00000000-0000-0000-0000-0000000000b2', 'repo::acme/sb', 'sb-key-unbound', 'v');
+  assert (not v_org_routed) and v_slug is null,
+    'scope-bind: after unbind, a write under the scope is personal with no binding slug';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
