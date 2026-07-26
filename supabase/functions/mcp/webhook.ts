@@ -18,6 +18,20 @@
  *      compatibility (deployments that set the env var before the DB-backed
  *      flow was added).
  *
+ * Security posture — pre-HMAC DB query:
+ *   The repo full_name must be extracted from the payload before HMAC
+ *   verification so the right per-repo secret can be selected. This is an
+ *   accepted trade-off in a multi-tenant system where no single global
+ *   secret exists. The attack surface is bounded by:
+ *     a) SAFE_FULL_NAME regex — rejects anything that is not a plausible
+ *        owner/repo before it touches a DB filter.
+ *     b) 'none' short-circuit — if no secret is configured for the repo,
+ *        the handler returns 401 immediately without attempting HMAC
+ *        verification (no timing oracle on crypto).
+ *     c) PostgREST eq filter — parameterised, not interpolated.
+ *   An attacker can probe which repos have a secret configured, but cannot
+ *   bypass HMAC verification or inject into the query.
+ *
  * Previously this joined on repository.owner.login via an
  * auth.admin.listUsers({ perPage: 1000 }) scan — which fails for org-owned
  * repos (owner login is the org, not a personal login) and is O(all users),
@@ -146,6 +160,7 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
 
   // Parse enough of the payload to identify the repo before HMAC verification.
   // We need repository.full_name to look up the correct secret from the DB.
+  // See security posture comment at the top of this file.
   // deno-lint-ignore no-explicit-any
   let earlyPayload: Record<string, any> = {};
   try { earlyPayload = JSON.parse(body); } catch { /* handled below */ }
@@ -159,12 +174,28 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
 
   const { secrets, source: secretSource, matchedRepo } = await resolveSecrets(db, fullName);
 
+  // Short-circuit: if no secret is configured for this repo (source 'none'),
+  // reject immediately without running any HMAC crypto. This avoids exposing a
+  // timing oracle on the verification path and signals a configuration gap
+  // rather than a signature mismatch.
+  if (secrets.length === 0) {
+    span.setAttributes({
+      'lorekit.webhook.secret_configured': false,
+      'lorekit.webhook.secret_source': secretSource,
+      'lorekit.webhook.signature_present': !!signature,
+      'lorekit.webhook.body_bytes': bodyBytes.byteLength,
+      'lorekit.webhook.matched_repo': matchedRepo ?? '',
+      'lorekit.webhook.hmac_fail_reason': 'secret_not_configured',
+    });
+    span.error('HmacError: secret_not_configured');
+    return new Response('Unauthorized', { status: 401 });
+  }
+
   // Try each candidate secret in order. Single-user: one iteration.
   // Multi-user org: tries each until one verifies.
-  const candidates = secrets.length > 0 ? secrets : ['']; // empty string → triggers not_configured path
-  let hmac = await verifyHmac(bodyBytes, signature, candidates[0], secretSource);
-  for (let i = 1; i < candidates.length && !hmac.ok; i++) {
-    hmac = await verifyHmac(bodyBytes, signature, candidates[i], secretSource);
+  let hmac = await verifyHmac(bodyBytes, signature, secrets[0], secretSource);
+  for (let i = 1; i < secrets.length && !hmac.ok; i++) {
+    hmac = await verifyHmac(bodyBytes, signature, secrets[i], secretSource);
   }
 
   // Always record diagnostic attributes — these are the ground truth for
