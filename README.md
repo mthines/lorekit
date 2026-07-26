@@ -53,6 +53,9 @@ The knowledge exists. It just has nowhere to live.
   review comments become durable lessons automatically — no copy-paste.
 - **Works with the tools you already use.** Claude Code, Cursor, Codex, or any
   MCP client. One endpoint, one token.
+- **Local or hosted — your call.** Use the hosted service for cross-machine
+  sharing, or keep memory in plain markdown files on your own disk — no account,
+  no network. Switch between the two whenever you like.
 
 ## Get started
 
@@ -99,6 +102,48 @@ running the same token, and are there the next time any agent picks up the work.
 > — no reliance on the agent choosing to use the skill — install a plugin
 > instead. Claude Code has a one-line marketplace install; Cursor and Codex have
 > their own bundles. See [plugins/](./plugins/README.md).
+
+## Local or hosted — your choice
+
+LoreKit needs neither an account nor a network. The same `memory.*` tools can
+run against **plain markdown files on your machine** instead of the hosted
+service — fully offline, nothing to sign up for.
+
+| | Hosted | Local |
+|--|--------|-------|
+| Where lessons live | The LoreKit service (shared Postgres) | Markdown files under `~/.lorekit/` and `<repo>/.lorekit/` |
+| Best for | Sharing across machines, teammates, and CI | Private, offline, or air-gapped work |
+| Setup | A token (above) | No account, no token |
+| Sharing | Automatic, everywhere the token is used | Commit `<repo>/.lorekit/` to share via git — or gitignore it to keep private |
+
+Local memory is **two-tier**, mirroring the hosted scope model: a per-user
+`~/.lorekit/` holds global lessons, and an opt-in `<repo>/.lorekit/` holds
+repo- and branch-scoped ones. Reads merge both tiers with the closer scope
+winning. Every lesson is a human-readable markdown file — greppable and
+diffable, not a database you have to query.
+
+To run local, point your agent's `.mcp.json` at the CLI's built-in local server
+(no endpoint, no token needed):
+
+```jsonc
+{
+  "mcpServers": {
+    "lorekit": { "command": "npx", "args": ["-y", "@lorekit/cli", "mcp"] }
+  }
+}
+```
+
+Then select local mode — set `LOREKIT_MODE=local`, or add `{ "mode": "local" }`
+to a `.lorekit.json` at your repo root — and create `<repo>/.lorekit/` when you
+want repo-scoped lessons to persist in the project.
+
+> **Not committed to one?** Start local and move to hosted later (or the
+> reverse) with `lorekit migrate` — lessons are never stranded. You can also
+> hard-deny a mode for privacy or CI (e.g. `LOREKIT_DENY=remote`).
+
+Full details — the two-tier layout, write routing, the control model, and
+migration — are in
+[packages/cli/README.md](./packages/cli/README.md#memory-modes--the-control-model).
 
 ## How memory is organized
 
