@@ -1130,6 +1130,60 @@ begin
 end;
 $$;
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- Phase 4 dashboard-UX addition — supabase/migrations/00024 (reverses
+-- plan.md org-sharing-phase-4-dashboard Decision D1: real member identities
+-- instead of a bare user_id for other members).
+-- ═════════════════════════════════════════════════════════════════════════
+
+-- ── 30. lorekit_org_members_list: member sees co-members' real handles;
+--       non-member sees nothing (Phase 4 addition, 00024) ────────────────────
+-- Reuses phase3-org (f3), whose final membership at this point in the file is
+-- owner A, admin E, member C (D left in §27; G was removed in §25; C was
+-- promoted viewer->member in §26).
+update auth.users set raw_user_meta_data = '{"user_name":"owner-a","avatar_url":"https://avatars.example/a.png"}'::jsonb
+  where id = '00000000-0000-0000-0000-0000000000a1';
+update auth.users set raw_user_meta_data = '{"user_name":"admin-e","avatar_url":"https://avatars.example/e.png"}'::jsonb
+  where id = '00000000-0000-0000-0000-0000000000e5';
+
+do $$
+declare
+  v_member_row_count int;
+  v_owner_handle text;
+  v_owner_avatar text;
+  v_nonmember_row_count int;
+begin
+  -- Member C (of phase3-org, f3) sees all remaining co-members, including the
+  -- owner's real GitHub handle + avatar — not just a bare user_id (the exact
+  -- gap plan.md D1 deferred and this migration closes).
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000c3","role":"authenticated"}', true);
+  select count(*) into v_member_row_count from lorekit_org_members_list('00000000-0000-0000-0000-0000000000f3');
+  select handle, avatar_url into v_owner_handle, v_owner_avatar
+    from lorekit_org_members_list('00000000-0000-0000-0000-0000000000f3')
+    where user_id = '00000000-0000-0000-0000-0000000000a1';
+  reset role;
+
+  assert v_member_row_count = 3,
+    format('lorekit_org_members_list: a member should see all 3 remaining co-members of phase3-org, saw %s', v_member_row_count);
+  assert v_owner_handle = 'owner-a',
+    format('lorekit_org_members_list: a member should resolve the owner''s real GitHub handle, saw %s', v_owner_handle);
+  assert v_owner_avatar = 'https://avatars.example/a.png',
+    'lorekit_org_members_list: a member should resolve the owner''s avatar_url';
+
+  -- A non-member (B) of phase3-org gets NOTHING back — never leaks
+  -- membership of an org the caller doesn't belong to.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}', true);
+  select count(*) into v_nonmember_row_count from lorekit_org_members_list('00000000-0000-0000-0000-0000000000f3');
+  reset role;
+  assert v_nonmember_row_count = 0,
+    'lorekit_org_members_list: a non-member must see no rows for an org they do not belong to';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

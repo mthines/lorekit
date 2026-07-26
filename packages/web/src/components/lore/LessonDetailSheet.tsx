@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github } from 'lucide-react';
+import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle } from 'lucide-react';
 import { Controller } from 'react-hook-form';
 import { useQueryClient } from '@tanstack/react-query';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
+import { OwnershipBadge } from '@/components/memory/OwnershipBadge';
 import { EditableField } from '@/components/ui/EditableField';
 import { TagsField } from '@/components/ui/TagsField';
 import { FormActionBar } from '@/components/ui/FormActionBar';
@@ -13,6 +14,7 @@ import { useEditableForm } from '@/lib/hooks/useEditableForm';
 import { useArchiveLesson, useRestoreLesson } from '@/lib/queries/lore';
 import type { LessonEntry } from './LessonCard';
 import { updateLesson } from '@/lib/lore';
+import { listMemberIdentities } from '@/lib/org-members';
 import { scopeRepoUrl } from '@/lib/scope';
 import { toast } from 'sonner';
 
@@ -40,6 +42,40 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
   const isPending = archiveMutation.isPending || restoreMutation.isPending;
 
   const isArchived = Boolean(lesson?.archived_at);
+
+  const [memberCount, setMemberCount] = useState<number | null>(null);
+  const [updatedByHandle, setUpdatedByHandle] = useState<string | null>(null);
+
+  // Org-owned lore: resolve "Visible to N members" and, where resolvable, the
+  // last-updated-by author's real GitHub handle from the single Phase 4
+  // identity RPC (`lorekit_org_members_list`, via `listMemberIdentities`). The
+  // member count is just that list's length — no separate `listMembers`
+  // round-trip. Falls back to a generic "a team member" when the author can't
+  // be resolved (e.g. they've since left the org) — never fabricates a handle.
+  useEffect(() => {
+    const org = lesson?.org;
+    if (!org) {
+      setMemberCount(null);
+      setUpdatedByHandle(null);
+      return undefined;
+    }
+    let cancelled = false;
+    const updatedBy = lesson?.updated_by ?? null;
+    (async () => {
+      const identities = await listMemberIdentities(org.id);
+      if (cancelled) return;
+      setMemberCount(identities.length);
+      const author = updatedBy ? identities.find((i) => i.user_id === updatedBy) : undefined;
+      setUpdatedByHandle(author?.handle ?? null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Depend on the stable identifying fields (org id, updated_by), not the
+    // whole `lesson` object, so this doesn't re-fetch on every unrelated
+    // field change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lesson?.org?.id, lesson?.updated_by]);
 
   // Derive default form values from the current lesson. Changing lesson (user
   // opens a different entry) resets the form automatically inside useEditableForm.
@@ -156,6 +192,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-2">
                   <ScopeBadge scope={lesson.scope} type={lesson.scope_type} showPath linkRepo />
+                  <OwnershipBadge org={lesson.org} />
                   {isArchived && (
                     <span className="rounded-full bg-[var(--color-bg-elevated)] px-2 py-0.5 text-xs text-[var(--color-content-tertiary)]">
                       archived
@@ -237,6 +274,36 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
                     Metadata
                   </h2>
                   <dl className="flex flex-col gap-2">
+                    {/* Ownership (org-owned lore only) — Owner, last-updated-by
+                        author, and "Visible to N members", resolved from the
+                        Phase 4 identity RPC above. */}
+                    {lesson.org && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <Users className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                        <dt className="text-[var(--color-content-tertiary)]">Owner</dt>
+                        <dd className="ml-auto font-medium text-[var(--color-content-secondary)]">
+                          {lesson.org.name}
+                        </dd>
+                      </div>
+                    )}
+                    {lesson.org && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <UserCircle className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                        <dt className="text-[var(--color-content-tertiary)]">Last updated by</dt>
+                        <dd className="ml-auto text-[var(--color-content-secondary)]">
+                          {updatedByHandle ? `@${updatedByHandle}` : 'a team member'}
+                        </dd>
+                      </div>
+                    )}
+                    {lesson.org && memberCount !== null && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <Users className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                        <dt className="text-[var(--color-content-tertiary)]">Visible to</dt>
+                        <dd className="ml-auto text-[var(--color-content-secondary)]">
+                          {memberCount} {memberCount === 1 ? 'member' : 'members'}
+                        </dd>
+                      </div>
+                    )}
                     {lesson.source_agent && (
                       <div className="flex items-center gap-2 text-xs">
                         <Bot className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />

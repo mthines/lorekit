@@ -2,6 +2,7 @@
 
 import { MemoryCard, memoryFromLesson } from '@/components/memory/MemoryCard';
 import type { ScopePrefix } from '@/lib/scope';
+import type { MemoryOwner } from '@/lib/ownership';
 
 /**
  * Canonical shape of a memory as stored/queried. Kept here as the app's shared
@@ -21,6 +22,12 @@ export interface LessonEntry {
   trigger?: string | null;
   scope: string;
   scope_type: ScopePrefix;
+  /** Raw FK — undefined/null for personal lore, set for org-owned lore. */
+  org_id?: string | null;
+  created_by?: string | null;
+  updated_by?: string | null;
+  /** Resolved ownership (see `ownerFromMemoryRow`) — undefined for personal lore. */
+  org?: MemoryOwner;
 }
 
 interface LessonCardProps {

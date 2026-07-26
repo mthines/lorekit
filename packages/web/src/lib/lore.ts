@@ -13,6 +13,7 @@ import { substringNeedle, dateRangeBounds, type DateRangeInput } from '@/lib/pag
 import { applyKeyset, runPaginatedQuery, type FilterBuilderLike } from '@/lib/pagination/apply';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { scopeType } from '@/lib/scope';
+import { ownerFromMemoryRow } from '@/lib/ownership';
 
 // ── Edit / update ─────────────────────────────────────────────────────────────
 
@@ -186,10 +187,16 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
   const needle = substringNeedle(filters.search);
   const bounds = dateRangeBounds(filters.range);
 
+  // No explicit `.eq('user_id', …)` here: the `memories` read RLS (00015) is
+  // widened to `lorekit_member_org_ids(auth.uid())`, so this session already
+  // sees exactly its own personal rows plus every org it belongs to. Filtering
+  // to `user_id = self` would re-hide org-owned lore (org rows have
+  // `user_id IS NULL`) and defeat the Explorer's `Personal · {org}` ownership
+  // filter. RLS — not this predicate — is the tenant boundary; a forged keyset
+  // cursor still can't widen past it.
   let base = supabase
     .from('memories')
-    .select('id, scope, key, value, tags, created_at, updated_at, archived_at, source_agent, trigger')
-    .eq('user_id', user.id);
+    .select('id, scope, key, value, tags, created_at, updated_at, archived_at, source_agent, trigger, org_id, created_by, updated_by, orgs(name, slug)');
 
   // archived_at filter: active (IS NULL) vs archived (IS NOT NULL).
   if (filters.showArchived) {
@@ -222,19 +229,30 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
     return EMPTY_PAGE;
   }
 
-  const rows: (LessonEntry & { id: string })[] = (data ?? []).map((row) => ({
-    id: row.id as string,
-    scope: row.scope as string,
-    scope_type: scopeType(row.scope as string),
-    key: row.key as string,
-    value: row.value as string,
-    tags: (row.tags as string[]) ?? [],
-    created_at: row.created_at as string,
-    updated_at: row.updated_at as string,
-    archived_at: (row.archived_at as string | null) ?? null,
-    source_agent: (row.source_agent as string | null) ?? null,
-    trigger: (row.trigger as string | null) ?? null,
-  }));
+  const rows: (LessonEntry & { id: string })[] = (data ?? []).map((row) => {
+    const orgId = (row.org_id as string | null) ?? null;
+    const orgEmbed = row.orgs as { name: string; slug: string } | null;
+    return {
+      id: row.id as string,
+      scope: row.scope as string,
+      scope_type: scopeType(row.scope as string),
+      key: row.key as string,
+      value: row.value as string,
+      tags: (row.tags as string[]) ?? [],
+      created_at: row.created_at as string,
+      updated_at: row.updated_at as string,
+      archived_at: (row.archived_at as string | null) ?? null,
+      source_agent: (row.source_agent as string | null) ?? null,
+      trigger: (row.trigger as string | null) ?? null,
+      org_id: orgId,
+      created_by: (row.created_by as string | null) ?? null,
+      updated_by: (row.updated_by as string | null) ?? null,
+      org: ownerFromMemoryRow({
+        org_id: orgId,
+        org: orgEmbed && orgId ? { id: orgId, name: orgEmbed.name } : null,
+      }),
+    };
+  });
 
   return assemblePage(rows, pageSize, (row) => ({ c: row.created_at, id: row.id }));
 }

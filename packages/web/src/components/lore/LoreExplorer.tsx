@@ -45,8 +45,61 @@ import { useReducedMotion } from 'motion/react';
 import type { LessonEntry } from './LessonCard';
 import { ContributionHeatmap } from '@/components/activity/ContributionHeatmap';
 import { ActivityFeed, type ActivityEvent } from '@/components/activity/ActivityFeed';
+import { filterByOwnership, type OwnerFilter } from '@/lib/org-ui';
 
 type ViewMode = 'scope' | 'time';
+
+// ── Ownership filter bar ──────────────────────────────────────────────────────
+// "All · Personal · {org}" per ux-design §4 — only rendered when at least one
+// org-owned lesson is in view (nothing to filter by ownership otherwise).
+// Single-select, so it uses radiogroup/radio semantics (aria-checked), not the
+// toggle-button aria-pressed shape.
+
+function OwnershipFilterBar({
+  orgs,
+  value,
+  onChange,
+}: {
+  orgs: { id: string; name: string }[];
+  value: OwnerFilter;
+  onChange: (next: OwnerFilter) => void;
+}) {
+  if (orgs.length === 0) return null;
+
+  function isActive(candidate: OwnerFilter): boolean {
+    if (candidate === 'all') return value === 'all';
+    if (candidate === 'personal') return value === 'personal';
+    return typeof value === 'object' && value.orgId === candidate.orgId;
+  }
+
+  const chips: { key: string; label: string; filter: OwnerFilter }[] = [
+    { key: 'all', label: 'All', filter: 'all' },
+    { key: 'personal', label: 'Personal', filter: 'personal' },
+    ...orgs.map((org) => ({ key: org.id, label: org.name, filter: { orgId: org.id } as OwnerFilter })),
+  ];
+
+  return (
+    <div role="radiogroup" aria-label="Filter by ownership" className="flex flex-wrap gap-1.5 border-b border-[var(--color-border)] px-3 py-2">
+      {chips.map((chip) => (
+        <button
+          key={chip.key}
+          type="button"
+          role="radio"
+          onClick={() => onChange(chip.filter)}
+          aria-checked={isActive(chip.filter)}
+          className={[
+            'flex min-h-9 items-center rounded-full border px-3 text-xs font-medium transition-colors duration-150',
+            isActive(chip.filter)
+              ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
+              : 'border-[var(--color-border)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
+          ].join(' ')}
+        >
+          {chip.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 interface LoreExplorerProps {
   scopes: ScopeNode[];
@@ -84,10 +137,19 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
     cleanOnPathname: '/lore',
   });
 
+  // URL-backed ownership filter (plan.md Decision D9) — shareable, and the
+  // accept-invite flow deep-links here (`/lore?owner=<serialised OwnerFilter>`)
+  // so a freshly-joined org is pre-filtered on arrival.
+  const [ownerFilter, setOwnerFilter] = useUrlState<OwnerFilter>('owner', 'all', {
+    cleanOnPathname: '/lore',
+  });
+
   // URL-backed view mode so a shared link lands on the right tab.
   const [view, setView] = useUrlState<ViewMode>('view', 'scope');
 
-  // Local-only: mobile accordion state. Ephemeral — not shareable.
+  // Local-only: mobile accordion state. Ephemeral UI — not shareable, not
+  // persisted. Putting this in URL state would pollute every share link and
+  // fire a router.replace on every tap.
   const [scopePanelOpen, setScopePanelOpen] = useState(true);
 
   // Local-only: heatmap panel collapse. Ephemeral UI — not shareable.
@@ -113,7 +175,27 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
     [data],
   );
 
-  const isFiltered = search.trim() !== '' || range !== null || showArchived;
+  // Unique orgs present in the loaded lesson pages, for the ownership filter
+  // chips — recomputed only when the underlying lessons change.
+  const orgsInView = useMemo(() => {
+    const seen = new Map<string, { id: string; name: string }>();
+    for (const l of lessons) {
+      if (l.org && !seen.has(l.org.id)) seen.set(l.org.id, l.org);
+    }
+    return Array.from(seen.values());
+  }, [lessons]);
+
+  // Ownership is the one filter with no server-side param — scope / search /
+  // range / archived are already applied by `useMemories`, so this is a pure
+  // client-side narrowing of the loaded pages by owner (Personal vs a given
+  // org). `filterByOwnership` is the shared, unit-tested predicate.
+  const filteredLessons = useMemo(
+    () => filterByOwnership(lessons, ownerFilter),
+    [lessons, ownerFilter],
+  );
+
+  const isFiltered =
+    search.trim() !== '' || range !== null || showArchived || ownerFilter !== 'all';
 
   function handleScopeSelect(scope: string | null) {
     startTransition(() => {
@@ -174,7 +256,11 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
       );
     }
 
-    if (lessons.length === 0) {
+    // Empty state only when nothing is left to show AND nothing more to load —
+    // the ownership filter is client-side over the loaded pages, so an empty
+    // `filteredLessons` with `hasNextPage` still true means "keep loading",
+    // not "no matches".
+    if (filteredLessons.length === 0 && !hasNextPage) {
       return (
         <EmptyState
           icon={showArchived ? Archive : BookOpen}
@@ -198,7 +284,7 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
 
     return (
       <div className="flex flex-col gap-2">
-        {lessons.map((lesson, i) => (
+        {filteredLessons.map((lesson, i) => (
           <div key={`${lesson.scope}::${lesson.key}`} role="listitem">
             <LessonCard
               lesson={lesson}
@@ -241,7 +327,7 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
           ? 'Loading lessons'
           : isFetchingNextPage
             ? 'Loading more lessons'
-            : `${lessons.length} lesson${lessons.length === 1 ? '' : 's'} loaded`}
+            : `${filteredLessons.length} lesson${filteredLessons.length === 1 ? '' : 's'} loaded`}
       </p>
 
       {/* ── Heatmap panel (collapsible) ─────────────────────────────────── */}
@@ -360,6 +446,8 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
                 </button>
               </div>
 
+              <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
+
               <div className="flex-1 overflow-y-auto p-3" role="list" aria-label="Lessons">
                 <LessonList />
               </div>
@@ -371,6 +459,7 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
           <div className="flex md:hidden flex-col gap-3 pb-6">
             <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] overflow-hidden">
               <button
+                type="button"
                 onClick={() => setScopePanelOpen((v) => !v)}
                 aria-expanded={scopePanelOpen}
                 className="flex w-full min-h-11 items-center justify-between gap-2 px-4 py-2.5 text-sm text-[var(--color-content-primary)]"
@@ -426,6 +515,8 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
                 <Archive className="size-4" aria-hidden />
               </button>
             </div>
+
+            <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
 
             <div role="list" aria-label="Lessons">
               <LessonList />
