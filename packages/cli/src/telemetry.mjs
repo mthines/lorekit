@@ -105,6 +105,11 @@ function toOtlpValue(v) {
   return { stringValue: String(v) };
 }
 
+// Map a flat attribute bag to the OTLP key/value list shape.
+function toOtlpAttributes(attributes) {
+  return Object.entries(attributes).map(([key, value]) => ({ key, value: toOtlpValue(value) }));
+}
+
 function resourceAttributes(version) {
   return [
     { key: 'service.name', value: { stringValue: 'lorekit-cli' } },
@@ -148,10 +153,7 @@ export function buildTracePayload({ version, name, attributes, startMs, endMs, s
                 kind: 1, // INTERNAL
                 startTimeUnixNano: String(startMs * 1_000_000),
                 endTimeUnixNano: String(endMs * 1_000_000),
-                attributes: Object.entries(attributes).map(([key, value]) => ({
-                  key,
-                  value: toOtlpValue(value),
-                })),
+                attributes: toOtlpAttributes(attributes),
                 status: {
                   code: status === 'error' ? 2 : 1,
                   ...(statusMessage ? { message: statusMessage } : {}),
@@ -186,10 +188,7 @@ export function buildMetricsPayload({ version, attributes, startMs, endMs }) {
                       asInt: '1',
                       startTimeUnixNano: String(startMs * 1_000_000),
                       timeUnixNano: String(endMs * 1_000_000),
-                      attributes: Object.entries(attributes).map(([key, value]) => ({
-                        key,
-                        value: toOtlpValue(value),
-                      })),
+                      attributes: toOtlpAttributes(attributes),
                     },
                   ],
                 },
