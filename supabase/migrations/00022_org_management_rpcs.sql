@@ -138,6 +138,7 @@ create or replace function lorekit_invite_addressed_to_caller(p_invite org_invit
 returns boolean
 language sql
 stable
+set search_path = public
 as $$
   select
     coalesce(p_invite.invitee_email = lower(auth.jwt() ->> 'email'), false)
@@ -196,6 +197,13 @@ begin
 
   if not lorekit_org_can(auth.uid(), inv.org_id, 'revoke_invite') then
     raise exception using errcode = 'LK002', message = format('org_permission_denied: org=%s capability=revoke_invite', inv.org_id);
+  end if;
+
+  -- Only a still-pending invite can be revoked — guards the silent
+  -- re-revoke and the revoke-of-already-accepted cases (accepted invites are
+  -- undone via member removal, not revoke).
+  if inv.status <> 'pending' then
+    raise exception using errcode = 'LK002', message = 'invite is not pending';
   end if;
 
   update org_invites set status = 'revoked', responded_at = now() where id = p_invite_id;

@@ -151,9 +151,13 @@ export async function listPendingInvitesForMe(): Promise<OrgInvite[]> {
   const handle = (user.user_metadata?.user_name as string | undefined)?.toLowerCase();
   if (!email && !handle) return [];
 
+  // Double-quote the interpolated identity values so a comma (or other
+  // PostgREST reserved char) in the value can't split the `.or()` string into
+  // extra clauses — quoted values are parsed as literals. Non-exploitable
+  // given the invitee-scoped RLS, but removes the parse ambiguity entirely.
   const identityFilters = [
-    email ? `invitee_email.eq.${email}` : null,
-    handle ? `invitee_handle.eq.${handle}` : null,
+    email ? `invitee_email.eq."${email}"` : null,
+    handle ? `invitee_handle.eq."${handle}"` : null,
   ].filter((f): f is string => f !== null);
 
   const { data, error } = await supabase
