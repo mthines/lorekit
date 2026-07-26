@@ -362,6 +362,31 @@ begin
   );
   assert v_row.org_id is null,
     'memory_write: Phase 1 writes must always leave org_id NULL (writes stay personal-only)';
+-- ── 6. audit_log search indexes present (00012) ─────────────────────────────
+-- Covers the pg_trgm extension + both new indexes: index presence isn't a
+-- behavior the app-layer unit tests can assert, so this proves the migration
+-- actually created what packages/web/src/lib/pagination/ (name search +
+-- keyset seek) relies on for performance.
+do $$
+declare
+  v_trgm_ext   boolean;
+  v_trgm_idx   boolean;
+  v_keyset_idx boolean;
+begin
+  select exists (select 1 from pg_extension where extname = 'pg_trgm') into v_trgm_ext;
+  assert v_trgm_ext, 'audit_log search: pg_trgm extension must be enabled';
+
+  select exists (
+    select 1 from pg_indexes
+    where tablename = 'audit_log' and indexname = 'audit_log_target_trgm_idx'
+  ) into v_trgm_idx;
+  assert v_trgm_idx, 'audit_log search: GIN trigram index on target must exist';
+
+  select exists (
+    select 1 from pg_indexes
+    where tablename = 'audit_log' and indexname = 'audit_log_user_created_id_idx'
+  ) into v_keyset_idx;
+  assert v_keyset_idx, 'audit_log search: (user_id, created_at desc, id) keyset-covering index must exist';
 end;
 $$;
 

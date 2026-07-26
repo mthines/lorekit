@@ -18,13 +18,20 @@ export default function AuditLogLoading() {
         </div>
       </div>
       <div className="flex flex-col gap-3">
-        <div className="flex gap-1.5">
+        {/* Search box + date-range picker skeleton — mirrors AuditLogFeed's
+            search/date row so the layout doesn't jump once the controls
+            hydrate. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="h-9 min-w-0 flex-1 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] sm:max-w-xs" />
+          <div className="ml-auto h-7 w-28 animate-pulse rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)]" />
+        </div>
+        <div className="flex flex-wrap gap-1.5">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="h-7 w-24 animate-pulse rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)]" />
+            <div key={i} className="h-9 w-24 animate-pulse rounded-full border border-[var(--color-border)] bg-[var(--color-bg-elevated)]" />
           ))}
         </div>
         {[0, 1, 2, 3, 4].map((i) => (
-          <div key={i} className="h-14 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]" />
+          <div key={i} className="h-[60px] animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]" />
         ))}
       </div>
     </div>
