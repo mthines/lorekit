@@ -33,11 +33,13 @@ export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerPro
   const { showToast } = useToast();
   const reduceMotion = useReducedMotion();
   const { data: invites = initialInvites } = usePendingInvitesForMe(initialInvites);
-  const [dismissedIds, dismiss] = useDismissedInviteIds();
+  const [dismissedIds, dismiss, hasHydrated] = useDismissedInviteIds();
   const [pending, startTransition] = useTransition();
 
   const shown = visibleInvites(invites, dismissedIds);
-  const invite = shown[0];
+  // Gate on hasHydrated: nothing invite-related renders on the server or first
+  // client paint, so a banner this browser already dismissed never flashes.
+  const invite = hasHydrated ? shown[0] : undefined;
 
   function handleAccept(target: OrgInvite) {
     startTransition(async () => {

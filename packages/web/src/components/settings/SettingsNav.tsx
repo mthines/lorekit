@@ -15,8 +15,10 @@ import { pendingInviteCount } from '@/lib/org-ui';
  */
 export function SettingsNav() {
   const { data: invites = [] } = usePendingInvitesForMe();
-  const [dismissedIds] = useDismissedInviteIds();
-  const badgeCount = pendingInviteCount(invites, dismissedIds);
+  const [dismissedIds, , hasHydrated] = useDismissedInviteIds();
+  // 0 until hydrated so the server render and first client paint agree (no
+  // badge), then the real count once localStorage-backed dismissals are known.
+  const badgeCount = hasHydrated ? pendingInviteCount(invites, dismissedIds) : 0;
 
   const items = SETTINGS_SECTIONS.map((section) =>
     section.id === 'organization' ? { ...section, badgeCount } : section,

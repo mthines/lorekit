@@ -10,7 +10,7 @@
  * (plan.md Decision D5's functional-core / impure-shell split).
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 const STORAGE_KEY = 'lorekit:dismissed-invite-ids';
 
@@ -33,8 +33,24 @@ function writeDismissedIds(ids: string[]): void {
   }
 }
 
-export function useDismissedInviteIds(): [string[], (id: string) => void] {
-  const [ids, setIds] = useState<string[]>(() => readDismissedIds());
+/**
+ * Returns `[dismissedIds, dismiss, hasHydrated]`. `hasHydrated` is `false` on
+ * the server and on the first client paint, flipping to `true` only after the
+ * mount effect has read localStorage. Consumers gate all invite UI (banner, nav
+ * badge) on `hasHydrated` so the server render and first client render agree
+ * (both empty) — no hydration mismatch and no flash of already-dismissed
+ * content. The localStorage read must NOT live in the `useState` initializer:
+ * that runs during hydration on the client with the real stored value, which
+ * would diverge from the server's empty render.
+ */
+export function useDismissedInviteIds(): [string[], (id: string) => void, boolean] {
+  const [ids, setIds] = useState<string[]>([]);
+  const [hasHydrated, setHasHydrated] = useState(false);
+
+  useEffect(() => {
+    setIds(readDismissedIds());
+    setHasHydrated(true);
+  }, []);
 
   const dismiss = useCallback((id: string) => {
     setIds((prev) => {
@@ -45,5 +61,5 @@ export function useDismissedInviteIds(): [string[], (id: string) => void] {
     });
   }, []);
 
-  return [ids, dismiss];
+  return [ids, dismiss, hasHydrated];
 }
