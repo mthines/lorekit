@@ -58,7 +58,7 @@ jobs:
           echo "Comparing ${BASE}...HEAD"
           CHANGED="$(git diff --name-only "${BASE}" HEAD)"
           echo "$CHANGED"
-          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/mcp-core/|packages/mcp-server/|supabase/functions/|supabase/migrations/|supabase/tests/|supabase/config\.toml|package\.json|pnpm-lock\.yaml|\.github/workflows/ci\.yml)'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/mcp-core/|packages/mcp-server/|supabase/functions/|supabase/migrations/|supabase/tests/|supabase/config\.toml|package\.json|pnpm-lock\.yaml|scripts/smoke-mcp-stdio\.mjs|\.github/workflows/ci\.yml)'; then
             echo "api=true" >> "$GITHUB_OUTPUT"
           else
             echo "api=false" >> "$GITHUB_OUTPUT"
@@ -216,6 +216,16 @@ jobs:
           echo '--- last response body ---'; cat /tmp/mcp.out || true
           echo '--- edge runtime logs ---'; docker logs supabase_edge_runtime_lorekit 2>&1 | tail -80 || true
           exit 1
+
+      # The robust stdio transport (`lorekit mcp`) is the offline-friendly
+      # alternative to `npx -y mcp-remote` that a `.mcp.json` can point at.
+      # Spawn it against the live local stack and assert the handshake +
+      # tools/list + a memory.list that actually reaches the backend — proving
+      # the transport we recommend launches and passes traffic end-to-end.
+      - name: Smoke — robust stdio transport handshakes against the live stack
+        env:
+          TOKEN: ${{ steps.supabase.outputs.service_role_key }}
+        run: node scripts/smoke-mcp-stdio.mjs "http://127.0.0.1:54321/functions/v1/mcp" "$TOKEN"
 
       # Assert the business rules that live only in SQL — the cap/rate triggers
       # and RPCs, RLS isolation, memory_write's created_at semantics, and the

@@ -54,11 +54,25 @@ export async function resolveAuth(authHeader: string | null, queryToken: string 
       .eq('token_hash', hash)
       .maybeSingle();
     if (!data) return null;
-    // Fire-and-forget — don't block the response for a timestamp update
-    void serviceDb
-      .from('api_tokens')
-      .update({ last_used_at: new Date().toISOString() })
-      .eq('token_hash', hash);
+    // Best-effort last_used_at bump — don't block the response on it, but hand
+    // it to EdgeRuntime.waitUntil so the isolate stays alive until the write
+    // commits. A bare fire-and-forget is dropped when the isolate freezes right
+    // after the response returns, so the timestamp never lands (same reason the
+    // OTel flush in _shared/otel.ts uses waitUntil).
+    const lastUsedUpdate = Promise.resolve(
+      serviceDb
+        .from('api_tokens')
+        .update({ last_used_at: new Date().toISOString() })
+        .eq('token_hash', hash),
+    ).catch(() => { /* swallow — timestamp is best-effort */ });
+    const edgeRuntime = (globalThis as {
+      EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void };
+    }).EdgeRuntime;
+    if (typeof edgeRuntime?.waitUntil === 'function') {
+      edgeRuntime.waitUntil(lastUsedUpdate);
+    } else {
+      void lastUsedUpdate;
+    }
     return {
       type: 'api_key',
       userId: data.user_id as string,
