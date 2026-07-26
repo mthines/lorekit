@@ -69,6 +69,13 @@ export async function inviteMember(
   orgId: string,
   handleOrEmail: string,
   role: Exclude<OrgRole, 'owner'>,
+  /**
+   * The org's display name, for the invite email subject. The dashboard call
+   * site already has it in state, so passing it here skips a DB round-trip. When
+   * omitted (or blank), it's resolved from the DB, then falls back to slug /
+   * generic — the email is never blocked on the name.
+   */
+  orgName?: string,
 ): Promise<{ inviteId: string } | { error: string }> {
   const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -97,18 +104,21 @@ export async function inviteMember(
   // Fire the notification email for email invites only (a handle-only invite
   // has no address). Non-blocking and non-throwing — sendInviteEmail swallows
   // every failure, so a bad key / unverified domain never breaks the invite
-  // that already succeeded above. Resolve the org name (RLS-scoped; the caller
-  // is a member) for the subject line, falling back to slug then a generic.
+  // that already succeeded above. Prefer the caller-supplied org name; only
+  // hit the DB when it wasn't passed.
   if (isEmail) {
-    const { data: org } = await supabase
-      .from('orgs')
-      .select('name, slug')
-      .eq('id', orgId)
-      .maybeSingle();
-    const orgName = org?.name ?? org?.slug ?? 'your organization';
+    let resolvedName = orgName?.trim() ?? '';
+    if (!resolvedName) {
+      const { data: org } = await supabase
+        .from('orgs')
+        .select('name, slug')
+        .eq('id', orgId)
+        .maybeSingle();
+      resolvedName = org?.name ?? org?.slug ?? 'your organization';
+    }
     const invitedByLabel =
       (user.user_metadata?.user_name as string | undefined) ?? user.email ?? null;
-    await sendInviteEmail({ to: trimmed, orgName, role, invitedByLabel });
+    await sendInviteEmail({ to: trimmed, orgName: resolvedName, role, invitedByLabel });
   }
 
   revalidatePath('/settings', 'layout');

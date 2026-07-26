@@ -1304,6 +1304,28 @@ begin
 end;
 $$;
 
+-- ── 33b. Purge works directly on a LIVE org (skipping soft-delete) ──────────
+-- The owner may permanently delete without first soft-deleting; purge is not
+-- gated on deleted_at.
+do $$
+declare v_orgs int;
+begin
+  insert into orgs (id, slug, name, created_by) values
+    ('00000000-0000-0000-0000-0000000000fa', 'sod-live', 'Live Purge Org', '00000000-0000-0000-0000-0000000000a1');
+  insert into org_members (org_id, user_id, role) values
+    ('00000000-0000-0000-0000-0000000000fa', '00000000-0000-0000-0000-0000000000a1', 'owner');
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  perform lorekit_org_purge('00000000-0000-0000-0000-0000000000fa');
+  reset role;
+
+  select count(*) into v_orgs from orgs where id = '00000000-0000-0000-0000-0000000000fa';
+  assert v_orgs = 0, 'safe-delete: purge must remove a live (never soft-deleted) org too';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

@@ -200,7 +200,7 @@ function CreateOrgForm({
 
 // ── Invite form ───────────────────────────────────────────────────────────────
 
-function InviteForm({ orgId, onInvited }: { orgId: string; onInvited: (invite: OrgInvite) => void }) {
+function InviteForm({ orgId, orgName, onInvited }: { orgId: string; orgName: string; onInvited: (invite: OrgInvite) => void }) {
   const { showToast } = useToast();
   const [input, setInput] = useState('');
   const [role, setRole] = useState<Exclude<OrgRole, 'owner'>>('member');
@@ -217,7 +217,7 @@ function InviteForm({ orgId, onInvited }: { orgId: string; onInvited: (invite: O
     }
 
     startTransition(async () => {
-      const result = await inviteMember(orgId, classified.value, role);
+      const result = await inviteMember(orgId, classified.value, role, orgName);
       if ('error' in result) {
         setError(result.error);
         return;
@@ -408,10 +408,20 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
       const anchor = document.createElement('a');
       anchor.href = url;
       anchor.download = `lorekit-${org.slug}-lore.json`;
+      // Append to the DOM (Firefox requires the anchor be in the document to
+      // dispatch the click), and defer cleanup: revoking the object URL
+      // synchronously after click() aborts the download in Safari before the
+      // browser has queued it.
+      document.body.appendChild(anchor);
       anchor.click();
-      URL.revokeObjectURL(url);
+      setTimeout(() => {
+        anchor.remove();
+        URL.revokeObjectURL(url);
+      }, 100);
       showToast(
-        `Exported ${result.rows.length} ${result.rows.length === 1 ? 'memory' : 'memories'}.`,
+        result.truncated
+          ? `Exported the first ${result.rows.length} memories (export is capped).`
+          : `Exported ${result.rows.length} ${result.rows.length === 1 ? 'memory' : 'memories'}.`,
         'success',
       );
     });
@@ -628,7 +638,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
           </div>
 
           {/* Invite form — invite/admin+owner only */}
-          {caps?.canInvite && <InviteForm orgId={selectedOrg.id} onInvited={handleInvited} />}
+          {caps?.canInvite && <InviteForm orgId={selectedOrg.id} orgName={selectedOrg.name} onInvited={handleInvited} />}
 
           {/* Pending invites */}
           {pendingInvites.length > 0 && (

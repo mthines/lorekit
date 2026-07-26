@@ -53,6 +53,26 @@ describe('sendInviteEmail', () => {
     }
   });
 
+  it('HTML-escapes the org name in the html body (no raw markup injection)', async () => {
+    process.env['RESEND_API_KEY'] = 'test-key';
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await sendInviteEmail({
+      to: 'invitee@example.com',
+      orgName: 'Acme & <b>Partners</b>',
+      role: 'member',
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    // The html body must carry the escaped form, never the raw tags/ampersand.
+    expect(body.html).toContain('Acme &amp; &lt;b&gt;Partners&lt;/b&gt;');
+    expect(body.html).not.toContain('<b>Partners</b>');
+    // The plain-text body carries the org name verbatim (not HTML).
+    expect(body.text).toContain('Acme & <b>Partners</b>');
+  });
+
   it('no-ops (no fetch) when RESEND_API_KEY is unset', async () => {
     delete process.env['RESEND_API_KEY'];
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
