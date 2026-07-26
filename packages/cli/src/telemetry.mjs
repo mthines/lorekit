@@ -226,7 +226,7 @@ async function post(url, headers, payload, timeoutMs) {
  * can never delay or fail the CLI. Awaited before process exit (Node would
  * otherwise drop the in-flight request), but capped at timeoutMs.
  */
-export async function exportInvocation(config, { version, name, attributes, startMs, endMs, status, statusMessage }, { timeoutMs = 2000 } = {}) {
+export async function exportInvocation(config, { version, name, attributes, startMs, endMs, status, statusMessage }, { timeoutMs = 1500 } = {}) {
   if (!config || !config.enabled) return;
   const trace = buildTracePayload({ version, name, attributes, startMs, endMs, status, statusMessage });
   const metric = buildMetricsPayload({ version, attributes, startMs, endMs });
@@ -237,6 +237,17 @@ export async function exportInvocation(config, { version, name, attributes, star
 }
 
 // ── Command wrapper ───────────────────────────────────────────────────────────
+
+/**
+ * A bounded, non-PII label for a thrown error: its `code` (e.g. `ENOENT`) or,
+ * failing that, its constructor name (e.g. `TypeError`). Never the free-form
+ * message, which can carry paths and other user data.
+ */
+function errorLabel(e) {
+  if (e && typeof e.code === 'string' && e.code) return e.code;
+  if (e && e.constructor && e.constructor.name) return e.constructor.name;
+  return 'Error';
+}
 
 /**
  * Time a human-facing command, record its outcome, and export one span + one
@@ -272,7 +283,11 @@ export async function traceCommand(command, args, version, run) {
     return exitCode;
   } catch (e) {
     status = 'error';
-    statusMessage = e && e.message ? e.message : String(e);
+    // Record only a bounded, non-PII identifier — NEVER e.message. Node fs /
+    // network error messages embed absolute paths (e.g. "ENOENT: ... open
+    // '/home/me/proj/.mcp.json'"), which must never reach an exported span. The
+    // error status code already conveys failure.
+    statusMessage = errorLabel(e);
     exitCode = 1;
     throw e;
   } finally {

@@ -273,6 +273,31 @@ test('traceCommand never lets a telemetry failure break the command', async () =
   }
 });
 
+test('traceCommand never leaks a thrown error message (paths) into the exported span', async () => {
+  const prevHeaders = process.env.OTEL_EXPORTER_OTLP_HEADERS;
+  process.env.OTEL_EXPORTER_OTLP_HEADERS = 'Authorization=Bearer test';
+  const { calls, restore } = stubFetch();
+  try {
+    const err = new Error("ENOENT: no such file or directory, open '/home/me/proj/.mcp.json'");
+    err.code = 'ENOENT';
+    await assert.rejects(
+      () => traceCommand('install', {}, '1.0.0', async () => { throw err; }),
+      /ENOENT/,
+    );
+    const trace = calls.find((c) => c.url.endsWith('/v1/traces'));
+    assert.ok(trace, 'a trace should still be exported on the throw path');
+    // The absolute path from the error message must never reach the payload.
+    assert.ok(!JSON.stringify(trace.body).includes('/home/me/proj'));
+    const span = trace.body.resourceSpans[0].scopeSpans[0].spans[0];
+    assert.equal(span.status.code, 2);
+    assert.equal(span.status.message, 'ENOENT'); // bounded identifier, not the raw message
+  } finally {
+    restore();
+    if (prevHeaders === undefined) delete process.env.OTEL_EXPORTER_OTLP_HEADERS;
+    else process.env.OTEL_EXPORTER_OTLP_HEADERS = prevHeaders;
+  }
+});
+
 test('traceCommand propagates a handler throw but still returns/exports', async () => {
   const prev = process.env.LOREKIT_TELEMETRY;
   process.env.LOREKIT_TELEMETRY = 'off'; // keep it simple: disabled path
