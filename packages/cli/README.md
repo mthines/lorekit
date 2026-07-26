@@ -106,6 +106,34 @@ lorekit doctor --deep     # also does a write → read → delete round-trip (ne
 
 Exit code is non-zero if any check fails, so it fits CI gates.
 
+### `lorekit list` (alias `ls`)
+
+Shows the lessons that apply to **where you are** — the scopes `deriveScope`
+resolves for the current directory (`project::{name}`, `branch::…`, `repo::…`,
+and `global`) — split into two clearly-labelled sections so you can see where
+each lesson lives:
+
+- **Offline** — the local two-tier store (`.lorekit/` in the repo + `~/.lorekit/`).
+- **Remote** — the hosted MCP store. When no token/endpoint is configured this
+  section is a short note on how to set it up; it is **never an error** (the
+  command still exits 0 and shows your offline lessons). A network/server error
+  is likewise a per-scope warning, not a crash.
+
+It is read-only — it never writes, deletes, or reveals archived lessons — and it
+independently queries both stores regardless of the resolved memory mode. A
+`LOREKIT_DENY=remote` (or `local`) ceiling suppresses that section, honoring the
+same deny-wins privacy invariant the control model enforces for agents.
+
+```bash
+lorekit list                 # both sections, grouped by scope
+lorekit ls                   # same, via the alias
+lorekit list --scope global  # narrow to a single scope
+lorekit list --json          # structured { offline, remote } payload for scripts
+```
+
+`--endpoint` / `--token` override the remote connection; `--store` overrides the
+local project-tier directory.
+
 ### `lorekit hook`
 
 The **shared hook engine** behind the Claude Code / Cursor / Codex plugins.
@@ -288,6 +316,8 @@ active deny constraints.
 | `--no-hooks` | Skip wiring the lifecycle hooks; skill + MCP only (`install`) |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
+| `--json` | Machine-readable output (`list`) |
+| `--scope <scope>` | Restrict to a single scope (`list`; default: all applicable) |
 | `--adapter <name>` | Host framework for `hook`: `claude` / `cursor` / `codex` |
 | `--event <name>` | Host hook event for `hook` (else read from the stdin payload) |
 | `-h, --help` | Help |
@@ -372,8 +402,8 @@ forever. This reduces manual validation to a single capture pass per tool.
 
 ## Usage telemetry
 
-The human-facing commands (`install`, `uninstall`, `doctor`, `migrate`) emit one
-OpenTelemetry span + one counter point per run so the maintainers can see which
+The human-facing commands (`install`, `uninstall`, `doctor`, `list`, `migrate`)
+emit one OpenTelemetry span + one counter point per run so the maintainers can see which
 commands people use. It is zero-dependency (OTLP/JSON over `fetch`, no SDK) and
 deliberately narrow — it carries only the command name, a bounded set of boolean
 flags (`--global`, `--deep`, …), the CLI/runtime/OS identity, and the outcome.
