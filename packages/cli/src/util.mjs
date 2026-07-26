@@ -40,6 +40,83 @@ export function status(kind, label, detail) {
   log(`  ${mark} ${label}${tail}`);
 }
 
+// Map a raw keypress to a select-list action. Pure so it can be unit-tested
+// without a pseudo-TTY. Supports arrow keys (both the `ESC [` and application
+// `ESC O` cursor modes) and vim-style j/k.
+export function selectAction(key) {
+  if (key === '') return 'cancel'; // Ctrl-C
+  if (key === '\r' || key === '\n') return 'submit';
+  if (key === 'k' || (key.startsWith('') && key.endsWith('A'))) return 'up';
+  if (key === 'j' || (key.startsWith('') && key.endsWith('B'))) return 'down';
+  return null;
+}
+
+// Interactive single-choice list. `options` is [{ label, value, hint? }].
+// Arrow keys / j / k move, Enter selects, Ctrl-C aborts. Falls back to the
+// default option when stdin isn't a TTY (CI / piped input), matching the
+// non-interactive install path. Zero-dependency; renders with raw ANSI.
+export function select(question, options, { defaultIndex = 0 } = {}) {
+  const { stdin, stdout } = process;
+  let index = Math.max(0, Math.min(defaultIndex, options.length - 1));
+
+  if (!stdin.isTTY) return Promise.resolve(options[index].value);
+
+  return new Promise((resolve) => {
+    const render = (first) => {
+      if (!first) stdout.write(`[${options.length}A`); // cursor up N lines
+      for (let i = 0; i < options.length; i++) {
+        const active = i === index;
+        const pointer = active ? c.cyan('❯') : ' ';
+        const label = active ? c.cyan(options[i].label) : options[i].label;
+        const hint = options[i].hint ? ` ${c.dim('— ' + options[i].hint)}` : '';
+        stdout.write(`[2K  ${pointer} ${label}${hint}\n`); // clear line, write
+      }
+    };
+
+    log(`  ${question}`);
+    stdout.write('[?25l'); // hide cursor
+    render(true);
+
+    const prevRaw = Boolean(stdin.isRaw);
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding('utf8');
+
+    const cleanup = () => {
+      stdin.setRawMode(prevRaw);
+      stdin.pause();
+      stdin.removeListener('data', onData);
+      stdout.write('[?25h'); // show cursor
+    };
+
+    const onData = (key) => {
+      switch (selectAction(key)) {
+        case 'cancel':
+          cleanup();
+          stdout.write('\n');
+          process.exit(130);
+          break;
+        case 'up':
+          index = (index - 1 + options.length) % options.length;
+          render(false);
+          break;
+        case 'down':
+          index = (index + 1) % options.length;
+          render(false);
+          break;
+        case 'submit':
+          cleanup();
+          resolve(options[index].value);
+          break;
+        default:
+          break;
+      }
+    };
+
+    stdin.on('data', onData);
+  });
+}
+
 // Minimal flag parser: --key value, --key=value, -k value, and bare --flags.
 // `aliases` maps short → long; `booleans` lists flags that take no value.
 export function parseArgs(argv, { aliases = {}, booleans = [] } = {}) {
