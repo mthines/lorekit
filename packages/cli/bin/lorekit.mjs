@@ -49,7 +49,7 @@ ${c.bold('Options')}
       --project           Install into this project: .claude/skills + .mcp.json (default)
       --global            Install for every project: ~/.claude/skills + ~/.claude.json
   -e, --endpoint <url>    LoreKit MCP endpoint
-  -t, --token <token>     LoreKit token (lk_rw_* to allow writes, lk_ro_* read-only)
+  -t, --token <token>     LoreKit token: lk_rw_* read+write, lk_ro_* read-only, lk_wo_* write-only
       --mode <mode>       Memory mode: off | local | remote (doctor override)
       --store <path>      Local project-tier store directory (default: .lorekit)
       --from <path>       Source store to migrate from (migrate)
