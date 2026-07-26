@@ -3,109 +3,101 @@
 /**
  * LoreExplorer
  *
- * Browseable two-panel layout (scope tree + lesson list) for the Lore page.
+ * Two-panel layout (scope tree + paginated lesson list) for the Lore page.
+ * Lessons are fetched server-side with keyset pagination, mirroring the
+ * AuditLogFeed pattern. Scope selection and search are URL-backed.
  *
- * ## URL state strategy
- * - `scope` param:   which scope is selected. Shareable, survives refresh.
- * - `q` param:       the active search query. Shareable, survives refresh, but
- *   written to the URL debounced (~300ms) — see the search-input note below.
- * - `scopePanelOpen`: local useState — ephemeral accordion state, NOT in URL.
- *   Putting accordion visibility in the URL clutters the address bar and the
- *   share link with low-value UI state. It also fires a router.replace on every
- *   mobile accordion tap, which is expensive and unnecessary.
+ * ## Key changes from the previous client-filtered version
+ * - Default view is "all scopes" (no scope selected). The scope tree has an
+ *   "all" row at the top that clears the scope filter.
+ * - Filtering (scope / search / date) is server-side, not client-side.
+ *   `useMemories` (`useInfiniteQuery` over `listMemories`) is the data source.
+ * - Pagination: "Load more" button appends the next keyset page, identical to
+ *   the audit log feed (`AuditLogFeed.tsx`).
+ * - The scope sidebar still reads a lightweight `useScopeTree()` query so the
+ *   tree renders immediately without waiting for the lesson list.
+ *
+ * ## URL state
+ * - `scope` param: selected scope (null → all scopes). Shareable.
+ * - `q` param: search query, debounced write. Shareable.
+ * - `range` param: date range, shareable. Scoped to /lore.
+ * - `scopePanelOpen`: local useState — ephemeral mobile accordion, NOT in URL.
  *
  * ## SSR note
- * This component uses `useUrlState` which calls `useSearchParams()`. It must be
- * wrapped in a <Suspense> boundary (via the dashboard layout). On the server,
- * `scope` and `q` default to null / '' and the first scope is shown; on the
- * client, the real URL values hydrate without mismatch.
- *
- * ## Optimistic state
- * `useUrlState` provides immediate UI feedback on scope/query changes via its
- * internal optimistic layer. Switching scope feels instant; the URL update
- * happens in the background.
+ * Uses `useSearchParams()` via `useUrlState`. Must be wrapped in <Suspense>.
  */
 
 import { useMemo, useTransition, useState } from 'react';
-import { Search, BookOpen, ChevronDown } from 'lucide-react';
+import { Search, BookOpen, ChevronDown, Loader2 } from 'lucide-react';
 import { ScopeTree, type ScopeNode } from './ScopeTree';
-import { LessonCard, type LessonEntry } from './LessonCard';
+import { LessonCard } from './LessonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDebouncedUrlState } from '@/lib/hooks/useDebouncedUrlState';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
+import { useMemories } from '@/lib/queries/lore';
+import { useReducedMotion } from 'motion/react';
+import type { LessonEntry } from './LessonCard';
 
 interface LoreExplorerProps {
   scopes: ScopeNode[];
-  lessons: LessonEntry[];
 }
 
-export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
+export function LoreExplorer({ scopes }: LoreExplorerProps) {
   const { openLesson, openLessonById, closeLesson } = useMemorySidebar();
   const [, startTransition] = useTransition();
+  const reduceMotion = useReducedMotion();
 
-  // URL-backed: scope selection survives refreshes and is shareable. Scope is a
-  // discrete click, so it writes the URL immediately (no debounce).
-  const [selectedScope, setSelectedScope] = useUrlState<string | null>('scope', null);
+  // URL-backed: null means "all scopes" (the new default). A discrete click
+  // writes the URL immediately (no debounce). Scoped to /lore.
+  const [selectedScope, setSelectedScope] = useUrlState<string | null>('scope', null, {
+    cleanOnPathname: '/lore',
+  });
 
-  // Search is high-frequency input: the returned `query` stays instantly
-  // responsive (local state) and drives client-side filtering, while the
-  // shareable `?q=` param is written on a trailing debounce so we don't fire a
-  // router.replace per keystroke. See useDebouncedUrlState for the full rationale.
-  const [query, setQuery] = useDebouncedUrlState<string>('q', '');
+  // Search is high-frequency input — the returned `query` is instantly
+  // responsive (local state) while the URL param is written on a trailing
+  // debounce. The *server query* keys off the settled URL value (committedSearch)
+  // so the server action fires only after the debounce settles, not on every
+  // keystroke. Mirrors the AuditLogFeed pattern exactly.
+  const [search, setSearch] = useDebouncedUrlState<string>('q', '', {
+    debounceMs: 350,
+    cleanOnPathname: '/lore',
+  });
+  const [committedSearch] = useUrlState<string>('q', '', {
+    cleanOnPathname: '/lore',
+  });
 
-  // URL-backed date range (single param, shareable). Scoped to /lore so the
-  // param doesn't linger on other pages. Filters lessons by creation day.
+  // URL-backed date range, scoped to /lore.
   const [range, setRange] = useUrlState<DateRange | null>('range', null, {
     cleanOnPathname: '/lore',
   });
 
-  // Local-only: mobile accordion state. Ephemeral UI — not shareable, not
-  // persisted. Putting this in URL state would pollute every share link and
-  // fire a router.replace on every tap.
+  // Local-only: mobile accordion state. Ephemeral — not shareable.
   const [scopePanelOpen, setScopePanelOpen] = useState(true);
 
-  // When no scope is stored in the URL, fall back to the first available scope.
-  // We do NOT write this back to the URL so that clean URLs stay clean (i.e.
-  // navigating to /lore without a ?scope= shows all lessons in the first scope
-  // without adding a param to the URL).
-  const effectiveScope = selectedScope ?? scopes[0]?.scope ?? null;
+  // Paginated lesson list — server-side filtered by scope / search / range.
+  const {
+    data,
+    isLoading,
+    isError,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = useMemories({ scope: selectedScope, search: committedSearch, range });
 
-  const filteredLessons = useMemo(() => {
-    let out = effectiveScope
-      ? lessons.filter((l) => l.scope === effectiveScope)
-      : lessons;
+  const lessons = useMemo(
+    () => data?.pages.flatMap((page) => page.rows) ?? [],
+    [data],
+  );
 
-    // Date range filters on the lesson's creation day (UTC), matching the
-    // DateRangePicker's UTC day strings and the created_at ordering.
-    if (range) {
-      out = out.filter((l) => {
-        const day = new Date(l.created_at).toISOString().slice(0, 10);
-        return day >= range.from && day <= range.to;
-      });
-    }
+  const isFiltered = search.trim() !== '' || range !== null;
 
-    if (query.trim()) {
-      const q = query.toLowerCase();
-      out = out.filter(
-        (l) =>
-          l.key.toLowerCase().includes(q) ||
-          l.value.toLowerCase().includes(q) ||
-          l.tags.some((t) => t.toLowerCase().includes(q)),
-      );
-    }
-
-    return out;
-  }, [lessons, effectiveScope, query, range]);
-
-  const isFiltered = query.trim() !== '' || range !== null;
-
-  function handleScopeSelect(scope: string) {
+  function handleScopeSelect(scope: string | null) {
     startTransition(() => {
       setSelectedScope(scope);
-      // Close the sidebar when switching scope – the previous lesson may not
-      // exist in the new scope.
+      // Close the sidebar when switching scope — the previous lesson may not
+      // be present in the new scope.
       closeLesson();
       setScopePanelOpen(false);
     });
@@ -120,10 +112,90 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
   }
 
   const selectedScopeLabel =
-    scopes.find((s) => s.scope === effectiveScope)?.label ?? effectiveScope ?? 'All scopes';
+    selectedScope === null
+      ? 'All scopes'
+      : (scopes.find((s) => s.scope === selectedScope)?.label ?? selectedScope);
+
+  const totalCount = scopes.reduce((sum, s) => sum + s.count, 0);
+
+  // Shared lesson list renderer.
+  function LessonList() {
+    if (isLoading) {
+      return (
+        <div className="flex flex-col gap-2 p-3" aria-label="Loading lessons" role="status">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-24 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]" />
+          ))}
+        </div>
+      );
+    }
+
+    if (isError) {
+      return (
+        <div className="flex items-center justify-center p-8">
+          <p className="text-sm text-[var(--color-content-secondary)]">Failed to load lessons. Please refresh.</p>
+        </div>
+      );
+    }
+
+    if (lessons.length === 0) {
+      return (
+        <EmptyState
+          icon={BookOpen}
+          title={isFiltered ? 'No matching lessons' : 'No lessons in this scope'}
+          description={isFiltered ? 'Try a different search term or date range.' : 'Lessons will appear here once your agents start writing.'}
+        />
+      );
+    }
+
+    return (
+      <div className="flex flex-col gap-2">
+        {lessons.map((lesson, i) => (
+          <div key={`${lesson.scope}::${lesson.key}`} role="listitem">
+            <LessonCard
+              lesson={lesson}
+              selected={openLesson?.key === lesson.key && openLesson?.scope === lesson.scope}
+              onClick={() => handleLessonClick(lesson)}
+              index={i}
+            />
+          </div>
+        ))}
+
+        <div className="flex justify-center pt-2 pb-1">
+          {hasNextPage ? (
+            <button
+              type="button"
+              onClick={() => fetchNextPage()}
+              disabled={isFetchingNextPage}
+              className="flex min-h-9 items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 py-1.5 text-xs font-medium text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] disabled:opacity-60"
+            >
+              {isFetchingNextPage && (
+                <Loader2
+                  className={`size-3.5 ${reduceMotion ? '' : 'animate-spin'}`}
+                  aria-hidden
+                />
+              )}
+              {isFetchingNextPage ? 'Loading…' : 'Load more'}
+            </button>
+          ) : (
+            <p className="text-[10px] text-[var(--color-content-tertiary)]">All lessons loaded</p>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
+      {/* Screen-reader-only status announcements. */}
+      <p role="status" aria-live="polite" className="sr-only">
+        {isLoading
+          ? 'Loading lessons'
+          : isFetchingNextPage
+            ? 'Loading more lessons'
+            : `${lessons.length} lesson${lessons.length === 1 ? '' : 's'} loaded`}
+      </p>
+
       {/* Desktop: side-by-side panels */}
       <div className="hidden md:flex h-full gap-0 overflow-hidden rounded-xl border border-[var(--color-border)]">
         <div className="flex w-56 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-bg-raised)]">
@@ -132,7 +204,12 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
           </div>
           <div className="flex-1 overflow-y-auto">
             {scopes.length > 0 ? (
-              <ScopeTree nodes={scopes} selected={effectiveScope} onSelect={handleScopeSelect} />
+              <ScopeTree
+                nodes={scopes}
+                selected={selectedScope}
+                onSelect={handleScopeSelect}
+                totalCount={totalCount}
+              />
             ) : (
               <EmptyState icon={BookOpen} title="No scopes yet" description="Run an agent to create your first lesson." />
             )}
@@ -146,8 +223,8 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
               <input
                 type="search"
                 placeholder="Search lessons…"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
                 aria-label="Search lessons"
                 className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] py-2 pl-8 pr-3 text-xs text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none transition-colors duration-150"
               />
@@ -156,26 +233,7 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
           </div>
 
           <div className="flex-1 overflow-y-auto p-3" role="list" aria-label="Lessons">
-            {filteredLessons.length > 0 ? (
-              <div className="flex flex-col gap-2">
-                {filteredLessons.map((lesson, i) => (
-                  <div key={`${lesson.scope}::${lesson.key}`} role="listitem">
-                    <LessonCard
-                      lesson={lesson}
-                      selected={openLesson?.key === lesson.key && openLesson?.scope === lesson.scope}
-                      onClick={() => handleLessonClick(lesson)}
-                      index={i}
-                    />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <EmptyState
-                icon={BookOpen}
-                title={isFiltered ? 'No matching lessons' : 'No lessons in this scope'}
-                description={isFiltered ? 'Try a different search term or date range.' : 'Lessons will appear here once your agents start writing.'}
-              />
-            )}
+            <LessonList />
           </div>
         </div>
       </div>
@@ -196,9 +254,14 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
               aria-hidden
             />
           </button>
-          {scopePanelOpen && scopes.length > 0 && (
+          {scopePanelOpen && (
             <div className="border-t border-[var(--color-border)] max-h-52 overflow-y-auto">
-              <ScopeTree nodes={scopes} selected={effectiveScope} onSelect={handleScopeSelect} />
+              <ScopeTree
+                nodes={scopes}
+                selected={selectedScope}
+                onSelect={handleScopeSelect}
+                totalCount={totalCount}
+              />
             </div>
           )}
         </div>
@@ -209,8 +272,8 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
             <input
               type="search"
               placeholder="Search lessons…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
               aria-label="Search lessons"
               className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] py-2 pl-8 pr-3 text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none transition-colors duration-150"
             />
@@ -219,26 +282,7 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
         </div>
 
         <div role="list" aria-label="Lessons">
-          {filteredLessons.length > 0 ? (
-            <div className="flex flex-col gap-2">
-              {filteredLessons.map((lesson, i) => (
-                <div key={`${lesson.scope}::${lesson.key}`} role="listitem">
-                  <LessonCard
-                    lesson={lesson}
-                    selected={openLesson?.key === lesson.key && openLesson?.scope === lesson.scope}
-                    onClick={() => handleLessonClick(lesson)}
-                    index={i}
-                  />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <EmptyState
-              icon={BookOpen}
-              title={isFiltered ? 'No matching lessons' : 'No lessons in this scope'}
-              description={isFiltered ? 'Try a different search term or date range.' : 'Lessons will appear here once your agents start writing.'}
-            />
-          )}
+          <LessonList />
         </div>
       </div>
     </>

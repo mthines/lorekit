@@ -9,6 +9,8 @@ import type { ScopePrefix } from '@/lib/scope';
  * visual rendering is delegated to the shared {@link MemoryCard}.
  */
 export interface LessonEntry {
+  /** DB row id — present on paginated server-action results, absent on legacy client fetches. */
+  id?: string;
   key: string;
   value: string;
   tags: string[];
