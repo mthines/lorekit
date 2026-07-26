@@ -98,6 +98,10 @@ export function resolveTelemetryConfig(env = process.env) {
 
 export function randHex(bytes) {
   const b = new Uint8Array(bytes);
+  // `crypto` here is the WebCrypto global (globalThis.crypto), a stable global
+  // since Node 19 and also present on Node 18 — hence used unqualified rather
+  // than imported. (Do NOT `import crypto from 'node:crypto'`: that module's
+  // default export does not expose getRandomValues; only `webcrypto` does.)
   crypto.getRandomValues(b);
   return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 }
