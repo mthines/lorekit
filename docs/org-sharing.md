@@ -102,10 +102,11 @@ scope — a scope maps to at most one org), not the advisory
 `.lorekit/config.json`. Authorization to *create* a binding requires an
 admin/owner role (`manage_scopes`).
 
-> **Dashboard UI is a fast-follow.** The backend + MCP auto-routing ship first;
-> the **Settings → Shared scopes** management UI (bind / list / unbind) and the
-> Explorer's bound-scope badge land in the next PR. Until then bindings are
-> created via the `lorekit_scope_bind` RPC.
+**Settings → Shared scopes** (admin/owner): the dashboard lists the org's bound
+scopes and lets you add or remove them. To bind a new scope, enter the scope
+string (e.g. `repo::owner/name`) and click **Bind scope**. To remove one, click
+**Unbind** and confirm. The Explorer's per-scope "shared with {org}" badge is a
+planned fast-follow.
 
 ---
 

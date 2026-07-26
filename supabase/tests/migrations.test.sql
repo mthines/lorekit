@@ -1435,6 +1435,44 @@ begin
 end;
 $$;
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- Audit log CHECK widening for scope actions (00027)
+-- ═════════════════════════════════════════════════════════════════════════
+
+-- ── 37. scope.bind and scope.unbind are accepted by audit_log.action CHECK ───
+do $$
+declare
+  v_blocked boolean;
+begin
+  -- scope.bind is now a valid action — the INSERT must succeed.
+  insert into audit_log (user_id, action, resource_type, resource_id, target)
+  values (
+    '00000000-0000-0000-0000-0000000000a1',
+    'scope.bind', 'org_scope_binding', gen_random_uuid(), 'scope-check-org'
+  );
+
+  -- scope.unbind is now a valid action — the INSERT must succeed.
+  insert into audit_log (user_id, action, resource_type, resource_id, target)
+  values (
+    '00000000-0000-0000-0000-0000000000a1',
+    'scope.unbind', 'org_scope_binding', gen_random_uuid(), 'scope-check-org'
+  );
+
+  -- An unknown action is still rejected.
+  v_blocked := false;
+  begin
+    insert into audit_log (user_id, action, resource_type, resource_id, target)
+    values (
+      '00000000-0000-0000-0000-0000000000a1',
+      'scope.unknown', 'org_scope_binding', gen_random_uuid(), 'scope-check-org'
+    );
+  exception when check_violation then
+    v_blocked := true;
+  end;
+  assert v_blocked, 'audit_log: unknown scope action must be rejected by the CHECK constraint';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
