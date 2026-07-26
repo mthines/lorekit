@@ -24,6 +24,14 @@ import { createServerClient } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
 import { normalizeRepo } from '@/lib/repo-format';
 import { recordAuditEvent } from '@/lib/audit-log';
+import { resolveMcpUrls } from '@/lib/mcp-url';
+import {
+  VERIFY_EVENT,
+  buildVerifyPayload,
+  signBody,
+  interpretVerifyStatus,
+  type VerifyResult,
+} from '@/lib/webhook-verify';
 
 export interface WebhookSecret {
   id: string;
@@ -120,4 +128,115 @@ export async function generateWebhookSecret(
   // not just the /settings redirect page.
   revalidatePath('/settings', 'layout');
   return { secret, id, repo };
+}
+
+/**
+ * Verify a repo's webhook is wired up correctly by sending a synthetic,
+ * correctly-signed GitHub `ping` from the server to the live webhook endpoint
+ * using the user's stored secret, then reporting whether it was accepted.
+ *
+ * This confirms LoreKit's half of the setup end-to-end: the endpoint is
+ * deployed/reachable and the exact stored secret round-trips through the
+ * deployed HMAC verification. `ping` is an unsupported event, so a valid
+ * signature returns 200 OK without writing a candidate lesson — verification
+ * never pollutes the lore. See lib/webhook-verify.ts for the boundary this
+ * check does and does not prove.
+ *
+ * Legacy null-repo secrets can't be verified (there's no full_name to sign a
+ * repo-scoped ping for) — callers should disable the button for those rows.
+ */
+export async function verifyWebhookSecret(repoInput: string): Promise<VerifyResult> {
+  const supabase = await createServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, code: 'unreachable', message: 'Not authenticated' };
+
+  const repo = normalizeRepo(repoInput);
+  if (!repo) {
+    return { ok: false, code: 'unreachable', message: 'Invalid repo — expected the format "owner/name".' };
+  }
+
+  const { data, error } = await supabase
+    .from('webhook_secrets')
+    .select('secret')
+    .eq('user_id', user.id)
+    .eq('repo', repo)
+    .eq('active', true)
+    .maybeSingle();
+
+  if (error || !data?.secret) {
+    return { ok: false, code: 'no_secret', message: 'No active secret for this repo — generate one first.' };
+  }
+
+  const { webhookUrl } = resolveMcpUrls();
+  const body = buildVerifyPayload(repo);
+  const signature = await signBody(data.secret as string, body);
+
+  try {
+    const res = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-github-event': VERIFY_EVENT,
+        'x-github-delivery': crypto.randomUUID(),
+        'x-hub-signature-256': signature,
+      },
+      body,
+      // Never cache a verification probe — it must hit the live endpoint.
+      cache: 'no-store',
+    });
+    return interpretVerifyStatus(res.status);
+  } catch {
+    return {
+      ok: false,
+      code: 'unreachable',
+      message: 'Could not reach the webhook endpoint. Check that the MCP server is deployed.',
+    };
+  }
+}
+
+/**
+ * Delete a webhook secret — implemented as a soft delete (deactivate). Setting
+ * `active = false` drops the row from `listWebhookSecrets` (which filters
+ * `active = true`) and from the edge function's lookup, so the secret stops
+ * working immediately, while preserving the audit trail's foreign reference.
+ * This matches the table's `active`-flag design (the partial unique index and
+ * the `webhook_secret.deactivate` audit action both exist for this) and the
+ * grace-window semantics already used by regeneration.
+ *
+ * Works for any row the user owns, including the legacy null-repo secret.
+ */
+export async function deleteWebhookSecret(id: string): Promise<{ error?: string }> {
+  const supabase = await createServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Not authenticated' };
+
+  // Read the repo before deactivating so the audit event has a readable target.
+  const { data: existing } = await supabase
+    .from('webhook_secrets')
+    .select('repo')
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  const { error } = await supabase
+    .from('webhook_secrets')
+    .update({ active: false })
+    .eq('id', id)
+    .eq('user_id', user.id) // Ensure ownership
+    .eq('active', true);
+
+  if (error) return { error: error.message };
+
+  const repo = (existing?.repo as string | null) ?? null;
+  await recordAuditEvent({
+    action: 'webhook_secret.deactivate',
+    resourceType: 'webhook_secret',
+    resourceId: id,
+    target: repo ?? 'legacy (all repos)',
+    metadata: repo ? { repo } : {},
+  });
+
+  revalidatePath('/dashboard');
+  revalidatePath('/settings', 'layout');
+  return {};
 }
