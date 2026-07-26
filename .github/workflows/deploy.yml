@@ -115,6 +115,21 @@ jobs:
           LOREKIT_SMOKE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
 
+      # Reproduce the real onboarding flow end-to-end against the live preview
+      # deploy: scaffold the skill + .mcp.json, then `doctor --deep` (skill found,
+      # token, endpoint, connectivity, and a self-cleaning write→read→delete
+      # round-trip). This is the holistic health gate — the single command that
+      # catches a placeholder endpoint, a bad token, an unreachable host, or a
+      # broken round-trip in one shot. The zero-dep CLI runs straight from source.
+      - name: Onboarding smoke — install, then doctor --deep (live round-trip)
+        run: |
+          node packages/cli/bin/lorekit.mjs install --project --no-hooks --yes \
+            --endpoint "$URL" --token "$TOKEN"
+          node packages/cli/bin/lorekit.mjs doctor --deep --endpoint "$URL" --token "$TOKEN"
+        env:
+          URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
+          TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
+
   # ── 3. Deploy to PRODUCTION (only reached if preview is green) ────────────────
   deploy-production:
     name: Deploy → production
@@ -173,6 +188,14 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
       - name: Verify health endpoint
         run: |
           URL="https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/health"
@@ -198,6 +221,19 @@ jobs:
             echo "::error::Production MCP endpoint returned HTTP ${CODE} for tools/list"
             exit 1
           fi
+
+      # Full authenticated onboarding + round-trip against the live production
+      # deploy, mirroring smoke-preview: scaffold skill + config, then
+      # `doctor --deep` (self-cleaning write→read→delete). Stronger than the
+      # curl checks above — it proves the production write path, not just reachability.
+      - name: Onboarding smoke — install, then doctor --deep (live round-trip)
+        run: |
+          node packages/cli/bin/lorekit.mjs install --project --no-hooks --yes \
+            --endpoint "$URL" --token "$TOKEN"
+          node packages/cli/bin/lorekit.mjs doctor --deep --endpoint "$URL" --token "$TOKEN"
+        env:
+          URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
+          TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
 
   # ── 5. Rollback PRODUCTION functions on a production failure ──────────────────
   #    Redeploys the previous commit's edge functions. Migrations are forward-only
