@@ -81,7 +81,7 @@ Authorization: Bearer <token>
             → user-scoped DB client (RLS enforced automatically)
 ```
 
-**Key security invariant:** API key auth uses the service-role client (bypasses RLS), but **every query** includes `.eq('user_id', userId)` so users cannot access each other's memories.
+**Key security invariant:** API key auth uses the service-role client (bypasses RLS), so **every read is tenant-scoped in app code** — to the caller's own `user_id` **or** an org they belong to — through the single `applyTenantScope` predicate ([Organizations](#organizations)). A user can never read another user's personal memories, or an org's memories unless they're a member.
 
 ---
 
@@ -92,7 +92,9 @@ Authorization: Bearer <token>
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | uuid | PK |
-| `user_id` | uuid | References `auth.users`. Null for CI/service writes (but not for API token writes). |
+| `user_id` | uuid | References `auth.users`. Null for CI/service writes **and for org-owned rows** (but not for personal API-token writes). |
+| `org_id` | uuid | FK → `orgs(id)`, nullable. Set for org-owned (shared) lore, null for personal. See [Organizations](#organizations). |
+| `created_by` / `updated_by` | uuid | Author attribution for org-owned rows (which keep `user_id` null) — powers "last updated by @handle". |
 | `scope` | text | Canonical scope string — see [scope-format.md](./scope-format.md) |
 | `key` | text | Lesson identifier |
 | `value` | text | Lesson body (markdown, max 64 KB) |
@@ -103,7 +105,10 @@ Authorization: Bearer <token>
 | `created_at` | timestamptz | |
 | `updated_at` | timestamptz | Auto-updated by trigger |
 
-Unique constraint: `(user_id, scope, key)`.
+Uniqueness is partitioned across three mutually-exclusive partial indexes so the
+three ownership kinds never collide: org-owned (`org_id, scope, key`), personal
+(`user_id, scope, key` where `org_id is null`), and service/CI (`scope, key`
+where both are null).
 
 ### `api_tokens` table
 
@@ -157,6 +162,39 @@ piece. Migration `00012_audit_log_search.sql` adds the supporting indexes: a
 doesn't degrade to a sequential scan) and a `(user_id, created_at desc, id)`
 index covering the keyset seek (00010's `(user_id, created_at desc)` index
 lacks the `id` tiebreaker the keyset predicate needs).
+
+### Organizations
+
+Organizations let a team share one authoritative set of memories (see the
+user/operator guide, [org-sharing.md](./org-sharing.md)). Two tables back it:
+`orgs` (name, slug, and a nullable `deleted_at` soft-delete marker) and
+`org_members` (a `(org, user)` row with a `role` of `owner`/`admin`/`member`/`viewer`).
+
+**One tenant-visibility predicate.** Which orgs a user can see lives in exactly
+one place: the `SECURITY DEFINER` function `lorekit_member_org_ids(user)`. Both
+the `memories` read RLS policies and the edge API-key read path
+(`applyTenantScope`, mirrored between `packages/mcp-core` and the edge function)
+consume it, so widening visibility to org membership was a single change and
+can't drift. This is why the earlier "every query filters `user_id`" invariant
+is now "reads are scoped to `user_id` **OR** an org the caller belongs to" — the
+`org_id in (lorekit_member_org_ids(auth.uid()))` branch is that predicate.
+
+**Membership writes go through RPCs, not RLS.** `orgs`/`org_members`/`org_invites`
+carry no insert/update/delete RLS policy; every state transition (create, invite,
+accept/decline, role change, remove, leave, delete) is a `SECURITY DEFINER` RPC
+that resolves the actor as `auth.uid()` and gates on `lorekit_org_can`. This
+avoids the owner-bootstrap footgun (a self-insert-as-owner policy would let
+anyone seize any org) and keeps invite-accept atomic.
+
+**Deletion is a soft-delete.** `lorekit_org_delete` stamps `orgs.deleted_at`
+rather than removing the row; `lorekit_member_org_ids` excludes soft-deleted
+orgs, so the org's lore vanishes from every read at once while staying
+recoverable. A separate owner-only `lorekit_org_purge` does the real cascading
+delete. See [org-sharing.md](./org-sharing.md#deleting-an-organization-and-getting-it-back).
+
+Org writes are authorization-derived: `memory_write` accepts an org slug but
+requires `lorekit_org_can(writer, org, 'write')` inside the RPC — the org is
+never trusted from the caller.
 
 ---
 
