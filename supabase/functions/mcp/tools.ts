@@ -463,6 +463,27 @@ export async function toolPurge(
 // dispatcher in mcp-handler.ts).
 
 /**
+ * Resolve an org's UUID from its slug. Throws if the org does not exist or is
+ * soft-deleted. Shared by toolOrgRename and toolOrgDelete — both need the id
+ * to call their respective SECURITY DEFINER RPCs.
+ */
+async function resolveOrgId(
+  tracedDb: ReturnType<typeof createTracedClient>,
+  slug: string,
+): Promise<string> {
+  const { data: org, error } = await tracedDb
+    .from('orgs')
+    .select('id')
+    .eq('slug', slug)
+    .is('deleted_at', null)
+    .maybeSingle();
+
+  if (error) throw new Error((error as { message: string }).message);
+  if (!org) throw new Error(`org not found: ${slug}`);
+  return (org as { id: string }).id;
+}
+
+/**
  * Create a new organization. The calling user becomes the owner.
  * Uses lorekit_org_create (00022_org_management_rpcs.sql).
  */
@@ -541,20 +562,11 @@ export async function toolOrgRename(
 
   span.setAttributes({ 'lorekit.org.slug': slug });
 
-  // Resolve org_id from slug so we can call the RPC.
   const tracedDb = createTracedClient(db, span);
-  const { data: org, error: orgErr } = await tracedDb
-    .from('orgs')
-    .select('id')
-    .eq('slug', slug)
-    .is('deleted_at', null)
-    .maybeSingle();
-
-  if (orgErr) throw new Error((orgErr as { message: string }).message);
-  if (!org) throw new Error(`org not found: ${slug}`);
+  const orgId = await resolveOrgId(tracedDb, slug);
 
   const { error } = await tracedDb
-    .rpc('lorekit_org_rename', { p_org_id: (org as { id: string }).id, p_name: name });
+    .rpc('lorekit_org_rename', { p_org_id: orgId, p_name: name });
 
   if (error) {
     const translated = translateOrgPermissionError(error);
@@ -581,18 +593,10 @@ export async function toolOrgDelete(
   span.setAttributes({ 'lorekit.org.slug': slug });
 
   const tracedDb = createTracedClient(db, span);
-  const { data: org, error: orgErr } = await tracedDb
-    .from('orgs')
-    .select('id')
-    .eq('slug', slug)
-    .is('deleted_at', null)
-    .maybeSingle();
-
-  if (orgErr) throw new Error((orgErr as { message: string }).message);
-  if (!org) throw new Error(`org not found: ${slug}`);
+  const orgId = await resolveOrgId(tracedDb, slug);
 
   const { error } = await tracedDb
-    .rpc('lorekit_org_delete', { p_org_id: (org as { id: string }).id });
+    .rpc('lorekit_org_delete', { p_org_id: orgId });
 
   if (error) {
     const translated = translateOrgPermissionError(error);
