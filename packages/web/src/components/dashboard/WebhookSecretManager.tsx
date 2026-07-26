@@ -31,12 +31,21 @@ function NewSecretDisplay({
   onDismiss: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
   const [visible, setVisible] = useState(true);
 
   function handleCopy() {
     navigator.clipboard.writeText(secret).then(() => {
       setCopied(true);
+      setCopyError(false);
       setTimeout(() => setCopied(false), 2500);
+    }).catch(() => {
+      // Clipboard access may be denied (permissions policy, non-HTTPS). Reveal
+      // the secret and prompt a manual copy rather than failing silently.
+      console.warn('[webhook-secret] clipboard write failed; falling back to manual copy');
+      setVisible(true);
+      setCopyError(true);
+      setTimeout(() => setCopyError(false), 4000);
     });
   }
 
@@ -84,6 +93,13 @@ function NewSecretDisplay({
             </button>
           </div>
         </div>
+
+        {copyError && (
+          <p className="mt-2 text-xs text-[var(--color-content-secondary)]">
+            Couldn&apos;t copy automatically — select the secret above and press{' '}
+            <kbd className="rounded border border-[var(--color-border)] px-1 font-mono">⌘/Ctrl+C</kbd>.
+          </p>
+        )}
 
         <button
           onClick={onDismiss}
@@ -170,10 +186,13 @@ function RepoSecretRow({
   webhookSecret,
   onRegenerate,
 }: {
-  webhookSecret: WebhookSecret;
+  // A rendered row always has a repo — legacy null-repo rows are filtered out
+  // before we get here (see WebhookSecretManager).
+  webhookSecret: WebhookSecret & { repo: string };
   onRegenerate: (secret: string, record: WebhookSecret) => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
   const [visible, setVisible] = useState(false);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState('');
@@ -181,14 +200,22 @@ function RepoSecretRow({
   function handleCopy() {
     navigator.clipboard.writeText(webhookSecret.secret).then(() => {
       setCopied(true);
+      setCopyError(false);
       setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+      // Clipboard access may be denied (permissions policy, non-HTTPS). Reveal
+      // the secret and prompt a manual copy rather than failing silently.
+      console.warn('[webhook-secret] clipboard write failed; falling back to manual copy');
+      setVisible(true);
+      setCopyError(true);
+      setTimeout(() => setCopyError(false), 4000);
     });
   }
 
   function handleRegenerate() {
     setError('');
     startTransition(async () => {
-      const result = await generateWebhookSecret(webhookSecret.repo ?? '');
+      const result = await generateWebhookSecret(webhookSecret.repo);
       if ('error' in result) { setError(result.error); return; }
       onRegenerate(result.secret, {
         id: result.id,
@@ -211,7 +238,7 @@ function RepoSecretRow({
         <GitBranch className="size-4 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
         <div className="min-w-0 flex-1">
           <span className="font-mono text-sm font-medium text-[var(--color-content-primary)]">
-            {webhookSecret.repo ?? 'legacy (all repos)'}
+            {webhookSecret.repo}
           </span>
           <div className="mt-0.5 text-[10px] text-[var(--color-content-tertiary)]">
             Created {relativeTime(webhookSecret.created_at)}
@@ -236,15 +263,15 @@ function RepoSecretRow({
           </button>
           <button
             onClick={handleCopy}
-            aria-label={`Copy secret for ${webhookSecret.repo ?? 'legacy'}`}
+            aria-label={`Copy secret for ${webhookSecret.repo}`}
             className="flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-content-tertiary)] transition-colors duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
           >
             {copied ? <><CheckCheck className="size-3" /> Copied!</> : <><Copy className="size-3" /> Copy</>}
           </button>
           <button
             onClick={handleRegenerate}
-            disabled={pending || !webhookSecret.repo}
-            aria-label={`Regenerate secret for ${webhookSecret.repo ?? 'legacy'}`}
+            disabled={pending}
+            aria-label={`Regenerate secret for ${webhookSecret.repo}`}
             className="flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-content-tertiary)] transition-colors duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)] disabled:opacity-50"
           >
             {pending ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
@@ -252,6 +279,12 @@ function RepoSecretRow({
           </button>
         </div>
       </div>
+      {copyError && (
+        <p className="text-xs text-[var(--color-content-secondary)]">
+          Couldn&apos;t copy automatically — select the secret and press{' '}
+          <kbd className="rounded border border-[var(--color-border)] px-1 font-mono">⌘/Ctrl+C</kbd>.
+        </p>
+      )}
       {error && <p className="text-xs text-[var(--color-error)]">{error}</p>}
     </motion.div>
   );
@@ -264,19 +297,31 @@ interface WebhookSecretManagerProps {
 }
 
 export function WebhookSecretManager({ initialSecrets }: WebhookSecretManagerProps) {
-  const [secrets, setSecrets] = useState<WebhookSecret[]>(initialSecrets);
-  const [showForm, setShowForm] = useState(initialSecrets.length === 0);
+  // Webhook secrets are per-repo. Any null-repo row is a leftover from before
+  // repo scoping existed — it isn't part of the current setup flow, so we don't
+  // surface it. Every displayed secret therefore has a concrete owner/repo.
+  const repoSecrets = initialSecrets.filter(
+    (s): s is WebhookSecret & { repo: string } => Boolean(s.repo),
+  );
+  const [secrets, setSecrets] = useState<Array<WebhookSecret & { repo: string }>>(repoSecrets);
+  const [showForm, setShowForm] = useState(repoSecrets.length === 0);
   const [newSecret, setNewSecret] = useState<string | null>(null);
   const [newSecretRepo, setNewSecretRepo] = useState<string | null>(null);
 
-  function upsertSecret(record: WebhookSecret) {
-    setSecrets((prev) => [record, ...prev.filter((s) => s.repo !== record.repo)]);
-  }
-
   function handleGenerated(secret: string, record: WebhookSecret) {
-    upsertSecret(record);
+    // The generate action always returns a concrete repo; guard for the type
+    // narrowing and skip the (impossible) null-repo case rather than widening
+    // the per-repo list.
+    if (!record.repo) {
+      // Unreachable in practice — generateWebhookSecret always returns a repo —
+      // but surface it rather than leaving the form silently open.
+      console.warn('[webhook-secret] generated secret had no repo; skipping list update');
+      return;
+    }
+    const withRepo = { ...record, repo: record.repo };
+    setSecrets((prev) => [withRepo, ...prev.filter((s) => s.repo !== withRepo.repo)]);
     setNewSecret(secret);
-    setNewSecretRepo(record.repo);
+    setNewSecretRepo(withRepo.repo);
     setShowForm(false);
   }
 
