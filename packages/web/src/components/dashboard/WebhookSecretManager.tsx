@@ -37,6 +37,9 @@ function NewSecretDisplay({
     navigator.clipboard.writeText(secret).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
+    }).catch(() => {
+      // Clipboard access may be denied (permissions policy, non-HTTPS). The
+      // user can still manually select and copy the secret.
     });
   }
 
@@ -184,6 +187,8 @@ function RepoSecretRow({
     navigator.clipboard.writeText(webhookSecret.secret).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+      // Clipboard access may be denied (permissions policy, non-HTTPS).
     });
   }
 

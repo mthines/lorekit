@@ -50,7 +50,12 @@ export function OnboardingProvider({
   useEffect(() => {
     try {
       const raw = localStorage.getItem(ONBOARDING_DONE_KEY);
-      if (raw) setManualDone(new Set(JSON.parse(raw) as string[]));
+      if (raw) {
+        const parsed: unknown = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.every((x) => typeof x === 'string')) {
+          setManualDone(new Set(parsed));
+        }
+      }
       setDismissed(localStorage.getItem(ONBOARDING_DISMISSED_KEY) === '1');
     } catch {
       // Ignore malformed/unavailable storage — fall back to server signals only.
@@ -78,6 +83,9 @@ export function OnboardingProvider({
   );
 
   const toggleDone = useCallback((id: string) => {
+    // Only allow manual toggling for markable steps — server-signalled steps
+    // should not be overridden by the client.
+    if (!MARKABLE_STEP_IDS.includes(id as OnboardingStepId)) return;
     setManualDone((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
