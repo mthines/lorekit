@@ -13,6 +13,35 @@ export function resolveProjectRoot(dir) {
   return path.resolve(dir || process.cwd());
 }
 
+// Atomic config write: serialize to a sibling temp file, then rename over the
+// target. rename(2) is atomic within a filesystem, so a crash / Ctrl-C / ENOSPC
+// mid-write can never leave a half-written (corrupt) file — the original stays
+// intact until the complete new content is swapped in. This matters most for
+// ~/.claude.json, which can be large and holds all of Claude Code's per-project
+// state and OAuth tokens. The temp file inherits the target's permissions when
+// it exists (so we don't widen a locked-down 0600 config to 0644 on replace).
+export function writeFileAtomic(file, data) {
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = path.join(dir, `.${path.basename(file)}.${process.pid}.tmp`);
+  try {
+    fs.writeFileSync(tmp, data);
+    try {
+      fs.chmodSync(tmp, fs.statSync(file).mode);
+    } catch {
+      /* target didn't exist — leave the temp file's default perms */
+    }
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {
+      /* best-effort cleanup of the temp file */
+    }
+    throw e;
+  }
+}
+
 // The user's home directory. Honors $HOME / %USERPROFILE% (so it can be
 // redirected in tests) and falls back to the OS lookup.
 export function homeDir() {
@@ -50,6 +79,12 @@ export function settingsPath(root, scope = 'project') {
 // tool failure, nudge a retrospective at end of turn. Mirrors the plugin's
 // hooks.json so `install` delivers the same deterministic layer.
 export const CLAUDE_HOOK_EVENTS = ['SessionStart', 'PostToolUseFailure', 'Stop'];
+
+// Matches a hook command that fires the lorekit engine, whether wired as a
+// global `lorekit hook …` or `npx -y @lorekit/cli hook …`. Shared by the
+// upsert (find-or-update) and remove (uninstall) paths so they agree on what
+// counts as "ours".
+export const LOREKIT_HOOK_RE = /(?:@lorekit\/cli|lorekit) hook\b/;
 
 // npx stages the package's own bin into an ephemeral cache dir
 // (…/_npx/<hash>/node_modules/.bin) and prepends it to PATH for the lifetime of
@@ -122,7 +157,7 @@ export function upsertClaudeHooks(root, scope, runner) {
     for (const group of groups) {
       const inner = group && Array.isArray(group.hooks) ? group.hooks : [];
       existing = inner.find(
-        (h) => h && typeof h.command === 'string' && /(?:@lorekit\/cli|lorekit) hook\b/.test(h.command),
+        (h) => h && typeof h.command === 'string' && LOREKIT_HOOK_RE.test(h.command),
       );
       if (existing) break;
     }
@@ -139,8 +174,7 @@ export function upsertClaudeHooks(root, scope, runner) {
     }
   }
 
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
+  writeFileAtomic(file, JSON.stringify(config, null, 2) + '\n');
   return { file, added, updated, unchanged };
 }
 
@@ -181,7 +215,7 @@ export function upsertMcpServer(root, remoteUrl, scope = 'project') {
     command: 'npx',
     args: ['-y', 'mcp-remote', remoteUrl],
   };
-  fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
+  writeFileAtomic(file, JSON.stringify(config, null, 2) + '\n');
   return { file, existed };
 }
 
@@ -190,6 +224,71 @@ export function upsertMcpServer(root, remoteUrl, scope = 'project') {
 // no lorekit server. Callers that need to distinguish those use readMcpConfig.
 export function readLorekitServer(root) {
   return readServerFromFile(mcpJsonPath(root));
+}
+
+// --- uninstall: surgical removal of the three things `install` writes. -------
+// Each helper touches only lorekit's own entries and leaves every other
+// server / hook / setting intact, so uninstalling never damages a shared
+// ~/.claude.json or settings.json.
+
+// Delete the scaffolded skill directory. We own the whole
+// .claude/skills/lorekit-memory tree, so a recursive remove is safe.
+export function removeSkill(root, scope = 'project') {
+  const dest = skillInstallDir(root, scope);
+  const removed = fs.existsSync(dest);
+  if (removed) fs.rmSync(dest, { recursive: true, force: true });
+  return { dest, removed };
+}
+
+// Drop the `lorekit` MCP server entry, preserving any other servers (and, for
+// the global ~/.claude.json, all other user settings). Prunes an emptied
+// mcpServers object. No-op (no write) when there's nothing to remove.
+export function removeMcpServer(root, scope = 'project') {
+  const file = mcpConfigPath(root, scope);
+  const config = readJsonIfExists(file);
+  const hasEntry =
+    config &&
+    config.mcpServers &&
+    typeof config.mcpServers === 'object' &&
+    Object.prototype.hasOwnProperty.call(config.mcpServers, 'lorekit');
+  if (!hasEntry) return { file, removed: false };
+
+  delete config.mcpServers.lorekit;
+  if (Object.keys(config.mcpServers).length === 0) delete config.mcpServers;
+  writeFileAtomic(file, JSON.stringify(config, null, 2) + '\n');
+  return { file, removed: true };
+}
+
+// Strip lorekit hook entries from every event, preserving non-lorekit hooks in
+// the same groups. Prunes groups left with no hooks and events left with no
+// groups. Returns the count removed; only writes when something changed.
+export function removeClaudeHooks(root, scope = 'project') {
+  const file = settingsPath(root, scope);
+  const config = readJsonIfExists(file);
+  if (!config || !config.hooks || typeof config.hooks !== 'object') {
+    return { file, removed: 0 };
+  }
+
+  let removed = 0;
+  for (const event of Object.keys(config.hooks)) {
+    const groups = config.hooks[event];
+    if (!Array.isArray(groups)) continue;
+    for (const group of groups) {
+      if (!group || !Array.isArray(group.hooks)) continue;
+      const before = group.hooks.length;
+      group.hooks = group.hooks.filter(
+        (h) => !(h && typeof h.command === 'string' && LOREKIT_HOOK_RE.test(h.command)),
+      );
+      removed += before - group.hooks.length;
+    }
+    // Drop groups we emptied, then the event key if it has no groups left.
+    config.hooks[event] = groups.filter((g) => g && Array.isArray(g.hooks) && g.hooks.length > 0);
+    if (config.hooks[event].length === 0) delete config.hooks[event];
+  }
+  if (Object.keys(config.hooks).length === 0) delete config.hooks;
+
+  if (removed > 0) writeFileAtomic(file, JSON.stringify(config, null, 2) + '\n');
+  return { file, removed };
 }
 
 // Recursively copy the skill source into the target, skipping files that
