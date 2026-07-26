@@ -28,6 +28,10 @@ if (!endpoint || !token) {
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.join(HERE, '..', 'packages', 'cli', 'bin', 'lorekit.mjs');
 const EXPECTED_TOOLS = ['memory.write', 'memory.read', 'memory.list', 'memory.search', 'memory.delete', 'memory.archive'];
+// Watchdog so this can never hang a timeout-less CI job: the per-call fetch abort
+// is ~10s, so a healthy run finishes well under this; if the child stalls or never
+// exits, kill it and fail loudly instead of running to the job's 6h ceiling.
+const TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS) || 60000;
 
 const fail = (msg) => {
   console.error(`✗ ${msg}`);
@@ -36,9 +40,12 @@ const fail = (msg) => {
 
 function run() {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [BIN, 'mcp', '-e', endpoint, '-t', token, '--mode', 'remote'], {
+    // The `mcp` command resolves its connection from the environment / .mcp.json
+    // (not from -e/-t flags), so pass the endpoint+token via env. Explicit values
+    // win over anything inherited, so this is deterministic on a bare CI runner.
+    const child = spawn(process.execPath, [BIN, 'mcp'], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, NO_COLOR: '1' },
+      env: { ...process.env, NO_COLOR: '1', LOREKIT_MODE: 'remote', LOREKIT_MCP_URL: endpoint, LOREKIT_TOKEN: token },
     });
     let out = '';
     let err = '';
@@ -46,8 +53,15 @@ function run() {
     child.stdout.on('data', (d) => (out += d));
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (d) => (err += d));
+    const watchdog = setTimeout(() => {
+      child.kill('SIGKILL');
+      fail(`timed out after ${TIMEOUT_MS / 1000}s — the stdio server did not finish (backend unresponsive?). stderr:\n${err}`);
+    }, TIMEOUT_MS);
+    watchdog.unref?.();
+
     child.on('error', (e) => fail(`could not spawn lorekit mcp: ${e.message}`));
     child.on('close', () => {
+      clearTimeout(watchdog);
       const messages = out
         .split('\n')
         .map((l) => l.trim())
