@@ -18,7 +18,7 @@ import { revalidatePath } from 'next/cache';
 import { recordAuditEvent } from '@/lib/audit-log';
 import { sendInviteEmail } from '@/lib/invite-email';
 import type { OrgRole } from '@/lib/orgs';
-import { withSpan, logger, getTraceContext, SpanStatusCode } from '@/lib/telemetry';
+import { withSpan, logger, SpanStatusCode } from '@/lib/telemetry';
 import { ATTR_ERROR_TYPE } from '@opentelemetry/semantic-conventions';
 
 export type OrgInviteStatus = 'pending' | 'accepted' | 'declined' | 'revoked';
@@ -113,7 +113,6 @@ export async function inviteMember(
           message: `SupabaseRpcError: ${error.message}`,
         });
         logger.error('lorekit.org.invite.member.failed', {
-          ...getTraceContext(),
           'exception.type': 'SupabaseRpcError',
           'exception.message': error.message,
           'lorekit.org.id': orgId,
@@ -200,7 +199,6 @@ export async function revokeInvite(inviteId: string): Promise<{ error?: string }
           message: `SupabaseRpcError: ${error.message}`,
         });
         logger.error('lorekit.org.invite.revoke.failed', {
-          ...getTraceContext(),
           'exception.type': 'SupabaseRpcError',
           'exception.message': error.message,
           'lorekit.invite.id': inviteId,
@@ -236,7 +234,6 @@ export async function acceptInvite(inviteId: string): Promise<{ error?: string }
           message: `SupabaseRpcError: ${error.message}`,
         });
         logger.error('lorekit.org.invite.accept.failed', {
-          ...getTraceContext(),
           'exception.type': 'SupabaseRpcError',
           'exception.message': error.message,
           'lorekit.invite.id': inviteId,
@@ -269,7 +266,6 @@ export async function declineInvite(inviteId: string): Promise<{ error?: string 
           message: `SupabaseRpcError: ${error.message}`,
         });
         logger.error('lorekit.org.invite.decline.failed', {
-          ...getTraceContext(),
           'exception.type': 'SupabaseRpcError',
           'exception.message': error.message,
           'lorekit.invite.id': inviteId,

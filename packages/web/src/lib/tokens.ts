@@ -9,7 +9,7 @@ import { createServerClient } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
 import { permissionSuffix } from '@/lib/token-permission';
 import { recordAuditEvent } from '@/lib/audit-log';
-import { withSpan, logger, getTraceContext, SpanStatusCode } from '@/lib/telemetry';
+import { withSpan, logger, SpanStatusCode } from '@/lib/telemetry';
 import { ATTR_ERROR_TYPE } from '@opentelemetry/semantic-conventions';
 
 export type TokenPermission = 'read' | 'write';
@@ -68,7 +68,6 @@ export async function generateToken(
         span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseQueryError');
         span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseQueryError: ${countError.message}` });
         logger.error('lorekit.api_token.generate.failed', {
-          ...getTraceContext(),
           'exception.type': 'SupabaseQueryError',
           'exception.message': countError.message,
         });
@@ -102,7 +101,6 @@ export async function generateToken(
         span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseInsertError');
         span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseInsertError: ${error.message}` });
         logger.error('lorekit.api_token.generate.failed', {
-          ...getTraceContext(),
           'exception.type': 'SupabaseInsertError',
           'exception.message': error.message,
           'lorekit.api_token.permissions': permissions.join(','),
@@ -184,7 +182,6 @@ export async function revokeToken(tokenId: string): Promise<{ error?: string }> 
         span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseDeleteError');
         span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseDeleteError: ${error.message}` });
         logger.error('lorekit.api_token.revoke.failed', {
-          ...getTraceContext(),
           'exception.type': 'SupabaseDeleteError',
           'exception.message': error.message,
           'lorekit.api_token.id': tokenId,

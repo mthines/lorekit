@@ -29,7 +29,7 @@ import { createServerClient } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
 import { recordAuditEvent } from '@/lib/audit-log';
 import { normalizeSlug } from '@/lib/org-slug';
-import { withSpan, logger, getTraceContext, SpanStatusCode } from '@/lib/telemetry';
+import { withSpan, logger, SpanStatusCode } from '@/lib/telemetry';
 import { ATTR_ERROR_TYPE } from '@opentelemetry/semantic-conventions';
 
 export type OrgRole = 'owner' | 'admin' | 'member' | 'viewer';
@@ -96,7 +96,6 @@ export async function createOrg(slug: string, name: string): Promise<{ orgId: st
         span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseRpcError');
         span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseRpcError: ${error.message}` });
         logger.error('lorekit.org.create.failed', {
-          ...getTraceContext(),
           'exception.type': 'SupabaseRpcError',
           'exception.message': error.message,
           'lorekit.org.slug': normalizedSlug,
@@ -185,7 +184,6 @@ export async function renameOrg(orgId: string, name: string): Promise<{ error?: 
         span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseRpcError');
         span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseRpcError: ${error.message}` });
         logger.error('lorekit.org.rename.failed', {
-          ...getTraceContext(),
           'exception.type': 'SupabaseRpcError',
           'exception.message': error.message,
           'lorekit.org.id': orgId,
@@ -222,7 +220,6 @@ export async function deleteOrg(orgId: string): Promise<{ error?: string }> {
         span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseRpcError');
         span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseRpcError: ${error.message}` });
         logger.error('lorekit.org.delete.failed', {
-          ...getTraceContext(),
           'exception.type': 'SupabaseRpcError',
           'exception.message': error.message,
           'lorekit.org.id': orgId,
@@ -327,7 +324,6 @@ export async function removeMember(orgId: string, targetUserId: string): Promise
         span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseRpcError');
         span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseRpcError: ${error.message}` });
         logger.error('lorekit.org.member.remove.failed', {
-          ...getTraceContext(),
           'exception.type': 'SupabaseRpcError',
           'exception.message': error.message,
           'lorekit.org.id': orgId,
@@ -371,7 +367,6 @@ export async function changeMemberRole(
         span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseRpcError');
         span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseRpcError: ${error.message}` });
         logger.error('lorekit.org.member.change_role.failed', {
-          ...getTraceContext(),
           'exception.type': 'SupabaseRpcError',
           'exception.message': error.message,
           'lorekit.org.id': orgId,
@@ -408,7 +403,6 @@ export async function leaveOrg(orgId: string): Promise<{ error?: string }> {
         span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseRpcError');
         span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseRpcError: ${error.message}` });
         logger.error('lorekit.org.leave.failed', {
-          ...getTraceContext(),
           'exception.type': 'SupabaseRpcError',
           'exception.message': error.message,
           'lorekit.org.id': orgId,

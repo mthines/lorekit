@@ -32,7 +32,7 @@ import {
   interpretVerifyStatus,
   type VerifyResult,
 } from '@/lib/webhook-verify';
-import { withSpan, logger, getTraceContext, SpanStatusCode } from '@/lib/telemetry';
+import { withSpan, logger, SpanStatusCode } from '@/lib/telemetry';
 import { ATTR_ERROR_TYPE } from '@opentelemetry/semantic-conventions';
 
 export interface WebhookSecret {
@@ -134,7 +134,6 @@ export async function generateWebhookSecret(
         span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseInsertError');
         span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseInsertError: ${error.message}` });
         logger.error('lorekit.webhook_secret.generate.failed', {
-          ...getTraceContext(),
           'exception.type': 'SupabaseInsertError',
           'exception.message': error.message,
           'vcs.repository.name': repo,
@@ -236,7 +235,6 @@ export async function verifyWebhookSecret(repoInput: string): Promise<VerifyResu
             message: `WebhookVerifyFailed: ${result.code} — ${result.message}`,
           });
           logger.warn('lorekit.webhook_secret.verify.failed', {
-            ...getTraceContext(),
             'lorekit.webhook_secret.verify.code': result.code,
             'http.response.status_code': res.status,
             'vcs.repository.name': repo,
@@ -252,7 +250,6 @@ export async function verifyWebhookSecret(repoInput: string): Promise<VerifyResu
           message: `${error.name}: ${error.message}`,
         });
         logger.error('lorekit.webhook_secret.verify.failed', {
-          ...getTraceContext(),
           'exception.type': error.name,
           'exception.message': error.message,
           'exception.stacktrace': error.stack ?? '',
@@ -307,7 +304,6 @@ export async function deleteWebhookSecret(id: string): Promise<{ error?: string 
         span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseUpdateError');
         span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseUpdateError: ${error.message}` });
         logger.error('lorekit.webhook_secret.delete.failed', {
-          ...getTraceContext(),
           'exception.type': 'SupabaseUpdateError',
           'exception.message': error.message,
           'lorekit.webhook_secret.id': id,

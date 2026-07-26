@@ -29,9 +29,7 @@
  */
 
 import { trace, context, SpanStatusCode, SpanKind, type Span } from '@opentelemetry/api';
-import {
-  ATTR_ERROR_TYPE,
-} from '@opentelemetry/semantic-conventions';
+import { ATTR_ERROR_TYPE } from '@opentelemetry/semantic-conventions';
 
 export { SpanStatusCode, SpanKind };
 
@@ -71,9 +69,9 @@ function emit(level: LogLevel, message: string, attributes: Record<string, unkno
   const line = JSON.stringify(record);
   if (level === 'ERROR' || level === 'WARN') {
     process.stderr.write(line + '\n');
-  } else {
-    process.stdout.write(line + '\n');
+    return;
   }
+  process.stdout.write(line + '\n');
 }
 
 export const logger = {
