@@ -74,7 +74,24 @@ export function ScopeBadge({
           {pillText}
         </Badge>
       )}
-      {showPath && (
+      {showPath && repoUrl ? (
+        /* When there is a repo link, the full path text is the link — the
+           GitHub icon is decorative; the whole element is the affordance. */
+        <a
+          href={repoUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          aria-label={`Open ${scopeLabel(scope)} on GitHub`}
+          className={[
+            'inline-flex min-w-0 items-center gap-1 font-mono text-xs text-[var(--color-content-tertiary)] transition-colors duration-150 hover:text-[var(--color-content-primary)]',
+            pathClassName,
+          ].join(' ')}
+        >
+          <ExternalLink className="size-3 shrink-0" aria-hidden />
+          <code className="min-w-0 truncate">{scope}</code>
+        </a>
+      ) : showPath ? (
         <code
           className={[
             'min-w-0 truncate font-mono text-xs text-[var(--color-content-tertiary)]',
@@ -83,8 +100,8 @@ export function ScopeBadge({
         >
           {scope}
         </code>
-      )}
-      {repoUrl && (
+      ) : repoUrl ? (
+        /* showPath is off but linkRepo is on — icon-only link as before */
         <a
           href={repoUrl}
           target="_blank"
@@ -96,7 +113,7 @@ export function ScopeBadge({
         >
           <ExternalLink className="size-3" aria-hidden />
         </a>
-      )}
+      ) : null}
     </span>
   );
 }

@@ -18,7 +18,9 @@ import { useMemo } from 'react';
 import { motion, AnimatePresence, MotionConfig, useReducedMotion } from 'motion/react';
 import { Clock, Search, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
+import { ActorBadge } from '@/components/settings/ActorBadge';
 import { AUDIT_ACTIONS, AUDIT_ACTION_META, type AuditAction } from '@/lib/audit-actions';
+import type { AuditActor } from '@/lib/audit-actor';
 import { formatRelativeTime } from '@/components/memory/MemoryCard';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDebouncedUrlState } from '@/lib/hooks/useDebouncedUrlState';
@@ -33,7 +35,7 @@ const AUDIT_ROUTE = '/settings/audit';
 // internal memoization doesn't churn on every render.
 const NO_ACTIONS: AuditAction[] = [];
 
-function AuditRow({ event, index }: { event: AuditLogRow; index: number }) {
+function AuditRow({ event, index, actor }: { event: AuditLogRow; index: number; actor: AuditActor }) {
   const reduceMotion = useReducedMotion();
   const meta = AUDIT_ACTION_META[event.action];
   const Icon = meta.icon;
@@ -75,6 +77,8 @@ function AuditRow({ event, index }: { event: AuditLogRow; index: number }) {
         )}
       </div>
 
+      <ActorBadge actor={actor} />
+
       {/* Relative time is the visible label; the absolute time is available
           two ways so it isn't hover-only (title tooltips are invisible to
           touch and unreliable for screen readers): (1) tabIndex makes the
@@ -102,7 +106,7 @@ function RowSkeleton() {
   );
 }
 
-export function AuditLogFeed() {
+export function AuditLogFeed({ actor }: { actor: AuditActor }) {
   // Multi-select action filter — a SET, URL-backed as an array of action
   // strings. Scoped to /settings/audit so it doesn't leak to other tabs.
   const [actions, setActions] = useUrlState<AuditAction[]>('actions', NO_ACTIONS, {
@@ -238,7 +242,7 @@ export function AuditLogFeed() {
           <div className="flex flex-col gap-1.5">
             <AnimatePresence initial={false}>
               {events.map((event, i) => (
-                <AuditRow key={event.id} event={event} index={i} />
+                <AuditRow key={event.id} event={event} index={i} actor={actor} />
               ))}
             </AnimatePresence>
 

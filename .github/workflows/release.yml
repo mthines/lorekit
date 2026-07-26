@@ -104,6 +104,14 @@ jobs:
         working-directory: packages/cli
         run: node --test test/*.test.mjs
 
+      # Pre-publish smoke: pack the CLI and run `install` THROUGH npx into a temp
+      # project, asserting the wired hooks use the `npx -y @lorekit/cli` runner
+      # and never a bare `lorekit` (which only resolves inside npx's transient
+      # PATH and dies with `command not found` once npx exits). A broken CLI must
+      # not reach the publish step below.
+      - name: Smoke-test the packaged CLI (npx install wiring)
+        run: node packages/cli/test/smoke-npx-install.mjs
+
       # No NODE_AUTH_TOKEN: npm authenticates via the Actions OIDC trusted
       # publisher. release-please guarantees the version is new, so no guard.
       - name: Publish (Trusted Publishing / OIDC)
