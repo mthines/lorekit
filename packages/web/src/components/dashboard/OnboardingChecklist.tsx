@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  Check, ChevronDown, ChevronRight, X, PartyPopper, RotateCcw,
+  Check, ChevronDown, ChevronRight, X, PartyPopper, RotateCcw, ListChecks,
 } from 'lucide-react';
 import { useOnboarding } from '@/components/providers/OnboardingProvider';
 import type { OnboardingStep } from '@/lib/onboarding';
@@ -153,7 +153,7 @@ function StepRow({ step, index, isOpen, onToggle }: StepRowProps) {
 
 // ── "All set" state (dedicated page only) ─────────────────────────────────────
 
-function AllSetPanel() {
+function AllSetPanel({ onReview }: { onReview: () => void }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 6 }}
@@ -171,6 +171,13 @@ function AllSetPanel() {
         Every setup step is complete. Your agents can read and write lore, and PR
         review comments flow in automatically. You can revisit this page any time.
       </p>
+      <button
+        onClick={onReview}
+        className="mt-2 flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2 text-sm font-medium text-[var(--color-content-secondary)] transition-colors duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+      >
+        <ListChecks className="size-4" aria-hidden />
+        Review the steps
+      </button>
     </motion.div>
   );
 }
@@ -197,12 +204,17 @@ export function OnboardingChecklist({ steps, variant = 'inline' }: OnboardingChe
     firstIncompleteIndex === -1 ? 0 : firstIncompleteIndex,
   );
   const [headerExpanded, setHeaderExpanded] = useState(true);
+  // On the dedicated page, "Review the steps" swaps the celebratory panel for
+  // the full checklist so completed users can re-open every step on demand.
+  const [reviewing, setReviewing] = useState(false);
 
   // Inline card retreats to the sidebar once complete or dismissed — the
   // persistent "Getting started" entry is the way back.
   if (variant === 'inline' && (allDone || dismissed)) return null;
 
-  if (variant === 'page' && allDone) return <AllSetPanel />;
+  if (variant === 'page' && allDone && !reviewing) {
+    return <AllSetPanel onReview={() => setReviewing(true)} />;
+  }
 
   const progress = completedCount / total;
   const remaining = total - completedCount;
@@ -244,10 +256,12 @@ export function OnboardingChecklist({ steps, variant = 'inline' }: OnboardingChe
 
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-[var(--color-content-primary)]">
-            Finish setting up LoreKit
+            {allDone ? 'Setup complete' : 'Finish setting up LoreKit'}
           </p>
           <p className="text-xs text-[var(--color-content-tertiary)]">
-            {remaining} step{remaining === 1 ? '' : 's'} left
+            {allDone
+              ? `All ${total} steps done`
+              : `${remaining} step${remaining === 1 ? '' : 's'} left`}
           </p>
         </div>
 
