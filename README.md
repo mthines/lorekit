@@ -1,177 +1,156 @@
 # LoreKit
 
-**Shared, persistent memory for AI coding agents.**
+> Shared, persistent memory for your AI coding agents.
 
-Your agents learn things — the right worktree naming convention, the DB migration pattern you keep forgetting to tell them, the fix for that recurring Supabase edge case. LoreKit stores those lessons in a central database so every agent on every machine benefits, CI runs included.
+[![CI](https://github.com/mthines/lorekit/actions/workflows/ci.yml/badge.svg)](https://github.com/mthines/lorekit/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@lorekit/cli.svg)](https://www.npmjs.com/package/@lorekit/cli)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](#license)
+
+Your coding agent figures something out — the migration pattern you keep
+forgetting to mention, the fix for that flaky test, the reason a build breaks on
+CI but not locally. Then the session ends, and it forgets. Tomorrow you explain
+it again.
+
+LoreKit gives your agents a memory that outlives the session. Lessons are
+written once and recalled everywhere: your machine, your teammates' machines,
+CI, and whichever tool you happen to be using that day.
 
 ```
-                   ┌─ persistent-memory skill ─┐
-  Agent learns      │  memory.write { scope, key, value } │
-  something ──────→│                            │──→ Supabase Postgres
-  in a session      │  memory.list { scope }    │←── memories table
-                   └───────────────────────────┘
-                              ↕ HTTPS + Bearer token
-                   https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp
+                   ┌─ your agent, any tool, any machine ─┐
+  learns something │  memory.write { scope, key, value } │
+  in a session ───→│                                     │──→ one shared store
+  recalls it next  │  memory.list  { scope }             │←── (Supabase Postgres)
+  time it needs it └─────────────────────────────────────┘
 ```
 
-## What it solves
+## The problem you have right now
 
-| Problem | LoreKit's answer |
-|---------|-----------------|
-| Skill memory in `.claude/` files lost after CI | Lessons stored in Supabase, survive every run |
-| Lessons stuck on one developer's machine | Any agent anywhere reads the same scoped memory |
-| Manually capturing PR review comments as lessons | GitHub webhook creates lessons automatically |
-| Agents reinventing the wheel on every session | Agents query lore before planning |
-| Sharing context across tools (Claude Code, Cursor, CI) | One MCP endpoint, any MCP-compatible client |
+If you use AI coding agents daily, you're paying a quiet tax:
 
-## Quick start
+- **Every session starts from zero.** The agent that just untangled a tricky bug
+  has no memory of it an hour later. You re-explain the same context, over and
+  over.
+- **Lessons are trapped on one machine.** What your agent learned on your laptop
+  never reaches your teammate's agent — or the same agent running in CI.
+- **Every tool is its own island.** What Claude Code figured out, Cursor doesn't
+  know. What you learned locally, GitHub Actions can't see.
+- **Good context dies quietly.** The `.claude/` notes your agent writes are
+  wiped on the next CI run and rarely make it back to you.
 
-### 1. Deploy (5 minutes)
+The knowledge exists. It just has nowhere to live.
+
+## What LoreKit gives you
+
+- **A memory that persists.** Lessons are stored in a database, not a scratch
+  file — they survive session ends, machine reboots, and CI runs.
+- **One brain for every agent.** Any MCP-compatible agent, anywhere, reads and
+  writes the same memory. Your laptop, your team, your pipeline — one source of
+  truth.
+- **Scoped so it stays relevant.** Memory is partitioned by scope, so an agent
+  gets the lessons for *this* repo and branch without drowning in noise from
+  everything else (see [How memory is organized](#how-memory-is-organized)).
+- **Learns from your code reviews.** Point a GitHub webhook at LoreKit and PR
+  review comments become durable lessons automatically — no copy-paste.
+- **Works with the tools you already use.** Claude Code, Cursor, Codex, or any
+  MCP client. One endpoint, one token.
+
+## Get started
+
+You don't have to run anything yourself — LoreKit is hosted. Getting your agents
+connected takes three steps.
+
+### 1. Get a token
+
+Sign in to the dashboard at
+[lorekit-io.vercel.app](https://lorekit-io.vercel.app) with GitHub, then
+**Overview → Connect your agent → Generate new token**.
+
+Pick **Read + Write** for agents that should learn, or **Read only** for
+context-injection-only setups like CI.
+
+Your token is shown once — copy it now.
+
+### 2. Connect your agent
+
+The fastest path is the CLI. It scaffolds a companion skill that makes your
+agent use LoreKit on its own: reading relevant lessons when it starts a task,
+and writing one whenever something goes wrong — a stuck loop, a repeated
+failure, a costly wrong assumption.
 
 ```bash
-# Clone and install
-git clone https://github.com/mthines/lorekit && cd lorekit
-pnpm install
-
-# Link to your Supabase project and apply migrations
-supabase link --project-ref pqokxlhvnosogizsjztg
-pnpm nx deploy supabase
-```
-
-### 2. Generate a token
-
-Open the web dashboard → Overview → Step 2 → **Generate new token**.
-
-Choose `Read + Write` for agents that learn, `Read only` for context injection.
-
-### 3. Connect your agent
-
-In `.claude/skills/persistent-memory/config.json`:
-
-```json
-{
-  "backend": "mcp",
-  "mcp": {
-    "server": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
-    "auth": { "type": "bearer", "token": "lk_rw_<your-token>" }
-  }
-}
-```
-
-That's it. Your agent's lessons now survive every run and session.
-
-## Agent memory skill + CLI
-
-Prefer a one-command setup? The [`@lorekit/cli`](./packages/cli/) package
-installs a companion skill that makes agents use LoreKit autonomously —
-reading lessons when they start a task or navigate new code, and writing a
-lesson whenever something goes wrong (a stuck loop, a repeated failure, a
-gotcha, a costly wrong assumption). It mirrors the read-on-start /
-write-on-failure loop of the `aw` autonomous-workflow agent.
-
-```bash
-# Install the CLI globally (recommended — pinned version, always on PATH,
-# so the plugin hooks fire instantly instead of re-fetching via npx each time)
-npm install -g @lorekit/cli
-
-# Scaffold the lorekit-memory skill into .claude/skills and wire .mcp.json
-lorekit install \
+npx @lorekit/cli install \
   --endpoint https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp \
   --token    lk_rw_<your-token>
-
-# Verify connectivity, token permission, and the git-derived scopes
-lorekit doctor
 ```
 
-> No global install? Swap `lorekit` for `npx @lorekit/cli` in the commands
-> above to run it on demand instead.
+Check that everything is wired up:
 
-→ See [packages/cli/README.md](./packages/cli/README.md) for all commands and
-flags, and the installed skill's `SKILL.md` for the read/write protocol.
-
-For a **deterministic** version that fires on host lifecycle events (no
-reliance on the agent invoking the skill), install a framework plugin. All
-three share one engine — the `lorekit hook` command — and differ only in thin
-per-host config:
-
-- **Claude Code** — a marketplace plugin (skill + `SessionStart` / failure /
-  `Stop` hooks + MCP): `/plugin marketplace add mthines/lorekit` then
-  `/plugin install lorekit-memory@lorekit`
-- **Cursor** — a rule + `stop` hook
-- **Codex** — feature-flagged hooks + an `AGENTS.md` fallback (experimental)
-
-→ See [plugins/README.md](./plugins/README.md).
-
-## Architecture
-
-LoreKit is an NX monorepo with three deployable pieces:
-
-- **MCP server** — Supabase Edge Function (Deno, self-contained)
-- **Web dashboard** — Next.js 15 app on Vercel ([lorekit-io.vercel.app](https://lorekit-io.vercel.app))
-- **Database** — Supabase Postgres with row-level security
-
-→ See [docs/architecture.md](./docs/architecture.md) for the full diagram.
-
-## Scope system
-
-Lessons are partitioned by canonical scope strings:
-
-```
-global                                  # universal lessons
-project::agent-skills                  # monorepo-level
-repo::mthines/gw-tools                 # repository-level
-branch::mthines/gw-tools::feat/x       # branch-level (short-lived)
+```bash
+npx @lorekit/cli doctor
+# → connectivity, token permission, and detected scopes, all green
 ```
 
-Agents query from narrow to broad and merge results. See [docs/scope-format.md](./docs/scope-format.md).
+### 3. That's it
 
-## MCP tools
+Your agent now remembers. Its lessons survive every session, reach every machine
+running the same token, and are there the next time any agent picks up the work.
 
-| Tool | Description |
-|------|-------------|
-| `memory.write` | Store or update a lesson |
-| `memory.read` | Read a lesson by scope + key |
-| `memory.list` | List lessons for a scope (supports tag filtering) |
-| `memory.delete` | Delete a lesson |
-| `memory.search` | Full-text search; supports `repo::owner/*` wildcard |
+> **Prefer a framework plugin?** For memory that fires on host lifecycle events
+> — no reliance on the agent choosing to use the skill — install a plugin
+> instead. Claude Code has a one-line marketplace install; Cursor and Codex have
+> their own bundles. See [plugins/](./plugins/README.md).
 
-→ Full reference: [docs/mcp-tools.md](./docs/mcp-tools.md)
+## How memory is organized
 
-## Authentication
+Lessons are partitioned by **scope** — a short string that says how widely a
+lesson applies:
 
-Three tiers — agents use API tokens:
+```
+global                             # applies everywhere
+project::agent-skills              # one project
+repo::mthines/gw-tools             # one repository
+branch::mthines/gw-tools::feat/x   # one branch (short-lived)
+```
 
-| Token | Format | Use case |
-|-------|--------|----------|
-| Read + Write | `lk_rw_<32 chars>` | Agents that learn (persistent-memory skill) |
-| Read only | `lk_ro_<32 chars>` | CI context injection |
-| Service role | `SUPABASE_SERVICE_ROLE_KEY` | Internal / infrastructure |
+An agent reads from narrow to broad — branch, then repo, then global — and
+merges what it finds. So a branch-specific gotcha and a universal convention both
+surface, without unrelated repos leaking in. Full spec:
+[docs/scope-format.md](./docs/scope-format.md).
 
-Tokens are generated in the dashboard, stored as SHA-256 hashes, shown once.
+## Works with your tools
 
-→ See [docs/api-tokens.md](./docs/api-tokens.md)
+| Tool | How it connects |
+|------|-----------------|
+| **Claude Code** | Marketplace plugin (skill + lifecycle hooks + MCP), or the CLI above |
+| **Cursor** | A rule plus a `stop` hook |
+| **Codex** | Feature-flagged hooks with an `AGENTS.md` fallback (experimental) |
+| **Any MCP client** | Point it at the endpoint with a Bearer token |
 
-## Observability
-
-All three layers emit traces, metrics, and logs to Dash0 via OpenTelemetry:
-
-- Edge Function: `lorekit.memory.*` spans with SQL child spans
-- Next.js server: HTTP spans via `@vercel/otel`
-- Browser: RUM via `@dash0/sdk-web`
-
-Every signal carries `service.namespace=lorekit` and `deployment.environment.name`.
-
-→ Setup: [docs/otel.md](./docs/otel.md)
+All the integrations share one engine and differ only in how each host wires it
+up. See [plugins/README.md](./plugins/README.md).
 
 ## Documentation
 
-| | |
-|--|--|
-| [docs/architecture.md](./docs/architecture.md) | System overview, auth tiers, data model |
-| [docs/mcp-tools.md](./docs/mcp-tools.md) | Tool reference with examples |
-| [docs/scope-format.md](./docs/scope-format.md) | Scope format spec |
-| [docs/api-tokens.md](./docs/api-tokens.md) | Token system |
-| [docs/otel.md](./docs/otel.md) | Observability setup |
-| [docs/deployment.md](./docs/deployment.md) | Full deployment guide |
-| [DEVELOPMENT.md](./DEVELOPMENT.md) | Local dev setup, CLI symlink, running the checks |
-| [CLAUDE.md](./CLAUDE.md) | Agent context (NX commands, key decisions) |
+| Guide | What it covers |
+|-------|----------------|
+| [docs/scope-format.md](./docs/scope-format.md) | How scopes work and how agents resolve them |
+| [docs/mcp-tools.md](./docs/mcp-tools.md) | The `memory.*` tools, with request/response examples |
+| [docs/api-tokens.md](./docs/api-tokens.md) | Token types, permissions, and CI usage |
+| [docs/limits.md](./docs/limits.md) | Memory caps and rate limits |
+| [packages/cli/README.md](./packages/cli/README.md) | Every CLI command and flag |
+| [docs/](./docs/README.md) | Everything else — architecture, deployment, observability |
+
+## Run your own instance
+
+LoreKit is fully self-hostable — the whole stack (MCP server, dashboard,
+database) deploys to your own Supabase and Vercel projects in about five
+minutes. See [docs/install.md](./docs/install.md).
+
+## Contributing
+
+LoreKit is an NX monorepo. To set it up locally, run the checks, and hack on any
+package, see [DEVELOPMENT.md](./DEVELOPMENT.md).
+
+## License
+
+MIT © LoreKit contributors.
