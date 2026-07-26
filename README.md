@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/mthines/lorekit/actions/workflows/ci.yml/badge.svg)](https://github.com/mthines/lorekit/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@lorekit/cli.svg)](https://www.npmjs.com/package/@lorekit/cli)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](#license)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
 Your coding agent figures something out — the migration pattern you keep
 forgetting to mention, the fix for that flaky test, the reason a build breaks on
@@ -153,4 +153,4 @@ package, see [DEVELOPMENT.md](./DEVELOPMENT.md).
 
 ## License
 
-MIT © LoreKit contributors.
+[MIT](./LICENSE) © LoreKit contributors.
