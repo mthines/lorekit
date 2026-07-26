@@ -23,10 +23,15 @@ the rest.
 2. **release-please keeps a "release PR" open**, continuously updating
    `packages/cli/package.json` and `packages/cli/CHANGELOG.md` with the next
    version and the accumulated notes. Nothing is published yet.
-3. **You merge the release PR** when you want to cut a release. That push makes
-   release-please create the tag `cli-vX.Y.Z` + a GitHub Release, which gates
-   the `publish-cli` job — it checks out the freshly-bumped `main` and runs
-   `npm publish` via Trusted Publishing.
+3. **The release PR merges itself** — `release.yml` turns on GitHub auto-merge
+   for it, so it lands the moment the required CI checks (`check` + `integration`)
+   pass. No human merge step. That push makes release-please create the tag
+   `cli-vX.Y.Z` + a GitHub Release, which gates the `publish-cli` job — it checks
+   out the freshly-bumped `main` and runs `npm publish` via Trusted Publishing.
+
+> Because the release PR auto-merges, **every CLI-affecting commit on `main`
+> flows to npm on its own**. To batch or hold releases, see "Hold a release"
+> below.
 
 The version is decided by the commits since the last release:
 
@@ -39,7 +44,7 @@ The version is decided by the commits since the last release:
 
 ## One-time setup
 
-Two things must exist for the pipeline to run end-to-end. Both are already
+Three things must exist for the pipeline to run end-to-end. All are already
 referenced by `.github/workflows/release.yml`.
 
 ### 1. A GitHub App for release-please
@@ -78,10 +83,23 @@ The package must already exist on npm before a trusted publisher can be added,
 so the very first publish is done by hand (`cd packages/cli && npm publish
 --access public`); every release after that is automated and token-free.
 
+### 3. Repo auto-merge enabled + required checks
+
+The release PR merges itself via GitHub's native auto-merge, so:
+
+- Under **Settings → General → Pull Requests**, tick **Allow auto-merge**.
+  Without it, `gh pr merge --auto` in `release.yml` errors and the PR sits
+  unmerged.
+- Keep `check` + `integration` as **required status checks** on `main` (branch
+  protection or a ruleset). Auto-merge holds the merge until they pass, so an
+  unverified release can never land. The workflow squash-merges the PR.
+
 ## Adjusting a release
 
 - **Change what's in the release** — edit the release PR's title/body or amend
   commits; release-please recomputes on the next push to `main`.
-- **Hold a release** — just don't merge the release PR. Feature merges keep
-  accumulating into it.
+- **Hold a release** — auto-merge lands the release PR as soon as CI is green,
+  so to hold, turn off auto-merge on that specific PR (or dismiss it) before it
+  goes green; feature merges keep accumulating into the next one. To pause
+  releases entirely, temporarily untick **Allow auto-merge** for the repo.
 - **Force a version** — add a `Release-As: X.Y.Z` footer to a commit on `main`.
