@@ -16,6 +16,7 @@
 import { createServerClient } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
 import { recordAuditEvent } from '@/lib/audit-log';
+import { sendInviteEmail } from '@/lib/invite-email';
 import type { OrgRole } from '@/lib/orgs';
 
 export type OrgInviteStatus = 'pending' | 'accepted' | 'declined' | 'revoked';
@@ -92,6 +93,24 @@ export async function inviteMember(
     target: orgId,
     metadata: { invitee: trimmed, role },
   });
+
+  // Fire the notification email for email invites only (a handle-only invite
+  // has no address). Non-blocking and non-throwing — sendInviteEmail swallows
+  // every failure, so a bad key / unverified domain never breaks the invite
+  // that already succeeded above. Resolve the org name (RLS-scoped; the caller
+  // is a member) for the subject line, falling back to slug then a generic.
+  if (isEmail) {
+    const { data: org } = await supabase
+      .from('orgs')
+      .select('name, slug')
+      .eq('id', orgId)
+      .maybeSingle();
+    const orgName = org?.name ?? org?.slug ?? 'your organization';
+    const invitedByLabel =
+      (user.user_metadata?.user_name as string | undefined) ?? user.email ?? null;
+    await sendInviteEmail({ to: trimmed, orgName, role, invitedByLabel });
+  }
+
   revalidatePath('/settings', 'layout');
   return { inviteId: inviteId as string };
 }

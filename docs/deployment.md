@@ -204,6 +204,11 @@ NEXT_PUBLIC_DASH0_AUTH_TOKEN      <ingesting-only-dash0-token>
 
 OTEL_EXPORTER_OTLP_ENDPOINT       https://ingress.europe-west4.gcp.dash0-dev.com
 OTEL_EXPORTER_OTLP_HEADERS        Authorization=Bearer <DASH0_AUTH_TOKEN>
+
+# Optional — org invite emails via Resend. Unset → invites are in-app only.
+# Verify a sending domain in Resend before setting these.
+RESEND_API_KEY                    re_<your-resend-api-key>
+RESEND_FROM                       LoreKit <invites@yourdomain.com>
 ```
 
 Also add your Vercel URL to Supabase → Auth → URL Configuration:

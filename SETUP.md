@@ -27,6 +27,13 @@
 | `NEXT_PUBLIC_DASH0_AUTH_TOKEN` | Ingesting-only Dash0 token (public — visible in bundle) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Dash0 OTLP endpoint (server-side) |
 | `OTEL_EXPORTER_OTLP_HEADERS` | `Authorization=Bearer <token>` |
+| `RESEND_API_KEY` | Optional. Resend API key for org invite emails. Unset → invites are in-app only |
+| `RESEND_FROM` | Optional. Verified sending address, e.g. `LoreKit <invites@yourdomain.com>` |
+
+> Org invite emails are optional. With no `RESEND_API_KEY`, an invite just
+> appears in the invitee's dashboard on next sign-in (no email). To send
+> emails, verify a sending domain in Resend, then set `RESEND_API_KEY` +
+> `RESEND_FROM` here.
 
 ### Supabase Edge Function secrets
 
