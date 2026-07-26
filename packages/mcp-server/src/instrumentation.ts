@@ -10,7 +10,7 @@
  *   OTEL_TRACES_EXPORTER         set to "otlp" to enable
  *   OTEL_METRICS_EXPORTER        set to "otlp" to enable
  *   OTEL_LOGS_EXPORTER           set to "otlp" to enable
- *   OTEL_EXPORTER_OTLP_ENDPOINT  e.g. https://ingress.us-east-1.aws.dash0.com
+ *   OTEL_EXPORTER_OTLP_ENDPOINT  e.g. https://ingress.europe-west4.gcp.dash0-dev.com
  *   OTEL_EXPORTER_OTLP_HEADERS   e.g. Authorization=Bearer <DASH0_AUTH_TOKEN>
  *   OTEL_RESOURCE_ATTRIBUTES     e.g. deployment.environment.name=production
  *

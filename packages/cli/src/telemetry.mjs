@@ -28,7 +28,7 @@ import { TELEMETRY_TOKEN } from './telemetry-token.mjs';
 // ── Baked-in defaults (public by design) ──────────────────────────────────────
 // The endpoint is a committed default; the token is injected at publish time
 // (empty in the source tree, so default export stays off until built/injected).
-const DEFAULT_ENDPOINT = 'https://ingress.us-east-1.aws.dash0.com';
+const DEFAULT_ENDPOINT = 'https://ingress.europe-west4.gcp.dash0-dev.com';
 const DEFAULT_TOKEN = TELEMETRY_TOKEN; // injected from LOREKIT_TELEMETRY_TOKEN at publish
 const DEFAULT_DATASET = 'lorekit-cli';
 
