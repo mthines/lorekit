@@ -5,11 +5,12 @@
  * one-line edit here, not a scattered set of if/else branches (mirrors the
  * `scope-meta.ts` single-record pattern).
  *
- * Mirrors the `AuditAction` union defined in `packages/mcp-core/src/audit.ts`
+ * Re-declares the `AuditAction` union independently of `packages/mcp-core/src/audit.ts`
  * (and its self-contained edge copy) — the web package has no dependency on
  * `@lorekit/core` (same reason `lib/scope.ts` re-declares a lightweight copy
- * of `scopeType`), so the 11 action literals are re-declared here rather than
- * imported.
+ * of `scopeType`), so the action literals are re-declared here rather than
+ * imported. This set is a superset of the edge union: it additionally covers
+ * the dashboard-only `org.*` / `member.*` actions the edge function never emits.
  */
 
 import {
@@ -24,6 +25,16 @@ import {
   ArchiveRestore,
   Trash2,
   Gauge,
+  Building2,
+  PenLine,
+  Building,
+  UserPlus,
+  UserCheck,
+  UserX,
+  Ban,
+  UserMinus,
+  ShieldCheck,
+  LogOut,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -39,6 +50,16 @@ export const AUDIT_ACTIONS = [
   'memory.restore',
   'memory.delete',
   'limit.override',
+  'org.create',
+  'org.rename',
+  'org.delete',
+  'member.invite',
+  'member.accept',
+  'member.decline',
+  'member.revoke',
+  'member.remove',
+  'member.role_change',
+  'member.leave',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -64,4 +85,14 @@ export const AUDIT_ACTION_META: Record<AuditAction, AuditActionMeta> = {
   'memory.restore': { label: 'Memory restored', badgeColor: 'blue', icon: ArchiveRestore },
   'memory.delete': { label: 'Memory deleted', badgeColor: 'red', icon: Trash2 },
   'limit.override': { label: 'Limit overridden', badgeColor: 'purple', icon: Gauge },
+  'org.create': { label: 'Organization created', badgeColor: 'green', icon: Building2 },
+  'org.rename': { label: 'Organization renamed', badgeColor: 'blue', icon: PenLine },
+  'org.delete': { label: 'Organization deleted', badgeColor: 'red', icon: Building },
+  'member.invite': { label: 'Member invited', badgeColor: 'green', icon: UserPlus },
+  'member.accept': { label: 'Invite accepted', badgeColor: 'green', icon: UserCheck },
+  'member.decline': { label: 'Invite declined', badgeColor: 'amber', icon: UserX },
+  'member.revoke': { label: 'Invite revoked', badgeColor: 'red', icon: Ban },
+  'member.remove': { label: 'Member removed', badgeColor: 'red', icon: UserMinus },
+  'member.role_change': { label: 'Member role changed', badgeColor: 'blue', icon: ShieldCheck },
+  'member.leave': { label: 'Member left', badgeColor: 'amber', icon: LogOut },
 };
