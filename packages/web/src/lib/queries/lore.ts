@@ -3,14 +3,20 @@
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { createClient } from '@/lib/supabase/client';
 import { scopeType } from '@/lib/scope';
+import { aggregateByDay } from '@/lib/aggregations';
 import type { ScopeNode } from '@/components/lore/ScopeTree';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { listMemories, type MemoryFilters, type MemoryPage } from '@/lib/lore';
 import type { DateRange } from '@/components/ui/DateRangePicker';
+import type { ActivityEvent } from '@/components/activity/ActivityFeed';
 
 export interface LoreData {
   scopes: ScopeNode[];
   lessons: LessonEntry[];
+  /** Heatmap series derived from the same lesson rows — no extra fetch. */
+  heatmapData: { date: string; count: number }[];
+  /** Time-ordered feed events derived from the same lesson rows. */
+  feedEvents: ActivityEvent[];
 }
 
 // ---------------------------------------------------------------------------
@@ -69,14 +75,14 @@ async function fetchLoreData(): Promise<LoreData> {
 
   const { data, error } = await supabase
     .from('memories')
-    .select('scope,key,value,tags,created_at,updated_at,archived_at,source_agent,trigger')
+    .select('id,scope,key,value,tags,created_at,updated_at,archived_at,source_agent,trigger')
     .is('archived_at', null)
     // Order by creation date so memories migrated with a backdated created_at
     // appear at their correct original position, not the migration time.
     .order('created_at', { ascending: false })
     .limit(500);
 
-  if (error || !data) return { scopes: [], lessons: [] };
+  if (error || !data) return { scopes: [], lessons: [], heatmapData: [], feedEvents: [] };
 
   const lessons: LessonEntry[] = data.map((row: Record<string, unknown>) => ({
     scope: row.scope as string,
@@ -109,7 +115,26 @@ async function fetchLoreData(): Promise<LoreData> {
       };
     });
 
-  return { scopes, lessons };
+  // Derive heatmap data from the same rows — normalise to UTC ISO date so
+  // timestamps with timezone offsets don't produce mismatched heatmap keys.
+  const heatmapData = aggregateByDay(
+    lessons.map((l) => ({ created_at: new Date(l.created_at).toISOString() })),
+  );
+
+  // Derive time-ordered feed events (same shape as the old /activity page).
+  const feedEvents: ActivityEvent[] = data.map((row: Record<string, unknown>) => ({
+    id: row.id as string,
+    scope: row.scope as string,
+    scope_type: scopeType(row.scope as string),
+    key: row.key as string,
+    value_preview: ((row.value as string) ?? '').slice(0, 120),
+    source_agent: row.source_agent as string | null,
+    trigger: row.trigger as string | null,
+    tags: (row.tags as string[]) ?? [],
+    created_at: row.created_at as string,
+  }));
+
+  return { scopes, lessons, heatmapData, feedEvents };
 }
 
 export function useLoreData() {

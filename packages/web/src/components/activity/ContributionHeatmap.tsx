@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { motion } from 'motion/react';
+import { motion, useReducedMotion } from 'motion/react';
 
 interface DayData {
   date: string; // YYYY-MM-DD
@@ -43,6 +43,11 @@ export function ContributionHeatmap({
   selectedRange = null,
   onSelectDate,
 }: ContributionHeatmapProps) {
+  // Respect the OS/browser reduce-motion preference. The heatmap animates 182
+  // cells on entry — skipping this gate causes discomfort for motion-sensitive
+  // users. When reduceMotion is true, cells appear instantly (no scale/fade).
+  const reduceMotion = useReducedMotion();
+
   const { grid, monthLabels, maxCount } = useMemo(() => {
     const today = new Date();
 
@@ -145,13 +150,13 @@ export function ContributionHeatmap({
                     type="button"
                     onClick={onSelectDate ? () => onSelectDate(date) : undefined}
                     disabled={!onSelectDate}
-                    initial={{ opacity: 0, scale: 0.6 }}
+                    initial={reduceMotion ? false : { opacity: 0, scale: 0.6 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    transition={{
-                      delay: wi * 0.008,
-                      duration: 0.2,
-                      ease: [0.16, 1, 0.3, 1],
-                    }}
+                    transition={
+                      reduceMotion
+                        ? { duration: 0 }
+                        : { delay: wi * 0.008, duration: 0.2, ease: [0.16, 1, 0.3, 1] }
+                    }
                     title={count > 0 ? `${count} lesson${count > 1 ? 's' : ''} on ${date}` : date}
                     className={[
                       'size-[11px] rounded-[2px] border transition-all duration-100',

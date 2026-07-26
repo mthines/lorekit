@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, Bot, Zap, Tag, Clock, CalendarClock, Archive, RotateCcw } from 'lucide-react';
+import { X, Bot, Zap, Tag, Clock, CalendarClock, Archive, RotateCcw, Github } from 'lucide-react';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import type { LessonEntry } from './LessonCard';
 import { archiveLesson, restoreLesson } from '@/lib/lore';
+import { scopeRepoUrl } from '@/lib/scope';
 
 interface LessonDetailSheetProps {
   lesson: LessonEntry | null;
@@ -168,6 +169,28 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
                       </dd>
                     </div>
                   )}
+                  {(() => {
+                    const repoUrl = scopeRepoUrl(lesson.scope);
+                    if (!repoUrl) return null;
+                    // Extract "owner/repo" or "owner/repo::branch" display text
+                    const display = lesson.scope.replace(/^(repo|branch)::/, '');
+                    return (
+                      <div className="flex items-center gap-2 text-xs">
+                        <Github className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                        <dt className="text-[var(--color-content-tertiary)]">Repo</dt>
+                        <dd className="ml-auto">
+                          <a
+                            href={repoUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-mono text-[var(--color-content-secondary)] hover:text-[var(--color-accent)] hover:underline transition-colors duration-150"
+                          >
+                            {display}
+                          </a>
+                        </dd>
+                      </div>
+                    );
+                  })()}
                 </dl>
               </section>
 
