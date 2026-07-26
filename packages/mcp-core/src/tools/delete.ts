@@ -4,6 +4,7 @@ import { type SupabaseClient } from '@supabase/supabase-js';
 import { ScopeSchema, scopeType } from '../scope.js';
 import { getTracer, getToolDurationHistogram } from '../telemetry.js';
 import { recordAudit } from '../audit.js';
+import { translateOrgPermissionError } from '../org-permissions.js';
 
 export const DeleteInputSchema = z.object({
   scope: ScopeSchema,
@@ -14,6 +15,10 @@ export const DeleteInputSchema = z.object({
    * cannot be restored.
    */
   force: z.boolean().optional().default(false),
+  // Org slug to delete under (org-owned delete). Omit for a personal memory.
+  // Routed through the role-gated memory_delete RPC — never the raw
+  // service-role .delete()/.update() below, which would bypass the role gate.
+  org: z.string().optional(),
 });
 
 /**
@@ -44,7 +49,39 @@ export async function deleteMemory(
     span.setAttribute('lorekit.delete.force', input.force);
 
     try {
-      if (input.force) {
+      if (input.org) {
+        // Org-owned delete: role-gated inside the memory_delete RPC (SECURITY
+        // DEFINER) — a viewer/non-member is denied via LK002, never silently
+        // bypassed by a raw service-role delete/update.
+        const { data, error } = await db
+          .rpc('memory_delete', {
+            p_user_id: userId,
+            p_org_slug: input.org,
+            p_scope: input.scope,
+            p_key: input.key,
+            p_force: input.force,
+          })
+          .single();
+
+        if (error) throw translateOrgPermissionError(error);
+
+        const row = data as { deleted: boolean; archived: boolean };
+        span.setAttribute('lorekit.result.deleted', row.deleted);
+        span.setAttribute('lorekit.result.archived', row.archived);
+        if (row.deleted || row.archived) {
+          await recordAudit(
+            db,
+            {
+              action: row.deleted ? 'memory.delete' : 'memory.archive',
+              resourceType: 'memory',
+              target: input.key,
+              metadata: { scope: input.scope, key: input.key, force: input.force, org: input.org },
+            },
+            userId,
+          );
+        }
+        return { deleted: row.deleted, archived: row.archived };
+      } else if (input.force) {
         // Hard delete — immediate, irreversible.
         const { error, count } = await db
           .from('memories')

@@ -365,7 +365,7 @@ forever. This reduces manual validation to a single capture pass per tool.
 
 ## Usage telemetry
 
-The human-facing commands (`install`, `doctor`, `migrate`) emit one
+The human-facing commands (`install`, `uninstall`, `doctor`, `migrate`) emit one
 OpenTelemetry span + one counter point per run so the maintainers can see which
 commands people use. It is zero-dependency (OTLP/JSON over `fetch`, no SDK) and
 deliberately narrow — it carries only the command name, a bounded set of boolean

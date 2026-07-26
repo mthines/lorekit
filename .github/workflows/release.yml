@@ -6,11 +6,13 @@
 #   1. release-please reads the conventional commits since the last release and
 #      maintains a single "release PR" that bumps packages/cli/package.json and
 #      writes packages/cli/CHANGELOG.md. Feature merges just keep that PR up to
-#      date — nothing is published.
-#   2. When you merge that release PR, the resulting push carries the release
-#      commit; release-please then creates the git tag + GitHub Release and sets
-#      `release_created=true`, which gates the publish job below. The job checks
-#      out the (now version-bumped) main and publishes to npm.
+#      date — nothing is published. This job then turns on GitHub auto-merge for
+#      that PR, so it lands itself the moment required CI passes — no human merge.
+#   2. Auto-merge lands the release PR once CI is green; the resulting push
+#      carries the release commit; release-please then creates the git tag +
+#      GitHub Release and sets `release_created=true`, which gates the publish
+#      job below. The job checks out the (now version-bumped) main and publishes
+#      to npm.
 #
 # Auth:
 #   • release-please runs as a GitHub App (create-github-app-token) rather than
@@ -75,6 +77,25 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # Merge the release PR with zero human intervention. We enable GitHub's
+      # native auto-merge rather than merging outright: GitHub queues the merge
+      # and completes it only once the branch's required status checks (ci.yml's
+      # `check` + `integration`) go green — the App token above is exactly what
+      # let the release PR trigger those checks. The next push to main then cuts
+      # the tag + release and gates publish-cli. `pr` is set only when a release
+      # PR was opened/updated this run (empty on the push that merges it), so the
+      # guard keeps this a clean no-op otherwise. Requires the repo's "Allow
+      # auto-merge" setting to be on (see docs/releasing.md).
+      - name: Auto-merge the release PR
+        if: ${{ steps.rp.outputs.pr != '' }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RELEASE_PR: ${{ steps.rp.outputs.pr }}
+        run: |
+          pr_number=$(jq -r '.number' <<< "$RELEASE_PR")
+          echo "Enabling auto-merge on release PR #$pr_number"
+          gh pr merge "$pr_number" --repo "$GITHUB_REPOSITORY" --auto --squash
 
   # ── 2. Publish to npm — only when a release was actually cut ─────────────────
   publish-cli:

@@ -1,12 +1,12 @@
 'use client';
 
-import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { createClient } from '@/lib/supabase/client';
 import { scopeType } from '@/lib/scope';
 import { aggregateByDay } from '@/lib/aggregations';
 import type { ScopeNode } from '@/components/lore/ScopeTree';
 import type { LessonEntry } from '@/components/lore/LessonCard';
-import { listMemories, type MemoryFilters, type MemoryPage } from '@/lib/lore';
+import { listMemories, archiveLesson, restoreLesson, type MemoryFilters, type MemoryPage } from '@/lib/lore';
 import type { DateRange } from '@/components/ui/DateRangePicker';
 import type { ActivityEvent } from '@/components/activity/ActivityFeed';
 
@@ -157,6 +157,8 @@ export interface UseMemoriesFilters {
   search: string;
   /** Date range filter on created_at. */
   range: DateRange | null;
+  /** When true, fetches archived memories instead of active ones. */
+  showArchived?: boolean;
 }
 
 /**
@@ -168,13 +170,14 @@ export interface UseMemoriesFilters {
  */
 export function useMemories(filters: UseMemoriesFilters) {
   return useInfiniteQuery<MemoryPage>({
-    queryKey: ['memories', filters.scope, filters.search, filters.range],
+    queryKey: ['memories', filters.scope, filters.search, filters.range, filters.showArchived ?? false],
     queryFn: ({ pageParam }) => {
       const args: MemoryFilters = {
         scope: filters.scope ?? undefined,
         search: filters.search || undefined,
         range: filters.range,
         cursor: pageParam as string | null,
+        showArchived: filters.showArchived,
       };
       return listMemories(args);
     },
@@ -182,5 +185,136 @@ export function useMemories(filters: UseMemoriesFilters) {
     getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.nextCursor : undefined),
     // Lore explorer is read-heavy — 90 s matches the scope-tree stale time.
     staleTime: 90_000,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Optimistic archive / restore mutations
+// ---------------------------------------------------------------------------
+
+/**
+ * Removes a lesson from all active `['memories', ...]` infinite-query pages
+ * in the cache. Called optimistically before the archive server action fires.
+ */
+function removeFromActiveCache(
+  queryClient: ReturnType<typeof useQueryClient>,
+  scope: string,
+  key: string,
+) {
+  queryClient.setQueriesData<InfiniteData<MemoryPage>>(
+    { queryKey: ['memories'], exact: false },
+    (old) => {
+      if (!old) return old;
+      return {
+        ...old,
+        pages: old.pages.map((page) => ({
+          ...page,
+          rows: page.rows.filter((r) => !(r.scope === scope && r.key === key)),
+        })),
+      };
+    },
+  );
+}
+
+/**
+ * Removes a lesson from all archived `['memories', ..., true]` pages.
+ * Called optimistically before the restore server action fires.
+ */
+function removeFromArchivedCache(
+  queryClient: ReturnType<typeof useQueryClient>,
+  scope: string,
+  key: string,
+) {
+  queryClient.setQueriesData<InfiniteData<MemoryPage>>(
+    // Match only queries that have showArchived=true (last key segment = true).
+    { predicate: (q) => q.queryKey[0] === 'memories' && q.queryKey[4] === true },
+    (old) => {
+      if (!old) return old;
+      return {
+        ...old,
+        pages: old.pages.map((page) => ({
+          ...page,
+          rows: page.rows.filter((r) => !(r.scope === scope && r.key === key)),
+        })),
+      };
+    },
+  );
+}
+
+interface ArchiveRestoreArgs { scope: string; key: string }
+
+/**
+ * `useMutation` for archiving a memory.
+ *
+ * Optimistic update: immediately removes the lesson from all active memory
+ * list caches. On error the snapshot is restored (rollback). On success the
+ * scope-tree and lore-data queries are invalidated so counts stay accurate.
+ */
+export function useArchiveLesson() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ scope, key }: ArchiveRestoreArgs) => archiveLesson(scope, key),
+    onMutate: async ({ scope, key }) => {
+      // Cancel any in-flight refetches so they don't overwrite our optimistic update.
+      await queryClient.cancelQueries({ queryKey: ['memories'] });
+      // Snapshot the current cache for rollback.
+      const snapshot = queryClient.getQueriesData<InfiniteData<MemoryPage>>({ queryKey: ['memories'] });
+      // Optimistically remove from the active list.
+      removeFromActiveCache(queryClient, scope, key);
+      return { snapshot };
+    },
+    onError: (_err, _vars, context) => {
+      // Rollback: restore all snapshotted query data.
+      if (context?.snapshot) {
+        for (const [queryKey, data] of context.snapshot) {
+          queryClient.setQueryData(queryKey, data);
+        }
+      }
+    },
+    onSettled: () => {
+      // Whether success or failure, sync the scope tree and legacy lore cache.
+      void queryClient.invalidateQueries({ queryKey: ['lore-scopes'] });
+      void queryClient.invalidateQueries({ queryKey: ['lore'] });
+      // Invalidate archived list so it picks up the newly archived row.
+      void queryClient.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === 'memories' && q.queryKey[4] === true,
+      });
+    },
+  });
+}
+
+/**
+ * `useMutation` for restoring an archived memory.
+ *
+ * Optimistic update: immediately removes the lesson from all archived memory
+ * list caches. On error the snapshot is restored. On success the scope-tree,
+ * lore-data, and active memory list caches are invalidated.
+ */
+export function useRestoreLesson() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ scope, key }: ArchiveRestoreArgs) => restoreLesson(scope, key),
+    onMutate: async ({ scope, key }) => {
+      await queryClient.cancelQueries({ queryKey: ['memories'] });
+      const snapshot = queryClient.getQueriesData<InfiniteData<MemoryPage>>({ queryKey: ['memories'] });
+      // Optimistically remove from the archived list.
+      removeFromArchivedCache(queryClient, scope, key);
+      return { snapshot };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.snapshot) {
+        for (const [queryKey, data] of context.snapshot) {
+          queryClient.setQueryData(queryKey, data);
+        }
+      }
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['lore-scopes'] });
+      void queryClient.invalidateQueries({ queryKey: ['lore'] });
+      // Invalidate active list so the restored memory reappears.
+      void queryClient.invalidateQueries({
+        predicate: (q) => q.queryKey[0] === 'memories' && q.queryKey[4] === false,
+      });
+    },
   });
 }

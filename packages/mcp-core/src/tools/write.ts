@@ -4,6 +4,7 @@ import { type SupabaseClient } from '@supabase/supabase-js';
 import { ScopeSchema, scopeType } from '../scope.js';
 import { getTracer, getToolDurationHistogram } from '../telemetry.js';
 import { translateCapError } from '../limits.js';
+import { translateOrgPermissionError } from '../org-permissions.js';
 import { parseCreatedAt } from '../created-at.js';
 import { recordAudit } from '../audit.js';
 
@@ -21,6 +22,10 @@ export const WriteInputSchema = z.object({
   // rejected) by parseCreatedAt below, not by zod, so the error message and the
   // clock-skew rule stay shared with the edge mirror.
   created_at: z.string().optional(),
+  // Org slug to write under (org-owned write). Omit for a personal memory.
+  // Ownership is authorization-derived inside memory_write — supplying an
+  // org here does not by itself grant write access to it.
+  org: z.string().optional(),
 });
 
 export type WriteInput = z.infer<typeof WriteInputSchema>;
@@ -62,10 +67,11 @@ export async function write(
             p_source_agent: input.source_agent ?? null,
             p_trigger: input.trigger ?? null,
             p_created_at: createdAt,
+            p_org_slug: input.org ?? null,
           })
           .single();
 
-        if (error) throw translateCapError(error);
+        if (error) throw translateOrgPermissionError(translateCapError(error));
 
         const row = data as { id: string; created_at: string; inserted?: boolean };
         await recordAudit(

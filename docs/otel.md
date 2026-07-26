@@ -9,7 +9,7 @@ LoreKit emits traces, metrics, and logs to Dash0 from every layer of the stack.
 | Edge Function (Deno) | Lightweight OTLP/JSON via `fetch()` | Traces per tool call + webhook; DB child spans named by SQL statement |
 | Next.js server | `@vercel/otel` | HTTP server spans, Supabase query spans |
 | Browser (RUM) | `@dash0/sdk-web` | Page loads, navigation, Web Vitals, fetch tracing, errors, sessions |
-| CLI (`@lorekit/cli`) | Lightweight OTLP/JSON via `fetch()` (zero-dep, no SDK) | One span + one counter point per human-facing command (`install` / `doctor` / `migrate`) |
+| CLI (`@lorekit/cli`) | Lightweight OTLP/JSON via `fetch()` (zero-dep, no SDK) | One span + one counter point per human-facing command (`install` / `uninstall` / `doctor` / `migrate`) |
 
 All signals carry `service.namespace=lorekit` so you can filter the full stack in one Dash0 query.
 
@@ -63,7 +63,7 @@ endpoint, repo, or scope string):
 
 | Attribute | Example | Notes |
 |-----------|---------|-------|
-| `lorekit.cli.command` | `install` | Bounded: `install` \| `doctor` \| `migrate` |
+| `lorekit.cli.command` | `install` | Bounded: `install` \| `uninstall` \| `doctor` \| `migrate` |
 | `lorekit.cli.outcome` | `ok` | `ok` \| `error` |
 | `lorekit.cli.exit_code` | `0` | Command exit code |
 | `lorekit.cli.flag.<name>` | `true` | Only when set; allow-list: `global`, `project`, `deep`, `yes`, `force`, `no-hooks` |
@@ -169,7 +169,7 @@ the baked-in token. End users can opt out entirely with `LOREKIT_TELEMETRY=0` or
 After a `memory.write` call, check Dash0 → Explore → filter `service.name = mcp` and `service.namespace = lorekit`.
 
 ### CLI
-After running `lorekit doctor` (with `DEFAULT_TOKEN` set, or `OTEL_EXPORTER_OTLP_*` exported), check Dash0 → Explore → filter `service.name = lorekit-cli` and `service.namespace = lorekit`. Group by `lorekit.cli.command` to count `install` vs `doctor` vs `migrate`.
+After running `lorekit doctor` (with `DEFAULT_TOKEN` set, or `OTEL_EXPORTER_OTLP_*` exported), check Dash0 → Explore → filter `service.name = lorekit-cli` and `service.namespace = lorekit`. Group by `lorekit.cli.command` to count `install` vs `uninstall` vs `doctor` vs `migrate`.
 
 ### Browser
 Open Chrome DevTools → Network → filter by `v1/traces`. You should see POST requests to the Dash0 OTLP endpoint after page load and on each navigation.

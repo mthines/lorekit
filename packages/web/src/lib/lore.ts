@@ -14,6 +14,67 @@ import { applyKeyset, runPaginatedQuery, type FilterBuilderLike } from '@/lib/pa
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { scopeType } from '@/lib/scope';
 
+// ── Edit / update ─────────────────────────────────────────────────────────────
+
+export interface UpdateLessonInput {
+  /** The fields to change. Only `value` and `tags` are user-editable in the UI. */
+  value: string;
+  tags: string[];
+}
+
+/**
+ * Update an existing active memory's value and tags.
+ *
+ * Delegates to the existing `memory_write` RPC, which performs a
+ * conflict-on-upsert. This preserves the `source_agent` / `trigger` /
+ * `created_at` fields (they are passed through unchanged) and records a
+ * `memory.update` audit event (because `xmax !== 0` on the conflict path).
+ *
+ * Returns `{ id }` on success, or `{ error }` on failure.
+ */
+export async function updateLesson(
+  scope: string,
+  key: string,
+  input: UpdateLessonInput,
+): Promise<{ id: string | null; error?: string }> {
+  const supabase = await createServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { id: null, error: 'Not authenticated' };
+
+  // Fetch the current row so we can forward source_agent / trigger unchanged.
+  const { data: current, error: fetchError } = await supabase
+    .from('memories')
+    .select('source_agent, trigger')
+    .eq('user_id', user.id)
+    .eq('scope', scope)
+    .eq('key', key)
+    .is('archived_at', null)
+    .single();
+
+  if (fetchError || !current) {
+    return { id: null, error: fetchError?.message ?? 'Memory not found' };
+  }
+
+  const { data, error } = await supabase
+    .rpc('memory_write', {
+      p_user_id: user.id,
+      p_scope: scope,
+      p_key: key,
+      p_value: input.value,
+      p_tags: input.tags,
+      p_source_agent: (current as { source_agent: string | null }).source_agent ?? null,
+      p_trigger: (current as { trigger: string | null }).trigger ?? null,
+      p_created_at: null,
+    })
+    .single();
+
+  if (error) return { id: null, error: error.message };
+  revalidatePath('/lore');
+  return { id: (data as { id: string }).id };
+}
+
 /** Soft-archive a memory. Returns the archived row id, or null if not found. */
 export async function archiveLesson(
   scope: string,
@@ -93,6 +154,11 @@ export interface MemoryFilters {
   pageSize?: number;
   /** Opaque keyset cursor from a previous page's `nextCursor`. */
   cursor?: string | null;
+  /**
+   * When true, returns only archived memories (archived_at IS NOT NULL).
+   * When false/absent, returns only active memories (archived_at IS NULL).
+   */
+  showArchived?: boolean;
 }
 
 export type MemoryPage = Page<LessonEntry>;
@@ -123,8 +189,14 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
   let base = supabase
     .from('memories')
     .select('id, scope, key, value, tags, created_at, updated_at, archived_at, source_agent, trigger')
-    .eq('user_id', user.id)
-    .is('archived_at', null);
+    .eq('user_id', user.id);
+
+  // archived_at filter: active (IS NULL) vs archived (IS NOT NULL).
+  if (filters.showArchived) {
+    base = base.not('archived_at', 'is', null);
+  } else {
+    base = base.is('archived_at', null);
+  }
 
   // Scope filter — absent / null means "all scopes".
   if (filters.scope) {

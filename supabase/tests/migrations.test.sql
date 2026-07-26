@@ -193,7 +193,163 @@ begin
 end;
 $$;
 
--- ── 6. audit_log search indexes present (00012) ─────────────────────────────
+-- ── 6. memories.org_id FK: a bogus org_id must be rejected (00013) ──────────
+do $$
+declare v_fk_violation boolean := false;
+begin
+  begin
+    insert into memories (user_id, org_id, scope, key, value)
+    values (null, gen_random_uuid(), 'global', 'fk-bogus-key', 'v');
+  exception when foreign_key_violation then
+    v_fk_violation := true;
+  end;
+  assert v_fk_violation,
+    'memories.org_id: an org_id not present in orgs must raise a foreign_key_violation';
+end;
+$$;
+
+-- ── 7. orgs / org_members: role CHECK + membership-row RLS (00012) ──────────
+-- User A and user D are members of a shared test org; user B stays a
+-- non-member (used by section 8's read-widening assertions below).
+insert into orgs (id, slug, name, created_by) values
+  ('00000000-0000-0000-0000-0000000000f1', 'test-org', 'Test Org', '00000000-0000-0000-0000-0000000000a1');
+
+insert into org_members (org_id, user_id, role) values
+  ('00000000-0000-0000-0000-0000000000f1', '00000000-0000-0000-0000-0000000000a1', 'owner'),
+  ('00000000-0000-0000-0000-0000000000f1', '00000000-0000-0000-0000-0000000000d4', 'member');
+
+do $$
+declare v_bad_role boolean := false;
+begin
+  begin
+    insert into org_members (org_id, user_id, role)
+    values ('00000000-0000-0000-0000-0000000000f1', '00000000-0000-0000-0000-0000000000c3', 'superadmin');
+  exception when check_violation then
+    v_bad_role := true;
+  end;
+  assert v_bad_role, 'org_members: role must be constrained to owner|admin|member';
+end;
+$$;
+
+do $$
+declare v_own int;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
+  select count(*) into v_own from org_members where org_id = '00000000-0000-0000-0000-0000000000f1';
+
+  reset role;
+
+  assert v_own = 1,
+    format('org_members RLS: user A should see only its own membership row (of 2 seeded), saw %s', v_own);
+end;
+$$;
+
+-- ── 8. Widened memories RLS: member sees org rows, non-member does not (00013) ─
+-- The row is org-owned only (user_id null, org_id set) — visible to any
+-- member of the org, to nobody else.
+insert into memories (user_id, org_id, scope, key, value) values
+  (null, '00000000-0000-0000-0000-0000000000f1', 'global', 'org-shared-key', 'shared value');
+
+do $$
+declare
+  v_member_ids   uuid[];
+  v_member_sees  int;
+  v_other_member_sees int;
+  v_nonmember_sees int;
+begin
+  select array_agg(org_id) into v_member_ids
+    from lorekit_member_org_ids('00000000-0000-0000-0000-0000000000a1') as org_id;
+  assert v_member_ids = array['00000000-0000-0000-0000-0000000000f1']::uuid[],
+    format('lorekit_member_org_ids: user A should resolve to org f1 only, got %s', v_member_ids);
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  select count(*) into v_member_sees from memories where key = 'org-shared-key';
+  reset role;
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000d4","role":"authenticated"}', true);
+  select count(*) into v_other_member_sees from memories where key = 'org-shared-key';
+  reset role;
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}', true);
+  select count(*) into v_nonmember_sees from memories where key = 'org-shared-key';
+  reset role;
+
+  assert v_member_sees = 1, format('org RLS: member A should see the org-owned row, saw %s', v_member_sees);
+  assert v_other_member_sees = 1, format('org RLS: member D should see the org-owned row, saw %s', v_other_member_sees);
+  assert v_nonmember_sees = 0, format('org RLS: non-member B must NOT see the org-owned row, saw %s', v_nonmember_sees);
+end;
+$$;
+
+-- The unsafe client-asserted JWT claim policy must be gone: forging an
+-- org_id claim for a non-member must NOT grant visibility (membership-join
+-- only, never the JWT claim itself — this is the exact vulnerability 00013
+-- replaces).
+do $$
+declare v_forged int;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated","org_id":"00000000-0000-0000-0000-0000000000f1"}', true);
+  select count(*) into v_forged from memories where key = 'org-shared-key';
+  reset role;
+
+  assert v_forged = 0,
+    'org RLS: a forged org_id JWT claim must not grant visibility';
+end;
+$$;
+
+-- ── 9. Org-aware unique arbiter: org / personal / service partitions never
+--       collide with each other, but do collide within themselves (00014) ───
+do $$
+declare v_org_dup boolean := false;
+begin
+  insert into memories (user_id, org_id, scope, key, value) values
+    (null, '00000000-0000-0000-0000-0000000000f1', 'global', 'arb-key', 'v1');
+  begin
+    insert into memories (user_id, org_id, scope, key, value) values
+      (null, '00000000-0000-0000-0000-0000000000f1', 'global', 'arb-key', 'v2');
+  exception when unique_violation then
+    v_org_dup := true;
+  end;
+  assert v_org_dup, 'arbiter: two org rows sharing (org_id, scope, key) must collide';
+end;
+$$;
+
+do $$
+begin
+  -- A personal row and a service row sharing (scope, key) with the org row
+  -- inserted above must NOT collide with it, or with each other — the three
+  -- partial indexes partition on org_id/user_id nullability.
+  insert into memories (user_id, org_id, scope, key, value) values
+    ('00000000-0000-0000-0000-0000000000a1', null, 'global', 'arb-key', 'personal');
+  insert into memories (user_id, org_id, scope, key, value) values
+    (null, null, 'global', 'arb-key', 'service');
+  -- Reaching here without an exception is the assertion.
+end;
+$$;
+
+-- ── 10. memory_write stays personal-only: org_id is always NULL (00014) ─────
+do $$
+declare v_row memories%rowtype;
+begin
+  select * into v_row from memories where id = (
+    select id from memory_write('00000000-0000-0000-0000-0000000000a1', 'global', 'phase1-write-key', 'v', '{}'::text[])
+  );
+  assert v_row.org_id is null,
+    'memory_write: Phase 1 writes must always leave org_id NULL (writes stay personal-only)';
+end;
+$$;
+
+-- ── 11. audit_log search indexes present (00012) ────────────────────────────
 -- Covers the pg_trgm extension + both new indexes: index presence isn't a
 -- behavior the app-layer unit tests can assert, so this proves the migration
 -- actually created what packages/web/src/lib/pagination/ (name search +
@@ -218,6 +374,272 @@ begin
     where tablename = 'audit_log' and indexname = 'audit_log_user_created_id_idx'
   ) into v_keyset_idx;
   assert v_keyset_idx, 'audit_log search: (user_id, created_at desc, id) keyset-covering index must exist';
+end;
+$$;
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- Phase 2 (org-owned writes) — supabase/migrations/00015-00018.
+-- A dedicated 'phase2-org' (f2) with all four roles keeps these assertions
+-- self-contained instead of coupling to test-org's (f1) row counts above.
+-- ═════════════════════════════════════════════════════════════════════════
+
+-- ── 11. Phase 2: org f2 seeded with all four roles (00015) ──────────────────
+insert into orgs (id, slug, name, created_by) values
+  ('00000000-0000-0000-0000-0000000000f2', 'phase2-org', 'Phase 2 Org', '00000000-0000-0000-0000-0000000000a1');
+
+insert into org_members (org_id, user_id, role) values
+  ('00000000-0000-0000-0000-0000000000f2', '00000000-0000-0000-0000-0000000000a1', 'owner'),
+  ('00000000-0000-0000-0000-0000000000f2', '00000000-0000-0000-0000-0000000000d4', 'member'),
+  ('00000000-0000-0000-0000-0000000000f2', '00000000-0000-0000-0000-0000000000c3', 'viewer'),
+  ('00000000-0000-0000-0000-0000000000f2', '00000000-0000-0000-0000-0000000000e5', 'admin');
+
+do $$
+begin
+  perform 1 from org_members where org_id = '00000000-0000-0000-0000-0000000000f2' and role = 'viewer';
+  assert found, 'org_members: viewer role insert should succeed (role CHECK must admit viewer)';
+end;
+$$;
+
+-- lorekit_org_can capability matrix (AC-8): viewer=none; member=write/archive/
+-- restore; admin & owner=+hard_delete. This is the SOLE capability source —
+-- no TS re-derivation of this matrix exists (see org-permissions.ts header).
+do $$
+declare
+  v_owner     constant uuid := '00000000-0000-0000-0000-0000000000a1';
+  v_member    constant uuid := '00000000-0000-0000-0000-0000000000d4';
+  v_viewer    constant uuid := '00000000-0000-0000-0000-0000000000c3';
+  v_admin     constant uuid := '00000000-0000-0000-0000-0000000000e5';
+  v_org       constant uuid := '00000000-0000-0000-0000-0000000000f2';
+  v_nonmember constant uuid := '00000000-0000-0000-0000-0000000000b2';
+begin
+  assert lorekit_org_can(v_owner, v_org, 'write'), 'owner should have write capability';
+  assert lorekit_org_can(v_owner, v_org, 'hard_delete'), 'owner should have hard_delete capability';
+  assert lorekit_org_can(v_admin, v_org, 'write'), 'admin should have write capability';
+  assert lorekit_org_can(v_admin, v_org, 'hard_delete'), 'admin should have hard_delete capability';
+  assert lorekit_org_can(v_member, v_org, 'write'), 'member should have write capability';
+  assert lorekit_org_can(v_member, v_org, 'archive'), 'member should have archive capability';
+  assert lorekit_org_can(v_member, v_org, 'restore'), 'member should have restore capability';
+  assert not lorekit_org_can(v_member, v_org, 'hard_delete'), 'member must NOT have hard_delete capability';
+  assert not lorekit_org_can(v_viewer, v_org, 'write'), 'viewer must NOT have write capability';
+  assert not lorekit_org_can(v_viewer, v_org, 'archive'), 'viewer must NOT have archive capability';
+  assert not lorekit_org_can(v_viewer, v_org, 'hard_delete'), 'viewer must NOT have hard_delete capability';
+  assert not lorekit_org_can(v_nonmember, v_org, 'write'), 'a non-member must NOT have write capability';
+end;
+$$;
+
+-- ── 12. memory_write: org-write authorization is derived, not caller-trusted (AC-1) ─
+do $$
+declare
+  v_id uuid;
+  v_row memories%rowtype;
+  v_denied_viewer boolean := false;
+  v_denied_nonmember boolean := false;
+begin
+  -- A write-capable member (owner) writes org-owned lore: org_id set, user_id
+  -- NULL. Two statements, not one nested subquery: a single SQL statement's
+  -- snapshot does not reliably see a row inserted by a volatile function
+  -- called from within its own WHERE clause (see §4/§10's identical shape).
+  select id into v_id from memory_write('00000000-0000-0000-0000-0000000000a1', 'global', 'p2-write-key', 'v1',
+                                        '{}'::text[], null, null, null, 'phase2-org');
+  select * into v_row from memories where id = v_id;
+  assert v_row.org_id = '00000000-0000-0000-0000-0000000000f2',
+    format('memory_write org branch: org_id should be phase2-org, got %s', v_row.org_id);
+  assert v_row.user_id is null,
+    'memory_write org branch: user_id must be NULL on an org-owned row';
+
+  -- A viewer is denied.
+  begin
+    perform memory_write('00000000-0000-0000-0000-0000000000c3', 'global', 'p2-write-viewer-key', 'v',
+                          '{}'::text[], null, null, null, 'phase2-org');
+  exception when sqlstate 'LK002' then
+    v_denied_viewer := true;
+  end;
+  assert v_denied_viewer, 'memory_write: a viewer must be denied an org write with LK002';
+
+  -- A non-member is denied.
+  begin
+    perform memory_write('00000000-0000-0000-0000-0000000000b2', 'global', 'p2-write-nonmember-key', 'v',
+                          '{}'::text[], null, null, null, 'phase2-org');
+  exception when sqlstate 'LK002' then
+    v_denied_nonmember := true;
+  end;
+  assert v_denied_nonmember, 'memory_write: a non-member must be denied an org write with LK002';
+
+  assert not exists (select 1 from memories where key = 'p2-write-viewer-key'),
+    'memory_write: a denied viewer write must not write any row';
+  assert not exists (select 1 from memories where key = 'p2-write-nonmember-key'),
+    'memory_write: a denied non-member write must not write any row';
+end;
+$$;
+
+-- ── 13. memory_write: an omitted p_org_slug stays personal-only (AC-2) ──────
+do $$
+declare v_id uuid; v_row memories%rowtype;
+begin
+  select id into v_id from memory_write('00000000-0000-0000-0000-0000000000a1', 'global', 'p2-personal-key', 'v');
+  select * into v_row from memories where id = v_id;
+  assert v_row.org_id is null,
+    'memory_write: a call with no p_org_slug must leave org_id NULL';
+  assert v_row.user_id = '00000000-0000-0000-0000-0000000000a1',
+    'memory_write: a personal write must set user_id to the writer';
+end;
+$$;
+
+-- ── 14. Author attribution: created_by/updated_by + clobber preservation (AC-3) ─
+-- The whole test file runs inside one transaction, and now() is STABLE (frozen
+-- at transaction start) for its duration — pg_sleep() cannot make a later
+-- now() call return a later value. So, exactly like §4's backdate technique,
+-- this proves ordering with an explicit backdated p_created_at on the FIRST
+-- write rather than a wall-clock gap: updated_at on clobber is set to the
+-- (frozen, but "now") transaction time, which is provably later than an
+-- old backdate.
+do $$
+declare
+  v_id uuid;
+  v_row memories%rowtype;
+  v_backdate constant timestamptz := timestamptz '2020-01-01T00:00:00Z';
+begin
+  -- Owner (A) creates the org row with a backdated created_at.
+  select id into v_id from memory_write('00000000-0000-0000-0000-0000000000a1', 'global', 'p2-clobber-key', 'v1',
+                                        '{}'::text[], null, null, v_backdate, 'phase2-org');
+  select * into v_row from memories where id = v_id;
+  assert v_row.created_by = '00000000-0000-0000-0000-0000000000a1'
+     and v_row.updated_by = '00000000-0000-0000-0000-0000000000a1',
+    'memory_write: a fresh org write should set created_by = updated_by = writer';
+  assert v_row.created_at = v_backdate,
+    format('memory_write org insert: created_at should be the backdate, got %s', v_row.created_at);
+
+  -- A different write-capable member (admin E) clobbers the same (org_id, scope, key).
+  select id into v_id from memory_write('00000000-0000-0000-0000-0000000000e5', 'global', 'p2-clobber-key', 'v2',
+                                        '{}'::text[], null, null, null, 'phase2-org');
+  select * into v_row from memories where id = v_id;
+  assert v_row.created_by = '00000000-0000-0000-0000-0000000000a1',
+    'memory_write org clobber: created_by must be preserved as the original writer';
+  assert v_row.created_at = v_backdate,
+    'memory_write org clobber: created_at must not move on clobber';
+  assert v_row.updated_by = '00000000-0000-0000-0000-0000000000e5',
+    'memory_write org clobber: updated_by must advance to the clobbering writer';
+  assert v_row.updated_at > v_backdate,
+    'memory_write org clobber: updated_at must advance past the original (backdated) created_at';
+  assert v_row.value = 'v2', 'memory_write org clobber: value should be updated';
+end;
+$$;
+
+-- ── 15. Author columns: personal write vs. service write (AC-4) ─────────────
+do $$
+declare v_id uuid; v_personal memories%rowtype; v_service memories%rowtype;
+begin
+  select * into v_personal from memories where key = 'p2-personal-key';
+  assert v_personal.created_by = '00000000-0000-0000-0000-0000000000a1'
+     and v_personal.updated_by = '00000000-0000-0000-0000-0000000000a1',
+    'memory_write: a personal write should set created_by = updated_by = writer';
+
+  select id into v_id from memory_write(null, 'global', 'p2-service-key', 'v');
+  select * into v_service from memories where id = v_id;
+  assert v_service.created_by is null and v_service.updated_by is null,
+    'memory_write: a service-role write must leave created_by/updated_by NULL';
+end;
+$$;
+
+-- ── 16. Tenant-keyed cap: org writes count against the org, never service-exempt (AC-5) ─
+-- phase2-org (f2) already carries exactly 2 active org rows at this point
+-- (p2-write-key from §12, p2-clobber-key from §14) — capping it at 2 means
+-- the next org write must be rejected. If the org branch ever regressed to
+-- fall through the user_id-IS-NULL service exemption (org rows always have
+-- user_id NULL), this insert would wrongly succeed instead of raising LK001.
+do $$
+declare v_blocked boolean := false;
+begin
+  insert into org_limits (org_id, max_memories)
+  values ('00000000-0000-0000-0000-0000000000f2', 2);
+
+  begin
+    perform memory_write('00000000-0000-0000-0000-0000000000a1', 'global', 'p2-cap-key', 'v',
+                          '{}'::text[], null, null, null, 'phase2-org');
+  exception when sqlstate 'LK001' then
+    v_blocked := true;
+  end;
+  assert v_blocked,
+    'org cap: the 3rd org write against max_memories=2 must raise SQLSTATE LK001';
+  assert not exists (select 1 from memories where key = 'p2-cap-key'),
+    'org cap: the rejected write must not have inserted a row';
+end;
+$$;
+
+-- ── 17. Org writes never consume the writer's personal cap (AC-6) ───────────
+-- Member D (default 1000 personal limit, no override) writes an org-owned row
+-- to test-org (f1, uncapped) — this must not appear in D's personal count.
+do $$
+declare v_personal_count_before int; v_personal_count_after int;
+begin
+  select count(*) into v_personal_count_before
+    from memories where user_id = '00000000-0000-0000-0000-0000000000d4' and archived_at is null;
+
+  perform memory_write('00000000-0000-0000-0000-0000000000d4', 'global', 'p2-member-org-write-key', 'v',
+                        '{}'::text[], null, null, null, 'test-org');
+
+  select count(*) into v_personal_count_after
+    from memories where user_id = '00000000-0000-0000-0000-0000000000d4' and archived_at is null;
+
+  assert v_personal_count_after = v_personal_count_before,
+    format('org write: writer D''s personal memory count must be unaffected (before=%s after=%s)',
+           v_personal_count_before, v_personal_count_after);
+  assert exists (
+    select 1 from memories
+     where key = 'p2-member-org-write-key' and org_id = '00000000-0000-0000-0000-0000000000f1'
+  ), 'org write: the row should exist under org f1, org-owned';
+end;
+$$;
+
+-- ── 18. Role-gated memory_delete: viewer/member/admin + personal unchanged (AC-9) ─
+do $$
+declare
+  v_denied_viewer boolean := false;
+  v_denied_member_hard boolean := false;
+  r record;
+begin
+  -- Lift phase2-org's cap (set to 2 in §16) so this section's direct insert
+  -- doesn't trip the cap trigger independently of what it's testing.
+  update org_limits set max_memories = 10 where org_id = '00000000-0000-0000-0000-0000000000f2';
+
+  insert into memories (org_id, scope, key, value) values
+    ('00000000-0000-0000-0000-0000000000f2', 'global', 'p2-del-key', 'v');
+
+  -- viewer denied soft-archive
+  begin
+    perform memory_delete('00000000-0000-0000-0000-0000000000c3', 'phase2-org', 'global', 'p2-del-key', false);
+  exception when sqlstate 'LK002' then
+    v_denied_viewer := true;
+  end;
+  assert v_denied_viewer, 'memory_delete: a viewer must be denied a soft-archive with LK002';
+
+  -- member soft-archives OK
+  select * into r from memory_delete('00000000-0000-0000-0000-0000000000d4', 'phase2-org', 'global', 'p2-del-key', false);
+  assert r.archived and not r.deleted,
+    format('memory_delete: a member soft-archive should succeed (archived=%s deleted=%s)', r.archived, r.deleted);
+
+  -- member denied hard-delete
+  begin
+    perform memory_delete('00000000-0000-0000-0000-0000000000d4', 'phase2-org', 'global', 'p2-del-key', true);
+  exception when sqlstate 'LK002' then
+    v_denied_member_hard := true;
+  end;
+  assert v_denied_member_hard, 'memory_delete: a member must be denied a hard-delete with LK002';
+
+  -- admin hard-deletes OK
+  select * into r from memory_delete('00000000-0000-0000-0000-0000000000e5', 'phase2-org', 'global', 'p2-del-key', true);
+  assert r.deleted and not r.archived,
+    format('memory_delete: an admin hard-delete should succeed (deleted=%s archived=%s)', r.deleted, r.archived);
+  assert not exists (select 1 from memories where key = 'p2-del-key'),
+    'memory_delete: an admin hard-delete should actually remove the row';
+
+  -- Personal delete (no org selector) is unchanged: mirrors the pre-Phase-2
+  -- .eq(user_id, ...) soft-archive behavior.
+  insert into memories (user_id, scope, key, value) values
+    ('00000000-0000-0000-0000-0000000000a1', 'global', 'p2-personal-del-key', 'v');
+  select * into r from memory_delete('00000000-0000-0000-0000-0000000000a1', null, 'global', 'p2-personal-del-key', false);
+  assert r.archived and not r.deleted,
+    'memory_delete: a personal soft-archive (no org selector) should behave as before';
 end;
 $$;
 

@@ -19,7 +19,7 @@ import {
 } from './config.mjs';
 import { buildRemoteUrl } from './mcp.mjs';
 import { deriveScope } from './scope.mjs';
-import { log, err, heading, status, c } from './util.mjs';
+import { log, err, heading, status, select, c } from './util.mjs';
 
 function ask(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -42,10 +42,10 @@ export async function install(args) {
     if (nonInteractive) {
       scope = 'project';
     } else {
-      const ans = (
-        await ask('  Install for this project or globally for all projects? [project/global] (project): ')
-      ).toLowerCase();
-      scope = ans.startsWith('g') ? 'global' : 'project';
+      scope = await select('Install LoreKit for…', [
+        { label: 'This project', value: 'project', hint: 'this repo only (.claude, .mcp.json)' },
+        { label: 'All projects (global)', value: 'global', hint: 'every project (~/.claude)' },
+      ]);
     }
   }
   log(

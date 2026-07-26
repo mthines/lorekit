@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { ownerRepoFromRemote } from '../src/scope.mjs';
 import { splitEndpoint, buildRemoteUrl } from '../src/mcp.mjs';
 import { tokenKind } from '../src/config.mjs';
-import { parseArgs } from '../src/util.mjs';
+import { parseArgs, selectAction, select } from '../src/util.mjs';
 
 test('ownerRepoFromRemote normalizes remote URL variants', () => {
   assert.equal(ownerRepoFromRemote('git@github.com:mthines/LoreKit.git'), 'mthines/lorekit');
@@ -48,4 +48,31 @@ test('parseArgs handles flags, values, =, and aliases', () => {
   assert.equal(args.endpoint, 'https://x');
   assert.equal(args.token, 'lk_rw_1');
   assert.equal(args.yes, true);
+});
+
+test('selectAction maps keys to list actions', () => {
+  assert.equal(selectAction(''), 'cancel'); // Ctrl-C
+  assert.equal(selectAction('\r'), 'submit');
+  assert.equal(selectAction('\n'), 'submit');
+  assert.equal(selectAction('[A'), 'up'); // arrow-up (ESC [ cursor mode)
+  assert.equal(selectAction('OA'), 'up'); // arrow-up (ESC O application mode)
+  assert.equal(selectAction('[B'), 'down');
+  assert.equal(selectAction('OB'), 'down');
+  assert.equal(selectAction('k'), 'up');
+  assert.equal(selectAction('j'), 'down');
+  assert.equal(selectAction('x'), null);
+});
+
+test('select resolves the default option when stdin is not a TTY', async () => {
+  const wasTTY = process.stdin.isTTY;
+  process.stdin.isTTY = false; // simulate piped / CI stdin
+  try {
+    const value = await select('pick', [
+      { label: 'A', value: 'a' },
+      { label: 'B', value: 'b' },
+    ], { defaultIndex: 1 });
+    assert.equal(value, 'b');
+  } finally {
+    process.stdin.isTTY = wasTTY;
+  }
 });

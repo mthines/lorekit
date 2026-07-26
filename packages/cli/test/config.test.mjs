@@ -12,6 +12,7 @@ import {
   mcpJsonPath,
   onPath,
   resolveHookRunner,
+  writeFileAtomic,
 } from '../src/config.mjs';
 
 function tmpRoot() {
@@ -78,6 +79,30 @@ test('readJsonIfExists still throws on malformed JSON (install clobber-guard)', 
   const root = tmpRoot();
   fs.writeFileSync(mcpJsonPath(root), '{ broken');
   assert.throws(() => readJsonIfExists(mcpJsonPath(root)), /Failed to parse/);
+});
+
+test('writeFileAtomic replaces content, preserves perms, and leaves no temp file', () => {
+  const root = tmpRoot();
+  const file = path.join(root, '.claude.json');
+  fs.writeFileSync(file, 'old');
+  fs.chmodSync(file, 0o600); // a locked-down config holding secrets
+
+  writeFileAtomic(file, 'new-content');
+
+  assert.equal(fs.readFileSync(file, 'utf8'), 'new-content', 'content replaced');
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600, 'original 0600 perms preserved on replace');
+  assert.deepEqual(
+    fs.readdirSync(root).filter((f) => f.includes('.tmp')),
+    [],
+    'no leftover temp file',
+  );
+});
+
+test('writeFileAtomic creates a new file (and its parent dir) when absent', () => {
+  const root = tmpRoot();
+  const file = path.join(root, 'nested', 'dir', '.mcp.json');
+  writeFileAtomic(file, 'fresh');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'fresh');
 });
 
 test('copyDir reports how many files it actually wrote', () => {
