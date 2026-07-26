@@ -5,11 +5,12 @@
  * one-line edit here, not a scattered set of if/else branches (mirrors the
  * `scope-meta.ts` single-record pattern).
  *
- * Mirrors the `AuditAction` union defined in `packages/mcp-core/src/audit.ts`
+ * Re-declares the `AuditAction` union independently of `packages/mcp-core/src/audit.ts`
  * (and its self-contained edge copy) — the web package has no dependency on
  * `@lorekit/core` (same reason `lib/scope.ts` re-declares a lightweight copy
- * of `scopeType`), so the 11 action literals are re-declared here rather than
- * imported.
+ * of `scopeType`), so the action literals are re-declared here rather than
+ * imported. This set is a superset of the edge union: it additionally covers
+ * the dashboard-only `org.*` / `member.*` actions the edge function never emits.
  */
 
 import {
