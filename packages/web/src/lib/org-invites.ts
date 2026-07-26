@@ -31,6 +31,31 @@ export interface OrgInvite {
   created_at: string;
   responded_at: string | null;
   expires_at: string | null;
+  /**
+   * Embedded org name/slug (PostgREST join via `org_invites.org_id ->
+   * orgs.id`, no new RPC/migration) — the Overview pending-invite banner
+   * needs the org's name ("invited you to Acme Team"), which the bare
+   * `org_id` alone can't render. Undefined if the embed can't resolve.
+   */
+  org?: { name: string; slug: string } | null;
+}
+
+/** Narrows a raw PostgREST row (embedded `orgs` relation) into an OrgInvite. */
+function mapInviteRow(row: Record<string, unknown>): OrgInvite {
+  const orgEmbed = row.orgs as { name: string; slug: string } | null | undefined;
+  return {
+    id: row.id as string,
+    org_id: row.org_id as string,
+    invitee_email: row.invitee_email as string | null,
+    invitee_handle: row.invitee_handle as string | null,
+    role: row.role as Exclude<OrgRole, 'owner'>,
+    status: row.status as OrgInviteStatus,
+    invited_by: row.invited_by as string | null,
+    created_at: row.created_at as string,
+    responded_at: row.responded_at as string | null,
+    expires_at: row.expires_at as string | null,
+    org: orgEmbed ? { name: orgEmbed.name, slug: orgEmbed.slug } : null,
+  };
 }
 
 /**
@@ -79,7 +104,7 @@ export async function listInvites(orgId: string): Promise<OrgInvite[]> {
 
   const { data, error } = await supabase
     .from('org_invites')
-    .select('id, org_id, invitee_email, invitee_handle, role, status, invited_by, created_at, responded_at, expires_at')
+    .select('id, org_id, invitee_email, invitee_handle, role, status, invited_by, created_at, responded_at, expires_at, orgs(name, slug)')
     .eq('org_id', orgId)
     .order('created_at', { ascending: false });
 
@@ -87,7 +112,7 @@ export async function listInvites(orgId: string): Promise<OrgInvite[]> {
     console.error('[listInvites] DB error:', error.message);
     return [];
   }
-  return (data ?? []) as OrgInvite[];
+  return (data ?? []).map((row) => mapInviteRow(row as Record<string, unknown>));
 }
 
 /** Revoke a pending invite. Owner/admin only. */
@@ -158,7 +183,7 @@ export async function listPendingInvitesForMe(): Promise<OrgInvite[]> {
 
   const { data, error } = await supabase
     .from('org_invites')
-    .select('id, org_id, invitee_email, invitee_handle, role, status, invited_by, created_at, responded_at, expires_at')
+    .select('id, org_id, invitee_email, invitee_handle, role, status, invited_by, created_at, responded_at, expires_at, orgs(name, slug)')
     .eq('status', 'pending')
     .or(identityFilters.join(','));
 
@@ -166,5 +191,5 @@ export async function listPendingInvitesForMe(): Promise<OrgInvite[]> {
     console.error('[listPendingInvitesForMe] DB error:', error.message);
     return [];
   }
-  return (data ?? []) as OrgInvite[];
+  return (data ?? []).map((row) => mapInviteRow(row as Record<string, unknown>));
 }

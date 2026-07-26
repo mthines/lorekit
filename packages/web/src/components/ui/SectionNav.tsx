@@ -11,6 +11,8 @@ export interface SectionNavItem {
   label: string;
   href: string;
   icon: LucideIcon;
+  /** Optional count pill rendered after the label (e.g. pending invites). Hidden when 0 or absent. */
+  badgeCount?: number;
 }
 
 interface SectionNavProps {
@@ -47,7 +49,7 @@ export function SectionNav({ items, ariaLabel, layoutId = 'section-nav-active' }
         aria-label={ariaLabel}
         className="flex gap-1 overflow-x-auto border-b border-[var(--color-border)] pb-2 md:w-52 md:shrink-0 md:flex-col md:overflow-visible md:border-b-0 md:pb-0"
       >
-        {items.map(({ id, label, href, icon: Icon }) => {
+        {items.map(({ id, label, href, icon: Icon, badgeCount }) => {
           const active = pathname === href || pathname.startsWith(href + '/');
           return (
             <Link
@@ -74,6 +76,14 @@ export function SectionNav({ items, ariaLabel, layoutId = 'section-nav-active' }
               )}
               <Icon className="relative size-4 shrink-0" aria-hidden />
               <span className="relative font-medium">{label}</span>
+              {Boolean(badgeCount && badgeCount > 0) && (
+                <span
+                  className="relative ml-auto flex h-4.5 min-w-4.5 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent)] px-1 text-[10px] font-semibold text-[#000]"
+                  aria-label={`${badgeCount} pending`}
+                >
+                  {badgeCount}
+                </span>
+              )}
             </Link>
           );
         })}

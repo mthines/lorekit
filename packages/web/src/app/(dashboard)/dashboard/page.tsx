@@ -4,8 +4,10 @@ import { OnboardingChecklist, type OnboardingStep } from '@/components/dashboard
 import { OnboardingStepContent } from '@/components/dashboard/OnboardingStepContent';
 import { listTokens, generateToken } from '@/lib/tokens';
 import { listWebhookSecrets } from '@/lib/webhook-secrets';
+import { listPendingInvitesForMe } from '@/lib/org-invites';
 import { resolveMcpUrls } from '@/lib/mcp-url';
 import { DashboardStats } from '@/components/dashboard/DashboardStats';
+import { PendingInvitesBanner } from '@/components/dashboard/PendingInvitesBanner';
 
 export const metadata: Metadata = { title: 'Overview' };
 
@@ -28,10 +30,11 @@ async function fetchOnboardingState() {
 }
 
 export default async function DashboardPage() {
-  const [{ hasLessons, hasWebhook }, existingTokens, webhookSecrets] = await Promise.all([
+  const [{ hasLessons, hasWebhook }, existingTokens, webhookSecrets, pendingInvites] = await Promise.all([
     fetchOnboardingState(),
     listTokens(),
     listWebhookSecrets(),
+    listPendingInvitesForMe(),
   ]);
 
   // First login: no tokens yet → auto-generate a read+write token so the
@@ -106,6 +109,8 @@ export default async function DashboardPage() {
           Your agents&apos; accumulated knowledge at a glance.
         </p>
       </div>
+
+      {pendingInvites.length > 0 && <PendingInvitesBanner initialInvites={pendingInvites} />}
 
       <OnboardingChecklist steps={steps} />
 

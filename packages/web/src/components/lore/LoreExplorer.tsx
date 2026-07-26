@@ -35,6 +35,56 @@ import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDebouncedUrlState } from '@/lib/hooks/useDebouncedUrlState';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
+import { filterByOwnership, type OwnerFilter } from '@/lib/org-ui';
+
+// ── Ownership filter bar ──────────────────────────────────────────────────────
+// "All · Personal · {org}" per ux-design §4 — only rendered when at least one
+// org-owned lesson is in view (nothing to filter by ownership otherwise).
+
+function OwnershipFilterBar({
+  orgs,
+  value,
+  onChange,
+}: {
+  orgs: { id: string; name: string }[];
+  value: OwnerFilter;
+  onChange: (next: OwnerFilter) => void;
+}) {
+  if (orgs.length === 0) return null;
+
+  function isActive(candidate: OwnerFilter): boolean {
+    if (candidate === 'all') return value === 'all';
+    if (candidate === 'personal') return value === 'personal';
+    return typeof value === 'object' && value.orgId === candidate.orgId;
+  }
+
+  const chips: { key: string; label: string; filter: OwnerFilter }[] = [
+    { key: 'all', label: 'All', filter: 'all' },
+    { key: 'personal', label: 'Personal', filter: 'personal' },
+    ...orgs.map((org) => ({ key: org.id, label: org.name, filter: { orgId: org.id } as OwnerFilter })),
+  ];
+
+  return (
+    <div role="group" aria-label="Filter by ownership" className="flex flex-wrap gap-1.5 px-3 pt-2">
+      {chips.map((chip) => (
+        <button
+          key={chip.key}
+          type="button"
+          onClick={() => onChange(chip.filter)}
+          aria-pressed={isActive(chip.filter)}
+          className={[
+            'flex min-h-11 items-center rounded-full border px-3 text-xs font-medium transition-colors duration-150',
+            isActive(chip.filter)
+              ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
+              : 'border-[var(--color-border)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
+          ].join(' ')}
+        >
+          {chip.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 interface LoreExplorerProps {
   scopes: ScopeNode[];
@@ -61,6 +111,13 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
     cleanOnPathname: '/lore',
   });
 
+  // URL-backed ownership filter (plan.md Decision D9) — shareable, and the
+  // accept-invite flow deep-links here (`/lore?owner=<serialised OwnerFilter>`)
+  // so a freshly-joined org is pre-filtered on arrival.
+  const [ownerFilter, setOwnerFilter] = useUrlState<OwnerFilter>('owner', 'all', {
+    cleanOnPathname: '/lore',
+  });
+
   // Local-only: mobile accordion state. Ephemeral UI — not shareable, not
   // persisted. Putting this in URL state would pollute every share link and
   // fire a router.replace on every tap.
@@ -72,10 +129,22 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
   // without adding a param to the URL).
   const effectiveScope = selectedScope ?? scopes[0]?.scope ?? null;
 
+  // Unique orgs present in the current lesson set, for the ownership filter
+  // chips — recomputed only when the underlying lessons change.
+  const orgsInView = useMemo(() => {
+    const seen = new Map<string, { id: string; name: string }>();
+    for (const l of lessons) {
+      if (l.org && !seen.has(l.org.id)) seen.set(l.org.id, l.org);
+    }
+    return Array.from(seen.values());
+  }, [lessons]);
+
   const filteredLessons = useMemo(() => {
     let out = effectiveScope
       ? lessons.filter((l) => l.scope === effectiveScope)
       : lessons;
+
+    out = filterByOwnership(out, ownerFilter);
 
     // Date range filters on the lesson's creation day (UTC), matching the
     // DateRangePicker's UTC day strings and the created_at ordering.
@@ -97,9 +166,9 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
     }
 
     return out;
-  }, [lessons, effectiveScope, query, range]);
+  }, [lessons, effectiveScope, ownerFilter, query, range]);
 
-  const isFiltered = query.trim() !== '' || range !== null;
+  const isFiltered = query.trim() !== '' || range !== null || ownerFilter !== 'all';
 
   function handleScopeSelect(scope: string) {
     startTransition(() => {
@@ -154,6 +223,8 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
             </div>
             <DateRangePicker value={range} onChange={setRange} className="shrink-0" />
           </div>
+
+          <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
 
           <div className="flex-1 overflow-y-auto p-3" role="list" aria-label="Lessons">
             {filteredLessons.length > 0 ? (
@@ -217,6 +288,8 @@ export function LoreExplorer({ scopes, lessons }: LoreExplorerProps) {
           </div>
           <DateRangePicker value={range} onChange={setRange} className="shrink-0" />
         </div>
+
+        <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
 
         <div role="list" aria-label="Lessons">
           {filteredLessons.length > 0 ? (

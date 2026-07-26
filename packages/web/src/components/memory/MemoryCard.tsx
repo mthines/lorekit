@@ -19,7 +19,9 @@ import { memo } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
 import { Clock, Bot, Zap } from 'lucide-react';
 import { ScopeBadge } from './ScopeBadge';
+import { OwnershipBadge } from './OwnershipBadge';
 import type { ScopePrefix } from './scope-meta';
+import type { MemoryOwner } from '@/lib/ownership';
 
 // ── Model ───────────────────────────────────────────────────────────────────
 
@@ -37,6 +39,8 @@ export interface MemoryCardModel {
   /** ISO timestamp shown as relative time. */
   timestamp?: string | null;
   archived?: boolean;
+  /** Ownership — undefined for personal lore, `{id, name}` for org-owned lore. */
+  org?: MemoryOwner;
 }
 
 /** Adapt a Lore Explorer lesson (LessonEntry-shaped) into the card model. */
@@ -51,6 +55,7 @@ export function memoryFromLesson(lesson: {
   source_agent?: string | null;
   trigger?: string | null;
   archived_at?: string | null;
+  org?: MemoryOwner;
 }): MemoryCardModel {
   return {
     scope: lesson.scope,
@@ -64,6 +69,7 @@ export function memoryFromLesson(lesson: {
     // original time rather than the migration wall-clock.
     timestamp: lesson.created_at,
     archived: Boolean(lesson.archived_at),
+    org: lesson.org,
   };
 }
 
@@ -201,6 +207,7 @@ export const MemoryCard = memo(function MemoryCard({
     trigger,
     tags = [],
     timestamp,
+    org,
   } = memory;
 
   const keyCode = (
@@ -291,6 +298,7 @@ export const MemoryCard = memo(function MemoryCard({
         <div className="min-w-0 flex-1">
           <div className="mb-1 flex flex-wrap items-center gap-1.5">
             {showScope && <ScopeBadge scope={scope} type={type} label />}
+            <OwnershipBadge org={org} />
             {keyCode}
             {timeEl && <span className="ml-auto">{timeEl}</span>}
           </div>
@@ -341,6 +349,7 @@ export const MemoryCard = memo(function MemoryCard({
     >
       <div className="mb-2 flex flex-wrap items-center gap-1.5">
         {showScope && <ScopeBadge scope={scope} type={type} label />}
+        <OwnershipBadge org={org} />
         {keyCode}
         {timeEl && <span className="ml-auto">{timeEl}</span>}
       </div>

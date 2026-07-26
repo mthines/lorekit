@@ -6,7 +6,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
       <div>
         <h1 className="text-2xl font-bold text-[var(--color-content-primary)]">Settings</h1>
         <p className="mt-1 text-sm text-[var(--color-content-secondary)]">
-          API keys, your MCP endpoint, and the GitHub webhook — all in one place.
+          API keys, your MCP endpoint, the GitHub webhook, and your organization — all in one place.
         </p>
       </div>
 
