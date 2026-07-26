@@ -135,12 +135,13 @@ function resourceAttributes(version) {
  * Collect the bounded, non-PII attributes for a command invocation. Only the
  * command name, allow-listed boolean flags, the outcome and the exit code.
  */
-export function commandAttributes({ command, args = {}, outcome, exitCode }) {
+export function commandAttributes({ command, args = {}, outcome, exitCode, extraAttrs = {} }) {
   const attrs = { 'lorekit.cli.command': command, 'lorekit.cli.outcome': outcome };
   if (typeof exitCode === 'number') attrs['lorekit.cli.exit_code'] = exitCode;
   for (const flag of FLAG_ATTRS) {
     if (args[flag]) attrs[`lorekit.cli.flag.${flag}`] = true;
   }
+  Object.assign(attrs, extraAttrs);
   return attrs;
 }
 
@@ -280,8 +281,23 @@ export async function traceCommand(command, args, version, run) {
   let exitCode = 0;
   let status = 'ok';
   let statusMessage;
+  let extraAttrs = {};
   try {
-    exitCode = await run();
+    const result = await run();
+    // Commands may return either a plain exit code (number) or an object with
+    // { exitCode, ...extra } — the latter lets commands surface bounded,
+    // non-PII diagnostic fields (e.g. which checks failed in `doctor`).
+    if (result !== null && typeof result === 'object') {
+      exitCode = result.exitCode ?? 0;
+      const { exitCode: _ec, ...rest } = result;
+      // Flatten any array-valued extras to a comma-joined string so they fit
+      // the flat attribute bag shape (OTLP stringValue).
+      for (const [k, v] of Object.entries(rest)) {
+        extraAttrs[k] = Array.isArray(v) ? v.join(',') : v;
+      }
+    } else {
+      exitCode = result ?? 0;
+    }
     if (typeof exitCode === 'number' && exitCode !== 0) {
       status = 'error';
       statusMessage = `exit ${exitCode}`;
@@ -308,6 +324,7 @@ export async function traceCommand(command, args, version, run) {
         args,
         outcome: status === 'error' ? 'error' : 'ok',
         exitCode: typeof exitCode === 'number' ? exitCode : undefined,
+        extraAttrs,
       });
       await exportInvocation(config, {
         version,

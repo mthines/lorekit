@@ -24,8 +24,9 @@ export async function doctor(args) {
   const root = resolveProjectRoot(args.dir);
   let failures = 0;
   let warnings = 0;
+  const failedChecks = [];
   const record = (kind, label, detail) => {
-    if (kind === 'fail') failures++;
+    if (kind === 'fail') { failures++; failedChecks.push(label); }
     if (kind === 'warn') warnings++;
     status(kind, label, detail);
   };
@@ -91,7 +92,8 @@ export async function doctor(args) {
       }.`,
     );
   }
-  return failures === 0 ? 0 : 1;
+  const exitCode = failures === 0 ? 0 : 1;
+  return { exitCode, 'lorekit.cli.doctor.failed_checks': failedChecks };
 }
 
 // Merge doctor's --endpoint / --token flags into the env the resolver reads, so
