@@ -115,7 +115,7 @@ Unique constraint: `(user_id, scope, key)`.
 | `token_prefix` | text | First 12 chars + `...` for display (e.g. `lk_rw_aBcD1...`) |
 | `token_hash` | text | SHA-256 of the full token — never stored in plain text |
 | `permissions` | text[] | `["read", "write"]`, `["read"]`, or `["write"]` |
-| `last_used_at` | timestamptz | Updated fire-and-forget on auth |
+| `last_used_at` | timestamptz | Updated on auth via `EdgeRuntime.waitUntil` (survives isolate teardown; non-blocking) |
 
 ### `audit_log` table
 
