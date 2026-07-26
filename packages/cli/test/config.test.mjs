@@ -10,11 +10,48 @@ import {
   readJsonIfExists,
   copyDir,
   mcpJsonPath,
+  onPath,
+  resolveHookRunner,
+  writeFileAtomic,
 } from '../src/config.mjs';
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'lk-cfg-'));
 }
+
+// Regression: `npx @lorekit/cli install` stages a `lorekit` symlink into an
+// ephemeral …/_npx/<hash>/node_modules/.bin dir and prepends it to PATH. That
+// dir must NOT count as a durable install, or hooks get wired as bare
+// `lorekit hook …` and fail with `command not found` once npx exits.
+test('onPath ignores npx ephemeral bin dirs', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lk-npx-'));
+  const npxBin = path.join(root, '_npx', 'abc123', 'node_modules', '.bin');
+  fs.mkdirSync(npxBin, { recursive: true });
+  fs.writeFileSync(path.join(npxBin, 'lorekit'), '#!/bin/sh\n');
+
+  const savedPath = process.env.PATH;
+  try {
+    process.env.PATH = npxBin; // only the ephemeral dir is on PATH
+    assert.equal(onPath('lorekit'), false, 'ephemeral npx dir must not count as installed');
+    assert.equal(resolveHookRunner(), 'npx -y @lorekit/cli');
+  } finally {
+    process.env.PATH = savedPath;
+  }
+});
+
+test('onPath honours a durable global install', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lk-bin-'));
+  fs.writeFileSync(path.join(dir, 'lorekit'), '#!/bin/sh\n');
+
+  const savedPath = process.env.PATH;
+  try {
+    process.env.PATH = dir;
+    assert.equal(onPath('lorekit'), true);
+    assert.equal(resolveHookRunner(), 'lorekit');
+  } finally {
+    process.env.PATH = savedPath;
+  }
+});
 
 test('readMcpConfig distinguishes absent / valid / invalid', () => {
   const root = tmpRoot();
@@ -42,6 +79,30 @@ test('readJsonIfExists still throws on malformed JSON (install clobber-guard)', 
   const root = tmpRoot();
   fs.writeFileSync(mcpJsonPath(root), '{ broken');
   assert.throws(() => readJsonIfExists(mcpJsonPath(root)), /Failed to parse/);
+});
+
+test('writeFileAtomic replaces content, preserves perms, and leaves no temp file', () => {
+  const root = tmpRoot();
+  const file = path.join(root, '.claude.json');
+  fs.writeFileSync(file, 'old');
+  fs.chmodSync(file, 0o600); // a locked-down config holding secrets
+
+  writeFileAtomic(file, 'new-content');
+
+  assert.equal(fs.readFileSync(file, 'utf8'), 'new-content', 'content replaced');
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600, 'original 0600 perms preserved on replace');
+  assert.deepEqual(
+    fs.readdirSync(root).filter((f) => f.includes('.tmp')),
+    [],
+    'no leftover temp file',
+  );
+});
+
+test('writeFileAtomic creates a new file (and its parent dir) when absent', () => {
+  const root = tmpRoot();
+  const file = path.join(root, 'nested', 'dir', '.mcp.json');
+  writeFileAtomic(file, 'fresh');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'fresh');
 });
 
 test('copyDir reports how many files it actually wrote', () => {
