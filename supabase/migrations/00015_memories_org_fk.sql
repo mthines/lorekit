@@ -18,7 +18,7 @@
 --      first. A non-zero count means the cast will fail loudly (forward-only
 --      migrations do not paper over that) — investigate before proceeding.
 --   3. Recreates both read policies using lorekit_member_org_ids(auth.uid())
---      (00013_orgs.sql) — the single SECURITY DEFINER membership source —
+--      (00014_orgs.sql) — the single SECURITY DEFINER membership source —
 --      instead of the client-asserted claim.
 --
 -- Writes are untouched here: memory_write (00007/00009/00011) never sets

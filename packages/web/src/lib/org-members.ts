@@ -1,7 +1,7 @@
 'use server';
 
 /**
- * Server action wrapping `lorekit_org_members_list` (00023_org_member_identities.sql)
+ * Server action wrapping `lorekit_org_members_list` (00024_org_member_identities.sql)
  * — resolves real GitHub handles + avatars for an org's members. This is the
  * Phase 4 addition that reverses plan.md Decision D1's "no handle resolution
  * for other members" deferral (see

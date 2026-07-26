@@ -71,4 +71,8 @@ as $$
   select org_id from org_members where user_id = p_user_id;
 $$;
 
-grant execute on function lorekit_member_org_ids(uuid) to anon, authenticated, service_role;
+-- NOT granted to `anon`: the function takes a bare p_user_id, so an
+-- unauthenticated caller with EXECUTE could enumerate any user's org
+-- membership via PostgREST RPC. RLS policies that call it run as the
+-- querying role, and only authenticated/service_role ever read `memories`.
+grant execute on function lorekit_member_org_ids(uuid) to authenticated, service_role;

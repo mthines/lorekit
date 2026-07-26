@@ -13,7 +13,7 @@
  * `rls_org_members_select` policies (00012/00019), so there is no
  * authorization subtlety beyond what RLS already enforces.
  *
- * WRITES call the SECURITY DEFINER RPCs from 00021_org_management_rpcs.sql
+ * WRITES call the SECURITY DEFINER RPCs from 00022_org_management_rpcs.sql
  * (`lorekit_org_create`/`_rename`/`_delete`/`_member_remove`/`_member_role`/
  * `_leave`) — org_members/orgs carry NO insert/update/delete RLS policy, so a
  * direct `.insert()/.update()/.delete()` here would always fail. The RPC is
