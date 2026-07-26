@@ -64,6 +64,14 @@ const ASSIGNABLE_ROLE_HELPER: Record<Exclude<OrgRole, 'owner'>, string> = {
   viewer: 'Reads shared lore only.',
 };
 
+const ASSIGNABLE_ROLE_OPTIONS = (
+  <>
+    <option value="admin">Admin</option>
+    <option value="member">Member</option>
+    <option value="viewer">Viewer</option>
+  </>
+);
+
 type ConfirmState =
   | { kind: 'leave' }
   | { kind: 'delete' }
@@ -263,9 +271,7 @@ function InviteForm({ orgId, onInvited }: { orgId: string; onInvited: (invite: O
           onChange={(e) => setRole(e.target.value as Exclude<OrgRole, 'owner'>)}
           className="min-h-11 w-full max-w-[10rem] rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 text-sm text-[var(--color-content-primary)] focus:border-[var(--color-accent)] focus:outline-none"
         >
-          <option value="admin">Admin</option>
-          <option value="member">Member</option>
-          <option value="viewer">Viewer</option>
+          {ASSIGNABLE_ROLE_OPTIONS}
         </select>
         <p className="text-[10px] text-[var(--color-content-tertiary)]">{ASSIGNABLE_ROLE_HELPER[role]}</p>
       </div>
@@ -560,9 +566,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                             }
                             className="min-h-11 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 text-xs text-[var(--color-content-primary)] focus:border-[var(--color-accent)] focus:outline-none"
                           >
-                            <option value="admin">Admin</option>
-                            <option value="member">Member</option>
-                            <option value="viewer">Viewer</option>
+                            {ASSIGNABLE_ROLE_OPTIONS}
                           </select>
                         </div>
                       ) : (
