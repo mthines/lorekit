@@ -1,26 +1,33 @@
 # @lorekit/cli
 
-Install the **LoreKit shared-memory skill** into a project and run health
-checks against your LoreKit MCP server — a small, zero-dependency Node CLI.
+> The fastest way to give your AI coding agent a memory that survives the session.
 
-LoreKit gives coding agents a shared, persistent memory: lessons one agent
-learns are stored centrally and read by every other agent, in every session,
-CI included. This CLI wires an agent up to it in two commands.
+[![npm](https://img.shields.io/npm/v/@lorekit/cli.svg)](https://www.npmjs.com/package/@lorekit/cli)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](../../LICENSE)
 
-## Install
+[LoreKit](https://github.com/mthines/lorekit) gives coding agents a **shared,
+persistent memory**: a lesson one agent learns — a migration gotcha, a
+flaky-test fix, a costly wrong assumption — is stored once and recalled by every
+other agent, in every session, on every machine, CI included.
 
-Install it globally — recommended. You get one pinned version, the `lorekit`
-command stays on your `PATH`, and the plugin hooks (which call `lorekit hook`
-on every lifecycle event) fire instantly instead of paying an `npx` resolution
-cost each time:
+This is the CLI that connects your agent to it. One command scaffolds
+everything — the memory skill, the MCP connection, and the lifecycle hooks — and
+it's a zero-dependency Node binary that also runs fully offline against local
+markdown files if you never want to sign up for anything.
 
 ```bash
 npm install -g @lorekit/cli
-lorekit install
-lorekit doctor
+lorekit install     # wires up the skill, MCP server, and hooks
+lorekit doctor      # verify it's all green
 ```
 
-Upgrade later with `npm install -g @lorekit/cli@latest`.
+## Install
+
+The quickstart above uses the **global install — recommended.** You get one
+pinned version, the `lorekit` command stays on your `PATH`, and the plugin hooks
+(which call `lorekit hook` on every lifecycle event) fire instantly instead of
+paying an `npx` resolution cost each time. Upgrade later with
+`npm install -g @lorekit/cli@latest`.
 
 Prefer not to install anything? Run it on demand with `npx` — same commands,
 always the latest version, fetched and cached per use:
