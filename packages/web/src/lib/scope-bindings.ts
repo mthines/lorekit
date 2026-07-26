@@ -31,6 +31,49 @@ export interface ScopeBinding {
 }
 
 /**
+ * Return distinct scopes visible to the caller (personal lore + org lore via
+ * RLS on `memories`) that are not yet bound to the given org. Excludes scopes
+ * that are already in `alreadyBound`, so the BindScopeForm only surfaces
+ * actionable suggestions. Capped at 100 to keep the payload small — the
+ * server sorts alphabetically so the most-recognisable scopes appear first.
+ */
+export async function listAvailableScopes(orgId: string, alreadyBound: string[]): Promise<string[]> {
+  const supabase = await createServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return [];
+
+  // The memories RLS policies (00015 + org read widening) scope this query
+  // to rows the user can see — personal lore + lore from orgs they belong to.
+  // PostgREST's column de-duplication via `.order` + client-side distinct is
+  // the pragmatic approach; a raw SQL `SELECT DISTINCT` would need an RPC.
+  const { data, error } = await supabase
+    .from('memories')
+    .select('scope')
+    .order('scope', { ascending: true })
+    .limit(500); // over-fetch then client-deduplicate; memories.scope has no index for DISTINCT
+
+  if (error) {
+    console.error('[listAvailableScopes] DB error:', error.message);
+    return [];
+  }
+
+  const boundSet = new Set(alreadyBound);
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const row of data ?? []) {
+    const scope = row.scope as string;
+    if (!seen.has(scope) && !boundSet.has(scope)) {
+      seen.add(scope);
+      result.push(scope);
+      if (result.length >= 100) break;
+    }
+  }
+
+  return result;
+}
+
+/**
  * List the scope bindings for the given org. RLS (`rls_scope_bindings_select`)
  * scopes the read to orgs the caller is a member of.
  */
