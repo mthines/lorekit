@@ -48,7 +48,8 @@ const ORG_TOOLS = {
   'org.delete': toolOrgDelete,
 } as const;
 
-const TOOLS = { ...MEMORY_TOOLS, ...ORG_TOOLS } as const;
+// All known tool names — used only for the unknown-tool guard in tools/call.
+const ALL_TOOL_NAMES = new Set<string>([...Object.keys(MEMORY_TOOLS), ...Object.keys(ORG_TOOLS)]);
 
 function jsonrpc(id: unknown, result: unknown): Response {
   return new Response(JSON.stringify({ jsonrpc: '2.0', id, result }), {
@@ -231,38 +232,39 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
   }
 
   if (method === 'tools/call') {
-    const toolName = params.name as keyof typeof TOOLS;
+    const toolName = params.name as string;
     const toolArgs = params.arguments ?? {};
-    const tool = TOOLS[toolName];
 
-    if (!tool) {
+    if (!ALL_TOOL_NAMES.has(toolName)) {
       span.error(`UnknownTool: ${toolName}`).setAttributes({ 'mcp.tool.name': toolName ?? 'unknown' });
       return jsonrpcError(id, -32601, `Unknown tool: ${toolName}`);
     }
 
     span.setAttributes({ 'mcp.tool.name': toolName });
 
-    // org.* tools require a Supabase user JWT so auth.uid() resolves inside
-    // the SECURITY DEFINER RPCs. Reject api_key callers with a clear message.
-    if (toolName.startsWith('org.') && !isJwtAuth(auth)) {
-      span.error('PermissionDenied: org.* requires JWT auth').setAttributes({ 'mcp.tool.name': toolName });
-      return jsonrpcError(
-        id,
-        -32001,
-        'org.* tools require Supabase JWT authentication. ' +
-          'They are not available via API token — connect via the dashboard or a Supabase user session.',
-      );
-    }
+    const isOrgTool = toolName in ORG_TOOLS;
 
-    // memory.* permission check (api_key auth only; JWT auth is RLS-gated).
-    if (!toolName.startsWith('org.')) {
+    if (isOrgTool) {
+      // org.* tools require a Supabase user JWT so auth.uid() resolves inside
+      // the SECURITY DEFINER RPCs. Reject api_key and service callers.
+      if (!isJwtAuth(auth)) {
+        span.error('PermissionDenied: org.* requires JWT auth');
+        return jsonrpcError(
+          id,
+          -32001,
+          'org.* tools require Supabase JWT authentication. ' +
+            'They are not available via API token — connect via the dashboard or a Supabase user session.',
+        );
+      }
+    } else {
+      // memory.* permission check (api_key auth only; JWT auth is RLS-gated).
       const requiredPermission = toolRequires(toolName as keyof typeof MEMORY_TOOLS);
       if (requiredPermission === 'write' && !canWrite(auth)) {
-        span.error('PermissionDenied: read-only token').setAttributes({ 'mcp.tool.name': toolName });
+        span.error('PermissionDenied: read-only token');
         return jsonrpcError(id, -32001, 'This token does not have write permission. Use a read+write (lk_rw_) or write-only (lk_wo_) token.');
       }
       if (requiredPermission === 'read' && !canRead(auth)) {
-        span.error('PermissionDenied: write-only token').setAttributes({ 'mcp.tool.name': toolName });
+        span.error('PermissionDenied: write-only token');
         return jsonrpcError(id, -32001, 'This token does not have read permission. Use a read+write (lk_rw_) or read-only (lk_ro_) token.');
       }
     }
@@ -279,18 +281,17 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
 
     try {
       const db = getDb(auth);
-
       let result: unknown;
-      if (toolName.startsWith('org.')) {
+
+      if (isOrgTool) {
         // org.* tools: (db, args, span) — no userId parameter; auth.uid()
         // is resolved inside the SECURITY DEFINER RPCs from the JWT.
-        const orgTool = ORG_TOOLS[toolName as keyof typeof ORG_TOOLS];
-        result = await orgTool(db, toolArgs, toolSpan);
+        result = await ORG_TOOLS[toolName as keyof typeof ORG_TOOLS](db, toolArgs, toolSpan);
       } else {
         // memory.* tools: (db, args, userId, span)
-        const userId = getUserId(auth);
-        const memTool = MEMORY_TOOLS[toolName as keyof typeof MEMORY_TOOLS];
-        result = await memTool(db, toolArgs, userId, toolSpan);
+        result = await MEMORY_TOOLS[toolName as keyof typeof MEMORY_TOOLS](
+          db, toolArgs, getUserId(auth), toolSpan,
+        );
       }
 
       toolSpan.end();
