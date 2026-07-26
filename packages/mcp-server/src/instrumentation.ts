@@ -32,7 +32,8 @@ import {
   ATTR_SERVICE_NAME,
   ATTR_SERVICE_VERSION,
 } from '@opentelemetry/semantic-conventions';
-import { trace } from '@opentelemetry/api';
+import { SpanStatusCode, trace } from '@opentelemetry/api';
+import type * as http from 'http';
 
 // Read service version from package.json at startup
 const SERVICE_VERSION = process.env['npm_package_version'] ?? '0.0.1';
@@ -106,6 +107,26 @@ const sdk = new NodeSDK({
       // Disable noisy instrumentations not needed for this server
       '@opentelemetry/instrumentation-fs': { enabled: false },
       '@opentelemetry/instrumentation-dns': { enabled: false },
+      // Per OTel HTTP semantic conventions, server spans MUST NOT be marked
+      // ERROR for 4xx responses — those are client errors, not server faults.
+      // Only 5xx responses indicate a server error worth alerting on.
+      // @see https://opentelemetry.io/docs/specs/semconv/http/http-spans/#status
+      '@opentelemetry/instrumentation-http': {
+        applyCustomAttributesOnSpan: (
+          span,
+          _req,
+          res,
+        ) => {
+          const statusCode = res.statusCode;
+          if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
+            // Clear the ERROR status set by the auto-instrumentation for 4xx —
+            // these are expected client errors (e.g. 401 Unauthorized), not
+            // server-side failures. Leaving status UNSET keeps them out of
+            // error-rate dashboards and alerts.
+            span.setStatus({ code: SpanStatusCode.UNSET });
+          }
+        },
+      },
     }),
   ],
 });
