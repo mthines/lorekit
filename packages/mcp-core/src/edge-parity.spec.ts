@@ -45,7 +45,7 @@ function executableSource(file: string): string {
     .join('\n');
 }
 
-const MIRRORS = ['created-at.ts', 'webhook-secret-select.ts', 'tenant-scope.ts', 'org-permissions.ts'];
+const MIRRORS = ['created-at.ts', 'webhook-secret-select.ts', 'tenant-scope.ts', 'org-permissions.ts', 'webhook-installation.ts'];
 
 describe('edge-function mirror parity', () => {
   it.each(MIRRORS)('%s stays behaviourally in sync with its edge mirror', (name) => {

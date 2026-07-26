@@ -37,6 +37,7 @@ import {
   LogOut,
   Link,
   Unlink,
+  Github,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -64,6 +65,7 @@ export const AUDIT_ACTIONS = [
   'member.leave',
   'scope.bind',
   'scope.unbind',
+  'github_app.installation_linked',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -101,4 +103,5 @@ export const AUDIT_ACTION_META: Record<AuditAction, AuditActionMeta> = {
   'member.leave': { label: 'Member left', badgeColor: 'amber', icon: LogOut },
   'scope.bind': { label: 'Scope bound', badgeColor: 'green', icon: Link },
   'scope.unbind': { label: 'Scope unbound', badgeColor: 'amber', icon: Unlink },
+  'github_app.installation_linked': { label: 'GitHub App installation linked', badgeColor: 'green', icon: Github },
 };
