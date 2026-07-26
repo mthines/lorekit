@@ -68,9 +68,25 @@ deploy-preview          db push + functions deploy → PREVIEW project
         └─▶ deploy-production     db push + functions deploy → PRODUCTION project
               └─▶ smoke-production   health + MCP tools/list against PRODUCTION
                     └─▶ rollback-production   (only on failure)
+
+any job fails ─▶ notify-failure   Discord webhook (see below)
 ```
 
 Production is never touched until preview has been deployed and smoke-tested.
+
+### Failure notifications (Discord)
+
+A `notify-failure` job runs whenever **any** pipeline job reports `failure` — a
+deploy step, a smoke gate, or the rollback — and posts a single embed to a
+Discord webhook so a red production deploy reaches you outside the Actions UI.
+The embed names the first stage that failed (e.g. *smoke test → production*),
+the commit, who triggered it, and links back to the run.
+
+Set it up by adding a **repo-level** secret `DISCORD_WEBHOOK_URL` (Settings ▸
+Secrets and variables ▸ Actions) — create the webhook in Discord under *Server
+Settings ▸ Integrations ▸ Webhooks ▸ New Webhook* and copy its URL. If the
+secret is **unset**, `notify-failure` no-ops with a warning and never fails the
+run — the underlying failure is still reported loudly by the job that broke.
 
 ### Rollback behaviour
 
@@ -93,9 +109,11 @@ right values:
 | `SUPABASE_DB_PASSWORD` | preview DB password | production DB password |
 | `LOREKIT_SMOKE_TOKEN` | preview `lk_rw_*` token | production `lk_rw_*` token |
 
-Repo-level secret shared by both: `SUPABASE_ACCESS_TOKEN` (a Supabase personal
-access token). Add a **required reviewer** on the `production` environment for a
-manual approval gate before prod is touched.
+Repo-level secrets (not environment-scoped): `SUPABASE_ACCESS_TOKEN` (a Supabase
+personal access token) and — optionally — `DISCORD_WEBHOOK_URL` for
+[failure notifications](#failure-notifications-discord). Add a **required
+reviewer** on the `production` environment for a manual approval gate before prod
+is touched.
 
 ### Recommended branch protection
 

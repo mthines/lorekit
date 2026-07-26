@@ -3,6 +3,7 @@
 #
 #   deploy-preview ─▶ smoke-preview ─▶ deploy-production ─▶ smoke-production
 #                                              └─▶ rollback-production (on failure)
+#   any job fails ─▶ notify-failure (Discord webhook)
 #
 # "preview" is the pre-production environment (a dedicated Supabase project);
 # production is only touched after preview is deployed and smoke-tested.
@@ -15,6 +16,8 @@
 #   preview     → SUPABASE_PROJECT_REF, SUPABASE_DB_PASSWORD, LOREKIT_SMOKE_TOKEN
 #   production  → SUPABASE_PROJECT_REF, SUPABASE_DB_PASSWORD, LOREKIT_SMOKE_TOKEN
 # Repo-level secret shared by both: SUPABASE_ACCESS_TOKEN (personal access token).
+# Optional repo-level secret: DISCORD_WEBHOOK_URL — when set, notify-failure posts
+# a message there on any deploy-pipeline failure. Unset → notify-failure no-ops.
 # Add a required reviewer on the `production` environment for a manual gate.
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -278,3 +281,72 @@ jobs:
           echo "Inspect the failing job above and, if a migration is at fault, restore via PITR." >> "$GITHUB_STEP_SUMMARY"
           echo "::error::Production deploy failed — functions rolled back to the previous commit."
           exit 1
+
+  # ── 6. Notify Discord on ANY deploy-pipeline failure ─────────────────────────
+  #    Fires when any job above reports 'failure' — a deploy step, a smoke gate, or
+  #    the rollback. Posts a single embed to the DISCORD_WEBHOOK_URL webhook so a
+  #    red production deploy reaches you outside the Actions UI (the failure the
+  #    smoke tests would otherwise report only there). If the webhook secret is
+  #    unset the job no-ops with a warning and never fails the run itself — the
+  #    real failure is already reported loudly by the job that broke.
+  #    Values are passed through `env:` (never interpolated into the shell script)
+  #    to avoid workflow script injection.
+  notify-failure:
+    name: Notify Discord on failure
+    runs-on: ubuntu-latest
+    needs: [deploy-preview, smoke-preview, deploy-production, smoke-production, rollback-production]
+    if: always() && contains(needs.*.result, 'failure')
+    permissions: {}
+    steps:
+      - name: Post failure notification to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RESULT_DEPLOY_PREVIEW: ${{ needs.deploy-preview.result }}
+          RESULT_SMOKE_PREVIEW: ${{ needs.smoke-preview.result }}
+          RESULT_DEPLOY_PRODUCTION: ${{ needs.deploy-production.result }}
+          RESULT_SMOKE_PRODUCTION: ${{ needs.smoke-production.result }}
+          RESULT_ROLLBACK: ${{ needs.rollback-production.result }}
+          COMMIT_SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "::warning::DISCORD_WEBHOOK_URL is not set — skipping Discord notification. Add it under Settings ▸ Secrets and variables ▸ Actions."
+            exit 0
+          fi
+
+          # Name the first pipeline stage that failed (top-to-bottom = root cause;
+          # rollback failing is a symptom of a prod-job failure listed before it).
+          failed="an unknown stage"
+          if   [ "$RESULT_DEPLOY_PREVIEW"    = "failure" ]; then failed="deploy → preview"
+          elif [ "$RESULT_SMOKE_PREVIEW"     = "failure" ]; then failed="smoke tests → preview"
+          elif [ "$RESULT_DEPLOY_PRODUCTION" = "failure" ]; then failed="deploy → production"
+          elif [ "$RESULT_SMOKE_PRODUCTION"  = "failure" ]; then failed="smoke test → production"
+          elif [ "$RESULT_ROLLBACK"          = "failure" ]; then failed="production (rolled back to previous commit)"
+          fi
+
+          jq -n \
+            --arg failed "$failed" \
+            --arg sha "$COMMIT_SHA" \
+            --arg actor "$ACTOR" \
+            --arg url "$RUN_URL" \
+            --arg repo "$REPO" \
+            '{
+              username: "LoreKit Deploy",
+              embeds: [{
+                title: "🔴 Production deploy failed",
+                description: "Failed stage: **\($failed)**",
+                url: $url,
+                color: 15158332,
+                fields: [
+                  { name: "Repository",   value: $repo,               inline: true },
+                  { name: "Commit",       value: "`\($sha[0:7])`",    inline: true },
+                  { name: "Triggered by", value: $actor,              inline: true }
+                ]
+              }]
+            }' \
+          | curl -sf -X POST "$DISCORD_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -d @-
+          echo "Discord failure notification sent (failed stage: $failed)."
