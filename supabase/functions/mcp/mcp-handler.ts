@@ -57,10 +57,32 @@ function jsonrpc(id: unknown, result: unknown): Response {
   });
 }
 
+/**
+ * JSON-RPC error code for an *authenticated* caller that lacks permission for a
+ * specific tool — an authorization failure, NOT an authentication failure.
+ *
+ * Deliberately distinct from the pre-dispatch Unauthorized code (-32001). The
+ * HTTP status carries transport-level auth state; the JSON-RPC code carries
+ * application state. Only a genuinely unauthenticated request (-32001, emitted
+ * with a null id before dispatch) may answer HTTP 401 — that status is what
+ * drives an MCP client's OAuth retry. An authorization denial is an in-band
+ * response to an accepted tool call and MUST travel as HTTP 200 with the error
+ * in the body. Answering 401 here makes streamable-HTTP MCP clients (e.g.
+ * mcp-remote) treat the whole session as unauthenticated and silently
+ * retry/reconnect — the caller's tool-call promise never resolves and the
+ * client hangs indefinitely instead of surfacing the error.
+ */
+const JSONRPC_FORBIDDEN = -32003;
+
 export function jsonrpcError(id: unknown, code: number, message: string): Response {
+  // -32001 (Unauthorized, pre-dispatch) → 401 to trigger client reauth.
+  // JSONRPC_FORBIDDEN (authenticated-but-denied) → 200 so the JSON-RPC error is
+  // delivered in-band rather than read as a transport auth failure (which hangs
+  // mcp-remote). Everything else is a bad/failed request → 400.
+  const status = code === -32001 ? 401 : code === JSONRPC_FORBIDDEN ? 200 : 400;
   return new Response(
     JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } }),
-    { status: code === -32001 ? 401 : 400, headers: { 'Content-Type': 'application/json' } },
+    { status, headers: { 'Content-Type': 'application/json' } },
   );
 }
 
@@ -247,25 +269,35 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
     if (isOrgTool) {
       // org.* tools require a Supabase user JWT so auth.uid() resolves inside
       // the SECURITY DEFINER RPCs. Reject api_key and service callers.
+      // This is an AUTHORIZATION denial (the caller authenticated fine) → it
+      // must be JSONRPC_FORBIDDEN (HTTP 200), never -32001 (HTTP 401), or the
+      // MCP client hangs. See jsonrpcError().
       if (!isJwtAuth(auth)) {
-        span.error('PermissionDenied: org.* requires JWT auth');
+        span
+          .error('PermissionDenied: org.* requires JWT auth')
+          .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'jwt_required' });
         return jsonrpcError(
           id,
-          -32001,
+          JSONRPC_FORBIDDEN,
           'org.* tools require Supabase JWT authentication. ' +
             'They are not available via API token — connect via the dashboard or a Supabase user session.',
         );
       }
     } else {
       // memory.* permission check (api_key auth only; JWT auth is RLS-gated).
+      // Authenticated-but-insufficient-scope → JSONRPC_FORBIDDEN (HTTP 200).
       const requiredPermission = toolRequires(toolName as keyof typeof MEMORY_TOOLS);
       if (requiredPermission === 'write' && !canWrite(auth)) {
-        span.error('PermissionDenied: read-only token');
-        return jsonrpcError(id, -32001, 'This token does not have write permission. Use a read+write (lk_rw_) or write-only (lk_wo_) token.');
+        span
+          .error('PermissionDenied: read-only token')
+          .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'write_permission_missing' });
+        return jsonrpcError(id, JSONRPC_FORBIDDEN, 'This token does not have write permission. Use a read+write (lk_rw_) or write-only (lk_wo_) token.');
       }
       if (requiredPermission === 'read' && !canRead(auth)) {
-        span.error('PermissionDenied: write-only token');
-        return jsonrpcError(id, -32001, 'This token does not have read permission. Use a read+write (lk_rw_) or read-only (lk_ro_) token.');
+        span
+          .error('PermissionDenied: write-only token')
+          .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'read_permission_missing' });
+        return jsonrpcError(id, JSONRPC_FORBIDDEN, 'This token does not have read permission. Use a read+write (lk_rw_) or read-only (lk_ro_) token.');
       }
     }
 
