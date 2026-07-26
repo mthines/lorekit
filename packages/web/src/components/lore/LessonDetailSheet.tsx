@@ -87,7 +87,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
             <div className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] p-5">
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-2">
-                  <ScopeBadge scope={lesson.scope} type={lesson.scope_type} showPath />
+                  <ScopeBadge scope={lesson.scope} type={lesson.scope_type} showPath linkRepo />
                   {isArchived && (
                     <span className="rounded-full bg-[var(--color-bg-elevated)] px-2 py-0.5 text-xs text-[var(--color-content-tertiary)]">
                       archived
