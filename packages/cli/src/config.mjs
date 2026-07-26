@@ -51,13 +51,22 @@ export function settingsPath(root, scope = 'project') {
 // hooks.json so `install` delivers the same deterministic layer.
 export const CLAUDE_HOOK_EVENTS = ['SessionStart', 'PostToolUseFailure', 'Stop'];
 
-// Is `bin` resolvable on PATH? Used to prefer a fast global `lorekit` over
-// `npx` for hook commands. Zero-dep, cross-platform.
+// npx stages the package's own bin into an ephemeral cache dir
+// (…/_npx/<hash>/node_modules/.bin) and prepends it to PATH for the lifetime of
+// the `npx @lorekit/cli …` process. That makes `lorekit` *look* globally
+// installed during `install`, so the hooks get wired as bare `lorekit hook …`
+// — but the symlink vanishes when npx exits, and Claude Code then fails every
+// hook with `lorekit: command not found`. Excluding these transient dirs keeps
+// the bare-`lorekit` runner reserved for a genuine global install.
+const isEphemeralNpxDir = (dir) => /[\\/]_npx[\\/]/.test(dir);
+
+// Is `bin` resolvable on a *durable* PATH entry? Used to prefer a fast global
+// `lorekit` over `npx` for hook commands. Zero-dep, cross-platform.
 export function onPath(bin) {
   const dirs = (process.env.PATH || '').split(path.delimiter);
   const exts = process.platform === 'win32' ? ['.cmd', '.exe', '.bat', ''] : [''];
   for (const dir of dirs) {
-    if (!dir) continue;
+    if (!dir || isEphemeralNpxDir(dir)) continue;
     for (const ext of exts) {
       try {
         if (fs.existsSync(path.join(dir, bin + ext))) return true;

@@ -10,11 +10,47 @@ import {
   readJsonIfExists,
   copyDir,
   mcpJsonPath,
+  onPath,
+  resolveHookRunner,
 } from '../src/config.mjs';
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'lk-cfg-'));
 }
+
+// Regression: `npx @lorekit/cli install` stages a `lorekit` symlink into an
+// ephemeral …/_npx/<hash>/node_modules/.bin dir and prepends it to PATH. That
+// dir must NOT count as a durable install, or hooks get wired as bare
+// `lorekit hook …` and fail with `command not found` once npx exits.
+test('onPath ignores npx ephemeral bin dirs', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lk-npx-'));
+  const npxBin = path.join(root, '_npx', 'abc123', 'node_modules', '.bin');
+  fs.mkdirSync(npxBin, { recursive: true });
+  fs.writeFileSync(path.join(npxBin, 'lorekit'), '#!/bin/sh\n');
+
+  const savedPath = process.env.PATH;
+  try {
+    process.env.PATH = npxBin; // only the ephemeral dir is on PATH
+    assert.equal(onPath('lorekit'), false, 'ephemeral npx dir must not count as installed');
+    assert.equal(resolveHookRunner(), 'npx -y @lorekit/cli');
+  } finally {
+    process.env.PATH = savedPath;
+  }
+});
+
+test('onPath honours a durable global install', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lk-bin-'));
+  fs.writeFileSync(path.join(dir, 'lorekit'), '#!/bin/sh\n');
+
+  const savedPath = process.env.PATH;
+  try {
+    process.env.PATH = dir;
+    assert.equal(onPath('lorekit'), true);
+    assert.equal(resolveHookRunner(), 'lorekit');
+  } finally {
+    process.env.PATH = savedPath;
+  }
+});
 
 test('readMcpConfig distinguishes absent / valid / invalid', () => {
   const root = tmpRoot();
