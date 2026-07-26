@@ -9,6 +9,9 @@ export default defineConfig({
   },
   test: {
     globals: true,
+    // Default: node environment for pure-logic specs.
+    // Hook and component specs override this per-file with
+    // `// @vitest-environment jsdom` at the top of the file.
     environment: 'node',
     include: ['src/**/*.spec.ts', 'src/**/*.test.ts'],
     coverage: {
