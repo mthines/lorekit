@@ -117,6 +117,17 @@ test('commandAttributes carries command/outcome/exit code and only allow-listed 
   assert.ok(!serialized.includes('https://x'));
 });
 
+test('commandAttributes merges extraAttrs into the attribute bag', () => {
+  const attrs = commandAttributes({
+    command: 'doctor',
+    args: {},
+    outcome: 'error',
+    exitCode: 1,
+    extraAttrs: { 'lorekit.cli.doctor.failed_checks': 'connectivity,token' },
+  });
+  assert.equal(attrs['lorekit.cli.doctor.failed_checks'], 'connectivity,token');
+});
+
 // ── payload shape ──────────────────────────────────────────────────────────────
 
 test('buildTracePayload produces a valid single-span OTLP structure', () => {
