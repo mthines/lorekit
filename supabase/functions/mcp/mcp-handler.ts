@@ -69,7 +69,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
     });
   }
 
-  if (method === 'notifications/initialized') {
+  if (method?.startsWith('notifications/')) {
+    // All MCP notification methods (notifications/initialized, notifications/cancelled,
+    // notifications/progress, etc.) require no response body per the MCP spec.
+    // Previously only notifications/initialized was handled; any other notification
+    // fell through to the MethodNotFound error path, producing false-positive ERROR spans.
     return new Response(null, { status: 204 });
   }
 
