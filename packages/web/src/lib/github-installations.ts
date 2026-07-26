@@ -125,7 +125,7 @@ export async function handleSetupReturn(
   // raw_app_meta_data.provider_id.  We use app_metadata via the admin API;
   // in the dashboard context we can read it from the session user object.
   const githubProviderData = user.app_metadata?.providers?.includes('github')
-    ? user.identities?.find((id) => id.provider === 'github')
+    ? user.identities?.find((identity) => identity.provider === 'github')
     : undefined;
 
   if (!githubProviderData) {
