@@ -11,7 +11,7 @@
  * works in both server and client components.
  */
 
-import { Github } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { scopeRepoUrl } from '@/lib/scope';
 import { scopeIcon, scopeLabel, scopeType, type ScopePrefix } from './scope-meta';
@@ -88,7 +88,7 @@ export function ScopeBadge({
             pathClassName,
           ].join(' ')}
         >
-          <Github className="size-3 shrink-0" aria-hidden />
+          <ExternalLink className="size-3 shrink-0" aria-hidden />
           <code className="min-w-0 truncate">{scope}</code>
         </a>
       ) : showPath ? (
@@ -111,7 +111,7 @@ export function ScopeBadge({
           title="Open on GitHub"
           className="inline-flex shrink-0 items-center text-[var(--color-content-tertiary)] transition-colors duration-150 hover:text-[var(--color-content-primary)]"
         >
-          <Github className="size-3" aria-hidden />
+          <ExternalLink className="size-3" aria-hidden />
         </a>
       ) : null}
     </span>
