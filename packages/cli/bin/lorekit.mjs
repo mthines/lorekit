@@ -10,6 +10,7 @@ import { hook } from '../src/hook.mjs';
 import { migrate } from '../src/migrate.mjs';
 import { mcpServer } from '../src/mcp-server.mjs';
 import { traceCommand } from '../src/telemetry.mjs';
+import { loadDotEnv } from '../src/dotenv.mjs';
 
 // Read the version from package.json so it always matches the published
 // package — release-please bumps package.json, and this tracks it for free.
@@ -75,6 +76,9 @@ ${c.bold('Environment')}
   NO_COLOR                             disable colored output
   LOREKIT_TELEMETRY / DO_NOT_TRACK     set to 0/off (or DO_NOT_TRACK=1) to opt
                                        out of anonymous command-usage telemetry
+
+A ${c.cyan('.env')} file in the current directory is loaded automatically. Real
+environment variables take precedence, so the file is a fallback.
 
 ${c.bold('Examples')}
   npx @lorekit/cli install --endpoint https://ref.supabase.co/functions/v1/mcp --token lk_rw_xxx
@@ -214,6 +218,12 @@ const KNOWN_FLAGS = [
 const HUMAN_COMMANDS = new Set(['install', 'uninstall', 'doctor', 'migrate']);
 
 async function main() {
+  // Load a `.env` from the current directory (if any) before anything reads the
+  // environment — so telemetry config, tokens, and endpoints can come from a
+  // file. Best-effort and non-overriding: real env vars still win, a missing
+  // file is a silent no-op, and it never prints (safe for hook/mcp stdout).
+  loadDotEnv();
+
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
