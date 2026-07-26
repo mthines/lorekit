@@ -64,7 +64,7 @@ export async function resolveAuth(authHeader: string | null, queryToken: string 
         .from('api_tokens')
         .update({ last_used_at: new Date().toISOString() })
         .eq('token_hash', hash),
-    ).then(() => {}, () => { /* swallow — timestamp is best-effort */ });
+    ).catch(() => { /* swallow — timestamp is best-effort */ });
     const edgeRuntime = (globalThis as {
       EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void };
     }).EdgeRuntime;
