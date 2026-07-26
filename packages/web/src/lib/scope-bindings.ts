@@ -52,8 +52,8 @@ export async function listScopeBindings(orgId: string): Promise<ScopeBinding[]> 
   return (data ?? []) as ScopeBinding[];
 }
 
-/** Translate a raw Supabase error from lorekit_scope_bind into a user-facing message. */
-function translateBindError(message: string, code: string | undefined): string {
+/** Translate a raw Supabase error from a scope-binding RPC into a user-facing message. */
+function translateScopeError(message: string, code: string | undefined): string {
   if (message.startsWith('scope_bound_elsewhere:')) {
     return 'This scope is already bound to another organization.';
   }
@@ -65,8 +65,7 @@ function translateBindError(message: string, code: string | undefined): string {
 
 /**
  * Bind a scope to the org. Admin/owner only (`manage_scopes` capability via
- * lorekit_scope_bind). Returns the new binding id on success, or an error
- * string on failure.
+ * lorekit_scope_bind).
  */
 export async function bindScope(orgId: string, scope: string): Promise<{ id: string } | { error: string }> {
   const supabase = await createServerClient();
@@ -80,7 +79,7 @@ export async function bindScope(orgId: string, scope: string): Promise<{ id: str
     p_org_id: orgId,
     p_scope: trimmed,
   });
-  if (error) return { error: translateBindError(error.message, error.code) };
+  if (error) return { error: translateScopeError(error.message, error.code) };
 
   await recordAuditEvent({
     action: 'scope.bind',
@@ -105,14 +104,14 @@ export async function unbindScope(orgId: string, scope: string): Promise<{ error
 
   const { error } = await supabase.rpc('lorekit_scope_unbind', {
     p_org_id: orgId,
-    p_scope: scope,
+    p_scope: scope.trim(),
   });
-  if (error) return { error: translateBindError(error.message, error.code) };
+  if (error) return { error: translateScopeError(error.message, error.code) };
 
   await recordAuditEvent({
     action: 'scope.unbind',
     resourceType: 'org_scope_binding',
-    resourceId: orgId,
+    resourceId: scope,
     target: orgId,
     metadata: { scope },
   });

@@ -356,16 +356,14 @@ function BindScopeForm({ orgId, orgName, onBound }: { orgId: string; orgName: st
 
       {error && <p className="text-xs text-[var(--color-error)]">{error}</p>}
 
-      <div>
-        <button
-          type="submit"
-          disabled={pending || !scope.trim()}
-          className="flex min-h-11 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[#000] transition-opacity duration-150 disabled:opacity-50"
-        >
-          {pending ? <Loader2 className="size-4 animate-spin" /> : <Link className="size-4" />}
-          Bind scope
-        </button>
-      </div>
+      <button
+        type="submit"
+        disabled={pending || !scope.trim()}
+        className="flex min-h-11 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[#000] transition-opacity duration-150 disabled:opacity-50"
+      >
+        {pending ? <Loader2 className="size-4 animate-spin" /> : <Link className="size-4" aria-hidden />}
+        Bind scope
+      </button>
     </form>
   );
 }
