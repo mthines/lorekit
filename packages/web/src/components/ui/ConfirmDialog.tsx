@@ -9,7 +9,7 @@
  * opt-ins (plan.md Decision D7 / ux-design accessibility checklist).
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { AlertTriangle } from 'lucide-react';
 
@@ -22,6 +22,12 @@ export interface ConfirmDialogProps {
   /** Renders the confirm button and icon in the error/warning treatment. */
   destructive?: boolean;
   pending?: boolean;
+  /**
+   * When set, the confirm button stays disabled until the user types this exact
+   * phrase (e.g. the org name) into a confirmation input — a friction gate for
+   * the highest-stakes, irreversible-looking actions. Omit for a plain confirm.
+   */
+  confirmPhrase?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -34,27 +40,43 @@ export function ConfirmDialog({
   cancelLabel = 'Cancel',
   destructive = false,
   pending = false,
+  confirmPhrase,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const phraseRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
   const reduceMotion = useReducedMotion();
+  const [typed, setTyped] = useState('');
 
-  // On open: remember the triggering element and move focus to the SAFE Cancel
-  // action (never the destructive confirm — a stray Enter must not destroy).
+  const phraseSatisfied = !confirmPhrase || typed.trim() === confirmPhrase;
+
+  // Reset the typed confirmation each time the dialog opens so a phrase typed on
+  // a previous open never carries over into the next confirm.
+  useEffect(() => {
+    if (open) setTyped('');
+  }, [open, confirmPhrase]);
+
+  // On open: remember the triggering element and move focus. With a
+  // type-to-confirm phrase, focus the input (the required, non-destructive
+  // interaction — the confirm button is disabled until the phrase matches, so a
+  // stray Enter can't destroy). Otherwise focus the SAFE Cancel action.
   // On close: restore focus to the trigger. Mirrors LessonDetailSheet's
   // focus-on-open + restore-on-close pattern.
   useEffect(() => {
     if (open) {
       previouslyFocused.current = document.activeElement as HTMLElement | null;
-      const timer = setTimeout(() => cancelRef.current?.focus(), 80);
+      const timer = setTimeout(() => {
+        if (confirmPhrase) phraseRef.current?.focus();
+        else cancelRef.current?.focus();
+      }, 80);
       return () => clearTimeout(timer);
     }
     previouslyFocused.current?.focus?.();
     return undefined;
-  }, [open]);
+  }, [open, confirmPhrase]);
 
   // Escape cancels; Tab / Shift+Tab are trapped within the dialog so focus can
   // never reach the inert background behind an aria-modal dialog.
@@ -127,6 +149,22 @@ export function ConfirmDialog({
             <p id="confirm-dialog-description" className="mb-4 text-xs leading-relaxed text-[var(--color-content-secondary)]">
               {description}
             </p>
+            {confirmPhrase && (
+              <div className="mb-4 flex flex-col gap-1.5">
+                <label htmlFor="confirm-dialog-phrase" className="text-xs text-[var(--color-content-secondary)]">
+                  Type <span className="font-mono font-medium text-[var(--color-content-primary)]">{confirmPhrase}</span> to confirm
+                </label>
+                <input
+                  id="confirm-dialog-phrase"
+                  ref={phraseRef}
+                  type="text"
+                  value={typed}
+                  onChange={(e) => setTyped(e.target.value)}
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none"
+                />
+              </div>
+            )}
             <div className="flex justify-end gap-2">
               <button
                 ref={cancelRef}
@@ -139,7 +177,7 @@ export function ConfirmDialog({
               <button
                 type="button"
                 onClick={onConfirm}
-                disabled={pending}
+                disabled={pending || !phraseSatisfied}
                 className={[
                   'flex min-h-11 items-center justify-center rounded-lg px-4 text-sm font-medium transition-opacity duration-150 disabled:opacity-50',
                   destructive

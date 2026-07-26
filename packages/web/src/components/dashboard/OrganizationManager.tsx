@@ -16,7 +16,7 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Users, Plus, Loader2, Mail, X, LogOut, Trash2 } from 'lucide-react';
+import { Users, Plus, Loader2, Mail, X, LogOut, Trash2, Download } from 'lucide-react';
 import {
   createOrg,
   listMembers,
@@ -24,6 +24,8 @@ import {
   changeMemberRole,
   leaveOrg,
   deleteOrg,
+  exportOrgLore,
+  ORG_DELETE_RETENTION_DAYS,
   type OrgMembership,
   type OrgMember,
   type OrgRole,
@@ -380,7 +382,38 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
         setSelectedOrgId(next[0]?.id ?? null);
         return next;
       });
-      showToast('Organization deleted.', 'success');
+      showToast(`Organization deleted — recoverable for ${ORG_DELETE_RETENTION_DAYS} days.`, 'success');
+    });
+  }
+
+  // Download the org's shared lore as JSON — offered before delete so an owner
+  // can keep a copy. Browser-only (Blob + object URL), no server round-trip
+  // beyond the RLS-scoped read.
+  function handleExportLore() {
+    if (!selectedOrgId || !selectedOrg) return;
+    const org = selectedOrg;
+    startTransition(async () => {
+      const result = await exportOrgLore(selectedOrgId);
+      if ('error' in result) {
+        showToast(result.error, 'error');
+        return;
+      }
+      const payload = {
+        org: { id: org.id, slug: org.slug, name: org.name },
+        exported_at: new Date().toISOString(),
+        memories: result.rows,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `lorekit-${org.slug}-lore.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      showToast(
+        `Exported ${result.rows.length} ${result.rows.length === 1 ? 'memory' : 'memories'}.`,
+        'success',
+      );
     });
   }
 
@@ -651,14 +684,25 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
               Leave organization
             </button>
             {caps?.canDelete && (
-              <button
-                type="button"
-                onClick={() => setConfirm({ kind: 'delete' })}
-                className="flex min-h-11 items-center gap-2 rounded-lg border border-[var(--color-border)] px-4 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:border-[var(--color-error)]/40 hover:text-[var(--color-error)]"
-              >
-                <Trash2 className="size-4" aria-hidden />
-                Delete organization
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={handleExportLore}
+                  disabled={pending}
+                  className="flex min-h-11 items-center gap-2 rounded-lg border border-[var(--color-border)] px-4 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] disabled:opacity-50"
+                >
+                  <Download className="size-4" aria-hidden />
+                  Export lore
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirm({ kind: 'delete' })}
+                  className="flex min-h-11 items-center gap-2 rounded-lg border border-[var(--color-border)] px-4 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:border-[var(--color-error)]/40 hover:text-[var(--color-error)]"
+                >
+                  <Trash2 className="size-4" aria-hidden />
+                  Delete organization
+                </button>
+              </>
             )}
           </div>
         </>
@@ -681,7 +725,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
           confirm?.kind === 'leave'
             ? "You'll lose access to this organization's shared lore. You can be invited back later."
             : confirm?.kind === 'delete'
-              ? 'This permanently deletes the organization, its memberships, and pending invites. This cannot be undone.'
+              ? `The organization and its shared lore are hidden from all members immediately, but kept recoverable for ${ORG_DELETE_RETENTION_DAYS} days before permanent deletion. Export a copy first if you want one.`
               : confirm?.kind === 'revoke'
                 ? 'The invited person will no longer be able to accept this invite. You can invite them again later.'
                 : confirm?.kind === 'remove'
@@ -699,6 +743,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
         }
         destructive
         pending={pending}
+        confirmPhrase={confirm?.kind === 'delete' ? (selectedOrg?.name ?? undefined) : undefined}
         onConfirm={() => {
           if (confirm?.kind === 'leave') handleLeave();
           else if (confirm?.kind === 'delete') handleDelete();

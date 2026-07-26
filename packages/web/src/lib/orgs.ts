@@ -50,6 +50,28 @@ export interface OrgMember {
   created_at: string;
 }
 
+/**
+ * How long a soft-deleted org (and its shared lore) is retained before it's
+ * eligible for permanent purge. There is no automated purge job yet — this is
+ * the documented intended window, surfaced in the delete confirmation copy so
+ * an owner knows the delete is recoverable. `lorekit_org_purge` is the explicit
+ * permanent-delete path (SQL-only for now, see 00025).
+ */
+export const ORG_DELETE_RETENTION_DAYS = 30;
+
+/** A single org-owned memory row, shaped for the pre-delete JSON export. */
+export interface MemoryExportRow {
+  scope: string;
+  key: string;
+  value: string;
+  tags: string[] | null;
+  created_at: string;
+  updated_at: string;
+  archived_at: string | null;
+  source_agent: string | null;
+  trigger: string | null;
+}
+
 /** Create an org; the caller becomes its owner. Returns the new org's id. */
 export async function createOrg(slug: string, name: string): Promise<{ orgId: string } | { error: string }> {
   const supabase = await createServerClient();
@@ -137,7 +159,14 @@ export async function renameOrg(orgId: string, name: string): Promise<{ error?: 
   return {};
 }
 
-/** Delete an org (cascades org_members/org_invites). Owner only. */
+/**
+ * Soft-delete an org. Owner only. Since 00025 `lorekit_org_delete` stamps
+ * `orgs.deleted_at` instead of removing the row: the org and its shared lore
+ * immediately disappear from every member's reads (via the widened
+ * `lorekit_member_org_ids`), but the data is retained and recoverable for
+ * `ORG_DELETE_RETENTION_DAYS`. Permanent removal is the separate
+ * `lorekit_org_purge` path (not wired to the dashboard yet).
+ */
 export async function deleteOrg(orgId: string): Promise<{ error?: string }> {
   const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -149,6 +178,27 @@ export async function deleteOrg(orgId: string): Promise<{ error?: string }> {
   await recordAuditEvent({ action: 'org.delete', resourceType: 'org', resourceId: orgId });
   revalidatePath('/settings', 'layout');
   return {};
+}
+
+/**
+ * Export an org's shared lore as rows for a client-side JSON download, offered
+ * before deletion so an owner can keep a copy. RLS-scoped: only a member of the
+ * org gets rows back (both the active and archived read policies match org rows
+ * for members, so this returns the full set). Read-only — never mutates.
+ */
+export async function exportOrgLore(orgId: string): Promise<{ rows: MemoryExportRow[] } | { error: string }> {
+  const supabase = await createServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { error: 'Not authenticated' };
+
+  const { data, error } = await supabase
+    .from('memories')
+    .select('scope, key, value, tags, created_at, updated_at, archived_at, source_agent, trigger')
+    .eq('org_id', orgId)
+    .order('created_at', { ascending: true });
+
+  if (error) return { error: error.message };
+  return { rows: (data ?? []) as MemoryExportRow[] };
 }
 
 /**

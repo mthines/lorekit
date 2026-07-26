@@ -1184,6 +1184,126 @@ begin
 end;
 $$;
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- Safe org deletion — soft-delete + retention + purge (00025)
+-- ═════════════════════════════════════════════════════════════════════════
+
+-- Fresh 'sod-org' (f9) with owner A + member B and two org-owned memories,
+-- isolated from the phase-3 fixtures above so soft-delete/purge assertions
+-- don't perturb other sections.
+insert into orgs (id, slug, name, created_by) values
+  ('00000000-0000-0000-0000-0000000000f9', 'sod-org', 'Safe-Delete Org', '00000000-0000-0000-0000-0000000000a1');
+insert into org_members (org_id, user_id, role) values
+  ('00000000-0000-0000-0000-0000000000f9', '00000000-0000-0000-0000-0000000000a1', 'owner'),
+  ('00000000-0000-0000-0000-0000000000f9', '00000000-0000-0000-0000-0000000000b2', 'member');
+insert into memories (user_id, org_id, scope, key, value) values
+  (null, '00000000-0000-0000-0000-0000000000f9', 'repo::acme/sod', 'sod-1', 'v'),
+  (null, '00000000-0000-0000-0000-0000000000f9', 'repo::acme/sod', 'sod-2', 'v');
+
+-- ── 31. Soft-delete hides the org AND its memories from a member's reads ─────
+do $$
+declare
+  v_visible_before boolean;
+  v_visible_after boolean;
+  v_mem_before int;
+  v_mem_after int;
+  v_deleted_at timestamptz;
+begin
+  -- Before soft-delete: member B sees f9 in their membership set and can read
+  -- both org-owned memories.
+  v_visible_before := ('00000000-0000-0000-0000-0000000000f9'
+    in (select lorekit_member_org_ids('00000000-0000-0000-0000-0000000000b2')));
+  assert v_visible_before,
+    'safe-delete: a member must see a live org in lorekit_member_org_ids before soft-delete';
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}', true);
+  select count(*) into v_mem_before from memories where org_id = '00000000-0000-0000-0000-0000000000f9';
+  reset role;
+  assert v_mem_before = 2,
+    format('safe-delete: a member must read both org memories before soft-delete, saw %s', v_mem_before);
+
+  -- Owner A soft-deletes the org.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  perform lorekit_org_delete('00000000-0000-0000-0000-0000000000f9');
+  reset role;
+
+  -- The row still exists (recoverable) but is stamped deleted_at.
+  select deleted_at into v_deleted_at from orgs where id = '00000000-0000-0000-0000-0000000000f9';
+  assert v_deleted_at is not null,
+    'safe-delete: lorekit_org_delete must stamp orgs.deleted_at, not remove the row';
+
+  -- After: member B no longer sees the org in their membership set...
+  v_visible_after := ('00000000-0000-0000-0000-0000000000f9'
+    in (select lorekit_member_org_ids('00000000-0000-0000-0000-0000000000b2')));
+  assert not v_visible_after,
+    'safe-delete: a soft-deleted org must disappear from lorekit_member_org_ids';
+
+  -- ...and can no longer read its memories (hidden transitively via the
+  -- memories RLS read policy, which routes through lorekit_member_org_ids).
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}', true);
+  select count(*) into v_mem_after from memories where org_id = '00000000-0000-0000-0000-0000000000f9';
+  reset role;
+  assert v_mem_after = 0,
+    format('safe-delete: a soft-deleted org''s memories must be hidden from members, saw %s', v_mem_after);
+end;
+$$;
+
+-- ── 32. A non-owner can neither soft-delete nor purge ───────────────────────
+do $$
+declare
+  v_delete_denied boolean := false;
+  v_purge_denied boolean := false;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}', true);
+  begin
+    perform lorekit_org_delete('00000000-0000-0000-0000-0000000000f9');
+  exception when sqlstate 'LK002' then v_delete_denied := true; end;
+  begin
+    perform lorekit_org_purge('00000000-0000-0000-0000-0000000000f9');
+  exception when sqlstate 'LK002' then v_purge_denied := true; end;
+  reset role;
+
+  assert v_delete_denied,
+    'safe-delete: a member (non-owner) must be denied lorekit_org_delete with LK002';
+  assert v_purge_denied,
+    'safe-delete: a member (non-owner) must be denied lorekit_org_purge with LK002';
+end;
+$$;
+
+-- ── 33. Purge cascades the org, its memberships, and its memories away ──────
+do $$
+declare
+  v_orgs int;
+  v_members int;
+  v_mems int;
+begin
+  -- Owner A purges (the real, irreversible delete). Works on the already
+  -- soft-deleted org from §31.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  perform lorekit_org_purge('00000000-0000-0000-0000-0000000000f9');
+  reset role;
+
+  select count(*) into v_orgs from orgs where id = '00000000-0000-0000-0000-0000000000f9';
+  select count(*) into v_members from org_members where org_id = '00000000-0000-0000-0000-0000000000f9';
+  select count(*) into v_mems from memories where org_id = '00000000-0000-0000-0000-0000000000f9';
+
+  assert v_orgs = 0, 'safe-delete: purge must remove the orgs row';
+  assert v_members = 0, 'safe-delete: purge must cascade org_members away';
+  assert v_mems = 0,
+    'safe-delete: purge must cascade org-owned memories away (memories.org_id ON DELETE CASCADE)';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
