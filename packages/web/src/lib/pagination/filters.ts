@@ -46,7 +46,7 @@ export function substringNeedle(raw: string | undefined): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
   if (!trimmed) return null;
-  return trimmed.replace(ILIKE_ESCAPE_RE, (ch) => ILIKE_ESCAPE_MAP[ch] ?? ch);
+  return trimmed.replace(ILIKE_ESCAPE_RE, (ch) => ILIKE_ESCAPE_MAP[ch]);
 }
 
 export interface DateRangeInput {

@@ -116,13 +116,13 @@ export async function listAuditLog(filters: AuditLogFilters = {}): Promise<Audit
     def: DEFAULT_PAGE_SIZE,
     max: MAX_PAGE_SIZE,
   });
-  const cursor = decodeCursor(filters.cursor ?? null);
+  const cursor = decodeCursor(filters.cursor);
   const actions = normalizeActions(
     filters.actions ?? (filters.action ? [filters.action] : undefined),
     AUDIT_ACTIONS,
   );
   const needle = substringNeedle(filters.name);
-  const bounds = dateRangeBounds(filters.range ?? null);
+  const bounds = dateRangeBounds(filters.range);
 
   const base = supabase
     .from('audit_log')

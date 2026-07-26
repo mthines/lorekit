@@ -30,8 +30,8 @@ export function useAuditLog(filters: UseAuditLogFilters) {
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.nextCursor : undefined),
     // Audit events are relatively low-frequency and security-sensitive to get
-    // right rather than instantly fresh — matches the Settings-area staleness
-    // tolerance rather than Activity's 30s window.
+    // right rather than instantly fresh — 30s matches the Settings-area
+    // staleness tolerance (same cadence as the Activity feed).
     staleTime: 30_000,
   });
 }
