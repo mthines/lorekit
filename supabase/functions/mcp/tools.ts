@@ -224,27 +224,27 @@ export async function toolDelete(
       );
     }
     return { deleted, archived: false };
-  } else {
-    let query = tracedDb
-      .from('memories')
-      .update({ archived_at: new Date().toISOString() }, { count: 'exact' })
-      .eq('scope', scope)
-      .eq('key', key)
-      .is('archived_at', null);
-    if (userId) query = query.eq('user_id', userId);
-    const { error, count } = await query;
-    if (error) throw new Error(error.message);
-    const archived = (count ?? 0) > 0;
-    span.setAttributes({ 'lorekit.result.deleted': false, 'lorekit.result.archived': archived });
-    if (archived) {
-      await recordAudit(
-        db,
-        { action: 'memory.archive', resourceType: 'memory', target: key, metadata: { scope, key, force: false } },
-        userId,
-      );
-    }
-    return { deleted: false, archived };
   }
+
+  let query = tracedDb
+    .from('memories')
+    .update({ archived_at: new Date().toISOString() }, { count: 'exact' })
+    .eq('scope', scope)
+    .eq('key', key)
+    .is('archived_at', null);
+  if (userId) query = query.eq('user_id', userId);
+  const { error, count } = await query;
+  if (error) throw new Error(error.message);
+  const archived = (count ?? 0) > 0;
+  span.setAttributes({ 'lorekit.result.deleted': false, 'lorekit.result.archived': archived });
+  if (archived) {
+    await recordAudit(
+      db,
+      { action: 'memory.archive', resourceType: 'memory', target: key, metadata: { scope, key, force: false } },
+      userId,
+    );
+  }
+  return { deleted: false, archived };
 }
 
 export async function toolSearch(
