@@ -31,15 +31,21 @@ function NewSecretDisplay({
   onDismiss: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
   const [visible, setVisible] = useState(true);
 
   function handleCopy() {
     navigator.clipboard.writeText(secret).then(() => {
       setCopied(true);
+      setCopyError(false);
       setTimeout(() => setCopied(false), 2500);
     }).catch(() => {
-      // Clipboard access may be denied (permissions policy, non-HTTPS). The
-      // user can still manually select and copy the secret.
+      // Clipboard access may be denied (permissions policy, non-HTTPS). Reveal
+      // the secret and prompt a manual copy rather than failing silently.
+      console.warn('[webhook-secret] clipboard write failed; falling back to manual copy');
+      setVisible(true);
+      setCopyError(true);
+      setTimeout(() => setCopyError(false), 4000);
     });
   }
 
@@ -87,6 +93,13 @@ function NewSecretDisplay({
             </button>
           </div>
         </div>
+
+        {copyError && (
+          <p className="mt-2 text-xs text-[var(--color-content-secondary)]">
+            Couldn&apos;t copy automatically — select the secret above and press{' '}
+            <kbd className="rounded border border-[var(--color-border)] px-1 font-mono">⌘/Ctrl+C</kbd>.
+          </p>
+        )}
 
         <button
           onClick={onDismiss}
@@ -179,6 +192,7 @@ function RepoSecretRow({
   onRegenerate: (secret: string, record: WebhookSecret) => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
   const [visible, setVisible] = useState(false);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState('');
@@ -186,9 +200,15 @@ function RepoSecretRow({
   function handleCopy() {
     navigator.clipboard.writeText(webhookSecret.secret).then(() => {
       setCopied(true);
+      setCopyError(false);
       setTimeout(() => setCopied(false), 2000);
     }).catch(() => {
-      // Clipboard access may be denied (permissions policy, non-HTTPS).
+      // Clipboard access may be denied (permissions policy, non-HTTPS). Reveal
+      // the secret and prompt a manual copy rather than failing silently.
+      console.warn('[webhook-secret] clipboard write failed; falling back to manual copy');
+      setVisible(true);
+      setCopyError(true);
+      setTimeout(() => setCopyError(false), 4000);
     });
   }
 
@@ -259,6 +279,12 @@ function RepoSecretRow({
           </button>
         </div>
       </div>
+      {copyError && (
+        <p className="text-xs text-[var(--color-content-secondary)]">
+          Couldn&apos;t copy automatically — select the secret and press{' '}
+          <kbd className="rounded border border-[var(--color-border)] px-1 font-mono">⌘/Ctrl+C</kbd>.
+        </p>
+      )}
       {error && <p className="text-xs text-[var(--color-error)]">{error}</p>}
     </motion.div>
   );
@@ -286,7 +312,12 @@ export function WebhookSecretManager({ initialSecrets }: WebhookSecretManagerPro
     // The generate action always returns a concrete repo; guard for the type
     // narrowing and skip the (impossible) null-repo case rather than widening
     // the per-repo list.
-    if (!record.repo) return;
+    if (!record.repo) {
+      // Unreachable in practice — generateWebhookSecret always returns a repo —
+      // but surface it rather than leaving the form silently open.
+      console.warn('[webhook-secret] generated secret had no repo; skipping list update');
+      return;
+    }
     const withRepo = { ...record, repo: record.repo };
     setSecrets((prev) => [withRepo, ...prev.filter((s) => s.repo !== withRepo.repo)]);
     setNewSecret(secret);
