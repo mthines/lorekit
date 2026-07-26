@@ -65,8 +65,7 @@ function translateScopeError(message: string, code: string | undefined): string 
 
 /**
  * Bind a scope to the org. Admin/owner only (`manage_scopes` capability via
- * lorekit_scope_bind). Returns the new binding id on success, or an error
- * string on failure.
+ * lorekit_scope_bind).
  */
 export async function bindScope(orgId: string, scope: string): Promise<{ id: string } | { error: string }> {
   const supabase = await createServerClient();
@@ -105,7 +104,7 @@ export async function unbindScope(orgId: string, scope: string): Promise<{ error
 
   const { error } = await supabase.rpc('lorekit_scope_unbind', {
     p_org_id: orgId,
-    p_scope: scope,
+    p_scope: scope.trim(),
   });
   if (error) return { error: translateScopeError(error.message, error.code) };
 
