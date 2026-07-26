@@ -50,7 +50,10 @@ export function resolveTelemetryConfig(env = process.env) {
   if (optOut !== undefined && OFF_VALUES.has(String(optOut).trim().toLowerCase())) {
     return { enabled: false };
   }
-  if (env.DO_NOT_TRACK && String(env.DO_NOT_TRACK).trim() !== '0') {
+  // DNT spec designates exactly `1` as the opt-out signal (consoledonottrack.com).
+  // Match it precisely — a stray `DO_NOT_TRACK=false` should NOT disable export
+  // (use LOREKIT_TELEMETRY for the loose app-specific opt-out values).
+  if (env.DO_NOT_TRACK && String(env.DO_NOT_TRACK).trim() === '1') {
     return { enabled: false };
   }
 
