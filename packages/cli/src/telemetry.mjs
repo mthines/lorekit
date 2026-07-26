@@ -257,6 +257,19 @@ function errorLabel(e) {
 }
 
 /**
+ * Coerce a command handler's return value to a numeric exit code. Commands may
+ * resolve to a bare number, or to an { exitCode, ...extra } object (which lets
+ * them surface bounded diagnostic fields for telemetry); anything else → 0.
+ * Single source of truth for exit-code normalization on both traceCommand paths.
+ * @param {unknown} result
+ * @returns {number}
+ */
+function normalizeExitCode(result) {
+  if (result !== null && typeof result === 'object') return result.exitCode ?? 0;
+  return result ?? 0;
+}
+
+/**
  * Time a human-facing command, record its outcome, and export one span + one
  * counter point. Returns the command's exit code unchanged. Telemetry failures
  * are swallowed — the command result is never affected.
@@ -274,8 +287,13 @@ export async function traceCommand(command, args, version, run) {
     config = { enabled: false };
   }
 
-  // Fast path: no export configured → run with zero overhead.
-  if (!config.enabled) return run();
+  // Fast path: no export configured → run with zero telemetry overhead. Still
+  // normalize the result to a numeric exit code: commands may resolve to an
+  // { exitCode, ...extra } object (e.g. `doctor`), and only the instrumented
+  // path below unwraps it. Returning `run()` raw would leak that object all the
+  // way to `process.exit(obj)` in the bin entry → ERR_INVALID_ARG_TYPE crash
+  // (exit 1) for every user without an OTLP endpoint configured.
+  if (!config.enabled) return normalizeExitCode(await run());
 
   const startMs = Date.now();
   let exitCode = 0;
@@ -287,16 +305,14 @@ export async function traceCommand(command, args, version, run) {
     // Commands may return either a plain exit code (number) or an object with
     // { exitCode, ...extra } — the latter lets commands surface bounded,
     // non-PII diagnostic fields (e.g. which checks failed in `doctor`).
+    exitCode = normalizeExitCode(result);
     if (result !== null && typeof result === 'object') {
-      exitCode = result.exitCode ?? 0;
       const { exitCode: _ec, ...rest } = result;
       // Flatten any array-valued extras to a comma-joined string so they fit
       // the flat attribute bag shape (OTLP stringValue).
       for (const [k, v] of Object.entries(rest)) {
         extraAttrs[k] = Array.isArray(v) ? v.join(',') : v;
       }
-    } else {
-      exitCode = result ?? 0;
     }
     if (typeof exitCode === 'number' && exitCode !== 0) {
       status = 'error';

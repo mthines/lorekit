@@ -269,6 +269,29 @@ test('traceCommand runs with zero overhead and no fetch when disabled', async ()
   }
 });
 
+test('traceCommand unwraps an { exitCode } object to a number when disabled', async () => {
+  // Regression: `doctor` resolves to { exitCode, ...diagnostics }. With telemetry
+  // disabled (the common case — no OTLP endpoint), the fast path must still
+  // unwrap it to a number. Returning the raw object let it flow to
+  // process.exit(obj) in bin/lorekit.mjs → ERR_INVALID_ARG_TYPE crash (exit 1),
+  // which broke `doctor --deep` in CI smoke and for every un-instrumented user.
+  const prev = process.env.LOREKIT_TELEMETRY;
+  process.env.LOREKIT_TELEMETRY = 'off';
+  try {
+    const ok = await traceCommand('doctor', { deep: true }, '1.0.0', async () => ({
+      exitCode: 0,
+      'lorekit.cli.doctor.failed_checks': 'none',
+    }));
+    assert.equal(typeof ok, 'number');
+    assert.equal(ok, 0);
+    const failed = await traceCommand('doctor', {}, '1.0.0', async () => ({ exitCode: 1 }));
+    assert.equal(failed, 1);
+  } finally {
+    if (prev === undefined) delete process.env.LOREKIT_TELEMETRY;
+    else process.env.LOREKIT_TELEMETRY = prev;
+  }
+});
+
 test('traceCommand never lets a telemetry failure break the command', async () => {
   const prevHeaders = process.env.OTEL_EXPORTER_OTLP_HEADERS;
   process.env.OTEL_EXPORTER_OTLP_HEADERS = 'Authorization=Bearer test';
