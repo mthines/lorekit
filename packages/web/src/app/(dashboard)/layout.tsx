@@ -7,6 +7,8 @@ import { TopBar } from '@/components/layout/TopBar';
 import { Dash0Provider } from '@/components/providers/Dash0Provider';
 import { MemorySidebarProvider } from '@/components/providers/MemorySidebarProvider';
 import { ToastProvider } from '@/components/providers/ToastProvider';
+import { OnboardingProvider } from '@/components/providers/OnboardingProvider';
+import { getOnboardingState } from '@/lib/onboarding-server';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createServerClient();
@@ -24,11 +26,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
     redirect(`/login?next=${next}`);
   }
 
+  // Onboarding completion feeds both the sidebar's "Getting started" progress
+  // badge and the checklist itself, so it's resolved once here and shared via
+  // the provider.
+  const onboardingState = await getOnboardingState();
+
   return (
     // ToastProvider mounts once at the dashboard root — a thin sibling client
     // context (no Suspense-dependent hooks), so any settings/lore/dashboard
     // action can announce an aria-live toast (plan.md Decision D7).
     <ToastProvider>
+    <OnboardingProvider serverState={onboardingState}>
       <div className="flex h-screen flex-col overflow-hidden bg-[var(--color-bg)] md:flex-row">
         {/* Pass userId so Dash0Provider can call identify() and attach
             the opaque user ID to all subsequent RUM telemetry */}
@@ -49,6 +57,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           </MemorySidebarProvider>
         </Suspense>
       </div>
+    </OnboardingProvider>
     </ToastProvider>
   );
 }

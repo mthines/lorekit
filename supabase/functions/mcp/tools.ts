@@ -23,9 +23,9 @@ export type Params = Record<string, any>;
 
 /**
  * Resolve the org ids a user is a member of via the single membership-truth
- * RPC (lorekit_member_org_ids, 00012_orgs.sql) — never re-derives membership
+ * RPC (lorekit_member_org_ids, 00013_orgs.sql) — never re-derives membership
  * itself. Used only by the api_key read handlers below; the JWT/dashboard
- * path gets identical widening for free through RLS (00013_memories_org_fk.sql).
+ * path gets identical widening for free through RLS (00014_memories_org_fk.sql).
  *
  * Fails closed: an RPC error resolves to no orgs (personal-only), never to
  * broader access than intended.
@@ -224,27 +224,27 @@ export async function toolDelete(
       );
     }
     return { deleted, archived: false };
-  } else {
-    let query = tracedDb
-      .from('memories')
-      .update({ archived_at: new Date().toISOString() }, { count: 'exact' })
-      .eq('scope', scope)
-      .eq('key', key)
-      .is('archived_at', null);
-    if (userId) query = query.eq('user_id', userId);
-    const { error, count } = await query;
-    if (error) throw new Error(error.message);
-    const archived = (count ?? 0) > 0;
-    span.setAttributes({ 'lorekit.result.deleted': false, 'lorekit.result.archived': archived });
-    if (archived) {
-      await recordAudit(
-        db,
-        { action: 'memory.archive', resourceType: 'memory', target: key, metadata: { scope, key, force: false } },
-        userId,
-      );
-    }
-    return { deleted: false, archived };
   }
+
+  let query = tracedDb
+    .from('memories')
+    .update({ archived_at: new Date().toISOString() }, { count: 'exact' })
+    .eq('scope', scope)
+    .eq('key', key)
+    .is('archived_at', null);
+  if (userId) query = query.eq('user_id', userId);
+  const { error, count } = await query;
+  if (error) throw new Error(error.message);
+  const archived = (count ?? 0) > 0;
+  span.setAttributes({ 'lorekit.result.deleted': false, 'lorekit.result.archived': archived });
+  if (archived) {
+    await recordAudit(
+      db,
+      { action: 'memory.archive', resourceType: 'memory', target: key, metadata: { scope, key, force: false } },
+      userId,
+    );
+  }
+  return { deleted: false, archived };
 }
 
 export async function toolSearch(
