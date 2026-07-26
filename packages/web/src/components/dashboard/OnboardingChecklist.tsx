@@ -1,64 +1,17 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  Check, ChevronDown, ChevronRight, Copy, CheckCheck,
-  ExternalLink, Terminal, Webhook, Zap, X, Sparkles
+  Check, ChevronDown, ChevronRight, X, PartyPopper, RotateCcw, ListChecks,
 } from 'lucide-react';
+import { useOnboarding } from '@/components/providers/OnboardingProvider';
+import type { OnboardingStep } from '@/lib/onboarding';
 
-const DISMISSED_KEY = 'lorekit:onboarding-dismissed';
+// Re-exported for callers that build steps and render the checklist together.
+export type { OnboardingStep } from '@/lib/onboarding';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface CodeSnippetProps {
-  code: string;
-  language?: string;
-}
-
-function CodeSnippet({ code, language = 'bash' }: CodeSnippetProps) {
-  const [copied, setCopied] = useState(false);
-
-  function handleCopy() {
-    navigator.clipboard.writeText(code).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }
-
-  return (
-    <div className="group relative mt-2 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
-      <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)] px-3 py-1.5">
-        <span className="font-mono text-[10px] text-[var(--color-content-tertiary)]">{language}</span>
-        <button
-          onClick={handleCopy}
-          aria-label="Copy to clipboard"
-          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-[var(--color-content-tertiary)] transition-colors duration-150 hover:text-[var(--color-accent)]"
-        >
-          {copied ? (
-            <><CheckCheck className="size-3" aria-hidden /> Copied</>
-          ) : (
-            <><Copy className="size-3" aria-hidden /> Copy</>
-          )}
-        </button>
-      </div>
-      <pre className="overflow-x-auto p-3 font-mono text-xs leading-relaxed text-[var(--color-content-secondary)] whitespace-pre">
-        {code}
-      </pre>
-    </div>
-  );
-}
-
-// ── Step content ──────────────────────────────────────────────────────────────
-
-export interface OnboardingStep {
-  id: string;
-  title: string;
-  subtitle: string;
-  done: boolean;
-  icon: React.ReactNode;
-  content: React.ReactNode;
-}
+// ── Step row ────────────────────────────────────────────────────────────────
 
 interface StepRowProps {
   step: OnboardingStep;
@@ -68,10 +21,20 @@ interface StepRowProps {
 }
 
 function StepRow({ step, index, isOpen, onToggle }: StepRowProps) {
+  const { isDone, isServerDone, isManuallyDone, isMarkable, toggleDone } = useOnboarding();
+
+  const done = isDone(step.id);
+  const manuallyDone = isManuallyDone(step.id);
+  // Offer the self-attest toggle only while there's no real server signal —
+  // once a delivery actually lands, the step is genuinely done and un-marking
+  // it would be a confusing no-op.
+  const markable = isMarkable(step.id) && !isServerDone(step.id);
+
   // A step is expandable when it has content to reveal. Completed steps stay
   // expandable (collapsed by default) so their instructions and tokens remain
   // reachable — only steps with no content (e.g. "server is live") are inert.
   const expandable = step.content != null;
+
   return (
     <motion.div
       initial={{ opacity: 0, x: -8 }}
@@ -81,7 +44,7 @@ function StepRow({ step, index, isOpen, onToggle }: StepRowProps) {
         'rounded-xl border transition-all duration-200',
         isOpen && expandable
           ? 'border-[var(--color-border)] bg-[var(--color-bg-elevated)]'
-          : step.done
+          : done
             ? 'border-[var(--color-border-subtle)] bg-[var(--color-bg)] hover:bg-[var(--color-bg-raised)]'
             : 'border-[var(--color-border)] bg-[var(--color-bg-raised)] hover:bg-[var(--color-bg-elevated)]',
       ].join(' ')}
@@ -97,7 +60,7 @@ function StepRow({ step, index, isOpen, onToggle }: StepRowProps) {
         <div
           className={[
             'flex size-8 shrink-0 items-center justify-center rounded-lg border transition-all duration-300',
-            step.done
+            done
               ? 'border-[var(--color-success)] bg-[var(--color-success)]'
               : isOpen
                 ? 'border-[var(--color-border)] bg-[var(--color-bg-raised)] text-[var(--color-content-secondary)]'
@@ -105,7 +68,7 @@ function StepRow({ step, index, isOpen, onToggle }: StepRowProps) {
           ].join(' ')}
           aria-hidden
         >
-          {step.done ? (
+          {done ? (
             <Check className="size-4 text-[#000]" strokeWidth={3} />
           ) : (
             step.icon
@@ -116,14 +79,14 @@ function StepRow({ step, index, isOpen, onToggle }: StepRowProps) {
           <p
             className={[
               'text-sm font-medium',
-              step.done
+              done
                 ? 'text-[var(--color-content-tertiary)] line-through'
                 : 'text-[var(--color-content-primary)]',
             ].join(' ')}
           >
             {step.title}
           </p>
-          {!step.done && (
+          {!done && (
             <p className="mt-0.5 text-xs text-[var(--color-content-tertiary)]">
               {step.subtitle}
             </p>
@@ -154,6 +117,32 @@ function StepRow({ step, index, isOpen, onToggle }: StepRowProps) {
           >
             <div className="border-t border-[var(--color-border)] px-4 pb-4 pt-3">
               {step.content}
+
+              {/* Self-attest completion for steps with no reliable server signal. */}
+              {markable && (
+                <div className="mt-5 flex items-center gap-3 border-t border-[var(--color-border-subtle)] pt-4">
+                  <button
+                    onClick={() => toggleDone(step.id)}
+                    className={[
+                      'flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors duration-150',
+                      manuallyDone
+                        ? 'border-[var(--color-border)] bg-[var(--color-bg-raised)] text-[var(--color-content-secondary)] hover:text-[var(--color-content-primary)]'
+                        : 'border-[var(--color-accent)] bg-[var(--color-accent)] text-[#000] hover:opacity-90',
+                    ].join(' ')}
+                  >
+                    {manuallyDone ? (
+                      <><RotateCcw className="size-4" aria-hidden /> Mark as not done</>
+                    ) : (
+                      <><Check className="size-4" aria-hidden /> I&apos;ve set up the webhook</>
+                    )}
+                  </button>
+                  <p className="text-xs text-[var(--color-content-tertiary)]">
+                    {manuallyDone
+                      ? 'Marked complete. Lessons will appear here once a delivery arrives.'
+                      : 'Already added it on GitHub? Mark this step complete.'}
+                  </p>
+                </div>
+              )}
             </div>
           </motion.div>
         )}
@@ -162,69 +151,76 @@ function StepRow({ step, index, isOpen, onToggle }: StepRowProps) {
   );
 }
 
+// ── "All set" state (dedicated page only) ─────────────────────────────────────
+
+function AllSetPanel({ onReview }: { onReview: () => void }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+      className="flex flex-col items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-6 py-10 text-center"
+    >
+      <div className="flex size-11 items-center justify-center rounded-full border border-[var(--color-success)] bg-[var(--color-success)]/10 text-[var(--color-success)]">
+        <PartyPopper className="size-5" aria-hidden />
+      </div>
+      <p className="text-base font-semibold text-[var(--color-content-primary)]">
+        You&apos;re all set
+      </p>
+      <p className="max-w-sm text-sm text-[var(--color-content-secondary)]">
+        Every setup step is complete. Your agents can read and write lore, and PR
+        review comments flow in automatically. You can revisit this page any time.
+      </p>
+      <button
+        onClick={onReview}
+        className="mt-2 flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2 text-sm font-medium text-[var(--color-content-secondary)] transition-colors duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+      >
+        <ListChecks className="size-4" aria-hidden />
+        Review the steps
+      </button>
+    </motion.div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 interface OnboardingChecklistProps {
   steps: OnboardingStep[];
+  /**
+   * `inline` (Overview): a dismissible first-run card that hides once complete
+   * or dismissed. `page` (dedicated /onboarding): always shown, with a celebratory
+   * state when everything is done. Both share the same provider-backed progress.
+   */
+  variant?: 'inline' | 'page';
 }
 
-export function OnboardingChecklist({ steps }: OnboardingChecklistProps) {
-  const completedCount = steps.filter((s) => s.done).length;
-  const allDone = completedCount === steps.length;
-  const progress = completedCount / steps.length;
+export function OnboardingChecklist({ steps, variant = 'inline' }: OnboardingChecklistProps) {
+  const { isDone, completedCount, total, allDone, dismissed, dismiss } = useOnboarding();
 
-  // Find the first incomplete step to auto-open it
-  const firstIncompleteIndex = steps.findIndex((s) => !s.done);
-  const [openIndex, setOpenIndex] = useState<number>(firstIncompleteIndex);
+  // Auto-open the first incomplete step; on the dedicated page, keep the whole
+  // panel expanded by default.
+  const firstIncompleteIndex = steps.findIndex((s) => !isDone(s.id));
+  const [openIndex, setOpenIndex] = useState<number>(
+    firstIncompleteIndex === -1 ? 0 : firstIncompleteIndex,
+  );
   const [headerExpanded, setHeaderExpanded] = useState(true);
-  // Dismissed state — persisted in localStorage so closing survives page reloads.
-  const [dismissed, setDismissed] = useState(false);
+  // On the dedicated page, "Review the steps" swaps the celebratory panel for
+  // the full checklist so completed users can re-open every step on demand.
+  const [reviewing, setReviewing] = useState(false);
 
-  // Read localStorage after mount (SSR-safe).
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setDismissed(localStorage.getItem(DISMISSED_KEY) === '1');
-    }
-  }, []);
+  // Inline card retreats to the sidebar once complete or dismissed — the
+  // persistent "Getting started" entry is the way back.
+  if (variant === 'inline' && (allDone || dismissed)) return null;
 
-  // Nothing left to set up — hide entirely, no way (or need) to bring it back.
-  if (allDone) return null;
+  if (variant === 'page' && allDone && !reviewing) {
+    return <AllSetPanel onReview={() => setReviewing(true)} />;
+  }
+
+  const progress = completedCount / total;
+  const remaining = total - completedCount;
 
   function handleToggle(i: number) {
     setOpenIndex(openIndex === i ? -1 : i);
-  }
-
-  function handleDismiss(e: React.MouseEvent) {
-    e.stopPropagation();
-    localStorage.setItem(DISMISSED_KEY, '1');
-    setDismissed(true);
-  }
-
-  function handleRestore() {
-    localStorage.removeItem(DISMISSED_KEY);
-    setDismissed(false);
-  }
-
-  // Dismissed but still incomplete — collapse to a compact button the user can
-  // click to bring the full checklist back.
-  if (dismissed) {
-    return (
-      <motion.button
-        initial={{ opacity: 0, y: -4 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-        onClick={handleRestore}
-        className="group flex items-center gap-2 self-start rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2 text-left transition-colors duration-150 hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-elevated)]"
-      >
-        <Sparkles className="size-4 shrink-0 text-[var(--color-accent)]" aria-hidden />
-        <span className="text-sm font-medium text-[var(--color-content-secondary)] transition-colors duration-150 group-hover:text-[var(--color-content-primary)]">
-          Finish setting up LoreKit
-        </span>
-        <span className="rounded-md bg-[var(--color-bg-elevated)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--color-content-tertiary)]">
-          {completedCount}/{steps.length}
-        </span>
-      </motion.button>
-    );
   }
 
   return (
@@ -233,7 +229,10 @@ export function OnboardingChecklist({ steps }: OnboardingChecklistProps) {
       <button
         onClick={() => setHeaderExpanded((v) => !v)}
         aria-expanded={headerExpanded}
-        className="flex w-full items-center gap-3 p-4 pr-14 text-left"
+        className={[
+          'flex w-full items-center gap-3 p-4 text-left',
+          variant === 'inline' ? 'pr-14' : '',
+        ].join(' ')}
       >
         {/* Progress ring */}
         <div className="relative size-9 shrink-0" aria-hidden>
@@ -251,16 +250,18 @@ export function OnboardingChecklist({ steps }: OnboardingChecklistProps) {
             />
           </svg>
           <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-[var(--color-content-primary)]">
-            {completedCount}/{steps.length}
+            {completedCount}/{total}
           </span>
         </div>
 
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-[var(--color-content-primary)]">
-            Finish setting up LoreKit
+            {allDone ? 'Setup complete' : 'Finish setting up LoreKit'}
           </p>
           <p className="text-xs text-[var(--color-content-tertiary)]">
-            {steps.length - completedCount} step{steps.length - completedCount > 1 ? 's' : ''} left
+            {allDone
+              ? `All ${total} steps done`
+              : `${remaining} step${remaining === 1 ? '' : 's'} left`}
           </p>
         </div>
 
@@ -273,17 +274,19 @@ export function OnboardingChecklist({ steps }: OnboardingChecklistProps) {
         />
       </button>
 
-      {/* Dismiss button — shown outside the toggle button so it doesn't collapse the list */}
-      <div className="absolute right-4 top-4 flex items-center gap-1">
-        <button
-          onClick={handleDismiss}
-          aria-label="Dismiss onboarding checklist"
-          title="Dismiss"
-          className="flex size-7 items-center justify-center rounded-md text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-secondary)]"
-        >
-          <X className="size-3.5" aria-hidden />
-        </button>
-      </div>
+      {/* Dismiss button — inline card only, kept outside the toggle button */}
+      {variant === 'inline' && (
+        <div className="absolute right-4 top-4 flex items-center gap-1">
+          <button
+            onClick={dismiss}
+            aria-label="Hide onboarding checklist"
+            title="Hide — reopen from Getting started in the sidebar"
+            className="flex size-7 items-center justify-center rounded-md text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-secondary)]"
+          >
+            <X className="size-3.5" aria-hidden />
+          </button>
+        </div>
+      )}
 
       {/* Step list */}
       <AnimatePresence initial={false}>

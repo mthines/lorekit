@@ -22,9 +22,9 @@ export type Params = Record<string, any>;
 
 /**
  * Resolve the org ids a user is a member of via the single membership-truth
- * RPC (lorekit_member_org_ids, 00012_orgs.sql) — never re-derives membership
+ * RPC (lorekit_member_org_ids, 00013_orgs.sql) — never re-derives membership
  * itself. Used only by the api_key read handlers below; the JWT/dashboard
- * path gets identical widening for free through RLS (00013_memories_org_fk.sql).
+ * path gets identical widening for free through RLS (00014_memories_org_fk.sql).
  *
  * Fails closed: an RPC error resolves to no orgs (personal-only), never to
  * broader access than intended.

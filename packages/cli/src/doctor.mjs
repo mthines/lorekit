@@ -41,10 +41,16 @@ export async function doctor(args) {
     `v${process.versions.node}${major < 18 ? ' — need v18+ for fetch' : ''}`,
   );
 
-  // 2. Skill installed.
-  const skillMd = path.join(skillInstallDir(root), 'SKILL.md');
-  if (fs.existsSync(skillMd)) {
-    record('pass', `skill ${SKILL_NAME}`, path.relative(root, skillMd) || skillMd);
+  // 2. Skill installed — check BOTH the project and the global (~/.claude)
+  // locations. `lorekit install --global` writes the skill under home, not the
+  // repo, so a project-only check reports a healthy global install as "not
+  // found" (exactly the false FAIL a --global setup would hit).
+  const skillMd = [skillInstallDir(root, 'project'), skillInstallDir(root, 'global')]
+    .map((dir) => path.join(dir, 'SKILL.md'))
+    .find((p) => fs.existsSync(p));
+  if (skillMd) {
+    const rel = path.relative(root, skillMd);
+    record('pass', `skill ${SKILL_NAME}`, rel && !rel.startsWith('..') ? rel : prettyPath(skillMd));
   } else {
     record('fail', `skill ${SKILL_NAME}`, 'not found — run `lorekit install`');
   }
