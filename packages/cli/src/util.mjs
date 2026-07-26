@@ -119,8 +119,13 @@ export function select(question, options, { defaultIndex = 0 } = {}) {
 
 // Minimal flag parser: --key value, --key=value, -k value, and bare --flags.
 // `aliases` maps short → long; `booleans` lists flags that take no value.
-export function parseArgs(argv, { aliases = {}, booleans = [] } = {}) {
+// When `known` is a non-null list of long flag names, any flag whose resolved
+// name isn't in it is collected (as its original token) into `out._unknown` —
+// letting the caller reject typos like `--gloabl` instead of silently ignoring
+// them. `out._unknown` is only present when `known` was supplied.
+export function parseArgs(argv, { aliases = {}, booleans = [], known = null } = {}) {
   const out = { _: [] };
+  const unknown = [];
   for (let i = 0; i < argv.length; i++) {
     let token = argv[i];
     if (!token.startsWith('-')) {
@@ -135,6 +140,7 @@ export function parseArgs(argv, { aliases = {}, booleans = [] } = {}) {
     }
     let key = token.replace(/^-+/, '');
     if (aliases[key]) key = aliases[key];
+    if (known && !known.includes(key)) unknown.push(token);
     if (booleans.includes(key)) {
       out[key] = true;
       continue;
@@ -150,5 +156,6 @@ export function parseArgs(argv, { aliases = {}, booleans = [] } = {}) {
     }
     out[key] = value;
   }
+  if (known) out._unknown = unknown;
   return out;
 }

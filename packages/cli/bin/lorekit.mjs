@@ -83,25 +83,164 @@ ${c.bold('Examples')}
   npx @lorekit/cli doctor --deep
   npx @lorekit/cli migrate --from .lore                 # preview a rename
   npx @lorekit/cli migrate --from .lore --to project --yes
+
+Run ${c.cyan('lorekit <command> --help')} for command-specific options.
 `;
+
+// Per-command help. Keyed by command; `lorekit <command> --help` prints the
+// focused entry instead of the full top-level HELP, so a user only sees the
+// flags that actually apply to what they're running.
+const COMMAND_HELP = {
+  install: `${c.bold('lorekit install')} — scaffold the skill, wire the MCP server, install the hooks
+
+${c.bold('Usage')}
+  npx @lorekit/cli install [options]
+
+Scaffolds the lorekit-memory skill, adds the LoreKit MCP server, and wires the
+deterministic hooks (lessons on SessionStart, a nudge on tool failure + at Stop).
+
+${c.bold('Options')}
+  -d, --dir <path>        Target project root (default: current directory)
+      --project           Install into this project: .claude/skills + .mcp.json (default)
+      --global            Install for every project: ~/.claude/skills + ~/.claude.json
+  -e, --endpoint <url>    LoreKit MCP endpoint (else LOREKIT_MCP_URL)
+  -t, --token <token>     LoreKit token: lk_rw_* read+write, lk_ro_* read-only, lk_wo_* write-only
+      --no-hooks          Skip wiring the lifecycle hooks (skill stays model-invoked only)
+      --force             Overwrite existing skill files
+  -y, --yes               Non-interactive; never prompt (defaults to --project)
+
+${c.bold('Examples')}
+  npx @lorekit/cli install --endpoint https://ref.supabase.co/functions/v1/mcp --token lk_rw_xxx
+  npx @lorekit/cli install --global
+  npx @lorekit/cli install --no-hooks --yes
+`,
+  uninstall: `${c.bold('lorekit uninstall')} — reverse install for the chosen scope
+
+${c.bold('Usage')}
+  npx @lorekit/cli uninstall [options]
+
+Removes the lorekit-memory skill, the MCP server entry, and the lifecycle hooks.
+Surgical — other servers, hooks, and settings are left untouched.
+
+${c.bold('Options')}
+  -d, --dir <path>        Target project root (default: current directory)
+      --project           Uninstall from this project (default)
+      --global            Uninstall the global (~/.claude) setup
+  -y, --yes               Non-interactive; never prompt
+
+${c.bold('Examples')}
+  npx @lorekit/cli uninstall --global
+  npx @lorekit/cli uninstall --project --yes
+`,
+  doctor: `${c.bold('lorekit doctor')} — verify the skill install and the resolved memory backend
+
+${c.bold('Usage')}
+  npx @lorekit/cli doctor [options]
+
+Checks the node runtime, skill install, resolved memory mode, MCP connectivity,
+token, and scope.
+
+${c.bold('Options')}
+  -d, --dir <path>        Target project root (default: current directory)
+      --mode <mode>       Override the resolved mode: off | local | remote
+  -e, --endpoint <url>    Endpoint override (else .mcp.json / LOREKIT_MCP_URL)
+  -t, --token <token>     Token override (else .mcp.json / LOREKIT_TOKEN)
+      --store <path>      Local project-tier store directory (default: .lorekit)
+      --deep              Do a write→read→delete round-trip
+
+${c.bold('Examples')}
+  npx @lorekit/cli doctor
+  npx @lorekit/cli doctor --deep
+  npx @lorekit/cli doctor --mode local
+`,
+  migrate: `${c.bold('lorekit migrate')} — relocate a LoreKit-format local store into the current layout
+
+${c.bold('Usage')}
+  npx @lorekit/cli migrate --from <path> [options]
+
+Dry-run by default; pass --yes (or --apply) to write. Idempotent.
+
+${c.bold('Options')}
+  -d, --dir <path>        Target project root (default: current directory)
+      --from <path>       Source store to migrate from (required)
+      --to <tier>         Destination tier: home | project (default routes by scope)
+      --apply             Apply the migration (alias of --yes)
+  -y, --yes               Apply the migration; never prompt
+
+${c.bold('Examples')}
+  npx @lorekit/cli migrate --from .lore                 # preview a rename
+  npx @lorekit/cli migrate --from .lore --to project --yes
+`,
+  hook: `${c.bold('lorekit hook')} — hook engine for Claude Code / Cursor / Codex
+
+${c.bold('Usage')}
+  lorekit hook --adapter <claude|cursor|codex> --event <name> [--dir <path>]
+
+Machine-facing: reads the host's JSON on stdin and injects lessons or a
+retrospective nudge on stdout, always exiting 0. Wired into a plugin's hook
+config by \`lorekit install\` — not run by hand.
+
+${c.bold('Options')}
+  -d, --dir <path>        Target project root
+      --adapter <name>    Host framework: claude | cursor | codex
+      --event <name>      Host hook event (else read from the stdin payload)
+`,
+  mcp: `${c.bold('lorekit mcp')} — local stdio MCP server
+
+${c.bold('Usage')}
+  lorekit mcp [--dir <path>]
+
+Machine-facing: exposes the memory.* tools backed by the resolved store (local
+.lorekit/ offline, or remote passthrough) over JSON-RPC on stdin/stdout, so
+.mcp.json can point at the CLI instead of mcp-remote. Not run by hand.
+
+${c.bold('Options')}
+  -d, --dir <path>        Target project root (default: current directory)
+`,
+};
+
+// Every long flag the CLI understands (after alias resolution). Passed to the
+// parser so an unrecognized flag is captured rather than silently ignored — a
+// typo like `--gloabl` should fail loudly, not quietly fall back to --project.
+const KNOWN_FLAGS = [
+  'dir', 'project', 'global', 'endpoint', 'token', 'mode', 'store',
+  'from', 'to', 'apply', 'yes', 'no-hooks', 'force', 'deep', 'adapter',
+  'event', 'help', 'version',
+];
+
+// Commands that write to disk / talk to the network on a human's behalf. These
+// reject unknown flags; the machine-facing `hook` / `mcp` do not (they must
+// never fail on a stray flag, and only ever receive flags we control).
+const HUMAN_COMMANDS = new Set(['install', 'uninstall', 'doctor', 'migrate']);
 
 async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
     booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks'],
+    known: KNOWN_FLAGS,
   });
+
+  const command = args._[0];
+
+  // Help is intercepted first — before the machine-facing hook/mcp dispatch — so
+  // `lorekit <command> --help` always documents the command (even hook/mcp)
+  // instead of blocking on stdin. Real hook/mcp invocations never pass --help.
+  if (args.help) {
+    log(command && COMMAND_HELP[command] ? COMMAND_HELP[command] : HELP);
+    return 0;
+  }
 
   // `hook` is machine-facing: it must never print help/errors to stdout
   // (that would corrupt the JSON the host parses). Handle it before the
-  // help/usage branch and always resolve to exit 0.
-  if (args._[0] === 'hook') {
+  // usage branch and always resolve to exit 0.
+  if (command === 'hook') {
     return hook(args);
   }
 
   // `mcp` is machine-facing too: only JSON-RPC frames may reach stdout, so it
-  // must bypass the help/usage branch. It serves stdio until the client closes.
-  if (args._[0] === 'mcp') {
+  // must bypass the usage branch. It serves stdio until the client closes.
+  if (command === 'mcp') {
     return mcpServer(args);
   }
 
@@ -110,11 +249,18 @@ async function main() {
     return 0;
   }
 
-  const command = args._[0];
-
-  if (args.help || !command) {
+  if (!command) {
     log(HELP);
-    return command ? 0 : args.help ? 0 : 1;
+    return 1;
+  }
+
+  // Reject unrecognized flags on human-facing commands with an actionable
+  // pointer, rather than silently ignoring a typo that would change behavior.
+  if (HUMAN_COMMANDS.has(command) && args._unknown.length > 0) {
+    const plural = args._unknown.length > 1 ? 's' : '';
+    err(`${c.red(`Unknown option${plural}:`)} ${args._unknown.join(', ')}`);
+    err(`Run ${c.cyan(`lorekit ${command} --help`)} to see valid options.`);
+    return 1;
   }
 
   // Human-facing commands are wrapped so we can see which commands people run
