@@ -29,6 +29,8 @@ import { createServerClient } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
 import { recordAuditEvent } from '@/lib/audit-log';
 import { normalizeSlug } from '@/lib/org-slug';
+import { withSpan, logger, SpanStatusCode } from '@/lib/telemetry';
+import { ATTR_ERROR_TYPE } from '@opentelemetry/semantic-conventions';
 
 export type OrgRole = 'owner' | 'admin' | 'member' | 'viewer';
 
@@ -71,32 +73,50 @@ export interface MemoryExportRow {
 
 /** Create an org; the caller becomes its owner. Returns the new org's id. */
 export async function createOrg(slug: string, name: string): Promise<{ orgId: string } | { error: string }> {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Not authenticated' };
-  if (!name.trim()) return { error: 'Organization name is required' };
+  return withSpan(
+    'lorekit.org.create',
+    { 'lorekit.org.slug': slug },
+    async (span) => {
+      const supabase = await createServerClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { error: 'Not authenticated' };
+      if (!name.trim()) return { error: 'Organization name is required' };
 
-  const normalizedSlug = normalizeSlug(slug);
-  if (!normalizedSlug) {
-    return { error: 'Invalid organization slug — use 2–48 lowercase letters, digits, or dashes.' };
-  }
+      const normalizedSlug = normalizeSlug(slug);
+      if (!normalizedSlug) {
+        return { error: 'Invalid organization slug — use 2–48 lowercase letters, digits, or dashes.' };
+      }
 
-  const { data: orgId, error } = await supabase.rpc('lorekit_org_create', {
-    p_slug: normalizedSlug,
-    p_name: name.trim(),
-  });
-  if (error) return { error: error.message };
+      const { data: orgId, error } = await supabase.rpc('lorekit_org_create', {
+        p_slug: normalizedSlug,
+        p_name: name.trim(),
+      });
 
-  await recordAuditEvent({
-    action: 'org.create',
-    resourceType: 'org',
-    resourceId: orgId as string,
-    target: name.trim(),
-    metadata: { slug: normalizedSlug },
-  });
+      if (error) {
+        span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseRpcError');
+        span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseRpcError: ${error.message}` });
+        logger.error('lorekit.org.create.failed', {
+          'exception.type': 'SupabaseRpcError',
+          'exception.message': error.message,
+          'lorekit.org.slug': normalizedSlug,
+        });
+        return { error: error.message };
+      }
 
-  revalidatePath('/settings', 'layout');
-  return { orgId: orgId as string };
+      span.setAttribute('lorekit.org.id', orgId as string);
+
+      await recordAuditEvent({
+        action: 'org.create',
+        resourceType: 'org',
+        resourceId: orgId as string,
+        target: name.trim(),
+        metadata: { slug: normalizedSlug },
+      });
+
+      revalidatePath('/settings', 'layout');
+      return { orgId: orgId as string };
+    },
+  );
 }
 
 /** List the orgs the current user is a member of, with their role in each. */
@@ -111,7 +131,10 @@ export async function listMyOrgs(): Promise<OrgMembership[]> {
     .eq('user_id', user.id);
 
   if (error) {
-    console.error('[listMyOrgs] DB error:', error.message);
+    logger.error('lorekit.org.list_my_orgs.failed', {
+      'exception.type': 'SupabaseQueryError',
+      'exception.message': error.message,
+    });
     return [];
   }
 
@@ -135,7 +158,11 @@ export async function getOrg(orgId: string): Promise<Org | null> {
     .maybeSingle();
 
   if (error) {
-    console.error('[getOrg] DB error:', error.message);
+    logger.error('lorekit.org.get.failed', {
+      'exception.type': 'SupabaseQueryError',
+      'exception.message': error.message,
+      'lorekit.org.id': orgId,
+    });
     return null;
   }
   return data as Org | null;
@@ -143,17 +170,32 @@ export async function getOrg(orgId: string): Promise<Org | null> {
 
 /** Rename an org. Owner/admin only (lorekit_org_can 'rename_org'). */
 export async function renameOrg(orgId: string, name: string): Promise<{ error?: string }> {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Not authenticated' };
-  if (!name.trim()) return { error: 'Organization name is required' };
+  return withSpan(
+    'lorekit.org.rename',
+    { 'lorekit.org.id': orgId },
+    async (span) => {
+      const supabase = await createServerClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { error: 'Not authenticated' };
+      if (!name.trim()) return { error: 'Organization name is required' };
 
-  const { error } = await supabase.rpc('lorekit_org_rename', { p_org_id: orgId, p_name: name.trim() });
-  if (error) return { error: error.message };
+      const { error } = await supabase.rpc('lorekit_org_rename', { p_org_id: orgId, p_name: name.trim() });
+      if (error) {
+        span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseRpcError');
+        span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseRpcError: ${error.message}` });
+        logger.error('lorekit.org.rename.failed', {
+          'exception.type': 'SupabaseRpcError',
+          'exception.message': error.message,
+          'lorekit.org.id': orgId,
+        });
+        return { error: error.message };
+      }
 
-  await recordAuditEvent({ action: 'org.rename', resourceType: 'org', resourceId: orgId, target: name.trim() });
-  revalidatePath('/settings', 'layout');
-  return {};
+      await recordAuditEvent({ action: 'org.rename', resourceType: 'org', resourceId: orgId, target: name.trim() });
+      revalidatePath('/settings', 'layout');
+      return {};
+    },
+  );
 }
 
 /**
@@ -165,16 +207,31 @@ export async function renameOrg(orgId: string, name: string): Promise<{ error?: 
  * `lorekit_org_purge` path (not wired to the dashboard yet).
  */
 export async function deleteOrg(orgId: string): Promise<{ error?: string }> {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Not authenticated' };
+  return withSpan(
+    'lorekit.org.delete',
+    { 'lorekit.org.id': orgId },
+    async (span) => {
+      const supabase = await createServerClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { error: 'Not authenticated' };
 
-  const { error } = await supabase.rpc('lorekit_org_delete', { p_org_id: orgId });
-  if (error) return { error: error.message };
+      const { error } = await supabase.rpc('lorekit_org_delete', { p_org_id: orgId });
+      if (error) {
+        span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseRpcError');
+        span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseRpcError: ${error.message}` });
+        logger.error('lorekit.org.delete.failed', {
+          'exception.type': 'SupabaseRpcError',
+          'exception.message': error.message,
+          'lorekit.org.id': orgId,
+        });
+        return { error: error.message };
+      }
 
-  await recordAuditEvent({ action: 'org.delete', resourceType: 'org', resourceId: orgId });
-  revalidatePath('/settings', 'layout');
-  return {};
+      await recordAuditEvent({ action: 'org.delete', resourceType: 'org', resourceId: orgId });
+      revalidatePath('/settings', 'layout');
+      return {};
+    },
+  );
 }
 
 /**
@@ -235,7 +292,11 @@ export async function listMembers(orgId: string): Promise<OrgMember[]> {
     .order('created_at', { ascending: true });
 
   if (error) {
-    console.error('[listMembers] DB error:', error.message);
+    logger.error('lorekit.org.list_members.failed', {
+      'exception.type': 'SupabaseQueryError',
+      'exception.message': error.message,
+      'lorekit.org.id': orgId,
+    });
     return [];
   }
   return (data ?? []) as OrgMember[];
@@ -247,19 +308,34 @@ export async function listMembers(orgId: string): Promise<OrgMember[]> {
  * (lorekit_org_member_remove enforces both invariants).
  */
 export async function removeMember(orgId: string, targetUserId: string): Promise<{ error?: string }> {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Not authenticated' };
+  return withSpan(
+    'lorekit.org.member.remove',
+    { 'lorekit.org.id': orgId },
+    async (span) => {
+      const supabase = await createServerClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { error: 'Not authenticated' };
 
-  const { error } = await supabase.rpc('lorekit_org_member_remove', {
-    p_org_id: orgId,
-    p_target_user_id: targetUserId,
-  });
-  if (error) return { error: error.message };
+      const { error } = await supabase.rpc('lorekit_org_member_remove', {
+        p_org_id: orgId,
+        p_target_user_id: targetUserId,
+      });
+      if (error) {
+        span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseRpcError');
+        span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseRpcError: ${error.message}` });
+        logger.error('lorekit.org.member.remove.failed', {
+          'exception.type': 'SupabaseRpcError',
+          'exception.message': error.message,
+          'lorekit.org.id': orgId,
+        });
+        return { error: error.message };
+      }
 
-  await recordAuditEvent({ action: 'member.remove', resourceType: 'org_member', resourceId: targetUserId, target: orgId });
-  revalidatePath('/settings', 'layout');
-  return {};
+      await recordAuditEvent({ action: 'member.remove', resourceType: 'org_member', resourceId: targetUserId, target: orgId });
+      revalidatePath('/settings', 'layout');
+      return {};
+    },
+  );
 }
 
 /**
@@ -271,38 +347,72 @@ export async function changeMemberRole(
   targetUserId: string,
   role: Exclude<OrgRole, 'owner'>,
 ): Promise<{ error?: string }> {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Not authenticated' };
+  return withSpan(
+    'lorekit.org.member.change_role',
+    {
+      'lorekit.org.id': orgId,
+      'lorekit.org.member.role': role,
+    },
+    async (span) => {
+      const supabase = await createServerClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { error: 'Not authenticated' };
 
-  const { error } = await supabase.rpc('lorekit_org_member_role', {
-    p_org_id: orgId,
-    p_target_user_id: targetUserId,
-    p_role: role,
-  });
-  if (error) return { error: error.message };
+      const { error } = await supabase.rpc('lorekit_org_member_role', {
+        p_org_id: orgId,
+        p_target_user_id: targetUserId,
+        p_role: role,
+      });
+      if (error) {
+        span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseRpcError');
+        span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseRpcError: ${error.message}` });
+        logger.error('lorekit.org.member.change_role.failed', {
+          'exception.type': 'SupabaseRpcError',
+          'exception.message': error.message,
+          'lorekit.org.id': orgId,
+          'lorekit.org.member.role': role,
+        });
+        return { error: error.message };
+      }
 
-  await recordAuditEvent({
-    action: 'member.role_change',
-    resourceType: 'org_member',
-    resourceId: targetUserId,
-    target: orgId,
-    metadata: { role },
-  });
-  revalidatePath('/settings', 'layout');
-  return {};
+      await recordAuditEvent({
+        action: 'member.role_change',
+        resourceType: 'org_member',
+        resourceId: targetUserId,
+        target: orgId,
+        metadata: { role },
+      });
+      revalidatePath('/settings', 'layout');
+      return {};
+    },
+  );
 }
 
 /** Leave an org (remove the caller's own membership). The last owner cannot leave. */
 export async function leaveOrg(orgId: string): Promise<{ error?: string }> {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { error: 'Not authenticated' };
+  return withSpan(
+    'lorekit.org.leave',
+    { 'lorekit.org.id': orgId },
+    async (span) => {
+      const supabase = await createServerClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return { error: 'Not authenticated' };
 
-  const { error } = await supabase.rpc('lorekit_org_leave', { p_org_id: orgId });
-  if (error) return { error: error.message };
+      const { error } = await supabase.rpc('lorekit_org_leave', { p_org_id: orgId });
+      if (error) {
+        span.setAttribute(ATTR_ERROR_TYPE, 'SupabaseRpcError');
+        span.setStatus({ code: SpanStatusCode.ERROR, message: `SupabaseRpcError: ${error.message}` });
+        logger.error('lorekit.org.leave.failed', {
+          'exception.type': 'SupabaseRpcError',
+          'exception.message': error.message,
+          'lorekit.org.id': orgId,
+        });
+        return { error: error.message };
+      }
 
-  await recordAuditEvent({ action: 'member.leave', resourceType: 'org_member', resourceId: user.id, target: orgId });
-  revalidatePath('/settings', 'layout');
-  return {};
+      await recordAuditEvent({ action: 'member.leave', resourceType: 'org_member', resourceId: user.id, target: orgId });
+      revalidatePath('/settings', 'layout');
+      return {};
+    },
+  );
 }

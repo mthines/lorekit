@@ -17,6 +17,8 @@
  */
 
 import { trace, SpanStatusCode } from '@opentelemetry/api';
+import { ATTR_ERROR_TYPE } from '@opentelemetry/semantic-conventions';
+import { logger } from '@/lib/telemetry';
 
 export interface InviteEmailInput {
   /** invitee_email — the helper no-ops if this is falsy or lacks an '@'. */
@@ -110,17 +112,31 @@ export async function sendInviteEmail(input: InviteEmailInput): Promise<void> {
         // Non-fatal: record and move on. The invite already exists in the DB.
         finish('error');
         span.setAttribute('lorekit.invite.email.status_code', res.status);
-        span.setStatus({ code: SpanStatusCode.ERROR, message: `resend responded ${res.status}` });
-        console.error(`[sendInviteEmail] Resend responded ${res.status}`);
+        span.setAttribute(ATTR_ERROR_TYPE, 'ResendHttpError');
+        span.setStatus({ code: SpanStatusCode.ERROR, message: `ResendHttpError: resend responded ${res.status}` });
+        logger.error('lorekit.invite.email.send.failed', {
+          'exception.type': 'ResendHttpError',
+          'exception.message': `Resend responded with HTTP ${res.status}`,
+          'lorekit.invite.role': input.role,
+          'lorekit.invite.email.status_code': res.status,
+        });
         return;
       }
 
       finish('sent');
     } catch (err) {
+      const error = err as Error;
       finish('error');
-      span.recordException(err as Error);
-      span.setStatus({ code: SpanStatusCode.ERROR, message: (err as Error).message });
-      console.error('[sendInviteEmail] failed:', (err as Error).message);
+      span.setAttribute(ATTR_ERROR_TYPE, error.name);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: `${error.name}: ${error.message}` });
+      // Emit as a structured log record — span.recordException() uses the deprecated
+      // Span Event API (see agent-skills/skills/otel-instrumentation/rules/spans.md §"Recording exceptions").
+      logger.error('lorekit.invite.email.send.failed', {
+        'exception.type': error.name,
+        'exception.message': error.message,
+        'exception.stacktrace': error.stack ?? '',
+        'lorekit.invite.role': input.role,
+      });
     } finally {
       span.end();
     }
