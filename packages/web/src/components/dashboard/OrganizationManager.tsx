@@ -25,7 +25,6 @@ import {
   leaveOrg,
   deleteOrg,
   exportOrgLore,
-  ORG_DELETE_RETENTION_DAYS,
   type OrgMembership,
   type OrgMember,
   type OrgRole,
@@ -33,7 +32,7 @@ import {
 import { inviteMember, listInvites, revokeInvite, type OrgInvite } from '@/lib/org-invites';
 import { listMemberIdentities, type OrgMemberIdentity } from '@/lib/org-members';
 import { normalizeSlug } from '@/lib/org-slug';
-import { roleCapabilities, canActOnOrgMember, classifyInviteInput } from '@/lib/org-ui';
+import { roleCapabilities, canActOnOrgMember, classifyInviteInput, ORG_DELETE_RETENTION_DAYS } from '@/lib/org-ui';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { useToast } from '@/components/providers/ToastProvider';

@@ -8,6 +8,20 @@
 import type { OrgRole } from './orgs';
 import type { OrgInvite } from './org-invites';
 
+// ── Org deletion policy ──────────────────────────────────────────────────────
+
+/**
+ * How long a soft-deleted org (and its shared lore) is retained before it's
+ * eligible for permanent purge. There is no automated purge job yet — this is
+ * the documented intended window, surfaced in the delete confirmation copy so
+ * an owner knows the delete is recoverable. `lorekit_org_purge` is the explicit
+ * permanent-delete path (SQL-only for now, see 00025).
+ *
+ * Lives here (not in the `'use server'` `orgs.ts`) because a "use server" file
+ * may only export async functions — a plain value export is a compile error.
+ */
+export const ORG_DELETE_RETENTION_DAYS = 30;
+
 // ── Role → UI-affordance capability matrix ───────────────────────────────────
 
 export interface OrgRoleCapabilities {

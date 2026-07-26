@@ -51,13 +51,10 @@ export interface OrgMember {
 }
 
 /**
- * How long a soft-deleted org (and its shared lore) is retained before it's
- * eligible for permanent purge. There is no automated purge job yet — this is
- * the documented intended window, surfaced in the delete confirmation copy so
- * an owner knows the delete is recoverable. `lorekit_org_purge` is the explicit
- * permanent-delete path (SQL-only for now, see 00025).
+ * The org-deletion retention window (`ORG_DELETE_RETENTION_DAYS`) lives in the
+ * pure `org-ui.ts` module, not here: a `'use server'` file may only export
+ * async functions, so a plain value export is a compile error.
  */
-export const ORG_DELETE_RETENTION_DAYS = 30;
 
 /** A single org-owned memory row, shaped for the pre-delete JSON export. */
 export interface MemoryExportRow {
