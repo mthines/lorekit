@@ -31,7 +31,20 @@ function extractFunctionBody(src: string, fnName: string): string {
   const signature = `export async function ${fnName}(`;
   const start = src.indexOf(signature);
   if (start === -1) throw new Error(`handler ${fnName} not found in tools.ts`);
-  const paramsEnd = src.indexOf(')', start);
+  // Depth-count parens from the signature's `(` so nested `)` in a param type
+  // (e.g. `ReturnType<typeof createClient>`, default values) doesn't end the
+  // param list early — find the `)` that returns depth to 0, then the body `{`.
+  const sigOpen = src.indexOf('(', start);
+  let depthParen = 0;
+  let paramsEnd = -1;
+  for (let i = sigOpen; i < src.length; i++) {
+    if (src[i] === '(') depthParen++;
+    else if (src[i] === ')' && --depthParen === 0) {
+      paramsEnd = i;
+      break;
+    }
+  }
+  if (paramsEnd === -1) throw new Error(`could not find end of params for ${fnName}`);
   const bodyStart = src.indexOf('{', paramsEnd);
   let depth = 0;
   for (let i = bodyStart; i < src.length; i++) {
