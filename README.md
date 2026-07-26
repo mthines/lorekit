@@ -199,3 +199,6 @@ package, see [DEVELOPMENT.md](./DEVELOPMENT.md).
 ## License
 
 [MIT](./LICENSE) © LoreKit contributors.
+
+<img width="128" height="128" alt="lorekit-logo-2" src="https://github.com/user-attachments/assets/d65ac2d4-0a52-483b-9efe-427dfa45c026" />
+
