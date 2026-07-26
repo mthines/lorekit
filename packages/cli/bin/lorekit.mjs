@@ -227,7 +227,7 @@ async function main() {
   // `lorekit <command> --help` always documents the command (even hook/mcp)
   // instead of blocking on stdin. Real hook/mcp invocations never pass --help.
   if (args.help) {
-    log(command && COMMAND_HELP[command] ? COMMAND_HELP[command] : HELP);
+    log(COMMAND_HELP[command] ?? HELP);
     return 0;
   }
 
