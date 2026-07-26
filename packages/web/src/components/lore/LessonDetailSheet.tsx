@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useTransition } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github } from 'lucide-react';
 import { Controller } from 'react-hook-form';
@@ -9,8 +9,9 @@ import { EditableField } from '@/components/ui/EditableField';
 import { TagsField } from '@/components/ui/TagsField';
 import { FormActionBar } from '@/components/ui/FormActionBar';
 import { useEditableForm } from '@/lib/hooks/useEditableForm';
+import { useArchiveLesson, useRestoreLesson } from '@/lib/queries/lore';
 import type { LessonEntry } from './LessonCard';
-import { archiveLesson, restoreLesson, updateLesson } from '@/lib/lore';
+import { updateLesson } from '@/lib/lore';
 import { scopeRepoUrl } from '@/lib/scope';
 import { toast } from 'sonner';
 
@@ -32,7 +33,9 @@ interface LessonFormValues {
 
 export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSheetProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
-  const [isPending, startTransition] = useTransition();
+  const archiveMutation = useArchiveLesson();
+  const restoreMutation = useRestoreLesson();
+  const isPending = archiveMutation.isPending || restoreMutation.isPending;
 
   const isArchived = Boolean(lesson?.archived_at);
 
@@ -91,15 +94,32 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
 
   function handleArchive() {
     if (!lesson) return;
-    startTransition(async () => {
-      const result = isArchived
-        ? await restoreLesson(lesson.scope, lesson.key)
-        : await archiveLesson(lesson.scope, lesson.key);
-      if (!result.error) {
-        onMutated?.();
-        onClose();
-      }
-    });
+    const { scope, key } = lesson;
+    if (isArchived) {
+      restoreMutation.mutate({ scope, key }, {
+        onSuccess: (result) => {
+          if (result.error) {
+            toast.error('Failed to restore', { description: result.error });
+            return;
+          }
+          toast.success('Memory restored', { description: key });
+          onMutated?.();
+          onClose();
+        },
+      });
+    } else {
+      archiveMutation.mutate({ scope, key }, {
+        onSuccess: (result) => {
+          if (result.error) {
+            toast.error('Failed to archive', { description: result.error });
+            return;
+          }
+          toast.success('Memory archived', { description: key });
+          onMutated?.();
+          onClose();
+        },
+      });
+    }
   }
 
   return (

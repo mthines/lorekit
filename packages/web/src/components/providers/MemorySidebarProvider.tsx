@@ -27,7 +27,7 @@
  * visible gap.
  */
 
-import { createContext, useCallback, useContext, useMemo } from 'react';
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { LessonDetailSheet } from '@/components/lore/LessonDetailSheet';
 import { useLoreData } from '@/lib/queries/lore';
@@ -45,8 +45,13 @@ interface MemorySidebarContextValue {
   openLesson: LessonEntry | null;
   /** The raw lesson reference (scope + key) even while data is loading. */
   openLessonRef: LessonRef | null;
-  /** Open the sidebar for a specific lesson. Reacts immediately (optimistic). */
-  openLessonById: (ref: LessonRef) => void;
+  /**
+   * Open the sidebar for a specific lesson. Reacts immediately (optimistic).
+   * Pass the full `lesson` object when the caller already has it (e.g. from
+   * the archived list) so the sidebar can render without a separate lookup.
+   * Active-list callers omit it; the provider resolves it from useLoreData.
+   */
+  openLessonById: (ref: LessonRef, lesson?: LessonEntry) => void;
   /** Close the sidebar. Reacts immediately (optimistic). */
   closeLesson: () => void;
   /**
@@ -81,21 +86,44 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
   // without waiting for the router navigation round-trip.
   const [lessonRef, setLessonRef] = useUrlState<LessonRef | null>('lesson', null);
 
+  // Holds a pre-fetched lesson passed by the caller (e.g. an archived memory
+  // that won't be present in the active useLoreData cache). Kept in a ref so
+  // it doesn't cause an extra render cycle; mirrored to state so the memoised
+  // openLesson value updates when it changes.
+  const prefetchedRef = useRef<LessonEntry | null>(null);
+  const [prefetched, setPrefetched] = useState<LessonEntry | null>(null);
+
   // Resolve the ref to a full LessonEntry using the shared TanStack Query cache.
   // The same query is used by the Lore Explorer — zero extra network requests.
   const { data } = useLoreData();
 
   const openLesson = useMemo<LessonEntry | null>(() => {
-    if (!lessonRef || !data?.lessons) return null;
-    return (
-      data.lessons.find(
+    if (!lessonRef) return null;
+    // 1. Try the active-memories cache (covers all non-archived lessons).
+    if (data?.lessons) {
+      const found = data.lessons.find(
         (l) => l.scope === lessonRef.scope && l.key === lessonRef.key,
-      ) ?? null
-    );
-  }, [lessonRef, data]);
+      );
+      if (found) return found;
+    }
+    // 2. Fall back to the caller-supplied prefetched lesson (e.g. archived).
+    if (
+      prefetched &&
+      prefetched.scope === lessonRef.scope &&
+      prefetched.key === lessonRef.key
+    ) {
+      return prefetched;
+    }
+    return null;
+  }, [lessonRef, data, prefetched]);
 
   const openLessonById = useCallback(
-    (ref: LessonRef) => setLessonRef(ref),
+    (ref: LessonRef, lesson?: LessonEntry) => {
+      const next = lesson ?? null;
+      prefetchedRef.current = next;
+      setPrefetched(next);
+      setLessonRef(ref);
+    },
     [setLessonRef],
   );
 
@@ -106,7 +134,11 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
   // scope param that was set in the same tick. Guarding on lessonRef makes the
   // close a no-op navigation when nothing is open.
   const closeLesson = useCallback(() => {
-    if (lessonRef !== null) setLessonRef(null);
+    if (lessonRef !== null) {
+      prefetchedRef.current = null;
+      setPrefetched(null);
+      setLessonRef(null);
+    }
   }, [lessonRef, setLessonRef]);
 
   const contextValue = useMemo<MemorySidebarContextValue>(

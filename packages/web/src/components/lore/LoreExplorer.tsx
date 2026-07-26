@@ -32,7 +32,7 @@
  */
 
 import { useMemo, useTransition, useState } from 'react';
-import { Search, BookOpen, ChevronDown, ChevronUp, Loader2, List, LayoutGrid } from 'lucide-react';
+import { Search, BookOpen, ChevronDown, ChevronUp, Loader2, List, LayoutGrid, Archive } from 'lucide-react';
 import { ScopeTree, type ScopeNode } from './ScopeTree';
 import { LessonCard } from './LessonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -93,7 +93,12 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
   // Local-only: heatmap panel collapse. Ephemeral UI — not shareable.
   const [heatmapOpen, setHeatmapOpen] = useState(true);
 
-  // Paginated lesson list — server-side filtered by scope / search / range.
+  // URL-backed archived toggle — scoped to /lore.
+  const [showArchived, setShowArchived] = useUrlState<boolean>('archived', false, {
+    cleanOnPathname: '/lore',
+  });
+
+  // Paginated lesson list — server-side filtered by scope / search / range / archived.
   const {
     data,
     isLoading,
@@ -101,14 +106,14 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
     hasNextPage,
     isFetchingNextPage,
     fetchNextPage,
-  } = useMemories({ scope: selectedScope, search: committedSearch, range });
+  } = useMemories({ scope: selectedScope, search: committedSearch, range, showArchived });
 
   const lessons = useMemo(
     () => data?.pages.flatMap((page) => page.rows) ?? [],
     [data],
   );
 
-  const isFiltered = search.trim() !== '' || range !== null;
+  const isFiltered = search.trim() !== '' || range !== null || showArchived;
 
   function handleScopeSelect(scope: string | null) {
     startTransition(() => {
@@ -124,7 +129,10 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
     if (openLesson?.key === lesson.key && openLesson?.scope === lesson.scope) {
       closeLesson();
     } else {
-      openLessonById({ scope: lesson.scope, key: lesson.key });
+      // Pass the full lesson object so the sidebar can render immediately
+      // without a lookup — critical for archived lessons which aren't in the
+      // active useLoreData cache.
+      openLessonById({ scope: lesson.scope, key: lesson.key }, lesson);
     }
   }
 
@@ -169,9 +177,21 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
     if (lessons.length === 0) {
       return (
         <EmptyState
-          icon={BookOpen}
-          title={isFiltered ? 'No matching lessons' : 'No lessons in this scope'}
-          description={isFiltered ? 'Try a different search term or date range.' : 'Lessons will appear here once your agents start writing.'}
+          icon={showArchived ? Archive : BookOpen}
+          title={
+            showArchived
+              ? 'No archived memories'
+              : isFiltered
+                ? 'No matching lessons'
+                : 'No lessons in this scope'
+          }
+          description={
+            showArchived
+              ? 'Archive a memory from its detail panel to see it here.'
+              : isFiltered
+                ? 'Try a different search term or date range.'
+                : 'Lessons will appear here once your agents start writing.'
+          }
         />
       );
     }
@@ -319,6 +339,25 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
                   />
                 </div>
                 <DateRangePicker value={range} onChange={setRange} className="shrink-0" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowArchived(!showArchived);
+                    closeLesson();
+                  }}
+                  aria-pressed={showArchived}
+                  aria-label={showArchived ? 'Showing archived memories — click to show active' : 'Show archived memories'}
+                  title={showArchived ? 'Showing archived' : 'Show archived'}
+                  className={[
+                    'flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all duration-150',
+                    showArchived
+                      ? 'border-amber-400/40 bg-amber-400/10 text-amber-400'
+                      : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-tertiary)] hover:border-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]',
+                  ].join(' ')}
+                >
+                  <Archive className="size-3.5" aria-hidden />
+                  <span className="hidden sm:inline">Archived</span>
+                </button>
               </div>
 
               <div className="flex-1 overflow-y-auto p-3" role="list" aria-label="Lessons">
@@ -369,6 +408,23 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
                 />
               </div>
               <DateRangePicker value={range} onChange={setRange} className="shrink-0" />
+              <button
+                type="button"
+                onClick={() => {
+                  setShowArchived(!showArchived);
+                  closeLesson();
+                }}
+                aria-pressed={showArchived}
+                aria-label={showArchived ? 'Showing archived memories — click to show active' : 'Show archived memories'}
+                className={[
+                  'flex min-h-9 shrink-0 items-center justify-center rounded-lg border p-2 transition-all duration-150',
+                  showArchived
+                    ? 'border-amber-400/40 bg-amber-400/10 text-amber-400'
+                    : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-tertiary)]',
+                ].join(' ')}
+              >
+                <Archive className="size-4" aria-hidden />
+              </button>
             </div>
 
             <div role="list" aria-label="Lessons">
