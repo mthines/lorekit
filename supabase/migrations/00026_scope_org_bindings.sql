@@ -100,10 +100,9 @@ begin
       message = format('org_permission_denied: org=%s capability=manage_scopes', p_org_id);
   end if;
 
-  select org_id into v_existing_org from org_scope_bindings where scope = p_scope;
+  select org_id, id into v_existing_org, v_id from org_scope_bindings where scope = p_scope;
   if v_existing_org = p_org_id then
     -- Already bound to this org — idempotent no-op; return the existing id.
-    select id into v_id from org_scope_bindings where scope = p_scope;
     return v_id;
   elsif v_existing_org is not null then
     raise exception using errcode = 'P0001',
@@ -126,6 +125,10 @@ as $$
 declare
   v_actor uuid := auth.uid();
 begin
+  if p_scope is null or length(trim(p_scope)) = 0 then
+    raise exception using errcode = 'P0001', message = 'scope is required';
+  end if;
+
   if not lorekit_org_can(v_actor, p_org_id, 'manage_scopes') then
     raise exception using errcode = 'LK002',
       message = format('org_permission_denied: org=%s capability=manage_scopes', p_org_id);

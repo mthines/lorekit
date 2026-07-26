@@ -102,20 +102,11 @@ export async function toolWrite(
   // `inserted` is an internal audit-classification signal (D4), not part of
   // the memory.write response contract — keep the same {id, created_at}
   // shape the Node (mcp-core) path returns so both production surfaces agree.
-  //
-  // Scope-binding (00026) graceful fallback: when the scope is bound to an org
-  // but this writer isn't a write-capable member, the row was saved PERSONAL
-  // (never rejected, never silently org-owned). Surface an actionable `notice`
-  // so the caller knows where it landed and how to fix it — the write itself
-  // still succeeded, so this is additive, not an error.
   if (row.binding_org_slug && row.org_routed === false) {
     return {
       id: row.id,
       created_at: row.created_at,
-      notice:
-        `Saved to your personal lore. The scope "${scope}" is shared with the ` +
-        `"${row.binding_org_slug}" organization, but you're not a write-member — ` +
-        `ask an admin to add you to share it with the team.`,
+      notice: `Saved to your personal lore. The scope "${scope}" is shared with the "${row.binding_org_slug}" organization, but you're not a write-member — ask an admin to add you to share it with the team.`,
     };
   }
   return { id: row.id, created_at: row.created_at };
