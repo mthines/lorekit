@@ -183,8 +183,12 @@ export async function deleteOrg(orgId: string): Promise<{ error?: string }> {
  * the action or exhausts client memory. An org at the cap is an edge case
  * (memory caps are far lower by default); if it's ever hit, `truncated` tells
  * the caller the export is partial.
+ *
+ * Not exported: it's used only by {@link exportOrgLore} below, and a
+ * `'use server'` file may export async functions only — a value export is a
+ * compile error.
  */
-export const ORG_EXPORT_ROW_LIMIT = 5000;
+const ORG_EXPORT_ROW_LIMIT = 5000;
 
 /**
  * Export an org's shared lore as rows for a client-side JSON download, offered
