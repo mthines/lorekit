@@ -281,7 +281,6 @@ export function removeClaudeHooks(root, scope = 'project') {
       );
       removed += before - group.hooks.length;
     }
-    // Drop groups we emptied, then the event key if it has no groups left.
     config.hooks[event] = groups.filter((g) => g && Array.isArray(g.hooks) && g.hooks.length > 0);
     if (config.hooks[event].length === 0) delete config.hooks[event];
   }

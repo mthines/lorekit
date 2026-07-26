@@ -75,7 +75,7 @@ export async function uninstall(args) {
   });
 
   const failed = [skill, mcp, hooks].some((s) => !s.ok);
-  const any = (skill.result?.removed || mcp.result?.removed || hooks.result?.removed) && true;
+  const any = Boolean(skill.result?.removed || mcp.result?.removed || hooks.result?.removed);
 
   if (failed) {
     log(`\n  ${c.dim('Some items could not be removed and were left untouched — see above.')}`);
@@ -109,6 +109,5 @@ function report(step, label, { done, noop }) {
     return;
   }
   const r = step.result;
-  const removed = r.removed;
-  status(removed ? 'pass' : 'info', label, removed ? done(r) : noop);
+  status(r.removed ? 'pass' : 'info', label, r.removed ? done(r) : noop);
 }
