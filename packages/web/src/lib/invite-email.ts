@@ -63,7 +63,7 @@ export async function sendInviteEmail(input: InviteEmailInput): Promise<void> {
       `<p>${escapeHtml(invitedBy)} to join <strong>${escapeHtml(orgName)}</strong> on LoreKit as a <strong>${escapeHtml(role)}</strong>.</p>`,
       `<p><a href="${escapeHtml(link)}">Sign in with GitHub to accept</a></p>`,
       `<p style="color:#888;font-size:12px">LoreKit — shared, persistent memory for your agents.</p>`,
-    ].join('');
+    ].join('\n');
 
     const res = await fetch(RESEND_ENDPOINT, {
       method: 'POST',
@@ -79,7 +79,7 @@ export async function sendInviteEmail(input: InviteEmailInput): Promise<void> {
       console.error(`[sendInviteEmail] Resend responded ${res.status}`);
     }
   } catch (err) {
-    console.error('[sendInviteEmail] failed:', (err as Error).message);
+    console.error('[sendInviteEmail] failed:', String(err));
   }
 }
 
