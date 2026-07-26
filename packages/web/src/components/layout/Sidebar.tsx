@@ -3,13 +3,14 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
-import { BookOpen, Activity, LayoutDashboard, Settings, Rocket } from 'lucide-react';
+import { BookOpen, LayoutDashboard, Settings, Rocket } from 'lucide-react';
 import { useOnboarding } from '@/components/providers/OnboardingProvider';
 
+// Activity is no longer a standalone route — the heatmap and time-ordered feed
+// are now accessible from the Lore Explorer page via the "Browse by time" tab.
 const NAV = [
   { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { href: '/lore', label: 'Explorer', icon: BookOpen },
-  { href: '/activity', label: 'Activity', icon: Activity },
 ] as const;
 
 // "Getting started" and "Settings" sit apart from the primary content nav —

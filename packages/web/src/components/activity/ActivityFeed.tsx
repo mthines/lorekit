@@ -1,7 +1,8 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Bot, Zap, Webhook } from 'lucide-react';
+import { Bot, Zap, Webhook, ArrowRight } from 'lucide-react';
+import Link from 'next/link';
 import { MemoryCard, memoryFromEvent } from '@/components/memory/MemoryCard';
 import { scopeLabel } from '@/components/memory/scope-meta';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
@@ -184,11 +185,22 @@ export function ActivityFeed({ events, range, onRangeChange }: ActivityFeedProps
       ) : (
         <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
           <p className="text-sm text-[var(--color-content-secondary)]">
-            {isFiltered ? 'No activity matches these filters' : 'No activity yet'}
+            {isFiltered ? 'No lessons match these filters' : 'No lessons yet'}
           </p>
           <p className="text-xs text-[var(--color-content-tertiary)]">
-            {isFiltered ? 'Try widening the date range or clearing the scope filter.' : 'Agent writes will appear here.'}
+            {isFiltered
+              ? 'Try widening the date range or clearing the scope filter.'
+              : 'Agent writes will appear here once your LoreKit config is connected.'}
           </p>
+          {!isFiltered && (
+            <Link
+              href="/onboarding"
+              className="mt-1 flex items-center gap-1 text-xs font-medium text-[var(--color-accent)] hover:underline"
+            >
+              View setup guide
+              <ArrowRight className="size-3" aria-hidden />
+            </Link>
+          )}
         </div>
       )}
     </div>
