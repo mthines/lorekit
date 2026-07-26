@@ -60,26 +60,22 @@ function jsonrpc(id: unknown, result: unknown): Response {
 /**
  * JSON-RPC error code for an *authenticated* caller that lacks permission for a
  * specific tool — an authorization failure, NOT an authentication failure.
- *
- * Deliberately distinct from the pre-dispatch Unauthorized code (-32001). The
- * HTTP status carries transport-level auth state; the JSON-RPC code carries
- * application state. Only a genuinely unauthenticated request (-32001, emitted
- * with a null id before dispatch) may answer HTTP 401 — that status is what
- * drives an MCP client's OAuth retry. An authorization denial is an in-band
- * response to an accepted tool call and MUST travel as HTTP 200 with the error
- * in the body. Answering 401 here makes streamable-HTTP MCP clients (e.g.
- * mcp-remote) treat the whole session as unauthenticated and silently
- * retry/reconnect — the caller's tool-call promise never resolves and the
- * client hangs indefinitely instead of surfacing the error.
+ * Distinct from the Unauthorized code (-32001) so the two are legible in logs,
+ * but both are auth-family errors delivered in-band (see jsonrpcError).
  */
 const JSONRPC_FORBIDDEN = -32003;
 
 export function jsonrpcError(id: unknown, code: number, message: string): Response {
-  // -32001 (Unauthorized, pre-dispatch) → 401 to trigger client reauth.
-  // JSONRPC_FORBIDDEN (authenticated-but-denied) → 200 so the JSON-RPC error is
-  // delivered in-band rather than read as a transport auth failure (which hangs
-  // mcp-remote). Everything else is a bad/failed request → 400.
-  const status = code === -32001 ? 401 : code === JSONRPC_FORBIDDEN ? 200 : 400;
+  // This is a token-based MCP server (no OAuth), so a 401 buys nothing but a
+  // hang: streamable-HTTP clients (mcp-remote) read a 401 on the MCP endpoint as
+  // a *session* auth failure and silently retry/reconnect, so the caller's
+  // promise never resolves. Deliver every auth-family error IN-BAND at HTTP 200
+  // instead — the client parses the JSON-RPC error and surfaces it immediately:
+  //   -32001          unauthenticated (missing / invalid / rotated token)
+  //   JSONRPC_FORBIDDEN authenticated but not permitted (org.* JWT, token scope)
+  // Malformed / internal errors stay 400 (a bad request, not an auth signal).
+  // Nothing returns 401 — a fast, legible error always beats a hang.
+  const status = code === -32001 || code === JSONRPC_FORBIDDEN ? 200 : 400;
   return new Response(
     JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } }),
     { status, headers: { 'Content-Type': 'application/json' } },
@@ -204,7 +200,8 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
         },
         // ── org.* ──────────────────────────────────────────────────────────
         // Require a Supabase user JWT (auth.uid() resolved inside SECURITY
-        // DEFINER RPCs). api_key callers receive -32001 before dispatch.
+        // DEFINER RPCs). api_key callers are rejected at dispatch with
+        // JSONRPC_FORBIDDEN (-32003, HTTP 200) — see the tools/call branch.
         {
           name: 'org.create',
           description:

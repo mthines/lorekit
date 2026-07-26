@@ -27,6 +27,23 @@ import { handleMcp, jsonrpcError } from './mcp-handler.ts';
 import { handleWebhook } from './webhook.ts';
 import { checkRateLimit, rateLimitMessage } from './limits.ts';
 
+/**
+ * Best-effort read of the JSON-RPC request id from the body, without disturbing
+ * the caller's stream (uses req.clone()). Used only on the auth-failure path so
+ * the in-band error response can echo the real id — a response with id:null
+ * can't be correlated to the pending tools/call and would hang the client.
+ * Returns null for a missing/invalid id or an unparseable body.
+ */
+async function peekRequestId(req: Request): Promise<string | number | null> {
+  try {
+    const body = await req.clone().json();
+    const id = (body as { id?: unknown })?.id;
+    return typeof id === 'string' || typeof id === 'number' ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
 
@@ -49,8 +66,19 @@ Deno.serve(async (req: Request) => {
     // resolveAuth checks Authorization header first, then ?token= query param as fallback.
     const auth = await resolveAuth(req.headers.get('authorization'), url.searchParams.get('token'));
     if (!auth) {
-      span.setAttributes({ 'auth.result': 'failed', 'http.response.status_code': 401 });
-      return jsonrpcError(null, -32001, 'Unauthorized');
+      // Fail fast on a missing / invalid / rotated token — never hang. Return
+      // the error IN-BAND: HTTP 200 (not 401) with a JSON-RPC error carrying the
+      // REAL request id. A 401 makes streamable-HTTP clients (mcp-remote) treat
+      // it as a session-auth failure and stall; an id:null body can't be matched
+      // to the pending tools/call and also hangs — so we peek the id and echo it.
+      // This is a token-based server with no OAuth flow for a 401 to drive.
+      const reqId = await peekRequestId(req);
+      span.setAttributes({ 'auth.result': 'failed', 'http.response.status_code': 200 });
+      return jsonrpcError(
+        reqId,
+        -32001,
+        'Invalid or unknown API token. Check the token in your LoreKit MCP server URL or config (it may have been rotated).',
+      );
     }
 
     span.setAttributes({
