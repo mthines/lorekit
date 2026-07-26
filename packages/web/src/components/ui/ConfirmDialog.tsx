@@ -57,7 +57,7 @@ export function ConfirmDialog({
   // a previous open never carries over into the next confirm.
   useEffect(() => {
     if (open) setTyped('');
-  }, [open]);
+  }, [open, confirmPhrase]);
 
   // On open: remember the triggering element and move focus. With a
   // type-to-confirm phrase, focus the input (the required, non-destructive
@@ -161,7 +161,6 @@ export function ConfirmDialog({
                   value={typed}
                   onChange={(e) => setTyped(e.target.value)}
                   autoComplete="off"
-                  aria-label={`Type ${confirmPhrase} to confirm`}
                   className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none"
                 />
               </div>
