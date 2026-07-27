@@ -10,9 +10,10 @@ import type { ReactNode } from 'react';
  * completion rules.
  */
 
-// Only the steps a consumer actually performs. "MCP server is live" was an
-// operator-side status, not a setup action, so it isn't part of the checklist.
-export const ONBOARDING_STEP_IDS = ['connect', 'webhook'] as const;
+// The one mandatory setup step: connect an agent via MCP.
+// The GitHub webhook is an optional enrichment feature, not a gate — it is
+// surfaced separately via WebhookTeaser once the connect step is done.
+export const ONBOARDING_STEP_IDS = ['connect'] as const;
 export type OnboardingStepId = (typeof ONBOARDING_STEP_IDS)[number];
 
 export const ONBOARDING_TOTAL = ONBOARDING_STEP_IDS.length;
@@ -20,12 +21,11 @@ export const ONBOARDING_TOTAL = ONBOARDING_STEP_IDS.length;
 /**
  * Steps a user can mark complete by hand.
  *
- * The webhook step has no reliable server signal until a delivery actually
- * fires — a user can finish the GitHub setup long before the first PR review
- * comment arrives — so we let them self-attest that they're done. The other
- * steps complete from an unambiguous server signal and need no manual toggle.
+ * The connect step completes automatically from a server signal (first lesson
+ * written) so no manual toggle is needed. Kept as an empty tuple for
+ * forward-compatibility.
  */
-export const MARKABLE_STEP_IDS: readonly OnboardingStepId[] = ['webhook'];
+export const MARKABLE_STEP_IDS: readonly OnboardingStepId[] = [];
 
 export interface OnboardingServerState {
   /** At least one memory exists → an agent has connected and written a lesson. */
@@ -36,15 +36,12 @@ export interface OnboardingServerState {
 
 /**
  * Whether a step is complete from the server's perspective, ignoring any
- * client-side manual override. The `server` step is always complete — the
- * Edge Function is deployed the moment the account exists.
+ * client-side manual override.
  */
 export function serverDoneFor(id: OnboardingStepId, state: OnboardingServerState): boolean {
   switch (id) {
     case 'connect':
       return state.hasLessons;
-    case 'webhook':
-      return state.hasWebhook;
   }
 }
 

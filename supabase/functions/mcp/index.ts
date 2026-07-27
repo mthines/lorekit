@@ -64,7 +64,9 @@ Deno.serve(async (req: Request) => {
   // traceRequest so unauthenticated calls are still visible in telemetry.
   return traceRequest(req, 'lorekit.mcp', async (span) => {
     // resolveAuth checks Authorization header first, then ?token= query param as fallback.
-    const auth = await resolveAuth(req.headers.get('authorization'), url.searchParams.get('token'));
+    // Pass the root span so auth outcome attributes (auth.type, auth.outcome,
+    // auth.user_id) land on the request span — no separate child span needed.
+    const auth = await resolveAuth(req.headers.get('authorization'), url.searchParams.get('token'), span);
     if (!auth) {
       // Fail fast on a missing / invalid / rotated token — never hang. Return
       // the error IN-BAND: HTTP 200 (not 401) with a JSON-RPC error carrying the

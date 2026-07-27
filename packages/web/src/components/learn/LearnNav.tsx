@@ -13,7 +13,7 @@ export function LearnNav() {
   return (
     <SectionNav
       items={LEARN_SECTIONS}
-      ariaLabel="Learn sections"
+      ariaLabel="Getting started sections"
       layoutId="learn-nav-active"
     />
   );
