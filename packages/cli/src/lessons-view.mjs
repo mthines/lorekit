@@ -13,9 +13,7 @@ import { log, heading, status, c } from './util.mjs';
 // or a project whose name collides, never lists a scope twice). Pure — takes an
 // already-derived `deriveScope()` result so it is trivially unit-testable.
 export function scopeList({ projectScope, branchScope, repoScope } = {}) {
-  return [projectScope, branchScope, repoScope, 'global']
-    .filter(Boolean)
-    .filter((v, i, a) => a.indexOf(v) === i);
+  return [...new Set([projectScope, branchScope, repoScope, 'global'].filter(Boolean))];
 }
 
 // Normalize an entry from either store (local markdown row or hosted DB row)
