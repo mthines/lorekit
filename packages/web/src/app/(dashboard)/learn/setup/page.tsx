@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { TutorialStep } from '@/components/learn/TutorialStep';
 import { TutorialCallout } from '@/components/learn/TutorialCallout';
+import { ClientConfigTabs, type McpClientConfig } from '@/components/dashboard/ClientConfigTabs';
 
 export const metadata: Metadata = { title: 'Getting started — Learn' };
 
@@ -18,9 +19,13 @@ export const metadata: Metadata = { title: 'Getting started — Learn' };
  * API keys and webhook secrets live in Settings — we link there rather than
  * embedding the token manager inline, keeping the tutorial scannable and
  * avoiding a token-generation side-effect on every page view.
+ *
+ * The five MCP client configs are presented via ClientConfigTabs — a logo-tab
+ * switcher that lets users jump directly to their tool rather than scrolling
+ * through a sequential list.
  */
-export default function LearnSetupPage() {
-  const jsonSnippet = `{
+
+const JSON_SNIPPET = `{
   "mcpServers": {
     "lorekit": {
       "command": "npx",
@@ -29,7 +34,7 @@ export default function LearnSetupPage() {
   }
 }`;
 
-  const yamlSnippet = `mcp:
+const YAML_SNIPPET = `mcp:
   servers:
     lorekit:
       command: npx
@@ -38,12 +43,56 @@ export default function LearnSetupPage() {
         - mcp-remote
         - "https://<your-mcp-url>?token=lk_rw_…"`;
 
-  const writeSnippet = `memory.write {
+const WRITE_SNIPPET = `memory.write {
   scope: "global",
   key:   "hello-lorekit",
   value: "Connection is working."
 }`;
 
+const MCP_CLIENTS: McpClientConfig[] = [
+  {
+    id: 'claude-code',
+    name: 'Claude Code',
+    scope: 'project',
+    filename: '.mcp.json',
+    hint: 'Project-local. Add .mcp.json to .gitignore — the token is in the URL.',
+    snippet: JSON_SNIPPET,
+  },
+  {
+    id: 'opencode',
+    name: 'opencode',
+    scope: 'project',
+    filename: '.opencode/mcp.json',
+    hint: 'Project-local. opencode picks this up automatically from the project root.',
+    snippet: JSON_SNIPPET,
+  },
+  {
+    id: 'cursor',
+    name: 'Cursor',
+    scope: 'project',
+    filename: '.cursor/mcp.json',
+    hint: 'Project-local. Cursor reads .cursor/mcp.json from the workspace root.',
+    snippet: JSON_SNIPPET,
+  },
+  {
+    id: 'windsurf',
+    name: 'Windsurf',
+    scope: 'global',
+    filename: 'mcp_config.json',
+    hint: 'Global. Save to ~/.codeium/windsurf/mcp_config.json.',
+    snippet: JSON_SNIPPET,
+  },
+  {
+    id: 'codex-cli',
+    name: 'Codex CLI',
+    scope: 'global',
+    filename: 'config.yaml',
+    hint: 'Global. Add to ~/.codex/config.yaml.',
+    snippet: YAML_SNIPPET,
+  },
+];
+
+export default function LearnSetupPage() {
   return (
     <div className="flex flex-col gap-8">
       <div>
@@ -82,8 +131,8 @@ export default function LearnSetupPage() {
         {/* ── Step 2: MCP config ──────────────────────────────────────────── */}
         <TutorialStep number={2} title="Add LoreKit to your agent's MCP config">
           <p>
-            Paste your token into the MCP URL and drop the snippet into your agent&apos;s
-            config file. Replace <code>{'<your-mcp-url>'}</code> with the endpoint shown in{' '}
+            Paste your token into the MCP URL and drop the snippet into your agent&apos;s config
+            file. Replace <code>{'<your-mcp-url>'}</code> with the endpoint shown in{' '}
             <Link
               href="/settings/api-keys"
               className="text-[var(--color-accent)] underline underline-offset-2"
@@ -92,33 +141,9 @@ export default function LearnSetupPage() {
             </Link>.
           </p>
 
-          <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--color-content-tertiary)]">
-            Claude Code — <code>.mcp.json</code> (project root)
-          </p>
-          <pre className="mt-1"><code>{jsonSnippet}</code></pre>
-          <p className="mt-1 text-xs text-[var(--color-content-tertiary)]">
-            Add <code>.mcp.json</code> to <code>.gitignore</code> — the token is in the URL.
-          </p>
-
-          <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--color-content-tertiary)]">
-            opencode — <code>.opencode/mcp.json</code> (project root)
-          </p>
-          <pre className="mt-1"><code>{jsonSnippet}</code></pre>
-
-          <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--color-content-tertiary)]">
-            Cursor — <code>.cursor/mcp.json</code> (project root)
-          </p>
-          <pre className="mt-1"><code>{jsonSnippet}</code></pre>
-
-          <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--color-content-tertiary)]">
-            Windsurf — <code>~/.codeium/windsurf/mcp_config.json</code> (global)
-          </p>
-          <pre className="mt-1"><code>{jsonSnippet}</code></pre>
-
-          <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-[var(--color-content-tertiary)]">
-            Codex CLI — <code>~/.codex/config.yaml</code> (global)
-          </p>
-          <pre className="mt-1"><code>{yamlSnippet}</code></pre>
+          <div className="mt-4">
+            <ClientConfigTabs clients={MCP_CLIENTS} />
+          </div>
 
           <TutorialCallout variant="tip">
             All five agents use the same URL format — only the config file path differs.
@@ -132,7 +157,7 @@ export default function LearnSetupPage() {
           <p>
             Start a new session in your agent and ask it to write a test lesson:
           </p>
-          <pre className="mt-2"><code>{writeSnippet}</code></pre>
+          <pre className="mt-2"><code>{WRITE_SNIPPET}</code></pre>
           <p className="mt-2">
             If the write succeeds, the{' '}
             <Link

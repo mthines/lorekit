@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Copy, CheckCheck, ExternalLink, Terminal, Webhook, Link2, Key, ArrowRight } from 'lucide-react';
 import { TokenManager } from './TokenManager';
 import { WebhookSecretManager } from './WebhookSecretManager';
+import { ClientConfigTabs, type McpClientConfig } from './ClientConfigTabs';
 import type { WebhookSecret } from '@/lib/webhook-secrets';
 import type { ApiToken } from '@/lib/tokens';
 import type { TokenPermission } from '@/lib/tokens';
@@ -17,10 +18,8 @@ interface McpClient {
   id: string;
   name: string;
   scope: InstallScope;
-  /** File path shown in footnote and CodeBlock header. */
   configPath: string;
   filename: string;
-  /** One-line hint shown below the config snippet. */
   hint: string;
   buildConfig: (mcpUrlWithToken: string) => string;
 }
@@ -88,118 +87,6 @@ const MCP_CLIENTS: McpClient[] = [
   },
 ];
 
-// ── Client logos (greyscale inline SVG) ──────────────────────────────────────
-//
-// Each logo is a simplified monochrome mark sized for a 20×20 viewport.
-// They render at 'currentColor' so the active/inactive colour cascade
-// from the parent button's text colour.
-
-function LogoClaudeCode({ className }: { className?: string }) {
-  // Anthropic "A" lettermark — triangular apex with two horizontal bars
-  return (
-    <svg viewBox="0 0 20 20" fill="none" aria-hidden className={className}>
-      <path
-        d="M10 2L2 17h3.5l1.4-3h6.2l1.4 3H18L10 2zm-1.8 9L10 6.5l1.8 4.5H8.2z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
-function LogoOpencode({ className }: { className?: string }) {
-  // Stylised "{ }" — opencode is a terminal-native tool, curly braces suit it
-  return (
-    <svg viewBox="0 0 20 20" fill="none" aria-hidden className={className}>
-      <path
-        d="M7 3H5C4 3 3 4 3 5v3l-1.5 2L3 12v3c0 1 1 2 2 2h2M13 3h2c1 0 2 1 2 2v3l1.5 2L17 12v3c0 1-1 2-2 2h-2"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle cx="10" cy="10" r="1.2" fill="currentColor" />
-    </svg>
-  );
-}
-
-function LogoCursor({ className }: { className?: string }) {
-  // Cursor's distinctive diagonal double-arrow mark
-  return (
-    <svg viewBox="0 0 20 20" fill="none" aria-hidden className={className}>
-      <path
-        d="M3 3l6 14 2.5-5.5L17 9 3 3z"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinejoin="round"
-        fill="none"
-      />
-      <path
-        d="M11.5 11.5l4 4"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function LogoWindsurf({ className }: { className?: string }) {
-  // Wave / surfboard silhouette — Windsurf's aquatic identity
-  return (
-    <svg viewBox="0 0 20 20" fill="none" aria-hidden className={className}>
-      <path
-        d="M2 13c2-4 4-7 8-9l2 12c-2-1-4-2-10-3z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-        fill="none"
-      />
-      <path
-        d="M12 4c1 2 2 5 2 9"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-      <path
-        d="M3 16c4-0.5 8-0.5 14 0"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function LogoCodexCli({ className }: { className?: string }) {
-  // Terminal ">" prompt — Codex CLI is command-line first
-  return (
-    <svg viewBox="0 0 20 20" fill="none" aria-hidden className={className}>
-      <rect x="2" y="3" width="16" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" />
-      <path
-        d="M6 8l3 2.5L6 13"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M12 13h3"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-const CLIENT_LOGO: Record<string, React.ComponentType<{ className?: string }>> = {
-  'claude-code': LogoClaudeCode,
-  'opencode': LogoOpencode,
-  'cursor': LogoCursor,
-  'windsurf': LogoWindsurf,
-  'codex-cli': LogoCodexCli,
-};
-
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
 function CodeBlock({ code, filename }: { code: string; filename: string }) {
@@ -265,61 +152,6 @@ function SectionLabel({ icon, children }: { icon: React.ReactNode; children: Rea
   );
 }
 
-// ── Client selector ───────────────────────────────────────────────────────────
-//
-// A logo-tab strip that lets the user switch between MCP clients at a glance.
-// Each tab shows a greyscale logo mark + the client name. The active tab gets
-// a border + slightly elevated background; inactive tabs are muted and gain
-// colour on hover. Logos render at `currentColor` so the cascade handles all
-// state transitions — no per-state colour overrides needed.
-
-function ClientSelector({
-  clients,
-  active,
-  onChange,
-}: {
-  clients: McpClient[];
-  active: string;
-  onChange: (id: string) => void;
-}) {
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="text-[10px] text-[var(--color-content-tertiary)]">
-        Using a different client?
-      </p>
-      <div
-        role="radiogroup"
-        aria-label="MCP client"
-        className="grid gap-1.5"
-        style={{ gridTemplateColumns: `repeat(${clients.length}, minmax(0, 1fr))` }}
-      >
-        {clients.map((client) => {
-          const isActive = client.id === active;
-          const Logo = CLIENT_LOGO[client.id];
-          return (
-            <button
-              key={client.id}
-              role="radio"
-              aria-checked={isActive}
-              onClick={() => onChange(client.id)}
-              title={client.name}
-              className={[
-                'flex flex-col items-center gap-1.5 rounded-lg border px-2 py-2.5 text-center transition-all duration-150',
-                isActive
-                  ? 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-primary)]'
-                  : 'border-transparent text-[var(--color-content-tertiary)] hover:border-[var(--color-border-subtle)] hover:bg-[var(--color-bg-raised)] hover:text-[var(--color-content-secondary)]',
-              ].join(' ')}
-            >
-              {Logo && <Logo className="size-5 shrink-0" />}
-              <span className="text-[10px] font-medium leading-none">{client.name}</span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 // ── Step: Connect your agent ──────────────────────────────────────────────────
 
 function ConnectStep({
@@ -331,18 +163,26 @@ function ConnectStep({
   mcpUrl: string;
   initialTokens: ApiToken[];
   autoGeneratedToken?: string;
-  /** When set, shows a link to the persistent settings home for keys. */
   manageHref?: string;
 }) {
   const [activeToken, setActiveToken] = useState<string>(
     autoGeneratedToken ?? '<your-lorekit-token>',
   );
-  const [activeClientId, setActiveClientId] = useState<string>(MCP_CLIENTS[0].id);
 
   const mcpUrlWithToken = `${mcpUrl}?token=${activeToken}`;
-  const activeClient = MCP_CLIENTS.find((c) => c.id === activeClientId) ?? MCP_CLIENTS[0];
-  const configSnippet = activeClient.buildConfig(mcpUrlWithToken);
   const tokenPlaceholder = activeToken === '<your-lorekit-token>';
+
+  // Build McpClientConfig entries with the live token already substituted in.
+  const clientConfigs: McpClientConfig[] = MCP_CLIENTS.map((c) => ({
+    id: c.id,
+    name: c.name,
+    scope: c.scope,
+    filename: c.filename,
+    hint: c.hint,
+    snippet: c.buildConfig(mcpUrlWithToken),
+  }));
+
+  const activeClient = MCP_CLIENTS[0];
 
   return (
     <div className="flex flex-col gap-5">
@@ -383,44 +223,26 @@ function ConnectStep({
         <InlineCode>{mcpUrl}</InlineCode>
       </div>
 
-      {/* Config snippet */}
+      {/* Config snippet with logo-tab client switcher */}
       <div>
-        <SectionLabel icon={<Terminal className="size-3" />}>
-          {activeClient.filename}
-        </SectionLabel>
-        <CodeBlock code={configSnippet} filename={activeClient.filename} />
-
+        <SectionLabel icon={<Terminal className="size-3" />}>Config file</SectionLabel>
+        <ClientConfigTabs clients={clientConfigs} />
         {tokenPlaceholder && (
           <p className="mt-1.5 text-[10px] text-[var(--color-content-tertiary)]">
             Generate a token above and it will fill in automatically.
           </p>
         )}
-
         <p className="mt-1.5 text-[10px] text-[var(--color-content-tertiary)]">
-          {activeClient.hint}{' '}
           Requires Node.js —{' '}
           <code className="font-mono">npx</code> will download{' '}
           <code className="font-mono">mcp-remote</code> on first run.
         </p>
       </div>
-
-      {/* Client selector — logo tabs, below the config snippet */}
-      <ClientSelector
-        clients={MCP_CLIENTS}
-        active={activeClientId}
-        onChange={setActiveClientId}
-      />
     </div>
   );
 }
 
 // ── Step: GitHub webhook ──────────────────────────────────────────────────────
-//
-// Secrets are per-repo (see WebhookSecretManager) — a user adds a secret for
-// each owner/repo they want to webhook. The RSC passes the current list of
-// active secrets; the manager handles adding, listing, and regenerating them
-// client-side. There is no maintainer-owned Supabase infra for the end user
-// to configure — the edge function reads webhook_secrets directly.
 
 function WebhookStep({
   webhookUrl,
@@ -447,13 +269,11 @@ function WebhookStep({
         and visible in Lore Explorer.
       </p>
 
-      {/* Per-repo secret manager — add a repo, list existing secrets, regenerate */}
       <div>
         <SectionLabel icon={<Key className="size-3" />}>Webhook secrets</SectionLabel>
         <WebhookSecretManager initialSecrets={webhookSecrets} />
       </div>
 
-      {/* Add the webhook on GitHub */}
       <div>
         <SectionLabel icon={<Webhook className="size-3" />}>
           Add the webhook on GitHub
@@ -481,7 +301,6 @@ interface OnboardingStepContentProps {
   webhookUrl?: string;
   webhookSecrets?: WebhookSecret[];
   autoGeneratedToken?: string;
-  /** When set (onboarding context), the connect step links to the persistent settings home. */
   manageHref?: string;
   initialTokens?: Array<{
     id: string;
