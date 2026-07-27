@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/mthines/lorekit/compare/cli-v1.13.1...cli-v1.14.0) (2026-07-27)
+
+
+### Features
+
+* **cli:** add `scopes` store-wide scope inventory command ([#159](https://github.com/mthines/lorekit/issues/159)) ([4221a7f](https://github.com/mthines/lorekit/commit/4221a7ff2b3df1cf58065a5ed13a97eb99553f6d))
+
 ## [1.13.1](https://github.com/mthines/lorekit/compare/cli-v1.13.0...cli-v1.13.1) (2026-07-27)
 
 
