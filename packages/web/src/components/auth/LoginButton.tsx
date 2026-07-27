@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { addSignalAttribute } from '@/instrumentation-client';
+import { addSignalAttribute } from '@dash0/sdk-web';
 
 function GitHubIcon({ className }: { className?: string }) {
   return (
