@@ -173,6 +173,43 @@ missing. It exits **non-zero** when the key is found in no readable store, so it
 fits scripts. `--json` emits the full normalized record(s) and which store each
 came from. Both a scope and a key are required (else a usage error).
 
+### `lorekit stats`
+
+An at-a-glance overview of how many lessons apply to the current directory —
+counted **per scope** and **per store** (Offline vs Remote), with per-store and
+grand totals, in the same Offline / Remote split as `list`:
+
+```bash
+lorekit stats                 # per-scope counts + totals for both stores
+lorekit stats --scope global  # narrow to a single scope
+lorekit stats --json          # { offline, remote } with per-scope { count } rows
+```
+
+Every applicable scope prints a row (a scope with zero lessons still shows `0`,
+which is the point of an overview). An unconfigured remote degrades to a short
+note — never an error, always exit 0. `--endpoint` / `--token` / `--store`
+behave as in `list`. Remote counts reflect what the hosted `memory.list` returns
+per scope (the server's default page size); there is no cap-usage `N / limit`
+figure because the MCP surface exposes no total-count or cap tool.
+
+### `lorekit diff`
+
+Compare the **offline** and **remote** stores for the applicable scopes and
+report where they diverge, grouped by scope:
+
+```bash
+lorekit diff                  # local-only / remote-only / conflicting, per scope
+lorekit diff --scope global   # narrow to a single scope
+lorekit diff --json           # { comparable, totals, groups[] } for scripts
+```
+
+Three groups: **local-only** (key present offline, absent remote), **remote-only**
+(absent offline, present remote), and **conflicting** (same `scope::key` in both,
+but the value or tags differ). A diff needs **both** stores readable — if the
+remote is unconfigured (or a store is denied), a meaningful diff is impossible,
+so `diff` prints a clear note (`comparable: false` in `--json`) and exits 0
+rather than crashing. `--endpoint` / `--token` / `--store` behave as in `list`.
+
 ### `lorekit hook`
 
 The **shared hook engine** behind the Claude Code / Cursor / Codex plugins.
@@ -355,8 +392,8 @@ active deny constraints.
 | `--no-hooks` | Skip wiring the lifecycle hooks; skill + MCP only (`install`) |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
-| `--json` | Machine-readable output (`list` / `search` / `show`) |
-| `--scope <scope>` | Restrict to a single scope (`list` / `search`; default: all applicable) |
+| `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `diff`) |
+| `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff`; default: all applicable) |
 | `--adapter <name>` | Host framework for `hook`: `claude` / `cursor` / `codex` |
 | `--event <name>` | Host hook event for `hook` (else read from the stdin payload) |
 | `-h, --help` | Help |
@@ -442,7 +479,7 @@ forever. This reduces manual validation to a single capture pass per tool.
 ## Usage telemetry
 
 The human-facing commands (`install`, `uninstall`, `doctor`, `list`, `search`,
-`show`, `migrate`)
+`show`, `stats`, `diff`, `migrate`)
 emit one OpenTelemetry span + one counter point per run so the maintainers can see which
 commands people use. It is zero-dependency (OTLP/JSON over `fetch`, no SDK) and
 deliberately narrow — it carries only the command name, a bounded set of boolean

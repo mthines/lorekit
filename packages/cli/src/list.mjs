@@ -11,7 +11,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { resolveProjectRoot } from './config.mjs';
 import { deriveScope } from './scope.mjs';
-import { loadControl } from './control.mjs';
+import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
 import { scopeList, gather, renderSection } from './lessons-view.mjs';
 import { log, heading, c } from './util.mjs';
@@ -49,10 +49,7 @@ export async function list(args) {
   // A `LOREKIT_DENY=remote|local` privacy/compliance ceiling (deny-wins, never
   // overridable) suppresses that section entirely — the same invariant the
   // agent-facing control model enforces, honored here in the human read view.
-  const control = loadControl(root, { env });
-  const deny = (mode) => control.denies.find((d) => d.mode === mode) || null;
-  const localDenied = deny('local');
-  const remoteDenied = deny('remote');
+  const { localDenied, remoteDenied } = resolveDenies(root, { env });
 
   const offline = localDenied ? { groups: [], total: 0 } : await gather(local, scopes);
   const remoteAvailable = !remoteDenied && remote.usable();

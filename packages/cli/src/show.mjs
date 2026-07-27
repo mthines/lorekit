@@ -11,7 +11,7 @@
 // so the bin wraps it in `traceCommand`.
 import process from 'node:process';
 import { resolveProjectRoot } from './config.mjs';
-import { loadControl } from './control.mjs';
+import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
 import { normalizeEntry, shortDate, describeError, recordsDiverge } from './lessons-view.mjs';
 import { log, err, heading, status, c } from './util.mjs';
@@ -56,10 +56,7 @@ export async function show(args) {
   });
 
   // Deny-wins section suppression, identical to `list`/`search`.
-  const control = loadControl(root, { env });
-  const deny = (mode) => control.denies.find((d) => d.mode === mode) || null;
-  const localDenied = deny('local');
-  const remoteDenied = deny('remote');
+  const { localDenied, remoteDenied } = resolveDenies(root, { env });
 
   const offline = localDenied
     ? { available: false, reason: `disabled by deny constraint (${localDenied.source})` }

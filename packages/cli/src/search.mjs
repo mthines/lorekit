@@ -16,7 +16,7 @@
 import process from 'node:process';
 import { resolveProjectRoot } from './config.mjs';
 import { deriveScope } from './scope.mjs';
-import { loadControl } from './control.mjs';
+import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
 import { scopeList, gather, filterGroups, renderSection } from './lessons-view.mjs';
 import { log, err, heading, c } from './util.mjs';
@@ -48,10 +48,7 @@ export async function search(args) {
   });
 
   // Deny-wins section suppression, identical to `list`.
-  const control = loadControl(root, { env });
-  const deny = (mode) => control.denies.find((d) => d.mode === mode) || null;
-  const localDenied = deny('local');
-  const remoteDenied = deny('remote');
+  const { localDenied, remoteDenied } = resolveDenies(root, { env });
 
   const offline = localDenied
     ? { groups: [], total: 0 }
