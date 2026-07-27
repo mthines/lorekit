@@ -79,6 +79,26 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      // Service worker must be served from the root scope with the correct
+      // Content-Type and without a Cache-Control max-age so browsers can
+      // detect updates promptly (spec: SW is revalidated every 24 h max, but
+      // no-cache ensures the browser checks every navigation).
+      {
+        source: '/sw.js',
+        headers: [
+          { key: 'Content-Type', value: 'application/javascript; charset=utf-8' },
+          { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
+          { key: 'Service-Worker-Allowed', value: '/' },
+        ],
+      },
+      // Web app manifest
+      {
+        source: '/manifest.json',
+        headers: [
+          { key: 'Content-Type', value: 'application/manifest+json; charset=utf-8' },
+          { key: 'Cache-Control', value: 'public, max-age=86400' },
+        ],
+      },
     ];
   },
 };
