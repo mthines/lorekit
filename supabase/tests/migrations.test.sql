@@ -1473,6 +1473,73 @@ begin
 end;
 $$;
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- Invite-details modal: lorekit_invite_org_details (00028)
+-- ═════════════════════════════════════════════════════════════════════════
+
+-- ── 38. lorekit_invite_org_details: the addressed invitee gets exactly one
+-- row of Tier-A org details; a different authenticated user gets zero (AC-2) ─
+do $$
+declare
+  v_invite_id       uuid;
+  v_row             record;
+  v_row_count       int;
+  v_expected_org_name text;
+  v_expected_org_slug text;
+  v_expected_members  int;
+begin
+  -- Owner (A) invites H by email to org f3 — a fresh pending invite (H's
+  -- earlier invites in §24 are declined/revoked, so no partial-unique
+  -- collision).
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  select lorekit_org_invite('00000000-0000-0000-0000-0000000000f3', 'lk-mig-h@test.local', null, 'member')
+    into v_invite_id;
+  reset role;
+
+  -- Read the org's CURRENT name/slug/member-count dynamically rather than
+  -- the values it was seeded with — earlier sections rename it (§ before 23)
+  -- and change its membership (§25/§29-ish leave/remove), so a hardcoded
+  -- literal would silently couple this assertion to test ordering.
+  select name, slug into v_expected_org_name, v_expected_org_slug
+    from orgs where id = '00000000-0000-0000-0000-0000000000f3';
+  select count(*) into v_expected_members
+    from org_members where org_id = '00000000-0000-0000-0000-0000000000f3';
+
+  -- A different authenticated user (C, a co-member of the SAME org — see
+  -- §21's role-change, still 'member' — but NOT the addressed invitee) must
+  -- get zero rows — the gate is identity-bound, not membership-bound, so
+  -- co-membership alone is no free pass.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000c3","role":"authenticated","email":"lk-mig-c@test.local"}', true);
+  select count(*) into v_row_count from lorekit_invite_org_details(v_invite_id);
+  reset role;
+  assert v_row_count = 0,
+    format('lorekit_invite_org_details: a non-addressed authenticated user must get zero rows, got %s', v_row_count);
+
+  -- The addressed invitee (H, matched on verified JWT email) gets exactly
+  -- one row of Tier-A org details.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000f7","role":"authenticated","email":"lk-mig-h@test.local"}', true);
+  select * into v_row from lorekit_invite_org_details(v_invite_id);
+  reset role;
+
+  assert v_row.org_name = v_expected_org_name,
+    format('lorekit_invite_org_details: expected org_name %s, got %s', v_expected_org_name, v_row.org_name);
+  assert v_row.org_slug = v_expected_org_slug,
+    format('lorekit_invite_org_details: expected org_slug %s, got %s', v_expected_org_slug, v_row.org_slug);
+  assert v_row.member_count = v_expected_members,
+    format('lorekit_invite_org_details: expected member_count %s, got %s', v_expected_members, v_row.member_count);
+  -- The seeded auth.users rows carry no raw_user_meta_data, so the inviter
+  -- handle/avatar resolve gracefully to null rather than erroring.
+  assert v_row.inviter_handle is null and v_row.inviter_avatar_url is null,
+    'lorekit_invite_org_details: inviter handle/avatar must resolve to null when raw_user_meta_data is absent';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
