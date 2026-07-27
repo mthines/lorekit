@@ -148,7 +148,7 @@ caught something, a near-miss, a guess that paid off. Not on smooth successes.
      key:   "<host>-lessons::<slug>",
      value: "<the lesson body above>",
      tags:  ["loop::<host>-lessons", "source::<trigger>"],
-     trigger: "<stuck-loop | command-failure | gotcha | near-miss | end-of-run>"
+     trigger: "<stuck-loop | command-failure | gotcha | near-miss | assumption-wrong | paid-off | manual>"
    }
    ```
 
@@ -169,7 +169,7 @@ bar is stricter for `repo::` writes — a repo scope is team-visible.
 After a read or write, a lesson is **promotion-eligible** when either:
 
 - `seen_count >= 3` — the same failure recurred across at least three runs, or
-- it is tagged `status: structural` because it reflects a design gap, not a
+- it is tagged `status=structural` because it reflects a design gap, not a
   one-off.
 
 For an eligible lesson, **surface a one-line suggestion — never act silently**:
@@ -181,7 +181,7 @@ The promotion target follows the lesson's scope: a `global` lesson hardens the
 **host's own source** (every user of the host benefits); a `repo::` lesson
 hardens the **repo's own rules / docs** (every teammate in that repo benefits).
 Promotion is a normal, human-reviewed edit — LoreKit does not apply it. After a
-successful promotion, write an UPDATE setting `status: promoted` so the lesson
+successful promotion, write an UPDATE setting `status=promoted` so the lesson
 stops re-suggesting and stands as an audit trail of why the rule exists.
 
 ---
@@ -197,7 +197,7 @@ guards are what make the loop safe:
    run; it can never silently disable a gate, skip a step, or change a limit. The
    only path from a lesson to changed behavior is the human-reviewed slow tier.
 2. **Recurrence gates promotion, not a single run** (`seen_count >= 3`, or an
-   explicit `structural` tag).
+   explicit `status=structural` marker in the lesson's `meta:` comment).
 3. **Every lesson expires** (default ~90 days from last sighting; the read step
    ignores expired lessons, so stale beliefs decay instead of entrenching).
 4. **Contradiction is surfaced, not silently overwritten** — the dedup search
@@ -219,7 +219,7 @@ To add a loop to a host called `<host>`:
       (classify scope, `memory.search` to dedup, `memory.write`). No new
       reflection stage — hook the points the host already detects.
 - [ ] Add the **promotion suggestion** when a read/written lesson hits
-      `seen_count >= 3` or `status: structural`.
+      `seen_count >= 3` or `status=structural`.
 - [ ] State the **entrenchment guards** so a future maintainer does not "optimize
       them away".
 - [ ] Confirm the loop **degrades silently** when `memory.*` is not connected.
