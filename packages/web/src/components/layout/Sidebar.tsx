@@ -3,23 +3,22 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
-import { BookOpen, LayoutDashboard, Settings, Rocket, GraduationCap } from 'lucide-react';
+import { BookOpen, LayoutDashboard, Settings, GraduationCap } from 'lucide-react';
 import { useOnboarding } from '@/components/providers/OnboardingProvider';
 
-// Primary content nav — rendered in order in both the desktop sidebar and the
-// mobile bottom tab bar. Getting started sits here (third position, after
-// Overview and Explorer) because it is a high-signal destination for new users
-// and remains useful after setup as a reference. Tutorials is fourth.
+// Primary content nav — 3 destinations keeps the sidebar scannable and the
+// mobile tab bar comfortably within the 3–5 item guideline.
+// "Learn" unifies Getting started (setup checklist) and Tutorials (topic guides)
+// under a single grouped secondary nav with a divider, matching the pattern in
+// agent-skills where categories group related items in one view.
 const NAV = [
   { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { href: '/lore', label: 'Explorer', icon: BookOpen },
-  { href: '/onboarding', label: 'Getting started', mobileLabel: 'Setup', icon: Rocket },
-  { href: '/tutorials', label: 'Tutorials', icon: GraduationCap },
+  { href: '/learn', label: 'Learn', mobileLabel: 'Learn', icon: GraduationCap },
 ] as const;
 
 // Settings is a persistent utility destination kept in the sidebar footer —
-// separate from the primary content nav so it does not compete for attention
-// during normal use.
+// separate from the primary content nav so it does not compete for attention.
 const SETTINGS = { href: '/settings', label: 'Settings', icon: Settings } as const;
 
 interface SidebarProps {
@@ -49,11 +48,11 @@ export function Sidebar({ user }: SidebarProps) {
           </span>
         </div>
 
-        {/* Primary nav — all content destinations, including Getting started */}
+        {/* Primary nav */}
         <nav className="flex flex-1 flex-col gap-0.5 p-2" aria-label="Main navigation">
           {NAV.map(({ href, label, icon: Icon }) => {
             const active = pathname === href || pathname.startsWith(href + '/');
-            const isOnboarding = href === '/onboarding';
+            const isLearn = href === '/learn';
             return (
               <Link
                 key={href}
@@ -70,10 +69,10 @@ export function Sidebar({ user }: SidebarProps) {
               >
                 <Icon className="size-4 shrink-0" aria-hidden />
                 <span className="flex-1">{label}</span>
-                {isOnboarding && showProgress && (
+                {isLearn && showProgress && (
                   <span
                     className="rounded-md bg-[var(--color-bg-elevated)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--color-content-tertiary)]"
-                    aria-label={`${completedCount} of ${total} steps complete`}
+                    aria-label={`${completedCount} of ${total} setup steps complete`}
                   >
                     {completedCount}/{total}
                   </span>
@@ -123,7 +122,7 @@ export function Sidebar({ user }: SidebarProps) {
       </aside>
 
       {/* ── Mobile bottom tab bar (<md) ──────────────────────────────────── */}
-      {/* NAV (3 items) + Settings = 4 tabs, within the 3–5 bottom-tab guideline. */}
+      {/* NAV (3 items) + Settings = 4 tabs — comfortably within 3–5 guideline. */}
       <nav
         className="fixed inset-x-0 bottom-0 z-40 flex border-t border-[var(--color-border)] bg-[var(--color-bg-raised)] md:hidden"
         aria-label="Main navigation"
@@ -132,8 +131,8 @@ export function Sidebar({ user }: SidebarProps) {
           const { href, icon: Icon } = item;
           const label = 'mobileLabel' in item ? item.mobileLabel : item.label;
           const active = pathname === href || pathname.startsWith(href + '/');
-          const isOnboarding = href === '/onboarding';
-          const withProgressDot = isOnboarding && showProgress;
+          const isLearn = href === '/learn';
+          const withProgressDot = isLearn && showProgress;
           return (
             <Link
               key={href}
@@ -159,7 +158,7 @@ export function Sidebar({ user }: SidebarProps) {
               </span>
               <span>{label}</span>
               {withProgressDot && (
-                <span className="sr-only">{`, ${completedCount} of ${total} steps complete`}</span>
+                <span className="sr-only">{`, ${completedCount} of ${total} setup steps complete`}</span>
               )}
             </Link>
           );
