@@ -4,7 +4,7 @@ import { TutorialStep } from '@/components/learn/TutorialStep';
 import { TutorialCallout } from '@/components/learn/TutorialCallout';
 import { ClientConfigTabs, type McpClientConfig } from '@/components/dashboard/ClientConfigTabs';
 
-export const metadata: Metadata = { title: 'Getting started — Learn' };
+export const metadata: Metadata = { title: 'Getting started' };
 
 /**
  * Getting started — the first page new users land on.

@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { TutorialStep } from '@/components/learn/TutorialStep';
 import { TutorialCallout } from '@/components/learn/TutorialCallout';
 
-export const metadata: Metadata = { title: 'Offline storage — Learn' };
+export const metadata: Metadata = { title: 'Offline storage — Start here' };
 
 export default function LearnOfflinePage() {
   return (

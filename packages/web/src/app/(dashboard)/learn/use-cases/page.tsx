@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { TutorialCallout } from '@/components/learn/TutorialCallout';
 
-export const metadata: Metadata = { title: 'Use cases — Learn' };
+export const metadata: Metadata = { title: 'Use cases — Start here' };
 
 interface UseCaseProps {
   title: string;
