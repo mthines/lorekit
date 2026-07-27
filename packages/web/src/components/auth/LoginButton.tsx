@@ -164,7 +164,6 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           id="lk-email"
           type="email"
           autoComplete="email"
-          // eslint-disable-next-line jsx-a11y/no-autofocus
           autoFocus
           placeholder="you@example.com"
           value={email}
