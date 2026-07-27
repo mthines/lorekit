@@ -128,7 +128,8 @@ async function checkLocal(control, root, args, record) {
 
   // Home tier — per-user, cross-repo, always available.
   record('pass', 'home store', prettyPath(store.homeDir));
-  record('info', 'home entries', `${await store.home.count(scopes)} memory(ies)`);
+  const homeCount = await store.home.count(scopes);
+  record('info', 'home entries', `${homeCount} ${homeCount === 1 ? 'memory' : 'memories'}`);
 
   // Project tier — opt-in; active only when its directory exists.
   const projRel = path.relative(root, store.projectDir) || store.projectDir;
@@ -137,7 +138,8 @@ async function checkLocal(control, root, args, record) {
       ? 'committed — shared with the team'
       : 'gitignored — private to your checkout';
     record('pass', 'project store', projRel);
-    record('info', 'project entries', `${await store.project.count(scopes)} memory(ies) — ${sharing}`);
+    const projCount = await store.project.count(scopes);
+    record('info', 'project entries', `${projCount} ${projCount === 1 ? 'memory' : 'memories'} — ${sharing}`);
   } else {
     record(
       'info',
