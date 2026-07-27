@@ -204,6 +204,53 @@ class LocalStore {
     for (const scope of scopes || []) n += (await this.list({ scope })).entries.length;
     return n;
   }
+
+  // Recursively collect every parsed entry under baseDir, across ALL scopes —
+  // the primitive `listScopes()` builds on. Best-effort: a missing base dir or
+  // an unreadable file is skipped, never thrown. Reads each file's frontmatter
+  // (the authoritative scope string) rather than the directory it sits in.
+  _walkEntries() {
+    const out = [];
+    const walk = (dir) => {
+      let dirents;
+      try {
+        dirents = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return; // missing / unreadable directory — nothing to enumerate here
+      }
+      for (const d of dirents) {
+        const full = path.join(dir, d.name);
+        if (d.isDirectory()) {
+          walk(full);
+        } else if (d.isFile() && d.name.endsWith('.md')) {
+          try {
+            const entry = parseEntry(fs.readFileSync(full, 'utf8'));
+            if (entry) out.push({ entry, file: full });
+          } catch {
+            // Skip an unreadable file rather than fail the whole enumeration.
+          }
+        }
+      }
+    };
+    walk(this.baseDir);
+    return out;
+  }
+
+  // Enumerate every distinct scope present on disk with its non-archived lesson
+  // count — a STORE-WIDE inventory, independent of any current directory (unlike
+  // list/count, which take an explicit scope set). The scope of each lesson is
+  // read from its frontmatter `scope` field, so the reconstructed scope string
+  // is EXACT — never reverse-mapped from the on-disk directory layout, which is
+  // lossy for `project::{name}` (stored by basename only). Returns
+  // `[{ scope, count }]`, unsorted.
+  async listScopes() {
+    const counts = new Map();
+    for (const { entry } of this._walkEntries()) {
+      if (entry.archived_at || !entry.scope) continue;
+      counts.set(entry.scope, (counts.get(entry.scope) || 0) + 1);
+    }
+    return [...counts.entries()].map(([scope, count]) => ({ scope, count }));
+  }
 }
 
 // A scope string is global when its type segment is `global`.
@@ -325,5 +372,24 @@ class TwoTierStore {
     let n = 0;
     for (const scope of scopes || []) n += (await this.list({ scope })).entries.length;
     return n;
+  }
+
+  // Store-wide scope inventory across both tiers, de-duplicated by scope+key so
+  // a lesson present in both tiers is counted once — project shadows home, the
+  // same first-wins merge `list()` uses. Returns `[{ scope, count }]`, unsorted.
+  async listScopes() {
+    const seen = new Set(); // `${scope}\x00${key}` — dedup across tiers
+    const counts = new Map();
+    const tiers = this.projectActive() ? [this.project, this.home] : [this.home];
+    for (const tier of tiers) {
+      for (const { entry } of tier._walkEntries()) {
+        if (entry.archived_at || !entry.scope) continue;
+        const id = `${entry.scope}\x00${entry.key ?? ''}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        counts.set(entry.scope, (counts.get(entry.scope) || 0) + 1);
+      }
+    }
+    return [...counts.entries()].map(([scope, count]) => ({ scope, count }));
   }
 }

@@ -112,6 +112,51 @@ export function tallyGroups({ groups = [], total } = {}) {
   return { perScope, total: typeof total === 'number' ? total : summed };
 }
 
+// ── `scopes` — store-wide scope inventory ─────────────────────────────────────
+
+// The canonical scope TYPE of a scope string — its `::`-leading segment when it
+// is one of the four recognized types, else `other` (a malformed / legacy row).
+// Pure. Shared by the `scopes` inventory ordering below.
+export function scopeTypeOf(scope) {
+  const type = String(scope == null ? '' : scope).split('::')[0];
+  return ['global', 'project', 'repo', 'branch'].includes(type) ? type : 'other';
+}
+
+// A stable type ordering for the inventory: broadest → most-specific, with any
+// unrecognized scope last. Chosen (over count-desc) so the listing groups
+// related scopes together and is deterministic run-to-run.
+const SCOPE_TYPE_RANK = { global: 0, project: 1, repo: 2, branch: 3, other: 4 };
+
+// Sort a scope inventory (`[{ scope, count }]`) into a navigable order: primary
+// by scope type (global → project → repo → branch → other), secondary
+// alphabetical by the full scope string. Pure — returns a new array, never
+// mutating its input.
+export function sortScopeInventory(list = []) {
+  return [...list].sort((a, b) => {
+    const ra = SCOPE_TYPE_RANK[scopeTypeOf(a.scope)] ?? 4;
+    const rb = SCOPE_TYPE_RANK[scopeTypeOf(b.scope)] ?? 4;
+    if (ra !== rb) return ra - rb;
+    return String(a.scope).localeCompare(String(b.scope));
+  });
+}
+
+// Narrow a scope inventory to the scopes whose string CONTAINS `needle`
+// (case-insensitive substring) — the `scopes --scope <s>` filter. An empty /
+// absent needle passes everything through unchanged. Pure.
+export function filterScopeInventory(list = [], needle) {
+  if (!needle) return list;
+  const q = String(needle).toLowerCase();
+  return list.filter((s) => String(s.scope).toLowerCase().includes(q));
+}
+
+// The pure core of the `scopes` command: sort an inventory and total its counts.
+// Returns `{ scopes: [{ scope, count }] (sorted), total }`. Pure.
+export function summarizeScopeInventory(list = []) {
+  const scopes = sortScopeInventory(list);
+  const total = scopes.reduce((n, s) => n + (Number(s.count) || 0), 0);
+  return { scopes, total };
+}
+
 // Compare two `gather()` results (offline vs remote) and classify every scope's
 // keys into three sets — the pure core of the `diff` command:
 //   • localOnly     — key present offline, absent remote;
