@@ -164,6 +164,29 @@ function seedEmpty() {
   return { root, home };
 }
 
+// Seed BOTH tiers so the project tier is active (its `.lorekit` dir exists) with
+// an OVERLAPPING `scope::key` present in home AND project, plus a home-only and a
+// project-only key. This is the load-bearing fixture for the cross-tier dedup:
+// `TwoTierStore.listScopes()` must count a `scope::key` present in both tiers
+// ONCE (project shadows home, the same first-wins merge `list` uses).
+function seedTwoTier() {
+  const root = tmp('lk-scopes-2root-');
+  const home = tmp('lk-scopes-2home-');
+  const project = path.join(root, '.lorekit'); // default project-tier dir
+  const writeTier = (base, rel, e) => {
+    const full = path.join(base, rel);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, entry(e));
+  };
+  // Same scope::key in BOTH tiers → must be counted exactly once.
+  writeTier(home, 'global/dup.md', { scope: 'global', key: 'dup', value: 'home copy' });
+  writeTier(project, 'global/dup.md', { scope: 'global', key: 'dup', value: 'project copy' });
+  // A home-only and a project-only key → both counted.
+  writeTier(home, 'global/home-only.md', { scope: 'global', key: 'homeonly', value: 'h' });
+  writeTier(project, 'project/thing/p.md', { scope: 'project::thing', key: 'ponly', value: 'p' });
+  return { root, home };
+}
+
 function baseEnv(home, extraEnv) {
   const env = {
     ...process.env,
@@ -234,6 +257,21 @@ test('scopes surfaces a scope that is NOT applicable to the current directory', 
   assert.match(res.stdout, /project::somethingelse/);
   assert.match(res.stdout, /Offline/);
   assert.match(res.stdout, /total/);
+});
+
+// ── integration: cross-tier dedup (project shadows home) ──────────────────────
+
+test('scopes counts a scope::key present in BOTH tiers once (project shadows home)', () => {
+  const { root, home } = seedTwoTier();
+  const res = runScopes(root, home, ['--json']);
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  const byScope = Object.fromEntries(out.offline.scopes.map((s) => [s.scope, s.count]));
+  // global holds `dup` (in both tiers → counted once) + `homeonly` → 2, not 3.
+  assert.equal(byScope['global'], 2);
+  assert.equal(byScope['project::thing'], 1);
+  // Total is 3, not 4 — the overlapping `global::dup` is never double-counted.
+  assert.equal(out.offline.total, 3);
 });
 
 // ── integration: --scope substring filter ─────────────────────────────────────
