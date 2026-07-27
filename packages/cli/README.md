@@ -194,6 +194,44 @@ behave as in `list`. Remote counts reflect what the hosted `memory.list` returns
 per scope (the server's default page size); there is no cap-usage `N / limit`
 figure because the MCP surface exposes no total-count or cap tool.
 
+### `lorekit scopes`
+
+A **store-wide inventory** of every distinct scope that holds lessons, with a
+lesson count per scope, in the same Offline / Remote split as the other read
+commands:
+
+```bash
+lorekit scopes                 # every scope in the store + a count each
+lorekit scopes --scope repo::  # filter to scopes containing a substring
+lorekit scopes --json          # { offline, remote } with [{ scope, count }] rows
+```
+
+Unlike `list` / `search` / `stats` / `diff` / `tree` — which are all **cwd-scoped**
+(they only look at the scopes that resolve for the current directory:
+project / branch / repo / global) — `scopes` enumerates **every** scope present in
+the store, regardless of the current directory. That's the whole point: it lets
+you see all the scopes you have lessons in, anywhere. Scopes are grouped by type
+(global → project → repo → branch), then alphabetically; each store shows a
+per-store total and scope count.
+
+`--scope <s>` is a **substring filter** over the inventory (not a single-scope
+selector — an inventory of one scope would be pointless).
+
+**Offline enumeration is exact.** It walks the local two-tier store and reads
+each lesson file's frontmatter `scope` string directly, rather than reverse-
+mapping the on-disk directory layout (which is lossy for `project::{name}`,
+stored by basename only) — so every scope is reconstructed verbatim. Lessons
+present in both tiers are counted once (project shadows home, the same merge
+`list` uses); archived lessons are excluded.
+
+**Remote enumeration is not possible, and `scopes` says so honestly.** The
+hosted MCP surface exposes no "list all scopes" tool — every read tool
+(`memory.list` / `memory.search` / `memory.read`) *requires* a scope — so a
+remote inventory can't be built. The Remote section is therefore always a short
+note (never a faked listing), degrading gracefully at exit 0, the same way
+`stats` omits a cap-usage figure. `--endpoint` / `--token` / `--store` behave as
+in `list`.
+
 ### `lorekit diff`
 
 Compare the **offline** and **remote** stores for the applicable scopes and
@@ -453,8 +491,8 @@ active deny constraints.
 | `--no-hooks` | Skip wiring the lifecycle hooks; skill + MCP only (`install`) |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
-| `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `diff` / `tree` / `lint` / `dedupe`) |
-| `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff` / `tree` / `lint` / `dedupe`; default: all applicable) |
+| `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe`) |
+| `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff` / `tree` / `lint` / `dedupe`; default: all applicable). For `scopes` it is a **substring filter** over the inventory |
 | `--threshold <0..1>` | Duplicate-similarity cutoff (`dedupe`; default `0.8`) |
 | `--adapter <name>` | Host framework for `hook`: `claude` / `cursor` / `codex` |
 | `--event <name>` | Host hook event for `hook` (else read from the stdin payload) |
@@ -548,7 +586,7 @@ forever. This reduces manual validation to a single capture pass per tool.
 ## Usage telemetry
 
 The human-facing commands (`install`, `uninstall`, `doctor`, `list`, `search`,
-`show`, `stats`, `diff`, `migrate`)
+`show`, `stats`, `scopes`, `diff`, `migrate`)
 emit one OpenTelemetry span + one counter point per run so the maintainers can see which
 commands people use. It is zero-dependency (OTLP/JSON over `fetch`, no SDK) and
 deliberately narrow — it carries only the command name, a bounded set of boolean
