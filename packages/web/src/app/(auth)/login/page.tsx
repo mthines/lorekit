@@ -38,19 +38,15 @@ const FEATURES = [
 export default function LoginPage() {
   return (
     <main className="relative flex min-h-screen flex-col overflow-hidden bg-[var(--color-bg)]">
-      {/* ── Ambient background ────────────────────────────────────────────────── */}
       <div aria-hidden className="pointer-events-none fixed inset-0 overflow-hidden">
-        {/* Primary amber glow — centred behind the hero */}
         <div
           className="absolute left-1/2 top-1/3 size-[700px] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-30"
           style={{ background: 'radial-gradient(circle, #f5a623 0%, transparent 70%)' }}
         />
-        {/* Subtle violet counter-glow — bottom-right */}
         <div
           className="absolute bottom-0 right-0 size-[500px] translate-x-1/4 translate-y-1/4 rounded-full opacity-10"
           style={{ background: 'radial-gradient(circle, #a78bfa 0%, transparent 70%)' }}
         />
-        {/* Grid overlay */}
         <div
           className="absolute inset-0 opacity-[0.03]"
           style={{
@@ -61,7 +57,6 @@ export default function LoginPage() {
         />
       </div>
 
-      {/* ── Nav ──────────────────────────────────────────────────────────────── */}
       <header className="relative z-10 flex h-16 items-center justify-between px-6 md:px-10">
         <div className="flex items-center gap-2.5">
           <div className="flex size-8 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
@@ -69,18 +64,12 @@ export default function LoginPage() {
           </div>
           <span className="text-sm font-semibold text-[var(--color-content-primary)]">LoreKit</span>
         </div>
-
-        {/* Login in top-right, always visible.
-            Suspense required because LoginButton reads useSearchParams() to pick up
-            the ?next= redirect param set by the dashboard layout. */}
         <Suspense fallback={null}>
           <LoginButton compact />
         </Suspense>
       </header>
 
-      {/* ── Hero ─────────────────────────────────────────────────────────────── */}
       <section className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 py-20 text-center">
-        {/* Wordmark badge */}
         <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[var(--color-accent)]/30 bg-[var(--color-accent-subtle)] px-4 py-1.5">
           <span className="size-1.5 rounded-full bg-[var(--color-accent)]" aria-hidden />
           <span className="font-mono text-xs font-medium text-[var(--color-accent)]">
@@ -99,18 +88,16 @@ export default function LoginPage() {
           Lessons written in one session survive forever — reachable by any agent, on any project.
         </p>
 
-        {/* Primary CTA */}
         <div className="flex flex-col items-center gap-3">
           <Suspense fallback={null}>
             <LoginButton />
           </Suspense>
           <p className="text-xs text-[var(--color-content-tertiary)]">
-            Authenticates via GitHub OAuth — no password required.
+            Sign in with GitHub OAuth or a magic-link email — no password required.
           </p>
         </div>
       </section>
 
-      {/* ── Feature grid ─────────────────────────────────────────────────────── */}
       <section
         aria-label="Features"
         className="relative z-10 mx-auto mb-20 grid max-w-4xl grid-cols-1 gap-4 px-6 sm:grid-cols-2"
@@ -135,7 +122,6 @@ export default function LoginPage() {
         ))}
       </section>
 
-      {/* ── Footer ───────────────────────────────────────────────────────────── */}
       <footer className="relative z-10 border-t border-[var(--color-border)] py-6 text-center">
         <p className="text-xs text-[var(--color-content-tertiary)]">
           Open source · built by{' '}

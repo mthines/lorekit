@@ -8,9 +8,6 @@ import { useOnboarding } from '@/components/providers/OnboardingProvider';
 
 // Primary content nav — 3 destinations keeps the sidebar scannable and the
 // mobile tab bar comfortably within the 3–5 item guideline.
-// "Learn" unifies Getting started (setup checklist) and Tutorials (topic guides)
-// under a single grouped secondary nav with a divider, matching the pattern in
-// agent-skills where categories group related items in one view.
 const NAV = [
   { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { href: '/lore', label: 'Explorer', icon: BookOpen },
@@ -30,9 +27,11 @@ export function Sidebar({ user }: SidebarProps) {
   const { completedCount, total, allDone, hydrated } = useOnboarding();
   const isSettingsActive =
     pathname === SETTINGS.href || pathname.startsWith(SETTINGS.href + '/');
-  // Only surface the count once localStorage is read, so the badge doesn't flash
-  // a stale (server-only) number before manual completions hydrate.
   const showProgress = hydrated && !allDone;
+  const isUserActive = pathname === '/settings/user';
+
+  const displayName = (user.user_metadata?.['full_name'] as string) ?? user.email ?? 'User';
+  const avatarUrl = user.user_metadata?.['avatar_url'] as string | undefined;
 
   return (
     <>
@@ -59,7 +58,6 @@ export function Sidebar({ user }: SidebarProps) {
                 href={href}
                 prefetch={true}
                 className={[
-                  /* Minimum 44px touch target height (WCAG 2.2 SC 2.5.8) */
                   'flex min-h-11 items-center gap-2.5 rounded-lg px-3 text-sm transition-all duration-150',
                   active
                     ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)] font-medium'
@@ -82,7 +80,7 @@ export function Sidebar({ user }: SidebarProps) {
           })}
         </nav>
 
-        {/* Settings — utility destination, pinned above the user row */}
+        {/* Settings */}
         <div className="flex flex-col gap-0.5 p-2">
           <Link
             href={SETTINGS.href}
@@ -100,29 +98,36 @@ export function Sidebar({ user }: SidebarProps) {
           </Link>
         </div>
 
-        {/* User */}
+        {/* User — links to /settings/user on both desktop and mobile */}
         <div className="border-t border-[var(--color-border)] p-2">
-          <div className="flex min-h-11 items-center gap-2.5 rounded-lg px-3 text-sm text-[var(--color-content-secondary)]">
-            {/* Avatar */}
-            <div className="size-5 shrink-0 overflow-hidden rounded-full bg-[var(--color-border)]">
-              {user.user_metadata?.['avatar_url'] && (
+          <Link
+            href="/settings/user"
+            prefetch={true}
+            className={[
+              'flex min-h-11 items-center gap-2.5 rounded-lg px-3 text-sm transition-all duration-150',
+              isUserActive
+                ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)] font-medium'
+                : 'text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]',
+            ].join(' ')}
+            aria-current={isUserActive ? 'page' : undefined}
+            aria-label={`User settings for ${displayName}`}
+          >
+            <div className="size-5 shrink-0 overflow-hidden rounded-full border border-[var(--color-border)] bg-[var(--color-border)]">
+              {avatarUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={user.user_metadata['avatar_url'] as string}
-                  alt={user.user_metadata?.['full_name'] as string ?? 'User'}
-                  className="size-full object-cover"
-                />
+                <img src={avatarUrl} alt="" aria-hidden className="size-full object-cover" />
+              ) : (
+                <div className="flex size-full items-center justify-center text-[8px] font-bold">
+                  {displayName.charAt(0).toUpperCase()}
+                </div>
               )}
             </div>
-            <span className="min-w-0 flex-1 truncate">
-              {(user.user_metadata?.['full_name'] as string) ?? user.email}
-            </span>
-          </div>
+            <span className="min-w-0 flex-1 truncate">{displayName}</span>
+          </Link>
         </div>
       </aside>
 
       {/* ── Mobile bottom tab bar (<md) ──────────────────────────────────── */}
-      {/* NAV (3 items) + Settings = 4 tabs — comfortably within 3–5 guideline. */}
       <nav
         className="fixed inset-x-0 bottom-0 z-40 flex border-t border-[var(--color-border)] bg-[var(--color-bg-raised)] md:hidden"
         aria-label="Main navigation"
@@ -138,7 +143,6 @@ export function Sidebar({ user }: SidebarProps) {
               key={href}
               href={href}
               prefetch={true}
-              /* 44px minimum touch target — explicit min-h */
               className={[
                 'relative flex flex-1 min-h-[3.5rem] flex-col items-center justify-center gap-1 text-xs transition-all duration-150',
                 active
