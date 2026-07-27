@@ -6,8 +6,17 @@ import { fileURLToPath } from 'node:url';
 
 // packages/cli/ — the installable package root (this file lives in src/).
 export const PKG_ROOT = fileURLToPath(new URL('../', import.meta.url));
-export const SKILL_SOURCE = path.join(PKG_ROOT, 'skill', 'lorekit-memory');
 export const SKILL_NAME = 'lorekit-memory';
+export const SKILL_SOURCE = path.join(PKG_ROOT, 'skill', SKILL_NAME);
+
+// Every skill the CLI ships. `lorekit-memory` is the operational read/write
+// loop (kept first as the primary — `SKILL_NAME`/`SKILL_SOURCE` above alias it
+// for back-compat); `lorekit-setup` is the authoring skill that wires a
+// self-improvement loop into a host. install/uninstall/doctor iterate this list.
+export const SKILLS = ['lorekit-memory', 'lorekit-setup'].map((name) => ({
+  name,
+  source: path.join(PKG_ROOT, 'skill', name),
+}));
 
 export function resolveProjectRoot(dir) {
   return path.resolve(dir || process.cwd());
@@ -62,9 +71,9 @@ export function mcpConfigPath(root, scope = 'project') {
 // Where the skill is scaffolded for a given scope:
 //   project → <root>/.claude/skills/…   (this repo only)
 //   global  → ~/.claude/skills/…        (personal skills, all projects)
-export function skillInstallDir(root, scope = 'project') {
+export function skillInstallDir(root, scope = 'project', name = SKILL_NAME) {
   const base = scope === 'global' ? homeDir() : root;
-  return path.join(base, '.claude', 'skills', SKILL_NAME);
+  return path.join(base, '.claude', 'skills', name);
 }
 
 // Claude Code settings file that holds the hooks for a given scope:
@@ -231,10 +240,10 @@ export function readLorekitServer(root) {
 // server / hook / setting intact, so uninstalling never damages a shared
 // ~/.claude.json or settings.json.
 
-// Delete the scaffolded skill directory. We own the whole
-// .claude/skills/lorekit-memory tree, so a recursive remove is safe.
-export function removeSkill(root, scope = 'project') {
-  const dest = skillInstallDir(root, scope);
+// Delete a scaffolded skill directory. We own the whole
+// .claude/skills/<name> tree for each skill we ship, so a recursive remove is safe.
+export function removeSkill(root, scope = 'project', name = SKILL_NAME) {
+  const dest = skillInstallDir(root, scope, name);
   const removed = fs.existsSync(dest);
   if (removed) fs.rmSync(dest, { recursive: true, force: true });
   return { dest, removed };

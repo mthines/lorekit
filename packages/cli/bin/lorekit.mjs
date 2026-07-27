@@ -32,14 +32,14 @@ ${c.bold('Usage')}
   npx @lorekit/cli <command> [options]
 
 ${c.bold('Commands')}
-  install     Scaffold the lorekit-memory skill, wire the LoreKit MCP server,
-              and install the deterministic hooks (lessons on SessionStart, a
-              nudge on tool failure + at Stop). Prompts to install for this
-              project (.claude) or globally for every project (~/.claude);
-              --project / --global choose non-interactively, --no-hooks skips
-              the hooks (skill stays model-invoked only).
-  uninstall   Reverse install: remove the lorekit-memory skill, the MCP server
-              entry, and the lifecycle hooks for the chosen scope. Surgical —
+  install     Scaffold the lorekit-memory + lorekit-setup skills, wire the
+              LoreKit MCP server, and install the deterministic hooks (lessons
+              on SessionStart, a nudge on tool failure + at Stop). Prompts to
+              install for this project (.claude) or globally for every project
+              (~/.claude); --project / --global choose non-interactively,
+              --no-hooks skips the hooks (skills stay model-invoked only).
+  uninstall   Reverse install: remove the lorekit-memory + lorekit-setup skills,
+              the MCP server entry, and the lifecycle hooks for the chosen scope. Surgical —
               other servers, hooks, and settings are left untouched. Prompts
               project vs global; --project / --global choose non-interactively.
   doctor      Verify the skill install, MCP connectivity, token, and scope.
@@ -131,13 +131,14 @@ Run ${c.cyan('lorekit <command> --help')} for command-specific options.
 // focused entry instead of the full top-level HELP, so a user only sees the
 // flags that actually apply to what they're running.
 const COMMAND_HELP = {
-  install: `${c.bold('lorekit install')} — scaffold the skill, wire the MCP server, install the hooks
+  install: `${c.bold('lorekit install')} — scaffold the skills, wire the MCP server, install the hooks
 
 ${c.bold('Usage')}
   npx @lorekit/cli install [options]
 
-Scaffolds the lorekit-memory skill, adds the LoreKit MCP server, and wires the
-deterministic hooks (lessons on SessionStart, a nudge on tool failure + at Stop).
+Scaffolds the lorekit-memory (runtime read/write) and lorekit-setup (loop
+authoring) skills, adds the LoreKit MCP server, and wires the deterministic
+hooks (lessons on SessionStart, a nudge on tool failure + at Stop).
 
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
@@ -159,8 +160,8 @@ ${c.bold('Examples')}
 ${c.bold('Usage')}
   npx @lorekit/cli uninstall [options]
 
-Removes the lorekit-memory skill, the MCP server entry, and the lifecycle hooks.
-Surgical — other servers, hooks, and settings are left untouched.
+Removes the lorekit-memory and lorekit-setup skills, the MCP server entry, and
+the lifecycle hooks. Surgical — other servers, hooks, and settings are left untouched.
 
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)

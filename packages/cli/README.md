@@ -477,9 +477,11 @@ active deny constraints.
 | `LOREKIT_TELEMETRY_TOKEN` | bearer token for telemetry export (overrides the baked-in default) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS` | override the telemetry OTLP endpoint / headers |
 
-## What the skill does
+## What the skills do
 
-The installed `lorekit-memory` skill teaches an agent to:
+`install` scaffolds two skills:
+
+The **`lorekit-memory`** skill teaches an agent to:
 
 - **Read** scoped lessons at the start of a task, on first navigation into
   unfamiliar code, and before risky operations (narrow-to-broad scope merge).
@@ -491,11 +493,16 @@ This mirrors the read-on-start / write-on-failure loop of the `aw`
 autonomous-workflow agent. See the skill's own `SKILL.md` for the full
 protocol.
 
-The **skill** is model-invoked (the agent chooses to use it). For a
+The **`lorekit-setup`** skill is the authoring counterpart: it teaches an agent
+to wire a self-improvement loop into one of *your own* skills or workflows — the
+two-tier model, the lesson bucket convention, and the entrenchment guards. See
+its `SKILL.md` and `rules/self-improvement-loops.md`.
+
+The **skills** are model-invoked (the agent chooses to use them). For a
 **deterministic** guarantee — lessons injected on every session start, a nudge
 on every tool failure — use the framework plugins in [`plugins/`](../../plugins/),
-which fire the `lorekit hook` engine on host lifecycle events. The skill and
-the hooks compose: hooks guarantee the *timing*, the skill supplies the
+which fire the `lorekit hook` engine on host lifecycle events. The skills and
+the hooks compose: hooks guarantee the *timing*, the skills supply the
 *authoring judgment*.
 
 ## Testing & validating across frameworks

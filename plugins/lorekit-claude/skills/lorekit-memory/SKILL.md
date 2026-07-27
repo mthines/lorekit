@@ -46,6 +46,12 @@ Both jobs run through LoreKit's `memory.*` MCP tools.
 If those tools are not connected, this skill is a no-op — say so once and
 continue the task; never block work because memory is unavailable.
 
+> **Wiring a loop into your own skill?** This skill does the runtime read/write.
+> To set up a *self-improvement loop* for a skill, workflow, or agent — so it
+> reads its own lessons on every run and promotes proven ones into permanent
+> rules — use the **`lorekit-setup`** skill, the authoring counterpart to this
+> one.
+
 > **Modes.** Memory has a controllable backend (`lorekit doctor` shows the
 > resolved one): `remote` (the hosted LoreKit server — the default), `local`
 > (markdown files in two tiers — a per-user **home** tier at `~/.lorekit/` and

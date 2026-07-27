@@ -5,7 +5,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { execFileSync } from 'node:child_process';
 import {
-  SKILL_NAME,
+  SKILLS,
   resolveProjectRoot,
   skillInstallDir,
   readLorekitServer,
@@ -42,18 +42,24 @@ export async function doctor(args) {
     `v${process.versions.node}${major < 18 ? ' — need v18+ for fetch' : ''}`,
   );
 
-  // 2. Skill installed — check BOTH the project and the global (~/.claude)
-  // locations. `lorekit install --global` writes the skill under home, not the
-  // repo, so a project-only check reports a healthy global install as "not
-  // found" (exactly the false FAIL a --global setup would hit).
-  const skillMd = [skillInstallDir(root, 'project'), skillInstallDir(root, 'global')]
-    .map((dir) => path.join(dir, 'SKILL.md'))
-    .find((p) => fs.existsSync(p));
-  if (skillMd) {
-    const rel = path.relative(root, skillMd);
-    record('pass', `skill ${SKILL_NAME}`, rel && !rel.startsWith('..') ? rel : prettyPath(skillMd));
-  } else {
-    record('fail', `skill ${SKILL_NAME}`, 'not found — run `lorekit install`');
+  // 2. Skills installed — check every skill the CLI ships, in BOTH the project
+  // and the global (~/.claude) locations. `lorekit install --global` writes the
+  // skill under home, not the repo, so a project-only check reports a healthy
+  // global install as "not found" (exactly the false FAIL a --global setup would
+  // hit).
+  for (const skill of SKILLS) {
+    const skillMd = [
+      skillInstallDir(root, 'project', skill.name),
+      skillInstallDir(root, 'global', skill.name),
+    ]
+      .map((dir) => path.join(dir, 'SKILL.md'))
+      .find((p) => fs.existsSync(p));
+    if (skillMd) {
+      const rel = path.relative(root, skillMd);
+      record('pass', `skill ${skill.name}`, rel && !rel.startsWith('..') ? rel : prettyPath(skillMd));
+    } else {
+      record('fail', `skill ${skill.name}`, 'not found — run `lorekit install`');
+    }
   }
 
   // 3. Resolved control model — which mode, and who decided it.

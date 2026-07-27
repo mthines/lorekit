@@ -30,9 +30,11 @@ function runDoctor(dir, home) {
   });
 }
 
-// The single "skill lorekit-memory" status line from doctor's output.
-const skillLine = (stdout) =>
-  stdout.split('\n').find((l) => l.includes('skill lorekit-memory')) ?? '';
+// The status line for a given skill from doctor's output.
+const skillLineFor = (stdout, name) =>
+  stdout.split('\n').find((l) => l.includes(`skill ${name}`)) ?? '';
+// The primary "skill lorekit-memory" status line (most assertions key on it).
+const skillLine = (stdout) => skillLineFor(stdout, 'lorekit-memory');
 
 // Install with HOME pinned to `home` (global install targets homeDir()).
 async function installWith(opts, home) {
@@ -59,6 +61,10 @@ test('doctor finds a project-installed skill', async () => {
   const line = skillLine(res.stdout);
   assert.match(line, /PASS/, `expected skill PASS, got: ${line}`);
   assert.doesNotMatch(line, /not found/);
+
+  // doctor checks every shipped skill, not just the primary one.
+  const setupLine = skillLineFor(res.stdout, 'lorekit-setup');
+  assert.match(setupLine, /PASS/, `expected lorekit-setup PASS, got: ${setupLine}`);
 });
 
 test('doctor finds a GLOBAL-installed skill (regression: was reported "not found")', async () => {
