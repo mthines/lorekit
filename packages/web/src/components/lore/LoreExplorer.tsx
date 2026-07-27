@@ -266,7 +266,7 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
   // a fresh type identity on every parent render, so React would unmount and
   // remount the entire list each time any filter/search/transition state
   // changed — replaying every card's enter animation even when the same cards
-  // remain. Inlining the returned JSX keeps each keyed <MemoryCard> mounted
+  // remain. Inlining the returned JSX keeps each keyed <LessonCard> mounted
   // across renders, so only genuinely-new cards animate in.
   const renderLessonList = () => {
     if (isLoading) {
