@@ -106,10 +106,11 @@ export async function resolveAuth(
   });
   const { data, error } = await client.auth.getUser(token);
   if (error || !data.user) {
+    // Use bounded error code, not the free-form message, to avoid PII leaking into span attributes.
     span?.setAttributes({
       'auth.outcome': 'jwt_invalid',
       'auth.type': 'jwt',
-      'auth.error': error?.message ?? 'no user returned',
+      'auth.error_code': error?.code ?? error?.name ?? 'no_user',
     });
     return null;
   }

@@ -4,7 +4,7 @@
  * Unauthenticated requests receive JSON-RPC error -32001 + HTTP 401.
  */
 import { createClient } from '@supabase/supabase-js';
-import { trace, SpanStatusCode, SpanKind } from '@opentelemetry/api';
+import { trace, SpanStatusCode, SpanKind, type Span } from '@opentelemetry/api';
 import { ATTR_ERROR_TYPE } from '@opentelemetry/semantic-conventions';
 import { logger } from './logger.js';
 
@@ -63,12 +63,12 @@ export async function resolveAuth(authHeader: string | undefined): Promise<AuthC
 
 async function _resolveAuth(
   authHeader: string | undefined,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  span: any,
+  span: Span,
 ): Promise<AuthContext | null> {
   if (!authHeader?.startsWith('Bearer ')) {
+    // Missing/malformed header is a client error (equivalent to HTTP 4xx) —
+    // per OTel HTTP semconv, client errors MUST NOT set span status to ERROR.
     span.setAttribute('auth.outcome', 'missing_header');
-    span.setStatus({ code: SpanStatusCode.ERROR, message: 'missing or malformed Authorization header' });
     return null;
   }
 
@@ -100,9 +100,10 @@ async function _resolveAuth(
   const { data, error } = await client.auth.getUser(token);
   if (error || !data.user) {
     logger.warn({ error: error?.message }, 'auth.jwt.invalid');
+    // JWT validation failure is a client error — UNSET status, not ERROR.
+    // Use the bounded error code, not the free-form message, to avoid PII in spans.
     span.setAttribute('auth.outcome', 'jwt_invalid');
-    span.setAttribute('auth.error', error?.message ?? 'no user returned');
-    span.setStatus({ code: SpanStatusCode.ERROR, message: 'JWT validation failed' });
+    span.setAttribute('auth.error_code', error?.code ?? error?.name ?? 'no_user');
     return null;
   }
 

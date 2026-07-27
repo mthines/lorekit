@@ -22,7 +22,8 @@ export async function GET(request: NextRequest) {
           span.setAttribute('auth.user_id', data.user?.id ?? 'unknown');
           // auth.provider is safe to surface — it is a bounded value (github, email, …)
           span.setAttribute('auth.provider', data.user?.app_metadata?.['provider'] ?? 'unknown');
-          span.setStatus({ code: SpanStatusCode.OK });
+          // Leave span status UNSET on success — consistent with withSpan convention
+          // (see lib/telemetry.ts: status is set to ERROR only on thrown exceptions).
           logger.info('auth.callback.success', {
             'auth.provider': data.user?.app_metadata?.['provider'] ?? 'unknown',
           });
