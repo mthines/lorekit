@@ -12,6 +12,18 @@ loop entrenching its own mistakes.
 
 The design has two tiers connected by a recurrence gate. Both run on LoreKit.
 
+## Contents
+
+- [When to add a loop (and when not to)](#when-to-add-a-loop-and-when-not-to)
+- [The two tiers](#the-two-tiers)
+- [Conventions](#conventions)
+- [Read step (start of every run)](#read-step-start-of-every-run)
+- [Write step (on failure / at the end of a run)](#write-step-on-failure--at-the-end-of-a-run)
+- [Promotion (fast → slow)](#promotion-fast--slow)
+- [Entrenchment guards (do not skip these)](#entrenchment-guards-do-not-skip-these)
+- [Wiring checklist](#wiring-checklist)
+- [Interactive setup](#interactive-setup)
+
 ---
 
 ## When to add a loop (and when not to)

@@ -2,22 +2,19 @@
 name: lorekit-memory
 description: >
   Shared persistent memory for coding agents, backed by LoreKit's MCP server.
-  Reads scoped lessons at the start of a task or when navigating into
-  unfamiliar code (narrow-to-broad scope resolution across branch, repo,
-  project, and global), and writes a lesson when something goes wrong — a
-  stuck loop, a repeated command failure, a surprising gotcha, a near-miss,
-  or a wrong assumption that cost time. Lessons are phrased as observations
-  (never rigid rules), scoped to the narrowest namespace that fits, and
-  deduplicated on write. Also sets up a two-tier self-improvement loop for a
-  skill, workflow, or agent — a fast episodic tier (LoreKit lessons read at the
-  start of a run, written on failure) that promotes proven lessons into a
-  permanent host rule (the slow tier) behind a recurrence gate and entrenchment
-  guards. Use at task start, before risky operations, after any failure or
-  retrospective, and when giving a host durable cross-run memory. Triggers on
-  "read lessons", "check memory", "what do we know about", "remember this",
-  "save a lesson", "record this gotcha", "capture this lesson", "set up memory
-  for my skill", "add a self-improvement loop", "make this learn from its
-  mistakes", "self-improving memory", "/lorekit-memory".
+  Reads scoped lessons at the start of a task or when entering unfamiliar code
+  (narrow-to-broad across branch, repo, project, and global), and writes one
+  when something goes wrong — a stuck loop, a repeated failure, a gotcha, a
+  near-miss, or a costly wrong assumption. Lessons are observations, not rules,
+  scoped to the narrowest namespace and deduplicated on write. Also sets up a
+  two-tier self-improvement loop for a skill, workflow, or agent: a fast
+  episodic tier (lessons read at the start of a run, written on failure) that
+  promotes proven lessons into a permanent rule behind a recurrence gate and
+  entrenchment guards. Use at task start, before risky operations, after a
+  failure, or when giving a host durable cross-run memory. Triggers on "read
+  lessons", "check memory", "remember this", "save a lesson", "set up memory
+  for my skill", "add a self-improvement loop", "self-improving memory",
+  "/lorekit-memory".
 user-invocable: true
 argument-hint: '[read|write] [scope-hint or lesson]'
 license: MIT
