@@ -8,7 +8,10 @@
 // `deriveScope().readOrder` (branch → repo → global, most-specific first) and
 // keeps the FIRST value seen per key, so a more-specific scope shadows a broader
 // scope's same-key lesson. `tree` resolves over that same `readOrder` set via
-// the pure `resolvePrecedence`, so what it shows is what the agent is injected.
+// the pure `resolvePrecedence`, so it shows the same resolution order the agent
+// is injected with (the hook additionally caps the injected set at MAX_LESSONS;
+// `tree` is uncapped, so a large workspace may list more winners than the hook
+// injects).
 //
 // NOTE on scope coverage: `readOrder` is the injected set, and it deliberately
 // excludes `project::` — the hooks never inject project-scope lessons, so `tree`
