@@ -319,9 +319,8 @@ Shows the scopes the hooks actually inject for the current directory — project
 branch, repo, global, in precedence order (most-specific first) — and marks, for any key
 present at more than one scope, which scope's lesson WINS and which are shadowed.
 This mirrors the SessionStart hook's resolution exactly (a more-specific scope
-overrides a broader scope's same-key lesson). Project-scope lessons are NOT
-injected by the hooks, so they are not shown here — browse them with \`lorekit list\`.
-Resolved independently per store, in the same Offline / Remote split.
+overrides a broader scope's same-key lesson). Resolved independently per store,
+in the same Offline / Remote split.
 
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)

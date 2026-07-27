@@ -96,8 +96,8 @@ function entry({ scope, key, value, tags = [] }) {
 }
 
 // A git-backed project (remote `acme/widget`, branch `feat/x`) so `deriveScope`
-// resolves the full branch → repo → global `readOrder`, with the same key
-// `shared` present at all three scopes plus a global-only key.
+// resolves the full project → branch → repo → global `readOrder`, with the same
+// key `shared` present at the branch, repo, and global scopes plus a global-only key.
 function seedGitProject() {
   const root = tmp('lk-tree-proj-');
   const home = tmp('lk-tree-home-');
