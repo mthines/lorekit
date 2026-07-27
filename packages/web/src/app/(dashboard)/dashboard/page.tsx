@@ -28,7 +28,7 @@ export default async function DashboardPage() {
       {pendingInvites.length > 0 && <PendingInvitesBanner initialInvites={pendingInvites} />}
 
       {/* First-run setup. Dismissing hides it here; the persistent
-          "Getting started" sidebar entry (and /onboarding) is the way back. */}
+          "Learn" sidebar entry (and /learn/setup) is the way back. */}
       <OnboardingChecklist steps={steps} variant="inline" />
 
       {/* Scope health stats — fetched client-side with TanStack Query so

@@ -194,7 +194,7 @@ export function ActivityFeed({ events, range, onRangeChange }: ActivityFeedProps
           </p>
           {!isFiltered && (
             <Link
-              href="/onboarding"
+              href="/learn/setup"
               className="mt-1 flex items-center gap-1 text-xs font-medium text-[var(--color-accent)] hover:underline"
             >
               View setup guide
