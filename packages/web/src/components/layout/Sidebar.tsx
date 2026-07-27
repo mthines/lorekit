@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import { BookOpen, LayoutDashboard, Settings, GraduationCap } from 'lucide-react';
@@ -39,9 +40,14 @@ export function Sidebar({ user }: SidebarProps) {
       <aside className="hidden md:flex w-56 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-bg-raised)]">
         {/* Brand */}
         <div className="flex h-14 items-center gap-2.5 border-b border-[var(--color-border)] px-4">
-          <div className="flex size-7 items-center justify-center rounded-lg bg-[var(--color-accent-subtle)] text-[var(--color-accent)]">
-            <span className="text-sm" aria-hidden>⚡</span>
-          </div>
+          <Image
+            src="/icons/icon-192.png"
+            alt="LoreKit"
+            width={28}
+            height={28}
+            className="shrink-0 rounded-lg"
+            priority
+          />
           <span className="text-sm font-semibold text-[var(--color-content-primary)]">
             LoreKit
           </span>
