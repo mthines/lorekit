@@ -6,18 +6,19 @@ import type { User } from '@supabase/supabase-js';
 import { BookOpen, LayoutDashboard, Settings, Rocket } from 'lucide-react';
 import { useOnboarding } from '@/components/providers/OnboardingProvider';
 
-// Activity is no longer a standalone route — the heatmap and time-ordered feed
-// are now accessible from the Lore Explorer page via the "Browse by time" tab.
+// Primary content nav — rendered in order in both the desktop sidebar and the
+// mobile bottom tab bar. Getting started sits here (third position, after
+// Overview and Explorer) because it is a high-signal destination for new users
+// and remains useful after setup as a reference.
 const NAV = [
   { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { href: '/lore', label: 'Explorer', icon: BookOpen },
+  { href: '/onboarding', label: 'Getting started', mobileLabel: 'Setup', icon: Rocket },
 ] as const;
 
-// "Getting started" and "Settings" sit apart from the primary content nav —
-// they're persistent destinations, not content views. Getting started is always
-// available (even once complete) so setup is never a dead end. Desktop renders
-// both in the footer; mobile appends them as trailing tabs.
-const GETTING_STARTED = { href: '/onboarding', label: 'Getting started', mobileLabel: 'Setup', icon: Rocket } as const;
+// Settings is a persistent utility destination kept in the sidebar footer —
+// separate from the primary content nav so it does not compete for attention
+// during normal use.
 const SETTINGS = { href: '/settings', label: 'Settings', icon: Settings } as const;
 
 interface SidebarProps {
@@ -29,8 +30,6 @@ export function Sidebar({ user }: SidebarProps) {
   const { completedCount, total, allDone, hydrated } = useOnboarding();
   const isSettingsActive =
     pathname === SETTINGS.href || pathname.startsWith(SETTINGS.href + '/');
-  const isGettingStartedActive =
-    pathname === GETTING_STARTED.href || pathname.startsWith(GETTING_STARTED.href + '/');
   // Only surface the count once localStorage is read, so the badge doesn't flash
   // a stale (server-only) number before manual completions hydrate.
   const showProgress = hydrated && !allDone;
@@ -49,10 +48,11 @@ export function Sidebar({ user }: SidebarProps) {
           </span>
         </div>
 
-        {/* Nav */}
+        {/* Primary nav — all content destinations, including Getting started */}
         <nav className="flex flex-1 flex-col gap-0.5 p-2" aria-label="Main navigation">
           {NAV.map(({ href, label, icon: Icon }) => {
             const active = pathname === href || pathname.startsWith(href + '/');
+            const isOnboarding = href === '/onboarding';
             return (
               <Link
                 key={href}
@@ -68,37 +68,22 @@ export function Sidebar({ user }: SidebarProps) {
                 aria-current={active ? 'page' : undefined}
               >
                 <Icon className="size-4 shrink-0" aria-hidden />
-                {label}
+                <span className="flex-1">{label}</span>
+                {isOnboarding && showProgress && (
+                  <span
+                    className="rounded-md bg-[var(--color-bg-elevated)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--color-content-tertiary)]"
+                    aria-label={`${completedCount} of ${total} steps complete`}
+                  >
+                    {completedCount}/{total}
+                  </span>
+                )}
               </Link>
             );
           })}
         </nav>
 
-        {/* Getting started + Settings — persistent destinations, pinned above the
-            user row and separated from the primary content nav. */}
+        {/* Settings — utility destination, pinned above the user row */}
         <div className="flex flex-col gap-0.5 p-2">
-          <Link
-            href={GETTING_STARTED.href}
-            prefetch={true}
-            className={[
-              'flex min-h-11 items-center gap-2.5 rounded-lg px-3 text-sm transition-all duration-150',
-              isGettingStartedActive
-                ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)] font-medium'
-                : 'text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]',
-            ].join(' ')}
-            aria-current={isGettingStartedActive ? 'page' : undefined}
-          >
-            <GETTING_STARTED.icon className="size-4 shrink-0" aria-hidden />
-            <span className="flex-1">{GETTING_STARTED.label}</span>
-            {showProgress && (
-              <span
-                className="rounded-md bg-[var(--color-bg-elevated)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--color-content-tertiary)]"
-                aria-label={`${completedCount} of ${total} steps complete`}
-              >
-                {completedCount}/{total}
-              </span>
-            )}
-          </Link>
           <Link
             href={SETTINGS.href}
             prefetch={true}
@@ -137,17 +122,17 @@ export function Sidebar({ user }: SidebarProps) {
       </aside>
 
       {/* ── Mobile bottom tab bar (<md) ──────────────────────────────────── */}
-      {/* Getting started + Settings are appended after NAV, so they render as the
-          trailing tabs (5 total — within the 3–5 bottom-tab guideline). */}
+      {/* NAV (3 items) + Settings = 4 tabs, within the 3–5 bottom-tab guideline. */}
       <nav
         className="fixed inset-x-0 bottom-0 z-40 flex border-t border-[var(--color-border)] bg-[var(--color-bg-raised)] md:hidden"
         aria-label="Main navigation"
       >
-        {[...NAV, GETTING_STARTED, SETTINGS].map((item) => {
+        {[...NAV, SETTINGS].map((item) => {
           const { href, icon: Icon } = item;
           const label = 'mobileLabel' in item ? item.mobileLabel : item.label;
           const active = pathname === href || pathname.startsWith(href + '/');
-          const withProgressDot = href === GETTING_STARTED.href && showProgress;
+          const isOnboarding = href === '/onboarding';
+          const withProgressDot = isOnboarding && showProgress;
           return (
             <Link
               key={href}
