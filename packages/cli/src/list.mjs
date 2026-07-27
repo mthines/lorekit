@@ -13,7 +13,7 @@ import { resolveProjectRoot } from './config.mjs';
 import { deriveScope } from './scope.mjs';
 import { loadControl } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { scopeList, gather, renderSection, normalizeEntry } from './lessons-view.mjs';
+import { scopeList, gather, renderSection } from './lessons-view.mjs';
 import { log, heading, c } from './util.mjs';
 
 // Abbreviate the user's home directory to `~` for readable paths.
@@ -116,7 +116,8 @@ function sectionJson(section) {
     groups: (section.groups || []).map((g) => ({
       scope: g.scope,
       error: g.error || null,
-      entries: g.entries.map(normalizeEntry),
+      // `gather()` already normalized these entries; no second pass needed.
+      entries: g.entries,
     })),
   };
 }
