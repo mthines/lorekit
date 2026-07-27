@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveControl, normalizeMode, loadControl } from '../src/control.mjs';
+import { resolveControl, normalizeMode, loadControl, resolveDenies } from '../src/control.mjs';
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'lk-ctl-'));
@@ -156,4 +156,43 @@ test('user config is read from $LOREKIT_HOME/config.json (the ~/.lorekit move)',
   assert.equal(r.mode, 'local');
   assert.ok(r.denies.some((d) => d.mode === 'remote' && /\.lorekit\/config\.json/.test(d.source)));
   assert.deepEqual(r.storeTarget, { home, project: path.join(root, '.lorekit') });
+});
+
+// ── resolveDenies — the shared deny-wins seam for the read commands ───────────
+
+test('resolveDenies returns null on both sides when no deny is active', () => {
+  const home = tmpDir();
+  const root = tmpDir();
+  const { localDenied, remoteDenied } = resolveDenies(root, { env: { LOREKIT_HOME: home } });
+  assert.equal(localDenied, null);
+  assert.equal(remoteDenied, null);
+});
+
+test('resolveDenies surfaces the matched deny object (mode + source) per side', () => {
+  const home = tmpDir();
+  const root = tmpDir();
+  const env = { LOREKIT_HOME: home, LOREKIT_DENY: 'remote' };
+  const { localDenied, remoteDenied } = resolveDenies(root, { env });
+  assert.equal(localDenied, null);
+  assert.equal(remoteDenied.mode, 'remote');
+  assert.match(remoteDenied.source, /LOREKIT_DENY/);
+});
+
+test('resolveDenies reports both when both modes are denied (union, deny-wins)', () => {
+  const home = tmpDir();
+  const root = tmpDir();
+  const env = { LOREKIT_HOME: home, LOREKIT_DENY: 'local,remote' };
+  const { localDenied, remoteDenied } = resolveDenies(root, { env });
+  assert.equal(localDenied.mode, 'local');
+  assert.equal(remoteDenied.mode, 'remote');
+});
+
+test('resolveDenies reads a deny from the user config file, not just env', () => {
+  const home = tmpDir();
+  const root = tmpDir();
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ deny: ['local'] }));
+  const { localDenied, remoteDenied } = resolveDenies(root, { env: { LOREKIT_HOME: home } });
+  assert.equal(localDenied.mode, 'local');
+  assert.match(localDenied.source, /config\.json/);
+  assert.equal(remoteDenied, null);
 });
