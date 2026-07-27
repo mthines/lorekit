@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.1](https://github.com/mthines/lorekit/compare/cli-v1.13.0...cli-v1.13.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* **cli:** mcp readiness banner + correct tree scope help ([#157](https://github.com/mthines/lorekit/issues/157)) ([57128be](https://github.com/mthines/lorekit/commit/57128beb55756e4917122ac9e9f0091e7e80a4bf))
+
 ## [1.13.0](https://github.com/mthines/lorekit/compare/cli-v1.12.0...cli-v1.13.0) (2026-07-27)
 
 
