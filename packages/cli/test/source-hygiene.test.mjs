@@ -12,19 +12,23 @@ import { fileURLToPath } from 'node:url';
 
 const srcDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
 
-function mjsFiles(dir) {
+// Every file under src/ (any extension) — a raw NUL makes git treat ANY file
+// as binary, not just .mjs, so the guard scans the whole tree rather than one
+// extension. src/ is source-only today; if a genuine binary asset is ever
+// added here, narrow this walker at that point.
+function sourceFiles(dir) {
   const out = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...mjsFiles(full));
-    else if (entry.name.endsWith('.mjs')) out.push(full);
+    if (entry.isDirectory()) out.push(...sourceFiles(full));
+    else out.push(full);
   }
   return out;
 }
 
 test('no source file contains a raw NUL byte (would make git treat it as binary)', () => {
   const offenders = [];
-  for (const file of mjsFiles(srcDir)) {
+  for (const file of sourceFiles(srcDir)) {
     const buf = readFileSync(file);
     if (buf.includes(0)) offenders.push(file);
   }
