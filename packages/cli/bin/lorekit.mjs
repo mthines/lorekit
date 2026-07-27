@@ -10,6 +10,7 @@ import { list } from '../src/list.mjs';
 import { search } from '../src/search.mjs';
 import { show } from '../src/show.mjs';
 import { stats } from '../src/stats.mjs';
+import { scopes } from '../src/scopes.mjs';
 import { diff } from '../src/diff.mjs';
 import { tree } from '../src/tree.mjs';
 import { lint } from '../src/lint.mjs';
@@ -56,6 +57,10 @@ ${c.bold('Commands')}
   stats       Count the applicable lessons per scope and per store (offline vs
               remote), with per-store and grand totals, in the same Offline/
               Remote split. --json, --scope <s>.
+  scopes      Store-wide inventory of EVERY distinct scope that holds lessons,
+              with a lesson count per scope — not cwd-scoped like the commands
+              above (it lists scopes anywhere in the store). Offline is exact;
+              the remote can't enumerate scopes (honest note). --json, --scope <s>.
   diff        Compare the offline and remote stores for the applicable scopes and
               report divergence: local-only, remote-only, and conflicting keys
               (grouped by scope). Needs both stores readable. --json, --scope <s>.
@@ -86,8 +91,8 @@ ${c.bold('Options')}
   -t, --token <token>     LoreKit token (lk_rw_* to allow writes, lk_ro_* read-only)
       --mode <mode>       Memory mode: off | local | remote (doctor override)
       --store <path>      Local project-tier store directory (default: .lorekit)
-      --json              Machine-readable output (list / search / show / stats / diff / tree / lint / dedupe)
-      --scope <scope>     Restrict to a single scope (list / search / stats / diff / tree / lint / dedupe)
+      --json              Machine-readable output (list / search / show / stats / scopes / diff / tree / lint / dedupe)
+      --scope <scope>     Restrict to a single scope; a substring filter for scopes (list / search / stats / scopes / diff / tree / lint / dedupe)
       --threshold <0..1>  Duplicate-similarity cutoff (dedupe; default 0.8)
       --from <path>       Source store to migrate from (migrate)
       --to <tier>         Migration destination tier: home | project (migrate;
@@ -286,6 +291,35 @@ ${c.bold('Examples')}
   npx @lorekit/cli stats --json
   npx @lorekit/cli stats --scope global
 `,
+  scopes: `${c.bold('lorekit scopes')} — store-wide inventory of every distinct scope
+
+${c.bold('Usage')}
+  npx @lorekit/cli scopes [options]
+
+Lists EVERY distinct scope present in the store, with a lesson count per scope,
+in the same Offline / Remote split as the other read commands. Unlike \`list\` /
+\`stats\` (which only see the scopes that resolve for the current directory), this
+is a full inventory — it surfaces scopes anywhere in the store, regardless of the
+current directory.
+
+Offline counts are exact: each scope is read from the lesson files' frontmatter,
+not reverse-mapped from the directory layout. The Remote section is always a
+short note: the hosted MCP surface has no "list all scopes" tool (every read tool
+requires a scope), so a remote inventory isn't possible — never an error (exit 0).
+
+${c.bold('Options')}
+  -d, --dir <path>        Target project root (default: current directory)
+      --scope <substr>    Filter the inventory to scopes containing this substring
+      --json              Machine-readable output
+  -e, --endpoint <url>    Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
+  -t, --token <token>     Remote token override (else .mcp.json / LOREKIT_TOKEN)
+      --store <path>      Local project-tier store directory (default: .lorekit)
+
+${c.bold('Examples')}
+  npx @lorekit/cli scopes
+  npx @lorekit/cli scopes --json
+  npx @lorekit/cli scopes --scope repo::
+`,
   diff: `${c.bold('lorekit diff')} — compare the offline and remote stores
 
 ${c.bold('Usage')}
@@ -442,8 +476,8 @@ const KNOWN_FLAGS = [
 // reject unknown flags; the machine-facing `hook` / `mcp` do not (they must
 // never fail on a stray flag, and only ever receive flags we control).
 const HUMAN_COMMANDS = new Set([
-  'install', 'uninstall', 'doctor', 'list', 'search', 'show', 'stats', 'diff',
-  'tree', 'lint', 'dedupe', 'migrate',
+  'install', 'uninstall', 'doctor', 'list', 'search', 'show', 'stats', 'scopes',
+  'diff', 'tree', 'lint', 'dedupe', 'migrate',
 ]);
 
 // Command aliases — canonicalized before help / dispatch so `lorekit ls --help`
@@ -525,6 +559,8 @@ async function main() {
       return traceCommand('show', args, VERSION, () => show(args));
     case 'stats':
       return traceCommand('stats', args, VERSION, () => stats(args));
+    case 'scopes':
+      return traceCommand('scopes', args, VERSION, () => scopes(args));
     case 'diff':
       return traceCommand('diff', args, VERSION, () => diff(args));
     case 'tree':
