@@ -51,9 +51,11 @@ without needing a marketplace:
 2. **MCP server** (`lorekit`) — the connection to your lessons, merged into the
    MCP config (preserving any other servers).
 3. **Hooks** — the *deterministic* layer: lessons injected on every
-   `SessionStart`, a nudge on tool failure (`PostToolUseFailure`), and a
-   retrospective nudge on `Stop`. These fire the shared `lorekit hook` engine
-   and are merged into `settings.json` (existing hooks preserved).
+   `SessionStart`, and on a tool failure (`PostToolUseFailure`) any lessons that
+   look **relevant to that failure** ("you've hit this before") plus a nudge to
+   record the fix, and a retrospective nudge on `Stop`. These fire the shared
+   `lorekit hook` engine and are merged into `settings.json` (existing hooks
+   preserved).
 
 It first asks **where** to install:
 
@@ -134,13 +136,148 @@ lorekit list --json          # structured { offline, remote } payload for script
 `--endpoint` / `--token` override the remote connection; `--store` overrides the
 local project-tier directory.
 
+### `lorekit search` (alias `grep`)
+
+Full-text search across the same applicable scopes and the same two stores as
+`list`, rendered in the same Offline / Remote split. A lesson matches when the
+query appears — **case-insensitively, as a literal substring** — in its **key or
+value**:
+
+```bash
+lorekit search sandbox            # both sections, only the matching lessons
+lorekit grep "flaky test"         # same, via the alias
+lorekit search migration --scope global
+lorekit search build --json       # { query, offline, remote } for scripts
+```
+
+The query is matched with a plain substring check, **never compiled as a regex**,
+so a term full of metacharacters (`a.*(b)`) matches those characters verbatim —
+no injection, no surprises. It is read-only, hides archived lessons, and degrades
+the remote section gracefully (an unconfigured remote is a note, not an error;
+the command still exits 0). An empty query is a usage error; no matches prints a
+friendly "no lessons match" note (exit 0). `--scope` narrows to one scope;
+`--endpoint` / `--token` / `--store` behave as in `list`.
+
+### `lorekit show`
+
+Inspect **one** lesson in full — its complete, **untruncated** value plus scope,
+key, updated date, tags, and which store(s) it lives in:
+
+```bash
+lorekit show global prefer-guard-clauses
+lorekit show project::widget build-flags --json
+```
+
+If the same `scope::key` exists in **both** the offline and remote stores —
+possibly with different values — both are shown and any divergence is flagged.
+When it lives in only one store, that copy is shown and the other is noted as
+missing. It exits **non-zero** when the key is found in no readable store, so it
+fits scripts. `--json` emits the full normalized record(s) and which store each
+came from. Both a scope and a key are required (else a usage error).
+
+### `lorekit stats`
+
+An at-a-glance overview of how many lessons apply to the current directory —
+counted **per scope** and **per store** (Offline vs Remote), with per-store and
+grand totals, in the same Offline / Remote split as `list`:
+
+```bash
+lorekit stats                 # per-scope counts + totals for both stores
+lorekit stats --scope global  # narrow to a single scope
+lorekit stats --json          # { offline, remote } with per-scope { count } rows
+```
+
+Every applicable scope prints a row (a scope with zero lessons still shows `0`,
+which is the point of an overview). An unconfigured remote degrades to a short
+note — never an error, always exit 0. `--endpoint` / `--token` / `--store`
+behave as in `list`. Remote counts reflect what the hosted `memory.list` returns
+per scope (the server's default page size); there is no cap-usage `N / limit`
+figure because the MCP surface exposes no total-count or cap tool.
+
+### `lorekit diff`
+
+Compare the **offline** and **remote** stores for the applicable scopes and
+report where they diverge, grouped by scope:
+
+```bash
+lorekit diff                  # local-only / remote-only / conflicting, per scope
+lorekit diff --scope global   # narrow to a single scope
+lorekit diff --json           # { comparable, totals, groups[] } for scripts
+```
+
+Three groups: **local-only** (key present offline, absent remote), **remote-only**
+(absent offline, present remote), and **conflicting** (same `scope::key` in both,
+but the value or tags differ). A diff needs **both** stores readable — if the
+remote is unconfigured (or a store is denied), a meaningful diff is impossible,
+so `diff` prints a clear note (`comparable: false` in `--json`) and exits 0
+rather than crashing. `--endpoint` / `--token` / `--store` behave as in `list`.
+
+### `lorekit tree` (alias `resolve`)
+
+Show the scopes the hooks actually **inject** — project → branch → repo →
+global, in precedence order (most-specific first) — as a resolution hierarchy,
+and mark for any key present at more than one scope which scope's lesson **wins**
+and which are **shadowed**:
+
+```bash
+lorekit tree                  # the injected hierarchy with ✓ winning / ↳ shadowed marks
+lorekit tree --scope global   # narrow to a single scope
+lorekit tree --json           # per-entry { winning, shadowedBy } + a winners[] list
+```
+
+This mirrors the SessionStart hook's resolution **exactly**: it reads the scopes
+in `readOrder` (project → branch → repo → global) and keeps the first value seen
+per key, so a more-specific scope overrides a broader scope's same-key lesson. It
+answers "which lesson actually applies here, and what is being overridden?". The
+`project::` scope **is** part of the injected set (project is the most-specific
+scope), so `tree`, the hooks, and every read command's `scopeList` now share one
+ordering. Each store is resolved independently, in the same Offline / Remote split.
+
+### `lorekit lint`
+
+Flag low-quality lessons across the applicable scopes and both stores. Each
+finding names the rule it violated:
+
+```bash
+lorekit lint                  # findings grouped by scope; exits non-zero if any
+lorekit lint --scope global   # narrow to a single scope
+lorekit lint --json           # { total, offline, remote } structured findings
+```
+
+Rules: **empty-value** (blank/whitespace-only body), **short-value** (a non-empty
+body below a small length threshold), **untrimmed-value** (real content with
+surrounding whitespace), **empty-key** (blank key), and **malformed-scope** (e.g.
+a single `:` where `::` is expected). `lint` **exits non-zero (1) when any issue
+is found**, so it is usable as a CI gate (`lorekit lint || exit 1`); a clean run —
+or one where only a store is unavailable — exits 0. The pure rule predicates live
+in `lessons-view.mjs` and are unit-tested one rule at a time.
+
+### `lorekit dedupe`
+
+Find likely-duplicate lessons and group them into clusters — per store, across
+the applicable scopes:
+
+```bash
+lorekit dedupe                    # clusters of near-duplicate lessons per store
+lorekit dedupe --threshold 0.6    # loosen the similarity cutoff (default 0.8)
+lorekit dedupe --json             # { threshold, offline, remote } clusters + signal
+```
+
+The similarity signal is a zero-dependency **heuristic** — Jaccard overlap of
+lowercased word tokens, **not** a semantic/embedding measure — so it surfaces
+candidates for a human to review and can both miss paraphrases and group
+coincidental overlaps. Any pair scoring at or above `--threshold` links (transitively)
+into one cluster; only clusters of 2+ members are reported, each with a similarity
+range. Cross-**store** divergence is `diff`'s job; `dedupe` looks within a store.
+
 ### `lorekit hook`
 
 The **shared hook engine** behind the Claude Code / Cursor / Codex plugins.
 It is not run by hand — the plugins wire it into their hook config. It reads
 the host framework's JSON on stdin and prints that host's injection format on
-stdout (lessons at session start; a nudge on failure or at end of turn),
-always exiting 0 so it can never block the host agent.
+stdout (lessons at session start; relevant lessons plus a write-nudge on a tool
+failure; a retrospective nudge at end of turn), always exiting 0 so it can never
+block the host agent.
 
 ```bash
 lorekit hook --adapter <claude|cursor|codex> --event <SessionStart|Stop|…>
@@ -316,8 +453,9 @@ active deny constraints.
 | `--no-hooks` | Skip wiring the lifecycle hooks; skill + MCP only (`install`) |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
-| `--json` | Machine-readable output (`list`) |
-| `--scope <scope>` | Restrict to a single scope (`list`; default: all applicable) |
+| `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `diff` / `tree` / `lint` / `dedupe`) |
+| `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff` / `tree` / `lint` / `dedupe`; default: all applicable) |
+| `--threshold <0..1>` | Duplicate-similarity cutoff (`dedupe`; default `0.8`) |
 | `--adapter <name>` | Host framework for `hook`: `claude` / `cursor` / `codex` |
 | `--event <name>` | Host hook event for `hook` (else read from the stdin payload) |
 | `-h, --help` | Help |
@@ -409,7 +547,8 @@ forever. This reduces manual validation to a single capture pass per tool.
 
 ## Usage telemetry
 
-The human-facing commands (`install`, `uninstall`, `doctor`, `list`, `migrate`)
+The human-facing commands (`install`, `uninstall`, `doctor`, `list`, `search`,
+`show`, `stats`, `diff`, `migrate`)
 emit one OpenTelemetry span + one counter point per run so the maintainers can see which
 commands people use. It is zero-dependency (OTLP/JSON over `fetch`, no SDK) and
 deliberately narrow — it carries only the command name, a bounded set of boolean

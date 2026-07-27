@@ -7,7 +7,15 @@ import { resolveProjectRoot } from './config.mjs';
 import { deriveScope } from './scope.mjs';
 import { loadControl } from './control.mjs';
 import { createStore } from './store/index.mjs';
-import { fetchLessons, formatLessons, retrospectiveNudge, failureNudge } from './core/lessons.mjs';
+import {
+  fetchLessons,
+  formatLessons,
+  retrospectiveNudge,
+  failureNudge,
+  failureQuery,
+  relevantLessons,
+  formatRelevantLessons,
+} from './core/lessons.mjs';
 import { isFailure } from './core/failure.mjs';
 import { firstTimeThisSession } from './core/state.mjs';
 import { recordFixture } from './core/record.mjs';
@@ -92,7 +100,22 @@ async function run(args) {
     const known = adapter.guaranteedFailure ? adapter.guaranteedFailure(event) : false;
     if (!known && !isFailure(parsed.toolName, parsed.toolResponse)) return 0;
     if (!firstTimeThisSession(parsed.sessionId, 'failure')) return 0;
-    emit(failureNudge(parsed.toolName, scope));
+    // Best-effort: surface any existing lessons that look relevant to THIS
+    // failure ("you've hit this before"), then the write-nudge. A missing /
+    // unusable store, or no match, silently falls back to the nudge alone.
+    let relevant = null;
+    try {
+      const store = createStore(control);
+      if (store) {
+        const { lessons } = await fetchLessons(store, root);
+        const terms = failureQuery(parsed.toolName, parsed.toolResponse);
+        relevant = formatRelevantLessons(relevantLessons(lessons, terms));
+      }
+    } catch {
+      relevant = null; // never let a lesson lookup break the failure nudge
+    }
+    const nudge = failureNudge(parsed.toolName, scope);
+    emit(relevant ? `${relevant}\n\n${nudge}` : nudge);
     return 0;
   }
 

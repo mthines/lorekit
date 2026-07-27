@@ -6,9 +6,34 @@ import {
   classifyInviteInput,
   visibleInvites,
   pendingInviteCount,
+  resolveActiveOrg,
   type OwnerFilter,
 } from './org-ui';
 import type { OrgInvite } from './org-invites';
+import type { OrgMembership } from './orgs';
+
+describe('resolveActiveOrg', () => {
+  const orgs: OrgMembership[] = [
+    { id: 'id-1', slug: 'acme', name: 'Acme', role: 'owner', created_at: '2026-01-01T00:00:00Z' },
+    { id: 'id-2', slug: 'globex', name: 'Globex', role: 'member', created_at: '2026-01-02T00:00:00Z' },
+  ];
+
+  it('returns null for the list view (null slug)', () => {
+    expect(resolveActiveOrg(orgs, null)).toBeNull();
+  });
+
+  it('resolves a slug to its membership', () => {
+    expect(resolveActiveOrg(orgs, 'globex')?.id).toBe('id-2');
+  });
+
+  it('returns null for a stale/forged slug that maps to no org', () => {
+    expect(resolveActiveOrg(orgs, 'does-not-exist')).toBeNull();
+  });
+
+  it('returns null when the caller has no orgs', () => {
+    expect(resolveActiveOrg([], 'acme')).toBeNull();
+  });
+});
 
 describe('roleCapabilities', () => {
   it('viewer has no management capabilities', () => {

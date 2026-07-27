@@ -124,6 +124,19 @@ export function localStoreDirs(root = process.cwd(), env = process.env) {
   return { home, project: projectDirFrom({ env, userConfig, repoConfig, root }) };
 }
 
+// Resolve the deny-wins ceiling for the read commands: which section (offline /
+// remote) is forbidden outright by an active `deny` constraint. A deny is never
+// overridable (see the module header), so this is the single seam `list`,
+// `search`, `show`, `stats`, and `diff` share instead of each re-deriving the
+// same `control.denies.find(...)` block. Returns the matched deny object
+// ({ mode, source }) or null per side — the `source` explains the "why" in each
+// command's graceful note. Thin wrapper over `loadControl`, co-located with it.
+export function resolveDenies(root, { env = process.env } = {}) {
+  const control = loadControl(root, { env });
+  const find = (mode) => control.denies.find((d) => d.mode === mode) || null;
+  return { localDenied: find('local'), remoteDenied: find('remote') };
+}
+
 // IO wrapper — load env + config files, derive the connection, then resolve.
 export function loadControl(root, { env = process.env } = {}) {
   const home = userConfigDir(env);
