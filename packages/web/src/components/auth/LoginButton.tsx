@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { addSignalAttribute } from '@/instrumentation-client';
+import { normalizeEmail } from '@/lib/email';
 
 function GitHubIcon({ className }: { className?: string }) {
   return (
@@ -79,6 +81,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
 
   async function handleGitHubLogin() {
     setLoading(true);
+    addSignalAttribute('auth.method', 'github_oauth');
     const supabase = createClient();
     await supabase.auth.signInWithOAuth({
       provider: 'github',
@@ -96,10 +99,20 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
       setEmailError('Please enter your email address.');
       return;
     }
+
+    // Normalize the email: strip plus-subaddress (RFC 5233) so that
+    // `user+alias@example.com` signs into the same account as `user@example.com`.
+    // Without this, Supabase creates a separate account for the aliased address.
+    const rawEmail = email.trim();
+    const normalizedEmail = normalizeEmail(rawEmail);
+    const wasNormalized = normalizedEmail !== rawEmail.toLowerCase();
+
     setEmailLoading(true);
+    addSignalAttribute('auth.method', 'email_otp');
+    addSignalAttribute('auth.email_normalized', wasNormalized);
     const supabase = createClient();
     const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
+      email: normalizedEmail,
       options: {
         emailRedirectTo: buildCallbackUrl(),
         shouldCreateUser: true,
@@ -109,6 +122,11 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     if (error) {
       setEmailError(error.message);
     } else {
+      if (wasNormalized) {
+        // Update the display email so the confirmation message shows the
+        // address where the magic link was actually sent.
+        setEmail(normalizedEmail);
+      }
       setEmailStep('sent');
     }
   }
