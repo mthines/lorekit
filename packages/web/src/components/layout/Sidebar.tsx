@@ -3,17 +3,18 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
-import { BookOpen, LayoutDashboard, Settings, Rocket } from 'lucide-react';
+import { BookOpen, LayoutDashboard, Settings, Rocket, GraduationCap } from 'lucide-react';
 import { useOnboarding } from '@/components/providers/OnboardingProvider';
 
 // Primary content nav — rendered in order in both the desktop sidebar and the
 // mobile bottom tab bar. Getting started sits here (third position, after
 // Overview and Explorer) because it is a high-signal destination for new users
-// and remains useful after setup as a reference.
+// and remains useful after setup as a reference. Tutorials is fourth.
 const NAV = [
   { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { href: '/lore', label: 'Explorer', icon: BookOpen },
   { href: '/onboarding', label: 'Getting started', mobileLabel: 'Setup', icon: Rocket },
+  { href: '/tutorials', label: 'Tutorials', icon: GraduationCap },
 ] as const;
 
 // Settings is a persistent utility destination kept in the sidebar footer —
