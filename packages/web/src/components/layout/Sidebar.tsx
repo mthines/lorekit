@@ -11,7 +11,7 @@ import { useOnboarding } from '@/components/providers/OnboardingProvider';
 const NAV = [
   { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { href: '/lore', label: 'Explorer', icon: BookOpen },
-  { href: '/learn', label: 'Learn', mobileLabel: 'Learn', icon: GraduationCap },
+  { href: '/learn', label: 'Getting started', mobileLabel: 'Getting started', icon: GraduationCap },
 ] as const;
 
 // Settings is a persistent utility destination kept in the sidebar footer —
@@ -24,7 +24,7 @@ interface SidebarProps {
 
 export function Sidebar({ user }: SidebarProps) {
   const pathname = usePathname();
-  const { completedCount, total, allDone, hydrated } = useOnboarding();
+  const { allDone, hydrated } = useOnboarding();
   const isSettingsActive =
     pathname === SETTINGS.href || pathname.startsWith(SETTINGS.href + '/');
   const showProgress = hydrated && !allDone;
@@ -67,14 +67,6 @@ export function Sidebar({ user }: SidebarProps) {
               >
                 <Icon className="size-4 shrink-0" aria-hidden />
                 <span className="flex-1">{label}</span>
-                {isLearn && showProgress && (
-                  <span
-                    className="rounded-md bg-[var(--color-bg-elevated)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--color-content-tertiary)]"
-                    aria-label={`${completedCount} of ${total} setup steps complete`}
-                  >
-                    {completedCount}/{total}
-                  </span>
-                )}
               </Link>
             );
           })}
@@ -162,7 +154,7 @@ export function Sidebar({ user }: SidebarProps) {
               </span>
               <span>{label}</span>
               {withProgressDot && (
-                <span className="sr-only">{`, ${completedCount} of ${total} setup steps complete`}</span>
+                <span className="sr-only">, setup not yet complete</span>
               )}
             </Link>
           );
