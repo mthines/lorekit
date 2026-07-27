@@ -274,8 +274,7 @@ For a manual `.mcp.json` entry (any MCP-compatible agent):
       "command": "npx",
       "args": ["-y", "mcp-remote",
                "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
-               "--header", "Authorization:${LOREKIT_AUTH}"],
-      "env": { "LOREKIT_AUTH": "Bearer lk_rw_<your-token>" }
+               "--header", "Authorization:Bearer lk_rw_<your-token>"]
     }
   }
 }
