@@ -27,7 +27,7 @@ interface SidebarProps {
 
 export function Sidebar({ user }: SidebarProps) {
   const pathname = usePathname();
-  const { completedCount, total, allDone, hydrated } = useOnboarding();
+  const { allDone, hydrated } = useOnboarding();
   const isSettingsActive =
     pathname === SETTINGS.href || pathname.startsWith(SETTINGS.href + '/');
   // Only surface the count once localStorage is read, so the badge doesn't flash
@@ -69,14 +69,6 @@ export function Sidebar({ user }: SidebarProps) {
               >
                 <Icon className="size-4 shrink-0" aria-hidden />
                 <span className="flex-1">{label}</span>
-                {isLearn && showProgress && (
-                  <span
-                    className="rounded-md bg-[var(--color-bg-elevated)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--color-content-tertiary)]"
-                    aria-label={`${completedCount} of ${total} setup steps complete`}
-                  >
-                    {completedCount}/{total}
-                  </span>
-                )}
               </Link>
             );
           })}
@@ -158,7 +150,7 @@ export function Sidebar({ user }: SidebarProps) {
               </span>
               <span>{label}</span>
               {withProgressDot && (
-                <span className="sr-only">{`, ${completedCount} of ${total} setup steps complete`}</span>
+                <span className="sr-only">, setup not yet complete</span>
               )}
             </Link>
           );
