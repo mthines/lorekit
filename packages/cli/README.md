@@ -210,6 +210,64 @@ remote is unconfigured (or a store is denied), a meaningful diff is impossible,
 so `diff` prints a clear note (`comparable: false` in `--json`) and exits 0
 rather than crashing. `--endpoint` / `--token` / `--store` behave as in `list`.
 
+### `lorekit tree` (alias `resolve`)
+
+Show the scopes the hooks actually **inject** — branch → repo → global, in
+precedence order (most-specific first) — as a resolution hierarchy, and mark for
+any key present at more than one scope which scope's lesson **wins** and which are
+**shadowed**:
+
+```bash
+lorekit tree                  # the injected hierarchy with ✓ winning / ↳ shadowed marks
+lorekit tree --scope global   # narrow to a single scope
+lorekit tree --json           # per-entry { winning, shadowedBy } + a winners[] list
+```
+
+This mirrors the SessionStart hook's resolution **exactly**: it reads the scopes
+in `readOrder` (branch → repo → global) and keeps the first value seen per key, so
+a more-specific scope overrides a broader scope's same-key lesson. It answers
+"which lesson actually applies here, and what is being overridden?". Note that
+`project::` scope is **not** part of the injected set (the hooks never inject
+project lessons), so `tree` doesn't show it — browse those with `lorekit list`.
+Each store is resolved independently, in the same Offline / Remote split.
+
+### `lorekit lint`
+
+Flag low-quality lessons across the applicable scopes and both stores. Each
+finding names the rule it violated:
+
+```bash
+lorekit lint                  # findings grouped by scope; exits non-zero if any
+lorekit lint --scope global   # narrow to a single scope
+lorekit lint --json           # { total, offline, remote } structured findings
+```
+
+Rules: **empty-value** (blank/whitespace-only body), **short-value** (a non-empty
+body below a small length threshold), **untrimmed-value** (real content with
+surrounding whitespace), **empty-key** (blank key), and **malformed-scope** (e.g.
+a single `:` where `::` is expected). `lint` **exits non-zero (1) when any issue
+is found**, so it is usable as a CI gate (`lorekit lint || exit 1`); a clean run —
+or one where only a store is unavailable — exits 0. The pure rule predicates live
+in `lessons-view.mjs` and are unit-tested one rule at a time.
+
+### `lorekit dedupe`
+
+Find likely-duplicate lessons and group them into clusters — per store, across
+the applicable scopes:
+
+```bash
+lorekit dedupe                    # clusters of near-duplicate lessons per store
+lorekit dedupe --threshold 0.6    # loosen the similarity cutoff (default 0.8)
+lorekit dedupe --json             # { threshold, offline, remote } clusters + signal
+```
+
+The similarity signal is a zero-dependency **heuristic** — Jaccard overlap of
+lowercased word tokens, **not** a semantic/embedding measure — so it surfaces
+candidates for a human to review and can both miss paraphrases and group
+coincidental overlaps. Any pair scoring at or above `--threshold` links (transitively)
+into one cluster; only clusters of 2+ members are reported, each with a similarity
+range. Cross-**store** divergence is `diff`'s job; `dedupe` looks within a store.
+
 ### `lorekit hook`
 
 The **shared hook engine** behind the Claude Code / Cursor / Codex plugins.
@@ -392,8 +450,9 @@ active deny constraints.
 | `--no-hooks` | Skip wiring the lifecycle hooks; skill + MCP only (`install`) |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
-| `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `diff`) |
-| `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff`; default: all applicable) |
+| `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `diff` / `tree` / `lint` / `dedupe`) |
+| `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff` / `tree` / `lint` / `dedupe`; default: all applicable) |
+| `--threshold <0..1>` | Duplicate-similarity cutoff (`dedupe`; default `0.8`) |
 | `--adapter <name>` | Host framework for `hook`: `claude` / `cursor` / `codex` |
 | `--event <name>` | Host hook event for `hook` (else read from the stdin payload) |
 | `-h, --help` | Help |
