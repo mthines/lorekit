@@ -63,7 +63,7 @@ Tokens never expire and are stored as SHA-256 hashes. Generate and revoke in the
 ## Architecture
 
 - **MCP server** — Supabase Edge Function (Deno), endpoint `/functions/v1/mcp`
-- **Web dashboard** — Next.js 15 on Vercel (`lorekit-io.vercel.app`)
+- **Web dashboard** — Next.js 15 on Vercel (`lorekit.io`)
 - **Database** — Supabase Postgres, row-level security, full-text search
 
 ## Key documentation

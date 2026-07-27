@@ -1,7 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   translateCapError,
   checkRateLimit,
+  memoryCapMessage,
+  rateLimitMessage,
   LimitError,
   MEMORY_CAP_SQLSTATE,
 } from './limits.js';
@@ -14,6 +16,24 @@ vi.mock('./telemetry.js', () => ({
   }),
   getToolDurationHistogram: () => ({ record: vi.fn() }),
 }));
+
+describe('dashboard URL in messages', () => {
+  afterEach(() => {
+    delete process.env['LOREKIT_APP_URL'];
+  });
+
+  it('defaults to the canonical lorekit.io origin', () => {
+    delete process.env['LOREKIT_APP_URL'];
+    expect(memoryCapMessage(1000)).toContain('https://lorekit.io');
+    expect(rateLimitMessage(30)).toContain('https://lorekit.io');
+  });
+
+  it('honours a LOREKIT_APP_URL override at call time', () => {
+    process.env['LOREKIT_APP_URL'] = 'https://staging.lorekit.io';
+    expect(memoryCapMessage(1000)).toContain('https://staging.lorekit.io');
+    expect(rateLimitMessage(30)).toContain('https://staging.lorekit.io');
+  });
+});
 
 describe('translateCapError', () => {
   it('translates a cap-SQLSTATE error into a LimitError(memory_cap) with an actionable message', () => {

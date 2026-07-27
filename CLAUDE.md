@@ -199,7 +199,7 @@ Metric: `lorekit.tool.duration` histogram (unit `s`) with `lorekit.tool.name` + 
 |-----|------|---------|
 | `https://<ref>.supabase.co/functions/v1/mcp` | Bearer token required | MCP server for agents |
 | `https://<ref>.supabase.co/functions/v1/health` | None (public) | Uptime monitoring |
-| `https://lorekit-io.vercel.app` | GitHub OAuth | Web dashboard |
+| `https://lorekit.io` | GitHub OAuth | Web dashboard |
 
 ---
 

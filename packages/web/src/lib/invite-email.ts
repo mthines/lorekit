@@ -33,7 +33,7 @@ export interface InviteEmailInput {
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 const DEFAULT_FROM = 'LoreKit <invites@lorekit.io>';
-const DEFAULT_APP_URL = 'https://lorekit-io.vercel.app';
+const DEFAULT_APP_URL = 'https://lorekit.io';
 
 // The SDK is initialised by @vercel/otel in instrumentation.ts; this only calls
 // the API (no-op tracer if no SDK is registered, e.g. under vitest). The
