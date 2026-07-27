@@ -17,7 +17,7 @@ export default function LearnRemotePage() {
       </div>
 
       <TutorialCallout variant="tip">
-        You can use the hosted instance at <code>lorekit-io.vercel.app</code> or
+        You can use the hosted instance at <code>lorekit.io</code> or
         self-host your own. This tutorial uses the hosted instance. For self-hosting see the{' '}
         <a
           href="https://github.com/mthines/lorekit/blob/main/docs/install.md"

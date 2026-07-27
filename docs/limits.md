@@ -28,7 +28,7 @@ When a write would exceed the cap, the DB raises a custom error (SQLSTATE
 
 > "You've reached the free-tier limit of 1000 stored memories. Archive or
 > delete unused memories, or raise your limit — see
-> https://lorekit-io.vercel.app (or contact support) to increase it."
+> https://lorekit.io (or contact support) to increase it."
 
 ## Rate limiting
 

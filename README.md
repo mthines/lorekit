@@ -72,7 +72,7 @@ connected takes three steps.
 ### 1. Get a token
 
 Sign in to the dashboard at
-[lorekit-io.vercel.app](https://lorekit-io.vercel.app) with GitHub, then
+[lorekit.io](https://lorekit.io) with GitHub, then
 **Overview → Connect your agent → Generate new token**.
 
 Pick **Read + Write** for agents that should learn, or **Read only** for

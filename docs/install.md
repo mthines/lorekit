@@ -112,7 +112,7 @@ pnpm nx health supabase
 
 ## Step 7 — Generate an API token
 
-1. Open the web dashboard: https://lorekit-io.vercel.app/dashboard (or your own Vercel URL after step 8)
+1. Open the web dashboard: https://lorekit.io/dashboard (or your own Vercel URL after step 8)
 2. Go to **Overview → Step 2: Connect your agent**
 3. Click **Generate new token**
 4. Enter a name (e.g. `claude-local`, `ci-github-actions`)
@@ -129,7 +129,7 @@ Token formats:
 
 ## Step 8 — Deploy the web dashboard (optional)
 
-If you want your own dashboard instance (rather than using `lorekit-io.vercel.app`):
+If you want your own dashboard instance (rather than using `lorekit.io`):
 
 1. Import the repo at https://vercel.com/new
 2. Set these project settings:

@@ -35,15 +35,25 @@ export class LimitError extends Error {
 /** Custom SQLSTATE raised by the enforce_memory_cap() trigger. */
 export const MEMORY_CAP_SQLSTATE = 'LK001';
 
-const LOREKIT_URL = 'https://lorekit-io.vercel.app';
+/** Dashboard origin shown in cap/rate-limit messages, overridable per deploy. */
+const DEFAULT_LOREKIT_URL = 'https://lorekit.io';
+
+/**
+ * Resolve the dashboard URL from the environment, falling back to the canonical
+ * origin. Read at call time (not module load) so a deploy's `LOREKIT_APP_URL`
+ * override always takes effect.
+ */
+function lorekitUrl(): string {
+  return Deno.env.get('LOREKIT_APP_URL') || DEFAULT_LOREKIT_URL;
+}
 
 export function memoryCapMessage(limit?: number): string {
   const ceiling = limit ? `the free-tier limit of ${limit} stored memories` : 'your stored-memories limit';
-  return `You've reached ${ceiling}. Archive or delete unused memories, or raise your limit — see ${LOREKIT_URL} (or contact support) to increase it.`;
+  return `You've reached ${ceiling}. Archive or delete unused memories, or raise your limit — see ${lorekitUrl()} (or contact support) to increase it.`;
 }
 
 export function rateLimitMessage(retryAfterSeconds: number): string {
-  return `Too many requests — you're being rate limited. Retry after ${retryAfterSeconds}s, or raise your limit — see ${LOREKIT_URL} (or contact support) to increase it.`;
+  return `Too many requests — you're being rate limited. Retry after ${retryAfterSeconds}s, or raise your limit — see ${lorekitUrl()} (or contact support) to increase it.`;
 }
 
 /**

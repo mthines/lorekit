@@ -22,7 +22,7 @@ LoreKit is a shared memory layer for AI coding agents. Agents write lessons they
 │  AI agent (persistent-memory skill)                    │
 │  CI job (GitHub Actions, service-role token)           │
 │  GitHub webhook (PR review comment → lesson)          │
-│  Web dashboard (https://lorekit-io.vercel.app)         │
+│  Web dashboard (https://lorekit.io)                    │
 └───────────────────────────────────────────────────────-┘
                           │
                     HTTPS + Bearer
