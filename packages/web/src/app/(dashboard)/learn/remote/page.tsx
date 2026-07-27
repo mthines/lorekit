@@ -53,23 +53,26 @@ export default function LearnRemotePage() {
 
         <TutorialStep number={2} title="Point your agent at the MCP server">
           <p>
-            Add the MCP endpoint to your agent config. For Claude Code, in{' '}
-            <code>.claude/skills/persistent-memory/config.json</code>:
+            The fastest path is <code>npx @lorekit/cli install</code> — it scaffolds
+            the skills, wires the MCP server, and installs the lifecycle hooks in one command.
+            Or add the endpoint manually to your agent&apos;s MCP config:
           </p>
-          <pre><code>{`{
-  "backend": "mcp",
-  "mcp": {
-    "server": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
-    "auth": {
-      "type": "bearer",
-      "token": "lk_rw_<your-token>"
+          <pre><code>{`// .mcp.json (Claude Code / Cursor / opencode — project-local)
+{
+  "mcpServers": {
+    "lorekit": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote",
+               "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
+               "--header", "Authorization:Bearer lk_rw_<your-token>"]
     }
   }
 }`}</code></pre>
-          <p className="mt-2">
-            For any other MCP-compatible agent, point the client at the same endpoint with
-            the same <code>Authorization: Bearer lk_rw_…</code> header.
-          </p>
+          <TutorialCallout variant="tip">
+            Keep <code>.mcp.json</code> out of version control — it contains your token.
+            Commit a <code>.lorekit.json</code> instead to set the team default mode
+            (e.g. <code>{`{ "mode": "remote" }`}</code>).
+          </TutorialCallout>
         </TutorialStep>
 
         <TutorialStep number={3} title="Verify the connection">

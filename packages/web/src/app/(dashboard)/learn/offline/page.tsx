@@ -80,6 +80,35 @@ export default function LearnOfflinePage() {
             Works across all applicable scopes. Add <code>--scope</code> to narrow the search.
           </p>
         </TutorialStep>
+
+        <TutorialStep number={6} title="(Optional) Commit a project config file">
+          <p>
+            Drop a <code>.lorekit.json</code> at the repo root to set the default memory mode
+            for everyone on the team — no per-machine env var needed:
+          </p>
+          <pre><code>{`// .lorekit.json  (safe to commit)
+{
+  "mode": "local"
+}`}</code></pre>
+          <p className="mt-2">
+            The same file also controls the local store path and deny constraints:
+          </p>
+          <pre><code>{`{
+  "mode": "local",
+  "store": ".lorekit",      // path to the project-tier store (default: .lorekit)
+  "deny": ["remote"]        // prevent remote mode in this repo (e.g. for air-gapped CI)
+}`}</code></pre>
+          <p className="mt-2">
+            A user-level version of the same file lives at{' '}
+            <code>~/.lorekit/config.json</code> and applies across all repos. User-level deny
+            constraints are a ceiling the repo config can never lift — a user who sets{' '}
+            <code>{`"deny": ["remote"]`}</code> is always offline, regardless of the repo default.
+          </p>
+          <TutorialCallout variant="tip">
+            Run <code>npx @lorekit/cli doctor</code> to see the resolved mode and which config
+            source decided it. The output names the exact file or env var that won.
+          </TutorialCallout>
+        </TutorialStep>
       </div>
 
       <TutorialCallout variant="info">
