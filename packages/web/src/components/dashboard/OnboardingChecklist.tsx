@@ -309,6 +309,12 @@ export function OnboardingChecklist({ steps, variant = 'inline' }: OnboardingChe
                   onToggle={() => handleToggle(i)}
                 />
               ))}
+              {variant === 'inline' && (
+                <p className="mt-1 text-[10px] text-[var(--color-content-tertiary)]">
+                  You can always reopen this from{' '}
+                  <strong className="font-medium">Learn</strong> in the sidebar.
+                </p>
+              )}
             </div>
           </motion.div>
         )}

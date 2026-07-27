@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import { OnboardingChecklist } from '@/components/dashboard/OnboardingChecklist';
+import { WebhookTeaser } from '@/components/dashboard/WebhookTeaser';
 import { buildOnboardingSteps } from '@/lib/onboarding-steps';
+import { getOnboardingState } from '@/lib/onboarding-server';
 import { listPendingInvitesForMe } from '@/lib/org-invites';
 import { DashboardStats } from '@/components/dashboard/DashboardStats';
 import { PendingInvitesBanner } from '@/components/dashboard/PendingInvitesBanner';
@@ -11,9 +13,10 @@ export default async function DashboardPage() {
   // Overview is the default landing route — the single place that mints a
   // first token so brand-new users get a ready-to-copy config immediately.
   // Pending org invites are fetched alongside so the banner can surface them.
-  const [steps, pendingInvites] = await Promise.all([
+  const [steps, pendingInvites, onboardingState] = await Promise.all([
     buildOnboardingSteps({ autoGenerateToken: true }),
     listPendingInvitesForMe(),
+    getOnboardingState(),
   ]);
 
   return (
@@ -30,6 +33,10 @@ export default async function DashboardPage() {
       {/* First-run setup. Dismissing hides it here; the persistent
           "Learn" sidebar entry (and /learn/setup) is the way back. */}
       <OnboardingChecklist steps={steps} variant="inline" />
+
+      {/* Progressive disclosure: show the webhook upsell only after the agent
+          is connected. Rendered as a separate card so it never blocks allDone. */}
+      <WebhookTeaser hasWebhook={onboardingState.hasWebhook} />
 
       {/* Scope health stats — fetched client-side with TanStack Query so
           navigation back to this page is instant after the first load. */}
