@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { resolveMcpUrls } from './mcp-url';
+import { resolveMcpUrls, VANITY_MCP_URL } from './mcp-url';
 
 // resolveMcpUrls reads NEXT_PUBLIC_SUPABASE_URL at call time. Snapshot and
 // restore it around every case so the tests don't leak env state into each
@@ -21,6 +21,13 @@ describe('resolveMcpUrls', () => {
     process.env[KEY] = 'https://abcdefghijklmnop.supabase.co';
     const { mcpUrl } = resolveMcpUrls();
     expect(mcpUrl).toBe('https://abcdefghijklmnop.supabase.co/functions/v1/mcp');
+  });
+
+  it('always returns the stable vanity URL regardless of the project ref', () => {
+    process.env[KEY] = 'https://abcdefghijklmnop.supabase.co';
+    expect(resolveMcpUrls().vanityMcpUrl).toBe(VANITY_MCP_URL);
+    delete process.env[KEY];
+    expect(resolveMcpUrls().vanityMcpUrl).toBe(VANITY_MCP_URL);
   });
 
   it('derives the webhook URL as the MCP URL plus /webhooks/github', () => {

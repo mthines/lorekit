@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { TutorialStep } from '@/components/learn/TutorialStep';
 import { TutorialCallout } from '@/components/learn/TutorialCallout';
 import { ClientConfigTabs, type McpClientConfig } from '@/components/dashboard/ClientConfigTabs';
+import { VANITY_MCP_URL } from '@/lib/mcp-url';
 
 export const metadata: Metadata = { title: 'Getting started — Learn' };
 
@@ -29,7 +30,7 @@ const JSON_SNIPPET = `{
   "mcpServers": {
     "lorekit": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp?token=lk_rw_…"]
+      "args": ["-y", "mcp-remote", "${VANITY_MCP_URL}?token=lk_rw_…"]
     }
   }
 }`;
@@ -41,7 +42,7 @@ const YAML_SNIPPET = `mcp:
       args:
         - -y
         - mcp-remote
-        - "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp?token=lk_rw_…"`;
+        - "${VANITY_MCP_URL}?token=lk_rw_…"`;
 
 const WRITE_SNIPPET = `memory.write {
   scope: "global",

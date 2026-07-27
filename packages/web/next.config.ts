@@ -1,5 +1,17 @@
 import type { NextConfig } from 'next';
 
+// Derive the upstream MCP URL from the Supabase project ref — the same logic
+// as resolveMcpUrls() in lib/mcp-url.ts, kept in sync manually.
+// Falls back to the production project ref so the proxy works even without the
+// env var set (e.g. local dev without a .env.local).
+const supabaseUrl = process.env['NEXT_PUBLIC_SUPABASE_URL'] ?? '';
+const supabaseProjectRef = supabaseUrl
+  .replace('https://', '')
+  .replace('.supabase.co', '');
+const mcpUpstream = supabaseProjectRef
+  ? `https://${supabaseProjectRef}.supabase.co/functions/v1/mcp`
+  : 'https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp';
+
 const nextConfig: NextConfig = {
   // Disable Next.js's built-in ESLint step — NX runs it separately via nx lint
   eslint: { ignoreDuringBuilds: true },
@@ -60,6 +72,30 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_VCS_REPO_SLUG: process.env['VERCEL_GIT_REPO_SLUG'] ?? '',
     NEXT_PUBLIC_VCS_REF_HEAD_NAME: process.env['VERCEL_GIT_COMMIT_REF'] ?? '',
     NEXT_PUBLIC_VCS_REF_HEAD_REVISION: process.env['VERCEL_GIT_COMMIT_SHA'] ?? '',
+  },
+
+  // Proxy /v1/mcp (and sub-paths) to the Supabase Edge Function.
+  //
+  // This lets agents use https://lorekit.io/v1/mcp?token=… instead of the
+  // raw Supabase URL. The destination is derived from NEXT_PUBLIC_SUPABASE_URL
+  // at build time so staging/preview deployments proxy to their own project.
+  //
+  // Important: mcp-remote uses Server-Sent Events (SSE). Vercel Edge Functions
+  // and the default Node.js runtime both support streaming, so no extra config
+  // is needed. The token travels in the query string and is forwarded verbatim.
+  async rewrites() {
+    return [
+      // Root path — e.g. /v1/mcp?token=lk_rw_…
+      {
+        source: '/v1/mcp',
+        destination: mcpUpstream,
+      },
+      // Sub-paths — e.g. /v1/mcp/webhooks/github, /v1/mcp/sse, …
+      {
+        source: '/v1/mcp/:path*',
+        destination: `${mcpUpstream}/:path*`,
+      },
+    ];
   },
 
   // Allow Supabase + Dash0 to receive trace context headers from the browser.
