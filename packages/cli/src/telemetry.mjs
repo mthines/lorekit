@@ -4,8 +4,8 @@
 // mirrors the Edge Function's SDK-free approach (supabase/functions/_shared/
 // otel.ts): OTLP/JSON over the global fetch (Node 18+), no @opentelemetry/*
 // packages. One span + one counter data point per human-facing command
-// (install / doctor / migrate), fired to Dash0 so the maintainers can see
-// which commands people actually run.
+// (install / uninstall / doctor / list / search / show / migrate), fired to
+// Dash0 so the maintainers can see which commands people actually run.
 //
 // Privacy — this runs on end-users' machines, so it is deliberately narrow:
 //   • Opt-out honored: LOREKIT_TELEMETRY=0|off|false|no|disable, or the
@@ -274,7 +274,7 @@ function normalizeExitCode(result) {
  * counter point. Returns the command's exit code unchanged. Telemetry failures
  * are swallowed — the command result is never affected.
  *
- * @param {string} command  bounded: install | doctor | migrate
+ * @param {string} command  bounded: install | uninstall | doctor | list | search | show | migrate
  * @param {object} args     parsed CLI args (read for allow-listed flags only)
  * @param {string} version  CLI version (from package.json)
  * @param {() => Promise<number>} run  the command handler
