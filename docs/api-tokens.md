@@ -59,8 +59,10 @@ In `.mcp.json` (via `mcp-remote`):
   "mcpServers": {
     "lorekit": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp"],
-      "env": { "MCP_REMOTE_HEADER_Authorization": "Bearer lk_rw_<your-token>" }
+      "args": ["-y", "mcp-remote",
+               "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
+               "--header", "Authorization:${LOREKIT_AUTH}"],
+      "env": { "LOREKIT_AUTH": "Bearer lk_rw_<your-token>" }
     }
   }
 }
