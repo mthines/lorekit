@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.13.0](https://github.com/mthines/lorekit/compare/cli-v1.12.0...cli-v1.13.0) (2026-07-27)
+
+
+### Features
+
+* add lorekit-setup skill (self-improvement-loop authoring) + multi-skill CLI ([#137](https://github.com/mthines/lorekit/issues/137)) ([24d8906](https://github.com/mthines/lorekit/commit/24d8906aa4434e12ae5b69566871ffdf9c4a6123))
+
+
+### Bug Fixes
+
+* **cli:** de-binary two source files (raw NUL → `\x00` escape) + regression guard ([#147](https://github.com/mthines/lorekit/issues/147)) ([9406e2c](https://github.com/mthines/lorekit/commit/9406e2c4f33d357bd9c887d10a1bdfc6e414cf00))
+
 ## [1.12.0](https://github.com/mthines/lorekit/compare/cli-v1.11.0...cli-v1.12.0) (2026-07-27)
 
 
