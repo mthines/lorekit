@@ -25,11 +25,13 @@ export const metadata: Metadata = { title: 'Getting started — Learn' };
  * through a sequential list.
  */
 
+const MCP_URL = 'https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp';
+
 const JSON_SNIPPET = `{
   "mcpServers": {
     "lorekit": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp?token=lk_rw_…"]
+      "args": ["-y", "mcp-remote", "${MCP_URL}", "--header", "Authorization:Bearer lk_rw_…"]
     }
   }
 }`;
@@ -41,7 +43,9 @@ const YAML_SNIPPET = `mcp:
       args:
         - -y
         - mcp-remote
-        - "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp?token=lk_rw_…"`;
+        - "${MCP_URL}"
+        - --header
+        - "Authorization:Bearer lk_rw_…"`;
 
 const WRITE_SNIPPET = `memory.write {
   scope: "global",
@@ -55,7 +59,7 @@ const MCP_CLIENTS: McpClientConfig[] = [
     name: 'Claude Code',
     scope: 'project',
     filename: '.mcp.json',
-    hint: 'Project-local. Add .mcp.json to .gitignore — the token is in the URL.',
+    hint: 'Project-local. Add .mcp.json to .gitignore — it contains your token.',
     snippet: JSON_SNIPPET,
   },
   {
