@@ -27,6 +27,30 @@ function UseCase({ title, description, code, note }: UseCaseProps) {
   );
 }
 
+// GitHub Actions expressions use ${{ }} syntax which conflicts with JSX template
+// literals. Define these strings outside JSX to avoid the parse ambiguity.
+const CI_INJECT_CODE = [
+  '- name: Inject LoreKit context',
+  '  run: |',
+  '    curl -s -X POST "$LOREKIT_MCP_URL" \\',
+  '      -H "Authorization: Bearer $LOREKIT_TOKEN" \\',
+  '      -H "Content-Type: application/json" \\',
+  "      -d '{",
+  '        "jsonrpc":"2.0","id":1,"method":"tools/call",',
+  '        "params":{',
+  '          "name":"memory.list",',
+  '          "arguments":{',
+  '            "scope":"repo::${{ github.repository }}",',
+  '            "tags":["loop::aw-lessons"],',
+  '            "limit":20',
+  '          }',
+  '        }',
+  "      }'",
+  '  env:',
+  '    LOREKIT_MCP_URL: https://…/functions/v1/mcp',
+  '    LOREKIT_TOKEN: ${{ secrets.LOREKIT_TOKEN }}',
+].join('\n');
+
 export default function UseCasesTutorialPage() {
   return (
     <div className="flex flex-col gap-8">
@@ -90,25 +114,7 @@ memory.list {
         <UseCase
           title="Inject lessons before an AI step"
           description="Use a read-only token (lk_ro_…) stored as LOREKIT_TOKEN."
-          code={`- name: Inject LoreKit context
-  run: |
-    curl -s -X POST "$LOREKIT_MCP_URL" \\
-      -H "Authorization: Bearer $LOREKIT_TOKEN" \\
-      -H "Content-Type: application/json" \\
-      -d '{
-        "jsonrpc":"2.0","id":1,"method":"tools/call",
-        "params":{
-          "name":"memory.list",
-          "arguments":{
-            "scope":"repo::${{ github.repository }}",
-            "tags":["loop::aw-lessons"],
-            "limit":20
-          }
-        }
-      }'
-  env:
-    LOREKIT_MCP_URL: https://…/functions/v1/mcp
-    LOREKIT_TOKEN: \${{ secrets.LOREKIT_TOKEN }}`}
+          code={CI_INJECT_CODE}
         />
       </div>
 
