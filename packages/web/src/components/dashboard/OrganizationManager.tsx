@@ -809,7 +809,7 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
           showCreateForm={showCreateForm}
           onShowCreateForm={setShowCreateForm}
           onCreated={handleCreated}
-          onSelect={(slug) => setSelectedSlug(slug)}
+          onSelect={setSelectedSlug}
         />
       ) : (
         // ── Detail view: manage the selected organization ────────────────────
