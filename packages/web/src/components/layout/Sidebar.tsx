@@ -14,7 +14,7 @@ import { useOnboarding } from '@/components/providers/OnboardingProvider';
 const NAV = [
   { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { href: '/lore', label: 'Explorer', icon: BookOpen },
-  { href: '/learn', label: 'Getting started', mobileLabel: 'Guide', icon: GraduationCap },
+  { href: '/learn', label: 'Getting started', mobileLabel: 'Getting started', icon: GraduationCap },
 ] as const;
 
 // Settings is a persistent utility destination kept in the sidebar footer —
