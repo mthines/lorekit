@@ -316,7 +316,7 @@ class TwoTierStore {
     const projRes = this.projectActive()
       ? await this.project.search({ q, scopes, tags })
       : { entries: [] };
-    const merged = mergeByKey(projRes.entries, homeRes.entries, (e) => `${e.scope} ${e.key}`);
+    const merged = mergeByKey(projRes.entries, homeRes.entries, (e) => `${e.scope}\x00${e.key}`);
     return { ok: true, entries: merged };
   }
 
