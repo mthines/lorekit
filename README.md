@@ -85,7 +85,10 @@ Your token is shown once — copy it now.
 The fastest path is the CLI. It scaffolds a companion skill that makes your
 agent use LoreKit on its own: reading relevant lessons when it starts a task,
 and writing one whenever something goes wrong — a stuck loop, a repeated
-failure, a costly wrong assumption.
+failure, a costly wrong assumption. The same skill also knows how to **set up a
+self-improvement loop** for one of your own skills or workflows — a fast
+episodic tier that promotes proven lessons into permanent rules, with the
+entrenchment guards that keep a learning loop from reinforcing its own mistakes.
 
 ```bash
 npx @lorekit/cli install \
