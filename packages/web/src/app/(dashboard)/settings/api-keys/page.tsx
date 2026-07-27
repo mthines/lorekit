@@ -10,7 +10,7 @@ export const metadata: Metadata = { title: 'API keys — Settings' };
 export default async function ApiKeysSettingsPage() {
   // Read-only: the settings page surfaces existing keys, it never auto-generates.
   const tokens = await listTokens();
-  const { mcpUrl, vanityMcpUrl } = resolveMcpUrls();
+  const { mcpUrl } = resolveMcpUrls();
 
   return (
     <SectionPanel
@@ -18,7 +18,7 @@ export default async function ApiKeysSettingsPage() {
       title="API keys"
       subtitle="Tokens your agents use to reach LoreKit. The secret is shown once at creation — we store only the prefix, so it can never be revealed again."
     >
-      <OnboardingStepContent step="connect" mcpUrl={mcpUrl} vanityMcpUrl={vanityMcpUrl} initialTokens={tokens} />
+      <OnboardingStepContent step="connect" mcpUrl={mcpUrl} initialTokens={tokens} />
     </SectionPanel>
   );
 }

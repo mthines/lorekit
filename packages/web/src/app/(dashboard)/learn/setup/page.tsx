@@ -3,7 +3,6 @@ import Link from 'next/link';
 import { TutorialStep } from '@/components/learn/TutorialStep';
 import { TutorialCallout } from '@/components/learn/TutorialCallout';
 import { ClientConfigTabs, type McpClientConfig } from '@/components/dashboard/ClientConfigTabs';
-import { VANITY_MCP_URL } from '@/lib/mcp-url';
 
 export const metadata: Metadata = { title: 'Getting started — Learn' };
 
@@ -26,11 +25,13 @@ export const metadata: Metadata = { title: 'Getting started — Learn' };
  * through a sequential list.
  */
 
+const MCP_URL = 'https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp';
+
 const JSON_SNIPPET = `{
   "mcpServers": {
     "lorekit": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "${VANITY_MCP_URL}", "--header", "Authorization:Bearer lk_rw_…"]
+      "args": ["-y", "mcp-remote", "${MCP_URL}", "--header", "Authorization:Bearer lk_rw_…"]
     }
   }
 }`;
@@ -42,7 +43,7 @@ const YAML_SNIPPET = `mcp:
       args:
         - -y
         - mcp-remote
-        - "${VANITY_MCP_URL}"
+        - "${MCP_URL}"
         - --header
         - "Authorization:Bearer lk_rw_…"`;
 
