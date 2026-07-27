@@ -5,8 +5,24 @@
  * single-record pattern (plan.md Decision D4).
  */
 
-import type { OrgRole } from './orgs';
+import type { OrgRole, OrgMembership } from './orgs';
 import type { OrgInvite } from './org-invites';
+
+// ── Master-detail selection ───────────────────────────────────────────────────
+
+/**
+ * Resolves the URL-backed org selection (a slug, or `null` for the list view)
+ * to the matching membership. Returns `null` for the list view AND for a stale
+ * or forged slug that no longer maps to one of the caller's orgs — so a dead
+ * deep link degrades to the org list rather than a broken detail view.
+ */
+export function resolveActiveOrg(
+  orgs: OrgMembership[],
+  slug: string | null,
+): OrgMembership | null {
+  if (!slug) return null;
+  return orgs.find((o) => o.slug === slug) ?? null;
+}
 
 // ── Org deletion policy ──────────────────────────────────────────────────────
 
