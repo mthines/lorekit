@@ -59,7 +59,7 @@ ${c.bold('Commands')}
   diff        Compare the offline and remote stores for the applicable scopes and
               report divergence: local-only, remote-only, and conflicting keys
               (grouped by scope). Needs both stores readable. --json, --scope <s>.
-  tree        Show the injected scopes (branch → repo → global) as a precedence
+  tree        Show the injected scopes (project → branch → repo → global) as a precedence
     (resolve) hierarchy and mark, per key, which scope's lesson WINS and which are
               shadowed — the real hook-resolution order. --json, --scope <s>.
   lint        Flag low-quality lessons (empty/short/untrimmed value, empty key,
@@ -315,8 +315,8 @@ ${c.bold('Examples')}
 ${c.bold('Usage')}
   npx @lorekit/cli tree [options]
 
-Shows the scopes the hooks actually inject for the current directory — branch,
-repo, global, in precedence order (most-specific first) — and marks, for any key
+Shows the scopes the hooks actually inject for the current directory — project,
+branch, repo, global, in precedence order (most-specific first) — and marks, for any key
 present at more than one scope, which scope's lesson WINS and which are shadowed.
 This mirrors the SessionStart hook's resolution exactly (a more-specific scope
 overrides a broader scope's same-key lesson). Project-scope lessons are NOT

@@ -316,3 +316,11 @@ test('tree resolves a configured remote independently, marking its shadowed keys
     server.close();
   }
 });
+
+// Guards the readOrder-doc drift: after the smart-hooks PR, `readOrder` (and so
+// tree) includes project scope, so the help must name it as an injected scope.
+test('tree --help lists project among the injected scopes', () => {
+  const res = spawnSync(process.execPath, [BIN, 'tree', '--help'], { encoding: 'utf8' });
+  const out = (res.stdout || '') + (res.stderr || '');
+  assert.match(out, /inject[\s\S]{0,80}project/i);
+});
