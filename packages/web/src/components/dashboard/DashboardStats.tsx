@@ -1,8 +1,9 @@
 'use client';
 
-import { BookOpen, Layers, Zap, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { BookOpen, Info, Layers, Zap, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { ScopeHealthGrid } from '@/components/dashboard/ScopeHealthCard';
 import { Sparkbar } from '@/components/dashboard/Sparkbar';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { useDashboardData } from '@/lib/queries/dashboard';
 
 /** Skeleton that matches the real layout to prevent CLS while the query loads. */
@@ -84,30 +85,33 @@ export function DashboardStats() {
     {
       icon: BookOpen,
       label: 'Total lessons',
+      tooltip: 'Total number of lessons stored across all scopes, based on the most recent 1,000 rows fetched. The trend chip shows the change in lessons written in the last 7 days vs. the prior 7 days.',
       value: totalLessons,
       description: 'across all scopes',
-      // Lessons written per day (last 30 days).
       trend: trends.lessons,
+      showTrend: true,
       unit: 'lessons',
       trendTitle: 'Last 7 days vs. previous 7',
     },
     {
       icon: Layers,
-      label: 'Scopes',
-      value: scopes.length,
-      description: 'active memory namespaces',
-      // Distinct scopes active per day (last 30 days).
+      label: 'Scopes · 7d',
+      tooltip: 'Number of distinct memory scopes (namespaces) that had at least one lesson written in the last 7 days. The trend chip compares this week\'s unique scope count to the prior week\'s — useful for spotting whether your agents are exploring new areas or narrowing focus.',
+      value: trends.activeScopes7d,
+      description: 'distinct scopes active this week',
       trend: trends.scopes,
+      showTrend: true,
       unit: 'scopes',
       trendTitle: 'Last 7 days vs. previous 7',
     },
     {
       icon: Zap,
       label: 'Active · 24h',
+      tooltip: 'Number of distinct scopes that had at least one lesson written in the last 24 hours (rolling window, not since midnight). The bar chart below shows hourly lesson volume across the same 24-hour period.',
       value: active24h,
       description: 'scopes written in the last 24h',
-      // Lessons written per hour (last 24 hours).
       trend: trends.activity,
+      showTrend: false,
       unit: 'lessons',
       trendTitle: 'Last 12 hours vs. previous 12',
     },
@@ -116,7 +120,7 @@ export function DashboardStats() {
   return (
     <>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {stats.map(({ icon: Icon, label, value, description, trend, unit, trendTitle }) => (
+        {stats.map(({ icon: Icon, label, tooltip, value, description, trend, showTrend, unit, trendTitle }) => (
           <div
             key={label}
             className="flex flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5"
@@ -125,7 +129,7 @@ export function DashboardStats() {
               <div className="flex size-9 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
                 <Icon className="size-4 text-[var(--color-accent)]" aria-hidden />
               </div>
-              {trend.points.length >= 2 && (
+              {showTrend && trend.points.length >= 2 && (
                 <TrendChip changePct={trend.changePct} title={trendTitle} />
               )}
             </div>
@@ -133,7 +137,15 @@ export function DashboardStats() {
               <p className="text-2xl font-bold tabular-nums text-[var(--color-content-primary)]">
                 {value}
               </p>
-              <p className="text-xs text-[var(--color-content-tertiary)]">{label}</p>
+              <p className="flex items-center gap-1 text-xs text-[var(--color-content-tertiary)]">
+                {label}
+                <Tooltip content={tooltip} side="top" align="center">
+                  <Info
+                    className="size-3 shrink-0 text-[var(--color-content-tertiary)] opacity-60"
+                    aria-hidden
+                  />
+                </Tooltip>
+              </p>
               <p className="mt-0.5 text-[10px] text-[var(--color-content-tertiary)] opacity-70">
                 {description}
               </p>
