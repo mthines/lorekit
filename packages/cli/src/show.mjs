@@ -89,7 +89,7 @@ export async function show(args) {
     renderRecordSection(
       'Remote',
       remote_,
-      remoteAvailable && !remoteDenied ? connection.endpoint : undefined,
+      remoteAvailable ? connection.endpoint : undefined,
     );
 
     if (diverged) {
