@@ -158,7 +158,6 @@ async function resolveSecrets(
  * false to let the caller respond 200 OK (we never 5xx GitHub on reconcile
  * failures, to avoid delivery-retry storms).
  *
- * deno-lint-ignore no-explicit-any
  */
 async function reconcileAppInstallation(
   db: ReturnType<typeof createClient>,
@@ -247,8 +246,6 @@ async function reconcileAppInstallation(
     'lorekit.installation.github_account_id': githubAccountId,
   });
 
-  const repos = payloadRepos;
-
   const { error: upsertError } = await db.rpc('lorekit_installation_upsert', {
     p_installation_id: installationId,
     p_github_account_id: githubAccountId,
@@ -256,7 +253,7 @@ async function reconcileAppInstallation(
     p_account_type: accountType,
     p_user_id: verdict.kind === 'linked' ? verdict.userId : null,
     p_status: verdict.kind,
-    p_repos: repos,
+    p_repos: payloadRepos,
   });
 
   if (upsertError) {

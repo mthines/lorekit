@@ -60,7 +60,7 @@ function AppCoveredRepoRow({ fullName }: { fullName: string }) {
 
 function InstallationCard({ installation }: { installation: GithubInstallation }) {
   const AccountIcon = installation.account_type === 'Organization' ? Building2 : User;
-  const repos = installation.repositories.filter((r) => r.active);
+  const repos = installation.repositories;
 
   return (
     <motion.div

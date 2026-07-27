@@ -143,8 +143,6 @@ export async function handleSetupReturn(
   // is therefore invisible via RLS (which requires user_id = auth.uid()).
   // We use a targeted update scoped to (installation_id, github_account_id)
   // so we cannot affect any other user's installation.
-  // Use the service role key to read/update pending installations (which have
-  // user_id = NULL and are invisible to the authenticated-user RLS policy).
   const supabaseAdmin = createClient(
     process.env['NEXT_PUBLIC_SUPABASE_URL']!,
     process.env['SUPABASE_SERVICE_ROLE_KEY']!,
