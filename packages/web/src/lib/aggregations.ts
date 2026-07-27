@@ -105,13 +105,37 @@ export function pctChange(recent: number, prev: number): number {
 }
 
 /** % change of the sum of the last `k` values vs. the preceding `k` values. */
-function windowChange(values: number[], k: number): number {
+export function windowChange(values: number[], k: number): number {
   const n = values.length;
   const recent = values.slice(Math.max(0, n - k)).reduce((a, b) => a + b, 0);
   const prev = values
     .slice(Math.max(0, n - 2 * k), Math.max(0, n - k))
     .reduce((a, b) => a + b, 0);
   return pctChange(recent, prev);
+}
+
+/**
+ * % change of distinct scopes active in the last `k` days vs. the preceding
+ * `k` days.
+ *
+ * Unlike lessons, scopes must be counted distinctly per window — summing daily
+ * distinct-scope counts double-counts a scope that was active on multiple days
+ * within the window.
+ *
+ * `buckets` is the array of per-day scope sets aligned oldest→newest (one
+ * entry per day). The function reads the last `k` entries as "recent" and the
+ * preceding `k` as "prev", unions each half's sets, then compares sizes.
+ */
+export function scopeWindowChange(buckets: Set<string>[], k: number): number {
+  const n = buckets.length;
+  const recentBuckets = buckets.slice(Math.max(0, n - k));
+  const prevBuckets = buckets.slice(Math.max(0, n - 2 * k), Math.max(0, n - k));
+  const union = (sets: Set<string>[]) => {
+    const out = new Set<string>();
+    for (const s of sets) for (const v of s) out.add(v);
+    return out;
+  };
+  return pctChange(union(recentBuckets).size, union(prevBuckets).size);
 }
 
 /**
@@ -138,6 +162,8 @@ export function computeStatTrends(rows: TrendRow[], nowIso: string): StatTrends 
   const todayMidnight = Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth(), nowDate.getUTCDate());
   const lessonsPerDay: BucketPoint[] = [];
   const scopesPerDay: BucketPoint[] = [];
+  // Retain the raw per-day scope sets for window-distinct changePct (see scopeWindowChange).
+  const scopeSetsPerDay: Set<string>[] = [];
   for (let i = DAYS - 1; i >= 0; i--) {
     const start = todayMidnight - i * DAY_MS;
     const end = start + DAY_MS;
@@ -156,6 +182,7 @@ export function computeStatTrends(rows: TrendRow[], nowIso: string): StatTrends 
     });
     lessonsPerDay.push({ label, value: count });
     scopesPerDay.push({ label, value: seen.size });
+    scopeSetsPerDay.push(seen);
   }
 
   // ── Hourly buckets: last 24 hours, UTC-hour aligned. ──
@@ -173,7 +200,9 @@ export function computeStatTrends(rows: TrendRow[], nowIso: string): StatTrends 
 
   return {
     lessons: { points: lessonsPerDay, changePct: windowChange(lessonsPerDay.map((p) => p.value), 7) },
-    scopes: { points: scopesPerDay, changePct: windowChange(scopesPerDay.map((p) => p.value), 7) },
+    // Use window-distinct scope counts: summing daily distinct-scope values
+    // double-counts a scope active on multiple days within the same window.
+    scopes: { points: scopesPerDay, changePct: scopeWindowChange(scopeSetsPerDay, 7) },
     activity: { points: lessonsPerHour, changePct: windowChange(lessonsPerHour.map((p) => p.value), 12) },
   };
 }
