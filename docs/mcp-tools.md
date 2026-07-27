@@ -261,24 +261,25 @@ This operation is unrecoverable. Requires a token with write permission (`lk_rw_
 
 ---
 
-## Using with `persistent-memory` skill
+## Connecting your agent
 
-In your project's `.claude/skills/persistent-memory/config.json`:
+The fastest path is `npx @lorekit/cli install` — it scaffolds the `lorekit-memory` and `lorekit-setup` skills, wires the MCP server, and installs the lifecycle hooks in one command. See the [CLI README](../packages/cli/README.md) for flags.
 
-```json
+For a manual `.mcp.json` entry (any MCP-compatible agent):
+
+```jsonc
 {
-  "backend": "mcp",
-  "mcp": {
-    "server": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
-    "auth": {
-      "type": "bearer",
-      "token": "lk_rw_<your-token>"
+  "mcpServers": {
+    "lorekit": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp"],
+      "env": { "MCP_REMOTE_HEADER_Authorization": "Bearer lk_rw_<your-token>" }
     }
   }
 }
 ```
 
-Generate a token from the LoreKit dashboard: **Overview → Step 2 → Generate new token**.
+Generate a token from the LoreKit dashboard: **Overview → Connect your agent → Generate new token**.
 
 ---
 

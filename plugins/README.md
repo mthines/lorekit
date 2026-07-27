@@ -67,10 +67,10 @@ Bash-restricted contexts included) instead of the hosted endpoint, point the
 See each bundle's README for copy-in instructions:
 [Cursor](./lorekit-cursor/README.md) · [Codex](./lorekit-codex/README.md).
 
-## Keeping the Claude skill in sync
+## Keeping the Claude skills in sync
 
-`lorekit-claude/skills/lorekit-memory/` is vendored from the single source at
-`packages/cli/skill/lorekit-memory/`. Re-sync after editing the source:
+`lorekit-claude/skills/lorekit-memory/` and `lorekit-claude/skills/lorekit-setup/` are vendored from the single sources at
+`packages/cli/skill/lorekit-memory/` and `packages/cli/skill/lorekit-setup/`. Re-sync after editing either source:
 
 ```bash
 node scripts/sync-plugin-skill.mjs        # copy source → plugin
