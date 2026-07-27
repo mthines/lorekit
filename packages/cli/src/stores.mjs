@@ -41,5 +41,9 @@ export function remoteUnavailableReason({ endpoint, token } = {}) {
   if (!endpoint) return 'no endpoint configured — run `lorekit install` or set LOREKIT_MCP_URL';
   if (String(endpoint).includes('<project-ref>')) return `endpoint is still a placeholder (${endpoint})`;
   if (!token) return 'no token configured — set LOREKIT_TOKEN or run `lorekit install`';
+  // Defensive catch-all: unreachable while this mirrors `RemoteStore.usable()` —
+  // callers only reach here when the remote is unusable, so one check above has
+  // already fired. Kept as a total return (never a throw): this helper is on the
+  // graceful read path and must never break the listing.
   return 'not configured';
 }
