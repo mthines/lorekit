@@ -6,6 +6,7 @@ import { parseArgs, log, err, c } from '../src/util.mjs';
 import { install } from '../src/install.mjs';
 import { uninstall } from '../src/uninstall.mjs';
 import { doctor } from '../src/doctor.mjs';
+import { list } from '../src/list.mjs';
 import { hook } from '../src/hook.mjs';
 import { migrate } from '../src/migrate.mjs';
 import { mcpServer } from '../src/mcp-server.mjs';
@@ -35,6 +36,10 @@ ${c.bold('Commands')}
               other servers, hooks, and settings are left untouched. Prompts
               project vs global; --project / --global choose non-interactively.
   doctor      Verify the skill install, MCP connectivity, token, and scope.
+  list (ls)   List the lessons that apply to the current directory, split into
+              an Offline section (local .lorekit/ + ~/.lorekit/) and a Remote
+              section (hosted MCP). Groups by scope (project/branch/repo/global).
+              --json for scripting, --scope <s> to narrow.
   migrate     Relocate a LoreKit-format local store into the current layout.
               Dry-run by default; pass --yes to apply. Idempotent.
   hook        Hook engine for Claude Code / Cursor / Codex. Reads the host's
@@ -53,6 +58,8 @@ ${c.bold('Options')}
   -t, --token <token>     LoreKit token (lk_rw_* to allow writes, lk_ro_* read-only)
       --mode <mode>       Memory mode: off | local | remote (doctor override)
       --store <path>      Local project-tier store directory (default: .lorekit)
+      --json              Machine-readable output (list)
+      --scope <scope>     Restrict to a single scope (list)
       --from <path>       Source store to migrate from (migrate)
       --to <tier>         Migration destination tier: home | project (migrate;
                           default routes each entry by scope)
@@ -157,6 +164,30 @@ ${c.bold('Examples')}
   npx @lorekit/cli doctor --deep
   npx @lorekit/cli doctor --mode local
 `,
+  list: `${c.bold('lorekit list')} — list the lessons that apply to the current directory ${c.dim('(alias: ls)')}
+
+${c.bold('Usage')}
+  npx @lorekit/cli list [options]
+
+Shows the lessons for the scopes that resolve for the current directory
+(project/branch/repo/global), split into an Offline section (the local
+.lorekit/ + ~/.lorekit/ two-tier store) and a Remote section (the hosted MCP
+server). When no remote token/endpoint is configured the Remote section is a
+short note on how to set it up — never an error.
+
+${c.bold('Options')}
+  -d, --dir <path>        Target project root (default: current directory)
+      --scope <scope>     Restrict to a single scope (default: all applicable)
+      --json              Machine-readable output
+  -e, --endpoint <url>    Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
+  -t, --token <token>     Remote token override (else .mcp.json / LOREKIT_TOKEN)
+      --store <path>      Local project-tier store directory (default: .lorekit)
+
+${c.bold('Examples')}
+  npx @lorekit/cli list
+  npx @lorekit/cli list --json
+  npx @lorekit/cli list --scope global
+`,
   migrate: `${c.bold('lorekit migrate')} — relocate a LoreKit-format local store into the current layout
 
 ${c.bold('Usage')}
@@ -209,13 +240,17 @@ ${c.bold('Options')}
 const KNOWN_FLAGS = [
   'dir', 'project', 'global', 'endpoint', 'token', 'mode', 'store',
   'from', 'to', 'apply', 'yes', 'no-hooks', 'force', 'deep', 'adapter',
-  'event', 'help', 'version',
+  'event', 'json', 'scope', 'help', 'version',
 ];
 
 // Commands that write to disk / talk to the network on a human's behalf. These
 // reject unknown flags; the machine-facing `hook` / `mcp` do not (they must
 // never fail on a stray flag, and only ever receive flags we control).
-const HUMAN_COMMANDS = new Set(['install', 'uninstall', 'doctor', 'migrate']);
+const HUMAN_COMMANDS = new Set(['install', 'uninstall', 'doctor', 'list', 'migrate']);
+
+// Command aliases — canonicalized before help / dispatch so `lorekit ls --help`
+// and telemetry both resolve to the real command name.
+const COMMAND_ALIASES = { ls: 'list' };
 
 async function main() {
   // Load a `.env` from the current directory (if any) before anything reads the
@@ -227,11 +262,11 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'json'],
     known: KNOWN_FLAGS,
   });
 
-  const command = args._[0];
+  const command = COMMAND_ALIASES[args._[0]] || args._[0];
 
   // Help is intercepted first — before the machine-facing hook/mcp dispatch — so
   // `lorekit <command> --help` always documents the command (even hook/mcp)
@@ -284,6 +319,8 @@ async function main() {
       return traceCommand('uninstall', args, VERSION, () => uninstall(args));
     case 'doctor':
       return traceCommand('doctor', args, VERSION, () => doctor(args));
+    case 'list':
+      return traceCommand('list', args, VERSION, () => list(args));
     case 'migrate':
       return traceCommand('migrate', args, VERSION, () => migrate(args));
     default:

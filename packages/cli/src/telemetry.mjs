@@ -34,7 +34,7 @@ const DEFAULT_DATASET = 'lorekit-cli';
 
 // Flags worth counting (e.g. how many installs are --global). Bounded on
 // purpose: only these booleans are ever attached, never free-form values.
-const FLAG_ATTRS = ['global', 'project', 'deep', 'yes', 'force', 'no-hooks'];
+const FLAG_ATTRS = ['global', 'project', 'deep', 'yes', 'force', 'no-hooks', 'json'];
 
 const OFF_VALUES = new Set(['0', 'off', 'false', 'no', 'disable', 'disabled']);
 
