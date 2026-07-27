@@ -161,10 +161,11 @@ export function retrospectiveNudge(scope, control) {
 export function failureNudge(toolName, scope, control) {
   const writeScope = scope.repoScope || 'global';
   const hint = tagsHint(writeScope, control);
+  const suffix = hint ? `${hint} So the next run avoids it.` : 'so the next run avoids it.';
   return (
     `LoreKit: the last ${toolName} call failed. If this is a recurring or ` +
     'non-obvious failure, consider recording the fix as a lesson via ' +
-    `lorekit-memory (memory.write to ${writeScope}).${hint} So the next run avoids it.`
+    `lorekit-memory (memory.write to ${writeScope}) — ${suffix}`
   );
 }
 

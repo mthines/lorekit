@@ -36,7 +36,7 @@ export function parseThreshold(raw) {
 export function repoThreshold(root) {
   try {
     const cfg = JSON.parse(fs.readFileSync(path.join(root, '.lorekit.json'), 'utf8'));
-    if (cfg && cfg['dedupe.threshold'] !== undefined) {
+    if (cfg?.['dedupe.threshold'] !== undefined) {
       return parseThreshold(cfg['dedupe.threshold']);
     }
   } catch { /* not present or invalid — skip silently */ }
@@ -65,7 +65,10 @@ export async function dedupe(args) {
   if (args.store) env.LOREKIT_STORE = args.store;
 
   // Threshold precedence: --threshold flag > dedupe.threshold in .lorekit.json > default (0.8).
-  const threshold = args.threshold !== undefined ? parseThreshold(args.threshold) : (repoThreshold(root) ?? DEFAULT_THRESHOLD);
+  const threshold =
+    args.threshold !== undefined
+      ? parseThreshold(args.threshold)
+      : (repoThreshold(root) ?? DEFAULT_THRESHOLD);
   const scopeInfo = deriveScope(root);
   // Default to every applicable scope; `--scope <s>` narrows to one.
   const scopes = args.scope && typeof args.scope === 'string' ? [args.scope] : scopeList(scopeInfo);
