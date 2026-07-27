@@ -30,7 +30,7 @@ const JSON_SNIPPET = `{
   "mcpServers": {
     "lorekit": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "${VANITY_MCP_URL}?token=lk_rw_…"]
+      "args": ["-y", "mcp-remote", "${VANITY_MCP_URL}", "--header", "Authorization:Bearer lk_rw_…"]
     }
   }
 }`;
@@ -42,7 +42,9 @@ const YAML_SNIPPET = `mcp:
       args:
         - -y
         - mcp-remote
-        - "${VANITY_MCP_URL}?token=lk_rw_…"`;
+        - "${VANITY_MCP_URL}"
+        - --header
+        - "Authorization:Bearer lk_rw_…"`;
 
 const WRITE_SNIPPET = `memory.write {
   scope: "global",
@@ -56,7 +58,7 @@ const MCP_CLIENTS: McpClientConfig[] = [
     name: 'Claude Code',
     scope: 'project',
     filename: '.mcp.json',
-    hint: 'Project-local. Add .mcp.json to .gitignore — the token is in the URL.',
+    hint: 'Project-local. Add .mcp.json to .gitignore — it contains your token.',
     snippet: JSON_SNIPPET,
   },
   {

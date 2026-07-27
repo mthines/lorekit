@@ -8,6 +8,7 @@
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { extractToken } from './auth-token.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
@@ -27,17 +28,11 @@ async function sha256hex(text: string): Promise<string> {
 }
 
 export async function resolveAuth(authHeader: string | null, queryToken: string | null = null): Promise<AuthContext | null> {
-  // Accept token from Authorization header OR ?token= query param.
-  // Query-param auth exists specifically for MCP clients (e.g. mcp-remote) that
-  // cannot inject custom request headers — the token is embedded in the server URL.
-  let token: string;
-  if (authHeader?.startsWith('Bearer ')) {
-    token = authHeader.slice(7);
-  } else if (queryToken) {
-    token = queryToken;
-  } else {
-    return null;
-  }
+  // Accept token from Authorization: Bearer header (preferred — keeps the token
+  // out of server logs) or ?token= query param (legacy fallback for MCP clients
+  // that cannot inject custom headers). extractToken() implements the precedence.
+  const token = extractToken(authHeader, queryToken);
+  if (!token) return null;
 
   // 1. Service-role key — CI / internal use only
   if (SERVICE_ROLE_KEY && token === SERVICE_ROLE_KEY) return { type: 'service' };
