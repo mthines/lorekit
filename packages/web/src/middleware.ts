@@ -56,7 +56,16 @@ export async function middleware(request: NextRequest) {
 
   // Refresh session if the access token has expired; supabase-ssr will
   // transparently use the refresh token and write new cookies via setAll.
-  await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  // Redirect authenticated users away from /login. Honour the ?next= param so
+  // a logged-in user landing on /login?next=/lore/xyz is sent to their intended
+  // destination rather than unconditionally to /dashboard.
+  if (user && request.nextUrl.pathname === '/login') {
+    const next = request.nextUrl.searchParams.get('next') ?? '/dashboard';
+    return NextResponse.redirect(new URL(next, request.url));
+  }
+
   return response;
 }
 
