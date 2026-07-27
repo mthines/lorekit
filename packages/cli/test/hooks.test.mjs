@@ -1,7 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { isFailure } from '../src/core/failure.mjs';
-import { formatLessons, retrospectiveNudge, failureNudge } from '../src/core/lessons.mjs';
+import {
+  fetchLessons,
+  formatLessons,
+  retrospectiveNudge,
+  failureNudge,
+  failureQuery,
+  relevantLessons,
+  formatRelevantLessons,
+} from '../src/core/lessons.mjs';
+import { resolvePrecedence, matchesQuery } from '../src/lessons-pure.mjs';
 import { claude } from '../src/adapters/claude.mjs';
 import { cursor } from '../src/adapters/cursor.mjs';
 import { codex } from '../src/adapters/codex.mjs';
@@ -33,6 +42,141 @@ test('formatLessons returns null when empty and a block otherwise', () => {
 test('nudges name the write scope', () => {
   assert.match(retrospectiveNudge({ repoScope: 'repo::a/b' }), /memory\.write to repo::a\/b/);
   assert.match(failureNudge('Bash', { repoScope: null }), /memory\.write to global/);
+});
+
+// ── failureQuery (distil significant terms from a tool failure) ───────────────
+
+test('failureQuery pulls significant terms from the tool name + error text', () => {
+  const terms = failureQuery('Bash', { stderr: 'ENOENT: eslint config not found' });
+  assert.ok(terms.includes('eslint'));
+  assert.ok(terms.includes('enoent'));
+  assert.ok(terms.includes('config'));
+  // Generic/short words are dropped so a match stays meaningful.
+  assert.ok(!terms.includes('not'));
+  assert.ok(!terms.includes('error'));
+});
+
+test('failureQuery is total on any toolResponse shape (no throw)', () => {
+  assert.deepEqual(failureQuery('X', null), []);
+  assert.deepEqual(failureQuery('', {}), []);
+  assert.deepEqual(failureQuery(null, undefined), []);
+  // A raw string response is accepted directly.
+  assert.ok(failureQuery('tool', 'permission denied writing lockfile').includes('permission'));
+  // A nested object is stringified, not skipped.
+  assert.ok(failureQuery('X', { error: { name: 'TimeoutException' } }).includes('timeoutexception'));
+});
+
+test('failureQuery de-duplicates and caps the term count', () => {
+  const blob = Array.from({ length: 50 }, (_, i) => `token${i}`).join(' ');
+  const terms = failureQuery('Bash', { stderr: `${blob} ${blob}` });
+  assert.ok(terms.length <= 12);
+  assert.equal(new Set(terms).size, terms.length); // no duplicates
+});
+
+// ── relevantLessons (filter injected lessons to ones the failure matches) ─────
+
+const LESSONS = [
+  { scope: 'repo::a/b', key: 'eslint-flat-config', value: 'use eslint.config.js not .eslintrc' },
+  { scope: 'global', key: 'lockfile', value: 'run pnpm install to refresh the lockfile' },
+  { scope: 'global', key: 'unrelated', value: 'the sky is blue' },
+];
+
+test('relevantLessons injects lessons matching a failure term, capped', () => {
+  const hits = relevantLessons(LESSONS, ['eslint', 'lockfile']);
+  assert.equal(hits.length, 2);
+  assert.deepEqual(hits.map((l) => l.key), ['eslint-flat-config', 'lockfile']);
+});
+
+test('relevantLessons returns nothing when no term matches (nudge-only fallback)', () => {
+  assert.deepEqual(relevantLessons(LESSONS, ['kubernetes']), []);
+  assert.deepEqual(relevantLessons(LESSONS, []), []);
+  assert.deepEqual(relevantLessons([], ['eslint']), []);
+  assert.deepEqual(relevantLessons(null, ['eslint']), []);
+});
+
+test('relevantLessons respects the cap', () => {
+  const many = Array.from({ length: 10 }, (_, i) => ({ scope: 'global', key: `k${i}`, value: 'eslint' }));
+  assert.equal(relevantLessons(many, ['eslint'], 3).length, 3);
+});
+
+test('failureQuery + relevantLessons compose end to end', () => {
+  const terms = failureQuery('Bash', { exit_code: 1, stderr: 'eslint: no configuration found' });
+  const hits = relevantLessons(LESSONS, terms);
+  assert.deepEqual(hits.map((l) => l.key), ['eslint-flat-config']);
+});
+
+test('formatRelevantLessons frames prior lessons, or null when empty', () => {
+  assert.equal(formatRelevantLessons([]), null);
+  const out = formatRelevantLessons([LESSONS[0]]);
+  assert.match(out, /hit something like this before/);
+  assert.match(out, /eslint-flat-config/);
+  assert.match(out, /repo::a\/b/);
+  assert.match(out, /considerations, not rules/);
+});
+
+// ── fetchLessons resolves precedence via the shared resolvePrecedence ─────────
+
+// A minimal fake store: returns the seeded entries per scope, and can be told to
+// fail a scope's read (best-effort skip) — no network, no filesystem.
+function fakeStore(byScope, { failScopes = [] } = {}) {
+  return {
+    async list({ scope }) {
+      if (failScopes.includes(scope)) return { ok: false };
+      return { ok: true, entries: byScope[scope] || [] };
+    },
+  };
+}
+
+test('fetchLessons keeps the most-specific value per key — same as resolvePrecedence', async () => {
+  // deriveScope on this repo yields project → branch? → repo → global; seed the
+  // duplicate key at every possible scope so whichever leads wins deterministically.
+  const shared = (scope, v) => ({ scope, key: 'shared', value: v });
+  const byScope = {};
+  // Build groups in readOrder to compute the expected winners independently.
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  scope.readOrder.forEach((s, i) => {
+    byScope[s] = [shared(s, `body-${i}`), { scope: s, key: `only-${i}`, value: `u${i}` }];
+  });
+  const { lessons } = await fetchLessons(fakeStore(byScope), process.cwd());
+
+  // Expected: resolvePrecedence over the same groups, taking the winners.
+  const groups = scope.readOrder.map((s) => ({ scope: s, error: null, entries: byScope[s] }));
+  const { groups: resolved } = resolvePrecedence({ groups });
+  const expected = [];
+  for (const g of resolved) for (const e of g.entries) if (e.winning) expected.push(e);
+
+  assert.deepEqual(
+    lessons.map((l) => `${l.scope}:${l.key}`),
+    expected.map((l) => `${l.scope}:${l.key}`),
+  );
+  // The single `shared` winner is the FIRST (most-specific) scope in readOrder.
+  const sharedWinners = lessons.filter((l) => l.key === 'shared');
+  assert.equal(sharedWinners.length, 1);
+  assert.equal(sharedWinners[0].scope, scope.readOrder[0]);
+});
+
+test('fetchLessons is best-effort: a failed scope read is skipped, not thrown', async () => {
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  const first = scope.readOrder[0];
+  const last = scope.readOrder[scope.readOrder.length - 1];
+  const store = fakeStore({ [last]: [{ scope: last, key: 'survivor', value: 'v' }] }, { failScopes: [first] });
+  const { lessons } = await fetchLessons(store, process.cwd());
+  assert.deepEqual(lessons.map((l) => l.key), ['survivor']);
+});
+
+test('fetchLessons caps at MAX_LESSONS (15)', async () => {
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  const many = Array.from({ length: 30 }, (_, i) => ({ scope: scope.readOrder[0], key: `k${i}`, value: 'v' }));
+  const { lessons } = await fetchLessons(fakeStore({ [scope.readOrder[0]]: many }), process.cwd());
+  assert.equal(lessons.length, 15);
+});
+
+test('matchesQuery re-export from lessons-pure matches the search matcher', () => {
+  assert.equal(matchesQuery({ key: 'k', value: 'eslint' }, 'ESLINT'), true);
+  assert.equal(matchesQuery({ key: 'k', value: 'v' }, 'a.*b'), false); // literal, not regex
 });
 
 test('adapter event → intent mapping', () => {
