@@ -161,8 +161,6 @@ function CopyableCode({ code, filename }: { code: string; filename: string }) {
 
 interface ClientConfigTabsProps {
   clients: McpClientConfig[];
-  /** If provided, tokens in snippets are already filled in. */
-  initialClientId?: string;
 }
 
 /**
@@ -170,17 +168,16 @@ interface ClientConfigTabsProps {
  * for one client at a time.
  *
  * Used in two contexts:
- * - `OnboardingStepContent` (ConnectStep): live token substitution, tabs below
- *   the code block.
- * - `learn/setup` tutorial page: static snippets, tabs above the code block.
+ * - `OnboardingStepContent` (ConnectStep): live token substitution.
+ * - `learn/setup` tutorial page: static snippets.
  *
  * UX rationale: five text-only pills are slower to scan than five logo+name
  * tabs. Logos provide instant visual recognition for the user's current tool
  * without reading every label. Greyscale keeps the selector visually quiet
  * relative to the config snippet that is the primary content.
  */
-export function ClientConfigTabs({ clients, initialClientId }: ClientConfigTabsProps) {
-  const [activeId, setActiveId] = useState(initialClientId ?? clients[0]?.id ?? '');
+export function ClientConfigTabs({ clients }: ClientConfigTabsProps) {
+  const [activeId, setActiveId] = useState(clients[0]?.id ?? '');
   const active = clients.find((c) => c.id === activeId) ?? clients[0];
   if (!active) return null;
 

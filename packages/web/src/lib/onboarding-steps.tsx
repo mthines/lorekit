@@ -11,19 +11,17 @@ import { resolveMcpUrls } from '@/lib/mcp-url';
  * enrichment — surfaced post-connect via `WebhookTeaser`, not as a required
  * checklist step.
  *
- * Shared by the Overview page and the dedicated `/learn/setup` page so the
- * two never drift. Completion state is NOT computed here — it lives in the
+ * Used by the Overview page (dashboard). The `/learn/setup` page has its own
+ * static tutorial layout and no longer calls this function.
+ *
+ * Completion state is NOT computed here — it lives in the
  * {@link OnboardingProvider}, which overlays server signals with the user's
  * manual "mark as done" choices.
  *
  * First login has no tokens: with `autoGenerateToken`, we mint a read+write
  * token so the user can copy a ready-to-use config with zero extra clicks.
- * Only the Overview page opts in — it's the default landing route — so the
- * token-minting side effect keeps a single entry point even though the
- * dedicated /learn/setup page renders the same steps. The dedicated page still
- * lets the user generate a token on demand via the TokenManager. Wrapped in
- * try/catch: if generation fails the page still renders, just without the
- * auto-filled token.
+ * Wrapped in try/catch: if generation fails the page still renders, just
+ * without the auto-filled token.
  */
 export async function buildOnboardingSteps(
   { autoGenerateToken = false }: { autoGenerateToken?: boolean } = {},

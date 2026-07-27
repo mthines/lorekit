@@ -29,7 +29,7 @@ const JSON_SNIPPET = `{
   "mcpServers": {
     "lorekit": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "https://<your-mcp-url>?token=lk_rw_…"]
+      "args": ["-y", "mcp-remote", "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp?token=lk_rw_…"]
     }
   }
 }`;
@@ -41,7 +41,7 @@ const YAML_SNIPPET = `mcp:
       args:
         - -y
         - mcp-remote
-        - "https://<your-mcp-url>?token=lk_rw_…"`;
+        - "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp?token=lk_rw_…"`;
 
 const WRITE_SNIPPET = `memory.write {
   scope: "global",
@@ -131,14 +131,8 @@ export default function LearnSetupPage() {
         {/* ── Step 2: MCP config ──────────────────────────────────────────── */}
         <TutorialStep number={2} title="Add LoreKit to your agent's MCP config">
           <p>
-            Paste your token into the MCP URL and drop the snippet into your agent&apos;s config
-            file. Replace <code>{'<your-mcp-url>'}</code> with the endpoint shown in{' '}
-            <Link
-              href="/settings/api-keys"
-              className="text-[var(--color-accent)] underline underline-offset-2"
-            >
-              Settings → API keys
-            </Link>.
+            Replace <code>lk_rw_…</code> with your token and drop the snippet into your
+            agent&apos;s config file.
           </p>
 
           <div className="mt-4">
