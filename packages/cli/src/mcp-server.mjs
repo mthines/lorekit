@@ -36,7 +36,7 @@ const SERVER_INFO = { name: 'lorekit-local', version: '1.0.0' };
 export const MEMORY_TOOL_DEFS = [
   {
     name: 'memory.write',
-    description: 'Store or update a lesson',
+    description: 'Store or update a memory',
     inputSchema: {
       type: 'object',
       required: ['scope', 'key', 'value'],
@@ -58,24 +58,24 @@ export const MEMORY_TOOL_DEFS = [
   },
   {
     name: 'memory.read',
-    description: 'Read a lesson by scope and key',
+    description: 'Read a memory by scope and key',
     inputSchema: { type: 'object', required: ['scope', 'key'] },
   },
   {
     name: 'memory.list',
-    description: 'List lessons for a scope',
+    description: 'List memories for a scope',
     inputSchema: { type: 'object', required: ['scope'] },
   },
   {
     name: 'memory.search',
-    description: 'Keyword search across lessons',
+    description: 'Keyword search across memories',
     inputSchema: { type: 'object', required: ['q'] },
   },
   {
     name: 'memory.delete',
     description:
-      'Soft-archive a lesson (default) or hard-delete it (force: true). ' +
-      'Archived lessons are hidden from reads but can be restored.',
+      'Soft-archive a memory (default) or hard-delete it (force: true). ' +
+      'Archived memories are hidden from reads but can be restored.',
     inputSchema: {
       type: 'object',
       required: ['scope', 'key'],
@@ -88,7 +88,7 @@ export const MEMORY_TOOL_DEFS = [
   },
   {
     name: 'memory.archive',
-    description: 'Soft-archive a lesson. Hidden from reads but restorable.',
+    description: 'Soft-archive a memory. Hidden from reads but restorable.',
     inputSchema: { type: 'object', required: ['scope', 'key'] },
   },
 ];

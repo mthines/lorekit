@@ -138,7 +138,7 @@ function StepRow({ step, index, isOpen, onToggle }: StepRowProps) {
                   </button>
                   <p className="text-xs text-[var(--color-content-tertiary)]">
                     {manuallyDone
-                      ? 'Marked complete. Lessons will appear here once a delivery arrives.'
+                      ? 'Marked complete. Memories will appear here once a delivery arrives.'
                       : 'Already added it on GitHub? Mark this step complete.'}
                   </p>
                 </div>

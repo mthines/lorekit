@@ -55,7 +55,7 @@ export async function fetchLessons(store, cwd) {
 export function formatLessons(lessons, scope) {
   if (!lessons || lessons.length === 0) return null;
   const header =
-    `LoreKit — ${lessons.length} shared lesson(s) for ${scope.repoScope || 'this workspace'}. ` +
+    `LoreKit — ${lessons.length} shared ${lessons.length === 1 ? 'memory' : 'memories'} for ${scope.repoScope || 'this workspace'}. ` +
     `Treat as considerations, not rules; trust the current code if they conflict.`;
   const body = lessons
     .map((l) => {
@@ -110,7 +110,7 @@ export function formatRelevantLessons(lessons) {
   if (!lessons || lessons.length === 0) return null;
   const header =
     `LoreKit — you've hit something like this before. ${lessons.length} related ` +
-    'lesson(s) (considerations, not rules; trust the current code if they conflict):';
+    `${lessons.length === 1 ? 'memory' : 'memories'} (considerations, not rules; trust the current code if they conflict):`;
   const body = lessons
     .map((l) => {
       const first = String(l.value || '').split('\n')[0].slice(0, 300);
@@ -137,7 +137,7 @@ export function failureNudge(toolName, scope) {
   const writeScope = scope.repoScope || 'global';
   return (
     `LoreKit: the last ${toolName} call failed. If this is a recurring or ` +
-    'non-obvious failure, consider recording the fix as a lesson via ' +
+    'non-obvious failure, consider recording the fix as a memory via ' +
     `lorekit-memory (memory.write to ${writeScope}), so the next run avoids it.`
   );
 }

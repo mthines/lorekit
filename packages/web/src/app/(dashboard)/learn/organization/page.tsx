@@ -19,7 +19,7 @@ export default function LearnOrganizationPage() {
       <TutorialCallout variant="tip">
         Org sharing is <strong>org-first</strong>: there is a single shared row owned by
         the org, not a personal copy per member. Every team member reads and writes the
-        same lesson. When one person updates it, everyone sees the change immediately.
+        same memory. When one person updates it, everyone sees the change immediately.
       </TutorialCallout>
 
       {/* Role overview */}
@@ -138,16 +138,16 @@ export default function LearnOrganizationPage() {
             <Link href="/lore" className="text-[var(--color-accent)] underline underline-offset-2">
               Explorer
             </Link>, use the <strong>All · Personal · {'{org}'}</strong>{' '}
-            filter to narrow to your org's lore. Org-owned lessons show an ownership badge
+            filter to narrow to your org's lore. Org-owned memories show an ownership badge
             next to the scope badge. The detail panel shows the owning org and who last
-            updated the lesson.
+            updated the memory.
           </p>
         </TutorialStep>
       </div>
 
       <TutorialCallout>
         <strong>Next:</strong> understand how personal and org-owned lore coexist and how
-        scope precedence decides which lesson wins. See the{' '}
+        scope precedence decides which memory wins. See the{' '}
         <Link href="/learn/private" className="text-[var(--color-accent)] underline underline-offset-2">
           Private lore tutorial
         </Link>.

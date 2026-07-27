@@ -69,12 +69,12 @@ export default function LearnUseCasesPage() {
           Autonomous workflow self-improvement
         </h3>
         <p className="text-sm text-[var(--color-content-secondary)]">
-          The <code>aw</code> agent dispatcher reads lessons at Phase 1 (planning) and writes
-          new ones at Phase 4 (stuck-loop) and Phase 7 (end-of-run). Universal lessons go to{' '}
-          <code>global</code>; repo-bound lessons go to <code>repo::{'{owner}/{repo}'}</code>.
+          The <code>aw</code> agent dispatcher reads memories at Phase 1 (planning) and writes
+          new ones at Phase 4 (stuck-loop) and Phase 7 (end-of-run). Universal memories go to{' '}
+          <code>global</code>; repo-bound memories go to <code>repo::{'{owner}/{repo}'}</code>.
         </p>
         <UseCase
-          title="Read lessons before planning"
+          title="Read memories before planning"
           description="Narrow-to-broad fan-out — more specific wins."
           code={`// Phase 1 — read narrow first, then global
 memory.list {
@@ -89,7 +89,7 @@ memory.list {
 }`}
         />
         <UseCase
-          title="Record a stuck-loop lesson"
+          title="Record a stuck-loop memory"
           description="Write when the agent is stuck for the third iteration on the same area."
           code={`memory.write {
   scope:        "repo::mthines/lorekit",
@@ -99,7 +99,7 @@ memory.list {
   source_agent: "aw-executor",
   trigger:      "stuck-loop"
 }`}
-          note="The lesson is repo-scoped so it only surfaces for this codebase, not globally."
+          note="The memory is repo-scoped so it only surfaces for this codebase, not globally."
         />
       </div>
 
@@ -109,7 +109,7 @@ memory.list {
           CI / GitHub Actions context injection
         </h3>
         <p className="text-sm text-[var(--color-content-secondary)]">
-          Inject global and repo-scoped lessons into any CI step so AI-assisted jobs have
+          Inject global and repo-scoped memories into any CI step so AI-assisted jobs have
           the same context as local agents. Generate a read-only token in{' '}
           <Link href="/settings/api-keys" className="text-[var(--color-accent)] underline underline-offset-2">
             Settings → API keys
@@ -117,7 +117,7 @@ memory.list {
           and store it as <code>LOREKIT_TOKEN</code> in your repo secrets.
         </p>
         <UseCase
-          title="Inject lessons before an AI step"
+          title="Inject memories before an AI step"
           description="Use a read-only token (lk_ro_…) stored as LOREKIT_TOKEN."
           code={CI_INJECT_CODE}
         />
@@ -177,7 +177,7 @@ memory.write {
           Branch-scoped experimentation
         </h3>
         <p className="text-sm text-[var(--color-content-secondary)]">
-          Keep experimental lessons on a feature branch so they don't pollute the repo
+          Keep experimental memories on a feature branch so they don't pollute the repo
           set. Browse them in the{' '}
           <Link href="/lore" className="text-[var(--color-accent)] underline underline-offset-2">
             Explorer
@@ -186,7 +186,7 @@ memory.write {
         </p>
         <UseCase
           title="Write to a branch scope"
-          description="Lesson only surfaces when the agent is on this branch."
+          description="Memory only surfaces when the agent is on this branch."
           code={`memory.write {
   scope: "branch::mthines/lorekit::feat/new-cache",
   key:   "cache-invalidation-strategy",
@@ -196,7 +196,7 @@ memory.write {
         />
         <UseCase
           title="Promote to repo scope after merging"
-          description="Once proven, promote the lesson so it persists beyond the branch."
+          description="Once proven, promote the memory so it persists beyond the branch."
           code={`// After merge: write the same key at repo scope, delete the branch copy
 memory.write {
   scope: "repo::mthines/lorekit",
@@ -212,8 +212,8 @@ memory.delete {
 
       <TutorialCallout variant="tip">
         The CLI <code>npx @lorekit/cli tree</code> command shows the full scope precedence
-        hierarchy — which lesson wins per key, and which are shadowed — so you can audit
-        exactly what an agent will see before a task. You can also browse lessons visually
+        hierarchy — which memory wins per key, and which are shadowed — so you can audit
+        exactly what an agent will see before a task. You can also browse memories visually
         in the{' '}
         <Link href="/lore" className="text-[var(--color-accent)] underline underline-offset-2">
           Explorer

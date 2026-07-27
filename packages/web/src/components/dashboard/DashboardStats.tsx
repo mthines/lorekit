@@ -84,19 +84,19 @@ export function DashboardStats() {
   const stats = [
     {
       icon: BookOpen,
-      label: 'Total lessons',
-      tooltip: 'Total number of lessons stored across all scopes, based on the most recent 1,000 rows fetched. The trend chip shows the change in lessons written in the last 7 days vs. the prior 7 days.',
+      label: 'Total memories',
+      tooltip: 'Total number of memories stored across all scopes, based on the most recent 1,000 rows fetched. The trend chip shows the change in memories written in the last 7 days vs. the prior 7 days.',
       value: totalLessons,
       description: 'across all scopes',
       trend: trends.lessons,
       showTrend: true,
-      unit: 'lessons',
+      unit: 'memories',
       trendTitle: 'Last 7 days vs. previous 7',
     },
     {
       icon: Layers,
       label: 'Scopes · 7d',
-      tooltip: 'Number of distinct memory scopes (namespaces) that had at least one lesson written in the last 7 days. The trend chip compares this week\'s unique scope count to the prior week\'s — useful for spotting whether your agents are exploring new areas or narrowing focus.',
+      tooltip: 'Number of distinct memory scopes (namespaces) that had at least one memory written in the last 7 days. The trend chip compares this week\'s unique scope count to the prior week\'s — useful for spotting whether your agents are exploring new areas or narrowing focus.',
       value: trends.activeScopes7d,
       description: 'distinct scopes active this week',
       trend: trends.scopes,
@@ -107,12 +107,12 @@ export function DashboardStats() {
     {
       icon: Zap,
       label: 'Active · 24h',
-      tooltip: 'Number of distinct scopes that had at least one lesson written in the last 24 hours (rolling window, not since midnight). The bar chart below shows hourly lesson volume across the same 24-hour period.',
+      tooltip: 'Number of distinct scopes that had at least one memory written in the last 24 hours (rolling window, not since midnight). The bar chart below shows hourly memory volume across the same 24-hour period.',
       value: active24h,
       description: 'scopes written in the last 24h',
       trend: trends.activity,
       showTrend: false,
-      unit: 'lessons',
+      unit: 'memories',
       trendTitle: 'Last 12 hours vs. previous 12',
     },
   ];

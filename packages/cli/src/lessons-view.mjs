@@ -429,9 +429,9 @@ export function renderSection(header, section) {
 
   const printable = (section.groups || []).filter((g) => g.entries.length || g.error);
   if (!printable.length) {
-    // `header.empty` lets `search` say "no lessons match" where `list` says
-    // "no lessons found"; both are the same empty-section case.
-    log(`  ${c.dim(header.empty || 'no lessons found in the applicable scopes')}`);
+    // `header.empty` lets `search` say "no memories match" where `list` says
+    // "no memories found"; both are the same empty-section case.
+    log(`  ${c.dim(header.empty || 'no memories found in the applicable scopes')}`);
     return;
   }
 

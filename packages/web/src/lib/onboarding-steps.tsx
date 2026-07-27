@@ -65,7 +65,7 @@ export async function buildOnboardingSteps(
     {
       id: 'webhook',
       title: 'Set up the GitHub webhook',
-      subtitle: 'LoreKit will automatically create lessons from your PR review comments.',
+      subtitle: 'LoreKit will automatically create memories from your PR review comments.',
       icon: <Webhook className="size-4" />,
       content: (
         <OnboardingStepContent

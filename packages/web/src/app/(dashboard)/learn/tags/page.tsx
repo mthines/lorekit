@@ -12,7 +12,7 @@ export default function LearnTagsPage() {
         <h2 className="text-xl font-semibold text-[var(--color-content-primary)]">Tags & scopes</h2>
         <p className="mt-1 text-sm text-[var(--color-content-secondary)]">
           Scopes partition lore by location (global, repo, branch). Tags are free-form labels
-          that cut across scopes — use them to identify lesson type, source agent, workflow,
+          that cut across scopes — use them to identify memory type, source agent, workflow,
           or any dimension you care about.
         </p>
       </div>
@@ -32,8 +32,8 @@ export default function LearnTagsPage() {
             <tbody className="divide-y divide-[var(--color-border)]">
               {[
                 ['global', 'global', 'Universal principles — always apply'],
-                ['project', 'project::{name}', "Lessons shared across a monorepo"],
-                ['repo', 'repo::{owner}/{repo}', "Lessons about this repo's codebase"],
+                ['project', 'project::{name}', "Memories shared across a monorepo"],
+                ['repo', 'repo::{owner}/{repo}', "Memories about this repo's codebase"],
                 ['branch', 'branch::{owner}/{repo}::{branch}', 'Experimental learnings on a feature branch'],
               ].map(([type, format, when]) => (
                 <tr key={type} className="text-[var(--color-content-secondary)]">
@@ -53,7 +53,7 @@ export default function LearnTagsPage() {
 
       <div className="flex flex-col">
         <TutorialStep number={1} title="Choose the right scope">
-          <p>Use the narrowest scope that correctly describes where the lesson applies:</p>
+          <p>Use the narrowest scope that correctly describes where the memory applies:</p>
           <pre><code>{`// Universal: always apply to every agent everywhere
 scope: "global"
 
@@ -82,7 +82,7 @@ scope: "project::my-monorepo"`}</code></pre>
 }`}</code></pre>
           <p className="mt-2">Common tag namespaces used in the ecosystem:</p>
           <ul className="mt-2 list-disc pl-5 space-y-1">
-            <li><code>skill::aw</code> / <code>skill::fix-bug</code> — which skill owns the lesson</li>
+            <li><code>skill::aw</code> / <code>skill::fix-bug</code> — which skill owns the memory</li>
             <li><code>loop::aw-lessons</code> — part of the AW self-improvement loop</li>
             <li><code>source::stuck-loop</code> / <code>source::pr-webhook</code> — what triggered the write</li>
           </ul>
@@ -131,24 +131,24 @@ memory.list { scope: "global" }`}</code></pre>
         <TutorialStep number={6} title="Inspect with the CLI">
           <p>
             The CLI offers several commands that respect the same scope/tag logic.
-            You can also browse lessons visually in the{' '}
+            You can also browse memories visually in the{' '}
             <Link href="/lore" className="text-[var(--color-accent)] underline underline-offset-2">
               Explorer
             </Link>.
           </p>
-          <pre><code>{`# Human-readable view of all applicable lessons
+          <pre><code>{`# Human-readable view of all applicable memories
 npx @lorekit/cli list
 
 # Full-text search
 npx @lorekit/cli search "worktree"
 
-# Inspect one lesson in full
+# Inspect one memory in full
 npx @lorekit/cli show --scope global --key aw-lessons::worktree-naming
 
-# Scope precedence tree (which lesson wins per key)
+# Scope precedence tree (which memory wins per key)
 npx @lorekit/cli tree
 
-# Flag low-quality or malformed lessons
+# Flag low-quality or malformed memories
 npx @lorekit/cli lint
 
 # Find near-duplicates (Jaccard similarity)
