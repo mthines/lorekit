@@ -345,8 +345,9 @@ export function tokenKind(token) {
 
 // For hooks: resolve the connection closest-scope first — the project's
 // .mcp.json (a project install), then the global ~/.claude.json (a global
-// install), then env. `splitEndpoint` is passed in to avoid a circular import
-// with mcp.mjs.
+// install), then the `mcp.endpoint` field in .lorekit.json (committable URL
+// without token — safe for VCS), then env. `splitEndpoint` is passed in to
+// avoid a circular import with mcp.mjs.
 export function resolveProjectConnection(root, splitEndpoint) {
   const sources = [readLorekitServer(root), readServerFromFile(mcpConfigPath(root, 'global'))];
   for (const configured of sources) {
@@ -360,5 +361,31 @@ export function resolveProjectConnection(root, splitEndpoint) {
       }
     }
   }
+
+  // Fallback: `mcp.endpoint` in .lorekit.json — a committable URL without token.
+  // Token still comes from .mcp.json or LOREKIT_TOKEN.
+  const lorekitJson = readLorekitJson(root);
+  const committedEndpoint =
+    lorekitJson && typeof lorekitJson['mcp.endpoint'] === 'string'
+      ? lorekitJson['mcp.endpoint'].trim()
+      : null;
+  if (committedEndpoint && !committedEndpoint.includes('<project-ref>')) {
+    return {
+      endpoint: committedEndpoint,
+      token: process.env.LOREKIT_TOKEN || null,
+    };
+  }
+
   return resolveConnection({});
+}
+
+// Read .lorekit.json from the repo root without throwing.
+// Kept internal to config.mjs — control.mjs has its own equivalent.
+function readLorekitJson(root) {
+  const file = path.join(root, '.lorekit.json');
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8')) || {};
+  } catch {
+    return {};
+  }
 }

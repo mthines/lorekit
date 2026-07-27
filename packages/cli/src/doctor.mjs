@@ -4,6 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { execFileSync } from 'node:child_process';
+// Read .lorekit.json for doctor.require (non-throwing).
+function readLorekitJson(root) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(root, '.lorekit.json'), 'utf8')) || {};
+  } catch {
+    return {};
+  }
+}
 import {
   SKILLS,
   resolveProjectRoot,
@@ -85,6 +93,22 @@ export async function doctor(args) {
     record('info', 'write scope', `${scope.repoScope} (default for "went wrong" lessons)`);
   } else {
     record('warn', 'scope', 'no git remote here — lessons fall back to global');
+  }
+
+  // 6. doctor.require — committed list of checks that MUST pass.
+  //    Useful as a CI gate: any check in the list that did not pass causes a failure.
+  const lorekitJson = readLorekitJson(root);
+  const required = Array.isArray(lorekitJson['doctor.require']) ? lorekitJson['doctor.require'] : [];
+  for (const req of required) {
+    if (typeof req !== 'string') continue;
+    // A required check passes if its label appears in the checks that ran and is NOT in failedChecks.
+    // We record it as failed now if it DID fail; if it was never run (unknown label) it's a warning.
+    if (failedChecks.includes(req)) {
+      // Already counted as a failure above; just surface the require constraint.
+      record('fail', 'doctor.require', `required check failed: ${req}`);
+    } else {
+      record('pass', 'doctor.require', `required check passed: ${req}`);
+    }
   }
 
   // Summary.

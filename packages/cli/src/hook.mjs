@@ -83,6 +83,9 @@ async function run(args) {
   const control = loadControl(root);
   if (control.mode === 'off') return 0;
 
+  // `hooks.disabled` — skip the event if this event name is suppressed by config.
+  if (control.hooksDisabled && control.hooksDisabled.has(event)) return 0;
+
   const emit = (text) => {
     if (text) process.stdout.write(adapter.emit(event, text));
   };
@@ -114,14 +117,14 @@ async function run(args) {
     } catch {
       relevant = null; // never let a lesson lookup break the failure nudge
     }
-    const nudge = failureNudge(parsed.toolName, scope);
+    const nudge = failureNudge(parsed.toolName, scope, control);
     emit(relevant ? `${relevant}\n\n${nudge}` : nudge);
     return 0;
   }
 
   if (intent === 'retrospective') {
     if (!firstTimeThisSession(parsed.sessionId, 'retro')) return 0;
-    emit(retrospectiveNudge(scope));
+    emit(retrospectiveNudge(scope, control));
     return 0;
   }
 

@@ -1,5 +1,11 @@
 // The control model: decide the memory mode (off | local | remote), the store
-// target, who decided, and which deny constraints are active.
+// target, who decided, and which deny constraints are active. Also resolves
+// write-behaviour properties from the config layers:
+//
+//   scope.defaults  — map of scope-prefix → { tags } applied to every matching write
+//   tags.default    — array of tags appended to every write (both layers merged)
+//   hooks.disabled  — array of hook event names to suppress (e.g. ["Stop"])
+//   hooks.adapter   — explicit adapter override ("claude" | "cursor" | "codex")
 //
 // Two layers of config, two kinds of statement:
 //   - a SELECT (`mode`) chooses a mode within what is allowed;
@@ -104,7 +110,44 @@ export function resolveControl({
     storeTarget = connection.endpoint || null;
   }
 
-  return { mode: chosen.mode, storeTarget, decidedBy, denies, connection };
+  // 5. Write-behaviour properties resolved from config layers.
+  //    `tags.default` — both layers merged, user supplements repo (no override).
+  const tagsDefault = [
+    ...asList(repoConfig['tags.default']),
+    ...asList(userConfig['tags.default']),
+  ].filter((t) => typeof t === 'string' && t.length > 0);
+
+  // `scope.defaults` — repo layer only (team-scoped write policy).
+  //    Schema: { "<scope-prefix>": { "tags": [...] } }
+  //    Matched against a write's resolved scope using startsWith — no glob dep.
+  const scopeDefaults =
+    repoConfig['scope.defaults'] && typeof repoConfig['scope.defaults'] === 'object'
+      ? repoConfig['scope.defaults']
+      : null;
+
+  // `hooks.disabled` — union of both layers (either layer can suppress an event).
+  const hooksDisabled = new Set([
+    ...asList(repoConfig['hooks.disabled']),
+    ...asList(userConfig['hooks.disabled']),
+  ]);
+
+  // `hooks.adapter` — repo layer wins over user layer (explicit project override).
+  const hooksAdapter =
+    (typeof repoConfig['hooks.adapter'] === 'string' && repoConfig['hooks.adapter'].trim()) ||
+    (typeof userConfig['hooks.adapter'] === 'string' && userConfig['hooks.adapter'].trim()) ||
+    null;
+
+  return {
+    mode: chosen.mode,
+    storeTarget,
+    decidedBy,
+    denies,
+    connection,
+    tagsDefault,
+    scopeDefaults,
+    hooksDisabled,
+    hooksAdapter,
+  };
 }
 
 // The per-repo project-tier directory: $LOREKIT_STORE, else a `store` override

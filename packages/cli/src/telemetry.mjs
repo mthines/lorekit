@@ -23,6 +23,8 @@
 // telemetry-token.mjs at publish time from a secret (see that file). Standard
 // OTEL_EXPORTER_OTLP_* env vars — or LOREKIT_TELEMETRY_TOKEN — override it.
 
+import fs from 'node:fs';
+import path from 'node:path';
 import process from 'node:process';
 import { TELEMETRY_TOKEN } from './telemetry-token.mjs';
 
@@ -41,12 +43,23 @@ const OFF_VALUES = new Set(['0', 'off', 'false', 'no', 'disable', 'disabled']);
 
 // ── Config resolution ─────────────────────────────────────────────────────────
 
+// Read .lorekit.json from cwd (non-throwing). Used for telemetry.disabled check.
+function readLorekitJson(cwd = process.cwd()) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(cwd, '.lorekit.json'), 'utf8')) || {};
+  } catch {
+    return {};
+  }
+}
+
 /**
- * Resolve telemetry config from env + baked-in defaults.
+ * Resolve telemetry config from env + baked-in defaults + .lorekit.json.
  * Returns { enabled: false } when disabled or unconfigured, else the endpoint
  * and headers to export with.
+ * @param {object} [env]  defaults to process.env
+ * @param {object} [repoConfig]  pre-loaded .lorekit.json (optional; read from cwd if absent)
  */
-export function resolveTelemetryConfig(env = process.env) {
+export function resolveTelemetryConfig(env = process.env, repoConfig) {
   const optOut = env.LOREKIT_TELEMETRY;
   if (optOut !== undefined && OFF_VALUES.has(String(optOut).trim().toLowerCase())) {
     return { enabled: false };
@@ -55,6 +68,12 @@ export function resolveTelemetryConfig(env = process.env) {
   // Match it precisely — a stray `DO_NOT_TRACK=false` should NOT disable export
   // (use LOREKIT_TELEMETRY for the loose app-specific opt-out values).
   if (env.DO_NOT_TRACK && String(env.DO_NOT_TRACK).trim() === '1') {
+    return { enabled: false };
+  }
+  // `telemetry.disabled: true` in .lorekit.json — team-level opt-out committed
+  // to the repo. Checked after env overrides (env always wins).
+  const cfg = repoConfig !== undefined ? repoConfig : readLorekitJson();
+  if (cfg['telemetry.disabled'] === true) {
     return { enabled: false };
   }
 

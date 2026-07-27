@@ -196,3 +196,84 @@ test('resolveDenies reads a deny from the user config file, not just env', () =>
   assert.match(localDenied.source, /config\.json/);
   assert.equal(remoteDenied, null);
 });
+
+// ── New config properties ─────────────────────────────────────────────────────
+
+test('tags.default: both config layers merged, user supplements repo', () => {
+  const r = resolveControl({
+    repoConfig: { 'tags.default': ['team', 'project::lorekit'] },
+    userConfig: { 'tags.default': ['personal'] },
+    connection: NO_CONN,
+  });
+  assert.deepEqual(r.tagsDefault, ['team', 'project::lorekit', 'personal']);
+});
+
+test('tags.default: empty when neither layer sets it', () => {
+  const r = resolveControl({ connection: NO_CONN });
+  assert.deepEqual(r.tagsDefault, []);
+});
+
+test('tags.default: comma-string form accepted', () => {
+  const r = resolveControl({
+    repoConfig: { 'tags.default': 'team,loop::aw-lessons' },
+    connection: NO_CONN,
+  });
+  assert.deepEqual(r.tagsDefault, ['team', 'loop::aw-lessons']);
+});
+
+test('scope.defaults: map set from repoConfig', () => {
+  const r = resolveControl({
+    repoConfig: {
+      'scope.defaults': {
+        'repo::owner/name': { tags: ['team'] },
+        'branch::owner/name::': { tags: ['ephemeral'] },
+      },
+    },
+    connection: NO_CONN,
+  });
+  assert.ok(r.scopeDefaults);
+  assert.deepEqual(r.scopeDefaults['repo::owner/name'], { tags: ['team'] });
+});
+
+test('scope.defaults: null when not set', () => {
+  const r = resolveControl({ connection: NO_CONN });
+  assert.equal(r.scopeDefaults, null);
+});
+
+test('hooks.disabled: union of both layers, event suppressed', () => {
+  const r = resolveControl({
+    repoConfig: { 'hooks.disabled': ['Stop'] },
+    userConfig: { 'hooks.disabled': ['PostToolUseFailure'] },
+    connection: NO_CONN,
+  });
+  assert.ok(r.hooksDisabled.has('Stop'));
+  assert.ok(r.hooksDisabled.has('PostToolUseFailure'));
+  assert.ok(!r.hooksDisabled.has('SessionStart'));
+});
+
+test('hooks.disabled: empty set when not configured', () => {
+  const r = resolveControl({ connection: NO_CONN });
+  assert.equal(r.hooksDisabled.size, 0);
+});
+
+test('hooks.adapter: repo wins over user', () => {
+  const r = resolveControl({
+    repoConfig: { 'hooks.adapter': 'cursor' },
+    userConfig: { 'hooks.adapter': 'codex' },
+    connection: NO_CONN,
+  });
+  assert.equal(r.hooksAdapter, 'cursor');
+});
+
+test('hooks.adapter: user fallback when repo is not set', () => {
+  const r = resolveControl({
+    userConfig: { 'hooks.adapter': 'codex' },
+    connection: NO_CONN,
+  });
+  assert.equal(r.hooksAdapter, 'codex');
+});
+
+test('hooks.adapter: null when neither layer sets it', () => {
+  const r = resolveControl({ connection: NO_CONN });
+  assert.equal(r.hooksAdapter, null);
+});

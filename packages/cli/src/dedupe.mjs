@@ -10,6 +10,8 @@
 // span project + global; cross-STORE divergence is `diff`'s job, not this one).
 // Same Offline / Remote split and graceful degradation as `list`. Read-only.
 // Human-facing, so the bin wraps it in `traceCommand`.
+import fs from 'node:fs';
+import path from 'node:path';
 import process from 'node:process';
 import { resolveProjectRoot } from './config.mjs';
 import { deriveScope } from './scope.mjs';
@@ -27,6 +29,18 @@ export function parseThreshold(raw) {
   const n = Number(raw);
   if (!Number.isFinite(n)) return DEFAULT_THRESHOLD;
   return Math.min(1, Math.max(0, n));
+}
+
+// Read `dedupe.threshold` from .lorekit.json (non-throwing). Returns the
+// repo-default threshold, or undefined when not configured.
+export function repoThreshold(root) {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(root, '.lorekit.json'), 'utf8'));
+    if (cfg && cfg['dedupe.threshold'] !== undefined) {
+      return parseThreshold(cfg['dedupe.threshold']);
+    }
+  } catch { /* not present or invalid — skip silently */ }
+  return undefined;
 }
 
 // Flatten a `gather()` result into one entry list (each entry keeps its scope)
@@ -50,7 +64,8 @@ export async function dedupe(args) {
   const env = { ...process.env };
   if (args.store) env.LOREKIT_STORE = args.store;
 
-  const threshold = parseThreshold(args.threshold);
+  // Threshold precedence: --threshold flag > dedupe.threshold in .lorekit.json > default (0.8).
+  const threshold = args.threshold !== undefined ? parseThreshold(args.threshold) : (repoThreshold(root) ?? DEFAULT_THRESHOLD);
   const scopeInfo = deriveScope(root);
   // Default to every applicable scope; `--scope <s>` narrows to one.
   const scopes = args.scope && typeof args.scope === 'string' ? [args.scope] : scopeList(scopeInfo);

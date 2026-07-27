@@ -16,7 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { tokenize, similarity, clusterDuplicates } from '../src/lessons-view.mjs';
-import { parseThreshold } from '../src/dedupe.mjs';
+import { parseThreshold, repoThreshold } from '../src/dedupe.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const tmp = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -231,4 +231,44 @@ test('dedupe degrades an unconfigured remote to a note, never an error', () => {
   assert.equal(res.status, 0, res.stderr);
   assert.match(res.stdout, /Remote/);
   assert.match(res.stdout, /unavailable/);
+});
+
+// ── dedupe.threshold in .lorekit.json ─────────────────────────────────────────
+
+test('repoThreshold reads dedupe.threshold from .lorekit.json', () => {
+  const root = tmp('lk-rth-');
+  fs.writeFileSync(path.join(root, '.lorekit.json'), JSON.stringify({ 'dedupe.threshold': 0.6 }));
+  assert.equal(repoThreshold(root), 0.6);
+});
+
+test('repoThreshold returns undefined when .lorekit.json is absent', () => {
+  const root = tmp('lk-rth-');
+  assert.equal(repoThreshold(root), undefined);
+});
+
+test('repoThreshold returns undefined when dedupe.threshold is not set', () => {
+  const root = tmp('lk-rth-');
+  fs.writeFileSync(path.join(root, '.lorekit.json'), JSON.stringify({ mode: 'local' }));
+  assert.equal(repoThreshold(root), undefined);
+});
+
+test('dedupe.threshold from .lorekit.json is used when no --threshold flag', () => {
+  // Seed a project with two near-duplicates and threshold 0.0 (always cluster).
+  const root = tmp('lk-dth-');
+  const home = tmp('lk-dth-home-');
+  const store = path.join(root, '.lorekit');
+  const gScope = path.join(store, 'global');
+  fs.mkdirSync(gScope, { recursive: true });
+  const md = (key, val) =>
+    `---\nscope: global\nkey: ${key}\n---\n${val}`;
+  fs.writeFileSync(path.join(gScope, 'alpha.md'), md('alpha', 'totally different lesson'));
+  fs.writeFileSync(path.join(gScope, 'beta.md'), md('beta', 'totally different lesson here too'));
+  // threshold 0.0 → everything clusters
+  fs.writeFileSync(path.join(root, '.lorekit.json'), JSON.stringify({ 'dedupe.threshold': 0.0 }));
+  const res = spawnSync('node', [BIN, 'dedupe', '--dir', root, '--store', store], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home, LOREKIT_HOME: home, LOREKIT_DENY: 'remote' },
+  });
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /Cluster/i, 'expected a cluster at threshold 0');
 });
