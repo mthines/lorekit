@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { addSignalAttribute } from '@dash0/sdk-web';
 
 function GitHubIcon({ className }: { className?: string }) {
   return (
@@ -47,6 +48,45 @@ interface LoginButtonProps {
 
 type EmailStep = 'idle' | 'entering' | 'sent';
 
+/**
+ * Map Supabase OTP error codes / messages to user-friendly strings.
+ *
+ * Supabase returns terse internal messages (e.g. "Email rate limit exceeded",
+ * "Invalid email address") that are not suitable to show directly. We intercept
+ * the most common ones and return a clear, actionable message instead.
+ *
+ * Falls back to the raw message for anything we don't recognise, which is still
+ * better than silence.
+ */
+function friendlyOtpError(error: { message: string; code?: string; status?: number }): string {
+  const msg = error.message.toLowerCase();
+  const code = (error.code ?? '').toLowerCase();
+
+  // Rate limit — most common on Supabase Free tier (4 emails/hour per project)
+  if (msg.includes('rate limit') || msg.includes('too many') || error.status === 429) {
+    return 'Too many sign-in attempts. Please wait a few minutes and try again.';
+  }
+  // Invalid / undeliverable address
+  if (
+    msg.includes('invalid email') ||
+    msg.includes('unable to validate') ||
+    code === 'validation_failed'
+  ) {
+    return 'That doesn\'t look like a valid email address. Please double-check and try again.';
+  }
+  // Signups disabled in this Supabase project
+  if (msg.includes('signups not allowed') || msg.includes('signup is disabled') || code === 'signup_disabled') {
+    return 'Sign-up is currently disabled. Please contact the administrator.';
+  }
+  // Email provider rejected delivery (bounced, domain doesn't exist, etc.)
+  if (msg.includes('email not confirmed') || msg.includes('smtp') || msg.includes('delivery')) {
+    return 'We couldn\'t deliver an email to that address. Please check the address and try again.';
+  }
+
+  // Fallback: show the raw message but at least capitalise it
+  return error.message.charAt(0).toUpperCase() + error.message.slice(1);
+}
+
 export function LoginButton({ compact = false }: LoginButtonProps) {
   const [loading, setLoading] = useState(false);
   const [emailStep, setEmailStep] = useState<EmailStep>('idle');
@@ -79,6 +119,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
 
   async function handleGitHubLogin() {
     setLoading(true);
+    addSignalAttribute('auth.method', 'github_oauth');
     const supabase = createClient();
     await supabase.auth.signInWithOAuth({
       provider: 'github',
@@ -96,9 +137,16 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
       setEmailError('Please enter your email address.');
       return;
     }
+
     setEmailLoading(true);
+    addSignalAttribute('auth.method', 'email_otp');
     const supabase = createClient();
     const { error } = await supabase.auth.signInWithOtp({
+      // Pass the email exactly as the user typed it. Plus-subaddressed variants
+      // (user+alias@example.com) are valid and distinct Supabase identities —
+      // Supabase creates an account on first use (shouldCreateUser: true) and
+      // delivers the magic link to the typed address. We do NOT strip the alias
+      // here because that would silently change which account the user logs into.
       email: email.trim(),
       options: {
         emailRedirectTo: buildCallbackUrl(),
@@ -107,7 +155,8 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     });
     setEmailLoading(false);
     if (error) {
-      setEmailError(error.message);
+      addSignalAttribute('auth.otp_error_code', error.code ?? error.name ?? 'unknown');
+      setEmailError(friendlyOtpError(error));
     } else {
       setEmailStep('sent');
     }
