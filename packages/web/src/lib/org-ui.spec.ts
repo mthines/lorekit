@@ -7,6 +7,8 @@ import {
   visibleInvites,
   pendingInviteCount,
   resolveActiveOrg,
+  memberCountLabel,
+  inviteExpiryLabel,
   type OwnerFilter,
 } from './org-ui';
 import type { OrgInvite } from './org-invites';
@@ -152,5 +154,46 @@ describe('visibleInvites / pendingInviteCount', () => {
   it('pendingInviteCount matches visibleInvites length', () => {
     expect(pendingInviteCount(invites, [])).toBe(2);
     expect(pendingInviteCount(invites, ['1', '2'])).toBe(0);
+  });
+});
+
+describe('memberCountLabel', () => {
+  it('pluralizes to "members" for zero', () => {
+    expect(memberCountLabel(0)).toBe('0 members');
+  });
+
+  it('singularizes to "member" for exactly one', () => {
+    expect(memberCountLabel(1)).toBe('1 member');
+  });
+
+  it('pluralizes to "members" for more than one', () => {
+    expect(memberCountLabel(5)).toBe('5 members');
+  });
+});
+
+describe('inviteExpiryLabel', () => {
+  const now = new Date('2026-07-27T00:00:00Z');
+
+  it('returns null when there is no expiry', () => {
+    expect(inviteExpiryLabel(null, now)).toBeNull();
+  });
+
+  it('returns a future-relative label for a future expiry', () => {
+    const in3Days = new Date('2026-07-30T00:00:00Z').toISOString();
+    expect(inviteExpiryLabel(in3Days, now)).toBe('Expires in 3 days');
+  });
+
+  it('singularizes "day" when exactly one day remains', () => {
+    const in1Day = new Date('2026-07-28T00:00:00Z').toISOString();
+    expect(inviteExpiryLabel(in1Day, now)).toBe('Expires in 1 day');
+  });
+
+  it('returns "Expired" for a past expiry', () => {
+    const yesterday = new Date('2026-07-26T00:00:00Z').toISOString();
+    expect(inviteExpiryLabel(yesterday, now)).toBe('Expired');
+  });
+
+  it('returns "Expired" when expiry is exactly now', () => {
+    expect(inviteExpiryLabel(now.toISOString(), now)).toBe('Expired');
   });
 });

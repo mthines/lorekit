@@ -125,3 +125,25 @@ export function visibleInvites(invites: OrgInvite[], dismissedIds: string[]): Or
 export function pendingInviteCount(invites: OrgInvite[], dismissedIds: string[]): number {
   return visibleInvites(invites, dismissedIds).length;
 }
+
+// ── Invite-details modal display helpers ─────────────────────────────────────
+
+/** Pluralized "N member(s)" label for the invite-details modal's aggregate count. */
+export function memberCountLabel(count: number): string {
+  return `${count} ${count === 1 ? 'member' : 'members'}`;
+}
+
+/**
+ * "Expires …" label for an invite's `expires_at`, or `null` when there's no
+ * expiry to show (no expiry line renders). Takes an injected `now` (rather
+ * than reading `Date.now()` internally) so this stays a pure, node-testable
+ * function — the functional-core/impure-shell split (plan.md Decision D5
+ * precedent).
+ */
+export function inviteExpiryLabel(expiresAt: string | null, now: Date): string | null {
+  if (!expiresAt) return null;
+  const diffMs = new Date(expiresAt).getTime() - now.getTime();
+  if (diffMs <= 0) return 'Expired';
+  const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+  return `Expires in ${days} day${days === 1 ? '' : 's'}`;
+}
