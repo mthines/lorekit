@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import { BookOpen, LayoutDashboard, Settings, GraduationCap } from 'lucide-react';
 import { useOnboarding } from '@/components/providers/OnboardingProvider';
+import { UserMenu } from '@/components/auth/UserMenu';
 
 // Primary content nav — 3 destinations keeps the sidebar scannable and the
 // mobile tab bar comfortably within the 3–5 item guideline.
@@ -100,24 +101,9 @@ export function Sidebar({ user }: SidebarProps) {
           </Link>
         </div>
 
-        {/* User */}
+        {/* User — clickable avatar that opens the user menu (sign-out / delete account) */}
         <div className="border-t border-[var(--color-border)] p-2">
-          <div className="flex min-h-11 items-center gap-2.5 rounded-lg px-3 text-sm text-[var(--color-content-secondary)]">
-            {/* Avatar */}
-            <div className="size-5 shrink-0 overflow-hidden rounded-full bg-[var(--color-border)]">
-              {user.user_metadata?.['avatar_url'] && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={user.user_metadata['avatar_url'] as string}
-                  alt={user.user_metadata?.['full_name'] as string ?? 'User'}
-                  className="size-full object-cover"
-                />
-              )}
-            </div>
-            <span className="min-w-0 flex-1 truncate">
-              {(user.user_metadata?.['full_name'] as string) ?? user.email}
-            </span>
-          </div>
+          <UserMenu user={user} />
         </div>
       </aside>
 
