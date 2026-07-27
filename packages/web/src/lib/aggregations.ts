@@ -93,6 +93,11 @@ export interface StatTrends {
   scopes: StatTrend;
   /** Lessons written per hour, last 24 hours. */
   activity: StatTrend;
+  /**
+   * Count of distinct scopes written to in the last 7 days.
+   * Used as the "Scopes" stat card value so it matches the trend comparison window.
+   */
+  activeScopes7d: number;
 }
 
 const DAY_MS = 86_400_000;
@@ -200,11 +205,16 @@ export function computeStatTrends(rows: TrendRow[], nowIso: string): StatTrends 
     lessonsPerHour.push({ label, value: count });
   }
 
+  // Count of distinct scopes written to in the last 7 days — matches the trend
+  // comparison window so the card value and trend chip describe the same thing.
+  const activeScopes7d = unionSets(scopeSetsPerDay.slice(Math.max(0, scopeSetsPerDay.length - 7))).size;
+
   return {
     lessons: { points: lessonsPerDay, changePct: windowChange(lessonsPerDay.map((p) => p.value), 7) },
     // Use window-distinct scope counts: summing daily distinct-scope values
     // double-counts a scope active on multiple days within the same window.
     scopes: { points: scopesPerDay, changePct: scopeWindowChange(scopeSetsPerDay, 7) },
     activity: { points: lessonsPerHour, changePct: windowChange(lessonsPerHour.map((p) => p.value), 12) },
+    activeScopes7d,
   };
 }

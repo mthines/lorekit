@@ -86,18 +86,20 @@ export function DashboardStats() {
       label: 'Total lessons',
       value: totalLessons,
       description: 'across all scopes',
-      // Lessons written per day (last 30 days).
       trend: trends.lessons,
+      showTrend: true,
       unit: 'lessons',
       trendTitle: 'Last 7 days vs. previous 7',
     },
     {
       icon: Layers,
-      label: 'Scopes',
-      value: scopes.length,
-      description: 'active memory namespaces',
-      // Distinct scopes active per day (last 30 days).
+      // Value matches the trend window: distinct scopes written to in the last
+      // 7 days, not the total namespace count (which barely changes).
+      label: 'Scopes · 7d',
+      value: trends.activeScopes7d,
+      description: 'distinct scopes active this week',
       trend: trends.scopes,
+      showTrend: true,
       unit: 'scopes',
       trendTitle: 'Last 7 days vs. previous 7',
     },
@@ -106,8 +108,11 @@ export function DashboardStats() {
       label: 'Active · 24h',
       value: active24h,
       description: 'scopes written in the last 24h',
-      // Lessons written per hour (last 24 hours).
+      // The hourly sparkbar shows shape but the 12h trend chip adds noise here:
+      // the value measures scope count while the trend measures lesson rate,
+      // and −100% appears structurally every morning regardless of real activity.
       trend: trends.activity,
+      showTrend: false,
       unit: 'lessons',
       trendTitle: 'Last 12 hours vs. previous 12',
     },
@@ -116,7 +121,7 @@ export function DashboardStats() {
   return (
     <>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {stats.map(({ icon: Icon, label, value, description, trend, unit, trendTitle }) => (
+        {stats.map(({ icon: Icon, label, value, description, trend, showTrend, unit, trendTitle }) => (
           <div
             key={label}
             className="flex flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5"
@@ -125,7 +130,7 @@ export function DashboardStats() {
               <div className="flex size-9 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
                 <Icon className="size-4 text-[var(--color-accent)]" aria-hidden />
               </div>
-              {trend.points.length >= 2 && (
+              {showTrend && trend.points.length >= 2 && (
                 <TrendChip changePct={trend.changePct} title={trendTitle} />
               )}
             </div>

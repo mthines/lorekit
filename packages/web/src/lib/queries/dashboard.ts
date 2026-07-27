@@ -14,7 +14,12 @@ export interface DashboardData {
 }
 
 const EMPTY_TREND = { points: [], changePct: 0 };
-const EMPTY_TRENDS: StatTrends = { lessons: EMPTY_TREND, scopes: EMPTY_TREND, activity: EMPTY_TREND };
+const EMPTY_TRENDS: StatTrends = {
+  lessons: EMPTY_TREND,
+  scopes: EMPTY_TREND,
+  activity: EMPTY_TREND,
+  activeScopes7d: 0,
+};
 
 async function fetchDashboardData(): Promise<DashboardData> {
   const supabase = createClient();

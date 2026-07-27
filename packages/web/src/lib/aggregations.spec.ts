@@ -230,6 +230,7 @@ describe('computeStatTrends', () => {
     expect(t.activity.points).toHaveLength(24);
     expect(t.lessons.points.every((p) => p.value === 0)).toBe(true);
     expect(t.lessons.changePct).toBe(0);
+    expect(t.activeScopes7d).toBe(0);
   });
 
   it('counts lessons per day and totals to the in-window count', () => {
@@ -345,5 +346,49 @@ describe('computeStatTrends', () => {
     ];
     const t = computeStatTrends(rows, NOW);
     expect(t.activity.changePct).toBe(100);
+  });
+
+  // ── activeScopes7d ────────────────────────────────────────────────────────
+  it('activeScopes7d counts distinct scopes active in the last 7 days', () => {
+    // NOW = 2026-07-24. Last 7 days = Jul 18–24.
+    const rows = [
+      // In window: 3 distinct scopes
+      { scope: 'global', created_at: '2026-07-18T10:00:00Z' },
+      { scope: 'project::a', created_at: '2026-07-20T10:00:00Z' },
+      { scope: 'project::a', created_at: '2026-07-22T10:00:00Z' }, // duplicate scope, same window
+      { scope: 'project::b', created_at: '2026-07-24T10:00:00Z' },
+      // Outside window: should not count
+      { scope: 'project::old', created_at: '2026-07-17T23:59:00Z' },
+    ];
+    const t = computeStatTrends(rows, NOW);
+    // global, project::a, project::b — project::old is outside the 7-day window
+    expect(t.activeScopes7d).toBe(3);
+  });
+
+  it('activeScopes7d is 0 when no activity in the last 7 days', () => {
+    const rows = [{ scope: 'global', created_at: '2026-07-10T10:00:00Z' }];
+    const t = computeStatTrends(rows, NOW);
+    expect(t.activeScopes7d).toBe(0);
+  });
+
+  it('activeScopes7d matches the recent window used for scopes.changePct', () => {
+    // Same rows as the scopes.changePct regression test.
+    // Recent 7-day union = {project::a, project::b, project::c} → 3
+    const rows = [
+      { scope: 'global', created_at: '2026-07-11T10:00:00Z' },
+      { scope: 'global', created_at: '2026-07-12T10:00:00Z' },
+      { scope: 'global', created_at: '2026-07-13T10:00:00Z' },
+      { scope: 'global', created_at: '2026-07-14T10:00:00Z' },
+      { scope: 'global', created_at: '2026-07-15T10:00:00Z' },
+      { scope: 'global', created_at: '2026-07-16T10:00:00Z' },
+      { scope: 'global', created_at: '2026-07-17T10:00:00Z' },
+      { scope: 'project::a', created_at: '2026-07-18T10:00:00Z' },
+      { scope: 'project::b', created_at: '2026-07-19T10:00:00Z' },
+      { scope: 'project::c', created_at: '2026-07-20T10:00:00Z' },
+    ];
+    const t = computeStatTrends(rows, NOW);
+    expect(t.activeScopes7d).toBe(3);
+    // And the trend confirms: 3 recent vs 1 prior → +200%
+    expect(t.scopes.changePct).toBe(200);
   });
 });
