@@ -248,6 +248,10 @@ const KNOWN_FLAGS = [
 // never fail on a stray flag, and only ever receive flags we control).
 const HUMAN_COMMANDS = new Set(['install', 'uninstall', 'doctor', 'list', 'migrate']);
 
+// Command aliases — canonicalized before help / dispatch so `lorekit ls --help`
+// and telemetry both resolve to the real command name.
+const COMMAND_ALIASES = { ls: 'list' };
+
 async function main() {
   // Load a `.env` from the current directory (if any) before anything reads the
   // environment — so telemetry config, tokens, and endpoints can come from a
@@ -262,9 +266,6 @@ async function main() {
     known: KNOWN_FLAGS,
   });
 
-  // Command aliases (canonicalized before help / dispatch so `lorekit ls --help`
-  // and telemetry both resolve to the real command).
-  const COMMAND_ALIASES = { ls: 'list' };
   const command = COMMAND_ALIASES[args._[0]] || args._[0];
 
   // Help is intercepted first — before the machine-facing hook/mcp dispatch — so
