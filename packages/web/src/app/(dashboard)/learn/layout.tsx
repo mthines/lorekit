@@ -4,7 +4,7 @@ export default function LearnLayout({ children }: { children: React.ReactNode })
   return (
     <div className="flex w-full max-w-4xl flex-col gap-6">
       <div>
-        <h1 className="text-2xl font-bold text-[var(--color-content-primary)]">Start here</h1>
+        <h1 className="text-2xl font-bold text-[var(--color-content-primary)]">Getting started</h1>
         <p className="mt-1 text-sm text-[var(--color-content-secondary)]">
           Connect LoreKit to your agents, then go deeper with step-by-step guides for every setup.
         </p>

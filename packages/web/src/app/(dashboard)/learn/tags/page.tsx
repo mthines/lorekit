@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { TutorialStep } from '@/components/learn/TutorialStep';
 import { TutorialCallout } from '@/components/learn/TutorialCallout';
 
-export const metadata: Metadata = { title: 'Tags & scopes — Start here' };
+export const metadata: Metadata = { title: 'Tags & scopes — Getting started' };
 
 export default function LearnTagsPage() {
   return (

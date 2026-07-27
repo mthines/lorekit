@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { TutorialStep } from '@/components/learn/TutorialStep';
 import { TutorialCallout } from '@/components/learn/TutorialCallout';
 
-export const metadata: Metadata = { title: 'Team sharing — Start here' };
+export const metadata: Metadata = { title: 'Team sharing — Getting started' };
 
 export default function LearnOrganizationPage() {
   return (

@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { TutorialStep } from '@/components/learn/TutorialStep';
 import { TutorialCallout } from '@/components/learn/TutorialCallout';
 
-export const metadata: Metadata = { title: 'Private lore — Start here' };
+export const metadata: Metadata = { title: 'Private lore — Getting started' };
 
 export default function LearnPrivatePage() {
   return (
