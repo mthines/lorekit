@@ -1,11 +1,10 @@
-// `lorekit install` — scaffold the skill and wire the MCP server.
+// `lorekit install` — scaffold the skills and wire the MCP server.
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import process from 'node:process';
 import {
-  SKILL_SOURCE,
-  SKILL_NAME,
+  SKILLS,
   resolveProjectRoot,
   skillInstallDir,
   copyDir,
@@ -73,10 +72,13 @@ export async function install(args) {
     token = token || null;
   }
 
-  // 3. Install the skill files.
-  const dest = skillInstallDir(root, scope);
-  const skillExisted = fs.existsSync(path.join(dest, 'SKILL.md'));
-  const written = copyDir(SKILL_SOURCE, dest, { force: Boolean(args.force) });
+  // 3. Install the skill files — every skill the CLI ships.
+  const skillResults = SKILLS.map((skill) => {
+    const dest = skillInstallDir(root, scope, skill.name);
+    const existed = fs.existsSync(path.join(dest, 'SKILL.md'));
+    const written = copyDir(skill.source, dest, { force: Boolean(args.force) });
+    return { name: skill.name, dest, existed, written };
+  });
 
   // 4. Wire the MCP config for the chosen scope.
   const remoteUrl = buildRemoteUrl(endpoint, token);
@@ -100,12 +102,14 @@ export async function install(args) {
 
   // 5. Report.
   heading('Done');
-  const skillState = !skillExisted
-    ? 'installed'
-    : written > 0
-      ? `updated (${written} file(s) written)`
-      : 'unchanged — pass --force to overwrite';
-  status(skillExisted && written === 0 ? 'info' : 'pass', `skill ${SKILL_NAME}`, `${skillState} → ${display(dest)}`);
+  for (const s of skillResults) {
+    const skillState = !s.existed
+      ? 'installed'
+      : s.written > 0
+        ? `updated (${s.written} file(s) written)`
+        : 'unchanged — pass --force to overwrite';
+    status(s.existed && s.written === 0 ? 'info' : 'pass', `skill ${s.name}`, `${skillState} → ${display(s.dest)}`);
+  }
   status('pass', mcpLabel, `${existed ? 'updated' : 'created'} lorekit server → ${display(file)}`);
 
   if (!wireHooks) {

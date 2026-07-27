@@ -4,11 +4,12 @@ Use this when someone wants a skill, workflow, or agent to **get better across
 runs** — "give my skill memory", "add a self-improvement loop", "make this
 learn from its mistakes", "set up lessons for this workflow".
 
-Reading and writing individual lessons is [intake.md](./intake.md) and
-[retrospective.md](./retrospective.md). This file is one level up: how to wire a
-**durable loop** into a host skill so it reads its own accumulated lessons at
+Reading and writing individual lessons at runtime is the **`lorekit-memory`**
+skill (its `intake` / `retrospective` rules). This skill is one level up: how to
+wire a **durable loop** into a host so it reads its own accumulated lessons at
 the start of every run and records new ones on failure — safely, without the
-loop entrenching its own mistakes.
+loop entrenching its own mistakes. The loop runs on the same `memory.*` MCP
+tools `lorekit-memory` uses.
 
 The design has two tiers connected by a recurrence gate. Both run on LoreKit.
 
@@ -80,8 +81,9 @@ loop's on the same scopes. A bucket is a tag plus a key namespace:
   Same `scope` + `key` overwrites in place — the mechanism behind recurrence
   counting.
 
-Pick the **scope** per lesson from the standard LoreKit model (see
-[scope-resolution.md](../references/scope-resolution.md)):
+Pick the **scope** per lesson from the standard LoreKit model (`::` is the only
+separator; the `lorekit-memory` skill's scope-resolution reference has the full
+derivation):
 
 - **`global`** — universal lessons that should follow the user across every repo.
 - **`repo::{owner}/{repo}`** — lessons specific to this repository.

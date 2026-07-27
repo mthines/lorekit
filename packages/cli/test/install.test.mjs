@@ -32,6 +32,11 @@ test('install --project writes into the repo, not home', async () => {
   assert.equal(code, 0);
 
   assert.ok(fs.existsSync(path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md')));
+  // Every skill the CLI ships is installed, not just the primary one.
+  assert.ok(
+    fs.existsSync(path.join(root, '.claude', 'skills', 'lorekit-setup', 'SKILL.md')),
+    'lorekit-setup skill installed alongside lorekit-memory',
+  );
   const mcp = JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'));
   assert.ok(mcp.mcpServers.lorekit, 'lorekit server wired into project .mcp.json');
   assert.ok(mcp.mcpServers.lorekit.args.some((a) => a.includes(ENDPOINT)));

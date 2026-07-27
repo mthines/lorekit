@@ -43,6 +43,7 @@ test('uninstall --project removes skill, MCP entry, and hooks', async () => {
   assert.equal(code, 0);
 
   assert.ok(!fs.existsSync(path.join(root, '.claude', 'skills', 'lorekit-memory')), 'skill dir gone');
+  assert.ok(!fs.existsSync(path.join(root, '.claude', 'skills', 'lorekit-setup')), 'lorekit-setup skill dir gone');
 
   const mcp = JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'));
   assert.ok(!mcp.mcpServers?.lorekit, 'lorekit server removed');
