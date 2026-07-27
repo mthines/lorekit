@@ -134,6 +134,45 @@ lorekit list --json          # structured { offline, remote } payload for script
 `--endpoint` / `--token` override the remote connection; `--store` overrides the
 local project-tier directory.
 
+### `lorekit search` (alias `grep`)
+
+Full-text search across the same applicable scopes and the same two stores as
+`list`, rendered in the same Offline / Remote split. A lesson matches when the
+query appears — **case-insensitively, as a literal substring** — in its **key or
+value**:
+
+```bash
+lorekit search sandbox            # both sections, only the matching lessons
+lorekit grep "flaky test"         # same, via the alias
+lorekit search migration --scope global
+lorekit search build --json       # { query, offline, remote } for scripts
+```
+
+The query is matched with a plain substring check, **never compiled as a regex**,
+so a term full of metacharacters (`a.*(b)`) matches those characters verbatim —
+no injection, no surprises. It is read-only, hides archived lessons, and degrades
+the remote section gracefully (an unconfigured remote is a note, not an error;
+the command still exits 0). An empty query is a usage error; no matches prints a
+friendly "no lessons match" note (exit 0). `--scope` narrows to one scope;
+`--endpoint` / `--token` / `--store` behave as in `list`.
+
+### `lorekit show`
+
+Inspect **one** lesson in full — its complete, **untruncated** value plus scope,
+key, updated date, tags, and which store(s) it lives in:
+
+```bash
+lorekit show global prefer-guard-clauses
+lorekit show project::widget build-flags --json
+```
+
+If the same `scope::key` exists in **both** the offline and remote stores —
+possibly with different values — both are shown and any divergence is flagged.
+When it lives in only one store, that copy is shown and the other is noted as
+missing. It exits **non-zero** when the key is found in no readable store, so it
+fits scripts. `--json` emits the full normalized record(s) and which store each
+came from. Both a scope and a key are required (else a usage error).
+
 ### `lorekit hook`
 
 The **shared hook engine** behind the Claude Code / Cursor / Codex plugins.
@@ -316,8 +355,8 @@ active deny constraints.
 | `--no-hooks` | Skip wiring the lifecycle hooks; skill + MCP only (`install`) |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
-| `--json` | Machine-readable output (`list`) |
-| `--scope <scope>` | Restrict to a single scope (`list`; default: all applicable) |
+| `--json` | Machine-readable output (`list` / `search` / `show`) |
+| `--scope <scope>` | Restrict to a single scope (`list` / `search`; default: all applicable) |
 | `--adapter <name>` | Host framework for `hook`: `claude` / `cursor` / `codex` |
 | `--event <name>` | Host hook event for `hook` (else read from the stdin payload) |
 | `-h, --help` | Help |
@@ -402,7 +441,8 @@ forever. This reduces manual validation to a single capture pass per tool.
 
 ## Usage telemetry
 
-The human-facing commands (`install`, `uninstall`, `doctor`, `list`, `migrate`)
+The human-facing commands (`install`, `uninstall`, `doctor`, `list`, `search`,
+`show`, `migrate`)
 emit one OpenTelemetry span + one counter point per run so the maintainers can see which
 commands people use. It is zero-dependency (OTLP/JSON over `fetch`, no SDK) and
 deliberately narrow — it carries only the command name, a bounded set of boolean

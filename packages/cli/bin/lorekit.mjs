@@ -7,6 +7,8 @@ import { install } from '../src/install.mjs';
 import { uninstall } from '../src/uninstall.mjs';
 import { doctor } from '../src/doctor.mjs';
 import { list } from '../src/list.mjs';
+import { search } from '../src/search.mjs';
+import { show } from '../src/show.mjs';
 import { hook } from '../src/hook.mjs';
 import { migrate } from '../src/migrate.mjs';
 import { mcpServer } from '../src/mcp-server.mjs';
@@ -40,6 +42,12 @@ ${c.bold('Commands')}
               an Offline section (local .lorekit/ + ~/.lorekit/) and a Remote
               section (hosted MCP). Groups by scope (project/branch/repo/global).
               --json for scripting, --scope <s> to narrow.
+  search      Full-text search the applicable lessons across both stores and all
+    (grep)    scopes (case-insensitive, literal substring over key + value),
+              rendered in the same Offline/Remote split. --json, --scope <s>.
+  show        Inspect one lesson in full: its complete value, scope, key, updated
+              date, tags, and which store(s) it lives in (noting any divergence
+              when it is in both). --json. Usage: show <scope> <key>.
   migrate     Relocate a LoreKit-format local store into the current layout.
               Dry-run by default; pass --yes to apply. Idempotent.
   hook        Hook engine for Claude Code / Cursor / Codex. Reads the host's
@@ -58,8 +66,8 @@ ${c.bold('Options')}
   -t, --token <token>     LoreKit token (lk_rw_* to allow writes, lk_ro_* read-only)
       --mode <mode>       Memory mode: off | local | remote (doctor override)
       --store <path>      Local project-tier store directory (default: .lorekit)
-      --json              Machine-readable output (list)
-      --scope <scope>     Restrict to a single scope (list)
+      --json              Machine-readable output (list / search / show)
+      --scope <scope>     Restrict to a single scope (list / search)
       --from <path>       Source store to migrate from (migrate)
       --to <tier>         Migration destination tier: home | project (migrate;
                           default routes each entry by scope)
@@ -188,6 +196,51 @@ ${c.bold('Examples')}
   npx @lorekit/cli list --json
   npx @lorekit/cli list --scope global
 `,
+  search: `${c.bold('lorekit search')} — full-text search the applicable lessons ${c.dim('(alias: grep)')}
+
+${c.bold('Usage')}
+  npx @lorekit/cli search <query> [options]
+
+Searches every lesson for the current directory's scopes (project/branch/repo/
+global) across both stores, matching the query case-insensitively as a LITERAL
+substring of a lesson's key or value (regex metacharacters are matched verbatim,
+never interpreted). Results are shown in the same Offline / Remote split as
+\`list\`; an unconfigured remote degrades to a short note, never an error.
+
+${c.bold('Options')}
+  -d, --dir <path>        Target project root (default: current directory)
+      --scope <scope>     Restrict to a single scope (default: all applicable)
+      --json              Machine-readable output
+  -e, --endpoint <url>    Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
+  -t, --token <token>     Remote token override (else .mcp.json / LOREKIT_TOKEN)
+      --store <path>      Local project-tier store directory (default: .lorekit)
+
+${c.bold('Examples')}
+  npx @lorekit/cli search sandbox
+  npx @lorekit/cli grep "flaky test" --json
+  npx @lorekit/cli search migration --scope global
+`,
+  show: `${c.bold('lorekit show')} — inspect one lesson in full
+
+${c.bold('Usage')}
+  npx @lorekit/cli show <scope> <key> [options]
+
+Prints one lesson's complete (untruncated) value, scope, key, updated date, tags,
+and which store(s) it lives in. If the same scope::key exists in both the offline
+and remote stores, both are shown and any divergence in their values is flagged.
+Exits non-zero when the key is found in neither readable store.
+
+${c.bold('Options')}
+  -d, --dir <path>        Target project root (default: current directory)
+      --json              Machine-readable output (the full normalized record(s))
+  -e, --endpoint <url>    Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
+  -t, --token <token>     Remote token override (else .mcp.json / LOREKIT_TOKEN)
+      --store <path>      Local project-tier store directory (default: .lorekit)
+
+${c.bold('Examples')}
+  npx @lorekit/cli show global prefer-guard-clauses
+  npx @lorekit/cli show project::widget build-flags --json
+`,
   migrate: `${c.bold('lorekit migrate')} — relocate a LoreKit-format local store into the current layout
 
 ${c.bold('Usage')}
@@ -246,11 +299,13 @@ const KNOWN_FLAGS = [
 // Commands that write to disk / talk to the network on a human's behalf. These
 // reject unknown flags; the machine-facing `hook` / `mcp` do not (they must
 // never fail on a stray flag, and only ever receive flags we control).
-const HUMAN_COMMANDS = new Set(['install', 'uninstall', 'doctor', 'list', 'migrate']);
+const HUMAN_COMMANDS = new Set([
+  'install', 'uninstall', 'doctor', 'list', 'search', 'show', 'migrate',
+]);
 
 // Command aliases — canonicalized before help / dispatch so `lorekit ls --help`
 // and telemetry both resolve to the real command name.
-const COMMAND_ALIASES = { ls: 'list' };
+const COMMAND_ALIASES = { ls: 'list', grep: 'search' };
 
 async function main() {
   // Load a `.env` from the current directory (if any) before anything reads the
@@ -321,6 +376,10 @@ async function main() {
       return traceCommand('doctor', args, VERSION, () => doctor(args));
     case 'list':
       return traceCommand('list', args, VERSION, () => list(args));
+    case 'search':
+      return traceCommand('search', args, VERSION, () => search(args));
+    case 'show':
+      return traceCommand('show', args, VERSION, () => show(args));
     case 'migrate':
       return traceCommand('migrate', args, VERSION, () => migrate(args));
     default:
