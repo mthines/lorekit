@@ -73,6 +73,15 @@ test('failureQuery de-duplicates and caps the term count', () => {
   assert.equal(new Set(terms).size, terms.length); // no duplicates
 });
 
+test('failureQuery bounds the scanned input so a huge error blob cannot spike', () => {
+  // A distinctive marker sits far past the scan bound (MAX_SCAN_CHARS=4096);
+  // 'filler' dedups to a single term so the term cap does not mask the slice.
+  const stderr = `inboundmarker ${'filler '.repeat(2000)}outboundmarker`;
+  const terms = failureQuery('Bash', { stderr });
+  assert.ok(terms.includes('inboundmarker')); // near the front — kept
+  assert.ok(!terms.includes('outboundmarker')); // beyond the bound — dropped
+});
+
 // ── relevantLessons (filter injected lessons to ones the failure matches) ─────
 
 const LESSONS = [

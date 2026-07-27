@@ -18,6 +18,12 @@ const MAX_RELEVANT = 3;
 const MAX_TERMS = 12;
 // Terms shorter than this are dropped: too generic to make a match meaningful.
 const MIN_TERM_LEN = 4;
+// Cap on how much failure text is scanned for terms. A tool can dump a
+// multi-megabyte stderr/stdout; the salient error words are always near the
+// front, so we bound the input BEFORE lowercasing/splitting it — otherwise a
+// giant blob would materialise a giant token array (a CPU/memory spike) even
+// though the term COUNT is capped. Generous enough to never clip a real error.
+const MAX_SCAN_CHARS = 4096;
 
 // Read lessons narrow-to-broad through the store and resolve cross-scope
 // precedence via the shared pure `resolvePrecedence` (the SAME first-seen /
@@ -68,7 +74,7 @@ export function formatLessons(lessons, scope) {
 // stays meaningful, and the count is capped (`MAX_TERMS`) so a huge error blob
 // can't blow up the downstream scan.
 export function failureQuery(toolName, toolResponse) {
-  const text = `${toolName ? String(toolName) : ''} ${errorText(toolResponse)}`;
+  const text = `${toolName ? String(toolName) : ''} ${errorText(toolResponse)}`.slice(0, MAX_SCAN_CHARS);
   const seen = new Set();
   const terms = [];
   for (const raw of text.toLowerCase().split(/[^a-z0-9]+/)) {
