@@ -1,8 +1,9 @@
 'use client';
 
-import { BookOpen, Layers, Zap, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { BookOpen, Info, Layers, Zap, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { ScopeHealthGrid } from '@/components/dashboard/ScopeHealthCard';
 import { Sparkbar } from '@/components/dashboard/Sparkbar';
+import { Tooltip } from '@/components/ui/Tooltip';
 import { useDashboardData } from '@/lib/queries/dashboard';
 
 /** Skeleton that matches the real layout to prevent CLS while the query loads. */
@@ -84,6 +85,7 @@ export function DashboardStats() {
     {
       icon: BookOpen,
       label: 'Total lessons',
+      tooltip: 'Total number of lessons stored across all scopes, based on the most recent 1,000 rows fetched. The trend chip shows the change in lessons written in the last 7 days vs. the prior 7 days.',
       value: totalLessons,
       description: 'across all scopes',
       trend: trends.lessons,
@@ -93,9 +95,8 @@ export function DashboardStats() {
     },
     {
       icon: Layers,
-      // Value matches the trend window: distinct scopes written to in the last
-      // 7 days, not the total namespace count (which barely changes).
       label: 'Scopes · 7d',
+      tooltip: 'Number of distinct memory scopes (namespaces) that had at least one lesson written in the last 7 days. The trend chip compares this week\'s unique scope count to the prior week\'s — useful for spotting whether your agents are exploring new areas or narrowing focus.',
       value: trends.activeScopes7d,
       description: 'distinct scopes active this week',
       trend: trends.scopes,
@@ -106,11 +107,9 @@ export function DashboardStats() {
     {
       icon: Zap,
       label: 'Active · 24h',
+      tooltip: 'Number of distinct scopes that had at least one lesson written in the last 24 hours (rolling window, not since midnight). The bar chart below shows hourly lesson volume across the same 24-hour period.',
       value: active24h,
       description: 'scopes written in the last 24h',
-      // The hourly sparkbar shows shape but the 12h trend chip adds noise here:
-      // the value measures scope count while the trend measures lesson rate,
-      // and −100% appears structurally every morning regardless of real activity.
       trend: trends.activity,
       showTrend: false,
       unit: 'lessons',
@@ -121,7 +120,7 @@ export function DashboardStats() {
   return (
     <>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {stats.map(({ icon: Icon, label, value, description, trend, showTrend, unit, trendTitle }) => (
+        {stats.map(({ icon: Icon, label, tooltip, value, description, trend, showTrend, unit, trendTitle }) => (
           <div
             key={label}
             className="flex flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5"
@@ -138,7 +137,15 @@ export function DashboardStats() {
               <p className="text-2xl font-bold tabular-nums text-[var(--color-content-primary)]">
                 {value}
               </p>
-              <p className="text-xs text-[var(--color-content-tertiary)]">{label}</p>
+              <p className="flex items-center gap-1 text-xs text-[var(--color-content-tertiary)]">
+                {label}
+                <Tooltip content={tooltip} side="top" align="center">
+                  <Info
+                    className="size-3 shrink-0 text-[var(--color-content-tertiary)] opacity-60"
+                    aria-hidden
+                  />
+                </Tooltip>
+              </p>
               <p className="mt-0.5 text-[10px] text-[var(--color-content-tertiary)] opacity-70">
                 {description}
               </p>
