@@ -51,9 +51,11 @@ without needing a marketplace:
 2. **MCP server** (`lorekit`) — the connection to your lessons, merged into the
    MCP config (preserving any other servers).
 3. **Hooks** — the *deterministic* layer: lessons injected on every
-   `SessionStart`, a nudge on tool failure (`PostToolUseFailure`), and a
-   retrospective nudge on `Stop`. These fire the shared `lorekit hook` engine
-   and are merged into `settings.json` (existing hooks preserved).
+   `SessionStart`, and on a tool failure (`PostToolUseFailure`) any lessons that
+   look **relevant to that failure** ("you've hit this before") plus a nudge to
+   record the fix, and a retrospective nudge on `Stop`. These fire the shared
+   `lorekit hook` engine and are merged into `settings.json` (existing hooks
+   preserved).
 
 It first asks **where** to install:
 
@@ -212,10 +214,10 @@ rather than crashing. `--endpoint` / `--token` / `--store` behave as in `list`.
 
 ### `lorekit tree` (alias `resolve`)
 
-Show the scopes the hooks actually **inject** — branch → repo → global, in
-precedence order (most-specific first) — as a resolution hierarchy, and mark for
-any key present at more than one scope which scope's lesson **wins** and which are
-**shadowed**:
+Show the scopes the hooks actually **inject** — project → branch → repo →
+global, in precedence order (most-specific first) — as a resolution hierarchy,
+and mark for any key present at more than one scope which scope's lesson **wins**
+and which are **shadowed**:
 
 ```bash
 lorekit tree                  # the injected hierarchy with ✓ winning / ↳ shadowed marks
@@ -224,12 +226,12 @@ lorekit tree --json           # per-entry { winning, shadowedBy } + a winners[] 
 ```
 
 This mirrors the SessionStart hook's resolution **exactly**: it reads the scopes
-in `readOrder` (branch → repo → global) and keeps the first value seen per key, so
-a more-specific scope overrides a broader scope's same-key lesson. It answers
-"which lesson actually applies here, and what is being overridden?". Note that
-`project::` scope is **not** part of the injected set (the hooks never inject
-project lessons), so `tree` doesn't show it — browse those with `lorekit list`.
-Each store is resolved independently, in the same Offline / Remote split.
+in `readOrder` (project → branch → repo → global) and keeps the first value seen
+per key, so a more-specific scope overrides a broader scope's same-key lesson. It
+answers "which lesson actually applies here, and what is being overridden?". The
+`project::` scope **is** part of the injected set (project is the most-specific
+scope), so `tree`, the hooks, and every read command's `scopeList` now share one
+ordering. Each store is resolved independently, in the same Offline / Remote split.
 
 ### `lorekit lint`
 
@@ -273,8 +275,9 @@ range. Cross-**store** divergence is `diff`'s job; `dedupe` looks within a store
 The **shared hook engine** behind the Claude Code / Cursor / Codex plugins.
 It is not run by hand — the plugins wire it into their hook config. It reads
 the host framework's JSON on stdin and prints that host's injection format on
-stdout (lessons at session start; a nudge on failure or at end of turn),
-always exiting 0 so it can never block the host agent.
+stdout (lessons at session start; relevant lessons plus a write-nudge on a tool
+failure; a retrospective nudge at end of turn), always exiting 0 so it can never
+block the host agent.
 
 ```bash
 lorekit hook --adapter <claude|cursor|codex> --event <SessionStart|Stop|…>
