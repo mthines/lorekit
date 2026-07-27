@@ -11,6 +11,9 @@ import { search } from '../src/search.mjs';
 import { show } from '../src/show.mjs';
 import { stats } from '../src/stats.mjs';
 import { diff } from '../src/diff.mjs';
+import { tree } from '../src/tree.mjs';
+import { lint } from '../src/lint.mjs';
+import { dedupe } from '../src/dedupe.mjs';
 import { hook } from '../src/hook.mjs';
 import { migrate } from '../src/migrate.mjs';
 import { mcpServer } from '../src/mcp-server.mjs';
@@ -56,6 +59,15 @@ ${c.bold('Commands')}
   diff        Compare the offline and remote stores for the applicable scopes and
               report divergence: local-only, remote-only, and conflicting keys
               (grouped by scope). Needs both stores readable. --json, --scope <s>.
+  tree        Show the injected scopes (branch → repo → global) as a precedence
+    (resolve) hierarchy and mark, per key, which scope's lesson WINS and which are
+              shadowed — the real hook-resolution order. --json, --scope <s>.
+  lint        Flag low-quality lessons (empty/short/untrimmed value, empty key,
+              malformed scope) across the applicable scopes and both stores. Exits
+              non-zero when issues are found (CI gate). --json, --scope <s>.
+  dedupe      Find likely-duplicate lessons via a zero-dep word-overlap HEURISTIC
+              (Jaccard >= threshold, not semantic), grouped into clusters per
+              store. --json, --scope <s>, --threshold <0..1>.
   migrate     Relocate a LoreKit-format local store into the current layout.
               Dry-run by default; pass --yes to apply. Idempotent.
   hook        Hook engine for Claude Code / Cursor / Codex. Reads the host's
@@ -74,8 +86,9 @@ ${c.bold('Options')}
   -t, --token <token>     LoreKit token (lk_rw_* to allow writes, lk_ro_* read-only)
       --mode <mode>       Memory mode: off | local | remote (doctor override)
       --store <path>      Local project-tier store directory (default: .lorekit)
-      --json              Machine-readable output (list / search / show / stats / diff)
-      --scope <scope>     Restrict to a single scope (list / search / stats / diff)
+      --json              Machine-readable output (list / search / show / stats / diff / tree / lint / dedupe)
+      --scope <scope>     Restrict to a single scope (list / search / stats / diff / tree / lint / dedupe)
+      --threshold <0..1>  Duplicate-similarity cutoff (dedupe; default 0.8)
       --from <path>       Source store to migrate from (migrate)
       --to <tier>         Migration destination tier: home | project (migrate;
                           default routes each entry by scope)
@@ -296,6 +309,80 @@ ${c.bold('Examples')}
   npx @lorekit/cli diff --json
   npx @lorekit/cli diff --scope global
 `,
+  tree: `${c.bold('lorekit tree')} — show the scope precedence hierarchy and which lesson wins ${c.dim('(alias: resolve)')}
+
+${c.bold('Usage')}
+  npx @lorekit/cli tree [options]
+
+Shows the scopes the hooks actually inject for the current directory — branch,
+repo, global, in precedence order (most-specific first) — and marks, for any key
+present at more than one scope, which scope's lesson WINS and which are shadowed.
+This mirrors the SessionStart hook's resolution exactly (a more-specific scope
+overrides a broader scope's same-key lesson). Project-scope lessons are NOT
+injected by the hooks, so they are not shown here — browse them with \`lorekit list\`.
+Resolved independently per store, in the same Offline / Remote split.
+
+${c.bold('Options')}
+  -d, --dir <path>        Target project root (default: current directory)
+      --scope <scope>     Restrict to a single scope (default: the injected set)
+      --json              Machine-readable output (per-entry winning/shadowedBy tags)
+  -e, --endpoint <url>    Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
+  -t, --token <token>     Remote token override (else .mcp.json / LOREKIT_TOKEN)
+      --store <path>      Local project-tier store directory (default: .lorekit)
+
+${c.bold('Examples')}
+  npx @lorekit/cli tree
+  npx @lorekit/cli resolve --json
+`,
+  lint: `${c.bold('lorekit lint')} — flag low-quality lessons across the applicable scopes
+
+${c.bold('Usage')}
+  npx @lorekit/cli lint [options]
+
+Checks every lesson for the current directory's scopes (project/branch/repo/
+global), across both stores, against a small set of quality rules: empty or
+whitespace-only value, suspiciously short value, untrimmed value, empty key, and
+malformed scope (e.g. a single \`:\` where \`::\` is expected). Each finding names
+the rule it violated. Exits NON-ZERO when any issue is found, so it works as a CI
+gate; a clean run — or one where only a store is unavailable — exits 0.
+
+${c.bold('Options')}
+  -d, --dir <path>        Target project root (default: current directory)
+      --scope <scope>     Restrict to a single scope (default: all applicable)
+      --json              Machine-readable output (structured findings list)
+  -e, --endpoint <url>    Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
+  -t, --token <token>     Remote token override (else .mcp.json / LOREKIT_TOKEN)
+      --store <path>      Local project-tier store directory (default: .lorekit)
+
+${c.bold('Examples')}
+  npx @lorekit/cli lint
+  npx @lorekit/cli lint --json
+  npx @lorekit/cli lint --scope global
+`,
+  dedupe: `${c.bold('lorekit dedupe')} — find likely-duplicate lessons (heuristic)
+
+${c.bold('Usage')}
+  npx @lorekit/cli dedupe [options]
+
+Groups lessons whose values overlap heavily into duplicate clusters, per store,
+across the current directory's scopes. The similarity signal is a zero-dependency
+HEURISTIC — Jaccard overlap of lowercased word tokens, not a semantic/embedding
+measure — so it surfaces candidates for a human to review, and can both miss
+paraphrases and group coincidental overlaps. Tune the cutoff with --threshold.
+
+${c.bold('Options')}
+  -d, --dir <path>        Target project root (default: current directory)
+      --scope <scope>     Restrict to a single scope (default: all applicable)
+      --threshold <0..1>  Similarity cutoff to cluster a pair (default: 0.8)
+      --json              Machine-readable output (clusters + similarity signal)
+  -e, --endpoint <url>    Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
+  -t, --token <token>     Remote token override (else .mcp.json / LOREKIT_TOKEN)
+      --store <path>      Local project-tier store directory (default: .lorekit)
+
+${c.bold('Examples')}
+  npx @lorekit/cli dedupe
+  npx @lorekit/cli dedupe --threshold 0.6 --json
+`,
   migrate: `${c.bold('lorekit migrate')} — relocate a LoreKit-format local store into the current layout
 
 ${c.bold('Usage')}
@@ -348,19 +435,20 @@ ${c.bold('Options')}
 const KNOWN_FLAGS = [
   'dir', 'project', 'global', 'endpoint', 'token', 'mode', 'store',
   'from', 'to', 'apply', 'yes', 'no-hooks', 'force', 'deep', 'adapter',
-  'event', 'json', 'scope', 'help', 'version',
+  'event', 'json', 'scope', 'threshold', 'help', 'version',
 ];
 
 // Commands that write to disk / talk to the network on a human's behalf. These
 // reject unknown flags; the machine-facing `hook` / `mcp` do not (they must
 // never fail on a stray flag, and only ever receive flags we control).
 const HUMAN_COMMANDS = new Set([
-  'install', 'uninstall', 'doctor', 'list', 'search', 'show', 'stats', 'diff', 'migrate',
+  'install', 'uninstall', 'doctor', 'list', 'search', 'show', 'stats', 'diff',
+  'tree', 'lint', 'dedupe', 'migrate',
 ]);
 
 // Command aliases — canonicalized before help / dispatch so `lorekit ls --help`
 // and telemetry both resolve to the real command name.
-const COMMAND_ALIASES = { ls: 'list', grep: 'search' };
+const COMMAND_ALIASES = { ls: 'list', grep: 'search', resolve: 'tree' };
 
 async function main() {
   // Load a `.env` from the current directory (if any) before anything reads the
@@ -439,6 +527,12 @@ async function main() {
       return traceCommand('stats', args, VERSION, () => stats(args));
     case 'diff':
       return traceCommand('diff', args, VERSION, () => diff(args));
+    case 'tree':
+      return traceCommand('tree', args, VERSION, () => tree(args));
+    case 'lint':
+      return traceCommand('lint', args, VERSION, () => lint(args));
+    case 'dedupe':
+      return traceCommand('dedupe', args, VERSION, () => dedupe(args));
     case 'migrate':
       return traceCommand('migrate', args, VERSION, () => migrate(args));
     default:
