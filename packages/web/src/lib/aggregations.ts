@@ -104,6 +104,13 @@ export function pctChange(recent: number, prev: number): number {
   return Math.round(((recent - prev) / prev) * 100);
 }
 
+/** Unions an array of Sets into a single Set. */
+function unionSets<T>(sets: Set<T>[]): Set<T> {
+  const out = new Set<T>();
+  for (const s of sets) for (const v of s) out.add(v);
+  return out;
+}
+
 /** % change of the sum of the last `k` values vs. the preceding `k` values. */
 export function windowChange(values: number[], k: number): number {
   const n = values.length;
@@ -122,20 +129,15 @@ export function windowChange(values: number[], k: number): number {
  * distinct-scope counts double-counts a scope that was active on multiple days
  * within the window.
  *
- * `buckets` is the array of per-day scope sets aligned oldest→newest (one
- * entry per day). The function reads the last `k` entries as "recent" and the
- * preceding `k` as "prev", unions each half's sets, then compares sizes.
+ * `buckets` is the array of per-day scope sets aligned oldest→newest (one entry
+ * per day). Unions each `k`-day half separately, then compares distinct counts.
  */
 export function scopeWindowChange(buckets: Set<string>[], k: number): number {
   const n = buckets.length;
-  const recentBuckets = buckets.slice(Math.max(0, n - k));
-  const prevBuckets = buckets.slice(Math.max(0, n - 2 * k), Math.max(0, n - k));
-  const union = (sets: Set<string>[]) => {
-    const out = new Set<string>();
-    for (const s of sets) for (const v of s) out.add(v);
-    return out;
-  };
-  return pctChange(union(recentBuckets).size, union(prevBuckets).size);
+  return pctChange(
+    unionSets(buckets.slice(Math.max(0, n - k))).size,
+    unionSets(buckets.slice(Math.max(0, n - 2 * k), Math.max(0, n - k))).size,
+  );
 }
 
 /**
