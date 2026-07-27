@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { TutorialStep } from '@/components/learn/TutorialStep';
 import { TutorialCallout } from '@/components/learn/TutorialCallout';
 import { ClientConfigTabs, type McpClientConfig } from '@/components/dashboard/ClientConfigTabs';
+import { TutorialCard } from '@/components/learn/TutorialCard';
 
 export const metadata: Metadata = { title: 'Getting started' };
 
@@ -98,7 +99,8 @@ const MCP_CLIENTS: McpClientConfig[] = [
 
 export default function LearnSetupPage() {
   return (
-    <div className="flex flex-col gap-8">
+    <TutorialCard>
+      <div className="flex flex-col gap-8">
       <div>
         <h2 className="text-xl font-semibold text-[var(--color-content-primary)]">Getting started</h2>
         <p className="mt-1 text-sm text-[var(--color-content-secondary)]">
@@ -208,5 +210,6 @@ export default function LearnSetupPage() {
         to share lore across your whole team.
       </TutorialCallout>
     </div>
+    </TutorialCard>
   );
 }
