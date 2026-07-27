@@ -5,17 +5,18 @@
 //
 // Precedence is not an assumption — it mirrors the hook engine exactly. The
 // SessionStart hook (`core/lessons.mjs → fetchLessons`) reads the scopes in
-// `deriveScope().readOrder` (branch → repo → global, most-specific first) and
-// keeps the FIRST value seen per key, so a more-specific scope shadows a broader
-// scope's same-key lesson. `tree` resolves over that same `readOrder` set via
-// the pure `resolvePrecedence`, so it shows the same resolution order the agent
-// is injected with (the hook additionally caps the injected set at MAX_LESSONS;
-// `tree` is uncapped, so a large workspace may list more winners than the hook
-// injects).
+// `deriveScope().readOrder` (project → branch → repo → global, most-specific
+// first) and keeps the FIRST value seen per key, so a more-specific scope
+// shadows a broader scope's same-key lesson. `tree` resolves over that same
+// `readOrder` set via the pure `resolvePrecedence`, so it shows the same
+// resolution order the agent is injected with (the hook additionally caps the
+// injected set at MAX_LESSONS; `tree` is uncapped, so a large workspace may list
+// more winners than the hook injects).
 //
-// NOTE on scope coverage: `readOrder` is the injected set, and it deliberately
-// excludes `project::` — the hooks never inject project-scope lessons, so `tree`
-// doesn't either (browse those with `lorekit list`). Both stores are resolved
+// NOTE on scope coverage: `readOrder` is the injected set. As of the smart-hooks
+// PR it INCLUDES `project::` (project is the most-specific scope and now wins /
+// is injected), so `tree` shows it too — the ordering is now unified across the
+// hook, `tree`, and every read command's `scopeList`. Both stores are resolved
 // independently (precedence is per-store — the hook reads one resolved store),
 // in the same Offline / Remote split as `list`. Graceful, read-only, wrapped in
 // `traceCommand` by the bin.
@@ -24,7 +25,8 @@ import { resolveProjectRoot } from './config.mjs';
 import { deriveScope } from './scope.mjs';
 import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { gather, resolvePrecedence, preview, shortDate } from './lessons-view.mjs';
+import { resolvePrecedence } from './lessons-pure.mjs';
+import { gather, preview, shortDate } from './lessons-view.mjs';
 import { log, heading, status, c } from './util.mjs';
 
 export async function tree(args) {

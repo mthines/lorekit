@@ -191,7 +191,10 @@ test('tree --json tags each entry winning/shadowedBy and lists the winners', () 
   const res = runTree(root, home, ['--json']);
   assert.equal(res.status, 0, res.stderr);
   const out = JSON.parse(res.stdout);
-  assert.deepEqual(out.scopes, ['branch::acme/widget::feat/x', 'repo::acme/widget', 'global']);
+  // project:: is now the most-specific scope in `readOrder` (unified with the
+  // read commands' `scopeList`), so it leads; the temp dir's basename varies.
+  assert.equal(out.scopes[0].startsWith('project::'), true);
+  assert.deepEqual(out.scopes.slice(1), ['branch::acme/widget::feat/x', 'repo::acme/widget', 'global']);
   assert.equal(out.offline.available, true);
   assert.equal(out.offline.winningTotal, 2); // `shared` (branch) + `global-only`
   assert.equal(out.offline.shadowedTotal, 2); // repo + global copies of `shared`
@@ -204,6 +207,32 @@ test('tree --json tags each entry winning/shadowedBy and lists the winners', () 
   const shadowed = globalGroup.entries.find((e) => e.key === 'shared');
   assert.equal(shadowed.winning, false);
   assert.equal(shadowed.shadowedBy, 'branch::acme/widget::feat/x');
+});
+
+test('tree now includes project:: scope, and a project lesson wins as most-specific', () => {
+  const { root, home } = seedGitProject();
+  // Seed a project-scoped copy of `shared` — project is now the most-specific
+  // scope in `readOrder`, so it must win over the branch/repo/global copies.
+  const projName = path.basename(root).toLowerCase();
+  const projScope = `project::${projName}`;
+  const projDir = path.join(root, '.lorekit', 'project', projName);
+  fs.mkdirSync(projDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(projDir, 'shared.md'),
+    entry({ scope: projScope, key: 'shared', value: 'project body of shared' }),
+  );
+
+  const res = runTree(root, home, ['--json']);
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.scopes[0], projScope); // project leads the resolution order
+  const winner = out.offline.winners.find((w) => w.key === 'shared');
+  assert.equal(winner.scope, projScope); // project beats branch/repo/global
+  // The branch copy is now itself shadowed (by project).
+  const branchGroup = out.offline.groups.find((g) => g.scope === 'branch::acme/widget::feat/x');
+  const branchShared = branchGroup.entries.find((e) => e.key === 'shared');
+  assert.equal(branchShared.winning, false);
+  assert.equal(branchShared.shadowedBy, projScope);
 });
 
 test('tree --scope narrows to one scope (no cross-scope shadowing possible)', () => {
