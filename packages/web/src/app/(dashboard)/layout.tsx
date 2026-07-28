@@ -79,8 +79,18 @@ export default async function DashboardLayout({ children }: { children: React.Re
                   vertical space — while still reachable on every page.
                 */}
                 <main className="flex-1 overflow-y-auto p-4 pb-20 md:pb-6 md:p-6">
-                  {children}
-                  <SiteFooter className="-mx-4 mt-8 md:-mx-6" />
+                  {/*
+                    Sticky-footer layout: a min-h-full flex column whose content
+                    area grows (flex-1) to push the footer to the bottom of the
+                    viewport when a page is shorter than the screen, while still
+                    letting it flow below the content on taller pages. main stays
+                    the scroll container; the inner content stays an auto-height
+                    block, so the lore explorer's own h-full layout is unaffected.
+                  */}
+                  <div className="flex min-h-full flex-col">
+                    <div className="min-h-0 flex-1">{children}</div>
+                    <SiteFooter className="-mx-4 mt-8 md:-mx-6" />
+                  </div>
                 </main>
               </div>
             </MemorySidebarProvider>
