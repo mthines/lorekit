@@ -1,5 +1,9 @@
 import type { ComponentPropsWithoutRef } from 'react';
 
+const DISCORD_URL = 'https://discord.gg/B9m6BzMRjg';
+const ICON_LINK_CLASS =
+  'inline-flex items-center gap-1.5 transition-colors duration-200 hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]';
+
 /**
  * Shared, deliberately subtle site footer rendered both on the public login
  * page and across every authenticated dashboard page, so the GitHub repo and
@@ -19,7 +23,7 @@ export function SiteFooter({ className = '', ...props }: ComponentPropsWithoutRe
         href="https://github.com/mthines/lorekit"
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-flex items-center gap-1.5 transition-colors duration-200 hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
+        className={ICON_LINK_CLASS}
       >
         <svg
           aria-hidden
@@ -34,10 +38,10 @@ export function SiteFooter({ className = '', ...props }: ComponentPropsWithoutRe
       </a>
 
       <a
-        href="https://discord.gg/B9m6BzMRjg"
+        href={DISCORD_URL}
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-flex items-center gap-1.5 transition-colors duration-200 hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
+        className={ICON_LINK_CLASS}
       >
         <svg
           aria-hidden
@@ -54,7 +58,7 @@ export function SiteFooter({ className = '', ...props }: ComponentPropsWithoutRe
       <span className="text-[var(--color-content-tertiary)]">
         Need help? Join our{' '}
         <a
-          href="https://discord.gg/B9m6BzMRjg"
+          href={DISCORD_URL}
           target="_blank"
           rel="noopener noreferrer"
           className="underline-offset-2 transition-colors duration-200 hover:text-[var(--color-content-primary)] hover:underline"
