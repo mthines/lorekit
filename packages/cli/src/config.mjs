@@ -379,9 +379,11 @@ export function resolveProjectConnection(root, splitEndpoint) {
   return resolveConnection({});
 }
 
-// Read .lorekit.json from the repo root without throwing.
-// Kept internal to config.mjs — control.mjs has its own equivalent.
-function readLorekitJson(root) {
+// Read .lorekit.json from the repo root without throwing. Exported so other
+// CLI modules can read per-repo config without duplicating the same try/catch.
+// control.mjs uses its own internal readJson(file) for historical reasons and
+// does not import this — that is a known duplication, not a bug.
+export function readLorekitJson(root) {
   const file = path.join(root, '.lorekit.json');
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8')) || {};

@@ -23,10 +23,9 @@
 // telemetry-token.mjs at publish time from a secret (see that file). Standard
 // OTEL_EXPORTER_OTLP_* env vars — or LOREKIT_TELEMETRY_TOKEN — override it.
 
-import fs from 'node:fs';
-import path from 'node:path';
 import process from 'node:process';
 import { TELEMETRY_TOKEN } from './telemetry-token.mjs';
+import { readLorekitJson } from './config.mjs';
 
 // ── Baked-in defaults (public by design) ──────────────────────────────────────
 // The endpoint is a committed default; the token is injected at publish time
@@ -42,15 +41,6 @@ const FLAG_ATTRS = ['global', 'project', 'deep', 'yes', 'force', 'no-hooks', 'js
 const OFF_VALUES = new Set(['0', 'off', 'false', 'no', 'disable', 'disabled']);
 
 // ── Config resolution ─────────────────────────────────────────────────────────
-
-// Read .lorekit.json from cwd (non-throwing). Used for telemetry.disabled check.
-function readLorekitJson(cwd = process.cwd()) {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(cwd, '.lorekit.json'), 'utf8')) || {};
-  } catch {
-    return {};
-  }
-}
 
 /**
  * Resolve telemetry config from env + baked-in defaults + .lorekit.json.
@@ -72,7 +62,7 @@ export function resolveTelemetryConfig(env = process.env, repoConfig) {
   }
   // `telemetry.disabled: true` in .lorekit.json — team-level opt-out committed
   // to the repo. Checked after env overrides (env always wins).
-  const cfg = repoConfig !== undefined ? repoConfig : readLorekitJson();
+  const cfg = repoConfig !== undefined ? repoConfig : readLorekitJson(process.cwd());
   if (cfg['telemetry.disabled'] === true) {
     return { enabled: false };
   }

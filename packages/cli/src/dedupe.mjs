@@ -10,10 +10,8 @@
 // span project + global; cross-STORE divergence is `diff`'s job, not this one).
 // Same Offline / Remote split and graceful degradation as `list`. Read-only.
 // Human-facing, so the bin wraps it in `traceCommand`.
-import fs from 'node:fs';
-import path from 'node:path';
 import process from 'node:process';
-import { resolveProjectRoot } from './config.mjs';
+import { resolveProjectRoot, readLorekitJson } from './config.mjs';
 import { deriveScope } from './scope.mjs';
 import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
@@ -34,12 +32,10 @@ export function parseThreshold(raw) {
 // Read `dedupe.threshold` from .lorekit.json (non-throwing). Returns the
 // repo-default threshold, or undefined when not configured.
 export function repoThreshold(root) {
-  try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(root, '.lorekit.json'), 'utf8'));
-    if (cfg?.['dedupe.threshold'] !== undefined) {
-      return parseThreshold(cfg['dedupe.threshold']);
-    }
-  } catch { /* not present or invalid — skip silently */ }
+  const cfg = readLorekitJson(root);
+  if (cfg['dedupe.threshold'] !== undefined) {
+    return parseThreshold(cfg['dedupe.threshold']);
+  }
   return undefined;
 }
 

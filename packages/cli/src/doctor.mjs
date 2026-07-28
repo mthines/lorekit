@@ -11,21 +11,13 @@ import {
   readLorekitServer,
   readMcpConfig,
   tokenKind,
+  readLorekitJson,
 } from './config.mjs';
 import { splitEndpoint } from './mcp.mjs';
 import { deriveScope } from './scope.mjs';
 import { loadControl } from './control.mjs';
 import { createStore } from './store/index.mjs';
 import { log, heading, status, c } from './util.mjs';
-
-// Read .lorekit.json for doctor.require (non-throwing).
-function readLorekitJson(root) {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(root, '.lorekit.json'), 'utf8')) || {};
-  } catch {
-    return {};
-  }
-}
 
 const AUTH_CODES = new Set([401, 403, -32001]);
 
