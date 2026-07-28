@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
 
 /**
@@ -10,11 +10,16 @@ import { Check, Copy } from 'lucide-react';
  */
 export function CopyCommand({ command }: { command: string }) {
   const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cancel a pending copy-reset timer if the component unmounts within the window.
+  useEffect(() => () => { if (resetTimer.current) clearTimeout(resetTimer.current); }, []);
 
   function handleCopy() {
     navigator.clipboard.writeText(command).then(() => {
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+      resetTimer.current = setTimeout(() => setCopied(false), 2000);
     }).catch(() => {
       // Clipboard access denied — fail silently; the command text is still visible.
     });
