@@ -134,7 +134,7 @@ export default function LoginPage() {
             <LoginButton />
           </Suspense>
           <p className="text-xs text-[var(--color-content-tertiary)]">
-            Sign in free · No credit card · 2-minute setup
+            Sign in free · 2-minute setup
           </p>
         </div>
       </section>
@@ -149,7 +149,7 @@ export default function LoginPage() {
             Get started in 2 minutes
           </h2>
           <p className="text-sm text-[var(--color-content-secondary)] text-center mb-6">
-            Free · Open source · No credit card
+            Free · Open source
           </p>
           <ol className="space-y-4 mb-6">
             <li className="flex gap-3">
@@ -180,7 +180,7 @@ export default function LoginPage() {
             <Suspense fallback={null}>
               <LoginButton />
             </Suspense>
-            <p className="text-xs text-[var(--color-content-tertiary)]">Sign in free · No credit card · 2-minute setup</p>
+            <p className="text-xs text-[var(--color-content-tertiary)]">Sign in free · 2-minute setup</p>
           </div>
         </div>
       </div>

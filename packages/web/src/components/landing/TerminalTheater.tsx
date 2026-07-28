@@ -162,7 +162,7 @@ const USE_CASES: UseCase[] = [
   },
 ];
 
-const CHAR_DELAY = 28;
+const CHAR_DELAY = 16;
 const LINE_GAP = 320;
 const CARD_APPEAR_DELAY = 180;
 const LOAD_STAGGER = 130; // ms between each card lighting up
