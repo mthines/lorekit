@@ -4,6 +4,7 @@ import Image from 'next/image';
 import type { User } from '@supabase/supabase-js';
 import { SignOutButton } from '@/components/auth/SignOutButton';
 import { MemoryExpandButton } from '@/components/lore/MemoryExpandButton';
+import { CommandPaletteButton } from '@/components/command/CommandPaletteButton';
 
 interface TopBarProps {
   user: User;
@@ -13,7 +14,10 @@ export function TopBar({ user: _ }: TopBarProps) {
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg-raised)] px-6">
       {/* Left — logo on mobile (desktop shows brand in sidebar) */}
-      <div className="items-center gap-2 flex md:opacity-0" aria-label="LoreKit">
+      <div
+        className="flex items-center gap-2 md:opacity-0"
+        aria-label="LoreKit"
+      >
         <Image
           src="/icons/icon-192.png"
           alt="LoreKit"
@@ -26,6 +30,8 @@ export function TopBar({ user: _ }: TopBarProps) {
 
       {/* Right — actions */}
       <div className="flex items-center gap-3">
+        {/* Command palette trigger — opens with ⌘K or clicking this button */}
+        <CommandPaletteButton />
         {/* Memory expand button: always visible, opens the global lesson sidebar */}
         <MemoryExpandButton />
         <SignOutButton />
