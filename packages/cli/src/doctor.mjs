@@ -88,19 +88,21 @@ export async function doctor(args) {
     record('warn', 'scope', 'no git remote here — memories fall back to global');
   }
 
-  // 6. Hook instructions — show resolved per-event custom instructions when any are set.
-  {
-    const instr = control.hooksInstructions || {};
-    const EVENTS = ['SessionStart', 'PostToolUseFailure', 'Stop'];
-    const configured = EVENTS.filter((ev) => instr[ev]);
-    if (configured.length > 0) {
-      for (const ev of EVENTS) {
-        const text = instr[ev];
-        if (text) {
-          record('info', `hooks.instructions.${ev}`, c.dim(text.length > 80 ? text.slice(0, 77) + '…' : text));
-        } else {
-          record('info', `hooks.instructions.${ev}`, c.dim('(not set)'));
-        }
+  // 6. Hook instructions — show the resolved per-event instructions from
+  //    .lorekit.json and ~/.lorekit/config.json so users can see exactly what
+  //    will be appended to each hook's default output.
+  const HOOK_EVENTS = ['SessionStart', 'PostToolUseFailure', 'Stop'];
+  const instrMap = control.hooksInstructions || {};
+  const hasAnyInstruction = HOOK_EVENTS.some(
+    (e) => typeof instrMap[e] === 'string' && instrMap[e].trim().length > 0,
+  );
+  if (hasAnyInstruction) {
+    for (const event of HOOK_EVENTS) {
+      const instr = instrMap[event];
+      if (typeof instr === 'string' && instr.trim().length > 0) {
+        // Truncate long instructions to keep the doctor output readable.
+        const preview = instr.length > 80 ? instr.slice(0, 77) + '…' : instr;
+        record('info', `hook instruction (${event})`, preview);
       }
     }
   }

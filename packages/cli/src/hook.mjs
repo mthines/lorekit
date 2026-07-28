@@ -93,19 +93,12 @@ async function run(args) {
   if (intent === 'read') {
     if (!firstTimeThisSession(parsed.sessionId, 'read')) return 0;
     const store = createStore(control);
-    // When there is no usable store, we still want to emit a custom instruction
-    // if one is configured — so we don't bail out entirely on a missing store.
-    const sessionInstruction = control.hooksInstructions && control.hooksInstructions.SessionStart
-      ? control.hooksInstructions.SessionStart : null;
-    if (!store) {
-      // No store: emit a minimal header + instruction when present, then return.
-      if (sessionInstruction) {
-        emit(formatLessons(null, { repoScope: null }, { instruction: sessionInstruction }));
-      }
-      return 0;
-    }
+    if (!store) return 0; // unconfigured/unusable — stay silent
     const { scope: readScope, lessons } = await fetchLessons(store, root);
-    emit(formatLessons(lessons, readScope, { instruction: sessionInstruction }));
+    // Pass the resolved per-event instruction so users/repos can append their
+    // own context to the default lesson block at SessionStart.
+    const instruction = control.hooksInstructions && control.hooksInstructions.SessionStart;
+    emit(formatLessons(lessons, readScope, { instruction: instruction || null }));
     return 0;
   }
 
@@ -127,6 +120,7 @@ async function run(args) {
     } catch {
       relevant = null; // never let a lesson lookup break the failure nudge
     }
+    // failureNudge reads control.hooksInstructions.PostToolUseFailure internally.
     const nudge = failureNudge(parsed.toolName, scope, control);
     emit(relevant ? `${relevant}\n\n${nudge}` : nudge);
     return 0;
@@ -134,6 +128,7 @@ async function run(args) {
 
   if (intent === 'retrospective') {
     if (!firstTimeThisSession(parsed.sessionId, 'retro')) return 0;
+    // retrospectiveNudge reads control.hooksInstructions.Stop internally.
     emit(retrospectiveNudge(scope, control));
     return 0;
   }
