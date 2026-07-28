@@ -4,9 +4,10 @@
   "private": true,
   "scripts": {
     "build": "next build",
-    "dev": "next dev --turbopack",
+    "dev": "pnpm run env:pull && next dev --turbopack",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "env:pull": "vercel env pull .env.local"
   },
   "dependencies": {
     "@dash0/sdk-web": "^0.10.1",

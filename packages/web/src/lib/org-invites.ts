@@ -43,6 +43,21 @@ export interface OrgInvite {
   org?: { name: string; slug: string } | null;
 }
 
+/**
+ * Tier-A org details a PENDING (non-member) invitee may see before
+ * accepting — resolved server-side by `lorekit_invite_org_details` (00028),
+ * gated on `lorekit_invite_addressed_to_caller`. Deliberately excludes any
+ * per-member identity list (Tier B, declined in Phase 0).
+ */
+export interface InviteOrgDetails {
+  org_name: string;
+  org_slug: string;
+  org_created_at: string;
+  member_count: number;
+  inviter_handle: string | null;
+  inviter_avatar_url: string | null;
+}
+
 /** Narrows a raw PostgREST row (embedded `orgs` relation) into an OrgInvite. */
 function mapInviteRow(row: Record<string, unknown>): OrgInvite {
   const orgEmbed = row.orgs as { name: string; slug: string } | null | undefined;
@@ -278,6 +293,34 @@ export async function declineInvite(inviteId: string): Promise<{ error?: string 
       return {};
     },
   );
+}
+
+/**
+ * Fetch Tier-A org details for a pending invite addressed to the caller's
+ * verified identity — lets a not-yet-member invitee see WHICH org invited
+ * them (name, slug, inviter, member count) before accepting. Wraps
+ * `lorekit_invite_org_details` (00028), which returns an EMPTY set (never an
+ * error) for an invite that doesn't exist, isn't pending, or isn't addressed
+ * to the caller — so this is a total function: `null` covers every
+ * absent-by-design case, matching `getOrg`'s null-on-absence shape (orgs.ts).
+ */
+export async function getInviteOrgDetails(inviteId: string): Promise<InviteOrgDetails | null> {
+  const supabase = await createServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const { data, error } = await supabase.rpc('lorekit_invite_org_details', { p_invite_id: inviteId });
+  if (error) {
+    logger.error('lorekit.org.invite.get_org_details.failed', {
+      'exception.type': 'SupabaseRpcError',
+      'exception.message': error.message,
+      'lorekit.invite.id': inviteId,
+    });
+    return null;
+  }
+
+  const row = (data as InviteOrgDetails[] | null)?.[0];
+  return row ?? null;
 }
 
 /**

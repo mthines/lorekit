@@ -7,5 +7,11 @@
     "checkout": {
       "post": ["pnpm install"]
     }
-  }
+  },
+  "autoCopyFiles": [
+    "packages/web/.vercel",
+    "packages/web/.env.local",
+    ".env.local",
+    ".mcp.json"
+]
 }
