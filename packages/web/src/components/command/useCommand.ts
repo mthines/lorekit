@@ -62,12 +62,11 @@ export function useCommand(command: Command): void {
   }, [register, command.id]);
 
   // When non-id fields change (label, icon, shortcut, onSelect, etc.), update
-  // the registry entry in-place without a full re-register cycle (avoids a
-  // brief flash where the command disappears and reappears).
+  // the registry entry in-place. We call register() which overwrites the same
+  // map key — no flash — and return the cleanup so this effect's entry is
+  // revoked when the dep changes (the id-effect immediately re-registers).
   useEffect(() => {
-    register(command);
-    // No cleanup here — the id-effect above owns the lifecycle.
-    // This fires after every render where command fields change.
+    return register(command);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     command.label,
