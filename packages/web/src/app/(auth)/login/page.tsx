@@ -40,7 +40,6 @@ const FEATURES = [
 export default function LoginPage() {
   return (
     <main className="relative flex min-h-screen flex-col overflow-hidden bg-[var(--color-bg)]">
-      {/* Background decoration */}
       <div aria-hidden className="pointer-events-none fixed inset-0 overflow-hidden">
         <div
           className="absolute left-1/2 top-1/3 size-[700px] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-30"
@@ -60,7 +59,6 @@ export default function LoginPage() {
         />
       </div>
 
-      {/* Header — unchanged */}
       <header className="relative z-10 flex h-16 items-center justify-between px-6 md:px-10">
         <div className="flex items-center gap-2.5">
           <div className="flex size-8 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
