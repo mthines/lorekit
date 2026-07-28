@@ -52,7 +52,7 @@ describe('READ_TOOLS / WRITE_TOOLS', () => {
       ['memory.list', 'memory.list_archived', 'memory.read', 'memory.search'].sort(),
     );
     expect([...WRITE_TOOLS].sort()).toEqual(
-      ['memory.archive', 'memory.delete', 'memory.purge', 'memory.restore', 'memory.write'].sort(),
+      ['memory.archive', 'memory.delete', 'memory.purge', 'memory.purge_expired', 'memory.restore', 'memory.write'].sort(),
     );
   });
 });

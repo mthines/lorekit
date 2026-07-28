@@ -14,6 +14,7 @@ import {
   toolListArchived,
   toolRestore,
   toolPurge,
+  toolPurgeExpired,
   toolOrgCreate,
   toolOrgList,
   toolOrgRename,
@@ -36,6 +37,7 @@ const MEMORY_TOOLS = {
   'memory.list_archived': toolListArchived,
   'memory.restore':       toolRestore,
   'memory.purge':         toolPurge,
+  'memory.purge_expired':  toolPurgeExpired,
 } as const;
 
 // org.* tools — dispatched with (db, args, span). They require JWT auth
@@ -137,6 +139,18 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
                 description:
                   'Org slug to write under (org-owned write). Omit for a personal memory. You must be a write-capable member (member/admin/owner, not viewer) of the org, verified server-side — supplying an org slug you are not authorized for is rejected.',
               },
+              ttl_days: {
+                type: 'integer',
+                minimum: 1,
+                maximum: 365,
+                description:
+                  'Number of days until the memory auto-expires. Omit for a permanent memory. On an update, supplying ttl_days refreshes the expiry; omitting it leaves the existing expiry unchanged.',
+              },
+              clear_ttl: {
+                type: 'boolean',
+                description:
+                  'When true, removes the existing expiry and makes the memory permanent again. Takes precedence over ttl_days when both are supplied.',
+              },
             },
           },
         },
@@ -197,6 +211,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
               retention_days: { type: 'integer', minimum: 1, maximum: 365, default: PURGE_RETENTION_DAYS_DEFAULT },
             },
           },
+        },
+        {
+          name: 'memory.purge_expired',
+          description: 'Permanently delete all TTL-expired memories for the current user. Unrecoverable.',
+          inputSchema: { type: 'object', properties: {} },
         },
         // ── org.* ──────────────────────────────────────────────────────────
         // Require a Supabase user JWT (auth.uid() resolved inside SECURITY

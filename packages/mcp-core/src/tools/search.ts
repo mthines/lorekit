@@ -39,6 +39,9 @@ export async function search(
         .from('memories')
         .select('key,value,scope,tags')
         .textSearch('fts', input.q, { type: 'websearch', config: 'english' })
+        // Exclude archived and expired rows (see read.ts for the rationale).
+        .is('archived_at', null)
+        .or('expires_at.is.null,expires_at.gt.now()')
         .limit(input.limit);
 
       if (input.tags && input.tags.length > 0) {

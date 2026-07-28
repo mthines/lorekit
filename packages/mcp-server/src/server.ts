@@ -15,6 +15,7 @@ import {
   restoreMemory,
   listArchived,
   purgeArchived,
+  purgeExpired,
   createUserClient,
   createServiceClient,
   checkRateLimit,
@@ -51,6 +52,8 @@ export function createMcpServer(auth: AuthContext): McpServer {
       source_agent: z.string().optional().describe('Agent that wrote this lesson'),
       trigger: z.string().optional().describe('What triggered this write e.g. "stuck-loop"'),
       created_at: z.string().optional().describe('Optional ISO 8601 creation date. Use when migrating a pre-existing memory so it is dated by its original time instead of now. Rejected if invalid or in the future. Applies only when the memory is first created.'),
+      ttl_days: z.number().int().min(1).max(365).optional().describe('Number of days until the memory auto-expires (1–365). Omit for a permanent memory. On an update, supplying ttl_days refreshes the expiry; omitting it leaves the existing expiry unchanged.'),
+      clear_ttl: z.boolean().optional().describe('When true, removes the existing expiry and makes the memory permanent again.'),
     },
     async (args) => {
       try {
@@ -148,6 +151,17 @@ export function createMcpServer(auth: AuthContext): McpServer {
     async (args) => {
       const userId = auth.type === 'service' ? null : (auth.userId ?? null);
       const result = await purgeArchived(db, args, userId);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    },
+  );
+
+  server.tool(
+    'memory.purge_expired',
+    'Permanently delete all expired (TTL-lapsed) memories for the current user. Unrecoverable.',
+    {},
+    async (_args) => {
+      const userId = auth.type === 'service' ? null : (auth.userId ?? null);
+      const result = await purgeExpired(db, userId);
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     },
   );

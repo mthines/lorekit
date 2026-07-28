@@ -35,6 +35,9 @@ export async function list(db: SupabaseClient, raw: unknown): Promise<{ entries:
         .from('memories')
         .select('key,value,tags,updated_at')
         .eq('scope', input.scope)
+        // Exclude archived rows and expired rows (see read.ts for the rationale).
+        .is('archived_at', null)
+        .or('expires_at.is.null,expires_at.gt.now()')
         .limit(input.limit);
 
       if (input.tags && input.tags.length > 0) {

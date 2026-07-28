@@ -13,15 +13,20 @@ vi.mock('../telemetry.js', () => ({
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 function makeDb(data: null | { value: string; updated_at: string }, error: null | { message: string } = null) {
+  const maybeSingle = vi.fn().mockResolvedValue({ data, error });
+  const chain = {
+    eq: vi.fn(),
+    is: vi.fn(),
+    or: vi.fn(),
+    maybeSingle,
+  };
+  // Make every chained method return the chain itself for fluent chaining.
+  chain.eq.mockReturnValue(chain);
+  chain.is.mockReturnValue(chain);
+  chain.or.mockReturnValue(chain);
   return {
     from: vi.fn().mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            maybeSingle: vi.fn().mockResolvedValue({ data, error }),
-          }),
-        }),
-      }),
+      select: vi.fn().mockReturnValue(chain),
     }),
   } as unknown as SupabaseClient;
 }

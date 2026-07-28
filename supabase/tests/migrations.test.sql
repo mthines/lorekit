@@ -1473,6 +1473,7 @@ begin
 end;
 $$;
 
+
 -- ═════════════════════════════════════════════════════════════════════════
 -- Invite-details modal: lorekit_invite_org_details (00028)
 -- ═════════════════════════════════════════════════════════════════════════
@@ -1549,6 +1550,170 @@ begin
     format('lorekit_invite_org_details: expected inviter_avatar_url %s, got %s', v_expected_avatar, v_row.inviter_avatar_url);
 end;
 $$;
+
+
+-- ── Memory TTL — 00030 + 00031 ────────────────────────────────────────────────
+-- AC-1: Writing with ttl_days sets expires_at approximately ttl_days from now.
+-- AC-2: An expired memory is invisible to a plain SELECT (query-layer filter).
+-- AC-3: A non-expired memory with a TTL is still visible.
+-- AC-4: Updating without ttl_days leaves existing expires_at unchanged.
+-- AC-5: Updating with a new ttl_days refreshes expires_at.
+-- AC-6: purge_expired_memories deletes expired rows and returns the count.
+-- AC-7: purge_expired_memories does NOT delete non-expired TTL rows.
+-- AC-8: Rows without a TTL (expires_at IS NULL) are unaffected by purge_expired_memories.
+-- AC-9: ttl_days < 1 raises a P0001 exception.
+
+do 605
+declare
+  v_id         uuid;
+  v_expires_at timestamptz;
+  v_count      int;
+  v_uid        uuid := '00000000-0000-0000-0000-0000000000a1';
+  v_purged     int;
+  v_blocked    boolean;
+begin
+  -- AC-1: Write a memory with ttl_days=7; expires_at must be ~7 days ahead.
+  select id, expires_at into v_id, v_expires_at
+  from memory_write(v_uid, 'global', 'ttl-test-7d', 'transient value', '{}', null, null, null, null, 7);
+
+  assert v_expires_at is not null,
+    'TTL AC-1: expires_at must be set when ttl_days is provided';
+  assert v_expires_at > now() + interval '6 days 23 hours',
+    'TTL AC-1: expires_at must be at least 7 days from now';
+  assert v_expires_at < now() + interval '7 days 1 hour',
+    'TTL AC-1: expires_at must not exceed 7 days + 1h from now';
+
+  -- AC-2: Manually set expires_at to the past; the row is invisible to active reads.
+  update memories set expires_at = now() - interval '1 second'
+   where id = v_id;
+
+  select count(*) into v_count
+   from memories
+   where user_id = v_uid and key = 'ttl-test-7d'
+     and archived_at is null
+     and (expires_at is null or expires_at > now());
+  assert v_count = 0,
+    'TTL AC-2: an expired memory must be invisible to the active-read filter';
+
+  -- AC-3: Write a memory with ttl_days=1 (future); it must be visible.
+  perform memory_write(v_uid, 'global', 'ttl-test-future', 'future value', '{}', null, null, null, null, 1);
+  select count(*) into v_count
+   from memories
+   where user_id = v_uid and key = 'ttl-test-future'
+     and archived_at is null
+     and (expires_at is null or expires_at > now());
+  assert v_count = 1,
+    'TTL AC-3: a non-expired TTL memory must be visible';
+
+  -- AC-4: Update without ttl_days; expires_at must stay unchanged.
+  select expires_at into v_expires_at
+   from memories where user_id = v_uid and key = 'ttl-test-future';
+  perform memory_write(v_uid, 'global', 'ttl-test-future', 'updated value', '{}', null, null, null, null, null);
+  select count(*) into v_count
+   from memories
+   where user_id = v_uid and key = 'ttl-test-future'
+     and expires_at = v_expires_at;
+  assert v_count = 1,
+    'TTL AC-4: omitting ttl_days on an update must preserve the existing expires_at';
+
+  -- AC-5: Update WITH a new ttl_days; expires_at must be refreshed.
+  perform memory_write(v_uid, 'global', 'ttl-test-future', 'refreshed value', '{}', null, null, null, null, 30);
+  select count(*) into v_count
+   from memories
+   where user_id = v_uid and key = 'ttl-test-future'
+     and expires_at > now() + interval '29 days 23 hours';
+  assert v_count = 1,
+    'TTL AC-5: supplying a new ttl_days on an update must refresh expires_at';
+
+  -- AC-6: purge_expired_memories deletes past-expired rows and returns the count.
+  -- Insert a row with a past expiry directly (bypassing memory_write validation).
+  insert into memories (user_id, scope, key, value, expires_at)
+  values (v_uid, 'global', 'ttl-expired-purge', 'gone', now() - interval '1 minute');
+
+  select purge_expired_memories(v_uid) into v_purged;
+  assert v_purged >= 1,
+    format('TTL AC-6: purge_expired_memories must delete >= 1 expired row, got %s', v_purged);
+  select count(*) into v_count
+   from memories where user_id = v_uid and key = 'ttl-expired-purge';
+  assert v_count = 0,
+    'TTL AC-6: the expired row must be physically deleted after purge';
+
+  -- AC-7: purge_expired_memories does NOT delete a future-expiry row.
+  select count(*) into v_count
+   from memories where user_id = v_uid and key = 'ttl-test-future';
+  assert v_count = 1,
+    'TTL AC-7: purge_expired_memories must not delete a memory with a future expires_at';
+
+  -- AC-8: Rows with expires_at IS NULL are unaffected by purge_expired_memories.
+  insert into memories (user_id, scope, key, value)
+  values (v_uid, 'global', 'ttl-no-expiry', 'permanent');
+  select purge_expired_memories(v_uid) into v_purged;
+  select count(*) into v_count
+   from memories where user_id = v_uid and key = 'ttl-no-expiry';
+  assert v_count = 1,
+    'TTL AC-8: purge_expired_memories must not delete rows with no expires_at';
+
+  -- AC-9: ttl_days < 1 must raise a P0001 exception.
+  v_blocked := false;
+  begin
+    perform memory_write(v_uid, 'global', 'ttl-bad', 'bad', '{}', null, null, null, null, 0);
+  exception when sqlstate 'P0001' then
+    v_blocked := true;
+  end;
+  assert v_blocked, 'TTL AC-9: ttl_days = 0 must raise SQLSTATE P0001';
+
+  -- AC-10: ttl_days > 365 also raises a P0001 exception (upper-bound guard).
+  v_blocked := false;
+  begin
+    perform memory_write(v_uid, 'global', 'ttl-upper-bound', 'bad', '{}', null, null, null, null, 366, false);
+  exception when sqlstate 'P0001' then
+    v_blocked := true;
+  end;
+  assert v_blocked, 'TTL AC-10: ttl_days = 366 must raise SQLSTATE P0001';
+end;
+605;
+
+
+-- ── Memory TTL clear — 00029 ─────────────────────────────────────────────────
+-- AC-1: p_clear_ttl = true clears an existing expires_at (sets it to NULL).
+-- AC-2: p_clear_ttl wins over p_ttl_days when both are supplied.
+-- AC-3: p_clear_ttl = false with no p_ttl_days leaves expires_at unchanged.
+
+do $
+declare
+  v_uid     uuid := '00000000-0000-0000-0000-0000000000a1';
+  v_exp     timestamptz;
+  v_count   int;
+begin
+  -- Seed: write with a 7-day TTL.
+  perform memory_write(v_uid, 'global', 'ttl-clear-test', 'v', '{}', null, null, null, null, 7, false);
+  select expires_at into v_exp from memories where user_id = v_uid and key = 'ttl-clear-test';
+  assert v_exp is not null, 'TTL-clear AC-0: seed must have expires_at set';
+
+  -- AC-1: clear removes it.
+  perform memory_write(v_uid, 'global', 'ttl-clear-test', 'v2', '{}', null, null, null, null, null, true);
+  select expires_at into v_exp from memories where user_id = v_uid and key = 'ttl-clear-test';
+  assert v_exp is null, 'TTL-clear AC-1: p_clear_ttl = true must set expires_at = NULL';
+
+  -- AC-2: clear wins when p_ttl_days is also supplied.
+  perform memory_write(v_uid, 'global', 'ttl-clear-test', 'v3', '{}', null, null, null, null, 30, false);
+  select expires_at into v_exp from memories where user_id = v_uid and key = 'ttl-clear-test';
+  assert v_exp is not null, 'TTL-clear AC-2a: seed 30-day TTL';
+  perform memory_write(v_uid, 'global', 'ttl-clear-test', 'v4', '{}', null, null, null, null, 14, true);
+  select expires_at into v_exp from memories where user_id = v_uid and key = 'ttl-clear-test';
+  assert v_exp is null, 'TTL-clear AC-2: p_clear_ttl wins over p_ttl_days';
+
+  -- AC-3: neither flag leaves expires_at unchanged.
+  perform memory_write(v_uid, 'global', 'ttl-clear-test', 'v5', '{}', null, null, null, null, 7, false);
+  select expires_at into v_exp from memories where user_id = v_uid and key = 'ttl-clear-test';
+  assert v_exp is not null, 'TTL-clear AC-3a: seed';
+  perform memory_write(v_uid, 'global', 'ttl-clear-test', 'updated value', '{}', null, null, null, null, null, false);
+  select count(*) into v_count from memories
+   where user_id = v_uid and key = 'ttl-clear-test' and expires_at is not null;
+  assert v_count = 1, 'TTL-clear AC-3: no-flag update must preserve existing expires_at';
+end;
+$;
+
 
 rollback;
 

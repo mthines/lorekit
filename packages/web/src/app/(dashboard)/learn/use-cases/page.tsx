@@ -212,6 +212,61 @@ memory.delete {
         />
       </div>
 
+
+      {/* Section 5 */}
+      <div className="flex flex-col gap-4">
+        <h3 className="text-sm font-semibold text-[var(--color-content-primary)]">
+          Transient memories with auto-expiry
+        </h3>
+        <p className="text-sm text-[var(--color-content-secondary)]">
+          Not every memory should live forever. Pass <code>ttl_days</code> to{' '}
+          <code>memory.write</code> and the entry automatically becomes invisible once
+          the TTL elapses — no manual cleanup required. This is ideal for session-scoped
+          signals: issues already triaged, PR reviews in progress, or any fact that is
+          only relevant for a few days.
+        </p>
+        <UseCase
+          title="Flag a triaged issue (expires in 7 days)"
+          description="The entry disappears automatically, so the agent won't revisit it next session."
+          code={`memory.write {
+  scope:    "repo::mthines/lorekit",
+  key:      "triage::ENG-123",
+  value:    "Already triaged — assigned to backend team, no action needed.",
+  ttl_days: 7
+}
+// → response includes expires_at so you can confirm the deadline
+// { id: "…", created_at: "…", expires_at: "2026-08-04T…" }`}
+          note="On an update, omitting ttl_days leaves the existing expiry unchanged. Pass a new ttl_days to refresh the countdown."
+        />
+        <UseCase
+          title="Renew a TTL on the next encounter"
+          description="Update the value without resetting the expiry, or refresh both at once."
+          code={`// Update only the value — expiry stays where it was
+memory.write {
+  scope: "repo::mthines/lorekit",
+  key:   "triage::ENG-123",
+  value: "Triaged — backend confirmed fix ships Friday."
+}
+
+// Extend the countdown by supplying a new ttl_days
+memory.write {
+  scope:    "repo::mthines/lorekit",
+  key:      "triage::ENG-123",
+  value:    "Triaged — backend confirmed fix ships Friday.",
+  ttl_days: 3
+}`}
+        />
+        <UseCase
+          title="Clean up expired entries explicitly"
+          description="Expired rows are invisible to reads immediately. Call memory.purge_expired to reclaim storage."
+          code={`// Expired rows are hidden from all reads once expires_at passes.
+// Call memory.purge_expired to physically remove them and reclaim storage:
+memory.purge_expired {}
+// → { purged: 4 }`}
+          note="The CLI `npx @lorekit/cli list` always skips expired entries — you'll never see stale data in read results."
+        />
+      </div>
+
       <TutorialCallout variant="tip">
         The CLI <code>npx @lorekit/cli tree</code> command shows the full scope precedence
         hierarchy — which memory wins per key, and which are shadowed — so you can audit

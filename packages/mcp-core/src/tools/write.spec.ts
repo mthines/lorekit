@@ -180,3 +180,51 @@ describe('write', () => {
     expect(insertMock).toHaveBeenCalledWith(expect.objectContaining({ user_id: 'user-9' }));
   });
 });
+
+// ── TTL (ttl_days) tests ───────────────────────────────────────────────────────
+
+describe('write with ttl_days', () => {
+  it('passes p_ttl_days to the RPC when ttl_days is provided', async () => {
+    const db = makeDb({ ...fakeResult, expires_at: '2026-08-03T00:00:00Z' });
+    await write(db, { scope: 'global', key: 'k', value: 'v', ttl_days: 7 });
+    expect(db.rpc).toHaveBeenCalledWith('memory_write', expect.objectContaining({ p_ttl_days: 7 }));
+  });
+
+  it('passes p_ttl_days: null to the RPC when ttl_days is omitted', async () => {
+    const db = makeDb(fakeResult);
+    await write(db, { scope: 'global', key: 'k', value: 'v' });
+    expect(db.rpc).toHaveBeenCalledWith('memory_write', expect.objectContaining({ p_ttl_days: null }));
+  });
+
+  it('includes expires_at in the result when ttl_days is provided', async () => {
+    const expiresAt = '2026-08-03T00:00:00Z';
+    const db = makeDb({ ...fakeResult, expires_at: expiresAt });
+    const result = await write(db, { scope: 'global', key: 'k', value: 'v', ttl_days: 7 });
+    expect(result).toHaveProperty('expires_at', expiresAt);
+  });
+
+  it('does NOT include expires_at in the result when ttl_days is omitted', async () => {
+    const db = makeDb(fakeResult);
+    const result = await write(db, { scope: 'global', key: 'k', value: 'v' });
+    expect(result).not.toHaveProperty('expires_at');
+  });
+
+  it('throws ZodError when ttl_days is 0', async () => {
+    const db = makeDb(fakeResult);
+    await expect(write(db, { scope: 'global', key: 'k', value: 'v', ttl_days: 0 })).rejects.toThrow();
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it('throws ZodError when ttl_days exceeds 365', async () => {
+    const db = makeDb(fakeResult);
+    await expect(write(db, { scope: 'global', key: 'k', value: 'v', ttl_days: 366 })).rejects.toThrow();
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it('accepts ttl_days at the boundary values (1 and 365)', async () => {
+    const db1 = makeDb({ ...fakeResult, expires_at: '2026-07-28T00:00:00Z' });
+    await expect(write(db1, { scope: 'global', key: 'k', value: 'v', ttl_days: 1 })).resolves.toBeDefined();
+    const db365 = makeDb({ ...fakeResult, expires_at: '2027-07-27T00:00:00Z' });
+    await expect(write(db365, { scope: 'global', key: 'k', value: 'v', ttl_days: 365 })).resolves.toBeDefined();
+  });
+});

@@ -28,6 +28,8 @@ export interface LessonEntry {
   updated_by?: string | null;
   /** Resolved ownership (see `ownerFromMemoryRow`) — undefined for personal lore. */
   org?: MemoryOwner;
+  /** Optional expiry timestamp. NULL means the row never expires. */
+  expires_at?: string | null;
 }
 
 interface LessonCardProps {
