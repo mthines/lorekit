@@ -229,7 +229,7 @@ function TypewriterLine({
     error:         'text-[var(--color-error)]',
     separator:     'text-[var(--color-content-tertiary)]',
     'session-end': 'text-[var(--color-error)]',
-    'session-start':'text-[var(--color-success)]',
+    'session-start': 'text-[var(--color-success)]',
   };
   const colorClass = LINE_COLOR[type] ?? 'text-[var(--color-content-secondary)]';
 
