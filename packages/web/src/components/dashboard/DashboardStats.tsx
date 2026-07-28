@@ -63,7 +63,7 @@ function StatRangeSelect({
             aria-checked={active}
             onClick={() => onChange(opt.value)}
             className={[
-              'rounded px-2 py-1 text-[11px] font-medium tabular-nums transition-colors duration-150',
+              'rounded px-1.5 py-0.5 text-[10px] font-medium tabular-nums transition-colors duration-150',
               active
                 ? 'bg-[var(--color-bg-raised)] text-[var(--color-content-primary)] shadow-sm'
                 : 'text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]',
@@ -225,15 +225,18 @@ export function DashboardStats() {
               <div className="flex size-9 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
                 <Icon className="size-4 text-[var(--color-accent)]" aria-hidden />
               </div>
+              {/* Trend chip first, range selector to its right — so the selector
+                  right-aligns consistently across all cards (including "Active",
+                  which has no chip). */}
               <div className="flex items-center gap-2">
+                {showTrend && trend.points.length >= 2 && (
+                  <TrendChip changePct={trend.changePct} title={rangeTrendTitle(range)} />
+                )}
                 <StatRangeSelect
                   value={range}
                   label={label}
                   onChange={(next) => setRanges((prev) => ({ ...prev, [id]: next }))}
                 />
-                {showTrend && trend.points.length >= 2 && (
-                  <TrendChip changePct={trend.changePct} title={rangeTrendTitle(range)} />
-                )}
               </div>
             </div>
             <div>
