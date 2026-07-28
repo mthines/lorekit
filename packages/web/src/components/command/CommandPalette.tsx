@@ -265,6 +265,14 @@ export function CommandPalette() {
         aria-modal
         aria-label="Command Palette"
         className="fixed inset-x-4 top-[15%] z-50 mx-auto max-w-xl overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] shadow-2xl shadow-black/50"
+        onMouseDown={(e) => {
+          // Prevent the browser from moving focus away from the search input
+          // when the user clicks anywhere inside the palette (rows, back button,
+          // scrollbar, etc.). Without this, clicking a row steals focus to
+          // <body> and subsequent Escape / arrow-key presses are silently lost.
+          // The click event still fires normally — only the focus side-effect is suppressed.
+          if (e.target !== inputRef.current) e.preventDefault();
+        }}
       >
         {/* Header: breadcrumb + search */}
         <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2.5">
