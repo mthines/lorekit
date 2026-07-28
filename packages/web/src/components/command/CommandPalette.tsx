@@ -163,7 +163,6 @@ export function CommandPalette() {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
 
   // Reset state when palette opens / frame changes.
   useEffect(() => {
@@ -183,15 +182,12 @@ export function CommandPalette() {
 
   const grouped = useMemo(() => groupCommands(filtered), [filtered]);
 
-  // Flat list for keyboard navigation.
-  const flat = useMemo(() => filtered, [filtered]);
-
-  const selectedCommand = flat[selectedIndex] ?? null;
+  const selectedCommand = filtered[selectedIndex] ?? null;
 
   // Clamp index when filtered list shrinks.
   useEffect(() => {
-    setSelectedIndex((i) => Math.min(i, Math.max(0, flat.length - 1)));
-  }, [flat.length]);
+    setSelectedIndex((i) => Math.min(i, Math.max(0, filtered.length - 1)));
+  }, [filtered.length]);
 
   // ── Keyboard navigation ─────────────────────────────────────────────────────
 
@@ -199,11 +195,11 @@ export function CommandPalette() {
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault();
-        setSelectedIndex((i) => (i + 1) % Math.max(1, flat.length));
+        setSelectedIndex((i) => (i + 1) % Math.max(1, filtered.length));
         break;
       case 'ArrowUp':
         e.preventDefault();
-        setSelectedIndex((i) => (i - 1 + flat.length) % Math.max(1, flat.length));
+        setSelectedIndex((i) => (i - 1 + filtered.length) % Math.max(1, filtered.length));
         break;
       case 'Enter':
         e.preventDefault();
@@ -314,7 +310,6 @@ export function CommandPalette() {
         {/* Command list */}
         <div
           id="command-palette-list"
-          ref={listRef}
           role="listbox"
           aria-label={frameTitle}
           className="max-h-80 overflow-y-auto p-1.5"
@@ -324,7 +319,7 @@ export function CommandPalette() {
               <Loader2 className="size-4 animate-spin" aria-hidden />
               Loading…
             </div>
-          ) : flat.length === 0 ? (
+          ) : filtered.length === 0 ? (
             <div className="py-8 text-center text-sm text-[var(--color-content-tertiary)]">
               {query ? `No results for "${query}"` : 'No commands available'}
             </div>
@@ -341,7 +336,7 @@ export function CommandPalette() {
                   </div>
                 )}
                 {group.commands.map((command) => {
-                  const flatIdx = flat.indexOf(command);
+                  const flatIdx = filtered.indexOf(command);
                   return (
                     <CommandRow
                       key={command.id}
