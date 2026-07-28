@@ -483,6 +483,16 @@ Both files share this schema — all fields optional:
                            // values: "claude" | "cursor" | "codex"
                            // repo wins over user
 
+  "hooks.instructions": {
+    "SessionStart":        "Focus on migration safety. Treat any lesson tagged 'migration' as high-priority.",
+    "PostToolUseFailure":  "When recording a failure, always include the exact command and exit code.",
+    "Stop":                null
+  },
+                           // per-event custom text appended to the hook output.
+                           // both layers merged: repo instructions first, then user.
+                           // null (or absent key) means no extra instruction for that event.
+                           // values: string | null  (keys: "SessionStart" | "PostToolUseFailure" | "Stop")
+
   // ── Telemetry ──────────────────────────────────────────────────────────────
   "telemetry.disabled": true,
                            // team-level opt-out for orgs with a no-telemetry policy

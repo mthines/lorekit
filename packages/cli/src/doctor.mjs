@@ -88,7 +88,24 @@ export async function doctor(args) {
     record('warn', 'scope', 'no git remote here — memories fall back to global');
   }
 
-  // 6. doctor.require — committed list of checks that MUST pass.
+  // 6. Hook instructions — show resolved per-event custom instructions when any are set.
+  {
+    const instr = control.hooksInstructions || {};
+    const EVENTS = ['SessionStart', 'PostToolUseFailure', 'Stop'];
+    const configured = EVENTS.filter((ev) => instr[ev]);
+    if (configured.length > 0) {
+      for (const ev of EVENTS) {
+        const text = instr[ev];
+        if (text) {
+          record('info', `hooks.instructions.${ev}`, c.dim(text.length > 80 ? text.slice(0, 77) + '…' : text));
+        } else {
+          record('info', `hooks.instructions.${ev}`, c.dim('(not set)'));
+        }
+      }
+    }
+  }
+
+  // 7. doctor.require — committed list of checks that MUST pass.
   //    Useful as a CI gate: any check in the list that did not pass causes a failure.
   const lorekitJson = readLorekitJson(root);
   const required = (Array.isArray(lorekitJson['doctor.require']) ? lorekitJson['doctor.require'] : [])

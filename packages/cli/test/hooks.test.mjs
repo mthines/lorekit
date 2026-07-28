@@ -274,3 +274,61 @@ test('retrospectiveNudge and failureNudge work without control arg (backward com
   assert.doesNotThrow(() => retrospectiveNudge(scope));
   assert.doesNotThrow(() => failureNudge('Bash', scope));
 });
+
+// ── hooks.instructions — per-event custom instruction appended to hook output ──
+
+test('formatLessons appends instruction when provided', () => {
+  const out = formatLessons(
+    [{ key: 'k1', value: 'some lesson', scope: 'repo::a/b' }],
+    { repoScope: 'repo::a/b' },
+    { instruction: 'Focus on migration safety.' },
+  );
+  assert.match(out, /Project instruction:/);
+  assert.match(out, /Focus on migration safety/);
+});
+
+test('formatLessons with empty lessons and an instruction emits header + instruction', () => {
+  const out = formatLessons([], { repoScope: 'repo::a/b' }, { instruction: 'Use strict mode.' });
+  assert.ok(out !== null, 'should not return null when instruction is set');
+  assert.match(out, /Project instruction:/);
+  assert.match(out, /Use strict mode/);
+});
+
+test('formatLessons with no instruction still returns null for empty lessons', () => {
+  assert.equal(formatLessons([], { repoScope: 'repo::a/b' }), null);
+  assert.equal(formatLessons([], { repoScope: 'repo::a/b' }, {}), null);
+  assert.equal(formatLessons([], { repoScope: 'repo::a/b' }, { instruction: null }), null);
+});
+
+test('retrospectiveNudge appends instruction from control.hooksInstructions.Stop', () => {
+  const scope = fakeScope();
+  const control = {
+    tagsDefault: [],
+    scopeDefaults: null,
+    hooksInstructions: { Stop: 'Always record the commands you ran.' },
+  };
+  const text = retrospectiveNudge(scope, control);
+  assert.match(text, /Project instruction:/);
+  assert.match(text, /Always record the commands/);
+});
+
+test('failureNudge appends instruction from control.hooksInstructions.PostToolUseFailure', () => {
+  const scope = fakeScope();
+  const control = {
+    tagsDefault: [],
+    scopeDefaults: null,
+    hooksInstructions: { PostToolUseFailure: 'Include the exit code in the lesson.' },
+  };
+  const text = failureNudge('Bash', scope, control);
+  assert.match(text, /Project instruction:/);
+  assert.match(text, /Include the exit code/);
+});
+
+test('nudges emit no instruction when hooksInstructions is missing or null for that event', () => {
+  const scope = fakeScope();
+  const controlNoInstr = { tagsDefault: [], scopeDefaults: null, hooksInstructions: {} };
+  assert.doesNotMatch(retrospectiveNudge(scope, controlNoInstr), /Project instruction/);
+  assert.doesNotMatch(failureNudge('Bash', scope, controlNoInstr), /Project instruction/);
+  assert.doesNotMatch(retrospectiveNudge(scope, { tagsDefault: [], scopeDefaults: null }), /Project instruction/);
+});
+

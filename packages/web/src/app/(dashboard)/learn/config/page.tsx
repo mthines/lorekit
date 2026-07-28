@@ -87,6 +87,13 @@ const PROPERTIES: {
       'Explicit host adapter when auto-detection is ambiguous. Repo wins over user.',
   },
   {
+    name: 'hooks.instructions',
+    type: 'Record<"SessionStart" | "PostToolUseFailure" | "Stop", string | null>',
+    layer: 'Both',
+    description:
+      'Per-event custom text appended to the hook output. Lets teams embed project-specific guidance (e.g. "focus on migration safety") into the injected agent context. Both layers are merged: repo instructions first, then user. null or an absent key means no instruction for that event.',
+  },
+  {
     name: 'telemetry.disabled',
     type: 'boolean',
     layer: 'Repo',
@@ -113,6 +120,11 @@ const REPO_SNIPPET = `// .lorekit.json — repo root, safe to commit (no secrets
     "branch::owner/name::": { "tags": ["ephemeral"] }
   },
   "hooks.disabled": ["Stop"],
+  "hooks.instructions": {
+    "SessionStart":       "Focus on migration safety. Any lesson tagged 'migration' is high-priority.",
+    "PostToolUseFailure": "When recording a failure, include the exact command and exit code.",
+    "Stop":               null
+  },
   "telemetry.disabled": true,
   "dedupe.threshold": 0.8
 }`;
@@ -229,7 +241,30 @@ export default function LearnConfigPage() {
             <pre className="mt-2"><code>{USER_SNIPPET}</code></pre>
           </TutorialStep>
 
-          <TutorialStep number={3} title="Understand precedence & deny">
+          <TutorialStep number={3} title="Add project-specific hook instructions">
+            <p>
+              Use <code>hooks.instructions</code> to inject custom guidance into the three hook
+              events. The agent sees your text appended to each event&apos;s output — your default
+              LoreKit messages stay unchanged:
+            </p>
+            <pre className="mt-2"><code>{`// .lorekit.json
+{
+  "hooks.instructions": {
+    // Injected at session start, after the memory index.
+    "SessionStart":       "Focus on migration safety. Any lesson tagged 'migration' is high-priority.",
+    // Injected alongside the failure nudge when a tool call fails.
+    "PostToolUseFailure": "When recording a failure, include the exact command and exit code.",
+    // Injected with the retrospective nudge at end-of-turn (null = disabled for this event).
+    "Stop":               null
+  }
+}`}</code></pre>
+            <p className="mt-2">
+              Both config layers are merged — repo instructions come first, user instructions follow.
+              Run <code>lorekit doctor</code> to see what&apos;s resolved for each event.
+            </p>
+          </TutorialStep>
+
+          <TutorialStep number={4} title="Understand precedence & deny">
             <p>A <em>selection</em> (which mode to use) is resolved highest-precedence first:</p>
             <pre className="mt-2"><code>{`env LOREKIT_MODE → user config "mode" → repo config "mode" → built-in default ("remote")`}</code></pre>
             <p className="mt-2">
@@ -251,7 +286,7 @@ export default function LearnConfigPage() {
             </ul>
           </TutorialStep>
 
-          <TutorialStep number={4} title="Check the resolved mode">
+          <TutorialStep number={5} title="Check the resolved mode">
             <p>
               Run the CLI doctor to see the resolved mode, <strong>which source decided it</strong>,
               and any active deny constraints:
