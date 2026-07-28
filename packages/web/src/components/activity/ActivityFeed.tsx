@@ -36,21 +36,24 @@ function groupByDate(lessons: LessonEntry[]): [string, LessonEntry[]][] {
   return Array.from(groups.entries());
 }
 
-function DateLabel({ date }: { date: string }) {
-  const d = new Date(date);
+/**
+ * Friendly heading for a UTC day string (`YYYY-MM-DD`): "Today" / "Yesterday"
+ * / weekday. One source of truth so the visible `DateLabel` and the day-group
+ * list's `aria-label` never diverge (a screen reader must hear the same label a
+ * sighted user reads, not the raw ISO date).
+ */
+function dayLabel(date: string): string {
   const today = new Date().toISOString().slice(0, 10);
   const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  if (date === today) return 'Today';
+  if (date === yesterday) return 'Yesterday';
+  return new Date(date).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+}
 
-  const label =
-    date === today
-      ? 'Today'
-      : date === yesterday
-        ? 'Yesterday'
-        : d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
-
+function DateLabel({ date }: { date: string }) {
   return (
     <div className="sticky top-0 z-10 flex items-center gap-3 bg-[var(--color-bg)] py-2">
-      <span className="text-xs font-medium text-[var(--color-content-tertiary)]">{label}</span>
+      <span className="text-xs font-medium text-[var(--color-content-tertiary)]">{dayLabel(date)}</span>
       <div className="h-px flex-1 bg-[var(--color-border)]" aria-hidden />
     </div>
   );
@@ -73,7 +76,7 @@ export function ActivityFeed({ lessons, isSelected, onSelect }: ActivityFeedProp
       {grouped.map(([date, dayLessons]) => (
         <div key={date}>
           <DateLabel date={date} />
-          <div className="flex flex-col gap-1.5" role="list" aria-label={date}>
+          <div className="flex flex-col gap-1.5" role="list" aria-label={dayLabel(date)}>
             {dayLessons.map((lesson, i) => {
               const TriggerIcon = lesson.trigger ? (TRIGGER_ICONS[lesson.trigger] ?? Bot) : Bot;
               return (
