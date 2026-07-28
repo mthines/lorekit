@@ -124,6 +124,74 @@ function OwnershipFilterBar({
   );
 }
 
+// ── Filter bar (search + date + archived) ─────────────────────────────────────
+// Shared by both tabs and both breakpoints. `variant` carries the only two
+// differences between the desktop and mobile renders: the desktop bar sits in a
+// bordered header (`border-b`/padding), uses smaller type + the page `bg`, and
+// shows an "Archived" text label + hover affordances; the mobile bar is a bare
+// row with an icon-only archived toggle on the raised `bg`. Everything else —
+// the search input, the date picker, the toggle behaviour — is identical, so it
+// lives here once instead of near-verbatim in each breakpoint branch.
+
+function FilterBar({
+  variant,
+  search,
+  onSearchChange,
+  range,
+  onRangeChange,
+  showArchived,
+  onToggleArchived,
+}: {
+  variant: 'desktop' | 'mobile';
+  search: string;
+  onSearchChange: (value: string) => void;
+  range: DateRange | null;
+  onRangeChange: (range: DateRange | null) => void;
+  showArchived: boolean;
+  onToggleArchived: () => void;
+}) {
+  const desktop = variant === 'desktop';
+
+  return (
+    <div className={desktop ? 'flex items-center gap-2 border-b border-[var(--color-border)] p-3' : 'flex items-center gap-2'}>
+      <div className="relative flex-1">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-content-tertiary)]" aria-hidden />
+        <input
+          type="search"
+          placeholder="Search memories…"
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          aria-label="Search memories"
+          className={[
+            'w-full rounded-lg border border-[var(--color-border)] py-2 pl-8 pr-3 text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none transition-colors duration-150',
+            desktop ? 'bg-[var(--color-bg)] text-xs' : 'bg-[var(--color-bg-raised)] text-sm',
+          ].join(' ')}
+        />
+      </div>
+      <DateRangePicker value={range} onChange={onRangeChange} className="shrink-0" />
+      <button
+        type="button"
+        onClick={onToggleArchived}
+        aria-pressed={showArchived}
+        aria-label={showArchived ? 'Showing archived memories — click to show active' : 'Show archived memories'}
+        title={desktop ? (showArchived ? 'Showing archived' : 'Show archived') : undefined}
+        className={[
+          'flex min-h-9 shrink-0 items-center rounded-lg border transition-all duration-150',
+          desktop ? 'gap-1.5 px-2.5 py-1.5 text-xs font-medium' : 'justify-center p-2',
+          showArchived
+            ? 'border-amber-400/40 bg-amber-400/10 text-amber-400'
+            : `border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-tertiary)]${
+                desktop ? ' hover:border-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]' : ''
+              }`,
+        ].join(' ')}
+      >
+        <Archive className={desktop ? 'size-3.5' : 'size-4'} aria-hidden />
+        {desktop && <span className="hidden sm:inline">Archived</span>}
+      </button>
+    </div>
+  );
+}
+
 interface LoreExplorerProps {
   scopes: ScopeNode[];
   heatmapData: { date: string; count: number }[];
@@ -218,6 +286,12 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
 
   const isFiltered =
     search.trim() !== '' || range !== null || showArchived || ownerFilter !== 'all';
+
+  function handleToggleArchived() {
+    setShowArchived(!showArchived);
+    // Close the sidebar — the open lesson may not exist in the other list.
+    closeLesson();
+  }
 
   function handleScopeSelect(scope: string | null) {
     startTransition(() => {
@@ -471,39 +545,15 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
         </div>
 
         <div className="flex flex-1 flex-col overflow-hidden">
-          <div className="flex items-center gap-2 border-b border-[var(--color-border)] p-3">
-            <div className="relative flex-1">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-content-tertiary)]" aria-hidden />
-              <input
-                type="search"
-                placeholder="Search memories…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                aria-label="Search memories"
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] py-2 pl-8 pr-3 text-xs text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none transition-colors duration-150"
-              />
-            </div>
-            <DateRangePicker value={range} onChange={setRange} className="shrink-0" />
-            <button
-              type="button"
-              onClick={() => {
-                setShowArchived(!showArchived);
-                closeLesson();
-              }}
-              aria-pressed={showArchived}
-              aria-label={showArchived ? 'Showing archived memories — click to show active' : 'Show archived memories'}
-              title={showArchived ? 'Showing archived' : 'Show archived'}
-              className={[
-                'flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all duration-150',
-                showArchived
-                  ? 'border-amber-400/40 bg-amber-400/10 text-amber-400'
-                  : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-tertiary)] hover:border-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]',
-              ].join(' ')}
-            >
-              <Archive className="size-3.5" aria-hidden />
-              <span className="hidden sm:inline">Archived</span>
-            </button>
-          </div>
+          <FilterBar
+            variant="desktop"
+            search={search}
+            onSearchChange={setSearch}
+            range={range}
+            onRangeChange={setRange}
+            showArchived={showArchived}
+            onToggleArchived={handleToggleArchived}
+          />
 
           <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
 
@@ -543,37 +593,15 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           )}
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-content-tertiary)]" aria-hidden />
-            <input
-              type="search"
-              placeholder="Search memories…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              aria-label="Search memories"
-              className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] py-2 pl-8 pr-3 text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none transition-colors duration-150"
-            />
-          </div>
-          <DateRangePicker value={range} onChange={setRange} className="shrink-0" />
-          <button
-            type="button"
-            onClick={() => {
-              setShowArchived(!showArchived);
-              closeLesson();
-            }}
-            aria-pressed={showArchived}
-            aria-label={showArchived ? 'Showing archived memories — click to show active' : 'Show archived memories'}
-            className={[
-              'flex min-h-9 shrink-0 items-center justify-center rounded-lg border p-2 transition-all duration-150',
-              showArchived
-                ? 'border-amber-400/40 bg-amber-400/10 text-amber-400'
-                : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-tertiary)]',
-            ].join(' ')}
-          >
-            <Archive className="size-4" aria-hidden />
-          </button>
-        </div>
+        <FilterBar
+          variant="mobile"
+          search={search}
+          onSearchChange={setSearch}
+          range={range}
+          onRangeChange={setRange}
+          showArchived={showArchived}
+          onToggleArchived={handleToggleArchived}
+        />
 
         <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
 
