@@ -192,15 +192,16 @@ function TypewriterLine({
     return () => clearInterval(id);
   }, [text, reducedMotion]);
 
-  const colorClass =
-    type === 'command'       ? 'text-[var(--color-content-primary)]'  :
-    type === 'success'       ? 'text-[var(--color-success)]'          :
-    type === 'info'          ? 'text-[var(--color-scope-repo)]'       :
-    type === 'agent'         ? 'text-[var(--color-accent)]'           :
-    type === 'separator'     ? 'text-[var(--color-content-tertiary)]' :
-    type === 'session-end'   ? 'text-[var(--color-error)]'            :
-    type === 'session-start' ? 'text-[var(--color-success)]'          :
-                               'text-[var(--color-content-secondary)]';
+  const LINE_COLOR: Record<ScriptLine['type'], string> = {
+    command:       'text-[var(--color-content-primary)]',
+    success:       'text-[var(--color-success)]',
+    info:          'text-[var(--color-scope-repo)]',
+    agent:         'text-[var(--color-accent)]',
+    separator:     'text-[var(--color-content-tertiary)]',
+    'session-end': 'text-[var(--color-error)]',
+    'session-start':'text-[var(--color-success)]',
+  };
+  const colorClass = LINE_COLOR[type] ?? 'text-[var(--color-content-secondary)]';
 
   return (
     <div className={`font-mono text-xs leading-relaxed whitespace-pre-wrap ${colorClass}`}>
@@ -315,18 +316,6 @@ export function TerminalTheater() {
     });
   }
 
-  /** Flip a single card's `loaded` flag by index (used for staggered lighting). */
-  function lightUpCard(index: number) {
-    setCards((prev) =>
-      prev.map((c, i) => (i === index ? { ...c, loaded: true } : c)),
-    );
-  }
-
-  /** Reset all cards back to `written` state (used just before loop restart). */
-  function dimAllCards() {
-    setCards((prev) => prev.map((c) => ({ ...c, loaded: false })));
-  }
-
   const play = useCallback(
     async (tabIndex: number) => {
       clearTimers();
@@ -358,10 +347,11 @@ export function TerminalTheater() {
         await wait(line.text.length * CHAR_DELAY + 80);
 
         if (line.card) {
+          const card = line.card;
           await wait(CARD_APPEAR_DELAY);
           if (cancelRef.current) return;
           // Append card in `written` state — it stays from here on
-          setCards((prev) => [...prev, { ...line.card!, loaded: false }]);
+          setCards((prev) => [...prev, { ...card, loaded: false }]);
         }
 
         await wait(line.pauseAfter ?? LINE_GAP);
@@ -396,7 +386,7 @@ export function TerminalTheater() {
             const cardIndex = i;
             const delay = cardIndex * LOAD_STAGGER;
             const id = setTimeout(() => {
-              if (!cancelRef.current) lightUpCard(cardIndex);
+              if (!cancelRef.current) setCards((prev) => prev.map((card, j) => (j === cardIndex ? { ...card, loaded: true } : card)));
             }, delay);
             timeoutsRef.current.push(id);
           }
@@ -410,7 +400,7 @@ export function TerminalTheater() {
       // ── Loop: dim cards back to written, then restart ─────────────────────
       if (cancelRef.current) return;
       await wait(400);
-      dimAllCards();
+      setCards((prev) => prev.map((card) => ({ ...card, loaded: false })));
       setAct('a');
       await wait(300);
 
