@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/mthines/lorekit/compare/cli-v1.15.0...cli-v1.16.0) (2026-07-28)
+
+
+### Features
+
+* **cli:** add hooks.instructions config for user-customizable hook output ([#188](https://github.com/mthines/lorekit/issues/188)) ([df59900](https://github.com/mthines/lorekit/commit/df59900f717e3d77a1bcd69747108b16ae25268b))
+
 ## [1.15.0](https://github.com/mthines/lorekit/compare/cli-v1.14.0...cli-v1.15.0) (2026-07-28)
 
 
