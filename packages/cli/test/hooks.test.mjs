@@ -223,3 +223,54 @@ test('adapters normalize their native stdin fields', () => {
   assert.equal(cu.sessionId, 'g');
   assert.equal(cu.cwd, '/w');
 });
+
+// ── scope.defaults + tags.default in nudge text ───────────────────────────────
+// (retrospectiveNudge, failureNudge already imported above)
+
+// Build a minimal scope object matching deriveScope's shape.
+function fakeScope(overrides = {}) {
+  return { repoScope: 'repo::owner/repo', ...overrides };
+}
+
+test('retrospectiveNudge includes tags hint when tagsDefault is set', () => {
+  const scope = fakeScope();
+  const control = { tagsDefault: ['team', 'loop::aw-lessons'], scopeDefaults: null };
+  const text = retrospectiveNudge(scope, control);
+  assert.match(text, /Include tags/);
+  assert.match(text, /"team"/);
+  assert.match(text, /"loop::aw-lessons"/);
+});
+
+test('retrospectiveNudge includes no tags hint when tagsDefault is empty', () => {
+  const scope = fakeScope();
+  const control = { tagsDefault: [], scopeDefaults: null };
+  const text = retrospectiveNudge(scope, control);
+  assert.doesNotMatch(text, /Include tags/);
+});
+
+test('failureNudge includes tags from scope.defaults when scope matches', () => {
+  const scope = fakeScope();
+  const control = {
+    tagsDefault: [],
+    scopeDefaults: { 'repo::owner/repo': { tags: ['project::lorekit'] } },
+  };
+  const text = failureNudge('Bash', scope, control);
+  assert.match(text, /Include tags/);
+  assert.match(text, /"project::lorekit"/);
+});
+
+test('failureNudge adds no tags hint when scope does not match any defaults prefix', () => {
+  const scope = fakeScope({ repoScope: 'repo::other/repo' });
+  const control = {
+    tagsDefault: [],
+    scopeDefaults: { 'repo::owner/': { tags: ['team'] } },
+  };
+  const text = failureNudge('Bash', scope, control);
+  assert.doesNotMatch(text, /Include tags/);
+});
+
+test('retrospectiveNudge and failureNudge work without control arg (backward compat)', () => {
+  const scope = fakeScope();
+  assert.doesNotThrow(() => retrospectiveNudge(scope));
+  assert.doesNotThrow(() => failureNudge('Bash', scope));
+});

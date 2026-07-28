@@ -345,3 +345,28 @@ test('traceCommand propagates a handler throw but still returns/exports', async 
     else process.env.LOREKIT_TELEMETRY = prev;
   }
 });
+
+// ── telemetry.disabled in .lorekit.json ───────────────────────────────────────
+
+test('telemetry.disabled: true suppresses export even when endpoint is configured', () => {
+  const cfg = resolveTelemetryConfig(ENABLED_ENV, { 'telemetry.disabled': true });
+  assert.equal(cfg.enabled, false);
+});
+
+test('telemetry.disabled: false does not suppress export', () => {
+  const cfg = resolveTelemetryConfig(ENABLED_ENV, { 'telemetry.disabled': false });
+  assert.equal(cfg.enabled, true);
+});
+
+test('telemetry.disabled not set — no effect on telemetry', () => {
+  const cfg = resolveTelemetryConfig(ENABLED_ENV, {});
+  assert.equal(cfg.enabled, true);
+});
+
+test('env LOREKIT_TELEMETRY=0 still wins over telemetry.disabled: false', () => {
+  const cfg = resolveTelemetryConfig(
+    { ...ENABLED_ENV, LOREKIT_TELEMETRY: '0' },
+    { 'telemetry.disabled': false },
+  );
+  assert.equal(cfg.enabled, false);
+});

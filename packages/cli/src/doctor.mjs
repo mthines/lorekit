@@ -11,6 +11,7 @@ import {
   readLorekitServer,
   readMcpConfig,
   tokenKind,
+  readLorekitJson,
 } from './config.mjs';
 import { splitEndpoint } from './mcp.mjs';
 import { deriveScope } from './scope.mjs';
@@ -85,6 +86,21 @@ export async function doctor(args) {
     record('info', 'write scope', `${scope.repoScope} (default for "went wrong" memories)`);
   } else {
     record('warn', 'scope', 'no git remote here — memories fall back to global');
+  }
+
+  // 6. doctor.require — committed list of checks that MUST pass.
+  //    Useful as a CI gate: any check in the list that did not pass causes a failure.
+  const lorekitJson = readLorekitJson(root);
+  const required = (Array.isArray(lorekitJson['doctor.require']) ? lorekitJson['doctor.require'] : [])
+    .filter((r) => typeof r === 'string');
+  for (const req of required) {
+    // A required check passes if its label is NOT in failedChecks (it either
+    // passed or was never run; unknown labels get a pass to avoid false failures).
+    if (failedChecks.includes(req)) {
+      record('fail', 'doctor.require', `required check failed: ${req}`);
+    } else {
+      record('pass', 'doctor.require', `required check passed: ${req}`);
+    }
   }
 
   // Summary.

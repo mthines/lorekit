@@ -25,6 +25,7 @@
 
 import process from 'node:process';
 import { TELEMETRY_TOKEN } from './telemetry-token.mjs';
+import { readLorekitJson } from './config.mjs';
 
 // ── Baked-in defaults (public by design) ──────────────────────────────────────
 // The endpoint is a committed default; the token is injected at publish time
@@ -42,11 +43,13 @@ const OFF_VALUES = new Set(['0', 'off', 'false', 'no', 'disable', 'disabled']);
 // ── Config resolution ─────────────────────────────────────────────────────────
 
 /**
- * Resolve telemetry config from env + baked-in defaults.
+ * Resolve telemetry config from env + baked-in defaults + .lorekit.json.
  * Returns { enabled: false } when disabled or unconfigured, else the endpoint
  * and headers to export with.
+ * @param {object} [env]  defaults to process.env
+ * @param {object} [repoConfig]  pre-loaded .lorekit.json (optional; read from cwd if absent)
  */
-export function resolveTelemetryConfig(env = process.env) {
+export function resolveTelemetryConfig(env = process.env, repoConfig) {
   const optOut = env.LOREKIT_TELEMETRY;
   if (optOut !== undefined && OFF_VALUES.has(String(optOut).trim().toLowerCase())) {
     return { enabled: false };
@@ -55,6 +58,12 @@ export function resolveTelemetryConfig(env = process.env) {
   // Match it precisely — a stray `DO_NOT_TRACK=false` should NOT disable export
   // (use LOREKIT_TELEMETRY for the loose app-specific opt-out values).
   if (env.DO_NOT_TRACK && String(env.DO_NOT_TRACK).trim() === '1') {
+    return { enabled: false };
+  }
+  // `telemetry.disabled: true` in .lorekit.json — team-level opt-out committed
+  // to the repo. Checked after env overrides (env always wins).
+  const cfg = repoConfig !== undefined ? repoConfig : readLorekitJson(process.cwd());
+  if (cfg['telemetry.disabled'] === true) {
     return { enabled: false };
   }
 

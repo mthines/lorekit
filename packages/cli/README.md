@@ -444,13 +444,53 @@ Two config layers decide the mode:
 - **Repo / team** — a `.lorekit.json` at the repo root (and/or the existing
   `lorekit` block in `.mcp.json` for the connection).
 
-Both files share one schema:
+Both files share this schema — all fields optional:
 
 ```jsonc
+// .lorekit.json  (repo root — safe to commit, no secrets)
+// ~/.lorekit/config.json  (user/machine — personal overrides, not committed)
 {
-  "mode": "local",        // select a mode (off | local | remote)
-  "store": ".lorekit",    // project-tier store dir (relative to repo root, or absolute)
-  "deny": ["remote"]      // forbid modes outright — deny always wins
+  // ── Mode & store ───────────────────────────────────────────────────────────
+  "mode": "local",         // off | local | remote
+  "store": ".lorekit",     // project-tier store path (relative to root, or absolute)
+  "deny": ["remote"],      // forbid modes outright — deny always wins, union across layers
+
+  // ── Connection (repo config only — no token, safe to commit) ───────────────
+  "mcp.endpoint": "https://<ref>.supabase.co/functions/v1/mcp",
+                           // committable MCP URL without token; token still comes
+                           // from .mcp.json or LOREKIT_TOKEN env var
+
+  // ── Write behaviour ────────────────────────────────────────────────────────
+  "tags.default": ["team", "project::my-project"],
+                           // tags appended to every memory.write from this repo/user
+                           // both layers merged: repo tags first, then user tags
+
+  "scope.defaults": {
+    "repo::owner/name":     { "tags": ["team"] },
+    "branch::owner/name::": { "tags": ["ephemeral"] }
+  },
+                           // per-scope tag defaults applied to writes whose scope
+                           // starts with the key; matched by prefix (no wildcards needed)
+                           // repo config only — this is a team-level write policy
+
+  // ── Hook behaviour ─────────────────────────────────────────────────────────
+  "hooks.disabled": ["Stop"],
+                           // suppress specific hook events; union across layers
+                           // values: "SessionStart" | "PostToolUseFailure" | "Stop"
+
+  "hooks.adapter": "claude",
+                           // explicit adapter when auto-detection is ambiguous
+                           // values: "claude" | "cursor" | "codex"
+                           // repo wins over user
+
+  // ── Telemetry ──────────────────────────────────────────────────────────────
+  "telemetry.disabled": true,
+                           // team-level opt-out for orgs with a no-telemetry policy
+                           // env LOREKIT_TELEMETRY=0 always wins if set
+
+  // ── Dedupe threshold ───────────────────────────────────────────────────────
+  "dedupe.threshold": 0.8  // Jaccard similarity cutoff for `lorekit dedupe`
+                           // --threshold flag wins when passed explicitly
 }
 ```
 

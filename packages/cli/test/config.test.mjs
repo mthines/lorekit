@@ -116,3 +116,43 @@ test('copyDir reports how many files it actually wrote', () => {
   assert.equal(copyDir(src, dest), 0); // re-run without --force: nothing written
   assert.equal(copyDir(src, dest, { force: true }), 2); // force: both rewritten
 });
+
+// ── mcp.endpoint in .lorekit.json ─────────────────────────────────────────────
+import { resolveProjectConnection } from '../src/config.mjs';
+import { splitEndpoint } from '../src/mcp.mjs';
+
+test('resolveProjectConnection uses mcp.endpoint from .lorekit.json as fallback', () => {
+  const root = tmpRoot();
+  const ep = 'https://abc.supabase.co/functions/v1/mcp';
+  fs.writeFileSync(path.join(root, '.lorekit.json'), JSON.stringify({ 'mcp.endpoint': ep }));
+  const conn = resolveProjectConnection(root, splitEndpoint);
+  assert.equal(conn.endpoint, ep);
+});
+
+test('resolveProjectConnection prefers .mcp.json over mcp.endpoint in .lorekit.json', () => {
+  const root = tmpRoot();
+  const mpcEp = 'https://primary.supabase.co/functions/v1/mcp';
+  const fallbackEp = 'https://fallback.supabase.co/functions/v1/mcp';
+  const mcpJson = {
+    mcpServers: {
+      lorekit: {
+        command: 'npx',
+        args: ['-y', 'mcp-remote', mpcEp, '--header', 'Authorization:Bearer lk_rw_tok'],
+      },
+    },
+  };
+  fs.writeFileSync(path.join(root, '.mcp.json'), JSON.stringify(mcpJson));
+  fs.writeFileSync(path.join(root, '.lorekit.json'), JSON.stringify({ 'mcp.endpoint': fallbackEp }));
+  const conn = resolveProjectConnection(root, splitEndpoint);
+  assert.equal(conn.endpoint, mpcEp);
+});
+
+test('resolveProjectConnection ignores placeholder mcp.endpoint', () => {
+  const root = tmpRoot();
+  fs.writeFileSync(
+    path.join(root, '.lorekit.json'),
+    JSON.stringify({ 'mcp.endpoint': 'https://<project-ref>.supabase.co/functions/v1/mcp' }),
+  );
+  const conn = resolveProjectConnection(root, splitEndpoint);
+  assert.equal(conn.endpoint, null);
+});

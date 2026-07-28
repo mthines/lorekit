@@ -120,25 +120,52 @@ export function formatRelevantLessons(lessons) {
   return `${header}\n${body}`;
 }
 
+// Build a tags hint string from config-resolved tags and scope defaults. Returns
+// "" when there are no configured tags (no hint appended to the nudge).
+function tagsHint(writeScope, { tagsDefault = [], scopeDefaults = null } = {}) {
+  const tags = [...tagsDefault];
+  if (scopeDefaults) {
+    for (const [prefix, cfg] of Object.entries(scopeDefaults)) {
+      if (
+        writeScope === prefix ||
+        writeScope.startsWith(prefix.endsWith('::') ? prefix : prefix + '::')
+      ) {
+        for (const t of Array.isArray(cfg.tags) ? cfg.tags : []) {
+          if (typeof t === 'string' && t.length > 0 && !tags.includes(t)) tags.push(t);
+        }
+      }
+    }
+  }
+  if (tags.length === 0) return '';
+  return ` Include tags: [${tags.map((t) => JSON.stringify(t)).join(', ')}].`;
+}
+
 // The retrospective nudge emitted at end-of-turn (one-shot per session).
-export function retrospectiveNudge(scope) {
+// `control` is the resolved control object (optional) — carries tagsDefault and
+// scopeDefaults when the repo/user config defines them.
+export function retrospectiveNudge(scope, control) {
   const writeScope = scope.repoScope || 'global';
+  const hint = tagsHint(writeScope, control);
   return (
     'LoreKit retrospective: if this session hit a stuck loop, a repeated ' +
     'command failure, a surprising gotcha, a near-miss, or a wrong assumption ' +
     'that cost time, record it now via the lorekit-memory skill ' +
-    `(memory.write to ${writeScope}, phrased as an observation). ` +
+    `(memory.write to ${writeScope}, phrased as an observation).${hint} ` +
     'If nothing was durable, do nothing.'
   );
 }
 
 // The nudge emitted when a tool failure is detected.
-export function failureNudge(toolName, scope) {
+// `control` is the resolved control object (optional) — carries tagsDefault and
+// scopeDefaults when the repo/user config defines them.
+export function failureNudge(toolName, scope, control) {
   const writeScope = scope.repoScope || 'global';
+  const hint = tagsHint(writeScope, control);
+  const suffix = hint ? `${hint} So the next run avoids it.` : 'so the next run avoids it.';
   return (
     `LoreKit: the last ${toolName} call failed. If this is a recurring or ` +
     'non-obvious failure, consider recording the fix as a memory via ' +
-    `lorekit-memory (memory.write to ${writeScope}), so the next run avoids it.`
+    `lorekit-memory (memory.write to ${writeScope}) — ${suffix}`
   );
 }
 
