@@ -72,25 +72,19 @@ export default async function DashboardLayout({ children }: { children: React.Re
               <div className="flex flex-1 flex-col overflow-hidden">
                 <TopBar user={user} />
                 {/*
-                  main stays the bounded scroll container (the lore explorer's
-                  desktop two-panel layout relies on this). The footer renders
-                  inside it, after the page content, so it stays subtle —
-                  appearing at the end of the scroll rather than eating fixed
-                  vertical space — while still reachable on every page.
+                  Sticky-footer layout: main is the bounded scroll container AND
+                  a flex column. The content wrapper grows (flex-1) to push the
+                  footer to the bottom of the viewport when a page is shorter than
+                  the screen, while still letting it flow below the content on
+                  taller pages. Driving the growth from flex (rather than a
+                  percentage min-h-full, which is unreliable inside a flex scroll
+                  container) is what keeps the footer pinned to the bottom. The
+                  content wrapper stays a flex-1/min-h-0 block, so the lore
+                  explorer's own h-full layout is unaffected.
                 */}
-                <main className="flex-1 overflow-y-auto p-4 pb-20 md:pb-6 md:p-6">
-                  {/*
-                    Sticky-footer layout: a min-h-full flex column whose content
-                    area grows (flex-1) to push the footer to the bottom of the
-                    viewport when a page is shorter than the screen, while still
-                    letting it flow below the content on taller pages. main stays
-                    the scroll container; the inner content stays an auto-height
-                    block, so the lore explorer's own h-full layout is unaffected.
-                  */}
-                  <div className="flex min-h-full flex-col">
-                    <div className="min-h-0 flex-1">{children}</div>
-                    <SiteFooter className="-mx-4 mt-8 md:-mx-6" />
-                  </div>
+                <main className="flex flex-1 flex-col overflow-y-auto p-4 pb-20 md:pb-6 md:p-6">
+                  <div className="min-h-0 flex-1">{children}</div>
+                  <SiteFooter className="-mx-4 mt-8 md:-mx-6" />
                 </main>
               </div>
             </MemorySidebarProvider>

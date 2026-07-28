@@ -2,14 +2,20 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
+import { Cloud, HardDrive } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+/** Where a memory lives: the on-disk offline store or the hosted remote store. */
+type MemoryStore = 'local' | 'remote';
 
 type MemoryCard = {
   id: string;
   key: string;
   value: string;
   source?: string;
+  /** which store this memory persists in — surfaced as an icon on the card */
+  store: MemoryStore;
 };
 
 type LiveCard = MemoryCard & {
@@ -24,6 +30,7 @@ type ScriptLine = {
     | 'success'
     | 'info'
     | 'agent'
+    | 'error'
     | 'separator'
     | 'session-end'
     | 'session-start';
@@ -43,27 +50,88 @@ type UseCase = {
 
 const USE_CASES: UseCase[] = [
   {
+    label: 'Self-healing',
+    act1: [
+      { type: 'command', text: 'pnpm build', pauseAfter: 240 },
+      {
+        type: 'error',
+        text: '✗ ReferenceError: window is not defined  (server component)',
+        pauseAfter: 320,
+      },
+      {
+        type: 'agent',
+        text: '> Agent: Guarded window access with a typeof check.\n         Recording the fix so I never trip on this again.',
+        pauseAfter: 260,
+      },
+      {
+        type: 'command',
+        text: 'memory.write { scope: "repo::lorekit", key: "fix/ssr-window", value: "guard window with typeof check in server components" }',
+        pauseAfter: 60,
+        card: {
+          id: 'ssr',
+          key: 'fix/ssr-window',
+          value: 'guard window with typeof check in server components',
+          store: 'remote',
+        },
+      },
+      { type: 'success', text: '✓ Saved', pauseAfter: 500 },
+      {
+        type: 'error',
+        text: '✗ Hydration mismatch: server/client <time> differ',
+        pauseAfter: 320,
+      },
+      {
+        type: 'agent',
+        text: '> Agent: Rendered the date client-side only.\n         Saving so it never recurs.',
+        pauseAfter: 260,
+      },
+      {
+        type: 'command',
+        text: 'memory.write { scope: "repo::lorekit", key: "fix/hydration-date", value: "render dates client-side only to avoid hydration mismatch" }',
+        pauseAfter: 60,
+        card: {
+          id: 'hydration',
+          key: 'fix/hydration-date',
+          value: 'render dates client-side only to avoid hydration mismatch',
+          store: 'local',
+        },
+      },
+      { type: 'success', text: '✓ Saved', pauseAfter: 800 },
+    ],
+    act2: [
+      { type: 'separator', text: '— New session —', pauseAfter: 320 },
+      { type: 'command', text: 'memory.list { scope: "repo::lorekit" }', pauseAfter: 60 },
+      { type: 'info', text: '  ↳ 2 memories loaded', pauseAfter: 400 },
+      {
+        type: 'agent',
+        text: '> Agent: Known pitfalls here: SSR window access + date hydration.\n         Writing it right the first time.',
+        pauseAfter: 300,
+      },
+      { type: 'success', text: '✓ Past mistakes avoided automatically', pauseAfter: 2000 },
+    ],
+  },
+  {
     label: 'Code conventions',
     act1: [
       {
         type: 'command',
         text: 'memory.write { scope: "repo::lorekit", key: "style/indent", value: "2 spaces" }',
         pauseAfter: 60,
-        card: { id: 'indent', key: 'style/indent', value: '2 spaces' },
+        card: { id: 'indent', key: 'style/indent', value: '2 spaces', store: 'local' },
       },
       { type: 'success', text: '✓ Saved', pauseAfter: 320 },
       {
         type: 'command',
         text: 'memory.write { scope: "repo::lorekit", key: "style/exports", value: "no default exports" }',
         pauseAfter: 60,
-        card: { id: 'exports', key: 'style/exports', value: 'no default exports' },
+        card: { id: 'exports', key: 'style/exports', value: 'no default exports', store: 'local' },
       },
       { type: 'success', text: '✓ Saved', pauseAfter: 320 },
       {
         type: 'command',
         text: 'memory.write { scope: "repo::lorekit", key: "db/columns", value: "snake_case" }',
         pauseAfter: 60,
-        card: { id: 'db', key: 'db/columns', value: 'snake_case' },
+        card: { id: 'db', key: 'db/columns', value: 'snake_case', store: 'remote' },
       },
       { type: 'success', text: '✓ Saved', pauseAfter: 800 },
     ],
@@ -74,47 +142,6 @@ const USE_CASES: UseCase[] = [
       {
         type: 'agent',
         text: '> Agent: I see snake_case for DB columns and 2-space indentation.\n         Continuing with those conventions.',
-        pauseAfter: 300,
-      },
-      { type: 'success', text: '✓ No context re-establishment needed', pauseAfter: 2000 },
-    ],
-  },
-  {
-    label: 'Auth setup',
-    act1: [
-      {
-        type: 'command',
-        text: 'memory.write { scope: "repo::lorekit", key: "auth/provider", value: "Supabase" }',
-        pauseAfter: 60,
-        card: { id: 'provider', key: 'auth/provider', value: 'Supabase' },
-      },
-      { type: 'success', text: '✓ Saved', pauseAfter: 320 },
-      {
-        type: 'command',
-        text: 'memory.write { scope: "repo::lorekit", key: "auth/pattern", value: "RLS with row-level policies" }',
-        pauseAfter: 60,
-        card: { id: 'pattern', key: 'auth/pattern', value: 'RLS with row-level policies' },
-      },
-      { type: 'success', text: '✓ Saved', pauseAfter: 320 },
-      {
-        type: 'command',
-        text: 'memory.write { scope: "repo::lorekit", key: "auth/sessions", value: "httpOnly cookies" }',
-        pauseAfter: 60,
-        card: {
-          id: 'sessions',
-          key: 'auth/sessions',
-          value: 'httpOnly cookies, no JWT in localStorage',
-        },
-      },
-      { type: 'success', text: '✓ Saved', pauseAfter: 800 },
-    ],
-    act2: [
-      { type: 'separator', text: '— New session —', pauseAfter: 320 },
-      { type: 'command', text: 'memory.list { scope: "repo::lorekit" }', pauseAfter: 60 },
-      { type: 'info', text: '  ↳ 3 memories loaded', pauseAfter: 400 },
-      {
-        type: 'agent',
-        text: '> Agent: Auth is Supabase with RLS. Using httpOnly cookies.\n         Skipping the usual setup questions.',
         pauseAfter: 300,
       },
       { type: 'success', text: '✓ No context re-establishment needed', pauseAfter: 2000 },
@@ -132,6 +159,7 @@ const USE_CASES: UseCase[] = [
           key: 'review/logging',
           value: 'use custom logger, not console.log',
           source: 'PR #42',
+          store: 'remote',
         },
       },
       { type: 'success', text: '✓ Saved  (source: PR #42 review comment)', pauseAfter: 320 },
@@ -144,6 +172,7 @@ const USE_CASES: UseCase[] = [
           key: 'review/components',
           value: 'prefer server components',
           source: 'PR #38',
+          store: 'remote',
         },
       },
       { type: 'success', text: '✓ Saved  (source: PR #38 review comment)', pauseAfter: 800 },
@@ -197,9 +226,10 @@ function TypewriterLine({
     success:       'text-[var(--color-success)]',
     info:          'text-[var(--color-scope-repo)]',
     agent:         'text-[var(--color-accent)]',
+    error:         'text-[var(--color-error)]',
     separator:     'text-[var(--color-content-tertiary)]',
     'session-end': 'text-[var(--color-error)]',
-    'session-start':'text-[var(--color-success)]',
+    'session-start': 'text-[var(--color-success)]',
   };
   const colorClass = LINE_COLOR[type] ?? 'text-[var(--color-content-secondary)]';
 
@@ -263,6 +293,18 @@ function MemoryCard({ card }: { card: LiveCard }) {
             · {card.source}
           </span>
         )}
+
+        {/* Store indicator — makes it explicit whether this memory is kept in
+            the on-disk offline store or the hosted remote store. */}
+        <span
+          className="ml-auto inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-[var(--color-content-tertiary)]"
+          title={card.store === 'remote' ? 'Hosted remote store' : 'On-disk local store'}
+        >
+          {card.store === 'remote'
+            ? <Cloud className="size-3" aria-hidden />
+            : <HardDrive className="size-3" aria-hidden />}
+          {card.store}
+        </span>
       </div>
 
       <div>
@@ -288,6 +330,14 @@ export function TerminalTheater() {
 
   const [activeTab, setActiveTab] = useState(0);
   const [renderedLines, setRenderedLines] = useState<ScriptLine[]>([]);
+
+  /**
+   * The terminal-output pane has a fixed height (so the window never resizes),
+   * which means a tall script — e.g. the Self-healing act — would otherwise
+   * stream its final, payoff lines below the fold. Keep the newest line in view
+   * by pinning the scroll to the bottom whenever a line is added.
+   */
+  const outputRef = useRef<HTMLDivElement>(null);
 
   /**
    * Single card array. Cards are added (loaded: false) during act 1 and
@@ -416,6 +466,12 @@ export function TerminalTheater() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
+  // Keep the latest streamed line visible within the fixed-height output pane.
+  useEffect(() => {
+    const el = outputRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [renderedLines]);
+
   const anyLoaded = act === 'b';
 
   return (
@@ -493,9 +549,11 @@ export function TerminalTheater() {
           </div>
         </div>
 
-        {/* Terminal output */}
+        {/* Terminal output — fixed height so the window never resizes as lines
+            stream in and out (keeps the footer below it from jumping). */}
         <div
-          className="px-4 py-4 min-h-[180px] space-y-1.5"
+          ref={outputRef}
+          className="px-4 py-4 h-[200px] overflow-y-auto space-y-1.5"
           aria-live="polite"
           aria-label="Terminal output"
         >
@@ -528,10 +586,23 @@ export function TerminalTheater() {
               : 'bg-[var(--color-bg-raised)]',
           ].join(' ')}
         >
-          <p className="font-mono text-[10px] text-[var(--color-content-tertiary)] mb-3 uppercase tracking-widest">
-            memory store
-          </p>
-          <div className="flex flex-col gap-2">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="font-mono text-[10px] text-[var(--color-content-tertiary)] uppercase tracking-widest">
+              memory store
+            </p>
+            {/* Legend for the per-card store icons */}
+            <div className="flex items-center gap-3 font-mono text-[10px] uppercase tracking-wide text-[var(--color-content-tertiary)]">
+              <span className="inline-flex items-center gap-1">
+                <HardDrive className="size-3" aria-hidden /> local
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <Cloud className="size-3" aria-hidden /> remote
+              </span>
+            </div>
+          </div>
+          {/* Fixed height so the card list never changes the window height as
+              memories are written one by one. */}
+          <div className="flex flex-col gap-2 h-[200px] overflow-y-auto pr-1">
             <AnimatePresence mode="popLayout">
               {cards.map((card) => (
                 <MemoryCard key={`${activeTab}-${card.id}`} card={card} />
