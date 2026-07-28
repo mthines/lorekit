@@ -6,10 +6,6 @@
 //   tags.default    — array of tags appended to every write (both layers merged)
 //   hooks.disabled  — array of hook event names to suppress (e.g. ["Stop"])
 //   hooks.adapter   — explicit adapter override ("claude" | "cursor" | "codex")
-//   hooks.instructions — map of hook event name → string injected as a project/user
-//                        instruction after the default hook output. Both layers merged
-//                        (repo text first, then user text). null or "" = no instruction
-//                        for that event.
 //
 // Two layers of config, two kinds of statement:
 //   - a SELECT (`mode`) chooses a mode within what is allowed;
@@ -32,9 +28,6 @@ import { resolveProjectConnection } from './config.mjs';
 import { splitEndpoint } from './mcp.mjs';
 
 export const MODES = ['off', 'local', 'remote'];
-
-// The three hook events that support per-event user instructions.
-const HOOK_EVENTS = ['SessionStart', 'PostToolUseFailure', 'Stop'];
 
 // Accept a few friendly spellings, incl. persistent-memory's `backend` values.
 export function normalizeMode(v) {
@@ -144,23 +137,25 @@ export function resolveControl({
     (typeof userConfig['hooks.adapter'] === 'string' && userConfig['hooks.adapter'].trim()) ||
     null;
 
-  // `hooks.instructions` — per-event text appended after the default hook output.
-  //    Both layers merged: repo text first, then user text (user supplements repo,
-  //    not overrides it — same pattern as tags.default). null or "" suppresses for
-  //    that event. The resolved value is a map of event name → string | null.
-  const repoInstr =
-    repoConfig['hooks.instructions'] && typeof repoConfig['hooks.instructions'] === 'object'
-      ? repoConfig['hooks.instructions']
-      : {};
-  const userInstr =
-    userConfig['hooks.instructions'] && typeof userConfig['hooks.instructions'] === 'object'
-      ? userConfig['hooks.instructions']
-      : {};
+  // `hooks.instructions` — per-event custom text appended to the hook output so
+  // teams can embed project-specific guidance directly into the injected context.
+  // Both layers contribute: repo instructions come first, user instructions follow
+  // (same direction as `tags.default` — repo supplements, user personalises).
+  // null for a given event means "no custom instruction for that event".
+  const HOOK_EVENTS = ['SessionStart', 'PostToolUseFailure', 'Stop'];
   const hooksInstructions = {};
-  for (const event of HOOK_EVENTS) {
-    const parts = [repoInstr[event], userInstr[event]]
-      .filter((v) => typeof v === 'string' && v.trim().length > 0);
-    hooksInstructions[event] = parts.length > 0 ? parts.join('\n') : null;
+  {
+    const repoInstr =
+      (repoConfig['hooks.instructions'] && typeof repoConfig['hooks.instructions'] === 'object')
+        ? repoConfig['hooks.instructions'] : {};
+    const userInstr =
+      (userConfig['hooks.instructions'] && typeof userConfig['hooks.instructions'] === 'object')
+        ? userConfig['hooks.instructions'] : {};
+    for (const ev of HOOK_EVENTS) {
+      const parts = [repoInstr[ev], userInstr[ev]]
+        .filter((v) => typeof v === 'string' && v.trim().length > 0);
+      hooksInstructions[ev] = parts.length > 0 ? parts.join('\n') : null;
+    }
   }
 
   return {

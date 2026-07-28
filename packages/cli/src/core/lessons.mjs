@@ -51,38 +51,56 @@ export async function fetchLessons(store, cwd) {
   return { scope, lessons: lessons.slice(0, MAX_LESSONS) };
 }
 
-// Render lessons as a compact markdown block, or null when there are none.
-// An optional `instruction` string (from `control.hooksInstructions.SessionStart`)
-// is appended as a "Project instruction" when provided — letting repo owners or
-// users customise what Claude is nudged toward at session start without touching
-// the default lesson output.
+// Cap on a lesson's one-line hook in the injected index. Long enough to jog
+// recognition, short enough that N lessons stay a scannable list, not a wall —
+// the full text is always one `memory.read` away.
+const HOOK_LEN = 80;
+
+// A lesson's first meaningful line, cleaned into a short recognisable hook:
+// skips leading HTML-comment metadata (`<!-- ... -->`) and markdown heading
+// marks, collapses whitespace, and truncates on a word boundary with an
+// ellipsis — so nothing is ever cut mid-word into noise like "cascades to GE".
+function lessonHook(value, max = HOOK_LEN) {
+  let first = '';
+  for (const raw of String(value || '').split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('<!--')) continue; // skip blanks + meta comments
+    first = line.replace(/^#+\s*/, '');              // strip markdown heading marks
+    if (first) break;
+  }
+  first = first.replace(/\s+/g, ' ').trim();
+  if (first.length <= max) return first;
+  const clipped = first.slice(0, max);
+  const lastSpace = clipped.lastIndexOf(' ');
+  return `${(lastSpace > max * 0.6 ? clipped.slice(0, lastSpace) : clipped).trimEnd()}…`;
+}
+
+// Render the SessionStart block as a compact INDEX — one terse line per lesson
+// (scope, key, and a short hook), never the full bodies. This mirrors the
+// lorekit-memory intake rule ("report briefly") and the MEMORY.md index pattern:
+// surface WHAT is known so the agent can `memory.read` the one lesson that turns
+// out to matter, instead of paying for every body up front. Null when empty.
+// `instruction` — an optional extra line appended after the index, sourced from
+// `hooks.instructions.SessionStart` in the control config. Lets teams inject
+// project-specific guidance (e.g. "focus on migration safety") without touching
+// the hook internals. Visible even when there are no lessons.
 export function formatLessons(lessons, scope, { instruction = null } = {}) {
-  const hasLessons = lessons && lessons.length > 0;
-  const hasInstruction = typeof instruction === 'string' && instruction.trim().length > 0;
-
-  if (!hasLessons && !hasInstruction) return null;
-
-  let out = '';
-
-  if (hasLessons) {
-    const header =
-      `LoreKit — ${lessons.length} shared ${lessons.length === 1 ? 'memory' : 'memories'} for ${scope.repoScope || 'this workspace'}. ` +
-      `Treat as considerations, not rules; trust the current code if they conflict.`;
-    const body = lessons
-      .map((l) => {
-        const first = String(l.value || '').split('\n')[0].slice(0, 300);
-        return `- (${l.scope}) ${l.key}: ${first}`;
-      })
-      .join('\n');
-    out = `${header}\n${body}`;
+  const noun = lessons && lessons.length === 1 ? 'memory' : 'memories';
+  if (!lessons || lessons.length === 0) {
+    // No lessons — only emit if there is a custom instruction to show.
+    if (!instruction) return null;
+    return (
+      `LoreKit: 0 ${noun} loaded · ${scope.repoScope || 'this workspace'} ` +
+      `— considerations, not rules; read any in full with memory.read.\n\n` +
+      `Project instruction: ${instruction}`
+    );
   }
-
-  if (hasInstruction) {
-    const block = `Project instruction: ${instruction.trim()}`;
-    out = out ? `${out}\n\n${block}` : block;
-  }
-
-  return out;
+  const header =
+    `LoreKit: ${lessons.length} ${noun} loaded · ${scope.repoScope || 'this workspace'} ` +
+    `— considerations, not rules; read any in full with memory.read.`;
+  const body = lessons.map((l) => `- (${l.scope}) ${l.key} — ${lessonHook(l.value)}`).join('\n');
+  const instructionBlock = instruction ? `\n\nProject instruction: ${instruction}` : '';
+  return `${header}\n${body}${instructionBlock}`;
 }
 
 // Distil a small set of significant, lowercased search TERMS from a tool
@@ -123,19 +141,16 @@ export function relevantLessons(lessons, terms, cap = MAX_RELEVANT) {
 }
 
 // Render the relevant-lessons block injected alongside the failure nudge, or
-// null when nothing matched. Framed as prior art, not a directive — same
-// "considerations, not rules" stance as `formatLessons`.
+// null when nothing matched. Same compact-index shape as `formatLessons`, with a
+// touch more hook per line (there are at most MAX_RELEVANT and they're directly
+// actionable). Framed as prior art, not a directive.
 export function formatRelevantLessons(lessons) {
   if (!lessons || lessons.length === 0) return null;
+  const noun = lessons.length === 1 ? 'memory' : 'memories';
   const header =
-    `LoreKit — you've hit something like this before. ${lessons.length} related ` +
-    `${lessons.length === 1 ? 'memory' : 'memories'} (considerations, not rules; trust the current code if they conflict):`;
-  const body = lessons
-    .map((l) => {
-      const first = String(l.value || '').split('\n')[0].slice(0, 300);
-      return `- (${l.scope}) ${l.key}: ${first}`;
-    })
-    .join('\n');
+    `LoreKit: ${lessons.length} related ${noun} — you've hit something like this before ` +
+    `(considerations, not rules; read in full with memory.read):`;
+  const body = lessons.map((l) => `- (${l.scope}) ${l.key} — ${lessonHook(l.value, 140)}`).join('\n');
   return `${header}\n${body}`;
 }
 
@@ -160,43 +175,32 @@ function tagsHint(writeScope, { tagsDefault = [], scopeDefaults = null } = {}) {
 }
 
 // The retrospective nudge emitted at end-of-turn (one-shot per session).
-// `control` is the resolved control object (optional) — carries tagsDefault,
-// scopeDefaults, and hooksInstructions when the repo/user config defines them.
+// `control` is the resolved control object (optional) — carries tagsDefault and
+// scopeDefaults when the repo/user config defines them.
 export function retrospectiveNudge(scope, control) {
   const writeScope = scope.repoScope || 'global';
   const hint = tagsHint(writeScope, control);
-  const base =
-    'LoreKit retrospective: if this session hit a stuck loop, a repeated ' +
-    'command failure, a surprising gotcha, a near-miss, or a wrong assumption ' +
-    'that cost time, record it now via the lorekit-memory skill ' +
-    `(memory.write to ${writeScope}, phrased as an observation).${hint} ` +
-    'If nothing was durable, do nothing.';
-
-  const instruction = control && control.hooksInstructions && control.hooksInstructions.Stop;
-  if (typeof instruction === 'string' && instruction.trim().length > 0) {
-    return `${base}\n\nProject instruction: ${instruction.trim()}`;
-  }
-  return base;
+  const instruction = control && control.hooksInstructions && control.hooksInstructions.Stop
+    ? `\n\nProject instruction: ${control.hooksInstructions.Stop}` : '';
+  return (
+    `LoreKit: hit any friction worth remembering — a stuck loop, a repeated ` +
+    `failure, a gotcha, a wrong assumption? If so, memory.write to ${writeScope} ` +
+    `as an observation; else skip.${hint}${instruction}`
+  );
 }
 
 // The nudge emitted when a tool failure is detected.
-// `control` is the resolved control object (optional) — carries tagsDefault,
-// scopeDefaults, and hooksInstructions when the repo/user config defines them.
+// `control` is the resolved control object (optional) — carries tagsDefault and
+// scopeDefaults when the repo/user config defines them.
 export function failureNudge(toolName, scope, control) {
   const writeScope = scope.repoScope || 'global';
   const hint = tagsHint(writeScope, control);
-  const suffix = hint ? `${hint} So the next run avoids it.` : 'so the next run avoids it.';
-  const base =
-    `LoreKit: the last ${toolName} call failed. If this is a recurring or ` +
-    'non-obvious failure, consider recording the fix as a memory via ' +
-    `lorekit-memory (memory.write to ${writeScope}) — ${suffix}`;
-
-  const instruction =
-    control && control.hooksInstructions && control.hooksInstructions.PostToolUseFailure;
-  if (typeof instruction === 'string' && instruction.trim().length > 0) {
-    return `${base}\n\nProject instruction: ${instruction.trim()}`;
-  }
-  return base;
+  const instruction = control && control.hooksInstructions && control.hooksInstructions.PostToolUseFailure
+    ? `\n\nProject instruction: ${control.hooksInstructions.PostToolUseFailure}` : '';
+  return (
+    `LoreKit: the last ${toolName} call failed. If it's recurring or non-obvious, ` +
+    `memory.write to ${writeScope} with the fix so the next run avoids it.${hint}${instruction}`
+  );
 }
 
 // Pull the human-readable error text out of a tool_response of any shape. Total:
