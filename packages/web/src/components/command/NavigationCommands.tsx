@@ -23,7 +23,7 @@
  * ### Learn
  * Direct jumps to the Getting Started page and each tutorial:
  *   Setup · Offline storage · Remote storage · Team sharing ·
- *   Private lore · Tags & scopes · Use cases
+ *   Private lore · Tags & scopes · Configuration · Use cases
  *
  * ### Lore
  * "Open Lesson…" — async nested list of the 20 most-recent memories;
@@ -42,6 +42,7 @@ import {
   ShieldCheck,
   UserCircle,
   Rocket,
+  FileCog,
   HardDrive,
   Cloud,
   Lock,
@@ -242,6 +243,15 @@ export function NavigationCommands() {
     icon: <Tag className="size-4" />,
     group: 'Learn',
     onSelect: () => router.push('/learn/tags'),
+  });
+
+  useCommand({
+    id: 'learn-config',
+    label: 'Configuration Reference',
+    description: 'All .lorekit.json / config.json options',
+    icon: <FileCog className="size-4" />,
+    group: 'Learn',
+    onSelect: () => router.push('/learn/config'),
   });
 
   useCommand({
