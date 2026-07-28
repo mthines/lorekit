@@ -27,6 +27,7 @@ export const WRITE_TOOLS: ReadonlySet<string> = new Set([
   'memory.archive',
   'memory.restore',
   'memory.purge',
+  'memory.purge_expired',
 ]);
 
 /**

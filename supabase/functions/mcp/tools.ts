@@ -18,6 +18,7 @@ import { createTracedClient, type Span } from '../_shared/otel.ts';
 import { translateCapError } from './limits.ts';
 import { translateOrgPermissionError } from './org-permissions.ts';
 import { parseCreatedAt } from './created-at.ts';
+import { parseTtlDays } from './ttl.ts';
 import { recordAudit } from './audit.ts';
 import { applyTenantScope } from './tenant-scope.ts';
 
@@ -48,13 +49,14 @@ export async function toolWrite(
   userId: string | null,
   span: Span,
 ) {
-  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org } = params;
+  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, clear_ttl = false } = params;
   if (!rawScope || !key || !value) throw new Error('scope, key, and value are required');
   if (value.length > MAX_VALUE_BYTES) throw new Error(`value exceeds ${MAX_VALUE_BYTES} bytes`);
   const scope = validateScope(rawScope);
   // Optional creation-date override (migration use case). Validates + rejects
   // future dates; null when omitted so the DB applies its now() default.
   const createdAt = parseCreatedAt(created_at);
+  const ttlDays = parseTtlDays(ttl_days);
 
   span.setAttributes({
     'lorekit.scope': scope,
@@ -63,6 +65,8 @@ export async function toolWrite(
     ...(trigger ? { 'lorekit.trigger': trigger } : {}),
     ...(createdAt ? { 'lorekit.created_at': createdAt } : {}),
     ...(org ? { 'lorekit.org': org } : {}),
+    ...(ttlDays !== null ? { 'lorekit.ttl_days': ttlDays } : {}),
+    ...(clear_ttl ? { 'lorekit.clear_ttl': true } : {}),
   });
 
   // 00003 replaced the plain unique constraint with PARTIAL indexes
@@ -81,6 +85,8 @@ export async function toolWrite(
       p_trigger: trigger ?? null,
       p_created_at: createdAt,
       p_org_slug: org ?? null,
+      p_ttl_days: ttlDays,
+      p_clear_ttl: clear_ttl,
     })
     .single();
   if (error) {
@@ -115,7 +121,9 @@ export async function toolWrite(
       notice: `Saved to your personal lore. The scope "${scope}" is shared with the "${row.binding_org_slug}" organization, but you're not a write-member — ask an admin to add you to share it with the team.`,
     };
   }
-  return { id: row.id, created_at: row.created_at };
+  const result: Record<string, unknown> = { id: row.id, created_at: row.created_at };
+  if (ttlDays !== null || clear_ttl) result.expires_at = (row as { id: string; created_at: string; expires_at?: string | null }).expires_at ?? null;
+  return result;
 }
 
 export async function toolRead(
@@ -131,7 +139,8 @@ export async function toolRead(
   span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
 
   const tracedDb = createTracedClient(db, span);
-  let query = tracedDb.from('memories').select('value,updated_at').eq('scope', scope).eq('key', key).is('archived_at', null);
+  let query = tracedDb.from('memories').select('value,updated_at').eq('scope', scope).eq('key', key).is('archived_at', null)
+    .or('expires_at.is.null,expires_at.gt.now()');
   if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
   const { data, error } = await query.maybeSingle();
   if (error) throw new Error(error.message);
@@ -156,6 +165,7 @@ export async function toolList(
     .select('key,value,tags,updated_at')
     .eq('scope', scope)
     .is('archived_at', null)
+    .or('expires_at.is.null,expires_at.gt.now()')
     .order('updated_at', { ascending: false })
     .limit(Math.min(limit, 100));
   if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
@@ -283,6 +293,7 @@ export async function toolSearch(
     .select('key,value,scope,tags')
     .textSearch('fts', q, { type: 'websearch', config: 'english' })
     .is('archived_at', null)
+    .or('expires_at.is.null,expires_at.gt.now()')
     .limit(Math.min(limit, 100));
   // Tenant .or() and the scope-glob .or() below are applied as two separate
   // .or() calls, which PostgREST ANDs together — never merged into one
@@ -604,4 +615,44 @@ export async function toolOrgDelete(
   }
 
   return { deleted: true, slug };
+}
+
+/**
+ * Hard-delete all active memories whose expires_at is in the past.
+ * Complementary to toolPurge (which removes archived rows).
+ */
+export async function toolPurgeExpired(
+  db: ReturnType<typeof createClient>,
+  _params: Params,
+  userId: string | null,
+  span: Span,
+) {
+  if (!userId) {
+    throw new Error('memory.purge_expired requires a user_id');
+  }
+
+  span.setAttributes({ 'lorekit.tool.name': 'memory.purge_expired' });
+
+  const tracedDb = createTracedClient(db, span);
+  const { data, error } = await tracedDb.rpc('purge_expired_memories', { p_user_id: userId });
+
+  if (error) throw new Error((error as { message: string }).message);
+
+  const purged = (data as number) ?? 0;
+  span.setAttributes({ 'lorekit.result.purged_expired': purged });
+
+  if (purged > 0) {
+    await recordAudit(
+      db,
+      {
+        action: 'memory.delete',
+        resourceType: 'memory',
+        target: `${purged} expired memories`,
+        metadata: { purged_expired: purged },
+      },
+      userId,
+    );
+  }
+
+  return { purged };
 }

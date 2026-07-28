@@ -24,23 +24,17 @@ const fakeEntry = {
  * .order() with the supplied result.
  */
 function makeDb(rows: unknown[], error: null | { message: string } = null) {
+  // Fluent chain: every method returns the chain; order() resolves.
+  const chain: Record<string, unknown> = {};
+  const resolve = vi.fn().mockResolvedValue({ data: rows, error });
+  const chainMethods = ['eq', 'is', 'or', 'limit', 'overlaps'];
+  for (const m of chainMethods) {
+    chain[m] = vi.fn().mockReturnValue(chain);
+  }
+  chain['order'] = resolve;
   return {
     from: vi.fn().mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          limit: vi.fn().mockReturnValue({
-            order: vi.fn().mockResolvedValue({ data: rows, error }),
-            overlaps: vi.fn().mockReturnValue({
-              order: vi.fn().mockResolvedValue({ data: rows, error }),
-            }),
-          }),
-          overlaps: vi.fn().mockReturnValue({
-            limit: vi.fn().mockReturnValue({
-              order: vi.fn().mockResolvedValue({ data: rows, error }),
-            }),
-          }),
-        }),
-      }),
+      select: vi.fn().mockReturnValue(chain),
     }),
   } as unknown as SupabaseClient;
 }

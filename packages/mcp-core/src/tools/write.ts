@@ -6,6 +6,7 @@ import { getTracer, getToolDurationHistogram } from '../telemetry.js';
 import { translateCapError } from '../limits.js';
 import { translateOrgPermissionError } from '../org-permissions.js';
 import { parseCreatedAt } from '../created-at.js';
+import { parseTtlDays } from '../ttl.js';
 import { recordAudit } from '../audit.js';
 
 const MAX_VALUE_BYTES = 65_536;
@@ -26,6 +27,14 @@ export const WriteInputSchema = z.object({
   // Ownership is authorization-derived inside memory_write — supplying an
   // org here does not by itself grant write access to it.
   org: z.string().optional(),
+  // Optional TTL in days. When set, expires_at is computed as
+  // now() + ttl_days * 1 day. On an UPDATE the TTL is refreshed only when
+  // ttl_days is supplied; omitting it on an update leaves the existing expiry
+  // unchanged. Validated by parseTtlDays (1–365).
+  ttl_days: z.number().int().min(1).max(365).optional(),
+  // When true, clears an existing expires_at (makes the memory permanent again).
+  // Ignored when ttl_days is also supplied — clear takes precedence inside the RPC.
+  clear_ttl: z.boolean().optional().default(false),
 });
 
 export type WriteInput = z.infer<typeof WriteInputSchema>;
@@ -34,9 +43,13 @@ export async function write(
   db: SupabaseClient,
   raw: unknown,
   userId: string | null = null,
-): Promise<{ id: string; created_at: string }> {
+): Promise<{ id: string; created_at: string; expires_at?: string | null }> {
   const input = WriteInputSchema.parse(raw);
   const createdAt = parseCreatedAt(input.created_at);
+  // parseTtlDays is redundant here since zod already validates the range, but
+  // calling it keeps the pure-module contract and guards against edge callers
+  // that bypass the schema (the RPC validates server-side too).
+  const ttlDays = parseTtlDays(input.ttl_days);
   const tracer = getTracer();
   const hist = getToolDurationHistogram();
   const startTime = Date.now();
@@ -52,11 +65,13 @@ export async function write(
       if (input.source_agent) span.setAttribute('lorekit.source_agent', input.source_agent);
       if (input.trigger) span.setAttribute('lorekit.trigger', input.trigger);
       if (createdAt) span.setAttribute('lorekit.created_at', createdAt);
+      if (ttlDays !== null) span.setAttribute('lorekit.ttl_days', ttlDays);
+      if (input.clear_ttl) span.setAttribute('lorekit.clear_ttl', true);
 
       try {
         // 00003 replaced the plain unique constraint with PARTIAL indexes
         // (WHERE archived_at IS NULL), which `.upsert(onConflict)` cannot target.
-        // Writes go through the memory_write RPC (00007) instead.
+        // Writes go through the memory_write RPC (00007 → 00028) instead.
         const { data, error } = await db
           .rpc('memory_write', {
             p_user_id: null,
@@ -68,12 +83,19 @@ export async function write(
             p_trigger: input.trigger ?? null,
             p_created_at: createdAt,
             p_org_slug: input.org ?? null,
+            p_ttl_days: ttlDays,
+            p_clear_ttl: input.clear_ttl ?? false,
           })
           .single();
 
         if (error) throw translateOrgPermissionError(translateCapError(error));
 
-        const row = data as { id: string; created_at: string; inserted?: boolean };
+        const row = data as {
+          id: string;
+          created_at: string;
+          inserted?: boolean;
+          expires_at?: string | null;
+        };
         await recordAudit(
           db,
           {
@@ -87,7 +109,15 @@ export async function write(
         );
 
         span.setStatus({ code: SpanStatusCode.UNSET });
-        return { id: row.id, created_at: row.created_at };
+        const result: { id: string; created_at: string; expires_at?: string | null } = {
+          id: row.id,
+          created_at: row.created_at,
+        };
+        // Only include expires_at in the response when it was explicitly requested
+        // (i.e. a TTL was supplied) — omitting it keeps the response stable for
+        // callers that don't ask for expiry.
+if (ttlDays !== null || input.clear_ttl) result.expires_at = row.expires_at ?? null;
+        return result;
       } catch (err) {
         const e = err as Error;
         span.setStatus({

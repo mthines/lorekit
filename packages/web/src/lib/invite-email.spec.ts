@@ -1,6 +1,13 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { sendInviteEmail } from './invite-email';
 
+// Silence the OTel logger so the ERROR-level JSON emitted by sendInviteEmail's
+// non-throwing catch block does not land in stdout and cause NX to mark
+// the test run as failed (it only reads stdout to detect failure signals).
+vi.mock('@/lib/telemetry', () => ({
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
+
 // sendInviteEmail reads RESEND_API_KEY / RESEND_FROM / NEXT_PUBLIC_APP_URL at
 // call time and calls the global fetch. Snapshot + restore the env and the
 // fetch stub around every case so nothing leaks between tests (the

@@ -17,7 +17,7 @@
 import type { ReactNode } from 'react';
 import { memo } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
-import { Clock, Bot, Zap } from 'lucide-react';
+import { Clock, Bot, Zap, Timer } from 'lucide-react';
 import { ScopeBadge } from './ScopeBadge';
 import { OwnershipBadge } from './OwnershipBadge';
 import type { ScopePrefix } from './scope-meta';
@@ -41,6 +41,8 @@ export interface MemoryCardModel {
   archived?: boolean;
   /** Ownership — undefined for personal lore, `{id, name}` for org-owned lore. */
   org?: MemoryOwner;
+  /** ISO expiry timestamp. Null/undefined = never expires. */
+  expiresAt?: string | null;
 }
 
 /** Adapt a Lore Explorer lesson (LessonEntry-shaped) into the card model. */
@@ -56,6 +58,7 @@ export function memoryFromLesson(lesson: {
   trigger?: string | null;
   archived_at?: string | null;
   org?: MemoryOwner;
+  expires_at?: string | null;
 }): MemoryCardModel {
   return {
     scope: lesson.scope,
@@ -70,6 +73,7 @@ export function memoryFromLesson(lesson: {
     timestamp: lesson.created_at,
     archived: Boolean(lesson.archived_at),
     org: lesson.org,
+    expiresAt: lesson.expires_at ?? null,
   };
 }
 
@@ -145,6 +149,40 @@ function Tags({ tags, max = 4 }: { tags: string[]; max?: number }) {
   );
 }
 
+// ── ExpiryBadge ──────────────────────────────────────────────────────────────
+// Shows a compact TTL pill on the card when expiry is within 30 days or past.
+// Silent outside that window so cards with distant expiries stay uncluttered.
+
+export function expiryStatus(iso: string | null | undefined): { label: string; urgent: boolean } | null {
+  if (!iso) return null;
+  const diff = new Date(iso).getTime() - Date.now();
+  const days = Math.ceil(diff / 86_400_000);
+  if (diff < 0)    return { label: 'Expired',       urgent: true  };
+  if (days <= 1)   return { label: 'Expires today',  urgent: true  };
+  if (days <= 7)   return { label: days + 'd left',  urgent: true  };
+  if (days <= 30)  return { label: days + 'd left',  urgent: false };
+  return null;
+}
+
+function ExpiryBadge({ expiresAt }: { expiresAt?: string | null }) {
+  const status = expiryStatus(expiresAt);
+  if (!status) return null;
+  return (
+    <span
+      className={[
+        'flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-px text-xs',
+        status.urgent
+          ? 'border-amber-400/30 bg-amber-400/10 text-amber-400'
+          : 'border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] text-[var(--color-content-tertiary)]',
+      ].join(' ')}
+      title={new Date(expiresAt!).toLocaleString()}
+    >
+      <Timer className="size-3" aria-hidden />
+      {status.label}
+    </span>
+  );
+}
+
 // ── Props ───────────────────────────────────────────────────────────────────
 
 export interface MemoryCardProps {
@@ -208,6 +246,7 @@ export const MemoryCard = memo(function MemoryCard({
     tags = [],
     timestamp,
     org,
+    expiresAt,
   } = memory;
 
   const keyCode = (
@@ -351,6 +390,7 @@ export const MemoryCard = memo(function MemoryCard({
         {showScope && <ScopeBadge scope={scope} type={type} label />}
         <OwnershipBadge org={org} />
         {keyCode}
+        <ExpiryBadge expiresAt={expiresAt} />
         {timeEl && <span className="ml-auto">{timeEl}</span>}
       </div>
 
