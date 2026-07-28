@@ -80,14 +80,27 @@ function lessonHook(value, max = HOOK_LEN) {
 // lorekit-memory intake rule ("report briefly") and the MEMORY.md index pattern:
 // surface WHAT is known so the agent can `memory.read` the one lesson that turns
 // out to matter, instead of paying for every body up front. Null when empty.
-export function formatLessons(lessons, scope) {
-  if (!lessons || lessons.length === 0) return null;
-  const noun = lessons.length === 1 ? 'memory' : 'memories';
+// `instruction` — an optional extra line appended after the index, sourced from
+// `hooks.instructions.SessionStart` in the control config. Lets teams inject
+// project-specific guidance (e.g. "focus on migration safety") without touching
+// the hook internals. Visible even when there are no lessons.
+export function formatLessons(lessons, scope, { instruction = null } = {}) {
+  const noun = lessons && lessons.length === 1 ? 'memory' : 'memories';
+  if (!lessons || lessons.length === 0) {
+    // No lessons — only emit if there is a custom instruction to show.
+    if (!instruction) return null;
+    return (
+      `LoreKit: 0 ${noun} loaded · ${scope.repoScope || 'this workspace'} ` +
+      `— considerations, not rules; read any in full with memory.read.\n\n` +
+      `Project instruction: ${instruction}`
+    );
+  }
   const header =
     `LoreKit: ${lessons.length} ${noun} loaded · ${scope.repoScope || 'this workspace'} ` +
     `— considerations, not rules; read any in full with memory.read.`;
   const body = lessons.map((l) => `- (${l.scope}) ${l.key} — ${lessonHook(l.value)}`).join('\n');
-  return `${header}\n${body}`;
+  const instructionBlock = instruction ? `\n\nProject instruction: ${instruction}` : '';
+  return `${header}\n${body}${instructionBlock}`;
 }
 
 // Distil a small set of significant, lowercased search TERMS from a tool
@@ -167,10 +180,12 @@ function tagsHint(writeScope, { tagsDefault = [], scopeDefaults = null } = {}) {
 export function retrospectiveNudge(scope, control) {
   const writeScope = scope.repoScope || 'global';
   const hint = tagsHint(writeScope, control);
+  const instruction = control && control.hooksInstructions && control.hooksInstructions.Stop
+    ? `\n\nProject instruction: ${control.hooksInstructions.Stop}` : '';
   return (
     `LoreKit: hit any friction worth remembering — a stuck loop, a repeated ` +
     `failure, a gotcha, a wrong assumption? If so, memory.write to ${writeScope} ` +
-    `as an observation; else skip.${hint}`
+    `as an observation; else skip.${hint}${instruction}`
   );
 }
 
@@ -180,9 +195,11 @@ export function retrospectiveNudge(scope, control) {
 export function failureNudge(toolName, scope, control) {
   const writeScope = scope.repoScope || 'global';
   const hint = tagsHint(writeScope, control);
+  const instruction = control && control.hooksInstructions && control.hooksInstructions.PostToolUseFailure
+    ? `\n\nProject instruction: ${control.hooksInstructions.PostToolUseFailure}` : '';
   return (
     `LoreKit: the last ${toolName} call failed. If it's recurring or non-obvious, ` +
-    `memory.write to ${writeScope} with the fix so the next run avoids it.${hint}`
+    `memory.write to ${writeScope} with the fix so the next run avoids it.${hint}${instruction}`
   );
 }
 

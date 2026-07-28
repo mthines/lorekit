@@ -137,6 +137,27 @@ export function resolveControl({
     (typeof userConfig['hooks.adapter'] === 'string' && userConfig['hooks.adapter'].trim()) ||
     null;
 
+  // `hooks.instructions` — per-event custom text appended to the hook output so
+  // teams can embed project-specific guidance directly into the injected context.
+  // Both layers contribute: repo instructions come first, user instructions follow
+  // (same direction as `tags.default` — repo supplements, user personalises).
+  // null for a given event means "no custom instruction for that event".
+  const HOOK_EVENTS = ['SessionStart', 'PostToolUseFailure', 'Stop'];
+  const hooksInstructions = {};
+  {
+    const repoInstr =
+      (repoConfig['hooks.instructions'] && typeof repoConfig['hooks.instructions'] === 'object')
+        ? repoConfig['hooks.instructions'] : {};
+    const userInstr =
+      (userConfig['hooks.instructions'] && typeof userConfig['hooks.instructions'] === 'object')
+        ? userConfig['hooks.instructions'] : {};
+    for (const ev of HOOK_EVENTS) {
+      const parts = [repoInstr[ev], userInstr[ev]]
+        .filter((v) => typeof v === 'string' && v.trim().length > 0);
+      hooksInstructions[ev] = parts.length > 0 ? parts.join('\n') : null;
+    }
+  }
+
   return {
     mode: chosen.mode,
     storeTarget,
@@ -147,6 +168,7 @@ export function resolveControl({
     scopeDefaults,
     hooksDisabled,
     hooksAdapter,
+    hooksInstructions,
   };
 }
 
