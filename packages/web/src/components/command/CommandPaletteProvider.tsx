@@ -34,7 +34,7 @@ import {
   useState,
 } from 'react';
 import type { Command, PaletteFrame } from './types';
-import { CHORD_TIMEOUT_MS } from './shortcut';
+import { CHORD_TIMEOUT_MS, isMac } from './shortcut';
 
 // ── Context ───────────────────────────────────────────────────────────────────
 
@@ -181,10 +181,6 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
   );
 
   useEffect(() => {
-    function isMac() {
-      return /Mac|iPhone|iPad|iPod/.test(navigator.platform);
-    }
-
     function onKeyDown(e: KeyboardEvent) {
       const modPressed = isMac() ? e.metaKey : e.ctrlKey;
 
