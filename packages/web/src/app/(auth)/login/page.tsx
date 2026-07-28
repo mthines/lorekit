@@ -1,5 +1,6 @@
 import { Suspense } from 'react';
 import type { Metadata } from 'next';
+import Image from 'next/image';
 import { LoginButton } from '@/components/auth/LoginButton';
 import { SiteFooter } from '@/components/layout/SiteFooter';
 import { BookOpen, Brain, GitBranch, Zap } from 'lucide-react';
@@ -62,9 +63,14 @@ export default function LoginPage() {
 
       <header className="relative z-10 flex h-16 items-center justify-between px-6 md:px-10">
         <div className="flex items-center gap-2.5">
-          <div className="flex size-8 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-            <span className="text-base" aria-hidden>⚡</span>
-          </div>
+          <Image
+            src="/icons/icon-192.png"
+            alt="LoreKit"
+            width={32}
+            height={32}
+            className="shrink-0 rounded-xl"
+            priority
+          />
           <span className="text-sm font-semibold text-[var(--color-content-primary)]">LoreKit</span>
         </div>
         <div className="flex items-center gap-1 sm:gap-3">
