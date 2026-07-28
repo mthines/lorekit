@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.15.0](https://github.com/mthines/lorekit/compare/cli-v1.14.0...cli-v1.15.0) (2026-07-28)
+
+
+### Features
+
+* **cli:** add 7 new .lorekit.json config properties ([#167](https://github.com/mthines/lorekit/issues/167)) ([13905c9](https://github.com/mthines/lorekit/commit/13905c910db1c136979a38d372056b62ed9c1307))
+
+
+### Bug Fixes
+
+* **web,cli:** unify "memory" terminology and polish Explorer filters/heatmap ([#168](https://github.com/mthines/lorekit/issues/168)) ([ce0cb00](https://github.com/mthines/lorekit/commit/ce0cb001d78505be0a6eab8a8769d461b418bd66))
+
+
+### Documentation
+
+* fix drift in otel.md CLI command list, install.md Step 9, and CLAUDE.md key files ([#165](https://github.com/mthines/lorekit/issues/165)) ([6e83aaf](https://github.com/mthines/lorekit/commit/6e83aaf1ee7ca5c354ced0b54f8b0861ac9dcb08))
+
 ## [1.14.0](https://github.com/mthines/lorekit/compare/cli-v1.13.1...cli-v1.14.0) (2026-07-27)
 
 
