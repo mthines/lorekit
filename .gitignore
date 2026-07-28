@@ -19,3 +19,4 @@ tmp/
 
 # Autonomous workflow artifacts
 .agent/
+.vercel
