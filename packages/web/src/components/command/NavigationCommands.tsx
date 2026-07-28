@@ -16,7 +16,7 @@
  */
 
 import { useRouter } from 'next/navigation';
-import { BookOpen, LayoutDashboard, Settings, GraduationCap, Command } from 'lucide-react';
+import { BookOpen, LayoutDashboard, Settings, GraduationCap } from 'lucide-react';
 import { useCommand } from './useCommand';
 
 export function NavigationCommands() {
