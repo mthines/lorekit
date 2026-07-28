@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { LoginButton } from '@/components/auth/LoginButton';
 import { SiteFooter } from '@/components/layout/SiteFooter';
 import { BookOpen, Brain, GitBranch, Zap } from 'lucide-react';
+import { TerminalTheater } from '@/components/landing/TerminalTheater';
 
 export const metadata: Metadata = {
   title: 'Sign in',
@@ -65,16 +66,7 @@ export default function LoginPage() {
           </div>
           <span className="text-sm font-semibold text-[var(--color-content-primary)]">LoreKit</span>
         </div>
-        {/* Right — nav actions */}
         <div className="flex items-center gap-1 sm:gap-3">
-          {/*
-           * GitHub repo link — industry-standard OSS top-right placement.
-           * size-11 (44 px) meets the iOS 44pt / WCAG AA touch-target minimum on mobile;
-           * the icon stays size-5 (20 px) for visual proportion on all screen sizes.
-           * Gap tightens to gap-1 on the smallest viewports (< 640 px) so the sign-in
-           * button still fits comfortably alongside the logo wordmark.
-           * Grey at rest → white on hover: subtle but discoverable.
-           */}
           <a
             href="https://github.com/mthines/lorekit"
             target="_blank"
@@ -98,35 +90,100 @@ export default function LoginPage() {
         </div>
       </header>
 
-      <section className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 py-20 text-center">
-        <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[var(--color-accent)]/30 bg-[var(--color-accent-subtle)] px-4 py-1.5">
-          <span className="size-1.5 rounded-full bg-[var(--color-accent)]" aria-hidden />
-          <span className="font-mono text-xs font-medium text-[var(--color-accent)]">
-            MCP · Supabase · Next.js
+      {/* Hero */}
+      <section className="relative z-10 flex flex-col items-center justify-center px-6 pt-12 pb-10">
+        {/* Trust bar */}
+        <div className="mb-8 flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-1 font-mono text-xs text-[var(--color-content-secondary)]">
+            <span className="size-1.5 rounded-full bg-[var(--color-success)]" aria-hidden />
+            Free
+          </span>
+          <a
+            href="https://github.com/mthines/lorekit"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-1 font-mono text-xs text-[var(--color-content-secondary)] transition-colors hover:text-[var(--color-content-primary)]"
+          >
+            <svg aria-hidden xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="size-3.5">
+              <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12" />
+            </svg>
+            Open source · MIT
+          </a>
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-1 font-mono text-xs text-[var(--color-content-secondary)]">
+            Works with Claude Code, Cursor &amp; Codex
           </span>
         </div>
 
-        <h1 className="mb-5 max-w-2xl text-4xl font-bold tracking-tight text-[var(--color-content-primary)] sm:text-5xl lg:text-6xl">
+        {/* Main headline */}
+        <h1 className="mt-8 mb-3 max-w-2xl text-center text-3xl font-bold tracking-tight text-[var(--color-content-primary)] sm:text-4xl lg:text-5xl">
           Persistent memory
           <br />
           <span className="text-[var(--color-accent)]">for your AI agents</span>
         </h1>
 
-        <p className="mb-10 max-w-lg text-base text-[var(--color-content-secondary)] sm:text-lg">
-          LoreKit gives your coding agents a shared, scoped memory store backed by Supabase.
-          Memories written in one session survive forever — reachable by any agent, on any project.
+        <p className="mb-8 max-w-lg text-center text-base text-[var(--color-content-secondary)]">
+          Your AI agent forgets everything when a session ends. LoreKit gives it persistent memory —
+          so it never asks the same question twice.
         </p>
 
+        {/* Primary CTA */}
         <div className="flex flex-col items-center gap-3">
           <Suspense fallback={null}>
             <LoginButton />
           </Suspense>
           <p className="text-xs text-[var(--color-content-tertiary)]">
-            Sign in with GitHub OAuth or a magic-link email — no password required.
+            Sign in free · 2-minute setup
           </p>
         </div>
       </section>
 
+      {/* Narrative sections */}
+      <div className="relative z-10 flex flex-col items-center gap-16 px-6 py-12">
+        <TerminalTheater />
+
+        {/* Get started section */}
+        <div className="w-full max-w-2xl mx-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-6 sm:p-8">
+          <h2 className="text-xl font-semibold text-[var(--color-content-primary)] mb-2 text-center">
+            Get started in 2 minutes
+          </h2>
+          <p className="text-sm text-[var(--color-content-secondary)] text-center mb-6">
+            Free · Open source
+          </p>
+          <ol className="space-y-4 mb-6">
+            <li className="flex gap-3">
+              <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] font-mono text-xs font-semibold text-[var(--color-accent)]">1</span>
+              <div>
+                <p className="text-sm font-medium text-[var(--color-content-primary)] mb-1">Sign in and get your token</p>
+                <p className="text-xs text-[var(--color-content-secondary)]">GitHub OAuth or magic-link email — takes 30 seconds</p>
+              </div>
+            </li>
+            <li className="flex gap-3">
+              <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] font-mono text-xs font-semibold text-[var(--color-accent)]">2</span>
+              <div>
+                <p className="text-sm font-medium text-[var(--color-content-primary)] mb-1">Run one command</p>
+                <code className="block mt-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 font-mono text-xs text-[var(--color-accent)]">
+                  npx @lorekit/cli install
+                </code>
+              </div>
+            </li>
+            <li className="flex gap-3">
+              <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] font-mono text-xs font-semibold text-[var(--color-accent)]">3</span>
+              <div>
+                <p className="text-sm font-medium text-[var(--color-content-primary)] mb-1">Your agent now remembers</p>
+                <p className="text-xs text-[var(--color-content-secondary)]">Memories persist across sessions, repos, and tools — automatically</p>
+              </div>
+            </li>
+          </ol>
+          <div className="flex flex-col items-center gap-2">
+            <Suspense fallback={null}>
+              <LoginButton />
+            </Suspense>
+            <p className="text-xs text-[var(--color-content-tertiary)]">Sign in free · 2-minute setup</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Feature cards — retained below the narrative */}
       <section
         aria-label="Features"
         className="relative z-10 mx-auto mb-20 grid max-w-4xl grid-cols-1 gap-4 px-6 sm:grid-cols-2"
