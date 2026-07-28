@@ -202,16 +202,22 @@ Metric: `lorekit.tool.duration` histogram (unit `s`) with `lorekit.tool.name` + 
 
 ## Endpoints
 
+The production Supabase project ref is **`pqokxlhvnosogizsjztg`** (static). Always
+write the concrete endpoint below in any user-facing surface — dashboard copy,
+Learn pages, config examples, docs — **NEVER** a `<ref>` / `<project-ref>`
+placeholder for the MCP server URL.
+
 | URL | Auth | Purpose |
 |-----|------|---------|
-| `https://<ref>.supabase.co/functions/v1/mcp` | Bearer token required | MCP server for agents |
-| `https://<ref>.supabase.co/functions/v1/health` | None (public) | Uptime monitoring |
+| `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp` | Bearer token required | MCP server for agents |
+| `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/health` | None (public) | Uptime monitoring |
 | `https://lorekit.io` | GitHub OAuth | Web dashboard |
 
 ---
 
 ## Key decisions (do not relitigate)
 
+- **The MCP server endpoint is a static production URL — never write a `<ref>` placeholder in user-facing content.** The hosted MCP server lives at a fixed Supabase project ref (`pqokxlhvnosogizsjztg`), so any URL an end user sees — Getting started / Learn pages, `.lorekit.json` / config examples, dashboard copy, docs — MUST use the concrete `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp` (the same literal the setup page's `MCP_URL` uses), NOT `https://<ref>.supabase.co/...` or `<project-ref>`. A placeholder is only acceptable in migration/deploy tooling that legitimately targets multiple projects (e.g. the `resolveProjectConnection` `<project-ref>` guard, which *rejects* an unconfigured placeholder). See the Endpoints table.
 - `::` separator avoids collision with `/` in repo paths and `:` in branch names
 - `lk_rw_` prefix encodes permission visibly in config files
 - Write-only tokens (`lk_wo_*`) store `permissions: ['write']` in the existing `text[]` column — zero migration. Prefix derivation and tool gating (`READ_TOOLS`/`WRITE_TOOLS`/`toolRequires`/`tokenPrefixFor`) are consolidated into a shared pure module (`packages/mcp-core/src/permissions.ts`), mirrored self-contained into the edge function and lightly into web — the same reasoning as `limits.ts`/`webhook-secret-select.ts`: the edge function has no test harness, so the pure module is the only unit-testable home for gating logic. The Node.js `mcp-server` gets no gating — it has no API-token auth path at all, and adding one is out of scope.
