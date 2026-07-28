@@ -6,6 +6,11 @@ import { TutorialCard } from '@/components/learn/TutorialCard';
 
 export const metadata: Metadata = { title: 'Configuration — Getting started' };
 
+// Shared Tailwind class strings — reused across all three reference tables.
+const TH_CLASS = 'px-3 py-2 text-left font-medium text-[var(--color-content-secondary)]';
+const THEAD_ROW_CLASS = 'border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)]';
+const TABLE_WRAPPER_CLASS = 'overflow-x-auto rounded-lg border border-[var(--color-border)]';
+
 /**
  * Configuration — a reference for the two LoreKit config files.
  *
@@ -148,13 +153,13 @@ export default function LearnConfigPage() {
         {/* The two config files */}
         <div className="flex flex-col gap-3">
           <p className="text-sm font-medium text-[var(--color-content-primary)]">The two config layers</p>
-          <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
+          <div className={TABLE_WRAPPER_CLASS}>
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                  <th className="px-3 py-2 text-left font-medium text-[var(--color-content-secondary)]">Layer</th>
-                  <th className="px-3 py-2 text-left font-medium text-[var(--color-content-secondary)]">File</th>
-                  <th className="px-3 py-2 text-left font-medium text-[var(--color-content-secondary)]">Scope</th>
+                <tr className={THEAD_ROW_CLASS}>
+                  <th className={TH_CLASS}>Layer</th>
+                  <th className={TH_CLASS}>File</th>
+                  <th className={TH_CLASS}>Scope</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
@@ -176,14 +181,14 @@ export default function LearnConfigPage() {
         {/* Property reference */}
         <div className="flex flex-col gap-3">
           <p className="text-sm font-medium text-[var(--color-content-primary)]">Property reference</p>
-          <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
+          <div className={TABLE_WRAPPER_CLASS}>
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                  <th className="px-3 py-2 text-left font-medium text-[var(--color-content-secondary)]">Property</th>
-                  <th className="px-3 py-2 text-left font-medium text-[var(--color-content-secondary)]">Type</th>
-                  <th className="px-3 py-2 text-left font-medium text-[var(--color-content-secondary)]">Layer</th>
-                  <th className="px-3 py-2 text-left font-medium text-[var(--color-content-secondary)]">Description</th>
+                <tr className={THEAD_ROW_CLASS}>
+                  <th className={TH_CLASS}>Property</th>
+                  <th className={TH_CLASS}>Type</th>
+                  <th className={TH_CLASS}>Layer</th>
+                  <th className={TH_CLASS}>Description</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
@@ -262,12 +267,12 @@ export default function LearnConfigPage() {
             The core mode, store, and connection settings have env-var equivalents that outrank the
             config files — useful in CI where you cannot commit a config change.
           </p>
-          <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
+          <div className={TABLE_WRAPPER_CLASS}>
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                  <th className="px-3 py-2 text-left font-medium text-[var(--color-content-secondary)]">Variable</th>
-                  <th className="px-3 py-2 text-left font-medium text-[var(--color-content-secondary)]">Purpose</th>
+                <tr className={THEAD_ROW_CLASS}>
+                  <th className={TH_CLASS}>Variable</th>
+                  <th className={TH_CLASS}>Purpose</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
