@@ -3,6 +3,10 @@ import type { Metadata } from 'next';
 import { LoginButton } from '@/components/auth/LoginButton';
 import { SiteFooter } from '@/components/layout/SiteFooter';
 import { BookOpen, Brain, GitBranch, Zap } from 'lucide-react';
+import { SupportTicketHero } from '@/components/landing/SupportTicketHero';
+import { ChangelogSection } from '@/components/landing/ChangelogSection';
+import { AgentContextClear } from '@/components/landing/AgentContextClear';
+import { TimestampLedger } from '@/components/landing/TimestampLedger';
 
 export const metadata: Metadata = {
   title: 'Sign in',
@@ -39,6 +43,7 @@ const FEATURES = [
 export default function LoginPage() {
   return (
     <main className="relative flex min-h-screen flex-col overflow-hidden bg-[var(--color-bg)]">
+      {/* Background decoration */}
       <div aria-hidden className="pointer-events-none fixed inset-0 overflow-hidden">
         <div
           className="absolute left-1/2 top-1/3 size-[700px] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-30"
@@ -58,6 +63,7 @@ export default function LoginPage() {
         />
       </div>
 
+      {/* Header — unchanged */}
       <header className="relative z-10 flex h-16 items-center justify-between px-6 md:px-10">
         <div className="flex items-center gap-2.5">
           <div className="flex size-8 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
@@ -65,16 +71,7 @@ export default function LoginPage() {
           </div>
           <span className="text-sm font-semibold text-[var(--color-content-primary)]">LoreKit</span>
         </div>
-        {/* Right — nav actions */}
         <div className="flex items-center gap-1 sm:gap-3">
-          {/*
-           * GitHub repo link — industry-standard OSS top-right placement.
-           * size-11 (44 px) meets the iOS 44pt / WCAG AA touch-target minimum on mobile;
-           * the icon stays size-5 (20 px) for visual proportion on all screen sizes.
-           * Gap tightens to gap-1 on the smallest viewports (< 640 px) so the sign-in
-           * button still fits comfortably alongside the logo wordmark.
-           * Grey at rest → white on hover: subtle but discoverable.
-           */}
           <a
             href="https://github.com/mthines/lorekit"
             target="_blank"
@@ -98,25 +95,31 @@ export default function LoginPage() {
         </div>
       </header>
 
-      <section className="relative z-10 flex flex-1 flex-col items-center justify-center px-6 py-20 text-center">
-        <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[var(--color-accent)]/30 bg-[var(--color-accent-subtle)] px-4 py-1.5">
+      {/* Hero — SupportTicketHero replaces the badge + h1 + subheadline */}
+      <section className="relative z-10 flex flex-col items-center justify-center px-6 pt-12 pb-10">
+        {/* MCP badge */}
+        <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-[var(--color-accent)]/30 bg-[var(--color-accent-subtle)] px-4 py-1.5">
           <span className="size-1.5 rounded-full bg-[var(--color-accent)]" aria-hidden />
           <span className="font-mono text-xs font-medium text-[var(--color-accent)]">
             MCP · Supabase · Next.js
           </span>
         </div>
 
-        <h1 className="mb-5 max-w-2xl text-4xl font-bold tracking-tight text-[var(--color-content-primary)] sm:text-5xl lg:text-6xl">
+        <SupportTicketHero />
+
+        {/* Main headline */}
+        <h1 className="mt-8 mb-3 max-w-2xl text-center text-3xl font-bold tracking-tight text-[var(--color-content-primary)] sm:text-4xl lg:text-5xl">
           Persistent memory
           <br />
           <span className="text-[var(--color-accent)]">for your AI agents</span>
         </h1>
 
-        <p className="mb-10 max-w-lg text-base text-[var(--color-content-secondary)] sm:text-lg">
+        <p className="mb-8 max-w-lg text-center text-base text-[var(--color-content-secondary)]">
           LoreKit gives your coding agents a shared, scoped memory store backed by Supabase.
           Memories written in one session survive forever — reachable by any agent, on any project.
         </p>
 
+        {/* Primary CTA */}
         <div className="flex flex-col items-center gap-3">
           <Suspense fallback={null}>
             <LoginButton />
@@ -127,6 +130,24 @@ export default function LoginPage() {
         </div>
       </section>
 
+      {/* Narrative sections */}
+      <div className="relative z-10 flex flex-col items-center gap-16 px-6 py-12">
+        <ChangelogSection />
+        <AgentContextClear />
+        <TimestampLedger />
+
+        {/* Final CTA before feature cards */}
+        <div className="flex flex-col items-center gap-3">
+          <Suspense fallback={null}>
+            <LoginButton />
+          </Suspense>
+          <p className="text-xs text-[var(--color-content-tertiary)]">
+            One `npx lorekit install` and your agent remembers everything.
+          </p>
+        </div>
+      </div>
+
+      {/* Feature cards — retained below the narrative */}
       <section
         aria-label="Features"
         className="relative z-10 mx-auto mb-20 grid max-w-4xl grid-cols-1 gap-4 px-6 sm:grid-cols-2"
