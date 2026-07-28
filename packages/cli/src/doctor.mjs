@@ -82,8 +82,9 @@ export async function doctor(args) {
   // 5. Scope.
   const scope = deriveScope(root);
   if (scope.hasRemote) {
+    log('');
     record('info', 'read scope', scope.readOrder.join('  →  '));
-    record('info', 'write scope', `${scope.repoScope} (default for "went wrong" memories)`);
+    record('info', 'write scope', `${scope.repoScope} (default write target)`);
   } else {
     record('warn', 'scope', 'no git remote here — memories fall back to global');
   }
