@@ -4,6 +4,14 @@ const nextConfig: NextConfig = {
   // Disable Next.js's built-in ESLint step — NX runs it separately via nx lint
   eslint: { ignoreDuringBuilds: true },
 
+  // Emit source maps in production so Dash0 can translate minified JavaScript
+  // stack traces back to their original source locations. Source maps are served
+  // alongside the JS bundles; Dash0 downloads them on demand when a browser.error
+  // web event arrives. They are not loaded by end-user browsers unless DevTools
+  // are open, so there is no runtime performance cost.
+  // @see https://dash0.com/docs/dash0/monitoring/websites/resolve-stack-traces-with-source-maps
+  productionBrowserSourceMaps: true,
+
   // Enable the React Compiler (babel-plugin-react-compiler) so components are
   // auto-memoized at build time — removes the need for most manual useMemo/
   // useCallback/React.memo. Requires the babel-plugin-react-compiler devDep.
