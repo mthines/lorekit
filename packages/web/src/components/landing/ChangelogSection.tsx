@@ -7,10 +7,10 @@ const ENTRIES = [
   { version: 'v0.12.0', text: 'Reminded agent: we use Zod for API validation' },
   { version: 'v0.11.0', text: 'Reminded agent: we use Zod for API validation' },
   { version: 'v0.10.0', text: 'Re-reminded agent: Zod. Not Yup.' },
-  { version: 'v0.9.0 ', text: 'Told agent (again): Zod for validation' },
-  { version: 'v0.8.0 ', text: 'Explained Zod preference to agent' },
-  { version: 'v0.7.0 ', text: 'Same. Zod.' },
-  { version: 'v∞     ', text: 'You could keep doing this.' },
+  { version: 'v0.9.0', text: 'Told agent (again): Zod for validation' },
+  { version: 'v0.8.0', text: 'Explained Zod preference to agent' },
+  { version: 'v0.7.0', text: 'Same. Zod.' },
+  { version: 'v∞', text: 'You could keep doing this.' },
 ] as const;
 
 export function ChangelogSection() {
