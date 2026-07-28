@@ -65,7 +65,7 @@ export default function LoginPage() {
         <div className="flex items-center gap-2.5">
           <Image
             src="/icons/icon-192.png"
-            alt="LoreKit"
+            alt=""
             width={32}
             height={32}
             className="shrink-0 rounded-xl"
