@@ -84,7 +84,28 @@ scope: "project::my-monorepo"`}</code></pre>
 }`}</code></pre>
           <p className="mt-2">Common tag namespaces used in the ecosystem:</p>
           <ul className="mt-2 list-disc pl-5 space-y-1">
-            <li><code>skill::aw</code> / <code>skill::fix-bug</code> — which skill owns the memory</li>
+            <li>
+              <code>skill::aw</code> / <code>skill::fix-bug</code> — which skill owns the memory
+              (see the{' '}
+              <a
+                href="https://github.com/mthines/agent-skills/tree/main/skills/workflow/autonomous-workflow"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[var(--color-accent)] underline underline-offset-2"
+              >
+                autonomous-workflow
+              </a>{' '}
+              skill in{' '}
+              <a
+                href="https://github.com/mthines/agent-skills"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[var(--color-accent)] underline underline-offset-2"
+              >
+                mthines/agent-skills
+              </a>
+              )
+            </li>
             <li><code>loop::aw-lessons</code> — part of the AW self-improvement loop</li>
             <li><code>source::stuck-loop</code> / <code>source::pr-webhook</code> — what triggered the write</li>
           </ul>
