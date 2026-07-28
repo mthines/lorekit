@@ -101,7 +101,7 @@ const REPO_SNIPPET = `// .lorekit.json — repo root, safe to commit (no secrets
 {
   "mode": "local",
   "store": ".lorekit",
-  "mcp.endpoint": "https://<ref>.supabase.co/functions/v1/mcp",
+  "mcp.endpoint": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
   "tags.default": ["team", "project::my-app"],
   "scope.defaults": {
     "repo::owner/name":     { "tags": ["team"] },
