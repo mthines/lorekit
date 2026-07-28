@@ -56,8 +56,10 @@ import { useLoreData } from '@/lib/queries/lore';
 // ── Lore sub-commands helper ──────────────────────────────────────────────────
 //
 // Rendered as a separate component so it can safely call hooks that depend on
-// MemorySidebarProvider (which lives inside the same Suspense boundary as the
-// palette provider in the dashboard layout).
+// MemorySidebarProvider. NavigationCommands is mounted INSIDE
+// MemorySidebarProvider in the dashboard layout precisely so useMemorySidebar()
+// here resolves — the command registry itself still comes from the ancestor
+// CommandPaletteProvider.
 
 function LoreCommands() {
   const { openLessonById } = useMemorySidebar();
@@ -78,7 +80,7 @@ function LoreCommands() {
             id: 'lore-no-lessons',
             label: 'No lessons found',
             description: 'Visit the Lore Explorer to add some.',
-            onSelect: () => {},
+            onSelect: () => router.push('/lore'),
           },
         ];
       }
@@ -86,7 +88,8 @@ function LoreCommands() {
         id: `lore-lesson-${lesson.scope}::${lesson.key}`,
         label: lesson.key,
         description: lesson.scope,
-        onSelect: () => openLessonById({ scope: lesson.scope, key: lesson.key }),
+        onSelect: () =>
+          openLessonById({ scope: lesson.scope, key: lesson.key }),
       }));
     },
   });
@@ -106,7 +109,7 @@ export function NavigationCommands() {
     label: 'Go to Dashboard',
     icon: <LayoutDashboard className="size-4" />,
     group: 'Navigate',
-    shortcut: { keys: ['g', 'h'] },
+    shortcut: { keys: ['g', 'o'] },
     onSelect: () => router.push('/dashboard'),
   });
 
@@ -133,7 +136,7 @@ export function NavigationCommands() {
     label: 'Go to Getting Started',
     icon: <GraduationCap className="size-4" />,
     group: 'Navigate',
-    shortcut: { keys: ['g', 'l'] },
+    shortcut: { keys: ['g', 'g'] },
     onSelect: () => router.push('/learn'),
   });
 

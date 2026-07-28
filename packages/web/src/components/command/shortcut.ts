@@ -21,7 +21,7 @@ export function isMac(): boolean {
   return /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 }
 
-interface ParsedKey {
+export interface ParsedKey {
   key: string; // Normalised lower-case key name
   mod: boolean; // Cmd (macOS) or Ctrl (others)
   shift: boolean;
@@ -31,7 +31,7 @@ interface ParsedKey {
 /**
  * Parse a key token like `'mod+k'`, `'shift+n'`, `'g'` into its parts.
  */
-function parseKey(token: string): ParsedKey {
+export function parseKey(token: string): ParsedKey {
   const parts = token.toLowerCase().split('+');
   const key = parts[parts.length - 1]!;
   return {
@@ -40,6 +40,46 @@ function parseKey(token: string): ParsedKey {
     shift: parts.includes('shift'),
     alt: parts.includes('alt') || parts.includes('option'),
   };
+}
+
+/**
+ * Canonical string for a parsed key: modifiers in a FIXED order followed by the
+ * base key, e.g. `{ mod, shift, key: 'm' }` → `'mod+shift+m'`. Both authored
+ * shortcut tokens and live keyboard events funnel through this so they compare
+ * as plain strings regardless of how the token was written (`shift+mod+m` and
+ * `mod+shift+m` both normalise to `'mod+shift+m'`).
+ */
+export function canonicalKey(p: ParsedKey): string {
+  const parts: string[] = [];
+  if (p.mod) parts.push('mod');
+  if (p.shift) parts.push('shift');
+  if (p.alt) parts.push('alt');
+  parts.push(p.key);
+  return parts.join('+');
+}
+
+/** Canonicalise an authored shortcut token (`'mod+shift+M'` → `'mod+shift+m'`). */
+export function normalizeToken(token: string): string {
+  return canonicalKey(parseKey(token));
+}
+
+/**
+ * Canonical token for a live keyboard event, or `null` for a pure-modifier
+ * press (Meta/Control/Alt/Shift on their own) which never forms a chord step.
+ * `mod` resolves to Cmd on macOS and Ctrl elsewhere — matching how `mod` is
+ * authored — so a `mod+shift+m` shortcut fires on Cmd+Shift+M (mac) or
+ * Ctrl+Shift+M (other platforms).
+ */
+export function eventToToken(e: KeyboardEvent): string | null {
+  if (e.key === 'Meta' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Shift') {
+    return null;
+  }
+  return canonicalKey({
+    key: e.key.toLowerCase(),
+    mod: isMac() ? e.metaKey : e.ctrlKey,
+    shift: e.shiftKey,
+    alt: e.altKey,
+  });
 }
 
 /**

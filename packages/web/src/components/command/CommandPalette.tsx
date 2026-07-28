@@ -18,6 +18,7 @@
  */
 
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronRight, Loader2, ArrowLeft, Search } from 'lucide-react';
 import { useCommandPalette } from './CommandPaletteProvider';
 import { formatShortcut } from './shortcut';
@@ -89,7 +90,12 @@ interface CommandRowProps {
   onHover: () => void;
 }
 
-function CommandRow({ command, selected, onActivate, onHover }: CommandRowProps) {
+function CommandRow({
+  command,
+  selected,
+  onActivate,
+  onHover,
+}: CommandRowProps) {
   const rowRef = useRef<HTMLButtonElement>(null);
 
   // Scroll selected row into view without moving browser focus away from the
@@ -123,7 +129,9 @@ function CommandRow({ command, selected, onActivate, onHover }: CommandRowProps)
         <span
           className={[
             'flex size-4 shrink-0 items-center justify-center',
-            selected ? 'text-[var(--color-accent)]' : 'text-[var(--color-content-secondary)]',
+            selected
+              ? 'text-[var(--color-accent)]'
+              : 'text-[var(--color-content-secondary)]',
           ].join(' ')}
           aria-hidden
         >
@@ -143,7 +151,13 @@ function CommandRow({ command, selected, onActivate, onHover }: CommandRowProps)
 
       {/* Shortcut badge */}
       {command.shortcut && (
-        <ShortcutBadge keys={command.shortcut.label ? [command.shortcut.label] : command.shortcut.keys} />
+        <ShortcutBadge
+          keys={
+            command.shortcut.label
+              ? [command.shortcut.label]
+              : command.shortcut.keys
+          }
+        />
       )}
 
       {/* Chevron for commands with children */}
@@ -151,7 +165,9 @@ function CommandRow({ command, selected, onActivate, onHover }: CommandRowProps)
         <ChevronRight
           className={[
             'size-3.5 shrink-0',
-            selected ? 'text-[var(--color-accent)]' : 'text-[var(--color-content-tertiary)]',
+            selected
+              ? 'text-[var(--color-accent)]'
+              : 'text-[var(--color-content-tertiary)]',
           ].join(' ')}
           aria-hidden
         />
@@ -211,7 +227,9 @@ export function CommandPalette() {
           break;
         case 'ArrowUp':
           e.preventDefault(); // prevent cursor jumping to start-of-input
-          setSelectedIndex((i) => (i - 1 + filtered.length) % Math.max(1, filtered.length));
+          setSelectedIndex(
+            (i) => (i - 1 + filtered.length) % Math.max(1, filtered.length),
+          );
           break;
         case 'Enter':
           e.preventDefault();
@@ -237,7 +255,15 @@ export function CommandPalette() {
           break;
       }
     },
-    [filtered.length, selectedCommand, activateCommand, stack.length, popFrame, closePalette, query],
+    [
+      filtered.length,
+      selectedCommand,
+      activateCommand,
+      stack.length,
+      popFrame,
+      closePalette,
+      query,
+    ],
   );
 
   if (!open) return null;
@@ -250,21 +276,22 @@ export function CommandPalette() {
   const isNested = stack.length > 1;
   const frameTitle = currentFrame?.parentCommand?.label ?? 'Command Palette';
 
-  return (
-    <>
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
-        aria-hidden
-        onClick={closePalette}
-      />
-
+  return createPortal(
+    // Full-screen backdrop that also flex-centers the panel. Portalled to
+    // <body> so no transformed / contained ancestor can trap the fixed panel in
+    // a narrow containing block (which had pinned it to the sidebar column).
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-[15vh] backdrop-blur-sm"
+      onClick={closePalette}
+    >
       {/* Palette panel */}
       <div
         role="dialog"
         aria-modal
         aria-label="Command Palette"
-        className="fixed inset-x-4 top-[15%] z-50 mx-auto max-w-xl overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] shadow-2xl shadow-black/50"
+        className="w-full max-w-xl overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] shadow-2xl shadow-black/50"
+        // Clicks inside the panel must not bubble to the backdrop's close handler.
+        onClick={(e) => e.stopPropagation()}
         onMouseDown={(e) => {
           // Prevent the browser from moving focus away from the search input
           // when the user clicks anywhere inside the palette (rows, back button,
@@ -304,7 +331,10 @@ export function CommandPalette() {
 
           {/* Search icon */}
           {!isNested && (
-            <Search className="size-4 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+            <Search
+              className="size-4 shrink-0 text-[var(--color-content-tertiary)]"
+              aria-hidden
+            />
           )}
 
           {/* Search input — holds focus at all times; handles all keyboard nav */}
@@ -315,8 +345,12 @@ export function CommandPalette() {
             aria-expanded={open}
             aria-controls="command-palette-list"
             aria-autocomplete="list"
-            aria-activedescendant={selectedCommand ? `cmd-${selectedCommand.id}` : undefined}
-            placeholder={isNested ? `Search ${frameTitle}…` : 'Type a command or search…'}
+            aria-activedescendant={
+              selectedCommand ? `cmd-${selectedCommand.id}` : undefined
+            }
+            placeholder={
+              isNested ? `Search ${frameTitle}…` : 'Type a command or search…'
+            }
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
@@ -325,7 +359,7 @@ export function CommandPalette() {
             onKeyDown={onInputKeyDown}
             // No outline — the input is permanently focused; the ring would
             // never leave and would be visually distracting.
-            className="flex-1 bg-transparent text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] outline-none focus:outline-none"
+            className="flex-1 bg-transparent text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] !outline-none !focus:outline-none"
           />
 
           {/* Keyboard hint */}
@@ -352,7 +386,11 @@ export function CommandPalette() {
             </div>
           ) : (
             grouped.map((group, gi) => (
-              <div key={gi} role="group" aria-labelledby={group.group ? `group-${gi}` : undefined}>
+              <div
+                key={gi}
+                role="group"
+                aria-labelledby={group.group ? `group-${gi}` : undefined}
+              >
                 {/* Group separator */}
                 {group.group && (
                   <div
@@ -383,26 +421,35 @@ export function CommandPalette() {
         <div className="flex items-center justify-between border-t border-[var(--color-border)] px-3 py-1.5 text-[10px] text-[var(--color-content-tertiary)]">
           <span className="flex items-center gap-3">
             <span className="flex items-center gap-1">
-              <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1">↑↓</kbd>
+              <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1">
+                ↑↓
+              </kbd>
               navigate
             </span>
             <span className="flex items-center gap-1">
-              <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1">↵</kbd>
+              <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1">
+                ↵
+              </kbd>
               select
             </span>
             {isNested && (
               <span className="flex items-center gap-1">
-                <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1">⌫</kbd>
+                <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1">
+                  ⌫
+                </kbd>
                 back
               </span>
             )}
           </span>
           <span className="flex items-center gap-1">
-            <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1">⌘K</kbd>
+            <kbd className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1">
+              ⌘K
+            </kbd>
             toggle
           </span>
         </div>
       </div>
-    </>
+    </div>,
+    document.body,
   );
 }

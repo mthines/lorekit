@@ -31,6 +31,9 @@ export type Key = string;
  *  - `'mod+k'`  → Cmd+K on macOS, Ctrl+K elsewhere
  *  - `'shift+n'` → Shift+N
  *  - `'alt+p'`   → Alt/Option+P
+ *
+ * Modifiers combine and chain freely, so a sequence of modified chords works:
+ *  - `['mod+shift+m', 'mod+shift+o']` → Cmd+Shift+M then Cmd+Shift+O.
  */
 export type KeySequence = Key[];
 

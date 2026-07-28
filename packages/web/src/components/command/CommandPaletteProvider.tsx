@@ -34,7 +34,7 @@ import {
   useState,
 } from 'react';
 import type { Command, PaletteFrame } from './types';
-import { CHORD_TIMEOUT_MS, isMac } from './shortcut';
+import { CHORD_TIMEOUT_MS, canonicalKey, isMac, normalizeToken } from './shortcut';
 
 // ── Context ───────────────────────────────────────────────────────────────────
 
@@ -167,7 +167,7 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
         if (!command.shortcut) continue;
         const { keys } = command.shortcut;
         if (keys.length !== sequence.length) continue;
-        const match = keys.every((token, i) => token.toLowerCase() === sequence[i]);
+        const match = keys.every((token, i) => normalizeToken(token) === sequence[i]);
         if (match) {
           if (command.children || command.onSelect) {
             activateCommand(command);
@@ -207,8 +207,17 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
       // Ignore pure modifier key events.
       if (['Meta', 'Control', 'Alt', 'Shift'].includes(e.key)) return;
 
-      // Accumulate chord.
-      const token = e.key.toLowerCase();
+      // Accumulate chord. Each step is a CANONICAL token that captures the
+      // modifier state (mod/shift/alt) held during this keypress, so a modified
+      // sequence like `mod+shift+m → mod+shift+o` accumulates as
+      // ['mod+shift+m', 'mod+shift+o'] and matches. Plain keys (`g`, `h`)
+      // canonicalise to themselves, so chained letter chords are unchanged.
+      const token = canonicalKey({
+        key: e.key.toLowerCase(),
+        mod: modPressed,
+        shift: e.shiftKey,
+        alt: e.altKey,
+      });
       const newChord = [...chordRef.current, token];
       chordRef.current = newChord;
 
@@ -228,7 +237,7 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
         const { keys } = cmd.shortcut;
         return (
           keys.length > newChord.length &&
-          newChord.every((k, i) => k === keys[i]!.toLowerCase())
+          newChord.every((k, i) => k === normalizeToken(keys[i]!))
         );
       });
 

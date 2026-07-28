@@ -15,7 +15,6 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Command } from 'lucide-react';
 import { useCommandPalette } from './CommandPaletteProvider';
 import { isMac } from './shortcut';
 
@@ -33,15 +32,14 @@ export function CommandPaletteButton() {
     <button
       type="button"
       onClick={openPalette}
-      aria-label="Open command palette"
+      aria-label={`Open command palette (${shortcutLabel})`}
       title={`Open command palette (${shortcutLabel})`}
-      className="flex min-h-11 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2.5 text-xs text-[var(--color-content-secondary)] transition-colors hover:border-[var(--color-content-tertiary)] hover:text-[var(--color-content-primary)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
+      // Shaped like the app's badges/tags (rounded-md, mono, hairline border):
+      // a muted neutral tag at rest, warming to the LoreKit amber tag tint on
+      // hover/focus — subtle by default, sexy on interaction.
+      className="inline-flex items-center rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1.5 py-0.5 font-mono text-xs text-[var(--color-content-tertiary)] transition-colors duration-200 hover:border-[#f5a62333] hover:bg-[#f5a6231a] hover:text-[var(--color-accent)] focus-visible:border-[#f5a62333] focus-visible:bg-[#f5a6231a] focus-visible:text-[var(--color-accent)] focus-visible:outline-none"
     >
-      <Command className="size-3.5 shrink-0" aria-hidden />
-      <span className="hidden sm:inline">Search</span>
-      <kbd className="hidden rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-1 py-0.5 font-mono text-[10px] sm:inline">
-        {shortcutLabel}
-      </kbd>
+      {shortcutLabel}
     </button>
   );
 }
