@@ -15,6 +15,8 @@ export function CopyCommand({ command }: { command: string }) {
     navigator.clipboard.writeText(command).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {
+      // Clipboard access denied — fail silently; the command text is still visible.
     });
   }
 
