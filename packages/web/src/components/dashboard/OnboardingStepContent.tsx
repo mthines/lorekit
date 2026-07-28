@@ -265,7 +265,7 @@ function WebhookStep({
   return (
     <div className="flex flex-col gap-5">
       <p className="text-sm text-[var(--color-content-secondary)]">
-        Every resolved PR review comment becomes a candidate lesson — tagged{' '}
+        Every resolved PR review comment becomes a candidate memory — tagged{' '}
         <code className="rounded bg-[var(--color-bg)] px-1 font-mono text-xs">
           source::pr-webhook
         </code>{' '}

@@ -13,25 +13,25 @@ const FEATURES = [
     icon: Brain,
     title: 'Agents that remember',
     description:
-      'LoreKit gives your AI coding agents a shared memory store. Lessons written in one session are available in the next — across repos, branches, and tools.',
+      'LoreKit gives your AI coding agents a shared memory store. Memories written in one session are available in the next — across repos, branches, and tools.',
   },
   {
     icon: GitBranch,
     title: 'Scope-aware memory',
     description:
-      'Lessons are namespaced by scope: global, project, repo, or branch. Agents read the narrowest scope first and fall back automatically.',
+      'Memories are namespaced by scope: global, project, repo, or branch. Agents read the narrowest scope first and fall back automatically.',
   },
   {
     icon: Zap,
     title: 'Wired to your workflow',
     description:
-      'Connect via MCP in one config line. A GitHub webhook turns resolved PR review comments into candidate lessons automatically.',
+      'Connect via MCP in one config line. A GitHub webhook turns resolved PR review comments into candidate memories automatically.',
   },
   {
     icon: BookOpen,
     title: 'Browse and curate',
     description:
-      'The dashboard lets you explore every lesson your agents have written, archive stale entries, and watch activity in real time.',
+      'The dashboard lets you explore every memory your agents have written, archive stale entries, and watch activity in real time.',
   },
 ] as const;
 
@@ -113,7 +113,7 @@ export default function LoginPage() {
 
         <p className="mb-10 max-w-lg text-base text-[var(--color-content-secondary)] sm:text-lg">
           LoreKit gives your coding agents a shared, scoped memory store backed by Supabase.
-          Lessons written in one session survive forever — reachable by any agent, on any project.
+          Memories written in one session survive forever — reachable by any agent, on any project.
         </p>
 
         <div className="flex flex-col items-center gap-3">

@@ -150,7 +150,10 @@ export function DateRangePicker({ value, onChange, className = '' }: DateRangePi
         aria-expanded={open}
         aria-haspopup="dialog"
         className={[
-          'flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors duration-150',
+          // min-h-9 + rounded-lg + px-2.5/py-1.5 keeps this control the same
+          // height and shape as the sibling "Archived" toggle in the Lore
+          // Explorer filter row (LoreExplorer.tsx) so they read as one set.
+          'flex min-h-9 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors duration-150',
           value
             ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
             : 'border-[var(--color-border)] bg-[var(--color-bg-raised)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',

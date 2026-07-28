@@ -198,7 +198,7 @@ test('search with no matches prints a friendly note (exit 0)', () => {
   const { root, home } = seedProject();
   const res = runSearch(root, home, ['zzznomatch']);
   assert.equal(res.status, 0, res.stderr);
-  assert.match(res.stdout, /no lessons match/);
+  assert.match(res.stdout, /no memories match/);
 });
 
 test('search is case-insensitive', () => {

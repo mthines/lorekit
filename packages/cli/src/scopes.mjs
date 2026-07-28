@@ -113,7 +113,7 @@ function renderScopesSection(header, section) {
   }
 
   if (!section.scopes.length) {
-    log(`  ${c.dim('no scopes found — the store holds no lessons')}`);
+    log(`  ${c.dim('no scopes found — the store holds no memories')}`);
     return;
   }
 

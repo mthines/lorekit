@@ -32,7 +32,7 @@
  */
 
 import { useMemo, useTransition, useState } from 'react';
-import { Search, BookOpen, ChevronDown, ChevronUp, Loader2, List, LayoutGrid, Archive } from 'lucide-react';
+import { Search, BookOpen, ChevronDown, ChevronUp, Loader2, List, LayoutGrid, Archive, User, Building2, Users } from 'lucide-react';
 import { ScopeTree, type ScopeNode } from './ScopeTree';
 import { LessonCard } from './LessonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -50,10 +50,12 @@ import { filterByOwnership, type OwnerFilter } from '@/lib/org-ui';
 type ViewMode = 'scope' | 'time';
 
 // ── Ownership filter bar ──────────────────────────────────────────────────────
-// "All · Personal · {org}" per ux-design §4 — only rendered when at least one
-// org-owned lesson is in view (nothing to filter by ownership otherwise).
-// Single-select, so it uses radiogroup/radio semantics (aria-checked), not the
-// toggle-button aria-pressed shape.
+// "Owner: All · Personal · {org}" per ux-design §4 — only rendered when at least
+// one org-owned memory is in view (nothing to filter by ownership otherwise).
+// A leading "Owner" label + per-chip icons make the dimension self-explanatory:
+// without them the bare "Personal / {org}" chips read as unlabelled mystery
+// filters. Single-select, so it uses radiogroup/radio semantics (aria-checked),
+// not the toggle-button aria-pressed shape.
 
 function OwnershipFilterBar({
   orgs,
@@ -72,14 +74,33 @@ function OwnershipFilterBar({
     return typeof value === 'object' && value.orgId === candidate.orgId;
   }
 
-  const chips: { key: string; label: string; filter: OwnerFilter }[] = [
-    { key: 'all', label: 'All', filter: 'all' },
-    { key: 'personal', label: 'Personal', filter: 'personal' },
-    ...orgs.map((org) => ({ key: org.id, label: org.name, filter: { orgId: org.id } as OwnerFilter })),
+  const chips: {
+    key: string;
+    label: string;
+    filter: OwnerFilter;
+    icon: typeof User;
+    title: string;
+  }[] = [
+    { key: 'all', label: 'All', filter: 'all', icon: Users, title: 'Show memories from every owner' },
+    { key: 'personal', label: 'Personal', filter: 'personal', icon: User, title: 'Only your personal memories' },
+    ...orgs.map((org) => ({
+      key: org.id,
+      label: org.name,
+      filter: { orgId: org.id } as OwnerFilter,
+      icon: Building2,
+      title: `Only memories shared with ${org.name}`,
+    })),
   ];
 
   return (
-    <div role="radiogroup" aria-label="Filter by ownership" className="flex flex-wrap gap-1.5 border-b border-[var(--color-border)] px-3 py-2">
+    <div
+      role="radiogroup"
+      aria-label="Filter by owner"
+      className="flex flex-wrap items-center gap-1.5 border-b border-[var(--color-border)] px-3 py-2"
+    >
+      <span className="mr-0.5 flex items-center text-xs font-medium text-[var(--color-content-tertiary)]">
+        Owner
+      </span>
       {chips.map((chip) => (
         <button
           key={chip.key}
@@ -87,13 +108,15 @@ function OwnershipFilterBar({
           role="radio"
           onClick={() => onChange(chip.filter)}
           aria-checked={isActive(chip.filter)}
+          title={chip.title}
           className={[
-            'flex min-h-9 items-center rounded-full border px-3 text-xs font-medium transition-colors duration-150',
+            'flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors duration-150',
             isActive(chip.filter)
               ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
               : 'border-[var(--color-border)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
           ].join(' ')}
         >
+          <chip.icon className="size-3 shrink-0" aria-hidden />
           {chip.label}
         </button>
       ))}
@@ -236,11 +259,19 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
 
   const totalCount = scopes.reduce((sum, s) => sum + s.count, 0);
 
-  // Shared lesson list renderer (scope view only).
-  function LessonList() {
+  // Shared memory list renderer (scope view only).
+  //
+  // This is a plain function that is CALLED (`{renderLessonList()}`), not a
+  // nested component rendered as `<LessonList />`. A nested component would get
+  // a fresh type identity on every parent render, so React would unmount and
+  // remount the entire list each time any filter/search/transition state
+  // changed — replaying every card's enter animation even when the same cards
+  // remain. Inlining the returned JSX keeps each keyed <LessonCard> mounted
+  // across renders, so only genuinely-new cards animate in.
+  const renderLessonList = () => {
     if (isLoading) {
       return (
-        <div className="flex flex-col gap-2 p-3" aria-label="Loading lessons" role="status">
+        <div className="flex flex-col gap-2 p-3" aria-label="Loading memories" role="status">
           {[0, 1, 2, 3, 4].map((i) => (
             <div key={i} className="h-24 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]" />
           ))}
@@ -251,7 +282,7 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
     if (isError) {
       return (
         <div className="flex items-center justify-center p-8">
-          <p className="text-sm text-[var(--color-content-secondary)]">Failed to load lessons. Please refresh.</p>
+          <p className="text-sm text-[var(--color-content-secondary)]">Failed to load memories. Please refresh.</p>
         </div>
       );
     }
@@ -268,15 +299,15 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
             showArchived
               ? 'No archived memories'
               : isFiltered
-                ? 'No matching lessons'
-                : 'No lessons in this scope'
+                ? 'No matching memories'
+                : 'No memories in this scope'
           }
           description={
             showArchived
               ? 'Archive a memory from its detail panel to see it here.'
               : isFiltered
                 ? 'Try a different search term or date range.'
-                : 'Lessons will appear here once your agents start writing.'
+                : 'Memories will appear here once your agents start writing.'
           }
         />
       );
@@ -312,22 +343,22 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
               {isFetchingNextPage ? 'Loading…' : 'Load more'}
             </button>
           ) : (
-            <p className="text-[10px] text-[var(--color-content-tertiary)]">All lessons loaded</p>
+            <p className="text-[10px] text-[var(--color-content-tertiary)]">All memories loaded</p>
           )}
         </div>
       </div>
     );
-  }
+  };
 
   return (
     <div className="flex flex-col gap-4">
       {/* Screen-reader-only status announcements. */}
       <p role="status" aria-live="polite" className="sr-only">
         {isLoading
-          ? 'Loading lessons'
+          ? 'Loading memories'
           : isFetchingNextPage
-            ? 'Loading more lessons'
-            : `${filteredLessons.length} lesson${filteredLessons.length === 1 ? '' : 's'} loaded`}
+            ? 'Loading more memories'
+            : `${filteredLessons.length} memor${filteredLessons.length === 1 ? 'y' : 'ies'} loaded`}
       </p>
 
       {/* ── Heatmap panel (collapsible) ─────────────────────────────────── */}
@@ -339,7 +370,7 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
           className="flex w-full min-h-11 items-center justify-between gap-4 px-5 py-3"
         >
           <p className="text-xs font-medium text-[var(--color-content-tertiary)]">
-            Lessons written — last 26 weeks
+            Memories written — last 26 weeks
           </p>
           {heatmapOpen ? (
             <ChevronUp className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
@@ -406,7 +437,7 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
                     totalCount={totalCount}
                   />
                 ) : (
-                  <EmptyState icon={BookOpen} title="No scopes yet" description="Run an agent to create your first lesson." />
+                  <EmptyState icon={BookOpen} title="No scopes yet" description="Run an agent to create your first memory." />
                 )}
               </div>
             </div>
@@ -417,10 +448,10 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
                   <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-content-tertiary)]" aria-hidden />
                   <input
                     type="search"
-                    placeholder="Search lessons…"
+                    placeholder="Search memories…"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    aria-label="Search lessons"
+                    aria-label="Search memories"
                     className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] py-2 pl-8 pr-3 text-xs text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none transition-colors duration-150"
                   />
                 </div>
@@ -448,8 +479,8 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
 
               <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
 
-              <div className="flex-1 overflow-y-auto p-3" role="list" aria-label="Lessons">
-                <LessonList />
+              <div className="flex-1 overflow-y-auto p-3" role="list" aria-label="Memories">
+                {renderLessonList()}
               </div>
             </div>
           </div>
@@ -489,10 +520,10 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-content-tertiary)]" aria-hidden />
                 <input
                   type="search"
-                  placeholder="Search lessons…"
+                  placeholder="Search memories…"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  aria-label="Search lessons"
+                  aria-label="Search memories"
                   className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] py-2 pl-8 pr-3 text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none transition-colors duration-150"
                 />
               </div>
@@ -518,8 +549,8 @@ export function LoreExplorer({ scopes, heatmapData, feedEvents }: LoreExplorerPr
 
             <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
 
-            <div role="list" aria-label="Lessons">
-              <LessonList />
+            <div role="list" aria-label="Memories">
+              {renderLessonList()}
             </div>
           </div>
         </>

@@ -13,16 +13,16 @@ export default function LearnPrivatePage() {
       <div>
         <h2 className="text-xl font-semibold text-[var(--color-content-primary)]">Private lore</h2>
         <p className="mt-1 text-sm text-[var(--color-content-secondary)]">
-          Every lesson is personal by default — visible only to the user or token that wrote it.
+          Every memory is personal by default — visible only to the user or token that wrote it.
           This tutorial explains how personal and org-owned lore coexist, and how to keep
-          sensitive lessons private even in a shared team environment.
+          sensitive memories private even in a shared team environment.
         </p>
       </div>
 
       <TutorialCallout variant="info">
-        You never have to do anything to make a lesson private. Omitting the{' '}
+        You never have to do anything to make a memory private. Omitting the{' '}
         <code>org</code> parameter on <code>memory.write</code> is all that is needed —
-        the lesson is personal by definition.
+        the memory is personal by definition.
       </TutorialCallout>
 
       <div className="flex flex-col gap-6">
@@ -59,9 +59,9 @@ export default function LearnPrivatePage() {
       </div>
 
       <div className="flex flex-col">
-        <TutorialStep number={1} title="Write a private lesson">
+        <TutorialStep number={1} title="Write a private memory">
           <p>
-            Simply omit <code>org</code>. The lesson is stored under your personal partition
+            Simply omit <code>org</code>. The memory is stored under your personal partition
             regardless of whether a scope binding exists:
           </p>
           <pre><code>{`memory.write {
@@ -104,11 +104,11 @@ export default function LearnPrivatePage() {
               Explorer
             </Link>, use the <strong>Personal</strong> filter in the{' '}
             <strong>All · Personal · {'{org}'}</strong> toolbar. This narrows the list to
-            lessons that belong only to you.
+            memories that belong only to you.
           </p>
         </TutorialStep>
 
-        <TutorialStep number={4} title="Archive or delete a private lesson">
+        <TutorialStep number={4} title="Archive or delete a private memory">
           <p>
             Soft-archive (recoverable — hidden from reads, restorable via{' '}
             <code>memory.restore</code>):
@@ -127,8 +127,8 @@ export default function LearnPrivatePage() {
       </div>
 
       <TutorialCallout>
-        <strong>Next:</strong> learn how to organise lessons with tags and scope namespaces
-        so the right lesson surfaces at the right time. See the{' '}
+        <strong>Next:</strong> learn how to organise memories with tags and scope namespaces
+        so the right memory surfaces at the right time. See the{' '}
         <Link href="/learn/tags" className="text-[var(--color-accent)] underline underline-offset-2">
           Tags & scopes tutorial
         </Link>.

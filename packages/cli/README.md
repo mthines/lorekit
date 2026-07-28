@@ -17,7 +17,7 @@ markdown files if you never want to sign up for anything.
 
 ```bash
 npm install -g @lorekit/cli
-lorekit install     # wires up the skill, MCP server, and hooks
+lorekit install     # wires up the skills, MCP server, and hooks
 lorekit doctor      # verify it's all green
 ```
 
@@ -47,7 +47,7 @@ Linux, and Windows (npm creates the `lorekit` shim on every platform).
 Sets up the full memory loop — the same three parts as the Claude plugin,
 without needing a marketplace:
 
-1. **Skill** (`lorekit-memory`) — the model-invoked authoring judgment.
+1. **Skills** (`lorekit-memory` + `lorekit-setup`) — the model-invoked authoring judgment and the self-improvement loop authoring counterpart.
 2. **MCP server** (`lorekit`) — the connection to your lessons, merged into the
    MCP config (preserving any other servers).
 3. **Hooks** — the *deterministic* layer: lessons injected on every
@@ -75,7 +75,7 @@ lorekit install --global      # set it up for every project
 
 In a TTY it prompts for the scope (and for `--endpoint` / `--token` if missing).
 Flags: `--project` / `--global` pick the scope non-interactively; `--no-hooks`
-installs the skill + MCP only (memory stays model-invoked); `--yes` runs
+installs the skills + MCP only (memory stays model-invoked); `--yes` runs
 non-interactively (endpoint required via flag/env; scope defaults to project);
 `--force` overwrites an existing skill copy. Re-running is idempotent — the hook
 entries are updated in place, never duplicated.
@@ -528,7 +528,7 @@ active deny constraints.
 | `--to <tier>` | Migration destination tier: `home` / `project` (`migrate`; default routes by scope) |
 | `--apply` | Apply the migration — alias of `--yes` (`migrate`) |
 | `-y, --yes` | Non-interactive / apply; never prompt |
-| `--no-hooks` | Skip wiring the lifecycle hooks; skill + MCP only (`install`) |
+| `--no-hooks` | Skip wiring the lifecycle hooks; skills + MCP only (`install`) |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
 | `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe`) |

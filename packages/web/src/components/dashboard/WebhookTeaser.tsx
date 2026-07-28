@@ -93,11 +93,11 @@ export function WebhookTeaser({ hasWebhook }: WebhookTeaserProps) {
 
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-[var(--color-content-primary)]">
-            Auto-lessons from PR reviews
+            Auto-memories from PR reviews
           </p>
           <p className="mt-0.5 text-xs text-[var(--color-content-tertiary)]">
             Connect a GitHub webhook and every resolved review comment becomes a
-            lesson automatically — no manual writes needed.
+            memory automatically — no manual writes needed.
           </p>
 
           <Link

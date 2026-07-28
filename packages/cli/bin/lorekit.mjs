@@ -34,7 +34,7 @@ ${c.bold('Usage')}
 
 ${c.bold('Commands')}
   install     Scaffold the lorekit-memory + lorekit-setup skills, wire the
-              LoreKit MCP server, and install the deterministic hooks (lessons
+              LoreKit MCP server, and install the deterministic hooks (memories
               on SessionStart, a nudge on tool failure + at Stop). Prompts to
               install for this project (.claude) or globally for every project
               (~/.claude); --project / --global choose non-interactively,
@@ -44,39 +44,39 @@ ${c.bold('Commands')}
               other servers, hooks, and settings are left untouched. Prompts
               project vs global; --project / --global choose non-interactively.
   doctor      Verify the skill install, MCP connectivity, token, and scope.
-  list (ls)   List the lessons that apply to the current directory, split into
+  list (ls)   List the memories that apply to the current directory, split into
               an Offline section (local .lorekit/ + ~/.lorekit/) and a Remote
               section (hosted MCP). Groups by scope (project/branch/repo/global).
               --json for scripting, --scope <s> to narrow.
-  search      Full-text search the applicable lessons across both stores and all
+  search      Full-text search the applicable memories across both stores and all
     (grep)    scopes (case-insensitive, literal substring over key + value),
               rendered in the same Offline/Remote split. --json, --scope <s>.
-  show        Inspect one lesson in full: its complete value, scope, key, updated
+  show        Inspect one memory in full: its complete value, scope, key, updated
               date, tags, and which store(s) it lives in (noting any divergence
               when it is in both). --json. Usage: show <scope> <key>.
-  stats       Count the applicable lessons per scope and per store (offline vs
+  stats       Count the applicable memories per scope and per store (offline vs
               remote), with per-store and grand totals, in the same Offline/
               Remote split. --json, --scope <s>.
-  scopes      Store-wide inventory of EVERY distinct scope that holds lessons,
-              with a lesson count per scope — not cwd-scoped like the commands
+  scopes      Store-wide inventory of EVERY distinct scope that holds memories,
+              with a memory count per scope — not cwd-scoped like the commands
               above (it lists scopes anywhere in the store). Offline is exact;
               the remote can't enumerate scopes (honest note). --json, --scope <s>.
   diff        Compare the offline and remote stores for the applicable scopes and
               report divergence: local-only, remote-only, and conflicting keys
               (grouped by scope). Needs both stores readable. --json, --scope <s>.
   tree        Show the injected scopes (project → branch → repo → global) as a precedence
-    (resolve) hierarchy and mark, per key, which scope's lesson WINS and which are
+    (resolve) hierarchy and mark, per key, which scope's memory WINS and which are
               shadowed — the real hook-resolution order. --json, --scope <s>.
-  lint        Flag low-quality lessons (empty/short/untrimmed value, empty key,
+  lint        Flag low-quality memories (empty/short/untrimmed value, empty key,
               malformed scope) across the applicable scopes and both stores. Exits
               non-zero when issues are found (CI gate). --json, --scope <s>.
-  dedupe      Find likely-duplicate lessons via a zero-dep word-overlap HEURISTIC
+  dedupe      Find likely-duplicate memories via a zero-dep word-overlap HEURISTIC
               (Jaccard >= threshold, not semantic), grouped into clusters per
               store. --json, --scope <s>, --threshold <0..1>.
   migrate     Relocate a LoreKit-format local store into the current layout.
               Dry-run by default; pass --yes to apply. Idempotent.
   hook        Hook engine for Claude Code / Cursor / Codex. Reads the host's
-              JSON on stdin and injects lessons or a retrospective nudge.
+              JSON on stdin and injects memories or a retrospective nudge.
               Not run by hand — wired into a plugin's hook config.
   mcp         Local stdio MCP server. Exposes the memory.* tools backed by the
               resolved store (local .lorekit/ offline, or remote passthrough) so
@@ -143,7 +143,7 @@ ${c.bold('Usage')}
 
 Scaffolds the lorekit-memory (runtime read/write) and lorekit-setup (loop
 authoring) skills, adds the LoreKit MCP server, and wires the deterministic
-hooks (lessons on SessionStart, a nudge on tool failure + at Stop).
+hooks (memories on SessionStart, a nudge on tool failure + at Stop).
 
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
@@ -199,12 +199,12 @@ ${c.bold('Examples')}
   npx @lorekit/cli doctor --deep
   npx @lorekit/cli doctor --mode local
 `,
-  list: `${c.bold('lorekit list')} — list the lessons that apply to the current directory ${c.dim('(alias: ls)')}
+  list: `${c.bold('lorekit list')} — list the memories that apply to the current directory ${c.dim('(alias: ls)')}
 
 ${c.bold('Usage')}
   npx @lorekit/cli list [options]
 
-Shows the lessons for the scopes that resolve for the current directory
+Shows the memories for the scopes that resolve for the current directory
 (project/branch/repo/global), split into an Offline section (the local
 .lorekit/ + ~/.lorekit/ two-tier store) and a Remote section (the hosted MCP
 server). When no remote token/endpoint is configured the Remote section is a
@@ -223,14 +223,14 @@ ${c.bold('Examples')}
   npx @lorekit/cli list --json
   npx @lorekit/cli list --scope global
 `,
-  search: `${c.bold('lorekit search')} — full-text search the applicable lessons ${c.dim('(alias: grep)')}
+  search: `${c.bold('lorekit search')} — full-text search the applicable memories ${c.dim('(alias: grep)')}
 
 ${c.bold('Usage')}
   npx @lorekit/cli search <query> [options]
 
-Searches every lesson for the current directory's scopes (project/branch/repo/
+Searches every memory for the current directory's scopes (project/branch/repo/
 global) across both stores, matching the query case-insensitively as a LITERAL
-substring of a lesson's key or value (regex metacharacters are matched verbatim,
+substring of a memory's key or value (regex metacharacters are matched verbatim,
 never interpreted). Results are shown in the same Offline / Remote split as
 \`list\`; an unconfigured remote degrades to a short note, never an error.
 
@@ -247,12 +247,12 @@ ${c.bold('Examples')}
   npx @lorekit/cli grep "flaky test" --json
   npx @lorekit/cli search migration --scope global
 `,
-  show: `${c.bold('lorekit show')} — inspect one lesson in full
+  show: `${c.bold('lorekit show')} — inspect one memory in full
 
 ${c.bold('Usage')}
   npx @lorekit/cli show <scope> <key> [options]
 
-Prints one lesson's complete (untruncated) value, scope, key, updated date, tags,
+Prints one memory's complete (untruncated) value, scope, key, updated date, tags,
 and which store(s) it lives in. If the same scope::key exists in both the offline
 and remote stores, both are shown and any divergence in their values is flagged.
 Exits non-zero when the key is found in neither readable store.
@@ -268,12 +268,12 @@ ${c.bold('Examples')}
   npx @lorekit/cli show global prefer-guard-clauses
   npx @lorekit/cli show project::widget build-flags --json
 `,
-  stats: `${c.bold('lorekit stats')} — count the applicable lessons per scope and per store
+  stats: `${c.bold('lorekit stats')} — count the applicable memories per scope and per store
 
 ${c.bold('Usage')}
   npx @lorekit/cli stats [options]
 
-Shows how many lessons apply to the current directory's scopes (project/branch/
+Shows how many memories apply to the current directory's scopes (project/branch/
 repo/global), broken down per scope and per store (Offline = the local .lorekit/
 + ~/.lorekit/ two-tier store; Remote = the hosted MCP server), with per-store and
 grand totals. An unconfigured remote degrades to a short note, never an error.
@@ -296,13 +296,13 @@ ${c.bold('Examples')}
 ${c.bold('Usage')}
   npx @lorekit/cli scopes [options]
 
-Lists EVERY distinct scope present in the store, with a lesson count per scope,
+Lists EVERY distinct scope present in the store, with a memory count per scope,
 in the same Offline / Remote split as the other read commands. Unlike \`list\` /
 \`stats\` (which only see the scopes that resolve for the current directory), this
 is a full inventory — it surfaces scopes anywhere in the store, regardless of the
 current directory.
 
-Offline counts are exact: each scope is read from the lesson files' frontmatter,
+Offline counts are exact: each scope is read from the memory files' frontmatter,
 not reverse-mapped from the directory layout. The Remote section is always a
 short note: the hosted MCP surface has no "list all scopes" tool (every read tool
 requires a scope), so a remote inventory isn't possible — never an error (exit 0).
@@ -344,16 +344,16 @@ ${c.bold('Examples')}
   npx @lorekit/cli diff --json
   npx @lorekit/cli diff --scope global
 `,
-  tree: `${c.bold('lorekit tree')} — show the scope precedence hierarchy and which lesson wins ${c.dim('(alias: resolve)')}
+  tree: `${c.bold('lorekit tree')} — show the scope precedence hierarchy and which memory wins ${c.dim('(alias: resolve)')}
 
 ${c.bold('Usage')}
   npx @lorekit/cli tree [options]
 
 Shows the scopes the hooks actually inject for the current directory — project,
 branch, repo, global, in precedence order (most-specific first) — and marks, for any key
-present at more than one scope, which scope's lesson WINS and which are shadowed.
+present at more than one scope, which scope's memory WINS and which are shadowed.
 This mirrors the SessionStart hook's resolution exactly (a more-specific scope
-overrides a broader scope's same-key lesson). Resolved independently per store,
+overrides a broader scope's same-key memory). Resolved independently per store,
 in the same Offline / Remote split.
 
 ${c.bold('Options')}
@@ -368,12 +368,12 @@ ${c.bold('Examples')}
   npx @lorekit/cli tree
   npx @lorekit/cli resolve --json
 `,
-  lint: `${c.bold('lorekit lint')} — flag low-quality lessons across the applicable scopes
+  lint: `${c.bold('lorekit lint')} — flag low-quality memories across the applicable scopes
 
 ${c.bold('Usage')}
   npx @lorekit/cli lint [options]
 
-Checks every lesson for the current directory's scopes (project/branch/repo/
+Checks every memory for the current directory's scopes (project/branch/repo/
 global), across both stores, against a small set of quality rules: empty or
 whitespace-only value, suspiciously short value, untrimmed value, empty key, and
 malformed scope (e.g. a single \`:\` where \`::\` is expected). Each finding names
@@ -393,12 +393,12 @@ ${c.bold('Examples')}
   npx @lorekit/cli lint --json
   npx @lorekit/cli lint --scope global
 `,
-  dedupe: `${c.bold('lorekit dedupe')} — find likely-duplicate lessons (heuristic)
+  dedupe: `${c.bold('lorekit dedupe')} — find likely-duplicate memories (heuristic)
 
 ${c.bold('Usage')}
   npx @lorekit/cli dedupe [options]
 
-Groups lessons whose values overlap heavily into duplicate clusters, per store,
+Groups memories whose values overlap heavily into duplicate clusters, per store,
 across the current directory's scopes. The similarity signal is a zero-dependency
 HEURISTIC — Jaccard overlap of lowercased word tokens, not a semantic/embedding
 measure — so it surfaces candidates for a human to review, and can both miss
@@ -440,7 +440,7 @@ ${c.bold('Examples')}
 ${c.bold('Usage')}
   lorekit hook --adapter <claude|cursor|codex> --event <name> [--dir <path>]
 
-Machine-facing: reads the host's JSON on stdin and injects lessons or a
+Machine-facing: reads the host's JSON on stdin and injects memories or a
 retrospective nudge on stdout, always exiting 0. Wired into a plugin's hook
 config by \`lorekit install\` — not run by hand.
 

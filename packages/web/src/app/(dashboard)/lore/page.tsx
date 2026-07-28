@@ -23,7 +23,7 @@ export default function LorePage() {
           Lore Explorer
         </h1>
         <p className="mt-1 text-sm text-[var(--color-content-secondary)]">
-          Find any lesson your agents have written, filtered by scope or date.
+          Find any memory your agents have written, filtered by scope or date.
         </p>
       </div>
 
