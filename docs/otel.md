@@ -34,6 +34,74 @@ Attributes on `lorekit.memory.*` spans:
 | `lorekit.key` | `aw-lessons::worktree-naming` | Lesson key |
 | `lorekit.source_agent` | `aw-executor` | Agent that triggered the write |
 | `lorekit.trigger` | `stuck-loop` | What triggered the write |
+| `lorekit.plan` | `free` | User's plan at call time |
+| `lorekit.duration_ms` | `42` | Wall-clock handler duration (milliseconds) |
+| `lorekit.write.inserted` | `true` | Write path only: `true` = new row, `false` = update |
+| `lorekit.value.bytes` | `312` | Write path only: byte length of the value |
+| `lorekit.tags.count` | `2` | Write path only: number of tags supplied |
+| `lorekit.result.count` | `17` | List / search results: row count returned |
+
+Rate-limit attributes on the root `lorekit.mcp` span:
+
+| Attribute | Example | Notes |
+|-----------|---------|-------|
+| `rate_limit.allowed` | `true` | Whether the request was allowed |
+| `rate_limit.current_count` | `47` | Current window request count |
+| `rate_limit.limit_value` | `120` | Effective RPM limit |
+
+---
+
+## Structured usage events (`usage_events` table)
+
+In addition to OTLP traces, every significant tool call outcome is recorded as
+a lightweight structured row in the `usage_events` Postgres table
+(`supabase/migrations/00034_usage_events.sql`). These rows are intentionally
+**flat and categorical** (no PII, no key/value/scope strings) so they can be
+queried directly in SQL for plan-sizing analysis without a Dash0 token:
+
+```sql
+-- Daily active writers (free plan)
+select date_trunc('day', created_at) as day, count(distinct user_id) as writers
+  from usage_events
+ where tool_name = 'memory.write'
+   and outcome = 'ok'
+   and plan_name = 'free'
+ group by 1 order by 1 desc;
+
+-- Cap-hit rate per plan — use to calibrate plan thresholds
+select plan_name, count(*) filter (where outcome = 'cap_exceeded') as cap_hits,
+       count(*) as total_writes,
+       round(100.0 * count(*) filter (where outcome = 'cap_exceeded') / nullif(count(*), 0), 1) as pct
+  from usage_events
+ where tool_name = 'memory.write'
+ group by plan_name;
+
+-- p50 / p95 write duration per tool
+select tool_name,
+       percentile_cont(0.50) within group (order by duration_ms) as p50_ms,
+       percentile_cont(0.95) within group (order by duration_ms) as p95_ms
+  from usage_events
+ where outcome = 'ok'
+ group by tool_name order by tool_name;
+```
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `user_id` | `uuid` | Supabase auth user UUID (pseudonymous, never email/handle) |
+| `org_id` | `uuid` | Set for org-owned writes, null for personal |
+| `plan_name` | `text` | `'free'` or a future plan name |
+| `tool_name` | `text` | e.g. `memory.write`, `memory.search`, `transport` (rate-limit) |
+| `scope_type` | `text` | `global` \| `project` \| `repo` \| `branch` \| `null` (org tools) |
+| `auth_type` | `text` | `api_key` \| `jwt` (excludes service-role) |
+| `outcome` | `text` | `ok` \| `cap_exceeded` \| `rate_limited` \| `permission_denied` \| `error` |
+| `duration_ms` | `integer` | Wall-clock handler time |
+| `memory_count` | `integer` | Active memories at write time (write path only, future use) |
+| `created_at` | `timestamptz` | Event timestamp |
+
+Rows are retained for **90 days** and purged weekly by `lorekit_purge_old_usage_events()`.
+Users can read their own rows (self-service "my usage" view via RLS).
+
+---
 
 DB child spans carry OTel database semconv:
 

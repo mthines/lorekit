@@ -165,9 +165,12 @@ function buildOtlpPayload(spans: SpanPayload[]): unknown {
   // the lifetime of the isolate — resolved from Supabase secrets at startup).
   const vcsAttrs = getVcsResourceAttributes();
 
+  const serviceVersion = Deno.env.get('VCS_REF_HEAD_REVISION') ?? Deno.env.get('GITHUB_SHA') ?? 'unknown';
+
   const resourceAttributes = [
     { key: 'service.name', value: { stringValue: 'mcp' } },
     { key: 'service.namespace', value: { stringValue: 'lorekit' } },
+    { key: 'service.version', value: { stringValue: serviceVersion } },
     { key: 'deployment.environment.name', value: { stringValue: resolveDeploymentEnv() } },
     ...Object.entries(vcsAttrs).map(([key, value]) => ({
       key,

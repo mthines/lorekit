@@ -36,11 +36,29 @@ export type Params = Record<string, any>;
  *
  * Fails closed: an RPC error resolves to no orgs (personal-only), never to
  * broader access than intended.
+ *
+ * Performance: the result is memoised per-request via a module-level WeakMap
+ * keyed by the db client instance (which is created once per request in
+ * auth.ts → getDb). This avoids a redundant RPC round-trip when multiple
+ * read tools are called in the same request (toolRead + toolSearch, etc.).
  */
+const memberOrgIdsCache = new WeakMap<object, Map<string, string[]>>();
+
 async function memberOrgIds(db: ReturnType<typeof createClient>, userId: string): Promise<string[]> {
+  // Retrieve or create the per-client cache map.
+  let clientCache = memberOrgIdsCache.get(db as object);
+  if (!clientCache) {
+    clientCache = new Map();
+    memberOrgIdsCache.set(db as object, clientCache);
+  }
+
+  const cached = clientCache.get(userId);
+  if (cached !== undefined) return cached;
+
   const { data, error } = await db.rpc('lorekit_member_org_ids', { p_user_id: userId });
-  if (error) return [];
-  return (data ?? []) as string[];
+  const result = error ? [] : ((data ?? []) as string[]);
+  clientCache.set(userId, result);
+  return result;
 }
 
 export async function toolWrite(
@@ -61,6 +79,8 @@ export async function toolWrite(
   span.setAttributes({
     'lorekit.scope': scope,
     'lorekit.key': key,
+    'lorekit.value.bytes': value.length,
+    'lorekit.tags.count': tags.length,
     ...(source_agent ? { 'lorekit.source_agent': source_agent } : {}),
     ...(trigger ? { 'lorekit.trigger': trigger } : {}),
     ...(createdAt ? { 'lorekit.created_at': createdAt } : {}),
@@ -100,6 +120,12 @@ export async function toolWrite(
     org_routed?: boolean;
     binding_org_slug?: string | null;
   };
+
+  // Emit the write outcome as a telemetry attribute (insert vs update) so
+  // dashboards can distinguish new memory creation from updates without reading
+  // the audit_log table.
+  span.setAttributes({ 'lorekit.write.inserted': row.inserted !== false });
+
   await recordAudit(
     db,
     {

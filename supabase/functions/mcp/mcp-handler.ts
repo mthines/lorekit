@@ -23,7 +23,7 @@ import {
   type Params,
 } from './tools.ts';
 import { type Span } from '../_shared/otel.ts';
-import { LimitError } from './limits.ts';
+import { LimitError, recordUsageEvent, getUserPlanName } from './limits.ts';
 import { toolRequires } from './permissions.ts';
 
 // memory.* tools — dispatched with (db, args, userId, span)
@@ -327,8 +327,24 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
       ...(rawScope ? { 'lorekit.scope': rawScope } : {}),
     });
 
+    // Hoist db above try/catch so the error path can record usage events
+    // without re-calling getDb.
+    const db = getDb(auth);
+    // toolUserId: null for JWT auth (RLS handles scoping), api_key userId otherwise.
+    // analyticsUserId: the resolved user ID for usage-event annotation regardless of auth type.
+    const toolUserId = getUserId(auth);
+    const analyticsUserId = toolUserId ?? (auth.type === 'user' ? auth.userId : null) ?? null;
+
+    // Resolve plan name for usage-event annotation (fails open — null → 'free').
+    // Only resolved for authenticated non-service callers; service-role has no plan.
+    const planName = auth.type !== 'service' && analyticsUserId
+      ? await getUserPlanName(db, analyticsUserId)
+      : null;
+    if (planName) toolSpan.setAttributes({ 'lorekit.plan': planName });
+
+    const toolStartMs = Date.now();
+
     try {
-      const db = getDb(auth);
       let result: unknown;
 
       if (isOrgTool) {
@@ -336,18 +352,55 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
         // is resolved inside the SECURITY DEFINER RPCs from the JWT.
         result = await ORG_TOOLS[toolName as keyof typeof ORG_TOOLS](db, toolArgs, toolSpan);
       } else {
-        // memory.* tools: (db, args, userId, span)
+        // memory.* tools: (db, args, toolUserId, span)
+        // toolUserId is null for JWT auth — RLS handles scoping on the DB side.
         result = await MEMORY_TOOLS[toolName as keyof typeof MEMORY_TOOLS](
-          db, toolArgs, getUserId(auth), toolSpan,
+          db, toolArgs, toolUserId, toolSpan,
         );
       }
 
+      const durationMs = Date.now() - toolStartMs;
+      toolSpan.setAttributes({ 'lorekit.duration_ms': durationMs });
       toolSpan.end();
+
+      // Record successful usage event (fire-and-forget).
+      if (auth.type !== 'service' && analyticsUserId) {
+        recordUsageEvent(db, {
+          userId: analyticsUserId,
+          planName,
+          toolName,
+          scopeType: rawScope ? scopeType : null,
+          authType: auth.type as 'api_key' | 'jwt',
+          outcome: 'ok',
+          durationMs,
+        });
+      }
+
       return jsonrpc(id, { content: [{ type: 'text', text: JSON.stringify(result) }] });
     } catch (err) {
       const msg = `${(err as Error).name}: ${(err as Error).message}`;
+      const durationMs = Date.now() - toolStartMs;
+      toolSpan.setAttributes({ 'lorekit.duration_ms': durationMs });
       toolSpan.error(msg).end();
       span.error(msg);
+
+      // Record failure usage event (fire-and-forget) — distinguishes cap hits
+      // from generic errors in plan-sizing analytics.
+      if (auth.type !== 'service' && analyticsUserId) {
+        const outcome = err instanceof LimitError && err.code === 'memory_cap'
+          ? 'cap_exceeded'
+          : 'error';
+        recordUsageEvent(db, {
+          userId: analyticsUserId,
+          planName: null,  // skip plan lookup on error path to keep it fast
+          toolName,
+          scopeType: rawScope ? scopeType : null,
+          authType: auth.type as 'api_key' | 'jwt',
+          outcome,
+          durationMs,
+        });
+      }
+
       if (err instanceof LimitError) {
         // Distinct JSON-RPC error code for the memory cap — an actionable,
         // MCP-appropriate error rather than the generic -32603 internal error.

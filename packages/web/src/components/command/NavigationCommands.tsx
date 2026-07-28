@@ -41,6 +41,7 @@ import {
   Users,
   ShieldCheck,
   UserCircle,
+  CreditCard,
   Rocket,
   FileCog,
   HardDrive,
@@ -143,6 +144,15 @@ export function NavigationCommands() {
   });
 
   // ── Settings ──────────────────────────────────────────────────────────────
+
+  useCommand({
+    id: 'settings-plan',
+    label: 'Plan',
+    description: 'Your plan, memory usage, and capacity',
+    icon: <CreditCard className="size-4" />,
+    group: 'Settings',
+    onSelect: () => router.push('/settings/plan'),
+  });
 
   useCommand({
     id: 'settings-api-keys',
