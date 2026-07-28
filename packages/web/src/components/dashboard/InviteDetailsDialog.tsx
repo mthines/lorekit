@@ -145,6 +145,7 @@ export function InviteDetailsDialog({ invite, pending, onClose, onAccept, onDecl
   }, [open, onClose]);
 
   const expiryLabel = invite ? inviteExpiryLabel(invite.expires_at, new Date()) : null;
+  const isExpired = expiryLabel === 'Expired';
   const avatarUrl = isTrustedAvatarUrl(details?.inviter_avatar_url) ? details.inviter_avatar_url : null;
 
   return (
@@ -249,6 +250,12 @@ export function InviteDetailsDialog({ invite, pending, onClose, onAccept, onDecl
               </dl>
             )}
 
+            {isExpired && (
+              <p id="invite-details-expired" className="mb-2 text-xs text-[var(--color-content-tertiary)]">
+                This invitation has expired. Ask an admin to send a new one, or decline to dismiss it.
+              </p>
+            )}
+
             <div className="flex justify-end gap-2">
               <button
                 type="button"
@@ -261,7 +268,8 @@ export function InviteDetailsDialog({ invite, pending, onClose, onAccept, onDecl
               <button
                 type="button"
                 onClick={() => onAccept(invite)}
-                disabled={pending}
+                disabled={pending || isExpired}
+                aria-describedby={isExpired ? 'invite-details-expired' : undefined}
                 className="flex min-h-11 items-center justify-center rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[#000] transition-opacity duration-150 hover:opacity-90 disabled:opacity-50"
               >
                 Accept
