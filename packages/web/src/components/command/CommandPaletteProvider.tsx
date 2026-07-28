@@ -208,8 +208,25 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
         return;
       }
 
-      // Don't fire other shortcuts when palette is open or focus is in a text field.
-      if (openRef.current) return;
+      // When the palette is open, handle Escape here as a safety-net for the
+      // case where the search input has lost browser focus (e.g. the user
+      // tabbed away, focus was moved programmatically, or a sub-frame is still
+      // loading). Normally the input's own onKeyDown catches Escape; this
+      // handler catches it when the input is NOT focused.
+      if (openRef.current) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          // Mirror the input handler: pop nested frame or close at root.
+          setStack((prev) => {
+            if (prev.length <= 1) {
+              setOpen(false);
+              return [];
+            }
+            return prev.slice(0, -1);
+          });
+        }
+        return;
+      }
       const target = e.target as HTMLElement;
       const inTextField =
         target.tagName === 'INPUT' ||
