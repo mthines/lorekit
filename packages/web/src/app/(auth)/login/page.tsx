@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import { LoginButton } from '@/components/auth/LoginButton';
+import { SiteFooter } from '@/components/layout/SiteFooter';
 import { BookOpen, Brain, GitBranch, Zap } from 'lucide-react';
 
 export const metadata: Metadata = {
@@ -150,19 +151,7 @@ export default function LoginPage() {
         ))}
       </section>
 
-      <footer className="relative z-10 border-t border-[var(--color-border)] py-6 text-center">
-        <p className="text-xs text-[var(--color-content-tertiary)]">
-          Open source · built by{' '}
-          <a
-            href="https://github.com/mthines"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[var(--color-content-secondary)] underline-offset-2 hover:underline"
-          >
-            mthines
-          </a>
-        </p>
-      </footer>
+      <SiteFooter className="relative z-10" />
     </main>
   );
 }

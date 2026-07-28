@@ -4,6 +4,7 @@ import { headers } from 'next/headers';
 import { createServerClient } from '@/lib/supabase/server';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
+import { SiteFooter } from '@/components/layout/SiteFooter';
 import { Dash0Provider } from '@/components/providers/Dash0Provider';
 import { MemorySidebarProvider } from '@/components/providers/MemorySidebarProvider';
 import { ToastProvider } from '@/components/providers/ToastProvider';
@@ -70,7 +71,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
               <NavigationCommands />
               <div className="flex flex-1 flex-col overflow-hidden">
                 <TopBar user={user} />
-                <main className="flex-1 overflow-y-auto p-4 pb-20 md:pb-6 md:p-6">{children}</main>
+                {/*
+                  main stays the bounded scroll container (the lore explorer's
+                  desktop two-panel layout relies on this). The footer renders
+                  inside it, after the page content, so it stays subtle —
+                  appearing at the end of the scroll rather than eating fixed
+                  vertical space — while still reachable on every page.
+                */}
+                <main className="flex-1 overflow-y-auto p-4 pb-20 md:pb-6 md:p-6">
+                  {children}
+                  <SiteFooter className="-mx-4 mt-8 md:-mx-6" />
+                </main>
               </div>
             </MemorySidebarProvider>
           </Suspense>
