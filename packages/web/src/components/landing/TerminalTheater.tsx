@@ -196,6 +196,10 @@ const LINE_GAP = 320;
 const CARD_APPEAR_DELAY = 180;
 const LOAD_STAGGER = 130; // ms between each card lighting up
 
+/** Both terminal panes share one fixed height so the window never resizes and
+ *  the two panes stay balanced. Keep them in lockstep via this single constant. */
+const PANE_HEIGHT = 'h-[200px]';
+
 // ─── TypewriterLine ───────────────────────────────────────────────────────────
 
 function TypewriterLine({
@@ -553,7 +557,7 @@ export function TerminalTheater() {
             stream in and out (keeps the footer below it from jumping). */}
         <div
           ref={outputRef}
-          className="px-4 py-4 h-[200px] overflow-y-auto space-y-1.5"
+          className={`px-4 py-4 ${PANE_HEIGHT} overflow-y-auto space-y-1.5`}
           aria-live="polite"
           aria-label="Terminal output"
         >
@@ -602,7 +606,7 @@ export function TerminalTheater() {
           </div>
           {/* Fixed height so the card list never changes the window height as
               memories are written one by one. */}
-          <div className="flex flex-col gap-2 h-[200px] overflow-y-auto pr-1">
+          <div className={`flex flex-col gap-2 ${PANE_HEIGHT} overflow-y-auto pr-1`}>
             <AnimatePresence mode="popLayout">
               {cards.map((card) => (
                 <MemoryCard key={`${activeTab}-${card.id}`} card={card} />
