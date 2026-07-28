@@ -165,8 +165,8 @@ importers:
   packages/web:
     dependencies:
       '@dash0/sdk-web':
-        specifier: ^0.24.0
-        version: 0.24.0
+        specifier: 0.23.0
+        version: 0.23.0
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.1
@@ -834,8 +834,8 @@ packages:
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
     engines: {node: '>=12'}
 
-  '@dash0/sdk-web@0.24.0':
-    resolution: {integrity: sha512-p5myuoNlYP3hq4Ye7oO6Ibu3M6rATcCIw/FSubMRVxyQ2EnMfxm9/kPlaRHaNCigMO0y9kCHwhpuKhVUt91DVw==}
+  '@dash0/sdk-web@0.23.0':
+    resolution: {integrity: sha512-uFI/QnBbwLqgIglId7tUJ6eN8jmcnYOqBYDQ2v0xf7UG+Y5DgXl7rbY4L2a2G34+tiYVj9pNvyysmFi3TV+UIA==}
     engines: {node: '>=18'}
 
   '@emnapi/core@1.11.2':
@@ -7869,7 +7869,7 @@ snapshots:
     dependencies:
       '@jridgewell/trace-mapping': 0.3.9
 
-  '@dash0/sdk-web@0.24.0':
+  '@dash0/sdk-web@0.23.0':
     dependencies:
       web-vitals: 5.3.0
 
