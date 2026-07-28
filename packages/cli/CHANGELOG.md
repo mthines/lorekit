@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.0](https://github.com/mthines/lorekit/compare/cli-v1.16.0...cli-v1.17.0) (2026-07-28)
+
+
+### Features
+
+* **cli:** improve install UX — graceful re-install, token reuse, remove endpoint prompt ([#192](https://github.com/mthines/lorekit/issues/192)) ([443afc4](https://github.com/mthines/lorekit/commit/443afc4bdc504b76b7b95f55cd646f0c895f3a2a))
+
 ## [1.16.0](https://github.com/mthines/lorekit/compare/cli-v1.15.0...cli-v1.16.0) (2026-07-28)
 
 
