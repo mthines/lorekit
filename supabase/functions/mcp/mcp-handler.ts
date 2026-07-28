@@ -23,7 +23,7 @@ import {
   type Params,
 } from './tools.ts';
 import { type Span } from '../_shared/otel.ts';
-import { LimitError } from './limits.ts';
+import { LimitError, recordUsageEvent, getUserPlanName } from './limits.ts';
 import { toolRequires } from './permissions.ts';
 
 // memory.* tools — dispatched with (db, args, userId, span)
@@ -327,9 +327,22 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
       ...(rawScope ? { 'lorekit.scope': rawScope } : {}),
     });
 
+    const toolStartMs = Date.now();
+
     try {
       const db = getDb(auth);
       let result: unknown;
+
+      // Resolve plan name for usage-event annotation (fails open — null → 'free').
+      // Only resolved for authenticated non-service callers; service-role has no plan.
+      const userId = getUserId(auth) ?? (auth.type === 'user' ? auth.userId : null) ?? null;
+      const planName = auth.type !== 'service' && userId
+        ? await getUserPlanName(db, userId)
+        : null;
+
+      if (planName) {
+        toolSpan.setAttributes({ 'lorekit.plan': planName });
+      }
 
       if (isOrgTool) {
         // org.* tools: (db, args, span) — no userId parameter; auth.uid()
@@ -342,12 +355,52 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
         );
       }
 
+      const durationMs = Date.now() - toolStartMs;
+      toolSpan.setAttributes({ 'lorekit.duration_ms': durationMs });
       toolSpan.end();
+
+      // Record successful usage event (fire-and-forget).
+      if (auth.type !== 'service' && userId) {
+        recordUsageEvent(db, {
+          userId,
+          planName,
+          toolName,
+          scopeType: rawScope ? scopeType : null,
+          authType: auth.type as 'api_key' | 'jwt',
+          outcome: 'ok',
+          durationMs,
+        });
+      }
+
       return jsonrpc(id, { content: [{ type: 'text', text: JSON.stringify(result) }] });
     } catch (err) {
       const msg = `${(err as Error).name}: ${(err as Error).message}`;
+      const durationMs = Date.now() - toolStartMs;
+      toolSpan.setAttributes({ 'lorekit.duration_ms': durationMs });
       toolSpan.error(msg).end();
       span.error(msg);
+
+      // Record failure usage event (fire-and-forget) — distinguishes cap hits
+      // from generic errors in plan-sizing analytics.
+      if (auth.type !== 'service') {
+        const db = getDb(auth);
+        const userId2 = getUserId(auth) ?? (auth.type === 'user' ? auth.userId : null) ?? null;
+        if (userId2) {
+          const outcome = err instanceof LimitError && err.code === 'memory_cap'
+            ? 'cap_exceeded'
+            : 'error';
+          recordUsageEvent(db, {
+            userId: userId2,
+            planName: null,  // skip plan lookup on error path to keep it fast
+            toolName,
+            scopeType: rawScope ? scopeType : null,
+            authType: auth.type as 'api_key' | 'jwt',
+            outcome,
+            durationMs,
+          });
+        }
+      }
+
       if (err instanceof LimitError) {
         // Distinct JSON-RPC error code for the memory cap — an actionable,
         // MCP-appropriate error rather than the generic -32603 internal error.

@@ -25,7 +25,7 @@ import { traceRequest } from '../_shared/otel.ts';
 import { resolveAuth, getDb } from './auth.ts';
 import { handleMcp, jsonrpcError } from './mcp-handler.ts';
 import { handleWebhook } from './webhook.ts';
-import { checkRateLimit, rateLimitMessage } from './limits.ts';
+import { checkRateLimit, rateLimitMessage, recordUsageEvent, getUserPlanName } from './limits.ts';
 
 /**
  * Best-effort read of the JSON-RPC request id from the body, without disturbing
@@ -94,9 +94,27 @@ Deno.serve(async (req: Request) => {
     // reach this point (handled above).
     if (auth.type !== 'service' && auth.userId) {
       const db = getDb(auth);
-      const { allowed, retryAfterSeconds } = await checkRateLimit(db, auth.userId, span);
-      span.setAttributes({ 'rate_limit.allowed': allowed });
+
+      // Resolve the user's plan name once per request — used for rate-limit
+      // messages and usage-event annotation. Fails open (null → 'free').
+      const planName = await getUserPlanName(db, auth.userId);
+      span.setAttributes({ 'lorekit.plan': planName ?? 'free' });
+
+      const { allowed, retryAfterSeconds, currentCount, limitValue } = await checkRateLimit(db, auth.userId, span);
+      span.setAttributes({
+        'rate_limit.allowed': allowed,
+        ...(currentCount != null ? { 'rate_limit.current_count': currentCount } : {}),
+        ...(limitValue != null ? { 'rate_limit.limit_value': limitValue } : {}),
+      });
       if (!allowed) {
+        // Record rate-limit hit as a usage event for plan-sizing analytics.
+        recordUsageEvent(db, {
+          userId: auth.userId,
+          planName,
+          toolName: 'transport',
+          authType: auth.type as 'api_key' | 'jwt',
+          outcome: 'rate_limited',
+        });
         return new Response(
           JSON.stringify({
             jsonrpc: '2.0',
