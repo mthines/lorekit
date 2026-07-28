@@ -1,8 +1,17 @@
 /**
  * GitHub webhook handler.
- * Listens for pull_request_review_comment, pull_request_review, and
- * issue_comment events (all issue and PR comments) and creates
+ * Listens for pull_request_review_comment, pull_request_review,
+ * pull_request_review_thread, and issue_comment events and creates
  * candidate memory entries tagged source::pr-webhook.
+ *
+ * Two signal-quality gates applied before every write (mirrored from
+ * packages/mcp-server/src/webhooks/signal-filter.ts — keep in sync):
+ *   1. classifyWebhookAction — only 'created', 'submitted', and 'resolved'
+ *      actions carry durable signal; edits, deletes, dismissals are skipped.
+ *   2. isSignalWorthy — rejects short bodies, bot noise, and code-only blocks.
+ *
+ * All webhook-sourced memories are stored with ttl_days: 30 — they are
+ * candidates, not promoted lessons, and should decay unless re-surfaced.
  *
  * Unsupported event types return 200 OK but are marked with
  * lorekit.webhook.skipped=true on the span so they are visible in Dash0.
@@ -55,11 +64,45 @@ const SAFE_FULL_NAME = /^[a-z0-9._/-]+$/;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 
+/** TTL for all webhook-sourced memory candidates (days). */
+const WEBHOOK_TTL_DAYS = 30;
+
 const SUPPORTED_EVENTS = new Set([
   'pull_request_review_comment',
   'pull_request_review',
+  'pull_request_review_thread',
   'issue_comment',
 ]);
+
+// ── Signal-quality helpers (inlined — Deno edge functions are self-contained) ─
+// Keep in sync with packages/mcp-server/src/webhooks/signal-filter.ts
+
+type WebhookTier = 'WRITE' | 'SKIP';
+
+const BOT_NOISE_PATTERNS: RegExp[] = [
+  /^(Build|Deploy|Test|CI|Checks?) (passed|failed|succeeded|completed)/i,
+  /^Bumps \[/,
+  /^All \d+ checks? (passed|failed)/i,
+  /^Auto-merge enabled/i,
+];
+
+function classifyWebhookAction(event: string, action: string): WebhookTier {
+  if (event === 'pull_request_review_thread' && action === 'resolved') return 'WRITE';
+  if (event === 'pull_request_review' && action === 'submitted') return 'WRITE';
+  if (event === 'pull_request_review_comment' && action === 'created') return 'WRITE';
+  if (event === 'issue_comment' && action === 'created') return 'WRITE';
+  return 'SKIP';
+}
+
+function isSignalWorthy(body: string): boolean {
+  const trimmed = body.trim();
+  if (trimmed.length < 20) return false;
+  if (/^```[\s\S]*```$/.test(trimmed)) return false;
+  if (BOT_NOISE_PATTERNS.some((re) => re.test(trimmed))) return false;
+  return true;
+}
+
+// ── Secret resolution ─────────────────────────────────────────────────────────
 
 /**
  * Resolve candidate HMAC secrets for this webhook delivery.
@@ -232,8 +275,15 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
 
     if (!repo) return new Response('OK', { status: 200 });
 
+    // Layer 1 — action-tier gate: skip edits, deletes, dismissals, etc.
+    if (classifyWebhookAction(event, action) === 'SKIP') {
+      span.setAttributes({ 'lorekit.webhook.skipped': true, 'lorekit.webhook.skip_reason': 'action_not_signal_worthy' });
+      return new Response('OK', { status: 200 });
+    }
+
     let commentBody: string | undefined;
     let commentUrl: string | undefined;
+    const extraTags: string[] = [];
 
     if (event === 'pull_request_review_comment') {
       commentBody = earlyPayload['comment']?.body;
@@ -244,10 +294,17 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
     } else if (event === 'issue_comment') {
       commentBody = earlyPayload['comment']?.body;
       commentUrl = earlyPayload['comment']?.html_url;
+    } else if (event === 'pull_request_review_thread') {
+      // Resolved thread: the first comment in the thread is the finding.
+      // This is the highest-signal event — explicit author acknowledgement.
+      commentBody = earlyPayload['thread']?.comments?.[0]?.body;
+      commentUrl = earlyPayload['thread']?.comments?.[0]?.html_url;
+      extraTags.push('signal::resolved-thread');
     }
 
-    if (!commentBody?.trim()) {
-      span.setAttributes({ 'lorekit.webhook.skipped': true, 'lorekit.webhook.skip_reason': 'empty_body' });
+    // Layer 2 — body quality gate: reject noise before touching the DB.
+    if (!commentBody?.trim() || !isSignalWorthy(commentBody)) {
+      span.setAttributes({ 'lorekit.webhook.skipped': true, 'lorekit.webhook.skip_reason': 'body_not_signal_worthy' });
       return new Response('OK', { status: 200 });
     }
 
@@ -258,10 +315,13 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
       scope,
       key: `pr-webhook::${repo}::${Date.now()}`,
       value: commentBody.trim(),
+      // Layer 3 — TTL: webhook memories are candidates, not promoted lessons.
+      ttl_days: WEBHOOK_TTL_DAYS,
       tags: [
         'source::pr-webhook',
         `event::${event}`,
         `action::${action}`,
+        ...extraTags,
         ...(commentUrl ? [`url::${commentUrl}`] : []),
       ],
       source_agent: 'github-webhook',

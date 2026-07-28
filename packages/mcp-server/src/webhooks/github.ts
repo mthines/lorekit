@@ -1,7 +1,16 @@
 /**
  * GitHub webhook handler for LoreKit.
- * Listens for pull_request_review_comment and pull_request_review events.
+ * Listens for pull_request_review_comment, pull_request_review,
+ * pull_request_review_thread, and issue_comment events.
  * Creates a candidate memory entry tagged source::pr-webhook.
+ *
+ * Two signal-quality gates are applied before every write:
+ *   1. classifyWebhookAction — only 'created', 'submitted', and 'resolved'
+ *      actions carry durable signal; edits, deletes, dismissals are skipped.
+ *   2. isSignalWorthy — rejects short bodies, bot noise, and code-only blocks.
+ *
+ * All webhook-sourced memories are stored with ttl_days: 30 — they are
+ * candidates, not promoted lessons, and should decay unless re-surfaced.
  *
  * Per otel-instrumentation skills: spans on all operations.
  */
@@ -9,6 +18,10 @@ import { SpanStatusCode } from '@opentelemetry/api';
 import { createServiceClient, getTracer, write, validateScope } from '@lorekit/core';
 import { logger } from '../logger.js';
 import { createHmac, timingSafeEqual } from 'crypto';
+import { classifyWebhookAction, isSignalWorthy } from './signal-filter.js';
+
+/** TTL for all webhook-sourced memory candidates (days). */
+const WEBHOOK_TTL_DAYS = 30;
 
 // Read lazily (not as module-level consts) so tests that set process.env in
 // beforeEach — after this module has already been imported — see the value
@@ -56,6 +69,13 @@ export async function handleGitHubWebhook(req: Request): Promise<Response> {
       const action = (payload['action'] as string) ?? 'unknown';
       span.setAttribute('lorekit.webhook.action', action);
 
+      // Layer 1 — action-tier gate: skip edits, deletes, dismissals, etc.
+      if (classifyWebhookAction(event, action) === 'SKIP') {
+        span.addEvent('webhook.skipped', { reason: 'action_not_signal_worthy' });
+        logger.info({ scope: undefined, event, action }, 'lorekit.webhook.skipped');
+        return new Response('OK', { status: 200 });
+      }
+
       // Extract repo scope from the payload
       const repo = (payload['repository'] as { full_name?: string } | undefined)?.full_name;
       if (!repo) {
@@ -69,6 +89,7 @@ export async function handleGitHubWebhook(req: Request): Promise<Response> {
 
       let commentBody: string | undefined;
       let commentUrl: string | undefined;
+      const extraTags: string[] = [];
 
       if (event === 'pull_request_review_comment') {
         const comment = payload['comment'] as { body?: string; html_url?: string } | undefined;
@@ -78,10 +99,24 @@ export async function handleGitHubWebhook(req: Request): Promise<Response> {
         const review = payload['review'] as { body?: string; html_url?: string } | undefined;
         commentBody = review?.body;
         commentUrl = review?.html_url;
+      } else if (event === 'issue_comment') {
+        const comment = payload['comment'] as { body?: string; html_url?: string } | undefined;
+        commentBody = comment?.body;
+        commentUrl = comment?.html_url;
+      } else if (event === 'pull_request_review_thread') {
+        // Resolved thread: the first comment in the thread is the finding.
+        // This is the highest-signal event — explicit author acknowledgement.
+        const thread = payload['thread'] as
+          | { comments?: Array<{ body?: string; html_url?: string }> }
+          | undefined;
+        commentBody = thread?.comments?.[0]?.body;
+        commentUrl = thread?.comments?.[0]?.html_url;
+        extraTags.push('signal::resolved-thread');
       }
 
-      if (!commentBody?.trim()) {
-        span.addEvent('webhook.skipped', { reason: 'empty comment body' });
+      // Layer 2 — body quality gate: reject noise before touching the DB.
+      if (!commentBody?.trim() || !isSignalWorthy(commentBody)) {
+        span.addEvent('webhook.skipped', { reason: 'body_not_signal_worthy' });
         logger.info({ scope, event, action }, 'lorekit.webhook.skipped');
         return new Response('OK', { status: 200 });
       }
@@ -93,10 +128,13 @@ export async function handleGitHubWebhook(req: Request): Promise<Response> {
         scope,
         key,
         value: commentBody.trim(),
+        // Layer 3 — TTL: webhook memories are candidates, not promoted lessons.
+        ttl_days: WEBHOOK_TTL_DAYS,
         tags: [
           'source::pr-webhook',
           `event::${event}`,
           `action::${action}`,
+          ...extraTags,
           ...(commentUrl ? [`url::${commentUrl}`] : []),
         ],
         source_agent: 'github-webhook',
