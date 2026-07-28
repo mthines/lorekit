@@ -62,6 +62,7 @@ import { useLoreData } from '@/lib/queries/lore';
 // CommandPaletteProvider.
 
 function LoreCommands() {
+  const router = useRouter();
   const { openLessonById } = useMemorySidebar();
   const { data } = useLoreData();
 

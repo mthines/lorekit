@@ -31,7 +31,7 @@ export function CommandPaletteButton() {
   return (
     <button
       type="button"
-      onClick={openPalette}
+      onClick={() => openPalette('button')}
       aria-label={`Open command palette (${shortcutLabel})`}
       title={`Open command palette (${shortcutLabel})`}
       // Shaped like the app's badges/tags (rounded-md, mono, hairline border):

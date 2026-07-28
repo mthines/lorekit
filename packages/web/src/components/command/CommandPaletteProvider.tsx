@@ -35,6 +35,7 @@ import {
 } from 'react';
 import type { Command, PaletteFrame } from './types';
 import { CHORD_TIMEOUT_MS, canonicalKey, isMac, normalizeToken } from './shortcut';
+import { track, type CommandSource, type PaletteTrigger } from '@/lib/analytics/track';
 
 // ── Context ───────────────────────────────────────────────────────────────────
 
@@ -45,12 +46,12 @@ interface CommandPaletteContextValue {
   stack: PaletteFrame[];
   /** Current topmost frame. */
   currentFrame: PaletteFrame | null;
-  /** Open the palette at the root level. */
-  openPalette: () => void;
+  /** Open the palette at the root level. `trigger` tags the RUM event. */
+  openPalette: (trigger?: PaletteTrigger) => void;
   /** Close the palette. */
   closePalette: () => void;
-  /** Navigate into a command's children (or fire onSelect). */
-  activateCommand: (command: Command) => Promise<void>;
+  /** Navigate into a command's children (or fire onSelect). `source` tags the RUM event. */
+  activateCommand: (command: Command, source?: CommandSource) => Promise<void>;
   /** Pop the current nested level (or close if at root). */
   popFrame: () => void;
   /**
@@ -92,10 +93,14 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
     return Array.from(registryRef.current.values());
   }, [registryVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const openPalette = useCallback(() => {
-    setStack([{ parentCommand: null, commands: rootCommands(), loading: false }]);
-    setOpen(true);
-  }, [rootCommands]);
+  const openPalette = useCallback(
+    (trigger: PaletteTrigger = 'button') => {
+      setStack([{ parentCommand: null, commands: rootCommands(), loading: false }]);
+      setOpen(true);
+      track({ name: 'command_palette.opened', trigger });
+    },
+    [rootCommands],
+  );
 
   const closePalette = useCallback(() => {
     setOpen(false);
@@ -113,7 +118,7 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
   }, []);
 
   const activateCommand = useCallback(
-    async (command: Command): Promise<void> => {
+    async (command: Command, source: CommandSource = 'palette'): Promise<void> => {
       if (command.children) {
         if (typeof command.children === 'function') {
           // Push a loading frame immediately for perceived responsiveness.
@@ -145,6 +150,14 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
       }
       if (command.onSelect) {
         closePalette();
+        // Track leaf executions only — drilling into a submenu (the `children`
+        // branch above) returns early and is intentionally not counted.
+        track({
+          name: 'command_palette.command_selected',
+          commandId: command.id,
+          group: command.group,
+          source,
+        });
         await command.onSelect();
       }
     },
@@ -170,7 +183,7 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
         const match = keys.every((token, i) => normalizeToken(token) === sequence[i]);
         if (match) {
           if (command.children || command.onSelect) {
-            activateCommand(command);
+            activateCommand(command, 'shortcut');
           }
           return true;
         }
@@ -190,7 +203,7 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
         if (openRef.current) {
           closePalette();
         } else {
-          openPalette();
+          openPalette('shortcut');
         }
         return;
       }
