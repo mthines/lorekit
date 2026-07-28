@@ -76,7 +76,7 @@ async function fetchLoreData(): Promise<LoreData> {
   // for personal lore, the resolved name/slug for org-owned lore.
   const { data, error } = await supabase
     .from('memories')
-    .select('id,scope,key,value,tags,created_at,updated_at,archived_at,source_agent,trigger,org_id,created_by,updated_by,orgs(name,slug)')
+    .select('id,scope,key,value,tags,created_at,updated_at,archived_at,expires_at,source_agent,trigger,org_id,created_by,updated_by,orgs(name,slug)')
     .is('archived_at', null)
     // Order by creation date so memories migrated with a backdated created_at
     // appear at their correct original position, not the migration time.
@@ -97,6 +97,7 @@ async function fetchLoreData(): Promise<LoreData> {
       created_at: row.created_at as string,
       updated_at: row.updated_at as string,
       archived_at: (row.archived_at as string | null) ?? null,
+      expires_at: (row.expires_at as string | null) ?? null,
       source_agent: row.source_agent as string | null,
       trigger: row.trigger as string | null,
       org_id: orgId,
