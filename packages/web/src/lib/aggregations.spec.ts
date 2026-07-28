@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   aggregateByScope,
   aggregateByDay,
-  computeStatTrends,
+  computeRangeTrends,
   pctChange,
   windowChange,
   scopeWindowChange,
@@ -218,43 +218,49 @@ describe('scopeWindowChange', () => {
   });
 });
 
-// ── computeStatTrends ─────────────────────────────────────────────────────────
+// ── computeRangeTrends ────────────────────────────────────────────────────────
 
-describe('computeStatTrends', () => {
+describe('computeRangeTrends', () => {
   const NOW = '2026-07-24T12:00:00Z'; // Friday
+  const sum = (points: { value: number }[]) => points.reduce((a, p) => a + p.value, 0);
 
-  it('returns daily (30) and hourly (24) bucketed series', () => {
-    const t = computeStatTrends([], NOW);
-    expect(t.lessons.points).toHaveLength(30);
-    expect(t.scopes.points).toHaveLength(30);
-    expect(t.activity.points).toHaveLength(24);
-    expect(t.lessons.points.every((p) => p.value === 0)).toBe(true);
-    expect(t.lessons.changePct).toBe(0);
-    expect(t.activeScopes7d).toBe(0);
+  it('charts the recent window per range (7d → 7 daily, 30d → 30 daily, 24h → 24 hourly)', () => {
+    expect(computeRangeTrends([], NOW, '7d').lessons.points).toHaveLength(7);
+    expect(computeRangeTrends([], NOW, '7d').scopes.points).toHaveLength(7);
+    expect(computeRangeTrends([], NOW, '30d').lessons.points).toHaveLength(30);
+    expect(computeRangeTrends([], NOW, '24h').lessons.points).toHaveLength(24);
   });
 
-  it('counts lessons per day and totals to the in-window count', () => {
+  it('is all-zero and flat for empty input', () => {
+    const t = computeRangeTrends([], NOW, '7d');
+    expect(t.lessons.points.every((p) => p.value === 0)).toBe(true);
+    expect(t.lessons.changePct).toBe(0);
+    expect(t.scopes.changePct).toBe(0);
+    expect(t.activeScopes).toBe(0);
+  });
+
+  it('counts lessons per day with the last bucket = today (7d)', () => {
     const rows = [
       { scope: 'global', created_at: '2026-07-24T10:00:00Z' }, // today
       { scope: 'project::a', created_at: '2026-07-24T11:00:00Z' }, // today
       { scope: 'project::a', created_at: '2026-07-23T09:00:00Z' }, // yesterday
     ];
-    const t = computeStatTrends(rows, NOW);
-    // Last bucket = today.
-    expect(t.lessons.points[t.lessons.points.length - 1]!.value).toBe(2);
-    expect(t.lessons.points[t.lessons.points.length - 2]!.value).toBe(1);
-    const total = t.lessons.points.reduce((a, p) => a + p.value, 0);
-    expect(total).toBe(3);
+    const t = computeRangeTrends(rows, NOW, '7d');
+    const n = t.lessons.points.length;
+    expect(t.lessons.points[n - 1]!.value).toBe(2);
+    expect(t.lessons.points[n - 2]!.value).toBe(1);
+    expect(sum(t.lessons.points)).toBe(3);
   });
 
-  it('counts distinct scopes per day', () => {
+  it('counts distinct scopes per day (7d)', () => {
     const rows = [
       { scope: 'global', created_at: '2026-07-24T10:00:00Z' },
       { scope: 'project::a', created_at: '2026-07-24T11:00:00Z' },
       { scope: 'project::a', created_at: '2026-07-24T12:00:00Z' }, // dup scope same day
     ];
-    const t = computeStatTrends(rows, NOW);
-    expect(t.scopes.points[t.scopes.points.length - 1]!.value).toBe(2); // global + project::a
+    const t = computeRangeTrends(rows, NOW, '7d');
+    const n = t.scopes.points.length;
+    expect(t.scopes.points[n - 1]!.value).toBe(2); // global + project::a
   });
 
   it('counts lessons per hour for the last 24h', () => {
@@ -263,22 +269,37 @@ describe('computeStatTrends', () => {
       { scope: 'global', created_at: '2026-07-24T11:30:00Z' }, // 11:00 bucket
       { scope: 'global', created_at: '2026-07-24T10:15:00Z' }, // 10:00 bucket
     ];
-    const t = computeStatTrends(rows, NOW);
-    expect(t.activity.points).toHaveLength(24);
-    const n = t.activity.points.length;
-    expect(t.activity.points[n - 1]!.value).toBe(0); // 12:00
-    expect(t.activity.points[n - 2]!.value).toBe(1); // 11:00
-    expect(t.activity.points[n - 3]!.value).toBe(1); // 10:00
+    const t = computeRangeTrends(rows, NOW, '24h');
+    const n = t.lessons.points.length;
+    expect(n).toBe(24);
+    expect(t.lessons.points[n - 1]!.value).toBe(0); // 12:00
+    expect(t.lessons.points[n - 2]!.value).toBe(1); // 11:00
+    expect(t.lessons.points[n - 3]!.value).toBe(1); // 10:00
   });
 
-  it('excludes rows older than the daily window', () => {
+  it('excludes rows older than the comparison window (7d)', () => {
     const rows = [{ scope: 'global', created_at: '2026-01-01T10:00:00Z' }];
-    const t = computeStatTrends(rows, NOW);
-    expect(t.lessons.points.reduce((a, p) => a + p.value, 0)).toBe(0);
+    const t = computeRangeTrends(rows, NOW, '7d');
+    expect(sum(t.lessons.points)).toBe(0);
+    expect(t.lessons.changePct).toBe(0);
   });
 
-  // ── scopes.changePct regression ───────────────────────────────────────────
-  it('scopes.changePct uses window-distinct union, not sum of daily distinct counts', () => {
+  it('lessons.changePct compares the recent window vs. the preceding one (7d)', () => {
+    // Prior 7 days (Jul 11–17): 1/day = 7. Recent 7 days (Jul 18–24): 2/day = 14 → +100%.
+    const rows = [
+      ...Array.from({ length: 7 }, (_, i) => ({
+        scope: 'global',
+        created_at: `2026-07-${String(11 + i).padStart(2, '0')}T10:00:00Z`,
+      })),
+      ...Array.from({ length: 14 }, (_, i) => ({
+        scope: 'global',
+        created_at: `2026-07-${String(18 + Math.floor(i / 2)).padStart(2, '0')}T${i % 2 === 0 ? '10' : '14'}:00:00Z`,
+      })),
+    ];
+    expect(computeRangeTrends(rows, NOW, '7d').lessons.changePct).toBe(100);
+  });
+
+  it('scopes.changePct uses window-distinct union, not sum of per-bucket counts (7d)', () => {
     // Recent 7 days (Jul 18–24): 3 scopes, each active on exactly 1 day → union = 3
     // Prior 7 days (Jul 11–17):  1 scope active all 7 days               → union = 1
     // Sum-based (buggy): recent=3, prev=7 → −57% (wrong direction)
@@ -295,11 +316,13 @@ describe('computeStatTrends', () => {
       { scope: 'project::b', created_at: '2026-07-19T10:00:00Z' },
       { scope: 'project::c', created_at: '2026-07-20T10:00:00Z' },
     ];
-    const t = computeStatTrends(rows, NOW);
+    const t = computeRangeTrends(rows, NOW, '7d');
     expect(t.scopes.changePct).toBe(200);
+    // activeScopes is the recent-window distinct union used for the card value.
+    expect(t.activeScopes).toBe(3);
   });
 
-  it('scopes.changePct is 0 when the same scope set is active in both windows', () => {
+  it('scopes.changePct is 0 when the same scope set is active in both windows (7d)', () => {
     const scopes = ['global', 'project::a', 'project::b'];
     const rows = [
       ...scopes.map((scope, i) => ({
@@ -311,84 +334,23 @@ describe('computeStatTrends', () => {
         created_at: `2026-07-${String(18 + i).padStart(2, '0')}T10:00:00Z`,
       })),
     ];
-    const t = computeStatTrends(rows, NOW);
-    expect(t.scopes.changePct).toBe(0);
+    expect(computeRangeTrends(rows, NOW, '7d').scopes.changePct).toBe(0);
   });
 
-  it('lessons.changePct sums counts correctly', () => {
-    // Prior 7 days: 1 lesson/day = 7 total. Recent 7 days: 2 lessons/day = 14 total → +100%
+  it('activeScopes counts distinct scopes active in the selected window (7d)', () => {
     const rows = [
-      ...Array.from({ length: 7 }, (_, i) => ({
-        scope: 'global',
-        created_at: `2026-07-${String(11 + i).padStart(2, '0')}T10:00:00Z`,
-      })),
-      ...Array.from({ length: 14 }, (_, i) => ({
-        scope: 'global',
-        created_at: `2026-07-${String(18 + Math.floor(i / 2)).padStart(2, '0')}T${i % 2 === 0 ? '10' : '14'}:00:00Z`,
-      })),
-    ];
-    const t = computeStatTrends(rows, NOW);
-    expect(t.lessons.changePct).toBe(100);
-  });
-
-  it('activity.changePct compares last 12 hours vs prior 12 hours', () => {
-    // NOW = 12:00 UTC. Prior 12h = yesterday 12:00–23:59 (3 lessons). Recent 12h = today 00:00–11:59 (6 lessons) → +100%
-    const rows = [
-      { scope: 'global', created_at: '2026-07-23T14:00:00Z' },
-      { scope: 'global', created_at: '2026-07-23T16:00:00Z' },
-      { scope: 'global', created_at: '2026-07-23T20:00:00Z' },
-      { scope: 'global', created_at: '2026-07-24T01:00:00Z' },
-      { scope: 'global', created_at: '2026-07-24T03:00:00Z' },
-      { scope: 'global', created_at: '2026-07-24T05:00:00Z' },
-      { scope: 'global', created_at: '2026-07-24T07:00:00Z' },
-      { scope: 'global', created_at: '2026-07-24T09:00:00Z' },
-      { scope: 'global', created_at: '2026-07-24T11:00:00Z' },
-    ];
-    const t = computeStatTrends(rows, NOW);
-    expect(t.activity.changePct).toBe(100);
-  });
-
-  // ── activeScopes7d ────────────────────────────────────────────────────────
-  it('activeScopes7d counts distinct scopes active in the last 7 days', () => {
-    // NOW = 2026-07-24. Last 7 days = Jul 18–24.
-    const rows = [
-      // In window: 3 distinct scopes
       { scope: 'global', created_at: '2026-07-18T10:00:00Z' },
       { scope: 'project::a', created_at: '2026-07-20T10:00:00Z' },
       { scope: 'project::a', created_at: '2026-07-22T10:00:00Z' }, // duplicate scope, same window
       { scope: 'project::b', created_at: '2026-07-24T10:00:00Z' },
-      // Outside window: should not count
-      { scope: 'project::old', created_at: '2026-07-17T23:59:00Z' },
+      { scope: 'project::old', created_at: '2026-07-17T23:59:00Z' }, // outside 7d
     ];
-    const t = computeStatTrends(rows, NOW);
-    // global, project::a, project::b — project::old is outside the 7-day window
-    expect(t.activeScopes7d).toBe(3);
+    expect(computeRangeTrends(rows, NOW, '7d').activeScopes).toBe(3);
   });
 
-  it('activeScopes7d is 0 when no activity in the last 7 days', () => {
-    const rows = [{ scope: 'global', created_at: '2026-07-10T10:00:00Z' }];
-    const t = computeStatTrends(rows, NOW);
-    expect(t.activeScopes7d).toBe(0);
-  });
-
-  it('activeScopes7d matches the recent window used for scopes.changePct', () => {
-    // Same rows as the scopes.changePct regression test.
-    // Recent 7-day union = {project::a, project::b, project::c} → 3
-    const rows = [
-      { scope: 'global', created_at: '2026-07-11T10:00:00Z' },
-      { scope: 'global', created_at: '2026-07-12T10:00:00Z' },
-      { scope: 'global', created_at: '2026-07-13T10:00:00Z' },
-      { scope: 'global', created_at: '2026-07-14T10:00:00Z' },
-      { scope: 'global', created_at: '2026-07-15T10:00:00Z' },
-      { scope: 'global', created_at: '2026-07-16T10:00:00Z' },
-      { scope: 'global', created_at: '2026-07-17T10:00:00Z' },
-      { scope: 'project::a', created_at: '2026-07-18T10:00:00Z' },
-      { scope: 'project::b', created_at: '2026-07-19T10:00:00Z' },
-      { scope: 'project::c', created_at: '2026-07-20T10:00:00Z' },
-    ];
-    const t = computeStatTrends(rows, NOW);
-    expect(t.activeScopes7d).toBe(3);
-    // And the trend confirms: 3 recent vs 1 prior → +200%
-    expect(t.scopes.changePct).toBe(200);
+  it('a wider range admits older rows: 10 days back is out for 7d, in for 30d', () => {
+    const rows = [{ scope: 'project::x', created_at: '2026-07-14T10:00:00Z' }]; // 10 days back
+    expect(computeRangeTrends(rows, NOW, '7d').activeScopes).toBe(0);
+    expect(computeRangeTrends(rows, NOW, '30d').activeScopes).toBe(1);
   });
 });
