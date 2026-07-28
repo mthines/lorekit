@@ -10,8 +10,9 @@
  *   - the Activity feed rows        → `layout="row"`     (horizontal, leading icon)
  *   - the "N memories" dropdown     → `density="compact"` (key + one-line preview)
  *
- * Callers pass a normalised {@link MemoryCardModel}. Two adapters are provided
- * for the app's two source shapes; build one inline for anything else.
+ * Callers pass a normalised {@link MemoryCardModel}. The {@link memoryFromLesson}
+ * adapter maps the app's `LessonEntry` shape onto it; build one inline for
+ * anything else.
  */
 
 import type { ReactNode } from 'react';
@@ -74,29 +75,6 @@ export function memoryFromLesson(lesson: {
     archived: Boolean(lesson.archived_at),
     org: lesson.org,
     expiresAt: lesson.expires_at ?? null,
-  };
-}
-
-/** Adapt an Activity event into the card model. */
-export function memoryFromEvent(event: {
-  scope: string;
-  scope_type: ScopePrefix;
-  key: string;
-  value_preview: string;
-  tags?: string[];
-  created_at: string;
-  source_agent?: string | null;
-  trigger?: string | null;
-}): MemoryCardModel {
-  return {
-    scope: event.scope,
-    scopeType: event.scope_type,
-    memoryKey: event.key,
-    preview: event.value_preview,
-    sourceAgent: event.source_agent,
-    trigger: event.trigger,
-    tags: event.tags,
-    timestamp: event.created_at,
   };
 }
 

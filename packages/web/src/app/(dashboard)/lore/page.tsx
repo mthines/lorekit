@@ -8,8 +8,9 @@ export default function LorePage() {
   // useScopeTree: lightweight scope-only fetch — tree renders immediately while
   // the lesson list streams in separately via useMemories inside LoreExplorer.
   const { data: scopes, isLoading: scopesLoading, isError: scopesError } = useScopeTree();
-  // useLoreData: full 500-row fetch used only for heatmapData + feedEvents.
-  // Runs in parallel — the heatmap and feed tab can load after the scope tree.
+  // useLoreData: full 500-row fetch used only for heatmapData (the 26-week
+  // contribution graph). Runs in parallel — the heatmap can load after the
+  // scope tree; the lesson list + feed stream in via useMemories separately.
   const { data: loreData } = useLoreData();
 
   const isLoading = scopesLoading;
@@ -42,7 +43,6 @@ export default function LorePage() {
           <LoreExplorer
             scopes={scopes}
             heatmapData={loreData?.heatmapData ?? []}
-            feedEvents={loreData?.feedEvents ?? []}
           />
         )}
       </div>
