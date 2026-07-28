@@ -18,7 +18,7 @@
  * the banner's route-to-Explorer + success-toast behavior exactly (AC-7).
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { Building2, Loader2, ShieldQuestion, X } from 'lucide-react';
 import { getInviteOrgDetails, type OrgInvite, type InviteOrgDetails } from '@/lib/org-invites';
@@ -144,7 +144,13 @@ export function InviteDetailsDialog({ invite, pending, onClose, onAccept, onDecl
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [open, onClose]);
 
-  const expiryLabel = invite ? inviteExpiryLabel(invite.expires_at, new Date()) : null;
+  // Memoized so an unrelated re-render doesn't recompute the label (and freeze
+  // a fresh `new Date()` each time), mirroring how `details` is fetched once
+  // and held in state rather than derived per-render.
+  const expiryLabel = useMemo(
+    () => inviteExpiryLabel(invite?.expires_at ?? null, new Date()),
+    [invite?.expires_at],
+  );
   const isExpired = expiryLabel === 'Expired';
   const avatarUrl = isTrustedAvatarUrl(details?.inviter_avatar_url) ? details.inviter_avatar_url : null;
 
@@ -212,7 +218,7 @@ export function InviteDetailsDialog({ invite, pending, onClose, onAccept, onDecl
             {status === 'loaded' && details && (
               <dl className="mb-4 flex flex-col gap-2 text-xs text-[var(--color-content-secondary)]">
                 <div className="flex items-center justify-between gap-2">
-                  <dt>Organization</dt>
+                  <dt>Slug</dt>
                   <dd className="font-medium text-[var(--color-content-primary)]">{details.org_slug}</dd>
                 </div>
                 <div className="flex items-center justify-between gap-2">
