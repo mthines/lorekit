@@ -151,9 +151,7 @@ pnpm nx db:push supabase
 supabase db push --project-ref pqokxlhvnosogizsjztg
 ```
 
-This applies:
-- `00001_memories.sql` — `memories` table, FTS, indexes, RLS policies
-- `00002_api_tokens.sql` — `api_tokens` table, RLS policies
+This applies all migrations in `supabase/migrations/` in order, creating all required tables (`memories`, `api_tokens`, `user_limits`, `plans`, `orgs`, `org_members`, `org_invites`, `org_scope_bindings`, `webhook_secrets`, `audit_log`, `usage_events`, and others).
 
 ---
 
