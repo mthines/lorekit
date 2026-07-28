@@ -73,19 +73,20 @@ export function ActivityFeed({ lessons, isSelected, onSelect }: ActivityFeedProp
       {grouped.map(([date, dayLessons]) => (
         <div key={date}>
           <DateLabel date={date} />
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5" role="list" aria-label={date}>
             {dayLessons.map((lesson, i) => {
               const TriggerIcon = lesson.trigger ? (TRIGGER_ICONS[lesson.trigger] ?? Bot) : Bot;
               return (
-                <MemoryCard
-                  key={`${lesson.scope}::${lesson.key}`}
-                  memory={memoryFromLesson(lesson)}
-                  layout="row"
-                  index={i}
-                  selected={isSelected(lesson)}
-                  onClick={() => onSelect(lesson)}
-                  leadingIcon={<TriggerIcon className="size-3.5 text-[var(--color-content-tertiary)]" aria-hidden />}
-                />
+                <div key={`${lesson.scope}::${lesson.key}`} role="listitem">
+                  <MemoryCard
+                    memory={memoryFromLesson(lesson)}
+                    layout="row"
+                    index={i}
+                    selected={isSelected(lesson)}
+                    onClick={() => onSelect(lesson)}
+                    leadingIcon={<TriggerIcon className="size-3.5 text-[var(--color-content-tertiary)]" aria-hidden />}
+                  />
+                </div>
               );
             })}
           </div>
