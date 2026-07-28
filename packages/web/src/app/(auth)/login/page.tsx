@@ -116,6 +116,8 @@ export default function LoginPage() {
           </span>
         </div>
 
+        <SupportTicketHero />
+
         {/* Main headline */}
         <h1 className="mt-8 mb-3 max-w-2xl text-center text-3xl font-bold tracking-tight text-[var(--color-content-primary)] sm:text-4xl lg:text-5xl">
           Persistent memory
