@@ -1,4 +1,4 @@
-import { Rocket, HardDrive, Cloud, Users, Lock, Tag, Zap } from 'lucide-react';
+import { Rocket, FileCog, HardDrive, Cloud, Users, Lock, Tag, Zap } from 'lucide-react';
 import type { SectionNavItem } from '@/components/ui/SectionNav';
 
 /**
@@ -21,6 +21,12 @@ export const LEARN_SECTIONS: readonly SectionNavItem[] = [
     label: 'Getting started',
     href: '/learn/setup',
     icon: Rocket,
+  },
+  {
+    id: 'config',
+    label: 'Configuration',
+    href: '/learn/config',
+    icon: FileCog,
   },
 
   // ── Tutorials ──────────────────────────────────────────────────────────────

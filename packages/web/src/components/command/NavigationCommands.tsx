@@ -22,7 +22,7 @@
  *
  * ### Learn
  * Direct jumps to the Getting Started page and each tutorial:
- *   Setup · Offline storage · Remote storage · Team sharing ·
+ *   Setup · Configuration · Offline storage · Remote storage · Team sharing ·
  *   Private lore · Tags & scopes · Use cases
  *
  * ### Lore
@@ -42,6 +42,7 @@ import {
   ShieldCheck,
   UserCircle,
   Rocket,
+  FileCog,
   HardDrive,
   Cloud,
   Lock,
@@ -197,6 +198,15 @@ export function NavigationCommands() {
     icon: <Rocket className="size-4" />,
     group: 'Learn',
     onSelect: () => router.push('/learn/setup'),
+  });
+
+  useCommand({
+    id: 'learn-config',
+    label: 'Configuration Reference',
+    description: 'All .lorekit.json / config.json options',
+    icon: <FileCog className="size-4" />,
+    group: 'Learn',
+    onSelect: () => router.push('/learn/config'),
   });
 
   useCommand({
