@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-LoreKit exposes nine `memory.*` tools and four `org.*` tools via the MCP protocol.
+LoreKit exposes ten `memory.*` tools and four `org.*` tools via the MCP protocol.
 
 `memory.*` tools require a valid API token (see [api-tokens.md](./api-tokens.md)).
 
