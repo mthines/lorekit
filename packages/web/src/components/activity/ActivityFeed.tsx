@@ -185,7 +185,7 @@ export function ActivityFeed({ events, range, onRangeChange }: ActivityFeedProps
       ) : (
         <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
           <p className="text-sm text-[var(--color-content-secondary)]">
-            {isFiltered ? 'No lessons match these filters' : 'No lessons yet'}
+            {isFiltered ? 'No memories match these filters' : 'No memories yet'}
           </p>
           <p className="text-xs text-[var(--color-content-tertiary)]">
             {isFiltered

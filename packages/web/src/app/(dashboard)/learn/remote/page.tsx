@@ -13,7 +13,7 @@ export default function LearnRemotePage() {
       <div>
         <h2 className="text-xl font-semibold text-[var(--color-content-primary)]">Remote storage</h2>
         <p className="mt-1 text-sm text-[var(--color-content-secondary)]">
-          Sync lore to the hosted LoreKit MCP server so your lessons are available on every
+          Sync lore to the hosted LoreKit MCP server so your memories are available on every
           machine, from every agent, without any extra setup on each device.
         </p>
       </div>
@@ -44,7 +44,7 @@ export default function LearnRemotePage() {
           <ul className="mt-2 list-disc pl-5 space-y-1">
             <li><code>lk_rw_…</code> — read + write (agents that learn)</li>
             <li><code>lk_ro_…</code> — read only (CI context injection)</li>
-            <li><code>lk_wo_…</code> — write only (one-way lesson feeders)</li>
+            <li><code>lk_wo_…</code> — write only (one-way memory feeders)</li>
           </ul>
           <p className="mt-2">
             The token is shown <strong>once only</strong> — copy it before closing the modal.
@@ -53,23 +53,26 @@ export default function LearnRemotePage() {
 
         <TutorialStep number={2} title="Point your agent at the MCP server">
           <p>
-            Add the MCP endpoint to your agent config. For Claude Code, in{' '}
-            <code>.claude/skills/persistent-memory/config.json</code>:
+            The fastest path is <code>npx @lorekit/cli install</code> — it scaffolds
+            the skills, wires the MCP server, and installs the lifecycle hooks in one command.
+            Or add the endpoint manually to your agent&apos;s MCP config:
           </p>
-          <pre><code>{`{
-  "backend": "mcp",
-  "mcp": {
-    "server": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
-    "auth": {
-      "type": "bearer",
-      "token": "lk_rw_<your-token>"
+          <pre><code>{`// .mcp.json (Claude Code / Cursor / opencode — project-local)
+{
+  "mcpServers": {
+    "lorekit": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote",
+               "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
+               "--header", "Authorization:Bearer lk_rw_<your-token>"]
     }
   }
 }`}</code></pre>
-          <p className="mt-2">
-            For any other MCP-compatible agent, point the client at the same endpoint with
-            the same <code>Authorization: Bearer lk_rw_…</code> header.
-          </p>
+          <TutorialCallout variant="tip">
+            Keep <code>.mcp.json</code> out of version control — it contains your token.
+            Commit a <code>.lorekit.json</code> instead to set the team default mode
+            (e.g. <code>{`{ "mode": "remote" }`}</code>).
+          </TutorialCallout>
         </TutorialStep>
 
         <TutorialStep number={3} title="Verify the connection">
@@ -81,8 +84,8 @@ export default function LearnRemotePage() {
           </p>
         </TutorialStep>
 
-        <TutorialStep number={4} title="Write and read a lesson">
-          <p>Write a test lesson via the MCP endpoint:</p>
+        <TutorialStep number={4} title="Write and read a memory">
+          <p>Write a test memory via the MCP endpoint:</p>
           <pre><code>{`memory.write {
   scope: "global",
   key:   "hello-remote",
@@ -99,7 +102,7 @@ export default function LearnRemotePage() {
         <TutorialStep number={5} title="Use in CI / GitHub Actions">
           <p>
             Store a read-only token as <code>LOREKIT_TOKEN</code> in your repo secrets,
-            then inject global lessons before any AI step:
+            then inject global memories before any AI step:
           </p>
           <pre><code>{`- name: Inject LoreKit context
   run: |
@@ -137,7 +140,7 @@ export default function LearnRemotePage() {
       </div>
 
       <TutorialCallout>
-        <strong>Next steps:</strong> share lessons with your whole team by setting up an
+        <strong>Next steps:</strong> share memories with your whole team by setting up an
         organization. See the{' '}
         <Link href="/learn/organization" className="text-[var(--color-accent)] underline underline-offset-2">
           Team sharing tutorial

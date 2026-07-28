@@ -54,7 +54,7 @@ export function ContributionHeatmap({
     // Anchor the grid so its LAST column is the current week (the one that
     // contains today). Previously the grid was anchored to `today - weeks*7`
     // and snapped backward to a Monday, which made it end ~a week before today
-    // — so lessons written this week fell past the final cell and never showed.
+    // — so memories written this week fell past the final cell and never showed.
     //
     // Steps: find the Monday of the current week, then walk back (weeks - 1)
     // weeks to get the first column's Monday. Building `weeks` columns forward
@@ -109,27 +109,30 @@ export function ContributionHeatmap({
 
   return (
     <div className="select-none" aria-label="Contribution heatmap">
-      {/* Month labels */}
+      {/* Month labels — left offset matches the per-column pitch below
+          (cell 9px + 1px gap = 10px). Keep the `10` in sync with the cell/gap
+          sizing if either changes. */}
       <div className="relative mb-1 h-4" aria-hidden>
         {monthLabels.map(({ label, col }) => (
           <span
             key={`${label}-${col}`}
             className="absolute text-xs text-[var(--color-content-tertiary)]"
-            style={{ left: `${col * 13}px` }}
+            style={{ left: `${col * 10}px` }}
           >
             {label}
           </span>
         ))}
       </div>
 
-      <div className="flex gap-0.5">
-        {/* Day labels */}
-        <div className="mr-1 flex flex-col gap-0.5" aria-hidden>
+      <div className="flex">
+        {/* Day labels — narrow gutter (mr-0.5, 9px font) keeps the 26-week grid
+            inside a ~360px phone without horizontal scroll. */}
+        <div className="mr-0.5 flex flex-col gap-px" aria-hidden>
           {DAYS.map((day, i) => (
             <span
               key={i}
-              className="flex h-[11px] items-center text-[10px] text-[var(--color-content-tertiary)]"
-              style={{ lineHeight: '11px' }}
+              className="flex h-[9px] items-center pr-0.5 text-[9px] text-[var(--color-content-tertiary)]"
+              style={{ lineHeight: '9px' }}
             >
               {day}
             </span>
@@ -137,9 +140,9 @@ export function ContributionHeatmap({
         </div>
 
         {/* Grid */}
-        <div className="flex gap-0.5">
+        <div className="flex gap-px">
           {grid.map((week, wi) => (
-            <div key={wi} className="flex flex-col gap-0.5">
+            <div key={wi} className="flex flex-col gap-px">
               {week.map(({ date, count }) => {
                 const intensity = getIntensity(count, maxCount);
                 const inRange =
@@ -157,14 +160,14 @@ export function ContributionHeatmap({
                         ? { duration: 0 }
                         : { delay: wi * 0.008, duration: 0.2, ease: [0.16, 1, 0.3, 1] }
                     }
-                    title={count > 0 ? `${count} lesson${count > 1 ? 's' : ''} on ${date}` : date}
+                    title={count > 0 ? `${count} memor${count > 1 ? 'ies' : 'y'} on ${date}` : date}
                     className={[
-                      'size-[11px] rounded-[2px] border transition-all duration-100',
+                      'size-[9px] rounded-[2px] border transition-all duration-100',
                       INTENSITY_STYLES[intensity],
                       onSelectDate ? 'cursor-pointer hover:scale-125 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)]' : '',
                       inRange ? 'ring-1 ring-inset ring-[var(--color-accent)]' : '',
                     ].join(' ')}
-                    aria-label={`${date}: ${count} lessons${inRange ? ' (selected)' : ''}`}
+                    aria-label={`${date}: ${count} memor${count === 1 ? 'y' : 'ies'}${inRange ? ' (selected)' : ''}`}
                     aria-pressed={onSelectDate ? inRange : undefined}
                   />
                 );
@@ -174,10 +177,10 @@ export function ContributionHeatmap({
         </div>
       </div>
 
-      {/* Legend — the scale runs from 0 lessons (empty) to the busiest day. */}
+      {/* Legend — the scale runs from 0 memories (empty) to the busiest day. */}
       <div
         className="mt-2 flex items-center gap-1.5"
-        aria-label={`Scale from 0 to ${maxCount} lesson${maxCount === 1 ? '' : 's'} per day`}
+        aria-label={`Scale from 0 to ${maxCount} memor${maxCount === 1 ? 'y' : 'ies'} per day`}
       >
         <span className="text-[10px] text-[var(--color-content-tertiary)]" aria-hidden>
           0
@@ -185,7 +188,7 @@ export function ContributionHeatmap({
         {([0, 1, 2, 3, 4] as const).map((i) => (
           <div
             key={i}
-            className={`size-[11px] rounded-[2px] border ${INTENSITY_STYLES[i]}`}
+            className={`size-[9px] rounded-[2px] border ${INTENSITY_STYLES[i]}`}
             aria-hidden
           />
         ))}
@@ -193,7 +196,7 @@ export function ContributionHeatmap({
           {maxCount}
         </span>
         <span className="ml-1 text-[10px] text-[var(--color-content-tertiary)]" aria-hidden>
-          lessons / day
+          memories / day
         </span>
       </div>
     </div>

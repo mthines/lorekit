@@ -82,9 +82,9 @@ export async function doctor(args) {
   const scope = deriveScope(root);
   if (scope.hasRemote) {
     record('info', 'read scope', scope.readOrder.join('  →  '));
-    record('info', 'write scope', `${scope.repoScope} (default for "went wrong" lessons)`);
+    record('info', 'write scope', `${scope.repoScope} (default for "went wrong" memories)`);
   } else {
-    record('warn', 'scope', 'no git remote here — lessons fall back to global');
+    record('warn', 'scope', 'no git remote here — memories fall back to global');
   }
 
   // Summary.
@@ -128,7 +128,8 @@ async function checkLocal(control, root, args, record) {
 
   // Home tier — per-user, cross-repo, always available.
   record('pass', 'home store', prettyPath(store.homeDir));
-  record('info', 'home entries', `${await store.home.count(scopes)} lesson(s)`);
+  const homeCount = await store.home.count(scopes);
+  record('info', 'home entries', `${homeCount} ${homeCount === 1 ? 'memory' : 'memories'}`);
 
   // Project tier — opt-in; active only when its directory exists.
   const projRel = path.relative(root, store.projectDir) || store.projectDir;
@@ -137,12 +138,13 @@ async function checkLocal(control, root, args, record) {
       ? 'committed — shared with the team'
       : 'gitignored — private to your checkout';
     record('pass', 'project store', projRel);
-    record('info', 'project entries', `${await store.project.count(scopes)} lesson(s) — ${sharing}`);
+    const projCount = await store.project.count(scopes);
+    record('info', 'project entries', `${projCount} ${projCount === 1 ? 'memory' : 'memories'} — ${sharing}`);
   } else {
     record(
       'info',
       'project store',
-      `${projRel} — not opted-in (create it to persist repo/branch lessons here)`,
+      `${projRel} — not opted-in (create it to persist repo/branch memories here)`,
     );
   }
 

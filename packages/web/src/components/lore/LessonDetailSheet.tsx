@@ -93,7 +93,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
   const editForm = useEditableForm<LessonFormValues>({
     defaultValues,
     onSave: async (data) => {
-      if (!lesson) return 'No lesson selected';
+      if (!lesson) return 'No memory selected';
       const result = await updateLesson(lesson.scope, lesson.key, {
         value: data.value,
         tags: data.tags,
@@ -185,7 +185,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
             className="fixed inset-y-0 right-0 z-50 flex w-full max-w-lg flex-col border-l border-[var(--color-border)] bg-[var(--color-bg-raised)] shadow-2xl"
             role="dialog"
             aria-modal="true"
-            aria-label="Lesson detail"
+            aria-label="Memory detail"
           >
             {/* Header */}
             <div className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] p-5">
@@ -231,7 +231,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
             <form
               onSubmit={handleSubmit}
               className="flex flex-1 flex-col overflow-hidden"
-              aria-label="Edit lesson"
+              aria-label="Edit memory"
             >
               <div className="group flex flex-1 flex-col gap-5 overflow-y-auto p-5">
                 {/* Content — editable */}

@@ -78,7 +78,7 @@ export async function show(args) {
   if (args.json) {
     log(JSON.stringify(buildJson({ scope, key, offline, remote_, diverged }), null, 2));
   } else {
-    heading('LoreKit lesson');
+    heading('LoreKit memory');
     log(`  scope:  ${c.dim(scope)}`);
     log(`  key:    ${c.dim(key)}`);
 
@@ -95,7 +95,7 @@ export async function show(args) {
     }
     if (!found) {
       log('');
-      log(`  ${c.dim(`no lesson found for ${scope}::${key} in the readable store(s)`)}`);
+      log(`  ${c.dim(`no memory found for ${scope}::${key} in the readable store(s)`)}`);
     }
     log('');
   }

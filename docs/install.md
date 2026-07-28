@@ -158,22 +158,28 @@ OTEL_EXPORTER_OTLP_HEADERS        Authorization=Bearer <dash0-token>
 
 ## Step 9 — Connect your agent
 
-Add the MCP config to your agent. For Claude Code (`.claude/skills/persistent-memory/config.json`):
+The fastest path is the CLI — it scaffolds the skill, MCP connection, and lifecycle hooks in one command:
 
-```json
+```bash
+npx @lorekit/cli install \
+  --endpoint https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp \
+  --token    lk_rw_<your-token>
+```
+
+For any other MCP-compatible agent, add the endpoint and Bearer token to the agent's MCP config directly:
+
+```jsonc
 {
-  "backend": "mcp",
-  "mcp": {
-    "server": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
-    "auth": {
-      "type": "bearer",
-      "token": "lk_rw_<your-token>"
+  "mcpServers": {
+    "lorekit": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote",
+               "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
+               "--header", "Authorization:Bearer lk_rw_<your-token>"]
     }
   }
 }
 ```
-
-For any other MCP-compatible agent, point the client at the same endpoint with the same Bearer token.
 
 ---
 

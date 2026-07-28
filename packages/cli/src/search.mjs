@@ -77,7 +77,7 @@ export async function search(args) {
     log(`  query:   ${c.dim(query)}`);
     log(`  scopes:  ${scopes.join('  →  ')}`);
 
-    const empty = 'no lessons match';
+    const empty = 'no memories match';
     renderSection({ title: 'Offline', empty }, offlineSection);
     renderSection(
       { title: 'Remote', subtitle: remoteAvailable ? connection.endpoint : undefined, empty },

@@ -105,7 +105,7 @@ export default function LearnSetupPage() {
         <h2 className="text-xl font-semibold text-[var(--color-content-primary)]">Getting started</h2>
         <p className="mt-1 text-sm text-[var(--color-content-secondary)]">
           Connect LoreKit to your AI coding agent in three steps. Once connected, your agent
-          can read and write lessons so knowledge accumulates across sessions.
+          can read and write memories so knowledge accumulates across sessions.
         </p>
       </div>
 
@@ -127,7 +127,7 @@ export default function LearnSetupPage() {
           <ul className="mt-2 list-disc pl-5 space-y-1">
             <li><code>lk_rw_…</code> — read + write (recommended for coding agents)</li>
             <li><code>lk_ro_…</code> — read only (context injection, CI)</li>
-            <li><code>lk_wo_…</code> — write only (one-way lesson feeders)</li>
+            <li><code>lk_wo_…</code> — write only (one-way memory feeders)</li>
           </ul>
           <p className="mt-2">
             The token is shown <strong>once</strong> — copy it before closing the modal.
@@ -155,7 +155,7 @@ export default function LearnSetupPage() {
         {/* ── Step 3: Verify ──────────────────────────────────────────────── */}
         <TutorialStep number={3} title="Verify the connection">
           <p>
-            Start a new session in your agent and ask it to write a test lesson:
+            Start a new session in your agent and ask it to write a test memory:
           </p>
           <pre className="mt-2"><code>{WRITE_SNIPPET}</code></pre>
           <p className="mt-2">
@@ -166,7 +166,7 @@ export default function LearnSetupPage() {
             >
               Lore Explorer
             </Link>{' '}
-            will show the lesson. You can also run the CLI health check:
+            will show the memory. You can also run the CLI health check:
           </p>
           <pre className="mt-2"><code>npx @lorekit/cli doctor</code></pre>
         </TutorialStep>
@@ -176,10 +176,10 @@ export default function LearnSetupPage() {
       {/* ── Optional: GitHub webhook ─────────────────────────────────────── */}
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5">
         <p className="text-sm font-medium text-[var(--color-content-primary)]">
-          Optional: auto-lessons from PR reviews
+          Optional: auto-memories from PR reviews
         </p>
         <p className="mt-1 text-sm text-[var(--color-content-secondary)]">
-          Connect a GitHub webhook and every resolved PR review comment becomes a lesson
+          Connect a GitHub webhook and every resolved PR review comment becomes a memory
           automatically, tagged{' '}
           <code className="rounded bg-[var(--color-bg-elevated)] px-1 font-mono text-xs">source::pr-webhook</code>.
           Set this up any time from{' '}

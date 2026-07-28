@@ -149,7 +149,7 @@ test('show exits non-zero and notes when the key is found in no store', () => {
   const { root, home } = seedProject();
   const res = runShow(root, home, ['global', 'does-not-exist']);
   assert.equal(res.status, 1);
-  assert.match(res.stdout, /no lesson found/);
+  assert.match(res.stdout, /no memory found/);
   assert.match(res.stdout, /no such key in this store/);
 });
 

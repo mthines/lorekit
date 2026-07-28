@@ -14,7 +14,7 @@ export default function LearnOfflinePage() {
         <h2 className="text-xl font-semibold text-[var(--color-content-primary)]">Offline storage</h2>
         <p className="mt-1 text-sm text-[var(--color-content-secondary)]">
           Store lore locally on your machine using the LoreKit CLI — no account, no network, full privacy.
-          Lessons live in a plain directory you own and control.
+          Memories live in a plain directory you own and control.
         </p>
       </div>
 
@@ -46,11 +46,11 @@ export default function LearnOfflinePage() {
           </p>
         </TutorialStep>
 
-        <TutorialStep number={3} title="Write your first lesson">
+        <TutorialStep number={3} title="Write your first memory">
           <pre><code>{`npx @lorekit/cli mcp`}</code></pre>
           <p className="mt-2">
             This starts the local stdio MCP server. Your agent can then call{' '}
-            <code>memory.write</code> to store a lesson:
+            <code>memory.write</code> to store a memory:
           </p>
           <pre><code>{`memory.write {
   scope: "global",
@@ -58,14 +58,14 @@ export default function LearnOfflinePage() {
   value: "Always run the unit tests before committing."
 }`}</code></pre>
           <p className="mt-2">
-            Lessons are stored as plain files under <code>.lorekit/</code> in your home directory.
+            Memories are stored as plain files under <code>.lorekit/</code> in your home directory.
           </p>
         </TutorialStep>
 
-        <TutorialStep number={4} title="List your lessons">
+        <TutorialStep number={4} title="List your memories">
           <pre><code>{`npx @lorekit/cli list`}</code></pre>
           <p className="mt-2">
-            Shows all lessons in the applicable scopes (project → branch → repo → global),
+            Shows all memories in the applicable scopes (project → branch → repo → global),
             split into an <strong>Offline</strong> section (local files) and a{' '}
             <strong>Remote</strong> section (hosted, if configured).
           </p>
@@ -73,12 +73,41 @@ export default function LearnOfflinePage() {
           <pre><code>{`npx @lorekit/cli list --scope global`}</code></pre>
         </TutorialStep>
 
-        <TutorialStep number={5} title="Search your lessons">
+        <TutorialStep number={5} title="Search your memories">
           <pre><code>{`npx @lorekit/cli search "commit"`}</code></pre>
           <p className="mt-2">
-            Matches a literal, case-insensitive substring against the lesson key or value.
+            Matches a literal, case-insensitive substring against the memory key or value.
             Works across all applicable scopes. Add <code>--scope</code> to narrow the search.
           </p>
+        </TutorialStep>
+
+        <TutorialStep number={6} title="(Optional) Commit a project config file">
+          <p>
+            Drop a <code>.lorekit.json</code> at the repo root to set the default memory mode
+            for everyone on the team — no per-machine env var needed:
+          </p>
+          <pre><code>{`// .lorekit.json  (safe to commit)
+{
+  "mode": "local"
+}`}</code></pre>
+          <p className="mt-2">
+            The same file also controls the local store path and deny constraints:
+          </p>
+          <pre><code>{`{
+  "mode": "local",
+  "store": ".lorekit",      // path to the project-tier store (default: .lorekit)
+  "deny": ["remote"]        // prevent remote mode in this repo (e.g. for air-gapped CI)
+}`}</code></pre>
+          <p className="mt-2">
+            A user-level version of the same file lives at{' '}
+            <code>~/.lorekit/config.json</code> and applies across all repos. User-level deny
+            constraints are a ceiling the repo config can never lift — a user who sets{' '}
+            <code>{`"deny": ["remote"]`}</code> is always offline, regardless of the repo default.
+          </p>
+          <TutorialCallout variant="tip">
+            Run <code>npx @lorekit/cli doctor</code> to see the resolved mode and which config
+            source decided it. The output names the exact file or env var that won.
+          </TutorialCallout>
         </TutorialStep>
       </div>
 

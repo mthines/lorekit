@@ -152,7 +152,7 @@ function renderDedupeSection(header, section) {
       cluster.minSimilarity === cluster.maxSimilarity
         ? cluster.minSimilarity.toFixed(2)
         : `${cluster.minSimilarity.toFixed(2)}–${cluster.maxSimilarity.toFixed(2)}`;
-    log(`  ${c.yellow('•')} cluster ${n} ${c.dim(`(${cluster.size} lessons, similarity ${range})`)}`);
+    log(`  ${c.yellow('•')} cluster ${n} ${c.dim(`(${cluster.size} memories, similarity ${range})`)}`);
     for (const m of cluster.members) {
       log(`    ${c.cyan('-')} ${m.scope}::${m.key}`);
     }
