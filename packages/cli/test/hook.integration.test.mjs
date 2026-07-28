@@ -61,7 +61,7 @@ test('claude Stop injects a retrospective nudge', () => {
   assert.equal(code, 0);
   const out = JSON.parse(stdout);
   assert.equal(out.hookSpecificOutput.hookEventName, 'Stop');
-  assert.match(out.hookSpecificOutput.additionalContext, /retrospective/i);
+  assert.match(out.hookSpecificOutput.additionalContext, /worth remembering/i);
 });
 
 test('claude PostToolUseFailure nudges even with an empty response (guaranteed failure)', () => {
@@ -93,7 +93,7 @@ test('cursor stop returns a followup_message', () => {
     adapter: 'cursor',
     input: { hook_event_name: 'stop', generation_id: 'g-1' },
   });
-  assert.match(JSON.parse(stdout).followup_message, /retrospective/i);
+  assert.match(JSON.parse(stdout).followup_message, /worth remembering/i);
 });
 
 test('unknown adapter exits 0 and prints nothing', () => {
@@ -117,7 +117,7 @@ test('malformed stdin exits 0 and prints nothing', () => {
   // Stop has no tool data and needs no stdin fields, so it still nudges;
   // the point is it must not crash on unparseable input.
   assert.equal(code, 0);
-  assert.ok(stdout === '' || stdout.includes('retrospective'));
+  assert.ok(stdout === '' || stdout.includes('worth remembering'));
 });
 
 test('the nudge fires at most once per session (throttle)', () => {
