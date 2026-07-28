@@ -4,9 +4,7 @@ import { LoginButton } from '@/components/auth/LoginButton';
 import { SiteFooter } from '@/components/layout/SiteFooter';
 import { BookOpen, Brain, GitBranch, Zap } from 'lucide-react';
 import { SupportTicketHero } from '@/components/landing/SupportTicketHero';
-import { ChangelogSection } from '@/components/landing/ChangelogSection';
-import { AgentContextClear } from '@/components/landing/AgentContextClear';
-import { TimestampLedger } from '@/components/landing/TimestampLedger';
+import { TerminalTheater } from '@/components/landing/TerminalTheater';
 
 export const metadata: Metadata = {
   title: 'Sign in',
@@ -146,9 +144,7 @@ export default function LoginPage() {
 
       {/* Narrative sections */}
       <div className="relative z-10 flex flex-col items-center gap-16 px-6 py-12">
-        <ChangelogSection />
-        <AgentContextClear />
-        <TimestampLedger />
+        <TerminalTheater />
 
         {/* Get started section */}
         <div className="w-full max-w-2xl mx-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-6 sm:p-8">
