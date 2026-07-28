@@ -29,6 +29,7 @@ export async function middleware(request: NextRequest) {
           'traceparent',
           'tracestate',
         ].join(', '),
+        'Access-Control-Max-Age': '86400',
       },
     });
   }
