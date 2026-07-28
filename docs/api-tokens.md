@@ -39,6 +39,7 @@ Tokens are stored as **SHA-256 hashes** in the database. The full token is shown
 | `memory.archive` | ✓ | ✗ (returns -32001) | ✓ |
 | `memory.restore` | ✓ | ✗ (returns -32001) | ✓ |
 | `memory.purge` | ✓ | ✗ (returns -32001) | ✓ |
+| `memory.purge_expired` | ✓ | ✗ (returns -32001) | ✓ |
 | `memory.list_archived` | ✓ | ✓ | ✗ (returns -32001) |
 
 ## Using a token
