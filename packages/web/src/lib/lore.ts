@@ -248,6 +248,7 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
       created_at: row.created_at as string,
       updated_at: row.updated_at as string,
       archived_at: (row.archived_at as string | null) ?? null,
+      expires_at: (row.expires_at as string | null) ?? null,
       source_agent: (row.source_agent as string | null) ?? null,
       trigger: (row.trigger as string | null) ?? null,
       org_id: orgId,

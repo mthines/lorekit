@@ -10,7 +10,7 @@
     "env:pull": "vercel env pull .env.local"
   },
   "dependencies": {
-    "@dash0/sdk-web": "^0.24.0",
+    "@dash0/sdk-web": "0.23.0",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/semantic-conventions": "^1.27.0",
     "@supabase/ssr": "^0.6.0",
