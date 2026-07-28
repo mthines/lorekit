@@ -264,10 +264,11 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
         <span className="h-px flex-1 bg-[var(--color-border)]" aria-hidden />
       </div>
 
-      {/* Secondary: email */}
+      {/* Secondary: email — kept clearly visible (elevated surface + primary
+          text) so it reads as a real alternative, not a muted afterthought. */}
       <button
         onClick={() => setEmailStep('entering')}
-        className="flex h-10 min-w-[220px] items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] bg-transparent px-6 text-sm font-medium text-[var(--color-content-secondary)] transition-all duration-200 hover:border-[var(--color-border)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
+        className="flex h-11 min-w-[220px] items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-6 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
       >
         <MailIcon className="size-4 shrink-0" />
         Continue with email

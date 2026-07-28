@@ -16,7 +16,7 @@ const ICON_LINK_CLASS =
 export function SiteFooter({ className = '', ...props }: ComponentPropsWithoutRef<'footer'>) {
   return (
     <footer
-      className={`flex flex-wrap items-center justify-center gap-x-5 gap-y-2 border-t border-[var(--color-border)] px-6 py-4 text-xs text-[var(--color-content-tertiary)] ${className}`}
+      className={`flex flex-wrap items-center justify-center gap-x-4 gap-y-2 border-t border-[var(--color-border)] px-6 py-5 text-xs text-[var(--color-content-tertiary)] ${className}`}
       {...props}
     >
       <a
@@ -37,6 +37,8 @@ export function SiteFooter({ className = '', ...props }: ComponentPropsWithoutRe
         GitHub
       </a>
 
+      <span aria-hidden className="text-[var(--color-border)]">·</span>
+
       <a
         href={DISCORD_URL}
         target="_blank"
@@ -54,6 +56,8 @@ export function SiteFooter({ className = '', ...props }: ComponentPropsWithoutRe
         </svg>
         Discord
       </a>
+
+      <span aria-hidden className="text-[var(--color-border)]">·</span>
 
       <span>
         Need help? Join our{' '}

@@ -4,6 +4,7 @@ import { LoginButton } from '@/components/auth/LoginButton';
 import { SiteFooter } from '@/components/layout/SiteFooter';
 import { BookOpen, Brain, GitBranch, Zap } from 'lucide-react';
 import { TerminalTheater } from '@/components/landing/TerminalTheater';
+import { CopyCommand } from '@/components/landing/CopyCommand';
 
 export const metadata: Metadata = {
   title: 'Sign in',
@@ -159,11 +160,9 @@ export default function LoginPage() {
             </li>
             <li className="flex gap-3">
               <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] font-mono text-xs font-semibold text-[var(--color-accent)]">2</span>
-              <div>
+              <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-[var(--color-content-primary)] mb-1">Run one command</p>
-                <code className="block mt-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3 py-2 font-mono text-xs text-[var(--color-accent)]">
-                  npx @lorekit/cli install
-                </code>
+                <CopyCommand command="npx @lorekit/cli install" />
               </div>
             </li>
             <li className="flex gap-3">
@@ -174,12 +173,6 @@ export default function LoginPage() {
               </div>
             </li>
           </ol>
-          <div className="flex flex-col items-center gap-2">
-            <Suspense fallback={null}>
-              <LoginButton />
-            </Suspense>
-            <p className="text-xs text-[var(--color-content-tertiary)]">Sign in free · 2-minute setup</p>
-          </div>
         </div>
       </div>
 
