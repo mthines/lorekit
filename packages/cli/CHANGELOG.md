@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.1](https://github.com/mthines/lorekit/compare/cli-v1.17.0...cli-v1.17.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* **cli:** send telemetry to default dataset instead of lorekit-cli ([#195](https://github.com/mthines/lorekit/issues/195)) ([83a71c4](https://github.com/mthines/lorekit/commit/83a71c4f5127cef0ade5df76d3aa1489c33bfa56))
+
 ## [1.17.0](https://github.com/mthines/lorekit/compare/cli-v1.16.0...cli-v1.17.0) (2026-07-28)
 
 
