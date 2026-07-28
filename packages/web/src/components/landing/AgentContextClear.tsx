@@ -66,7 +66,6 @@ export function AgentContextClear() {
             aria-label="Agent context file contents"
             className="w-full h-56 px-4 py-3 bg-transparent font-mono text-sm text-[var(--color-content-primary)] resize-none focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] placeholder:text-[var(--color-content-tertiary)]"
             value={phase === 'filling' ? INITIAL_CONTENT : ''}
-            onChange={() => {/* controlled but editable feel */}}
             readOnly={phase !== 'filling'}
             spellCheck={false}
           />
