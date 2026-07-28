@@ -4,18 +4,20 @@
  * CommandPalette
  *
  * The visual overlay rendered when `open=true`. Features:
- * - Fuzzy search / filter across the current frame's commands.
+ * - Search / filter across the current frame's commands.
  * - Grouped items with separator labels.
  * - Icons, shortcut badge, and a loading spinner.
- * - Keyboard navigation: Arrow keys, Enter to activate, Escape/Backspace to pop.
+ * - Keyboard navigation: Arrow keys move selection; any printable key is
+ *   forwarded to the search input so typing always filters, even after
+ *   navigating with arrows (Linear-style).
  * - Nested breadcrumb showing the parent command label when drilling.
- * - `mod+k` always closes (handled in the provider; Escape also closes).
+ * - Escape / Backspace (on empty search) pops back or closes.
  *
  * Rendered once at the dashboard layout root (inside `CommandPaletteProvider`),
  * so it overlays every page.
  */
 
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { ChevronRight, Loader2, ArrowLeft, Search } from 'lucide-react';
 import { useCommandPalette } from './CommandPaletteProvider';
 import { formatShortcut } from './shortcut';
@@ -69,7 +71,7 @@ function ShortcutBadge({ keys }: { keys: string[] }) {
       {keys.map((k, i) => (
         <span key={i}>
           {i > 0 && <span className="mx-0.5 opacity-40">then</span>}
-          <kbd className="inline-flex h-4.5 min-w-5 items-center justify-center rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1">
+          <kbd className="inline-flex min-w-5 items-center justify-center rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1 py-0.5">
             {formatShortcut([k])}
           </kbd>
         </span>
@@ -90,7 +92,8 @@ interface CommandRowProps {
 function CommandRow({ command, selected, onActivate, onHover }: CommandRowProps) {
   const rowRef = useRef<HTMLButtonElement>(null);
 
-  // Scroll into view when selected.
+  // Scroll selected row into view without moving browser focus away from the
+  // search input — we use scrollIntoView on the element reference directly.
   useEffect(() => {
     if (selected && rowRef.current) {
       rowRef.current.scrollIntoView({ block: 'nearest' });
@@ -103,10 +106,13 @@ function CommandRow({ command, selected, onActivate, onHover }: CommandRowProps)
       type="button"
       role="option"
       aria-selected={selected}
+      // Never receive browser focus — keyboard focus stays on the input at all
+      // times so typing immediately filters. Selection is purely visual.
+      tabIndex={-1}
       onMouseEnter={onHover}
       onClick={onActivate}
       className={[
-        'flex w-full min-h-10 items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors',
+        'flex w-full min-h-10 items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors focus:outline-none',
         selected
           ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
           : 'text-[var(--color-content-primary)] hover:bg-[var(--color-bg-elevated)]',
@@ -164,12 +170,12 @@ export function CommandPalette() {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Reset state when palette opens / frame changes.
+  // Reset state and re-focus input when palette opens or the frame changes
+  // (drilling into a nested level).
   useEffect(() => {
     if (open) {
       setQuery('');
       setSelectedIndex(0);
-      // Focus the search input.
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open, currentFrame]);
@@ -184,46 +190,55 @@ export function CommandPalette() {
 
   const selectedCommand = filtered[selectedIndex] ?? null;
 
-  // Clamp index when filtered list shrinks.
+  // Clamp selection index when the filtered list shrinks (e.g. as user types).
   useEffect(() => {
     setSelectedIndex((i) => Math.min(i, Math.max(0, filtered.length - 1)));
   }, [filtered.length]);
 
-  // ── Keyboard navigation ─────────────────────────────────────────────────────
+  // ── Keyboard handler on the input ───────────────────────────────────────────
+  //
+  // Arrow keys move the visual selection while typing focus stays on the input,
+  // so any printable character the user presses immediately updates the search
+  // query — identical to Linear / Raycast behaviour. The input never loses
+  // focus, so there is no need to "redirect" keys.
 
-  function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-    switch (e.key) {
-      case 'ArrowDown':
-        e.preventDefault();
-        setSelectedIndex((i) => (i + 1) % Math.max(1, filtered.length));
-        break;
-      case 'ArrowUp':
-        e.preventDefault();
-        setSelectedIndex((i) => (i - 1 + filtered.length) % Math.max(1, filtered.length));
-        break;
-      case 'Enter':
-        e.preventDefault();
-        if (selectedCommand) activateCommand(selectedCommand);
-        break;
-      case 'Escape':
-        e.preventDefault();
-        if (stack.length > 1) {
-          popFrame();
-        } else {
-          closePalette();
-        }
-        break;
-      case 'Backspace':
-        // Pop on backspace when search is empty.
-        if (!query && stack.length > 1) {
+  const onInputKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      switch (e.key) {
+        case 'ArrowDown':
+          e.preventDefault(); // prevent cursor jumping to end-of-input
+          setSelectedIndex((i) => (i + 1) % Math.max(1, filtered.length));
+          break;
+        case 'ArrowUp':
+          e.preventDefault(); // prevent cursor jumping to start-of-input
+          setSelectedIndex((i) => (i - 1 + filtered.length) % Math.max(1, filtered.length));
+          break;
+        case 'Enter':
           e.preventDefault();
-          popFrame();
-        }
-        break;
-      default:
-        break;
-    }
-  }
+          if (selectedCommand) activateCommand(selectedCommand);
+          break;
+        case 'Escape':
+          e.preventDefault();
+          if (stack.length > 1) {
+            popFrame();
+          } else {
+            closePalette();
+          }
+          break;
+        case 'Backspace':
+          // Pop the nested frame only when the query is already empty — normal
+          // Backspace character deletion must still work.
+          if (!query && stack.length > 1) {
+            e.preventDefault();
+            popFrame();
+          }
+          break;
+        default:
+          break;
+      }
+    },
+    [filtered.length, selectedCommand, activateCommand, stack.length, popFrame, closePalette, query],
+  );
 
   if (!open) return null;
 
@@ -250,7 +265,6 @@ export function CommandPalette() {
         aria-modal
         aria-label="Command Palette"
         className="fixed inset-x-4 top-[15%] z-50 mx-auto max-w-xl overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] shadow-2xl shadow-black/50"
-        onKeyDown={onKeyDown}
       >
         {/* Header: breadcrumb + search */}
         <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2.5">
@@ -259,7 +273,8 @@ export function CommandPalette() {
             <button
               type="button"
               onClick={popFrame}
-              className="flex shrink-0 items-center justify-center rounded-md p-1 text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)] transition-colors"
+              tabIndex={-1}
+              className="flex shrink-0 items-center justify-center rounded-md p-1 text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)] transition-colors focus:outline-none"
               aria-label="Go back"
             >
               <ArrowLeft className="size-4" aria-hidden />
@@ -284,7 +299,7 @@ export function CommandPalette() {
             <Search className="size-4 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
           )}
 
-          {/* Search input */}
+          {/* Search input — holds focus at all times; handles all keyboard nav */}
           <input
             ref={inputRef}
             type="text"
@@ -292,13 +307,17 @@ export function CommandPalette() {
             aria-expanded={open}
             aria-controls="command-palette-list"
             aria-autocomplete="list"
+            aria-activedescendant={selectedCommand ? `cmd-${selectedCommand.id}` : undefined}
             placeholder={isNested ? `Search ${frameTitle}…` : 'Type a command or search…'}
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
               setSelectedIndex(0);
             }}
-            className="flex-1 bg-transparent text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] outline-none"
+            onKeyDown={onInputKeyDown}
+            // No outline — the input is permanently focused; the ring would
+            // never leave and would be visually distracting.
+            className="flex-1 bg-transparent text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] outline-none focus:outline-none"
           />
 
           {/* Keyboard hint */}
