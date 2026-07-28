@@ -24,7 +24,7 @@ async function fetchDashboardData(): Promise<DashboardData> {
   // included in the dashboard total while the plan page excluded them.
   const { data, error } = await supabase
     .from('memories')
-    .select('scope,key,created_at')
+    .select('scope,created_at')
     .is('archived_at', null)
     .or('expires_at.is.null,expires_at.gt.now()')
     .order('created_at', { ascending: false })
