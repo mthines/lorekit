@@ -72,19 +72,21 @@ export default async function DashboardLayout({ children }: { children: React.Re
               <div className="flex flex-1 flex-col overflow-hidden">
                 <TopBar user={user} />
                 {/*
-                  Sticky-footer layout: main is the bounded scroll container AND
-                  a flex column. The content wrapper grows (flex-1) to push the
-                  footer to the bottom of the viewport when a page is shorter than
-                  the screen, while still letting it flow below the content on
-                  taller pages. Driving the growth from flex (rather than a
-                  percentage min-h-full, which is unreliable inside a flex scroll
-                  container) is what keeps the footer pinned to the bottom. The
-                  content wrapper stays a flex-1/min-h-0 block, so the lore
-                  explorer's own h-full layout is unaffected.
+                  Sticky-footer layout: main is the bounded scroll container. An
+                  inner `min-h-full flex-col` sheet is what makes the footer
+                  behave: the content grows (grow) to push the footer to the
+                  bottom of the viewport on short pages, while on taller pages the
+                  sheet grows past 100% so the footer flows *below* the content and
+                  scrolls with it. `min-h-full` (a floor, not a cap) is the key —
+                  the previous `flex-1 min-h-0` content wrapper capped its box at
+                  the viewport height, so tall pages overflowed it and the footer
+                  floated on top of the content instead of scrolling after it.
                 */}
-                <main className="flex flex-1 flex-col overflow-y-auto p-4 pb-20 md:pb-6 md:p-6">
-                  <div className="min-h-0 flex-1">{children}</div>
-                  <SiteFooter className="-mx-4 mt-8 md:-mx-6" />
+                <main className="flex-1 overflow-y-auto p-4 pb-20 md:pb-6 md:p-6">
+                  <div className="flex min-h-full flex-col">
+                    <div className="grow">{children}</div>
+                    <SiteFooter className="-mx-4 mt-8 md:-mx-6" />
+                  </div>
                 </main>
               </div>
             </MemorySidebarProvider>
