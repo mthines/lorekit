@@ -71,8 +71,27 @@ export default function LearnUseCasesPage() {
           Autonomous workflow self-improvement
         </h3>
         <p className="text-sm text-[var(--color-content-secondary)]">
-          The <code>aw</code> agent dispatcher reads memories at Phase 1 (planning) and writes
-          new ones at Phase 4 (stuck-loop) and Phase 7 (end-of-run). Universal memories go to{' '}
+          The{' '}
+          <a
+            href="https://github.com/mthines/agent-skills/tree/main/skills/workflow/autonomous-workflow"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[var(--color-accent)] underline underline-offset-2"
+          >
+            autonomous-workflow
+          </a>{' '}
+          skill (part of{' '}
+          <a
+            href="https://github.com/mthines/agent-skills"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[var(--color-accent)] underline underline-offset-2"
+          >
+            mthines/agent-skills
+          </a>
+          ) defines a multi-phase agent dispatcher. The <code>aw</code> executor reads memories
+          at Phase 1 (planning) and writes new ones at Phase 4 (stuck-loop) and Phase 7
+          (end-of-run). Universal memories go to{' '}
           <code>global</code>; repo-bound memories go to <code>repo::{'{owner}/{repo}'}</code>.
         </p>
         <UseCase
