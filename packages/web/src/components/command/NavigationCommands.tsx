@@ -22,8 +22,8 @@
  *
  * ### Learn
  * Direct jumps to the Getting Started page and each tutorial:
- *   Setup · Configuration · Offline storage · Remote storage · Team sharing ·
- *   Private lore · Tags & scopes · Use cases
+ *   Setup · Offline storage · Remote storage · Team sharing ·
+ *   Private lore · Tags & scopes · Configuration · Use cases
  *
  * ### Lore
  * "Open Lesson…" — async nested list of the 20 most-recent memories;
@@ -201,15 +201,6 @@ export function NavigationCommands() {
   });
 
   useCommand({
-    id: 'learn-config',
-    label: 'Configuration Reference',
-    description: 'All .lorekit.json / config.json options',
-    icon: <FileCog className="size-4" />,
-    group: 'Learn',
-    onSelect: () => router.push('/learn/config'),
-  });
-
-  useCommand({
     id: 'learn-offline',
     label: 'Tutorial: Offline Storage',
     description: 'Store lessons locally without a server',
@@ -252,6 +243,15 @@ export function NavigationCommands() {
     icon: <Tag className="size-4" />,
     group: 'Learn',
     onSelect: () => router.push('/learn/tags'),
+  });
+
+  useCommand({
+    id: 'learn-config',
+    label: 'Configuration Reference',
+    description: 'All .lorekit.json / config.json options',
+    icon: <FileCog className="size-4" />,
+    group: 'Learn',
+    onSelect: () => router.push('/learn/config'),
   });
 
   useCommand({

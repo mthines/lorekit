@@ -22,12 +22,6 @@ export const LEARN_SECTIONS: readonly SectionNavItem[] = [
     href: '/learn/setup',
     icon: Rocket,
   },
-  {
-    id: 'config',
-    label: 'Configuration',
-    href: '/learn/config',
-    icon: FileCog,
-  },
 
   // ── Tutorials ──────────────────────────────────────────────────────────────
   {
@@ -60,6 +54,12 @@ export const LEARN_SECTIONS: readonly SectionNavItem[] = [
     label: 'Tags & scopes',
     href: '/learn/tags',
     icon: Tag,
+  },
+  {
+    id: 'config',
+    label: 'Configuration',
+    href: '/learn/config',
+    icon: FileCog,
   },
   {
     id: 'use-cases',
