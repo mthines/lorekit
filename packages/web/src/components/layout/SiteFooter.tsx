@@ -2,7 +2,7 @@ import type { ComponentPropsWithoutRef } from 'react';
 
 const DISCORD_URL = 'https://discord.gg/B9m6BzMRjg';
 const ICON_LINK_CLASS =
-  'inline-flex items-center gap-1.5 transition-colors duration-200 hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]';
+  'inline-flex items-center gap-1.5 transition-colors duration-200 hover:text-[var(--color-content-primary)]';
 
 /**
  * Shared, deliberately subtle site footer rendered both on the public login
@@ -55,7 +55,7 @@ export function SiteFooter({ className = '', ...props }: ComponentPropsWithoutRe
         Discord
       </a>
 
-      <span className="text-[var(--color-content-tertiary)]">
+      <span>
         Need help? Join our{' '}
         <a
           href={DISCORD_URL}
