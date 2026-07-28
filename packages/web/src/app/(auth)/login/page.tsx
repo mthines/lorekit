@@ -3,7 +3,6 @@ import type { Metadata } from 'next';
 import { LoginButton } from '@/components/auth/LoginButton';
 import { SiteFooter } from '@/components/layout/SiteFooter';
 import { BookOpen, Brain, GitBranch, Zap } from 'lucide-react';
-import { SupportTicketHero } from '@/components/landing/SupportTicketHero';
 import { TerminalTheater } from '@/components/landing/TerminalTheater';
 
 export const metadata: Metadata = {
@@ -99,7 +98,7 @@ export default function LoginPage() {
         <div className="mb-8 flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
           <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-1 font-mono text-xs text-[var(--color-content-secondary)]">
             <span className="size-1.5 rounded-full bg-[var(--color-success)]" aria-hidden />
-            Free while in beta
+            Free
           </span>
           <a
             href="https://github.com/mthines/lorekit"
@@ -116,8 +115,6 @@ export default function LoginPage() {
             Works with Claude Code, Cursor &amp; Codex
           </span>
         </div>
-
-        <SupportTicketHero />
 
         {/* Main headline */}
         <h1 className="mt-8 mb-3 max-w-2xl text-center text-3xl font-bold tracking-tight text-[var(--color-content-primary)] sm:text-4xl lg:text-5xl">
@@ -152,7 +149,7 @@ export default function LoginPage() {
             Get started in 2 minutes
           </h2>
           <p className="text-sm text-[var(--color-content-secondary)] text-center mb-6">
-            Free while in beta · Open source · No credit card
+            Free · Open source · No credit card
           </p>
           <ol className="space-y-4 mb-6">
             <li className="flex gap-3">
