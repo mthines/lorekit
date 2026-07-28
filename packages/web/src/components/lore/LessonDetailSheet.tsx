@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer, TimerOff } from 'lucide-react';
+import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer } from 'lucide-react';
 import { Controller, type UseFormReturn } from 'react-hook-form';
 import { useQueryClient } from '@tanstack/react-query';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
@@ -34,15 +34,14 @@ const TTL_PRESETS = [
   { label: '14 days', days: 14 },
   { label: '30 days', days: 30 },
   { label: '90 days', days: 90 },
-  { label: 'Custom…', days: -1 },
 ] as const;
 
 interface LessonFormValues {
   value: string;
   tags: string[];
-  /** Days until expiry. 0 = clear/never; -1 = custom (use customTtl). null = unchanged. */
+  /** Days until expiry. 0 = clear/never; null = unchanged. */
   ttlPreset: number | null;
-  /** Days for the custom preset. Only used when ttlPreset === -1. */
+  /** @deprecated kept to satisfy useEditableForm generic — no longer used. */
   customTtl: string;
 }
 
@@ -62,73 +61,76 @@ interface ExpiryControlProps {
 
 function ExpiryControl({ currentExpiresAt, form, disabled }: ExpiryControlProps) {
   const ttlPreset = form.watch('ttlPreset');
-  const customTtl = form.watch('customTtl');
 
   const isExpired = currentExpiresAt ? new Date(currentExpiresAt) < new Date() : false;
 
+  // The sentinel value used in the select when the memory has a custom/unknown
+  // TTL that doesn't match any preset. The user can see the current formatted
+  // date in this option; selecting a preset replaces it.
+  const CURRENT_SENTINEL = '__current__';
+
+  // Determine whether the current expires_at matches one of the known presets
+  // (approximate: within ±12 h of the expected target date). If it does, we
+  // can pre-select that preset; otherwise fall back to __current__.
+  const matchedPreset = (() => {
+    if (!currentExpiresAt) return 0; // Never
+    if (isExpired) return null;
+    const expiresMs = new Date(currentExpiresAt).getTime();
+    for (const p of TTL_PRESETS) {
+      if (p.days === 0) continue;
+      const expected = Date.now() + p.days * 86_400_000;
+      if (Math.abs(expiresMs - expected) < 12 * 3_600_000) return p.days;
+    }
+    return null; // custom / doesn't match any preset
+  })();
+
+  // The value driving the <select>:
+  //   ttlPreset !== null → user has explicitly chosen something this session
+  //   ttlPreset === null → reflect the current persisted state
+  const selectValue = ttlPreset !== null
+    ? String(ttlPreset)
+    : matchedPreset !== null
+      ? String(matchedPreset)
+      : CURRENT_SENTINEL;
+
+  // Human-readable label for the __current__ option (shown when the TTL
+  // doesn't match a preset — e.g. a custom value set via MCP).
+  const currentLabel = isExpired
+    ? 'Expired'
+    : currentExpiresAt
+      ? new Date(currentExpiresAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+      : 'Never';
+
   return (
-    <div className="flex flex-col items-end gap-1.5">
-      {/* Current value when unchanged (ttlPreset === null) */}
-      {ttlPreset === null && (
-        <span className={[
-          'text-xs',
-          isExpired
-            ? 'text-amber-400'
-            : currentExpiresAt
-              ? 'text-[var(--color-content-secondary)]'
-              : 'text-[var(--color-content-tertiary)]',
-        ].join(' ')}>
-          {isExpired
-            ? 'Expired'
-            : currentExpiresAt
-              ? new Date(currentExpiresAt).toLocaleString()
-              : 'Never'}
-        </span>
+    <select
+      aria-label="Expiry"
+      disabled={disabled}
+      value={selectValue}
+      onChange={(e) => {
+        const raw = e.target.value;
+        if (raw === CURRENT_SENTINEL) return; // selecting "current" is a no-op
+        const val = Number(raw);
+        form.setValue('ttlPreset', val, { shouldDirty: true });
+      }}
+      className={[
+        'cursor-pointer bg-transparent text-xs focus:outline-none disabled:cursor-default disabled:opacity-50',
+        isExpired
+          ? 'text-amber-400'
+          : 'text-[var(--color-content-secondary)]',
+      ].join(' ')}
+    >
+      {/* Shown only when the stored TTL doesn't match a preset */}
+      {matchedPreset === null && (
+        <option value={CURRENT_SENTINEL} disabled>
+          {currentLabel}
+        </option>
       )}
-
-      {/* Preset select */}
-      <div className="flex items-center gap-1.5">
-        {ttlPreset !== null && ttlPreset === 0 && (
-          <TimerOff className="size-3 text-[var(--color-content-tertiary)]" aria-hidden />
-        )}
-        <select
-          aria-label="Expiry preset"
-          disabled={disabled}
-          value={ttlPreset === null ? '' : String(ttlPreset)}
-          onChange={(e) => {
-            const val = e.target.value === '' ? null : Number(e.target.value);
-            form.setValue('ttlPreset', val, { shouldDirty: true });
-            if (val !== -1) form.setValue('customTtl', '');
-          }}
-          className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-0.5 text-xs text-[var(--color-content-secondary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] disabled:opacity-50 cursor-pointer"
-        >
-          <option value="">Change…</option>
-          {TTL_PRESETS.map((p) => (
-            <option key={p.days} value={String(p.days)}>
-              {p.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Custom day input — shown only when "Custom…" is selected */}
-      {ttlPreset === -1 && (
-        <div className="flex items-center gap-1 text-xs">
-          <input
-            type="number"
-            min="1"
-            max="365"
-            aria-label="Custom expiry in days"
-            placeholder="Days"
-            disabled={disabled}
-            value={customTtl}
-            onChange={(e) => form.setValue('customTtl', e.target.value, { shouldDirty: true })}
-            className="w-16 rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-2 py-0.5 text-xs text-[var(--color-content-secondary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] disabled:opacity-50"
-          />
-          <span className="text-[var(--color-content-tertiary)]">days from now</span>
-        </div>
-      )}
-    </div>
+      {TTL_PRESETS.map((p) => (
+        <option key={p.days} value={String(p.days)}>
+          {p.label}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -199,9 +201,6 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
       let clearTtl = false;
       if (data.ttlPreset === 0) {
         clearTtl = true;
-      } else if (data.ttlPreset === -1) {
-        const parsed = parseInt(data.customTtl, 10);
-        if (!Number.isNaN(parsed) && parsed >= 1) ttlDays = parsed;
       } else if (data.ttlPreset !== null && data.ttlPreset > 0) {
         ttlDays = data.ttlPreset;
       }
@@ -451,10 +450,10 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
                     </div>
                     {/* Expiry — editable TTL control */}
                     {!isArchived && (
-                      <div className="flex items-start gap-2 text-xs">
-                        <Timer className="size-3.5 shrink-0 mt-0.5 text-[var(--color-content-tertiary)]" aria-hidden />
-                        <dt className="text-[var(--color-content-tertiary)] pt-0.5">Expires</dt>
-                        <dd className="ml-auto flex flex-col items-end gap-1">
+                      <div className="flex items-center gap-2 text-xs">
+                        <Timer className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                        <dt className="text-[var(--color-content-tertiary)]">Expires</dt>
+                        <dd className="ml-auto">
                           <ExpiryControl
                             currentExpiresAt={lesson.expires_at}
                             form={form}
