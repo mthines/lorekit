@@ -84,9 +84,9 @@ const PROPERTIES: {
   {
     name: 'telemetry.disabled',
     type: 'boolean',
-    layer: 'Both',
+    layer: 'Repo',
     description:
-      'Team-level opt-out of anonymous CLI usage telemetry. The env var LOREKIT_TELEMETRY=0 always wins if set.',
+      'Team-level opt-out of anonymous CLI usage telemetry, read from .lorekit.json only. The env var LOREKIT_TELEMETRY=0 always wins if set.',
   },
   {
     name: 'dedupe.threshold',
@@ -108,6 +108,7 @@ const REPO_SNIPPET = `// .lorekit.json — repo root, safe to commit (no secrets
     "branch::owner/name::": { "tags": ["ephemeral"] }
   },
   "hooks.disabled": ["Stop"],
+  "telemetry.disabled": true,
   "dedupe.threshold": 0.8
 }`;
 
@@ -115,8 +116,7 @@ const USER_SNIPPET = `// ~/.lorekit/config.json — user/machine, not committed
 {
   "deny": ["remote"],
   "tags.default": ["mads"],
-  "hooks.adapter": "claude",
-  "telemetry.disabled": true
+  "hooks.adapter": "claude"
 }`;
 
 const ENV_VARS: [string, string][] = [
@@ -259,8 +259,8 @@ export default function LearnConfigPage() {
         <div className="flex flex-col gap-3">
           <p className="text-sm font-medium text-[var(--color-content-primary)]">Environment variables</p>
           <p className="text-xs text-[var(--color-content-tertiary)]">
-            Every setting has an env-var equivalent that outranks the config files — useful in CI where
-            you cannot commit a config change.
+            The core mode, store, and connection settings have env-var equivalents that outrank the
+            config files — useful in CI where you cannot commit a config change.
           </p>
           <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
             <table className="w-full text-xs">
