@@ -5,7 +5,7 @@ import { LoginButton } from '@/components/auth/LoginButton';
 import { SiteFooter } from '@/components/layout/SiteFooter';
 import { BookOpen, Brain, GitBranch, Zap } from 'lucide-react';
 import { TerminalTheater } from '@/components/landing/TerminalTheater';
-import { CopyCommand } from '@/components/landing/CopyCommand';
+import { GettingStartedContent } from '@/components/learn/GettingStartedContent';
 
 export const metadata: Metadata = {
   title: 'Sign in',
@@ -148,37 +148,9 @@ export default function LoginPage() {
       <div className="relative z-10 flex flex-col items-center gap-16 px-6 py-12">
         <TerminalTheater />
 
-        {/* Get started section */}
+        {/* Getting started — shared content with /learn/setup, public variant */}
         <div className="w-full max-w-2xl mx-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-6 sm:p-8">
-          <h2 className="text-xl font-semibold text-[var(--color-content-primary)] mb-2 text-center">
-            Get started in 2 minutes
-          </h2>
-          <p className="text-sm text-[var(--color-content-secondary)] text-center mb-6">
-            Free · Open source
-          </p>
-          <ol className="space-y-4 mb-6">
-            <li className="flex gap-3">
-              <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] font-mono text-xs font-semibold text-[var(--color-accent)]">1</span>
-              <div>
-                <p className="text-sm font-medium text-[var(--color-content-primary)] mb-1">Sign in and get your token</p>
-                <p className="text-xs text-[var(--color-content-secondary)]">GitHub OAuth or magic-link email — takes 30 seconds</p>
-              </div>
-            </li>
-            <li className="flex gap-3">
-              <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] font-mono text-xs font-semibold text-[var(--color-accent)]">2</span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-[var(--color-content-primary)] mb-1">Run one command</p>
-                <CopyCommand command="npx @lorekit/cli install" />
-              </div>
-            </li>
-            <li className="flex gap-3">
-              <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] font-mono text-xs font-semibold text-[var(--color-accent)]">3</span>
-              <div>
-                <p className="text-sm font-medium text-[var(--color-content-primary)] mb-1">Your agent now remembers</p>
-                <p className="text-xs text-[var(--color-content-secondary)]">Memories persist across sessions, repos, and tools — automatically</p>
-              </div>
-            </li>
-          </ol>
+          <GettingStartedContent isPublic />
         </div>
       </div>
 
