@@ -51,9 +51,7 @@ echo "SUPABASE_PROJECT_REF=pqokxlhvnosogizsjztg" > .env.local
 pnpm nx db:push supabase
 ```
 
-This creates two tables:
-- `memories` — lesson storage with full-text search and row-level security
-- `api_tokens` — hashed token store
+This applies all migrations in `supabase/migrations/` and creates all required tables, including `memories`, `api_tokens`, `user_limits`, `plans`, `orgs`, `org_members`, `org_invites`, `org_scope_bindings`, `webhook_secrets`, `audit_log`, `usage_events`, and others.
 
 ---
 
