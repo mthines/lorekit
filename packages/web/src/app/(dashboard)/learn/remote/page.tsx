@@ -13,7 +13,7 @@ export default function LearnRemotePage() {
       <div>
         <h2 className="text-xl font-semibold text-[var(--color-content-primary)]">Remote storage</h2>
         <p className="mt-1 text-sm text-[var(--color-content-secondary)]">
-          Sync lore to the hosted LoreKit MCP server so your lessons are available on every
+          Sync lore to the hosted LoreKit MCP server so your memories are available on every
           machine, from every agent, without any extra setup on each device.
         </p>
       </div>
@@ -44,7 +44,7 @@ export default function LearnRemotePage() {
           <ul className="mt-2 list-disc pl-5 space-y-1">
             <li><code>lk_rw_…</code> — read + write (agents that learn)</li>
             <li><code>lk_ro_…</code> — read only (CI context injection)</li>
-            <li><code>lk_wo_…</code> — write only (one-way lesson feeders)</li>
+            <li><code>lk_wo_…</code> — write only (one-way memory feeders)</li>
           </ul>
           <p className="mt-2">
             The token is shown <strong>once only</strong> — copy it before closing the modal.
@@ -81,8 +81,8 @@ export default function LearnRemotePage() {
           </p>
         </TutorialStep>
 
-        <TutorialStep number={4} title="Write and read a lesson">
-          <p>Write a test lesson via the MCP endpoint:</p>
+        <TutorialStep number={4} title="Write and read a memory">
+          <p>Write a test memory via the MCP endpoint:</p>
           <pre><code>{`memory.write {
   scope: "global",
   key:   "hello-remote",
@@ -99,7 +99,7 @@ export default function LearnRemotePage() {
         <TutorialStep number={5} title="Use in CI / GitHub Actions">
           <p>
             Store a read-only token as <code>LOREKIT_TOKEN</code> in your repo secrets,
-            then inject global lessons before any AI step:
+            then inject global memories before any AI step:
           </p>
           <pre><code>{`- name: Inject LoreKit context
   run: |
@@ -137,7 +137,7 @@ export default function LearnRemotePage() {
       </div>
 
       <TutorialCallout>
-        <strong>Next steps:</strong> share lessons with your whole team by setting up an
+        <strong>Next steps:</strong> share memories with your whole team by setting up an
         organization. See the{' '}
         <Link href="/learn/organization" className="text-[var(--color-accent)] underline underline-offset-2">
           Team sharing tutorial

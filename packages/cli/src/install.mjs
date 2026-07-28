@@ -113,7 +113,7 @@ export async function install(args) {
   status('pass', mcpLabel, `${existed ? 'updated' : 'created'} lorekit server → ${display(file)}`);
 
   if (!wireHooks) {
-    status('info', 'hooks', 'skipped (--no-hooks) — the skill still works, but lessons are model-invoked only');
+    status('info', 'hooks', 'skipped (--no-hooks) — the skill still works, but memories are model-invoked only');
   } else {
     const n = hooks.added + hooks.updated;
     const hookState =
@@ -127,9 +127,9 @@ export async function install(args) {
   if (kind === 'none') {
     status('warn', 'token', 'none configured — reads/writes will fail until a token is set');
   } else if (kind === 'read-only') {
-    status('warn', 'token', 'read-only (lk_ro_*) — the skill can read lessons but not write them');
+    status('warn', 'token', 'read-only (lk_ro_*) — the skill can read memories but not write them');
   } else if (kind === 'write-only') {
-    status('warn', 'token', 'write-only (lk_wo_*) — the skill can write lessons but not read them');
+    status('warn', 'token', 'write-only (lk_wo_*) — the skill can write memories but not read them');
   } else if (kind === 'unknown') {
     status('warn', 'token', 'unrecognized prefix — expected lk_rw_*, lk_ro_*, or lk_wo_*');
   } else {
@@ -140,7 +140,7 @@ export async function install(args) {
   if (gitScope.hasRemote) {
     status('info', 'scope', `${gitScope.repoScope}${gitScope.branchScope ? `  ·  ${gitScope.branchScope}` : ''}`);
   } else {
-    status('warn', 'scope', 'no git remote — lessons will fall back to global');
+    status('warn', 'scope', 'no git remote — memories will fall back to global');
   }
 
   log(`\n  Next: ${c.cyan('npx @lorekit/cli doctor')} to verify the connection.`);

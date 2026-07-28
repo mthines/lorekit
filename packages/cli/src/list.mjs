@@ -70,7 +70,7 @@ export async function list(args) {
   if (args.json) {
     log(JSON.stringify(buildJson({ root, scopes, offlineSection, remoteSection }), null, 2));
   } else {
-    heading('LoreKit lessons');
+    heading('LoreKit memories');
     log(`  project: ${c.dim(root)}`);
     log(`  scopes:  ${scopes.join('  →  ')}`);
 

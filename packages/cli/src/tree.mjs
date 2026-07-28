@@ -107,7 +107,7 @@ function renderTreeSection(header, section) {
 
   const printable = (section.groups || []).filter((g) => g.entries.length || g.error);
   if (!printable.length) {
-    log(`  ${c.dim('no lessons found in the applicable scopes')}`);
+    log(`  ${c.dim('no memories found in the applicable scopes')}`);
     return;
   }
 
