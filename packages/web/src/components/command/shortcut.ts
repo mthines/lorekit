@@ -1,5 +1,3 @@
-'use client';
-
 /**
  * Keyboard shortcut engine
  *
@@ -23,7 +21,7 @@ export function isMac(): boolean {
   return /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 }
 
-export interface ParsedKey {
+interface ParsedKey {
   key: string; // Normalised lower-case key name
   mod: boolean; // Cmd (macOS) or Ctrl (others)
   shift: boolean;
@@ -33,7 +31,7 @@ export interface ParsedKey {
 /**
  * Parse a key token like `'mod+k'`, `'shift+n'`, `'g'` into its parts.
  */
-export function parseKey(token: string): ParsedKey {
+function parseKey(token: string): ParsedKey {
   const parts = token.toLowerCase().split('+');
   const key = parts[parts.length - 1]!;
   return {
@@ -42,19 +40,6 @@ export function parseKey(token: string): ParsedKey {
     shift: parts.includes('shift'),
     alt: parts.includes('alt') || parts.includes('option'),
   };
-}
-
-/**
- * Check whether a native KeyboardEvent matches a parsed key descriptor.
- */
-export function matchesKey(e: KeyboardEvent, parsed: ParsedKey): boolean {
-  const mac = isMac();
-  const modPressed = mac ? e.metaKey : e.ctrlKey;
-  if (parsed.mod && !modPressed) return false;
-  if (!parsed.mod && modPressed) return false;
-  if (parsed.shift !== e.shiftKey) return false;
-  if (parsed.alt !== e.altKey) return false;
-  return e.key.toLowerCase() === parsed.key;
 }
 
 /**
