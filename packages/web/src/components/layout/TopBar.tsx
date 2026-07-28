@@ -13,7 +13,7 @@ export function TopBar({ user: _ }: TopBarProps) {
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg-raised)] px-6">
       {/* Left — logo on mobile (desktop shows brand in sidebar) */}
-      <div className="flex items-center gap-2" aria-label="LoreKit">
+      <div className="items-center gap-2 flex md:opacity-0" aria-label="LoreKit">
         <Image
           src="/icons/icon-192.png"
           alt="LoreKit"
