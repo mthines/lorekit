@@ -159,7 +159,7 @@ export function createMcpServer(auth: AuthContext): McpServer {
     'memory.purge_expired',
     'Permanently delete all expired (TTL-lapsed) memories for the current user. Unrecoverable.',
     {},
-    async (_args) => {
+    async () => {
       const userId = auth.type === 'service' ? null : (auth.userId ?? null);
       const result = await purgeExpired(db, userId);
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
