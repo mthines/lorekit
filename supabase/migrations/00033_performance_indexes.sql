@@ -28,13 +28,14 @@
 --               but adding a covering index on org_members (user_id, org_id)
 --               means the SECURITY DEFINER function never hits the heap.
 --
--- 5. rate_limit_counters — the existing primary key (user_id, window_start) is
---               the look-up key, so the insert+read is already index-friendly.
---               Add a partial index to accelerate the reaper query
---               (lorekit_purge_rate_limit_counters) which deletes old windows.
+-- 5. rate_limit_counters — no additional index added. The existing
+--               rate_limit_counters_window_idx (window_start) from 00004_limits.sql
+--               already covers the reaper's DELETE. A partial index would need
+--               a volatile predicate (now()), which PostgreSQL disallows.
 --
--- All indexes are created with IF NOT EXISTS + CONCURRENTLY so they can be
--- added to a running production database without a table lock.
+-- All indexes are created with IF NOT EXISTS so they can be applied to a
+-- running production database (CONCURRENTLY is not used inside migrations
+-- because it cannot run inside a transaction).
 
 -- 1. Active-memories point-read covering index.
 --    Covers: toolRead, and the cap trigger's active-row count.
@@ -56,13 +57,12 @@ create index if not exists memories_scope_archived_at_idx
 create index if not exists org_members_user_org_idx
   on org_members (user_id, org_id);
 
--- 5. rate_limit_counters reaper partial index.
---    The reaper deletes rows WHERE window_start < now() - interval.
---    The existing window_start idx already covers this but a partial index
---    skips the live current-window rows, which shrinks index scans.
-create index if not exists rate_limit_counters_old_windows_idx
-  on rate_limit_counters (window_start)
-  where window_start < now() - interval '1 hour';
+-- 5. rate_limit_counters — no additional index needed.
+--    The existing `rate_limit_counters_window_idx (window_start)` from
+--    00004_limits.sql already covers the reaper's DELETE predicate
+--    (window_start < now() - interval). A partial index on this table
+--    would require a volatile predicate (now()), which PostgreSQL rejects
+--    for index predicates — so the existing index is the right choice.
 
 -- 6. Schedule automatic expired-memory purge via pg_cron (when available).
 --    Expired memories (expires_at < now()) are invisible to all read paths but

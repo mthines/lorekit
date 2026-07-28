@@ -327,31 +327,35 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
       ...(rawScope ? { 'lorekit.scope': rawScope } : {}),
     });
 
+    // Hoist db above try/catch so the error path can record usage events
+    // without re-calling getDb.
+    const db = getDb(auth);
+    // toolUserId: null for JWT auth (RLS handles scoping), api_key userId otherwise.
+    // analyticsUserId: the resolved user ID for usage-event annotation regardless of auth type.
+    const toolUserId = getUserId(auth);
+    const analyticsUserId = toolUserId ?? (auth.type === 'user' ? auth.userId : null) ?? null;
+
+    // Resolve plan name for usage-event annotation (fails open — null → 'free').
+    // Only resolved for authenticated non-service callers; service-role has no plan.
+    const planName = auth.type !== 'service' && analyticsUserId
+      ? await getUserPlanName(db, analyticsUserId)
+      : null;
+    if (planName) toolSpan.setAttributes({ 'lorekit.plan': planName });
+
     const toolStartMs = Date.now();
 
     try {
-      const db = getDb(auth);
       let result: unknown;
-
-      // Resolve plan name for usage-event annotation (fails open — null → 'free').
-      // Only resolved for authenticated non-service callers; service-role has no plan.
-      const userId = getUserId(auth) ?? (auth.type === 'user' ? auth.userId : null) ?? null;
-      const planName = auth.type !== 'service' && userId
-        ? await getUserPlanName(db, userId)
-        : null;
-
-      if (planName) {
-        toolSpan.setAttributes({ 'lorekit.plan': planName });
-      }
 
       if (isOrgTool) {
         // org.* tools: (db, args, span) — no userId parameter; auth.uid()
         // is resolved inside the SECURITY DEFINER RPCs from the JWT.
         result = await ORG_TOOLS[toolName as keyof typeof ORG_TOOLS](db, toolArgs, toolSpan);
       } else {
-        // memory.* tools: (db, args, userId, span)
+        // memory.* tools: (db, args, toolUserId, span)
+        // toolUserId is null for JWT auth — RLS handles scoping on the DB side.
         result = await MEMORY_TOOLS[toolName as keyof typeof MEMORY_TOOLS](
-          db, toolArgs, getUserId(auth), toolSpan,
+          db, toolArgs, toolUserId, toolSpan,
         );
       }
 
@@ -360,9 +364,9 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
       toolSpan.end();
 
       // Record successful usage event (fire-and-forget).
-      if (auth.type !== 'service' && userId) {
+      if (auth.type !== 'service' && analyticsUserId) {
         recordUsageEvent(db, {
-          userId,
+          userId: analyticsUserId,
           planName,
           toolName,
           scopeType: rawScope ? scopeType : null,
@@ -382,23 +386,19 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
 
       // Record failure usage event (fire-and-forget) — distinguishes cap hits
       // from generic errors in plan-sizing analytics.
-      if (auth.type !== 'service') {
-        const db = getDb(auth);
-        const userId2 = getUserId(auth) ?? (auth.type === 'user' ? auth.userId : null) ?? null;
-        if (userId2) {
-          const outcome = err instanceof LimitError && err.code === 'memory_cap'
-            ? 'cap_exceeded'
-            : 'error';
-          recordUsageEvent(db, {
-            userId: userId2,
-            planName: null,  // skip plan lookup on error path to keep it fast
-            toolName,
-            scopeType: rawScope ? scopeType : null,
-            authType: auth.type as 'api_key' | 'jwt',
-            outcome,
-            durationMs,
-          });
-        }
+      if (auth.type !== 'service' && analyticsUserId) {
+        const outcome = err instanceof LimitError && err.code === 'memory_cap'
+          ? 'cap_exceeded'
+          : 'error';
+        recordUsageEvent(db, {
+          userId: analyticsUserId,
+          planName: null,  // skip plan lookup on error path to keep it fast
+          toolName,
+          scopeType: rawScope ? scopeType : null,
+          authType: auth.type as 'api_key' | 'jwt',
+          outcome,
+          durationMs,
+        });
       }
 
       if (err instanceof LimitError) {
