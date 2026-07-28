@@ -6,7 +6,7 @@ import { ScopeHealthGrid } from '@/components/dashboard/ScopeHealthCard';
 import { Sparkbar } from '@/components/dashboard/Sparkbar';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { useDashboardData } from '@/lib/queries/dashboard';
-import { computeRangeTrends, type MetricRange } from '@/lib/aggregations';
+import { computeRangeTrends, type MetricRange, type StatTrend } from '@/lib/aggregations';
 
 type CardId = 'total' | 'scopes' | 'active';
 
@@ -167,7 +167,7 @@ export function DashboardStats() {
     tooltip: string;
     value: number;
     description: string;
-    trend: { points: { label: string; value: number }[]; changePct: number };
+    trend: StatTrend;
     showTrend: boolean;
     unit: string;
     range: MetricRange;
