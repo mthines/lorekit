@@ -147,7 +147,7 @@ never break the invite itself.
 | Variable | Purpose |
 |----------|---------|
 | `RESEND_API_KEY` | Your Resend API key. Unset → no emails, invites stay in-app. |
-| `RESEND_FROM` | Verified sending address, e.g. `LoreKit <invites@yourdomain.com>`. |
+| `RESEND_FROM` | Verified sending address, e.g. `LoreKit <invites@lorekit.io>`. |
 
 You must **verify a sending domain in Resend** first. See
 [deployment.md](./deployment.md) for the full env-var list. The send is
