@@ -1563,7 +1563,7 @@ $$;
 -- AC-8: Rows without a TTL (expires_at IS NULL) are unaffected by purge_expired_memories.
 -- AC-9: ttl_days < 1 raises a P0001 exception.
 
-do 605
+do $$
 declare
   v_id         uuid;
   v_expires_at timestamptz;
@@ -1671,7 +1671,7 @@ begin
   end;
   assert v_blocked, 'TTL AC-10: ttl_days = 366 must raise SQLSTATE P0001';
 end;
-605;
+$$;
 
 
 -- ── Memory TTL clear — 00029 ─────────────────────────────────────────────────
@@ -1679,7 +1679,7 @@ end;
 -- AC-2: p_clear_ttl wins over p_ttl_days when both are supplied.
 -- AC-3: p_clear_ttl = false with no p_ttl_days leaves expires_at unchanged.
 
-do $
+do $$
 declare
   v_uid     uuid := '00000000-0000-0000-0000-0000000000a1';
   v_exp     timestamptz;
@@ -1712,7 +1712,7 @@ begin
    where user_id = v_uid and key = 'ttl-clear-test' and expires_at is not null;
   assert v_count = 1, 'TTL-clear AC-3: no-flag update must preserve existing expires_at';
 end;
-$;
+$$;
 
 
 rollback;
