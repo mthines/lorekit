@@ -52,33 +52,32 @@ export function ChangelogSection() {
 
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] overflow-hidden">
         <div className="px-5 py-4 space-y-2 font-mono text-sm">
-          {ENTRIES.map((entry, i) => (
-            <div
-              key={entry.version}
-              aria-hidden={i >= visibleCount}
-              className="flex gap-4 transition-opacity duration-300"
-              style={{ opacity: i < visibleCount ? 1 : 0 }}
-            >
-              <span
-                className={
-                  entry.version.trim() === 'v∞'
-                    ? 'text-[var(--color-accent)] shrink-0 w-16'
-                    : 'text-[var(--color-content-tertiary)] shrink-0 w-16'
-                }
+          {ENTRIES.map((entry, i) => {
+            const isInfinity = entry.version.trim() === 'v∞';
+            return (
+              <div
+                key={entry.version}
+                aria-hidden={i >= visibleCount}
+                className="flex gap-4 transition-opacity duration-300"
+                style={{ opacity: i < visibleCount ? 1 : 0 }}
               >
-                {entry.version}
-              </span>
-              <span
-                className={
-                  entry.version.trim() === 'v∞'
-                    ? 'text-[var(--color-accent)]'
-                    : 'text-[var(--color-content-secondary)]'
-                }
-              >
-                {entry.text}
-              </span>
-            </div>
-          ))}
+                <span
+                  className={
+                    isInfinity
+                      ? 'text-[var(--color-accent)] shrink-0 w-16'
+                      : 'text-[var(--color-content-tertiary)] shrink-0 w-16'
+                  }
+                >
+                  {entry.version}
+                </span>
+                <span
+                  className={isInfinity ? 'text-[var(--color-accent)]' : 'text-[var(--color-content-secondary)]'}
+                >
+                  {entry.text}
+                </span>
+              </div>
+            );
+          })}
         </div>
 
         {/* Separator + product explanation */}

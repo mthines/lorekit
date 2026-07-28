@@ -310,8 +310,8 @@ export function TerminalTheater() {
 
   function wait(ms: number): Promise<void> {
     return new Promise((resolve) => {
-      if (cancelRef.current) return;
-      const id = setTimeout(() => { if (!cancelRef.current) resolve(); }, ms);
+      // Always resolve so the promise settles; callers check cancelRef after each await
+      const id = setTimeout(resolve, ms);
       timeoutsRef.current.push(id);
     });
   }
