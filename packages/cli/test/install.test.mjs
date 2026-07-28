@@ -167,17 +167,14 @@ test('install reports already-installed and exits 0 without --force on a complet
 
 test('install reuses existing token from config when no token is passed', async () => {
   const root = tmp('lk-reuse-token-');
-  // First install with a token.
-  await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true, force: true });
-
-  // Second install with no token flag — should reuse the stored token.
-  const root2 = tmp('lk-reuse-token2-');
-  // Pre-seed an .mcp.json with an existing token in the URL.
+  // Pre-seed an .mcp.json with an existing token in the URL — simulates a
+  // project that already has a token configured from a previous install.
   const existing = { mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', `${ENDPOINT}?token=${TOKEN}`] } } };
-  fs.writeFileSync(path.join(root2, '.mcp.json'), JSON.stringify(existing));
-  await install({ dir: root2, yes: true, project: true, force: true });
-  const mcp = JSON.parse(fs.readFileSync(path.join(root2, '.mcp.json'), 'utf8'));
-  // The token should be preserved in the written URL.
+  fs.writeFileSync(path.join(root, '.mcp.json'), JSON.stringify(existing));
+
+  // Install without passing a token — the stored token should be picked up.
+  await install({ dir: root, yes: true, project: true, force: true });
+  const mcp = JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'));
   assert.ok(mcp.mcpServers.lorekit.args.some((a) => a.includes(TOKEN)), 'token reused from existing config');
 });
 

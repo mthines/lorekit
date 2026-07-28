@@ -20,7 +20,7 @@ import {
 } from './config.mjs';
 import { buildRemoteUrl, splitEndpoint } from './mcp.mjs';
 import { deriveScope } from './scope.mjs';
-import { log, err, heading, status, select, c } from './util.mjs';
+import { log, heading, status, select, c } from './util.mjs';
 
 // The MCP server URL is fixed — there is only one hosted LoreKit endpoint.
 const LOREKIT_MCP_ENDPOINT = 'https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp';
@@ -39,18 +39,16 @@ function detectInstalled(root, scope) {
   );
 
   // Check if the MCP server entry exists and extract any configured token.
+  // Use a try/catch so a corrupt config file degrades to "not installed"
+  // instead of throwing — the user sees a clear error when they actually
+  // try to write via upsertMcpServer, which uses the throwing readJsonIfExists.
   const mcpFile = mcpConfigPath(root, scope);
-  const mcpConfig = readJsonIfExists(mcpFile);
+  let mcpConfig = null;
+  try { mcpConfig = readJsonIfExists(mcpFile); } catch { /* corrupt — treat as absent */ }
   const mcpServer = mcpConfig && mcpConfig.mcpServers && mcpConfig.mcpServers.lorekit;
-  let existingToken = null;
-  if (mcpServer) {
-    const args = Array.isArray(mcpServer.args) ? mcpServer.args : [];
-    const urlArg = args.find((a) => typeof a === 'string' && /^https?:\/\//.test(a));
-    if (urlArg) {
-      const { token } = splitEndpoint(urlArg);
-      existingToken = token;
-    }
-  }
+  const serverArgs = mcpServer && Array.isArray(mcpServer.args) ? mcpServer.args : [];
+  const serverUrl = serverArgs.find((a) => typeof a === 'string' && /^https?:\/\//.test(a));
+  const existingToken = serverUrl ? splitEndpoint(serverUrl).token : null;
 
   return {
     hasSkills: skillsPresent.length > 0,
@@ -87,7 +85,7 @@ export async function install(args) {
   // 2. Already-installed detection — check both scopes so we can give accurate
   //    context ("installed globally but not for this project", etc.).
   const projectState = detectInstalled(root, 'project');
-  const globalState  = detectInstalled(root, 'global');
+  const globalState = detectInstalled(root, 'global');
   const currentState = scope === 'global' ? globalState : projectState;
 
   if (currentState.isFullyInstalled && !force) {
@@ -134,15 +132,13 @@ export async function install(args) {
 
   // Partial install — note what's already there vs what will be added.
   if ((currentState.hasSkills || currentState.hasMcp) && !force) {
-    log(
-      `\n  ${c.dim(
-        currentState.hasSkills && !currentState.hasMcp
-          ? `Skills already present (${currentState.skillCount}/${currentState.totalSkills}) — wiring MCP server.`
-          : currentState.hasMcp && !currentState.hasSkills
-            ? 'MCP server already configured — installing skill files.'
-            : `Partially installed (${currentState.skillCount}/${currentState.totalSkills} skills, MCP ${currentState.hasMcp ? 'present' : 'missing'}) — completing setup.`,
-      )}`,
-    );
+    const partialNote =
+      currentState.hasSkills && !currentState.hasMcp
+        ? `Skills already present (${currentState.skillCount}/${currentState.totalSkills}) — wiring MCP server.`
+        : currentState.hasMcp && !currentState.hasSkills
+          ? 'MCP server already configured — installing skill files.'
+          : `Partially installed (${currentState.skillCount}/${currentState.totalSkills} skills, MCP ${currentState.hasMcp ? 'present' : 'missing'}) — completing setup.`;
+    log(`\n  ${c.dim(partialNote)}`);
   }
 
   log(
@@ -215,10 +211,11 @@ export async function install(args) {
     status('info', 'hooks', 'skipped (--no-hooks) — the skill still works, but memories are model-invoked only');
   } else {
     const n = hooks.added + hooks.updated;
-    const hookState =
-      n === 0
-        ? 'already wired'
-        : `${hooks.added ? `${hooks.added} added` : ''}${hooks.added && hooks.updated ? ', ' : ''}${hooks.updated ? `${hooks.updated} updated` : ''}`;
+    const hookParts = [
+      hooks.added ? `${hooks.added} added` : '',
+      hooks.updated ? `${hooks.updated} updated` : '',
+    ].filter(Boolean);
+    const hookState = n === 0 ? 'already wired' : hookParts.join(', ');
     status(n === 0 ? 'info' : 'pass', 'hooks', `${hookState} → ${display(hooks.file)} (${CLAUDE_HOOK_EVENTS.join(', ')})`);
   }
 
