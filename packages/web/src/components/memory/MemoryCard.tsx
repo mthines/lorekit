@@ -58,6 +58,7 @@ export function memoryFromLesson(lesson: {
   trigger?: string | null;
   archived_at?: string | null;
   org?: MemoryOwner;
+  expires_at?: string | null;
 }): MemoryCardModel {
   return {
     scope: lesson.scope,
