@@ -242,3 +242,49 @@ jobs:
       - name: Stop local Supabase
         if: always()
         run: supabase stop --no-backup
+
+  # ── CI Summary — the single required status check ────────────────────────────
+  #    Aggregates the result of every job above into ONE pass/fail check plus a
+  #    human-readable table in the run summary. Make THIS the only required check
+  #    in branch protection: it fails if any job failed or was cancelled, and
+  #    passes when every job either succeeded or was *intentionally skipped* (the
+  #    path-gated `plugin`/`integration` jobs on unrelated PRs). GitHub's native
+  #    "required check" treats a skipped job as pending forever, which would wedge
+  #    docs/web-only PRs — this job collapses that ambiguity into a real verdict.
+  summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    # `always()` so the gate still runs (and reports) even when an upstream job
+    # failed, was cancelled, or was skipped — otherwise it would be skipped too.
+    if: always()
+    needs: [changes, check, plugin, integration]
+    permissions: {}
+    steps:
+      - name: Aggregate job results into a pass/fail gate
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          echo "### CI Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Job | Result |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | ------ |" >> "$GITHUB_STEP_SUMMARY"
+
+          failed=0
+          while read -r job result; do
+            case "$result" in
+              success)   icon="✅ success" ;;
+              skipped)   icon="⏭️ skipped (not applicable)" ;;
+              failure)   icon="❌ failure";   failed=1 ;;
+              cancelled) icon="🚫 cancelled"; failed=1 ;;
+              *)         icon="❓ $result";    failed=1 ;;
+            esac
+            echo "| \`$job\` | $icon |" >> "$GITHUB_STEP_SUMMARY"
+          done < <(printf '%s' "$NEEDS_JSON" | jq -r 'to_entries[] | "\(.key) \(.value.result)"')
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$failed" -eq 1 ]; then
+            echo "**CI failed** — one or more required jobs did not succeed." >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::CI failed — one or more required jobs did not succeed. See the summary table."
+            exit 1
+          fi
+          echo "**CI passed** — every job succeeded or was intentionally skipped." >> "$GITHUB_STEP_SUMMARY"
