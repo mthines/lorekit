@@ -55,9 +55,11 @@ Rate-limit attributes on the root `lorekit.mcp` span:
 
 In addition to OTLP traces, every significant tool call outcome is recorded as
 a lightweight structured row in the `usage_events` Postgres table
-(`supabase/migrations/00034_usage_events.sql`). These rows are intentionally
-**flat and categorical** (no PII, no key/value/scope strings) so they can be
-queried directly in SQL for plan-sizing analysis without a Dash0 token:
+(`supabase/migrations/00034_usage_events.sql`). These rows live **in Postgres,
+not in Dash0** — use Supabase's SQL editor or a direct DB connection to query
+them, not the Dash0 Explore UI. They are intentionally **flat and categorical**
+(no PII, no key/value/scope strings) so they can be used for plan-sizing
+analysis without a Dash0 token:
 
 ```sql
 -- Daily active writers (free plan)
