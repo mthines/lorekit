@@ -95,7 +95,7 @@ export function ChangelogSection() {
         >
           <p className="font-mono text-sm text-[var(--color-content-secondary)] leading-relaxed">
             Or give your agent a memory that survives sessions.{' '}
-            <span className="text-[var(--color-accent)]">One `npx` command.</span>
+            <span className="text-[var(--color-accent)] select-all">npx @lorekit/cli install</span>
           </p>
         </motion.div>
       </div>
