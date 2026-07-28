@@ -1487,6 +1487,8 @@ declare
   v_expected_org_name text;
   v_expected_org_slug text;
   v_expected_members  int;
+  v_expected_handle   text;
+  v_expected_avatar   text;
 begin
   -- Owner (A) invites H by email to org f3 — a fresh pending invite (H's
   -- earlier invites in §24 are declined/revoked, so no partial-unique
@@ -1533,10 +1535,18 @@ begin
     format('lorekit_invite_org_details: expected org_slug %s, got %s', v_expected_org_slug, v_row.org_slug);
   assert v_row.member_count = v_expected_members,
     format('lorekit_invite_org_details: expected member_count %s, got %s', v_expected_members, v_row.member_count);
-  -- The seeded auth.users rows carry no raw_user_meta_data, so the inviter
-  -- handle/avatar resolve gracefully to null rather than erroring.
-  assert v_row.inviter_handle is null and v_row.inviter_avatar_url is null,
-    'lorekit_invite_org_details: inviter handle/avatar must resolve to null when raw_user_meta_data is absent';
+  -- The inviter (owner A) is seeded with raw_user_meta_data (§ before 24), so
+  -- the function resolves A's real handle/avatar from auth.users. Read the
+  -- expected values dynamically rather than hardcoding — same rationale as the
+  -- org_name/slug reads above — which also exercises the positive
+  -- inviter-identity resolution path (the coalesce over user_name/avatar_url).
+  select raw_user_meta_data ->> 'user_name', raw_user_meta_data ->> 'avatar_url'
+    into v_expected_handle, v_expected_avatar
+    from auth.users where id = '00000000-0000-0000-0000-0000000000a1';
+  assert v_row.inviter_handle = v_expected_handle,
+    format('lorekit_invite_org_details: expected inviter_handle %s, got %s', v_expected_handle, v_row.inviter_handle);
+  assert v_row.inviter_avatar_url = v_expected_avatar,
+    format('lorekit_invite_org_details: expected inviter_avatar_url %s, got %s', v_expected_avatar, v_row.inviter_avatar_url);
 end;
 $$;
 
