@@ -24,9 +24,15 @@ const EMPTY_TRENDS: StatTrends = {
 async function fetchDashboardData(): Promise<DashboardData> {
   const supabase = createClient();
 
+  // Filter to active (non-archived), non-expired memories only — consistent
+  // with the plan-page count and the cap trigger's definition of "active".
+  // The previous query had no archived_at filter, so archived memories were
+  // included in the dashboard total while the plan page excluded them.
   const { data, error } = await supabase
     .from('memories')
     .select('scope,key,created_at')
+    .is('archived_at', null)
+    .or('expires_at.is.null,expires_at.gt.now()')
     .order('created_at', { ascending: false })
     .limit(1000);
 
