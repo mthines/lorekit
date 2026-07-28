@@ -1,5 +1,3 @@
-'use client';
-
 /**
  * Command Palette — shared types
  *
