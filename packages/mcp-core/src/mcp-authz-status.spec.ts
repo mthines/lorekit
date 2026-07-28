@@ -57,6 +57,20 @@ describe('mcp-handler auth status guard', () => {
     expect(forbidden.length).toBe(3); // org.* JWT, write-missing, read-missing
     expect(block).not.toMatch(/jsonrpcError\(\s*id,\s*-32001/);
   });
+
+  it('uses clientError() (not error()) for every authz denial in tools/call so spans are not marked ERROR', () => {
+    // Authz denials are client-caused — the server handled them correctly.
+    // OTel semantic conventions: server spans are ERROR only for 5xx / server-side faults.
+    const block = blockAfter(handler, "method === 'tools/call'", 'tools/call block');
+    const clientErrors = block.match(/\.clientError\(/g) ?? [];
+    // org.* JWT denial + write-missing + read-missing + unknown-tool = 4 clientError calls
+    // (the error-path catch uses clientError only for UserInputError/OrgPermissionError, covered separately)
+    expect(clientErrors.length).toBeGreaterThanOrEqual(3);
+    // None of the three JSONRPC_FORBIDDEN paths should call .error() (which marks span ERROR)
+    // instead of .clientError(). Check by verifying .error() is not paired with JSONRPC_FORBIDDEN.
+    const forbidden_with_error = block.match(/\.error\([^)]+\)[^;]*\n[^)]*JSONRPC_FORBIDDEN/g) ?? [];
+    expect(forbidden_with_error.length).toBe(0);
+  });
 });
 
 describe('index.ts auth-failure guard', () => {
