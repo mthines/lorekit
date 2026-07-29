@@ -648,7 +648,11 @@ export function GettingStartedDialog({ open, onClose }: GettingStartedDialogProp
   const previouslyFocused = useRef<HTMLElement | null>(null);
   const reduceMotion = useReducedMotion();
   const [activeTab, setActiveTab] = useState<TabId>('setup');
+  const [mounted, setMounted] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
+
+  // Defer portal mount to avoid SSR / prerender "document is not defined"
+  useEffect(() => { setMounted(true); }, []);
 
   // Body scroll lock
   useEffect(() => {
@@ -711,6 +715,8 @@ export function GettingStartedDialog({ open, onClose }: GettingStartedDialogProp
   }, [activeTab]);
 
   const ActiveContent = TABS.find((t) => t.id === activeTab)!.content;
+
+  if (!mounted) return null;
 
   return createPortal(
     <AnimatePresence>
