@@ -31,8 +31,7 @@ export const claude = {
   // a string `id` field returned by the memory_write RPC.
   isLoreWrite(toolName, toolResponse) {
     if (!toolName || !String(toolName).endsWith('memory_write')) return false;
-    const r = toolResponse;
-    return r != null && typeof r === 'object' && typeof r.id === 'string';
+    return toolResponse != null && typeof toolResponse === 'object' && typeof toolResponse.id === 'string';
   },
 
   parse(input) {
