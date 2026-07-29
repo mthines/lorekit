@@ -18,7 +18,7 @@ import process from 'node:process';
 import { resolveProjectRoot } from './config.mjs';
 import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { normalizeEntry, shortDate, describeError, recordsDiverge } from './lessons-view.mjs';
+import { normalizeEntry, shortDate, describeError, recordsDiverge, parseScopeKey } from './lessons-view.mjs';
 import { log, err, heading, status, c } from './util.mjs';
 
 // Read one scope::key from a store, normalizing the result into a small,
@@ -50,11 +50,11 @@ export async function show(args) {
   //   show <scope::key>     — combined shorthand mirroring `list` output format
   let scope, key;
   const first = typeof args._[1] === 'string' ? args._[1] : '';
-  const dblColon = first.indexOf('::');
-  if (dblColon !== -1) {
+  const parsed = parseScopeKey(first);
+  if (parsed) {
     // Combined scope::key — e.g. `show global::claude-mcp-registration-can-hang`
-    scope = first.slice(0, dblColon).trim();
-    key = first.slice(dblColon + 2).trim();
+    scope = parsed.scope;
+    key = parsed.key;
   } else {
     // Classic two-positional form — e.g. `show global claude-mcp-registration-can-hang`
     scope = first;

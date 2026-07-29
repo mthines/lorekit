@@ -16,6 +16,19 @@ import { log, heading, status, c } from './util.mjs';
 import { resolvePrecedence, matchesQuery } from './lessons-pure.mjs';
 export { resolvePrecedence, matchesQuery };
 
+// Parse a combined `scope::key` string into { scope, key }, or return null when
+// the input contains no `::`. Uses the FIRST occurrence of `::` as the separator
+// so nested scopes like `branch::owner/repo::feat/x` are handled correctly.
+// Exported so `show`, `write`, and any future commands share one implementation.
+export function parseScopeKey(s) {
+  const idx = s.indexOf('::');
+  if (idx === -1) return null;
+  const scope = s.slice(0, idx).trim();
+  const key = s.slice(idx + 2).trim();
+  if (!scope || !key) return null;
+  return { scope, key };
+}
+
 // The scopes that apply to the current directory, most-specific → broadest:
 // project, branch, repo, global. De-duplicated (a repo with no branch scope,
 // or a project whose name collides, never lists a scope twice). Pure — takes an

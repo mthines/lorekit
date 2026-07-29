@@ -31,20 +31,11 @@ import { resolveProjectRoot } from './config.mjs';
 import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
 import { log, err, heading, status, c } from './util.mjs';
-
-// Parse `scope::key` from a single string, returning { scope, key } or null.
-function parseScopeKey(s) {
-  const idx = s.indexOf('::');
-  if (idx === -1) return null;
-  const scope = s.slice(0, idx).trim();
-  const key = s.slice(idx + 2).trim();
-  if (!scope || !key) return null;
-  return { scope, key };
-}
+import { parseScopeKey } from './lessons-view.mjs';
 
 // Read all of stdin to a string. Resolves to '' when stdin IS a TTY (no pipe).
 function readStdin() {
-  if (process.stdin.isTTY) return Promise.resolve('');
+  if (process.stdin.isTTY) return '';
   return new Promise((resolve) => {
     const chunks = [];
     process.stdin.on('data', (d) => chunks.push(d));
@@ -98,7 +89,7 @@ export async function write(args) {
   if (!value) {
     err(`${c.red('Error:')} a non-empty value is required`);
     err(`Pipe a value via stdin, pass it as a positional, or use --value <text>.`);
-    err(`To remove a key, use ${c.cyan('lorekit delete <scope> <key>')}.`);
+    err(`Run ${c.cyan('lorekit write --help')} for options.`);
     return 1;
   }
 
