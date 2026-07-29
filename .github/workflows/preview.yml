@@ -225,7 +225,16 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
-          URL=$(vercel deploy --prebuilt 2>&1 | tail -1)
+          # Vercel prints the deployment URL to stdout and progress to stderr;
+          # keep them separate (no 2>&1) and grep the URL so a trailing stderr
+          # line can never be mistaken for the deployment URL.
+          deploy_out="$(vercel deploy --prebuilt)"
+          echo "$deploy_out"
+          URL="$(printf '%s\n' "$deploy_out" | grep -Eo 'https://[^[:space:]]+' | tail -1)"
+          if [ -z "$URL" ]; then
+            echo "::error::Could not parse Vercel deployment URL"
+            exit 1
+          fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
   smoke:
@@ -274,6 +283,7 @@ jobs:
     runs-on: ubuntu-latest
     if: always() && needs.guard.outputs.authorized == 'true'
     needs: [guard, deploy-api, deploy-web, smoke]
+    environment: preview
     permissions:
       pull-requests: write
       statuses: write
