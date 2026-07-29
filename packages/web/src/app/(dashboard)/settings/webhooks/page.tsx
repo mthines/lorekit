@@ -32,7 +32,7 @@ export default async function WebhooksSettingsPage() {
       <SectionPanel
         icon={<Webhook className="size-4.5" />}
         title="GitHub webhook"
-        subtitle="Turn resolved PR review comments into lessons automatically, tagged source::pr-webhook."
+        subtitle="Turn resolved PR review comments into memories automatically, tagged source::pr-webhook."
       >
         <OnboardingStepContent
           step="webhook"
