@@ -99,7 +99,7 @@ export function ActivityFeed({ lessons, isSelected, onSelect }: ActivityFeedProp
       {grouped.map(([date, dayLessons]) => (
         <div key={date}>
           <DateLabel date={date} />
-          <div className="flex flex-col gap-1.5" role="list" aria-label={dayLabel(date)}>
+          <div className="flex flex-col gap-1.5" role="list" aria-label={date}>
             {dayLessons.map((lesson, i) => {
               const TriggerIcon = lesson.trigger ? (TRIGGER_ICONS[lesson.trigger] ?? Bot) : Bot;
               return (
