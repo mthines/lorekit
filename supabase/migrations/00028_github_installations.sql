@@ -219,30 +219,7 @@ $$;
 grant execute on function lorekit_installation_remove(bigint)
   to service_role;
 
--- 6. Coverage lookup — is a given full_name covered by any active App installation?
---    Pure boolean; used by the webhook handler (service role) to decide whether
---    to route to the app-secret path vs. the per-repo webhook_secrets path.
-create or replace function lorekit_is_app_covered(p_full_name text)
-returns boolean
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select exists (
-    select 1
-      from installation_repositories ir
-      join github_installations gi on gi.installation_id = ir.installation_id
-     where ir.full_name = p_full_name
-       and ir.active = true
-       and gi.status != 'removed'
-  );
-$$;
-
-grant execute on function lorekit_is_app_covered(text)
-  to service_role;
-
--- 7. Identity lookup helper — given a GitHub numeric account id (stored as
+-- 6. Identity lookup helper — given a GitHub numeric account id (stored as
 --    text in auth.identities.provider_id), return the matching auth.users.id.
 --    Used by the edge webhook handler to reconcile an installation to a LoreKit
 --    user without exposing the auth schema through PostgREST.
