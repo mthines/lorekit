@@ -278,7 +278,9 @@ jobs:
             const api   = process.env.RESULT_DEPLOY_API;
             const web   = process.env.RESULT_DEPLOY_WEB;
             const smoke = process.env.RESULT_SMOKE;
-            const vUrl  = process.env.VERCEL_URL || '(not available)';
+            const vUrl  = process.env.VERCEL_URL || '';
+            const hasWeb = /^https?:\/\//.test(vUrl);
+            const webLink = hasWeb ? `[${vUrl}](${vUrl})` : '(not available)';
             const sha   = process.env.PR_SHA.slice(0, 7);
             const branch = process.env.PR_BRANCH;
             const ref   = process.env.SUPABASE_PROJECT_REF;
@@ -289,6 +291,7 @@ jobs:
               `### ${ok ? '✅ Preview deploy succeeded' : '❌ Preview deploy failed'}`,
               '',
               `Branch: \`${branch}\` @ \`${sha}\``,
+              ...(hasWeb ? ['', `🔗 **[Open preview → ${vUrl}](${vUrl})**`] : []),
               '',
               '| Step | Result |',
               '| ---- | ------ |',
@@ -298,7 +301,7 @@ jobs:
               '',
               '**Endpoints:**',
               `- API: ${apiUrl}`,
-              `- Web: ${vUrl}`,
+              `- Web: ${webLink}`,
               '',
               `[View workflow run](${runUrl})`,
             ].join('\n');
