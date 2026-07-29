@@ -9,6 +9,7 @@ import { doctor } from '../src/doctor.mjs';
 import { list } from '../src/list.mjs';
 import { search } from '../src/search.mjs';
 import { show } from '../src/show.mjs';
+import { write } from '../src/write.mjs';
 import { stats } from '../src/stats.mjs';
 import { scopes } from '../src/scopes.mjs';
 import { diff } from '../src/diff.mjs';
@@ -53,7 +54,13 @@ ${c.bold('Commands')}
               rendered in the same Offline/Remote split. --json, --scope <s>.
   show        Inspect one memory in full: its complete value, scope, key, updated
               date, tags, and which store(s) it lives in (noting any divergence
-              when it is in both). --json. Usage: show <scope> <key>.
+              when it is in both). Accepts show <scope> <key> or the combined
+              show <scope::key> shorthand (copy-paste directly from list output).
+              --json.
+  write       Create or update a memory. Accepts the same <scope::key> shorthand.
+              Value is a positional, --value flag, or piped stdin. Writes to the
+              remote store when configured, falling back to local. --local /
+              --remote to force.
   stats       Count the applicable memories per scope and per store (offline vs
               remote), with per-store and grand totals, in the same Offline/
               Remote split. --json, --scope <s>.
@@ -247,6 +254,39 @@ ${c.bold('Examples')}
   npx @lorekit/cli grep "flaky test" --json
   npx @lorekit/cli search migration --scope global
 `,
+  write: `${c.bold('lorekit write')} — create or update a memory from the CLI
+
+${c.bold('Usage')}
+  npx @lorekit/cli write <scope> <key> <value> [options]
+  npx @lorekit/cli write <scope::key> <value> [options]
+  echo "value" | npx @lorekit/cli write <scope> <key> [options]
+
+Creates or updates a memory (upsert — overwrites if the key exists). Value can
+be a positional, --value, or piped stdin. Writes to the remote store when
+configured, falling back to local.
+
+${c.bold('Options')}
+  -d, --dir <path>         Target project root (default: current directory)
+      --value <text>       Memory value (alternative to positional / stdin)
+      --tags <a,b,c>       Comma-separated tags (default: none)
+      --source-agent <n>   Source agent name to record (default: none)
+      --trigger <slug>     Trigger context slug (default: none)
+      --ttl-days <n>       Days until auto-expiry 1–365 (remote only)
+      --org <slug>         Write to this org's scope (remote only)
+      --remote             Force write to the remote store
+      --local              Force write to the local offline store
+      --json               Machine-readable output
+  -e, --endpoint <url>     Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
+  -t, --token <token>      Remote token override (else .mcp.json / LOREKIT_TOKEN)
+      --store <path>       Local project-tier store directory (default: .lorekit)
+
+${c.bold('Examples')}
+  npx @lorekit/cli write global my-key "Always prefer guard clauses"
+  npx @lorekit/cli write global::my-key "Always prefer guard clauses"
+  cat notes.md | npx @lorekit/cli write global my-key --tags "style,aw"
+  npx @lorekit/cli write global my-key "body" --local
+  npx @lorekit/cli write global my-key "body" --ttl-days 30 --remote
+`,
   show: `${c.bold('lorekit show')} — inspect one memory in full
 
 ${c.bold('Usage')}
@@ -266,6 +306,7 @@ ${c.bold('Options')}
 
 ${c.bold('Examples')}
   npx @lorekit/cli show global prefer-guard-clauses
+  npx @lorekit/cli show global::prefer-guard-clauses
   npx @lorekit/cli show project::widget build-flags --json
 `,
   stats: `${c.bold('lorekit stats')} — count the applicable memories per scope and per store
@@ -470,6 +511,7 @@ const KNOWN_FLAGS = [
   'dir', 'project', 'global', 'endpoint', 'token', 'mode', 'store',
   'from', 'to', 'apply', 'yes', 'no-hooks', 'force', 'deep', 'adapter',
   'event', 'json', 'scope', 'threshold', 'help', 'version',
+  'value', 'tags', 'source-agent', 'trigger', 'ttl-days', 'org', 'remote', 'local',
 ];
 
 // Commands that write to disk / talk to the network on a human's behalf. These
@@ -477,7 +519,7 @@ const KNOWN_FLAGS = [
 // never fail on a stray flag, and only ever receive flags we control).
 const HUMAN_COMMANDS = new Set([
   'install', 'uninstall', 'doctor', 'list', 'search', 'show', 'stats', 'scopes',
-  'diff', 'tree', 'lint', 'dedupe', 'migrate',
+  'diff', 'tree', 'lint', 'dedupe', 'migrate', 'write',
 ]);
 
 // Command aliases — canonicalized before help / dispatch so `lorekit ls --help`
@@ -494,7 +536,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'json'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'json', 'remote', 'local'],
     known: KNOWN_FLAGS,
   });
 
@@ -571,6 +613,8 @@ async function main() {
       return traceCommand('dedupe', args, VERSION, () => dedupe(args));
     case 'migrate':
       return traceCommand('migrate', args, VERSION, () => migrate(args));
+    case 'write':
+      return traceCommand('write', args, VERSION, () => write(args));
     default:
       err(`${c.red('Unknown command:')} ${command}\n`);
       log(HELP);

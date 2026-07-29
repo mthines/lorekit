@@ -117,7 +117,7 @@ function renderLintSection(header, section) {
       continue;
     }
     for (const f of g.findings) {
-      log(`    ${c.yellow('•')} ${f.key}  ${c.dim(`[${f.rule}]`)} ${f.message}`);
+      log(`    ${c.yellow('•')} ${g.scope}::${f.key}  ${c.dim(`[${f.rule}]`)} ${f.message}`);
     }
   }
 }

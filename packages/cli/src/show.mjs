@@ -4,6 +4,11 @@
 // stores — possibly with different values — both are shown and the divergence is
 // flagged.
 //
+// Two positional shapes are accepted:
+//   show <scope> <key>     — classic two-positional form
+//   show <scope::key>      — combined shorthand (the same format `list` prints,
+//                            so you can copy-paste a key directly from list output)
+//
 // Uses each store's real `read({scope, key})` method (both stores expose it),
 // not a filtered `list` — a single-record lookup is what `read` is for, and it
 // already hides archived entries. Graceful by design (mirrors `list`/`search`):
@@ -13,7 +18,7 @@ import process from 'node:process';
 import { resolveProjectRoot } from './config.mjs';
 import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { normalizeEntry, shortDate, describeError, recordsDiverge } from './lessons-view.mjs';
+import { normalizeEntry, shortDate, describeError, recordsDiverge, parseScopeKey } from './lessons-view.mjs';
 import { log, err, heading, status, c } from './util.mjs';
 
 // Read one scope::key from a store, normalizing the result into a small,
@@ -40,11 +45,24 @@ export async function show(args) {
   const env = { ...process.env };
   if (args.store) env.LOREKIT_STORE = args.store;
 
-  // Both positionals are required: `show <scope> <key>`.
-  const scope = typeof args._[1] === 'string' ? args._[1] : '';
-  const key = typeof args._[2] === 'string' ? args._[2] : '';
+  // Two positional shapes are accepted:
+  //   show <scope> <key>    — classic two-positional form (backward-compatible)
+  //   show <scope::key>     — combined shorthand mirroring `list` output format
+  let scope, key;
+  const first = typeof args._[1] === 'string' ? args._[1] : '';
+  const parsed = parseScopeKey(first);
+  if (parsed) {
+    // Combined scope::key — e.g. `show global::claude-mcp-registration-can-hang`
+    scope = parsed.scope;
+    key = parsed.key;
+  } else {
+    // Classic two-positional form — e.g. `show global claude-mcp-registration-can-hang`
+    scope = first;
+    key = typeof args._[2] === 'string' ? args._[2] : '';
+  }
   if (!scope || !key) {
     err(`${c.red('Usage:')} lorekit show <scope> <key> [--json]`);
+    err(`       lorekit show <scope::key> [--json]`);
     err(`Both a scope and a key are required. Run ${c.cyan('lorekit show --help')} for options.`);
     return 1;
   }
