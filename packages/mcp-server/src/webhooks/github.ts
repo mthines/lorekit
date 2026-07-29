@@ -72,7 +72,7 @@ export async function handleGitHubWebhook(req: Request): Promise<Response> {
       // Layer 1 — action-tier gate: skip edits, deletes, dismissals, etc.
       if (classifyWebhookAction(event, action) === 'SKIP') {
         span.addEvent('webhook.skipped', { reason: 'action_not_signal_worthy' });
-        logger.info({ scope: undefined, event, action }, 'lorekit.webhook.skipped');
+        logger.info({ event, action }, 'lorekit.webhook.skipped');
         return new Response('OK', { status: 200 });
       }
 

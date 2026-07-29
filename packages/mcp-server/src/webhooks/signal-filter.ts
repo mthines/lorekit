@@ -32,7 +32,7 @@ const MIN_BODY_LENGTH = 20;
  * Patterns that indicate bot-generated noise rather than human signal.
  * Applied against the trimmed comment body.
  */
-const BOT_NOISE_PATTERNS: RegExp[] = [
+const BOT_NOISE_PATTERNS: readonly RegExp[] = [
   // GitHub Actions / CI status lines
   /^(Build|Deploy|Test|CI|Checks?) (passed|failed|succeeded|completed)/i,
   // Dependabot PR body headers

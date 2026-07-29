@@ -79,7 +79,7 @@ const SUPPORTED_EVENTS = new Set([
 
 type WebhookTier = 'WRITE' | 'SKIP';
 
-const BOT_NOISE_PATTERNS: RegExp[] = [
+const BOT_NOISE_PATTERNS: readonly RegExp[] = [
   /^(Build|Deploy|Test|CI|Checks?) (passed|failed|succeeded|completed)/i,
   /^Bumps \[/,
   /^All \d+ checks? (passed|failed)/i,
@@ -277,7 +277,10 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
 
     // Layer 1 — action-tier gate: skip edits, deletes, dismissals, etc.
     if (classifyWebhookAction(event, action) === 'SKIP') {
-      span.setAttributes({ 'lorekit.webhook.skipped': true, 'lorekit.webhook.skip_reason': 'action_not_signal_worthy' });
+      span.setAttributes({
+        'lorekit.webhook.skipped': true,
+        'lorekit.webhook.skip_reason': 'action_not_signal_worthy',
+      });
       return new Response('OK', { status: 200 });
     }
 
