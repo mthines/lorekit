@@ -29,7 +29,6 @@ export interface StorageAdapter {
    * database. BYOD is billed flat-rate or is free, not by memory count.
    */
   supportsHostedBilling: boolean;
-  /** 'hosted' | 'byod' */
   mode: 'hosted' | 'byod';
 }
 
