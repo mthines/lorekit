@@ -1,26 +1,10 @@
 import { SpanStatusCode } from '@opentelemetry/api';
-import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
+import { PurgeInputSchema, type PurgeInput, PURGE_RETENTION_DAYS_DEFAULT } from '@lorekit/schemas/memory.js';
 import { getTracer, getToolDurationHistogram } from '../telemetry.js';
 import { recordAudit } from '../audit.js';
 
-export const PURGE_RETENTION_DAYS_DEFAULT = 30;
-
-export const PurgeInputSchema = z.object({
-  /**
-   * Number of days after archiving before a memory is eligible for permanent deletion.
-   * Defaults to 30. Minimum 1, maximum 365.
-   */
-  retention_days: z
-    .number()
-    .int()
-    .min(1)
-    .max(365)
-    .optional()
-    .default(PURGE_RETENTION_DAYS_DEFAULT),
-});
-
-export type PurgeInput = z.infer<typeof PurgeInputSchema>;
+export { PurgeInputSchema, type PurgeInput, PURGE_RETENTION_DAYS_DEFAULT };
 
 /**
  * Hard-delete archived memories whose archived_at is older than retention_days.

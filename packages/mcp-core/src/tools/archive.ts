@@ -1,24 +1,18 @@
 import { SpanStatusCode } from '@opentelemetry/api';
-import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
-import { ScopeSchema, scopeType } from '../scope.js';
+import {
+  ArchiveInputSchema,
+  type ArchiveInput,
+  RestoreInputSchema,
+  type RestoreInput,
+  ListArchivedInputSchema,
+  type ListArchivedInput,
+} from '@lorekit/schemas/memory.js';
+import { scopeType } from '../scope.js';
 import { getTracer, getToolDurationHistogram } from '../telemetry.js';
 import { recordAudit } from '../audit.js';
 
-export const ArchiveInputSchema = z.object({
-  scope: ScopeSchema,
-  key: z.string().min(1).max(512),
-});
-
-export const RestoreInputSchema = z.object({
-  scope: ScopeSchema,
-  key: z.string().min(1).max(512),
-});
-
-export const ListArchivedInputSchema = z.object({
-  scope: ScopeSchema,
-  limit: z.number().int().min(1).max(100).optional().default(50),
-});
+export { ArchiveInputSchema, type ArchiveInput, RestoreInputSchema, type RestoreInput, ListArchivedInputSchema, type ListArchivedInput };
 
 export interface ArchivedEntry {
   key: string;

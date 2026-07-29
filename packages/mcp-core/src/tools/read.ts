@@ -1,15 +1,10 @@
 import { SpanStatusCode } from '@opentelemetry/api';
-import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
-import { ScopeSchema, scopeType } from '../scope.js';
+import { ReadInputSchema, type ReadInput } from '@lorekit/schemas/memory.js';
+import { scopeType } from '../scope.js';
 import { getTracer, getToolDurationHistogram } from '../telemetry.js';
 
-export const ReadInputSchema = z.object({
-  scope: ScopeSchema,
-  key: z.string().min(1).max(512),
-});
-
-export type ReadInput = z.infer<typeof ReadInputSchema>;
+export { ReadInputSchema, type ReadInput };
 export type ReadResult = { value: string; updated_at: string } | null;
 
 export async function read(db: SupabaseClient, raw: unknown): Promise<ReadResult> {

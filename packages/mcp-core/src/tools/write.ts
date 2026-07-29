@@ -1,7 +1,7 @@
 import { SpanStatusCode } from '@opentelemetry/api';
-import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
-import { ScopeSchema, scopeType } from '../scope.js';
+import { WriteInputSchema, type WriteInput, MAX_VALUE_BYTES } from '@lorekit/schemas/memory.js';
+import { scopeType } from '../scope.js';
 import { getTracer, getToolDurationHistogram } from '../telemetry.js';
 import { translateCapError } from '../limits.js';
 import { translateOrgPermissionError } from '../org-permissions.js';
@@ -9,35 +9,7 @@ import { parseCreatedAt } from '../created-at.js';
 import { parseTtlDays } from '../ttl.js';
 import { recordAudit } from '../audit.js';
 
-const MAX_VALUE_BYTES = 65_536;
-
-export const WriteInputSchema = z.object({
-  scope: ScopeSchema,
-  key: z.string().min(1).max(512),
-  value: z.string().max(MAX_VALUE_BYTES, `value exceeds ${MAX_VALUE_BYTES} bytes`),
-  tags: z.array(z.string()).optional().default([]),
-  source_agent: z.string().optional(),
-  trigger: z.string().optional(),
-  // Optional creation-date override for migrating pre-existing memories. When
-  // omitted the DB applies its now() default. Validated (and future-dates
-  // rejected) by parseCreatedAt below, not by zod, so the error message and the
-  // clock-skew rule stay shared with the edge mirror.
-  created_at: z.string().optional(),
-  // Org slug to write under (org-owned write). Omit for a personal memory.
-  // Ownership is authorization-derived inside memory_write — supplying an
-  // org here does not by itself grant write access to it.
-  org: z.string().optional(),
-  // Optional TTL in days. When set, expires_at is computed as
-  // now() + ttl_days * 1 day. On an UPDATE the TTL is refreshed only when
-  // ttl_days is supplied; omitting it on an update leaves the existing expiry
-  // unchanged. Validated by parseTtlDays (1–365).
-  ttl_days: z.number().int().min(1).max(365).optional(),
-  // When true, clears an existing expires_at (makes the memory permanent again).
-  // Ignored when ttl_days is also supplied — clear takes precedence inside the RPC.
-  clear_ttl: z.boolean().optional().default(false),
-});
-
-export type WriteInput = z.infer<typeof WriteInputSchema>;
+export { WriteInputSchema, type WriteInput };
 
 export async function write(
   db: SupabaseClient,

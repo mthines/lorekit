@@ -19,7 +19,11 @@
     "baseUrl": ".",
     "paths": {
       "@lorekit/core": ["packages/mcp-core/src/index.ts"],
-      "@lorekit/schemas": ["packages/schemas/src/index.ts"]
+      "@lorekit/schemas": ["packages/schemas/src/index.ts"],
+      "@lorekit/schemas/scope.js": ["packages/schemas/src/scope.ts"],
+      "@lorekit/schemas/memory.js": ["packages/schemas/src/memory.ts"],
+      "@lorekit/schemas/org.js": ["packages/schemas/src/org.ts"],
+      "@lorekit/schemas/common.js": ["packages/schemas/src/common.ts"]
     }
   }
 }

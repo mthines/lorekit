@@ -1,25 +1,12 @@
 import { SpanStatusCode } from '@opentelemetry/api';
-import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
-import { ScopeSchema, scopeType } from '../scope.js';
+import { DeleteInputSchema, type DeleteInput } from '@lorekit/schemas/memory.js';
+import { scopeType } from '../scope.js';
 import { getTracer, getToolDurationHistogram } from '../telemetry.js';
 import { recordAudit } from '../audit.js';
 import { translateOrgPermissionError } from '../org-permissions.js';
 
-export const DeleteInputSchema = z.object({
-  scope: ScopeSchema,
-  key: z.string().min(1).max(512),
-  /**
-   * When true, permanently hard-delete the row instead of soft-archiving it.
-   * Defaults to false (soft-archive). Use with caution — hard-deleted rows
-   * cannot be restored.
-   */
-  force: z.boolean().optional().default(false),
-  // Org slug to delete under (org-owned delete). Omit for a personal memory.
-  // Routed through the role-gated memory_delete RPC — never the raw
-  // service-role .delete()/.update() below, which would bypass the role gate.
-  org: z.string().optional(),
-});
+export { DeleteInputSchema, type DeleteInput };
 
 /**
  * Delete (or soft-archive) a memory.

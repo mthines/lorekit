@@ -1,15 +1,10 @@
 import { SpanStatusCode } from '@opentelemetry/api';
-import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
+import { SearchInputSchema } from '@lorekit/schemas/memory.js';
 import { expandScopeForSearch } from '../scope.js';
 import { getTracer, getToolDurationHistogram } from '../telemetry.js';
 
-export const SearchInputSchema = z.object({
-  q: z.string().min(1).max(512),
-  scopes: z.array(z.string()).optional(),
-  tags: z.array(z.string()).optional(),
-  limit: z.number().int().min(1).max(100).optional().default(20),
-});
+export { SearchInputSchema };
 
 export interface SearchEntry {
   key: string;

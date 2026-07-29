@@ -1,16 +1,10 @@
 import { SpanStatusCode } from '@opentelemetry/api';
-import { z } from 'zod';
 import { type SupabaseClient } from '@supabase/supabase-js';
-import { ScopeSchema, scopeType } from '../scope.js';
+import { ListInputSchema, type ListInput } from '@lorekit/schemas/memory.js';
+import { scopeType } from '../scope.js';
 import { getTracer, getToolDurationHistogram } from '../telemetry.js';
 
-export const ListInputSchema = z.object({
-  scope: ScopeSchema,
-  tags: z.array(z.string()).optional(),
-  limit: z.number().int().min(1).max(100).optional().default(50),
-});
-
-export type ListInput = z.infer<typeof ListInputSchema>;
+export { ListInputSchema, type ListInput };
 
 export interface ListEntry {
   key: string;
