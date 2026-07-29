@@ -22,7 +22,7 @@
  * This hook solves it with a local `optimistic` state that is updated
  * synchronously on every `setState` call, while the URL write happens in the
  * background. When the URL finally reflects the new value (next render after
- * navigation), `optimistic` is reset to `null` so the URL is once again the
+ * navigation), `optimistic` is reset to `UNSET` so the URL is once again the
  * source of truth. External URL changes (browser back/forward, direct link
  * visits) are reflected immediately because they change `searchParams`, which
  * resets the optimistic layer.
@@ -39,6 +39,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+
+// ── Optimistic sentinel ────────────────────────────────────────────────────────
+// Using `null` as "no optimistic value" breaks when T itself is `string | null`
+// (e.g. `useUrlState<string | null>('org', null)`) because a legitimate `null`
+// value is indistinguishable from the "not set" sentinel, which causes the
+// optimistic layer to never clear and eventually triggers a React invalid-hook
+// call (React error #310) on the /settings page.
+// A module-scoped Symbol is unique and can never equal a real state value.
+const UNSET = Symbol('useUrlState/unset');
+type Unset = typeof UNSET;
 
 export type UrlStateDispatch<S> = (value: S | ((prev: S) => S)) => void;
 
@@ -139,21 +149,24 @@ export function useUrlState<T>(
   const urlValue = useMemo<T>(() => deserialise<T>(searchParams.get(key), defaultValue), [searchParams, key]);
 
   // ── Optimistic state ───────────────────────────────────────────────────────
-  // `null` means "use the URL value". Set to a concrete value immediately on
+  // `UNSET` means "use the URL value". Set to a concrete value immediately on
   // setState, then cleared once the URL catches up (i.e. once urlValue changes
   // to match the optimistic value).
-  const [optimisticValue, setOptimisticValue] = useState<T | null>(null);
+  // NOTE: Do NOT use `null` as the sentinel — when T includes `null` (e.g.
+  // `string | null`) the sentinel collides with a legitimate state value,
+  // preventing the optimistic layer from ever clearing (React error #310).
+  const [optimisticValue, setOptimisticValue] = useState<T | Unset>(UNSET);
 
   // Once the URL reflects the optimistic value, drop the optimistic layer.
   useEffect(() => {
-    if (optimisticValue !== null && serialise(urlValue) === serialise(optimisticValue)) {
-      setOptimisticValue(null);
+    if (optimisticValue !== UNSET && serialise(urlValue) === serialise(optimisticValue)) {
+      setOptimisticValue(UNSET);
     }
   }, [urlValue, optimisticValue]);
 
   // The value exposed to callers: optimistic takes priority while the URL is
   // catching up; falls back to the true URL value otherwise.
-  const value = optimisticValue !== null ? optimisticValue : urlValue;
+  const value = optimisticValue !== UNSET ? optimisticValue : urlValue;
 
   // ── Navigate ref ───────────────────────────────────────────────────────────
   // Updated synchronously during render (no useEffect) so there is never a
@@ -166,7 +179,7 @@ export function useUrlState<T>(
   // ── setState ───────────────────────────────────────────────────────────────
   const setState = useCallback<UrlStateDispatch<T>>(
     (valueOrUpdater) => {
-      const prev = optimisticValue !== null ? optimisticValue : deserialise<T>(searchParams.get(key), defaultValue);
+      const prev = optimisticValue !== UNSET ? optimisticValue : deserialise<T>(searchParams.get(key), defaultValue);
       const next =
         typeof valueOrUpdater === 'function'
           ? (valueOrUpdater as (prev: T) => T)(prev)
