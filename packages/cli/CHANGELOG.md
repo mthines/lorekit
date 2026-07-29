@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.0](https://github.com/mthines/lorekit/compare/cli-v1.19.0...cli-v1.20.0) (2026-07-29)
+
+
+### Features
+
+* **byod:** Bring Your Own Database support ([#208](https://github.com/mthines/lorekit/issues/208)) ([69cbf07](https://github.com/mthines/lorekit/commit/69cbf07130e689d9d2389f87d5c3c5fb262d9e23))
+
 ## [1.19.0](https://github.com/mthines/lorekit/compare/cli-v1.18.0...cli-v1.19.0) (2026-07-29)
 
 
