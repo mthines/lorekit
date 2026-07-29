@@ -138,7 +138,7 @@ function StepRow({ step, index, isOpen, onToggle }: StepRowProps) {
                   </button>
                   <p className="text-xs text-[var(--color-content-tertiary)]">
                     {manuallyDone
-                      ? 'Marked complete. Lessons will appear here once a delivery arrives.'
+                      ? 'Marked complete. Memories will appear here once a delivery arrives.'
                       : 'Already added it on GitHub? Mark this step complete.'}
                   </p>
                 </div>
@@ -195,7 +195,7 @@ interface OnboardingChecklistProps {
 }
 
 export function OnboardingChecklist({ steps, variant = 'inline' }: OnboardingChecklistProps) {
-  const { isDone, completedCount, total, allDone, dismissed, dismiss } = useOnboarding();
+  const { isDone, allDone, dismissed, dismiss } = useOnboarding();
 
   // Auto-open the first incomplete step; on the dedicated page, keep the whole
   // panel expanded by default.
@@ -216,9 +216,6 @@ export function OnboardingChecklist({ steps, variant = 'inline' }: OnboardingChe
     return <AllSetPanel onReview={() => setReviewing(true)} />;
   }
 
-  const progress = completedCount / total;
-  const remaining = total - completedCount;
-
   function handleToggle(i: number) {
     setOpenIndex(openIndex === i ? -1 : i);
   }
@@ -234,34 +231,24 @@ export function OnboardingChecklist({ steps, variant = 'inline' }: OnboardingChe
           variant === 'inline' ? 'pr-14' : '',
         ].join(' ')}
       >
-        {/* Progress ring */}
-        <div className="relative size-9 shrink-0" aria-hidden>
-          <svg className="size-9 -rotate-90" viewBox="0 0 36 36">
-            <circle cx="18" cy="18" r="15" fill="none" strokeWidth="3"
-              className="stroke-[var(--color-border)]" />
-            <motion.circle
-              cx="18" cy="18" r="15" fill="none" strokeWidth="3"
-              strokeLinecap="round"
-              className="stroke-[var(--color-accent)]"
-              strokeDasharray={`${2 * Math.PI * 15}`}
-              initial={{ strokeDashoffset: 2 * Math.PI * 15 }}
-              animate={{ strokeDashoffset: (1 - progress) * 2 * Math.PI * 15 }}
-              transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-            />
-          </svg>
-          <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-[var(--color-content-primary)]">
-            {completedCount}/{total}
-          </span>
+        {/* Status icon — done/not-done, no count needed with a single step */}
+        <div
+          className={[
+            'flex size-9 shrink-0 items-center justify-center rounded-lg border transition-all duration-300',
+            allDone
+              ? 'border-[var(--color-success)] bg-[var(--color-success)]'
+              : 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-secondary)]',
+          ].join(' ')}
+          aria-hidden
+        >
+          {allDone
+            ? <Check className="size-4 text-[#000]" strokeWidth={3} />
+            : <ListChecks className="size-4" />}
         </div>
 
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-[var(--color-content-primary)]">
             {allDone ? 'Setup complete' : 'Finish setting up LoreKit'}
-          </p>
-          <p className="text-xs text-[var(--color-content-tertiary)]">
-            {allDone
-              ? `All ${total} steps done`
-              : `${remaining} step${remaining === 1 ? '' : 's'} left`}
           </p>
         </div>
 
@@ -309,6 +296,12 @@ export function OnboardingChecklist({ steps, variant = 'inline' }: OnboardingChe
                   onToggle={() => handleToggle(i)}
                 />
               ))}
+              {variant === 'inline' && (
+                <p className="mt-1 text-[10px] text-[var(--color-content-tertiary)]">
+                  You can always reopen this from{' '}
+                  <strong className="font-medium">Learn</strong> in the sidebar.
+                </p>
+              )}
             </div>
           </motion.div>
         )}

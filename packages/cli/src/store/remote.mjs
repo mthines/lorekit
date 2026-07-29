@@ -112,6 +112,14 @@ class RemoteStore {
     return { ok: true, ...payload };
   }
 
+  // Store-wide scope enumeration is NOT possible against the hosted MCP surface:
+  // every read tool (memory.list / memory.search / memory.read) REQUIRES a
+  // scope, and there is no "list all scopes" tool. Signal that honestly so the
+  // `scopes` command shows a clear note rather than faking an inventory.
+  async listScopes() {
+    return { ok: false, unsupported: true };
+  }
+
   // Connectivity probe for doctor — a transport check, not a memory op.
   async ping() {
     if (!this.usable()) return { ok: false, unusable: true };

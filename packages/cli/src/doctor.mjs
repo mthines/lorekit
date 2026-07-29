@@ -5,12 +5,16 @@ import path from 'node:path';
 import process from 'node:process';
 import { execFileSync } from 'node:child_process';
 import {
-  SKILL_NAME,
+  SKILLS,
   resolveProjectRoot,
   skillInstallDir,
+  settingsPath,
+  CLAUDE_HOOK_EVENTS,
+  LOREKIT_HOOK_RE,
   readLorekitServer,
   readMcpConfig,
   tokenKind,
+  readLorekitJson,
 } from './config.mjs';
 import { splitEndpoint } from './mcp.mjs';
 import { deriveScope } from './scope.mjs';
@@ -42,18 +46,40 @@ export async function doctor(args) {
     `v${process.versions.node}${major < 18 ? ' — need v18+ for fetch' : ''}`,
   );
 
-  // 2. Skill installed — check BOTH the project and the global (~/.claude)
-  // locations. `lorekit install --global` writes the skill under home, not the
-  // repo, so a project-only check reports a healthy global install as "not
-  // found" (exactly the false FAIL a --global setup would hit).
-  const skillMd = [skillInstallDir(root, 'project'), skillInstallDir(root, 'global')]
-    .map((dir) => path.join(dir, 'SKILL.md'))
-    .find((p) => fs.existsSync(p));
-  if (skillMd) {
-    const rel = path.relative(root, skillMd);
-    record('pass', `skill ${SKILL_NAME}`, rel && !rel.startsWith('..') ? rel : prettyPath(skillMd));
-  } else {
-    record('fail', `skill ${SKILL_NAME}`, 'not found — run `lorekit install`');
+  // 2. Skills installed — check every skill the CLI ships, in BOTH the project
+  // and the global (~/.claude) locations. `lorekit install --global` writes the
+  // skill under home, not the repo, so a project-only check reports a healthy
+  // global install as "not found" (exactly the false FAIL a --global setup would
+  // hit).
+  for (const skill of SKILLS) {
+    const skillMd = [
+      skillInstallDir(root, 'project', skill.name),
+      skillInstallDir(root, 'global', skill.name),
+    ]
+      .map((dir) => path.join(dir, 'SKILL.md'))
+      .find((p) => fs.existsSync(p));
+    if (skillMd) {
+      const rel = path.relative(root, skillMd);
+      record('pass', `skill ${skill.name}`, rel && !rel.startsWith('..') ? rel : prettyPath(skillMd));
+    } else {
+      record('fail', `skill ${skill.name}`, 'not found — run `lorekit install`');
+    }
+  }
+
+  // 2.5. Duplicate-hook detection — warn when the same lorekit hook event is
+  // wired in both the project settings and the global settings. This causes
+  // Claude Code to fire the hook twice per event, producing doubled terminal
+  // output. Common after running `lorekit install` once with --project and
+  // once with --global (or via the marketplace plugin on top of a CLI install).
+  const dupeEvents = detectDuplicateHooks(root);
+  if (dupeEvents.length > 0) {
+    record(
+      'warn',
+      'hooks duplicate',
+      `${dupeEvents.join(', ')} registered in BOTH project and global settings — ` +
+        `Claude Code fires them twice. Remove one scope: ` +
+        `run \`lorekit uninstall --project\` or \`lorekit uninstall --global\`.`,
+    );
   }
 
   // 3. Resolved control model — which mode, and who decided it.
@@ -72,13 +98,49 @@ export async function doctor(args) {
     await checkRemote(control, root, args, record);
   }
 
+  // 4b. BYOD storage connectivity check.
+  await checkBYODStorage(record);
+
   // 5. Scope.
   const scope = deriveScope(root);
   if (scope.hasRemote) {
+    log('');
     record('info', 'read scope', scope.readOrder.join('  →  '));
-    record('info', 'write scope', `${scope.repoScope} (default for "went wrong" lessons)`);
+    record('info', 'write scope', `${scope.repoScope} (default write target)`);
   } else {
-    record('warn', 'scope', 'no git remote here — lessons fall back to global');
+    record('warn', 'scope', 'no git remote here — memories fall back to global');
+  }
+
+  // 6. Hook instructions — show resolved per-event custom instructions when any are set.
+  {
+    const instr = control.hooksInstructions || {};
+    const EVENTS = ['SessionStart', 'PostToolUseFailure', 'Stop'];
+    const configured = EVENTS.filter((ev) => instr[ev]);
+    if (configured.length > 0) {
+      for (const ev of EVENTS) {
+        const text = instr[ev];
+        if (text) {
+          record('info', `hooks.instructions.${ev}`, c.dim(text.length > 80 ? text.slice(0, 77) + '…' : text));
+        } else {
+          record('info', `hooks.instructions.${ev}`, c.dim('(not set)'));
+        }
+      }
+    }
+  }
+
+  // 7. doctor.require — committed list of checks that MUST pass.
+  //    Useful as a CI gate: any check in the list that did not pass causes a failure.
+  const lorekitJson = readLorekitJson(root);
+  const required = (Array.isArray(lorekitJson['doctor.require']) ? lorekitJson['doctor.require'] : [])
+    .filter((r) => typeof r === 'string');
+  for (const req of required) {
+    // A required check passes if its label is NOT in failedChecks (it either
+    // passed or was never run; unknown labels get a pass to avoid false failures).
+    if (failedChecks.includes(req)) {
+      record('fail', 'doctor.require', `required check failed: ${req}`);
+    } else {
+      record('pass', 'doctor.require', `required check passed: ${req}`);
+    }
   }
 
   // Summary.
@@ -122,7 +184,8 @@ async function checkLocal(control, root, args, record) {
 
   // Home tier — per-user, cross-repo, always available.
   record('pass', 'home store', prettyPath(store.homeDir));
-  record('info', 'home entries', `${await store.home.count(scopes)} lesson(s)`);
+  const homeCount = await store.home.count(scopes);
+  record('info', 'home entries', `${homeCount} ${homeCount === 1 ? 'memory' : 'memories'}`);
 
   // Project tier — opt-in; active only when its directory exists.
   const projRel = path.relative(root, store.projectDir) || store.projectDir;
@@ -131,12 +194,13 @@ async function checkLocal(control, root, args, record) {
       ? 'committed — shared with the team'
       : 'gitignored — private to your checkout';
     record('pass', 'project store', projRel);
-    record('info', 'project entries', `${await store.project.count(scopes)} lesson(s) — ${sharing}`);
+    const projCount = await store.project.count(scopes);
+    record('info', 'project entries', `${projCount} ${projCount === 1 ? 'memory' : 'memories'} — ${sharing}`);
   } else {
     record(
       'info',
       'project store',
-      `${projRel} — not opted-in (create it to persist repo/branch lessons here)`,
+      `${projRel} — not opted-in (create it to persist repo/branch memories here)`,
     );
   }
 
@@ -246,6 +310,82 @@ async function deepCheckLocal(store, scope, record) {
     readBack ? `wrote + read back in ${writeScope}` : 'write/read-back was inconclusive',
   );
   await store.delete({ scope: writeScope, key, force: true });
+}
+
+// Returns the list of CLAUDE_HOOK_EVENTS whose lorekit hook command appears in
+// BOTH the project settings file (.claude/settings.json) and the global one
+// (~/.claude/settings.json). An empty array means no duplicates — healthy.
+function detectDuplicateHooks(root) {
+  const dupes = [];
+  const projectFile = settingsPath(root, 'project');
+  const globalFile = settingsPath(root, 'global');
+
+  let projectHooks = {};
+  let globalHooks = {};
+  try {
+    const cfg = JSON.parse(fs.readFileSync(projectFile, 'utf8'));
+    if (cfg && typeof cfg.hooks === 'object') projectHooks = cfg.hooks;
+  } catch { /* absent or unparseable — treat as empty */ }
+  try {
+    const cfg = JSON.parse(fs.readFileSync(globalFile, 'utf8'));
+    if (cfg && typeof cfg.hooks === 'object') globalHooks = cfg.hooks;
+  } catch { /* absent or unparseable — treat as empty */ }
+
+  for (const event of CLAUDE_HOOK_EVENTS) {
+    const hasInProject = hooksForEvent(projectHooks, event).some((cmd) => LOREKIT_HOOK_RE.test(cmd));
+    const hasInGlobal = hooksForEvent(globalHooks, event).some((cmd) => LOREKIT_HOOK_RE.test(cmd));
+    if (hasInProject && hasInGlobal) dupes.push(event);
+  }
+  return dupes;
+}
+
+// Extract the flat list of hook command strings for one event from a hooks
+// object. Handles the nested-group shape Claude Code uses:
+// { [event]: [ { hooks: [ { type, command } ] } ] }
+function hooksForEvent(hooksObj, event) {
+  const groups = Array.isArray(hooksObj[event]) ? hooksObj[event] : [];
+  const commands = [];
+  for (const group of groups) {
+    const inner = group && Array.isArray(group.hooks) ? group.hooks : [];
+    for (const h of inner) {
+      if (h && typeof h.command === 'string') commands.push(h.command);
+    }
+  }
+  return commands;
+}
+
+async function checkBYODStorage(record) {
+  const storageUrl = process.env['LOREKIT_STORAGE_URL'];
+  const storageAnonKey = process.env['LOREKIT_STORAGE_ANON_KEY'];
+
+  if (!storageUrl && !storageAnonKey) {
+    return; // No BYOD configured — skip silently.
+  }
+
+  if (storageUrl && !storageAnonKey) {
+    record('fail', 'byod storage', 'LOREKIT_STORAGE_URL is set but LOREKIT_STORAGE_ANON_KEY is missing');
+    return;
+  }
+
+  if (!storageUrl && storageAnonKey) {
+    record('fail', 'byod storage', 'LOREKIT_STORAGE_ANON_KEY is set but LOREKIT_STORAGE_URL is missing');
+    return;
+  }
+
+  try {
+    const { createClient } = await import('@supabase/supabase-js');
+    const db = createClient(storageUrl, storageAnonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { error } = await db.from('memories').select('id').limit(1);
+    if (error && error.code !== '42P01') {
+      record('fail', 'byod storage', `connectivity error: ${error.message}`);
+    } else {
+      record('pass', 'byod storage', `ok — ${storageUrl}`);
+    }
+  } catch (e) {
+    record('fail', 'byod storage', `could not connect: ${e && e.message ? e.message : String(e)}`);
+  }
 }
 
 function gitTracked(root, dir) {

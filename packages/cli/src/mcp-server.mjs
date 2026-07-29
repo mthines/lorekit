@@ -36,7 +36,7 @@ const SERVER_INFO = { name: 'lorekit-local', version: '1.0.0' };
 export const MEMORY_TOOL_DEFS = [
   {
     name: 'memory.write',
-    description: 'Store or update a lesson',
+    description: 'Store or update a memory',
     inputSchema: {
       type: 'object',
       required: ['scope', 'key', 'value'],
@@ -58,24 +58,24 @@ export const MEMORY_TOOL_DEFS = [
   },
   {
     name: 'memory.read',
-    description: 'Read a lesson by scope and key',
+    description: 'Read a memory by scope and key',
     inputSchema: { type: 'object', required: ['scope', 'key'] },
   },
   {
     name: 'memory.list',
-    description: 'List lessons for a scope',
+    description: 'List memories for a scope',
     inputSchema: { type: 'object', required: ['scope'] },
   },
   {
     name: 'memory.search',
-    description: 'Keyword search across lessons',
+    description: 'Keyword search across memories',
     inputSchema: { type: 'object', required: ['q'] },
   },
   {
     name: 'memory.delete',
     description:
-      'Soft-archive a lesson (default) or hard-delete it (force: true). ' +
-      'Archived lessons are hidden from reads but can be restored.',
+      'Soft-archive a memory (default) or hard-delete it (force: true). ' +
+      'Archived memories are hidden from reads but can be restored.',
     inputSchema: {
       type: 'object',
       required: ['scope', 'key'],
@@ -88,7 +88,7 @@ export const MEMORY_TOOL_DEFS = [
   },
   {
     name: 'memory.archive',
-    description: 'Soft-archive a lesson. Hidden from reads but restorable.',
+    description: 'Soft-archive a memory. Hidden from reads but restorable.',
     inputSchema: { type: 'object', required: ['scope', 'key'] },
   },
 ];
@@ -337,12 +337,31 @@ function withOverrides(args, env) {
   return out;
 }
 
+// A one-line human-readable readiness banner for `lorekit mcp`. Pure so it can
+// be unit-tested. Printed to STDERR (never stdout — that channel carries only
+// JSON-RPC frames) and only when stdin is a TTY, so a real MCP client that
+// pipes to us gets a pristine, banner-free stdout AND stderr.
+export function startupBanner(mode) {
+  return (
+    `lorekit mcp — local stdio MCP server ready (mode: ${mode}). ` +
+    'Speaking JSON-RPC 2.0 on stdin/stdout; this is machine-facing, so no ' +
+    'further output is normal. Press Ctrl-C to stop.'
+  );
+}
+
 // Entrypoint for `lorekit mcp`. Resolves the store once, then serves stdio
 // until the client closes stdin. Always resolves to exit code 0.
-export async function mcpServer(args = {}, { env = process.env, input = process.stdin, output = process.stdout } = {}) {
+export async function mcpServer(
+  args = {},
+  { env = process.env, input = process.stdin, output = process.stdout, errorOutput = process.stderr } = {},
+) {
   const root = resolveProjectRoot(args.dir);
   const control = loadControl(root, { env: withOverrides(args, env) });
   const handle = createHandler(control);
+  // A human who runs `lorekit mcp` in a terminal would otherwise see a silent
+  // hang with no sign it is alive. Reassure them on stderr — but only when
+  // stdin is a TTY, so a piped MCP client never sees the banner on either channel.
+  if (input && input.isTTY) errorOutput.write(startupBanner(control.mode) + '\n');
   await runStdio(handle, input, output);
   return 0;
 }

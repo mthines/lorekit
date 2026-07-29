@@ -30,6 +30,11 @@ export async function read(db: SupabaseClient, raw: unknown): Promise<ReadResult
         .select('value,updated_at')
         .eq('scope', input.scope)
         .eq('key', input.key)
+        // Filter out archived rows and expired rows. The archived_at check is
+        // also enforced by the RLS policy; the expires_at check is applied here
+        // at the query layer (RLS policies are not expiry-aware).
+        .is('archived_at', null)
+        .or('expires_at.is.null,expires_at.gt.now()')
         .maybeSingle();
 
       if (error) throw error;

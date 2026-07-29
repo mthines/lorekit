@@ -25,7 +25,8 @@ import { traceRequest } from '../_shared/otel.ts';
 import { resolveAuth, getDb } from './auth.ts';
 import { handleMcp, jsonrpcError } from './mcp-handler.ts';
 import { handleWebhook } from './webhook.ts';
-import { checkRateLimit, rateLimitMessage } from './limits.ts';
+import { checkRateLimit, rateLimitMessage, recordUsageEvent, getUserPlanName } from './limits.ts';
+import { resolveStorageAdapter } from './storage-adapter.ts';
 
 /**
  * Best-effort read of the JSON-RPC request id from the body, without disturbing
@@ -64,7 +65,9 @@ Deno.serve(async (req: Request) => {
   // traceRequest so unauthenticated calls are still visible in telemetry.
   return traceRequest(req, 'lorekit.mcp', async (span) => {
     // resolveAuth checks Authorization header first, then ?token= query param as fallback.
-    const auth = await resolveAuth(req.headers.get('authorization'), url.searchParams.get('token'));
+    // Pass the root span so auth outcome attributes (auth.type, auth.outcome,
+    // auth.user_id) land on the request span — no separate child span needed.
+    const auth = await resolveAuth(req.headers.get('authorization'), url.searchParams.get('token'), span);
     if (!auth) {
       // Fail fast on a missing / invalid / rotated token — never hang. Return
       // the error IN-BAND: HTTP 200 (not 401) with a JSON-RPC error carrying the
@@ -87,14 +90,34 @@ Deno.serve(async (req: Request) => {
       ...(auth.userId ? { 'auth.user_id': auth.userId } : {}),
     });
 
+    const adapter = resolveStorageAdapter();
+
     // Per-user request rate limit — transport layer, all MCP methods.
     // Service-role (CI/internal) is exempt; unauthenticated requests never
-    // reach this point (handled above).
-    if (auth.type !== 'service' && auth.userId) {
+    // reach this point (handled above). BYOD adapters skip hosted rate limiting.
+    if (auth.type !== 'service' && auth.userId && adapter.supportsRateLimit) {
       const db = getDb(auth);
-      const { allowed, retryAfterSeconds } = await checkRateLimit(db, auth.userId, span);
-      span.setAttributes({ 'rate_limit.allowed': allowed });
+
+      // Resolve the user's plan name once per request — used for rate-limit
+      // messages and usage-event annotation. Fails open (null → 'free').
+      const planName = await getUserPlanName(db, auth.userId);
+      span.setAttributes({ 'lorekit.plan': planName ?? 'free' });
+
+      const { allowed, retryAfterSeconds, currentCount, limitValue } = await checkRateLimit(db, auth.userId, span);
+      span.setAttributes({
+        'rate_limit.allowed': allowed,
+        ...(currentCount != null ? { 'rate_limit.current_count': currentCount } : {}),
+        ...(limitValue != null ? { 'rate_limit.limit_value': limitValue } : {}),
+      });
       if (!allowed) {
+        // Record rate-limit hit as a usage event for plan-sizing analytics.
+        recordUsageEvent(db, {
+          userId: auth.userId,
+          planName,
+          toolName: 'transport',
+          authType: auth.type as 'api_key' | 'jwt',
+          outcome: 'rate_limited',
+        });
         return new Response(
           JSON.stringify({
             jsonrpc: '2.0',
@@ -109,6 +132,6 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    return handleMcp(req, auth, span);
+    return handleMcp(req, auth, span, adapter);
   });
 });

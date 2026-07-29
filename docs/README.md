@@ -3,7 +3,7 @@
 | Document | Audience | What it covers |
 |----------|----------|----------------|
 | [architecture.md](./architecture.md) | All | System diagram, package map, auth tiers, data model |
-| [mcp-tools.md](./mcp-tools.md) | Agents + developers | All 9 MCP tools with request/response examples |
+| [mcp-tools.md](./mcp-tools.md) | Agents + developers | All 10 MCP tools with request/response examples |
 | [scope-format.md](./scope-format.md) | Agents + developers | Canonical scope string spec and resolution strategy |
 | [org-sharing.md](./org-sharing.md) | Users + operators | Organizations & shared lore: roles, invites, ownership, deletion + recovery, invite emails |
 | [github-app.md](./github-app.md) | Developers + operators | GitHub App integration: architecture, data model, fail-safe pending identity, Setup-URL bounce, post-merge operational runbook |

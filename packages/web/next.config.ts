@@ -4,6 +4,14 @@ const nextConfig: NextConfig = {
   // Disable Next.js's built-in ESLint step — NX runs it separately via nx lint
   eslint: { ignoreDuringBuilds: true },
 
+  // Emit source maps in production so Dash0 can translate minified JavaScript
+  // stack traces back to their original source locations. Source maps are served
+  // alongside the JS bundles; Dash0 downloads them on demand when a browser.error
+  // web event arrives. They are not loaded by end-user browsers unless DevTools
+  // are open, so there is no runtime performance cost.
+  // @see https://dash0.com/docs/dash0/monitoring/websites/resolve-stack-traces-with-source-maps
+  productionBrowserSourceMaps: true,
+
   // Enable the React Compiler (babel-plugin-react-compiler) so components are
   // auto-memoized at build time — removes the need for most manual useMemo/
   // useCallback/React.memo. Requires the babel-plugin-react-compiler devDep.
@@ -39,13 +47,23 @@ const nextConfig: NextConfig = {
     // If the user visits the branch alias (e.g. lorekit-git-feat-*) but the
     // OAuth redirectTo points at the deployment URL (lorekit-3zw28wfrv-*),
     // Supabase rejects the callback and the auth fails with "auth_failed".
+    //
+    // Both VERCEL_BRANCH_URL and VERCEL_URL are only populated by Vercel's own
+    // cloud builds / at runtime — NOT during a manual `vercel build` in CI (the
+    // /preview workflow's prebuilt path). When neither is present we must fall
+    // back to '' so LoginButton uses window.location.origin (the actual host the
+    // user is on, where the PKCE code-verifier cookie lives). Building
+    // `https://${undefined}` here would bake a literal "https://undefined" into
+    // the bundle, breaking the OAuth redirectTo and leaving the user logged out.
     NEXT_PUBLIC_VERCEL_URL:
       process.env['VERCEL_ENV'] === 'production'
         ? (process.env['NEXT_PUBLIC_APP_URL'] ?? `https://${process.env['VERCEL_URL']}`)
         : process.env['VERCEL_ENV'] === 'preview'
           ? process.env['VERCEL_BRANCH_URL']
             ? `https://${process.env['VERCEL_BRANCH_URL']}`
-            : `https://${process.env['VERCEL_URL']}`
+            : process.env['VERCEL_URL']
+              ? `https://${process.env['VERCEL_URL']}`
+              : ''
           : '',
 
     // ── VCS resource attributes (OTel semantic conventions) ─────────────────
@@ -77,6 +95,44 @@ const nextConfig: NextConfig = {
             key: 'Access-Control-Expose-Headers',
             value: 'traceparent, tracestate',
           },
+        ],
+      },
+      // Serve Next.js static chunks with CORS headers so browsers can
+      // attribute errors to the correct origin. Without these headers,
+      // cross-origin script errors appear as opaque "Script error." at 0:0
+      // (browser security policy strips the real message and stack for
+      // cross-origin scripts loaded without crossorigin="anonymous" + CORS).
+      // This affects iPhone Safari in particular, which does not cache
+      // CORS-flagged resources as aggressively and re-fetches chunks on
+      // navigation — surfacing the missing header on every page load.
+      //
+      // Setting Access-Control-Allow-Origin: * on static assets is safe:
+      // these are public JS/CSS bundles with no cookies or credentials,
+      // and the same-origin page already has full access to them.
+      {
+        source: '/_next/static/:path*',
+        headers: [
+          { key: 'Access-Control-Allow-Origin', value: '*' },
+        ],
+      },
+      // Service worker must be served from the root scope with the correct
+      // Content-Type and without a Cache-Control max-age so browsers can
+      // detect updates promptly (spec: SW is revalidated every 24 h max, but
+      // no-cache ensures the browser checks every navigation).
+      {
+        source: '/sw.js',
+        headers: [
+          { key: 'Content-Type', value: 'application/javascript; charset=utf-8' },
+          { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
+          { key: 'Service-Worker-Allowed', value: '/' },
+        ],
+      },
+      // Web app manifest
+      {
+        source: '/manifest.json',
+        headers: [
+          { key: 'Content-Type', value: 'application/manifest+json; charset=utf-8' },
+          { key: 'Cache-Control', value: 'public, max-age=86400' },
         ],
       },
     ];

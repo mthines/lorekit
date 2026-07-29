@@ -1,5 +1,11 @@
 // The control model: decide the memory mode (off | local | remote), the store
-// target, who decided, and which deny constraints are active.
+// target, who decided, and which deny constraints are active. Also resolves
+// write-behaviour properties from the config layers:
+//
+//   scope.defaults  — map of scope-prefix → { tags } applied to every matching write
+//   tags.default    — array of tags appended to every write (both layers merged)
+//   hooks.disabled  — array of hook event names to suppress (e.g. ["Stop"])
+//   hooks.adapter   — explicit adapter override ("claude" | "cursor" | "codex")
 //
 // Two layers of config, two kinds of statement:
 //   - a SELECT (`mode`) chooses a mode within what is allowed;
@@ -104,7 +110,66 @@ export function resolveControl({
     storeTarget = connection.endpoint || null;
   }
 
-  return { mode: chosen.mode, storeTarget, decidedBy, denies, connection };
+  // 5. Write-behaviour properties resolved from config layers.
+  //    `tags.default` — both layers merged, user supplements repo (no override).
+  const tagsDefault = [
+    ...asList(repoConfig['tags.default']),
+    ...asList(userConfig['tags.default']),
+  ].filter((t) => typeof t === 'string' && t.length > 0);
+
+  // `scope.defaults` — repo layer only (team-scoped write policy).
+  //    Schema: { "<scope-prefix>": { "tags": [...] } }
+  //    Matched against a write's resolved scope using startsWith — no glob dep.
+  const scopeDefaults =
+    repoConfig['scope.defaults'] && typeof repoConfig['scope.defaults'] === 'object'
+      ? repoConfig['scope.defaults']
+      : null;
+
+  // `hooks.disabled` — union of both layers (either layer can suppress an event).
+  const hooksDisabled = new Set([
+    ...asList(repoConfig['hooks.disabled']),
+    ...asList(userConfig['hooks.disabled']),
+  ]);
+
+  // `hooks.adapter` — repo layer wins over user layer (explicit project override).
+  const hooksAdapter =
+    (typeof repoConfig['hooks.adapter'] === 'string' && repoConfig['hooks.adapter'].trim()) ||
+    (typeof userConfig['hooks.adapter'] === 'string' && userConfig['hooks.adapter'].trim()) ||
+    null;
+
+  // `hooks.instructions` — per-event custom text appended to the hook output so
+  // teams can embed project-specific guidance directly into the injected context.
+  // Both layers contribute: repo instructions come first, user instructions follow
+  // (same direction as `tags.default` — repo supplements, user personalises).
+  // null for a given event means "no custom instruction for that event".
+  const HOOK_EVENTS = ['SessionStart', 'PostToolUseFailure', 'Stop'];
+  const hooksInstructions = {};
+  {
+    const repoInstr =
+      (repoConfig['hooks.instructions'] && typeof repoConfig['hooks.instructions'] === 'object')
+        ? repoConfig['hooks.instructions'] : {};
+    const userInstr =
+      (userConfig['hooks.instructions'] && typeof userConfig['hooks.instructions'] === 'object')
+        ? userConfig['hooks.instructions'] : {};
+    for (const ev of HOOK_EVENTS) {
+      const parts = [repoInstr[ev], userInstr[ev]]
+        .filter((v) => typeof v === 'string' && v.trim().length > 0);
+      hooksInstructions[ev] = parts.length > 0 ? parts.join('\n') : null;
+    }
+  }
+
+  return {
+    mode: chosen.mode,
+    storeTarget,
+    decidedBy,
+    denies,
+    connection,
+    tagsDefault,
+    scopeDefaults,
+    hooksDisabled,
+    hooksAdapter,
+    hooksInstructions,
+  };
 }
 
 // The per-repo project-tier directory: $LOREKIT_STORE, else a `store` override
@@ -122,6 +187,19 @@ export function localStoreDirs(root = process.cwd(), env = process.env) {
   const userConfig = readJson(path.join(home, 'config.json'));
   const repoConfig = readJson(path.join(root, '.lorekit.json'));
   return { home, project: projectDirFrom({ env, userConfig, repoConfig, root }) };
+}
+
+// Resolve the deny-wins ceiling for the read commands: which section (offline /
+// remote) is forbidden outright by an active `deny` constraint. A deny is never
+// overridable (see the module header), so this is the single seam `list`,
+// `search`, `show`, `stats`, and `diff` share instead of each re-deriving the
+// same `control.denies.find(...)` block. Returns the matched deny object
+// ({ mode, source }) or null per side — the `source` explains the "why" in each
+// command's graceful note. Thin wrapper over `loadControl`, co-located with it.
+export function resolveDenies(root, { env = process.env } = {}) {
+  const control = loadControl(root, { env });
+  const find = (mode) => control.denies.find((d) => d.mode === mode) || null;
+  return { localDenied: find('local'), remoteDenied: find('remote') };
 }
 
 // IO wrapper — load env + config files, derive the connection, then resolve.

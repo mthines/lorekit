@@ -6,6 +6,34 @@ import { NextResponse, type NextRequest } from 'next/server';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24;
 
 export async function middleware(request: NextRequest) {
+  // Short-circuit OPTIONS preflights before hitting any auth logic.
+  //
+  // Next.js Server Actions are invoked as POST requests to the page route that
+  // hosts them (e.g. `POST /` for actions in lib/lore.ts, called from /lore).
+  // Browsers send a CORS preflight (OPTIONS) before that POST when the request
+  // includes non-simple headers such as `Next-Action`. Without this handler,
+  // Next.js returns 400 because page routes have no OPTIONS handler — and the
+  // Supabase `getUser()` call below would run unnecessarily on every preflight.
+  if (request.method === 'OPTIONS') {
+    return new NextResponse(null, {
+      status: 204,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': [
+          'Content-Type',
+          'Authorization',
+          'Next-Action',
+          'Next-Router-State-Tree',
+          'Next-Router-Prefetch',
+          'traceparent',
+          'tracestate',
+        ].join(', '),
+        'Access-Control-Max-Age': '86400',
+      },
+    });
+  }
+
   // Forward the pathname + search string as a request header so RSC layouts
   // can read the full URL without accessing the raw Request object.
   // Used by the dashboard layout to preserve shared URLs (e.g. ?lesson=…)
@@ -56,7 +84,16 @@ export async function middleware(request: NextRequest) {
 
   // Refresh session if the access token has expired; supabase-ssr will
   // transparently use the refresh token and write new cookies via setAll.
-  await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  // Redirect authenticated users away from /login. Honour the ?next= param so
+  // a logged-in user landing on /login?next=/lore/xyz is sent to their intended
+  // destination rather than unconditionally to /dashboard.
+  if (user && request.nextUrl.pathname === '/login') {
+    const next = request.nextUrl.searchParams.get('next') ?? '/dashboard';
+    return NextResponse.redirect(new URL(next, request.url));
+  }
+
   return response;
 }
 

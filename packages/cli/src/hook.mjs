@@ -7,7 +7,16 @@ import { resolveProjectRoot } from './config.mjs';
 import { deriveScope } from './scope.mjs';
 import { loadControl } from './control.mjs';
 import { createStore } from './store/index.mjs';
-import { fetchLessons, formatLessons, retrospectiveNudge, failureNudge } from './core/lessons.mjs';
+import {
+  fetchLessons,
+  formatLessons,
+  retrospectiveNudge,
+  failureNudge,
+  failureQuery,
+  relevantLessons,
+  formatRelevantLessons,
+  writeConfirmation,
+} from './core/lessons.mjs';
 import { isFailure } from './core/failure.mjs';
 import { firstTimeThisSession } from './core/state.mjs';
 import { recordFixture } from './core/record.mjs';
@@ -75,6 +84,9 @@ async function run(args) {
   const control = loadControl(root);
   if (control.mode === 'off') return 0;
 
+  // `hooks.disabled` — skip the event if this event name is suppressed by config.
+  if (control.hooksDisabled && control.hooksDisabled.has(event)) return 0;
+
   const emit = (text) => {
     if (text) process.stdout.write(adapter.emit(event, text));
   };
@@ -82,9 +94,39 @@ async function run(args) {
   if (intent === 'read') {
     if (!firstTimeThisSession(parsed.sessionId, 'read')) return 0;
     const store = createStore(control);
-    if (!store) return 0; // unconfigured/unusable — stay silent
+    // When there is no usable store, we still want to emit a custom instruction
+    // if one is configured — so we don't bail out entirely on a missing store.
+    const sessionInstruction = control.hooksInstructions && control.hooksInstructions.SessionStart
+      ? control.hooksInstructions.SessionStart : null;
+    if (!store) {
+      // No store: emit a minimal header + instruction when present, then return.
+      if (sessionInstruction) {
+        emit(formatLessons(null, { repoScope: null }, { instruction: sessionInstruction }));
+      }
+      return 0;
+    }
     const { scope: readScope, lessons } = await fetchLessons(store, root);
-    emit(formatLessons(lessons, readScope));
+    emit(formatLessons(lessons, readScope, { instruction: sessionInstruction }));
+    return 0;
+  }
+
+  if (intent === 'confirm') {
+    // Fire only when a lorekit memory write actually succeeded — the adapter's
+    // isLoreWrite() inspects the tool name and the response shape. Any error
+    // is swallowed (exit 0 — never block the host).
+    try {
+      if (adapter.isLoreWrite && adapter.isLoreWrite(parsed.toolName, parsed.toolResponse)) {
+        // The lesson key comes from the tool INPUT (what the agent sent), not
+        // the response (which only carries id + created_at). toolInput is
+        // populated by the adapter's parse() from the raw hook stdin.
+        const key = (parsed.toolInput && typeof parsed.toolInput.key === 'string')
+          ? parsed.toolInput.key
+          : null;
+        emit(writeConfirmation(scope, key));
+      }
+    } catch {
+      // best-effort — never break the host
+    }
     return 0;
   }
 
@@ -92,13 +134,28 @@ async function run(args) {
     const known = adapter.guaranteedFailure ? adapter.guaranteedFailure(event) : false;
     if (!known && !isFailure(parsed.toolName, parsed.toolResponse)) return 0;
     if (!firstTimeThisSession(parsed.sessionId, 'failure')) return 0;
-    emit(failureNudge(parsed.toolName, scope));
+    // Best-effort: surface any existing lessons that look relevant to THIS
+    // failure ("you've hit this before"), then the write-nudge. A missing /
+    // unusable store, or no match, silently falls back to the nudge alone.
+    let relevant = null;
+    try {
+      const store = createStore(control);
+      if (store) {
+        const { lessons } = await fetchLessons(store, root);
+        const terms = failureQuery(parsed.toolName, parsed.toolResponse);
+        relevant = formatRelevantLessons(relevantLessons(lessons, terms));
+      }
+    } catch {
+      relevant = null; // never let a lesson lookup break the failure nudge
+    }
+    const nudge = failureNudge(parsed.toolName, scope, control);
+    emit(relevant ? `${relevant}\n\n${nudge}` : nudge);
     return 0;
   }
 
   if (intent === 'retrospective') {
     if (!firstTimeThisSession(parsed.sessionId, 'retro')) return 0;
-    emit(retrospectiveNudge(scope));
+    emit(retrospectiveNudge(scope, control));
     return 0;
   }
 

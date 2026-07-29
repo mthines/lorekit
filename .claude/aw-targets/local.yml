@@ -1,0 +1,32 @@
+# aw-target for aw-tester — LoreKit dashboard (@lorekit/web, Next.js 15).
+#
+# Local dev server: `pnpm nx serve web` (or `pnpm --filter @lorekit/web dev`)
+# → http://localhost:3000. Auth is Supabase (GitHub OAuth + magic-link email OTP),
+# both external/passwordless flows — so we capture a session once, headfully.
+#
+# Re-run `/aw-setup` when the session expires or you need to switch accounts.
+name: local
+base_url: http://localhost:3000
+
+auth:
+  strategy: storage-state
+  storage_state: ./.auth/local.json
+  identity:
+    email: mads.thines@dash0.com
+    role: user
+  refresh:
+    when: missing-or-expired
+    # Interactive headful capture: opens a real browser, you log in via GitHub
+    # or magic-link, and the session is saved to ./.auth/local.json. Auto-saves
+    # and closes once the URL reaches /dashboard (or on manual window close).
+    command: |
+      AUTH_LOGIN_URL=http://localhost:3000/login \
+        AUTH_STORAGE_STATE=./.auth/local.json \
+        AUTH_POST_LOGIN_URL_PATTERN='/dashboard' \
+        node scripts/auth-bootstrap-headful.mjs
+    timeout_seconds: 600   # generous — user-driven login step
+
+# No seed command in this repo — aw-tester verifies against the data already
+# present in the logged-in account. Add a `seed:` command here if that changes.
+fixtures:
+  seed: null

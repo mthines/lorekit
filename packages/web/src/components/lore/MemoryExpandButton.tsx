@@ -12,7 +12,7 @@
  */
 
 import { useMemo, useRef, useEffect, useState, useCallback } from 'react';
-import { BookOpen, ChevronDown } from 'lucide-react';
+import { BookOpen, ChevronDown, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useLoreData } from '@/lib/queries/lore';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
@@ -151,16 +151,17 @@ export function MemoryExpandButton({
                 })}
                 {total > previewCount && (
                   <li>
-                    <p className="px-4 py-2 text-xs text-[var(--color-content-tertiary)]">
-                      +{total - previewCount} more · visit{' '}
-                      <a
-                        href="/lore"
-                        className="text-[var(--color-accent)] underline-offset-2 hover:underline"
-                      >
-                        Lore Explorer
-                      </a>{' '}
-                      to see all.
-                    </p>
+                    {/* Full-width tap target — the whole row navigates to the
+                        Lore Explorer, not just an inline text link. min-h-11
+                        keeps it a comfortable touch target on mobile. */}
+                    <a
+                      href="/lore"
+                      onClick={() => setIsDropdownOpen(false)}
+                      className="flex min-h-11 w-full items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-medium text-[var(--color-accent)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-accent)]"
+                    >
+                      See all {total} memories
+                      <ArrowRight className="size-3.5 shrink-0" aria-hidden />
+                    </a>
                   </li>
                 )}
               </ul>

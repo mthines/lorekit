@@ -4,6 +4,9 @@
  */
 
 import { type AuthContext, getDb, canWrite, canRead, getUserId, isJwtAuth } from './auth.ts';
+import { type StorageAdapter } from './storage-adapter.ts';
+import { UserInputError } from '../_shared/scope.ts';
+import { OrgPermissionError } from './org-permissions.ts';
 import {
   toolWrite,
   toolRead,
@@ -14,6 +17,7 @@ import {
   toolListArchived,
   toolRestore,
   toolPurge,
+  toolPurgeExpired,
   toolOrgCreate,
   toolOrgList,
   toolOrgRename,
@@ -22,7 +26,7 @@ import {
   type Params,
 } from './tools.ts';
 import { type Span } from '../_shared/otel.ts';
-import { LimitError } from './limits.ts';
+import { LimitError, recordUsageEvent, getUserPlanName } from './limits.ts';
 import { toolRequires } from './permissions.ts';
 
 // memory.* tools — dispatched with (db, args, userId, span)
@@ -36,6 +40,7 @@ const MEMORY_TOOLS = {
   'memory.list_archived': toolListArchived,
   'memory.restore':       toolRestore,
   'memory.purge':         toolPurge,
+  'memory.purge_expired':  toolPurgeExpired,
 } as const;
 
 // org.* tools — dispatched with (db, args, span). They require JWT auth
@@ -82,13 +87,31 @@ export function jsonrpcError(id: unknown, code: number, message: string): Respon
   );
 }
 
-export async function handleMcp(req: Request, auth: AuthContext, span: Span): Promise<Response> {
+export async function handleMcp(req: Request, auth: AuthContext, span: Span, adapter: StorageAdapter): Promise<Response> {
+  // POST-only (protocol 2024-11-05). Modern mcp-remote clients probe for SSE
+  // support with GET; answer 405 before req.json() to avoid the misleading
+  // "Unexpected end of JSON input" parse error. Client probe — use clientError().
+  if (req.method !== 'POST') {
+    span.clientError(`MethodNotAllowed: ${req.method} is not supported; use POST`).setAttributes({
+      'mcp.method': 'unknown',
+    });
+    return new Response(
+      JSON.stringify({ error: 'Method Not Allowed. This MCP server uses POST (protocol 2024-11-05). GET/SSE is not supported.' }),
+      {
+        status: 405,
+        headers: { 'Content-Type': 'application/json', Allow: 'POST' },
+      },
+    );
+  }
+
   let body: { id?: unknown; method?: string; params?: Params };
   try {
     body = await req.json();
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    span.error(`ParseError: invalid JSON body — ${detail}`).setAttributes({ 'mcp.method': 'unknown', 'error.message': detail });
+    // Client sent malformed JSON — not a server fault. Use clientError() so the
+    // span is not marked ERROR (OTel: server spans are ERROR only for 5xx faults).
+    span.clientError(`ParseError: invalid JSON body — ${detail}`).setAttributes({ 'mcp.method': 'unknown' });
     return jsonrpcError(null, -32700, `Parse error: ${detail}`);
   }
 
@@ -136,6 +159,18 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
                 type: 'string',
                 description:
                   'Org slug to write under (org-owned write). Omit for a personal memory. You must be a write-capable member (member/admin/owner, not viewer) of the org, verified server-side — supplying an org slug you are not authorized for is rejected.',
+              },
+              ttl_days: {
+                type: 'integer',
+                minimum: 1,
+                maximum: 365,
+                description:
+                  'Number of days until the memory auto-expires. Omit for a permanent memory. On an update, supplying ttl_days refreshes the expiry; omitting it leaves the existing expiry unchanged.',
+              },
+              clear_ttl: {
+                type: 'boolean',
+                description:
+                  'When true, removes the existing expiry and makes the memory permanent again. Takes precedence over ttl_days when both are supplied.',
               },
             },
           },
@@ -198,6 +233,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
             },
           },
         },
+        {
+          name: 'memory.purge_expired',
+          description: 'Permanently delete all TTL-expired memories for the current user. Unrecoverable.',
+          inputSchema: { type: 'object', properties: {} },
+        },
         // ── org.* ──────────────────────────────────────────────────────────
         // Require a Supabase user JWT (auth.uid() resolved inside SECURITY
         // DEFINER RPCs). api_key callers are rejected at dispatch with
@@ -255,7 +295,8 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
     const toolArgs = params.arguments ?? {};
 
     if (!ALL_TOOL_NAMES.has(toolName)) {
-      span.error(`UnknownTool: ${toolName}`).setAttributes({ 'mcp.tool.name': toolName ?? 'unknown' });
+      // Client requested a non-existent tool — not a server fault.
+      span.clientError(`UnknownTool: ${toolName}`).setAttributes({ 'mcp.tool.name': toolName ?? 'unknown' });
       return jsonrpcError(id, -32601, `Unknown tool: ${toolName}`);
     }
 
@@ -270,8 +311,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
       // must be JSONRPC_FORBIDDEN (HTTP 200), never -32001 (HTTP 401), or the
       // MCP client hangs. See jsonrpcError().
       if (!isJwtAuth(auth)) {
+        // Authorization denial — the caller authenticated but lacks the right
+        // auth type. Not a server fault; use clientError() so the span is not
+        // marked ERROR (OTel: server spans are ERROR only for 5xx faults).
         span
-          .error('PermissionDenied: org.* requires JWT auth')
+          .clientError('PermissionDenied: org.* requires JWT auth')
           .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'jwt_required' });
         return jsonrpcError(
           id,
@@ -285,14 +329,20 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
       // Authenticated-but-insufficient-scope → JSONRPC_FORBIDDEN (HTTP 200).
       const requiredPermission = toolRequires(toolName as keyof typeof MEMORY_TOOLS);
       if (requiredPermission === 'write' && !canWrite(auth)) {
+        // Token scope denial — caller authenticated but the token lacks write
+        // permission. Not a server fault; use clientError() so the span is not
+        // marked ERROR (OTel: server spans are ERROR only for 5xx faults).
         span
-          .error('PermissionDenied: read-only token')
+          .clientError('PermissionDenied: read-only token')
           .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'write_permission_missing' });
         return jsonrpcError(id, JSONRPC_FORBIDDEN, 'This token does not have write permission. Use a read+write (lk_rw_) or write-only (lk_wo_) token.');
       }
       if (requiredPermission === 'read' && !canRead(auth)) {
+        // Token scope denial — caller authenticated but the token lacks read
+        // permission. Not a server fault; use clientError() so the span is not
+        // marked ERROR (OTel: server spans are ERROR only for 5xx faults).
         span
-          .error('PermissionDenied: write-only token')
+          .clientError('PermissionDenied: write-only token')
           .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'read_permission_missing' });
         return jsonrpcError(id, JSONRPC_FORBIDDEN, 'This token does not have read permission. Use a read+write (lk_rw_) or read-only (lk_ro_) token.');
       }
@@ -308,8 +358,40 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
       ...(rawScope ? { 'lorekit.scope': rawScope } : {}),
     });
 
+    // Hoist db above try/catch so the error path can record usage events
+    // without re-calling getDb.
+    // When BYOD is configured, route all tool-call DB operations to the user's
+    // own Supabase project. For hosted mode, derive a correctly-scoped client
+    // from the auth context (JWT → user RLS, api_key → service-role).
+    //
+    // LIMITATION — BYOD + JWT auth: when BYOD mode is active the adapter.db
+    // client is built at startup with the LOREKIT_STORAGE_SERVICE_KEY (or the
+    // anon key as fallback). A BYOD caller that authenticates via a Supabase JWT
+    // does NOT get a per-user-scoped client — the JWT is consumed by *this*
+    // hosted function for rate-limiting / auth, but the downstream BYOD database
+    // receives the service-key (or anon-key) client, not a JWT-forwarded one.
+    // RLS on the BYOD database therefore runs as service role (all rows visible)
+    // or anon (policy-dependent), never as the individual JWT user.
+    // BYOD users must rely on application-level data isolation in their own
+    // Supabase project. If per-user RLS is required, configure the BYOD database
+    // to treat service-role writes as trusted and enforce isolation via a
+    // user_id column rather than auth.uid()-based policies.
+    const db = adapter.mode === 'byod' ? adapter.db : getDb(auth);
+    // toolUserId: null for JWT auth (RLS handles scoping), api_key userId otherwise.
+    // analyticsUserId: the resolved user ID for usage-event annotation regardless of auth type.
+    const toolUserId = getUserId(auth);
+    const analyticsUserId = toolUserId ?? (auth.type === 'user' ? auth.userId : null) ?? null;
+
+    // Resolve plan name for usage-event annotation (fails open — null → 'free').
+    // Only resolved for authenticated non-service callers; service-role has no plan.
+    const planName = auth.type !== 'service' && analyticsUserId
+      ? await getUserPlanName(db, analyticsUserId)
+      : null;
+    if (planName) toolSpan.setAttributes({ 'lorekit.plan': planName });
+
+    const toolStartMs = Date.now();
+
     try {
-      const db = getDb(auth);
       let result: unknown;
 
       if (isOrgTool) {
@@ -317,18 +399,66 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
         // is resolved inside the SECURITY DEFINER RPCs from the JWT.
         result = await ORG_TOOLS[toolName as keyof typeof ORG_TOOLS](db, toolArgs, toolSpan);
       } else {
-        // memory.* tools: (db, args, userId, span)
+        // memory.* tools: (db, args, toolUserId, span)
+        // toolUserId is null for JWT auth — RLS handles scoping on the DB side.
         result = await MEMORY_TOOLS[toolName as keyof typeof MEMORY_TOOLS](
-          db, toolArgs, getUserId(auth), toolSpan,
+          db, toolArgs, toolUserId, toolSpan,
         );
       }
 
+      const durationMs = Date.now() - toolStartMs;
+      toolSpan.setAttributes({ 'lorekit.duration_ms': durationMs });
       toolSpan.end();
+
+      // Record successful usage event (fire-and-forget).
+      if (auth.type !== 'service' && analyticsUserId && adapter.supportsHostedBilling) {
+        recordUsageEvent(db, {
+          userId: analyticsUserId,
+          planName,
+          toolName,
+          scopeType: rawScope ? scopeType : null,
+          authType: auth.type as 'api_key' | 'jwt',
+          outcome: 'ok',
+          durationMs,
+        });
+      }
+
       return jsonrpc(id, { content: [{ type: 'text', text: JSON.stringify(result) }] });
     } catch (err) {
       const msg = `${(err as Error).name}: ${(err as Error).message}`;
-      toolSpan.error(msg).end();
-      span.error(msg);
+      const durationMs = Date.now() - toolStartMs;
+      toolSpan.setAttributes({ 'lorekit.duration_ms': durationMs });
+
+      // UserInputError (bad scope, missing required arg) and OrgPermissionError
+      // (insufficient role) are client-caused — the server handled them correctly.
+      // Use clientError() so spans are NOT marked ERROR (OTel: server spans are
+      // ERROR only for 5xx / server-side faults, not 4xx client errors).
+      const isClientError = err instanceof UserInputError || err instanceof OrgPermissionError;
+      if (isClientError) {
+        toolSpan.clientError(msg).end();
+        span.clientError(msg);
+      } else {
+        toolSpan.error(msg).end();
+        span.error(msg);
+      }
+
+      // Record failure usage event (fire-and-forget) — distinguishes cap hits
+      // from generic errors in plan-sizing analytics.
+      if (auth.type !== 'service' && analyticsUserId && adapter.supportsHostedBilling) {
+        const outcome = err instanceof LimitError && err.code === 'memory_cap'
+          ? 'cap_exceeded'
+          : 'error';
+        recordUsageEvent(db, {
+          userId: analyticsUserId,
+          planName: null,  // skip plan lookup on error path to keep it fast
+          toolName,
+          scopeType: rawScope ? scopeType : null,
+          authType: auth.type as 'api_key' | 'jwt',
+          outcome,
+          durationMs,
+        });
+      }
+
       if (err instanceof LimitError) {
         // Distinct JSON-RPC error code for the memory cap — an actionable,
         // MCP-appropriate error rather than the generic -32603 internal error.
@@ -338,6 +468,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
     }
   }
 
-  span.error(`MethodNotFound: ${method}`);
+  // Unknown method — client sent an unsupported JSON-RPC method, not a server fault.
+  span.clientError(`MethodNotFound: ${method}`);
   return jsonrpcError(id, -32601, `Method not found: ${method}`);
 }

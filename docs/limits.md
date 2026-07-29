@@ -2,21 +2,33 @@
 
 LoreKit ships two abuse guardrails so any single account can't exhaust storage
 or saturate the MCP endpoint: a per-user cap on stored (active) memories, and
-a per-user request rate limit. Both are free-tier defaults, config-driven,
-and per-user overridable — laying the groundwork for a future paid tier
-without any billing logic built now.
+a per-user request rate limit. Both are plan-driven and per-user overridable —
+laying the groundwork for a future paid tier without any billing logic built now.
+
+## Plans
+
+Plans live in the `plans` table (`supabase/migrations/00032_plans.sql`). The
+only plan right now is **free**:
+
+| Plan | Max memories | Requests/min |
+|------|-------------|-------------|
+| free | **5,000**   | 120         |
+
+A user's plan is tracked in `user_plans` (one row per user; absent = free). A
+`user_limits` row overrides any plan ceiling — useful for per-user capacity
+adjustments without plan promotion.
 
 ## Memory cap
 
-Each user can store up to **1000 active memories** by default. "Active" means
+Each free-plan user can store up to **5,000 active memories**. "Active" means
 not archived (`archived_at IS NULL`) — archiving a memory frees cap headroom
 immediately.
 
 The cap is enforced **at the database level** by a `BEFORE INSERT` trigger
-(`enforce_memory_cap()`, see `supabase/migrations/00004_limits.sql`), not only
-in application code. This makes it authoritative regardless of which client
-inserts the row (the Deno edge function, the Node.js `mcp-server`, or any
-future direct DB access).
+(`enforce_memory_cap()`, see `supabase/migrations/00004_limits.sql` and
+`00032_plans.sql`), not only in application code. This makes it authoritative
+regardless of which client inserts the row (the Deno edge function, the
+Node.js `mcp-server`, or any future direct DB access).
 
 - Re-writing an existing `(scope, key)` (an upsert `UPDATE`) never counts
   against the cap — only genuinely **new** rows go through the trigger.
@@ -24,11 +36,11 @@ future direct DB access).
 
 When a write would exceed the cap, the DB raises a custom error (SQLSTATE
 `LK001`), which the app layer translates into an actionable MCP error
-(`memory_cap`) telling the caller their limit and how to raise it:
+(`memory_cap`) telling the caller their limit and plan, and how to raise it:
 
-> "You've reached the free-tier limit of 1000 stored memories. Archive or
-> delete unused memories, or raise your limit — see
-> https://lorekit-io.vercel.app (or contact support) to increase it."
+> "You've reached the free-plan limit of 5000 stored memories. Archive or
+> delete unused memories, or upgrade your plan — see
+> https://lorekit.io (or contact support) to increase it."
 
 ## Rate limiting
 
@@ -70,14 +82,15 @@ Both guardrails read their limits through a single function,
 `lorekit_get_limit(user_id, key)`, which resolves:
 
 ```
-COALESCE(user_limits.<key>, lorekit_default_limit(key))
+user_limits override  →  plan default (user_plans → plans)  →  lorekit_default_limit('free')
 ```
 
-- `lorekit_default_limit(key)` — the single source of free-tier defaults
-  (`max_memories` → 1000, `requests_per_minute` → 120). No numeric limit is
-  hardcoded anywhere else in the app.
+- `plans` table — the canonical per-plan limits (seeded by `00032_plans.sql`).
+  Adding a new paid tier is a single INSERT. No numeric limit is hardcoded in
+  app code.
+- `user_plans` — tracks which plan each user is on (absent = free).
 - `user_limits` — a per-user override table. An absent row (or a `null`
-  column) means the user is on the free-tier default.
+  column) means the user is on their plan's default.
 
 **Raising a user's limit today** is a one-row upsert:
 

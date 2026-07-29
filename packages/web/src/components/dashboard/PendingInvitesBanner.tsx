@@ -10,7 +10,7 @@
  * also drives the Organization nav badge (plan.md Decision D6).
  */
 
-import { useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
@@ -22,6 +22,7 @@ import { visibleInvites } from '@/lib/org-ui';
 import { serialise } from '@/lib/hooks/useUrlState';
 import type { OwnerFilter } from '@/lib/org-ui';
 import { useToast } from '@/components/providers/ToastProvider';
+import { InviteDetailsDialog } from '@/components/dashboard/InviteDetailsDialog';
 
 interface PendingInvitesBannerProps {
   initialInvites: OrgInvite[];
@@ -35,12 +36,16 @@ export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerPro
   const { data: invites = initialInvites } = usePendingInvitesForMe(initialInvites);
   const [dismissedIds, dismiss, hasHydrated] = useDismissedInviteIds();
   const [pending, startTransition] = useTransition();
+  const [viewingInvite, setViewingInvite] = useState<OrgInvite | null>(null);
 
   const shown = visibleInvites(invites, dismissedIds);
   // Gate on hasHydrated: nothing invite-related renders on the server or first
   // client paint, so a banner this browser already dismissed never flashes.
   const invite = hasHydrated ? shown[0] : undefined;
 
+  // Shared by both the banner's quick actions AND InviteDetailsDialog's
+  // Accept/Decline (AC-7) — a single accept/decline path, never a second,
+  // divergent one wired to the modal.
   function handleAccept(target: OrgInvite) {
     startTransition(async () => {
       const result = await acceptInvite(target.id);
@@ -48,6 +53,7 @@ export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerPro
         showToast(result.error, 'error');
         return;
       }
+      setViewingInvite(null);
       await queryClient.invalidateQueries({ queryKey: PENDING_INVITES_QUERY_KEY });
       const orgName = target.org?.name ?? 'the organization';
       showToast(`You joined ${orgName}. Their shared lore now appears in your Explorer.`, 'success');
@@ -63,6 +69,7 @@ export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerPro
         showToast(result.error, 'error');
         return;
       }
+      setViewingInvite(null);
       await queryClient.invalidateQueries({ queryKey: PENDING_INVITES_QUERY_KEY });
     });
   }
@@ -104,6 +111,13 @@ export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerPro
                 >
                   Decline
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setViewingInvite(invite)}
+                  className="flex min-h-11 items-center justify-center rounded-lg px-3 text-sm text-[var(--color-content-secondary)] underline-offset-2 transition-colors duration-150 hover:text-[var(--color-content-primary)] hover:underline"
+                >
+                  View details
+                </button>
               </div>
             </div>
             <button
@@ -117,6 +131,13 @@ export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerPro
           </div>
         </motion.div>
       )}
+      <InviteDetailsDialog
+        invite={viewingInvite}
+        pending={pending}
+        onClose={() => setViewingInvite(null)}
+        onAccept={handleAccept}
+        onDecline={handleDecline}
+      />
     </AnimatePresence>
   );
 }

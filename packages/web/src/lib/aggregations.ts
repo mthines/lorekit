@@ -86,13 +86,29 @@ export interface StatTrend {
   changePct: number;
 }
 
-export interface StatTrends {
-  /** Lessons written per day, last 30 days. */
+/** Selectable time range for a stat card's chart + trend. */
+export type MetricRange = '24h' | '7d' | '30d';
+
+/** Bucket granularity + count charted for each selectable range. */
+export const RANGE_BUCKETS: Record<MetricRange, { unit: 'hour' | 'day'; count: number }> = {
+  '24h': { unit: 'hour', count: 24 },
+  '7d': { unit: 'day', count: 7 },
+  '30d': { unit: 'day', count: 30 },
+};
+
+/**
+ * A metric's trends for one selected range. `points` cover exactly the charted
+ * (recent) window, and each `changePct` compares that window against the
+ * immediately preceding equal-length window — so the sparkbar and the trend chip
+ * always describe the same period (no chart-vs-trend discrepancy).
+ */
+export interface RangeTrends {
+  /** Memories written per bucket across the selected range. */
   lessons: StatTrend;
-  /** Distinct scopes active per day, last 30 days. */
+  /** Distinct scopes active per bucket across the selected range. */
   scopes: StatTrend;
-  /** Lessons written per hour, last 24 hours. */
-  activity: StatTrend;
+  /** Distinct scopes active anywhere within the selected range window. */
+  activeScopes: number;
 }
 
 const DAY_MS = 86_400_000;
@@ -104,8 +120,15 @@ export function pctChange(recent: number, prev: number): number {
   return Math.round(((recent - prev) / prev) * 100);
 }
 
+/** Unions an array of Sets into a single Set. */
+function unionSets<T>(sets: Set<T>[]): Set<T> {
+  const out = new Set<T>();
+  for (const s of sets) for (const v of s) out.add(v);
+  return out;
+}
+
 /** % change of the sum of the last `k` values vs. the preceding `k` values. */
-function windowChange(values: number[], k: number): number {
+export function windowChange(values: number[], k: number): number {
   const n = values.length;
   const recent = values.slice(Math.max(0, n - k)).reduce((a, b) => a + b, 0);
   const prev = values
@@ -115,65 +138,98 @@ function windowChange(values: number[], k: number): number {
 }
 
 /**
- * Build the three dashboard stat-card trend series, each in its own bucket
- * granularity (all UTC-aligned, oldest → newest):
+ * % change of distinct scopes active in the last `k` days vs. the preceding
+ * `k` days.
  *
- * - `lessons`  — lessons written per day, last 30 days.
- * - `scopes`   — distinct scopes active per day, last 30 days.
- * - `activity` — lessons written per hour, last 24 hours.
+ * Unlike lessons, scopes must be counted distinctly per window — summing daily
+ * distinct-scope counts double-counts a scope that was active on multiple days
+ * within the window.
  *
- * Each carries a `changePct`: day series compare the last 7 days vs. the prior
- * 7; the hourly series compares the last 12 hours vs. the prior 12.
+ * `buckets` is the array of per-day scope sets aligned oldest→newest (one entry
+ * per day). Unions each `k`-day half separately, then compares distinct counts.
+ */
+export function scopeWindowChange(buckets: Set<string>[], k: number): number {
+  const n = buckets.length;
+  return pctChange(
+    unionSets(buckets.slice(Math.max(0, n - k))).size,
+    unionSets(buckets.slice(Math.max(0, n - 2 * k), Math.max(0, n - k))).size,
+  );
+}
+
+/** Start-of-bucket anchor (UTC) for the bucket containing `now`. */
+function bucketAnchor(now: number, unit: 'hour' | 'day'): number {
+  if (unit === 'hour') return Math.floor(now / HOUR_MS) * HOUR_MS;
+  const d = new Date(now);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+/** Display label for a bucket start (UTC): "HH:00" for hours, "Mon D" for days. */
+function bucketLabel(start: number, unit: 'hour' | 'day'): string {
+  if (unit === 'hour') return `${String(new Date(start).getUTCHours()).padStart(2, '0')}:00`;
+  return new Date(start).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
+/**
+ * Build a stat card's trends for a selected range, all UTC-aligned oldest→newest.
+ *
+ * The range picks the bucket granularity and count (see `RANGE_BUCKETS`): 24h →
+ * 24 hourly buckets, 7d → 7 daily, 30d → 30 daily. To compute a period-over-period
+ * `changePct` without a second query, `2 × count` buckets are tallied and only the
+ * recent `count` are charted; the preceding `count` form the comparison window.
+ * This keeps the sparkbar window identical to the trend window — the two can no
+ * longer disagree.
  *
  * `nowIso` is injected rather than read from the clock so the function is pure
  * and deterministic for tests.
  */
-export function computeStatTrends(rows: TrendRow[], nowIso: string): StatTrends {
+export function computeRangeTrends(
+  rows: TrendRow[],
+  nowIso: string,
+  range: MetricRange,
+): RangeTrends {
+  const { unit, count } = RANGE_BUCKETS[range];
+  const unitMs = unit === 'hour' ? HOUR_MS : DAY_MS;
   const now = Date.parse(nowIso);
   const parsed = rows.map((r) => ({ t: Date.parse(r.created_at), scope: r.scope }));
+  const anchor = bucketAnchor(now, unit);
 
-  // ── Daily buckets: last 30 days, UTC-day aligned. ──
-  const DAYS = 30;
-  const nowDate = new Date(now);
-  const todayMidnight = Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth(), nowDate.getUTCDate());
-  const lessonsPerDay: BucketPoint[] = [];
-  const scopesPerDay: BucketPoint[] = [];
-  for (let i = DAYS - 1; i >= 0; i--) {
-    const start = todayMidnight - i * DAY_MS;
-    const end = start + DAY_MS;
-    let count = 0;
+  // 2 × count buckets: chart the recent half, compare against the prior half.
+  const total = count * 2;
+  const lessonsAll: BucketPoint[] = [];
+  const scopesAll: BucketPoint[] = [];
+  const scopeSetsAll: Set<string>[] = [];
+  for (let i = total - 1; i >= 0; i--) {
+    const start = anchor - i * unitMs;
+    const end = start + unitMs;
+    let c = 0;
     const seen = new Set<string>();
     for (const p of parsed) {
       if (p.t >= start && p.t < end) {
-        count++;
+        c++;
         seen.add(p.scope);
       }
     }
-    const label = new Date(start).toLocaleDateString(undefined, {
-      month: 'short',
-      day: 'numeric',
-      timeZone: 'UTC',
-    });
-    lessonsPerDay.push({ label, value: count });
-    scopesPerDay.push({ label, value: seen.size });
-  }
-
-  // ── Hourly buckets: last 24 hours, UTC-hour aligned. ──
-  const HOURS = 24;
-  const thisHour = Math.floor(now / HOUR_MS) * HOUR_MS;
-  const lessonsPerHour: BucketPoint[] = [];
-  for (let i = HOURS - 1; i >= 0; i--) {
-    const start = thisHour - i * HOUR_MS;
-    const end = start + HOUR_MS;
-    let count = 0;
-    for (const p of parsed) if (p.t >= start && p.t < end) count++;
-    const label = `${String(new Date(start).getUTCHours()).padStart(2, '0')}:00`;
-    lessonsPerHour.push({ label, value: count });
+    const label = bucketLabel(start, unit);
+    lessonsAll.push({ label, value: c });
+    scopesAll.push({ label, value: seen.size });
+    scopeSetsAll.push(seen);
   }
 
   return {
-    lessons: { points: lessonsPerDay, changePct: windowChange(lessonsPerDay.map((p) => p.value), 7) },
-    scopes: { points: scopesPerDay, changePct: windowChange(scopesPerDay.map((p) => p.value), 7) },
-    activity: { points: lessonsPerHour, changePct: windowChange(lessonsPerHour.map((p) => p.value), 12) },
+    lessons: {
+      points: lessonsAll.slice(count),
+      changePct: windowChange(lessonsAll.map((p) => p.value), count),
+    },
+    // Window-distinct scope counts: summing per-bucket distinct values would
+    // double-count a scope active in multiple buckets within the same window.
+    scopes: {
+      points: scopesAll.slice(count),
+      changePct: scopeWindowChange(scopeSetsAll, count),
+    },
+    activeScopes: unionSets(scopeSetsAll.slice(count)).size,
   };
 }

@@ -39,6 +39,7 @@ Tokens are stored as **SHA-256 hashes** in the database. The full token is shown
 | `memory.archive` | ✓ | ✗ (returns -32001) | ✓ |
 | `memory.restore` | ✓ | ✗ (returns -32001) | ✓ |
 | `memory.purge` | ✓ | ✗ (returns -32001) | ✓ |
+| `memory.purge_expired` | ✓ | ✗ (returns -32001) | ✓ |
 | `memory.list_archived` | ✓ | ✓ | ✗ (returns -32001) |
 
 ## Using a token
@@ -52,14 +53,17 @@ curl -X POST https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory.list","arguments":{"scope":"global"}}}'
 ```
 
-In `persistent-memory` config:
+In `.mcp.json` (via `mcp-remote`):
 
-```json
+```jsonc
 {
-  "backend": "mcp",
-  "mcp": {
-    "server": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
-    "auth": { "type": "bearer", "token": "lk_rw_<your-token>" }
+  "mcpServers": {
+    "lorekit": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote",
+               "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
+               "--header", "Authorization:Bearer lk_rw_<your-token>"]
+    }
   }
 }
 ```

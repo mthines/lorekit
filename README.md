@@ -72,7 +72,7 @@ connected takes three steps.
 ### 1. Get a token
 
 Sign in to the dashboard at
-[lorekit-io.vercel.app](https://lorekit-io.vercel.app) with GitHub, then
+[lorekit.io](https://lorekit.io) with GitHub, then
 **Overview → Connect your agent → Generate new token**.
 
 Pick **Read + Write** for agents that should learn, or **Read only** for
@@ -82,10 +82,16 @@ Your token is shown once — copy it now.
 
 ### 2. Connect your agent
 
-The fastest path is the CLI. It scaffolds a companion skill that makes your
-agent use LoreKit on its own: reading relevant lessons when it starts a task,
-and writing one whenever something goes wrong — a stuck loop, a repeated
-failure, a costly wrong assumption.
+The fastest path is the CLI. It scaffolds two companion skills that make your
+agent use LoreKit on its own:
+
+- **`lorekit-memory`** — the runtime loop: reading relevant lessons when it
+  starts a task, and writing one whenever something goes wrong (a stuck loop, a
+  repeated failure, a costly wrong assumption).
+- **`lorekit-setup`** — the authoring counterpart: wiring a **self-improvement
+  loop** into one of *your own* skills or workflows — a fast episodic tier that
+  promotes proven lessons into permanent rules, with the entrenchment guards
+  that keep a learning loop from reinforcing its own mistakes.
 
 ```bash
 npx @lorekit/cli install \

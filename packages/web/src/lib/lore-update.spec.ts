@@ -124,6 +124,8 @@ describe('updateLesson', () => {
       p_source_agent: 'agent0',
       p_trigger: 'hook',
       p_created_at: null,
+      p_ttl_days: null,
+      p_clear_ttl: false,
     });
 
     expect(revalidatePath).toHaveBeenCalledWith('/lore');

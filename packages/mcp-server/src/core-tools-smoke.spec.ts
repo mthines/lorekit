@@ -42,13 +42,22 @@ vi.mock('@lorekit/core', async (importOriginal) => {
 
 // ── import server AFTER mocks ─────────────────────────────────────────────────
 import { createMcpServer } from './server.js';
+import { type StorageAdapter } from '@lorekit/core';
 
 const SERVICE_AUTH = { type: 'service' as const };
+
+// Minimal hosted adapter stub — tests mock @lorekit/core so db is never called.
+const MOCK_ADAPTER: StorageAdapter = {
+  db: {} as StorageAdapter['db'],
+  mode: 'hosted',
+  supportsRateLimit: true,
+  supportsHostedBilling: true,
+};
 
 // ── helper ────────────────────────────────────────────────────────────────────
 
 async function callTool(toolName: string, args: Record<string, unknown>): Promise<unknown> {
-  const server = createMcpServer(SERVICE_AUTH);
+  const server = createMcpServer(SERVICE_AUTH, MOCK_ADAPTER);
   const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
   const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();

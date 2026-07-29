@@ -3,8 +3,8 @@
 import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { addSignalAttribute } from '@dash0/sdk-web';
 
-// GitHub wordmark SVG — inlined to avoid extra network requests.
 function GitHubIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -19,6 +19,25 @@ function GitHubIcon({ className }: { className?: string }) {
   );
 }
 
+function MailIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      aria-hidden
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <rect width="20" height="16" x="2" y="4" rx="2" />
+      <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+    </svg>
+  );
+}
+
 interface LoginButtonProps {
   /**
    * When true, renders a smaller nav-style button (no minimum width, less padding).
@@ -27,21 +46,65 @@ interface LoginButtonProps {
   compact?: boolean;
 }
 
+type EmailStep = 'idle' | 'entering' | 'sent';
+
+/**
+ * Map Supabase OTP error codes / messages to user-friendly strings.
+ *
+ * Supabase returns terse internal messages (e.g. "Email rate limit exceeded",
+ * "Invalid email address") that are not suitable to show directly. We intercept
+ * the most common ones and return a clear, actionable message instead.
+ *
+ * Falls back to the raw message for anything we don't recognise, which is still
+ * better than silence.
+ */
+function friendlyOtpError(error: { message: string; code?: string; status?: number }): string {
+  const msg = error.message.toLowerCase();
+  const code = (error.code ?? '').toLowerCase();
+
+  // Rate limit — most common on Supabase Free tier (4 emails/hour per project)
+  if (msg.includes('rate limit') || msg.includes('too many') || error.status === 429) {
+    return 'Too many sign-in attempts. Please wait a few minutes and try again.';
+  }
+  // Invalid / undeliverable address
+  if (
+    msg.includes('invalid email') ||
+    msg.includes('unable to validate') ||
+    code === 'validation_failed'
+  ) {
+    return 'That doesn\'t look like a valid email address. Please double-check and try again.';
+  }
+  // Signups disabled in this Supabase project
+  if (msg.includes('signups not allowed') || msg.includes('signup is disabled') || code === 'signup_disabled') {
+    return 'Sign-up is currently disabled. Please contact the administrator.';
+  }
+  // Email provider rejected delivery (bounced, domain doesn't exist, etc.)
+  if (msg.includes('email not confirmed') || msg.includes('smtp') || msg.includes('delivery')) {
+    return 'We couldn\'t deliver an email to that address. Please check the address and try again.';
+  }
+
+  // Fallback: show the raw message but at least capitalise it
+  return error.message.charAt(0).toUpperCase() + error.message.slice(1);
+}
+
 export function LoginButton({ compact = false }: LoginButtonProps) {
   const [loading, setLoading] = useState(false);
+  const [emailStep, setEmailStep] = useState<EmailStep>('idle');
+  const [email, setEmail] = useState('');
+  const [emailError, setEmailError] = useState('');
+  const [emailLoading, setEmailLoading] = useState(false);
+
   // Read the ?next= param set by the dashboard layout when redirecting unauthenticated
   // users to /login. After OAuth callback, /api/auth/callback will redirect there
-  // instead of /dashboard, preserving shared URLs (e.g. ?lesson=…).
+  // instead of /dashboard, preserving shared URLs (e.g. ?lesson=...).
   const searchParams = useSearchParams();
   const nextParam = searchParams.get('next');
 
-  async function handleLogin() {
-    setLoading(true);
-    const supabase = createClient();
+  function buildCallbackUrl(): string {
     // Prefer the build-time NEXT_PUBLIC_VERCEL_URL (set in next.config.ts from
     // VERCEL_URL) so preview deployments redirect back to their own URL, not
     // production. Empty string means local dev — fall back to window.location.origin
-    // so any dev-server port (3000, 3001, …) works without hardcoding.
+    // so any dev-server port (3000, 3001, ...) works without hardcoding.
     const vercelUrl = process.env['NEXT_PUBLIC_VERCEL_URL'];
     const base = vercelUrl || window.location.origin;
 
@@ -51,39 +114,165 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     if (nextParam) {
       callbackUrl.searchParams.set('next', nextParam);
     }
+    return callbackUrl.toString();
+  }
 
+  async function handleGitHubLogin() {
+    setLoading(true);
+    addSignalAttribute('auth.method', 'github_oauth');
+    const supabase = createClient();
     await supabase.auth.signInWithOAuth({
       provider: 'github',
       options: {
-        redirectTo: callbackUrl.toString(),
+        redirectTo: buildCallbackUrl(),
       },
     });
     // Loading stays true — page will redirect
   }
 
+  async function handleEmailSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setEmailError('');
+    if (!email.trim()) {
+      setEmailError('Please enter your email address.');
+      return;
+    }
+
+    setEmailLoading(true);
+    addSignalAttribute('auth.method', 'email_otp');
+    const supabase = createClient();
+    const { error } = await supabase.auth.signInWithOtp({
+      // Pass the email exactly as the user typed it. Plus-subaddressed variants
+      // (user+alias@example.com) are valid and distinct Supabase identities —
+      // Supabase creates an account on first use (shouldCreateUser: true) and
+      // delivers the magic link to the typed address. We do NOT strip the alias
+      // here because that would silently change which account the user logs into.
+      email: email.trim(),
+      options: {
+        emailRedirectTo: buildCallbackUrl(),
+        shouldCreateUser: true,
+      },
+    });
+    setEmailLoading(false);
+    if (error) {
+      addSignalAttribute('auth.otp_error_code', error.code ?? error.name ?? 'unknown');
+      setEmailError(friendlyOtpError(error));
+    } else {
+      setEmailStep('sent');
+    }
+  }
+
+  // -- Compact variant (top-right nav button on login page) --
   if (compact) {
     return (
       <button
-        onClick={handleLogin}
+        onClick={handleGitHubLogin}
         disabled={loading}
         className="flex h-9 items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50"
         aria-busy={loading}
       >
         <GitHubIcon className="size-3.5 shrink-0" />
-        {loading ? 'Redirecting…' : 'Sign in'}
+        {loading ? 'Redirecting...' : 'Sign in'}
       </button>
     );
   }
 
+  // -- Full variant (hero CTA) --
+
+  // Magic-link sent confirmation
+  if (emailStep === 'sent') {
+    return (
+      <div className="flex flex-col items-center gap-3 text-center">
+        <div className="flex size-12 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+          <MailIcon className="size-5 text-[var(--color-accent)]" />
+        </div>
+        <p className="text-sm font-medium text-[var(--color-content-primary)]">
+          Check your inbox
+        </p>
+        <p className="max-w-xs text-xs text-[var(--color-content-secondary)]">
+          We sent a magic link to{' '}
+          <span className="font-medium text-[var(--color-content-primary)]">{email}</span>.
+          Click it to sign in — no password needed.
+        </p>
+        <button
+          onClick={() => { setEmailStep('idle'); setEmail(''); setEmailError(''); }}
+          className="text-xs text-[var(--color-content-tertiary)] underline-offset-2 hover:text-[var(--color-content-secondary)] hover:underline"
+        >
+          Use a different address
+        </button>
+      </div>
+    );
+  }
+
+  // Email entry form
+  if (emailStep === 'entering') {
+    return (
+      <form onSubmit={handleEmailSubmit} className="flex w-full max-w-xs flex-col gap-2.5">
+        <label htmlFor="lk-email" className="sr-only">Email address</label>
+        <input
+          id="lk-email"
+          type="email"
+          autoComplete="email"
+          autoFocus
+          placeholder="you@example.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          disabled={emailLoading}
+          className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] disabled:opacity-50"
+        />
+        {emailError && (
+          <p role="alert" className="text-xs text-red-400">{emailError}</p>
+        )}
+        <button
+          type="submit"
+          disabled={emailLoading}
+          className="flex h-11 items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50"
+          aria-busy={emailLoading}
+        >
+          <MailIcon className="size-4 shrink-0" />
+          {emailLoading ? 'Sending...' : 'Send magic link'}
+        </button>
+        <button
+          type="button"
+          onClick={() => { setEmailStep('idle'); setEmailError(''); }}
+          className="text-xs text-[var(--color-content-tertiary)] underline-offset-2 hover:text-[var(--color-content-secondary)] hover:underline"
+        >
+          Back
+        </button>
+      </form>
+    );
+  }
+
+  // Default: GitHub + email option
   return (
-    <button
-      onClick={handleLogin}
-      disabled={loading}
-      className="group relative flex h-12 min-w-[220px] items-center justify-center gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-6 text-sm font-semibold text-[var(--color-content-primary)] shadow-[0_0_0_1px_transparent] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] hover:shadow-[0_0_20px_var(--color-accent-glow)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50"
-      aria-busy={loading}
-    >
-      <GitHubIcon className="size-4 shrink-0" />
-      {loading ? 'Redirecting…' : 'Continue with GitHub'}
-    </button>
+    <div className="flex flex-col items-center gap-3">
+      {/* Primary: GitHub */}
+      <button
+        onClick={handleGitHubLogin}
+        disabled={loading}
+        className="group relative flex h-12 min-w-[220px] items-center justify-center gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-6 text-sm font-semibold text-[var(--color-content-primary)] shadow-[0_0_0_1px_transparent] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] hover:shadow-[0_0_20px_var(--color-accent-glow)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50"
+        aria-busy={loading}
+      >
+        <GitHubIcon className="size-4 shrink-0" />
+        {loading ? 'Redirecting...' : 'Continue with GitHub'}
+      </button>
+
+      {/* Divider */}
+      <div className="flex w-full max-w-[220px] items-center gap-2.5">
+        <span className="h-px flex-1 bg-[var(--color-border)]" aria-hidden />
+        <span className="text-xs text-[var(--color-content-tertiary)]">or</span>
+        <span className="h-px flex-1 bg-[var(--color-border)]" aria-hidden />
+      </div>
+
+      {/* Secondary: email — kept clearly visible (elevated surface + primary
+          text) so it reads as a real alternative, not a muted afterthought. */}
+      <button
+        onClick={() => setEmailStep('entering')}
+        className="flex h-11 min-w-[220px] items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-6 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
+      >
+        <MailIcon className="size-4 shrink-0" />
+        Continue with email
+      </button>
+    </div>
   );
 }

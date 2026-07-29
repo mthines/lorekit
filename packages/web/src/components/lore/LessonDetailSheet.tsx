@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle } from 'lucide-react';
-import { Controller } from 'react-hook-form';
+import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer } from 'lucide-react';
+import { Controller, useWatch, type UseFormReturn } from 'react-hook-form';
 import { useQueryClient } from '@tanstack/react-query';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { OwnershipBadge } from '@/components/memory/OwnershipBadge';
@@ -30,9 +30,100 @@ interface LessonDetailSheetProps {
 interface LessonFormValues {
   value: string;
   tags: string[];
+  /**
+   * Free-text expiry duration typed by the user.
+   * Supports: bare number (days), Nd, Nh, Nm, Nw — e.g. "7", "7d", "2w", "12h", "60m".
+   * Empty string means "never expires" / clear any existing TTL.
+   * Defaults to the remaining days of the current TTL on load (e.g. "30d"), or ""
+   * when there is no TTL.  Only submitted when it differs from that initial value.
+   */
+  ttlInput: string;
+}
+
+// ── TTL helpers ───────────────────────────────────────────────────────────────
+
+/** Parse a human-readable duration string into API-ready TTL parameters. */
+function parseTtlInput(raw: string): { ttlDays: number | null; clearTtl: boolean; error: string | null } {
+  const s = raw.trim();
+  if (!s) return { ttlDays: null, clearTtl: true, error: null };
+
+  const m = /^(\d+(?:\.\d+)?)\s*(m(?:in)?|h(?:r|ours?)?|d(?:ays?)?|w(?:eeks?)?)?$/i.exec(s);
+  if (!m) return { ttlDays: null, clearTtl: false, error: 'e.g. 7, 7d, 2w, 12h, 60m' };
+
+  const n = parseFloat(m[1]);
+  const unit = (m[2] ?? 'd')[0].toLowerCase();
+  const days =
+    unit === 'm' ? n / 1440 :
+    unit === 'h' ? n / 24 :
+    unit === 'w' ? n * 7 :
+    n;
+
+  const rounded = Math.ceil(days);
+  if (rounded < 1)   return { ttlDays: null, clearTtl: false, error: 'Minimum is 1 day' };
+  if (rounded > 365) return { ttlDays: null, clearTtl: false, error: 'Maximum is 365 days' };
+  return { ttlDays: rounded, clearTtl: false, error: null };
+}
+
+/**
+ * Format remaining TTL as a short string for the expiry input (e.g. "30d").
+ * Returns "" when expired so the field starts empty and the user sets a fresh value.
+ */
+function formatRemainingTtl(expiresAt: string): string {
+  const remaining = new Date(expiresAt).getTime() - Date.now();
+  if (remaining <= 0) return '';
+  return `${Math.ceil(remaining / 86_400_000)}d`;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
+
+
+// ── ExpiryControl ────────────────────────────────────────────────────────────
+// Free-text TTL input. Accepts human-readable durations (7, 7d, 2w, 12h, 60m).
+// Empty = never expires. Validates inline; conversion hints shown for non-day units.
+
+interface ExpiryControlProps {
+  currentExpiresAt?: string | null;
+  form: UseFormReturn<LessonFormValues>;
+  disabled?: boolean;
+}
+
+function ExpiryControl({ currentExpiresAt, form, disabled }: ExpiryControlProps) {
+  const ttlInput = useWatch({ control: form.control, name: 'ttlInput' });
+
+  const isExpired = currentExpiresAt != null && new Date(currentExpiresAt) < new Date();
+  const inputTrimmed = ttlInput.trim();
+
+  // Derive validation / conversion feedback from the current value on every render
+  // — no local state needed since the input is controlled via useWatch.
+  const parsed = inputTrimmed ? parseTtlInput(inputTrimmed) : null;
+  // Show "→ Nd" when the entered unit converts to days (e.g. "2w" → "14d", "12h" → "1d").
+  const showConversion =
+    parsed != null && parsed.error === null && parsed.ttlDays != null &&
+    /[mhw]/i.test(inputTrimmed);
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <input
+        type="text"
+        placeholder="Never"
+        value={ttlInput}
+        onChange={(e) => form.setValue('ttlInput', e.target.value, { shouldDirty: true })}
+        disabled={disabled}
+        aria-label="Expiry"
+        className="w-20 bg-transparent text-right text-xs text-[var(--color-content-secondary)] placeholder:text-[var(--color-content-tertiary)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--color-accent)] rounded-sm disabled:cursor-default disabled:opacity-50"
+      />
+      {parsed?.error && (
+        <span className="text-xs text-red-400" role="alert">{parsed.error}</span>
+      )}
+      {showConversion && parsed?.ttlDays != null && (
+        <span className="text-xs text-[var(--color-content-tertiary)]">→ {parsed.ttlDays}d</span>
+      )}
+      {!inputTrimmed && isExpired && (
+        <span className="text-xs text-amber-400">Expired</span>
+      )}
+    </div>
+  );
+}
 
 export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSheetProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -83,20 +174,35 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
     () => ({
       value: lesson?.value ?? '',
       tags: lesson?.tags ?? [],
+      // Show remaining days on load (e.g. "30d"), or "" when there is no TTL.
+      ttlInput: lesson?.expires_at ? formatRemainingTtl(lesson.expires_at) : '',
     }),
     // Deliberately key on lesson identity (scope + key) so that opening the same
     // lesson again after a save does not reset the form.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [lesson?.scope, lesson?.key, lesson?.value, lesson?.tags],
+    [lesson?.scope, lesson?.key, lesson?.value, lesson?.tags, lesson?.expires_at],
   );
 
   const editForm = useEditableForm<LessonFormValues>({
     defaultValues,
     onSave: async (data) => {
-      if (!lesson) return 'No lesson selected';
+      if (!lesson) return 'No memory selected';
+      // Only update the TTL when the user actually changed the input from its
+      // initial value — avoids nudging the expiry timestamp on every save.
+      const initialTtlInput = lesson.expires_at ? formatRemainingTtl(lesson.expires_at) : '';
+      let ttlDays: number | null = null;
+      let clearTtl = false;
+      if (data.ttlInput !== initialTtlInput) {
+        const parsed = parseTtlInput(data.ttlInput);
+        if (parsed.error) return parsed.error;
+        ttlDays = parsed.ttlDays;
+        clearTtl = parsed.clearTtl;
+      }
       const result = await updateLesson(lesson.scope, lesson.key, {
         value: data.value,
         tags: data.tags,
+        ttl_days: ttlDays,
+        clear_ttl: clearTtl,
       });
       if (result.error) return result.error;
       // Keep the sidebar open — the user may want to keep reading or editing.
@@ -185,7 +291,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
             className="fixed inset-y-0 right-0 z-50 flex w-full max-w-lg flex-col border-l border-[var(--color-border)] bg-[var(--color-bg-raised)] shadow-2xl"
             role="dialog"
             aria-modal="true"
-            aria-label="Lesson detail"
+            aria-label="Memory detail"
           >
             {/* Header */}
             <div className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] p-5">
@@ -231,7 +337,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
             <form
               onSubmit={handleSubmit}
               className="flex flex-1 flex-col overflow-hidden"
-              aria-label="Edit lesson"
+              aria-label="Edit memory"
             >
               <div className="group flex flex-1 flex-col gap-5 overflow-y-auto p-5">
                 {/* Content — editable */}
@@ -336,6 +442,31 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
                         {new Date(lesson.updated_at).toLocaleString()}
                       </dd>
                     </div>
+                    {/* Expiry — editable TTL control */}
+                    {!isArchived && (
+                      <div className="flex items-start gap-2 text-xs">
+                        <Timer className="size-3.5 shrink-0 mt-0.5 text-[var(--color-content-tertiary)]" aria-hidden />
+                        <dt className="text-[var(--color-content-tertiary)] pt-0.5">Expires</dt>
+                        <dd className="ml-auto">
+                          <ExpiryControl
+                            currentExpiresAt={lesson.expires_at}
+                            form={form}
+                            disabled={isSaving}
+                          />
+                        </dd>
+                      </div>
+                    )}
+                    {isArchived && lesson.expires_at && (
+                      <div className="flex items-center gap-2 text-xs">
+                        <Timer className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                        <dt className="text-[var(--color-content-tertiary)]">Expires</dt>
+                        <dd className="ml-auto text-[var(--color-content-secondary)]">
+                          {new Date(lesson.expires_at) < new Date()
+                            ? <span className="text-amber-400">Expired</span>
+                            : new Date(lesson.expires_at).toLocaleString()}
+                        </dd>
+                      </div>
+                    )}
                     {lesson.archived_at && (
                       <div className="flex items-center gap-2 text-xs">
                         <Archive className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />

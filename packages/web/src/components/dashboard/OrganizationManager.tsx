@@ -16,7 +16,10 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Users, Plus, Loader2, Mail, X, LogOut, Trash2, Download, Link, Unlink } from 'lucide-react';
+import {
+  Users, Plus, Loader2, Mail, X, LogOut, Trash2, Download, Link, Unlink,
+  ArrowLeft, ChevronRight,
+} from 'lucide-react';
 import {
   createOrg,
   listMembers,
@@ -33,7 +36,14 @@ import { inviteMember, listInvites, revokeInvite, type OrgInvite } from '@/lib/o
 import { listMemberIdentities, type OrgMemberIdentity } from '@/lib/org-members';
 import { listScopeBindings, listAvailableScopes, bindScope, unbindScope, type ScopeBinding } from '@/lib/scope-bindings';
 import { normalizeSlug } from '@/lib/org-slug';
-import { roleCapabilities, canActOnOrgMember, classifyInviteInput, ORG_DELETE_RETENTION_DAYS } from '@/lib/org-ui';
+import {
+  roleCapabilities,
+  canActOnOrgMember,
+  classifyInviteInput,
+  resolveActiveOrg,
+  ORG_DELETE_RETENTION_DAYS,
+} from '@/lib/org-ui';
+import { useUrlState } from '@/lib/hooks/useUrlState';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { useToast } from '@/components/providers/ToastProvider';
@@ -201,7 +211,17 @@ function CreateOrgForm({
 
 // ── Invite form ───────────────────────────────────────────────────────────────
 
-function InviteForm({ orgId, orgName, onInvited }: { orgId: string; orgName: string; onInvited: (invite: OrgInvite) => void }) {
+function InviteForm({
+  orgId,
+  orgName,
+  onInvited,
+  onCancel,
+}: {
+  orgId: string;
+  orgName: string;
+  onInvited: (invite: OrgInvite) => void;
+  onCancel?: () => void;
+}) {
   const { showToast } = useToast();
   const [input, setInput] = useState('');
   const [role, setRole] = useState<Exclude<OrgRole, 'owner'>>('member');
@@ -281,7 +301,7 @@ function InviteForm({ orgId, orgName, onInvited }: { orgId: string; orgName: str
 
       {error && <p className="text-xs text-[var(--color-error)]">{error}</p>}
 
-      <div>
+      <div className="flex gap-2">
         <button
           type="submit"
           disabled={pending}
@@ -290,6 +310,15 @@ function InviteForm({ orgId, orgName, onInvited }: { orgId: string; orgName: str
           {pending ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
           Send invite
         </button>
+        {onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="flex min-h-11 items-center rounded-lg border border-[var(--color-border)] px-4 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)]"
+          >
+            Cancel
+          </button>
+        )}
       </div>
     </form>
   );
@@ -303,9 +332,10 @@ interface BindScopeFormProps {
   /** Scopes visible to the user that are not yet bound to this org — shown as clickable suggestions. */
   availableScopes: string[];
   onBound: (binding: ScopeBinding) => void;
+  onCancel?: () => void;
 }
 
-function BindScopeForm({ orgId, orgName, availableScopes, onBound }: BindScopeFormProps) {
+function BindScopeForm({ orgId, orgName, availableScopes, onBound, onCancel }: BindScopeFormProps) {
   const { showToast } = useToast();
   const [scope, setScope] = useState('');
   const [error, setError] = useState('');
@@ -397,15 +427,144 @@ function BindScopeForm({ orgId, orgName, availableScopes, onBound }: BindScopeFo
 
       {error && <p className="text-xs text-[var(--color-error)]">{error}</p>}
 
-      <button
-        type="submit"
-        disabled={pending || !scope.trim()}
-        className="flex min-h-11 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[#000] transition-opacity duration-150 disabled:opacity-50"
-      >
-        {pending ? <Loader2 className="size-4 animate-spin" /> : <Link className="size-4" aria-hidden />}
-        Bind scope
-      </button>
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={pending || !scope.trim()}
+          className="flex min-h-11 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[#000] transition-opacity duration-150 disabled:opacity-50"
+        >
+          {pending ? <Loader2 className="size-4 animate-spin" /> : <Link className="size-4" aria-hidden />}
+          Bind scope
+        </button>
+        {onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="flex min-h-11 items-center rounded-lg border border-[var(--color-border)] px-4 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)]"
+          >
+            Cancel
+          </button>
+        )}
+      </div>
     </form>
+  );
+}
+
+// ── Shared presentational bits ─────────────────────────────────────────────────
+
+/** Small role pill used in the org list and detail header. */
+function RoleBadge({ role }: { role: OrgRole }) {
+  return (
+    <span className="shrink-0 rounded-md border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-content-secondary)]">
+      {ROLE_LABEL[role]}
+    </span>
+  );
+}
+
+/** Consistent section label, matching the app-wide `[10px] uppercase` heading style. */
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
+      {children}
+    </p>
+  );
+}
+
+/** Progressive-disclosure trigger: an outline "+ label" button that opens a form. */
+function DisclosureButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex min-h-11 items-center gap-2 self-start rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 text-sm text-[var(--color-content-secondary)] transition-all duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
+    >
+      <Plus className="size-4" aria-hidden />
+      {label}
+    </button>
+  );
+}
+
+// ── Master view: the list of organizations ─────────────────────────────────────
+
+interface OrgListViewProps {
+  orgs: OrgMembership[];
+  showCreateForm: boolean;
+  onShowCreateForm: (show: boolean) => void;
+  onCreated: (orgId: string, membership: OrgMembership) => void;
+  onSelect: (slug: string) => void;
+}
+
+function OrgListView({ orgs, showCreateForm, onShowCreateForm, onCreated, onSelect }: OrgListViewProps) {
+  // Zero-org first run: the only action is to create one, so lead with the
+  // empty state (and open the form on request) rather than an empty list.
+  if (orgs.length === 0 && !showCreateForm) {
+    return (
+      <div className="flex flex-col items-center gap-4">
+        <EmptyState
+          icon={Users}
+          title="Create an organization"
+          description="You'll become its owner and can invite teammates once it exists."
+        />
+        <button
+          type="button"
+          onClick={() => onShowCreateForm(true)}
+          className="flex min-h-11 items-center gap-2 rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[#000] transition-opacity duration-150 hover:opacity-90"
+        >
+          <Plus className="size-4" aria-hidden />
+          Create organization
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {!showCreateForm && (
+        <div className="flex items-center justify-between gap-3">
+          <SectionLabel>Your organizations</SectionLabel>
+          <button
+            type="button"
+            onClick={() => onShowCreateForm(true)}
+            className="flex min-h-11 items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 text-xs text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)]"
+          >
+            <Plus className="size-3.5" aria-hidden />
+            New organization
+          </button>
+        </div>
+      )}
+
+      {showCreateForm ? (
+        <CreateOrgForm
+          onCreated={onCreated}
+          onCancel={orgs.length > 0 ? () => onShowCreateForm(false) : undefined}
+        />
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {orgs.map((org) => (
+            <li key={org.id}>
+              <button
+                type="button"
+                onClick={() => onSelect(org.slug)}
+                className="group flex min-h-11 w-full items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2.5 text-left transition-colors duration-150 hover:border-[var(--color-accent)]"
+              >
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-accent)]">
+                  <Users className="size-4" aria-hidden />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-[var(--color-content-primary)]">{org.name}</p>
+                  <p className="truncate font-mono text-[11px] text-[var(--color-content-tertiary)]">{org.slug}</p>
+                </div>
+                <RoleBadge role={org.role} />
+                <ChevronRight
+                  className="size-4 shrink-0 text-[var(--color-content-tertiary)] transition-colors duration-150 group-hover:text-[var(--color-accent)]"
+                  aria-hidden
+                />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -419,7 +578,16 @@ interface OrganizationManagerProps {
 export function OrganizationManager({ initialOrgs, currentUserId }: OrganizationManagerProps) {
   const { showToast } = useToast();
   const [orgs, setOrgs] = useState<OrgMembership[]>(initialOrgs);
-  const [selectedOrgId, setSelectedOrgId] = useState<string | null>(initialOrgs[0]?.id ?? null);
+  // URL-backed selection (org slug, or null for the master list) — deep-linkable,
+  // so a specific org can be shared/refreshed. `null` (the default) renders the
+  // two-step landing: the org list, not a detail view. `navigationMode: 'push'`
+  // (unlike LoreExplorer's `scope`, which uses the default 'replace') makes each
+  // selection a history entry, so the browser Back button returns to the list —
+  // the expected master/detail affordance.
+  const [selectedSlug, setSelectedSlug] = useUrlState<string | null>('org', null, {
+    cleanOnPathname: '/settings/organization',
+    navigationMode: 'push',
+  });
   const [members, setMembers] = useState<OrgMember[]>([]);
   const [identities, setIdentities] = useState<OrgMemberIdentity[]>([]);
   const [invites, setInvites] = useState<OrgInvite[]>([]);
@@ -427,15 +595,31 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
   const [availableScopes, setAvailableScopes] = useState<string[]>([]);
   const [loadingOrgData, setLoadingOrgData] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(initialOrgs.length === 0);
+  // Progressive disclosure — the invite and bind-scope forms stay collapsed
+  // behind a trigger until the user signals intent, so the detail view lands
+  // calm instead of showing two open forms at once.
+  const [showInviteForm, setShowInviteForm] = useState(false);
+  const [showBindForm, setShowBindForm] = useState(false);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [pending, startTransition] = useTransition();
 
-  const selectedOrg = orgs.find((o) => o.id === selectedOrgId) ?? null;
+  const selectedOrg = resolveActiveOrg(orgs, selectedSlug);
+  const selectedOrgId = selectedOrg?.id ?? null;
   const myRole = selectedOrg?.role ?? null;
   const caps = myRole ? roleCapabilities[myRole] : null;
 
-  // Load member/identity/invite data whenever the selected org changes.
+  // A stale or forged `?org=` slug (left an org, bad link) resolves to no
+  // membership — clear it so the URL falls back to the clean list view.
   useEffect(() => {
+    if (selectedSlug && !selectedOrgId) setSelectedSlug(null);
+  }, [selectedSlug, selectedOrgId, setSelectedSlug]);
+
+  // Load member/identity/invite data whenever the selected org changes. Also
+  // collapse the disclosure forms so a form left open on one org never carries
+  // over to the next.
+  useEffect(() => {
+    setShowInviteForm(false);
+    setShowBindForm(false);
     if (!selectedOrgId) {
       setMembers([]);
       setIdentities([]);
@@ -470,44 +654,41 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
     };
   }, [selectedOrgId]);
 
-  function handleCreated(orgId: string, membership: OrgMembership) {
+  function handleCreated(_orgId: string, membership: OrgMembership) {
     setOrgs((prev) => [...prev, membership]);
-    setSelectedOrgId(orgId);
     setShowCreateForm(false);
+    // Drop straight into the new org's detail view (also updates the URL).
+    setSelectedSlug(membership.slug);
   }
 
   function handleLeave() {
     if (!selectedOrgId) return;
+    const leavingId = selectedOrgId;
     startTransition(async () => {
-      const result = await leaveOrg(selectedOrgId);
+      const result = await leaveOrg(leavingId);
       setConfirm(null);
       if (result.error) {
         showToast(result.error, 'error');
         return;
       }
-      setOrgs((prev) => {
-        const next = prev.filter((o) => o.id !== selectedOrgId);
-        setSelectedOrgId(next[0]?.id ?? null);
-        return next;
-      });
+      setOrgs((prev) => prev.filter((o) => o.id !== leavingId));
+      setSelectedSlug(null);
       showToast('You left the organization.', 'success');
     });
   }
 
   function handleDelete() {
     if (!selectedOrgId) return;
+    const deletingId = selectedOrgId;
     startTransition(async () => {
-      const result = await deleteOrg(selectedOrgId);
+      const result = await deleteOrg(deletingId);
       setConfirm(null);
       if (result.error) {
         showToast(result.error, 'error');
         return;
       }
-      setOrgs((prev) => {
-        const next = prev.filter((o) => o.id !== selectedOrgId);
-        setSelectedOrgId(next[0]?.id ?? null);
-        return next;
-      });
+      setOrgs((prev) => prev.filter((o) => o.id !== deletingId));
+      setSelectedSlug(null);
       showToast(`Organization deleted — recoverable for ${ORG_DELETE_RETENTION_DAYS} days.`, 'success');
     });
   }
@@ -621,52 +802,26 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
 
   return (
     <div className="flex flex-col gap-4">
-      {orgs.length === 0 && !showCreateForm && (
-        <div className="flex flex-col items-center gap-4">
-          <EmptyState
-            icon={Users}
-            title="Create an organization"
-            description="You'll become its owner and can invite teammates once it exists."
-          />
+      {!selectedOrg ? (
+        // ── Master view: pick an organization to manage ──────────────────────
+        <OrgListView
+          orgs={orgs}
+          showCreateForm={showCreateForm}
+          onShowCreateForm={setShowCreateForm}
+          onCreated={handleCreated}
+          onSelect={setSelectedSlug}
+        />
+      ) : (
+        // ── Detail view: manage the selected organization ────────────────────
+        <div className="flex flex-col gap-5">
           <button
             type="button"
-            onClick={() => setShowCreateForm(true)}
-            className="flex min-h-11 items-center gap-2 rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[#000] transition-opacity duration-150 hover:opacity-90"
+            onClick={() => setSelectedSlug(null)}
+            className="flex min-h-11 items-center gap-1.5 self-start text-xs font-medium text-[var(--color-content-secondary)] transition-colors duration-150 hover:text-[var(--color-content-primary)]"
           >
-            <Plus className="size-4" aria-hidden />
-            Create organization
+            <ArrowLeft className="size-4" aria-hidden />
+            Organizations
           </button>
-        </div>
-      )}
-
-      {showCreateForm && (
-        <CreateOrgForm
-          onCreated={handleCreated}
-          onCancel={orgs.length > 0 ? () => setShowCreateForm(false) : undefined}
-        />
-      )}
-
-      {selectedOrg && !showCreateForm && (
-        <>
-          {orgs.length > 1 && (
-            <div className="flex flex-col gap-1">
-              <label htmlFor="org-switcher" className="text-xs text-[var(--color-content-secondary)]">
-                Organization
-              </label>
-              <select
-                id="org-switcher"
-                value={selectedOrgId ?? ''}
-                onChange={(e) => setSelectedOrgId(e.target.value)}
-                className="min-h-11 w-full max-w-xs rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-content-primary)] focus:border-[var(--color-accent)] focus:outline-none"
-              >
-                {orgs.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
 
           <div className="flex items-center gap-3">
             <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-accent)]">
@@ -679,23 +834,16 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                 {ROLE_LABEL[selectedOrg.role]}
               </p>
             </div>
-            {orgs.length > 0 && !showCreateForm && (
-              <button
-                type="button"
-                onClick={() => setShowCreateForm(true)}
-                className="ml-auto flex min-h-11 items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-3 text-xs text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)]"
-              >
-                <Plus className="size-3.5" aria-hidden />
-                New organization
-              </button>
-            )}
           </div>
 
-          {/* Member list */}
-          <div className="flex flex-col gap-1.5">
-            <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
-              Members
-            </p>
+          {/* Members */}
+          <section className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-2">
+              <SectionLabel>Members</SectionLabel>
+              {!loadingOrgData && members.length > 0 && (
+                <span className="text-[10px] text-[var(--color-content-tertiary)]">{members.length}</span>
+              )}
+            </div>
             {loadingOrgData ? (
               <p className="text-xs text-[var(--color-content-tertiary)]">Loading members…</p>
             ) : (
@@ -781,19 +929,16 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                 })}
               </AnimatePresence>
             )}
-          </div>
+          </section>
 
-          {/* Invite form — invite/admin+owner only */}
-          {caps?.canInvite && <InviteForm orgId={selectedOrg.id} orgName={selectedOrg.name} onInvited={handleInvited} />}
-
-          {/* Pending invites */}
-          {pendingInvites.length > 0 && (
-            <div className="flex flex-col gap-1.5">
-              <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
-                Pending invites
-              </p>
-              <AnimatePresence>
-                {pendingInvites.map((invite) => (
+          {/* Invites — pending list is visible to any member; the invite form is
+              gated to invite-capable roles and stays collapsed until requested. */}
+          {(caps?.canInvite || pendingInvites.length > 0) && (
+            <section className="flex flex-col gap-1.5">
+              <SectionLabel>Invites</SectionLabel>
+              {pendingInvites.length > 0 && (
+                <AnimatePresence>
+                  {pendingInvites.map((invite) => (
                   <motion.div
                     key={invite.id}
                     layout
@@ -824,17 +969,27 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                       </button>
                     )}
                   </motion.div>
+                  ))}
+                </AnimatePresence>
+              )}
+              {caps?.canInvite &&
+                (showInviteForm ? (
+                  <InviteForm
+                    orgId={selectedOrg.id}
+                    orgName={selectedOrg.name}
+                    onInvited={handleInvited}
+                    onCancel={() => setShowInviteForm(false)}
+                  />
+                ) : (
+                  <DisclosureButton label="Invite teammate" onClick={() => setShowInviteForm(true)} />
                 ))}
-              </AnimatePresence>
-            </div>
+            </section>
           )}
 
           {/* Shared scopes — admin/owner only */}
           {caps?.canManageScopes && (
-            <div className="flex flex-col gap-1.5">
-              <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
-                Shared scopes
-              </p>
+            <section className="flex flex-col gap-1.5">
+              <SectionLabel>Shared scopes</SectionLabel>
               <p className="text-[10px] text-[var(--color-content-tertiary)]">
                 Writes under a bound scope auto-route to {selectedOrg.name} for write-capable members.
               </p>
@@ -873,52 +1028,65 @@ export function OrganizationManager({ initialOrgs, currentUserId }: Organization
                   ))}
                 </AnimatePresence>
               )}
-              <BindScopeForm
-                orgId={selectedOrg.id}
-                orgName={selectedOrg.name}
-                availableScopes={availableScopes}
-                onBound={(binding) => {
-                  setBindings((prev) => [...prev, binding]);
-                  // Remove the just-bound scope from suggestions so it doesn't appear twice.
-                  setAvailableScopes((prev) => prev.filter((s) => s !== binding.scope));
-                }}
-              />
-            </div>
+              {showBindForm ? (
+                <BindScopeForm
+                  orgId={selectedOrg.id}
+                  orgName={selectedOrg.name}
+                  availableScopes={availableScopes}
+                  onBound={(binding) => {
+                    setBindings((prev) => [...prev, binding]);
+                    // Remove the just-bound scope from suggestions so it doesn't appear twice.
+                    setAvailableScopes((prev) => prev.filter((s) => s !== binding.scope));
+                  }}
+                  onCancel={() => setShowBindForm(false)}
+                />
+              ) : (
+                <DisclosureButton label="Bind a scope" onClick={() => setShowBindForm(true)} />
+              )}
+            </section>
           )}
 
-          {/* Leave / delete */}
-          <div className="flex flex-wrap gap-2 border-t border-[var(--color-border)] pt-4">
-            <button
-              type="button"
-              onClick={() => setConfirm({ kind: 'leave' })}
-              className="flex min-h-11 items-center gap-2 rounded-lg border border-[var(--color-border)] px-4 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)]"
-            >
-              <LogOut className="size-4" aria-hidden />
-              Leave organization
-            </button>
-            {caps?.canDelete && (
-              <>
-                <button
-                  type="button"
-                  onClick={handleExportLore}
-                  disabled={pending}
-                  className="flex min-h-11 items-center gap-2 rounded-lg border border-[var(--color-border)] px-4 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] disabled:opacity-50"
-                >
-                  <Download className="size-4" aria-hidden />
-                  Export lore
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirm({ kind: 'delete' })}
-                  className="flex min-h-11 items-center gap-2 rounded-lg border border-[var(--color-border)] px-4 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:border-[var(--color-error)]/40 hover:text-[var(--color-error)]"
-                >
-                  <Trash2 className="size-4" aria-hidden />
-                  Delete organization
-                </button>
-              </>
-            )}
-          </div>
-        </>
+          {/* Danger zone — leave/delete live in a visually distinct region, set
+              apart from the routine sections above, so a destructive click is
+              never adjacent to a routine one. Export sits here too, next to
+              delete, as the "keep a copy first" step. */}
+          <section className="flex flex-col gap-3 rounded-xl border border-[var(--color-error)]/25 bg-[var(--color-error)]/[0.04] p-4">
+            <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-error)]">
+              Danger zone
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirm({ kind: 'leave' })}
+                className="flex min-h-11 items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)]"
+              >
+                <LogOut className="size-4" aria-hidden />
+                Leave organization
+              </button>
+              {caps?.canDelete && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleExportLore}
+                    disabled={pending}
+                    className="flex min-h-11 items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 text-sm text-[var(--color-content-secondary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] disabled:opacity-50"
+                  >
+                    <Download className="size-4" aria-hidden />
+                    Export lore
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirm({ kind: 'delete' })}
+                    className="flex min-h-11 items-center gap-2 rounded-lg border border-[var(--color-error)]/40 bg-[var(--color-bg-raised)] px-4 text-sm text-[var(--color-error)] transition-colors duration-150 hover:bg-[var(--color-error)] hover:text-[#1a0000]"
+                  >
+                    <Trash2 className="size-4" aria-hidden />
+                    Delete organization
+                  </button>
+                </>
+              )}
+            </div>
+          </section>
+        </div>
       )}
 
       <ConfirmDialog

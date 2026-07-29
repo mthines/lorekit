@@ -1,26 +1,22 @@
 'use client';
 
-import { useMemo } from 'react';
-import { Bot, Zap, Webhook, ArrowRight } from 'lucide-react';
-import Link from 'next/link';
-import { MemoryCard, memoryFromEvent } from '@/components/memory/MemoryCard';
-import { scopeLabel } from '@/components/memory/scope-meta';
-import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
-import { useUrlState } from '@/lib/hooks/useUrlState';
-import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
-import type { ScopePrefix } from '@/lib/scope';
+/**
+ * ActivityFeed — the "Browse by time" rendering of the Lore Explorer.
+ *
+ * Presentational only: it receives an already-filtered, owner-aware list of
+ * lessons from {@link LoreExplorer} and groups them by calendar day. Every
+ * filter (scope / search / date range / owner / archived) is owned by
+ * `LoreExplorer` and applied upstream via the shared `useMemories` query, so
+ * this component no longer holds any filter state, scope pills, or date picker
+ * of its own — the scope tree and the shared filter bar drive both views
+ * identically. The only difference between the two tabs is the layout: the
+ * scope view renders a flat card list, the time view renders these date groups.
+ */
 
-export interface ActivityEvent {
-  id: string;
-  scope: string;
-  scope_type: ScopePrefix;
-  key: string;
-  value_preview: string;
-  source_agent: string | null;
-  trigger: string | null;
-  tags: string[];
-  created_at: string;
-}
+import { useMemo, useState, useEffect } from 'react';
+import { Bot, Zap, Webhook } from 'lucide-react';
+import { MemoryCard, memoryFromLesson } from '@/components/memory/MemoryCard';
+import type { LessonEntry } from '@/components/lore/LessonCard';
 
 const TRIGGER_ICONS: Record<string, typeof Bot> = {
   'stuck-loop': Zap,
@@ -28,27 +24,55 @@ const TRIGGER_ICONS: Record<string, typeof Bot> = {
   'manual': Bot,
 };
 
-function groupByDate(events: ActivityEvent[]): Map<string, ActivityEvent[]> {
-  const groups = new Map<string, ActivityEvent[]>();
-  for (const e of events) {
-    const day = e.created_at.slice(0, 10);
+/** Group lessons into [day, lessons] pairs, preserving the input order. */
+function groupByDate(lessons: LessonEntry[]): [string, LessonEntry[]][] {
+  const groups = new Map<string, LessonEntry[]>();
+  for (const l of lessons) {
+    // UTC day so groups line up with the heatmap cells a range can be set from.
+    const day = new Date(l.created_at).toISOString().slice(0, 10);
     if (!groups.has(day)) groups.set(day, []);
-    groups.get(day)!.push(e);
+    groups.get(day)!.push(l);
   }
-  return groups;
+  return Array.from(groups.entries());
 }
 
-function DateLabel({ date }: { date: string }) {
-  const d = new Date(date);
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+/**
+ * Friendly heading for a UTC day string (`YYYY-MM-DD`): "Today" / "Yesterday"
+ * / weekday. One source of truth so the visible `DateLabel` and the day-group
+ * list's `aria-label` never diverge (a screen reader must hear the same label a
+ * sighted user reads, not the raw ISO date).
+ *
+ * `todayIso` / `yesterdayIso` must be computed from a value that is stable
+ * between the SSR pass and the first client render. Calling `new Date()` at
+ * module level or directly inside the component body produces different
+ * timestamps on server vs client and triggers React hydration error #418.
+ * Callers must pass today's ISO date string (stable across the render) so this
+ * function stays pure and hydration-safe.
+ */
+function dayLabel(date: string, todayIso: string, yesterdayIso: string): string {
+  if (date === todayIso) return 'Today';
+  if (date === yesterdayIso) return 'Yesterday';
+  return new Date(date).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+}
 
-  const label =
-    date === today
-      ? 'Today'
-      : date === yesterday
-        ? 'Yesterday'
-        : d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+/**
+ * Hydration-safe date heading.
+ *
+ * `new Date()` produces a different value on the server vs the client (different
+ * clock instants), which makes "Today" / "Yesterday" labels mismatch and fires
+ * React hydration error #418. We defer the live-clock comparison to after mount
+ * via `useEffect`, starting with the static ISO date string so the SSR output
+ * and the first client render always agree.
+ */
+function DateLabel({ date }: { date: string }) {
+  // Start with the raw ISO date — identical on server and client first render.
+  const [label, setLabel] = useState(date);
+
+  useEffect(() => {
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const yesterdayIso = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    setLabel(dayLabel(date, todayIso, yesterdayIso));
+  }, [date]);
 
   return (
     <div className="sticky top-0 z-10 flex items-center gap-3 bg-[var(--color-bg)] py-2">
@@ -58,151 +82,42 @@ function DateLabel({ date }: { date: string }) {
   );
 }
 
-interface ActivityEventRowProps {
-  event: ActivityEvent;
-  index: number;
-  selected: boolean;
-  onSelect: (ref: { scope: string; key: string }) => void;
-}
-
-function ActivityEventRow({ event, index, selected, onSelect }: ActivityEventRowProps) {
-  const TriggerIcon = event.trigger ? (TRIGGER_ICONS[event.trigger] ?? Bot) : Bot;
-
-  return (
-    <MemoryCard
-      memory={memoryFromEvent(event)}
-      layout="row"
-      index={index}
-      selected={selected}
-      onClick={() => onSelect({ scope: event.scope, key: event.key })}
-      leadingIcon={<TriggerIcon className="size-3.5 text-[var(--color-content-tertiary)]" aria-hidden />}
-    />
-  );
-}
-
 interface ActivityFeedProps {
-  events: ActivityEvent[];
-  /** Selected date range (UTC day strings), or null for all time. */
-  range: DateRange | null;
-  onRangeChange: (range: DateRange | null) => void;
+  /** Already filtered + owner-narrowed lessons, newest first. */
+  lessons: LessonEntry[];
+  /** Selection predicate — mirrors the scope view's selected-card check. */
+  isSelected: (lesson: LessonEntry) => boolean;
+  /** Row click — same handler the scope view's cards use (toggles the sheet). */
+  onSelect: (lesson: LessonEntry) => void;
 }
 
-export function ActivityFeed({ events, range, onRangeChange }: ActivityFeedProps) {
-  // URL-backed so a filtered view is shareable and survives refresh. Scoped to
-  // /activity via cleanOnPathname so the param doesn't linger on other pages.
-  const [filter, setFilter] = useUrlState<string>('filter', 'all', {
-    cleanOnPathname: '/activity',
-  });
-  const { openLessonRef, openLessonById, closeLesson } = useMemorySidebar();
-
-  function handleSelect(ref: { scope: string; key: string }) {
-    if (openLessonRef?.scope === ref.scope && openLessonRef?.key === ref.key) {
-      closeLesson();
-    } else {
-      openLessonById(ref);
-    }
-  }
-
-  // Filter pills are derived from the scopes actually present in the events —
-  // dynamic and relevant to this user's data, rather than a hardcoded list of
-  // agent/trigger names. Ordered by frequency (most active scope first), then
-  // alphabetically for a stable tie-break.
-  const scopeFilters = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const e of events) counts.set(e.scope, (counts.get(e.scope) ?? 0) + 1);
-    return Array.from(counts.entries())
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .map(([scope]) => scope);
-  }, [events]);
-
-  // Apply both the scope pill and the date range. Event day is derived in UTC
-  // (toISOString) so it matches the heatmap cells the range can be set from.
-  const filtered = useMemo(() => {
-    let out = events;
-    if (filter !== 'all') out = out.filter((e) => e.scope === filter);
-    if (range) {
-      out = out.filter((e) => {
-        const day = new Date(e.created_at).toISOString().slice(0, 10);
-        return day >= range.from && day <= range.to;
-      });
-    }
-    return out;
-  }, [events, filter, range]);
-
-  const grouped = groupByDate(filtered);
-  const isFiltered = filter !== 'all' || range !== null;
+export function ActivityFeed({ lessons, isSelected, onSelect }: ActivityFeedProps) {
+  const grouped = useMemo(() => groupByDate(lessons), [lessons]);
 
   return (
-    <div className="flex flex-col gap-3">
-      {/* Filters: scope pills (left) + date-range picker (right). */}
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        {scopeFilters.length > 0 ? (
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by scope">
-            {['all', ...scopeFilters].map((f) => (
-              <button
-                key={f}
-                type="button"
-                onClick={() => setFilter(f)}
-                aria-pressed={filter === f}
-                title={f === 'all' ? undefined : f}
-                className={[
-                  'rounded-full px-3 py-1 font-mono text-xs font-medium transition-all duration-150',
-                  filter === f
-                    ? 'bg-[var(--color-accent)] text-[#000]'
-                    : 'border border-[var(--color-border)] bg-[var(--color-bg-raised)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
-                ].join(' ')}
-              >
-                {f === 'all' ? 'all' : scopeLabel(f)}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <span />
-        )}
-        <DateRangePicker value={range} onChange={onRangeChange} className="ml-auto" />
-      </div>
-
-      {/* Grouped events */}
-      {grouped.size > 0 ? (
-        <div className="flex flex-col gap-1">
-          {Array.from(grouped.entries()).map(([date, dayEvents]) => (
-            <div key={date}>
-              <DateLabel date={date} />
-              <div className="flex flex-col gap-1.5">
-                {dayEvents.map((e, i) => (
-                  <ActivityEventRow
-                    key={e.id}
-                    event={e}
+    <div className="flex flex-col gap-1">
+      {grouped.map(([date, dayLessons]) => (
+        <div key={date}>
+          <DateLabel date={date} />
+          <div className="flex flex-col gap-1.5" role="list" aria-label={date}>
+            {dayLessons.map((lesson, i) => {
+              const TriggerIcon = lesson.trigger ? (TRIGGER_ICONS[lesson.trigger] ?? Bot) : Bot;
+              return (
+                <div key={`${lesson.scope}::${lesson.key}`} role="listitem">
+                  <MemoryCard
+                    memory={memoryFromLesson(lesson)}
+                    layout="row"
                     index={i}
-                    selected={openLessonRef?.scope === e.scope && openLessonRef?.key === e.key}
-                    onSelect={handleSelect}
+                    selected={isSelected(lesson)}
+                    onClick={() => onSelect(lesson)}
+                    leadingIcon={<TriggerIcon className="size-3.5 text-[var(--color-content-tertiary)]" aria-hidden />}
                   />
-                ))}
-              </div>
-            </div>
-          ))}
+                </div>
+              );
+            })}
+          </div>
         </div>
-      ) : (
-        <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
-          <p className="text-sm text-[var(--color-content-secondary)]">
-            {isFiltered ? 'No lessons match these filters' : 'No lessons yet'}
-          </p>
-          <p className="text-xs text-[var(--color-content-tertiary)]">
-            {isFiltered
-              ? 'Try widening the date range or clearing the scope filter.'
-              : 'Agent writes will appear here once your LoreKit config is connected.'}
-          </p>
-          {!isFiltered && (
-            <Link
-              href="/onboarding"
-              className="mt-1 flex items-center gap-1 text-xs font-medium text-[var(--color-accent)] hover:underline"
-            >
-              View setup guide
-              <ArrowRight className="size-3" aria-hidden />
-            </Link>
-          )}
-        </div>
-      )}
+      ))}
     </div>
   );
 }

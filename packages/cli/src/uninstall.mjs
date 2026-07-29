@@ -5,7 +5,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import process from 'node:process';
 import {
-  SKILL_NAME,
+  SKILLS,
   resolveProjectRoot,
   removeSkill,
   removeMcpServer,
@@ -51,7 +51,10 @@ export async function uninstall(args) {
   // install — never clobber what we can't understand), so we catch and report it
   // cleanly, leaving that file byte-for-byte untouched. Atomic writes
   // (writeFileAtomic) guarantee a config can't be half-written even on a crash.
-  const skill = attempt(() => removeSkill(root, scope));
+  const skillSteps = SKILLS.map((skill) => ({
+    name: skill.name,
+    step: attempt(() => removeSkill(root, scope, skill.name)),
+  }));
   const mcp = attempt(() => removeMcpServer(root, scope));
   const hooks = attempt(() => removeClaudeHooks(root, scope));
 
@@ -61,10 +64,12 @@ export async function uninstall(args) {
   const mcpLabel = scope === 'global' ? '~/.claude.json' : '.mcp.json';
 
   heading('Done');
-  report(skill, `skill ${SKILL_NAME}`, {
-    done: (r) => `removed → ${display(r.dest)}`,
-    noop: 'not installed — nothing to remove',
-  });
+  for (const { name, step } of skillSteps) {
+    report(step, `skill ${name}`, {
+      done: (r) => `removed → ${display(r.dest)}`,
+      noop: 'not installed — nothing to remove',
+    });
+  }
   report(mcp, mcpLabel, {
     done: (r) => `lorekit server removed → ${display(r.file)}`,
     noop: 'no lorekit server entry — nothing to remove',
@@ -74,8 +79,10 @@ export async function uninstall(args) {
     noop: 'no lorekit hooks — nothing to remove',
   });
 
-  const failed = [skill, mcp, hooks].some((s) => !s.ok);
-  const any = (skill.result?.removed || mcp.result?.removed || hooks.result?.removed) && true;
+  const skillStepList = skillSteps.map((s) => s.step);
+  const failed = [...skillStepList, mcp, hooks].some((s) => !s.ok);
+  const any =
+    (skillStepList.some((s) => s.result?.removed) || mcp.result?.removed || hooks.result?.removed) && true;
 
   if (failed) {
     log(`\n  ${c.dim('Some items could not be removed and were left untouched — see above.')}`);

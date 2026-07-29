@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-LoreKit exposes nine `memory.*` tools and four `org.*` tools via the MCP protocol.
+LoreKit exposes ten `memory.*` tools and four `org.*` tools via the MCP protocol.
 
 `memory.*` tools require a valid API token (see [api-tokens.md](./api-tokens.md)).
 
@@ -42,10 +42,11 @@ Store or update a lesson. Requires a token with write permission (`lk_rw_*` or `
 | `source_agent` | | Name of the agent writing this lesson |
 | `trigger` | | What triggered the write (`stuck-loop`, `pr-webhook`, `manual`) |
 | `org` | | Org slug to write under (org-owned write). Omit for a personal memory. You must be a write-capable member (`member`/`admin`/`owner`, not `viewer`) of the org — verified server-side; supplying an org you're not authorized for is rejected. |
+| `ttl_days` | | Integer 1–365. When set, the memory auto-expires after this many days and is invisible to all reads once expired. On an update, supplying `ttl_days` refreshes the expiry; omitting it leaves the existing expiry unchanged. |
 
 **Scope→org binding.** If you omit `org` but the scope is **bound to an org** (an admin set that up — see [org-sharing.md](./org-sharing.md#scope--org-binding-auto-routing)), the write auto-routes to that org **when you're a write-capable member**. If you're *not* a member, it's saved to your personal lore instead (never rejected) and the response carries a `notice` explaining that. An explicit `org` always overrides the binding.
 
-**Returns:** `{ "id": "<uuid>", "created_at": "<iso>" }` — plus an optional `"notice": "<string>"` when a write fell back to personal because the scope is bound to an org you can't write to.
+**Returns:** `{ "id": "<uuid>", "created_at": "<iso>" }` — plus an optional `"expires_at": "<iso>"` when `ttl_days` was supplied, and an optional `"notice": "<string>"` when a write fell back to personal because the scope is bound to an org you can't write to.
 
 ---
 
@@ -249,6 +250,30 @@ This operation is unrecoverable. Requires a token with write permission (`lk_rw_
 
 ---
 
+## memory.purge_expired
+
+Permanently hard-delete all TTL-expired memories for the current user. Expired rows
+are those with an `expires_at` in the past that have not yet been physically removed.
+Requires a token with write permission (`lk_rw_*` or `lk_wo_*`).
+
+This tool complements `memory.purge` (which removes archived rows) and is safe to
+call periodically — it only removes rows the caller wrote and whose TTL has elapsed.
+
+```json
+{
+  params: {
+    name: memory.purge_expired,
+    arguments: {}
+  }
+}
+```
+
+No arguments required.
+
+**Returns:** `{ purged: <count> }` — number of expired rows permanently deleted.
+
+---
+
 ## Error codes
 
 | JSON-RPC code | Meaning |
@@ -261,24 +286,26 @@ This operation is unrecoverable. Requires a token with write permission (`lk_rw_
 
 ---
 
-## Using with `persistent-memory` skill
+## Connecting your agent
 
-In your project's `.claude/skills/persistent-memory/config.json`:
+The fastest path is `npx @lorekit/cli install` — it scaffolds the `lorekit-memory` and `lorekit-setup` skills, wires the MCP server, and installs the lifecycle hooks in one command. See the [CLI README](../packages/cli/README.md) for flags.
 
-```json
+For a manual `.mcp.json` entry (any MCP-compatible agent):
+
+```jsonc
 {
-  "backend": "mcp",
-  "mcp": {
-    "server": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
-    "auth": {
-      "type": "bearer",
-      "token": "lk_rw_<your-token>"
+  "mcpServers": {
+    "lorekit": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote",
+               "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
+               "--header", "Authorization:Bearer lk_rw_<your-token>"]
     }
   }
 }
 ```
 
-Generate a token from the LoreKit dashboard: **Overview → Step 2 → Generate new token**.
+Generate a token from the LoreKit dashboard: **Overview → Connect your agent → Generate new token**.
 
 ---
 

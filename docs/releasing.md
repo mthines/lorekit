@@ -94,6 +94,19 @@ The release PR merges itself via GitHub's native auto-merge, so:
   protection or a ruleset). Auto-merge holds the merge until they pass, so an
   unverified release can never land. The workflow squash-merges the PR.
 
+### 4. Discord failure alerts (optional)
+
+If `release-please` (maintaining the release PR / cutting the tag / auto-merge)
+or the `publish-cli` job (test, smoke, `npm publish`) fails, `release.yml`'s
+`notify-failure` job posts a red embed to Discord with a **deep link to the
+failed run** plus the branch, commit, and who triggered it — the same alert and
+webhook `deploy.yml` uses (both share `./.github/actions/discord-notify`).
+
+Add the **repo-level** secret `DISCORD_WEBHOOK_URL` (Settings ▸ Secrets and
+variables ▸ Actions) — create the webhook in Discord under *Server Settings ▸
+Integrations ▸ Webhooks ▸ New Webhook*. If it is **unset**, `notify-failure`
+no-ops with a warning and never fails the run.
+
 ## Adjusting a release
 
 - **Change what's in the release** — edit the release PR's title/body or amend

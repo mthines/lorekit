@@ -101,7 +101,13 @@ if (isValidOtlpEndpoint(ENDPOINT) && AUTH_TOKEN) {
     ],
   });
 
-  addSignalAttribute('page.url.path', window.location.pathname);
+  // Guard window access — this module is imported by client components which
+  // Next.js also evaluates server-side during static prerendering. Without the
+  // guard the module-level window.location access throws "window is not defined"
+  // and the build fails on any page that transitively imports this file.
+  if (typeof window !== 'undefined') {
+    addSignalAttribute('page.url.path', window.location.pathname);
+  }
 }
 
 export { addSignalAttribute };

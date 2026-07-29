@@ -79,6 +79,18 @@ for (const file of fixtureFiles) {
   });
 }
 
+// The failure path gained relevant-lesson injection, but its output contract is
+// unchanged: with no MCP store configured (as here) it must still emit exactly
+// the write-nudge, never nothing, and never break the host's JSON shape.
+test('the failure path always emits the write-nudge (injection is additive)', () => {
+  for (const file of ['claude-PostToolUseFailure.json', 'codex-PostToolUse.json']) {
+    const fx = JSON.parse(fs.readFileSync(path.join(FIXTURES, file), 'utf8'));
+    const out = runFixture(fx);
+    const ctx = JSON.parse(out).hookSpecificOutput.additionalContext;
+    assert.match(ctx, /call failed/, `${file} lost its failure nudge`);
+  }
+});
+
 test('Claude plugin config validates (claude plugin validate)', (t) => {
   const version = spawnSync('claude', ['--version'], { encoding: 'utf8' });
   if (version.status !== 0) {

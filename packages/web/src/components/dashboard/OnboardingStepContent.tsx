@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Copy, CheckCheck, ExternalLink, Terminal, Webhook, Link2, Key, ArrowRight } from 'lucide-react';
 import { TokenManager } from './TokenManager';
 import { WebhookSecretManager } from './WebhookSecretManager';
+import { ClientConfigTabs, type McpClientConfig } from './ClientConfigTabs';
 import type { WebhookSecret } from '@/lib/webhook-secrets';
 import type { ApiToken } from '@/lib/tokens';
 import type { TokenPermission } from '@/lib/tokens';
@@ -17,12 +18,27 @@ interface McpClient {
   id: string;
   name: string;
   scope: InstallScope;
-  /** File path shown in footnote and CodeBlock header. */
   configPath: string;
   filename: string;
-  /** One-line hint shown below the config snippet. */
   hint: string;
-  buildConfig: (mcpUrlWithToken: string) => string;
+  /**
+   * Builds the config snippet. Receives the base MCP URL (no token) and the
+   * raw token separately so the token can be placed in an Authorization header
+   * argument instead of the URL query string.
+   */
+  buildConfig: (baseUrl: string, token: string) => string;
+}
+
+/** JSON config builder shared by all JSON-format clients (Claude Code, opencode, Cursor, Windsurf). */
+function buildJsonConfig(baseUrl: string, token: string): string {
+  return JSON.stringify({
+    mcpServers: {
+      lorekit: {
+        command: 'npx',
+        args: ['-y', 'mcp-remote', baseUrl, '--header', `Authorization:Bearer ${token}`],
+      },
+    },
+  }, null, 2);
 }
 
 const MCP_CLIENTS: McpClient[] = [
@@ -32,10 +48,8 @@ const MCP_CLIENTS: McpClient[] = [
     scope: 'project',
     configPath: '.mcp.json',
     filename: '.mcp.json',
-    hint: 'Project-local. Add .mcp.json to .gitignore — the token is in the URL.',
-    buildConfig: (url) => JSON.stringify({
-      mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', url] } },
-    }, null, 2),
+    hint: 'Project-local. Add .mcp.json to .gitignore — it contains your token.',
+    buildConfig: buildJsonConfig,
   },
   {
     id: 'opencode',
@@ -44,9 +58,7 @@ const MCP_CLIENTS: McpClient[] = [
     configPath: '.opencode/mcp.json',
     filename: '.opencode/mcp.json',
     hint: 'Project-local. opencode picks this up automatically from the project root.',
-    buildConfig: (url) => JSON.stringify({
-      mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', url] } },
-    }, null, 2),
+    buildConfig: buildJsonConfig,
   },
   {
     id: 'cursor',
@@ -55,9 +67,7 @@ const MCP_CLIENTS: McpClient[] = [
     configPath: '.cursor/mcp.json',
     filename: '.cursor/mcp.json',
     hint: 'Project-local. Cursor reads .cursor/mcp.json from the workspace root.',
-    buildConfig: (url) => JSON.stringify({
-      mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', url] } },
-    }, null, 2),
+    buildConfig: buildJsonConfig,
   },
   {
     id: 'windsurf',
@@ -66,9 +76,7 @@ const MCP_CLIENTS: McpClient[] = [
     configPath: '~/.codeium/windsurf/mcp_config.json',
     filename: 'mcp_config.json',
     hint: 'Global. Save to ~/.codeium/windsurf/mcp_config.json.',
-    buildConfig: (url) => JSON.stringify({
-      mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', url] } },
-    }, null, 2),
+    buildConfig: buildJsonConfig,
   },
   {
     id: 'codex-cli',
@@ -77,14 +85,16 @@ const MCP_CLIENTS: McpClient[] = [
     configPath: '~/.codex/config.yaml',
     filename: 'config.yaml',
     hint: 'Global. Add to ~/.codex/config.yaml.',
-    buildConfig: (url) => `mcp:
+    buildConfig: (baseUrl, token) => `mcp:
   servers:
     lorekit:
       command: npx
       args:
         - -y
         - mcp-remote
-        - "${url}"`,
+        - "${baseUrl}"
+        - --header
+        - "Authorization:Bearer ${token}"`,
   },
 ];
 
@@ -153,47 +163,6 @@ function SectionLabel({ icon, children }: { icon: React.ReactNode; children: Rea
   );
 }
 
-// ── Client selector ───────────────────────────────────────────────────────────
-
-function ClientSelector({
-  clients,
-  active,
-  onChange,
-}: {
-  clients: McpClient[];
-  active: string;
-  onChange: (id: string) => void;
-}) {
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="text-[10px] text-[var(--color-content-tertiary)]">
-        Using a different client?
-      </p>
-      <div role="radiogroup" aria-label="MCP client" className="flex flex-wrap gap-1.5">
-        {clients.map((client) => {
-          const isActive = client.id === active;
-          return (
-            <button
-              key={client.id}
-              role="radio"
-              aria-checked={isActive}
-              onClick={() => onChange(client.id)}
-              className={[
-                'rounded-md border px-2.5 py-1 text-xs font-medium transition-colors duration-150',
-                isActive
-                  ? 'border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-primary)]'
-                  : 'border-transparent text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]',
-              ].join(' ')}
-            >
-              {client.name}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 // ── Step: Connect your agent ──────────────────────────────────────────────────
 
 function ConnectStep({
@@ -205,31 +174,31 @@ function ConnectStep({
   mcpUrl: string;
   initialTokens: ApiToken[];
   autoGeneratedToken?: string;
-  /** When set, shows a link to the persistent settings home for keys. */
   manageHref?: string;
 }) {
   const [activeToken, setActiveToken] = useState<string>(
     autoGeneratedToken ?? '<your-lorekit-token>',
   );
-  const [activeClientId, setActiveClientId] = useState<string>(MCP_CLIENTS[0].id);
 
-  const mcpUrlWithToken = `${mcpUrl}?token=${activeToken}`;
-  const activeClient = MCP_CLIENTS.find((c) => c.id === activeClientId) ?? MCP_CLIENTS[0];
-  const configSnippet = activeClient.buildConfig(mcpUrlWithToken);
   const tokenPlaceholder = activeToken === '<your-lorekit-token>';
+
+  // Build McpClientConfig entries with the token passed via Authorization header
+  // so it never appears in the URL or server request logs.
+  const clientConfigs: McpClientConfig[] = MCP_CLIENTS.map((c) => ({
+    id: c.id,
+    name: c.name,
+    scope: c.scope,
+    filename: c.filename,
+    hint: c.hint,
+    snippet: c.buildConfig(mcpUrl, activeToken),
+  }));
 
   return (
     <div className="flex flex-col gap-5">
       <p className="text-sm text-[var(--color-content-secondary)]">
         {autoGeneratedToken
           ? 'We created a read+write token for you. Copy it from the banner below, then add the config to your agent.'
-          : <>
-              Generate a token below, then add the config to your agent&apos;s{' '}
-              <code className="rounded bg-[var(--color-bg)] px-1 font-mono text-xs">
-                {activeClient.filename}
-              </code>{' '}
-              file. Works with Claude Code, opencode, and any MCP-compatible client.
-            </>}
+          : 'Generate a token below, then add the config snippet to your agent. Works with Claude Code, opencode, and any MCP-compatible client.'}
       </p>
 
       {/* Token manager */}
@@ -257,44 +226,26 @@ function ConnectStep({
         <InlineCode>{mcpUrl}</InlineCode>
       </div>
 
-      {/* Config snippet */}
+      {/* Config snippet with logo-tab client switcher */}
       <div>
-        <SectionLabel icon={<Terminal className="size-3" />}>
-          {activeClient.filename}
-        </SectionLabel>
-        <CodeBlock code={configSnippet} filename={activeClient.filename} />
-
+        <SectionLabel icon={<Terminal className="size-3" />}>Config file</SectionLabel>
+        <ClientConfigTabs clients={clientConfigs} />
         {tokenPlaceholder && (
           <p className="mt-1.5 text-[10px] text-[var(--color-content-tertiary)]">
             Generate a token above and it will fill in automatically.
           </p>
         )}
-
         <p className="mt-1.5 text-[10px] text-[var(--color-content-tertiary)]">
-          {activeClient.hint}{' '}
           Requires Node.js —{' '}
           <code className="font-mono">npx</code> will download{' '}
           <code className="font-mono">mcp-remote</code> on first run.
         </p>
       </div>
-
-      {/* Client selector — secondary, below the code */}
-      <ClientSelector
-        clients={MCP_CLIENTS}
-        active={activeClientId}
-        onChange={setActiveClientId}
-      />
     </div>
   );
 }
 
 // ── Step: GitHub webhook ──────────────────────────────────────────────────────
-//
-// Secrets are per-repo (see WebhookSecretManager) — a user adds a secret for
-// each owner/repo they want to webhook. The RSC passes the current list of
-// active secrets; the manager handles adding, listing, and regenerating them
-// client-side. There is no maintainer-owned Supabase infra for the end user
-// to configure — the edge function reads webhook_secrets directly.
 
 function WebhookStep({
   webhookUrl,
@@ -314,20 +265,18 @@ function WebhookStep({
   return (
     <div className="flex flex-col gap-5">
       <p className="text-sm text-[var(--color-content-secondary)]">
-        Every resolved PR review comment becomes a candidate lesson — tagged{' '}
+        Every resolved PR review comment becomes a candidate memory — tagged{' '}
         <code className="rounded bg-[var(--color-bg)] px-1 font-mono text-xs">
           source::pr-webhook
         </code>{' '}
         and visible in Lore Explorer.
       </p>
 
-      {/* Per-repo secret manager — add a repo, list existing secrets, regenerate */}
       <div>
         <SectionLabel icon={<Key className="size-3" />}>Webhook secrets</SectionLabel>
         <WebhookSecretManager initialSecrets={webhookSecrets} />
       </div>
 
-      {/* Add the webhook on GitHub */}
       <div>
         <SectionLabel icon={<Webhook className="size-3" />}>
           Add the webhook on GitHub
@@ -355,7 +304,6 @@ interface OnboardingStepContentProps {
   webhookUrl?: string;
   webhookSecrets?: WebhookSecret[];
   autoGeneratedToken?: string;
-  /** When set (onboarding context), the connect step links to the persistent settings home. */
   manageHref?: string;
   initialTokens?: Array<{
     id: string;

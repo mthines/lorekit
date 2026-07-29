@@ -19,3 +19,7 @@ tmp/
 
 # Autonomous workflow artifacts
 .agent/
+.vercel
+
+# aw-tester captured auth sessions (secrets — never commit)
+.auth/

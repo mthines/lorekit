@@ -4,7 +4,8 @@
 // mirrors the Edge Function's SDK-free approach (supabase/functions/_shared/
 // otel.ts): OTLP/JSON over the global fetch (Node 18+), no @opentelemetry/*
 // packages. One span + one counter data point per human-facing command
-// (install / doctor / migrate), fired to Dash0 so the maintainers can see
+// (install / uninstall / doctor / list / search / show / stats / scopes / diff /
+// tree / lint / dedupe / migrate), fired to Dash0 so the maintainers can see
 // which commands people actually run.
 //
 // Privacy — this runs on end-users' machines, so it is deliberately narrow:
@@ -24,28 +25,31 @@
 
 import process from 'node:process';
 import { TELEMETRY_TOKEN } from './telemetry-token.mjs';
+import { readLorekitJson } from './config.mjs';
 
 // ── Baked-in defaults (public by design) ──────────────────────────────────────
 // The endpoint is a committed default; the token is injected at publish time
 // (empty in the source tree, so default export stays off until built/injected).
 const DEFAULT_ENDPOINT = 'https://ingress.europe-west4.gcp.dash0-dev.com';
 const DEFAULT_TOKEN = TELEMETRY_TOKEN; // injected from LOREKIT_TELEMETRY_TOKEN at publish
-const DEFAULT_DATASET = 'lorekit-cli';
+const DEFAULT_DATASET = '';
 
 // Flags worth counting (e.g. how many installs are --global). Bounded on
 // purpose: only these booleans are ever attached, never free-form values.
-const FLAG_ATTRS = ['global', 'project', 'deep', 'yes', 'force', 'no-hooks'];
+const FLAG_ATTRS = ['global', 'project', 'deep', 'yes', 'force', 'no-hooks', 'json'];
 
 const OFF_VALUES = new Set(['0', 'off', 'false', 'no', 'disable', 'disabled']);
 
 // ── Config resolution ─────────────────────────────────────────────────────────
 
 /**
- * Resolve telemetry config from env + baked-in defaults.
+ * Resolve telemetry config from env + baked-in defaults + .lorekit.json.
  * Returns { enabled: false } when disabled or unconfigured, else the endpoint
  * and headers to export with.
+ * @param {object} [env]  defaults to process.env
+ * @param {object} [repoConfig]  pre-loaded .lorekit.json (optional; read from cwd if absent)
  */
-export function resolveTelemetryConfig(env = process.env) {
+export function resolveTelemetryConfig(env = process.env, repoConfig) {
   const optOut = env.LOREKIT_TELEMETRY;
   if (optOut !== undefined && OFF_VALUES.has(String(optOut).trim().toLowerCase())) {
     return { enabled: false };
@@ -54,6 +58,12 @@ export function resolveTelemetryConfig(env = process.env) {
   // Match it precisely — a stray `DO_NOT_TRACK=false` should NOT disable export
   // (use LOREKIT_TELEMETRY for the loose app-specific opt-out values).
   if (env.DO_NOT_TRACK && String(env.DO_NOT_TRACK).trim() === '1') {
+    return { enabled: false };
+  }
+  // `telemetry.disabled: true` in .lorekit.json — team-level opt-out committed
+  // to the repo. Checked after env overrides (env always wins).
+  const cfg = repoConfig !== undefined ? repoConfig : readLorekitJson(process.cwd());
+  if (cfg['telemetry.disabled'] === true) {
     return { enabled: false };
   }
 
@@ -274,7 +284,7 @@ function normalizeExitCode(result) {
  * counter point. Returns the command's exit code unchanged. Telemetry failures
  * are swallowed — the command result is never affected.
  *
- * @param {string} command  bounded: install | doctor | migrate
+ * @param {string} command  bounded: install | uninstall | doctor | list | search | show | stats | scopes | diff | tree | lint | dedupe | migrate
  * @param {object} args     parsed CLI args (read for allow-listed flags only)
  * @param {string} version  CLI version (from package.json)
  * @param {() => Promise<number>} run  the command handler

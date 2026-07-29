@@ -230,7 +230,7 @@ describe('isPathnameAllowed', () => {
  * 3. router.replace(url) fires asynchronously → navigation starts.
  * 4. When navigation completes, searchParams changes → urlValue becomes `next`.
  * 5. useEffect detects serialise(urlValue) === serialise(optimisticValue) → sets
- *    optimisticValue back to null (URL is now the source of truth again).
+ *    optimisticValue back to UNSET (URL is now the source of truth again).
  * 6. External URL changes (back button, direct link) update searchParams → urlValue
  *    changes → if optimisticValue !== null and doesn't match, it stays until it
  *    matches or a new setState overrides it. In practice this is fine because

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveControl, normalizeMode, loadControl } from '../src/control.mjs';
+import { resolveControl, normalizeMode, loadControl, resolveDenies } from '../src/control.mjs';
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'lk-ctl-'));
@@ -156,4 +156,124 @@ test('user config is read from $LOREKIT_HOME/config.json (the ~/.lorekit move)',
   assert.equal(r.mode, 'local');
   assert.ok(r.denies.some((d) => d.mode === 'remote' && /\.lorekit\/config\.json/.test(d.source)));
   assert.deepEqual(r.storeTarget, { home, project: path.join(root, '.lorekit') });
+});
+
+// ── resolveDenies — the shared deny-wins seam for the read commands ───────────
+
+test('resolveDenies returns null on both sides when no deny is active', () => {
+  const home = tmpDir();
+  const root = tmpDir();
+  const { localDenied, remoteDenied } = resolveDenies(root, { env: { LOREKIT_HOME: home } });
+  assert.equal(localDenied, null);
+  assert.equal(remoteDenied, null);
+});
+
+test('resolveDenies surfaces the matched deny object (mode + source) per side', () => {
+  const home = tmpDir();
+  const root = tmpDir();
+  const env = { LOREKIT_HOME: home, LOREKIT_DENY: 'remote' };
+  const { localDenied, remoteDenied } = resolveDenies(root, { env });
+  assert.equal(localDenied, null);
+  assert.equal(remoteDenied.mode, 'remote');
+  assert.match(remoteDenied.source, /LOREKIT_DENY/);
+});
+
+test('resolveDenies reports both when both modes are denied (union, deny-wins)', () => {
+  const home = tmpDir();
+  const root = tmpDir();
+  const env = { LOREKIT_HOME: home, LOREKIT_DENY: 'local,remote' };
+  const { localDenied, remoteDenied } = resolveDenies(root, { env });
+  assert.equal(localDenied.mode, 'local');
+  assert.equal(remoteDenied.mode, 'remote');
+});
+
+test('resolveDenies reads a deny from the user config file, not just env', () => {
+  const home = tmpDir();
+  const root = tmpDir();
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ deny: ['local'] }));
+  const { localDenied, remoteDenied } = resolveDenies(root, { env: { LOREKIT_HOME: home } });
+  assert.equal(localDenied.mode, 'local');
+  assert.match(localDenied.source, /config\.json/);
+  assert.equal(remoteDenied, null);
+});
+
+// ── New config properties ─────────────────────────────────────────────────────
+
+test('tags.default: both config layers merged, user supplements repo', () => {
+  const r = resolveControl({
+    repoConfig: { 'tags.default': ['team', 'project::lorekit'] },
+    userConfig: { 'tags.default': ['personal'] },
+    connection: NO_CONN,
+  });
+  assert.deepEqual(r.tagsDefault, ['team', 'project::lorekit', 'personal']);
+});
+
+test('tags.default: empty when neither layer sets it', () => {
+  const r = resolveControl({ connection: NO_CONN });
+  assert.deepEqual(r.tagsDefault, []);
+});
+
+test('tags.default: comma-string form accepted', () => {
+  const r = resolveControl({
+    repoConfig: { 'tags.default': 'team,loop::aw-lessons' },
+    connection: NO_CONN,
+  });
+  assert.deepEqual(r.tagsDefault, ['team', 'loop::aw-lessons']);
+});
+
+test('scope.defaults: map set from repoConfig', () => {
+  const r = resolveControl({
+    repoConfig: {
+      'scope.defaults': {
+        'repo::owner/name': { tags: ['team'] },
+        'branch::owner/name::': { tags: ['ephemeral'] },
+      },
+    },
+    connection: NO_CONN,
+  });
+  assert.ok(r.scopeDefaults);
+  assert.deepEqual(r.scopeDefaults['repo::owner/name'], { tags: ['team'] });
+});
+
+test('scope.defaults: null when not set', () => {
+  const r = resolveControl({ connection: NO_CONN });
+  assert.equal(r.scopeDefaults, null);
+});
+
+test('hooks.disabled: union of both layers, event suppressed', () => {
+  const r = resolveControl({
+    repoConfig: { 'hooks.disabled': ['Stop'] },
+    userConfig: { 'hooks.disabled': ['PostToolUseFailure'] },
+    connection: NO_CONN,
+  });
+  assert.ok(r.hooksDisabled.has('Stop'));
+  assert.ok(r.hooksDisabled.has('PostToolUseFailure'));
+  assert.ok(!r.hooksDisabled.has('SessionStart'));
+});
+
+test('hooks.disabled: empty set when not configured', () => {
+  const r = resolveControl({ connection: NO_CONN });
+  assert.equal(r.hooksDisabled.size, 0);
+});
+
+test('hooks.adapter: repo wins over user', () => {
+  const r = resolveControl({
+    repoConfig: { 'hooks.adapter': 'cursor' },
+    userConfig: { 'hooks.adapter': 'codex' },
+    connection: NO_CONN,
+  });
+  assert.equal(r.hooksAdapter, 'cursor');
+});
+
+test('hooks.adapter: user fallback when repo is not set', () => {
+  const r = resolveControl({
+    userConfig: { 'hooks.adapter': 'codex' },
+    connection: NO_CONN,
+  });
+  assert.equal(r.hooksAdapter, 'codex');
+});
+
+test('hooks.adapter: null when neither layer sets it', () => {
+  const r = resolveControl({ connection: NO_CONN });
+  assert.equal(r.hooksAdapter, null);
 });

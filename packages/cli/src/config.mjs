@@ -6,8 +6,17 @@ import { fileURLToPath } from 'node:url';
 
 // packages/cli/ — the installable package root (this file lives in src/).
 export const PKG_ROOT = fileURLToPath(new URL('../', import.meta.url));
-export const SKILL_SOURCE = path.join(PKG_ROOT, 'skill', 'lorekit-memory');
 export const SKILL_NAME = 'lorekit-memory';
+export const SKILL_SOURCE = path.join(PKG_ROOT, 'skill', SKILL_NAME);
+
+// Every skill the CLI ships. `lorekit-memory` is the operational read/write
+// loop (kept first as the primary — `SKILL_NAME`/`SKILL_SOURCE` above alias it
+// for back-compat); `lorekit-setup` is the authoring skill that wires a
+// self-improvement loop into a host. install/uninstall/doctor iterate this list.
+export const SKILLS = ['lorekit-memory', 'lorekit-setup'].map((name) => ({
+  name,
+  source: path.join(PKG_ROOT, 'skill', name),
+}));
 
 export function resolveProjectRoot(dir) {
   return path.resolve(dir || process.cwd());
@@ -62,9 +71,9 @@ export function mcpConfigPath(root, scope = 'project') {
 // Where the skill is scaffolded for a given scope:
 //   project → <root>/.claude/skills/…   (this repo only)
 //   global  → ~/.claude/skills/…        (personal skills, all projects)
-export function skillInstallDir(root, scope = 'project') {
+export function skillInstallDir(root, scope = 'project', name = SKILL_NAME) {
   const base = scope === 'global' ? homeDir() : root;
-  return path.join(base, '.claude', 'skills', SKILL_NAME);
+  return path.join(base, '.claude', 'skills', name);
 }
 
 // Claude Code settings file that holds the hooks for a given scope:
@@ -231,10 +240,10 @@ export function readLorekitServer(root) {
 // server / hook / setting intact, so uninstalling never damages a shared
 // ~/.claude.json or settings.json.
 
-// Delete the scaffolded skill directory. We own the whole
-// .claude/skills/lorekit-memory tree, so a recursive remove is safe.
-export function removeSkill(root, scope = 'project') {
-  const dest = skillInstallDir(root, scope);
+// Delete a scaffolded skill directory. We own the whole
+// .claude/skills/<name> tree for each skill we ship, so a recursive remove is safe.
+export function removeSkill(root, scope = 'project', name = SKILL_NAME) {
+  const dest = skillInstallDir(root, scope, name);
   const removed = fs.existsSync(dest);
   if (removed) fs.rmSync(dest, { recursive: true, force: true });
   return { dest, removed };
@@ -336,8 +345,9 @@ export function tokenKind(token) {
 
 // For hooks: resolve the connection closest-scope first — the project's
 // .mcp.json (a project install), then the global ~/.claude.json (a global
-// install), then env. `splitEndpoint` is passed in to avoid a circular import
-// with mcp.mjs.
+// install), then the `mcp.endpoint` field in .lorekit.json (committable URL
+// without token — safe for VCS), then env. `splitEndpoint` is passed in to
+// avoid a circular import with mcp.mjs.
 export function resolveProjectConnection(root, splitEndpoint) {
   const sources = [readLorekitServer(root), readServerFromFile(mcpConfigPath(root, 'global'))];
   for (const configured of sources) {
@@ -351,5 +361,33 @@ export function resolveProjectConnection(root, splitEndpoint) {
       }
     }
   }
+
+  // Fallback: `mcp.endpoint` in .lorekit.json — a committable URL without token.
+  // Token still comes from .mcp.json or LOREKIT_TOKEN.
+  const lorekitJson = readLorekitJson(root);
+  const committedEndpoint =
+    lorekitJson && typeof lorekitJson['mcp.endpoint'] === 'string'
+      ? lorekitJson['mcp.endpoint'].trim()
+      : null;
+  if (committedEndpoint && !committedEndpoint.includes('<project-ref>')) {
+    return {
+      endpoint: committedEndpoint,
+      token: process.env.LOREKIT_TOKEN || null,
+    };
+  }
+
   return resolveConnection({});
+}
+
+// Read .lorekit.json from the repo root without throwing. Exported so other
+// CLI modules can read per-repo config without duplicating the same try/catch.
+// control.mjs uses its own internal readJson(file) for historical reasons and
+// does not import this — that is a known duplication, not a bug.
+export function readLorekitJson(root) {
+  const file = path.join(root, '.lorekit.json');
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8')) || {};
+  } catch {
+    return {};
+  }
 }

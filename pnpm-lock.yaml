@@ -165,8 +165,8 @@ importers:
   packages/web:
     dependencies:
       '@dash0/sdk-web':
-        specifier: ^0.10.1
-        version: 0.10.1(rollup@4.62.2)
+        specifier: 0.23.0
+        version: 0.23.0
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.1
@@ -834,8 +834,8 @@ packages:
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
     engines: {node: '>=12'}
 
-  '@dash0/sdk-web@0.10.1':
-    resolution: {integrity: sha512-ZnMLc8/+mhwj63eWzbW29TQP5ogQwwWQ7nOXI8XqPHIuiQVrA5/gwk+FFxojV2V8iPx9eppZ8yWW6+nzH9rs7Q==}
+  '@dash0/sdk-web@0.23.0':
+    resolution: {integrity: sha512-uFI/QnBbwLqgIglId7tUJ6eN8jmcnYOqBYDQ2v0xf7UG+Y5DgXl7rbY4L2a2G34+tiYVj9pNvyysmFi3TV+UIA==}
     engines: {node: '>=18'}
 
   '@emnapi/core@1.11.2':
@@ -2452,15 +2452,6 @@ packages:
     engines: {node: '>=14.0.0'}
     peerDependencies:
       rollup: ^2.78.0||^3.0.0||^4.0.0
-    peerDependenciesMeta:
-      rollup:
-        optional: true
-
-  '@rollup/plugin-terser@0.4.4':
-    resolution: {integrity: sha512-XHeJC5Bgvs8LfukDwWZp7yeqin6ns8RTl2B9avbejt6tZqsqvVoWI7ZTQrcNsfKEDWBTnTxM8nMDkO2IFFbd0A==}
-    engines: {node: '>=14.0.0'}
-    peerDependencies:
-      rollup: ^2.0.0||^3.0.0||^4.0.0
     peerDependenciesMeta:
       rollup:
         optional: true
@@ -6381,10 +6372,6 @@ packages:
     resolution: {integrity: sha512-3dOsAHXXUkQTpOYcoAxLIorMTp4gIQr5IW3iVb7A7lFIp0VHhnynm9izx6TssdrIcVIESAlVjtnO2K8bg+Coew==}
     engines: {node: '>=12'}
 
-  smob@1.6.2:
-    resolution: {integrity: sha512-RQsvleCbF8cVHEv+xuDGaA4pOizFqJ0GgjtMSRo6oP8pnN7WsigHgVGey6aILRBKv4W2YOMHLqbKdnB6hpB9fw==}
-    engines: {node: '>=20.0.0'}
-
   snake-case@3.0.4:
     resolution: {integrity: sha512-LAOh4z89bGQvl9pFfNF8V146i7o7/CqFPbqzYgP+yYzDIDeS9HaNFtXABamRW+AQzEVODcvE79ljJ+8a9YSdMg==}
 
@@ -6666,10 +6653,6 @@ packages:
     engines: {node: '>=18.12'}
     peerDependencies:
       typescript: '>=4.8.4'
-
-  ts-deepmerge@7.0.3:
-    resolution: {integrity: sha512-Du/ZW2RfwV/D4cmA5rXafYjBQVuvu4qGiEEla4EmEHVHgRdx68Gftx7i66jn2bzHPwSVZY36Ae6OuDn9el4ZKA==}
-    engines: {node: '>=14.13.1'}
 
   ts-loader@9.6.2:
     resolution: {integrity: sha512-R4iuczmtgxvtuI556s+hTZ6/7Ee03VCAk/l/M8LY1OAsUgB7YydsCxkgq9D9pKRaD7GJqUi2u8fp9zZP/ufjKA==}
@@ -7886,18 +7869,9 @@ snapshots:
     dependencies:
       '@jridgewell/trace-mapping': 0.3.9
 
-  '@dash0/sdk-web@0.10.1(rollup@4.62.2)':
+  '@dash0/sdk-web@0.23.0':
     dependencies:
-      '@babel/core': 7.29.7
-      '@babel/preset-env': 7.29.7(@babel/core@7.29.7)
-      '@rollup/plugin-babel': 6.1.0(@babel/core@7.29.7)(rollup@4.62.2)
-      '@rollup/plugin-terser': 0.4.4(rollup@4.62.2)
-      ts-deepmerge: 7.0.3
       web-vitals: 5.3.0
-    transitivePeerDependencies:
-      - '@types/babel__core'
-      - rollup
-      - supports-color
 
   '@emnapi/core@1.11.2':
     dependencies:
@@ -10237,14 +10211,6 @@ snapshots:
       deepmerge: 4.3.1
       is-module: 1.0.0
       resolve: 1.22.12
-    optionalDependencies:
-      rollup: 4.62.2
-
-  '@rollup/plugin-terser@0.4.4(rollup@4.62.2)':
-    dependencies:
-      serialize-javascript: 6.0.2
-      smob: 1.6.2
-      terser: 5.49.0
     optionalDependencies:
       rollup: 4.62.2
 
@@ -14346,8 +14312,6 @@ snapshots:
 
   slash@4.0.0: {}
 
-  smob@1.6.2: {}
-
   snake-case@3.0.4:
     dependencies:
       dot-case: 3.0.4
@@ -14586,8 +14550,6 @@ snapshots:
   ts-api-utils@2.5.0(typescript@5.9.3):
     dependencies:
       typescript: 5.9.3
-
-  ts-deepmerge@7.0.3: {}
 
   ts-loader@9.6.2(loader-utils@2.0.4)(typescript@5.9.3)(webpack@5.108.4(@swc/core@1.5.29(@swc/helpers@0.5.23))(lightningcss@1.32.0)(postcss@8.4.30)):
     dependencies:

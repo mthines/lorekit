@@ -5,9 +5,16 @@
  *   1. SUPABASE_SERVICE_ROLE_KEY — full access, bypasses RLS (CI/internal)
  *   2. lk_rw_* / lk_ro_* / lk_wo_* API tokens — user-scoped via SHA-256 lookup
  *   3. Supabase JWT — user-scoped via auth.getUser()
+ *
+ * Every call to resolveAuth() produces child span attributes on the provided
+ * parent Span so the auth outcome is visible in traces without log-digging.
+ * Callers should pass the root span from traceRequest() via the optional `span`
+ * parameter; when omitted, no extra attributes are set.
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { extractToken } from './auth-token.ts';
+import type { Span } from '../_shared/otel.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
@@ -26,21 +33,25 @@ async function sha256hex(text: string): Promise<string> {
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export async function resolveAuth(authHeader: string | null, queryToken: string | null = null): Promise<AuthContext | null> {
-  // Accept token from Authorization header OR ?token= query param.
-  // Query-param auth exists specifically for MCP clients (e.g. mcp-remote) that
-  // cannot inject custom request headers — the token is embedded in the server URL.
-  let token: string;
-  if (authHeader?.startsWith('Bearer ')) {
-    token = authHeader.slice(7);
-  } else if (queryToken) {
-    token = queryToken;
-  } else {
+export async function resolveAuth(
+  authHeader: string | null,
+  queryToken: string | null = null,
+  span?: Span,
+): Promise<AuthContext | null> {
+  // Accept token from Authorization: Bearer header (preferred — keeps the token
+  // out of server logs) or ?token= query param (legacy fallback for MCP clients
+  // that cannot inject custom headers). extractToken() implements the precedence.
+  const token = extractToken(authHeader, queryToken);
+  if (!token) {
+    span?.setAttributes({ 'auth.outcome': 'missing_token', 'auth.type': 'none' });
     return null;
   }
 
   // 1. Service-role key — CI / internal use only
-  if (SERVICE_ROLE_KEY && token === SERVICE_ROLE_KEY) return { type: 'service' };
+  if (SERVICE_ROLE_KEY && token === SERVICE_ROLE_KEY) {
+    span?.setAttributes({ 'auth.outcome': 'service_role', 'auth.type': 'service' });
+    return { type: 'service' };
+  }
 
   // 2. LoreKit API token (lk_rw_..., lk_ro_..., or lk_wo_...)
   if (token.startsWith('lk_')) {
@@ -53,7 +64,10 @@ export async function resolveAuth(authHeader: string | null, queryToken: string 
       .select('user_id, permissions')
       .eq('token_hash', hash)
       .maybeSingle();
-    if (!data) return null;
+    if (!data) {
+      span?.setAttributes({ 'auth.outcome': 'api_key_invalid', 'auth.type': 'api_key' });
+      return null;
+    }
     // Best-effort last_used_at bump — don't block the response on it, but hand
     // it to EdgeRuntime.waitUntil so the isolate stays alive until the write
     // commits. A bare fire-and-forget is dropped when the isolate freezes right
@@ -73,6 +87,11 @@ export async function resolveAuth(authHeader: string | null, queryToken: string 
     } else {
       void lastUsedUpdate;
     }
+    span?.setAttributes({
+      'auth.outcome': 'api_key_valid',
+      'auth.type': 'api_key',
+      'auth.user_id': data.user_id as string,
+    });
     return {
       type: 'api_key',
       userId: data.user_id as string,
@@ -86,7 +105,20 @@ export async function resolveAuth(authHeader: string | null, queryToken: string 
     auth: { persistSession: false, autoRefreshToken: false },
   });
   const { data, error } = await client.auth.getUser(token);
-  if (error || !data.user) return null;
+  if (error || !data.user) {
+    // Use bounded error code, not the free-form message, to avoid PII leaking into span attributes.
+    span?.setAttributes({
+      'auth.outcome': 'jwt_invalid',
+      'auth.type': 'jwt',
+      'auth.error_code': error?.code ?? error?.name ?? 'no_user',
+    });
+    return null;
+  }
+  span?.setAttributes({
+    'auth.outcome': 'jwt_valid',
+    'auth.type': 'jwt',
+    'auth.user_id': data.user.id,
+  });
   return { type: 'user', userId: data.user.id, jwt: token };
 }
 

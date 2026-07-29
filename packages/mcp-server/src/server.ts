@@ -15,30 +15,17 @@ import {
   restoreMemory,
   listArchived,
   purgeArchived,
-  createUserClient,
-  createServiceClient,
+  purgeExpired,
   checkRateLimit,
   rateLimitMessage,
   LimitError,
+  type StorageAdapter,
 } from '@lorekit/core';
 import { type AuthContext } from './auth.js';
 
-// Read lazily so tests that set process.env in beforeEach (after import)
-// see the configured value — mirrors the same fix in auth.ts and github.ts.
-function getSupabaseUrl(): string { return process.env['SUPABASE_URL'] ?? ''; }
-function getSupabaseAnonKey(): string { return process.env['SUPABASE_ANON_KEY'] ?? ''; }
-function getSupabaseServiceRoleKey(): string { return process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? ''; }
-
-function getDb(auth: AuthContext) {
-  if (auth.type === 'service') {
-    return createServiceClient(getSupabaseUrl(), getSupabaseServiceRoleKey());
-  }
-  return createUserClient(getSupabaseUrl(), getSupabaseAnonKey(), auth.jwt!);
-}
-
-export function createMcpServer(auth: AuthContext): McpServer {
+export function createMcpServer(auth: AuthContext, adapter: StorageAdapter): McpServer {
   const server = new McpServer({ name: 'lorekit', version: '0.0.1' });
-  const db = getDb(auth);
+  const db = adapter.db;
 
   server.tool(
     'memory.write',
@@ -51,6 +38,8 @@ export function createMcpServer(auth: AuthContext): McpServer {
       source_agent: z.string().optional().describe('Agent that wrote this lesson'),
       trigger: z.string().optional().describe('What triggered this write e.g. "stuck-loop"'),
       created_at: z.string().optional().describe('Optional ISO 8601 creation date. Use when migrating a pre-existing memory so it is dated by its original time instead of now. Rejected if invalid or in the future. Applies only when the memory is first created.'),
+      ttl_days: z.number().int().min(1).max(365).optional().describe('Number of days until the memory auto-expires (1–365). Omit for a permanent memory. On an update, supplying ttl_days refreshes the expiry; omitting it leaves the existing expiry unchanged.'),
+      clear_ttl: z.boolean().optional().describe('When true, removes the existing expiry and makes the memory permanent again.'),
     },
     async (args) => {
       try {
@@ -153,6 +142,17 @@ export function createMcpServer(auth: AuthContext): McpServer {
   );
 
   server.tool(
+    'memory.purge_expired',
+    'Permanently delete all expired (TTL-lapsed) memories for the current user. Unrecoverable.',
+    {},
+    async () => {
+      const userId = auth.type === 'service' ? null : (auth.userId ?? null);
+      const result = await purgeExpired(db, userId);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    },
+  );
+
+  server.tool(
     'memory.search',
     'Full-text search across memory entries. Supports owner-level scope wildcards (repo::owner/*).',
     {
@@ -174,13 +174,13 @@ export async function handleMcpRequest(
   req: import('http').IncomingMessage & { body?: unknown },
   res: import('http').ServerResponse,
   auth: AuthContext,
+  adapter: StorageAdapter,
   parsedBody?: unknown,
 ): Promise<void> {
   // Per-user request rate limit — applied before dispatch, all MCP methods.
-  // Service-role (CI/internal) is exempt.
-  if (auth.type !== 'service' && auth.userId) {
-    const db = getDb(auth);
-    const { allowed, retryAfterSeconds } = await checkRateLimit(db, auth.userId);
+  // Service-role (CI/internal) is exempt. BYOD adapters skip hosted rate limiting.
+  if (auth.type !== 'service' && auth.userId && adapter.supportsRateLimit) {
+    const { allowed, retryAfterSeconds } = await checkRateLimit(adapter.db, auth.userId);
     if (!allowed) {
       res.writeHead(429, {
         'Content-Type': 'application/json',
@@ -197,7 +197,7 @@ export async function handleMcpRequest(
     }
   }
 
-  const server = createMcpServer(auth);
+  const server = createMcpServer(auth, adapter);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
   await transport.handleRequest(req, res, parsedBody);

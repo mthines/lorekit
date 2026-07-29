@@ -9,15 +9,12 @@ import type { ScopeNode } from '@/components/lore/ScopeTree';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { listMemories, archiveLesson, restoreLesson, type MemoryFilters, type MemoryPage } from '@/lib/lore';
 import type { DateRange } from '@/components/ui/DateRangePicker';
-import type { ActivityEvent } from '@/components/activity/ActivityFeed';
 
 export interface LoreData {
   scopes: ScopeNode[];
   lessons: LessonEntry[];
   /** Heatmap series derived from the same lesson rows — no extra fetch. */
   heatmapData: { date: string; count: number }[];
-  /** Time-ordered feed events derived from the same lesson rows. */
-  feedEvents: ActivityEvent[];
 }
 
 // ---------------------------------------------------------------------------
@@ -79,14 +76,14 @@ async function fetchLoreData(): Promise<LoreData> {
   // for personal lore, the resolved name/slug for org-owned lore.
   const { data, error } = await supabase
     .from('memories')
-    .select('id,scope,key,value,tags,created_at,updated_at,archived_at,source_agent,trigger,org_id,created_by,updated_by,orgs(name,slug)')
+    .select('id,scope,key,value,tags,created_at,updated_at,archived_at,expires_at,source_agent,trigger,org_id,created_by,updated_by,orgs(name,slug)')
     .is('archived_at', null)
     // Order by creation date so memories migrated with a backdated created_at
     // appear at their correct original position, not the migration time.
     .order('created_at', { ascending: false })
     .limit(500);
 
-  if (error || !data) return { scopes: [], lessons: [], heatmapData: [], feedEvents: [] };
+  if (error || !data) return { scopes: [], lessons: [], heatmapData: [] };
 
   const lessons: LessonEntry[] = data.map((row: Record<string, unknown>) => {
     const orgId = (row.org_id as string | null) ?? null;
@@ -100,6 +97,7 @@ async function fetchLoreData(): Promise<LoreData> {
       created_at: row.created_at as string,
       updated_at: row.updated_at as string,
       archived_at: (row.archived_at as string | null) ?? null,
+      expires_at: (row.expires_at as string | null) ?? null,
       source_agent: row.source_agent as string | null,
       trigger: row.trigger as string | null,
       org_id: orgId,
@@ -136,20 +134,7 @@ async function fetchLoreData(): Promise<LoreData> {
     lessons.map((l) => ({ created_at: new Date(l.created_at).toISOString() })),
   );
 
-  // Derive time-ordered feed events (same shape as the old /activity page).
-  const feedEvents: ActivityEvent[] = data.map((row: Record<string, unknown>) => ({
-    id: row.id as string,
-    scope: row.scope as string,
-    scope_type: scopeType(row.scope as string),
-    key: row.key as string,
-    value_preview: ((row.value as string) ?? '').slice(0, 120),
-    source_agent: row.source_agent as string | null,
-    trigger: row.trigger as string | null,
-    tags: (row.tags as string[]) ?? [],
-    created_at: row.created_at as string,
-  }));
-
-  return { scopes, lessons, heatmapData, feedEvents };
+  return { scopes, lessons, heatmapData };
 }
 
 export function useLoreData() {

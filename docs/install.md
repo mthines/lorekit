@@ -51,9 +51,7 @@ echo "SUPABASE_PROJECT_REF=pqokxlhvnosogizsjztg" > .env.local
 pnpm nx db:push supabase
 ```
 
-This creates two tables:
-- `memories` — lesson storage with full-text search and row-level security
-- `api_tokens` — hashed token store
+This applies all migrations in `supabase/migrations/` and creates all required tables, including `memories`, `api_tokens`, `user_limits`, `plans`, `orgs`, `org_members`, `org_invites`, `org_scope_bindings`, `webhook_secrets`, `audit_log`, `usage_events`, and others.
 
 ---
 
@@ -112,7 +110,7 @@ pnpm nx health supabase
 
 ## Step 7 — Generate an API token
 
-1. Open the web dashboard: https://lorekit-io.vercel.app/dashboard (or your own Vercel URL after step 8)
+1. Open the web dashboard: https://lorekit.io/dashboard (or your own Vercel URL after step 8)
 2. Go to **Overview → Step 2: Connect your agent**
 3. Click **Generate new token**
 4. Enter a name (e.g. `claude-local`, `ci-github-actions`)
@@ -129,7 +127,7 @@ Token formats:
 
 ## Step 8 — Deploy the web dashboard (optional)
 
-If you want your own dashboard instance (rather than using `lorekit-io.vercel.app`):
+If you want your own dashboard instance (rather than using `lorekit.io`):
 
 1. Import the repo at https://vercel.com/new
 2. Set these project settings:
@@ -158,22 +156,28 @@ OTEL_EXPORTER_OTLP_HEADERS        Authorization=Bearer <dash0-token>
 
 ## Step 9 — Connect your agent
 
-Add the MCP config to your agent. For Claude Code (`.claude/skills/persistent-memory/config.json`):
+The fastest path is the CLI — it scaffolds the skill, MCP connection, and lifecycle hooks in one command:
 
-```json
+```bash
+npx @lorekit/cli install \
+  --endpoint https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp \
+  --token    lk_rw_<your-token>
+```
+
+For any other MCP-compatible agent, add the endpoint and Bearer token to the agent's MCP config directly:
+
+```jsonc
 {
-  "backend": "mcp",
-  "mcp": {
-    "server": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
-    "auth": {
-      "type": "bearer",
-      "token": "lk_rw_<your-token>"
+  "mcpServers": {
+    "lorekit": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote",
+               "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
+               "--header", "Authorization:Bearer lk_rw_<your-token>"]
     }
   }
 }
 ```
-
-For any other MCP-compatible agent, point the client at the same endpoint with the same Bearer token.
 
 ---
 

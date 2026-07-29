@@ -1,25 +1,38 @@
 # LoreKit
 
-> Shared, persistent memory for AI coding agents. Agents learn lessons across sessions, machines, and CI runs — stored in a central Supabase database and served over the MCP protocol.
+> Shared, persistent memory for AI coding agents. Lessons survive session ends, machine reboots, and CI runs — stored in Supabase Postgres and served over MCP. Agents read relevant lessons at task start and write new ones when they learn something worth keeping.
 
-## What it does
+## Quickstart (hosted — fastest path)
 
-LoreKit gives any MCP-compatible agent a `memory.write / memory.read / memory.list / memory.delete / memory.search` interface backed by Supabase Postgres. Lessons are scoped (global → project → repo → branch) so an agent working on a feature branch inherits repo- and global-level context without polluting it.
+1. Sign in at https://lorekit.io with GitHub
+2. Go to Overview → Connect your agent → Generate new token (choose Read + Write)
+3. Copy the token (shown once)
+4. Connect your agent:
 
-## Quick start (5 minutes)
+```bash
+npx @lorekit/cli install \
+  --endpoint https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp \
+  --token    lk_rw_<your-token>
+```
 
-1. Clone and install: `git clone https://github.com/mthines/lorekit && cd lorekit && pnpm install`
-2. Deploy to your own Supabase project: `supabase link --project-ref pqokxlhvnosogizsjztg && pnpm nx deploy supabase`
-3. Generate a token in the web dashboard: Overview → Step 2 → Generate new token
-4. Add the MCP config to your agent — see the Installation Guide below
+5. Verify: `npx @lorekit/cli doctor`
 
-Full step-by-step: https://github.com/mthines/lorekit/blob/main/docs/deployment.md
+Full self-hosting guide (your own Supabase + Vercel): https://github.com/mthines/lorekit/blob/main/docs/install.md
 
-## Installation Guide (for agents)
+## Local mode (offline, no account)
 
-See: https://github.com/mthines/lorekit/blob/main/docs/install.md
+Run the MCP server against plain markdown files on disk — no endpoint, no token:
 
-This file is structured so an AI agent can execute every step autonomously or paste the config snippet and finish in seconds.
+```jsonc
+{
+  "mcpServers": {
+    "lorekit": { "command": "npx", "args": ["-y", "@lorekit/cli", "mcp"] }
+  }
+}
+```
+
+Set `LOREKIT_MODE=local` or add `{ "mode": "local" }` to `.lorekit.json` at the repo root.
+Lessons are stored in `~/.lorekit/` (global tier) and `<repo>/.lorekit/` (repo tier, commit or gitignore).
 
 ## MCP endpoint
 
@@ -27,30 +40,9 @@ This file is structured so an AI agent can execute every step autonomously or pa
 https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp
 ```
 
-Auth: `Authorization: Bearer lk_rw_<token>` (read+write), `lk_ro_<token>` (read-only), or `lk_wo_<token>` (write-only)
+Auth: `Authorization: Bearer <token>` — token prefix encodes permissions (see Tokens below).
 
-## MCP tools
-
-| Tool | Token required | Description |
-|------|---------------|-------------|
-| `memory.write` | `lk_rw_` or `lk_wo_` | Store or update a lesson |
-| `memory.read` | `lk_rw_` or `lk_ro_` | Read one lesson by scope + key |
-| `memory.list` | `lk_rw_` or `lk_ro_` | List lessons for a scope (tag-filterable) |
-| `memory.delete` | `lk_rw_` or `lk_wo_` | Delete a lesson |
-| `memory.search` | `lk_rw_` or `lk_ro_` | Full-text search; supports `repo::owner/*` wildcard |
-
-## Scope format
-
-```
-global                                   # universal lessons
-project::{name}                          # monorepo-level
-repo::{owner}/{repo}                     # repository-level
-branch::{owner}/{repo}::{branch}         # branch-level (short-lived)
-```
-
-`::` is the only valid separator. Segments are lowercased on ingest.
-
-## Token formats
+## Tokens
 
 ```
 lk_rw_<32 chars>   # read + write
@@ -58,29 +50,251 @@ lk_ro_<32 chars>   # read only
 lk_wo_<32 chars>   # write only
 ```
 
-Tokens never expire and are stored as SHA-256 hashes. Generate and revoke in the dashboard.
+Tokens never expire unless revoked. Stored as SHA-256 hashes — shown once on creation.
+Maximum 20 tokens per account. Generate and revoke at lorekit.io.
+
+### Permission matrix
+
+| Tool | lk_rw_ | lk_ro_ | lk_wo_ |
+|------|--------|--------|--------|
+| `memory.write` | ✓ | ✗ | ✓ |
+| `memory.read` | ✓ | ✓ | ✗ |
+| `memory.list` | ✓ | ✓ | ✗ |
+| `memory.delete` | ✓ | ✗ | ✓ |
+| `memory.search` | ✓ | ✓ | ✗ |
+| `memory.archive` | ✓ | ✗ | ✓ |
+| `memory.restore` | ✓ | ✗ | ✓ |
+| `memory.list_archived` | ✓ | ✓ | ✗ |
+| `memory.purge` | ✓ | ✗ | ✓ |
+| `memory.purge_expired` | ✓ | ✗ | ✓ |
+
+`org.*` tools require a Supabase user JWT (dashboard session) — not available via `lk_*` tokens.
+
+## Scope format
+
+`::` is the only valid separator. Segments are lowercased on ingest.
+
+| Type | Format | Example |
+|------|--------|---------|
+| Global | `global` | `global` |
+| Project (monorepo) | `project::{name}` | `project::agent-skills` |
+| Repository | `repo::{owner}/{repo}` | `repo::mthines/gw-tools` |
+| Branch | `branch::{owner}/{repo}::{branch}` | `branch::mthines/gw-tools::feat/x` |
+
+Validation: single `:` → 400; `repo::` without `/` → 400; `branch::` without two `::` → 400; unknown prefix → 400.
+
+### Scope resolution (read order)
+
+Query narrow → broad and merge. More-specific scope wins when the same key exists at multiple levels:
+
+```
+branch::{owner}/{repo}::{branch}   # most specific
+repo::{owner}/{repo}
+project::{name}                    # monorepo
+global                             # least specific
+```
+
+### Wildcard search
+
+`memory.search` accepts `"scopes": ["repo::mthines/*"]` (owner-level wildcard). Wildcards only work in `memory.search`.
+
+## MCP tools
+
+### memory.write
+
+Store or update a lesson. Upserts on (scope, key). Requires write permission.
+
+Arguments:
+
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `scope` | ✓ | Canonical scope string |
+| `key` | ✓ | Lesson identifier (max 512 chars) |
+| `value` | ✓ | Lesson body in markdown (max 64 KB) |
+| `tags` | | Array of strings e.g. `["skill::aw", "source::stuck-loop"]` |
+| `source_agent` | | Agent name writing this lesson |
+| `trigger` | | What triggered the write: `stuck-loop`, `pr-webhook`, `manual` |
+| `org` | | Org slug — writes lesson as org-owned. You must be a write-capable member. Omit for personal. |
+| `ttl_days` | | Integer 1–365. Auto-expires the lesson. On update, refreshes expiry. |
+| `clear_ttl` | | Boolean. When true, removes expiry (makes permanent again). Overrides `ttl_days`. |
+| `created_at` | | ISO 8601 timestamp. Use when migrating a pre-existing lesson. Rejected if in the future. |
+
+Returns: `{ "id": "<uuid>", "created_at": "<iso>" }` — plus optional `"expires_at"` and `"notice"` (when a write fell back to personal because the scope is bound to an org the caller cannot write to).
+
+**Scope→org binding:** An org admin can bind a scope (e.g. a repo) to an org. A write under a bound scope with no explicit `org` auto-routes to that org for write-capable members. A non-member's write falls back to personal (never rejected) with a `notice`.
+
+---
+
+### memory.read
+
+Read one lesson by scope + key.
+
+Arguments: `scope` (required), `key` (required).
+
+Returns: `{ "value": "<markdown>", "updated_at": "<iso>" }` or `null` if not found.
+
+---
+
+### memory.list
+
+List all active lessons for a scope, newest first.
+
+Arguments: `scope` (required), `tags` (optional array — OR filter), `limit` (default 50, max 100).
+
+Returns: `{ "entries": [{ "key", "value", "tags", "updated_at" }] }`
+
+---
+
+### memory.delete
+
+Soft-archive a lesson by default (hidden from reads, recoverable via `memory.restore`). Use `force: true` to permanently hard-delete (unrecoverable). Requires write permission.
+
+Arguments: `scope` (required), `key` (required), `force` (boolean, default `false`), `org` (org slug for org-owned lessons; requires `member`/`admin`/`owner` for soft-archive, `admin`/`owner` for hard-delete).
+
+Returns: `{ "deleted": boolean, "archived": boolean }`
+- Soft-archive (default): `{ "deleted": false, "archived": true }` if found.
+- Hard-delete (`force: true`): `{ "deleted": true, "archived": false }` if found.
+
+---
+
+### memory.search
+
+Full-text search across lessons. Supports owner-level scope wildcards.
+
+Arguments: `q` (required, full-text), `scopes` (optional array, supports `repo::owner/*` wildcard), `tags` (optional AND-filter), `limit` (default 20, max 100).
+
+Returns: `{ "entries": [{ "key", "value", "scope", "tags", "rank" }] }`
+
+---
+
+### memory.archive
+
+Soft-archive a lesson. Archived entries are hidden from `memory.read` and `memory.list` but can be listed via `memory.list_archived` and restored via `memory.restore`. Requires write permission.
+
+Arguments: `scope` (required), `key` (required).
+
+Returns: `{ "archived": true }` if found and archived, `{ "archived": false }` if already archived or not found.
+
+---
+
+### memory.restore
+
+Restore a soft-archived lesson to active. Requires write permission.
+
+Arguments: `scope` (required), `key` (required).
+
+Returns: `{ "restored": true }` if restored, `{ "restored": false }` if already active or not found.
+
+---
+
+### memory.list_archived
+
+List soft-archived lessons for a scope. Requires read permission.
+
+Arguments: `scope` (required), `limit` (default 50, max 100).
+
+Returns: `{ "entries": [{ "key", "value", "tags", "updated_at", "archived_at" }] }`
+
+---
+
+### memory.purge
+
+Permanently delete archived lessons older than `retention_days`. Unrecoverable. Requires write permission.
+
+Arguments: `retention_days` (default 30, min 1, max 365).
+
+Returns: `{ "purged": <count> }`
+
+---
+
+### memory.purge_expired
+
+Permanently hard-delete all TTL-expired lessons for the current user. Requires write permission.
+
+No arguments required.
+
+Returns: `{ "purged": <count> }`
+
+---
+
+### org.create
+
+Create a new organization. You become its owner. Requires dashboard session JWT (not available via `lk_*` tokens).
+
+Arguments: `slug` (required, globally unique lowercase), `name` (required, display name).
+
+Returns: `{ "id", "slug", "name" }`
+
+---
+
+### org.list
+
+List all organizations you are a member of. Requires dashboard session JWT.
+
+Returns: `{ "entries": [{ "id", "slug", "name", "role", "created_at" }] }` — roles: `owner`, `admin`, `member`, `viewer`.
+
+---
+
+### org.rename
+
+Rename an organization's display name. Requires `admin` or `owner` role. Requires dashboard session JWT.
+
+Arguments: `slug` (required), `name` (required, new display name).
+
+---
+
+### org.delete
+
+Soft-delete an organization. Requires `owner` role. All org-owned lore is immediately hidden. Requires dashboard session JWT.
+
+Arguments: `slug` (required).
+
+Returns: `{ "deleted": true, "slug": "<slug>" }`
+
+---
+
+## Organizations & shared lore
+
+- Every memory is personal by default. Add `org` to `memory.write` to write org-owned lore.
+- All org members with read access see org-owned lore in their reads.
+- Roles: `viewer` (read only), `member` (read + write/archive/restore), `admin` (+ hard-delete + invite management), `owner` (+ rename/delete org).
+- Scope→org binding: an admin can bind a scope to the org — subsequent writes under that scope auto-route to the org for write-capable members. Non-members fall back to personal (never rejected) with a `notice`.
+- Manage orgs and members at lorekit.io → Settings → Organization.
+
+## Limits
+
+| Limit | Default |
+|-------|---------|
+| Active memories per user | 5,000 |
+| Requests per minute per user | 120 |
+
+Archiving a lesson frees cap headroom immediately. Service-role / CI tokens are exempt.
+When the cap is hit, `memory.write` returns a `memory_cap` error with instructions.
+Rate-limited requests receive HTTP 429 with a `Retry-After` header.
+
+## Error codes
+
+| JSON-RPC code | Meaning |
+|---------------|---------|
+| `-32001` | Unauthorized — missing, invalid, expired, or wrong-permission-tier token (e.g. read-only token on a write, write-only token on a read) |
+| `-32603` | Execution error — DB error, scope validation failure, org permission denied (`LK002`), or memory cap exceeded (`LK001` / `memory_cap`) |
+| `-32700` | Parse error — malformed JSON body |
+| `-32601` | Unknown tool name |
 
 ## Architecture
 
 - **MCP server** — Supabase Edge Function (Deno), endpoint `/functions/v1/mcp`
-- **Web dashboard** — Next.js 15 on Vercel (`lorekit-io.vercel.app`)
-- **Database** — Supabase Postgres, row-level security, full-text search
+- **Web dashboard** — Next.js 15 on Vercel at `lorekit.io`
+- **Database** — Supabase Postgres with row-level security and full-text search
+- **CLI** — `@lorekit/cli` (Node, zero-dependency ESM, works offline)
 
 ## Key documentation
 
 - MCP tools reference: https://github.com/mthines/lorekit/blob/main/docs/mcp-tools.md
 - Scope format: https://github.com/mthines/lorekit/blob/main/docs/scope-format.md
 - API tokens: https://github.com/mthines/lorekit/blob/main/docs/api-tokens.md
-- Deployment: https://github.com/mthines/lorekit/blob/main/docs/deployment.md
-- Architecture: https://github.com/mthines/lorekit/blob/main/docs/architecture.md
-- Observability setup: https://github.com/mthines/lorekit/blob/main/docs/otel.md
-- Installation guide: https://github.com/mthines/lorekit/blob/main/docs/install.md
-
-## Error codes
-
-| JSON-RPC code | Meaning |
-|---------------|---------|
-| `-32001` | Unauthorized (missing/invalid token, a read-only token on a write, or a write-only token on a read) |
-| `-32603` | Execution error (DB error, scope validation failure) |
-| `-32700` | Malformed JSON |
-| `-32601` | Unknown tool name |
+- Limits: https://github.com/mthines/lorekit/blob/main/docs/limits.md
+- Organizations & sharing: https://github.com/mthines/lorekit/blob/main/docs/org-sharing.md
+- Deployment / self-hosting: https://github.com/mthines/lorekit/blob/main/docs/install.md
+- CLI reference: https://github.com/mthines/lorekit/blob/main/packages/cli/README.md
+- Plugins (Claude / Cursor / Codex): https://github.com/mthines/lorekit/blob/main/plugins/README.md

@@ -22,7 +22,7 @@ LoreKit is a shared memory layer for AI coding agents. Agents write lessons they
 │  AI agent (persistent-memory skill)                    │
 │  CI job (GitHub Actions, service-role token)           │
 │  GitHub webhook (PR review comment → lesson)          │
-│  Web dashboard (https://lorekit-io.vercel.app)         │
+│  Web dashboard (https://lorekit.io)                    │
 └───────────────────────────────────────────────────────-┘
                           │
                     HTTPS + Bearer
@@ -53,7 +53,7 @@ LoreKit is a shared memory layer for AI coding agents. Agents write lessons they
 
 | Package | Path | Runtime | Role |
 |---------|------|---------|------|
-| `@lorekit/core` | `packages/mcp-core/` | Node.js | Scope validator, DB client wrappers, 5 tool handlers, OTel tracer/meter |
+| `@lorekit/core` | `packages/mcp-core/` | Node.js | Scope validator, DB client wrappers, 10 tool handlers, OTel tracer/meter |
 | `@lorekit/server` | `packages/mcp-server/` | Node.js | HTTP entry point, auth middleware, GitHub webhook, OTel SDK init (for Fly.io deployment) |
 | `@lorekit/web` | `packages/web/` | Vercel / Next.js 15 | Dashboard: login, lore explorer, activity feed, overview + onboarding |
 | `supabase` | `supabase/` | Deno (Edge Functions) | Self-contained MCP server + health check + migrations |
@@ -132,7 +132,7 @@ for the one deliberate app-layer-capture exception.
 |--------|------|-------|
 | `id` | uuid | PK |
 | `user_id` | uuid | References `auth.users`. Null for service-role/CI writes and JWT-authenticated MCP calls (never surfaced to any user — RLS SELECT requires a matching `auth.uid()`) |
-| `action` | text | Bounded CHECK — one of 11 values, e.g. `api_key.create`, `memory.archive`, `limit.override` |
+| `action` | text | Bounded CHECK — e.g. `api_key.create`, `memory.archive`, `limit.override`, `org.create`, `member.invite`, `scope.bind` (widened by migrations 00023, 00027 as new action types were added) |
 | `resource_type` / `resource_id` | text | What was acted on, e.g. `memory` / the memory's id |
 | `target` | text | Human-readable label (a key, a repo, a token name) |
 | `metadata` | jsonb | Action-specific extra detail (never a raw token or hash) |
@@ -162,6 +162,14 @@ piece. Migration `00012_audit_log_search.sql` adds the supporting indexes: a
 doesn't degrade to a sequential scan) and a `(user_id, created_at desc, id)`
 index covering the keyset seek (00010's `(user_id, created_at desc)` index
 lacks the `id` tiebreaker the keyset predicate needs).
+
+### `usage_events` table
+
+Lightweight structured telemetry for plan-sizing analysis, appended on every significant MCP tool call outcome. Rows are stored in **Postgres** (not exported to Dash0 traces) so you can query them directly in SQL without a Dash0 token. See [otel.md](./otel.md#structured-usage-events-usage_events-table) for the schema, retention policy, and example queries.
+
+Key columns: `user_id`, `org_id`, `plan_name`, `tool_name`, `scope_type`, `auth_type`, `outcome` (`ok` | `cap_exceeded` | `rate_limited` | `permission_denied` | `error`), `duration_ms`. Rows are retained 90 days and purged weekly by `lorekit_purge_old_usage_events()`.
+
+---
 
 ### Organizations
 

@@ -1,5 +1,125 @@
 # Changelog
 
+## [1.20.0](https://github.com/mthines/lorekit/compare/cli-v1.19.0...cli-v1.20.0) (2026-07-29)
+
+
+### Features
+
+* **byod:** Bring Your Own Database support ([#208](https://github.com/mthines/lorekit/issues/208)) ([69cbf07](https://github.com/mthines/lorekit/commit/69cbf07130e689d9d2389f87d5c3c5fb262d9e23))
+
+## [1.19.0](https://github.com/mthines/lorekit/compare/cli-v1.18.0...cli-v1.19.0) (2026-07-29)
+
+
+### Features
+
+* **cli:** add write command and scope::key shorthand for show ([#215](https://github.com/mthines/lorekit/issues/215)) ([9276ab2](https://github.com/mthines/lorekit/commit/9276ab2284d03f2f4083293e5b9eafba25562997))
+
+## [1.18.0](https://github.com/mthines/lorekit/compare/cli-v1.17.1...cli-v1.18.0) (2026-07-29)
+
+
+### Features
+
+* **cli:** confirm memory writes with deep link + add lore URL to Stop nudge ([#203](https://github.com/mthines/lorekit/issues/203)) ([efa1d7b](https://github.com/mthines/lorekit/commit/efa1d7b8e25eecba0305ab360a0d0945bf3c7a2c))
+
+## [1.17.1](https://github.com/mthines/lorekit/compare/cli-v1.17.0...cli-v1.17.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* **cli:** send telemetry to default dataset instead of lorekit-cli ([#195](https://github.com/mthines/lorekit/issues/195)) ([83a71c4](https://github.com/mthines/lorekit/commit/83a71c4f5127cef0ade5df76d3aa1489c33bfa56))
+
+## [1.17.0](https://github.com/mthines/lorekit/compare/cli-v1.16.0...cli-v1.17.0) (2026-07-28)
+
+
+### Features
+
+* **cli:** improve install UX — graceful re-install, token reuse, remove endpoint prompt ([#192](https://github.com/mthines/lorekit/issues/192)) ([443afc4](https://github.com/mthines/lorekit/commit/443afc4bdc504b76b7b95f55cd646f0c895f3a2a))
+
+## [1.16.0](https://github.com/mthines/lorekit/compare/cli-v1.15.0...cli-v1.16.0) (2026-07-28)
+
+
+### Features
+
+* **cli:** add hooks.instructions config for user-customizable hook output ([#188](https://github.com/mthines/lorekit/issues/188)) ([df59900](https://github.com/mthines/lorekit/commit/df59900f717e3d77a1bcd69747108b16ae25268b))
+
+## [1.15.0](https://github.com/mthines/lorekit/compare/cli-v1.14.0...cli-v1.15.0) (2026-07-28)
+
+
+### Features
+
+* **cli:** add 7 new .lorekit.json config properties ([#167](https://github.com/mthines/lorekit/issues/167)) ([13905c9](https://github.com/mthines/lorekit/commit/13905c910db1c136979a38d372056b62ed9c1307))
+
+
+### Bug Fixes
+
+* **web,cli:** unify "memory" terminology and polish Explorer filters/heatmap ([#168](https://github.com/mthines/lorekit/issues/168)) ([ce0cb00](https://github.com/mthines/lorekit/commit/ce0cb001d78505be0a6eab8a8769d461b418bd66))
+
+
+### Documentation
+
+* fix drift in otel.md CLI command list, install.md Step 9, and CLAUDE.md key files ([#165](https://github.com/mthines/lorekit/issues/165)) ([6e83aaf](https://github.com/mthines/lorekit/commit/6e83aaf1ee7ca5c354ced0b54f8b0861ac9dcb08))
+
+## [1.14.0](https://github.com/mthines/lorekit/compare/cli-v1.13.1...cli-v1.14.0) (2026-07-27)
+
+
+### Features
+
+* **cli:** add `scopes` store-wide scope inventory command ([#159](https://github.com/mthines/lorekit/issues/159)) ([4221a7f](https://github.com/mthines/lorekit/commit/4221a7ff2b3df1cf58065a5ed13a97eb99553f6d))
+
+## [1.13.1](https://github.com/mthines/lorekit/compare/cli-v1.13.0...cli-v1.13.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* **cli:** mcp readiness banner + correct tree scope help ([#157](https://github.com/mthines/lorekit/issues/157)) ([57128be](https://github.com/mthines/lorekit/commit/57128beb55756e4917122ac9e9f0091e7e80a4bf))
+
+## [1.13.0](https://github.com/mthines/lorekit/compare/cli-v1.12.0...cli-v1.13.0) (2026-07-27)
+
+
+### Features
+
+* add lorekit-setup skill (self-improvement-loop authoring) + multi-skill CLI ([#137](https://github.com/mthines/lorekit/issues/137)) ([24d8906](https://github.com/mthines/lorekit/commit/24d8906aa4434e12ae5b69566871ffdf9c4a6123))
+
+
+### Bug Fixes
+
+* **cli:** de-binary two source files (raw NUL → `\x00` escape) + regression guard ([#147](https://github.com/mthines/lorekit/issues/147)) ([9406e2c](https://github.com/mthines/lorekit/commit/9406e2c4f33d357bd9c887d10a1bdfc6e414cf00))
+
+## [1.12.0](https://github.com/mthines/lorekit/compare/cli-v1.11.0...cli-v1.12.0) (2026-07-27)
+
+
+### Features
+
+* **cli:** smart hooks — failure-relevant lesson injection + unified scope precedence ([#145](https://github.com/mthines/lorekit/issues/145)) ([bf22e4e](https://github.com/mthines/lorekit/commit/bf22e4e3cbbfc30a0f6e4e2dd05221f3fdda0a15))
+
+## [1.11.0](https://github.com/mthines/lorekit/compare/cli-v1.10.0...cli-v1.11.0) (2026-07-27)
+
+
+### Features
+
+* **cli:** add read-only `tree`, `lint`, and `dedupe` commands ([#143](https://github.com/mthines/lorekit/issues/143)) ([36b8086](https://github.com/mthines/lorekit/commit/36b808615cf6863661113bb614f564e193423492))
+
+## [1.10.0](https://github.com/mthines/lorekit/compare/cli-v1.9.0...cli-v1.10.0) (2026-07-27)
+
+
+### Features
+
+* **cli:** add read-only `stats` and `diff` commands ([#141](https://github.com/mthines/lorekit/issues/141)) ([1aa4995](https://github.com/mthines/lorekit/commit/1aa4995401be06896f3664e7b3f5052ce9f7dc55))
+
+## [1.9.0](https://github.com/mthines/lorekit/compare/cli-v1.8.0...cli-v1.9.0) (2026-07-27)
+
+
+### Features
+
+* **cli:** add read-only `search` and `show` commands ([#138](https://github.com/mthines/lorekit/issues/138)) ([18aec96](https://github.com/mthines/lorekit/commit/18aec96108a66684130e55815a726fd4d08463f7))
+
+## [1.8.0](https://github.com/mthines/lorekit/compare/cli-v1.7.1...cli-v1.8.0) (2026-07-27)
+
+
+### Features
+
+* **cli:** add `list` command surfacing scoped lessons across offline + remote stores ([#132](https://github.com/mthines/lorekit/issues/132)) ([297b3e1](https://github.com/mthines/lorekit/commit/297b3e1b01825941ee4d5a6d58823df9d47fdbc2))
+
 ## [1.7.1](https://github.com/mthines/lorekit/compare/cli-v1.7.0...cli-v1.7.1) (2026-07-26)
 
 

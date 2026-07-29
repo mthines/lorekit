@@ -1,23 +1,22 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
-import { BookOpen, LayoutDashboard, Settings, Rocket } from 'lucide-react';
+import { BookOpen, LayoutDashboard, Settings, GraduationCap } from 'lucide-react';
 import { useOnboarding } from '@/components/providers/OnboardingProvider';
 
-// Activity is no longer a standalone route — the heatmap and time-ordered feed
-// are now accessible from the Lore Explorer page via the "Browse by time" tab.
+// Primary content nav — 3 destinations keeps the sidebar scannable and the
+// mobile tab bar comfortably within the 3–5 item guideline.
 const NAV = [
   { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { href: '/lore', label: 'Explorer', icon: BookOpen },
+  { href: '/learn', label: 'Getting started', mobileLabel: 'Getting started', icon: GraduationCap },
 ] as const;
 
-// "Getting started" and "Settings" sit apart from the primary content nav —
-// they're persistent destinations, not content views. Getting started is always
-// available (even once complete) so setup is never a dead end. Desktop renders
-// both in the footer; mobile appends them as trailing tabs.
-const GETTING_STARTED = { href: '/onboarding', label: 'Getting started', mobileLabel: 'Setup', icon: Rocket } as const;
+// Settings is a persistent utility destination kept in the sidebar footer —
+// separate from the primary content nav so it does not compete for attention.
 const SETTINGS = { href: '/settings', label: 'Settings', icon: Settings } as const;
 
 interface SidebarProps {
@@ -26,14 +25,14 @@ interface SidebarProps {
 
 export function Sidebar({ user }: SidebarProps) {
   const pathname = usePathname();
-  const { completedCount, total, allDone, hydrated } = useOnboarding();
+  const { allDone, hydrated } = useOnboarding();
   const isSettingsActive =
     pathname === SETTINGS.href || pathname.startsWith(SETTINGS.href + '/');
-  const isGettingStartedActive =
-    pathname === GETTING_STARTED.href || pathname.startsWith(GETTING_STARTED.href + '/');
-  // Only surface the count once localStorage is read, so the badge doesn't flash
-  // a stale (server-only) number before manual completions hydrate.
   const showProgress = hydrated && !allDone;
+  const isUserActive = pathname === '/settings/user';
+
+  const displayName = (user.user_metadata?.['full_name'] as string) ?? user.email ?? 'User';
+  const avatarUrl = user.user_metadata?.['avatar_url'] as string | undefined;
 
   return (
     <>
@@ -41,25 +40,30 @@ export function Sidebar({ user }: SidebarProps) {
       <aside className="hidden md:flex w-56 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-bg-raised)]">
         {/* Brand */}
         <div className="flex h-14 items-center gap-2.5 border-b border-[var(--color-border)] px-4">
-          <div className="flex size-7 items-center justify-center rounded-lg bg-[var(--color-accent-subtle)] text-[var(--color-accent)]">
-            <span className="text-sm" aria-hidden>⚡</span>
-          </div>
+          <Image
+            src="/icons/icon-192.png"
+            alt="LoreKit"
+            width={28}
+            height={28}
+            className="shrink-0 rounded-lg"
+            priority
+          />
           <span className="text-sm font-semibold text-[var(--color-content-primary)]">
             LoreKit
           </span>
         </div>
 
-        {/* Nav */}
+        {/* Primary nav */}
         <nav className="flex flex-1 flex-col gap-0.5 p-2" aria-label="Main navigation">
           {NAV.map(({ href, label, icon: Icon }) => {
             const active = pathname === href || pathname.startsWith(href + '/');
+            const isLearn = href === '/learn';
             return (
               <Link
                 key={href}
                 href={href}
                 prefetch={true}
                 className={[
-                  /* Minimum 44px touch target height (WCAG 2.2 SC 2.5.8) */
                   'flex min-h-11 items-center gap-2.5 rounded-lg px-3 text-sm transition-all duration-150',
                   active
                     ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)] font-medium'
@@ -68,37 +72,14 @@ export function Sidebar({ user }: SidebarProps) {
                 aria-current={active ? 'page' : undefined}
               >
                 <Icon className="size-4 shrink-0" aria-hidden />
-                {label}
+                <span className="flex-1">{label}</span>
               </Link>
             );
           })}
         </nav>
 
-        {/* Getting started + Settings — persistent destinations, pinned above the
-            user row and separated from the primary content nav. */}
+        {/* Settings */}
         <div className="flex flex-col gap-0.5 p-2">
-          <Link
-            href={GETTING_STARTED.href}
-            prefetch={true}
-            className={[
-              'flex min-h-11 items-center gap-2.5 rounded-lg px-3 text-sm transition-all duration-150',
-              isGettingStartedActive
-                ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)] font-medium'
-                : 'text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]',
-            ].join(' ')}
-            aria-current={isGettingStartedActive ? 'page' : undefined}
-          >
-            <GETTING_STARTED.icon className="size-4 shrink-0" aria-hidden />
-            <span className="flex-1">{GETTING_STARTED.label}</span>
-            {showProgress && (
-              <span
-                className="rounded-md bg-[var(--color-bg-elevated)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--color-content-tertiary)]"
-                aria-label={`${completedCount} of ${total} steps complete`}
-              >
-                {completedCount}/{total}
-              </span>
-            )}
-          </Link>
           <Link
             href={SETTINGS.href}
             prefetch={true}
@@ -115,45 +96,51 @@ export function Sidebar({ user }: SidebarProps) {
           </Link>
         </div>
 
-        {/* User */}
+        {/* User — links to /settings/user on both desktop and mobile */}
         <div className="border-t border-[var(--color-border)] p-2">
-          <div className="flex min-h-11 items-center gap-2.5 rounded-lg px-3 text-sm text-[var(--color-content-secondary)]">
-            {/* Avatar */}
-            <div className="size-5 shrink-0 overflow-hidden rounded-full bg-[var(--color-border)]">
-              {user.user_metadata?.['avatar_url'] && (
+          <Link
+            href="/settings/user"
+            prefetch={true}
+            className={[
+              'flex min-h-11 items-center gap-2.5 rounded-lg px-3 text-sm transition-all duration-150',
+              isUserActive
+                ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)] font-medium'
+                : 'text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]',
+            ].join(' ')}
+            aria-current={isUserActive ? 'page' : undefined}
+            aria-label={`User settings for ${displayName}`}
+          >
+            <div className="size-5 shrink-0 overflow-hidden rounded-full border border-[var(--color-border)] bg-[var(--color-border)]">
+              {avatarUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={user.user_metadata['avatar_url'] as string}
-                  alt={user.user_metadata?.['full_name'] as string ?? 'User'}
-                  className="size-full object-cover"
-                />
+                <img src={avatarUrl} alt="" aria-hidden className="size-full object-cover" />
+              ) : (
+                <div className="flex size-full items-center justify-center text-[8px] font-bold">
+                  {displayName.charAt(0).toUpperCase()}
+                </div>
               )}
             </div>
-            <span className="min-w-0 flex-1 truncate">
-              {(user.user_metadata?.['full_name'] as string) ?? user.email}
-            </span>
-          </div>
+            <span className="min-w-0 flex-1 truncate">{displayName}</span>
+          </Link>
         </div>
       </aside>
 
       {/* ── Mobile bottom tab bar (<md) ──────────────────────────────────── */}
-      {/* Getting started + Settings are appended after NAV, so they render as the
-          trailing tabs (5 total — within the 3–5 bottom-tab guideline). */}
       <nav
         className="fixed inset-x-0 bottom-0 z-40 flex border-t border-[var(--color-border)] bg-[var(--color-bg-raised)] md:hidden"
         aria-label="Main navigation"
       >
-        {[...NAV, GETTING_STARTED, SETTINGS].map((item) => {
+        {[...NAV, SETTINGS].map((item) => {
           const { href, icon: Icon } = item;
           const label = 'mobileLabel' in item ? item.mobileLabel : item.label;
           const active = pathname === href || pathname.startsWith(href + '/');
-          const withProgressDot = href === GETTING_STARTED.href && showProgress;
+          const isLearn = href === '/learn';
+          const withProgressDot = isLearn && showProgress;
           return (
             <Link
               key={href}
               href={href}
               prefetch={true}
-              /* 44px minimum touch target — explicit min-h */
               className={[
                 'relative flex flex-1 min-h-[3.5rem] flex-col items-center justify-center gap-1 text-xs transition-all duration-150',
                 active
@@ -173,7 +160,7 @@ export function Sidebar({ user }: SidebarProps) {
               </span>
               <span>{label}</span>
               {withProgressDot && (
-                <span className="sr-only">{`, ${completedCount} of ${total} steps complete`}</span>
+                <span className="sr-only">, setup not yet complete</span>
               )}
             </Link>
           );

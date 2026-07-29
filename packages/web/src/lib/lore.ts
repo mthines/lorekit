@@ -18,9 +18,13 @@ import { ownerFromMemoryRow } from '@/lib/ownership';
 // ── Edit / update ─────────────────────────────────────────────────────────────
 
 export interface UpdateLessonInput {
-  /** The fields to change. Only `value` and `tags` are user-editable in the UI. */
+  /** The fields to change. Only `value`, `tags`, and TTL are user-editable in the UI. */
   value: string;
   tags: string[];
+  /** When set, refreshes the expiry to now() + ttl_days. */
+  ttl_days?: number | null;
+  /** When true, removes any existing expiry (makes the memory permanent). */
+  clear_ttl?: boolean;
 }
 
 /**
@@ -68,6 +72,8 @@ export async function updateLesson(
       p_source_agent: (current as { source_agent: string | null }).source_agent ?? null,
       p_trigger: (current as { trigger: string | null }).trigger ?? null,
       p_created_at: null,
+      p_ttl_days: input.ttl_days ?? null,
+      p_clear_ttl: input.clear_ttl ?? false,
     })
     .single();
 
@@ -196,7 +202,7 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
   // cursor still can't widen past it.
   let base = supabase
     .from('memories')
-    .select('id, scope, key, value, tags, created_at, updated_at, archived_at, source_agent, trigger, org_id, created_by, updated_by, orgs(name, slug)');
+    .select('id, scope, key, value, tags, created_at, updated_at, archived_at, expires_at, source_agent, trigger, org_id, created_by, updated_by, orgs(name, slug)');
 
   // archived_at filter: active (IS NULL) vs archived (IS NOT NULL).
   if (filters.showArchived) {
@@ -242,6 +248,7 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
       created_at: row.created_at as string,
       updated_at: row.updated_at as string,
       archived_at: (row.archived_at as string | null) ?? null,
+      expires_at: (row.expires_at as string | null) ?? null,
       source_agent: (row.source_agent as string | null) ?? null,
       trigger: (row.trigger as string | null) ?? null,
       org_id: orgId,
