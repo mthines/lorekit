@@ -17,6 +17,7 @@ import { lint } from '../src/lint.mjs';
 import { dedupe } from '../src/dedupe.mjs';
 import { hook } from '../src/hook.mjs';
 import { migrate } from '../src/migrate.mjs';
+import { bootstrap } from '../src/bootstrap.mjs';
 import { mcpServer } from '../src/mcp-server.mjs';
 import { traceCommand } from '../src/telemetry.mjs';
 import { loadDotEnv } from '../src/dotenv.mjs';
@@ -73,6 +74,9 @@ ${c.bold('Commands')}
   dedupe      Find likely-duplicate memories via a zero-dep word-overlap HEURISTIC
               (Jaccard >= threshold, not semantic), grouped into clusters per
               store. --json, --scope <s>, --threshold <0..1>.
+  bootstrap   Apply the BYOD schema to a user-supplied Supabase database.
+              Only needed when using LOREKIT_STORAGE_URL / LOREKIT_STORAGE_ANON_KEY.
+              See docs/byod.md for setup instructions.
   migrate     Relocate a LoreKit-format local store into the current layout.
               Dry-run by default; pass --yes to apply. Idempotent.
   hook        Hook engine for Claude Code / Cursor / Codex. Reads the host's
@@ -476,7 +480,7 @@ const KNOWN_FLAGS = [
 // reject unknown flags; the machine-facing `hook` / `mcp` do not (they must
 // never fail on a stray flag, and only ever receive flags we control).
 const HUMAN_COMMANDS = new Set([
-  'install', 'uninstall', 'doctor', 'list', 'search', 'show', 'stats', 'scopes',
+  'install', 'uninstall', 'doctor', 'bootstrap', 'list', 'search', 'show', 'stats', 'scopes',
   'diff', 'tree', 'lint', 'dedupe', 'migrate',
 ]);
 
@@ -569,6 +573,8 @@ async function main() {
       return traceCommand('lint', args, VERSION, () => lint(args));
     case 'dedupe':
       return traceCommand('dedupe', args, VERSION, () => dedupe(args));
+    case 'bootstrap':
+      return traceCommand('bootstrap', args, VERSION, () => bootstrap(args));
     case 'migrate':
       return traceCommand('migrate', args, VERSION, () => migrate(args));
     default:

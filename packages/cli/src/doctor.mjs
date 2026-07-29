@@ -79,7 +79,10 @@ export async function doctor(args) {
     await checkRemote(control, root, args, record);
   }
 
-  // 5. Scope.
+  // 5. BYOD storage connectivity check.
+  await checkBYODStorage(record);
+
+  // 6. Scope.
   const scope = deriveScope(root);
   if (scope.hasRemote) {
     log('');
@@ -89,7 +92,7 @@ export async function doctor(args) {
     record('warn', 'scope', 'no git remote here — memories fall back to global');
   }
 
-  // 6. Hook instructions — show resolved per-event custom instructions when any are set.
+  // 7. Hook instructions — show resolved per-event custom instructions when any are set.
   {
     const instr = control.hooksInstructions || {};
     const EVENTS = ['SessionStart', 'PostToolUseFailure', 'Stop'];
@@ -106,7 +109,7 @@ export async function doctor(args) {
     }
   }
 
-  // 7. doctor.require — committed list of checks that MUST pass.
+  // 8. doctor.require — committed list of checks that MUST pass.
   //    Useful as a CI gate: any check in the list that did not pass causes a failure.
   const lorekitJson = readLorekitJson(root);
   const required = (Array.isArray(lorekitJson['doctor.require']) ? lorekitJson['doctor.require'] : [])
@@ -288,6 +291,46 @@ async function deepCheckLocal(store, scope, record) {
     readBack ? `wrote + read back in ${writeScope}` : 'write/read-back was inconclusive',
   );
   await store.delete({ scope: writeScope, key, force: true });
+}
+
+async function checkBYODStorage(record) {
+  const storageUrl = process.env['LOREKIT_STORAGE_URL'];
+  const storageAnonKey = process.env['LOREKIT_STORAGE_ANON_KEY'];
+
+  if (!storageUrl && !storageAnonKey) {
+    // No BYOD configured — skip silently (not an error, just not applicable).
+    return;
+  }
+
+  if (storageUrl && !storageAnonKey) {
+    record('fail', 'byod storage', 'LOREKIT_STORAGE_URL is set but LOREKIT_STORAGE_ANON_KEY is missing');
+    return;
+  }
+
+  if (!storageUrl && storageAnonKey) {
+    record('fail', 'byod storage', 'LOREKIT_STORAGE_ANON_KEY is set but LOREKIT_STORAGE_URL is missing');
+    return;
+  }
+
+  // Both are set — try to connect and do a simple read.
+  try {
+    // Dynamic import so the main doctor path stays zero-dependency when BYOD is unused.
+    const { createClient } = await import('@supabase/supabase-js');
+    const db = createClient(storageUrl, storageAnonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
+    const { error } = await db.from('memories').select('id').limit(1);
+    if (!error) {
+      record('pass', 'byod storage', 'storage ok');
+    } else if (error.code === '42P01') {
+      record('fail', 'byod storage', 'schema not applied — run `lorekit bootstrap`');
+    } else {
+      record('fail', 'byod storage', `storage error: ${error.message}`);
+    }
+  } catch (e) {
+    record('fail', 'byod storage', `storage error: ${e && e.message ? e.message : String(e)}`);
+  }
 }
 
 function gitTracked(root, dir) {
