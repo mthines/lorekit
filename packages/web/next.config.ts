@@ -47,13 +47,23 @@ const nextConfig: NextConfig = {
     // If the user visits the branch alias (e.g. lorekit-git-feat-*) but the
     // OAuth redirectTo points at the deployment URL (lorekit-3zw28wfrv-*),
     // Supabase rejects the callback and the auth fails with "auth_failed".
+    //
+    // Both VERCEL_BRANCH_URL and VERCEL_URL are only populated by Vercel's own
+    // cloud builds / at runtime — NOT during a manual `vercel build` in CI (the
+    // /preview workflow's prebuilt path). When neither is present we must fall
+    // back to '' so LoginButton uses window.location.origin (the actual host the
+    // user is on, where the PKCE code-verifier cookie lives). Building
+    // `https://${undefined}` here would bake a literal "https://undefined" into
+    // the bundle, breaking the OAuth redirectTo and leaving the user logged out.
     NEXT_PUBLIC_VERCEL_URL:
       process.env['VERCEL_ENV'] === 'production'
         ? (process.env['NEXT_PUBLIC_APP_URL'] ?? `https://${process.env['VERCEL_URL']}`)
         : process.env['VERCEL_ENV'] === 'preview'
           ? process.env['VERCEL_BRANCH_URL']
             ? `https://${process.env['VERCEL_BRANCH_URL']}`
-            : `https://${process.env['VERCEL_URL']}`
+            : process.env['VERCEL_URL']
+              ? `https://${process.env['VERCEL_URL']}`
+              : ''
           : '',
 
     // ── VCS resource attributes (OTel semantic conventions) ─────────────────
