@@ -5,6 +5,7 @@
 
 import { type AuthContext, getDb, canWrite, canRead, getUserId, isJwtAuth } from './auth.ts';
 import { UserInputError } from '../_shared/scope.ts';
+import { OrgPermissionError } from './org-permissions.ts';
 import {
   toolWrite,
   toolRead,
@@ -86,19 +87,12 @@ export function jsonrpcError(id: unknown, code: number, message: string): Respon
 }
 
 export async function handleMcp(req: Request, auth: AuthContext, span: Span): Promise<Response> {
-  // The MCP Streamable HTTP server implements protocol version 2024-11-05, which
-  // is POST-only. The newer 2025-03-26 spec introduced GET for opening an SSE
-  // stream for server-to-client notifications — mcp-remote (and other MCP clients
-  // built on that spec) probe for SSE support by sending a GET. We don't support
-  // SSE, so we must answer 405 Method Not Allowed, NOT try to parse a JSON body
-  // (GET has no body, causing the misleading "Unexpected end of JSON input" error).
-  //
-  // This is a normal client probe, not a server fault — use clientError() so the
-  // span is not marked ERROR (OTel: server spans are ERROR only for 5xx faults).
+  // POST-only (protocol 2024-11-05). Modern mcp-remote clients probe for SSE
+  // support with GET; answer 405 before req.json() to avoid the misleading
+  // "Unexpected end of JSON input" parse error. Client probe — use clientError().
   if (req.method !== 'POST') {
     span.clientError(`MethodNotAllowed: ${req.method} is not supported; use POST`).setAttributes({
       'mcp.method': 'unknown',
-      'http.request.method': req.method,
     });
     return new Response(
       JSON.stringify({ error: 'Method Not Allowed. This MCP server uses POST (protocol 2024-11-05). GET/SSE is not supported.' }),
@@ -422,7 +416,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
       // (insufficient role) are client-caused — the server handled them correctly.
       // Use clientError() so spans are NOT marked ERROR (OTel: server spans are
       // ERROR only for 5xx / server-side faults, not 4xx client errors).
-      const isClientError = err instanceof UserInputError || (err as Error).name === 'OrgPermissionError';
+      const isClientError = err instanceof UserInputError || err instanceof OrgPermissionError;
       if (isClientError) {
         toolSpan.clientError(msg).end();
         span.clientError(msg);

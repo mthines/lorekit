@@ -66,10 +66,10 @@ describe('mcp-handler auth status guard', () => {
     // org.* JWT denial + write-missing + read-missing + unknown-tool = 4 clientError calls
     // (the error-path catch uses clientError only for UserInputError/OrgPermissionError, covered separately)
     expect(clientErrors.length).toBeGreaterThanOrEqual(3);
-    // None of the three JSONRPC_FORBIDDEN paths should call .error() (which marks span ERROR)
-    // instead of .clientError(). Check by verifying .error() is not paired with JSONRPC_FORBIDDEN.
-    const forbidden_with_error = block.match(/\.error\([^)]+\)[^;]*\n[^)]*JSONRPC_FORBIDDEN/g) ?? [];
-    expect(forbidden_with_error.length).toBe(0);
+    // None of the authz-denial branches should call .error() (which marks the span ERROR)
+    // instead of .clientError(). The block must contain zero bare .error( calls.
+    const bareErrors = block.match(/\bspan\b[^;]*\.error\(/g) ?? [];
+    expect(bareErrors.length).toBe(0);
   });
 });
 
