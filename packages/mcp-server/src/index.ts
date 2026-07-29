@@ -4,6 +4,7 @@ import './instrumentation.js';
 import { createServer } from 'http';
 import { resolveAuth, sendUnauthorized } from './auth.js';
 import { handleMcpRequest } from './server.js';
+import { resolveStorageAdapter } from '@lorekit/core';
 import { handleGitHubWebhook } from './webhooks/github.js';
 import { logger } from './logger.js';
 
@@ -32,7 +33,8 @@ const httpServer = createServer(async (req, res) => {
       if (!auth) {
         sendUnauthorized(res);
       } else {
-        await handleMcpRequest(req, res, auth, parsedBody);
+        const adapter = resolveStorageAdapter(auth.type === 'user' ? auth.jwt : undefined);
+        await handleMcpRequest(req, res, auth, adapter, parsedBody);
       }
     } else if (url.pathname === '/webhooks/github') {
       // Rebuild a Web API Request for the webhook handler (it only reads headers/body)

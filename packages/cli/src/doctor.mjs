@@ -98,6 +98,9 @@ export async function doctor(args) {
     await checkRemote(control, root, args, record);
   }
 
+  // 4b. BYOD storage connectivity check.
+  await checkBYODStorage(record);
+
   // 5. Scope.
   const scope = deriveScope(root);
   if (scope.hasRemote) {
@@ -349,6 +352,40 @@ function hooksForEvent(hooksObj, event) {
     }
   }
   return commands;
+}
+
+async function checkBYODStorage(record) {
+  const storageUrl = process.env['LOREKIT_STORAGE_URL'];
+  const storageAnonKey = process.env['LOREKIT_STORAGE_ANON_KEY'];
+
+  if (!storageUrl && !storageAnonKey) {
+    return; // No BYOD configured — skip silently.
+  }
+
+  if (storageUrl && !storageAnonKey) {
+    record('fail', 'byod storage', 'LOREKIT_STORAGE_URL is set but LOREKIT_STORAGE_ANON_KEY is missing');
+    return;
+  }
+
+  if (!storageUrl && storageAnonKey) {
+    record('fail', 'byod storage', 'LOREKIT_STORAGE_ANON_KEY is set but LOREKIT_STORAGE_URL is missing');
+    return;
+  }
+
+  try {
+    const { createClient } = await import('@supabase/supabase-js');
+    const db = createClient(storageUrl, storageAnonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { error } = await db.from('memories').select('id').limit(1);
+    if (error && error.code !== '42P01') {
+      record('fail', 'byod storage', `connectivity error: ${error.message}`);
+    } else {
+      record('pass', 'byod storage', `ok — ${storageUrl}`);
+    }
+  } catch (e) {
+    record('fail', 'byod storage', `could not connect: ${e && e.message ? e.message : String(e)}`);
+  }
 }
 
 function gitTracked(root, dir) {
