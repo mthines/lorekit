@@ -22,6 +22,7 @@
 
 import { z } from 'npm:zod@3';
 import { badRequest } from './respond.ts';
+import { validateScope as validateScopeStr } from '../scope.ts';
 
 export type ValidationResult<T> =
   | { ok: true; data: T }
@@ -129,4 +130,16 @@ export function extractPathSegments(req: Request, prefix: string): string[] {
   const path = url.pathname;
   const after = path.startsWith(prefix) ? path.slice(prefix.length) : path;
   return after.split('/').filter(Boolean);
+}
+
+/**
+ * Validate and normalize a scope string.
+ * Returns 400 with a descriptive error if the scope is invalid.
+ */
+export function validateScope(raw: string): ValidationResult<string> {
+  try {
+    return { ok: true, data: validateScopeStr(raw) };
+  } catch (err) {
+    return { ok: false, error: badRequest((err as Error).message) };
+  }
 }
