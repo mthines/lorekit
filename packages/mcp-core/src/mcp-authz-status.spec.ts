@@ -57,6 +57,45 @@ describe('mcp-handler auth status guard', () => {
     expect(forbidden.length).toBe(3); // org.* JWT, write-missing, read-missing
     expect(block).not.toMatch(/jsonrpcError\(\s*id,\s*-32001/);
   });
+
+  it('uses clientError() (not error()) for every authz denial in tools/call so spans are not marked ERROR', () => {
+    // Authz denials are client-caused — the server handled them correctly.
+    // OTel semantic conventions: server spans are ERROR only for 5xx / server-side faults.
+    const block = blockAfter(handler, "method === 'tools/call'", 'tools/call block');
+    const clientErrors = block.match(/\.clientError\(/g) ?? [];
+    // org.* JWT denial + write-missing + read-missing + unknown-tool = 4 clientError calls
+    // (the error-path catch uses clientError only for UserInputError/OrgPermissionError, covered separately)
+    expect(clientErrors.length).toBeGreaterThanOrEqual(3);
+    // The authz-denial checks all run BEFORE the tool-dispatch try/catch.
+    // Slice the block up to the first `try {` that wraps the actual tool call
+    // and assert that no bare span.error( appears in that pre-dispatch section
+    // (the catch block legitimately uses span.error() for real server faults).
+    const preTry = block.slice(0, block.indexOf('\n    try {'));
+    const bareErrors = preTry.match(/\bspan\b[^;]*\.error\(/g) ?? [];
+    expect(bareErrors.length).toBe(0);
+  });
+});
+
+describe('mcp-handler GET guard', () => {
+  it('intercepts non-POST requests with 405 before trying to parse JSON, using clientError()', () => {
+    // GET is used by modern mcp-remote clients probing for SSE support (MCP 2025-03-26 spec).
+    // The server implements 2024-11-05 (POST-only). Without this guard, GET hits req.json()
+    // which throws "Unexpected end of JSON input" — a misleading 400, not the correct 405.
+    // The guard must use clientError() (not error()) so the span is not marked ERROR.
+    expect(handler).toMatch(/req\.method !== 'POST'/);
+    expect(handler).toMatch(/status: 405/);
+    expect(handler).toMatch(/Allow: 'POST'/);
+    // The guard must appear BEFORE req.json() — check it's before the try/catch for body parsing
+    const getGuardIdx = handler.indexOf("req.method !== 'POST'");
+    const jsonParseIdx = handler.indexOf('body = await req.json()');
+    expect(getGuardIdx).toBeGreaterThan(-1);
+    expect(jsonParseIdx).toBeGreaterThan(-1);
+    expect(getGuardIdx).toBeLessThan(jsonParseIdx);
+    // Must use clientError() not error() — GET is a client probe, not a server fault
+    const guardBlock = handler.slice(getGuardIdx, jsonParseIdx);
+    expect(guardBlock).toMatch(/\.clientError\(/);
+    expect(guardBlock).not.toMatch(/\.error\(/);
+  });
 });
 
 describe('index.ts auth-failure guard', () => {

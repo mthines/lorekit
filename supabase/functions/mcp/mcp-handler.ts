@@ -4,6 +4,8 @@
  */
 
 import { type AuthContext, getDb, canWrite, canRead, getUserId, isJwtAuth } from './auth.ts';
+import { UserInputError } from '../_shared/scope.ts';
+import { OrgPermissionError } from './org-permissions.ts';
 import {
   toolWrite,
   toolRead,
@@ -85,12 +87,30 @@ export function jsonrpcError(id: unknown, code: number, message: string): Respon
 }
 
 export async function handleMcp(req: Request, auth: AuthContext, span: Span): Promise<Response> {
+  // POST-only (protocol 2024-11-05). Modern mcp-remote clients probe for SSE
+  // support with GET; answer 405 before req.json() to avoid the misleading
+  // "Unexpected end of JSON input" parse error. Client probe — use clientError().
+  if (req.method !== 'POST') {
+    span.clientError(`MethodNotAllowed: ${req.method} is not supported; use POST`).setAttributes({
+      'mcp.method': 'unknown',
+    });
+    return new Response(
+      JSON.stringify({ error: 'Method Not Allowed. This MCP server uses POST (protocol 2024-11-05). GET/SSE is not supported.' }),
+      {
+        status: 405,
+        headers: { 'Content-Type': 'application/json', Allow: 'POST' },
+      },
+    );
+  }
+
   let body: { id?: unknown; method?: string; params?: Params };
   try {
     body = await req.json();
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    span.error(`ParseError: invalid JSON body — ${detail}`).setAttributes({ 'mcp.method': 'unknown', 'error.message': detail });
+    // Client sent malformed JSON — not a server fault. Use clientError() so the
+    // span is not marked ERROR (OTel: server spans are ERROR only for 5xx faults).
+    span.clientError(`ParseError: invalid JSON body — ${detail}`).setAttributes({ 'mcp.method': 'unknown' });
     return jsonrpcError(null, -32700, `Parse error: ${detail}`);
   }
 
@@ -274,7 +294,8 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
     const toolArgs = params.arguments ?? {};
 
     if (!ALL_TOOL_NAMES.has(toolName)) {
-      span.error(`UnknownTool: ${toolName}`).setAttributes({ 'mcp.tool.name': toolName ?? 'unknown' });
+      // Client requested a non-existent tool — not a server fault.
+      span.clientError(`UnknownTool: ${toolName}`).setAttributes({ 'mcp.tool.name': toolName ?? 'unknown' });
       return jsonrpcError(id, -32601, `Unknown tool: ${toolName}`);
     }
 
@@ -289,8 +310,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
       // must be JSONRPC_FORBIDDEN (HTTP 200), never -32001 (HTTP 401), or the
       // MCP client hangs. See jsonrpcError().
       if (!isJwtAuth(auth)) {
+        // Authorization denial — the caller authenticated but lacks the right
+        // auth type. Not a server fault; use clientError() so the span is not
+        // marked ERROR (OTel: server spans are ERROR only for 5xx faults).
         span
-          .error('PermissionDenied: org.* requires JWT auth')
+          .clientError('PermissionDenied: org.* requires JWT auth')
           .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'jwt_required' });
         return jsonrpcError(
           id,
@@ -304,14 +328,20 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
       // Authenticated-but-insufficient-scope → JSONRPC_FORBIDDEN (HTTP 200).
       const requiredPermission = toolRequires(toolName as keyof typeof MEMORY_TOOLS);
       if (requiredPermission === 'write' && !canWrite(auth)) {
+        // Token scope denial — caller authenticated but the token lacks write
+        // permission. Not a server fault; use clientError() so the span is not
+        // marked ERROR (OTel: server spans are ERROR only for 5xx faults).
         span
-          .error('PermissionDenied: read-only token')
+          .clientError('PermissionDenied: read-only token')
           .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'write_permission_missing' });
         return jsonrpcError(id, JSONRPC_FORBIDDEN, 'This token does not have write permission. Use a read+write (lk_rw_) or write-only (lk_wo_) token.');
       }
       if (requiredPermission === 'read' && !canRead(auth)) {
+        // Token scope denial — caller authenticated but the token lacks read
+        // permission. Not a server fault; use clientError() so the span is not
+        // marked ERROR (OTel: server spans are ERROR only for 5xx faults).
         span
-          .error('PermissionDenied: write-only token')
+          .clientError('PermissionDenied: write-only token')
           .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'read_permission_missing' });
         return jsonrpcError(id, JSONRPC_FORBIDDEN, 'This token does not have read permission. Use a read+write (lk_rw_) or read-only (lk_ro_) token.');
       }
@@ -381,8 +411,19 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
       const msg = `${(err as Error).name}: ${(err as Error).message}`;
       const durationMs = Date.now() - toolStartMs;
       toolSpan.setAttributes({ 'lorekit.duration_ms': durationMs });
-      toolSpan.error(msg).end();
-      span.error(msg);
+
+      // UserInputError (bad scope, missing required arg) and OrgPermissionError
+      // (insufficient role) are client-caused — the server handled them correctly.
+      // Use clientError() so spans are NOT marked ERROR (OTel: server spans are
+      // ERROR only for 5xx / server-side faults, not 4xx client errors).
+      const isClientError = err instanceof UserInputError || err instanceof OrgPermissionError;
+      if (isClientError) {
+        toolSpan.clientError(msg).end();
+        span.clientError(msg);
+      } else {
+        toolSpan.error(msg).end();
+        span.error(msg);
+      }
 
       // Record failure usage event (fire-and-forget) — distinguishes cap hits
       // from generic errors in plan-sizing analytics.
@@ -410,6 +451,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
     }
   }
 
-  span.error(`MethodNotFound: ${method}`);
+  // Unknown method — client sent an unsupported JSON-RPC method, not a server fault.
+  span.clientError(`MethodNotFound: ${method}`);
   return jsonrpcError(id, -32601, `Method not found: ${method}`);
 }

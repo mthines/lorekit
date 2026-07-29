@@ -271,6 +271,22 @@ export class Span {
     return this;
   }
 
+  /**
+   * Record a client-caused problem (bad input, missing auth, wrong scope, etc.)
+   * WITHOUT marking the span status as ERROR. The service handled the request
+   * correctly — the fault lies with the caller.
+   *
+   * Use this instead of `.error()` whenever the response would be a 4xx or an
+   * in-band JSON-RPC error caused by the caller's input (e.g. invalid scope,
+   * invalid JSON body, insufficient token permissions). Per the OTel semantic
+   * conventions, server spans should only carry status=ERROR for server-side
+   * faults, not for client errors.
+   */
+  clientError(message: string): this {
+    this.attributes['error.message'] = message;
+    return this;
+  }
+
   /** End the span and add it to the batch. */
   end(): void {
     this.batch.add({
