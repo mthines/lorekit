@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 import { handleSetupReturn } from '@/lib/github-installations';
+import { withSpan, logger, SpanKind, SpanStatusCode } from '@/lib/telemetry';
 
 /**
  * Auth callback route — handles two flows:
@@ -29,40 +30,69 @@ export async function GET(request: NextRequest) {
   const setupAction = searchParams.get('setup_action');
   const state = searchParams.get('state') ?? undefined;
 
-  // 1. OAuth code exchange — always attempt first so the session is established
-  //    before the GitHub App association below.
-  if (code) {
-    const supabase = await createServerClient();
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
-    if (error) {
+  return withSpan(
+    'lorekit.auth.callback',
+    {
+      'auth.callback.has_code': !!code,
+      'auth.callback.has_installation_id': !!rawInstallationId,
+      'auth.callback.next': next,
+    },
+    async (span) => {
+      // 1. OAuth code exchange — always attempt first so the session is established
+      //    before the GitHub App association below.
+      if (code) {
+        const supabase = await createServerClient();
+        const { error, data } = await supabase.auth.exchangeCodeForSession(code);
+        if (!error) {
+          span.setAttribute('auth.callback.outcome', 'success');
+          span.setAttribute('auth.user_id', data.user?.id ?? 'unknown');
+          span.setAttribute('auth.provider', data.user?.app_metadata?.['provider'] ?? 'unknown');
+          logger.info('auth.callback.success', {
+            'auth.provider': data.user?.app_metadata?.['provider'] ?? 'unknown',
+          });
+        } else {
+          span.setAttribute('auth.callback.outcome', 'exchange_failed');
+          span.setAttribute('auth.error_code', error.code ?? error.name);
+          span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+          logger.warn('auth.callback.exchange_failed', {
+            'auth.error_code': error.code ?? error.name,
+            'error.message': error.message,
+          });
+          return NextResponse.redirect(`${origin}/login?error=auth_failed`);
+        }
+      }
+
+      // 2. GitHub App Setup-URL: associate the installation with the session.
+      //    Only proceed when installation_id is present and looks like a number.
+      //    Note: setup_action is required alongside installation_id per the GitHub
+      //    App Setup-URL spec.  If it is absent, we skip the association (the
+      //    webhook reconcile will link the installation when the event arrives).
+      if (rawInstallationId && setupAction) {
+        const installationId = Number(rawInstallationId);
+        if (Number.isFinite(installationId) && installationId > 0) {
+          span.setAttribute('auth.callback.installation_id', installationId);
+          // handleSetupReturn is safe to call even if the user is not yet linked
+          // (pending installs stay pending until a matching identity is found).
+          // Errors here are non-fatal — we still redirect to the settings page.
+          await handleSetupReturn(installationId, setupAction, state).catch(() => {
+            // Non-fatal: the webhook delivery will reconcile the installation later.
+          });
+
+          // Redirect to the webhooks settings page so the user can see the result.
+          return NextResponse.redirect(`${origin}/settings/webhooks`);
+        }
+      }
+
+      // Standard OAuth redirect (or fallback when no installation_id present).
+      if (code) {
+        return NextResponse.redirect(`${origin}${next}`);
+      }
+
+      span.setAttribute('auth.callback.outcome', 'no_code');
+      span.setStatus({ code: SpanStatusCode.ERROR, message: 'no auth code in callback' });
+      logger.warn('auth.callback.no_code', {});
       return NextResponse.redirect(`${origin}/login?error=auth_failed`);
-    }
-  }
-
-  // 2. GitHub App Setup-URL: associate the installation with the session.
-  //    Only proceed when installation_id is present and looks like a number.
-  //    Note: setup_action is required alongside installation_id per the GitHub
-  //    App Setup-URL spec.  If it is absent, we skip the association (the
-  //    webhook reconcile will link the installation when the event arrives).
-  if (rawInstallationId && setupAction) {
-    const installationId = Number(rawInstallationId);
-    if (Number.isFinite(installationId) && installationId > 0) {
-      // handleSetupReturn is safe to call even if the user is not yet linked
-      // (pending installs stay pending until a matching identity is found).
-      // Errors here are non-fatal — we still redirect to the settings page.
-      await handleSetupReturn(installationId, setupAction, state).catch(() => {
-        // Non-fatal: the webhook delivery will reconcile the installation later.
-      });
-
-      // Redirect to the webhooks settings page so the user can see the result.
-      return NextResponse.redirect(`${origin}/settings/webhooks`);
-    }
-  }
-
-  // Standard OAuth redirect (or fallback when no installation_id present).
-  if (code) {
-    return NextResponse.redirect(`${origin}${next}`);
-  }
-
-  return NextResponse.redirect(`${origin}/login?error=auth_failed`);
+    },
+    SpanKind.SERVER,
+  );
 }
