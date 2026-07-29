@@ -120,13 +120,11 @@ export async function handleSetupReturn(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: 'not_authenticated' };
 
-  // Resolve the user's GitHub account id from their identity metadata.
-  // The GitHub OAuth provider stores the numeric id in provider_id /
-  // raw_app_meta_data.provider_id.  We use app_metadata via the admin API;
-  // in the dashboard context we can read it from the session user object.
-  const githubProviderData = user.app_metadata?.providers?.includes('github')
-    ? user.identities?.find((identity) => identity.provider === 'github')
-    : undefined;
+  // Resolve the user's GitHub account id from their GitHub identity.
+  // user.identities contains one entry per linked OAuth provider; look for the
+  // github entry directly rather than checking app_metadata.providers (which
+  // may be absent for single-provider GitHub-only users).
+  const githubProviderData = user.identities?.find((identity) => identity.provider === 'github');
 
   if (!githubProviderData) {
     // The user hasn't signed in via GitHub — cannot auto-associate.

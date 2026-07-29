@@ -41,6 +41,9 @@ export async function GET(request: NextRequest) {
 
   // 2. GitHub App Setup-URL: associate the installation with the session.
   //    Only proceed when installation_id is present and looks like a number.
+  //    Note: setup_action is required alongside installation_id per the GitHub
+  //    App Setup-URL spec.  If it is absent, we skip the association (the
+  //    webhook reconcile will link the installation when the event arrives).
   if (rawInstallationId && setupAction) {
     const installationId = Number(rawInstallationId);
     if (Number.isFinite(installationId) && installationId > 0) {
