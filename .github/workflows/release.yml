@@ -171,7 +171,7 @@ jobs:
   #    webhook secret is unset the action itself no-ops with a warning. The failed
   #    stage flows through `env:` (never interpolated) to avoid script injection.
   notify-failure:
-    name: Notify Discord on failure
+    name: Notify on failure (Discord + Dash0)
     runs-on: ubuntu-latest
     needs: [release-please, publish-cli]
     if: always() && contains(needs.*.result, 'failure')
@@ -199,4 +199,10 @@ jobs:
           webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
           username: LoreKit Release
           title: '🔴 Release workflow failed'
+          failed-stage: ${{ steps.stage.outputs.failed }}
+
+      - name: Post failure event to Dash0
+        uses: ./.github/actions/dash0-notify
+        with:
+          webhook-url: ${{ secrets.DASH0_WEBHOOK_URL }}
           failed-stage: ${{ steps.stage.outputs.failed }}

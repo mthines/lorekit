@@ -351,7 +351,7 @@ jobs:
   #    stage failed and passes it in. The stage name is derived via `env:` (never
   #    interpolated into the shell) to avoid workflow script injection.
   notify-failure:
-    name: Notify Discord on failure
+    name: Notify on failure (Discord + Dash0)
     runs-on: ubuntu-latest
     needs: [deploy-preview, smoke-preview, deploy-production, smoke-production, rollback-production]
     if: always() && contains(needs.*.result, 'failure')
@@ -387,4 +387,10 @@ jobs:
           webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
           username: LoreKit Deploy
           title: '🔴 Production deploy failed'
+          failed-stage: ${{ steps.stage.outputs.failed }}
+
+      - name: Post failure event to Dash0
+        uses: ./.github/actions/dash0-notify
+        with:
+          webhook-url: ${{ secrets.DASH0_WEBHOOK_URL }}
           failed-stage: ${{ steps.stage.outputs.failed }}
