@@ -1,0 +1,22 @@
+{
+  "name": "@lorekit/schemas",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./scope": "./src/scope.ts",
+    "./common": "./src/common.ts",
+    "./memory": "./src/memory.ts",
+    "./org": "./src/org.ts",
+    "./member": "./src/member.ts",
+    "./invite": "./src/invite.ts",
+    "./openapi/spec": "./src/openapi/spec.ts"
+  },
+  "dependencies": {
+    "zod": "^3.0.0"
+  },
+  "devDependencies": {
+    "@asteasolutions/zod-to-openapi": "^7.0.0"
+  }
+}

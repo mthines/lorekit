@@ -1,0 +1,7 @@
+{
+  "imports": {
+    "zod": "npm:zod@3",
+    "@lorekit/schemas": "../../packages/schemas/src/index.ts",
+    "@lorekit/schemas/": "../../packages/schemas/src/"
+  }
+}

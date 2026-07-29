@@ -65,6 +65,15 @@ verify_jwt = false
 [functions.health]
 verify_jwt = false
 
+[functions.api-memories]
+verify_jwt = false
+
+[functions.api-orgs]
+verify_jwt = false
+
+[functions.api-openapi]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
