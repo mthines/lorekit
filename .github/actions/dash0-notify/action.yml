@@ -1,0 +1,74 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Dash0 failure notification — one place that knows HOW to POST a CI-failure
+# event to a Dash0 Agent0 automation trigger webhook. Each workflow decides WHAT
+# failed (the human-readable stage name) and passes it in; this action builds the
+# JSON event body and posts it. The automation's unique trigger URL carries its
+# own secret key in the path, so the URL itself IS the credential — there is no
+# separate auth header.
+#
+# It is a no-op-safe primitive: if `webhook-url` is empty (the DASH0_WEBHOOK_URL
+# secret is unset) it warns and exits 0 — the underlying failure is already
+# reported loudly by the job that broke, so a missing webhook must never turn a
+# notification into a second, misleading red X.
+#
+# The event body carries a deep link to the failed run, the repository, branch,
+# workflow, short commit SHA, and who triggered it. All values flow through `env:`
+# and jq --arg (never interpolated into the shell) to avoid script injection.
+# ─────────────────────────────────────────────────────────────────────────────
+name: Dash0 failure notification
+description: POST a CI-failure event (deep link + run info) to a Dash0 Agent0 trigger webhook; no-op when the webhook URL is empty.
+
+inputs:
+  webhook-url:
+    description: Dash0 Agent0 automation trigger URL. When empty, the action warns and no-ops (never fails the run).
+    required: true
+  failed-stage:
+    description: Human-readable name of the stage that failed, e.g. "smoke test → production".
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Post failure event to Dash0
+      shell: bash
+      env:
+        DASH0_WEBHOOK_URL: ${{ inputs.webhook-url }}
+        FAILED_STAGE: ${{ inputs.failed-stage }}
+        WORKFLOW: ${{ github.workflow }}
+        COMMIT_SHA: ${{ github.sha }}
+        ACTOR: ${{ github.actor }}
+        REPO: ${{ github.repository }}
+        REF: ${{ github.ref_name }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+      run: |
+        if [ -z "$DASH0_WEBHOOK_URL" ]; then
+          echo "::warning::DASH0_WEBHOOK_URL is not set — skipping Dash0 notification. Add it under Settings ▸ Secrets and variables ▸ Actions."
+          exit 0
+        fi
+
+        jq -n \
+          --arg workflow "$WORKFLOW" \
+          --arg failed "$FAILED_STAGE" \
+          --arg sha "$COMMIT_SHA" \
+          --arg actor "$ACTOR" \
+          --arg url "$RUN_URL" \
+          --arg repo "$REPO" \
+          --arg ref "$REF" \
+          --arg commit_url "$COMMIT_URL" \
+          '{
+            event: "ci_failure",
+            workflow: $workflow,
+            failed_stage: $failed,
+            repository: $repo,
+            branch: $ref,
+            commit: $sha[0:7],
+            commit_url: $commit_url,
+            run_url: $url,
+            triggered_by: $actor,
+            summary: "\($workflow) failed at stage: \($failed) (\($repo)@\($sha[0:7]), branch \($ref)). Run: \($url)"
+          }' \
+        | curl -sS --fail-with-body -X POST "$DASH0_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d @-
+        echo "Dash0 failure notification sent (workflow: $WORKFLOW, failed stage: $FAILED_STAGE)."
