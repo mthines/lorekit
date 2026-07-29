@@ -83,11 +83,17 @@ export async function deleteMemory(
         return { deleted: row.deleted, archived: row.archived };
       } else if (input.force) {
         // Hard delete — immediate, irreversible.
-        const { error, count } = await db
+        // Scope the query to the owning user when a userId is known: without
+        // this filter a service-role client would match any user's row with the
+        // same (scope, key), leaking cross-user destructive access.
+        let deleteQuery = db
           .from('memories')
           .delete({ count: 'exact' })
           .eq('scope', input.scope)
           .eq('key', input.key);
+        if (userId) deleteQuery = deleteQuery.eq('user_id', userId);
+
+        const { error, count } = await deleteQuery;
 
         if (error) throw error;
         const deleted = (count ?? 0) > 0;
@@ -108,12 +114,16 @@ export async function deleteMemory(
         return { deleted, archived: false };
       } else {
         // Soft-archive — set archived_at, hide from normal reads.
-        const { error, count } = await db
+        // Same ownership guard as the force-delete branch above.
+        let archiveQuery = db
           .from('memories')
           .update({ archived_at: new Date().toISOString() }, { count: 'exact' })
           .eq('scope', input.scope)
           .eq('key', input.key)
           .is('archived_at', null);
+        if (userId) archiveQuery = archiveQuery.eq('user_id', userId);
+
+        const { error, count } = await archiveQuery;
 
         if (error) throw error;
         const archived = (count ?? 0) > 0;

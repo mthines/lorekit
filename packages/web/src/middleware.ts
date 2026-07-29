@@ -5,6 +5,19 @@ import { NextResponse, type NextRequest } from 'next/server';
  *  outlives the access token and the refresh token can be used. */
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24;
 
+/**
+ * Validate that a `?next=` redirect target is a safe relative path.
+ *
+ * Accepts paths that start with `/` but not `//` (scheme-relative URLs such as
+ * `//evil.com` would be followed by browsers as an absolute URL and are an
+ * open-redirect vector). Falls back to `/dashboard` for anything invalid.
+ */
+function safeNextPath(raw: string | null, fallback = '/dashboard'): string {
+  if (!raw) return fallback;
+  if (raw.startsWith('/') && !raw.startsWith('//')) return raw;
+  return fallback;
+}
+
 export async function middleware(request: NextRequest) {
   // Short-circuit OPTIONS preflights before hitting any auth logic.
   //
@@ -89,8 +102,10 @@ export async function middleware(request: NextRequest) {
   // Redirect authenticated users away from /login. Honour the ?next= param so
   // a logged-in user landing on /login?next=/lore/xyz is sent to their intended
   // destination rather than unconditionally to /dashboard.
+  // safeNextPath rejects scheme-relative URLs (//evil.com) and absolute URLs
+  // that would otherwise bypass the same-origin constraint.
   if (user && request.nextUrl.pathname === '/login') {
-    const next = request.nextUrl.searchParams.get('next') ?? '/dashboard';
+    const next = safeNextPath(request.nextUrl.searchParams.get('next'));
     return NextResponse.redirect(new URL(next, request.url));
   }
 
