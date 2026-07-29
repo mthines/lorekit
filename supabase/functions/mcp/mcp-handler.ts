@@ -4,6 +4,7 @@
  */
 
 import { type AuthContext, getDb, canWrite, canRead, getUserId, isJwtAuth } from './auth.ts';
+import { type StorageAdapter } from './storage-adapter.ts';
 import { UserInputError } from '../_shared/scope.ts';
 import { OrgPermissionError } from './org-permissions.ts';
 import {
@@ -86,7 +87,7 @@ export function jsonrpcError(id: unknown, code: number, message: string): Respon
   );
 }
 
-export async function handleMcp(req: Request, auth: AuthContext, span: Span): Promise<Response> {
+export async function handleMcp(req: Request, auth: AuthContext, span: Span, adapter: StorageAdapter): Promise<Response> {
   // POST-only (protocol 2024-11-05). Modern mcp-remote clients probe for SSE
   // support with GET; answer 405 before req.json() to avoid the misleading
   // "Unexpected end of JSON input" parse error. Client probe — use clientError().
@@ -359,7 +360,23 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
 
     // Hoist db above try/catch so the error path can record usage events
     // without re-calling getDb.
-    const db = getDb(auth);
+    // When BYOD is configured, route all tool-call DB operations to the user's
+    // own Supabase project. For hosted mode, derive a correctly-scoped client
+    // from the auth context (JWT → user RLS, api_key → service-role).
+    //
+    // LIMITATION — BYOD + JWT auth: when BYOD mode is active the adapter.db
+    // client is built at startup with the LOREKIT_STORAGE_SERVICE_KEY (or the
+    // anon key as fallback). A BYOD caller that authenticates via a Supabase JWT
+    // does NOT get a per-user-scoped client — the JWT is consumed by *this*
+    // hosted function for rate-limiting / auth, but the downstream BYOD database
+    // receives the service-key (or anon-key) client, not a JWT-forwarded one.
+    // RLS on the BYOD database therefore runs as service role (all rows visible)
+    // or anon (policy-dependent), never as the individual JWT user.
+    // BYOD users must rely on application-level data isolation in their own
+    // Supabase project. If per-user RLS is required, configure the BYOD database
+    // to treat service-role writes as trusted and enforce isolation via a
+    // user_id column rather than auth.uid()-based policies.
+    const db = adapter.mode === 'byod' ? adapter.db : getDb(auth);
     // toolUserId: null for JWT auth (RLS handles scoping), api_key userId otherwise.
     // analyticsUserId: the resolved user ID for usage-event annotation regardless of auth type.
     const toolUserId = getUserId(auth);
@@ -394,7 +411,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
       toolSpan.end();
 
       // Record successful usage event (fire-and-forget).
-      if (auth.type !== 'service' && analyticsUserId) {
+      if (auth.type !== 'service' && analyticsUserId && adapter.supportsHostedBilling) {
         recordUsageEvent(db, {
           userId: analyticsUserId,
           planName,
@@ -427,7 +444,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
 
       // Record failure usage event (fire-and-forget) — distinguishes cap hits
       // from generic errors in plan-sizing analytics.
-      if (auth.type !== 'service' && analyticsUserId) {
+      if (auth.type !== 'service' && analyticsUserId && adapter.supportsHostedBilling) {
         const outcome = err instanceof LimitError && err.code === 'memory_cap'
           ? 'cap_exceeded'
           : 'error';
