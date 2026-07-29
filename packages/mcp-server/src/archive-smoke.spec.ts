@@ -37,8 +37,6 @@ vi.mock('@lorekit/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@lorekit/core')>();
   return {
     ...actual,
-    createServiceClient: vi.fn(() => ({})),
-    createUserClient:    vi.fn(() => ({})),
     archiveMemory:  mockArchiveMemory,
     restoreMemory:  mockRestoreMemory,
     listArchived:   mockListArchived,
@@ -55,13 +53,19 @@ vi.mock('@lorekit/core', async (importOriginal) => {
 import { createMcpServer } from './server.js';
 
 const SERVICE_AUTH = { type: 'service' as const };
+const MOCK_ADAPTER = {
+  db: {} as import('@lorekit/core').StorageAdapter['db'],
+  supportsRateLimit: false,
+  supportsHostedBilling: false,
+  mode: 'hosted' as const,
+};
 
 // ── helper ────────────────────────────────────────────────────────────────────
 async function callTool(
   toolName: string,
   args: Record<string, unknown>,
 ): Promise<unknown> {
-  const server = createMcpServer(SERVICE_AUTH);
+  const server = createMcpServer(SERVICE_AUTH, MOCK_ADAPTER);
 
   const { InMemoryTransport } = await import('@modelcontextprotocol/sdk/inMemory.js');
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
