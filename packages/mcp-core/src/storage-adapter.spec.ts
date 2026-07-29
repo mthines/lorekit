@@ -25,6 +25,7 @@ describe('createHostedAdapter', () => {
     expect(adapter.mode).toBe('hosted');
     expect(adapter.supportsHostedBilling).toBe(true);
     expect(adapter.supportsRateLimit).toBe(true);
+    expect(adapter.db).not.toBeNull();
   });
 });
 
@@ -34,6 +35,7 @@ describe('createBYODAdapter', () => {
     expect(adapter.mode).toBe('byod');
     expect(adapter.supportsHostedBilling).toBe(false);
     expect(adapter.supportsRateLimit).toBe(false);
+    expect(adapter.db).not.toBeNull();
   });
 });
 
