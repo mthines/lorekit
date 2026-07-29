@@ -22,11 +22,13 @@ LOREKIT_STORAGE_SERVICE_KEY=your-service-role-key \
 lorekit bootstrap
 ```
 
-Or apply the SQL file directly:
+If the CLI is not installed, apply the schema directly with psql:
 
 ```bash
-psql "$DATABASE_URL" -f node_modules/@lorekit/cli/supabase/byod/bootstrap.sql
+psql "$DATABASE_URL" -f path/to/bootstrap.sql
 ```
+
+Or copy the raw SQL from the [LoreKit repository](https://github.com/mthines/lorekit/blob/main/supabase/byod/bootstrap.sql) and paste it into the Supabase dashboard → SQL Editor.
 
 ### 3. Configure your MCP server
 

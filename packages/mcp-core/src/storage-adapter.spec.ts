@@ -27,6 +27,16 @@ describe('createHostedAdapter', () => {
     expect(adapter.supportsRateLimit).toBe(true);
     expect(adapter.db).not.toBeNull();
   });
+
+  it('throws when no JWT is passed and SUPABASE_SERVICE_ROLE_KEY is empty', () => {
+    process.env['SUPABASE_SERVICE_ROLE_KEY'] = '';
+    expect(() => createHostedAdapter()).toThrow('SUPABASE_SERVICE_ROLE_KEY');
+  });
+
+  it('does NOT throw when a JWT is passed even if SUPABASE_SERVICE_ROLE_KEY is empty', () => {
+    process.env['SUPABASE_SERVICE_ROLE_KEY'] = '';
+    expect(() => createHostedAdapter('some-jwt')).not.toThrow();
+  });
 });
 
 describe('createBYODAdapter', () => {

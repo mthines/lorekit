@@ -26,6 +26,7 @@ import { resolveAuth, getDb } from './auth.ts';
 import { handleMcp, jsonrpcError } from './mcp-handler.ts';
 import { handleWebhook } from './webhook.ts';
 import { checkRateLimit, rateLimitMessage, recordUsageEvent, getUserPlanName } from './limits.ts';
+import { resolveStorageAdapter } from './storage-adapter.ts';
 
 /**
  * Best-effort read of the JSON-RPC request id from the body, without disturbing
@@ -89,10 +90,12 @@ Deno.serve(async (req: Request) => {
       ...(auth.userId ? { 'auth.user_id': auth.userId } : {}),
     });
 
+    const adapter = resolveStorageAdapter();
+
     // Per-user request rate limit — transport layer, all MCP methods.
     // Service-role (CI/internal) is exempt; unauthenticated requests never
-    // reach this point (handled above).
-    if (auth.type !== 'service' && auth.userId) {
+    // reach this point (handled above). BYOD adapters skip hosted rate limiting.
+    if (auth.type !== 'service' && auth.userId && adapter.supportsRateLimit) {
       const db = getDb(auth);
 
       // Resolve the user's plan name once per request — used for rate-limit
@@ -129,6 +132,6 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    return handleMcp(req, auth, span);
+    return handleMcp(req, auth, span, adapter);
   });
 });

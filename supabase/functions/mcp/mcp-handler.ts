@@ -4,6 +4,7 @@
  */
 
 import { type AuthContext, getDb, canWrite, canRead, getUserId, isJwtAuth } from './auth.ts';
+import { type StorageAdapter } from './storage-adapter.ts';
 import { UserInputError } from '../_shared/scope.ts';
 import { OrgPermissionError } from './org-permissions.ts';
 import {
@@ -86,7 +87,7 @@ export function jsonrpcError(id: unknown, code: number, message: string): Respon
   );
 }
 
-export async function handleMcp(req: Request, auth: AuthContext, span: Span): Promise<Response> {
+export async function handleMcp(req: Request, auth: AuthContext, span: Span, adapter: StorageAdapter): Promise<Response> {
   // POST-only (protocol 2024-11-05). Modern mcp-remote clients probe for SSE
   // support with GET; answer 405 before req.json() to avoid the misleading
   // "Unexpected end of JSON input" parse error. Client probe — use clientError().
@@ -394,7 +395,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
       toolSpan.end();
 
       // Record successful usage event (fire-and-forget).
-      if (auth.type !== 'service' && analyticsUserId) {
+      if (auth.type !== 'service' && analyticsUserId && adapter.supportsHostedBilling) {
         recordUsageEvent(db, {
           userId: analyticsUserId,
           planName,
@@ -427,7 +428,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span): Pr
 
       // Record failure usage event (fire-and-forget) — distinguishes cap hits
       // from generic errors in plan-sizing analytics.
-      if (auth.type !== 'service' && analyticsUserId) {
+      if (auth.type !== 'service' && analyticsUserId && adapter.supportsHostedBilling) {
         const outcome = err instanceof LimitError && err.code === 'memory_cap'
           ? 'cap_exceeded'
           : 'error';

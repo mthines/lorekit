@@ -28,9 +28,17 @@ export function createHostedAdapter(jwt?: string): StorageAdapter {
         global: { headers: { Authorization: `Bearer ${jwt}` } },
         auth: { persistSession: false, autoRefreshToken: false },
       })
-    : createClient(url, serviceKey, {
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
+    : (() => {
+        if (!serviceKey) {
+          throw new Error(
+            'SUPABASE_SERVICE_ROLE_KEY is required for service-role access. ' +
+              'Set this environment variable or pass a JWT to use user-scoped access.',
+          );
+        }
+        return createClient(url, serviceKey, {
+          auth: { persistSession: false, autoRefreshToken: false },
+        });
+      })();
 
   return { db, supportsRateLimit: true, supportsHostedBilling: true, mode: 'hosted' };
 }

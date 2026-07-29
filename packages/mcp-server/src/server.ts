@@ -16,30 +16,16 @@ import {
   listArchived,
   purgeArchived,
   purgeExpired,
-  createUserClient,
-  createServiceClient,
   checkRateLimit,
   rateLimitMessage,
   LimitError,
+  type StorageAdapter,
 } from '@lorekit/core';
 import { type AuthContext } from './auth.js';
 
-// Read lazily so tests that set process.env in beforeEach (after import)
-// see the configured value — mirrors the same fix in auth.ts and github.ts.
-function getSupabaseUrl(): string { return process.env['SUPABASE_URL'] ?? ''; }
-function getSupabaseAnonKey(): string { return process.env['SUPABASE_ANON_KEY'] ?? ''; }
-function getSupabaseServiceRoleKey(): string { return process.env['SUPABASE_SERVICE_ROLE_KEY'] ?? ''; }
-
-function getDb(auth: AuthContext) {
-  if (auth.type === 'service') {
-    return createServiceClient(getSupabaseUrl(), getSupabaseServiceRoleKey());
-  }
-  return createUserClient(getSupabaseUrl(), getSupabaseAnonKey(), auth.jwt!);
-}
-
-export function createMcpServer(auth: AuthContext): McpServer {
+export function createMcpServer(auth: AuthContext, adapter: StorageAdapter): McpServer {
   const server = new McpServer({ name: 'lorekit', version: '0.0.1' });
-  const db = getDb(auth);
+  const db = adapter.db;
 
   server.tool(
     'memory.write',
@@ -188,13 +174,13 @@ export async function handleMcpRequest(
   req: import('http').IncomingMessage & { body?: unknown },
   res: import('http').ServerResponse,
   auth: AuthContext,
+  adapter: StorageAdapter,
   parsedBody?: unknown,
 ): Promise<void> {
   // Per-user request rate limit — applied before dispatch, all MCP methods.
-  // Service-role (CI/internal) is exempt.
-  if (auth.type !== 'service' && auth.userId) {
-    const db = getDb(auth);
-    const { allowed, retryAfterSeconds } = await checkRateLimit(db, auth.userId);
+  // Service-role (CI/internal) is exempt. BYOD adapters skip hosted rate limiting.
+  if (auth.type !== 'service' && auth.userId && adapter.supportsRateLimit) {
+    const { allowed, retryAfterSeconds } = await checkRateLimit(adapter.db, auth.userId);
     if (!allowed) {
       res.writeHead(429, {
         'Content-Type': 'application/json',
@@ -211,7 +197,7 @@ export async function handleMcpRequest(
     }
   }
 
-  const server = createMcpServer(auth);
+  const server = createMcpServer(auth, adapter);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
   await transport.handleRequest(req, res, parsedBody);
