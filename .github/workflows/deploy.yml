@@ -118,6 +118,19 @@ jobs:
           LOREKIT_SMOKE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
 
+      # BYOD (bring-your-own-database) round-trip against a self-hosted Supabase
+      # project running the same edge function in BYOD mode. Opt-in coverage:
+      #   • unset LOREKIT_BYOD_URL / LOREKIT_BYOD_TOKEN → the test self-skips.
+      #   • byod-smoke.integration.spec.ts not present yet → --passWithNoTests keeps
+      #     the step green (the spec lands with its own PR; this decouples merge
+      #     order so a mis-ordered merge can't red the deploy/rollback pipeline).
+      # Only a real BYOD assertion failure fails the step.
+      - name: Run BYOD integration test (all four scope types)
+        run: pnpm nx test mcp-server -- byod-smoke.integration --passWithNoTests
+        env:
+          LOREKIT_BYOD_URL: ${{ secrets.LOREKIT_BYOD_URL }}
+          LOREKIT_BYOD_TOKEN: ${{ secrets.LOREKIT_BYOD_TOKEN }}
+
       # Reproduce the real onboarding flow end-to-end against the live preview
       # deploy: scaffold the skill + .mcp.json, then `doctor --deep` (skill found,
       # token, endpoint, connectivity, and a self-cleaning write→read→delete
@@ -194,10 +207,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Verify health endpoint
         run: |
@@ -237,6 +257,19 @@ jobs:
         env:
           URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
+
+      # BYOD (bring-your-own-database) round-trip against a self-hosted Supabase
+      # project running the same edge function in BYOD mode. Opt-in coverage:
+      #   • unset LOREKIT_BYOD_URL / LOREKIT_BYOD_TOKEN → the test self-skips.
+      #   • byod-smoke.integration.spec.ts not present yet → --passWithNoTests keeps
+      #     the step green (the spec lands with its own PR; this decouples merge
+      #     order so a mis-ordered merge can't red the deploy/rollback pipeline).
+      # Only a real BYOD assertion failure fails the step.
+      - name: Run BYOD integration test (all four scope types)
+        run: pnpm nx test mcp-server -- byod-smoke.integration --passWithNoTests
+        env:
+          LOREKIT_BYOD_URL: ${{ secrets.LOREKIT_BYOD_URL }}
+          LOREKIT_BYOD_TOKEN: ${{ secrets.LOREKIT_BYOD_TOKEN }}
 
   # ── 5. Rollback PRODUCTION functions on a production failure ──────────────────
   #    Redeploys the previous commit's edge functions. Migrations are forward-only
