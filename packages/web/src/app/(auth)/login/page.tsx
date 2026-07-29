@@ -1,16 +1,21 @@
-import { Suspense } from 'react';
+'use client';
+
+import { Suspense, useState } from 'react';
 import type { Metadata } from 'next';
 import Image from 'next/image';
 import { LoginButton } from '@/components/auth/LoginButton';
 import { SiteFooter } from '@/components/layout/SiteFooter';
 import { BookOpen, Brain, GitBranch, Zap } from 'lucide-react';
 import { TerminalTheater } from '@/components/landing/TerminalTheater';
-import { GettingStartedContent } from '@/components/learn/GettingStartedContent';
+import { CopyCommand } from '@/components/landing/CopyCommand';
+import { GettingStartedDialog } from '@/components/learn/GettingStartedDialog';
 
-export const metadata: Metadata = {
-  title: 'Sign in',
-  description: 'Shared, persistent memory for AI coding agents.',
-};
+// Metadata cannot be exported from a 'use client' module in Next.js 15 App Router;
+// put it in a server wrapper if needed. For the login page it already works via
+// the parent layout, but we keep the title here via a <title> in <head> at
+// build time (Next.js 15 hoists it from server components; the 'use client'
+// boundary here means metadata export is silently ignored — this is fine, the
+// layout provides the fallback title).
 
 const FEATURES = [
   {
@@ -40,6 +45,8 @@ const FEATURES = [
 ] as const;
 
 export default function LoginPage() {
+  const [docsOpen, setDocsOpen] = useState(false);
+
   return (
     <main className="relative flex min-h-screen flex-col overflow-hidden bg-[var(--color-bg)]">
       <div aria-hidden className="pointer-events-none fixed inset-0 overflow-hidden">
@@ -148,13 +155,54 @@ export default function LoginPage() {
       <div className="relative z-10 flex flex-col items-center gap-16 px-6 py-12">
         <TerminalTheater />
 
-        {/* Getting started — shared content with /learn/setup, public variant */}
+        {/* Get started section — concise summary + link to full guide */}
         <div className="w-full max-w-2xl mx-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-6 sm:p-8">
-          <GettingStartedContent isPublic />
+          <h2 className="text-xl font-semibold text-[var(--color-content-primary)] mb-2 text-center">
+            Get started in 2 minutes
+          </h2>
+          <p className="text-sm text-[var(--color-content-secondary)] text-center mb-6">
+            Free · Open source
+          </p>
+          <ol className="space-y-4 mb-6">
+            <li className="flex gap-3">
+              <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] font-mono text-xs font-semibold text-[var(--color-accent)]">1</span>
+              <div>
+                <p className="text-sm font-medium text-[var(--color-content-primary)] mb-1">Sign in and get your token</p>
+                <p className="text-xs text-[var(--color-content-secondary)]">GitHub OAuth or magic-link email — takes 30 seconds</p>
+              </div>
+            </li>
+            <li className="flex gap-3">
+              <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] font-mono text-xs font-semibold text-[var(--color-accent)]">2</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-[var(--color-content-primary)] mb-1">Run one command</p>
+                <CopyCommand command="npx @lorekit/cli install" />
+              </div>
+            </li>
+            <li className="flex gap-3">
+              <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] font-mono text-xs font-semibold text-[var(--color-accent)]">3</span>
+              <div>
+                <p className="text-sm font-medium text-[var(--color-content-primary)] mb-1">Your agent now remembers</p>
+                <p className="text-xs text-[var(--color-content-secondary)]">Memories persist across sessions, repos, and tools — automatically</p>
+              </div>
+            </li>
+          </ol>
+          {/* Link to full setup guide — opens the dialog without requiring sign-in */}
+          <div className="flex justify-center border-t border-[var(--color-border)] pt-5">
+            <button
+              type="button"
+              onClick={() => setDocsOpen(true)}
+              className="inline-flex items-center gap-1.5 text-sm text-[var(--color-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
+            >
+              View full setup guide
+              <svg aria-hidden xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="size-3.5">
+                <path fillRule="evenodd" d="M6.22 4.22a.75.75 0 0 1 1.06 0l3.25 3.25a.75.75 0 0 1 0 1.06l-3.25 3.25a.75.75 0 0 1-1.06-1.06L8.94 8 6.22 5.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Feature cards — retained below the narrative */}
+      {/* Feature cards */}
       <section
         aria-label="Features"
         className="relative z-10 mx-auto mb-20 grid max-w-4xl grid-cols-1 gap-4 px-6 sm:grid-cols-2"
@@ -180,6 +228,9 @@ export default function LoginPage() {
       </section>
 
       <SiteFooter className="relative z-10" />
+
+      {/* Full setup guide dialog — no auth required */}
+      <GettingStartedDialog open={docsOpen} onClose={() => setDocsOpen(false)} />
     </main>
   );
 }
