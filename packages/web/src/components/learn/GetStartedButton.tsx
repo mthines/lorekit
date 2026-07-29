@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { GettingStartedDialog } from '@/components/learn/GettingStartedDialog';
+import { GettingStartedDialog } from '@/components/landing/GettingStartedDialog';
 
 /**
  * Thin client wrapper that owns the open/close state for the getting-started

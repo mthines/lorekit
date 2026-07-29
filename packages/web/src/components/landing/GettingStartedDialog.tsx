@@ -10,6 +10,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { X, Rocket, HardDrive, Cloud, Users, Lock, Tag, FileCog, Zap } from 'lucide-react';
 
@@ -711,7 +712,7 @@ export function GettingStartedDialog({ open, onClose }: GettingStartedDialogProp
 
   const ActiveContent = TABS.find((t) => t.id === activeTab)!.content;
 
-  return (
+  return createPortal(
     <AnimatePresence>
       {open && (
         <>
@@ -722,7 +723,7 @@ export function GettingStartedDialog({ open, onClose }: GettingStartedDialogProp
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: reduceMotion ? 0 : 0.15 }}
-            className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
+            className="fixed inset-0 z-[9999] bg-black/50 backdrop-blur-sm"
             onClick={onClose}
             aria-hidden
           />
@@ -735,7 +736,7 @@ export function GettingStartedDialog({ open, onClose }: GettingStartedDialogProp
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: reduceMotion ? 1 : 0.97, y: reduceMotion ? 0 : 10 }}
             transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed inset-x-4 top-[50%] z-[51] flex max-h-[min(90dvh,860px)] -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] shadow-2xl sm:inset-x-auto sm:left-1/2 sm:w-[calc(100vw-2rem)] sm:max-w-4xl sm:-translate-x-1/2"
+            className="fixed inset-x-4 top-[50%] z-[10000] flex max-h-[min(90dvh,860px)] -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] shadow-2xl sm:inset-x-auto sm:left-1/2 sm:w-[calc(100vw-2rem)] sm:max-w-4xl sm:-translate-x-1/2"
             role="dialog"
             aria-modal="true"
             aria-label="LoreKit setup guide"
@@ -824,6 +825,7 @@ export function GettingStartedDialog({ open, onClose }: GettingStartedDialogProp
           </motion.div>
         </>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   );
 }
