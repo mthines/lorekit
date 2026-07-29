@@ -87,6 +87,24 @@ const nextConfig: NextConfig = {
           },
         ],
       },
+      // Serve Next.js static chunks with CORS headers so browsers can
+      // attribute errors to the correct origin. Without these headers,
+      // cross-origin script errors appear as opaque "Script error." at 0:0
+      // (browser security policy strips the real message and stack for
+      // cross-origin scripts loaded without crossorigin="anonymous" + CORS).
+      // This affects iPhone Safari in particular, which does not cache
+      // CORS-flagged resources as aggressively and re-fetches chunks on
+      // navigation — surfacing the missing header on every page load.
+      //
+      // Setting Access-Control-Allow-Origin: * on static assets is safe:
+      // these are public JS/CSS bundles with no cookies or credentials,
+      // and the same-origin page already has full access to them.
+      {
+        source: '/_next/static/:path*',
+        headers: [
+          { key: 'Access-Control-Allow-Origin', value: '*' },
+        ],
+      },
       // Service worker must be served from the root scope with the correct
       // Content-Type and without a Cache-Control max-age so browsers can
       // detect updates promptly (spec: SW is revalidated every 24 h max, but

@@ -13,7 +13,7 @@
  * scope view renders a flat card list, the time view renders these date groups.
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Bot, Zap, Webhook } from 'lucide-react';
 import { MemoryCard, memoryFromLesson } from '@/components/memory/MemoryCard';
 import type { LessonEntry } from '@/components/lore/LessonCard';
@@ -41,19 +41,42 @@ function groupByDate(lessons: LessonEntry[]): [string, LessonEntry[]][] {
  * / weekday. One source of truth so the visible `DateLabel` and the day-group
  * list's `aria-label` never diverge (a screen reader must hear the same label a
  * sighted user reads, not the raw ISO date).
+ *
+ * `todayIso` / `yesterdayIso` must be computed from a value that is stable
+ * between the SSR pass and the first client render. Calling `new Date()` at
+ * module level or directly inside the component body produces different
+ * timestamps on server vs client and triggers React hydration error #418.
+ * Callers must pass today's ISO date string (stable across the render) so this
+ * function stays pure and hydration-safe.
  */
-function dayLabel(date: string): string {
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
-  if (date === today) return 'Today';
-  if (date === yesterday) return 'Yesterday';
+function dayLabel(date: string, todayIso: string, yesterdayIso: string): string {
+  if (date === todayIso) return 'Today';
+  if (date === yesterdayIso) return 'Yesterday';
   return new Date(date).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
+/**
+ * Hydration-safe date heading.
+ *
+ * `new Date()` produces a different value on the server vs the client (different
+ * clock instants), which makes "Today" / "Yesterday" labels mismatch and fires
+ * React hydration error #418. We defer the live-clock comparison to after mount
+ * via `useEffect`, starting with the static ISO date string so the SSR output
+ * and the first client render always agree.
+ */
 function DateLabel({ date }: { date: string }) {
+  // Start with the raw ISO date — identical on server and client first render.
+  const [label, setLabel] = useState(date);
+
+  useEffect(() => {
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const yesterdayIso = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    setLabel(dayLabel(date, todayIso, yesterdayIso));
+  }, [date]);
+
   return (
     <div className="sticky top-0 z-10 flex items-center gap-3 bg-[var(--color-bg)] py-2">
-      <span className="text-xs font-medium text-[var(--color-content-tertiary)]">{dayLabel(date)}</span>
+      <span className="text-xs font-medium text-[var(--color-content-tertiary)]">{label}</span>
       <div className="h-px flex-1 bg-[var(--color-border)]" aria-hidden />
     </div>
   );
@@ -76,7 +99,7 @@ export function ActivityFeed({ lessons, isSelected, onSelect }: ActivityFeedProp
       {grouped.map(([date, dayLessons]) => (
         <div key={date}>
           <DateLabel date={date} />
-          <div className="flex flex-col gap-1.5" role="list" aria-label={dayLabel(date)}>
+          <div className="flex flex-col gap-1.5" role="list" aria-label={date}>
             {dayLessons.map((lesson, i) => {
               const TriggerIcon = lesson.trigger ? (TRIGGER_ICONS[lesson.trigger] ?? Bot) : Bot;
               return (
