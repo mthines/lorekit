@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.0](https://github.com/mthines/lorekit/compare/cli-v1.18.0...cli-v1.19.0) (2026-07-29)
+
+
+### Features
+
+* **cli:** add write command and scope::key shorthand for show ([#215](https://github.com/mthines/lorekit/issues/215)) ([9276ab2](https://github.com/mthines/lorekit/commit/9276ab2284d03f2f4083293e5b9eafba25562997))
+
 ## [1.18.0](https://github.com/mthines/lorekit/compare/cli-v1.17.1...cli-v1.18.0) (2026-07-29)
 
 
