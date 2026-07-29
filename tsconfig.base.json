@@ -18,7 +18,8 @@
     "target": "es2022",
     "baseUrl": ".",
     "paths": {
-      "@lorekit/core": ["packages/mcp-core/src/index.ts"]
+      "@lorekit/core": ["packages/mcp-core/src/index.ts"],
+      "@lorekit/schemas": ["packages/schemas/src/index.ts"]
     }
   }
 }

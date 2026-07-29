@@ -1,0 +1,10 @@
+{
+  "name": "@lorekit/schemas",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "zod": "^3.0.0",
+    "@asteasolutions/zod-to-openapi": "^7.0.0"
+  }
+}
