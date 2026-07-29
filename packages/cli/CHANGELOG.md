@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.0](https://github.com/mthines/lorekit/compare/cli-v1.17.1...cli-v1.18.0) (2026-07-29)
+
+
+### Features
+
+* **cli:** confirm memory writes with deep link + add lore URL to Stop nudge ([#203](https://github.com/mthines/lorekit/issues/203)) ([efa1d7b](https://github.com/mthines/lorekit/commit/efa1d7b8e25eecba0305ab360a0d0945bf3c7a2c))
+
 ## [1.17.1](https://github.com/mthines/lorekit/compare/cli-v1.17.0...cli-v1.17.1) (2026-07-28)
 
 
