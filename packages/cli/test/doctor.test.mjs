@@ -92,3 +92,31 @@ test('doctor reports the skill missing when it is installed nowhere (and exits n
   assert.match(line, /not found/);
   assert.equal(res.status, 1, 'a missing skill makes doctor exit non-zero');
 });
+
+test('doctor warns when hooks are registered in both project and global settings', async () => {
+  const root = tmp('lk-doc-dupe-proj-');
+  const home = tmp('lk-doc-dupe-home-');
+
+  // Install in BOTH scopes — this is exactly how duplicates arise.
+  await installWith({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true }, home);
+  await installWith({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, global: true }, home);
+
+  const res = runDoctor(root, home);
+  // The duplicate warning line must be present.
+  const dupeLine = res.stdout.split('\n').find((l) => l.includes('hooks duplicate')) ?? '';
+  assert.match(dupeLine, /WARN/, `expected hooks duplicate WARN, got: ${dupeLine}`);
+  assert.match(dupeLine, /SessionStart/, `expected SessionStart in duplicate line, got: ${dupeLine}`);
+  assert.match(dupeLine, /lorekit uninstall/, `expected uninstall hint, got: ${dupeLine}`);
+});
+
+test('doctor does NOT warn about duplicates when hooks exist only in one scope', async () => {
+  const root = tmp('lk-doc-nodupe-');
+  const home = tmp('lk-doc-nodupe-home-');
+
+  // Project-only install — no duplicate.
+  await installWith({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true }, home);
+
+  const res = runDoctor(root, home);
+  const dupeLine = res.stdout.split('\n').find((l) => l.includes('hooks duplicate')) ?? '';
+  assert.equal(dupeLine, '', `expected no hooks duplicate line, got: ${dupeLine}`);
+});
