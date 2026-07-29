@@ -1,0 +1,87 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Discord failure notification — one place that knows HOW to post a red-embed
+# alert to a Discord webhook. Each workflow decides WHAT failed (the human-
+# readable stage name) and passes it in; this action builds the embed and posts.
+#
+# It is a no-op-safe primitive: if `webhook-url` is empty (the DISCORD_WEBHOOK_URL
+# secret is unset) it warns and exits 0 — the underlying failure is already
+# reported loudly by the job that broke, so a missing webhook must never turn a
+# notification into a second, misleading red X.
+#
+# The embed carries a deep link to the failed run (clickable title + an explicit
+# "View the failed run" link), the repository, the branch, a clickable short
+# commit SHA, and who triggered it. All values flow through `env:` and jq --arg
+# (never interpolated into the shell) to avoid workflow script injection.
+# ─────────────────────────────────────────────────────────────────────────────
+name: Discord failure notification
+description: Post a failure embed (deep link + run info) to a Discord webhook; no-op when the webhook URL is empty.
+
+inputs:
+  webhook-url:
+    description: Discord webhook URL. When empty, the action warns and no-ops (never fails the run).
+    required: true
+  title:
+    description: Embed title, e.g. "🔴 Production deploy failed".
+    required: true
+  failed-stage:
+    description: Human-readable name of the stage that failed, e.g. "smoke test → production".
+    required: true
+  username:
+    description: Bot username shown in Discord.
+    required: false
+    default: LoreKit CI
+
+runs:
+  using: composite
+  steps:
+    - name: Post failure notification to Discord
+      shell: bash
+      env:
+        DISCORD_WEBHOOK_URL: ${{ inputs.webhook-url }}
+        EMBED_TITLE: ${{ inputs.title }}
+        EMBED_USERNAME: ${{ inputs.username }}
+        FAILED_STAGE: ${{ inputs.failed-stage }}
+        WORKFLOW: ${{ github.workflow }}
+        COMMIT_SHA: ${{ github.sha }}
+        ACTOR: ${{ github.actor }}
+        REPO: ${{ github.repository }}
+        REF: ${{ github.ref_name }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+      run: |
+        if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+          echo "::warning::DISCORD_WEBHOOK_URL is not set — skipping Discord notification. Add it under Settings ▸ Secrets and variables ▸ Actions."
+          exit 0
+        fi
+
+        jq -n \
+          --arg title "$EMBED_TITLE" \
+          --arg username "$EMBED_USERNAME" \
+          --arg failed "$FAILED_STAGE" \
+          --arg workflow "$WORKFLOW" \
+          --arg sha "$COMMIT_SHA" \
+          --arg actor "$ACTOR" \
+          --arg url "$RUN_URL" \
+          --arg repo "$REPO" \
+          --arg ref "$REF" \
+          --arg commit_url "$COMMIT_URL" \
+          '{
+            username: $username,
+            embeds: [{
+              title: $title,
+              description: "Failed stage: **\($failed)**\n\n[View the failed run →](\($url))",
+              url: $url,
+              color: 15158332,
+              fields: [
+                { name: "Repository",   value: $repo,                              inline: true },
+                { name: "Branch",       value: "`\($ref)`",                        inline: true },
+                { name: "Workflow",     value: $workflow,                          inline: true },
+                { name: "Commit",       value: "[`\($sha[0:7])`](\($commit_url))", inline: true },
+                { name: "Triggered by", value: $actor,                             inline: true }
+              ]
+            }]
+          }' \
+        | curl -sf -X POST "$DISCORD_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d @-
+        echo "Discord failure notification sent (workflow: $WORKFLOW, failed stage: $FAILED_STAGE)."

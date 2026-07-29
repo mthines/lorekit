@@ -31,6 +31,13 @@
 #     RELEASE_APP_PRIVATE_KEY. Until the variable is set, this workflow no-ops.
 #   • npm ▸ @lorekit/cli ▸ Settings ▸ Trusted Publisher ▸ GitHub Actions:
 #     repo mthines/lorekit, workflow release.yml.
+#
+# Failure alerts:
+#   • Optional repo-level secret DISCORD_WEBHOOK_URL — when set, notify-failure
+#     posts a red embed (deep link to the run + commit/branch/actor) to Discord
+#     if release-please or the npm publish fails. Unset → the job no-ops with a
+#     warning and never fails the run. Same webhook + shared composite action as
+#     deploy.yml (./.github/actions/discord-notify).
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Release
@@ -153,3 +160,43 @@ jobs:
         run: |
           echo "### 📦 Published ${{ needs.release-please.outputs.cli_tag }} to npm" >> "$GITHUB_STEP_SUMMARY"
           echo "\`npm install -g @lorekit/cli@latest\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 3. Notify Discord on ANY release-workflow failure ────────────────────────
+  #    Fires when release-please (maintaining the release PR / cutting the tag /
+  #    auto-merge) or publish-cli (test, smoke, npm publish) reports 'failure' —
+  #    the release failures that otherwise surface only in the Actions UI. Posts a
+  #    single embed to DISCORD_WEBHOOK_URL via the shared composite action (also
+  #    used by deploy.yml). When neither job ran (RELEASE_APP_ID unset → both
+  #    'skipped') there is no 'failure' and this job is a clean no-op; when the
+  #    webhook secret is unset the action itself no-ops with a warning. The failed
+  #    stage flows through `env:` (never interpolated) to avoid script injection.
+  notify-failure:
+    name: Notify Discord on failure
+    runs-on: ubuntu-latest
+    needs: [release-please, publish-cli]
+    if: always() && contains(needs.*.result, 'failure')
+    permissions:
+      contents: read # checkout, so the local composite action is available
+    steps:
+      - name: Checkout repository (for the composite action)
+        uses: actions/checkout@v7
+
+      - name: Identify the failed stage
+        id: stage
+        env:
+          RESULT_RELEASE_PLEASE: ${{ needs.release-please.result }}
+          RESULT_PUBLISH_CLI: ${{ needs.publish-cli.result }}
+        run: |
+          failed="an unknown stage"
+          if   [ "$RESULT_RELEASE_PLEASE" = "failure" ]; then failed="release automation (release PR / tag / auto-merge)"
+          elif [ "$RESULT_PUBLISH_CLI"    = "failure" ]; then failed="publish @lorekit/cli to npm"
+          fi
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
+
+      - name: Post failure notification to Discord
+        uses: ./.github/actions/discord-notify
+        with:
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          username: LoreKit Release
+          title: '🔴 Release workflow failed'
+          failed-stage: ${{ steps.stage.outputs.failed }}

@@ -79,8 +79,15 @@ Production is never touched until preview has been deployed and smoke-tested.
 A `notify-failure` job runs whenever **any** pipeline job reports `failure` — a
 deploy step, a smoke gate, or the rollback — and posts a single embed to a
 Discord webhook so a red production deploy reaches you outside the Actions UI.
-The embed names the first stage that failed (e.g. *smoke test → production*),
-the commit, who triggered it, and links back to the run.
+The embed names the first stage that failed (e.g. *smoke test → production*) and
+carries a **deep link to the failed run** (clickable title + a *View the failed
+run* link), plus the repository, branch, workflow, a clickable short commit SHA,
+and who triggered it.
+
+The `release.yml` workflow posts the same alert on a release/publish failure —
+both share the `./.github/actions/discord-notify` composite action and the same
+`DISCORD_WEBHOOK_URL` secret, so there is one webhook and one embed format for
+every pipeline.
 
 Set it up by adding a **repo-level** secret `DISCORD_WEBHOOK_URL` (Settings ▸
 Secrets and variables ▸ Actions) — create the webhook in Discord under *Server
