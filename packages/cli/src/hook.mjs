@@ -116,9 +116,12 @@ async function run(args) {
     // is swallowed (exit 0 — never block the host).
     try {
       if (adapter.isLoreWrite && adapter.isLoreWrite(parsed.toolName, parsed.toolResponse)) {
-        const key = (parsed.toolResponse && parsed.toolResponse.input && parsed.toolResponse.input.key)
-          || (parsed.toolResponse && parsed.toolResponse.key)
-          || null;
+        // The lesson key comes from the tool INPUT (what the agent sent), not
+        // the response (which only carries id + created_at). toolInput is
+        // populated by the adapter's parse() from the raw hook stdin.
+        const key = (parsed.toolInput && typeof parsed.toolInput.key === 'string')
+          ? parsed.toolInput.key
+          : null;
         emit(writeConfirmation(scope, key));
       }
     } catch {

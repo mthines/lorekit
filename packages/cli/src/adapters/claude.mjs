@@ -40,6 +40,7 @@ export const claude = {
       cwd: input.cwd || null,
       sessionId: input.session_id || null,
       toolName: input.tool_name || 'tool',
+      toolInput: input.tool_input || null,
       toolResponse: input.tool_response || null,
       event: input.hook_event_name || null,
     };

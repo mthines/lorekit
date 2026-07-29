@@ -216,10 +216,17 @@ test('adapters emit their framework-specific output shape', () => {
 });
 
 test('adapters normalize their native stdin fields', () => {
-  const c = claude.parse({ cwd: '/p', session_id: 's', tool_name: 'Bash', tool_response: { exit_code: 1 } });
+  const c = claude.parse({
+    cwd: '/p',
+    session_id: 's',
+    tool_name: 'Bash',
+    tool_input: { command: 'npm test' },
+    tool_response: { exit_code: 1 },
+  });
   assert.equal(c.cwd, '/p');
   assert.equal(c.sessionId, 's');
   assert.equal(c.toolName, 'Bash');
+  assert.deepEqual(c.toolInput, { command: 'npm test' });
 
   const cu = cursor.parse({ generation_id: 'g', workspace_roots: ['/w'] });
   assert.equal(cu.sessionId, 'g');
@@ -410,5 +417,24 @@ test('isLoreWrite rejects responses without a string id (failed or non-write res
 test('isLoreWrite handles null/undefined tool name safely', () => {
   assert.equal(claude.isLoreWrite(null, { id: 'abc' }), false);
   assert.equal(claude.isLoreWrite(undefined, { id: 'abc' }), false);
+});
+
+// ── claude.parse — toolInput field ────────────────────────────────────────────
+
+test('claude.parse captures tool_input so the confirm branch can read the key', () => {
+  const parsed = claude.parse({
+    hook_event_name: 'PostToolUse',
+    tool_name: 'mcp__lorekit__memory_write',
+    tool_input: { scope: 'repo::a/b', key: 'my-lesson', value: 'body' },
+    tool_response: { id: 'abc-123', created_at: '2026-01-01T00:00:00Z' },
+  });
+  assert.equal(parsed.toolName, 'mcp__lorekit__memory_write');
+  assert.deepEqual(parsed.toolInput, { scope: 'repo::a/b', key: 'my-lesson', value: 'body' });
+  assert.deepEqual(parsed.toolResponse, { id: 'abc-123', created_at: '2026-01-01T00:00:00Z' });
+});
+
+test('claude.parse defaults toolInput to null when absent', () => {
+  const parsed = claude.parse({ hook_event_name: 'PostToolUse', tool_name: 'Bash' });
+  assert.equal(parsed.toolInput, null);
 });
 
