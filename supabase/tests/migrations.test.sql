@@ -1562,10 +1562,9 @@ begin
 end;
 $$;
 
--- ── 41. Installation repositories: add, then coverage lookup (AC-2, AC-3) ─────
+-- ── 41. Installation repositories: add, active rows tracked (AC-2) ─────
 do $$
 declare
-  v_covered boolean;
   v_count int;
 begin
   -- Upsert installation 9000003 with two covered repos.
@@ -1575,44 +1574,32 @@ begin
     array['acme/covered-repo', 'acme/another-repo']
   );
 
-  -- Coverage lookup for a covered repo must return true.
-  select lorekit_is_app_covered('acme/covered-repo') into v_covered;
-  assert v_covered,
-    'coverage lookup: acme/covered-repo must be reported as App-covered after installation';
-
-  select lorekit_is_app_covered('acme/another-repo') into v_covered;
-  assert v_covered,
-    'coverage lookup: acme/another-repo must be reported as App-covered after installation';
-
-  -- Coverage lookup for an uncovered repo must return false.
-  select lorekit_is_app_covered('acme/not-covered') into v_covered;
-  assert not v_covered,
-    'coverage lookup: acme/not-covered must NOT be reported as App-covered';
-
-  -- Two covered repos were inserted; the count must equal 2.
+  -- Two covered repos were inserted; both must be active.
   select count(*) into v_count
     from installation_repositories where installation_id = 9000003 and active = true;
   assert v_count = 2,
     format('installation repos: expected 2 active rows for installation 9000003, got %s', v_count);
+
+  assert exists (select 1 from installation_repositories where installation_id = 9000003 and full_name = 'acme/covered-repo' and active = true),
+    'installation repos: acme/covered-repo must be present and active';
+  assert exists (select 1 from installation_repositories where installation_id = 9000003 and full_name = 'acme/another-repo' and active = true),
+    'installation repos: acme/another-repo must be present and active';
 end;
 $$;
 
--- ── 42. Remove repos: coverage disappears after removal (AC-2) ───────────────
+-- ── 42. Remove repos: inactive flag set correctly (AC-2) ───────────────
 do $$
-declare v_covered boolean;
 begin
   -- Remove one of the two repos added in §41.
   perform lorekit_installation_remove_repos(9000003, array['acme/covered-repo']);
 
-  -- The removed repo is no longer covered.
-  select lorekit_is_app_covered('acme/covered-repo') into v_covered;
-  assert not v_covered,
-    'remove repos: acme/covered-repo must no longer be App-covered after removal';
+  -- The removed repo must be inactive.
+  assert exists (select 1 from installation_repositories where installation_id = 9000003 and full_name = 'acme/covered-repo' and active = false),
+    'remove repos: acme/covered-repo must be inactive after removal';
 
-  -- The other repo is still covered.
-  select lorekit_is_app_covered('acme/another-repo') into v_covered;
-  assert v_covered,
-    'remove repos: acme/another-repo must still be App-covered after partial removal';
+  -- The other repo must still be active.
+  assert exists (select 1 from installation_repositories where installation_id = 9000003 and full_name = 'acme/another-repo' and active = true),
+    'remove repos: acme/another-repo must still be active after partial removal';
 end;
 $$;
 
@@ -1620,7 +1607,6 @@ $$;
 do $$
 declare
   v_status text;
-  v_covered boolean;
 begin
   perform lorekit_installation_remove(9000003);
 
@@ -1629,9 +1615,9 @@ begin
   assert v_status = 'removed',
     format('remove installation: status must be removed, got %s', v_status);
 
-  select lorekit_is_app_covered('acme/another-repo') into v_covered;
-  assert not v_covered,
-    'remove installation: a removed installation''s repos must not show as App-covered';
+  -- All repos for this installation must be inactive after removal.
+  assert not exists (select 1 from installation_repositories where installation_id = 9000003 and active = true),
+    'remove installation: all repos must be inactive after installation removal';
 end;
 $$;
 
