@@ -86,7 +86,19 @@ jobs:
         run: supabase db push
 
       - name: Deploy edge functions (mcp + health)
-        run: supabase functions deploy --no-verify-jwt --project-ref "$PROJECT_REF"
+        # Retry up to 3 times with 10 s back-off to tolerate transient OOM
+        # crashes (exit 135 / SIGBUS) from the edge-runtime bundler container.
+        run: |
+          for attempt in 1 2 3; do
+            supabase functions deploy --no-verify-jwt --project-ref "$PROJECT_REF" && break
+            rc=$?
+            if [ $attempt -eq 3 ]; then
+              echo "::error::Edge function deploy failed after $attempt attempts (exit $rc)"
+              exit $rc
+            fi
+            echo "::warning::Edge function deploy failed (exit $rc), retrying in 10 s (attempt $attempt/3)..."
+            sleep 10
+          done
 
   # ── 2. Integration test against PREVIEW (the gate before prod) ────────────────
   smoke-preview:
@@ -193,7 +205,19 @@ jobs:
         run: supabase db push
 
       - name: Deploy edge functions (mcp + health)
-        run: supabase functions deploy --no-verify-jwt --project-ref "$PROJECT_REF"
+        # Retry up to 3 times with 10 s back-off to tolerate transient OOM
+        # crashes (exit 135 / SIGBUS) from the edge-runtime bundler container.
+        run: |
+          for attempt in 1 2 3; do
+            supabase functions deploy --no-verify-jwt --project-ref "$PROJECT_REF" && break
+            rc=$?
+            if [ $attempt -eq 3 ]; then
+              echo "::error::Edge function deploy failed after $attempt attempts (exit $rc)"
+              exit $rc
+            fi
+            echo "::warning::Edge function deploy failed (exit $rc), retrying in 10 s (attempt $attempt/3)..."
+            sleep 10
+          done
 
   # ── 4. Post-deploy verification against PRODUCTION ───────────────────────────
   smoke-production:
