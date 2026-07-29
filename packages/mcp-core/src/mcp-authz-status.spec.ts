@@ -66,9 +66,12 @@ describe('mcp-handler auth status guard', () => {
     // org.* JWT denial + write-missing + read-missing + unknown-tool = 4 clientError calls
     // (the error-path catch uses clientError only for UserInputError/OrgPermissionError, covered separately)
     expect(clientErrors.length).toBeGreaterThanOrEqual(3);
-    // None of the authz-denial branches should call .error() (which marks the span ERROR)
-    // instead of .clientError(). The block must contain zero bare .error( calls.
-    const bareErrors = block.match(/\bspan\b[^;]*\.error\(/g) ?? [];
+    // The authz-denial checks all run BEFORE the tool-dispatch try/catch.
+    // Slice the block up to the first `try {` that wraps the actual tool call
+    // and assert that no bare span.error( appears in that pre-dispatch section
+    // (the catch block legitimately uses span.error() for real server faults).
+    const preTry = block.slice(0, block.indexOf('\n    try {'));
+    const bareErrors = preTry.match(/\bspan\b[^;]*\.error\(/g) ?? [];
     expect(bareErrors.length).toBe(0);
   });
 });
