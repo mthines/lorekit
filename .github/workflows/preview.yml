@@ -196,20 +196,35 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: vercel pull --yes --environment=preview
 
-      # Overrides the Vercel-pulled preview vars with staging values.
-      # .env.local has highest Next.js env precedence and is never committed,
-      # so it cleanly shadows whatever NEXT_PUBLIC_SUPABASE_* values Vercel
-      # pulled for the normal preview environment.
+      # Overrides the Vercel-pulled preview vars with staging values by
+      # rewriting the env file `vercel pull` produced and `vercel build`
+      # actually reads (.vercel/.env.preview.local). Editing this file — not
+      # .env.local — is what guarantees the override: `vercel build` injects
+      # these values into process.env, and Next.js never lets a .env.local
+      # entry override a variable already set in process.env. We strip any
+      # pulled NEXT_PUBLIC_SUPABASE_* lines first so ours are the only
+      # definitions. This mutates only the runner's local copy for this one
+      # build; push-triggered Vercel previews never run this workflow, so
+      # their env is unchanged.
       - name: Override Supabase config with staging values
         env:
           PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
           ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
+          ENV_FILE=".vercel/.env.preview.local"
+          if [ ! -f "$ENV_FILE" ]; then
+            echo "::error::$ENV_FILE not found — did 'vercel pull' run?"
+            exit 1
+          fi
+          # Drop any pulled Supabase vars so ours are the only definitions.
+          grep -vE '^(NEXT_PUBLIC_SUPABASE_URL|NEXT_PUBLIC_SUPABASE_ANON_KEY|NEXT_PUBLIC_SUPABASE_PROJECT_REF)=' \
+            "$ENV_FILE" > "$ENV_FILE.tmp" || true
+          mv "$ENV_FILE.tmp" "$ENV_FILE"
           {
             echo "NEXT_PUBLIC_SUPABASE_URL=https://${PROJECT_REF}.supabase.co"
             echo "NEXT_PUBLIC_SUPABASE_PROJECT_REF=${PROJECT_REF}"
             echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${ANON_KEY}"
-          } >> packages/web/.env.local
+          } >> "$ENV_FILE"
 
       - name: Build Vercel preview
         env:
