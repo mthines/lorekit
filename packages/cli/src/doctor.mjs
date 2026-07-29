@@ -8,6 +8,9 @@ import {
   SKILLS,
   resolveProjectRoot,
   skillInstallDir,
+  settingsPath,
+  CLAUDE_HOOK_EVENTS,
+  LOREKIT_HOOK_RE,
   readLorekitServer,
   readMcpConfig,
   tokenKind,
@@ -61,6 +64,22 @@ export async function doctor(args) {
     } else {
       record('fail', `skill ${skill.name}`, 'not found — run `lorekit install`');
     }
+  }
+
+  // 2.5. Duplicate-hook detection — warn when the same lorekit hook event is
+  // wired in both the project settings and the global settings. This causes
+  // Claude Code to fire the hook twice per event, producing doubled terminal
+  // output. Common after running `lorekit install` once with --project and
+  // once with --global (or via the marketplace plugin on top of a CLI install).
+  const dupeEvents = detectDuplicateHooks(root);
+  if (dupeEvents.length > 0) {
+    record(
+      'warn',
+      'hooks duplicate',
+      `${dupeEvents.join(', ')} registered in BOTH project and global settings — ` +
+        `Claude Code fires them twice. Remove one scope: ` +
+        `run \`lorekit uninstall --project\` or \`lorekit uninstall --global\`.`,
+    );
   }
 
   // 3. Resolved control model — which mode, and who decided it.
@@ -331,6 +350,48 @@ async function checkBYODStorage(record) {
   } catch (e) {
     record('fail', 'byod storage', `storage error: ${e && e.message ? e.message : String(e)}`);
   }
+}
+
+// Returns the list of CLAUDE_HOOK_EVENTS whose lorekit hook command appears in
+// BOTH the project settings file (.claude/settings.json) and the global one
+// (~/.claude/settings.json). An empty array means no duplicates — healthy.
+function detectDuplicateHooks(root) {
+  const dupes = [];
+  const projectFile = settingsPath(root, 'project');
+  const globalFile = settingsPath(root, 'global');
+
+  let projectHooks = {};
+  let globalHooks = {};
+  try {
+    const cfg = JSON.parse(fs.readFileSync(projectFile, 'utf8'));
+    if (cfg && typeof cfg.hooks === 'object') projectHooks = cfg.hooks;
+  } catch { /* absent or unparseable — treat as empty */ }
+  try {
+    const cfg = JSON.parse(fs.readFileSync(globalFile, 'utf8'));
+    if (cfg && typeof cfg.hooks === 'object') globalHooks = cfg.hooks;
+  } catch { /* absent or unparseable — treat as empty */ }
+
+  for (const event of CLAUDE_HOOK_EVENTS) {
+    const hasInProject = hooksForEvent(projectHooks, event).some((cmd) => LOREKIT_HOOK_RE.test(cmd));
+    const hasInGlobal = hooksForEvent(globalHooks, event).some((cmd) => LOREKIT_HOOK_RE.test(cmd));
+    if (hasInProject && hasInGlobal) dupes.push(event);
+  }
+  return dupes;
+}
+
+// Extract the flat list of hook command strings for one event from a hooks
+// object. Handles the nested-group shape Claude Code uses:
+// { [event]: [ { hooks: [ { type, command } ] } ] }
+function hooksForEvent(hooksObj, event) {
+  const groups = Array.isArray(hooksObj[event]) ? hooksObj[event] : [];
+  const commands = [];
+  for (const group of groups) {
+    const inner = group && Array.isArray(group.hooks) ? group.hooks : [];
+    for (const h of inner) {
+      if (h && typeof h.command === 'string') commands.push(h.command);
+    }
+  }
+  return commands;
 }
 
 function gitTracked(root, dir) {

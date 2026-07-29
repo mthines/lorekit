@@ -36,7 +36,7 @@ import { SpanStatusCode, trace } from '@opentelemetry/api';
 
 // Read service version from package.json at startup
 const SERVICE_VERSION = process.env['npm_package_version'] ?? '0.0.1';
-const SERVICE_NAME = process.env['OTEL_SERVICE_NAME'] ?? 'lorekit';
+const SERVICE_NAME = process.env['OTEL_SERVICE_NAME'] ?? 'mcp';
 
 /**
  * Resolve vcs.* OTel resource attributes from environment variables.

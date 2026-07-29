@@ -6,6 +6,7 @@ import { SiteFooter } from '@/components/layout/SiteFooter';
 import { BookOpen, Brain, GitBranch, Zap } from 'lucide-react';
 import { TerminalTheater } from '@/components/landing/TerminalTheater';
 import { CopyCommand } from '@/components/landing/CopyCommand';
+import { GetStartedButton } from '@/components/learn/GetStartedButton';
 
 export const metadata: Metadata = {
   title: 'Sign in',
@@ -148,7 +149,7 @@ export default function LoginPage() {
       <div className="relative z-10 flex flex-col items-center gap-16 px-6 py-12">
         <TerminalTheater />
 
-        {/* Get started section */}
+        {/* Get started section — original concise card + link to full guide */}
         <div className="w-full max-w-2xl mx-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-6 sm:p-8">
           <h2 className="text-xl font-semibold text-[var(--color-content-primary)] mb-2 text-center">
             Get started in 2 minutes
@@ -179,10 +180,12 @@ export default function LoginPage() {
               </div>
             </li>
           </ol>
+          {/* View full docs — client component owns dialog state; page stays server-rendered */}
+          <GetStartedButton />
         </div>
       </div>
 
-      {/* Feature cards — retained below the narrative */}
+      {/* Feature cards */}
       <section
         aria-label="Features"
         className="relative z-10 mx-auto mb-20 grid max-w-4xl grid-cols-1 gap-4 px-6 sm:grid-cols-2"

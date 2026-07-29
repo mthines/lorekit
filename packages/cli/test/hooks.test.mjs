@@ -9,6 +9,8 @@ import {
   failureQuery,
   relevantLessons,
   formatRelevantLessons,
+  writeConfirmation,
+  loreUrl,
 } from '../src/core/lessons.mjs';
 import { resolvePrecedence, matchesQuery } from '../src/lessons-pure.mjs';
 import { claude } from '../src/adapters/claude.mjs';
@@ -190,7 +192,7 @@ test('matchesQuery re-export from lessons-pure matches the search matcher', () =
 
 test('adapter event → intent mapping', () => {
   assert.equal(claude.intentFor('SessionStart'), 'read');
-  assert.equal(claude.intentFor('PostToolUse'), 'failure');
+  assert.equal(claude.intentFor('PostToolUse'), 'confirm');
   assert.equal(claude.intentFor('PostToolUseFailure'), 'failure');
   assert.equal(claude.intentFor('Stop'), 'retrospective');
   assert.equal(claude.intentFor('Whatever'), 'noop');
@@ -214,10 +216,17 @@ test('adapters emit their framework-specific output shape', () => {
 });
 
 test('adapters normalize their native stdin fields', () => {
-  const c = claude.parse({ cwd: '/p', session_id: 's', tool_name: 'Bash', tool_response: { exit_code: 1 } });
+  const c = claude.parse({
+    cwd: '/p',
+    session_id: 's',
+    tool_name: 'Bash',
+    tool_input: { command: 'npm test' },
+    tool_response: { exit_code: 1 },
+  });
   assert.equal(c.cwd, '/p');
   assert.equal(c.sessionId, 's');
   assert.equal(c.toolName, 'Bash');
+  assert.deepEqual(c.toolInput, { command: 'npm test' });
 
   const cu = cursor.parse({ generation_id: 'g', workspace_roots: ['/w'] });
   assert.equal(cu.sessionId, 'g');
@@ -330,5 +339,102 @@ test('nudges emit no instruction when hooksInstructions is missing or null for t
   assert.doesNotMatch(retrospectiveNudge(scope, controlNoInstr), /Project instruction/);
   assert.doesNotMatch(failureNudge('Bash', scope, controlNoInstr), /Project instruction/);
   assert.doesNotMatch(retrospectiveNudge(scope, { tagsDefault: [], scopeDefaults: null }), /Project instruction/);
+});
+
+// ── loreUrl ────────────────────────────────────────────────────────────────────
+
+test('loreUrl returns base URL for global scope', () => {
+  assert.equal(loreUrl('global'), 'https://lorekit.io/lore');
+  assert.equal(loreUrl(null), 'https://lorekit.io/lore');
+  assert.equal(loreUrl(''), 'https://lorekit.io/lore');
+});
+
+test('loreUrl encodes repo scope into the query string', () => {
+  assert.equal(
+    loreUrl('repo::owner/repo'),
+    'https://lorekit.io/lore?scope=repo%3A%3Aowner%2Frepo',
+  );
+});
+
+// ── writeConfirmation ─────────────────────────────────────────────────────────
+
+test('writeConfirmation includes scope and deep link', () => {
+  const scope = fakeScope({ repoScope: 'repo::owner/repo' });
+  const text = writeConfirmation(scope, 'my-lesson-key');
+  assert.match(text, /memory saved to repo::owner\/repo/);
+  assert.match(text, /my-lesson-key/);
+  assert.match(text, /lorekit\.io\/lore/);
+  assert.match(text, /q=my-lesson-key/);
+});
+
+test('writeConfirmation omits q param when key is null', () => {
+  const scope = fakeScope({ repoScope: 'repo::owner/repo' });
+  const text = writeConfirmation(scope, null);
+  assert.match(text, /memory saved to repo::owner\/repo/);
+  assert.doesNotMatch(text, /q=/);
+  assert.match(text, /lorekit\.io\/lore/);
+});
+
+test('writeConfirmation falls back to global scope', () => {
+  const text = writeConfirmation({ repoScope: null }, 'k');
+  assert.match(text, /memory saved to global/);
+  assert.match(text, /lorekit\.io\/lore/);
+});
+
+// ── retrospectiveNudge includes lore URL ─────────────────────────────────────
+
+test('retrospectiveNudge includes a lore deep link for the write scope', () => {
+  const scope = fakeScope({ repoScope: 'repo::owner/repo' });
+  const text = retrospectiveNudge(scope);
+  assert.match(text, /lorekit\.io\/lore/);
+  assert.match(text, /scope=repo%3A%3Aowner%2Frepo/);
+});
+
+test('retrospectiveNudge uses base URL for global scope', () => {
+  const text = retrospectiveNudge({ repoScope: null });
+  assert.match(text, /https:\/\/lorekit\.io\/lore$/m);
+  assert.doesNotMatch(text, /scope=/);
+});
+
+// ── claude.isLoreWrite ────────────────────────────────────────────────────────
+
+test('isLoreWrite detects a successful memory write by tool name suffix + response id', () => {
+  assert.equal(claude.isLoreWrite('mcp__lorekit__memory_write', { id: 'abc-123', created_at: '2026-01-01' }), true);
+  assert.equal(claude.isLoreWrite('mcp__other_server__memory_write', { id: 'abc' }), true);
+});
+
+test('isLoreWrite rejects non-write tool names', () => {
+  assert.equal(claude.isLoreWrite('Bash', { id: 'abc' }), false);
+  assert.equal(claude.isLoreWrite('mcp__lorekit__memory_read', { id: 'abc' }), false);
+});
+
+test('isLoreWrite rejects responses without a string id (failed or non-write responses)', () => {
+  assert.equal(claude.isLoreWrite('mcp__lorekit__memory_write', null), false);
+  assert.equal(claude.isLoreWrite('mcp__lorekit__memory_write', {}), false);
+  assert.equal(claude.isLoreWrite('mcp__lorekit__memory_write', { id: 123 }), false);
+});
+
+test('isLoreWrite handles null/undefined tool name safely', () => {
+  assert.equal(claude.isLoreWrite(null, { id: 'abc' }), false);
+  assert.equal(claude.isLoreWrite(undefined, { id: 'abc' }), false);
+});
+
+// ── claude.parse — toolInput field ────────────────────────────────────────────
+
+test('claude.parse captures tool_input so the confirm branch can read the key', () => {
+  const parsed = claude.parse({
+    hook_event_name: 'PostToolUse',
+    tool_name: 'mcp__lorekit__memory_write',
+    tool_input: { scope: 'repo::a/b', key: 'my-lesson', value: 'body' },
+    tool_response: { id: 'abc-123', created_at: '2026-01-01T00:00:00Z' },
+  });
+  assert.equal(parsed.toolName, 'mcp__lorekit__memory_write');
+  assert.deepEqual(parsed.toolInput, { scope: 'repo::a/b', key: 'my-lesson', value: 'body' });
+  assert.deepEqual(parsed.toolResponse, { id: 'abc-123', created_at: '2026-01-01T00:00:00Z' });
+});
+
+test('claude.parse defaults toolInput to null when absent', () => {
+  const parsed = claude.parse({ hook_event_name: 'PostToolUse', tool_name: 'Bash' });
+  assert.equal(parsed.toolInput, null);
 });
 

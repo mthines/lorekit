@@ -174,6 +174,14 @@ function tagsHint(writeScope, { tagsDefault = [], scopeDefaults = null } = {}) {
   return ` Include tags: [${tags.map((t) => JSON.stringify(t)).join(', ')}].`;
 }
 
+// The LoreKit web app URL for the Lore Explorer, pre-filtered to the given scope.
+// Exported so tests can assert the URL shape without re-deriving the encoding.
+export function loreUrl(writeScope) {
+  const base = 'https://lorekit.io/lore';
+  if (!writeScope || writeScope === 'global') return base;
+  return `${base}?scope=${encodeURIComponent(writeScope)}`;
+}
+
 // The retrospective nudge emitted at end-of-turn (one-shot per session).
 // `control` is the resolved control object (optional) — carries tagsDefault and
 // scopeDefaults when the repo/user config defines them.
@@ -182,11 +190,26 @@ export function retrospectiveNudge(scope, control) {
   const hint = tagsHint(writeScope, control);
   const instruction = control && control.hooksInstructions && control.hooksInstructions.Stop
     ? `\n\nProject instruction: ${control.hooksInstructions.Stop}` : '';
+  const url = loreUrl(writeScope);
   return (
     `LoreKit: hit any friction worth remembering — a stuck loop, a repeated ` +
     `failure, a gotcha, a wrong assumption? If so, memory.write to ${writeScope} ` +
-    `as an observation; else skip.${hint}${instruction}`
+    `as an observation; else skip.${hint}${instruction}\n` +
+    `View lore: ${url}`
   );
+}
+
+// Terse confirmation emitted via PostToolUse when a memory.write succeeded.
+// `key` is the lesson key from the tool response (may be null when the response
+// shape doesn't surface it). Includes a deep link to the scope's Lore Explorer
+// page so the user can verify immediately.
+export function writeConfirmation(scope, key) {
+  const writeScope = scope.repoScope || 'global';
+  const keyPart = key ? ` · ${key}` : '';
+  const url = key
+    ? `${loreUrl(writeScope)}&q=${encodeURIComponent(key)}`
+    : loreUrl(writeScope);
+  return `LoreKit: memory saved to ${writeScope}${keyPart}\nView: ${url}`;
 }
 
 // The nudge emitted when a tool failure is detected.
