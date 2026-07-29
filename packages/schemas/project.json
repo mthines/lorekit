@@ -4,5 +4,20 @@
   "sourceRoot": "packages/schemas/src",
   "projectType": "library",
   "tags": [],
-  "targets": {}
+  "targets": {
+    "generate:openapi": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "pnpm tsx src/openapi/generate.ts",
+        "cwd": "{projectRoot}"
+      }
+    },
+    "sync-to-shared": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node scripts/sync-schemas-to-shared.mjs",
+        "cwd": "{workspaceRoot}"
+      }
+    }
+  }
 }

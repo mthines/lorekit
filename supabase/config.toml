@@ -65,6 +65,16 @@ verify_jwt = false
 [functions.health]
 verify_jwt = false
 
+# REST API functions — auth handled inside each function (same pattern as mcp)
+[functions.rest-memories]
+verify_jwt = false
+
+[functions.rest-orgs]
+verify_jwt = false
+
+[functions.rest-openapi]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
