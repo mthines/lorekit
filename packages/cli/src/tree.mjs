@@ -121,7 +121,7 @@ function renderTreeSection(header, section) {
       const when = e.updated ? `  ${c.dim(`(updated ${shortDate(e.updated)})`)}` : '';
       const mark = e.winning ? c.green('✓') : c.yellow('↳');
       const tag = e.winning ? '' : `  ${c.dim(`shadowed by ${e.shadowedBy}`)}`;
-      log(`    ${mark} ${e.key}${tag}${when}`);
+      log(`    ${mark} ${g.scope}::${e.key}${tag}${when}`);
       if (e.value) log(`      ${c.dim(preview(e.value))}`);
     }
   }

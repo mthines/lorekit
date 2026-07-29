@@ -181,6 +181,13 @@ function runSearchAsync(root, home, extraArgs = [], extraEnv = {}) {
 
 // ── integration: offline matching ─────────────────────────────────────────────
 
+test('search outputs scope::key format so output is copy-pasteable', () => {
+  const { root, home } = seedProject();
+  const res = runSearch(root, home, ['guard']);
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /global::prefer-guard-clauses/);
+});
+
 test('search matches offline and degrades remote gracefully (exit 0)', () => {
   const { root, home } = seedProject();
   const res = runSearch(root, home, ['sandbox']);

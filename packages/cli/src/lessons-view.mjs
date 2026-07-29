@@ -456,7 +456,7 @@ export function renderSection(header, section) {
     }
     for (const e of g.entries) {
       const when = e.updated ? `  ${c.dim(`(updated ${shortDate(e.updated)})`)}` : '';
-      log(`    ${c.cyan('•')} ${e.key}${when}`);
+      log(`    ${c.cyan('•')} ${g.scope}::${e.key}${when}`);
       if (e.value) log(`      ${c.dim(preview(e.value))}`);
     }
   }

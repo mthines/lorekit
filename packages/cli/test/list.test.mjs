@@ -170,8 +170,9 @@ test('list renders the offline section and degrades remote gracefully (exit 0)',
   const res = runList(root, home);
   assert.equal(res.status, 0, res.stderr);
   assert.match(res.stdout, /Offline/);
-  assert.match(res.stdout, /widget-build-flags/);
-  assert.match(res.stdout, /prefer-guard-clauses/);
+  // Keys are shown as scope::key so they can be copy-pasted directly into show/write.
+  assert.match(res.stdout, /global::prefer-guard-clauses/);
+  assert.match(res.stdout, /widget-build-flags/); // project::... prefix in there
   // Remote is not configured → a graceful note, never an error line.
   assert.match(res.stdout, /Remote/);
   assert.match(res.stdout, /unavailable/);

@@ -132,7 +132,7 @@ function renderSet(title, subtitle, groups, pick) {
     log(`  ${c.bold(g.scope)}`);
     for (const e of pick(g)) {
       const when = e.updated ? `  ${c.dim(`(updated ${shortDate(e.updated)})`)}` : '';
-      log(`    ${c.cyan('•')} ${e.key}${when}`);
+      log(`    ${c.cyan('•')} ${g.scope}::${e.key}${when}`);
       if (e.value) log(`      ${c.dim(preview(e.value))}`);
     }
   }
@@ -148,7 +148,7 @@ function renderConflicts(groups) {
   for (const g of present) {
     log(`  ${c.bold(g.scope)}`);
     for (const conflict of g.conflicting) {
-      log(`    ${c.yellow('•')} ${conflict.key}`);
+      log(`    ${c.yellow('•')} ${g.scope}::${conflict.key}`);
       log(`      ${c.dim('offline')} ${preview(conflict.local.value)}`);
       log(`      ${c.dim('remote ')} ${preview(conflict.remote.value)}`);
     }
