@@ -9,6 +9,7 @@ export const claude = {
       case 'SessionStart':
         return 'read';
       case 'PostToolUse':
+        return 'confirm';
       case 'PostToolUseFailure':
         return 'failure';
       case 'Stop':
@@ -21,6 +22,17 @@ export const claude = {
   // PostToolUseFailure fires only when a tool failed — no heuristic needed.
   guaranteedFailure(event) {
     return event === 'PostToolUseFailure';
+  },
+
+  // Returns true when the PostToolUse event was a successful lorekit memory
+  // write. Claude Code reports MCP tool names as
+  // "mcp__<server-label>__memory_write" (underscores) — we match the suffix
+  // so any server label works. A successful write response always contains
+  // a string `id` field returned by the memory_write RPC.
+  isLoreWrite(toolName, toolResponse) {
+    if (!toolName || !String(toolName).endsWith('memory_write')) return false;
+    const r = toolResponse;
+    return r != null && typeof r === 'object' && typeof r.id === 'string';
   },
 
   parse(input) {

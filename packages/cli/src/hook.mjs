@@ -15,6 +15,7 @@ import {
   failureQuery,
   relevantLessons,
   formatRelevantLessons,
+  writeConfirmation,
 } from './core/lessons.mjs';
 import { isFailure } from './core/failure.mjs';
 import { firstTimeThisSession } from './core/state.mjs';
@@ -106,6 +107,23 @@ async function run(args) {
     }
     const { scope: readScope, lessons } = await fetchLessons(store, root);
     emit(formatLessons(lessons, readScope, { instruction: sessionInstruction }));
+    return 0;
+  }
+
+  if (intent === 'confirm') {
+    // Fire only when a lorekit memory write actually succeeded — the adapter's
+    // isLoreWrite() inspects the tool name and the response shape. Any error
+    // is swallowed (exit 0 — never block the host).
+    try {
+      if (adapter.isLoreWrite && adapter.isLoreWrite(parsed.toolName, parsed.toolResponse)) {
+        const key = (parsed.toolResponse && parsed.toolResponse.input && parsed.toolResponse.input.key)
+          || (parsed.toolResponse && parsed.toolResponse.key)
+          || null;
+        emit(writeConfirmation(scope, key));
+      }
+    } catch {
+      // best-effort — never break the host
+    }
     return 0;
   }
 
