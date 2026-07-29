@@ -72,9 +72,6 @@ export function createBYODAdapter(url: string, anonKey: string): StorageAdapter 
   return {
     db,
     supportsRateLimit: false,
-    // BYOD billing: LoreKit cannot meter memories in the user's private database.
-    // Memory-count billing does not apply. BYOD users are on a flat-rate or
-    // open-source tier; no lorekit_record_usage_event calls are made.
     supportsHostedBilling: false,
     mode: 'byod',
   };
