@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ownerRepoFromRemote } from '../src/scope.mjs';
-import { splitEndpoint, buildRemoteUrl } from '../src/mcp.mjs';
+import { splitEndpoint, buildRemoteUrl, mcpCall } from '../src/mcp.mjs';
 import { tokenKind } from '../src/config.mjs';
 import { parseArgs, selectAction, select } from '../src/util.mjs';
 
@@ -29,6 +29,38 @@ test('splitEndpoint tolerates a URL with no token', () => {
 test('buildRemoteUrl round-trips with splitEndpoint', () => {
   const url = buildRemoteUrl('https://ref.supabase.co/functions/v1/mcp', 'lk_ro_xyz');
   assert.equal(splitEndpoint(url).token, 'lk_ro_xyz');
+});
+
+// ── mcpCall traceparent propagation ───────────────────────────────────────────
+// Without this the MCP-only operations (memory.delete --force, org.*) start a
+// fresh, uncorrelated server-side trace.
+
+async function captureMcpFetch(opts) {
+  const original = globalThis.fetch;
+  let captured = null;
+  globalThis.fetch = async (url, init) => {
+    captured = { url, headers: init.headers };
+    return { ok: true, status: 200, statusText: 'OK', async text() { return '{"jsonrpc":"2.0","id":1,"result":{}}'; } };
+  };
+  try {
+    await mcpCall('https://ref.supabase.co/functions/v1/mcp', 'lk_rw_abc', 'tools/list', {}, opts);
+  } finally {
+    globalThis.fetch = original;
+  }
+  return captured;
+}
+
+test('mcpCall sends the traceparent header when given one', async () => {
+  const tp = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
+  const captured = await captureMcpFetch({ traceparent: tp });
+  assert.equal(captured.headers.traceparent, tp);
+});
+
+test('mcpCall omits the traceparent header when not given one', async () => {
+  const captured = await captureMcpFetch({});
+  assert.ok(!('traceparent' in captured.headers));
+  const noOpts = await captureMcpFetch(undefined);
+  assert.ok(!('traceparent' in noOpts.headers));
 });
 
 test('tokenKind classifies by prefix', () => {

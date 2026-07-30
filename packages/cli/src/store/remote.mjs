@@ -39,7 +39,7 @@ class RemoteStore {
 
   async _mcp(name, args) {
     if (!this.usable()) return { ok: false, unusable: true };
-    return mcpCall(this.endpoint, this.token, 'tools/call', { name, arguments: args });
+    return mcpCall(this.endpoint, this.token, 'tools/call', { name, arguments: args }, { traceparent: this._tp() });
   }
 
   _mcpEntries(res) {
@@ -173,11 +173,15 @@ class RemoteStore {
       ? `${this.restBase.replace(/\/functions\/v1$/, '')}/functions/v1/health`
       : null;
     if (healthUrl) {
+      const tp = this._tp();
       try {
-        const res = await fetch(healthUrl, { signal: AbortSignal.timeout(5000) });
+        const res = await fetch(healthUrl, {
+          signal: AbortSignal.timeout(5000),
+          ...(tp ? { headers: { traceparent: tp } } : {}),
+        });
         return { ok: res.ok, httpStatus: res.status };
       } catch (e) { return { ok: false, networkError: String(e?.message ?? e) }; }
     }
-    return mcpCall(this.endpoint, this.token, 'tools/list', {});
+    return mcpCall(this.endpoint, this.token, 'tools/list', {}, { traceparent: this._tp() });
   }
 }

@@ -31,6 +31,12 @@ import { RestError, translateDbError } from '../_shared/api/errors.ts';
 ### cors.ts
 - `corsHeaders(req)` — returns CORS headers; respects `ALLOWED_ORIGINS` env var.
 - `handlePreflight(req)` — returns 204 with CORS headers for OPTIONS requests.
+- Emits `Access-Control-Expose-Headers: traceparent`. Every response produced under
+  `traceRequest` (`_shared/otel.ts`) carries a `traceparent` header built from the root
+  SERVER span's `traceId`/`spanId` + sampled flag; without the expose header a browser
+  cannot read it. `traceRequest` never mutates the handler's Response in place — it copies
+  the headers and rebuilds the Response (status, statusText, body preserved), so an
+  immutable or bodiless (204/304) Response is handled correctly.
 
 ### respond.ts
 - Thin wrappers for every HTTP status. Always pass `cors` as the last argument.

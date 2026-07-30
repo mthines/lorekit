@@ -10,6 +10,9 @@ export function corsHeaders(req: Request): Record<string, string> {
   const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Authorization, Content-Type, traceparent, tracestate',
+    // Lets a browser read the server span's traceparent off the response
+    // (traceRequest sets it) so client-side RUM can link to the server trace.
+    'Access-Control-Expose-Headers': 'traceparent',
     'Access-Control-Max-Age': '86400',
   };
   if (allow) headers['Access-Control-Allow-Origin'] = origin || '*';
