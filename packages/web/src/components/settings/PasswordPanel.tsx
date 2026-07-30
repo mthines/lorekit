@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { KeyRound } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { addSignalAttribute } from '@dash0/sdk-web';
 import { friendlyAuthError } from '@/lib/auth-errors';
 import { MIN_PASSWORD_LENGTH, validatePasswordConfirmation } from '@/lib/password-policy';
 
@@ -34,10 +35,15 @@ export function PasswordPanel() {
     }
 
     setBusy(true);
+    addSignalAttribute('auth.method', 'password_change_settings');
     const supabase = createClient();
     const { error: updateError } = await supabase.auth.updateUser({ password });
     setBusy(false);
     if (updateError) {
+      addSignalAttribute(
+        'auth.password_error_code',
+        updateError.code ?? updateError.name ?? 'unknown',
+      );
       setError(friendlyAuthError(updateError));
       return;
     }
