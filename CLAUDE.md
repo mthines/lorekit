@@ -94,21 +94,38 @@ gh pr view <pr-number> --repo mthines/lorekit --json reviews \\
 # Tip: loop with `while [ "$(above command)" -lt 1 ]; do sleep 10; done`
 ```
 
-### Step 3 — Trigger the resolve automation
+### Step 3 — Implement review suggestions via implement-suggestion skill
 
-Once the Dash0 bot review is posted, add **exactly this comment** to the PR:
+Once the Dash0 bot review is posted, run the `implement-suggestion` skill directly.
+Do NOT post `@dash0 resolve` as a comment — agent-posted comments do not trigger the automation.
 
+```bash
+# 1. Clone agent-skills (skip if already present)
+git clone https://github.com/mthines/agent-skills.git /tmp/workspace/agent-skills 2>/dev/null || true
+
+# 2. Wire up skill symlinks
+bash /tmp/workspace/agent-skills/scripts/sync-symlinks.sh
+
+# 3. Verify the skill is present — stop if MISSING or sync-symlinks printed "skipped (unsafe)"
+test -f /tmp/workspace/agent-skills/skills/workflow/implement-suggestion/SKILL.md && echo OK || echo MISSING
 ```
-@dash0 resolve
-```
 
-The `dash0-dev` bot will acknowledge with `⚡ Running PR Implement Suggestions…` and open an Agent0
-thread that reads the review, implements the accepted suggestions, commits the changes, and pushes.
-Wait for that thread to complete before moving on.
+Then dispatch a sub-agent (subagent_type: general) with this prompt, substituting the real values
+for TARGET_PR, OWNER, REPO, and NUMBER:
+
+> Read /tmp/workspace/agent-skills/skills/workflow/implement-suggestion/SKILL.md and follow it exactly.
+> TARGET_PR=<full PR URL>, OWNER=<owner>, REPO=<repo>, NUMBER=<pr number>
+
+The skill fetches all open review comments from human and AI reviewers, validates each through
+`/critical` then `/confidence`, applies approved changes as individual commits, pushes to
+the existing branch, and resolves addressed threads. Do NOT open a new PR. Do NOT skip the two-gate
+validation. Wait for the sub-agent to finish before proceeding to Step 4.
+
+If the review report contained no actionable suggestions (all gates passed clean), skip this step.
 
 ### Step 4 — Fix CI with `/ci-auto-fix`
 
-After the resolve automation finishes (or if there was no feedback and CI is still red), run:
+After the implement-suggestion sub-agent finishes (or if there were no suggestions to implement), run:
 
 ```
 /ci-auto-fix
@@ -117,7 +134,7 @@ After the resolve automation finishes (or if there was no feedback and CI is sti
 This loads the `ci-auto-fix` skill from `mthines/agent-skills` (under `skills/delivery/ci-auto-fix`),
 diagnoses any failing GitHub Actions checks, applies a minimal targeted fix, and iterates until all
 checks are green. The skill is confidence-gated (>=90 auto-apply, 80-89 ask, <80 escalate) and will
-never disable or weaken a check.
+never disable or weaken a check. Skip if CI is already fully green.
 
 ### Summary table
 
@@ -125,8 +142,8 @@ never disable or weaken a check.
 |------|--------|--------------|
 | 1 | Open / push the PR (draft or ready) | Agent |
 | 2 | Wait for `dash0-dev` bot review comment | Automatic (Dash0 bot) |
-| 3 | Post `@dash0 resolve` comment | Agent |
-| 4 | Run `/ci-auto-fix` until all checks pass | Agent |
+| 3 | Run implement-suggestion skill (or skip if review is clean) | Agent |
+| 4 | Run `/ci-auto-fix` until all checks pass (or skip if green) | Agent |
 
 ## Scope format (canonical — `::` separator only)
 
