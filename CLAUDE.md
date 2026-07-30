@@ -72,15 +72,42 @@ pnpm nx fn:dev supabase        # run Edge Functions locally
 
 ## PR workflow (mandatory — always follow this order)
 
-Every PR in this repository goes through a fixed four-step sequence.
+Every PR in this repository goes through a fixed five-step sequence.
 Do NOT skip steps or change the order, whether the PR is a draft or ready for review.
 
-### Step 1 — Open / push the PR
+### Step 1 — Run `/polish` and auto-fix all findings
+
+Before opening the PR, run the `polish` skill against the branch. This is a **local-only** pass —
+it never writes to GitHub. All auto-fixable findings must be committed before opening the PR.
+
+```bash
+# 1. Clone agent-skills (skip if already present)
+git clone https://github.com/mthines/agent-skills.git /tmp/workspace/agent-skills 2>/dev/null || true
+
+# 2. Wire up skill symlinks
+bash /tmp/workspace/agent-skills/scripts/sync-symlinks.sh
+
+# 3. Verify the skill is present
+test -f /tmp/workspace/agent-skills/skills/quality/polish/SKILL.md && echo OK || echo MISSING
+```
+
+Then load and run the skill (full mode — review pass + simplify pass):
+
+> Read /tmp/workspace/agent-skills/skills/quality/polish/SKILL.md and follow it exactly.
+> Run in full mode (default). Auto-fix all simple findings. Apply all Class M mechanical refactors
+> that pass the confidence gate. Commit each pass separately. Do NOT write to GitHub.
+
+Wait for the polish run to finish before proceeding. Planned-complex items (Class J, judgment-required)
+are surfaced for awareness but do not block the workflow — they require a human decision.
+
+Skip this step only if the branch diff is non-code only (docs, lockfiles, generated artefacts).
+
+### Step 2 — Open / push the PR
 
 Create the PR (or push a new commit to an existing branch). It may start as a draft.
 The Dash0 bot picks up the event automatically and starts its review — **you do not trigger it manually**.
 
-### Step 2 — Await the Dash0 bot review report
+### Step 3 — Await the Dash0 bot review report
 
 After the PR is opened or marked ready-for-review, **wait for the `dash0-dev` bot to post its review**.
 The bot runs `PR Ready for Review — Polish + Review` automatically; a comment from `dash0-dev` with
@@ -94,7 +121,7 @@ gh pr view <pr-number> --repo mthines/lorekit --json reviews \\
 # Tip: loop with `while [ "$(above command)" -lt 1 ]; do sleep 10; done`
 ```
 
-### Step 3 — Implement review suggestions via implement-suggestion skill
+### Step 4 — Implement review suggestions via implement-suggestion skill
 
 Once the Dash0 bot review is posted, run the `implement-suggestion` skill directly.
 Do NOT post `@dash0 resolve` as a comment — agent-posted comments do not trigger the automation.
@@ -119,11 +146,11 @@ for TARGET_PR, OWNER, REPO, and NUMBER:
 The skill fetches all open review comments from human and AI reviewers, validates each through
 `/critical` then `/confidence`, applies approved changes as individual commits, pushes to
 the existing branch, and resolves addressed threads. Do NOT open a new PR. Do NOT skip the two-gate
-validation. Wait for the sub-agent to finish before proceeding to Step 4.
+validation. Wait for the sub-agent to finish before proceeding to Step 5.
 
 If the review report contained no actionable suggestions (all gates passed clean), skip this step.
 
-### Step 4 — Fix CI with `/ci-auto-fix`
+### Step 5 — Fix CI with `/ci-auto-fix`
 
 After the implement-suggestion sub-agent finishes (or if there were no suggestions to implement), run:
 
@@ -140,10 +167,11 @@ never disable or weaken a check. Skip if CI is already fully green.
 
 | Step | Action | Who triggers |
 |------|--------|--------------|
-| 1 | Open / push the PR (draft or ready) | Agent |
-| 2 | Wait for `dash0-dev` bot review comment | Automatic (Dash0 bot) |
-| 3 | Run implement-suggestion skill (or skip if review is clean) | Agent |
-| 4 | Run `/ci-auto-fix` until all checks pass (or skip if green) | Agent |
+| 1 | Run `/polish` — review + simplify, auto-fix all findings, commit each pass | Agent |
+| 2 | Open / push the PR (draft or ready) | Agent |
+| 3 | Wait for `dash0-dev` bot review comment | Automatic (Dash0 bot) |
+| 4 | Run implement-suggestion skill (or skip if review is clean) | Agent |
+| 5 | Run `/ci-auto-fix` until all checks pass (or skip if green) | Agent |
 
 ## Scope format (canonical — `::` separator only)
 
