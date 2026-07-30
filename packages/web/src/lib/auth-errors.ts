@@ -1,0 +1,103 @@
+/**
+ * Pure Supabase-auth error → user-facing message mapping.
+ *
+ * Supabase returns terse internal messages (e.g. "Invalid login credentials",
+ * "Email rate limit exceeded") that are not suitable to show directly. This is
+ * the single source of truth for translating them, shared by every auth
+ * surface — the login form (magic link *and* password), the forgot-password
+ * page, the update-password page, and the settings password panel — so the
+ * same failure never reads differently in two places.
+ *
+ * Falls back to the raw message (capitalised) for anything unrecognised, which
+ * is still better than silence.
+ */
+
+import { MIN_PASSWORD_LENGTH } from './password-policy';
+
+/**
+ * Structural subset of `@supabase/supabase-js`'s `AuthError` this module
+ * needs. Declared structurally so the mapping stays pure and testable without
+ * constructing a real `AuthError`.
+ */
+export interface AuthErrorLike {
+  message: string;
+  code?: string | undefined;
+  status?: number | undefined;
+  name?: string | undefined;
+}
+
+export function friendlyAuthError(error: AuthErrorLike): string {
+  const msg = error.message.toLowerCase();
+  const code = (error.code ?? '').toLowerCase();
+
+  // -- Password sign-in ----------------------------------------------------
+  // Deliberately does NOT distinguish "no such account" from "wrong password"
+  // — that distinction is an account-enumeration oracle.
+  if (code === 'invalid_credentials' || msg.includes('invalid login credentials')) {
+    return 'Incorrect email or password. If you signed up with GitHub or a magic link, use that instead — or reset your password to set one.';
+  }
+
+  // Account exists but the email was never confirmed.
+  if (code === 'email_not_confirmed' || msg.includes('email not confirmed')) {
+    return 'Please confirm your email first — check your inbox for the confirmation link.';
+  }
+
+  // -- Sign-up -------------------------------------------------------------
+  if (
+    code === 'user_already_exists' ||
+    msg.includes('user already registered') ||
+    msg.includes('already been registered')
+  ) {
+    return 'An account with that email already exists. Sign in instead, or reset your password.';
+  }
+
+  // -- Password policy -----------------------------------------------------
+  if (code === 'weak_password' || msg.includes('password should be at least')) {
+    return `That password is too weak. Use at least ${MIN_PASSWORD_LENGTH} characters.`;
+  }
+  if (code === 'same_password' || msg.includes('should be different from the old password')) {
+    return 'Your new password must be different from your current one.';
+  }
+
+  // -- Session / recovery-link problems ------------------------------------
+  if (
+    code === 'otp_expired' ||
+    msg.includes('token has expired') ||
+    msg.includes('invalid or has expired')
+  ) {
+    return 'That link has expired or was already used. Request a new one and try again.';
+  }
+  if (code === 'session_not_found' || msg.includes('auth session missing')) {
+    return 'Your session has expired. Request a new link and try again.';
+  }
+
+  // -- Rate limiting — most common on Supabase Free tier (4 emails/hour) ---
+  if (msg.includes('rate limit') || msg.includes('too many') || error.status === 429) {
+    return 'Too many sign-in attempts. Please wait a few minutes and try again.';
+  }
+
+  // -- Invalid / undeliverable address -------------------------------------
+  if (
+    msg.includes('invalid email') ||
+    msg.includes('unable to validate') ||
+    code === 'validation_failed'
+  ) {
+    return "That doesn't look like a valid email address. Please double-check and try again.";
+  }
+
+  // -- Signups disabled in this Supabase project ---------------------------
+  if (
+    msg.includes('signups not allowed') ||
+    msg.includes('signup is disabled') ||
+    code === 'signup_disabled'
+  ) {
+    return 'Sign-up is currently disabled. Please contact the administrator.';
+  }
+
+  // -- Email provider rejected delivery (bounced, no such domain, ...) ------
+  if (msg.includes('smtp') || msg.includes('delivery')) {
+    return "We couldn't deliver an email to that address. Please check the address and try again.";
+  }
+
+  return error.message.charAt(0).toUpperCase() + error.message.slice(1);
+}

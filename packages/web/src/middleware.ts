@@ -1,22 +1,13 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+// Dependency-free pure module — safe to pull into the edge middleware bundle.
+// Shared with /api/auth/callback and the client-side password sign-in so all
+// three enforce one definition of a safe `?next=` target.
+import { safeNextPath } from '@/lib/auth-redirect';
 
 /** 24 hours — matches the Supabase project jwt_expiry so the cookie
  *  outlives the access token and the refresh token can be used. */
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24;
-
-/**
- * Validate that a `?next=` redirect target is a safe relative path.
- *
- * Accepts paths that start with `/` but not `//` (scheme-relative URLs such as
- * `//evil.com` would be followed by browsers as an absolute URL and are an
- * open-redirect vector). Falls back to `/dashboard` for anything invalid.
- */
-function safeNextPath(raw: string | null, fallback = '/dashboard'): string {
-  if (!raw) return fallback;
-  if (raw.startsWith('/') && !raw.startsWith('//')) return raw;
-  return fallback;
-}
 
 export async function middleware(request: NextRequest) {
   // Short-circuit OPTIONS preflights before hitting any auth logic.
