@@ -25,10 +25,17 @@ export default async function UserSettingsPage() {
         <UserSettingsPanel user={user} />
       </SectionPanel>
 
+      {/*
+        Collapsed by default: setting a password is an occasional, deliberate
+        task, not something the user needs to read on the way to their account
+        details. The header stays visible so the option is still discoverable
+        in one glance and one click — quiet, not buried.
+      */}
       <SectionPanel
+        collapsible
         icon={<KeyRound className="size-4.5" />}
         title="Password"
-        subtitle="Sign in with your email address and a password."
+        subtitle="Add or change a password so you can sign in with just your email address."
       >
         <PasswordPanel />
       </SectionPanel>
