@@ -142,6 +142,21 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', () =
     expect(status).toBe(404);
   });
 
+  // 9b. natural-key archive ───────────────────────────────────────────────────
+  // The CLI addresses lore by scope+key, never by UUID, so this is the route
+  // `lorekit delete` / `lorekit archive` actually calls.
+  it('DELETE /memories?scope=&key= — archives entry B by natural key (204)', async () => {
+    const { status } = await api('DELETE', `/?scope=${SCOPE}&key=${encodeURIComponent(KEY_B)}`);
+    expect(status, `expected 204`).toBe(204);
+    const { data } = await api('GET', `/?scope=${SCOPE}&key=${encodeURIComponent(KEY_B)}&limit=1`);
+    expect((data as JsonObj).entries).toEqual([]);
+  });
+
+  it('DELETE /memories — returns 400 without scope+key', async () => {
+    const { status } = await api('DELETE', '/');
+    expect(status, 'expected 400, not 405 (the route must exist)').toBe(400);
+  });
+
   // 10. invalid body ──────────────────────────────────────────────────────────
   it('POST /memories — returns 400 for missing required fields', async () => {
     const { status, data } = await api('POST', '/', { value: 'no-scope-or-key' });

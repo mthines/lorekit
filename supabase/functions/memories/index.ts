@@ -14,6 +14,10 @@ import { handleSearch } from './handlers/search.ts';
 const router = createRouter([
   { method: 'GET',    path: '/',        handler: handleList,   requires: 'read'  },
   { method: 'POST',   path: '/',        handler: handleCreate, requires: 'write' },
+  // Natural-key soft-archive: DELETE /memories?scope=…&key=…. `handleRemove` has
+  // always supported the scope+key form, but the route was never registered, so the
+  // CLI's `delete`/`archive` (which addresses lore by scope+key, not UUID) got a 405.
+  { method: 'DELETE', path: '/',        handler: handleRemove, requires: 'write' },
   { method: 'GET',    path: '/:id',     handler: handleGet,    requires: 'read'  },
   { method: 'PATCH',  path: '/:id',     handler: handleUpdate, requires: 'write' },
   { method: 'DELETE', path: '/:id',     handler: handleRemove, requires: 'write' },

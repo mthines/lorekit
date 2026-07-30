@@ -79,6 +79,8 @@ class RemoteStore {
     const p = new URLSearchParams();
     if (scope) p.set('scope', scope);
     if (key) p.set('key', key);
+    // scope+key is unique, so one row is all there can be — don't pull the default page of 50.
+    p.set('limit', '1');
     const res = await this._rest(`/memories?${p}`);
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
     const entries = res.data?.entries ?? [];
