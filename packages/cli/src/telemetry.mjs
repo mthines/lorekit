@@ -40,6 +40,22 @@ const FLAG_ATTRS = ['global', 'project', 'deep', 'yes', 'force', 'no-hooks', 'js
 
 const OFF_VALUES = new Set(['0', 'off', 'false', 'no', 'disable', 'disabled']);
 
+// ── Active trace context (for traceparent propagation to REST calls) ──────────
+// Set at the start of each traced command run; used by RemoteStore to
+// forward the CLI span's trace identity to outgoing REST requests.
+let _activeTraceId = null;
+let _activeSpanId = null;
+
+/**
+ * Get the W3C traceparent for the currently-running CLI command, or null.
+ * Called by RemoteStore to inject the header into REST fetches so CLI spans
+ * are linked to REST API spans in Dash0.
+ */
+export function getActiveTraceparent() {
+  if (!_activeTraceId || !_activeSpanId) return null;
+  return `00-${_activeTraceId}-${_activeSpanId}-01`;
+}
+
 // ── Config resolution ─────────────────────────────────────────────────────────
 
 /**
@@ -155,7 +171,7 @@ export function commandAttributes({ command, args = {}, outcome, exitCode, extra
   return attrs;
 }
 
-export function buildTracePayload({ version, name, attributes, startMs, endMs, status, statusMessage }) {
+export function buildTracePayload({ version, name, attributes, startMs, endMs, status, statusMessage, traceId, spanId }) {
   return {
     resourceSpans: [
       {
@@ -165,8 +181,8 @@ export function buildTracePayload({ version, name, attributes, startMs, endMs, s
             scope: { name: 'lorekit-cli', version: String(version) },
             spans: [
               {
-                traceId: randHex(16),
-                spanId: randHex(8),
+                traceId: traceId ?? randHex(16),
+                spanId: spanId ?? randHex(8),
                 name,
                 kind: 1, // INTERNAL
                 startTimeUnixNano: String(startMs * 1_000_000),
@@ -243,9 +259,9 @@ async function post(url, headers, payload, timeoutMs) {
  * can never delay or fail the CLI. Awaited before process exit (Node would
  * otherwise drop the in-flight request), but capped at timeoutMs.
  */
-export async function exportInvocation(config, { version, name, attributes, startMs, endMs, status, statusMessage }, { timeoutMs = 1500 } = {}) {
+export async function exportInvocation(config, { version, name, attributes, startMs, endMs, status, statusMessage, traceId, spanId }, { timeoutMs = 1500 } = {}) {
   if (!config || !config.enabled) return;
-  const trace = buildTracePayload({ version, name, attributes, startMs, endMs, status, statusMessage });
+  const trace = buildTracePayload({ version, name, attributes, startMs, endMs, status, statusMessage, traceId, spanId });
   const metric = buildMetricsPayload({ version, attributes, startMs, endMs });
   await Promise.all([
     post(`${config.endpoint}/v1/traces`, config.headers, trace, timeoutMs),
@@ -305,6 +321,11 @@ export async function traceCommand(command, args, version, run) {
   // (exit 1) for every user without an OTLP endpoint configured.
   if (!config.enabled) return normalizeExitCode(await run());
 
+  // Generate trace context before run() so REST calls can forward it as traceparent.
+  // The same IDs are reused in exportInvocation() to link the CLI span to REST spans.
+  _activeTraceId = randHex(16);
+  _activeSpanId = randHex(8);
+
   const startMs = Date.now();
   let exitCode = 0;
   let status = 'ok';
@@ -360,9 +381,14 @@ export async function traceCommand(command, args, version, run) {
         endMs: Date.now(),
         status,
         statusMessage,
+        traceId: _activeTraceId,
+        spanId: _activeSpanId,
       });
     } catch {
       // never let telemetry break the CLI
+    } finally {
+      _activeTraceId = null;
+      _activeSpanId = null;
     }
   }
 }
