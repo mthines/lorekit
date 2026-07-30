@@ -71,6 +71,9 @@ export async function write(
       if (input.source_agent) span.setAttribute('lorekit.source_agent', input.source_agent);
       if (input.trigger) span.setAttribute('lorekit.trigger', input.trigger);
       if (createdAt) span.setAttribute('lorekit.created_at', createdAt);
+      // Span attribute renamed from lorekit.ttl_days to lorekit.ttl_seconds (intentional:
+      // TTL is now stored and forwarded to the DB in seconds; update any dashboards or
+      // alert rules that query lorekit.ttl_days).
       if (ttlSeconds !== null) span.setAttribute('lorekit.ttl_seconds', ttlSeconds);
       if (input.clear_ttl) span.setAttribute('lorekit.clear_ttl', true);
 
