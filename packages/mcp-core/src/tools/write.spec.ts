@@ -181,19 +181,19 @@ describe('write', () => {
   });
 });
 
-// ── TTL (ttl_days) tests ───────────────────────────────────────────────────────
+// ── TTL — ttl_days ────────────────────────────────────────────────────────────
 
 describe('write with ttl_days', () => {
-  it('passes p_ttl_days to the RPC when ttl_days is provided', async () => {
+  it('passes p_ttl_seconds (converted from days) to the RPC', async () => {
     const db = makeDb({ ...fakeResult, expires_at: '2026-08-03T00:00:00Z' });
     await write(db, { scope: 'global', key: 'k', value: 'v', ttl_days: 7 });
-    expect(db.rpc).toHaveBeenCalledWith('memory_write', expect.objectContaining({ p_ttl_days: 7 }));
+    expect(db.rpc).toHaveBeenCalledWith('memory_write', expect.objectContaining({ p_ttl_seconds: 7 * 86_400 }));
   });
 
-  it('passes p_ttl_days: null to the RPC when ttl_days is omitted', async () => {
+  it('passes p_ttl_seconds: null to the RPC when no ttl_* is provided', async () => {
     const db = makeDb(fakeResult);
     await write(db, { scope: 'global', key: 'k', value: 'v' });
-    expect(db.rpc).toHaveBeenCalledWith('memory_write', expect.objectContaining({ p_ttl_days: null }));
+    expect(db.rpc).toHaveBeenCalledWith('memory_write', expect.objectContaining({ p_ttl_seconds: null }));
   });
 
   it('includes expires_at in the result when ttl_days is provided', async () => {
@@ -203,7 +203,7 @@ describe('write with ttl_days', () => {
     expect(result).toHaveProperty('expires_at', expiresAt);
   });
 
-  it('does NOT include expires_at in the result when ttl_days is omitted', async () => {
+  it('does NOT include expires_at in the result when no ttl_* is provided', async () => {
     const db = makeDb(fakeResult);
     const result = await write(db, { scope: 'global', key: 'k', value: 'v' });
     expect(result).not.toHaveProperty('expires_at');
@@ -226,5 +226,107 @@ describe('write with ttl_days', () => {
     await expect(write(db1, { scope: 'global', key: 'k', value: 'v', ttl_days: 1 })).resolves.toBeDefined();
     const db365 = makeDb({ ...fakeResult, expires_at: '2027-07-27T00:00:00Z' });
     await expect(write(db365, { scope: 'global', key: 'k', value: 'v', ttl_days: 365 })).resolves.toBeDefined();
+  });
+});
+
+// ── TTL — ttl_minutes ─────────────────────────────────────────────────────────
+
+describe('write with ttl_minutes', () => {
+  it('passes p_ttl_seconds (converted from minutes) to the RPC', async () => {
+    const db = makeDb({ ...fakeResult, expires_at: '2026-07-30T11:00:00Z' });
+    await write(db, { scope: 'global', key: 'k', value: 'v', ttl_minutes: 60 });
+    expect(db.rpc).toHaveBeenCalledWith('memory_write', expect.objectContaining({ p_ttl_seconds: 3_600 }));
+  });
+
+  it('converts 90 minutes to 5400 seconds', async () => {
+    const db = makeDb({ ...fakeResult, expires_at: '2026-07-30T11:30:00Z' });
+    await write(db, { scope: 'global', key: 'k', value: 'v', ttl_minutes: 90 });
+    expect(db.rpc).toHaveBeenCalledWith('memory_write', expect.objectContaining({ p_ttl_seconds: 5_400 }));
+  });
+
+  it('includes expires_at in the result when ttl_minutes is provided', async () => {
+    const expiresAt = '2026-07-30T11:00:00Z';
+    const db = makeDb({ ...fakeResult, expires_at: expiresAt });
+    const result = await write(db, { scope: 'global', key: 'k', value: 'v', ttl_minutes: 60 });
+    expect(result).toHaveProperty('expires_at', expiresAt);
+  });
+
+  it('throws ZodError when ttl_minutes is 0', async () => {
+    const db = makeDb(fakeResult);
+    await expect(write(db, { scope: 'global', key: 'k', value: 'v', ttl_minutes: 0 })).rejects.toThrow();
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it('accepts ttl_minutes at the boundary values (1 and max)', async () => {
+    const maxMinutes = 365 * 24 * 60;
+    const db1 = makeDb({ ...fakeResult, expires_at: '2026-07-30T10:33:00Z' });
+    await expect(write(db1, { scope: 'global', key: 'k', value: 'v', ttl_minutes: 1 })).resolves.toBeDefined();
+    const dbMax = makeDb({ ...fakeResult, expires_at: '2027-07-30T10:32:00Z' });
+    await expect(write(dbMax, { scope: 'global', key: 'k', value: 'v', ttl_minutes: maxMinutes })).resolves.toBeDefined();
+  });
+});
+
+// ── TTL — ttl_seconds ─────────────────────────────────────────────────────────
+
+describe('write with ttl_seconds', () => {
+  it('passes p_ttl_seconds directly to the RPC', async () => {
+    const db = makeDb({ ...fakeResult, expires_at: '2026-07-30T10:33:00Z' });
+    await write(db, { scope: 'global', key: 'k', value: 'v', ttl_seconds: 60 });
+    expect(db.rpc).toHaveBeenCalledWith('memory_write', expect.objectContaining({ p_ttl_seconds: 60 }));
+  });
+
+  it('passes 30 seconds correctly', async () => {
+    const db = makeDb({ ...fakeResult, expires_at: '2026-07-30T10:32:59Z' });
+    await write(db, { scope: 'global', key: 'k', value: 'v', ttl_seconds: 30 });
+    expect(db.rpc).toHaveBeenCalledWith('memory_write', expect.objectContaining({ p_ttl_seconds: 30 }));
+  });
+
+  it('includes expires_at in the result when ttl_seconds is provided', async () => {
+    const expiresAt = '2026-07-30T10:33:00Z';
+    const db = makeDb({ ...fakeResult, expires_at: expiresAt });
+    const result = await write(db, { scope: 'global', key: 'k', value: 'v', ttl_seconds: 60 });
+    expect(result).toHaveProperty('expires_at', expiresAt);
+  });
+
+  it('throws ZodError when ttl_seconds is 0', async () => {
+    const db = makeDb(fakeResult);
+    await expect(write(db, { scope: 'global', key: 'k', value: 'v', ttl_seconds: 0 })).rejects.toThrow();
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it('accepts ttl_seconds at the boundary values (1 and max)', async () => {
+    const maxSeconds = 365 * 24 * 60 * 60;
+    const db1 = makeDb({ ...fakeResult, expires_at: '2026-07-30T10:32:30Z' });
+    await expect(write(db1, { scope: 'global', key: 'k', value: 'v', ttl_seconds: 1 })).resolves.toBeDefined();
+    const dbMax = makeDb({ ...fakeResult, expires_at: '2027-07-30T10:32:00Z' });
+    await expect(write(dbMax, { scope: 'global', key: 'k', value: 'v', ttl_seconds: maxSeconds })).resolves.toBeDefined();
+  });
+});
+
+// ── TTL — mutual exclusivity ──────────────────────────────────────────────────
+
+describe('write TTL mutual exclusivity', () => {
+  it('throws TtlError when ttl_days and ttl_minutes are both supplied', async () => {
+    const db = makeDb(fakeResult);
+    await expect(
+      write(db, { scope: 'global', key: 'k', value: 'v', ttl_days: 1, ttl_minutes: 60 }),
+    ).rejects.toThrow(/at most one/);
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it('throws TtlError when ttl_days and ttl_seconds are both supplied', async () => {
+    const db = makeDb(fakeResult);
+    await expect(
+      write(db, { scope: 'global', key: 'k', value: 'v', ttl_days: 1, ttl_seconds: 60 }),
+    ).rejects.toThrow(/at most one/);
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it('throws TtlError when ttl_minutes and ttl_seconds are both supplied', async () => {
+    const db = makeDb(fakeResult);
+    await expect(
+      write(db, { scope: 'global', key: 'k', value: 'v', ttl_minutes: 5, ttl_seconds: 30 }),
+    ).rejects.toThrow(/at most one/);
+    expect(db.rpc).not.toHaveBeenCalled();
   });
 });
