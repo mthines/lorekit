@@ -70,6 +70,102 @@ pnpm nx fn:dev supabase        # run Edge Functions locally
 
 ---
 
+## PR workflow (mandatory — always follow this order)
+
+Every PR in this repository goes through a fixed five-step sequence.
+Do NOT skip steps or change the order, whether the PR is a draft or ready for review.
+
+### Prerequisites — install agent-skills (once per sandbox)
+
+Before running any PR workflow steps, ensure `agent-skills` is cloned and all skills and agents are
+wired into `~/.claude/`. This is idempotent — safe to re-run, no-op if already set up.
+
+```bash
+# Clone if not already present, then wire every skill and agent into ~/.claude/
+git clone https://github.com/mthines/agent-skills.git /tmp/workspace/agent-skills 2>/dev/null || true
+bash /tmp/workspace/agent-skills/scripts/sync-symlinks.sh
+```
+
+The script discovers all skills (any directory under `skills/` containing a `SKILL.md`) and all
+agents (`agents/*.md`), and creates a two-tier symlink chain so they are available as native Claude
+skills and sub-agents. It repairs broken links and skips already-correct ones.
+
+### Step 1 — Run `/polish` and auto-fix all findings
+
+Before opening the PR, run the `polish` skill against the branch. This is a **local-only** pass —
+it never writes to GitHub. All auto-fixable findings must be committed before opening the PR.
+
+Dispatch a sub-agent (subagent_type: general):
+
+> Read /tmp/workspace/agent-skills/skills/quality/polish/SKILL.md and follow it exactly.
+> Run in full mode (default). Auto-fix all simple findings. Apply all Class M mechanical refactors
+> that pass the confidence gate. Commit each pass separately. Do NOT write to GitHub.
+
+Wait for the polish run to finish before proceeding. Planned-complex items (Class J, judgment-required)
+are surfaced for awareness but do not block the workflow — they require a human decision.
+
+Skip this step only if the branch diff is non-code only (docs, lockfiles, generated artefacts).
+
+### Step 2 — Open / push the PR
+
+Create the PR (or push a new commit to an existing branch). It may start as a draft.
+The Dash0 bot picks up the event automatically and starts its review — **you do not trigger it manually**.
+
+### Step 3 — Await the Dash0 bot review report
+
+After the PR is opened or marked ready-for-review, **wait for the `dash0-dev` bot to post its review**.
+The bot runs `PR Ready for Review — Polish + Review` automatically; a comment from `dash0-dev` with
+the review results will appear on the PR. Do not proceed until that comment is present.
+
+```bash
+# Poll until the dash0-dev review appears (count should reach ≥ 1)
+while [ "$(gh pr view <pr-number> --repo mthines/lorekit --json reviews \
+  --jq '.reviews | map(select(.author.login == "dash0-dev")) | length')" -lt 1 ]; do
+  sleep 10
+done
+```
+
+### Step 4 — Implement review suggestions
+
+Once the Dash0 bot review is posted, dispatch a sub-agent (subagent_type: general):
+
+> Read /tmp/workspace/agent-skills/skills/workflow/implement-suggestion/SKILL.md and follow it exactly.
+> TARGET_PR=<full PR URL>, OWNER=<owner>, REPO=<repo>, NUMBER=<pr number>
+
+The skill fetches all open review comments from human and AI reviewers, validates each through
+`/critical` then `/confidence`, applies approved changes as individual commits, pushes to
+the existing branch, and resolves addressed threads. Do NOT open a new PR. Do NOT skip the two-gate
+validation. Wait for the sub-agent to finish before proceeding to Step 5.
+
+**Note:** Do NOT post `@dash0 resolve` as a PR comment — agent-posted comments do not trigger
+the webhook. Run the skill directly as described above.
+
+If the review report contained no actionable suggestions (all gates passed clean), skip this step.
+
+### Step 5 — Fix CI with `/ci-auto-fix`
+
+After the implement-suggestion sub-agent finishes (or if there were no suggestions to implement), run:
+
+```
+/ci-auto-fix
+```
+
+This uses the `ci-auto-fix` skill (wired in during Prerequisites), diagnoses any failing GitHub
+Actions checks, applies a minimal targeted fix, and iterates until all checks are green. The skill
+is confidence-gated (>=90 auto-apply, 80-89 ask, <80 escalate) and will never disable or weaken a
+check. Skip if CI is already fully green.
+
+### Summary table
+
+| Step | Action | Who triggers |
+|------|--------|--------------|
+| 0 | Clone agent-skills + run sync-symlinks.sh (once per sandbox) | Agent |
+| 1 | Run `/polish` — review + simplify, auto-fix all findings, commit each pass | Agent |
+| 2 | Open / push the PR (draft or ready) | Agent |
+| 3 | Wait for `dash0-dev` bot review comment | Automatic (Dash0 bot) |
+| 4 | Run implement-suggestion skill (or skip if review is clean) | Agent |
+| 5 | Run `/ci-auto-fix` until all checks pass (or skip if green) | Agent |
+
 ## Scope format (canonical — `::` separator only)
 
 ```
