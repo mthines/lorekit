@@ -4,6 +4,7 @@ import { validateUuid, validateBody } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import { UpdateMemoryBodySchema } from '@lorekit/schemas/memory';
+import { recordRestAudit } from '../../_shared/audit.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
 
@@ -34,6 +35,18 @@ export async function handleUpdate(
     .maybeSingle();
 
   if (error) { span.error(`DB: ${error.message}`); throw error; }
+  // Audit only on the success path — never for the 404 below, where no row
+  // matched and therefore nothing was updated.
   if (!data) return notFound('Memory', cors);
+
+  const updated = data as Pick<MemoryRow, 'id' | 'scope' | 'key'>;
+  await recordRestAudit(db, span, auth, {
+    action: 'memory.update',
+    resourceType: 'memory',
+    resourceId: updated.id,
+    target: updated.key,
+    metadata: { scope: updated.scope, key: updated.key },
+  });
+
   return ok(data, cors);
 }

@@ -4,6 +4,7 @@ import { validateUuid } from '../../../_shared/api/validate.ts';
 import { createTracedClient } from '../../../_shared/otel.ts';
 import type { Span } from '../../../_shared/otel.ts';
 import { translateDbError } from '../../../_shared/api/errors.ts';
+import { recordRestAudit } from '../../../_shared/audit.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
 
 export async function handleRevokeInvite(req: Request, auth: AuthContext, db: DbClient, span: Span, params: Record<string,string>, cors: Record<string,string>): Promise<Response> {
@@ -13,5 +14,15 @@ export async function handleRevokeInvite(req: Request, auth: AuthContext, db: Db
   const tracedDb = createTracedClient(db, span);
   const { error } = await tracedDb.rpc('lorekit_org_invite_revoke', { p_invite_id: idV.data });
   if (error) { const m = translateDbError(error); if (m) return m.toResponse(cors); span.error(error.message); throw error; }
+
+  // Matches web's revokeInvite: invite id only, no target — the org is not
+  // resolved on this route (the RPC takes the invite id alone) and web does not
+  // record one either.
+  await recordRestAudit(db, span, auth, {
+    action: 'member.revoke',
+    resourceType: 'org_invite',
+    resourceId: idV.data,
+  });
+
   return noContent(cors);
 }

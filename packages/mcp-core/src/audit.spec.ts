@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { AUDIT_ACTIONS, buildAuditEntry, recordAudit, type AuditAction } from './audit.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { AUDIT_ACTIONS as CANONICAL_AUDIT_ACTIONS } from '@lorekit/schemas/audit';
 
 function makeInsertDb(result: { error: null | { message: string } }) {
   const insert = vi.fn().mockResolvedValue(result);
@@ -8,8 +9,18 @@ function makeInsertDb(result: { error: null | { message: string } }) {
 }
 
 describe('AUDIT_ACTIONS', () => {
-  it('enumerates exactly the 11 bounded actions', () => {
-    expect(AUDIT_ACTIONS).toEqual([
+  // The vocabulary itself is no longer owned here — it is re-exported verbatim
+  // from @lorekit/schemas/audit, the single source of truth shared with the Deno
+  // writer, the dashboard, and (restated in SQL) the audit_log.action CHECK.
+  // Asserting the literal list in two places is exactly the duplication that
+  // let the four copies drift, so this only pins the re-export: identity with
+  // the schemas tuple, plus the actions THIS writer is responsible for emitting.
+  it('re-exports the canonical tuple from @lorekit/schemas without altering it', () => {
+    expect(AUDIT_ACTIONS).toBe(CANONICAL_AUDIT_ACTIONS);
+  });
+
+  it('covers every action the Node writer emits', () => {
+    for (const action of [
       'api_key.create',
       'api_key.revoke',
       'webhook_secret.create',
@@ -21,7 +32,9 @@ describe('AUDIT_ACTIONS', () => {
       'memory.restore',
       'memory.delete',
       'limit.override',
-    ]);
+    ]) {
+      expect(AUDIT_ACTIONS).toContain(action);
+    }
   });
 });
 

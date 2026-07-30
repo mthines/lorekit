@@ -2,6 +2,7 @@
   "imports": {
     "zod": "npm:zod@3",
     "@asteasolutions/zod-to-openapi": "npm:@asteasolutions/zod-to-openapi@^7.0.0",
+    "@lorekit/schemas/audit": "../../packages/schemas/src/audit.ts",
     "@lorekit/schemas/common": "../../packages/schemas/src/common.ts",
     "@lorekit/schemas/filter": "../../packages/schemas/src/filter.ts",
     "@lorekit/schemas/memory": "../../packages/schemas/src/memory.ts",

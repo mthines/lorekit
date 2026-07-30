@@ -4,6 +4,7 @@ import { validateUuid, validateQuery } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import { DeleteMemoryQuerySchema } from '@lorekit/schemas/memory';
+import { recordRestAudit } from '../../_shared/audit.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
 
@@ -18,10 +19,10 @@ type MemoryRow = Tables<'memories'>;
  * `lorekit.delete.force` span attribute, so the two surfaces are queryable
  * together in traces.
  *
- * No audit event is written here. Unlike the MCP path, the REST handlers have
- * no audit writer at all (no `_shared` equivalent of `mcp/audit.ts` exists, and
- * neither create.ts nor update.ts audits); adding a second, divergent audit
- * path from one handler would be worse than the current consistent gap.
+ * Audits `memory.delete` (force) or `memory.archive` (soft), matching
+ * toolDelete's action choice and metadata shape — but only once a row has
+ * actually matched. The 404 path writes nothing: an audit row asserts a
+ * mutation happened, and on a zero-match delete none did.
  */
 export async function handleRemove(
   req: Request, auth: AuthContext, db: DbClient, span: Span,
@@ -62,7 +63,25 @@ export async function handleRemove(
 
   const { count, error } = await q;
   if (error) { span.error(`DB: ${error.message}`); throw error; }
+  // Nothing matched → nothing happened → no audit row. Emitting one here would
+  // record a deletion that never occurred.
   if (!count || count === 0) return notFound('Memory', cors);
   span.setAttributes({ 'lorekit.result.deleted': force, 'lorekit.result.archived': !force });
+
+  // Action + metadata mirror toolDelete (mcp/tools.ts). This route also accepts
+  // the UUID form, which toolDelete has no equivalent of; in that case scope/key
+  // are simply unknown, so the row carries the id as its target and omits them
+  // rather than inventing values or paying for an extra lookup.
+  await recordRestAudit(db, span, auth, {
+    action: force ? 'memory.delete' : 'memory.archive',
+    resourceType: 'memory',
+    resourceId: idParam ?? null,
+    target: keyParam ?? idParam ?? null,
+    metadata: {
+      force,
+      ...(scopeParam && keyParam ? { scope: scopeParam, key: keyParam } : {}),
+    },
+  });
+
   return noContent(cors);
 }

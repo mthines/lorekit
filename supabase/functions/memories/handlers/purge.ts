@@ -4,6 +4,7 @@ import { validateOptionalBody } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { Span } from '../../_shared/otel.ts';
 import { PurgeMemoriesBodySchema } from '@lorekit/schemas/memory';
+import { recordRestAudit } from '../../_shared/audit.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Database } from '../../_shared/database.types.ts';
 
@@ -59,7 +60,10 @@ async function checkRateLimit(db: DbClient, span: Span, userId: string, cors: Re
  * out-of-range value is a client error worth reporting, not something to
  * silently round.
  *
- * No audit event is written — see the note in remove.ts.
+ * Emits ONE summary `memory.delete` audit event per run, and only when
+ * something was actually purged — identical in shape to toolPurge's (D6). The
+ * RPC returns a count and never the purged rows, so a per-row event is not
+ * derivable; the count goes in `target` and `metadata` instead.
  */
 export async function handlePurge(
   req: Request, auth: AuthContext, db: DbClient, span: Span,
@@ -92,6 +96,16 @@ export async function handlePurge(
   // so unwrap through `unknown` rather than lying about the shape.
   const purged = Number((data as unknown) ?? 0);
   span.setAttributes({ 'lorekit.result.purged': purged });
+
+  if (purged > 0) {
+    await recordRestAudit(db, span, auth, {
+      action: 'memory.delete',
+      resourceType: 'memory',
+      target: `${purged} archived memories`,
+      metadata: { purged, retention_days: retentionDays },
+    });
+  }
+
   return ok({ purged }, cors);
 }
 
@@ -100,7 +114,8 @@ export async function handlePurge(
  * Mirrors the MCP `memory.purge_expired` tool (toolPurgeExpired). Takes no
  * body: the RPC's only input is the user id.
  *
- * No audit event is written — see the note in remove.ts.
+ * Emits the same single summary `memory.delete` event as handlePurge when
+ * anything was purged, matching toolPurgeExpired's target/metadata shape.
  */
 export async function handlePurgeExpired(
   _req: Request, auth: AuthContext, db: DbClient, span: Span,
@@ -122,5 +137,15 @@ export async function handlePurgeExpired(
   // so unwrap through `unknown` rather than lying about the shape.
   const purged = Number((data as unknown) ?? 0);
   span.setAttributes({ 'lorekit.result.purged_expired': purged });
+
+  if (purged > 0) {
+    await recordRestAudit(db, span, auth, {
+      action: 'memory.delete',
+      resourceType: 'memory',
+      target: `${purged} expired memories`,
+      metadata: { purged_expired: purged },
+    });
+  }
+
   return ok({ purged }, cors);
 }

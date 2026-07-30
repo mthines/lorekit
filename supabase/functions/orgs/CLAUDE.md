@@ -49,6 +49,34 @@ Handler signature: `async function handle{Name}(req, auth, db, span, params, cor
 | members/role.ts | `lorekit_org_member_role` | Requires owner to change roles |
 | members/remove.ts | `lorekit_org_leave` or `lorekit_org_member_remove` | See note below |
 
+## Audit events
+
+Every mutating handler writes to `audit_log` via `recordRestAudit`
+(`_shared/audit.ts`), **after** the RPC succeeds and never on an error/404 path. The
+field layout deliberately matches the equivalent web server action
+(`packages/web/src/lib/orgs.ts`, `org-invites.ts`) so the dashboard and the REST API
+produce comparable rows for the same operation.
+
+| Handler | Action | `resourceType` | `resourceId` | `target` | metadata |
+|---------|--------|----------------|--------------|----------|----------|
+| orgs/create.ts | `org.create` | `org` | new org id | org name | `{ slug }` |
+| orgs/rename.ts | `org.rename` | `org` | org id | new name | — |
+| orgs/remove.ts | `org.delete` | `org` | org id | — | — |
+| members/remove.ts | `member.leave` (self) / `member.remove` | `org_member` | affected user id | org id | — |
+| members/change-role.ts | `member.role_change` | `org_member` | affected user id | org id | `{ role }` |
+| invites/create.ts | `member.invite` | `org_invite` | invite id | org id | `{ invitee, role }` |
+| invites/revoke.ts | `member.revoke` | `org_invite` | invite id | — | — |
+
+`members/remove.ts` picks its action from **the RPC that actually ran**, not the route:
+the endpoint serves both "kick a member" (`lorekit_org_member_remove`) and "leave"
+(`lorekit_org_leave`), and web audits those as `member.remove` and `member.leave`
+respectively. Emitting `member.remove` for a self-removal would make one operation read
+differently depending on which client performed it.
+
+A failed audit write never fails the request — `recordRestAudit` cannot throw.
+`packages/mcp-core/src/rest-audit-usage.spec.ts` fails if any mutating route here stops
+calling it.
+
 ## Self-removal routing in `members/remove.ts`
 
 `DELETE /:slug/members/:userId` is used for both **kicking a member** (admin/owner) and **leaving an org** (any member). The handler checks:

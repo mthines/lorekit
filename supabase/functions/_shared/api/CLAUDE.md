@@ -1,6 +1,8 @@
 # _shared/api — REST utility modules
 
-Nine modules shared by every REST edge function (`memories`, `orgs`, `openapi`).
+Nine modules shared by every REST edge function (`memories`, `orgs`, `openapi`), plus
+the audit writer one level up in `_shared/audit.ts` (shared with `mcp` too — see
+"Auditing" below).
 
 ## Import paths (from a function like `memories/`)
 
@@ -76,6 +78,65 @@ import { RestError, translateDbError } from '../_shared/api/errors.ts';
 - `applyRestTenantScope(query, userId, orgIds)` — the widened tenant-visibility predicate
   for `api_key` auth (which uses a service-role client and therefore bypasses RLS).
   JWT auth needs no call: RLS enforces visibility. Never inline `.eq('user_id', …)` instead.
+
+## Auditing — `_shared/audit.ts`
+
+Lives one level up (`../audit.ts`, not `api/`) because the MCP function shares it:
+`mcp/audit.ts` is now a thin re-export of the same module. One canonical Deno audit
+writer, no duplication.
+
+- `buildAuditEntry(input)` — pure; shapes the snake_case `audit_log` row.
+- `recordAudit(db, input, userId)` — inserts it. Never throws.
+- **`recordRestAudit(db, span, auth, input)`** — the one REST handlers should call.
+
+The action vocabulary and the `AuditAction` / `AuditEntryInput` / `AuditRow` types come
+from `@lorekit/schemas/audit` — the single source of truth shared with the Node writer,
+the dashboard, and (restated in SQL) the `audit_log.action` CHECK constraint. The import
+is **type-only** so the edge bundles don't gain the zod runtime for it.
+
+### Rules
+
+1. **Call it only AFTER the primary operation has succeeded.** Never on an error, 400,
+   403, 404 or zero-rows-matched path. An audit row asserts a mutation happened; one
+   written for a mutation that didn't is worse than none. Where an operation can no-op
+   (a soft-archive matching no row, a purge that purged 0), audit only when the count
+   proves it did something.
+2. **Never make the response conditional on it.** It cannot throw, and a caller must not
+   `try`/`catch` it or branch on it. A failed audit write must never fail the request.
+3. **Actor resolution is `auth.userId ?? null`** — and it works better here than in MCP.
+   `AuthContext.userId` is populated for JWT users (MCP's `getUserId` returns `null` for
+   them), and the `audit_log` INSERT policy requires `user_id = auth.uid()`, which the
+   RLS-scoped `type: 'user'` client satisfies. So REST records the real actor on JWT
+   calls where MCP cannot. `api_key` records the token owner and `service` records
+   `null`, both under a service-role client that bypasses RLS.
+4. It creates a `lorekit.rest.audit` child span (like `lorekit.rest.auth` /
+   `lorekit.rest.rate_limit`) so audit latency is attributable separately, carrying the
+   bounded `lorekit.audit.action` attribute.
+5. **Match the web server actions' field conventions** (`packages/web/src/lib/orgs.ts`,
+   `org-invites.ts`) for the same operation, so the dashboard and REST surfaces produce
+   comparable rows rather than two shapes for one event.
+
+Every mutating REST route is required to call it — enforced by
+`packages/mcp-core/src/rest-audit-usage.spec.ts`, which derives the handler set from the
+route tables rather than a hardcoded list. A route registered `requires: 'read'` (e.g.
+`POST /memories/search`) is exempt by construction.
+
+```typescript
+import { recordRestAudit } from '../../_shared/audit.ts';
+
+const { count, error } = await q;
+if (error) { span.error(`DB: ${error.message}`); throw error; }
+if (!count) return notFound('Memory', cors);   // ← no audit: nothing happened
+
+await recordRestAudit(db, span, auth, {
+  action: force ? 'memory.delete' : 'memory.archive',
+  resourceType: 'memory',
+  resourceId: idParam ?? null,
+  target: keyParam ?? idParam ?? null,
+  metadata: { force, scope: scopeParam, key: keyParam },
+});
+return noContent(cors);
+```
 
 ## Full example: memories/index.ts + one handler
 

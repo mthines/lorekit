@@ -5,6 +5,7 @@ import { createTracedClient } from '../../_shared/otel.ts';
 import type { Span } from '../../_shared/otel.ts';
 import { CreateMemoryBodySchema } from '@lorekit/schemas/memory';
 import { translateDbError } from '../../_shared/api/errors.ts';
+import { recordRestAudit } from '../../_shared/audit.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Database } from '../../_shared/database.types.ts';
 
@@ -58,7 +59,10 @@ export async function handleCreate(
   }
 
   // Fetch the full row so the response matches MemoryEntrySchema.
-  const row = data as { id: string; created_at: string; expires_at?: string | null } | null;
+  // `inserted` (migration 00011, `RETURNING (xmax = 0)`) is the create-vs-update
+  // discriminator — an internal audit-classification signal, deliberately not
+  // part of the response contract.
+  const row = data as { id: string; created_at: string; inserted?: boolean; expires_at?: string | null } | null;
   if (!row?.id) {
     span.error('memory_write returned no id');
     throw new Error('memory_write returned no id');
@@ -70,6 +74,19 @@ export async function handleCreate(
     .single();
 
   if (fetchErr) { span.error(`DB: ${fetchErr.message}`); throw fetchErr; }
-  span.setAttributes({ 'lorekit.memory_id': row.id });
+  span.setAttributes({ 'lorekit.memory_id': row.id, 'lorekit.write.inserted': row.inserted !== false });
+
+  // Audit AFTER the write has committed. `inserted !== false` (not
+  // `inserted === true`) mirrors toolWrite exactly: an older `memory_write`
+  // that predates the 00011 `inserted` column returns undefined, and the
+  // upsert's create branch is the safer default to assume.
+  await recordRestAudit(db, span, auth, {
+    action: row.inserted === false ? 'memory.update' : 'memory.create',
+    resourceType: 'memory',
+    resourceId: row.id,
+    target: body.key,
+    metadata: { scope: body.scope, key: body.key, ...(body.org ? { org: body.org } : {}) },
+  });
+
   return created(entry, cors);
 }

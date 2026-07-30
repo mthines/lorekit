@@ -10,11 +10,12 @@
  *     operation it is auditing (a memory write, a token revoke, etc). Errors
  *     are logged, not surfaced.
  *
- * Mirrored self-contained (no cross-package import) into
- * supabase/functions/mcp/audit.ts for the Deno edge function — the edge
- * runtime cannot cross-import this package (same pattern as limits.ts,
- * created-at.ts, webhook-secret-select.ts). Keep buildAuditEntry's body
- * byte-consistent between the two copies.
+ * The Deno counterpart is supabase/functions/_shared/audit.ts (re-exported by
+ * supabase/functions/mcp/audit.ts) — the edge runtime cannot cross-import this
+ * package, so buildAuditEntry/recordAudit stay duplicated there (the limits.ts
+ * pattern). Keep buildAuditEntry's body byte-consistent between the two copies.
+ * The action vocabulary and the three types are NOT duplicated: both writers
+ * import them from @lorekit/schemas, the single source of truth.
  *
  * CAPTURE MODEL (Decision D1): every action here is recorded by an explicit
  * app-layer call right after its primary operation succeeds — NOT by a DB
@@ -28,38 +29,11 @@
  * mirroring the memory-cap exemption in limits.ts).
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { AUDIT_ACTIONS } from '@lorekit/schemas/audit';
+import type { AuditAction, AuditEntryInput, AuditRow } from '@lorekit/schemas/audit';
 
-export const AUDIT_ACTIONS = [
-  'api_key.create',
-  'api_key.revoke',
-  'webhook_secret.create',
-  'webhook_secret.rotate',
-  'webhook_secret.deactivate',
-  'memory.create',
-  'memory.update',
-  'memory.archive',
-  'memory.restore',
-  'memory.delete',
-  'limit.override',
-] as const;
-
-export type AuditAction = (typeof AUDIT_ACTIONS)[number];
-
-export interface AuditEntryInput {
-  action: AuditAction;
-  resourceType?: string | null;
-  resourceId?: string | null;
-  target?: string | null;
-  metadata?: Record<string, unknown> | null;
-}
-
-export interface AuditRow {
-  action: AuditAction;
-  resource_type: string | null;
-  resource_id: string | null;
-  target: string | null;
-  metadata: Record<string, unknown> | null;
-}
+export { AUDIT_ACTIONS };
+export type { AuditAction, AuditEntryInput, AuditRow };
 
 /**
  * Pure: shape the audit_log row from a caller's input. No I/O, no actor

@@ -5,12 +5,20 @@
  * one-line edit here, not a scattered set of if/else branches (mirrors the
  * `scope-meta.ts` single-record pattern).
  *
- * Re-declares the `AuditAction` union independently of `packages/mcp-core/src/audit.ts`
- * (and its self-contained edge copy) — the web package has no dependency on
- * `@lorekit/core` (same reason `lib/scope.ts` re-declares a lightweight copy
- * of `scopeType`), so the action literals are re-declared here rather than
- * imported. This set is a superset of the edge union: it additionally covers
- * the dashboard-only `org.*` / `member.*` actions the edge function never emits.
+ * `AUDIT_ACTIONS` / `AuditAction` are NOT declared here — they come from
+ * `@lorekit/schemas`, the single source of truth shared with the Node writer
+ * (`@lorekit/core`'s `audit.ts`), the Deno writer
+ * (`supabase/functions/_shared/audit.ts`) and — restated in SQL — the
+ * `audit_log.action` CHECK constraint. They were re-declared here historically
+ * to avoid a `@lorekit/core` dependency in `web`; `@lorekit/schemas` is a
+ * zero-runtime-dep leaf package (zod only), so it carries none of that weight
+ * and the divergence it caused (the dashboard knew 24 actions, the writers 11,
+ * the CHECK 23) is now impossible.
+ *
+ * Both are re-exported so existing `@/lib/audit-actions` importers are
+ * unaffected. Only the presentation layer — `AUDIT_ACTION_META` — is owned here;
+ * it is deliberately NOT in the schemas package, which must stay free of
+ * `lucide-react` and every other UI dependency.
  */
 
 import {
@@ -40,35 +48,11 @@ import {
   Github,
   type LucideIcon,
 } from 'lucide-react';
+import { AUDIT_ACTIONS } from '@lorekit/schemas/audit';
+import type { AuditAction } from '@lorekit/schemas/audit';
 
-export const AUDIT_ACTIONS = [
-  'api_key.create',
-  'api_key.revoke',
-  'webhook_secret.create',
-  'webhook_secret.rotate',
-  'webhook_secret.deactivate',
-  'memory.create',
-  'memory.update',
-  'memory.archive',
-  'memory.restore',
-  'memory.delete',
-  'limit.override',
-  'org.create',
-  'org.rename',
-  'org.delete',
-  'member.invite',
-  'member.accept',
-  'member.decline',
-  'member.revoke',
-  'member.remove',
-  'member.role_change',
-  'member.leave',
-  'scope.bind',
-  'scope.unbind',
-  'github_app.installation_linked',
-] as const;
-
-export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+export { AUDIT_ACTIONS };
+export type { AuditAction };
 
 export interface AuditActionMeta {
   /** Human-readable label for the action badge. */

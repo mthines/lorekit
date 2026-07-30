@@ -56,10 +56,34 @@ PostgREST's default row cap: the response is truncated with no error, so whole s
 missing. Visibility inside the RPC composes `lorekit_member_org_ids` exactly as the
 `memories` RLS read policies do, so personal and org-shared scopes both appear.
 
-**No audit events.** None of these handlers write to `audit_log` — the REST surface has no
-audit writer at all (there is no `_shared` equivalent of `mcp/audit.ts`, and `create.ts` /
-`update.ts` do not audit either). The MCP tools do. Closing that gap is a separate change;
-do not add a second, divergent audit path from one handler.
+## Audit events
+
+Every mutating handler writes to `audit_log` via `recordRestAudit`
+(`_shared/audit.ts`) — the same canonical Deno writer `mcp/tools.ts` uses, so the two
+surfaces produce comparable rows. Actions and metadata deliberately mirror the equivalent
+MCP tool.
+
+| Handler | Action | When | `target` / metadata |
+|---------|--------|------|---------------------|
+| `create.ts` | `memory.create` / `memory.update` | `memory_write` returned `inserted !== false` / `=== false` (00011) | `target` = key; `{ scope, key, org? }` |
+| `update.ts` | `memory.update` | a row matched (never the 404) | `target` = key; `{ scope, key }` |
+| `remove.ts` | `memory.delete` (`?force=true`) / `memory.archive` | `count > 0` only | `target` = key or id; `{ force, scope?, key? }` |
+| `restore.ts` | `memory.restore` | `restored` only | `target` = key or id; `{ scope?, key? }` |
+| `purge.ts` | `memory.delete` | `purged > 0` — **one summary event**, not per row | `` `${purged} archived memories` `` / `` `${purged} expired memories` `` |
+
+Rules that are load-bearing, not stylistic:
+
+- **Audit only after success.** No event is written on an error, 400, 403, 404, or a
+  query that matched zero rows. An audit row asserts something happened.
+- **A failed audit never fails the request.** `recordRestAudit` cannot throw; do not
+  branch on its result.
+- The purge endpoints emit a single summary event because the RPCs return a count and
+  never the purged rows — a per-row event is not derivable.
+- `POST /search` writes nothing: it is a POST for payload-size reasons only and is
+  registered `requires: 'read'`.
+
+`packages/mcp-core/src/rest-audit-usage.spec.ts` derives the mutating-handler set from
+the route table in `index.ts` and fails if any of them stops calling `recordRestAudit`.
 
 ## `POST /search` body
 

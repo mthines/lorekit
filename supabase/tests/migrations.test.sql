@@ -2049,6 +2049,123 @@ end;
 $$;
 
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- Audit log CHECK widening for the GitHub App action (00040)
+-- ═════════════════════════════════════════════════════════════════════════
+
+-- ── 48. github_app.installation_linked is accepted by audit_log.action CHECK ──
+-- This is a regression test for a SILENT failure, which is why it belongs at the
+-- SQL level and nowhere else. packages/web/src/lib/github-installations.ts's
+-- handleSetupReturn has been auditing 'github_app.installation_linked' since the
+-- GitHub App work landed, but the 00027 CHECK did not admit it: Postgres
+-- rejected the INSERT and recordAuditEvent — deliberately non-throwing, so an
+-- audit failure can never break the operation it audits — swallowed the error.
+-- Nothing in the app layer could observe the loss. Only an assertion against the
+-- real constraint can.
+--
+-- The negative half matters just as much: a widened CHECK that admitted anything
+-- would "fix" the bug by removing the guarantee, so a genuinely bogus action
+-- must still be rejected.
+do $$
+declare
+  v_blocked boolean;
+begin
+  -- The action the CHECK used to reject — the INSERT must now succeed.
+  insert into audit_log (user_id, action, resource_type, resource_id, target)
+  values (
+    '00000000-0000-0000-0000-0000000000a1',
+    'github_app.installation_linked', 'github_installation', gen_random_uuid(), '12345678'
+  );
+
+  -- An unknown action in the same namespace is still rejected: 00040 widened the
+  -- CHECK by exactly one value, it did not loosen the prefix.
+  v_blocked := false;
+  begin
+    insert into audit_log (user_id, action, resource_type, resource_id, target)
+    values (
+      '00000000-0000-0000-0000-0000000000a1',
+      'github_app.installation_removed', 'github_installation', gen_random_uuid(), '12345678'
+    );
+  exception when check_violation then
+    v_blocked := true;
+  end;
+  assert v_blocked,
+    'audit_log: an unknown github_app.* action must still be rejected by the CHECK constraint';
+
+  -- ...and so is a plainly bogus one, so the constraint has not degenerated into
+  -- accepting free text.
+  v_blocked := false;
+  begin
+    insert into audit_log (user_id, action, resource_type, resource_id, target)
+    values (
+      '00000000-0000-0000-0000-0000000000a1',
+      'definitely.not.an.action', 'github_installation', gen_random_uuid(), '12345678'
+    );
+  exception when check_violation then
+    v_blocked := true;
+  end;
+  assert v_blocked,
+    'audit_log: a bogus action must still be rejected by the CHECK constraint';
+end;
+$$;
+
+-- ── 49. Every action in the widened CHECK round-trips (00040) ────────────────
+-- The CHECK list must match AUDIT_ACTIONS in packages/schemas/src/audit.ts. That
+-- correspondence is asserted textually in Node by
+-- packages/mcp-core/src/audit-actions-drift.spec.ts; this asserts the SQL half is
+-- actually insertable — a value present in the constraint but rejected for some
+-- other reason (a column type, a second constraint) would still be audit loss.
+do $$
+declare
+  v_action text;
+  v_count  int;
+  v_actions text[] := array[
+    'api_key.create',
+    'api_key.revoke',
+    'webhook_secret.create',
+    'webhook_secret.rotate',
+    'webhook_secret.deactivate',
+    'memory.create',
+    'memory.update',
+    'memory.archive',
+    'memory.restore',
+    'memory.delete',
+    'limit.override',
+    'org.create',
+    'org.rename',
+    'org.delete',
+    'member.invite',
+    'member.accept',
+    'member.decline',
+    'member.revoke',
+    'member.remove',
+    'member.role_change',
+    'member.leave',
+    'scope.bind',
+    'scope.unbind',
+    'github_app.installation_linked'
+  ];
+begin
+  -- Anti-vacuity: an empty or truncated array would make the loop below assert
+  -- nothing at all.
+  assert array_length(v_actions, 1) = 24,
+    format('audit_log CHECK round-trip: expected 24 actions to test, got %s', array_length(v_actions, 1));
+
+  foreach v_action in array v_actions loop
+    insert into audit_log (user_id, action, resource_type, target)
+    values ('00000000-0000-0000-0000-0000000000a1', v_action, 'roundtrip', v_action);
+  end loop;
+
+  select count(*) into v_count
+    from audit_log
+   where resource_type = 'roundtrip'
+     and user_id = '00000000-0000-0000-0000-0000000000a1';
+  assert v_count = 24,
+    format('audit_log CHECK round-trip: expected 24 inserted rows, got %s', v_count);
+end;
+$$;
+
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

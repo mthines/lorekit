@@ -4,6 +4,7 @@ import { validateUuid, validateOrgSlug } from '../../../_shared/api/validate.ts'
 import { createTracedClient } from '../../../_shared/otel.ts';
 import type { Span } from '../../../_shared/otel.ts';
 import { translateDbError } from '../../../_shared/api/errors.ts';
+import { recordRestAudit } from '../../../_shared/audit.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
 
 export async function handleRemoveMember(
@@ -47,6 +48,19 @@ export async function handleRemoveMember(
     span.error(error.message);
     throw error;
   }
+
+  // The action follows the RPC that actually ran, not the route: this endpoint
+  // is both "kick a member" and "leave", and web audits those as `member.remove`
+  // (removeMember) and `member.leave` (leaveOrg) respectively. Emitting
+  // `member.remove` for a self-removal would make the same operation read
+  // differently depending on which client performed it. Field layout matches web
+  // exactly — the affected user as resourceId, the org id as target.
+  await recordRestAudit(db, span, auth, {
+    action: isSelf ? 'member.leave' : 'member.remove',
+    resourceType: 'org_member',
+    resourceId: idV.data,
+    target: orgId,
+  });
 
   return noContent(cors);
 }

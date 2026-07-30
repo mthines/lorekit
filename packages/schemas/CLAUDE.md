@@ -39,6 +39,27 @@ Single source of truth for all lorekit data shapes — Zod schemas for both MCP 
 | `RawScopeSchema` | `scope.ts` | REST query params, OpenAPI |
 | `FilterGroupSchema` | `common.ts` | REST POST /memories/search `filter` |
 | `serializeFilterGroup` | `filter.ts` | `_shared/api/filter.ts` (edge adapter) |
+| `AUDIT_ACTIONS` / `AuditActionSchema` | `audit.ts` | **The** `audit_log.action` vocabulary — `@lorekit/core`'s `audit.ts`, `supabase/functions/_shared/audit.ts`, `packages/web/src/lib/audit-actions.ts`, and (restated in SQL) the CHECK constraint |
+| `AuditEntryInputSchema` | `audit.ts` | Input type for `recordAudit` / `recordRestAudit` / `recordAuditEvent` |
+| `AuditRowSchema` | `audit.ts` | Output type of `buildAuditEntry` — the snake_case `audit_log` row |
+
+### `audit.ts` is a vocabulary, and the DB owns a second copy
+
+`AUDIT_ACTIONS` is the only hand-maintained action list, but Postgres cannot import
+TypeScript: the enforcing copy is the `action` CHECK on `audit_log`. That seam has
+already failed once silently — the dashboard emitted `github_app.installation_linked`,
+the CHECK rejected it, and the non-throwing writer swallowed the error, so every such
+event was lost with no signal.
+
+**Adding an action is therefore two edits, always together:** the tuple here, and a new
+forward-only drop-and-re-add CHECK migration (the
+`00023`/`00027`/`00040_audit_log_*.sql` pattern). `packages/mcp-core/src/audit-actions-drift.spec.ts`
+parses the latest such migration back out and fails if the two disagree — it also
+requires `AUDIT_ACTION_META` in web to have exactly one entry per action.
+
+Presentation (labels, icons, badge colours) stays in
+`packages/web/src/lib/audit-actions.ts`: this package must not gain `lucide-react` or
+any other UI dependency.
 
 ## Behaviour lives here, not in the edge adapter
 

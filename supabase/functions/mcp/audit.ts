@@ -1,100 +1,24 @@
 /**
- * Append-only audit trail for security/data-affecting actions across LoreKit:
- * API-key lifecycle, webhook-secret changes, memory mutations, and limit
- * overrides (supabase/migrations/00010_audit_log.sql).
+ * MCP-facing view of the audit writer.
  *
- * Self-contained mirror of the shared Node audit writer (`@lorekit/core`'s
- * `src/audit.ts`) — the edge function has no cross-package imports (Deno /
- * Node.js MCP SDK incompatibility), so this module deliberately duplicates
- * the logic rather than importing it. Keep buildAuditEntry's body
- * byte-consistent with that copy; the vitest suite over it is the shared guard.
+ * The implementation moved to `../_shared/audit.ts` — one canonical Deno copy
+ * shared by the MCP tools and the REST handlers, instead of the previous
+ * duplicate that had already drifted from `packages/mcp-core/src/audit.ts`.
+ * This module stays only so `mcp/tools.ts` (and anything else importing
+ * `./audit.ts`) keeps working unchanged. `mcp/` already cross-imports
+ * `_shared/otel.ts`, so reaching into `_shared/` here crosses no boundary the
+ * function did not already cross.
  *
- * CAPTURE MODEL (Decision D1): every action here is recorded by an explicit
- * app-layer call right after its primary operation succeeds — NOT by a DB
- * trigger on the data tables. The one deliberate exception (Decision D2) is
- * `limit.override`: no app-layer path writes `user_limits` today, so a DB
- * trigger (`audit_user_limits()`, in the 00010 migration) is the only way to
- * capture it. See CLAUDE.md "Key decisions" for the full rationale.
- *
- * `userId` is auth-type-sensitive (see auth.ts getUserId): the resolved
- * actor for api_key calls, `null` for service-role AND for user-JWT calls
- * (getUserId only returns non-null for the api_key auth type — RLS already
- * scopes JWT reads/writes, so no distinct app userId is resolved for that
- * path). A JWT-authenticated MCP call that mutates memory therefore audits
- * with user_id = null; because the audit_log INSERT policy requires
- * `user_id = auth.uid()`, and the edge's JWT-scoped db client enforces RLS,
- * that insert fails RLS and is swallowed by recordAudit below — a documented
- * limitation (see plan.md Edge Cases), not a bug. Service-role and api_key
- * calls use the service-role client (bypasses RLS), so their audit inserts
- * always succeed regardless of user_id.
+ * NOTE ON THE MCP ACTOR (unchanged behaviour, documented here because it is the
+ * one place the two surfaces genuinely differ): `userId` on this path is
+ * auth-type-sensitive — the resolved actor for api_key calls, `null` for
+ * service-role AND for user-JWT calls, because `mcp/auth.ts`'s `getUserId`
+ * only returns non-null for api_key. A JWT-authenticated MCP call therefore
+ * audits with `user_id = null`, which the `audit_log` INSERT policy
+ * (`user_id = auth.uid()`) rejects under the JWT-scoped RLS client; the failure
+ * is swallowed by `recordAudit`. That is a documented MCP limitation, not a
+ * bug, and it is exactly what `recordRestAudit` fixes for the REST surface —
+ * see the actor-resolution note in `_shared/audit.ts`.
  */
-import { createClient } from 'npm:@supabase/supabase-js@2';
-
-export const AUDIT_ACTIONS = [
-  'api_key.create',
-  'api_key.revoke',
-  'webhook_secret.create',
-  'webhook_secret.rotate',
-  'webhook_secret.deactivate',
-  'memory.create',
-  'memory.update',
-  'memory.archive',
-  'memory.restore',
-  'memory.delete',
-  'limit.override',
-] as const;
-
-export type AuditAction = (typeof AUDIT_ACTIONS)[number];
-
-export interface AuditEntryInput {
-  action: AuditAction;
-  resourceType?: string | null;
-  resourceId?: string | null;
-  target?: string | null;
-  metadata?: Record<string, unknown> | null;
-}
-
-export interface AuditRow {
-  action: AuditAction;
-  resource_type: string | null;
-  resource_id: string | null;
-  target: string | null;
-  metadata: Record<string, unknown> | null;
-}
-
-/**
- * Pure: shape the audit_log row from a caller's input. No I/O, no actor
- * resolution — that's recordAudit's job (the impure shell below).
- */
-export function buildAuditEntry(input: AuditEntryInput): AuditRow {
-  return {
-    action: input.action,
-    resource_type: input.resourceType ?? null,
-    resource_id: input.resourceId ?? null,
-    target: input.target ?? null,
-    metadata: input.metadata ?? null,
-  };
-}
-
-/**
- * Insert one audit_log row. NEVER throws: the primary operation being
- * audited has already committed by the time this is called, and an audit
- * failure (RLS denial, network blip, constraint violation) must not undo it
- * or surface as an error to the caller. Failures are logged via
- * console.error for observability, not rethrown.
- */
-export async function recordAudit(
-  db: ReturnType<typeof createClient>,
-  input: AuditEntryInput,
-  userId: string | null,
-): Promise<void> {
-  try {
-    const row = buildAuditEntry(input);
-    const { error } = await db.from('audit_log').insert({ ...row, user_id: userId });
-    if (error) {
-      console.error(`[recordAudit] insert failed for action=${input.action}:`, error.message);
-    }
-  } catch (err) {
-    console.error(`[recordAudit] unexpected error for action=${input.action}:`, (err as Error).message);
-  }
-}
+export { buildAuditEntry, recordAudit } from '../_shared/audit.ts';
+export type { AuditAction, AuditEntryInput, AuditRow } from '../_shared/audit.ts';

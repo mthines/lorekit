@@ -4,6 +4,7 @@ import { validateBody, validateUuid } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import { RestoreMemoryBodySchema } from '@lorekit/schemas/memory';
+import { recordRestAudit } from '../../_shared/audit.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
 
@@ -27,8 +28,8 @@ type MemoryRow = Tables<'memories'>;
  * `restored` is always `true` when a 200 is returned — the zero-match case is the
  * 404, never `{ restored: false }`.
  *
- * No audit event is written — see the note in remove.ts: the REST surface has no
- * audit writer, so this deliberately does not invent a second one.
+ * Audits `memory.restore` only when a row actually came back — the 404 path
+ * (nothing archived matched) writes nothing.
  */
 export async function handleRestore(
   req: Request, auth: AuthContext, db: DbClient, span: Span,
@@ -42,15 +43,24 @@ export async function handleRestore(
     .update({ archived_at: null }, { count: 'exact' })
     .not('archived_at', 'is', null);
 
+  // Hoisted out of the branches below so the audit call at the end can name
+  // whichever addressing form the caller used.
+  let memoryId: string | null = null;
+  let scopeParam: string | null = null;
+  let keyParam: string | null = null;
+
   if (params.id) {
     const v = validateUuid(params.id, cors);
     if (!v.ok) return v.response;
+    memoryId = v.data;
     span.setAttributes({ 'lorekit.memory_id': v.data });
     q = q.eq('id', v.data);
   } else {
     const validated = await validateBody(req, RestoreMemoryBodySchema, cors);
     if (!validated.ok) return validated.response;
     const { scope, key } = validated.data;
+    scopeParam = scope;
+    keyParam = key;
     span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
     q = q.eq('scope', scope).eq('key', key);
   }
@@ -64,5 +74,17 @@ export async function handleRestore(
   const restored = (count ?? 0) > 0;
   span.setAttributes({ 'lorekit.result.restored': restored });
   if (!restored) return notFound('Archived memory', cors);
+
+  // Mirrors toolRestore's `if (restored)` guard and its `{ scope, key }`
+  // metadata; the UUID form (which the MCP tool has no equivalent of) records
+  // the id instead.
+  await recordRestAudit(db, span, auth, {
+    action: 'memory.restore',
+    resourceType: 'memory',
+    resourceId: memoryId,
+    target: keyParam ?? memoryId,
+    metadata: scopeParam && keyParam ? { scope: scopeParam, key: keyParam } : {},
+  });
+
   return ok({ restored: true }, cors);
 }

@@ -5,6 +5,7 @@ import { createTracedClient } from '../../../_shared/otel.ts';
 import type { Span } from '../../../_shared/otel.ts';
 import { CreateOrgBodySchema } from '@lorekit/schemas/org';
 import { translateDbError } from '../../../_shared/api/errors.ts';
+import { recordRestAudit } from '../../../_shared/audit.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
 
 export async function handleCreateOrg(req: Request, auth: AuthContext, db: DbClient, span: Span, _p: Record<string,string>, cors: Record<string,string>): Promise<Response> {
@@ -14,5 +15,17 @@ export async function handleCreateOrg(req: Request, auth: AuthContext, db: DbCli
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb.rpc('lorekit_org_create', { p_slug: v.data.slug, p_name: v.data.name });
   if (error) { const m = translateDbError(error); if (m) return m.toResponse(cors); span.error(error.message); throw error; }
+
+  // Same shape as web's createOrg (packages/web/src/lib/orgs.ts) so the REST
+  // and dashboard surfaces produce comparable rows: the new org id as
+  // resourceId, its display name as target, its slug in metadata.
+  await recordRestAudit(db, span, auth, {
+    action: 'org.create',
+    resourceType: 'org',
+    resourceId: typeof data === 'string' ? data : null,
+    target: v.data.name,
+    metadata: { slug: v.data.slug },
+  });
+
   return created(data, cors);
 }
