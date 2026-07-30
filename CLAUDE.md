@@ -70,6 +70,62 @@ pnpm nx fn:dev supabase        # run Edge Functions locally
 
 ---
 
+## PR workflow (mandatory — always follow this order)
+
+Every PR in this repository goes through a fixed four-step sequence.
+Do NOT skip steps or change the order, whether the PR is a draft or ready for review.
+
+### Step 1 — Open / push the PR
+
+Create the PR (or push a new commit to an existing branch). It may start as a draft.
+The Dash0 bot picks up the event automatically and starts its review — **you do not trigger it manually**.
+
+### Step 2 — Await the Dash0 bot review report
+
+After the PR is opened or marked ready-for-review, **wait for the `dash0-dev` bot to post its review**.
+The bot runs `PR Ready for Review — Polish + Review` automatically; a comment from `dash0-dev` with
+the review results will appear on the PR. Do not proceed until that comment is present.
+
+```
+# How to wait
+gh pr checks <pr-number> --repo mthines/lorekit --watch
+# Then confirm dash0-dev has posted a review comment before continuing.
+```
+
+### Step 3 — Trigger the resolve automation
+
+Once the Dash0 bot review is posted, add **exactly this comment** to the PR:
+
+```
+@dash0 resolve
+```
+
+The `dash0-dev` bot will acknowledge with `⚡ Running PR Implement Suggestions…` and open an Agent0
+thread that reads the review, implements the accepted suggestions, commits the changes, and pushes.
+Wait for that thread to complete before moving on.
+
+### Step 4 — Fix CI with `/ci-auto-fix`
+
+After the resolve automation finishes (or if there was no feedback and CI is still red), run:
+
+```
+/ci-auto-fix
+```
+
+This loads the `ci-auto-fix` skill from `mthines/agent-skills` (under `skills/delivery/ci-auto-fix`),
+diagnoses any failing GitHub Actions checks, applies a minimal targeted fix, and iterates until all
+checks are green. The skill is confidence-gated (>=90 auto-apply, 80-89 ask, <80 escalate) and will
+never disable or weaken a check.
+
+### Summary table
+
+| Step | Action | Who triggers |
+|------|--------|--------------|
+| 1 | Open / push the PR (draft or ready) | Agent |
+| 2 | Wait for `dash0-dev` bot review comment | Automatic (Dash0 bot) |
+| 3 | Post `@dash0 resolve` comment | Agent |
+| 4 | Run `/ci-auto-fix` until all checks pass | Agent |
+
 ## Scope format (canonical — `::` separator only)
 
 ```
