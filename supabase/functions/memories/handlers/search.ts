@@ -8,6 +8,7 @@ import { SearchMemoriesBodySchema } from '../../_shared/schemas/memory.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
 import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';
+import { applyFilter } from '../../_shared/api/filter.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -19,7 +20,7 @@ export async function handleSearch(
   if (!v.ok) return v.response;
   const body = v.data;
 
-  span.setAttributes({ 'lorekit.operation': 'memories.search', ...(body.q ? { 'lorekit.query': body.q } : {}), 'lorekit.limit': body.limit });
+  span.setAttributes({ 'lorekit.operation': 'memories.search', ...(body.q ? { 'lorekit.query': body.q } : {}), 'lorekit.filtered': body.filter !== undefined, 'lorekit.limit': body.limit });
 
   const tracedDb = createTracedClient(db, span);
 
@@ -41,6 +42,8 @@ export async function handleSearch(
   if (body.q) q = q.textSearch('fts', body.q, { type: 'websearch', config: 'english' });
   if (body.scopes?.length) q = q.in('scope', body.scopes);
   if (body.tags?.length) q = q.overlaps('tags', body.tags);
+  // OR+AND structured filter tree — whitelisted fields only (see _shared/api/filter.ts)
+  if (body.filter) q = applyFilter(q, body.filter);
   if (body.cursor) { const c = decodeCursor(body.cursor); if (c) q = q.or(`updated_at.lt.${c.updated_at},and(updated_at.eq.${c.updated_at},id.lt.${c.id})`); }
 
   const { data, error } = await q;

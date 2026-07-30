@@ -4,7 +4,17 @@
 // Why: edge functions are self-contained Deno; a bare '@lorekit/schemas/*'
 // specifier needs an import map, and the local edge runtime is not given one.
 // deno-lint-ignore-file
-import { OpenAPIRegistry, OpenApiGeneratorV31 } from 'npm:@asteasolutions/zod-to-openapi@^7.0.0';
+import { z } from 'npm:zod@3';
+import { OpenAPIRegistry, OpenApiGeneratorV31, extendZodWithOpenApi } from 'npm:@asteasolutions/zod-to-openapi@^7.0.0';
+
+// zod-to-openapi v7 attaches `.openapi()` to ZodType.prototype. Without this call
+// every `registry.register()` throws `zodSchema.openapi is not a function`, which is
+// what made GET /functions/v1/openapi return 500 from the day it shipped. The patch is
+// applied here (the only module that talks to zod-to-openapi) so the runtime schema
+// files stay free of any OpenAPI dependency — the edge functions that import them do
+// not pull zod-to-openapi into their bundle.
+extendZodWithOpenApi(z);
+
 import {
   MemoryEntrySchema,
   MemoryPageResponseSchema,
@@ -39,6 +49,29 @@ import {
 
 let _cachedSpec: Record<string, unknown> | null = null;
 
+// `FilterGroupSchema` is a `z.lazy()` recursive union, which zod-to-openapi cannot
+// introspect ("Unknown zod object type"). Document it as a free-form object with an
+// example instead of duplicating the search body: the doc schema is DERIVED from the
+// runtime one (`.innerType()` unwraps the `.refine()` wrapper), so any field added to
+// `SearchMemoriesBodySchema` shows up here automatically — only `filter` is overridden.
+const FilterGroupDocSchema = z.record(z.unknown()).openapi({
+  type: 'object',
+  description:
+    'Recursive filter tree. Either a condition `{ field, op, value }` or a group ' +
+    '`{ and: [...] }` / `{ or: [...] }`, nestable to any depth. ' +
+    'Operators: is, is_not, contains, does_not_contain, starts_with, ends_with, is_set, is_not_set.',
+  example: {
+    and: [
+      { field: 'scope', op: 'is', value: 'global' },
+      { or: [{ field: 'key', op: 'contains', value: 'auth' }, { field: 'tags', op: 'contains', value: 'ci' }] },
+    ],
+  },
+});
+
+const SearchMemoriesBodyDocSchema = SearchMemoriesBodySchema.innerType().extend({
+  filter: FilterGroupDocSchema.optional(),
+});
+
 export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co/functions/v1'): Record<string, unknown> {
   if (_cachedSpec) return _cachedSpec;
 
@@ -50,7 +83,7 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   registry.register('MemoryPage', MemoryPageResponseSchema);
   registry.register('CreateMemoryBody', CreateMemoryBodySchema);
   registry.register('UpdateMemoryBody', UpdateMemoryBodySchema);
-  registry.register('SearchMemoriesBody', SearchMemoriesBodySchema);
+  registry.register('SearchMemoriesBody', SearchMemoriesBodyDocSchema);
   registry.register('Org', OrgResponseSchema);
   registry.register('OrgList', OrgListResponseSchema);
   registry.register('CreateOrgBody', CreateOrgBodySchema);
@@ -97,7 +130,7 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   });
   registry.registerPath({
     method: 'post', path: '/memories/search', summary: 'Search memories with OR+AND filtering', tags: ['Memories'],
-    security, request: { body: { content: { 'application/json': { schema: SearchMemoriesBodySchema } } } },
+    security, request: { body: { content: { 'application/json': { schema: SearchMemoriesBodyDocSchema } } } },
     responses: { 200: memoryPageResponse('Search results'), 400: errorResponse, 401: errorResponse },
   });
   registry.registerPath({

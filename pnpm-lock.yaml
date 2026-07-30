@@ -121,6 +121,9 @@ importers:
       '@lorekit/core':
         specifier: workspace:*
         version: link:../mcp-core
+      '@lorekit/schemas':
+        specifier: workspace:*
+        version: link:../schemas
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
         version: 1.29.0(zod@3.25.76)

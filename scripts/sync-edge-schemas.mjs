@@ -50,6 +50,7 @@ const mirrorDir = join(repoRoot, 'supabase/functions/_shared/schemas');
  */
 export const MIRRORED_SCHEMA_FILES = [
   'common.ts',
+  'filter.ts',
   'scope.ts',
   'memory.ts',
   'org.ts',

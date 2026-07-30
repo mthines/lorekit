@@ -37,3 +37,25 @@ Single source of truth for all lorekit data shapes — Zod schemas for both MCP 
 | `OrgSlugInviteParamsSchema` | `common.ts` | REST /orgs/:slug/invites/:inviteId |
 | `ScopeSchema` | `scope.ts` | MCP tool input validation |
 | `RawScopeSchema` | `scope.ts` | REST query params, OpenAPI |
+| `FilterGroupSchema` | `common.ts` | REST POST /memories/search `filter` |
+| `serializeFilterGroup` | `filter.ts` | `_shared/api/filter.ts` (edge adapter) |
+
+## Behaviour lives here, not in the edge adapter
+
+`filter.ts` is the exception to "this package is only shapes": it holds the
+*meaning* of a `FilterGroup` — the operator→PostgREST mapping, the
+`ALLOWED_FILTER_FIELDS` whitelist, and the value encoding that stops a value
+breaking out of its clause. It sits next to the schema that validates its input
+so the two cannot drift, and because Deno has no test harness in this repo this
+is the only place the logic can be unit-tested (`src/filter.spec.ts`, run by
+`pnpm nx test schemas`). The edge module `_shared/api/filter.ts` is a five-line
+adapter that chains the returned expressions onto a query builder.
+
+Apply the same reasoning to any future logic that is (a) pure, (b) part of the
+wire contract, and (c) needed by more than one runtime.
+
+## Tests
+
+`pnpm nx test schemas` — Vitest, `src/**/*.spec.ts`. The package is a leaf with
+no I/O, so everything in it is directly unit-testable; add a co-located
+`.spec.ts` for any behaviour you add.
