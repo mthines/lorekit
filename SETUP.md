@@ -12,7 +12,7 @@
 |----------|-------|-------------|
 | `SUPABASE_URL` | Server + Edge Function secrets | `https://<ref>.supabase.co` |
 | `SUPABASE_ANON_KEY` | Server + Edge Function secrets | Publishable key |
-| `SUPABASE_SERVICE_ROLE_KEY` | Edge Function secrets only | Never expose to browser |
+| `SUPABASE_SERVICE_ROLE_KEY` | Edge Function secrets **and** Vercel server env (see below) | Never expose to browser |
 | `SUPABASE_PROJECT_REF` | `.env.local` | Subdomain of your Supabase URL — used by `pnpm nx db:push` |
 
 ### Vercel (web dashboard)
@@ -22,6 +22,7 @@
 | `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Publishable key |
 | `NEXT_PUBLIC_SUPABASE_PROJECT_REF` | Project ref (for CORS pattern) |
+| `SUPABASE_SERVICE_ROLE_KEY` | **Server-only** (no `NEXT_PUBLIC_` prefix, never bundled into the browser). Required by the privileged server routes/actions: account deletion (`DELETE /api/user/delete` → `auth.admin.deleteUser`) and GitHub App installation linking. Set it in **every** Vercel environment — Production, Preview *and* Development — or those routes answer `503 supabase_admin_not_configured` |
 | `NEXT_PUBLIC_APP_URL` | Canonical dashboard origin, e.g. `https://lorekit.io` |
 | `NEXT_PUBLIC_DASH0_OTLP_ENDPOINT` | Dash0 OTLP HTTP endpoint |
 | `NEXT_PUBLIC_DASH0_AUTH_TOKEN` | Ingesting-only Dash0 token (public — visible in bundle) |

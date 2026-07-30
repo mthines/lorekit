@@ -19,7 +19,7 @@
  */
 
 import { createServerClient } from '@/lib/supabase/server';
-import { createClient } from '@supabase/supabase-js';
+import { createAdminClient, SupabaseAdminConfigError } from '@/lib/supabase/admin';
 import { revalidatePath } from 'next/cache';
 import { recordAuditEvent } from '@/lib/audit-log';
 
@@ -141,11 +141,18 @@ export async function handleSetupReturn(
   // is therefore invisible via RLS (which requires user_id = auth.uid()).
   // We use a targeted update scoped to (installation_id, github_account_id)
   // so we cannot affect any other user's installation.
-  const supabaseAdmin = createClient(
-    process.env['NEXT_PUBLIC_SUPABASE_URL']!,
-    process.env['SUPABASE_SERVICE_ROLE_KEY']!,
-    { auth: { persistSession: false, autoRefreshToken: false } },
-  );
+  // Shared helper: fails fast with a named error when the deployment is
+  // missing SUPABASE_SERVICE_ROLE_KEY, instead of supabase-js' opaque
+  // `supabaseKey is required.`
+  let supabaseAdmin;
+  try {
+    supabaseAdmin = createAdminClient();
+  } catch (error) {
+    if (error instanceof SupabaseAdminConfigError) {
+      return { ok: false, error: error.code };
+    }
+    throw error;
+  }
 
   const { data: pendingInstall, error: lookupError } = await supabaseAdmin
     .from('github_installations')
