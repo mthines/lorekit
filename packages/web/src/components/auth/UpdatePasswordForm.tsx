@@ -8,6 +8,7 @@ import { addSignalAttribute } from '@dash0/sdk-web';
 import { friendlyAuthError } from '@/lib/auth-errors';
 import { validatePasswordConfirmation } from '@/lib/password-policy';
 import { DEFAULT_POST_LOGIN_PATH } from '@/lib/auth-redirect';
+import { FIELD_CLASS } from './field-styles';
 
 type SessionState = 'checking' | 'ready' | 'missing';
 
@@ -109,7 +110,7 @@ export function UpdatePasswordForm() {
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         disabled={busy || done}
-        className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] disabled:opacity-50"
+        className={FIELD_CLASS}
       />
 
       <label htmlFor="lk-confirm-password" className="sr-only">
@@ -125,7 +126,7 @@ export function UpdatePasswordForm() {
         value={confirmation}
         onChange={(e) => setConfirmation(e.target.value)}
         disabled={busy || done}
-        className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] disabled:opacity-50"
+        className={FIELD_CLASS}
       />
 
       {error && (

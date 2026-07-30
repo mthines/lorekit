@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { addSignalAttribute } from '@dash0/sdk-web';
 import { friendlyAuthError } from '@/lib/auth-errors';
 import { authCallbackOrigin, buildAuthCallbackUrl } from '@/lib/auth-callback-url';
+import { FIELD_CLASS } from './field-styles';
 
 /**
  * Step 1 of password recovery: ask Supabase to email a recovery link.
@@ -86,7 +87,7 @@ export function ForgotPasswordForm() {
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         disabled={busy}
-        className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] disabled:opacity-50"
+        className={FIELD_CLASS}
       />
       {error && (
         <p role="alert" className="text-xs text-red-400">

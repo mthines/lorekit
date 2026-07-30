@@ -9,6 +9,7 @@ import { friendlyAuthError } from '@/lib/auth-errors';
 import { validatePassword } from '@/lib/password-policy';
 import { authCallbackOrigin, buildAuthCallbackUrl } from '@/lib/auth-callback-url';
 import { safeNextPath } from '@/lib/auth-redirect';
+import { FIELD_CLASS } from './field-styles';
 
 function GitHubIcon({ className }: { className?: string }) {
   return (
@@ -83,9 +84,6 @@ type Step = 'idle' | 'password' | 'magic' | 'sent' | 'confirm';
 
 /** Whether the password form signs into an existing account or creates one. */
 type PasswordMode = 'signin' | 'signup';
-
-const FIELD_CLASS =
-  'h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] disabled:opacity-50';
 
 const PRIMARY_BUTTON_CLASS =
   'flex h-11 items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50';
