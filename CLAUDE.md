@@ -232,6 +232,7 @@ overridable (no billing built yet — see [docs/limits.md](./docs/limits.md)):
 | `supabase/migrations/00002_api_tokens.sql` | `api_tokens` table, RLS |
 | `supabase/migrations/00004_limits.sql` | Memory cap trigger (`enforce_memory_cap`), rate-limit RPC (`lorekit_check_rate_limit`), `user_limits` override table, `lorekit_get_limit`/`lorekit_default_limit` config source |
 | `packages/mcp-core/src/auth-token.ts` | Pure `extractToken` — resolves the raw Bearer token from `Authorization` header or `?token=` query parameter; import-free so it can be mirrored verbatim into `supabase/functions/mcp/auth-token.ts` and kept in sync by `edge-parity.spec.ts` |
+| `packages/mcp-core/src/trace-context.ts` | Pure W3C `traceparent` parse/format — `parseTraceparent` (strict: lowercase hex, no all-zero ids, `ff` rejected, `00` fixed at 4 fields, future versions may append), `formatTraceparent`, `isValidTraceId`/`isValidSpanId`; import-free so it can be mirrored verbatim into `supabase/functions/_shared/trace-context.ts` and kept in sync by `edge-parity.spec.ts` |
 | `packages/mcp-core/src/limits.ts` | `LimitError`, `translateCapError`, `checkRateLimit`, `rateLimitMessage` — mirrored self-contained in `supabase/functions/mcp/limits.ts` for the Deno edge function |
 | `packages/mcp-core/src/permissions.ts` | `READ_TOOLS`/`WRITE_TOOLS`, `toolRequires`, `tokenPrefixFor` — the `lk_rw_`/`lk_ro_`/`lk_wo_` prefix derivation and read/write tool-gating switch. Mirrored self-contained in `supabase/functions/mcp/permissions.ts` (edge) and lightly in `packages/web/src/lib/token-permission.ts` (web, `permissionSuffix`/`tierFor`/`PERMISSION_TIERS`) — the `limits.ts` pattern |
 | `supabase/migrations/00008_webhook_secrets_repo.sql` | Adds nullable `repo` column (`owner/name`, CHECK-constrained) to `webhook_secrets`; partial unique index `(user_id, coalesce(repo,'')) where active` — one active secret per `(user, repo)` |
@@ -297,6 +298,30 @@ All `lorekit.*` spans carry:
 - `deployment.environment.name` — `production|preview|development|local` (from `VERCEL_ENV`)
 
 Metric: `lorekit.tool.duration` histogram (unit `s`) with `lorekit.tool.name` + `lorekit.scope.type`.
+
+### Trace-context propagation (W3C `traceparent`)
+
+- **Who sends it.** The CLI attaches `traceparent` to every outgoing REST call (`restFetch`)
+  and every MCP call (`mcpCall` — `memory.delete --force` and all four `org.*` ops), sourced
+  from `getActiveTraceparent()` in `packages/cli/src/telemetry.mjs`. Context is generated for
+  **every** `traceCommand` run, including when telemetry export is disabled — propagation is
+  decoupled from export. The browser sends it via `@dash0/sdk-web`.
+- **Who receives it.** Every edge function's `traceRequest` (`supabase/functions/_shared/otel.ts`)
+  parses the inbound header; an invalid one falls back to a new root trace instead of a corrupt
+  span. Responses carry a `traceparent` back (exposed via `Access-Control-Expose-Headers`) so a
+  client can correlate with the server span.
+- **The parser** is `packages/mcp-core/src/trace-context.ts` (`parseTraceparent` /
+  `formatTraceparent` / `isValidTraceId` / `isValidSpanId`), import-free and mirrored verbatim
+  to `supabase/functions/_shared/trace-context.ts`; drift is parity-guarded by
+  `edge-parity.spec.ts`. Strict W3C validation: lowercase hex only, no all-zero ids, version
+  `ff` rejected, version `00` fixed at four fields, future versions may append fields.
+- **Span kinds.** Root request spans are SERVER (2), `TracedQuery` DB spans are CLIENT (3),
+  everything else INTERNAL (1) — required for service-to-service edges in an APM.
+- **The sampled flag is recorded and propagated, never acted on.** Edge spans emit
+  `flags: sampled ? 1 : 0` and children inherit the parent's flag, but export stays AlwaysOn —
+  sampling is deferred to the Dash0 pipeline (see Key decisions). Never turn the flag into a
+  drop condition. The CLI emits flags `01` when its span will be exported and `00` when it will
+  not, still carrying the trace id either way so the server can correlate.
 
 ---
 

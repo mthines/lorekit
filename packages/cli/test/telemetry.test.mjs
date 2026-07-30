@@ -285,6 +285,98 @@ test('getActiveTraceparent returns null outside of traceCommand', () => {
   assert.equal(getActiveTraceparent(), null);
 });
 
+// ── context propagation is decoupled from export ──────────────────────────────
+// Regression: the trace ids used to be generated AFTER the `!config.enabled`
+// early return, so every user without an OTLP endpoint (the default — the
+// telemetry token is empty in git) sent no traceparent at all and every
+// server-side trace was uncorrelated. Context must always exist; only the
+// sampled bit reflects whether the CLI span is exported.
+
+test('traceCommand still provides a traceparent when telemetry is disabled (flags 00)', async () => {
+  const prev = process.env.LOREKIT_TELEMETRY;
+  process.env.LOREKIT_TELEMETRY = 'off';
+  const { calls, restore } = stubFetch();
+  let captured = null;
+  try {
+    const code = await traceCommand('list', {}, '1.0.0', async () => {
+      captured = getActiveTraceparent();
+      return 0;
+    });
+    assert.equal(code, 0);
+    assert.equal(calls.length, 0, 'disabled telemetry must still export nothing');
+    assert.ok(captured, 'traceparent must exist even with telemetry disabled');
+    assert.ok(captured.startsWith('00-'), 'traceparent has the W3C version prefix');
+    assert.ok(captured.endsWith('-00'), 'not-exported → sampled bit clear');
+  } finally {
+    restore();
+    if (prev === undefined) delete process.env.LOREKIT_TELEMETRY;
+    else process.env.LOREKIT_TELEMETRY = prev;
+  }
+  assert.equal(getActiveTraceparent(), null, 'context is cleared after the run');
+});
+
+test('traceCommand marks the traceparent sampled (flags 01) when telemetry is enabled', async () => {
+  const prevHeaders = process.env.OTEL_EXPORTER_OTLP_HEADERS;
+  process.env.OTEL_EXPORTER_OTLP_HEADERS = 'Authorization=Bearer test';
+  const { restore } = stubFetch();
+  let captured = null;
+  try {
+    await traceCommand('list', {}, '1.0.0', async () => {
+      captured = getActiveTraceparent();
+      return 0;
+    });
+    assert.ok(captured, 'traceparent must exist when telemetry is enabled');
+    assert.ok(captured.endsWith('-01'), 'exported → sampled bit set');
+  } finally {
+    restore();
+    if (prevHeaders === undefined) delete process.env.OTEL_EXPORTER_OTLP_HEADERS;
+    else process.env.OTEL_EXPORTER_OTLP_HEADERS = prevHeaders;
+  }
+});
+
+test('the traceparent trace id is a real 32-hex id and stays stable for the whole run, enabled or not', async () => {
+  const seen = {};
+  for (const mode of ['disabled', 'enabled']) {
+    const prevOptOut = process.env.LOREKIT_TELEMETRY;
+    const prevHeaders = process.env.OTEL_EXPORTER_OTLP_HEADERS;
+    if (mode === 'disabled') process.env.LOREKIT_TELEMETRY = 'off';
+    else process.env.OTEL_EXPORTER_OTLP_HEADERS = 'Authorization=Bearer test';
+    const { calls, restore } = stubFetch();
+    try {
+      let first = null;
+      let second = null;
+      await traceCommand('list', {}, '1.0.0', async () => {
+        first = getActiveTraceparent();
+        second = getActiveTraceparent();
+        return 0;
+      });
+      // Two reads inside one run must yield the identical header — every
+      // outgoing call in that command joins the SAME trace.
+      assert.equal(first, second);
+      const [version, traceId, spanId, flags] = first.split('-');
+      assert.equal(version, '00');
+      assert.match(traceId, /^[0-9a-f]{32}$/);
+      assert.match(spanId, /^[0-9a-f]{16}$/);
+      assert.equal(flags, mode === 'enabled' ? '01' : '00');
+      seen[mode] = traceId;
+      if (mode === 'enabled') {
+        const trace = calls.find((c) => c.url.endsWith('/v1/traces'));
+        const span = trace.body.resourceSpans[0].scopeSpans[0].spans[0];
+        // The propagated trace id is the one actually exported.
+        assert.equal(span.traceId, traceId);
+      }
+    } finally {
+      restore();
+      if (prevOptOut === undefined) delete process.env.LOREKIT_TELEMETRY;
+      else process.env.LOREKIT_TELEMETRY = prevOptOut;
+      if (prevHeaders === undefined) delete process.env.OTEL_EXPORTER_OTLP_HEADERS;
+      else process.env.OTEL_EXPORTER_OTLP_HEADERS = prevHeaders;
+    }
+  }
+  // Each run is its own trace — the ids must not be accidentally shared.
+  assert.notEqual(seen.disabled, seen.enabled);
+});
+
 test('traceCommand records a non-zero exit code as an error outcome', async () => {
   const prevHeaders = process.env.OTEL_EXPORTER_OTLP_HEADERS;
   process.env.OTEL_EXPORTER_OTLP_HEADERS = 'Authorization=Bearer test';

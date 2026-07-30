@@ -7,8 +7,10 @@ import path from 'node:path';
  * Drift guard for the self-contained edge-function mirrors.
  *
  * Several pure modules in `packages/mcp-core/src` are duplicated verbatim into
- * `supabase/functions/mcp/` because the Deno edge function cannot cross-import
- * the Node package (Deno / Node.js MCP SDK incompatibility). Each mirror's
+ * the Deno edge tree (`supabase/functions/mcp/` for MCP-only logic,
+ * `supabase/functions/_shared/` for logic shared by every edge function)
+ * because the Deno edge function cannot cross-import the Node package
+ * (Deno / Node.js MCP SDK incompatibility). Each mirror's
  * header says "keep the two in sync" and points at this package's vitest suite
  * as "the shared guard" — but nothing actually fails when the copies drift.
  *
@@ -27,7 +29,7 @@ import path from 'node:path';
 
 const here = path.dirname(fileURLToPath(import.meta.url)); // packages/mcp-core/src
 const repoRoot = path.resolve(here, '../../..');
-const edgeDir = path.join(repoRoot, 'supabase', 'functions', 'mcp');
+const functionsDir = path.join(repoRoot, 'supabase', 'functions');
 
 // Reduce a source file to its executable lines: trim each line, drop blanks,
 // and drop comment lines (line comments and every line of a block/JSDoc
@@ -45,12 +47,24 @@ function executableSource(file: string): string {
     .join('\n');
 }
 
-const MIRRORS = ['auth-token.ts', 'created-at.ts', 'ttl.ts', 'webhook-secret-select.ts', 'tenant-scope.ts', 'org-permissions.ts', 'webhook-installation.ts'];
+// Each entry is [mcp-core file name, edge path relative to supabase/functions].
+// Most mirrors are MCP-only (`mcp/`); trace-context.ts lives in `_shared/`
+// because every edge function (REST + MCP) parses the inbound traceparent.
+const MIRRORS: ReadonlyArray<readonly [string, string]> = [
+  ['auth-token.ts', 'mcp/auth-token.ts'],
+  ['created-at.ts', 'mcp/created-at.ts'],
+  ['ttl.ts', 'mcp/ttl.ts'],
+  ['webhook-secret-select.ts', 'mcp/webhook-secret-select.ts'],
+  ['tenant-scope.ts', 'mcp/tenant-scope.ts'],
+  ['org-permissions.ts', 'mcp/org-permissions.ts'],
+  ['webhook-installation.ts', 'mcp/webhook-installation.ts'],
+  ['trace-context.ts', '_shared/trace-context.ts'],
+];
 
 describe('edge-function mirror parity', () => {
-  it.each(MIRRORS)('%s stays behaviourally in sync with its edge mirror', (name) => {
+  it.each(MIRRORS)('%s stays behaviourally in sync with its edge mirror (%s)', (name, edgePath) => {
     const core = executableSource(path.join(here, name));
-    const edge = executableSource(path.join(edgeDir, name));
+    const edge = executableSource(path.join(functionsDir, edgePath));
     // Sanity: both files exist and are non-trivial, so an empty-string match
     // can never masquerade as parity.
     expect(core.length).toBeGreaterThan(0);

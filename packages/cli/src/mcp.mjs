@@ -27,7 +27,11 @@ export function buildRemoteUrl(endpoint, token) {
 let idCounter = 0;
 
 // Returns { ok, httpStatus, result, error, networkError }.
-export async function mcpCall(endpoint, token, method, params = {}, { timeoutMs = 10000 } = {}) {
+//
+// `opts.traceparent` is an optional W3C traceparent header value (see
+// src/telemetry.mjs `getActiveTraceparent`); when present it is forwarded so
+// the server-side span joins the CLI's trace — same idiom as restFetch.
+export async function mcpCall(endpoint, token, method, params = {}, { timeoutMs = 10000, traceparent } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -40,6 +44,7 @@ export async function mcpCall(endpoint, token, method, params = {}, { timeoutMs 
         'content-type': 'application/json',
         accept: 'application/json, text/event-stream',
         ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(traceparent ? { traceparent } : {}),
       },
       body: JSON.stringify({ jsonrpc: '2.0', id: ++idCounter, method, params }),
       signal: controller.signal,
