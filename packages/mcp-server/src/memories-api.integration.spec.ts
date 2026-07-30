@@ -25,6 +25,10 @@ const KEY_PREFIX = `memories-smoke-${Date.now()}`;
 const SCOPE = 'global';
 const KEY_A = `${KEY_PREFIX}-a`;
 const KEY_B = `${KEY_PREFIX}-b`;
+// Restore / hard-delete keys. Kept separate from A/B so the archive-and-restore
+// round trip can't perturb the CRUD assertions above it.
+const KEY_R = `${KEY_PREFIX}-restore`;
+const KEY_F = `${KEY_PREFIX}-force`;
 
 type JsonObj = Record<string, unknown>;
 
@@ -43,14 +47,29 @@ async function api(method: string, path: string, body?: unknown): Promise<{ stat
   return { status: res.status, data };
 }
 
+/** Create a memory and return its id — used by the restore / force-delete cases. */
+async function create(key: string, value = 'v'): Promise<string> {
+  const { status, data } = await api('POST', '/', { scope: SCOPE, key, value });
+  expect(status, `create ${key}: expected 201; got ${status}: ${JSON.stringify(data)}`).toBe(201);
+  return (data as JsonObj).id as string;
+}
+
+/** The keys currently listed under `?archived=<flag>` for this run's scope. */
+async function listKeys(archived: boolean): Promise<unknown[]> {
+  const { status, data } = await api('GET', `/?scope=${SCOPE}&archived=${archived}&limit=100`);
+  expect(status, `list archived=${archived}: got ${status}: ${JSON.stringify(data)}`).toBe(200);
+  return ((data as JsonObj).entries as JsonObj[]).map((e) => e.key);
+}
+
 describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', () => {
   let createdIdA = '';
   let createdIdB = '';
+  let createdIdR = '';
 
   afterAll(async () => {
-    // Best-effort cleanup
-    for (const id of [createdIdA, createdIdB].filter(Boolean)) {
-      await api('DELETE', `/${id}`).catch(() => undefined);
+    // Best-effort cleanup. `force=true` so archived leftovers are removed too.
+    for (const id of [createdIdA, createdIdB, createdIdR].filter(Boolean)) {
+      await api('DELETE', `/${id}?force=true`).catch(() => undefined);
     }
   });
 
@@ -250,5 +269,105 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', () =
     const { status, data } = await api('POST', '/', { value: 'no-scope-or-key' });
     expect(status, `expected 400; got ${status}: ${JSON.stringify(data)}`).toBe(400);
     expect((data as JsonObj).error).toBeTruthy();
+  });
+
+  // ── Archived listing ────────────────────────────────────────────────────────
+  // `?archived=true` is the `memory.list-archived` equivalent — there is no
+  // dedicated route, and until now nothing proved the flag actually flips the
+  // filter rather than being silently ignored.
+  it('GET /memories?archived=true — lists an archived key, ?archived=false does not', async () => {
+    createdIdR = await create(KEY_R, 'restore-me');
+
+    expect(await listKeys(false), 'a fresh key must be listed as live').toContain(KEY_R);
+
+    const { status } = await api('DELETE', `/${createdIdR}`);
+    expect(status, 'archive should be 204').toBe(204);
+
+    expect(await listKeys(true), 'archived=true must list the archived key').toContain(KEY_R);
+    expect(await listKeys(false), 'archived=false must exclude the archived key').not.toContain(KEY_R);
+  });
+
+  // ── Restore ─────────────────────────────────────────────────────────────────
+  it('POST /memories/restore — restores by scope+key and the row is live again', async () => {
+    const { status, data } = await api('POST', '/restore', { scope: SCOPE, key: KEY_R });
+    expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    expect(data).toEqual({ restored: true });
+
+    expect(await listKeys(false), 'the restored key must be live again').toContain(KEY_R);
+    expect(await listKeys(true), 'the restored key must no longer be archived').not.toContain(KEY_R);
+
+    // And it is readable by id again — restore un-archives the same row, it
+    // does not create a new one.
+    const got = await api('GET', `/${createdIdR}`);
+    expect(got.status, `expected 200; got ${got.status}`).toBe(200);
+  });
+
+  it('POST /memories/:id/restore — returns 404 for a row that is not archived', async () => {
+    // KEY_R is live at this point (restored just above), so there is nothing to
+    // restore: the `.not(archived_at, is, null)` guard must match zero rows.
+    const { status, data } = await api('POST', `/${createdIdR}/restore`);
+    expect(status, `expected 404; got ${status}: ${JSON.stringify(data)}`).toBe(404);
+  });
+
+  it('POST /memories/restore — returns 400 for a malformed body', async () => {
+    const { status, data } = await api('POST', '/restore', { scope: SCOPE });
+    expect(status, `expected 400; got ${status}: ${JSON.stringify(data)}`).toBe(400);
+    expect((data as JsonObj).error).toBeTruthy();
+  });
+
+  // ── Hard delete ─────────────────────────────────────────────────────────────
+  it('DELETE /memories/:id?force=true — hard-deletes (not archives) the row', async () => {
+    const id = await create(KEY_F, 'delete-me-for-real');
+
+    const del = await api('DELETE', `/${id}?force=true`);
+    expect(del.status, `expected 204; got ${del.status}: ${JSON.stringify(del.data)}`).toBe(204);
+
+    const got = await api('GET', `/${id}`);
+    expect(got.status, 'the row must be gone').toBe(404);
+
+    // The distinguishing assertion: an ARCHIVE would still show up here.
+    expect(await listKeys(true), 'a force-deleted key must not be archived').not.toContain(KEY_F);
+    expect(await listKeys(false)).not.toContain(KEY_F);
+  });
+
+  // ── Scopes ──────────────────────────────────────────────────────────────────
+  it('GET /memories/scopes — includes this run\'s scope with a count >= 1', async () => {
+    const { status, data } = await api('GET', '/scopes');
+    expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    const scopes = (data as JsonObj).scopes as Array<{ scope: string; count: number }>;
+    expect(Array.isArray(scopes), JSON.stringify(data)).toBe(true);
+    const row = scopes.find((s) => s.scope === SCOPE);
+    expect(row, `expected scope ${SCOPE} in ${JSON.stringify(scopes)}`).toBeDefined();
+    expect(typeof row!.count).toBe('number');
+    expect(row!.count).toBeGreaterThanOrEqual(1);
+    // Sorted ascending — the documented contract of the endpoint.
+    expect(scopes.map((s) => s.scope)).toEqual([...scopes.map((s) => s.scope)].sort());
+  });
+
+  // ── Purge ───────────────────────────────────────────────────────────────────
+  // Both purge endpoints are user-scoped. LOREKIT_SMOKE_TOKEN may legitimately be
+  // either a user-scoped `lk_*` token or the service-role key, and the two have
+  // DIFFERENT correct answers — 200 with a count, or 403 because a service-role
+  // credential names no user to purge. Asserting the full contract of whichever
+  // branch applies keeps this meaningful either way; anything else (a 500, a 405
+  // from an unregistered route, a non-numeric count) still fails.
+  function expectPurgeResult(status: number, data: unknown): void {
+    if (status === 403) {
+      expect((data as JsonObj).code, JSON.stringify(data)).toBe('forbidden');
+      return;
+    }
+    expect(status, `expected 200 or 403; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    expect(typeof (data as JsonObj).purged, JSON.stringify(data)).toBe('number');
+    expect((data as JsonObj).purged as number).toBeGreaterThanOrEqual(0);
+  }
+
+  it('POST /memories/purge — returns a numeric purged count', async () => {
+    const { status, data } = await api('POST', '/purge', { retention_days: 365 });
+    expectPurgeResult(status, data);
+  });
+
+  it('POST /memories/purge-expired — returns a numeric purged count', async () => {
+    const { status, data } = await api('POST', '/purge-expired');
+    expectPurgeResult(status, data);
   });
 });

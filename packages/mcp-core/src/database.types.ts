@@ -637,6 +637,13 @@ export type Database = {
       }
       lorekit_member_org_ids: { Args: { p_user_id: string }; Returns: string[] }
       lorekit_memory_count: { Args: { p_user_id: string }; Returns: Json }
+      lorekit_memory_scopes: {
+        Args: { p_user_id: string }
+        Returns: {
+          count: number
+          scope: string
+        }[]
+      }
       lorekit_org_can: {
         Args: { p_capability: string; p_org_id: string; p_user_id: string }
         Returns: boolean

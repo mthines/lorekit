@@ -10,18 +10,42 @@ import { handleGet } from './handlers/get.ts';
 import { handleUpdate } from './handlers/update.ts';
 import { handleRemove } from './handlers/remove.ts';
 import { handleSearch } from './handlers/search.ts';
+import { handleRestore } from './handlers/restore.ts';
+import { handlePurge, handlePurgeExpired } from './handlers/purge.ts';
+import { handleScopes } from './handlers/scopes.ts';
 
+// ROUTE ORDER MATTERS. `matchPath` (../_shared/api/router.ts) matches purely on
+// segment COUNT plus literal equality, collects EVERY path match, then picks the
+// first whose method also matches. So `/search`, `/restore`, `/purge`,
+// `/purge-expired` and `/scopes` are all one segment — exactly like `/:id`, which
+// matches any single segment including those literals. The literal routes are
+// listed FIRST so the literal always wins on a method collision. Today `/:id`
+// has no POST route so `POST /restore` would resolve correctly either way; the
+// ordering is explicit precisely so adding `POST /:id` later cannot silently
+// swallow the literal routes. The same applies to the two-segment
+// `/:id/restore`, which has no literal sibling yet.
+//
+// Archived listing has NO route of its own: `GET /?archived=true` is the
+// `memory.list-archived` equivalent (see handlers/list.ts).
 const router = createRouter([
-  { method: 'GET',    path: '/',        handler: handleList,   requires: 'read'  },
-  { method: 'POST',   path: '/',        handler: handleCreate, requires: 'write' },
+  { method: 'GET',    path: '/',               handler: handleList,         requires: 'read'  },
+  { method: 'POST',   path: '/',               handler: handleCreate,       requires: 'write' },
   // Natural-key soft-archive: DELETE /memories?scope=…&key=…. `handleRemove` has
   // always supported the scope+key form, but the route was never registered, so the
   // CLI's `delete`/`archive` (which addresses lore by scope+key, not UUID) got a 405.
-  { method: 'DELETE', path: '/',        handler: handleRemove, requires: 'write' },
-  { method: 'GET',    path: '/:id',     handler: handleGet,    requires: 'read'  },
-  { method: 'PATCH',  path: '/:id',     handler: handleUpdate, requires: 'write' },
-  { method: 'DELETE', path: '/:id',     handler: handleRemove, requires: 'write' },
-  { method: 'POST',   path: '/search',  handler: handleSearch, requires: 'read'  },
+  // `?force=true` on either DELETE form hard-deletes instead of archiving.
+  { method: 'DELETE', path: '/',               handler: handleRemove,       requires: 'write' },
+  // ── literal single-segment routes (must precede `/:id`) ────────────────────
+  { method: 'POST',   path: '/search',         handler: handleSearch,       requires: 'read'  },
+  { method: 'POST',   path: '/restore',        handler: handleRestore,      requires: 'write' },
+  { method: 'POST',   path: '/purge',          handler: handlePurge,        requires: 'write' },
+  { method: 'POST',   path: '/purge-expired',  handler: handlePurgeExpired, requires: 'write' },
+  { method: 'GET',    path: '/scopes',         handler: handleScopes,       requires: 'read'  },
+  // ── parameterised routes ───────────────────────────────────────────────────
+  { method: 'GET',    path: '/:id',            handler: handleGet,          requires: 'read'  },
+  { method: 'PATCH',  path: '/:id',            handler: handleUpdate,       requires: 'write' },
+  { method: 'DELETE', path: '/:id',            handler: handleRemove,       requires: 'write' },
+  { method: 'POST',   path: '/:id/restore',    handler: handleRestore,      requires: 'write' },
 ], 'memories');
 
 Deno.serve(async (req) => {
