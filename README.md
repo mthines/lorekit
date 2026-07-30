@@ -209,6 +209,13 @@ minutes. See [docs/install.md](./docs/install.md).
 LoreKit is an NX monorepo. To set it up locally, run the checks, and hack on any
 package, see [DEVELOPMENT.md](./DEVELOPMENT.md).
 
+## Website screenshots
+
+<img width="1820" height="1175" alt="image" src="https://github.com/user-attachments/assets/2beda92d-a0ee-4c12-a7bb-cc8ff69ac5e8" />
+
+<img width="1820" height="1175" alt="image" src="https://github.com/user-attachments/assets/c3d8cc85-1101-4c74-8df1-1a3c2a83f95a" />
+
+
 ## License
 
 [MIT](./LICENSE) © LoreKit contributors.
