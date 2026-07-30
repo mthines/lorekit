@@ -85,10 +85,11 @@ describe('memory.write', () => {
 
     const result = await callTool('memory.write', { scope: 'global', key: 'k', value: 'v' });
     // write(db, args, userId) — userId is the third arg (null for service-role).
+    // service-role auth → userId is null (third arg)
     expect(mockWrite).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ scope: 'global', key: 'k', value: 'v' }),
-      expect.anything(),
+      null,
     );
     expect(parseResult(result)).toMatchObject(payload);
   });
@@ -106,7 +107,7 @@ describe('memory.write', () => {
     expect(mockWrite).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ tags: ['skill::aw'], source_agent: 'aw-executor', trigger: 'stuck-loop' }),
-      expect.anything(),
+      null,
     );
   });
 
@@ -121,7 +122,7 @@ describe('memory.write', () => {
     expect(mockWrite).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ created_at: '2020-06-01T00:00:00Z' }),
-      expect.anything(),
+      null,
     );
   });
 });
