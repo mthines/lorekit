@@ -2,6 +2,11 @@
   "imports": {
     "zod": "npm:zod@3",
     "@lorekit/schemas": "../../packages/schemas/src/index.ts",
-    "@lorekit/schemas/": "../../packages/schemas/src/"
+    "@lorekit/schemas/": "../../packages/schemas/src/",
+    "@lorekit/schemas/memory": "../../packages/schemas/src/memory.ts",
+    "@lorekit/schemas/org": "../../packages/schemas/src/org.ts",
+    "@lorekit/schemas/invite": "../../packages/schemas/src/invite.ts",
+    "@lorekit/schemas/member": "../../packages/schemas/src/member.ts",
+    "@lorekit/schemas/openapi/spec": "../../packages/schemas/src/openapi/spec.ts"
   }
 }
