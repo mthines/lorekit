@@ -1,0 +1,22 @@
+{
+  "name": "schemas",
+  "$schema": "../../node_modules/nx/schemas/project.json",
+  "projectType": "library",
+  "sourceRoot": "packages/schemas/src",
+  "targets": {
+    "generate:openapi": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        { "input": "default", "projects": ["schemas"] }
+      ],
+      "outputs": [
+        "{workspaceRoot}/supabase/functions/openapi/openapi.generated.json"
+      ],
+      "options": {
+        "command": "npx tsx packages/schemas/src/openapi/generate.ts",
+        "cwd": "{workspaceRoot}"
+      }
+    }
+  }
+}

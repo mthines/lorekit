@@ -21,16 +21,20 @@ concurrency:
 permissions: {}
 
 jobs:
-  # ── Detect whether API/backend code changed ──────────────────────────────────
-  #    Gates the (expensive) integration job so a docs- or web-only change does
-  #    not boot a local Supabase. Unit typecheck/test/lint is NOT gated here —
-  #    `nx affected` in `check` already scopes itself to the changed packages.
+  # ── Detect what changed ──────────────────────────────────────────────────────
+  #    `code`   — any non-docs file touched → gates the `check` job.
+  #    `api`    — API/backend paths → gates the (expensive) `integration` job.
+  #    `plugin` — Claude-plugin paths → gates the `plugin` smoke job.
+  #
+  #    A skipped required check is treated as passing by branch protection, so
+  #    docs- or web-only PRs sail through without booting any toolchain.
   changes:
-    name: Detect API changes
+    name: Detect changes
     runs-on: ubuntu-latest
     permissions:
       contents: read
     outputs:
+      code: ${{ steps.filter.outputs.code }}
       api: ${{ steps.filter.outputs.api }}
       plugin: ${{ steps.filter.outputs.plugin }}
     steps:
@@ -58,6 +62,14 @@ jobs:
           echo "Comparing ${BASE}...HEAD"
           CHANGED="$(git diff --name-only "${BASE}" HEAD)"
           echo "$CHANGED"
+          # Any non-docs source file → run typecheck/test/lint.
+          # Docs-only changes (*.md, *.mdx, docs/, assets/) are excluded so a
+          # README-only PR does not spin up the full toolchain.
+          if printf '%s\n' "$CHANGED" | grep -qvE '^(|.*\.mdx?|docs/|assets/|\.github/CODEOWNERS|LICENSE)$'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
           if printf '%s\n' "$CHANGED" | grep -qE '^(packages/mcp-core/|packages/mcp-server/|supabase/functions/|supabase/migrations/|supabase/tests/|supabase/config\.toml|package\.json|pnpm-lock\.yaml|scripts/smoke-mcp-stdio\.mjs|\.github/workflows/ci\.yml)'; then
             echo "api=true" >> "$GITHUB_OUTPUT"
           else
@@ -72,9 +84,13 @@ jobs:
           fi
 
   # ── Typecheck + Test + Lint (only affected packages) ─────────────────────────
+  #    Skipped entirely on docs-only PRs (no source code changed). When it does
+  #    run, `nx affected` further scopes work to the packages actually touched.
   check:
     name: Typecheck, Test & Lint (affected)
     runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
     permissions:
       contents: read
     steps:

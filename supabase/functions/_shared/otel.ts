@@ -25,6 +25,16 @@
 
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 
+/** PostgREST error shape returned by @supabase/supabase-js. */
+type PostgrestError = { message: string; details?: string | null; hint?: string | null; code?: string };
+
+/** Typed PostgREST response wrapper. */
+type PostgrestResponse<T> = {
+  data: T | null;
+  error: PostgrestError | null;
+  count?: number | null;
+};
+
 // ── Supabase Edge Runtime global ──────────────────────────────────────────────
 declare global {
   // deno-lint-ignore no-var
@@ -167,8 +177,11 @@ function buildOtlpPayload(spans: SpanPayload[]): unknown {
 
   const serviceVersion = Deno.env.get('VCS_REF_HEAD_REVISION') ?? Deno.env.get('GITHUB_SHA') ?? 'unknown';
 
+  // SERVICE_NAME is set per-function via Supabase secrets so spans carry the
+  // correct resource name regardless of which function emits them.
+  const serviceName = Deno.env.get('SERVICE_NAME') ?? 'lorekit';
   const resourceAttributes = [
-    { key: 'service.name', value: { stringValue: 'mcp' } },
+    { key: 'service.name', value: { stringValue: serviceName } },
     { key: 'service.namespace', value: { stringValue: 'lorekit' } },
     { key: 'service.version', value: { stringValue: serviceVersion } },
     { key: 'deployment.environment.name', value: { stringValue: resolveDeploymentEnv() } },
@@ -182,7 +195,7 @@ function buildOtlpPayload(spans: SpanPayload[]): unknown {
     resourceSpans: [{
       resource: { attributes: resourceAttributes },
       scopeSpans: [{
-        scope: { name: 'lorekit-mcp', version: '1.0.0' },
+        scope: { name: `lorekit-${serviceName}`, version: '1.0.0' },
         spans: spans.map((s) => ({
           traceId: s.ctx.traceId,
           spanId: s.ctx.spanId,
@@ -381,8 +394,7 @@ function buildSql(s: QueryState): string {
  * Fluent traced query builder — mirrors the Supabase query builder API
  * but wraps execution in a child span named after the SQL-like statement.
  */
-// deno-lint-ignore no-explicit-any
-export class TracedQuery<T = any> {
+export class TracedQuery<T = Record<string, unknown>> {
   constructor(private state: QueryState, private parent: Span) {}
 
   // ── column selection ──────────────────────────────────────────────────────
@@ -400,19 +412,23 @@ export class TracedQuery<T = any> {
   lt(col: string, val: unknown): this   { this.state.filters.push(`${col} < '${val}'`);  this.state.qb = this.state.qb.lt(col, val); return this; }
   lte(col: string, val: unknown): this  { this.state.filters.push(`${col} <= '${val}'`); this.state.qb = this.state.qb.lte(col, val); return this; }
   is(col: string, val: unknown): this   { this.state.filters.push(`${col} IS ${val}`);   this.state.qb = this.state.qb.is(col, val); return this; }
-  // deno-lint-ignore no-explicit-any
-  in(col: string, vals: any[]): this    { this.state.filters.push(`${col} IN (${vals.map((v) => `'${v}'`).join(', ')})`); this.state.qb = this.state.qb.in(col, vals); return this; }
-  // deno-lint-ignore no-explicit-any
-  overlaps(col: string, val: any[]): this { this.state.filters.push(`${col} && '{${val.join(',')}}'`); this.state.qb = this.state.qb.overlaps(col, val); return this; }
+  in<V = unknown>(col: string, vals: V[]): this    { this.state.filters.push(`${col} IN (${vals.map((v) => `'${v}'`).join(', ')})`); this.state.qb = this.state.qb.in(col, vals); return this; }
+  overlaps<V = unknown>(col: string, val: V[]): this { this.state.filters.push(`${col} && '{${val.join(',')}}'`); this.state.qb = this.state.qb.overlaps(col, val); return this; }
   textSearch(col: string, query: string, opts?: { type?: string; config?: string }): this {
     this.state.filters.push(`${col} @@ to_tsquery('${query}')`);
-    // deno-lint-ignore no-explicit-any
+    // deno-lint-ignore no-explicit-any -- PostgREST builder lacks textSearch overload in its public type
     this.state.qb = (this.state.qb as any).textSearch(col, query, opts);
     return this;
   }
   or(filters: string, opts?: { referencedTable?: string }): this {
     this.state.filters.push(`(${filters})`);
     this.state.qb = this.state.qb.or(filters, opts);
+    return this;
+  }
+  not(col: string, operator: string, val: unknown): this {
+    this.state.filters.push(`${col} NOT ${operator} '${val}'`);
+    // deno-lint-ignore no-explicit-any -- PostgREST builder's .not() types vary by version
+    this.state.qb = (this.state.qb as any).not(col, operator, val);
     return this;
   }
 
@@ -429,16 +445,14 @@ export class TracedQuery<T = any> {
   maybeSingle(): this { this.state.lim = 1; this.state.qb = this.state.qb.maybeSingle(); return this; }
 
   // ── mutations ─────────────────────────────────────────────────────────────
-  // deno-lint-ignore no-explicit-any
-  insert(data: any | any[]): this {
+  insert(data: Record<string, unknown> | Record<string, unknown>[]): this {
     this.state.op = 'INSERT';
     const sample = Array.isArray(data) ? data[0] : data;
     if (sample) this.state.columns = Object.keys(sample).join(', ');
     this.state.qb = this.state.qb.insert(data);
     return this;
   }
-  // deno-lint-ignore no-explicit-any
-  update(data: any, opts?: { count?: 'exact' | 'planned' | 'estimated' }): this {
+  update(data: Record<string, unknown>, opts?: { count?: 'exact' | 'planned' | 'estimated' }): this {
     this.state.op = 'UPDATE';
     this.state.columns = Object.keys(data).join(', ');
     // Forward opts (e.g. { count: 'exact' }) — without this the row count is
@@ -446,8 +460,7 @@ export class TracedQuery<T = any> {
     this.state.qb = this.state.qb.update(data, opts);
     return this;
   }
-  // deno-lint-ignore no-explicit-any
-  upsert(data: any | any[], opts?: { onConflict?: string }): this {
+  upsert(data: Record<string, unknown> | Record<string, unknown>[], opts?: { onConflict?: string }): this {
     this.state.op = 'UPSERT';
     const sample = Array.isArray(data) ? data[0] : data;
     if (sample) this.state.columns = Object.keys(sample).join(', ');
@@ -456,18 +469,16 @@ export class TracedQuery<T = any> {
   }
   delete(opts?: { count?: 'exact' | 'planned' | 'estimated' }): this {
     this.state.op = 'DELETE';
-    // deno-lint-ignore no-explicit-any
+    // deno-lint-ignore no-explicit-any -- PostgREST builder's .delete() opts aren't in the public type
     this.state.qb = (this.state.qb as any).delete(opts);
     return this;
   }
 
   // ── execution (with child span) ───────────────────────────────────────────
-  // deno-lint-ignore no-explicit-any
-  async then<R1 = any, R2 = never>(
-    // deno-lint-ignore no-explicit-any
-    resolve?: ((v: any) => R1 | PromiseLike<R1>) | null,
-    // deno-lint-ignore no-explicit-any
-    reject?: ((r: any) => R2 | PromiseLike<R2>) | null,
+  /** Execute the query. Result is typed via the TracedQuery<T> generic. */
+  then<R1 = PostgrestResponse<T[]>, R2 = never>(
+    resolve?: ((v: PostgrestResponse<T[]>) => R1 | PromiseLike<R1>) | null,
+    reject?: ((r: unknown) => R2 | PromiseLike<R2>) | null,
   ): Promise<R1 | R2> {
     const sql = buildSql(this.state);
     const dbSpan = this.parent.child(sql, {
@@ -477,28 +488,32 @@ export class TracedQuery<T = any> {
       'db.query.text': sql,
     });
 
-    try {
-      // deno-lint-ignore no-explicit-any
-      const result = await (this.state.qb as any);
-      const rows = Array.isArray(result.data) ? result.data.length : result.data ? 1 : 0;
-      dbSpan.setAttributes({ 'db.response.rows': rows, 'db.success': !result.error });
+    // deno-lint-ignore no-explicit-any -- PostgREST builder is awaited as opaque; result is cast below
+    const resultPromise = (this.state.qb as any) as Promise<PostgrestResponse<T[]>>;
 
-      if (result.error) {
-        if (result.error.code === 'PGRST116') {
-          // .single() no rows — expected, not an error
-          dbSpan.setAttributes({ 'db.no_rows': true });
-        } else {
-          dbSpan.error(`PostgrestError: ${result.error.message}`);
+    return resultPromise.then(
+      (result) => {
+        const rows = Array.isArray(result.data) ? result.data.length : result.data ? 1 : 0;
+        dbSpan.setAttributes({ 'db.response.rows': rows, 'db.success': !result.error });
+
+        if (result.error) {
+          if (result.error.code === 'PGRST116') {
+            // .single() no rows — expected, not an error
+            dbSpan.setAttributes({ 'db.no_rows': true });
+          } else {
+            dbSpan.error(`PostgrestError: ${result.error.message}`);
+          }
         }
-      }
 
-      dbSpan.end();
-      return resolve ? resolve(result) : result;
-    } catch (err) {
-      dbSpan.error(`${(err as Error).name}: ${(err as Error).message}`);
-      dbSpan.end();
-      return reject ? reject(err) : Promise.reject(err);
-    }
+        dbSpan.end();
+        return resolve ? resolve(result) : result as unknown as R1;
+      },
+      (err: unknown) => {
+        dbSpan.error(`${(err as Error).name}: ${(err as Error).message}`);
+        dbSpan.end();
+        return reject ? reject(err) : Promise.reject(err) as Promise<R2>;
+      },
+    );
   }
 }
 
@@ -519,16 +534,15 @@ export class TracedQuery<T = any> {
  */
 export function createTracedClient(supabase: SupabaseClient, parentSpan: Span) {
   return {
-    from(table: string): TracedQuery {
-      return new TracedQuery(
+    from<T = Record<string, unknown>>(table: string): TracedQuery<T> {
+      return new TracedQuery<T>(
         { table, op: 'SELECT', columns: '*', filters: [], qb: supabase.from(table) },
         parentSpan,
       );
     },
-    // deno-lint-ignore no-explicit-any
-    rpc(fn: string, args?: Record<string, unknown>, opts?: Record<string, unknown>): TracedQuery {
-      return new TracedQuery(
-        // deno-lint-ignore no-explicit-any
+    rpc<T = Record<string, unknown>>(fn: string, args?: Record<string, unknown>, opts?: Record<string, unknown>): TracedQuery<T> {
+      return new TracedQuery<T>(
+        // deno-lint-ignore no-explicit-any -- SupabaseClient.rpc() generic overload isn't publicly typed; cast is safe
         { table: fn, op: 'RPC', columns: '', filters: [], qb: (supabase as any).rpc(fn, args, opts) },
         parentSpan,
       );
