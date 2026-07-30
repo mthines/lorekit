@@ -7,10 +7,25 @@
  * span context and injects `traceparent` into the outgoing request.
  *
  * These tests verify the OTel context propagation primitives work correctly
- * using only `@opentelemetry/api` (no SDK registration required).
+ * using only `@opentelemetry/api` + `@opentelemetry/context-async-hooks`.
+ * A real context manager must be registered for `context.with()` to propagate
+ * values — the default no-op context manager is a stub that does not propagate.
  */
-import { describe, it, expect } from 'vitest';
-import { context, trace, ROOT_CONTEXT } from '@opentelemetry/api';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { context, trace, ContextManager } from '@opentelemetry/api';
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
+
+let manager: ContextManager;
+
+beforeAll(() => {
+  manager = new AsyncLocalStorageContextManager();
+  manager.enable();
+  context.setGlobalContextManager(manager);
+});
+
+afterAll(() => {
+  context.disable();
+});
 
 describe('OTel W3C traceparent propagation', () => {
   it('context.with() propagates a context value to the inner callback', () => {
