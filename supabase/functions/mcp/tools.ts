@@ -18,7 +18,7 @@ import { createTracedClient, type Span } from '../_shared/otel.ts';
 import { translateCapError } from './limits.ts';
 import { translateOrgPermissionError } from './org-permissions.ts';
 import { parseCreatedAt } from './created-at.ts';
-import { parseTtlDays } from './ttl.ts';
+import { parseTtl } from './ttl.ts';
 import { recordAudit } from './audit.ts';
 import { applyTenantScope } from './tenant-scope.ts';
 
@@ -67,14 +67,14 @@ export async function toolWrite(
   userId: string | null,
   span: Span,
 ) {
-  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, clear_ttl = false } = params;
+  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false } = params;
   if (!rawScope || !key || !value) throw new Error('scope, key, and value are required');
   if (value.length > MAX_VALUE_BYTES) throw new Error(`value exceeds ${MAX_VALUE_BYTES} bytes`);
   const scope = validateScope(rawScope);
   // Optional creation-date override (migration use case). Validates + rejects
   // future dates; null when omitted so the DB applies its now() default.
   const createdAt = parseCreatedAt(created_at);
-  const ttlDays = parseTtlDays(ttl_days);
+  const ttlSeconds = parseTtl({ ttl_days, ttl_minutes, ttl_seconds });
 
   span.setAttributes({
     'lorekit.scope': scope,
@@ -85,7 +85,7 @@ export async function toolWrite(
     ...(trigger ? { 'lorekit.trigger': trigger } : {}),
     ...(createdAt ? { 'lorekit.created_at': createdAt } : {}),
     ...(org ? { 'lorekit.org': org } : {}),
-    ...(ttlDays !== null ? { 'lorekit.ttl_days': ttlDays } : {}),
+    ...(ttlSeconds !== null ? { 'lorekit.ttl_seconds': ttlSeconds } : {}),
     ...(clear_ttl ? { 'lorekit.clear_ttl': true } : {}),
   });
 
@@ -105,7 +105,7 @@ export async function toolWrite(
       p_trigger: trigger ?? null,
       p_created_at: createdAt,
       p_org_slug: org ?? null,
-      p_ttl_days: ttlDays,
+      p_ttl_seconds: ttlSeconds,
       p_clear_ttl: clear_ttl,
     })
     .single();
@@ -148,7 +148,7 @@ export async function toolWrite(
     };
   }
   const result: Record<string, unknown> = { id: row.id, created_at: row.created_at };
-  if (ttlDays !== null || clear_ttl) result.expires_at = (row as { id: string; created_at: string; expires_at?: string | null }).expires_at ?? null;
+  if (ttlSeconds !== null || clear_ttl) result.expires_at = (row as { id: string; created_at: string; expires_at?: string | null }).expires_at ?? null;
   return result;
 }
 
