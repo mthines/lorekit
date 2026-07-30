@@ -1,9 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { addSignalAttribute } from '@dash0/sdk-web';
+import { friendlyAuthError } from '@/lib/auth-errors';
+import { validatePassword } from '@/lib/password-policy';
+import { authCallbackOrigin, buildAuthCallbackUrl } from '@/lib/auth-callback-url';
+import { safeNextPath } from '@/lib/auth-redirect';
 
 function GitHubIcon({ className }: { className?: string }) {
   return (
@@ -38,6 +43,25 @@ function MailIcon({ className }: { className?: string }) {
   );
 }
 
+function LockIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      aria-hidden
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <rect width="18" height="11" x="3" y="11" rx="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  );
+}
+
 interface LoginButtonProps {
   /**
    * When true, renders a smaller nav-style button (no minimum width, less padding).
@@ -46,75 +70,54 @@ interface LoginButtonProps {
   compact?: boolean;
 }
 
-type EmailStep = 'idle' | 'entering' | 'sent';
-
 /**
- * Map Supabase OTP error codes / messages to user-friendly strings.
+ * Which panel of the sign-in flow is showing.
  *
- * Supabase returns terse internal messages (e.g. "Email rate limit exceeded",
- * "Invalid email address") that are not suitable to show directly. We intercept
- * the most common ones and return a clear, actionable message instead.
- *
- * Falls back to the raw message for anything we don't recognise, which is still
- * better than silence.
+ * - `idle`      — provider choice (GitHub / email + password / magic link)
+ * - `password`  — email + password form (sign in or create account)
+ * - `magic`     — email-only form that sends a magic link
+ * - `sent`      — magic link sent confirmation
+ * - `confirm`   — password sign-up done, confirmation email sent
  */
-function friendlyOtpError(error: { message: string; code?: string; status?: number }): string {
-  const msg = error.message.toLowerCase();
-  const code = (error.code ?? '').toLowerCase();
+type Step = 'idle' | 'password' | 'magic' | 'sent' | 'confirm';
 
-  // Rate limit — most common on Supabase Free tier (4 emails/hour per project)
-  if (msg.includes('rate limit') || msg.includes('too many') || error.status === 429) {
-    return 'Too many sign-in attempts. Please wait a few minutes and try again.';
-  }
-  // Invalid / undeliverable address
-  if (
-    msg.includes('invalid email') ||
-    msg.includes('unable to validate') ||
-    code === 'validation_failed'
-  ) {
-    return 'That doesn\'t look like a valid email address. Please double-check and try again.';
-  }
-  // Signups disabled in this Supabase project
-  if (msg.includes('signups not allowed') || msg.includes('signup is disabled') || code === 'signup_disabled') {
-    return 'Sign-up is currently disabled. Please contact the administrator.';
-  }
-  // Email provider rejected delivery (bounced, domain doesn't exist, etc.)
-  if (msg.includes('email not confirmed') || msg.includes('smtp') || msg.includes('delivery')) {
-    return 'We couldn\'t deliver an email to that address. Please check the address and try again.';
-  }
+/** Whether the password form signs into an existing account or creates one. */
+type PasswordMode = 'signin' | 'signup';
 
-  // Fallback: show the raw message but at least capitalise it
-  return error.message.charAt(0).toUpperCase() + error.message.slice(1);
-}
+const FIELD_CLASS =
+  'h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] disabled:opacity-50';
+
+const PRIMARY_BUTTON_CLASS =
+  'flex h-11 items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50';
+
+const LINK_CLASS =
+  'text-xs text-[var(--color-content-tertiary)] underline-offset-2 hover:text-[var(--color-content-secondary)] hover:underline';
 
 export function LoginButton({ compact = false }: LoginButtonProps) {
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [emailStep, setEmailStep] = useState<EmailStep>('idle');
+  const [step, setStep] = useState<Step>('idle');
+  const [passwordMode, setPasswordMode] = useState<PasswordMode>('signin');
   const [email, setEmail] = useState('');
-  const [emailError, setEmailError] = useState('');
-  const [emailLoading, setEmailLoading] = useState(false);
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
   // Read the ?next= param set by the dashboard layout when redirecting unauthenticated
-  // users to /login. After OAuth callback, /api/auth/callback will redirect there
-  // instead of /dashboard, preserving shared URLs (e.g. ?lesson=...).
+  // users to /login. After the OAuth/magic-link callback, /api/auth/callback will
+  // redirect there instead of /dashboard, preserving shared URLs (e.g. ?lesson=...).
+  // The password path never leaves the SPA, so it navigates there itself.
   const searchParams = useSearchParams();
   const nextParam = searchParams.get('next');
 
-  function buildCallbackUrl(): string {
-    // Prefer the build-time NEXT_PUBLIC_VERCEL_URL (set in next.config.ts from
-    // VERCEL_URL) so preview deployments redirect back to their own URL, not
-    // production. Empty string means local dev — fall back to window.location.origin
-    // so any dev-server port (3000, 3001, ...) works without hardcoding.
-    const vercelUrl = process.env['NEXT_PUBLIC_VERCEL_URL'];
-    const base = vercelUrl || window.location.origin;
+  function callbackUrl(): string {
+    return buildAuthCallbackUrl(authCallbackOrigin(), nextParam);
+  }
 
-    // Thread the ?next= param through to the callback so post-login navigation
-    // returns to the originally-requested URL (including any search params).
-    const callbackUrl = new URL(`${base}/api/auth/callback`);
-    if (nextParam) {
-      callbackUrl.searchParams.set('next', nextParam);
-    }
-    return callbackUrl.toString();
+  function resetTo(next: Step) {
+    setStep(next);
+    setError('');
+    setPassword('');
   }
 
   async function handleGitHubLogin() {
@@ -124,24 +127,24 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     await supabase.auth.signInWithOAuth({
       provider: 'github',
       options: {
-        redirectTo: buildCallbackUrl(),
+        redirectTo: callbackUrl(),
       },
     });
     // Loading stays true — page will redirect
   }
 
-  async function handleEmailSubmit(e: React.FormEvent) {
+  async function handleMagicLinkSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setEmailError('');
+    setError('');
     if (!email.trim()) {
-      setEmailError('Please enter your email address.');
+      setError('Please enter your email address.');
       return;
     }
 
-    setEmailLoading(true);
+    setBusy(true);
     addSignalAttribute('auth.method', 'email_otp');
     const supabase = createClient();
-    const { error } = await supabase.auth.signInWithOtp({
+    const { error: otpError } = await supabase.auth.signInWithOtp({
       // Pass the email exactly as the user typed it. Plus-subaddressed variants
       // (user+alias@example.com) are valid and distinct Supabase identities —
       // Supabase creates an account on first use (shouldCreateUser: true) and
@@ -149,17 +152,95 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
       // here because that would silently change which account the user logs into.
       email: email.trim(),
       options: {
-        emailRedirectTo: buildCallbackUrl(),
+        emailRedirectTo: callbackUrl(),
         shouldCreateUser: true,
       },
     });
-    setEmailLoading(false);
-    if (error) {
-      addSignalAttribute('auth.otp_error_code', error.code ?? error.name ?? 'unknown');
-      setEmailError(friendlyOtpError(error));
+    setBusy(false);
+    if (otpError) {
+      addSignalAttribute('auth.otp_error_code', otpError.code ?? otpError.name ?? 'unknown');
+      setError(friendlyAuthError(otpError));
     } else {
-      setEmailStep('sent');
+      setStep('sent');
     }
+  }
+
+  async function handlePasswordSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError('');
+
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setError('Please enter your email address.');
+      return;
+    }
+    if (!password) {
+      setError('Please enter your password.');
+      return;
+    }
+    // Only pre-validate the policy when a password is being *set*. On sign-in
+    // an existing (possibly older, shorter) password must still be accepted —
+    // rejecting it client-side would lock the user out of their own account.
+    if (passwordMode === 'signup') {
+      const policyError = validatePassword(password);
+      if (policyError) {
+        setError(policyError);
+        return;
+      }
+    }
+
+    setBusy(true);
+    addSignalAttribute(
+      'auth.method',
+      passwordMode === 'signup' ? 'email_password_signup' : 'email_password',
+    );
+    const supabase = createClient();
+
+    if (passwordMode === 'signin') {
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: trimmedEmail,
+        password,
+      });
+      if (signInError) {
+        setBusy(false);
+        addSignalAttribute(
+          'auth.password_error_code',
+          signInError.code ?? signInError.name ?? 'unknown',
+        );
+        setError(friendlyAuthError(signInError));
+        return;
+      }
+      // The browser client has written the session cookies; refresh so the
+      // server components on the destination see the authenticated user.
+      router.push(safeNextPath(nextParam));
+      router.refresh();
+      return;
+    }
+
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email: trimmedEmail,
+      password,
+      options: { emailRedirectTo: callbackUrl() },
+    });
+    setBusy(false);
+    if (signUpError) {
+      addSignalAttribute(
+        'auth.password_error_code',
+        signUpError.code ?? signUpError.name ?? 'unknown',
+      );
+      setError(friendlyAuthError(signUpError));
+      return;
+    }
+    if (data.session) {
+      // Email confirmation is disabled on this project — the account is live.
+      router.push(safeNextPath(nextParam));
+      router.refresh();
+      return;
+    }
+    // Confirmation required. Supabase deliberately returns a user with no
+    // identities (and no session) when the address is already registered, so
+    // this same screen is shown either way — it must not reveal which.
+    setStep('confirm');
   }
 
   // -- Compact variant (top-right nav button on login page) --
@@ -180,23 +261,24 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
   // -- Full variant (hero CTA) --
 
   // Magic-link sent confirmation
-  if (emailStep === 'sent') {
+  if (step === 'sent') {
     return (
       <div className="flex flex-col items-center gap-3 text-center">
         <div className="flex size-12 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
           <MailIcon className="size-5 text-[var(--color-accent)]" />
         </div>
-        <p className="text-sm font-medium text-[var(--color-content-primary)]">
-          Check your inbox
-        </p>
+        <p className="text-sm font-medium text-[var(--color-content-primary)]">Check your inbox</p>
         <p className="max-w-xs text-xs text-[var(--color-content-secondary)]">
           We sent a magic link to{' '}
-          <span className="font-medium text-[var(--color-content-primary)]">{email}</span>.
-          Click it to sign in — no password needed.
+          <span className="font-medium text-[var(--color-content-primary)]">{email}</span>. Click it
+          to sign in — no password needed.
         </p>
         <button
-          onClick={() => { setEmailStep('idle'); setEmail(''); setEmailError(''); }}
-          className="text-xs text-[var(--color-content-tertiary)] underline-offset-2 hover:text-[var(--color-content-secondary)] hover:underline"
+          onClick={() => {
+            setEmail('');
+            resetTo('idle');
+          }}
+          className={LINK_CLASS}
         >
           Use a different address
         </button>
@@ -204,46 +286,157 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     );
   }
 
-  // Email entry form
-  if (emailStep === 'entering') {
+  // Sign-up confirmation email sent
+  if (step === 'confirm') {
     return (
-      <form onSubmit={handleEmailSubmit} className="flex w-full max-w-xs flex-col gap-2.5">
-        <label htmlFor="lk-email" className="sr-only">Email address</label>
+      <div className="flex flex-col items-center gap-3 text-center">
+        <div className="flex size-12 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+          <MailIcon className="size-5 text-[var(--color-accent)]" />
+        </div>
+        <p className="text-sm font-medium text-[var(--color-content-primary)]">
+          Confirm your email
+        </p>
+        <p className="max-w-xs text-xs text-[var(--color-content-secondary)]">
+          We sent a confirmation link to{' '}
+          <span className="font-medium text-[var(--color-content-primary)]">{email}</span>. Click it
+          to activate your account, then sign in with your password.
+        </p>
+        <button
+          onClick={() => {
+            setPasswordMode('signin');
+            resetTo('password');
+          }}
+          className={LINK_CLASS}
+        >
+          Back to sign in
+        </button>
+      </div>
+    );
+  }
+
+  // Email + password form
+  if (step === 'password') {
+    const isSignup = passwordMode === 'signup';
+    return (
+      <form onSubmit={handlePasswordSubmit} className="flex w-full max-w-xs flex-col gap-2.5">
+        <label htmlFor="lk-email" className="sr-only">
+          Email address
+        </label>
         <input
           id="lk-email"
+          name="email"
           type="email"
           autoComplete="email"
           autoFocus
+          required
           placeholder="you@example.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          disabled={emailLoading}
-          className="h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] disabled:opacity-50"
+          disabled={busy}
+          className={FIELD_CLASS}
         />
-        {emailError && (
-          <p role="alert" className="text-xs text-red-400">{emailError}</p>
+
+        <label htmlFor="lk-password" className="sr-only">
+          Password
+        </label>
+        <input
+          id="lk-password"
+          name="password"
+          type="password"
+          autoComplete={isSignup ? 'new-password' : 'current-password'}
+          required
+          placeholder="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          disabled={busy}
+          className={FIELD_CLASS}
+        />
+
+        {error && (
+          <p role="alert" className="text-xs text-red-400">
+            {error}
+          </p>
         )}
-        <button
-          type="submit"
-          disabled={emailLoading}
-          className="flex h-11 items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-4 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50"
-          aria-busy={emailLoading}
-        >
-          <MailIcon className="size-4 shrink-0" />
-          {emailLoading ? 'Sending...' : 'Send magic link'}
+
+        <button type="submit" disabled={busy} className={PRIMARY_BUTTON_CLASS} aria-busy={busy}>
+          <LockIcon className="size-4 shrink-0" />
+          {busy
+            ? isSignup
+              ? 'Creating account...'
+              : 'Signing in...'
+            : isSignup
+              ? 'Create account'
+              : 'Sign in'}
         </button>
-        <button
-          type="button"
-          onClick={() => { setEmailStep('idle'); setEmailError(''); }}
-          className="text-xs text-[var(--color-content-tertiary)] underline-offset-2 hover:text-[var(--color-content-secondary)] hover:underline"
-        >
+
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setPasswordMode(isSignup ? 'signin' : 'signup');
+              setError('');
+            }}
+            className={LINK_CLASS}
+          >
+            {isSignup ? 'I already have an account' : 'Create an account'}
+          </button>
+          {!isSignup && (
+            <Link href="/forgot-password" className={LINK_CLASS}>
+              Forgot password?
+            </Link>
+          )}
+        </div>
+
+        <button type="button" onClick={() => resetTo('magic')} className={LINK_CLASS}>
+          Email me a magic link instead
+        </button>
+        <button type="button" onClick={() => resetTo('idle')} className={LINK_CLASS}>
           Back
         </button>
       </form>
     );
   }
 
-  // Default: GitHub + email option
+  // Magic-link email entry form
+  if (step === 'magic') {
+    return (
+      <form onSubmit={handleMagicLinkSubmit} className="flex w-full max-w-xs flex-col gap-2.5">
+        <label htmlFor="lk-magic-email" className="sr-only">
+          Email address
+        </label>
+        <input
+          id="lk-magic-email"
+          name="email"
+          type="email"
+          autoComplete="email"
+          autoFocus
+          required
+          placeholder="you@example.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          disabled={busy}
+          className={FIELD_CLASS}
+        />
+        {error && (
+          <p role="alert" className="text-xs text-red-400">
+            {error}
+          </p>
+        )}
+        <button type="submit" disabled={busy} className={PRIMARY_BUTTON_CLASS} aria-busy={busy}>
+          <MailIcon className="size-4 shrink-0" />
+          {busy ? 'Sending...' : 'Send magic link'}
+        </button>
+        <button type="button" onClick={() => resetTo('password')} className={LINK_CLASS}>
+          Use a password instead
+        </button>
+        <button type="button" onClick={() => resetTo('idle')} className={LINK_CLASS}>
+          Back
+        </button>
+      </form>
+    );
+  }
+
+  // Default: GitHub + email options
   return (
     <div className="flex flex-col items-center gap-3">
       {/* Primary: GitHub */}
@@ -264,14 +457,22 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
         <span className="h-px flex-1 bg-[var(--color-border)]" aria-hidden />
       </div>
 
-      {/* Secondary: email — kept clearly visible (elevated surface + primary
-          text) so it reads as a real alternative, not a muted afterthought. */}
+      {/* Secondary: email + password — kept clearly visible (elevated surface +
+          primary text) so it reads as a real alternative, not a muted afterthought. */}
       <button
-        onClick={() => setEmailStep('entering')}
+        onClick={() => {
+          setPasswordMode('signin');
+          resetTo('password');
+        }}
         className="flex h-11 min-w-[220px] items-center justify-center gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-6 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
       >
-        <MailIcon className="size-4 shrink-0" />
+        <LockIcon className="size-4 shrink-0" />
         Continue with email
+      </button>
+
+      {/* Tertiary: passwordless — still one tap away for anyone who prefers it. */}
+      <button onClick={() => resetTo('magic')} className={LINK_CLASS}>
+        Or email me a magic link
       </button>
     </div>
   );

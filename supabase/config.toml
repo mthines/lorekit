@@ -37,7 +37,11 @@ enable_refresh_token_rotation = true
 refresh_token_reuse_interval = 10
 enable_signup = true
 enable_anonymous_sign_ins = false
-minimum_password_length = 6
+# Email + password sign-in is a first-class dashboard auth method alongside
+# GitHub OAuth and magic links. Keep this in sync with MIN_PASSWORD_LENGTH in
+# packages/web/src/lib/password-policy.ts (the UI may be stricter, never laxer)
+# and with the hosted project's Auth setting.
+minimum_password_length = 8
 password_requirements = ""
 
 [auth.external.github]

@@ -162,7 +162,7 @@ export default function LoginPage() {
               <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] font-mono text-xs font-semibold text-[var(--color-accent)]">1</span>
               <div>
                 <p className="text-sm font-medium text-[var(--color-content-primary)] mb-1">Sign in and get your token</p>
-                <p className="text-xs text-[var(--color-content-secondary)]">GitHub OAuth or magic-link email — takes 30 seconds</p>
+                <p className="text-xs text-[var(--color-content-secondary)]">GitHub, email + password, or a magic link — takes 30 seconds</p>
               </div>
             </li>
             <li className="flex gap-3">
