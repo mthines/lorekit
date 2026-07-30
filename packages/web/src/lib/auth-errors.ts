@@ -43,12 +43,19 @@ export function friendlyAuthError(error: AuthErrorLike): string {
   }
 
   // -- Sign-up -------------------------------------------------------------
+  // Deliberately does NOT confirm that the address is already registered.
+  // With email confirmations off, Supabase surfaces `user_already_exists`
+  // here, so an explicit "that account exists" message would turn sign-up
+  // into an enumeration oracle — exactly what the invalid-credentials branch
+  // above avoids. The copy mirrors the confirmation screen the happy path
+  // shows, plus a generic recovery path so a returning user is not left
+  // waiting on an email that will never arrive.
   if (
     code === 'user_already_exists' ||
     msg.includes('user already registered') ||
     msg.includes('already been registered')
   ) {
-    return 'An account with that email already exists. Sign in instead, or reset your password.';
+    return 'Check your inbox to finish setting up your account. If you already have one, sign in or reset your password instead.';
   }
 
   // -- Password policy -----------------------------------------------------

@@ -23,10 +23,20 @@ describe('friendlyAuthError', () => {
     ).toContain('confirm your email');
   });
 
-  it('maps an existing account on sign-up to an actionable message', () => {
-    expect(
-      friendlyAuthError({ message: 'User already registered', code: 'user_already_exists' }),
-    ).toContain('already exists');
+  it('maps an existing account on sign-up without leaking that it exists', () => {
+    const message = friendlyAuthError({
+      message: 'User already registered',
+      code: 'user_already_exists',
+    });
+    // No enumeration oracle: the copy must not confirm the address is taken.
+    const lowered = message.toLowerCase();
+    expect(lowered).not.toContain('already exists');
+    expect(lowered).not.toContain('already registered');
+    expect(lowered).not.toContain('taken');
+    // It must still leave the user a way forward.
+    expect(lowered).toContain('sign in or reset your password');
+    // Same outcome when only the raw message is available (no code).
+    expect(friendlyAuthError({ message: 'User already registered' })).toBe(message);
   });
 
   it('maps a weak password to the policy minimum', () => {
