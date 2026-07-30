@@ -4,7 +4,6 @@
   "projectType": "application",
   "tags": ["type:infra"],
   "targets": {
-
     "start": {
       "executor": "nx:run-commands",
       "options": {
@@ -59,7 +58,7 @@
     "db:types": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "supabase gen types typescript > packages/mcp-core/src/database.types.ts",
+        "command": "supabase gen types typescript > supabase/functions/_shared/database.types.ts --project-id pqokxlhvnosogizsjztg && cp supabase/functions/_shared/database.types.ts packages/mcp-core/src/database.types.ts",
         "cwd": "{workspaceRoot}"
       }
     },
@@ -98,7 +97,10 @@
     "deploy": {
       "executor": "nx:run-commands",
       "dependsOn": [
-        { "projects": ["mcp-core", "mcp-server", "web"], "target": "typecheck" },
+        {
+          "projects": ["mcp-core", "mcp-server", "web"],
+          "target": "typecheck"
+        },
         { "projects": ["mcp-core", "mcp-server"], "target": "test" }
       ],
       "options": {
@@ -111,6 +113,5 @@
         "cwd": "{workspaceRoot}"
       }
     }
-
   }
 }
