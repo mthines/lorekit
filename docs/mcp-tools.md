@@ -42,11 +42,13 @@ Store or update a lesson. Requires a token with write permission (`lk_rw_*` or `
 | `source_agent` | | Name of the agent writing this lesson |
 | `trigger` | | What triggered the write (`stuck-loop`, `pr-webhook`, `manual`) |
 | `org` | | Org slug to write under (org-owned write). Omit for a personal memory. You must be a write-capable member (`member`/`admin`/`owner`, not `viewer`) of the org — verified server-side; supplying an org you're not authorized for is rejected. |
-| `ttl_days` | | Integer 1–365. When set, the memory auto-expires after this many days and is invisible to all reads once expired. On an update, supplying `ttl_days` refreshes the expiry; omitting it leaves the existing expiry unchanged. |
+| `ttl_days` | | Integer 1–365. The memory auto-expires after this many days. Mutually exclusive with `ttl_minutes` and `ttl_seconds`; supply at most one. On an update, refreshes the expiry; omitting all three leaves the existing expiry unchanged. |
+| `ttl_minutes` | | Integer 1–525600 (365 days in minutes). The memory auto-expires after this many minutes. Mutually exclusive with `ttl_days` and `ttl_seconds`. |
+| `ttl_seconds` | | Integer 1–31536000 (365 days in seconds). The memory auto-expires after this many seconds. Useful for short-lived session memories (e.g. 30 s, 5 min). Mutually exclusive with `ttl_days` and `ttl_minutes`. |
 
 **Scope→org binding.** If you omit `org` but the scope is **bound to an org** (an admin set that up — see [org-sharing.md](./org-sharing.md#scope--org-binding-auto-routing)), the write auto-routes to that org **when you're a write-capable member**. If you're *not* a member, it's saved to your personal lore instead (never rejected) and the response carries a `notice` explaining that. An explicit `org` always overrides the binding.
 
-**Returns:** `{ "id": "<uuid>", "created_at": "<iso>" }` — plus an optional `"expires_at": "<iso>"` when `ttl_days` was supplied, and an optional `"notice": "<string>"` when a write fell back to personal because the scope is bound to an org you can't write to.
+**Returns:** `{ "id": "<uuid>", "created_at": "<iso>" }` — plus an optional `"expires_at": "<iso>"` when any `ttl_*` field was supplied, and an optional `"notice": "<string>"` when a write fell back to personal because the scope is bound to an org you can't write to.
 
 ---
 
