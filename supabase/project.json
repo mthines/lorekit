@@ -58,7 +58,7 @@
     "db:types": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "supabase gen types typescript > supabase/functions/_shared/database.types.ts --project-id pqokxlhvnosogizsjztg && cp supabase/functions/_shared/database.types.ts packages/mcp-core/src/database.types.ts",
+        "command": "supabase gen types typescript > supabase/functions/_shared/database.types.ts --project-id $SUPABASE_PROJECT_REF && cp supabase/functions/_shared/database.types.ts packages/mcp-core/src/database.types.ts",
         "cwd": "{workspaceRoot}"
       }
     },
