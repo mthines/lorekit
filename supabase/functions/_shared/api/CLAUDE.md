@@ -43,6 +43,7 @@ import { RestError, translateDbError } from '../_shared/api/errors.ts';
 
 ### validate.ts
 - `validateBody(req, schema, cors)` — async; parses JSON body against schema.
+- `validateOptionalBody(req, schema, cors)` — async; as above, but an absent body parses as `{}` (for endpoints where every field has a default, e.g. `POST /memories/purge`). A present-but-malformed body is still a 400.
 - `validateQuery(req, schema, cors)` — sync; parses URL search params.
 - `validateUuid(id, cors)` — validates a UUID path param.
 - All return `{ ok: true, data } | { ok: false, response }`.

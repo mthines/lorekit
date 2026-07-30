@@ -44,6 +44,63 @@ export type ListMemoriesQuery = z.infer<typeof ListMemoriesQuerySchema>;
 export const CreateMemoryBodySchema = MemoryWriteSchema.extend({ scope: RawScopeSchema });
 export type CreateMemoryBody = z.infer<typeof CreateMemoryBodySchema>;
 
+/**
+ * DELETE /memories and DELETE /memories/:id query params.
+ *
+ * Not derivable from MemoryDeleteSchema: that one is the MCP tool shape, where
+ * `scope`/`key` are required and `force` arrives as a real boolean over JSON-RPC.
+ * Over HTTP every query param is a string, so `force` is an enum coerced by the
+ * handler, and scope+key are optional because the `/:id` form supplies neither.
+ * `RawScopeSchema` (shape-only) rather than `ScopeSchema` for the same reason the
+ * other REST schemas use it — normalisation happens downstream.
+ */
+export const DeleteMemoryQuerySchema = z.object({
+  scope: RawScopeSchema.optional(),
+  key: z.string().min(1).max(512).optional(),
+  force: z.enum(['true', 'false']).optional().default('false'),
+});
+export type DeleteMemoryQuery = z.infer<typeof DeleteMemoryQuerySchema>;
+
+/**
+ * POST /memories/restore body — the natural-key form the CLI uses.
+ * Shape-compatible with the MCP `MemoryRestoreSchema` but with `RawScopeSchema`,
+ * matching every other REST body schema in this file.
+ */
+export const RestoreMemoryBodySchema = z.object({
+  scope: RawScopeSchema,
+  key: z.string().min(1).max(512),
+});
+export type RestoreMemoryBody = z.infer<typeof RestoreMemoryBodySchema>;
+
+/**
+ * POST /memories/purge body. Identical field semantics to the MCP
+ * `MemoryPurgeSchema`; kept as a separate export so the REST body can evolve
+ * (extra fields) without changing the MCP tool contract, and so the OpenAPI
+ * registration names a REST-shaped component.
+ */
+export const PurgeMemoriesBodySchema = z.object({
+  retention_days: z.coerce.number().int().min(1).max(365).optional().default(PURGE_RETENTION_DAYS_DEFAULT),
+});
+export type PurgeMemoriesBody = z.infer<typeof PurgeMemoriesBodySchema>;
+
+/** `200 { restored: true }` from POST /memories/restore and /memories/:id/restore. */
+export const RestoreResponseSchema = z.object({ restored: z.boolean() });
+export type RestoreResponse = z.infer<typeof RestoreResponseSchema>;
+
+/** `200 { purged: <number> }` from POST /memories/purge and /memories/purge-expired. */
+export const PurgeResponseSchema = z.object({ purged: z.number().int().nonnegative() });
+export type PurgeResponse = z.infer<typeof PurgeResponseSchema>;
+
+/** One row of GET /memories/scopes — a distinct scope with its non-archived count. */
+export const ScopeCountSchema = z.object({
+  scope: z.string(),
+  count: z.number().int().nonnegative(),
+});
+export type ScopeCount = z.infer<typeof ScopeCountSchema>;
+
+export const ScopesResponseSchema = z.object({ scopes: z.array(ScopeCountSchema) });
+export type ScopesResponse = z.infer<typeof ScopesResponseSchema>;
+
 export const UpdateMemoryBodySchema = MemoryWriteSchema
   .omit({ scope: true, key: true, created_at: true }).partial()
   .refine((d) => Object.keys(d).some((k) => d[k as keyof typeof d] !== undefined), { message: 'PATCH body must contain at least one field' });

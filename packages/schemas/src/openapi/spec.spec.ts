@@ -22,8 +22,13 @@ describe('generateSpec', () => {
   it('documents every REST route the edge functions serve', () => {
     expect(Object.keys(spec.paths).sort()).toEqual([
       '/memories',
+      '/memories/purge',
+      '/memories/purge-expired',
+      '/memories/restore',
+      '/memories/scopes',
       '/memories/search',
       '/memories/{id}',
+      '/memories/{id}/restore',
       '/orgs',
       '/orgs/{slug}',
       '/orgs/{slug}/invites',
@@ -40,6 +45,11 @@ describe('generateSpec', () => {
       'CreateMemoryBody',
       'UpdateMemoryBody',
       'SearchMemoriesBody',
+      'RestoreMemoryBody',
+      'PurgeMemoriesBody',
+      'RestoreResponse',
+      'PurgeResponse',
+      'ScopesResponse',
       'Org',
       'OrgList',
       'CreateOrgBody',
@@ -55,6 +65,27 @@ describe('generateSpec', () => {
       expect(spec.components.schemas[name], `missing component: ${name}`).toBeDefined();
     }
     expect(spec.components.securitySchemes.BearerAuth).toBeDefined();
+  });
+
+  // The hard-delete flag is a query param on BOTH delete forms — a caller that
+  // reads only the spec must be able to discover it, since it is the difference
+  // between an archive and an irreversible delete.
+  it.each(['/memories', '/memories/{id}'])('documents ?force=true on DELETE %s', (path) => {
+    const del = spec.paths[path]!.delete as { parameters: Array<{ name: string; in: string }> };
+    expect(del.parameters.some((p) => p.name === 'force' && p.in === 'query'), JSON.stringify(del.parameters)).toBe(true);
+  });
+
+  it('documents a response body for every new memory endpoint', () => {
+    for (const [path, method] of [
+      ['/memories/restore', 'post'],
+      ['/memories/{id}/restore', 'post'],
+      ['/memories/purge', 'post'],
+      ['/memories/purge-expired', 'post'],
+      ['/memories/scopes', 'get'],
+    ] as const) {
+      const op = spec.paths[path]![method] as { responses: Record<string, { content?: unknown }> };
+      expect(op.responses['200']?.content, `${method.toUpperCase()} ${path} has no 200 body`).toBeDefined();
+    }
   });
 
   // The doc schema is derived from the runtime one, so a field added to

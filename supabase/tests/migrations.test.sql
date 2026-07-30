@@ -1946,6 +1946,108 @@ end;
 $$;
 
 
+-- ── Memory scopes — 00039 ───────────────────────────────────────────────────
+-- lorekit_memory_scopes(p_user_id) backs GET /memories/scopes. It aggregates in
+-- Postgres precisely so the count is exact past PostgREST's row cap, which means
+-- these assertions are the only place the visibility predicate and the
+-- active-row definition are actually executed.
+-- AC-1: A caller sees their OWN scopes, with an exact active count.
+-- AC-2: A caller does NOT see another user's scopes.
+-- AC-3: Archived rows are excluded from the count.
+-- AC-4: Expired rows are excluded from the count.
+-- AC-5: A scope whose every row is archived disappears from the result entirely.
+-- AC-6: An org co-member sees the org's scopes (via lorekit_member_org_ids).
+-- AC-7: A non-member does not see that org's scopes.
+-- AC-8: Rows come back sorted by scope ascending.
+
+-- Fresh 'scopes-org' (fa) with owner A + member B, isolated from the phase-3
+-- and safe-org-deletion fixtures above (f3 has unrelated membership churn, f9
+-- is soft-deleted) so these counts can't be perturbed by an earlier section.
+insert into orgs (id, slug, name, created_by) values
+  ('00000000-0000-0000-0000-0000000000fa', 'scopes-org', 'Scopes Org', '00000000-0000-0000-0000-0000000000a1');
+insert into org_members (org_id, user_id, role) values
+  ('00000000-0000-0000-0000-0000000000fa', '00000000-0000-0000-0000-0000000000a1', 'owner'),
+  ('00000000-0000-0000-0000-0000000000fa', '00000000-0000-0000-0000-0000000000b2', 'member');
+
+-- User A: two active rows, one archived and one already-expired row in the SAME
+-- scope (so the count, not the scope's presence, proves the exclusion), plus a
+-- scope that is archived-only.
+insert into memories (user_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000a1', 'project::scopes-a', 'sc-a-1', 'v'),
+  ('00000000-0000-0000-0000-0000000000a1', 'project::scopes-a', 'sc-a-2', 'v');
+insert into memories (user_id, scope, key, value, archived_at) values
+  ('00000000-0000-0000-0000-0000000000a1', 'project::scopes-a', 'sc-a-archived', 'v', now()),
+  ('00000000-0000-0000-0000-0000000000a1', 'project::scopes-gone', 'sc-gone', 'v', now());
+insert into memories (user_id, scope, key, value, expires_at) values
+  ('00000000-0000-0000-0000-0000000000a1', 'project::scopes-a', 'sc-a-expired', 'v', now() - interval '1 minute');
+
+-- User B: one active row in a scope of their own.
+insert into memories (user_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000b2', 'project::scopes-b', 'sc-b-1', 'v');
+
+-- Org-owned row (user_id NULL, org_id set) — visible to BOTH members of fa.
+insert into memories (user_id, org_id, scope, key, value) values
+  (null, '00000000-0000-0000-0000-0000000000fa', 'repo::acme/scopes-org', 'sc-org-1', 'v');
+
+do $$
+declare
+  v_count        bigint;
+  v_rows         int;
+  v_scopes       text[];
+  v_sorted       text[];
+begin
+  -- AC-1 + AC-3 + AC-4: A's own scope is present, counting ONLY the two active
+  -- rows — the archived and the expired sibling in the same scope are excluded.
+  select count into v_count
+    from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000a1')
+   where scope = 'project::scopes-a';
+  assert v_count = 2,
+    format('memory scopes AC-1/3/4: project::scopes-a must count 2 active rows (archived + expired excluded), got %s', v_count);
+
+  -- AC-5: the archived-only scope is absent altogether, not present with count 0.
+  select count(*) into v_rows
+    from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000a1')
+   where scope = 'project::scopes-gone';
+  assert v_rows = 0,
+    'memory scopes AC-5: a scope whose every row is archived must not appear at all';
+
+  -- AC-2: A must not see B's personal scope.
+  select count(*) into v_rows
+    from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000a1')
+   where scope = 'project::scopes-b';
+  assert v_rows = 0,
+    'memory scopes AC-2: a caller must never see another user''s scopes';
+
+  -- AC-6: co-member B sees the ORG's scope even though the row is not theirs
+  -- (user_id IS NULL) — the lorekit_member_org_ids branch of the predicate.
+  select count into v_count
+    from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000b2')
+   where scope = 'repo::acme/scopes-org';
+  assert v_count = 1,
+    format('memory scopes AC-6: an org co-member must see the org scope with count 1, got %s', v_count);
+
+  -- ...and still sees their own personal scope alongside it.
+  select count into v_count
+    from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000b2')
+   where scope = 'project::scopes-b';
+  assert v_count = 1,
+    format('memory scopes AC-6b: B must also see their own scope, got %s', v_count);
+
+  -- AC-7: user C is in no org and owns none of these rows — sees none of them.
+  select count(*) into v_rows
+    from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000c3')
+   where scope in ('project::scopes-a', 'project::scopes-b', 'repo::acme/scopes-org');
+  assert v_rows = 0,
+    'memory scopes AC-7: a non-member/non-owner must see none of these scopes';
+
+  -- AC-8: results are ordered by scope ascending.
+  select array_agg(scope) into v_scopes from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000a1');
+  select array_agg(s order by s) into v_sorted from unnest(v_scopes) as s;
+  assert v_scopes = v_sorted,
+    format('memory scopes AC-8: results must be sorted by scope asc, got %s', v_scopes);
+end;
+$$;
+
 
 rollback;
 

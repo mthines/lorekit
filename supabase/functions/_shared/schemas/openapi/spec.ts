@@ -22,6 +22,12 @@ import {
   UpdateMemoryBodySchema,
   SearchMemoriesBodySchema,
   ListMemoriesQuerySchema,
+  DeleteMemoryQuerySchema,
+  RestoreMemoryBodySchema,
+  PurgeMemoriesBodySchema,
+  RestoreResponseSchema,
+  PurgeResponseSchema,
+  ScopesResponseSchema,
 } from '../memory.ts';
 import {
   OrgResponseSchema,
@@ -84,6 +90,11 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   registry.register('CreateMemoryBody', CreateMemoryBodySchema);
   registry.register('UpdateMemoryBody', UpdateMemoryBodySchema);
   registry.register('SearchMemoriesBody', SearchMemoriesBodyDocSchema);
+  registry.register('RestoreMemoryBody', RestoreMemoryBodySchema);
+  registry.register('PurgeMemoriesBody', PurgeMemoriesBodySchema);
+  registry.register('RestoreResponse', RestoreResponseSchema);
+  registry.register('PurgeResponse', PurgeResponseSchema);
+  registry.register('ScopesResponse', ScopesResponseSchema);
   registry.register('Org', OrgResponseSchema);
   registry.register('OrgList', OrgListResponseSchema);
   registry.register('CreateOrgBody', CreateOrgBodySchema);
@@ -116,6 +127,14 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     description: desc,
     content: { 'application/json': { schema: MemoryPageResponseSchema } },
   });
+  const restoreResponse = {
+    description: 'Restored',
+    content: { 'application/json': { schema: RestoreResponseSchema } },
+  };
+  const purgeResponse = {
+    description: 'Number of memories hard-deleted',
+    content: { 'application/json': { schema: PurgeResponseSchema } },
+  };
 
   // ── Memories ──────────────────────────────────────────────────────────────
   registry.registerPath({
@@ -134,6 +153,37 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     responses: { 200: memoryPageResponse('Search results'), 400: errorResponse, 401: errorResponse },
   });
   registry.registerPath({
+    method: 'delete', path: '/memories',
+    summary: 'Archive (or, with force=true, hard-delete) a memory by scope+key', tags: ['Memories'],
+    security, request: { query: DeleteMemoryQuerySchema },
+    responses: { 204: { description: 'Archived or deleted' }, 400: errorResponse, 401: errorResponse, 404: errorResponse },
+  });
+  registry.registerPath({
+    method: 'post', path: '/memories/restore', summary: 'Restore an archived memory by scope+key', tags: ['Memories'],
+    security, request: { body: { content: { 'application/json': { schema: RestoreMemoryBodySchema } } } },
+    responses: { 200: restoreResponse, 400: errorResponse, 401: errorResponse, 404: errorResponse },
+  });
+  registry.registerPath({
+    method: 'post', path: '/memories/purge',
+    summary: 'Hard-delete archived memories older than retention_days', tags: ['Memories'],
+    security, request: { body: { content: { 'application/json': { schema: PurgeMemoriesBodySchema } } } },
+    responses: { 200: purgeResponse, 400: errorResponse, 401: errorResponse, 403: errorResponse, 429: errorResponse },
+  });
+  registry.registerPath({
+    method: 'post', path: '/memories/purge-expired', summary: 'Hard-delete memories whose TTL has elapsed', tags: ['Memories'],
+    security,
+    responses: { 200: purgeResponse, 401: errorResponse, 403: errorResponse, 429: errorResponse },
+  });
+  registry.registerPath({
+    method: 'get', path: '/memories/scopes',
+    summary: 'List every visible scope with its active memory count', tags: ['Memories'],
+    security,
+    responses: {
+      200: { description: 'Scopes', content: { 'application/json': { schema: ScopesResponseSchema } } },
+      401: errorResponse, 403: errorResponse,
+    },
+  });
+  registry.registerPath({
     method: 'get', path: '/memories/{id}', summary: 'Get memory by ID', tags: ['Memories'],
     security, request: { params: MemoryIdParamsSchema },
     responses: { 200: memoryResponse('Memory'), 404: errorResponse, 401: errorResponse },
@@ -148,9 +198,15 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     responses: { 200: memoryResponse('Updated memory'), 400: errorResponse, 404: errorResponse, 401: errorResponse },
   });
   registry.registerPath({
-    method: 'delete', path: '/memories/{id}', summary: 'Archive a memory (soft-delete)', tags: ['Memories'],
+    method: 'delete', path: '/memories/{id}',
+    summary: 'Archive a memory (soft-delete), or hard-delete it with force=true', tags: ['Memories'],
+    security, request: { params: MemoryIdParamsSchema, query: DeleteMemoryQuerySchema },
+    responses: { 204: { description: 'Archived or deleted' }, 404: errorResponse, 401: errorResponse },
+  });
+  registry.registerPath({
+    method: 'post', path: '/memories/{id}/restore', summary: 'Restore an archived memory by ID', tags: ['Memories'],
     security, request: { params: MemoryIdParamsSchema },
-    responses: { 204: { description: 'Archived' }, 404: errorResponse, 401: errorResponse },
+    responses: { 200: restoreResponse, 400: errorResponse, 401: errorResponse, 404: errorResponse },
   });
 
   // ── Orgs ─────────────────────────────────────────────────────────────────
