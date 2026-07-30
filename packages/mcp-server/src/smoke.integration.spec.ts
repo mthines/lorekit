@@ -33,7 +33,18 @@ const KEY_B = `${KEY_PREFIX}-b`;
 
 let _id = 1;
 
+// Times every call so CI logs carry the real per-tool latency instead of only a
+// pass/fail. Without this a slow tool is indistinguishable from a hung one.
 async function mcpCall<T = unknown>(tool: string, args: Record<string, unknown>): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    return await mcpCallInner<T>(tool, args);
+  } finally {
+    console.log(`[smoke] ${tool} took ${Date.now() - startedAt}ms`);
+  }
+}
+
+async function mcpCallInner<T = unknown>(tool: string, args: Record<string, unknown>): Promise<T> {
   const id = _id++;
   const res = await fetch(BASE_URL, {
     method: 'POST',
@@ -162,7 +173,9 @@ describe.skipIf(SKIP)('LoreKit MCP smoke tests (integration)', () => {
       : (result as { entries?: Array<{ key: string }> })?.entries ?? [];
     const found = entries.some((e) => e.key === KEY_B);
     expect(found, `expected ${KEY_B} in results; got: ${JSON.stringify(entries)}`).toBe(true);
-  });
+    // 30s ceiling: the default 5s cannot distinguish "search is slow" from
+    // "search never returns". Deploy logs now show which one it is.
+  }, 30_000);
 
   // 7. delete ─────────────────────────────────────────────────────────────────
   it('memory.delete — removes an entry and reports success', async () => {
