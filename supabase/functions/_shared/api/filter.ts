@@ -24,18 +24,50 @@ function conditionToString(c: FilterCondition): string | null {
   }
 }
 
-function groupToString(g: FilterGroup): string | null {
+/**
+ * Serialise a FilterGroup node to a PostgREST or()-compatible string.
+ * Used only for OR nodes and leaf conditions; AND nodes are handled by
+ * chaining in applyGroup so they are not collapsed into a single or() call.
+ * Nested AND inside an OR expression uses PostgREST `and(...)` syntax.
+ */
+function groupToOrString(g: FilterGroup): string | null {
   if ('and' in g) {
-    const parts = g.and.map(groupToString).filter((s): s is string => s !== null);
+    // Nested AND inside an OR expression — use PostgREST and() syntax
+    const parts = g.and.map(groupToOrString).filter((s): s is string => s !== null);
     if (!parts.length) return null;
-    return parts.join(','); // PostgREST AND = comma-separated within an or() call
+    return `and(${parts.join(',')})`;
   }
   if ('or' in g) {
-    const parts = g.or.map(groupToString).filter((s): s is string => s !== null);
+    const parts = g.or.map(groupToOrString).filter((s): s is string => s !== null);
     if (!parts.length) return null;
-    return parts.join(','); // PostgREST OR within or()
+    return parts.join(',');
   }
   return conditionToString(g as FilterCondition);
+}
+
+/**
+ * Walk a FilterGroup tree and apply it to a Supabase/PostgREST query.
+ * AND nodes are expressed as chained query-builder calls (one per child).
+ * OR nodes are expressed as a single `.or(parts)` call.
+ * Only fields in the ALLOWED_FIELDS whitelist are accepted.
+ */
+function applyGroup<Q extends { or(f: string): Q }>(query: Q, g: FilterGroup): Q {
+  if ('and' in g) {
+    // AND: chain each child as a separate query builder call
+    return g.and.reduce((q, child) => applyGroup(q, child), query);
+  }
+  if ('or' in g) {
+    // OR: collect child strings and pass to one .or() call
+    const parts = g.or
+      .map((child) => groupToOrString(child))
+      .filter((s): s is string => s !== null);
+    if (!parts.length) return query;
+    return query.or(parts.join(','));
+  }
+  // Leaf condition
+  const s = conditionToString(g as FilterCondition);
+  if (!s) return query;
+  return query.or(s);
 }
 
 /**
@@ -49,7 +81,5 @@ function groupToString(g: FilterGroup): string | null {
  */
 export function applyFilter<Q extends { or(f: string): Q }>(query: Q, filter: FilterGroup | undefined): Q {
   if (!filter) return query;
-  const expr = groupToString(filter);
-  if (!expr) return query;
-  return query.or(expr);
+  return applyGroup(query, filter);
 }
