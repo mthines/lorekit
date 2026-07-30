@@ -1,16 +1,15 @@
 import { traceRequest } from '../_shared/otel.ts';
 import { corsHeaders, handlePreflight } from '../_shared/api/cors.ts';
 import { internalError } from '../_shared/api/respond.ts';
+import { generateSpec } from '@lorekit/schemas/openapi/spec';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? 'https://pqokxlhvnosogizsjztg.supabase.co';
 const BASE_URL = `${SUPABASE_URL}/functions/v1`;
 
 let _spec: Record<string, unknown> | null = null;
 
-async function getSpec(): Promise<Record<string, unknown>> {
-  if (_spec) return _spec;
-  const { generateSpec } = await import('@lorekit/schemas/openapi/spec');
-  _spec = generateSpec(BASE_URL);
+function getSpec(): Record<string, unknown> {
+  if (!_spec) _spec = generateSpec(BASE_URL);
   return _spec;
 }
 
@@ -47,7 +46,7 @@ Deno.serve(async (req) => {
     }
 
     try {
-      const spec = await getSpec();
+      const spec = getSpec();
       return new Response(JSON.stringify(spec), { headers: { 'Content-Type': 'application/json', ...cors } });
     } catch (e) {
       span.error(`spec generation failed: ${(e as Error).message}`);
