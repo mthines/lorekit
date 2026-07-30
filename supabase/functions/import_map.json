@@ -5,6 +5,7 @@
     "@lorekit/schemas/common": "../../packages/schemas/src/common.ts",
     "@lorekit/schemas/memory": "../../packages/schemas/src/memory.ts",
     "@lorekit/schemas/org": "../../packages/schemas/src/org.ts",
+    "@lorekit/schemas/scope": "../../packages/schemas/src/scope.ts",
     "@lorekit/schemas/invite": "../../packages/schemas/src/invite.ts",
     "@lorekit/schemas/member": "../../packages/schemas/src/member.ts",
     "@lorekit/schemas/openapi/spec": "../../packages/schemas/src/openapi/spec.ts"

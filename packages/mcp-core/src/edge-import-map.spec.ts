@@ -105,6 +105,48 @@ describe('supabase/functions/import_map.json', () => {
     expect(unmapped).toEqual([]);
   });
 
+  // The map is not only a resolver config — for `supabase start` it doubles as the
+  // bind-mount manifest. The walker mounts the files it can name from the map; a file
+  // pulled in only by a RELATIVE import inside an out-of-tree package (e.g.
+  // `packages/schemas/src/memory.ts` importing `./scope.ts`) is never named, so it is
+  // never mounted, and the worker dies with BOOT_ERROR even though Deno would resolve
+  // it fine. Every file transitively reachable from a mapped entry must therefore be
+  // mapped in its own right, whether or not any edge function imports it by specifier.
+  it('maps every file transitively reachable from a mapped local entry', () => {
+    const mapped = new Set(
+      Object.values(importMap.imports)
+        .filter((t) => t.startsWith('.') || t.startsWith('/'))
+        .filter((t) => t.endsWith('.ts'))
+        .map((t) => path.resolve(functionsDir, t)),
+    );
+
+    const seen = new Set<string>();
+    const queue = [...mapped];
+    const unmapped: string[] = [];
+
+    while (queue.length) {
+      const file = queue.pop()!;
+      if (seen.has(file)) continue;
+      seen.add(file);
+      if (!mapped.has(file)) unmapped.push(path.relative(repoRoot, file));
+
+      let source: string;
+      try {
+        source = readFileSync(file, 'utf8');
+      } catch {
+        continue; // "file exists" is asserted by the next test
+      }
+      for (const match of source.matchAll(/\bfrom\s*['"](\.[^'"\n]+)['"]/g)) {
+        queue.push(path.resolve(path.dirname(file), match[1]!));
+      }
+    }
+
+    expect(
+      unmapped.sort(),
+      `these files are reachable only via a relative import and will not be bind-mounted by \`supabase start\` — add an import_map.json entry for each:\n  ${unmapped.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
   it('resolves every mapped local path to a file that exists', () => {
     const missing: string[] = [];
     for (const [key, target] of Object.entries(importMap.imports)) {
