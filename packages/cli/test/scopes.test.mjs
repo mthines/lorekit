@@ -9,8 +9,9 @@
 //   • integration — the real binary spawned in a temp project with an isolated
 //     HOME, asserting the load-bearing full-inventory behaviour (scopes that do
 //     NOT resolve for the cwd are still listed, with correct counts), `--json`,
-//     the substring `--scope` filter, an empty store, deny suppression, and the
-//     HONEST remote note — both unconfigured AND configured-but-not-enumerable.
+//     the substring `--scope` filter, an empty store, deny suppression, the
+//     unconfigured-remote note, the REAL remote inventory served by
+//     `GET /memories/scopes`, and the accurate note when that call fails.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, spawn } from 'node:child_process';
@@ -26,7 +27,6 @@ import {
   filterScopeInventory,
   summarizeScopeInventory,
 } from '../src/lessons-view.mjs';
-import { REMOTE_SCOPES_UNSUPPORTED } from '../src/scopes.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const tmp = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -327,7 +327,7 @@ test('LOREKIT_DENY=remote suppresses the remote note; offline still enumerates',
   assert.equal(out.offline.total, 5);
 });
 
-// ── integration: the HONEST remote note ───────────────────────────────────────
+// ── integration: the remote inventory + honest failure notes ──────────────────
 
 test('scopes degrades an unconfigured remote to a note, never an error', () => {
   const { root, home } = seedStore();
@@ -339,32 +339,118 @@ test('scopes degrades an unconfigured remote to a note, never an error', () => {
   assert.match(out.remote.reason, /endpoint|token/);
 });
 
-// A configured (usable) remote STILL can't enumerate scopes — the hosted MCP
-// surface has no "list all scopes" tool. This asserts the honest capability
-// note, NOT a faked inventory. A mock server is booted only to make the remote
-// `usable()`; `scopes` never actually calls it for enumeration.
-test('scopes reports the honest not-enumerable note even for a CONFIGURED remote', async () => {
-  const { root, home } = seedStore();
+// Boot a mock REST backend for the remote store. `LOREKIT_MCP_URL` points at
+// `/mcp`, from which `mcpToRestBase` derives the REST base — so the enumeration
+// lands on `GET /memories/scopes`.
+async function withMockRemote(handler, fn) {
+  const seen = [];
   const server = http.createServer((req, res) => {
-    // Should never be hit for enumeration, but answer defensively if it is.
-    res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { content: [] } }));
+    seen.push(`${req.method} ${req.url}`);
+    handler(req, res);
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
   try {
-    const res = await runScopesAsync(root, home, ['--json'], {
-      LOREKIT_MCP_URL: `http://127.0.0.1:${port}/mcp`,
-      LOREKIT_TOKEN: 'lk_ro_test',
+    return await fn({
+      seen,
+      env: { LOREKIT_MCP_URL: `http://127.0.0.1:${port}/mcp`, LOREKIT_TOKEN: 'lk_ro_test' },
     });
-    assert.equal(res.status, 0, res.stderr);
-    const out = JSON.parse(res.stdout);
-    assert.equal(out.remote.available, false);
-    assert.equal(out.remote.reason, REMOTE_SCOPES_UNSUPPORTED);
-    assert.match(out.remote.reason, /not supported by the hosted MCP surface/);
-    // Offline is enumerated independently and is unaffected.
-    assert.equal(out.offline.total, 5);
   } finally {
     server.close();
   }
+}
+
+// A configured remote now enumerates for real: `GET /memories/scopes` returns
+// `{ scopes: [{ scope, count }] }`, which the command renders through the SAME
+// filter/summarize helpers the Offline section uses (so it is re-sorted by scope
+// type, not left in the server's scope-ascending order).
+test('scopes renders a REAL remote inventory from GET /memories/scopes', async () => {
+  const { root, home } = seedStore();
+  await withMockRemote(
+    (req, res) => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({
+        scopes: [{ scope: 'global', count: 2 }, { scope: 'repo::acme/api', count: 4 }],
+      }));
+    },
+    async ({ seen, env }) => {
+      const res = await runScopesAsync(root, home, ['--json'], env);
+      assert.equal(res.status, 0, res.stderr);
+      const out = JSON.parse(res.stdout);
+      // `mcpToRestBase` yields a bare `/` base for a root-level `/mcp` endpoint
+      // (production is `/functions/v1/mcp` → `/functions/v1`), so the mock sees a
+      // leading double slash — the route segment is what matters here.
+      assert.ok(
+        seen.some((r) => /^GET \/+memories\/scopes$/.test(r)),
+        `requests seen: ${seen.join(', ')}`,
+      );
+      assert.equal(out.remote.available, true);
+      assert.deepEqual(out.remote.scopes, [
+        { scope: 'global', count: 2 },
+        { scope: 'repo::acme/api', count: 4 },
+      ]);
+      assert.equal(out.remote.total, 6);
+      // Offline is enumerated independently and is unaffected.
+      assert.equal(out.offline.total, 5);
+    },
+  );
+});
+
+test('scopes --scope filters the REMOTE inventory too', async () => {
+  const { root, home } = seedStore();
+  await withMockRemote(
+    (req, res) => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({
+        scopes: [{ scope: 'global', count: 2 }, { scope: 'repo::acme/api', count: 4 }],
+      }));
+    },
+    async ({ env }) => {
+      const res = await runScopesAsync(root, home, ['--scope', 'repo::', '--json'], env);
+      assert.equal(res.status, 0, res.stderr);
+      const out = JSON.parse(res.stdout);
+      assert.deepEqual(out.remote.scopes.map((s) => s.scope), ['repo::acme/api']);
+      assert.equal(out.remote.total, 4);
+    },
+  );
+});
+
+// A failed enumeration must say WHAT failed (HTTP status / network error) — the
+// same bounded note a failed `list()` gets — never "unsupported", and never a
+// non-zero exit.
+test('scopes reports an accurate note when the remote enumeration fails', async () => {
+  const { root, home } = seedStore();
+  await withMockRemote(
+    (req, res) => {
+      res.statusCode = 500;
+      res.end('kaboom');
+    },
+    async ({ env }) => {
+      const res = await runScopesAsync(root, home, ['--json'], env);
+      assert.equal(res.status, 0, res.stderr);
+      const out = JSON.parse(res.stdout);
+      assert.equal(out.remote.available, false);
+      assert.match(out.remote.reason, /500|kaboom/);
+      assert.doesNotMatch(out.remote.reason, /not supported/);
+      // Offline still enumerates — one store's failure never suppresses the other.
+      assert.equal(out.offline.total, 5);
+    },
+  );
+});
+
+test('scopes prints the failed-remote note as a human warning, exit 0', async () => {
+  const { root, home } = seedStore();
+  await withMockRemote(
+    (req, res) => {
+      res.statusCode = 500;
+      res.end('kaboom');
+    },
+    async ({ env }) => {
+      const res = await runScopesAsync(root, home, [], env);
+      assert.equal(res.status, 0, res.stderr);
+      assert.match(res.stdout, /Remote/);
+      assert.match(res.stdout, /unavailable/);
+      assert.doesNotMatch(res.stdout, /Error:/);
+    },
+  );
 });

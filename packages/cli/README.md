@@ -224,13 +224,13 @@ stored by basename only) — so every scope is reconstructed verbatim. Lessons
 present in both tiers are counted once (project shadows home, the same merge
 `list` uses); archived lessons are excluded.
 
-**Remote enumeration is not possible, and `scopes` says so honestly.** The
-hosted MCP surface exposes no "list all scopes" tool — every read tool
-(`memory.list` / `memory.search` / `memory.read`) *requires* a scope — so a
-remote inventory can't be built. The Remote section is therefore always a short
-note (never a faked listing), degrading gracefully at exit 0, the same way
-`stats` omits a cap-usage figure. `--endpoint` / `--token` / `--store` behave as
-in `list`.
+**Remote enumeration is exact too.** `RemoteStore.listScopes()` calls
+`GET /memories/scopes`, which aggregates one `{ scope, count }` row per scope in
+Postgres (never a truncatable `select('scope')` plus a client-side dedupe), so
+the Remote section is a real inventory rendered through the same helpers as the
+Offline one. A denied, unconfigured, unreachable, or erroring remote degrades to
+a short, accurate note (network error / HTTP status — never a faked listing) at
+exit 0. `--endpoint` / `--token` / `--store` behave as in `list`.
 
 ### `lorekit diff`
 

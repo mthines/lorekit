@@ -348,9 +348,10 @@ is a full inventory — it surfaces scopes anywhere in the store, regardless of 
 current directory.
 
 Offline counts are exact: each scope is read from the memory files' frontmatter,
-not reverse-mapped from the directory layout. The Remote section is always a
-short note: the hosted MCP surface has no "list all scopes" tool (every read tool
-requires a scope), so a remote inventory isn't possible — never an error (exit 0).
+not reverse-mapped from the directory layout. Remote counts are exact too — they
+come from \`GET /memories/scopes\`, which aggregates one row per scope server-side.
+A denied, unconfigured, or unreachable remote degrades to a short, accurate note
+rather than an error (exit 0).
 
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
