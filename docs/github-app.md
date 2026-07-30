@@ -52,7 +52,7 @@ Incoming delivery
     → existing path — UNCHANGED
 ```
 
-### Data model (`00028_github_installations.sql`)
+### Data model (`00037_github_installations.sql`)
 
 | Table | Key columns | Purpose |
 | ----- | ----------- | ------- |

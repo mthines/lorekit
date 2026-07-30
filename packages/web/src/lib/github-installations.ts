@@ -9,7 +9,7 @@
  * revalidatePath on writes.
  *
  * Authorization: all queries run under the authenticated user's JWT.  RLS on
- * github_installations (00028) restricts rows to status='linked' rows where
+ * github_installations (00037) restricts rows to status='linked' rows where
  * user_id = auth.uid(), so a user can only ever read their own linked
  * installations.
  *
