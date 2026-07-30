@@ -9,6 +9,8 @@ import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
 import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';
 
+type MemoryRow = Tables<'memories'>;
+
 export async function handleList(
   req: Request, auth: AuthContext, db: DbClient, span: Span,
   _params: Record<string, string>, cors: Record<string, string>,
