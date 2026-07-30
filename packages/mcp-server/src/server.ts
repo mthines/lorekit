@@ -26,6 +26,8 @@ import { type AuthContext } from './auth.js';
 export function createMcpServer(auth: AuthContext, adapter: StorageAdapter): McpServer {
   const server = new McpServer({ name: 'lorekit', version: '0.0.1' });
   const db = adapter.db;
+  // Resolve the caller's user ID once: null for service-role / CI contexts.
+  const userId = auth.type === 'service' ? null : (auth.userId ?? null);
 
   server.tool(
     'memory.write',
@@ -43,7 +45,7 @@ export function createMcpServer(auth: AuthContext, adapter: StorageAdapter): Mcp
     },
     async (args) => {
       try {
-        const result = await write(db, args);
+        const result = await write(db, args, userId);
         return { content: [{ type: 'text', text: JSON.stringify(result) }] };
       } catch (err) {
         if (err instanceof LimitError) {
@@ -90,7 +92,7 @@ export function createMcpServer(auth: AuthContext, adapter: StorageAdapter): Mcp
       force: z.boolean().optional().describe('Hard-delete immediately (unrecoverable). Defaults to false.'),
     },
     async (args) => {
-      const result = await deleteMemory(db, args);
+      const result = await deleteMemory(db, args, userId);
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     },
   );
@@ -135,7 +137,6 @@ export function createMcpServer(auth: AuthContext, adapter: StorageAdapter): Mcp
       retention_days: z.number().int().min(1).max(365).optional(),
     },
     async (args) => {
-      const userId = auth.type === 'service' ? null : (auth.userId ?? null);
       const result = await purgeArchived(db, args, userId);
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     },
@@ -146,7 +147,6 @@ export function createMcpServer(auth: AuthContext, adapter: StorageAdapter): Mcp
     'Permanently delete all expired (TTL-lapsed) memories for the current user. Unrecoverable.',
     {},
     async () => {
-      const userId = auth.type === 'service' ? null : (auth.userId ?? null);
       const result = await purgeExpired(db, userId);
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     },
@@ -202,4 +202,3 @@ export async function handleMcpRequest(
   await server.connect(transport);
   await transport.handleRequest(req, res, parsedBody);
 }
-

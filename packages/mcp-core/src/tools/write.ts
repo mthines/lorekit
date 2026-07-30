@@ -72,9 +72,16 @@ export async function write(
         // 00003 replaced the plain unique constraint with PARTIAL indexes
         // (WHERE archived_at IS NULL), which `.upsert(onConflict)` cannot target.
         // Writes go through the memory_write RPC (00007 → 00028) instead.
+        //
+        // p_user_id is the authenticated user's ID (not null for user-scoped
+        // writes) so the RPC takes the user-scoped branch, enforces the
+        // per-user memory cap, and records correct author attribution. Passing
+        // null here would silently route every user write into the service-role /
+        // CI branch of the RPC, writing user_id=null into the row and bypassing
+        // the per-user cap.
         const { data, error } = await db
           .rpc('memory_write', {
-            p_user_id: null,
+            p_user_id: userId,
             p_scope: input.scope,
             p_key: input.key,
             p_value: input.value,
@@ -116,7 +123,7 @@ export async function write(
         // Only include expires_at in the response when it was explicitly requested
         // (i.e. a TTL was supplied) — omitting it keeps the response stable for
         // callers that don't ask for expiry.
-if (ttlDays !== null || input.clear_ttl) result.expires_at = row.expires_at ?? null;
+        if (ttlDays !== null || input.clear_ttl) result.expires_at = row.expires_at ?? null;
         return result;
       } catch (err) {
         const e = err as Error;

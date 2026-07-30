@@ -2,10 +2,23 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 import { withSpan, logger, SpanKind, SpanStatusCode } from '@/lib/telemetry';
 
+/**
+ * Validate that a `?next=` redirect target is a safe relative path.
+ *
+ * Accepts paths that start with `/` but not `//` (scheme-relative URLs such as
+ * `//evil.com` would be followed by browsers as an absolute URL and are an
+ * open-redirect vector). Falls back to `/dashboard` for anything invalid.
+ */
+function safeNextPath(raw: string | null, fallback = '/dashboard'): string {
+  if (!raw) return fallback;
+  if (raw.startsWith('/') && !raw.startsWith('//')) return raw;
+  return fallback;
+}
+
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get('code');
-  const next = searchParams.get('next') ?? '/dashboard';
+  const next = safeNextPath(searchParams.get('next'));
 
   return withSpan(
     'lorekit.auth.callback',

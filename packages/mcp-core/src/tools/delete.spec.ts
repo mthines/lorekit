@@ -15,33 +15,25 @@ vi.mock('../telemetry.js', () => ({
   getToolDurationHistogram: () => ({ record: vi.fn() }),
 }));
 
-/** Build a minimal Supabase client mock with chainable query methods. */
+/** Build a minimal Supabase client mock with chainable query methods.
+ *
+ * delete.ts uses .match(filter) for the equality predicates followed by
+ * .is('archived_at', null) for the soft-archive path. The mock mirrors that:
+ *   delete:  .delete({ count }).match(filter) → resolves
+ *   update:  .update({ ... }, { count }).match(filter).is(...) → resolves
+ */
 function makeDb(overrides: {
   updateResult?: { error: null | { message: string }; count: number };
   deleteResult?: { error: null | { message: string }; count: number };
 }) {
-  const updateChain = {
-    eq: vi.fn().mockReturnThis(),
-    is: vi.fn().mockReturnThis(),
-    then: undefined as unknown,
-  };
-  // resolve on .is() — final call in the chain
-  Object.defineProperty(updateChain, 'then', {
-    get() { return undefined; },
-  });
-
   const update = vi.fn().mockReturnValue({
-    eq: vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue({
-        is: vi.fn().mockResolvedValue(overrides.updateResult ?? { error: null, count: 1 }),
-      }),
+    match: vi.fn().mockReturnValue({
+      is: vi.fn().mockResolvedValue(overrides.updateResult ?? { error: null, count: 1 }),
     }),
   });
 
   const del = vi.fn().mockReturnValue({
-    eq: vi.fn().mockReturnValue({
-      eq: vi.fn().mockResolvedValue(overrides.deleteResult ?? { error: null, count: 1 }),
-    }),
+    match: vi.fn().mockResolvedValue(overrides.deleteResult ?? { error: null, count: 1 }),
   });
 
   const auditInsert = vi.fn().mockResolvedValue({ error: null });
@@ -80,6 +72,27 @@ describe('deleteMemory — soft-archive (default)', () => {
     );
   });
 
+  it('applies the user_id ownership filter when userId is provided', async () => {
+    const db = makeDb({ updateResult: { error: null, count: 1 } });
+    await deleteMemory(db, { scope: 'global', key: 'my-key' }, 'user-1');
+    // The match filter must include user_id when a userId is known.
+    const memTable = (db.from as ReturnType<typeof vi.fn>).mock.results.find(
+      (r) => (r.value as { update: unknown }).update,
+    )?.value as { update: ReturnType<typeof vi.fn> } | undefined;
+    const matchArg = memTable?.update.mock.results[0]?.value?.match?.mock?.calls[0]?.[0];
+    expect(matchArg).toMatchObject({ user_id: 'user-1', scope: 'global', key: 'my-key' });
+  });
+
+  it('does not include user_id in the filter when userId is null', async () => {
+    const db = makeDb({ updateResult: { error: null, count: 1 } });
+    await deleteMemory(db, { scope: 'global', key: 'my-key' });
+    const memTable = (db.from as ReturnType<typeof vi.fn>).mock.results.find(
+      (r) => (r.value as { update: unknown }).update,
+    )?.value as { update: ReturnType<typeof vi.fn> } | undefined;
+    const matchArg = memTable?.update.mock.results[0]?.value?.match?.mock?.calls[0]?.[0];
+    expect(matchArg).not.toHaveProperty('user_id');
+  });
+
   it('does not record an audit event when no row was soft-archived (no-op)', async () => {
     const db = makeDb({ updateResult: { error: null, count: 0 } });
     await deleteMemory(db, { scope: 'global', key: 'missing-key' });
@@ -111,6 +124,26 @@ describe('deleteMemory — force hard-delete', () => {
     expect(db.auditInsert).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'memory.delete', user_id: 'user-1' }),
     );
+  });
+
+  it('applies the user_id ownership filter when userId is provided', async () => {
+    const db = makeDb({ deleteResult: { error: null, count: 1 } });
+    await deleteMemory(db, { scope: 'global', key: 'my-key', force: true }, 'user-1');
+    const memTable = (db.from as ReturnType<typeof vi.fn>).mock.results.find(
+      (r) => (r.value as { delete: unknown }).delete,
+    )?.value as { delete: ReturnType<typeof vi.fn> } | undefined;
+    const matchArg = memTable?.delete.mock.results[0]?.value?.match?.mock?.calls[0]?.[0];
+    expect(matchArg).toMatchObject({ user_id: 'user-1', scope: 'global', key: 'my-key' });
+  });
+
+  it('does not include user_id in the filter when userId is null', async () => {
+    const db = makeDb({ deleteResult: { error: null, count: 1 } });
+    await deleteMemory(db, { scope: 'global', key: 'my-key', force: true });
+    const memTable = (db.from as ReturnType<typeof vi.fn>).mock.results.find(
+      (r) => (r.value as { delete: unknown }).delete,
+    )?.value as { delete: ReturnType<typeof vi.fn> } | undefined;
+    const matchArg = memTable?.delete.mock.results[0]?.value?.match?.mock?.calls[0]?.[0];
+    expect(matchArg).not.toHaveProperty('user_id');
   });
 
   it('does not record an audit event when no row was hard-deleted (no-op)', async () => {
