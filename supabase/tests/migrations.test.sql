@@ -1474,7 +1474,7 @@ end;
 $$;
 
 -- ═════════════════════════════════════════════════════════════════════════
--- GitHub App installations (00028)
+-- GitHub App installations (00037)
 -- Tests: idempotent double-apply, pending→linked, RLS isolation,
 --        coverage lookup, webhook_secrets untouched by reconcile.
 -- ═════════════════════════════════════════════════════════════════════════
