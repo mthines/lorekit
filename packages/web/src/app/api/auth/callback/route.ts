@@ -5,12 +5,22 @@ import { withSpan, logger, SpanKind, SpanStatusCode } from '@/lib/telemetry';
 // `safeNextPath` is shared with the client-side password sign-in so both
 // redirect paths enforce the exact same same-origin rule.
 import { safeNextPath } from '@/lib/auth-redirect';
+import { classifyAuthCallback } from '@/lib/auth-callback-params';
 
 /**
- * Auth callback route — handles two flows:
+ * Auth callback route — handles three flows:
  *
- * 1. Supabase OAuth code exchange (?code=…): exchanges the code for a session
- *    and redirects to `next` (default: /dashboard).
+ * 1. Supabase session establishment, in whichever shape the project is
+ *    configured to send (see `classifyAuthCallback`):
+ *      - `?code=…`                   → `exchangeCodeForSession` (PKCE)
+ *      - `?token_hash=…&type=…`      → `verifyOtp` (browser-independent, so an
+ *                                      email link opened on another device still
+ *                                      works — the preferred template shape)
+ *      - `?error=…`                  → forwarded to the destination as a
+ *                                      readable reason rather than swallowed
+ *    The implicit flow (`#access_token=…`) is deliberately NOT handled here: a
+ *    fragment is never sent to the server. `AuthHashCatcher` on the client
+ *    picks that one up.
  *
  * 2. GitHub App Setup-URL return bounce (?installation_id=…&setup_action=…
  *    [&state=…][&code=…]): if an `installation_id` is present, attempts to
@@ -18,17 +28,20 @@ import { safeNextPath } from '@/lib/auth-redirect';
  *    The `state` parameter is correlation-only — it never grants access.
  *    Access is always derived from auth.uid() + RLS.
  *
- * The two flows can arrive together: GitHub sends both `code` (OAuth) and
+ * 3. Neither: a bare hit. Sent on to `next` rather than to an error, because
+ *    the destination can still resolve an implicit-flow fragment client-side.
+ *
+ * Flows 1 and 2 can arrive together: GitHub sends both `code` (OAuth) and
  * `installation_id` when the user installs the App for the first time while
- * also completing OAuth.  We handle code-exchange first so the session exists
- * when we call handleSetupReturn.
+ * also completing OAuth. Session establishment runs first so the session
+ * exists when we call handleSetupReturn.
  */
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
-  const code = searchParams.get('code');
   const next = safeNextPath(searchParams.get('next'));
+  const callback = classifyAuthCallback(searchParams);
 
-  // GitHub App Setup-URL params (may coexist with the OAuth code).
+  // GitHub App Setup-URL params (may coexist with the auth params).
   const rawInstallationId = searchParams.get('installation_id');
   const setupAction = searchParams.get('setup_action');
   const state = searchParams.get('state') ?? undefined;
@@ -36,21 +49,50 @@ export async function GET(request: NextRequest) {
   return withSpan(
     'lorekit.auth.callback',
     {
-      'auth.callback.has_code': !!code,
+      'auth.callback.kind': callback.kind,
+      'auth.callback.otp_type': callback.kind === 'token_hash' ? callback.type : 'none',
       'auth.callback.has_installation_id': !!rawInstallationId,
       'auth.callback.next': next,
     },
     async (span) => {
-      // 1. OAuth code exchange — always attempt first so the session is established
-      //    before the GitHub App association below.
-      if (code) {
+      // 1. Establish the session — always attempted first so it exists before
+      //    the GitHub App association below.
+      let sessionEstablished = false;
+
+      if (callback.kind === 'error') {
+        // Supabase already rejected the link (expired, reused, wrong project).
+        // Hand the reason to the destination page so it can say which.
+        span.setAttribute('auth.callback.outcome', 'provider_error');
+        span.setAttribute('auth.error_code', callback.errorCode);
+        span.setStatus({
+          code: SpanStatusCode.ERROR,
+          message: callback.errorDescription ?? callback.errorCode,
+        });
+        logger.warn('auth.callback.provider_error', {
+          'auth.error_code': callback.errorCode,
+        });
+        const target = new URL(next, origin);
+        target.searchParams.set('error', callback.errorCode);
+        return NextResponse.redirect(target);
+      }
+
+      if (callback.kind === 'code' || callback.kind === 'token_hash') {
         const supabase = await createServerClient();
-        const { error, data } = await supabase.auth.exchangeCodeForSession(code);
+        const { data, error } =
+          callback.kind === 'code'
+            ? await supabase.auth.exchangeCodeForSession(callback.code)
+            : await supabase.auth.verifyOtp({
+                token_hash: callback.tokenHash,
+                type: callback.type,
+              });
+
         if (!error) {
+          sessionEstablished = true;
           span.setAttribute('auth.callback.outcome', 'success');
           span.setAttribute('auth.user_id', data.user?.id ?? 'unknown');
           span.setAttribute('auth.provider', data.user?.app_metadata?.['provider'] ?? 'unknown');
           logger.info('auth.callback.success', {
+            'auth.callback.kind': callback.kind,
             'auth.provider': data.user?.app_metadata?.['provider'] ?? 'unknown',
           });
         } else {
@@ -58,10 +100,17 @@ export async function GET(request: NextRequest) {
           span.setAttribute('auth.error_code', error.code ?? error.name);
           span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
           logger.warn('auth.callback.exchange_failed', {
+            'auth.callback.kind': callback.kind,
             'auth.error_code': error.code ?? error.name,
             'error.message': error.message,
           });
-          return NextResponse.redirect(`${origin}/login?error=auth_failed`);
+          // A PKCE exchange fails when the link is opened in a different
+          // browser from the one that started the flow — a routine situation
+          // (sign up on a laptop, tap the link on a phone), not a broken app.
+          // The destination still gets the reason and can say so plainly.
+          const target = new URL(next, origin);
+          target.searchParams.set('error', error.code ?? 'auth_failed');
+          return NextResponse.redirect(target);
         }
       }
 
@@ -86,15 +135,17 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // Standard OAuth redirect (or fallback when no installation_id present).
-      if (code) {
-        return NextResponse.redirect(`${origin}${next}`);
+      if (!sessionEstablished) {
+        // No auth params at all. Historically this redirected to
+        // /login?error=auth_failed, which was wrong for the implicit flow: the
+        // session is sitting in a fragment the server cannot read, and the
+        // destination page resolves it client-side. Send them on and let the
+        // page decide.
+        span.setAttribute('auth.callback.outcome', 'no_auth_params');
+        logger.info('auth.callback.no_auth_params', { 'auth.callback.next': next });
       }
 
-      span.setAttribute('auth.callback.outcome', 'no_code');
-      span.setStatus({ code: SpanStatusCode.ERROR, message: 'no auth code in callback' });
-      logger.warn('auth.callback.no_code', {});
-      return NextResponse.redirect(`${origin}/login?error=auth_failed`);
+      return NextResponse.redirect(`${origin}${next}`);
     },
     SpanKind.SERVER,
   );

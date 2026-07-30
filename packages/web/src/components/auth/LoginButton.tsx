@@ -218,7 +218,11 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     const { data, error: signUpError } = await supabase.auth.signUp({
       email: trimmedEmail,
       password,
-      options: { emailRedirectTo: callbackUrl() },
+      // Confirmation returns to /welcome rather than straight to the dashboard:
+      // whether the click actually produces a session depends on the link shape
+      // and on which browser it was opened in, so the user gets a page that
+      // states the outcome instead of a silent bounce to the login screen.
+      options: { emailRedirectTo: buildAuthCallbackUrl(authCallbackOrigin(), '/welcome') },
     });
     setBusy(false);
     if (signUpError) {

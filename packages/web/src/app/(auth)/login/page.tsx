@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import Image from 'next/image';
 import { LoginButton } from '@/components/auth/LoginButton';
+import { AuthHashCatcher } from '@/components/auth/AuthHashCatcher';
 import { SiteFooter } from '@/components/layout/SiteFooter';
 import { BookOpen, Brain, GitBranch, Zap } from 'lucide-react';
 import { TerminalTheater } from '@/components/landing/TerminalTheater';
@@ -43,6 +44,13 @@ const FEATURES = [
 export default function LoginPage() {
   return (
     <main className="relative flex min-h-screen flex-col overflow-hidden bg-[var(--color-bg)]">
+      {/*
+        Renders nothing on an ordinary visit. Only fires when Supabase bounced
+        an implicit-flow auth result to the Site URL (i.e. here) instead of the
+        callback route — see AuthHashCatcher.
+      */}
+      <AuthHashCatcher />
+
       <div aria-hidden className="pointer-events-none fixed inset-0 overflow-hidden">
         <div
           className="absolute left-1/2 top-1/3 size-[700px] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-30"

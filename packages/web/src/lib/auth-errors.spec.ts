@@ -63,6 +63,24 @@ describe('friendlyAuthError', () => {
     expect(friendlyAuthError({ message: 'Auth session missing!' })).toContain('session has expired');
   });
 
+  it('maps a cross-browser PKCE failure to sign-in guidance, not a fault', () => {
+    const message = friendlyAuthError({
+      message: 'invalid request: both auth code and code verifier should be non-empty',
+      code: 'flow_state_not_found',
+    });
+    expect(message).toContain('different browser');
+    expect(message.toLowerCase()).not.toContain('error');
+  });
+
+  it('maps a generic denied/failed link to request-a-new-one copy', () => {
+    expect(friendlyAuthError({ message: 'Access denied', code: 'access_denied' })).toContain(
+      'expired or already been used',
+    );
+    expect(friendlyAuthError({ message: 'auth_failed', code: 'auth_failed' })).toContain(
+      'Request a new one',
+    );
+  });
+
   it('maps rate limiting by message and by HTTP status', () => {
     expect(friendlyAuthError({ message: 'Email rate limit exceeded' })).toContain('Too many');
     expect(friendlyAuthError({ message: 'whatever', status: 429 })).toContain('Too many');

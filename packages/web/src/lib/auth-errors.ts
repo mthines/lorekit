@@ -77,6 +77,16 @@ export function friendlyAuthError(error: AuthErrorLike): string {
   if (code === 'session_not_found' || msg.includes('auth session missing')) {
     return 'Your session has expired. Request a new link and try again.';
   }
+  // A PKCE exchange fails this way when the email link is opened in a
+  // different browser from the one that started the flow — routine, and the
+  // account is still confirmed, so the copy points at signing in rather than
+  // implying something broke.
+  if (code === 'flow_state_not_found' || msg.includes('code verifier')) {
+    return 'This link was opened in a different browser from the one you started in. Sign in with your email and password to continue.';
+  }
+  if (code === 'access_denied' || code === 'auth_failed') {
+    return "That link didn't work — it may have expired or already been used. Request a new one and try again.";
+  }
 
   // -- Rate limiting — most common on Supabase Free tier (4 emails/hour) ---
   if (msg.includes('rate limit') || msg.includes('too many') || error.status === 429) {
