@@ -46,6 +46,6 @@ export function applyRestTenantScope<Q extends TracedQuery<unknown>>(
   if (orgIds.length === 0) {
     return q.eq('user_id', userId) as Q;
   }
-  const quoted = orgIds.map((id) => `"${id}"`).join(',');
-  return q.or(`user_id.eq.${userId},org_id.in.(${quoted})`) as Q;
+  const joined = orgIds.join(',');
+  return q.or(`user_id.eq.${userId},org_id.in.(${joined})`) as Q;
 }
