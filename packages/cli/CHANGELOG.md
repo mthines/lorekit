@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.20.1](https://github.com/mthines/lorekit/compare/cli-v1.20.0...cli-v1.20.1) (2026-07-30)
+
+
+### Bug Fixes
+
+* **github-app:** document setup_action requirement in auth callback ([e6b4ec4](https://github.com/mthines/lorekit/commit/e6b4ec45eed8073018a75d6e8b143799bfe3aaf0))
+* **github-app:** drop dead lorekit_is_app_covered from migration ([437d63b](https://github.com/mthines/lorekit/commit/437d63badfc3d30762239f6ef3000e6c9930e377))
+* **github-app:** use direct identities lookup in handleSetupReturn ([089d038](https://github.com/mthines/lorekit/commit/089d038641226127fc16775e925b0b70b489ae1f))
+* **security:** add safeNextPath open-redirect fix to GitHub App callback route ([c5c3bbb](https://github.com/mthines/lorekit/commit/c5c3bbb8dfc8e2fbc52090aaabbc10853d149dfa))
+* update middleware.ts from main (PR [#225](https://github.com/mthines/lorekit/issues/225) open-redirect fix) ([95d95f2](https://github.com/mthines/lorekit/commit/95d95f2eaf44239128f98873cfda67966807a269))
+* update write.ts from main (PR [#225](https://github.com/mthines/lorekit/issues/225)) ([1342a28](https://github.com/mthines/lorekit/commit/1342a28b7cbda4c6ee809b80d7aa394fc595de91))
+
 ## [1.20.0](https://github.com/mthines/lorekit/compare/cli-v1.19.0...cli-v1.20.0) (2026-07-29)
 
 
