@@ -14,10 +14,10 @@ function conditionToString(c: FilterCondition): string | null {
   switch (c.op) {
     case 'is':               return `${c.field}.eq.${v}`;
     case 'is_not':           return `${c.field}.neq.${v}`;
-    case 'contains':         return `${c.field}.ilike.%25${v}%25`;
-    case 'does_not_contain': return `${c.field}.not.ilike.%25${v}%25`;
-    case 'starts_with':      return `${c.field}.ilike.${v}%25`;
-    case 'ends_with':        return `${c.field}.ilike.%25${v}`;
+    case 'contains':         return `${c.field}.ilike.%${v}%`;
+    case 'does_not_contain': return `${c.field}.not.ilike.%${v}%`;
+    case 'starts_with':      return `${c.field}.ilike.${v}%`;
+    case 'ends_with':        return `${c.field}.ilike.%${v}`;
     case 'is_set':           return `${c.field}.not.is.null`;
     case 'is_not_set':       return `${c.field}.is.null`;
     default:                 return null;
