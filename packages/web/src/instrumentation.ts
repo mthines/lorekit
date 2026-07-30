@@ -22,6 +22,8 @@
  */
 import { registerOTel } from '@vercel/otel';
 
+import { supabaseOriginPattern } from './lib/otel-origins';
+
 function resolveDeploymentEnv(): string {
   const vercelEnv = process.env['VERCEL_ENV'];
   if (vercelEnv === 'production') return 'production';
@@ -85,6 +87,16 @@ export async function register() {
         'unknown',
       'deployment.environment.name': resolveDeploymentEnv(),
       ...buildVcsResourceAttributes(),
+    },
+    // @vercel/otel's fetch instrumentation propagates trace context ONLY to
+    // Vercel deployment URLs by default. Without this every server action /
+    // RSC fetch to Supabase produced an ORPHAN PostgREST / Edge Function span.
+    // The origin pattern is shared with the browser side (Dash0Provider,
+    // instrumentation-client) so the two can never drift.
+    instrumentationConfig: {
+      fetch: {
+        propagateContextUrls: [supabaseOriginPattern()],
+      },
     },
   });
 }

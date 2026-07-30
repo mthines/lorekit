@@ -204,9 +204,21 @@ function buildOtlpPayload(spans: SpanPayload[]): unknown {
 
   const serviceVersion = Deno.env.get('VCS_REF_HEAD_REVISION') ?? Deno.env.get('GITHUB_SHA') ?? 'unknown';
 
-  // SERVICE_NAME is set per-function via Supabase secrets so spans carry the
-  // correct resource name regardless of which function emits them.
-  const serviceName = Deno.env.get('SERVICE_NAME') ?? 'lorekit';
+  // Every Supabase Edge Function is ONE logical service: `api`. The individual
+  // functions (memories, orgs, openapi, mcp, health) are operations on it, not
+  // separate services — they share a deployment, a database and a lifecycle,
+  // and splitting them would fragment the service map for no analytical gain.
+  //
+  // This is a build-time constant on purpose. It used to be a per-function
+  // `SERVICE_NAME` Supabase secret, which could not work: Supabase secrets are
+  // project-wide, not per-function, so a single value could never name five
+  // functions. Functions that went unconfigured silently fell back to a shared
+  // name anyway. The env var is still honoured as an escape hatch, but nothing
+  // needs to set it.
+  //
+  // Distinguish functions and operations with `faas.name` and the span name
+  // (`lorekit.memories`, `lorekit.mcp`, …), both set by `traceRequest`.
+  const serviceName = Deno.env.get('SERVICE_NAME') ?? 'api';
   const resourceAttributes = [
     { key: 'service.name', value: { stringValue: serviceName } },
     { key: 'service.namespace', value: { stringValue: 'lorekit' } },
@@ -359,6 +371,19 @@ export class Span {
 // ── traceRequest — root entry point ──────────────────────────────────────────
 
 /**
+ * Derive the `faas.name` attribute from a root span's operation name.
+ *
+ * Operation names are `lorekit.<function>` (`lorekit.memories`,
+ * `lorekit.mcp`, `lorekit.webhook.github`, …). We take the segment after the
+ * `lorekit.` prefix, so `lorekit.webhook.github` reports `webhook.github` —
+ * the sub-operation is kept because it is a genuinely distinct entry point.
+ * A name without the prefix is passed through unchanged.
+ */
+function faasNameFrom(operationName: string): string {
+  return operationName.startsWith('lorekit.') ? operationName.slice('lorekit.'.length) : operationName;
+}
+
+/**
  * Return a Response carrying the server span's `traceparent`, so a browser or
  * CLI can correlate its request with the server-side trace.
  *
@@ -413,6 +438,10 @@ export async function traceRequest<T extends Response>(
   span.setAttributes({
     'http.request.method': req.method,
     'url.path': new URL(req.url).pathname,
+    // Every edge function reports service.name = 'api', so this is what tells
+    // them apart. Derived from the operation name ('lorekit.memories' →
+    // 'memories') so a new function gets it for free and cannot forget to.
+    'faas.name': faasNameFrom(operationName),
   });
 
   let response: T;

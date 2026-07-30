@@ -15,6 +15,8 @@
  */
 import { init, addSignalAttribute } from '@dash0/sdk-web';
 
+import { supabaseOriginPattern } from './lib/otel-origins';
+
 const ENDPOINT = process.env['NEXT_PUBLIC_DASH0_OTLP_ENDPOINT'];
 const AUTH_TOKEN = process.env['NEXT_PUBLIC_DASH0_AUTH_TOKEN'];
 
@@ -94,11 +96,7 @@ if (isValidOtlpEndpoint(ENDPOINT) && AUTH_TOKEN) {
       'deployment.environment.name': resolveDeploymentEnv(),
       ...buildVcsSignalAttributes(),
     },
-    propagateTraceHeadersCorsURLs: [
-      new RegExp(
-        `https://${process.env['NEXT_PUBLIC_SUPABASE_PROJECT_REF'] ?? '[^.]+'}\\.(supabase\\.co|supabase\\.in)/.*`,
-      ),
-    ],
+    propagateTraceHeadersCorsURLs: [supabaseOriginPattern()],
   });
 
   // Guard window access — this module is imported by client components which
