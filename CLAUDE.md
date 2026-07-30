@@ -87,9 +87,11 @@ The bot runs `PR Ready for Review — Polish + Review` automatically; a comment 
 the review results will appear on the PR. Do not proceed until that comment is present.
 
 ```
-# How to wait
-gh pr checks <pr-number> --repo mthines/lorekit --watch
-# Then confirm dash0-dev has posted a review comment before continuing.
+# How to wait for the dash0-dev bot review comment
+gh pr view <pr-number> --repo mthines/lorekit --json reviews \\
+  --jq '.reviews | map(select(.author.login == "dash0-dev")) | length'
+# Re-run until the count is ≥ 1 (the bot has posted its review).
+# Tip: loop with `while [ "$(above command)" -lt 1 ]; do sleep 10; done`
 ```
 
 ### Step 3 — Trigger the resolve automation
