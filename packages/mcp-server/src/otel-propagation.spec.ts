@@ -7,21 +7,22 @@
  * span context and injects `traceparent` into the outgoing request.
  *
  * These tests verify the OTel context propagation primitives work correctly
- * without requiring a full SDK — using the no-op tracer that ships with
- * @opentelemetry/api, which exercises the same context.with() mechanism.
+ * using only `@opentelemetry/api` (no SDK registration required).
  */
 import { describe, it, expect } from 'vitest';
 import { context, trace, ROOT_CONTEXT } from '@opentelemetry/api';
 
 describe('OTel W3C traceparent propagation', () => {
-  it('context.with() propagates a custom value to the active context', () => {
-    // This is the fundamental mechanism undici instrumentation uses:
-    // it calls context.with(spanCtx, outgoingFetch) so the active span
-    // context is available when the fetch headers are being built.
-    const key = context.createKey('test-trace-key');
+  it('context.with() propagates a context value to the inner callback', () => {
+    // OTel context keys are symbols — same mechanism undici instrumentation uses
+    // to propagate the active span context into outgoing fetch calls.
+    const key = Symbol('test-trace-key');
+
+    // context.active() returns ROOT_CONTEXT by default (no-op tracer in tests).
+    // setValue() returns a new derived context without mutating the original.
     const ctxWithValue = context.active().setValue(key, 'trace-id-abc123');
 
-    let capturedValue: unknown;
+    let capturedValue: unknown = 'not-set';
     context.with(ctxWithValue, () => {
       capturedValue = context.active().getValue(key);
     });
@@ -29,24 +30,25 @@ describe('OTel W3C traceparent propagation', () => {
     expect(capturedValue).toBe('trace-id-abc123');
   });
 
-  it('context.with() is isolated — outer context is not modified', () => {
-    const key = context.createKey('isolation-test');
-    const outer = context.active().setValue(key, 'outer');
-    const inner = context.active().setValue(key, 'inner');
+  it('context.with() does not leak the inner context to the outer scope', () => {
+    const key = Symbol('isolation-test');
+    const outerCtx = context.active().setValue(key, 'outer');
+    const innerCtx = context.active().setValue(key, 'inner');
 
     let innerValue: unknown;
-    context.with(inner, () => {
+    context.with(innerCtx, () => {
       innerValue = context.active().getValue(key);
     });
 
-    const afterValue = outer.getValue(key);
+    // After context.with() exits, the outer context is restored.
+    // This is what allows parallel requests to each carry their own span context.
+    const afterValue = outerCtx.getValue(key);
     expect(innerValue).toBe('inner');
     expect(afterValue).toBe('outer');
   });
 
   it('W3C traceparent format: 00-{traceId(32hex)}-{spanId(16hex)}-{flags(2hex)}', () => {
-    // Verify the format the undici instrumentation would construct and inject.
-    // traceId: 32 hex chars, spanId: 16 hex chars, flags: 2 hex chars
+    // Verify the exact format the undici instrumentation would construct and inject.
     const traceId = 'abcdef1234567890abcdef1234567890';
     const spanId  = 'abcdef1234567890';
     const flags   = 1; // sampled
@@ -56,13 +58,11 @@ describe('OTel W3C traceparent propagation', () => {
     expect(traceparent).toMatch(/^00-[a-f0-9]{32}-[a-f0-9]{16}-[0-9a-f]{2}$/);
   });
 
-  it('active span context from @opentelemetry/api is a no-op without SDK — confirms undici needs the SDK', () => {
-    // Without the SDK registered, trace.getActiveSpan() returns undefined.
-    // This is intentional in the test environment — the SDK (registered in
-    // instrumentation.ts at startup) is required for real context propagation.
-    // This test documents that fact explicitly.
+  it('trace.getActiveSpan() returns undefined without SDK — SDK is required for real propagation', () => {
+    // Without the SDK registered (via instrumentation.ts at startup), the global
+    // trace API is a no-op. This confirms that the auto-instrumentation in
+    // instrumentation.ts is what enables real context propagation in production.
     const span = trace.getActiveSpan();
-    // In test environment without SDK: no active span
     expect(span).toBeUndefined();
   });
 });
