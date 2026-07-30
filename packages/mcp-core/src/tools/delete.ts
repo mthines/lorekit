@@ -83,17 +83,20 @@ export async function deleteMemory(
         return { deleted: row.deleted, archived: row.archived };
       } else if (input.force) {
         // Hard delete — immediate, irreversible.
-        // Scope the query to the owning user when a userId is known: without
-        // this filter a service-role client would match any user's row with the
-        // same (scope, key), leaking cross-user destructive access.
-        let deleteQuery = db
+        // Use .match() to apply all equality filters in a single call so the
+        // ownership filter (user_id) is included without extending the chain
+        // depth. Without the user_id filter a service-role client would match
+        // any user's row with the same (scope, key).
+        const matchFilter: Record<string, string> = {
+          scope: input.scope,
+          key: input.key,
+        };
+        if (userId) matchFilter['user_id'] = userId;
+
+        const { error, count } = await db
           .from('memories')
           .delete({ count: 'exact' })
-          .eq('scope', input.scope)
-          .eq('key', input.key);
-        if (userId) deleteQuery = deleteQuery.eq('user_id', userId);
-
-        const { error, count } = await deleteQuery;
+          .match(matchFilter);
 
         if (error) throw error;
         const deleted = (count ?? 0) > 0;
@@ -114,16 +117,20 @@ export async function deleteMemory(
         return { deleted, archived: false };
       } else {
         // Soft-archive — set archived_at, hide from normal reads.
-        // Same ownership guard as the force-delete branch above.
-        let archiveQuery = db
+        // Same ownership guard as the force-delete branch above: use .match()
+        // for the equality filters so user_id is always included when known,
+        // then .is() for the NULL check on archived_at.
+        const matchFilter: Record<string, string> = {
+          scope: input.scope,
+          key: input.key,
+        };
+        if (userId) matchFilter['user_id'] = userId;
+
+        const { error, count } = await db
           .from('memories')
           .update({ archived_at: new Date().toISOString() }, { count: 'exact' })
-          .eq('scope', input.scope)
-          .eq('key', input.key)
+          .match(matchFilter)
           .is('archived_at', null);
-        if (userId) archiveQuery = archiveQuery.eq('user_id', userId);
-
-        const { error, count } = await archiveQuery;
 
         if (error) throw error;
         const archived = (count ?? 0) > 0;

@@ -97,9 +97,11 @@ describe('memory.delete — soft-archive default', () => {
   it('routes to deleteMemory and returns archived: true', async () => {
     mockDeleteMemory.mockResolvedValue({ deleted: false, archived: true });
     const result = await callTool('memory.delete', { scope: 'global', key: 'k1' });
+    // deleteMemory(db, args, userId) — userId is the third arg (null for service-role).
     expect(mockDeleteMemory).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ scope: 'global', key: 'k1' }),
+      expect.anything(),
     );
     expect(parseResult(result)).toMatchObject({ deleted: false, archived: true });
   });
@@ -110,6 +112,7 @@ describe('memory.delete — soft-archive default', () => {
     expect(mockDeleteMemory).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ force: true }),
+      expect.anything(),
     );
   });
 });
