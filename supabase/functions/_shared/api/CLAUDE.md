@@ -1,6 +1,6 @@
 # _shared/api — REST utility modules
 
-Seven modules shared by every REST edge function (`memories`, `orgs`, `openapi`).
+Nine modules shared by every REST edge function (`memories`, `orgs`, `openapi`).
 
 ## Import paths (from a function like `memories/`)
 
@@ -48,6 +48,27 @@ import { RestError, translateDbError } from '../_shared/api/errors.ts';
 ### errors.ts
 - `RestError` — extends Error, carries `status`, `code`, `details`. Call `.toResponse(cors)`.
 - `translateDbError(err)` — maps Postgres SQLSTATE codes to `RestError` instances.
+
+### filter.ts
+- `applyFilter(query, filter)` — applies a `FilterGroup` (the OR+AND tree accepted by
+  `POST /memories/search`) to a Supabase query builder. A no-op when `filter` is `undefined`.
+- This module is a **thin adapter only**. The semantics — operator mapping, the field
+  whitelist, and value encoding — live in `@lorekit/schemas/filter`'s
+  `serializeFilterGroup`, next to the `FilterGroupSchema` that validates the input,
+  so they are unit-tested in Node (`packages/schemas/src/filter.spec.ts`) and cannot
+  drift from the schema. Add a new operator or filterable column **there**, not here.
+- `serializeFilterGroup` returns an AND-list of PostgREST `or()` expressions; the adapter
+  chains one `.or()` call per element, because PostgREST ANDs successive `.or()` calls.
+- Fields outside `ALLOWED_FILTER_FIELDS` (`scope`, `key`, `value`, `tags`, `source_agent`,
+  `trigger`) are dropped silently — a caller can never filter on `user_id`/`org_id` and
+  subvert the tenant predicate applied separately by `tenant.ts`.
+
+### tenant.ts
+- `getMemberOrgIds(db, userId, span)` — resolves the caller's org memberships via
+  `lorekit_member_org_ids`.
+- `applyRestTenantScope(query, userId, orgIds)` — the widened tenant-visibility predicate
+  for `api_key` auth (which uses a service-role client and therefore bypasses RLS).
+  JWT auth needs no call: RLS enforces visibility. Never inline `.eq('user_id', …)` instead.
 
 ## Full example: memories/index.ts + one handler
 

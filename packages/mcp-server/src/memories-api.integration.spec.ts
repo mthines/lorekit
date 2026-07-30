@@ -128,6 +128,94 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', () =
     expect(found, `expected ${KEY_B} in results; got: ${JSON.stringify(entries)}`).toBe(true);
   });
 
+  // 7a. search with an AND filter ─────────────────────────────────────────────
+  it('POST /memories/search — AND filter narrows to this run\'s keys', async () => {
+    const { status, data } = await api('POST', '/search', {
+      filter: {
+        and: [
+          { field: 'scope', op: 'is', value: SCOPE },
+          { field: 'key', op: 'starts_with', value: KEY_PREFIX },
+        ],
+      },
+      limit: 100,
+    });
+    expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    const entries = (data as JsonObj).entries as JsonObj[];
+    const keys = entries.map((e) => e.key);
+    expect(keys).toContain(KEY_A);
+    expect(keys).toContain(KEY_B);
+    // Every returned row must satisfy the filter — proves it was applied, not ignored.
+    expect(entries.every((e) => String(e.key).startsWith(KEY_PREFIX)), JSON.stringify(keys)).toBe(true);
+  });
+
+  // 7b. search with an OR filter ──────────────────────────────────────────────
+  it('POST /memories/search — OR filter matches either branch', async () => {
+    const { status, data } = await api('POST', '/search', {
+      filter: {
+        or: [
+          { field: 'key', op: 'is', value: KEY_A },
+          { field: 'key', op: 'is', value: KEY_B },
+        ],
+      },
+      limit: 100,
+    });
+    expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    const keys = ((data as JsonObj).entries as JsonObj[]).map((e) => e.key);
+    expect(keys).toContain(KEY_A);
+    expect(keys).toContain(KEY_B);
+    expect(keys.every((k) => k === KEY_A || k === KEY_B), JSON.stringify(keys)).toBe(true);
+  });
+
+  // 7c. search with an OR nested inside an AND ────────────────────────────────
+  it('POST /memories/search — OR nested in AND excludes non-matching siblings', async () => {
+    const { status, data } = await api('POST', '/search', {
+      filter: {
+        and: [
+          { field: 'key', op: 'starts_with', value: KEY_PREFIX },
+          { or: [{ field: 'key', op: 'ends_with', value: '-b' }] },
+        ],
+      },
+      limit: 100,
+    });
+    expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    const keys = ((data as JsonObj).entries as JsonObj[]).map((e) => e.key);
+    expect(keys).toContain(KEY_B);
+    expect(keys).not.toContain(KEY_A);
+  });
+
+  // 7d. filter that matches nothing ───────────────────────────────────────────
+  it('POST /memories/search — filter with no matches returns an empty page', async () => {
+    const { status, data } = await api('POST', '/search', {
+      filter: { field: 'key', op: 'is', value: `${KEY_PREFIX}-does-not-exist` },
+    });
+    expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    expect((data as JsonObj).entries).toEqual([]);
+  });
+
+  // 7e. non-whitelisted field is dropped, never applied ───────────────────────
+  it('POST /memories/search — non-whitelisted filter field is ignored, not an error', async () => {
+    const { status, data } = await api('POST', '/search', {
+      filter: {
+        and: [
+          { field: 'key', op: 'starts_with', value: KEY_PREFIX },
+          { field: 'user_id', op: 'is', value: '00000000-0000-0000-0000-000000000000' },
+        ],
+      },
+      limit: 100,
+    });
+    expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    // The bogus field is dropped; the whitelisted sibling still applies.
+    const keys = ((data as JsonObj).entries as JsonObj[]).map((e) => e.key);
+    expect(keys).toContain(KEY_A);
+  });
+
+  // 7f. search requires at least one of q / scopes / filter ───────────────────
+  it('POST /memories/search — returns 400 when no q, scopes or filter is given', async () => {
+    const { status, data } = await api('POST', '/search', { limit: 10 });
+    expect(status, `expected 400; got ${status}: ${JSON.stringify(data)}`).toBe(400);
+    expect((data as JsonObj).error).toBeTruthy();
+  });
+
   // 8. delete (archive) ───────────────────────────────────────────────────────
   it('DELETE /memories/:id — archives entry A (204)', async () => {
     expect(createdIdA).toBeTruthy();
