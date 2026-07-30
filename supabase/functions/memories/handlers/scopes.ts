@@ -11,9 +11,10 @@ type ScopeRow = Database['public']['Functions']['lorekit_memory_scopes']['Return
  * GET /memories/scopes — every distinct scope the caller can see, with its
  * count of active (non-archived, non-expired) memories, sorted by scope asc.
  *
- * This is the REST answer to the CLI's `listScopes()`, which returns an
- * "unsupported" sentinel today because no MCP tool can enumerate scopes (every
- * read tool REQUIRES a scope).
+ * This is the REST answer to the CLI's `listScopes()`, which used to return an
+ * "unsupported" sentinel because no MCP tool can enumerate scopes (every read
+ * tool REQUIRES a scope). `packages/cli/src/store/remote.mjs` now calls this
+ * route, so `lorekit scopes` renders a real Remote inventory.
  *
  * The aggregation is done in Postgres (`lorekit_memory_scopes`, migration
  * 00039), NOT by selecting `scope` and deduping here. A client-side dedupe —
