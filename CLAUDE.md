@@ -305,7 +305,24 @@ Metric: `lorekit.tool.duration` histogram (unit `s`) with `lorekit.tool.name` + 
   and every MCP call (`mcpCall` — `memory.delete --force` and all four `org.*` ops), sourced
   from `getActiveTraceparent()` in `packages/cli/src/telemetry.mjs`. Context is generated for
   **every** `traceCommand` run, including when telemetry export is disabled — propagation is
-  decoupled from export. The browser sends it via `@dash0/sdk-web`.
+  decoupled from export. The browser sends it via `@dash0/sdk-web`. The Next.js **server**
+  side sends it via `@vercel/otel`'s fetch instrumentation, configured in
+  `packages/web/src/instrumentation.ts` — this needs an explicit
+  `fetch: { propagateContextUrls: [...] }`, because `@vercel/otel` propagates context ONLY to
+  Vercel deployment URLs by default. Without it every server action / RSC call to Supabase
+  produced an orphan PostgREST / Edge Function span.
+- **The Supabase origin allow-list lives in exactly one place** —
+  `packages/web/src/lib/otel-origins.ts` (`supabaseOriginPattern()`), consumed by all three
+  web call sites (`instrumentation.ts` server, `instrumentation-client.ts` browser,
+  `Dash0Provider.tsx` browser) so browser and server can never drift. It is dependency-free
+  (no React, no `next/*`, no node builtins) because it is evaluated in both the Node runtime
+  and the browser bundle, and reads `process.env['NEXT_PUBLIC_SUPABASE_PROJECT_REF']` as a
+  literal member expression so Next.js can inline it at build time. The pattern is anchored
+  (`^https://…`) so a nested URL such as `https://evil.com/https://<ref>.supabase.co/x` never
+  matches and plain `http://` is excluded. When the project ref is **unset** it deliberately
+  fails open to any `*.supabase.co` / `*.supabase.in` host (kept so local/preview setups
+  without the var still propagate) and emits a one-time `console.warn` so the widening is
+  visible rather than silent.
 - **Who receives it.** Every edge function's `traceRequest` (`supabase/functions/_shared/otel.ts`)
   parses the inbound header; an invalid one falls back to a new root trace instead of a corrupt
   span. Responses carry a `traceparent` back (exposed via `Access-Control-Expose-Headers`) so a
@@ -322,6 +339,38 @@ Metric: `lorekit.tool.duration` histogram (unit `s`) with `lorekit.tool.name` + 
   sampling is deferred to the Dash0 pipeline (see Key decisions). Never turn the flag into a
   drop condition. The CLI emits flags `01` when its span will be exported and `00` when it will
   not, still carrying the trace id either way so the server can correlate.
+
+### `service.name` inventory
+
+Every emitting component and where its `service.name` is configured. A collision here
+collapses two components into one indistinguishable node in the service map — keep these
+unique.
+
+| `service.name` | Component | Set in |
+|---|---|---|
+| `api` | **All** Supabase Edge Functions (`memories`, `orgs`, `openapi`, `mcp`, `health`) | Hard-coded in `supabase/functions/_shared/otel.ts`. No configuration required. |
+| `mcp-node` | Node MCP server (Fly.io) | `OTEL_SERVICE_NAME`, default in `packages/mcp-server/src/instrumentation.ts` |
+| `web` | Next.js (server + browser) | `packages/web/src/instrumentation.ts`, `packages/web/src/instrumentation-client.ts`, `packages/web/src/components/providers/Dash0Provider.tsx` |
+| `lorekit-cli` | CLI | `packages/cli/src/telemetry.mjs` |
+
+- **The edge functions are one service, not five.** They share a deployment, a database and a
+  lifecycle; each function is an *operation* on `api`, not a separate service. Splitting them
+  fragments the service map for no analytical gain.
+- **Tell the functions apart with `faas.name`**, set on every root span by `traceRequest` and
+  derived from the operation name (`lorekit.memories` → `memories`, `lorekit.webhook.github` →
+  `webhook.github`). The span name carries the same information. A new function gets this for
+  free and cannot forget to set it.
+- **Do not reintroduce a per-function `SERVICE_NAME` secret.** Supabase secrets are
+  project-wide, not per-function, so one value can never name five functions — the previous
+  attempt left `mcp` and `health` silently sharing a fallback name. The `SERVICE_NAME` env var
+  is still honoured as an escape hatch, but nothing needs to set it and `config.toml` sets none.
+- `service.namespace` is **`lorekit`** everywhere — hard-coded in each component's resource
+  (including `packages/mcp-server/src/instrumentation.ts`, which no longer delegates it to
+  `OTEL_RESOURCE_ATTRIBUTES`), never env-dependent.
+- The Node MCP server is `mcp-node`, deliberately distinct from the edge `api`: it is a
+  separate deployment (Fly.io) with its own lifecycle, so it stays its own service.
+- The Supabase origin pattern used for browser + server trace-context propagation lives in one
+  place: `packages/web/src/lib/otel-origins.ts`.
 
 ---
 

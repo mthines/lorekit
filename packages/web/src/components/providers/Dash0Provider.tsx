@@ -19,6 +19,8 @@ import { useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 import { init, addSignalAttribute, identify } from '@dash0/sdk-web';
 
+import { supabaseOriginPattern } from '@/lib/otel-origins';
+
 const ENDPOINT = process.env['NEXT_PUBLIC_DASH0_OTLP_ENDPOINT'];
 const AUTH_TOKEN = process.env['NEXT_PUBLIC_DASH0_AUTH_TOKEN'];
 
@@ -98,12 +100,8 @@ function initDash0() {
       'deployment.environment.name': resolveDeploymentEnv(),
       ...buildVcsSignalAttributes(),
     },
-    propagateTraceHeadersCorsURLs: [
-      // Propagate W3C trace context to Supabase — links browser spans to Edge Function spans
-      new RegExp(
-        `https://${process.env['NEXT_PUBLIC_SUPABASE_PROJECT_REF'] ?? '[^.]+'}\\.(supabase\\.co|supabase\\.in)/.*`,
-      ),
-    ],
+    // Propagate W3C trace context to Supabase — links browser spans to Edge Function spans
+    propagateTraceHeadersCorsURLs: [supabaseOriginPattern()],
   });
 }
 

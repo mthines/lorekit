@@ -6,7 +6,10 @@
  * Exporter: OTLP HTTP/protobuf → Dash0 (or any OTLP endpoint)
  *
  * Required env vars:
- *   OTEL_SERVICE_NAME            defaults to "lorekit"
+ *   OTEL_SERVICE_NAME            defaults to "mcp-node" (deliberately distinct
+ *                                from the Deno Edge Function's "mcp" — they are
+ *                                two deployments of the same logical service
+ *                                and must be separable in the service map)
  *   OTEL_TRACES_EXPORTER         set to "otlp" to enable
  *   OTEL_METRICS_EXPORTER        set to "otlp" to enable
  *   OTEL_LOGS_EXPORTER           set to "otlp" to enable
@@ -36,7 +39,11 @@ import { SpanStatusCode, trace } from '@opentelemetry/api';
 
 // Read service version from package.json at startup
 const SERVICE_VERSION = process.env['npm_package_version'] ?? '0.0.1';
-const SERVICE_NAME = process.env['OTEL_SERVICE_NAME'] ?? 'mcp';
+// 'mcp-node' — deliberately NOT 'mcp'. The Deno Edge Function at
+// supabase/functions/mcp/ reports service.name = 'mcp'; this Fly.io Node
+// deployment is a separate runtime of the same logical service and must be a
+// distinct node in the service map.
+const SERVICE_NAME = process.env['OTEL_SERVICE_NAME'] ?? 'mcp-node';
 
 /**
  * Resolve vcs.* OTel resource attributes from environment variables.
@@ -85,6 +92,9 @@ function buildVcsResourceAttributes(): Record<string, string> {
 const resource = new Resource({
   [ATTR_SERVICE_NAME]: SERVICE_NAME,
   [ATTR_SERVICE_VERSION]: SERVICE_VERSION,
+  // Hard-coded rather than delegated to OTEL_RESOURCE_ATTRIBUTES so it is
+  // guaranteed present, consistent with web, the CLI, and the Edge Functions.
+  'service.namespace': 'lorekit',
   // deployment.environment.name is set via OTEL_RESOURCE_ATTRIBUTES env var
   // per otel-instrumentation/rules/sdks/nodejs.md
   // vcs.* attributes resolved from VCS_* or GITHUB_* env vars at startup
