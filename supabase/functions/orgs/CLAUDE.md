@@ -1,34 +1,72 @@
-# supabase/functions/orgs/
+# orgs — REST org management
 
-REST API for organization management. All routes require a **Supabase JWT** — org RPCs resolve the caller via `auth.uid()` server-side and are unavailable to `lk_*` API token holders.
+Handles all org operations via HTTP. Auth is managed by the shared `resolveRestAuth` utility. **Org endpoints require a Supabase JWT — `lk_*` API key tokens receive 403.**
 
 ## URL patterns
 
-All routes are relative to `/functions/v1/orgs`:
+| Method | Path | Handler | Permission |
+|--------|------|---------|------------|
+| GET | / | handlers/orgs/list.ts | JWT only |
+| POST | / | handlers/orgs/create.ts | JWT only |
+| GET | /:slug | handlers/orgs/get.ts | JWT only |
+| PATCH | /:slug | handlers/orgs/rename.ts | JWT only |
+| DELETE | /:slug | handlers/orgs/remove.ts | JWT only |
+| GET | /:slug/members | handlers/members/list.ts | JWT only |
+| PATCH | /:slug/members/:userId | handlers/members/role.ts | JWT only |
+| DELETE | /:slug/members/:userId | handlers/members/remove.ts | JWT only |
+| GET | /:slug/invites | handlers/invites/list.ts | JWT only |
+| POST | /:slug/invites | handlers/invites/create.ts | JWT only |
+| DELETE | /:slug/invites/:inviteId | handlers/invites/revoke.ts | JWT only |
 
-| Method | Path | Operation |
-|--------|------|-----------|
-| GET    | /    | List caller's orgs |
-| POST   | /    | Create org |
-| GET    | /:slug | Get org details |
-| PATCH  | /:slug | Rename org |
-| DELETE | /:slug | Soft-delete org (owner only) |
-| GET    | /:slug/members | List members |
-| PATCH  | /:slug/members/:userId | Change member role |
-| DELETE | /:slug/members/:userId | Remove member (or leave if self) |
-| GET    | /:slug/invites | List pending invites |
-| POST   | /:slug/invites | Send invite |
-| DELETE | /:slug/invites/:inviteId | Revoke invite |
+## Auth rules
 
-## Slug → org_id pattern
+- **JWT required** — all org endpoints call RPCs that enforce `auth.uid()` server-side.
+- `lk_*` API tokens (read-only or read-write) are rejected with 403; orgs are personal/team resources tied to a user identity.
+- Service role key bypasses RLS but still routes through the same handlers.
 
-Every mutation RPC takes `p_org_id` (UUID), not a slug. Handlers that need it
-resolve the slug to org_id with a single `orgs.select('id').eq('slug', slug)` query
-before calling the RPC. If the org is not found (or soft-deleted), return 404.
+## Router layout
+
+The `index.ts` router dispatches to handler subdirectories:
+
+```
+handlers/
+  orgs/       — top-level org CRUD (list, create, get, rename, remove)
+  members/    — /:slug/members sub-resource (list, role, remove)
+  invites/    — /:slug/invites sub-resource (list, create, revoke)
+```
+
+Handler signature: `async function handle{Name}(req, auth, db, span, params, cors)`.
+
+## RPC calls
+
+| Handler | RPC | Notes |
+|---------|-----|-------|
+| orgs/create.ts | `lorekit_org_create` | Creates org + owner membership in one call |
+| orgs/rename.ts | `lorekit_org_rename` | Requires admin/owner role |
+| orgs/remove.ts | `lorekit_org_delete` | Requires owner role; soft-deletes |
+| invites/create.ts | `lorekit_org_invite` | Sends invite by email; requires admin/owner |
+| invites/revoke.ts | `lorekit_org_invite_revoke` | Requires admin/owner |
+| members/role.ts | `lorekit_org_member_role` | Requires owner to change roles |
+| members/remove.ts | `lorekit_org_leave` or `lorekit_org_member_remove` | See note below |
+
+## Self-removal routing in `members/remove.ts`
+
+`DELETE /:slug/members/:userId` is used for both **kicking a member** (admin/owner) and **leaving an org** (any member). The handler checks:
+
+```typescript
+if (params.userId === auth.userId) {
+  // Self-removal — call lorekit_org_leave
+} else {
+  // Removing another member — call lorekit_org_member_remove (requires admin/owner)
+}
+```
+
+This keeps the URL surface minimal while preserving correct permission semantics.
 
 ## Adding a handler
 
-1. Create `handlers/{section}/{operation}.ts` following the existing pattern.
-2. Import and wire it in `index.ts` router table with `requires: 'jwt'`.
-3. Use `createTracedClient(db, span)` for all DB calls.
-4. Return typed errors via `translateDbError(error)` before rethrowing.
+1. Create the file under the appropriate subdir (e.g. `handlers/members/newaction.ts`) exporting `async function handle{Name}(req, auth, db, span, params, cors)`.
+2. Import in `index.ts` and add a route entry to the `createRouter` call.
+3. Use `validateBody` / `validateQuery` / `validateUuid` / `validateSlug` from `_shared/api/validate.ts`.
+4. Always create a child span: `span.child('lorekit.orgs.{operation}')`.
+5. Translate DB errors with `translateDbError` before re-throwing.

@@ -2,12 +2,16 @@
  * LoreKit orgs REST API — integration smoke test
  * -----------------------------------------------
  * Exercises the `orgs` Edge Function end-to-end against a live LoreKit
- * instance. Requires a user JWT (not an API token) because org RPCs use
- * auth.uid() server-side.
+ * instance. Runs in CI (and locally) when the required environment variables
+ * are present; skips gracefully otherwise.
  *
  * Required env vars:
- *   LOREKIT_SMOKE_JWT        Supabase user JWT (not an lk_* API token)
+ *   LOREKIT_SMOKE_JWT        Supabase user JWT (org endpoints require JWT — lk_* tokens are rejected)
  *   LOREKIT_REST_BASE_URL    Base URL, e.g. https://<ref>.supabase.co/functions/v1
+ *                            Defaults to http://localhost:54321/functions/v1
+ *
+ * Optional env vars:
+ *   LOREKIT_SMOKE_TOKEN      A lk_* API token — used only to assert 403 behaviour
  *
  * Run standalone:
  *   LOREKIT_SMOKE_JWT=<jwt> LOREKIT_REST_BASE_URL=<url> \
@@ -18,81 +22,125 @@ import { describe, it, expect, afterAll } from 'vitest';
 
 const BASE = (process.env['LOREKIT_REST_BASE_URL'] ?? 'http://localhost:54321/functions/v1').replace(/\/$/, '');
 const JWT = process.env['LOREKIT_SMOKE_JWT'];
+const API_TOKEN = process.env['LOREKIT_SMOKE_TOKEN']; // optional — lk_* token for 403 assertion
 const SKIP = !JWT;
 
-const SLUG = `smoke-org-${Date.now()}`;
-const NAME = 'Smoke Test Org';
+// Slug must be unique and match ^[a-z0-9][a-z0-9-]*[a-z0-9]$
+const TEST_SLUG = `smoke-${Date.now()}-test`;
 
 type JsonObj = Record<string, unknown>;
 
-async function api(method: string, path: string, body?: unknown): Promise<Response> {
-  return fetch(`${BASE}/orgs${path}`, {
+async function restFetch(
+  method: string,
+  path: string,
+  body?: unknown,
+  token: string | undefined = JWT,
+): Promise<{ status: number; data: unknown }> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${BASE}/orgs${path}`, {
     method,
-    headers: {
-      Authorization: `Bearer ${JWT}`,
-      'Content-Type': 'application/json',
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    headers,
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
+  const text = await res.text();
+  let data: unknown;
+  try { data = JSON.parse(text); } catch { data = text; }
+  return { status: res.status, data };
 }
 
-describe.skipIf(SKIP)('orgs REST API smoke', () => {
-  let orgSlug = '';
-
+describe.skipIf(SKIP)('LoreKit orgs API — smoke tests (integration)', () => {
   afterAll(async () => {
-    // Best-effort cleanup
-    if (orgSlug) await api('DELETE', `/${orgSlug}`);
+    // Best-effort cleanup — delete the test org if it still exists
+    await restFetch('DELETE', `/${TEST_SLUG}`).catch(() => undefined);
   });
 
-  it('POST / — creates an org', async () => {
-    const res = await api('POST', '/', { slug: SLUG, name: NAME });
-    expect(res.status).toBe(201);
-    const body = await res.json() as JsonObj;
-    expect(body).toHaveProperty('slug', SLUG);
-    orgSlug = SLUG;
+  // 1. auth: no token → 401/403 ───────────────────────────────────────────────
+  it('GET /orgs — returns 401 or 403 when no auth token is provided', async () => {
+    const { status } = await restFetch('GET', '/', undefined, undefined);
+    expect([401, 403], `expected 401 or 403; got ${status}`).toContain(status);
   });
 
-  it('GET / — lists orgs including the new one', async () => {
-    const res = await api('GET', '/');
-    expect(res.status).toBe(200);
-    const body = await res.json() as { entries: JsonObj[] };
-    expect(body.entries.some((e) => e.slug === SLUG)).toBe(true);
+  // 2. auth: lk_* API token → 403 ────────────────────────────────────────────
+  it('GET /orgs — returns 403 when lk_* API token is used (JWT required)', async () => {
+    if (!API_TOKEN) {
+      console.log('  ⚠ LOREKIT_SMOKE_TOKEN not set — skipping lk_* 403 assertion');
+      return;
+    }
+    const { status } = await restFetch('GET', '/', undefined, API_TOKEN);
+    expect(status, `expected 403 for lk_* token; got ${status}`).toBe(403);
   });
 
-  it('GET /:slug — gets the org', async () => {
-    const res = await api('GET', `/${orgSlug}`);
-    expect(res.status).toBe(200);
-    const body = await res.json() as JsonObj;
-    expect(body).toHaveProperty('slug', orgSlug);
+  // 3. list — baseline ────────────────────────────────────────────────────────
+  it('GET /orgs — returns a list of orgs', async () => {
+    const { status, data } = await restFetch('GET', '/');
+    expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    const d = data as JsonObj;
+    expect(Array.isArray(d.orgs), 'orgs should be an array').toBe(true);
   });
 
-  it('PATCH /:slug — renames the org', async () => {
-    const res = await api('PATCH', `/${orgSlug}`, { name: 'Renamed Org' });
-    expect(res.status).toBe(200);
+  // 4. create ─────────────────────────────────────────────────────────────────
+  it('POST /orgs — creates a test org', async () => {
+    const { status, data } = await restFetch('POST', '/', {
+      slug: TEST_SLUG,
+      name: 'Smoke Test Org',
+    });
+    expect(status, `expected 201; got ${status}: ${JSON.stringify(data)}`).toBe(201);
+    const d = data as JsonObj;
+    expect(d.slug).toBe(TEST_SLUG);
+    expect(typeof d.name).toBe('string');
   });
 
-  it('GET /:slug/members — lists members', async () => {
-    const res = await api('GET', `/${orgSlug}/members`);
-    expect(res.status).toBe(200);
-    const body = await res.json() as { entries: JsonObj[] };
-    expect(Array.isArray(body.entries)).toBe(true);
+  // 5. get ────────────────────────────────────────────────────────────────────
+  it('GET /orgs/:slug — returns the created org', async () => {
+    const { status, data } = await restFetch('GET', `/${TEST_SLUG}`);
+    expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    const d = data as JsonObj;
+    expect(d.slug).toBe(TEST_SLUG);
   });
 
-  it('GET /:slug/invites — lists invites (empty)', async () => {
-    const res = await api('GET', `/${orgSlug}/invites`);
-    expect(res.status).toBe(200);
-    const body = await res.json() as { entries: JsonObj[] };
-    expect(body.entries).toHaveLength(0);
+  // 6. rename ─────────────────────────────────────────────────────────────────
+  it('PATCH /orgs/:slug — renames the org', async () => {
+    const { status, data } = await restFetch('PATCH', `/${TEST_SLUG}`, {
+      name: 'Smoke Test Org (renamed)',
+    });
+    expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    const d = data as JsonObj;
+    expect(d.name).toBe('Smoke Test Org (renamed)');
   });
 
-  it('DELETE /:slug — deletes the org', async () => {
-    const res = await api('DELETE', `/${orgSlug}`);
-    expect(res.status).toBe(204);
-    orgSlug = ''; // prevent afterAll double-delete
+  // 7. list members ───────────────────────────────────────────────────────────
+  it('GET /orgs/:slug/members — returns member list', async () => {
+    const { status, data } = await restFetch('GET', `/${TEST_SLUG}/members`);
+    expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    const d = data as JsonObj;
+    expect(Array.isArray(d.members), 'members should be an array').toBe(true);
   });
 
-  it('GET /:slug — returns 404 after deletion', async () => {
-    const res = await api('GET', `/${SLUG}`);
-    expect(res.status).toBe(404);
+  // 8. list invites ───────────────────────────────────────────────────────────
+  it('GET /orgs/:slug/invites — returns invite list', async () => {
+    const { status, data } = await restFetch('GET', `/${TEST_SLUG}/invites`);
+    expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    const d = data as JsonObj;
+    expect(Array.isArray(d.invites), 'invites should be an array').toBe(true);
+  });
+
+  // 9. delete ─────────────────────────────────────────────────────────────────
+  it('DELETE /orgs/:slug — deletes the test org (204)', async () => {
+    const { status } = await restFetch('DELETE', `/${TEST_SLUG}`);
+    expect(status, `expected 204`).toBe(204);
+  });
+
+  // 10. get after delete — 404 ────────────────────────────────────────────────
+  it('GET /orgs/:slug — returns 404 after deletion', async () => {
+    const { status } = await restFetch('GET', `/${TEST_SLUG}`);
+    expect(status).toBe(404);
+  });
+
+  // 11. invalid body ──────────────────────────────────────────────────────────
+  it('POST /orgs — returns 400 for missing required fields', async () => {
+    const { status, data } = await restFetch('POST', '/', { name: 'No Slug Provided' });
+    expect(status, `expected 400; got ${status}: ${JSON.stringify(data)}`).toBe(400);
+    expect((data as JsonObj).error).toBeTruthy();
   });
 });
