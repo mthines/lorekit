@@ -4,16 +4,19 @@ import { ok } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
 import { buildPage, decodeCursor } from '../../_shared/api/paginate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
-import type { Span } from '../../_shared/otel.ts';
+import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import { ListMemoriesQuerySchema } from '@lorekit/schemas/memory';
 import type { DbClient } from '../../_shared/api/auth.ts';
+import type { Tables } from '../../_shared/database.types.ts';
+
+type MemoryRow = Tables<'memories'>;
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
 async function getMemberOrgIds(db: DbClient, userId: string, span: Span): Promise<string[]> {
   const tracedDb = createTracedClient(db as ReturnType<typeof createClient>, span);
-  const { data, error } = await tracedDb.rpc('lorekit_member_org_ids', { p_user_id: userId });
+  const { data, error } = await tracedDb.rpc<string>('lorekit_member_org_ids', { p_user_id: userId });
   if (error) { span.setAttributes({ 'auth.org_ids_error': error.message }); return []; }
   return (data ?? []) as string[];
 }
@@ -24,36 +27,35 @@ export async function handleList(
 ): Promise<Response> {
   const validated = validateQuery(req, ListMemoriesQuerySchema, cors);
   if (!validated.ok) return validated.response;
-  const q = validated.data;
+  const params = validated.data;
 
   span.setAttributes({
     'lorekit.operation': 'memories.list',
-    ...(q.scope ? { 'lorekit.scope': q.scope } : {}),
-    ...(q.key ? { 'lorekit.key': q.key } : {}),
-    'lorekit.limit': q.limit,
-    'lorekit.archived': q.archived,
+    ...(params.scope ? { 'lorekit.scope': params.scope } : {}),
+    ...(params.key ? { 'lorekit.key': params.key } : {}),
+    'lorekit.limit': params.limit,
+    'lorekit.archived': params.archived,
   });
 
   const tracedDb = createTracedClient(db as ReturnType<typeof createClient>, span);
-  const isArchived = q.archived === 'true';
+  const isArchived = params.archived === 'true';
 
-  // deno-lint-ignore no-explicit-any
-  let query: any = tracedDb
-    .from('memories')
+  let q: TracedQuery<MemoryRow> = tracedDb
+    .from<MemoryRow>('memories')
     .select('id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at')
     .order('updated_at', { ascending: false })
     .order('id', { ascending: false })
-    .limit(q.limit + 1);
+    .limit(params.limit + 1);
 
-  if (isArchived) query = query.not('archived_at', 'is', null);
-  else query = query.is('archived_at', null).or('expires_at.is.null,expires_at.gt.now()');
+  if (isArchived) q = q.not('archived_at', 'is', null);
+  else q = q.is('archived_at', null).or('expires_at.is.null,expires_at.gt.now()');
 
-  if (q.scope) query = query.eq('scope', q.scope);
-  if (q.key) query = query.eq('key', q.key);
+  if (params.scope) q = q.eq('scope', params.scope);
+  if (params.key) q = q.eq('key', params.key);
 
-  if (q.tags) {
-    const tags = q.tags.split(',').map((t: string) => t.trim()).filter(Boolean);
-    if (tags.length) query = query.overlaps('tags', tags);
+  if (params.tags) {
+    const tags = params.tags.split(',').map((t: string) => t.trim()).filter(Boolean);
+    if (tags.length) q = q.overlaps('tags', tags);
   }
 
   if (auth.type !== 'service' && auth.userId) {
@@ -62,24 +64,24 @@ export async function handleList(
     orgIdsSpan.setAttributes({ 'lorekit.org_count': orgIds.length }).end();
 
     if (orgIds.length === 0) {
-      query = query.eq('user_id', auth.userId);
+      q = q.eq('user_id', auth.userId);
     } else {
       const quoted = orgIds.map((id: string) => `"${id}"`).join(',');
-      query = query.or(`user_id.eq.${auth.userId},org_id.in.(${quoted})`);
+      q = q.or(`user_id.eq.${auth.userId},org_id.in.(${quoted})`);
     }
   }
 
-  if (q.cursor) {
-    const c = decodeCursor(q.cursor);
+  if (params.cursor) {
+    const c = decodeCursor(params.cursor);
     if (c) {
-      query = query.or(`updated_at.lt.${c.updated_at},and(updated_at.eq.${c.updated_at},id.lt.${c.id})`);
+      q = q.or(`updated_at.lt.${c.updated_at},and(updated_at.eq.${c.updated_at},id.lt.${c.id})`);
     }
   }
 
-  const { data, error } = await query;
+  const { data, error } = await q;
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
-  const page = buildPage((data ?? []) as Array<{ id: string; updated_at: string } & Record<string, unknown>>, q.limit);
+  const page = buildPage(data ?? [], params.limit);
   span.setAttributes({ 'lorekit.result_count': page.entries.length, 'lorekit.has_more': page.hasMore });
   return ok(page, cors);
 }
