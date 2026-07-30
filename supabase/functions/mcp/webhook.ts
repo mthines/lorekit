@@ -57,6 +57,10 @@ import {
   type WebhookSecretRow,
   type WebhookSecretSource,
 } from './webhook-secret-select.ts';
+import {
+  mapInstallationEvent,
+  reconcileInstallation,
+} from './webhook-installation.ts';
 
 /** Delivery full_name must look like a plausible owner/repo before it touches a DB filter. */
 const SAFE_FULL_NAME = /^[a-z0-9._/-]+$/;
@@ -64,6 +68,14 @@ const SAFE_FULL_NAME = /^[a-z0-9._/-]+$/;
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 
+/**
+ * GitHub App feature flag.  When GITHUB_APP_ENABLED is unset or any value
+ * other than 'true', the App-event branch is completely inert — no token
+ * minting, no reconcile, no App-secret lookup.  This keeps the live path
+ * dormant until the App is registered and its secrets are provisioned.
+ */
+// ── Feature flags ───────────────────────────────────────────────────────────
+const GITHUB_APP_ENABLED = Deno.env.get('GITHUB_APP_ENABLED') === 'true';
 /** TTL for all webhook-sourced memory candidates (days). */
 const WEBHOOK_TTL_DAYS = 30;
 
@@ -105,12 +117,29 @@ function isSignalWorthy(body: string): boolean {
 // ── Secret resolution ─────────────────────────────────────────────────────────
 
 /**
+ * Installation-lifecycle events delivered by the GitHub App.
+ * These are verified against the single app-level secret and routed to
+ * the reconcile shell rather than the comment-write path.
+ */
+const INSTALLATION_EVENTS = new Set([
+  'installation',
+  'installation_repositories',
+  'installation_target',
+  'github_app_authorization',
+  'membership',
+]);
+
+/**
  * Resolve candidate HMAC secrets for this webhook delivery.
  *
- * Queries active webhook_secrets rows matching the delivery's full_name
- * directly (repo-scoped, deterministic — no user-login join), falls back to
- * a legacy null-repo row, then to the GITHUB_WEBHOOK_SECRET env var. See
- * selectWebhookSecrets for the precedence and OTel source values.
+ * When GITHUB_APP_ENABLED and the event is an App installation-lifecycle or
+ * comment event: returns the single app-level secret from
+ * GITHUB_APP_WEBHOOK_SECRET with source 'app'.
+ *
+ * Otherwise: queries active webhook_secrets rows matching the delivery's
+ * full_name directly (repo-scoped, deterministic — no user-login join), falls
+ * back to a legacy null-repo row, then to the GITHUB_WEBHOOK_SECRET env var.
+ * See selectWebhookSecrets for the precedence and OTel source values.
  *
  * `fullName` must already be lowercased and pass the SAFE_FULL_NAME guard
  * before this is called — untrusted, pre-HMAC-verification input never
@@ -119,7 +148,22 @@ function isSignalWorthy(body: string): boolean {
 async function resolveSecrets(
   db: ReturnType<typeof createClient>,
   fullName: string | undefined,
-) {
+  event: string,
+): Promise<{ secrets: string[]; source: WebhookSecretSource | 'app'; matchedRepo: string | null; isAppEvent: boolean }> {
+  const isAppEvent = GITHUB_APP_ENABLED && (
+    INSTALLATION_EVENTS.has(event) || SUPPORTED_EVENTS.has(event)
+  );
+
+  if (isAppEvent) {
+    const appSecret = Deno.env.get('GITHUB_APP_WEBHOOK_SECRET') ?? '';
+    return {
+      secrets: appSecret ? [appSecret] : [],
+      source: 'app',
+      matchedRepo: null,
+      isAppEvent: true,
+    };
+  }
+
   let rows: WebhookSecretRow[] = [];
 
   if (fullName && SAFE_FULL_NAME.test(fullName)) {
@@ -141,7 +185,126 @@ async function resolveSecrets(
   }
 
   const envSecret = Deno.env.get('GITHUB_WEBHOOK_SECRET') ?? '';
-  return selectWebhookSecrets(rows, fullName, envSecret);
+  const selection = selectWebhookSecrets(rows, fullName, envSecret);
+  return { ...selection, isAppEvent: false };
+}
+
+/**
+ * Reconcile an App installation event against the DB.
+ *
+ * Runs inside the App-event branch behind GITHUB_APP_ENABLED.  Maps the
+ * (event, action) pair to a reconcile op (pure), looks up the GitHub account
+ * id in auth.users to produce a ReconcileVerdict (pure), then calls the
+ * SECURITY DEFINER upsert RPC (impure shell).
+ *
+ * Never throws — errors are logged as span attributes and the function returns
+ * false to let the caller respond 200 OK (we never 5xx GitHub on reconcile
+ * failures, to avoid delivery-retry storms).
+ *
+ */
+async function reconcileAppInstallation(
+  db: ReturnType<typeof createClient>,
+  event: string,
+  // deno-lint-ignore no-explicit-any
+  payload: Record<string, any>,
+  span: Span,
+): Promise<boolean> {
+  const action = payload['action'] ?? 'unknown';
+  const op = mapInstallationEvent(event, action);
+
+  span.setAttributes({
+    'lorekit.installation.op': op.kind,
+    'lorekit.installation.event': event,
+    'lorekit.installation.action': action,
+  });
+
+  if (op.kind === 'ignore') {
+    span.setAttributes({ 'lorekit.installation.ignore_reason': op.reason });
+    return true;
+  }
+
+  const installation = payload['installation'];
+  if (!installation) {
+    span.setAttributes({ 'lorekit.installation.skip_reason': 'no_installation_in_payload' });
+    return true;
+  }
+
+  const installationId: number = installation['id'];
+  const githubAccountId: number = installation['account']?.['id'];
+  const githubAccountLogin: string = installation['account']?.['login'] ?? '';
+  const accountType: string = installation['account']?.['type'] ?? 'User';
+
+  if (!installationId || !githubAccountId) {
+    span.setAttributes({ 'lorekit.installation.skip_reason': 'missing_ids' });
+    return true;
+  }
+
+  if (op.kind === 'remove_installation') {
+    const { error } = await db.rpc('lorekit_installation_remove', {
+      p_installation_id: installationId,
+    });
+    if (error) {
+      span.setAttributes({ 'lorekit.installation.remove_error': error.message });
+    }
+    return true;
+  }
+
+  // Resolve repos from payload for add/remove/upsert ops.
+  const payloadRepos: string[] = (
+    payload['repositories'] ??
+    payload['repositories_added'] ??
+    payload['repositories_removed'] ??
+    []
+  ).map((r: { full_name: string }) => (r.full_name ?? '').toLowerCase()).filter(Boolean);
+
+  if (op.kind === 'remove_repos') {
+    const { error } = await db.rpc('lorekit_installation_remove_repos', {
+      p_installation_id: installationId,
+      p_repos: payloadRepos,
+    });
+    if (error) {
+      span.setAttributes({ 'lorekit.installation.remove_repos_error': error.message });
+    }
+    return true;
+  }
+
+  // upsert_installation or add_repos: look up the GitHub account id in
+  // auth.identities (Supabase's identity provider table) to find the matching
+  // LoreKit user.  We use a service-role RPC rather than querying auth.identities
+  // directly through PostgREST (which does not expose the auth schema).
+  // The db client here already uses the service-role key.
+  // deno-lint-ignore no-explicit-any
+  const { data: identityData } = await (db as any).rpc('lorekit_find_user_by_github_id', {
+    p_github_account_id: String(githubAccountId),
+  });
+
+  const matchedUserId: string | null = identityData ?? null;
+  const matchedUser = matchedUserId ? { userId: matchedUserId } : null;
+
+  const verdict = reconcileInstallation(githubAccountId, matchedUser);
+
+  span.setAttributes({
+    'lorekit.installation.verdict': verdict.kind,
+    'lorekit.installation.installation_id': installationId,
+    'lorekit.installation.github_account_id': githubAccountId,
+  });
+
+  const { error: upsertError } = await db.rpc('lorekit_installation_upsert', {
+    p_installation_id: installationId,
+    p_github_account_id: githubAccountId,
+    p_github_account_login: githubAccountLogin,
+    p_account_type: accountType,
+    p_user_id: verdict.kind === 'linked' ? verdict.userId : null,
+    p_status: verdict.kind,
+    p_repos: payloadRepos,
+  });
+
+  if (upsertError) {
+    span.setAttributes({ 'lorekit.installation.upsert_error': upsertError.message });
+    span.error(`InstallationUpsertError: ${upsertError.message}`);
+  }
+
+  return true;
 }
 
 /**
@@ -215,12 +378,13 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
-  const { secrets, source: secretSource, matchedRepo } = await resolveSecrets(db, fullName);
+  const { secrets, source: secretSource, matchedRepo, isAppEvent } = await resolveSecrets(db, fullName, event);
 
-  // Short-circuit: if no secret is configured for this repo (source 'none'),
-  // reject immediately without running any HMAC crypto. This avoids exposing a
-  // timing oracle on the verification path and signals a configuration gap
-  // rather than a signature mismatch.
+  // Short-circuit: if no secret is configured (source 'none', or App path
+  // selected but GITHUB_APP_WEBHOOK_SECRET is unset), reject immediately
+  // without running any HMAC crypto. This avoids exposing a timing oracle on
+  // the verification path and signals a configuration gap rather than a
+  // signature mismatch.
   if (secrets.length === 0) {
     span.setAttributes({
       'lorekit.webhook.secret_configured': false,
@@ -229,6 +393,7 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
       'lorekit.webhook.body_bytes': bodyBytes.byteLength,
       'lorekit.webhook.matched_repo': matchedRepo ?? '',
       'lorekit.webhook.hmac_fail_reason': 'secret_not_configured',
+      'lorekit.webhook.is_app_event': isAppEvent,
     });
     span.error('HmacError: secret_not_configured');
     return new Response('Unauthorized', { status: 401 });
@@ -249,12 +414,21 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
     'lorekit.webhook.signature_present': hmac.signaturePresent,
     'lorekit.webhook.body_bytes': bodyBytes.byteLength,
     'lorekit.webhook.matched_repo': matchedRepo ?? '',
+    'lorekit.webhook.is_app_event': isAppEvent,
   });
 
   if (!hmac.ok) {
     span.setAttributes({ 'lorekit.webhook.hmac_fail_reason': hmac.failReason ?? 'unknown' });
     span.error(`HmacError: ${hmac.failReason ?? 'signature mismatch'}`);
     return new Response('Unauthorized', { status: 401 });
+  }
+
+  // App installation-lifecycle events: verified above, now reconcile.
+  // Comment events (issue_comment/pull_request_review*) from the App flow
+  // through the existing candidate-write path below — no special branch needed.
+  if (isAppEvent && INSTALLATION_EVENTS.has(event)) {
+    await reconcileAppInstallation(db, event, earlyPayload, span);
+    return new Response('OK', { status: 200 });
   }
 
   // Report unsupported event types so they are visible in Dash0 rather than

@@ -1473,12 +1473,237 @@ begin
 end;
 $$;
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- GitHub App installations (00037)
+-- Tests: idempotent double-apply, pending→linked, RLS isolation,
+--        coverage lookup, webhook_secrets untouched by reconcile.
+-- ═════════════════════════════════════════════════════════════════════════
+
+-- ── 38. Idempotent double-apply: same installation_id → exactly 1 row (AC-7) ──
+do $$
+declare
+  v_count int;
+  v_id1 uuid;
+  v_id2 uuid;
+begin
+  -- First upsert: pending (no matching user).
+  select lorekit_installation_upsert(
+    9000001, 555001, 'octocat-test', 'User',
+    null, 'pending', '{}'::text[]
+  ) into v_id1;
+
+  -- Second upsert: same installation_id — must update, not insert a new row.
+  select lorekit_installation_upsert(
+    9000001, 555001, 'octocat-test', 'User',
+    null, 'pending', '{}'::text[]
+  ) into v_id2;
+
+  select count(*) into v_count
+    from github_installations where installation_id = 9000001;
+
+  assert v_count = 1,
+    format('installation idempotency: double-apply must produce exactly 1 row, got %s', v_count);
+  assert v_id1 = v_id2,
+    'installation idempotency: both upserts must return the same row id';
+end;
+$$;
+
+-- ── 39. pending → linked transition on user match (AC-4, AC-5) ───────────────
+do $$
+declare
+  v_status text;
+  v_user_id uuid;
+begin
+  -- Seed a pending installation.
+  perform lorekit_installation_upsert(
+    9000002, 555002, 'pending-user', 'User',
+    null, 'pending', '{}'::text[]
+  );
+
+  -- Verify it is pending with user_id NULL.
+  select status, user_id into v_status, v_user_id
+    from github_installations where installation_id = 9000002;
+  assert v_status = 'pending',
+    format('pending install: expected status=pending, got %s', v_status);
+  assert v_user_id is null,
+    'pending install: user_id must be NULL for a pending installation';
+
+  -- Transition to linked by re-upserting with a matched user_id.
+  perform lorekit_installation_upsert(
+    9000002, 555002, 'pending-user', 'User',
+    '00000000-0000-0000-0000-0000000000a1', 'linked', '{}'::text[]
+  );
+
+  -- Verify it is now linked.
+  select status, user_id into v_status, v_user_id
+    from github_installations where installation_id = 9000002;
+  assert v_status = 'linked',
+    format('linked transition: expected status=linked, got %s', v_status);
+  assert v_user_id = '00000000-0000-0000-0000-0000000000a1',
+    format('linked transition: user_id must be the matched user, got %s', v_user_id);
+end;
+$$;
+
+-- ── 40. Linked status never regresses to pending on re-delivery (AC-7) ────────
+do $$
+declare v_status text;
+begin
+  -- A subsequent delivery of the same event as pending must not overwrite the linked status.
+  perform lorekit_installation_upsert(
+    9000002, 555002, 'pending-user', 'User',
+    null, 'pending', '{}'::text[]
+  );
+
+  select status into v_status
+    from github_installations where installation_id = 9000002;
+
+  assert v_status = 'linked',
+    format('no regression: a linked installation must not regress to pending on re-delivery, got %s', v_status);
+end;
+$$;
+
+-- ── 41. Installation repositories: add, active rows tracked (AC-2) ─────
+do $$
+declare
+  v_count int;
+begin
+  -- Upsert installation 9000003 with two covered repos.
+  perform lorekit_installation_upsert(
+    9000003, 555003, 'app-org', 'Organization',
+    null, 'pending',
+    array['acme/covered-repo', 'acme/another-repo']
+  );
+
+  -- Two covered repos were inserted; both must be active.
+  select count(*) into v_count
+    from installation_repositories where installation_id = 9000003 and active = true;
+  assert v_count = 2,
+    format('installation repos: expected 2 active rows for installation 9000003, got %s', v_count);
+
+  assert exists (select 1 from installation_repositories where installation_id = 9000003 and full_name = 'acme/covered-repo' and active = true),
+    'installation repos: acme/covered-repo must be present and active';
+  assert exists (select 1 from installation_repositories where installation_id = 9000003 and full_name = 'acme/another-repo' and active = true),
+    'installation repos: acme/another-repo must be present and active';
+end;
+$$;
+
+-- ── 42. Remove repos: inactive flag set correctly (AC-2) ───────────────
+do $$
+begin
+  -- Remove one of the two repos added in §41.
+  perform lorekit_installation_remove_repos(9000003, array['acme/covered-repo']);
+
+  -- The removed repo must be inactive.
+  assert exists (select 1 from installation_repositories where installation_id = 9000003 and full_name = 'acme/covered-repo' and active = false),
+    'remove repos: acme/covered-repo must be inactive after removal';
+
+  -- The other repo must still be active.
+  assert exists (select 1 from installation_repositories where installation_id = 9000003 and full_name = 'acme/another-repo' and active = true),
+    'remove repos: acme/another-repo must still be active after partial removal';
+end;
+$$;
+
+-- ── 43. Remove installation: all repos go inactive, status=removed (AC-2) ─────
+do $$
+declare
+  v_status text;
+begin
+  perform lorekit_installation_remove(9000003);
+
+  select status into v_status
+    from github_installations where installation_id = 9000003;
+  assert v_status = 'removed',
+    format('remove installation: status must be removed, got %s', v_status);
+
+  -- All repos for this installation must be inactive after removal.
+  assert not exists (select 1 from installation_repositories where installation_id = 9000003 and active = true),
+    'remove installation: all repos must be inactive after installation removal';
+end;
+$$;
+
+-- ── 44. RLS: user A sees only their own linked installations (AC-10) ──────────
+do $$
+declare
+  v_visible_a int;
+  v_visible_b int;
+begin
+  -- Link installation 9000002 to user A (already linked above).
+  -- Insert a second installation linked to a different user (B, 0000b2).
+  perform lorekit_installation_upsert(
+    9000004, 555004, 'user-b-gh', 'User',
+    '00000000-0000-0000-0000-0000000000b2', 'linked', '{}'::text[]
+  );
+
+  -- User A should see only their own linked installation (9000002).
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  select count(*) into v_visible_a from github_installations;
+  reset role;
+
+  -- User B should see only their own linked installation (9000004).
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}', true);
+  select count(*) into v_visible_b from github_installations;
+  reset role;
+
+  assert v_visible_a = 1,
+    format('installations RLS: user A must see only their own linked installation, saw %s', v_visible_a);
+  assert v_visible_b = 1,
+    format('installations RLS: user B must see only their own linked installation, saw %s', v_visible_b);
+end;
+$$;
+
+-- ── 45. Pending rows are invisible to authenticated users (AC-4) ─────────────
+do $$
+declare v_visible int;
+begin
+  -- installation 9000001 is pending (user_id NULL) — neither A nor B owns it.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  -- This query would see 9000001 if RLS were broken.
+  select count(*) into v_visible
+    from github_installations where installation_id = 9000001;
+  reset role;
+
+  assert v_visible = 0,
+    format('pending RLS: a pending installation (user_id NULL) must be invisible to authenticated users, saw %s', v_visible);
+end;
+$$;
+
+-- ── 46. webhook_secrets row count must be unchanged by reconcile (AC-2) ───────
+-- This asserts that the App reconcile path (lorekit_installation_upsert) does
+-- NOT write any webhook_secrets rows.  Count before and after a reconcile cycle.
+do $$
+declare
+  v_count_before int;
+  v_count_after int;
+begin
+  select count(*) into v_count_before from webhook_secrets;
+
+  -- Full reconcile cycle: create, add repos, remove repos, remove installation.
+  perform lorekit_installation_upsert(
+    9000099, 555099, 'no-secret-write', 'User',
+    null, 'pending', array['nope/repo1']
+  );
+  perform lorekit_installation_remove_repos(9000099, array['nope/repo1']);
+  perform lorekit_installation_remove(9000099);
+
+  select count(*) into v_count_after from webhook_secrets;
+
+  assert v_count_after = v_count_before,
+    format('webhook_secrets isolation: reconcile must not write any webhook_secrets rows (before=%s after=%s)',
+           v_count_before, v_count_after);
+end;
+$$;
 
 -- ═════════════════════════════════════════════════════════════════════════
 -- Invite-details modal: lorekit_invite_org_details (00028)
 -- ═════════════════════════════════════════════════════════════════════════
 
--- ── 38. lorekit_invite_org_details: the addressed invitee gets exactly one
+-- ── 47. lorekit_invite_org_details: the addressed invitee gets exactly one
 -- row of Tier-A org details; a different authenticated user gets zero (AC-2) ─
 do $$
 declare
@@ -1713,6 +1938,7 @@ begin
   assert v_count = 1, 'TTL-clear AC-3: no-flag update must preserve existing expires_at';
 end;
 $$;
+
 
 
 rollback;
