@@ -8,3 +8,7 @@ export const OrgMemberSchema = z.object({
   display_name: z.string().nullable(), avatar_url: z.string().nullable(),
 });
 export type OrgMember = z.infer<typeof OrgMemberSchema>;
+
+/** List response for GET /orgs/:slug/members */
+export const OrgMemberListResponseSchema = z.object({ entries: z.array(OrgMemberSchema) });
+export type OrgMemberListResponse = z.infer<typeof OrgMemberListResponseSchema>;

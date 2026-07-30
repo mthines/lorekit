@@ -59,3 +59,11 @@ export const MemoryEntrySchema = z.object({
   expires_at: z.string().datetime().nullable(), archived_at: z.string().datetime().nullable(),
 });
 export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
+
+/** Paginated list response for GET /memories and POST /memories/search */
+export const MemoryPageResponseSchema = z.object({
+  entries: z.array(MemoryEntrySchema),
+  hasMore: z.boolean(),
+  nextCursor: z.string().nullable(),
+});
+export type MemoryPageResponse = z.infer<typeof MemoryPageResponseSchema>;

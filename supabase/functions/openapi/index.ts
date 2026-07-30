@@ -36,8 +36,8 @@ Deno.serve(async (req) => {
   const cors = corsHeaders(req);
   const url = new URL(req.url);
 
-  return traceRequest(req, 'lorekit.api-openapi', async (span) => {
-    span.setAttributes({ 'lorekit.function': 'api-openapi' });
+  return traceRequest(req, 'lorekit.openapi', async (span) => {
+    span.setAttributes({ 'lorekit.function': 'openapi' });
 
     if (url.pathname.endsWith('/ui')) {
       const specUrl = url.href.replace(/\/ui$/, '');

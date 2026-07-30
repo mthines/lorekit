@@ -65,13 +65,13 @@ verify_jwt = false
 [functions.health]
 verify_jwt = false
 
-[functions.api-memories]
+[functions.memories]
 verify_jwt = false
 
-[functions.api-orgs]
+[functions.orgs]
 verify_jwt = false
 
-[functions.api-openapi]
+[functions.openapi]
 verify_jwt = false
 
 [analytics]

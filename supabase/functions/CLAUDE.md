@@ -1,14 +1,15 @@
 # LoreKit Supabase Edge Functions
 
 ## Function naming
-All REST API functions are prefixed `api-`: `api-memories`, `api-orgs`, `api-openapi`.
+Functions are named after their domain resource: `memories`, `orgs`, `openapi`.
+No `api-` or `rest-` prefix — transport and layer are implementation details, not names.
 The existing `mcp` and `health` functions are unchanged.
 
 ## Adding a new REST function
 
-1. Create `supabase/functions/api-{resource}/index.ts` following the pattern in `api-memories/index.ts`
-2. Create `supabase/functions/api-{resource}/handlers/*.ts` for each method+path combination
-3. Add `[functions.api-{resource}]\nverify_jwt = false` to `supabase/config.toml`
+1. Create `supabase/functions/{resource}/index.ts` following the pattern in `memories/index.ts`
+2. Create `supabase/functions/{resource}/handlers/*.ts` for each method+path combination
+3. Add `[functions.{resource}]\nverify_jwt = false` to `supabase/config.toml`
 4. Document in this file
 
 ## Shared utilities
@@ -27,11 +28,11 @@ All Zod schemas live in `packages/schemas/` (@lorekit/schemas). Import via the i
 
 ## Telemetry
 
-Every function calls `traceRequest(req, 'lorekit.api-{resource}', ...)` as the root span.
+Every function calls `traceRequest(req, 'lorekit.{resource}', ...)` as the root span.
 Auth resolution creates a `lorekit.rest.auth` child span automatically.
 Router creates a child span per handler call named `lorekit.{function}.{method}.{path}`.
 DB operations get child spans automatically via `createTracedClient`.
-Add `span.child('lorekit.rest.{operation}')` for any significant sub-operation.
+Add `span.child('lorekit.{resource}.{operation}')` for any significant sub-operation.
 
 ## Deploying
-`pnpm nx fn:deploy supabase` — deploys all functions including new api-* ones.
+`pnpm nx fn:deploy supabase` — deploys all functions.

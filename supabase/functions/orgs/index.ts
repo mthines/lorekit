@@ -28,14 +28,14 @@ const router = createRouter([
   { method: 'GET',    path: '/:slug/invites',               handler: handleListInvites,  requires: 'jwt' },
   { method: 'POST',   path: '/:slug/invites',               handler: handleCreateInvite, requires: 'jwt' },
   { method: 'DELETE', path: '/:slug/invites/:inviteId',     handler: handleRevokeInvite, requires: 'jwt' },
-], 'api-orgs');
+], 'orgs');
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handlePreflight(req);
   const cors = corsHeaders(req);
 
-  return traceRequest(req, 'lorekit.api-orgs', async (span) => {
-    span.setAttributes({ 'lorekit.function': 'api-orgs' });
+  return traceRequest(req, 'lorekit.orgs', async (span) => {
+    span.setAttributes({ 'lorekit.function': 'orgs' });
     const resolved = await resolveRestAuth(req, span);
     if (!resolved) return unauthorized(cors);
 

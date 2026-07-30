@@ -26,4 +26,18 @@ export const FilterGroupSchema: z.ZodType<FilterGroup> = z.lazy(() =>
 
 export const ErrorResponseSchema = z.object({ error: z.string(), code: z.string().optional(), details: z.record(z.unknown()).optional() });
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
+
 export const UuidSchema = z.string().uuid('must be a valid UUID');
+
+// Path parameter schemas — used by REST route handlers and OpenAPI spec.
+export const MemoryIdParamsSchema = z.object({ id: UuidSchema });
+export type MemoryIdParams = z.infer<typeof MemoryIdParamsSchema>;
+
+export const OrgSlugParamsSchema = z.object({ slug: z.string().min(3).max(50) });
+export type OrgSlugParams = z.infer<typeof OrgSlugParamsSchema>;
+
+export const OrgSlugMemberParamsSchema = z.object({ slug: z.string().min(3).max(50), userId: UuidSchema });
+export type OrgSlugMemberParams = z.infer<typeof OrgSlugMemberParamsSchema>;
+
+export const OrgSlugInviteParamsSchema = z.object({ slug: z.string().min(3).max(50), inviteId: UuidSchema });
+export type OrgSlugInviteParams = z.infer<typeof OrgSlugInviteParamsSchema>;

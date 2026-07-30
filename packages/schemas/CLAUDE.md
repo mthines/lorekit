@@ -18,10 +18,18 @@ Single source of truth for all lorekit data shapes — Zod schemas for both MCP 
 
 | Schema | File | Used by |
 |---|---|---|
-| `MemoryWriteSchema` | `memory.ts` | MCP + REST POST /api-memories |
-| `ListMemoriesQuerySchema` | `memory.ts` | REST GET /api-memories |
-| `SearchMemoriesBodySchema` | `memory.ts` | REST POST /api-memories/search |
-| `UpdateMemoryBodySchema` | `memory.ts` | REST PATCH /api-memories/:id |
-| `OrgResponseSchema` | `org.ts` | REST /api-orgs |
+| `MemoryWriteSchema` | `memory.ts` | MCP + REST POST /memories |
+| `ListMemoriesQuerySchema` | `memory.ts` | REST GET /memories |
+| `SearchMemoriesBodySchema` | `memory.ts` | REST POST /memories/search |
+| `UpdateMemoryBodySchema` | `memory.ts` | REST PATCH /memories/:id |
+| `MemoryPageResponseSchema` | `memory.ts` | REST GET /memories, POST /memories/search |
+| `OrgResponseSchema` | `org.ts` | REST /orgs |
+| `OrgListResponseSchema` | `org.ts` | REST GET /orgs |
+| `OrgMemberListResponseSchema` | `member.ts` | REST GET /orgs/:slug/members |
+| `OrgInviteListResponseSchema` | `invite.ts` | REST GET /orgs/:slug/invites |
+| `MemoryIdParamsSchema` | `common.ts` | REST /memories/:id path params |
+| `OrgSlugParamsSchema` | `common.ts` | REST /orgs/:slug path params |
+| `OrgSlugMemberParamsSchema` | `common.ts` | REST /orgs/:slug/members/:userId |
+| `OrgSlugInviteParamsSchema` | `common.ts` | REST /orgs/:slug/invites/:inviteId |
 | `ScopeSchema` | `scope.ts` | MCP tool input validation |
 | `RawScopeSchema` | `scope.ts` | REST query params, OpenAPI |

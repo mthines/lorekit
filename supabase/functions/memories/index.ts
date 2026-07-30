@@ -18,14 +18,14 @@ const router = createRouter([
   { method: 'PATCH',  path: '/:id',     handler: handleUpdate, requires: 'write' },
   { method: 'DELETE', path: '/:id',     handler: handleRemove, requires: 'write' },
   { method: 'POST',   path: '/search',  handler: handleSearch, requires: 'read'  },
-], 'api-memories');
+], 'memories');
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handlePreflight(req);
   const cors = corsHeaders(req);
 
-  return traceRequest(req, 'lorekit.api-memories', async (span) => {
-    span.setAttributes({ 'lorekit.function': 'api-memories' });
+  return traceRequest(req, 'lorekit.memories', async (span) => {
+    span.setAttributes({ 'lorekit.function': 'memories' });
 
     const resolved = await resolveRestAuth(req, span);
     if (!resolved) return unauthorized(cors);

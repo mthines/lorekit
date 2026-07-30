@@ -13,3 +13,7 @@ export const OrgInviteSchema = z.object({
   role: MemberRoleSchema, created_at: z.string().datetime(), expires_at: z.string().datetime().nullable(),
 });
 export type OrgInvite = z.infer<typeof OrgInviteSchema>;
+
+/** List response for GET /orgs/:slug/invites */
+export const OrgInviteListResponseSchema = z.object({ entries: z.array(OrgInviteSchema) });
+export type OrgInviteListResponse = z.infer<typeof OrgInviteListResponseSchema>;

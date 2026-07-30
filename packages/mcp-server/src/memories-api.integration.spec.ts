@@ -1,19 +1,18 @@
 /**
- * LoreKit REST API Smoke Test — Integration
- * ------------------------------------------
- * Exercises the REST api-memories endpoint end-to-end against a live LoreKit
+ * LoreKit memories REST API — integration smoke test
+ * ---------------------------------------------------
+ * Exercises the `memories` Edge Function end-to-end against a live LoreKit
  * instance. Runs in CI (and locally) when the required environment variables
  * are present; skips gracefully otherwise.
  *
  * Required env vars:
  *   LOREKIT_SMOKE_TOKEN      Bearer token (service-role key, lk_* API token, or user JWT)
- *   LOREKIT_REST_BASE_URL    Base URL of the REST API
- *                            e.g. https://<ref>.supabase.co/functions/v1
+ *   LOREKIT_REST_BASE_URL    Base URL, e.g. https://<ref>.supabase.co/functions/v1
  *                            Defaults to http://localhost:54321/functions/v1
  *
  * Run standalone:
  *   LOREKIT_SMOKE_TOKEN=<token> LOREKIT_REST_BASE_URL=<url> \
- *     pnpm nx test mcp-server -- --reporter=verbose --testPathPattern=rest-smoke.integration
+ *     pnpm nx test mcp-server -- --reporter=verbose --testPathPattern=memories-api.integration
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
@@ -22,7 +21,7 @@ const BASE = (process.env['LOREKIT_REST_BASE_URL'] ?? 'http://localhost:54321/fu
 const TOKEN = process.env['LOREKIT_SMOKE_TOKEN'];
 const SKIP = !TOKEN;
 
-const KEY_PREFIX = `rest-smoke-${Date.now()}`;
+const KEY_PREFIX = `memories-smoke-${Date.now()}`;
 const SCOPE = 'global';
 const KEY_A = `${KEY_PREFIX}-a`;
 const KEY_B = `${KEY_PREFIX}-b`;
@@ -30,7 +29,7 @@ const KEY_B = `${KEY_PREFIX}-b`;
 type JsonObj = Record<string, unknown>;
 
 async function api(method: string, path: string, body?: unknown): Promise<{ status: number; data: unknown }> {
-  const res = await fetch(`${BASE}/api-memories${path}`, {
+  const res = await fetch(`${BASE}/memories${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${TOKEN}`,
@@ -44,7 +43,7 @@ async function api(method: string, path: string, body?: unknown): Promise<{ stat
   return { status: res.status, data };
 }
 
-describe.skipIf(SKIP)('LoreKit REST API smoke tests (integration)', () => {
+describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', () => {
   let createdIdA = '';
   let createdIdB = '';
 
@@ -56,7 +55,7 @@ describe.skipIf(SKIP)('LoreKit REST API smoke tests (integration)', () => {
   });
 
   // 1. list — baseline ────────────────────────────────────────────────────────
-  it('GET /api-memories — returns a paged response', async () => {
+  it('GET /memories — returns a paged response', async () => {
     const { status, data } = await api('GET', '/');
     expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
     const d = data as JsonObj;
@@ -65,7 +64,7 @@ describe.skipIf(SKIP)('LoreKit REST API smoke tests (integration)', () => {
   });
 
   // 2. create ─────────────────────────────────────────────────────────────────
-  it('POST /api-memories — creates entry A', async () => {
+  it('POST /memories — creates entry A', async () => {
     const { status, data } = await api('POST', '/', {
       scope: SCOPE, key: KEY_A, value: 'rest-smoke-alpha',
     });
@@ -78,7 +77,7 @@ describe.skipIf(SKIP)('LoreKit REST API smoke tests (integration)', () => {
   });
 
   // 3. create second ──────────────────────────────────────────────────────────
-  it('POST /api-memories — creates entry B with tags', async () => {
+  it('POST /memories — creates entry B with tags', async () => {
     const { status, data } = await api('POST', '/', {
       scope: SCOPE, key: KEY_B,
       value: `rest-smoke-beta unique-phrase-${KEY_PREFIX}`,
@@ -91,7 +90,7 @@ describe.skipIf(SKIP)('LoreKit REST API smoke tests (integration)', () => {
   });
 
   // 4. get by id ──────────────────────────────────────────────────────────────
-  it('GET /api-memories/:id — returns entry A', async () => {
+  it('GET /memories/:id — returns entry A', async () => {
     expect(createdIdA, 'createdIdA must be set').toBeTruthy();
     const { status, data } = await api('GET', `/${createdIdA}`);
     expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
@@ -101,7 +100,7 @@ describe.skipIf(SKIP)('LoreKit REST API smoke tests (integration)', () => {
   });
 
   // 5. update ─────────────────────────────────────────────────────────────────
-  it('PATCH /api-memories/:id — updates entry A value', async () => {
+  it('PATCH /memories/:id — updates entry A value', async () => {
     expect(createdIdA).toBeTruthy();
     const { status, data } = await api('PATCH', `/${createdIdA}`, { value: 'rest-smoke-alpha-updated' });
     expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
@@ -109,7 +108,7 @@ describe.skipIf(SKIP)('LoreKit REST API smoke tests (integration)', () => {
   });
 
   // 6. list with scope filter ─────────────────────────────────────────────────
-  it('GET /api-memories?scope=global — includes both keys', async () => {
+  it('GET /memories?scope=global — includes both keys', async () => {
     const { status, data } = await api('GET', `/?scope=${SCOPE}&limit=100`);
     expect(status).toBe(200);
     const entries = (data as JsonObj).entries as JsonObj[];
@@ -119,7 +118,7 @@ describe.skipIf(SKIP)('LoreKit REST API smoke tests (integration)', () => {
   });
 
   // 7. search ─────────────────────────────────────────────────────────────────
-  it('POST /api-memories/search — finds entry B by unique phrase', async () => {
+  it('POST /memories/search — finds entry B by unique phrase', async () => {
     const { status, data } = await api('POST', '/search', {
       q: `unique-phrase-${KEY_PREFIX}`,
     });
@@ -130,21 +129,21 @@ describe.skipIf(SKIP)('LoreKit REST API smoke tests (integration)', () => {
   });
 
   // 8. delete (archive) ───────────────────────────────────────────────────────
-  it('DELETE /api-memories/:id — archives entry A (204)', async () => {
+  it('DELETE /memories/:id — archives entry A (204)', async () => {
     expect(createdIdA).toBeTruthy();
     const { status } = await api('DELETE', `/${createdIdA}`);
     expect(status, `expected 204`).toBe(204);
   });
 
   // 9. get after archive ──────────────────────────────────────────────────────
-  it('GET /api-memories/:id — returns 404 after archive', async () => {
+  it('GET /memories/:id — returns 404 after archive', async () => {
     expect(createdIdA).toBeTruthy();
     const { status } = await api('GET', `/${createdIdA}`);
     expect(status).toBe(404);
   });
 
   // 10. invalid body ──────────────────────────────────────────────────────────
-  it('POST /api-memories — returns 400 for missing required fields', async () => {
+  it('POST /memories — returns 400 for missing required fields', async () => {
     const { status, data } = await api('POST', '/', { value: 'no-scope-or-key' });
     expect(status, `expected 400; got ${status}: ${JSON.stringify(data)}`).toBe(400);
     expect((data as JsonObj).error).toBeTruthy();

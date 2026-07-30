@@ -1,8 +1,8 @@
 # _shared/api — REST utility modules
 
-Seven modules that every `api-*` edge function uses.
+Seven modules shared by every REST edge function (`memories`, `orgs`, `openapi`).
 
-## Import paths (from a function like `api-memories/`)
+## Import paths (from a function like `memories/`)
 
 ```typescript
 import { resolveRestAuth } from '../_shared/api/auth.ts';
@@ -49,10 +49,10 @@ import { RestError, translateDbError } from '../_shared/api/errors.ts';
 - `RestError` — extends Error, carries `status`, `code`, `details`. Call `.toResponse(cors)`.
 - `translateDbError(err)` — maps Postgres SQLSTATE codes to `RestError` instances.
 
-## Full example: api-memories/index.ts + one handler
+## Full example: memories/index.ts + one handler
 
 ```typescript
-// api-memories/index.ts
+// memories/index.ts
 import { traceRequest } from '../_shared/otel.ts';
 import { resolveRestAuth } from '../_shared/api/auth.ts';
 import { createRouter } from '../_shared/api/router.ts';
@@ -63,12 +63,12 @@ import { handleList } from './handlers/list.ts';
 
 const router = createRouter([
   { method: 'GET', path: '/', handler: handleList, requires: 'read' },
-], 'api-memories');
+], 'memories');
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handlePreflight(req);
   const cors = corsHeaders(req);
-  return traceRequest(req, 'lorekit.api-memories', async (span) => {
+  return traceRequest(req, 'lorekit.memories', async (span) => {
     const resolved = await resolveRestAuth(req, span);
     if (!resolved) return unauthorized(cors);
     try {
@@ -85,7 +85,7 @@ Deno.serve(async (req) => {
 ```
 
 ```typescript
-// api-memories/handlers/list.ts
+// memories/handlers/list.ts
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import type { AuthContext, DbClient } from '../../_shared/api/auth.ts';
 import { ok } from '../../_shared/api/respond.ts';

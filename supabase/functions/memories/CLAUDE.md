@@ -1,4 +1,4 @@
-# api-memories — REST memory CRUD
+# memories — REST memory CRUD
 
 Handles all memory operations via HTTP. Auth is managed by the shared `resolveRestAuth` utility (service key, lk_ API token, or Supabase JWT).
 
@@ -25,5 +25,5 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 1. Create `handlers/{name}.ts` exporting `async function handle{Name}(req, auth, db, span, params, cors)`.
 2. Import in `index.ts` and add a route entry to the `createRouter` call.
 3. Use `validateBody` / `validateQuery` / `validateUuid` from `_shared/api/validate.ts`.
-4. Always create a child span: `span.child('lorekit.memories.{op}')`.
+4. Always create a child span: `span.child('lorekit.memories.{operation}')`.
 5. Translate DB errors with `translateDbError` before re-throwing.
