@@ -74,6 +74,7 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
  * minting, no reconcile, no App-secret lookup.  This keeps the live path
  * dormant until the App is registered and its secrets are provisioned.
  */
+// ── Feature flags ───────────────────────────────────────────────────────────
 const GITHUB_APP_ENABLED = Deno.env.get('GITHUB_APP_ENABLED') === 'true';
 /** TTL for all webhook-sourced memory candidates (days). */
 const WEBHOOK_TTL_DAYS = 30;
@@ -300,6 +301,7 @@ async function reconcileAppInstallation(
 
   if (upsertError) {
     span.setAttributes({ 'lorekit.installation.upsert_error': upsertError.message });
+    span.error(`InstallationUpsertError: ${upsertError.message}`);
   }
 
   return true;
