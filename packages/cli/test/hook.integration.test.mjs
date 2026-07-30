@@ -129,20 +129,14 @@ test('the nudge fires at most once per session (throttle)', () => {
   assert.equal(b.stdout, ''); // second call in the same session is suppressed
 });
 
-// A mock MCP endpoint returning a fixed lesson set for any scope.
+// A mock REST endpoint returning a fixed lesson set for any scope.
+// remote.mjs now calls restFetch (REST API) for memory.list, not mcpCall.
 function mockLessonServer(entries) {
   return http.createServer((req, res) => {
-    let body = '';
-    req.on('data', (c) => (body += c));
+    req.on('data', () => {}); // drain body
     req.on('end', () => {
       res.setHeader('content-type', 'application/json');
-      res.end(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          result: { content: [{ type: 'text', text: JSON.stringify({ entries }) }] },
-        }),
-      );
+      res.end(JSON.stringify({ entries, hasMore: false, nextCursor: null }));
     });
   });
 }
@@ -227,26 +221,17 @@ test('PostToolUseFailure with no store configured still nudges (best-effort)', (
 });
 
 test('SessionStart reads lessons from the MCP server and injects them', async () => {
-  // Mock LoreKit MCP endpoint that returns one lesson for any scope.
+  // Mock LoreKit REST endpoint that returns one lesson for any scope.
+  // remote.mjs now calls restFetch (REST API) for memory.list, not mcpCall.
   const server = http.createServer((req, res) => {
-    let body = '';
-    req.on('data', (c) => (body += c));
+    req.on('data', () => {}); // drain body
     req.on('end', () => {
       res.setHeader('content-type', 'application/json');
       res.end(
         JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          result: {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({
-                  entries: [{ key: 'lorekit-memory::demo', value: 'Demo lesson first line\nsecond', tags: [] }],
-                }),
-              },
-            ],
-          },
+          entries: [{ key: 'lorekit-memory::demo', value: 'Demo lesson first line\nsecond', tags: [] }],
+          hasMore: false,
+          nextCursor: null,
         }),
       );
     });

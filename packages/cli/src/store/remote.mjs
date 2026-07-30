@@ -1,25 +1,14 @@
-// Remote store: wraps the LoreKit MCP `memory.*` tools behind the common store
-// contract. Behaviour is identical to the previous direct `mcpCall` usage —
-// this only relocates it behind the interface. Zero-dependency.
-import { mcpCall } from '../mcp.mjs';
+// Remote store: wraps the LoreKit REST API `memory.*` endpoints behind the
+// common store contract. Memory operations use the REST API for lower overhead
+// and W3C traceparent propagation. Org operations remain on MCP because org
+// RPCs require a Supabase JWT session (auth.uid() via SECURITY DEFINER
+// functions), which is incompatible with the lk_* api_key tokens that CLI
+// users have. Zero-dependency.
+import { mcpCall, restFetch, mcpToRestBase } from '../mcp.mjs';
+import { getActiveTraceparent } from '../telemetry.mjs';
 
-// LoreKit returns tool output as { content: [{ type:'text', text:'<json>' }] }.
-function unwrap(result) {
-  if (!result) return null;
-  if (Array.isArray(result.content)) {
-    const text = result.content.map((c) => (c && c.text) || '').join('');
-    try {
-      return JSON.parse(text);
-    } catch {
-      return null;
-    }
-  }
-  return result;
-}
-
-// Drop undefined/null args so the JSON-RPC payload matches the old direct calls
-// (e.g. `memory.list` with only { scope, limit }).
-function clean(obj) {
+// Drop undefined/null args so JSON payloads stay tidy.
+function stripUndefined(obj) {
   const out = {};
   for (const [k, v] of Object.entries(obj || {})) if (v !== undefined && v !== null) out[k] = v;
   return out;
@@ -31,8 +20,9 @@ export function createRemoteStore({ endpoint, token } = {}) {
 
 class RemoteStore {
   constructor(endpoint, token) {
-    this.endpoint = endpoint;
+    this.endpoint = endpoint; // MCP URL (kept for org ops)
     this.token = token;
+    this.restBase = mcpToRestBase(endpoint); // REST base URL for memory ops
     this.mode = 'remote';
   }
 
@@ -40,82 +30,135 @@ class RemoteStore {
     return Boolean(this.endpoint && this.token && !String(this.endpoint).includes('<project-ref>'));
   }
 
-  async _call(name, args) {
+  _tp() { return getActiveTraceparent(); }
+
+  async _rest(path, opts = {}) {
+    if (!this.usable()) return { ok: false, unusable: true };
+    return restFetch(this.restBase, this.token, path, { ...opts, traceparent: this._tp() });
+  }
+
+  async _mcp(name, args) {
     if (!this.usable()) return { ok: false, unusable: true };
     return mcpCall(this.endpoint, this.token, 'tools/call', { name, arguments: args });
   }
 
-  _entries(res) {
+  _mcpEntries(res) {
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
-    const payload = unwrap(res.result);
-    const entries = payload && Array.isArray(payload.entries) ? payload.entries : [];
-    return { ok: true, entries };
+    // MCP wraps results in { content: [{ type: 'text', text: '<json>' }] }
+    let payload = null;
+    if (Array.isArray(res.result?.content)) {
+      const text = res.result.content.map((c) => c?.text ?? '').join('');
+      try { payload = JSON.parse(text); } catch { /* ignore */ }
+    } else { payload = res.result; }
+    return { ok: true, entries: Array.isArray(payload?.entries) ? payload.entries : [] };
   }
 
+  // ── Memory operations → REST ──────────────────────────────────────────────
+
   async list({ scope, tags, limit } = {}) {
-    return this._entries(await this._call('memory.list', clean({ scope, tags, limit })));
+    const p = new URLSearchParams();
+    if (scope) p.set('scope', scope);
+    if (tags?.length) p.set('tags', Array.isArray(tags) ? tags.join(',') : tags);
+    if (limit) p.set('limit', String(limit));
+    const res = await this._rest(`/memories?${p}`);
+    if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
+    return { ok: true, entries: res.data?.entries ?? [] };
   }
 
   async search({ q, scopes, tags } = {}) {
-    return this._entries(await this._call('memory.search', clean({ q, scopes, tags })));
+    const body = {};
+    if (q) body.q = q;
+    if (scopes?.length) body.scopes = scopes;
+    if (tags?.length) body.tags = tags;
+    const res = await this._rest('/memories/search', { method: 'POST', body });
+    if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
+    return { ok: true, entries: res.data?.entries ?? [] };
   }
 
   async read({ scope, key } = {}) {
-    const res = await this._call('memory.read', { scope, key });
+    const p = new URLSearchParams();
+    if (scope) p.set('scope', scope);
+    if (key) p.set('key', key);
+    const res = await this._rest(`/memories?${p}`);
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
-    const payload = unwrap(res.result);
-    return { ok: true, entry: payload && payload.entry ? payload.entry : payload };
+    const entries = res.data?.entries ?? [];
+    return { ok: true, entry: entries[0] ?? null };
   }
 
   async write(args = {}) {
-    const res = await this._call('memory.write', clean(args));
-    return { ok: res.ok, error: res.error, networkError: res.networkError, result: res.result };
+    const { scope, key, value, tags, source_agent, trigger, org, ttl_days, clear_ttl, created_at } = args;
+    const body = { scope, key, value };
+    if (tags !== undefined) body.tags = tags;
+    if (source_agent !== undefined) body.source_agent = source_agent;
+    if (trigger !== undefined) body.trigger = trigger;
+    if (org !== undefined) body.org = org;
+    if (ttl_days !== undefined) body.ttl_days = ttl_days;
+    if (clear_ttl !== undefined) body.clear_ttl = clear_ttl;
+    if (created_at !== undefined) body.created_at = created_at;
+    const res = await this._rest('/memories', { method: 'POST', body });
+    return { ok: res.ok, error: res.error, networkError: res.networkError };
   }
 
-  async delete({ scope, key, force } = {}) {
-    const res = await this._call('memory.delete', { scope, key, force: Boolean(force) });
+  async delete({ scope, key, force = false } = {}) {
+    if (force) {
+      // Hard-delete requires MCP — REST only supports soft-archive (archived_at)
+      const res = await this._mcp('memory.delete', { scope, key, force: true });
+      return { ok: res.ok, error: res.error, networkError: res.networkError };
+    }
+    // Soft-archive via natural-key REST endpoint
+    const p = new URLSearchParams({ scope, key });
+    const res = await this._rest(`/memories?${p}`, { method: 'DELETE' });
     return { ok: res.ok, error: res.error, networkError: res.networkError };
   }
 
   async archive({ scope, key } = {}) {
-    const res = await this._call('memory.archive', { scope, key });
-    return { ok: res.ok, error: res.error, networkError: res.networkError };
+    // Soft-archive = DELETE without force
+    return this.delete({ scope, key, force: false });
   }
 
-  // ── Org management ─────────────────────────────────────────────────────────
-  // These proxy to the hosted MCP endpoint's org.* tools. Auth is resolved
-  // server-side from the Bearer token; no user-id is passed by the caller.
+  // ── Org operations ─────────────────────────────────────────────────────────
+  // Org RPCs (lorekit_org_*) use auth.uid() server-side via SECURITY DEFINER
+  // functions, which only works with a Supabase JWT session. CLI uses lk_*
+  // api_key tokens which provide no JWT context, so the REST /orgs endpoint
+  // returns 403 for api_key callers. Org ops stay on the MCP endpoint which
+  // handles this correctly (the Deno edge function has its own auth path).
+  // TODO: if org RPCs ever gain api_key support, switch these to REST too.
 
   async orgCreate({ slug, name } = {}) {
-    const res = await this._call('org.create', clean({ slug, name }));
+    const res = await this._mcp('org.create', { slug, name });
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
-    const payload = unwrap(res.result);
+    let payload = null;
+    if (Array.isArray(res.result?.content)) {
+      try { payload = JSON.parse(res.result.content.map((c) => c?.text ?? '').join('')); } catch {}
+    } else { payload = res.result; }
     return { ok: true, org: payload };
   }
 
   async orgList() {
-    const res = await this._call('org.list', {});
-    return this._entries(res);
+    const res = await this._mcp('org.list', {});
+    return this._mcpEntries(res);
   }
 
   async orgRename({ slug, name } = {}) {
-    const res = await this._call('org.rename', clean({ slug, name }));
+    const res = await this._mcp('org.rename', { slug, name });
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
-    const payload = unwrap(res.result);
-    return { ok: true, ...payload };
+    let payload = null;
+    try { payload = Array.isArray(res.result?.content) ? JSON.parse(res.result.content.map((c) => c?.text ?? '').join('')) : res.result; } catch {}
+    return { ok: true, ...(payload ?? {}) };
   }
 
   async orgDelete({ slug } = {}) {
-    const res = await this._call('org.delete', clean({ slug }));
+    const res = await this._mcp('org.delete', { slug });
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
-    const payload = unwrap(res.result);
-    return { ok: true, ...payload };
+    let payload = null;
+    try { payload = Array.isArray(res.result?.content) ? JSON.parse(res.result.content.map((c) => c?.text ?? '').join('')) : res.result; } catch {}
+    return { ok: true, ...(payload ?? {}) };
   }
 
-  // Store-wide scope enumeration is NOT possible against the hosted MCP surface:
-  // every read tool (memory.list / memory.search / memory.read) REQUIRES a
-  // scope, and there is no "list all scopes" tool. Signal that honestly so the
-  // `scopes` command shows a clear note rather than faking an inventory.
+  // Store-wide scope enumeration is NOT possible against the hosted REST surface:
+  // every read tool requires a scope, and there is no "list all scopes" endpoint.
+  // Signal that honestly so the `scopes` command shows a clear note rather than
+  // faking an inventory.
   async listScopes() {
     return { ok: false, unsupported: true };
   }
@@ -123,6 +166,16 @@ class RemoteStore {
   // Connectivity probe for doctor — a transport check, not a memory op.
   async ping() {
     if (!this.usable()) return { ok: false, unusable: true };
+    // Use the /health function as a connectivity probe (public, no auth)
+    const healthUrl = this.restBase
+      ? `${this.restBase.replace(/\/functions\/v1$/, '')}/functions/v1/health`
+      : null;
+    if (healthUrl) {
+      try {
+        const res = await fetch(healthUrl, { signal: AbortSignal.timeout(5000) });
+        return { ok: res.ok, httpStatus: res.status };
+      } catch (e) { return { ok: false, networkError: String(e?.message ?? e) }; }
+    }
     return mcpCall(this.endpoint, this.token, 'tools/list', {});
   }
 }

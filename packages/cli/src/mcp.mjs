@@ -87,3 +87,69 @@ function parseBody(text) {
     return null;
   }
 }
+
+/**
+ * Derive the REST API base URL from an MCP endpoint URL.
+ * e.g. 'https://ref.supabase.co/functions/v1/mcp?token=...'
+ *   → 'https://ref.supabase.co/functions/v1'
+ */
+export function mcpToRestBase(mcpEndpointUrl) {
+  if (!mcpEndpointUrl) return null;
+  try {
+    const u = new URL(mcpEndpointUrl);
+    u.searchParams.delete('token');
+    // Strip /mcp suffix (with or without trailing slash)
+    const restPath = u.pathname.replace(/\/mcp\/?$/, '');
+    return `${u.origin}${restPath || '/'}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Minimal REST fetch for LoreKit REST API endpoints.
+ * Returns { ok, httpStatus, data, error, networkError } — same shape as mcpCall.
+ *
+ * @param {string} baseUrl - REST base URL (from mcpToRestBase)
+ * @param {string} token   - Bearer token
+ * @param {string} path    - e.g. '/memories' or '/memories/search'
+ * @param {object} [opts]
+ * @param {string} [opts.method='GET']
+ * @param {object} [opts.body] - JSON body for POST/PATCH/DELETE
+ * @param {number} [opts.timeoutMs=10000]
+ * @param {string} [opts.traceparent] - W3C traceparent header value
+ */
+export async function restFetch(baseUrl, token, path, { method = 'GET', body, timeoutMs = 10000, traceparent } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const url = `${baseUrl}${path}`;
+    const headers = {
+      accept: 'application/json',
+      ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(traceparent ? { traceparent } : {}),
+    };
+    const res = await fetch(url, {
+      method,
+      headers,
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch { /* non-JSON body */ }
+    if (!res.ok) {
+      return {
+        ok: false,
+        httpStatus: res.status,
+        error: data?.error ? { message: data.error, code: data.code } : { code: res.status, message: text.slice(0, 200) || res.statusText },
+      };
+    }
+    return { ok: true, httpStatus: res.status, data };
+  } catch (e) {
+    return { ok: false, networkError: String(e?.message ?? e) };
+  } finally {
+    clearTimeout(timer);
+  }
+}

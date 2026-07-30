@@ -193,29 +193,20 @@ test('LOREKIT_DENY=local suppresses the offline section', () => {
 
 // ── integration: a configured (mock) remote ───────────────────────────────────
 
-// A mock LoreKit MCP endpoint answering `memory.read` from a `${scope}::${key}`
-// fixture map — returning a null payload (→ null entry) when absent.
+// A mock LoreKit REST endpoint answering GET /memories?scope=X&key=Y from a
+// fixture map — returning { entries: [] } when absent.
+// remote.mjs now calls restFetch (REST API) for memory.read, not mcpCall.
 function startMockRemote(byKey) {
   const server = http.createServer((req, res) => {
-    let body = '';
-    req.on('data', (c) => (body += c));
+    req.on('data', () => {}); // drain body
     req.on('end', () => {
-      let args = {};
-      try {
-        args = JSON.parse(body)?.params?.arguments ?? {};
-      } catch {
-        /* ignore */
-      }
-      const found = byKey[`${args.scope}::${args.key}`] || null;
-      const payload = found ? { entry: found } : null;
+      const url = new URL(req.url, 'http://localhost');
+      const scope = url.searchParams.get('scope');
+      const key = url.searchParams.get('key');
+      const found = byKey[`${scope}::${key}`] || null;
+      const entries = found ? [found] : [];
       res.setHeader('content-type', 'application/json');
-      res.end(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          result: { content: [{ type: 'text', text: JSON.stringify(payload) }] },
-        }),
-      );
+      res.end(JSON.stringify({ entries, hasMore: false, nextCursor: null }));
     });
   });
   return server;

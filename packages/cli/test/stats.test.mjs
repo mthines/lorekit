@@ -221,28 +221,14 @@ test('LOREKIT_DENY=remote suppresses the remote counts, offline still counts', (
 
 // ── integration: a configured (mock) remote ───────────────────────────────────
 
-// A mock LoreKit MCP endpoint answering `memory.list` per scope from a fixture.
+// A mock LoreKit REST endpoint answering GET /memories?scope=X from a fixture.
 function startMockRemote(byScope) {
   const server = http.createServer((req, res) => {
-    let body = '';
-    req.on('data', (c) => (body += c));
-    req.on('end', () => {
-      let scope = null;
-      try {
-        scope = JSON.parse(body)?.params?.arguments?.scope ?? null;
-      } catch {
-        /* ignore */
-      }
-      const entries = byScope[scope] || [];
-      res.setHeader('content-type', 'application/json');
-      res.end(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          result: { content: [{ type: 'text', text: JSON.stringify({ entries }) }] },
-        }),
-      );
-    });
+    const url = new URL(req.url, `http://localhost`);
+    const scope = url.searchParams.get(`scope`);
+    const entries = (scope ? byScope[scope] : null) || [];
+    res.setHeader(`content-type`, `application/json`);
+    res.end(JSON.stringify({ entries, hasMore: false, nextCursor: null }));
   });
   return server;
 }

@@ -10,6 +10,7 @@ import {
   buildMetricsPayload,
   exportInvocation,
   traceCommand,
+  getActiveTraceparent,
 } from '../src/telemetry.mjs';
 import { TELEMETRY_TOKEN } from '../src/telemetry-token.mjs';
 import { injectToken } from '../../../scripts/inject-telemetry-token.mjs';
@@ -156,6 +157,24 @@ test('buildTracePayload produces a valid single-span OTLP structure', () => {
   assert.equal(resAttrs['service.version'], '9.9.9');
 });
 
+test('buildTracePayload uses provided traceId and spanId when given', () => {
+  const fixedTraceId = 'aabbccddeeff00112233445566778899';
+  const fixedSpanId = '0011223344556677';
+  const p = buildTracePayload({
+    version: '1',
+    name: 'lorekit.cli.list',
+    attributes: {},
+    startMs: 1,
+    endMs: 2,
+    status: 'ok',
+    traceId: fixedTraceId,
+    spanId: fixedSpanId,
+  });
+  const span = p.resourceSpans[0].scopeSpans[0].spans[0];
+  assert.equal(span.traceId, fixedTraceId);
+  assert.equal(span.spanId, fixedSpanId);
+});
+
 test('buildTracePayload marks error status with a message', () => {
   const p = buildTracePayload({
     version: '1', name: 'lorekit.cli.migrate', attributes: {}, startMs: 1, endMs: 2,
@@ -235,6 +254,35 @@ test('traceCommand returns the handler exit code and exports a span', async () =
     if (prevHeaders === undefined) delete process.env.OTEL_EXPORTER_OTLP_HEADERS;
     else process.env.OTEL_EXPORTER_OTLP_HEADERS = prevHeaders;
   }
+});
+
+test('traceCommand uses stable traceId/spanId: same IDs in the exported span and traceparent', async () => {
+  const prevHeaders = process.env.OTEL_EXPORTER_OTLP_HEADERS;
+  process.env.OTEL_EXPORTER_OTLP_HEADERS = 'Authorization=Bearer test';
+  const { calls, restore } = stubFetch();
+  let capturedTraceparent = null;
+  try {
+    await traceCommand('list', {}, '1.0.0', async () => {
+      capturedTraceparent = getActiveTraceparent();
+      return 0;
+    });
+    const trace = calls.find((c) => c.url.endsWith('/v1/traces'));
+    const span = trace.body.resourceSpans[0].scopeSpans[0].spans[0];
+    // The traceparent captured during run() must match the span's traceId/spanId.
+    assert.ok(capturedTraceparent, 'traceparent should be set during run()');
+    assert.ok(capturedTraceparent.startsWith('00-'), 'traceparent has W3C prefix');
+    const [, traceId, spanId] = capturedTraceparent.split('-');
+    assert.equal(span.traceId, traceId);
+    assert.equal(span.spanId, spanId);
+  } finally {
+    restore();
+    if (prevHeaders === undefined) delete process.env.OTEL_EXPORTER_OTLP_HEADERS;
+    else process.env.OTEL_EXPORTER_OTLP_HEADERS = prevHeaders;
+  }
+});
+
+test('getActiveTraceparent returns null outside of traceCommand', () => {
+  assert.equal(getActiveTraceparent(), null);
 });
 
 test('traceCommand records a non-zero exit code as an error outcome', async () => {
