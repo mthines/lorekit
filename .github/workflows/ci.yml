@@ -200,8 +200,9 @@ jobs:
         run: |
           supabase status -o json > /tmp/status.json
           # The service-role key the edge runtime injects as SUPABASE_SERVICE_ROLE_KEY.
-          # Field name varies by CLI version (legacy SERVICE_ROLE_KEY vs newer SECRET_KEY).
-          KEY="$(jq -r '.SERVICE_ROLE_KEY // .SECRET_KEY // .service_role_key // empty' /tmp/status.json)"
+          # Field name varies by CLI version (legacy SERVICE_ROLE_KEY/SECRET_KEY vs
+          # newer 'Secret', the sb_secret_... format key).
+          KEY="$(jq -r '.SERVICE_ROLE_KEY // .SECRET_KEY // .service_role_key // .Secret // empty' /tmp/status.json)"
           if [ -z "$KEY" ]; then
             echo "::error::No service-role/secret key in supabase status. Available keys:"
             jq -r 'keys[]' /tmp/status.json
