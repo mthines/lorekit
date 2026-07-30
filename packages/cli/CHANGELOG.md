@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.0](https://github.com/mthines/lorekit/compare/cli-v1.20.1...cli-v1.21.0) (2026-07-30)
+
+
+### Features
+
+* **cli:** switch memory ops to REST API with traceparent propagation ([#233](https://github.com/mthines/lorekit/issues/233)) ([665660d](https://github.com/mthines/lorekit/commit/665660d49b0fdb468bed976a2720a46038534f18))
+
 ## [1.20.1](https://github.com/mthines/lorekit/compare/cli-v1.20.0...cli-v1.20.1) (2026-07-30)
 
 
