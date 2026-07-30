@@ -59,12 +59,8 @@ function parseFinitePositiveInteger(input: unknown, paramName: string): number {
 export function parseTtlSeconds(input: unknown): number | null {
   if (input === undefined || input === null) return null;
   const n = parseFinitePositiveInteger(input, 'ttl_seconds');
-  if (n < TTL_MIN_SECONDS) {
-    throw new TtlError(`ttl_seconds must be >= ${TTL_MIN_SECONDS}`);
-  }
-  if (n > TTL_MAX_SECONDS) {
-    throw new TtlError(`ttl_seconds must be <= ${TTL_MAX_SECONDS}`);
-  }
+  if (n < TTL_MIN_SECONDS) throw new TtlError(`ttl_seconds must be >= ${TTL_MIN_SECONDS}`);
+  if (n > TTL_MAX_SECONDS) throw new TtlError(`ttl_seconds must be <= ${TTL_MAX_SECONDS}`);
   return n;
 }
 
@@ -77,12 +73,8 @@ export function parseTtlSeconds(input: unknown): number | null {
 export function parseTtlMinutes(input: unknown): number | null {
   if (input === undefined || input === null) return null;
   const n = parseFinitePositiveInteger(input, 'ttl_minutes');
-  if (n < TTL_MIN_MINUTES) {
-    throw new TtlError(`ttl_minutes must be >= ${TTL_MIN_MINUTES}`);
-  }
-  if (n > TTL_MAX_MINUTES) {
-    throw new TtlError(`ttl_minutes must be <= ${TTL_MAX_MINUTES}`);
-  }
+  if (n < TTL_MIN_MINUTES) throw new TtlError(`ttl_minutes must be >= ${TTL_MIN_MINUTES}`);
+  if (n > TTL_MAX_MINUTES) throw new TtlError(`ttl_minutes must be <= ${TTL_MAX_MINUTES}`);
   return n;
 }
 
@@ -99,12 +91,8 @@ export function parseTtlDays(input: unknown): number | null {
   // Accept numbers directly or numeric strings (for JSON schema flexibility).
   const n = parseFinitePositiveInteger(input, 'ttl_days');
 
-  if (n < TTL_MIN_DAYS) {
-    throw new TtlError(`ttl_days must be >= ${TTL_MIN_DAYS}`);
-  }
-  if (n > TTL_MAX_DAYS) {
-    throw new TtlError(`ttl_days must be <= ${TTL_MAX_DAYS}`);
-  }
+  if (n < TTL_MIN_DAYS) throw new TtlError(`ttl_days must be >= ${TTL_MIN_DAYS}`);
+  if (n > TTL_MAX_DAYS) throw new TtlError(`ttl_days must be <= ${TTL_MAX_DAYS}`);
   return n;
 }
 
@@ -131,9 +119,7 @@ export function parseTtl(input: TtlInput): number | null {
 
   const supplied = [days !== null, minutes !== null, seconds !== null].filter(Boolean).length;
   if (supplied > 1) {
-    throw new TtlError(
-      'at most one of ttl_days, ttl_minutes, ttl_seconds may be supplied',
-    );
+    throw new TtlError('at most one of ttl_days, ttl_minutes, ttl_seconds may be supplied');
   }
 
   if (days !== null) return days * 24 * 60 * 60;
