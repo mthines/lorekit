@@ -1,4 +1,3 @@
-import { createClient } from 'npm:@supabase/supabase-js@2';
 import type { AuthContext } from '../../../_shared/api/auth.ts';
 import { noContent } from '../../../_shared/api/respond.ts';
 import { validateUuid } from '../../../_shared/api/validate.ts';
@@ -11,7 +10,7 @@ export async function handleRemoveMember(req: Request, auth: AuthContext, db: Db
   const idV = validateUuid(params.userId ?? '', cors);
   if (!idV.ok) return idV.response;
   span.setAttributes({ 'lorekit.operation': 'members.remove', 'lorekit.org_slug': params.slug ?? '', 'lorekit.target_user': idV.data });
-  const tracedDb = createTracedClient(db as ReturnType<typeof createClient>, span);
+  const tracedDb = createTracedClient(db, span);
   const isSelf = auth.userId === idV.data;
   const { error } = isSelf
     ? await tracedDb.rpc('lorekit_org_leave', { p_slug: params.slug })

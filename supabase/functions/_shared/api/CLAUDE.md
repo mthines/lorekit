@@ -86,7 +86,6 @@ Deno.serve(async (req) => {
 
 ```typescript
 // memories/handlers/list.ts
-import { createClient } from 'npm:@supabase/supabase-js@2';
 import type { AuthContext, DbClient } from '../../_shared/api/auth.ts';
 import { ok } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
@@ -101,7 +100,7 @@ export async function handleList(
 ): Promise<Response> {
   const v = validateQuery(req, ListMemoriesQuerySchema, cors);
   if (!v.ok) return v.response;
-  const tracedDb = createTracedClient(db as ReturnType<typeof createClient>, span);
+  const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb.from('memories').select('*').limit(v.data.limit + 1);
   if (error) { span.error(error.message); throw error; }
   return ok(buildPage(data ?? [], v.data.limit), cors);

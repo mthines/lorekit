@@ -1,4 +1,3 @@
-import { createClient } from 'npm:@supabase/supabase-js@2';
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { ok, notFound } from '../../_shared/api/respond.ts';
 import { validateUuid, validateBody } from '../../_shared/api/validate.ts';
@@ -24,9 +23,11 @@ export async function handleUpdate(
   const patch: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(bodyV.data)) { if (v !== undefined) patch[k] = v; }
 
-  const tracedDb = createTracedClient(db as ReturnType<typeof createClient>, span);
+  const tracedDb = createTracedClient(db, span);
   let q: TracedQuery<MemoryRow> = tracedDb.from<MemoryRow>('memories').update(patch).eq('id', idV.data).is('archived_at', null);
-  if (auth.type !== 'service' && auth.userId) q = q.eq('user_id', auth.userId);
+  // api_key auth uses service-role client — restrict to caller's own rows.
+  // JWT auth uses RLS-scoped client — RLS handles access control (org-owned rows included).
+  if (auth.type === 'api_key' && auth.userId) q = q.eq('user_id', auth.userId);
 
   const { data, error } = await q
     .select('id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at')

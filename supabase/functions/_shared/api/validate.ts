@@ -37,3 +37,11 @@ export function validateUuid(id: string, cors: Record<string, string> = {}): Val
   }
   return { ok: true, data: id };
 }
+
+/** Validate an org slug path param (lowercase alphanumeric + hyphens, 3-50 chars). */
+export function validateOrgSlug(slug: string, cors: Record<string, string> = {}): ValidationResult<string> {
+  if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(slug) || slug.length < 3 || slug.length > 50) {
+    return { ok: false, response: badRequest(`Invalid org slug: "${slug}"`, undefined, cors) };
+  }
+  return { ok: true, data: slug };
+}

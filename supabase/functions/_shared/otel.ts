@@ -177,8 +177,11 @@ function buildOtlpPayload(spans: SpanPayload[]): unknown {
 
   const serviceVersion = Deno.env.get('VCS_REF_HEAD_REVISION') ?? Deno.env.get('GITHUB_SHA') ?? 'unknown';
 
+  // SERVICE_NAME is set per-function via Supabase secrets so spans carry the
+  // correct resource name regardless of which function emits them.
+  const serviceName = Deno.env.get('SERVICE_NAME') ?? 'lorekit';
   const resourceAttributes = [
-    { key: 'service.name', value: { stringValue: 'mcp' } },
+    { key: 'service.name', value: { stringValue: serviceName } },
     { key: 'service.namespace', value: { stringValue: 'lorekit' } },
     { key: 'service.version', value: { stringValue: serviceVersion } },
     { key: 'deployment.environment.name', value: { stringValue: resolveDeploymentEnv() } },
@@ -192,7 +195,7 @@ function buildOtlpPayload(spans: SpanPayload[]): unknown {
     resourceSpans: [{
       resource: { attributes: resourceAttributes },
       scopeSpans: [{
-        scope: { name: 'lorekit-mcp', version: '1.0.0' },
+        scope: { name: `lorekit-${serviceName}`, version: '1.0.0' },
         spans: spans.map((s) => ({
           traceId: s.ctx.traceId,
           spanId: s.ctx.spanId,

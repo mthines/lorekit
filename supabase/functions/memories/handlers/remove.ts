@@ -1,4 +1,3 @@
-import { createClient } from 'npm:@supabase/supabase-js@2';
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { noContent, notFound, badRequest } from '../../_shared/api/respond.ts';
 import { validateUuid } from '../../_shared/api/validate.ts';
@@ -18,7 +17,7 @@ export async function handleRemove(
   const keyParam = url.searchParams.get('key');
   const idParam = params.id;
 
-  const tracedDb = createTracedClient(db as ReturnType<typeof createClient>, span);
+  const tracedDb = createTracedClient(db, span);
   const now = new Date().toISOString();
   span.setAttributes({ 'lorekit.operation': 'memories.remove' });
 
@@ -36,7 +35,9 @@ export async function handleRemove(
     return badRequest('Provide either an id path param or scope+key query params', undefined, cors);
   }
 
-  if (auth.type !== 'service' && auth.userId) q = q.eq('user_id', auth.userId);
+  // api_key auth uses service-role client — restrict to caller's own rows.
+  // JWT auth uses RLS-scoped client — RLS handles access control.
+  if (auth.type === 'api_key' && auth.userId) q = q.eq('user_id', auth.userId);
 
   const { count, error } = await q;
   if (error) { span.error(`DB: ${error.message}`); throw error; }

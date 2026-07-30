@@ -5,12 +5,15 @@ const ALLOWED: string[] = RAW ? RAW.split(',').map((o) => o.trim()).filter(Boole
 export function corsHeaders(req: Request): Record<string, string> {
   const origin = req.headers.get('Origin') ?? '';
   const allow = ALLOWED.includes('*') || ALLOWED.includes(origin);
-  return {
-    'Access-Control-Allow-Origin': allow ? (origin || '*') : '',
+  // Only emit Access-Control-Allow-Origin when the origin is allowed.
+  // An empty string is not a valid header value and causes browser errors.
+  const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Authorization, Content-Type, traceparent, tracestate',
     'Access-Control-Max-Age': '86400',
   };
+  if (allow) headers['Access-Control-Allow-Origin'] = origin || '*';
+  return headers;
 }
 
 export function handlePreflight(req: Request): Response {

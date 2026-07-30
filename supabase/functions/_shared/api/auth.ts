@@ -45,11 +45,13 @@ export async function resolveRestAuth(req: Request, parentSpan: Span): Promise<R
 
   if (token.startsWith('lk_')) {
     const hash = await sha256(token);
+    // Create one service-role client and reuse it for both the token lookup and
+    // subsequent business queries — avoids a second client allocation per request.
     const db = svcClient();
     const { data, error } = await db.from('api_tokens').select('user_id,permissions').eq('token_hash', hash).maybeSingle();
     if (error || !data) { span.clientError('invalid_api_key').end(); return null; }
     span.setAttributes({ 'auth.type': 'api_key', 'auth.outcome': 'ok', 'auth.user_id': data.user_id }).end();
-    return { auth: { type: 'api_key', userId: data.user_id, permissions: data.permissions ?? [] }, db: svcClient() };
+    return { auth: { type: 'api_key', userId: data.user_id, permissions: data.permissions ?? [] }, db };
   }
 
   const anonDb = createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });

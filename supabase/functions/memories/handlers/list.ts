@@ -1,4 +1,3 @@
-import { createClient } from 'npm:@supabase/supabase-js@2';
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { ok } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
@@ -8,18 +7,7 @@ import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import { ListMemoriesQuerySchema } from '@lorekit/schemas/memory';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
-
-type MemoryRow = Tables<'memories'>;
-
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
-const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-
-async function getMemberOrgIds(db: DbClient, userId: string, span: Span): Promise<string[]> {
-  const tracedDb = createTracedClient(db as ReturnType<typeof createClient>, span);
-  const { data, error } = await tracedDb.rpc<string>('lorekit_member_org_ids', { p_user_id: userId });
-  if (error) { span.setAttributes({ 'auth.org_ids_error': error.message }); return []; }
-  return (data ?? []) as string[];
-}
+import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';
 
 export async function handleList(
   req: Request, auth: AuthContext, db: DbClient, span: Span,
@@ -37,7 +25,7 @@ export async function handleList(
     'lorekit.archived': params.archived,
   });
 
-  const tracedDb = createTracedClient(db as ReturnType<typeof createClient>, span);
+  const tracedDb = createTracedClient(db, span);
   const isArchived = params.archived === 'true';
 
   let q: TracedQuery<MemoryRow> = tracedDb
@@ -58,17 +46,11 @@ export async function handleList(
     if (tags.length) q = q.overlaps('tags', tags);
   }
 
-  if (auth.type !== 'service' && auth.userId) {
-    const orgIdsSpan = span.child('lorekit.rest.auth.org_ids');
-    const orgIds = await getMemberOrgIds(db, auth.userId, orgIdsSpan);
-    orgIdsSpan.setAttributes({ 'lorekit.org_count': orgIds.length }).end();
-
-    if (orgIds.length === 0) {
-      q = q.eq('user_id', auth.userId);
-    } else {
-      const quoted = orgIds.map((id: string) => `"${id}"`).join(',');
-      q = q.or(`user_id.eq.${auth.userId},org_id.in.(${quoted})`);
-    }
+  // api_key auth uses service-role client (bypasses RLS) — apply tenant filter.
+  // JWT auth uses RLS-scoped client — RLS handles visibility automatically.
+  if (auth.type === 'api_key' && auth.userId) {
+    const orgIds = await getMemberOrgIds(db, auth.userId, span);
+    q = applyRestTenantScope(q, auth.userId, orgIds);
   }
 
   if (params.cursor) {

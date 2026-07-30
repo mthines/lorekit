@@ -1,4 +1,3 @@
-import { createClient } from 'npm:@supabase/supabase-js@2';
 import type { AuthContext } from '../../../_shared/api/auth.ts';
 import { ok } from '../../../_shared/api/respond.ts';
 import { validateBody, validateUuid } from '../../../_shared/api/validate.ts';
@@ -14,7 +13,7 @@ export async function handleChangeRole(req: Request, auth: AuthContext, db: DbCl
   const bodyV = await validateBody(req, UpdateMemberRoleBodySchema, cors);
   if (!bodyV.ok) return bodyV.response;
   span.setAttributes({ 'lorekit.operation': 'members.change_role', 'lorekit.org_slug': params.slug ?? '', 'lorekit.target_user': idV.data });
-  const tracedDb = createTracedClient(db as ReturnType<typeof createClient>, span);
+  const tracedDb = createTracedClient(db, span);
   const { error } = await tracedDb.rpc('lorekit_org_member_role', { p_slug: params.slug, p_target_user_id: idV.data, p_role: bodyV.data.role });
   if (error) { const m = translateDbError(error); if (m) return m.toResponse(cors); span.error(error.message); throw error; }
   return ok({ slug: params.slug, userId: idV.data, role: bodyV.data.role }, cors);

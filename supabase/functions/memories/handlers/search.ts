@@ -1,4 +1,3 @@
-import { createClient } from 'npm:@supabase/supabase-js@2';
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { ok } from '../../_shared/api/respond.ts';
 import { validateBody } from '../../_shared/api/validate.ts';
@@ -8,6 +7,7 @@ import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import { SearchMemoriesBodySchema } from '@lorekit/schemas/memory';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
+import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -21,7 +21,7 @@ export async function handleSearch(
 
   span.setAttributes({ 'lorekit.operation': 'memories.search', ...(body.q ? { 'lorekit.query': body.q } : {}), 'lorekit.limit': body.limit });
 
-  const tracedDb = createTracedClient(db as ReturnType<typeof createClient>, span);
+  const tracedDb = createTracedClient(db, span);
 
   let q: TracedQuery<MemoryRow> = tracedDb
     .from<MemoryRow>('memories')
@@ -32,7 +32,12 @@ export async function handleSearch(
     .order('id', { ascending: false })
     .limit(body.limit + 1);
 
-  if (auth.type !== 'service' && auth.userId) q = q.eq('user_id', auth.userId);
+  // api_key auth uses service-role client (bypasses RLS) — apply tenant filter.
+  // JWT auth uses RLS-scoped client — RLS handles visibility automatically.
+  if (auth.type === 'api_key' && auth.userId) {
+    const orgIds = await getMemberOrgIds(db, auth.userId, span);
+    q = applyRestTenantScope(q, auth.userId, orgIds);
+  }
   if (body.q) q = q.textSearch('fts', body.q, { type: 'websearch', config: 'english' });
   if (body.scopes?.length) q = q.in('scope', body.scopes);
   if (body.tags?.length) q = q.overlaps('tags', body.tags);
