@@ -8,6 +8,10 @@
  *
  * Keep `MIN_PASSWORD_LENGTH` >= the project setting: being stricter in the UI
  * is safe (the server accepts everything the UI does), being laxer is not.
+ * That is why this PR leaves `supabase/config.toml` at the Supabase default of
+ * 6 — 8 >= 6 holds, so nothing here is unsafe, and raising the backend floor is
+ * a backend change that belongs with the hosted projects' dashboard setting
+ * rather than with the sign-in UI.
  */
 
 export const MIN_PASSWORD_LENGTH = 8;
