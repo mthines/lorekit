@@ -1,4 +1,5 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { createClient } from '@supabase/supabase-js';
 import {
   createAdminClient,
   isAdminConfigured,
@@ -6,6 +7,13 @@ import {
   SERVICE_ROLE_KEY_ENV,
   SUPABASE_URL_ENV,
 } from './admin';
+
+// Mock createClient so the real Supabase client (which needs native WebSocket
+// or the `ws` package, unavailable on Node 20 in CI) is never instantiated.
+// Same reason as packages/mcp-core/src/storage-adapter.spec.ts.
+vi.mock('@supabase/supabase-js', () => ({
+  createClient: vi.fn(() => ({ _mock: true })),
+}));
 
 // Both vars are read at call time. Snapshot and restore them around every case
 // so the tests don't leak env state into each other (mcp-url.spec.ts pattern).
@@ -25,7 +33,12 @@ describe('createAdminClient', () => {
   it('builds a client when both env vars are set', () => {
     process.env[SUPABASE_URL_ENV] = 'https://abcdefghijklmnop.supabase.co';
     process.env[SERVICE_ROLE_KEY_ENV] = 'service-role-key';
-    expect(createAdminClient().auth).toBeDefined();
+    expect(createAdminClient()).toBeDefined();
+    expect(createClient).toHaveBeenCalledWith(
+      'https://abcdefghijklmnop.supabase.co',
+      'service-role-key',
+      { auth: { persistSession: false, autoRefreshToken: false } },
+    );
   });
 
   it('throws a named error naming the missing service-role key', () => {
