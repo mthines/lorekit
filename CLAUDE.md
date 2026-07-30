@@ -75,23 +75,27 @@ pnpm nx fn:dev supabase        # run Edge Functions locally
 Every PR in this repository goes through a fixed five-step sequence.
 Do NOT skip steps or change the order, whether the PR is a draft or ready for review.
 
+### Prerequisites — install agent-skills (once per sandbox)
+
+Before running any PR workflow steps, ensure `agent-skills` is cloned and all skills and agents are
+wired into `~/.claude/`. This is idempotent — safe to re-run, no-op if already set up.
+
+```bash
+# Clone if not already present, then wire every skill and agent into ~/.claude/
+git clone https://github.com/mthines/agent-skills.git /tmp/workspace/agent-skills 2>/dev/null || true
+bash /tmp/workspace/agent-skills/scripts/sync-symlinks.sh
+```
+
+The script discovers all skills (any directory under `skills/` containing a `SKILL.md`) and all
+agents (`agents/*.md`), and creates a two-tier symlink chain so they are available as native Claude
+skills and sub-agents. It repairs broken links and skips already-correct ones.
+
 ### Step 1 — Run `/polish` and auto-fix all findings
 
 Before opening the PR, run the `polish` skill against the branch. This is a **local-only** pass —
 it never writes to GitHub. All auto-fixable findings must be committed before opening the PR.
 
-```bash
-# 1. Clone agent-skills (skip if already present)
-git clone https://github.com/mthines/agent-skills.git /tmp/workspace/agent-skills 2>/dev/null || true
-
-# 2. Wire up skill symlinks
-bash /tmp/workspace/agent-skills/scripts/sync-symlinks.sh
-
-# 3. Verify the skill is present
-test -f /tmp/workspace/agent-skills/skills/quality/polish/SKILL.md && echo OK || echo MISSING
-```
-
-Then load and run the skill (full mode — review pass + simplify pass):
+Dispatch a sub-agent (subagent_type: general):
 
 > Read /tmp/workspace/agent-skills/skills/quality/polish/SKILL.md and follow it exactly.
 > Run in full mode (default). Auto-fix all simple findings. Apply all Class M mechanical refactors
@@ -113,32 +117,17 @@ After the PR is opened or marked ready-for-review, **wait for the `dash0-dev` bo
 The bot runs `PR Ready for Review — Polish + Review` automatically; a comment from `dash0-dev` with
 the review results will appear on the PR. Do not proceed until that comment is present.
 
-```
-# How to wait for the dash0-dev bot review comment
-gh pr view <pr-number> --repo mthines/lorekit --json reviews \\
-  --jq '.reviews | map(select(.author.login == "dash0-dev")) | length'
-# Re-run until the count is ≥ 1 (the bot has posted its review).
-# Tip: loop with `while [ "$(above command)" -lt 1 ]; do sleep 10; done`
-```
-
-### Step 4 — Implement review suggestions via implement-suggestion skill
-
-Once the Dash0 bot review is posted, run the `implement-suggestion` skill directly.
-Do NOT post `@dash0 resolve` as a comment — agent-posted comments do not trigger the automation.
-
 ```bash
-# 1. Clone agent-skills (skip if already present)
-git clone https://github.com/mthines/agent-skills.git /tmp/workspace/agent-skills 2>/dev/null || true
-
-# 2. Wire up skill symlinks
-bash /tmp/workspace/agent-skills/scripts/sync-symlinks.sh
-
-# 3. Verify the skill is present — stop if MISSING or sync-symlinks printed "skipped (unsafe)"
-test -f /tmp/workspace/agent-skills/skills/workflow/implement-suggestion/SKILL.md && echo OK || echo MISSING
+# Poll until the dash0-dev review appears (count should reach ≥ 1)
+while [ "$(gh pr view <pr-number> --repo mthines/lorekit --json reviews \
+  --jq '.reviews | map(select(.author.login == "dash0-dev")) | length')" -lt 1 ]; do
+  sleep 10
+done
 ```
 
-Then dispatch a sub-agent (subagent_type: general) with this prompt, substituting the real values
-for TARGET_PR, OWNER, REPO, and NUMBER:
+### Step 4 — Implement review suggestions
+
+Once the Dash0 bot review is posted, dispatch a sub-agent (subagent_type: general):
 
 > Read /tmp/workspace/agent-skills/skills/workflow/implement-suggestion/SKILL.md and follow it exactly.
 > TARGET_PR=<full PR URL>, OWNER=<owner>, REPO=<repo>, NUMBER=<pr number>
@@ -147,6 +136,9 @@ The skill fetches all open review comments from human and AI reviewers, validate
 `/critical` then `/confidence`, applies approved changes as individual commits, pushes to
 the existing branch, and resolves addressed threads. Do NOT open a new PR. Do NOT skip the two-gate
 validation. Wait for the sub-agent to finish before proceeding to Step 5.
+
+**Note:** Do NOT post `@dash0 resolve` as a PR comment — agent-posted comments do not trigger
+the webhook. Run the skill directly as described above.
 
 If the review report contained no actionable suggestions (all gates passed clean), skip this step.
 
@@ -158,15 +150,16 @@ After the implement-suggestion sub-agent finishes (or if there were no suggestio
 /ci-auto-fix
 ```
 
-This loads the `ci-auto-fix` skill from `mthines/agent-skills` (under `skills/delivery/ci-auto-fix`),
-diagnoses any failing GitHub Actions checks, applies a minimal targeted fix, and iterates until all
-checks are green. The skill is confidence-gated (>=90 auto-apply, 80-89 ask, <80 escalate) and will
-never disable or weaken a check. Skip if CI is already fully green.
+This uses the `ci-auto-fix` skill (wired in during Prerequisites), diagnoses any failing GitHub
+Actions checks, applies a minimal targeted fix, and iterates until all checks are green. The skill
+is confidence-gated (>=90 auto-apply, 80-89 ask, <80 escalate) and will never disable or weaken a
+check. Skip if CI is already fully green.
 
 ### Summary table
 
 | Step | Action | Who triggers |
 |------|--------|--------------|
+| 0 | Clone agent-skills + run sync-symlinks.sh (once per sandbox) | Agent |
 | 1 | Run `/polish` — review + simplify, auto-fix all findings, commit each pass | Agent |
 | 2 | Open / push the PR (draft or ready) | Agent |
 | 3 | Wait for `dash0-dev` bot review comment | Automatic (Dash0 bot) |
