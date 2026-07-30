@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
-import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { createAdminClient, SupabaseAdminConfigError } from '@/lib/supabase/admin';
 
 /**
  * DELETE /api/user/delete
@@ -12,7 +12,8 @@ import { createClient as createServiceClient } from '@supabase/supabase-js';
  * to remove memories, api_tokens, webhook_secrets, audit_log rows, and the
  * auth.users row itself.
  *
- * Returns 200 on success, 401 if unauthenticated, 500 on server error.
+ * Returns 200 on success, 401 if unauthenticated, 503 if the server is missing
+ * SUPABASE_SERVICE_ROLE_KEY, 500 on any other server error.
  */
 export async function DELETE() {
   const supabase = await createServerClient();
@@ -26,11 +27,25 @@ export async function DELETE() {
 
   // Build a service-role client so we can call the admin API.
   // The service-role key is never exposed to the browser — this route only
-  // runs in the Next.js server runtime.
-  const serviceClient = createServiceClient(
-    process.env['NEXT_PUBLIC_SUPABASE_URL']!,
-    process.env['SUPABASE_SERVICE_ROLE_KEY']!,
-  );
+  // runs in the Next.js server runtime. When the deployment is missing the
+  // key, answer 503 naming the misconfiguration instead of letting
+  // supabase-js throw the opaque `supabaseKey is required.` as a bare 500.
+  let serviceClient;
+  try {
+    serviceClient = createAdminClient();
+  } catch (error) {
+    if (error instanceof SupabaseAdminConfigError) {
+      console.error('[delete-account] server misconfigured', error.missingEnv);
+      return NextResponse.json(
+        {
+          error: 'Account deletion is temporarily unavailable — the server is misconfigured.',
+          code: error.code,
+        },
+        { status: 503 },
+      );
+    }
+    throw error;
+  }
 
   // deleteUser cascades via ON DELETE CASCADE foreign keys to erase memories,
   // api_tokens, webhook_secrets, audit_log rows, and the auth.users row itself.
