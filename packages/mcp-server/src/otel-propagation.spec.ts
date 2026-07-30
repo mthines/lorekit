@@ -6,11 +6,11 @@
  * `fetch` so any fetch() inside a tool handler automatically inherits the active
  * span context and injects `traceparent` into the outgoing request.
  *
- * This test uses an in-memory tracer (from @opentelemetry/sdk-trace-base) to
- * verify that the OTel context API propagates a span through `context.with()`,
- * which is the exact mechanism the SDK uses when running handlers inside spans.
+ * These tests verify that the OTel context propagation primitives work correctly
+ * using a globally-registered in-memory tracer — the same mechanism the SDK
+ * uses when running inside a real request.
  */
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { context, trace, ROOT_CONTEXT } from '@opentelemetry/api';
 import {
   BasicTracerProvider,
@@ -18,18 +18,24 @@ import {
   SimpleSpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
 
-// ── In-memory tracer setup ─────────────────────────────────────────────────
-const exporter = new InMemorySpanExporter();
-const provider = new BasicTracerProvider();
-provider.addSpanProcessor(new SimpleSpanProcessor(exporter));
-const tracer = provider.getTracer('test');
+let provider: BasicTracerProvider;
+let exporter: InMemorySpanExporter;
+
+beforeAll(() => {
+  exporter = new InMemorySpanExporter();
+  provider = new BasicTracerProvider();
+  provider.addSpanProcessor(new SimpleSpanProcessor(exporter));
+  // Must register globally so trace.getActiveSpan() works
+  provider.register();
+});
+
+afterAll(async () => {
+  await provider.shutdown();
+});
 
 describe('OTel W3C traceparent propagation', () => {
-  afterEach(() => exporter.reset());
-
-  it('active span context is accessible inside context.with()', () => {
-    // This mirrors what the http instrumentation does when it extracts an
-    // incoming traceparent and sets up the active context for a request.
+  it('active span is accessible via trace.getActiveSpan() inside context.with()', () => {
+    const tracer = trace.getTracer('test');
     const span = tracer.startSpan('test-span');
     const ctx = trace.setSpan(ROOT_CONTEXT, span);
 
@@ -44,32 +50,34 @@ describe('OTel W3C traceparent propagation', () => {
     span.end();
   });
 
-  it('child spans share the parent traceId (traceparent propagation contract)', () => {
-    const parent = tracer.startSpan('parent');
-    const ctx = trace.setSpan(ROOT_CONTEXT, parent);
+  it('child span inherits the parent traceId — W3C trace context contract', () => {
+    const tracer = trace.getTracer('test');
+    const parent = tracer.startSpan('parent-span');
+    const parentCtx = trace.setSpan(ROOT_CONTEXT, parent);
 
     let childTraceId: string | undefined;
-    let childParentSpanId: string | undefined;
-    context.with(ctx, () => {
-      const child = tracer.startSpan('child');
+    let childSpanId: string | undefined;
+    context.with(parentCtx, () => {
+      // startSpan inside context.with uses the active span as parent
+      const child = tracer.startSpan('child-span');
       childTraceId = child.spanContext().traceId;
-      // Access parent span context from the active context
-      childParentSpanId = trace.getActiveSpan()?.spanContext().spanId;
+      childSpanId = child.spanContext().spanId;
       child.end();
     });
 
-    // Child shares the same traceId as the parent — this is the W3C trace contract.
-    expect(childTraceId).toBe(parent.spanContext().traceId);
-    // The parent span is the active span inside context.with()
-    expect(childParentSpanId).toBe(parent.spanContext().spanId);
     parent.end();
+
+    // The child must share the same traceId as its parent — W3C trace contract
+    expect(childTraceId).toBe(parent.spanContext().traceId);
+    // The child span has its own unique spanId
+    expect(childSpanId).not.toBe(parent.spanContext().spanId);
   });
 
-  it('W3C traceparent format: 00-{traceId}-{spanId}-{flags}', () => {
+  it('W3C traceparent format: 00-{traceId(32hex)}-{spanId(16hex)}-{flags(2hex)}', () => {
+    const tracer = trace.getTracer('test');
     const span = tracer.startSpan('format-test');
     const { traceId, spanId, traceFlags } = span.spanContext();
 
-    // Build the W3C traceparent header that undici instrumentation would inject
     const traceparent = `00-${traceId}-${spanId}-${traceFlags.toString(16).padStart(2, '0')}`;
 
     expect(traceparent).toMatch(/^00-[a-f0-9]{32}-[a-f0-9]{16}-[0-9a-f]{2}$/);
