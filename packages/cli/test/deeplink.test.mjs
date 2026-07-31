@@ -253,6 +253,41 @@ test('link with filter flags composes q + owner + archived', () => {
   assert.deepEqual(out.params, { scope: 'global', q: 'flaky', owner: 'personal', archived: true });
 });
 
+test('link --range JSON flows through the command into the range param', () => {
+  const root = tmp('lk-link-proj-');
+  const res = run(['link', 'global', '--range', '{"from":"2026-01-01","to":"2026-02-01"}', '--json'], { dir: root });
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.deepEqual(out.params, { scope: 'global', range: { from: '2026-01-01', to: '2026-02-01' } });
+  assert.deepEqual(decodeParams(out.url), { scope: 'global', range: { from: '2026-01-01', to: '2026-02-01' } });
+});
+
+test('link --from/--to shorthand flows through the command into the range param', () => {
+  const root = tmp('lk-link-proj-');
+  const res = run(['link', 'global', '--from', '2026-01-01', '--to', '2026-02-01', '--json'], { dir: root });
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.deepEqual(out.params.range, { from: '2026-01-01', to: '2026-02-01' });
+});
+
+test('link --view time flows through the command into the view param', () => {
+  const root = tmp('lk-link-proj-');
+  const res = run(['link', 'global', '--view', 'time', '--json'], { dir: root });
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.deepEqual(out.params, { scope: 'global', view: 'time' });
+  assert.deepEqual(decodeParams(out.url), { scope: 'global', view: 'time' });
+});
+
+test('link --owner <orgId> flows through the command as the { orgId } object form', () => {
+  const root = tmp('lk-link-proj-');
+  const res = run(['link', 'global', '--owner', 'org_abc', '--json'], { dir: root });
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.deepEqual(out.params.owner, { orgId: 'org_abc' });
+  assert.deepEqual(decodeParams(out.url).owner, { orgId: 'org_abc' });
+});
+
 test('bare link (no args) links to the cwd project scope', () => {
   // A plain temp dir has no git remote, so deriveScope yields project + global;
   // the most-specific is the project scope.
