@@ -1,4 +1,4 @@
-import type { FilterCondition, FilterGroup } from '@lorekit/schemas/common';
+import type { FilterCondition, FilterGroup } from '../schemas/common.ts';
 
 // Whitelist of filterable fields — prevents arbitrary column injection
 const ALLOWED_FIELDS = new Set(['scope', 'key', 'value', 'tags', 'source_agent', 'trigger']);

@@ -13,7 +13,7 @@
 //
 //   node scripts/smoke-mcp-stdio.mjs <endpoint> <token>
 //   node scripts/smoke-mcp-stdio.mjs "$LOREKIT_MCP_URL" "$LOREKIT_TOKEN"
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -33,8 +33,35 @@ const EXPECTED_TOOLS = ['memory.write', 'memory.read', 'memory.list', 'memory.se
 // exits, kill it and fail loudly instead of running to the job's 6h ceiling.
 const TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS) || 60000;
 
+/**
+ * Dump the local edge-runtime container log.
+ *
+ * A function that fails to boot surfaces here only as an opaque
+ * `503 BOOT_ERROR: Worker failed to boot (please check logs)` — the actual
+ * cause (a module-resolution error, usually) is printed by the container and
+ * nowhere else. Without this, a failure is undiagnosable from the CI output
+ * alone; that cost five runs across four branches once already.
+ *
+ * Best-effort: no Docker, no container, or a non-local endpoint just means no
+ * extra output. It never changes the exit code.
+ */
+function dumpEdgeRuntimeLog() {
+  if (!/127\.0\.0\.1|localhost/.test(endpoint ?? '')) return;
+  try {
+    const log = execFileSync(
+      'docker',
+      ['logs', '--tail', '200', 'supabase_edge_runtime_lorekit'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15000 },
+    );
+    if (log.trim()) console.error(`\n--- supabase_edge_runtime_lorekit (last 200 lines) ---\n${log}`);
+  } catch {
+    // Docker unavailable, container absent, or the command failed — nothing to add.
+  }
+}
+
 const fail = (msg) => {
   console.error(`✗ ${msg}`);
+  dumpEdgeRuntimeLog();
   process.exit(1);
 };
 

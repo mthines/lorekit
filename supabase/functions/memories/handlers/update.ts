@@ -3,7 +3,7 @@ import { ok, notFound } from '../../_shared/api/respond.ts';
 import { validateUuid, validateBody } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
-import { UpdateMemoryBodySchema } from '@lorekit/schemas/memory';
+import { UpdateMemoryBodySchema } from '../../_shared/schemas/memory.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
 

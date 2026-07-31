@@ -23,3 +23,7 @@ tmp/
 
 # aw-tester captured auth sessions (secrets — never commit)
 .auth/
+
+# Deno lockfile — the edge functions are checked with `deno info`/`deno check`
+# ad hoc; we do not pin a lockfile for them.
+deno.lock

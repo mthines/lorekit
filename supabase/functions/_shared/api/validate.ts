@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'npm:zod@3';
 import { badRequest } from './respond.ts';
 
 type Ok<T> = { ok: true; data: T };

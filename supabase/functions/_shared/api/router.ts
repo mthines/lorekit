@@ -25,12 +25,40 @@ function matchPath(pattern: string, actual: string): Record<string, string> | nu
   return params;
 }
 
+/**
+ * Strip the function's own mount point off the request path.
+ *
+ * The same function sees two different pathnames depending on who is in front
+ * of it, and only the first was handled before:
+ *
+ *   - `/functions/v1/memories/…`  — the gateway forwarded the full public path
+ *   - `/memories/…`               — the gateway already stripped `/functions/v1`
+ *
+ * In the local `supabase start` stack it is the second, so `GET
+ * /functions/v1/memories` arrived here as `/memories`, missed the prefix test,
+ * fell through to `/:id`, and answered `Invalid ID: "memories"` instead of
+ * listing. That went unnoticed because these functions never booted in CI at
+ * all until the import map was removed — the routing bug was hiding behind a
+ * `BOOT_ERROR`.
+ *
+ * Both forms collapse to `/`, so a bare call to either lands on the index
+ * route. Pure and total.
+ */
+export function relativePath(pathname: string, functionName: string): string {
+  const mounted = `/functions/v1/${functionName}`;
+  const bare = `/${functionName}`;
+  for (const prefix of [mounted, bare]) {
+    if (pathname === prefix) return '/';
+    if (pathname.startsWith(prefix + '/')) return pathname.slice(prefix.length) || '/';
+  }
+  return pathname || '/';
+}
+
 export function createRouter(routes: Route[], functionName: string) {
   return {
     async dispatch(req: Request, resolved: ResolvedAuth, span: Span, cors: Record<string, string>): Promise<Response> {
       const url = new URL(req.url);
-      const prefix = `/functions/v1/${functionName}`;
-      const rel = url.pathname.startsWith(prefix) ? (url.pathname.slice(prefix.length) || '/') : url.pathname;
+      const rel = relativePath(url.pathname, functionName);
       const method = req.method.toUpperCase();
 
       const pathMatches = routes.flatMap((r) => { const p = matchPath(r.path, rel); return p !== null ? [{ route: r, params: p }] : []; });
