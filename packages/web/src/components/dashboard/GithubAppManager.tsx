@@ -24,7 +24,7 @@ import {
   GitBranch,
   Building2,
   User,
-  CircleCheck,
+  ShieldCheck,
   Info,
   Settings2,
   ExternalLink,
@@ -32,6 +32,8 @@ import {
   X,
   Loader2,
   Search,
+  Sparkles,
+  ChevronDown,
 } from 'lucide-react';
 import type { GithubInstallation } from '@/lib/github-installations';
 import type { OrgMembership } from '@/lib/orgs';
@@ -43,7 +45,6 @@ import {
   repoScope,
   type BindingsByScope,
   type BindingSuggestion,
-  type UnboundRepo,
 } from '@/lib/github-app-bindings';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -104,137 +105,146 @@ function AppInstallLink({
   );
 }
 
-// ── Repo row — one App-covered repository, with its binding state ─────────────
+// ── Suggestion banner — the one-click "share all" nudge ──────────────────────
 
-function AppCoveredRepoRow({
+function SuggestionBanner({
+  suggestion,
+  busy,
+  onBind,
+}: {
+  suggestion: BindingSuggestion;
+  busy: boolean;
+  onBind: (orgId: string, fullNames: string[]) => void;
+}) {
+  const count = suggestion.repos.length;
+  return (
+    <div className="flex flex-col gap-2.5 rounded-lg border border-[var(--color-accent-glow)] bg-[var(--color-accent-subtle)] p-3 sm:flex-row sm:items-center sm:gap-3">
+      <Sparkles className="size-4 shrink-0 text-[var(--color-accent)]" aria-hidden />
+      <p className="min-w-0 flex-1 text-xs leading-relaxed text-[var(--color-content-secondary)]">
+        Share {count === 1 ? 'this repository' : `all ${count} repositories`} with{' '}
+        <span className="font-medium text-[var(--color-content-primary)]">{suggestion.org.name}</span>?
+        Their PR review comments become {suggestion.org.name} memories.
+      </p>
+      <button
+        type="button"
+        onClick={() => onBind(suggestion.org.id, suggestion.repos)}
+        disabled={busy}
+        className="flex min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3.5 text-xs font-semibold text-[var(--color-bg)] transition-opacity duration-150 hover:opacity-90 disabled:opacity-50"
+      >
+        {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <LinkIcon className="size-3.5" aria-hidden />}
+        Share all
+      </button>
+    </div>
+  );
+}
+
+// ── Repository row — display, plus a selection control when it's bindable ─────
+
+function RepoRow({
   fullName,
   boundOrgSlug,
+  selectable,
+  selected,
+  onToggle,
   onUnbind,
   busy,
 }: {
   fullName: string;
   /** The LoreKit org this repo's scope is bound to, or undefined when unbound. */
   boundOrgSlug?: string;
+  /** Unbound + the caller manages at least one org → the row is a select target. */
+  selectable: boolean;
+  selected: boolean;
+  onToggle: () => void;
   /** Present only when the caller can manage the bound org (admin/owner). */
   onUnbind?: () => void;
   busy: boolean;
 }) {
+  const name = (
+    <span className="min-w-0 flex-1 truncate font-mono text-xs text-[var(--color-content-primary)]">
+      {fullName}
+    </span>
+  );
+
+  // Selectable (unbound) rows: the whole row is a checkbox label with a clear
+  // selected state so multi-select reads at a glance.
+  if (selectable) {
+    return (
+      <label
+        className={`flex min-h-11 cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2 transition-colors ${
+          selected
+            ? 'border-[var(--color-accent-glow)] bg-[var(--color-accent-subtle)]/60'
+            : 'border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-content-tertiary)] hover:bg-[var(--color-bg-elevated)]'
+        }`}
+      >
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggle}
+          className="size-4 shrink-0 rounded accent-[var(--color-accent)]"
+        />
+        {name}
+      </label>
+    );
+  }
+
+  // Static rows: covered-but-not-shared (icon only) or shared (org chip + unbind).
   return (
-    <div className="flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
+    <div className="flex min-h-11 items-center gap-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
       <GitBranch className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-      <span className="min-w-0 flex-1 truncate font-mono text-xs text-[var(--color-content-primary)]">
-        {fullName}
-      </span>
-      {boundOrgSlug ? (
-        <div className="flex items-center gap-1">
-          <span className="flex items-center gap-1 rounded-full bg-[var(--color-accent-subtle)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-accent)]">
-            <LinkIcon className="size-3" aria-hidden />
-            {boundOrgSlug}
-          </span>
+      {name}
+      {boundOrgSlug && (
+        <span className="flex shrink-0 items-center gap-0.5 rounded-full bg-[var(--color-accent-subtle)] py-0.5 pl-2 pr-1 text-[11px] font-medium text-[var(--color-accent)] ring-1 ring-inset ring-[var(--color-accent-glow)]">
+          <LinkIcon className="size-3 shrink-0" aria-hidden />
+          {boundOrgSlug}
           {onUnbind && (
             <button
               type="button"
               onClick={onUnbind}
               disabled={busy}
-              aria-label={`Unshare ${fullName} from ${boundOrgSlug}`}
-              className="flex size-6 shrink-0 items-center justify-center rounded-md text-[var(--color-content-tertiary)] transition-colors hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-accent)] disabled:opacity-50"
+              aria-label={`Stop sharing ${fullName} with ${boundOrgSlug}`}
+              className="ml-0.5 flex size-6 items-center justify-center rounded-full text-[var(--color-accent)] transition-colors hover:bg-[var(--color-accent)]/20 disabled:opacity-50"
             >
               <X className="size-3.5" aria-hidden />
             </button>
           )}
-        </div>
-      ) : (
-        <span
-          title="Covered by GitHub App — no manual webhook secret required"
-          className="flex items-center gap-1 rounded-full bg-[var(--color-success)]/10 px-2 py-0.5 text-[10px] font-medium text-[var(--color-success)]"
-        >
-          <CircleCheck className="size-3" aria-hidden />
-          App-covered
         </span>
       )}
     </div>
   );
 }
 
-// ── Bind panel — select unbound repos + a LoreKit org, then bind ─────────────
+// ── Bind action bar — pick a target org, share the selected repos ────────────
 
-function RepoBindingPanel({
-  unbound,
+function BindActionBar({
   manageableOrgs,
-  suggestion,
+  targetOrgId,
+  onTargetChange,
+  selectedCount,
   busy,
   onBind,
+  orgSelectId,
 }: {
-  unbound: UnboundRepo[];
   manageableOrgs: OrgMembership[];
-  suggestion: BindingSuggestion | null;
+  targetOrgId: string;
+  onTargetChange: (id: string) => void;
+  selectedCount: number;
   busy: boolean;
-  onBind: (orgId: string, fullNames: string[]) => void;
+  onBind: () => void;
+  orgSelectId: string;
 }) {
-  const [targetOrgId, setTargetOrgId] = useState(suggestion?.org.id ?? manageableOrgs[0]?.id ?? '');
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [query, setQuery] = useState('');
-  const orgSelectId = useId();
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return q ? unbound.filter((r) => r.fullName.toLowerCase().includes(q)) : unbound;
-  }, [unbound, query]);
-
-  // Once a repo is bound it leaves `unbound`; drop it from `selected` too so the
-  // "Bind N selected" count stays truthful and a second click can't re-submit an
-  // already-bound scope.
-  const unboundNames = useMemo(() => new Set(unbound.map((r) => r.fullName)), [unbound]);
-  useEffect(() => {
-    setSelected((prev) => {
-      const next = new Set([...prev].filter((name) => unboundNames.has(name)));
-      return next.size === prev.size ? prev : next;
-    });
-  }, [unboundNames]);
-
-  function toggle(fullName: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(fullName)) next.delete(fullName);
-      else next.add(fullName);
-      return next;
-    });
-  }
-
   return (
-    <div className="flex flex-col gap-3 border-t border-[var(--color-border)] pt-3">
-      {/* One-click suggestion */}
-      {suggestion && (
-        <div className="flex flex-col gap-2 rounded-lg border border-[var(--color-accent-glow)] bg-[var(--color-accent-subtle)] px-3 py-2.5 sm:flex-row sm:items-center">
-          <Info className="mt-0.5 size-3.5 shrink-0 text-[var(--color-accent)] sm:mt-0" aria-hidden />
-          <p className="min-w-0 flex-1 text-[11px] leading-relaxed text-[var(--color-content-secondary)]">
-            Share {suggestion.repos.length} repo{suggestion.repos.length === 1 ? '' : 's'} with{' '}
-            <span className="font-medium text-[var(--color-content-primary)]">{suggestion.org.name}</span>
-            {suggestion.reason === 'name-match' ? ' (name match)' : ''}? PR lore will route to the org.
-          </p>
-          <button
-            type="button"
-            onClick={() => onBind(suggestion.org.id, suggestion.repos)}
-            disabled={busy}
-            className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3 text-xs font-medium text-[#000] transition-opacity duration-150 disabled:opacity-50"
-          >
-            {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <LinkIcon className="size-3.5" aria-hidden />}
-            Bind all
-          </button>
-        </div>
-      )}
-
-      {/* Manual selection */}
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <label htmlFor={orgSelectId} className="text-[11px] text-[var(--color-content-secondary)]">
-            Share selected repos with
-          </label>
+    <div className="flex flex-col gap-2.5 border-t border-[var(--color-border)] pt-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-center gap-2">
+        <label htmlFor={orgSelectId} className="shrink-0 text-[11px] text-[var(--color-content-secondary)]">
+          Share with
+        </label>
+        <div className="relative flex-1 sm:flex-initial">
           <select
             id={orgSelectId}
             value={targetOrgId}
-            onChange={(e) => setTargetOrgId(e.target.value)}
-            className="min-h-11 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 text-xs text-[var(--color-content-primary)] focus:border-[var(--color-accent)] focus:outline-none"
+            onChange={(e) => onTargetChange(e.target.value)}
+            className="min-h-11 w-full appearance-none rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] py-2 pl-3 pr-9 text-xs text-[var(--color-content-primary)] transition-colors hover:border-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none"
           >
             {manageableOrgs.map((org) => (
               <option key={org.id} value={org.id}>
@@ -242,53 +252,21 @@ function RepoBindingPanel({
               </option>
             ))}
           </select>
+          <ChevronDown
+            className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-[var(--color-content-tertiary)]"
+            aria-hidden
+          />
         </div>
-
-        {unbound.length > 8 && (
-          <div className="flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5">
-            <Search className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Filter repos…"
-              aria-label="Filter repositories"
-              className="min-h-11 w-full bg-transparent text-xs text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:outline-none"
-            />
-          </div>
-        )}
-
-        <div className="flex max-h-52 flex-col gap-1 overflow-y-auto">
-          {filtered.map((repo) => (
-            <label
-              key={repo.fullName}
-              className="flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs hover:bg-[var(--color-bg-elevated)]"
-            >
-              <input
-                type="checkbox"
-                checked={selected.has(repo.fullName)}
-                onChange={() => toggle(repo.fullName)}
-                className="size-4 accent-[var(--color-accent)]"
-              />
-              <span className="min-w-0 flex-1 truncate font-mono text-[var(--color-content-secondary)]">
-                {repo.fullName}
-              </span>
-            </label>
-          ))}
-          {filtered.length === 0 && (
-            <p className="px-2 py-1 text-[11px] text-[var(--color-content-tertiary)]">No matching repos.</p>
-          )}
-        </div>
-
-        <button
-          type="button"
-          onClick={() => onBind(targetOrgId, [...selected])}
-          disabled={busy || selected.size === 0 || !targetOrgId}
-          className="flex min-h-11 items-center justify-center gap-1.5 self-start rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[#000] transition-opacity duration-150 disabled:opacity-50"
-        >
-          {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <LinkIcon className="size-4" aria-hidden />}
-          Bind {selected.size > 0 ? `${selected.size} ` : ''}selected
-        </button>
       </div>
+      <button
+        type="button"
+        onClick={onBind}
+        disabled={busy || selectedCount === 0 || !targetOrgId}
+        className="flex min-h-11 items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 text-sm font-semibold text-[var(--color-bg)] transition-opacity duration-150 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <LinkIcon className="size-4" aria-hidden />}
+        {selectedCount === 0 ? 'Select repos to share' : `Share ${selectedCount}`}
+      </button>
     </div>
   );
 }
@@ -308,6 +286,7 @@ function InstallationCard({
   const repos = installation.repositories;
   const { showToast } = useToast();
   const [pending, startTransition] = useTransition();
+  const orgSelectId = useId();
 
   // Local, optimistic view of the bindings so badges update without a round-trip.
   // Seeding from the prop once is correct here: the parent is a server component,
@@ -315,6 +294,7 @@ function InstallationCard({
   // revalidatePath, and the fresh prop only arrives on the next navigation, which
   // remounts this subtree and re-seeds. In-session updates are the optimistic ones.
   const [localBindings, setLocalBindings] = useState<BindingsByScope>(bindingsByScope);
+  const canManage = manageableOrgs.length > 0;
   const manageableIds = useMemo(() => new Set(manageableOrgs.map((o) => o.id)), [manageableOrgs]);
 
   const state = useMemo(() => partitionRepos(repos, localBindings), [repos, localBindings]);
@@ -326,6 +306,36 @@ function InstallationCard({
     () => new Map(state.bound.map((b) => [b.fullName, b])),
     [state.bound],
   );
+
+  // Bind-form state: the target org (defaulting to the suggestion), the current
+  // multi-selection, and the filter query over the one unified repo list.
+  const [targetOrgId, setTargetOrgId] = useState(() => suggestion?.org.id ?? manageableOrgs[0]?.id ?? '');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState('');
+
+  // Once a repo is bound it leaves `unbound`; prune it from `selected` so the
+  // "Share N" count stays truthful and a second click can't re-submit it.
+  const unboundNames = useMemo(() => new Set(state.unbound.map((r) => r.fullName)), [state.unbound]);
+  useEffect(() => {
+    setSelected((prev) => {
+      const next = new Set([...prev].filter((name) => unboundNames.has(name)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [unboundNames]);
+
+  const visibleRepos = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q ? repos.filter((r) => r.full_name.toLowerCase().includes(q)) : repos;
+  }, [repos, query]);
+
+  function toggle(fullName: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(fullName)) next.delete(fullName);
+      else next.add(fullName);
+      return next;
+    });
+  }
 
   function doBind(orgId: string, fullNames: string[]) {
     const org = manageableOrgs.find((o) => o.id === orgId);
@@ -403,11 +413,11 @@ function InstallationCard({
           <p className="truncate font-mono text-sm font-semibold text-[var(--color-content-primary)]">
             {installation.github_account_login}
           </p>
-          <p className="text-[10px] text-[var(--color-content-tertiary)]">
+          <p className="text-[11px] text-[var(--color-content-secondary)]">
             {installation.account_type} · Installed {relativeTime(installation.created_at)}
           </p>
         </div>
-        <span className="shrink-0 rounded-full border border-[var(--color-success)]/40 bg-[var(--color-success)]/10 px-2 py-0.5 text-[10px] font-medium text-[var(--color-success)]">
+        <span className="shrink-0 rounded-full border border-[var(--color-success)]/40 bg-[var(--color-success)]/10 px-2 py-0.5 text-[11px] font-medium text-[var(--color-success)]">
           linked
         </span>
       </div>
@@ -415,56 +425,89 @@ function InstallationCard({
       {/* Covered repos + binding */}
       <div className="flex flex-col gap-3 p-4">
         {repos.length > 0 ? (
-          <div className="flex flex-col gap-1.5">
-            <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
-              App-covered repositories ({repos.length})
-            </p>
-            <div className="flex flex-col gap-1">
-              <AnimatePresence>
-                {repos.map((repo) => {
-                  const bound = boundByFullName.get(repo.full_name);
-                  return (
-                    <AppCoveredRepoRow
-                      key={repo.id}
-                      fullName={repo.full_name}
-                      boundOrgSlug={bound?.orgSlug}
-                      busy={pending}
-                      onUnbind={
-                        bound && manageableIds.has(bound.orgId)
-                          ? () => doUnbind(repo.full_name, bound.orgId)
-                          : undefined
-                      }
-                    />
-                  );
-                })}
-              </AnimatePresence>
+          <>
+            {/* Section header: coverage stated once, plus a live shared count */}
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-content-secondary)]">
+                Repositories
+              </p>
+              <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-[var(--color-content-secondary)]">
+                <ShieldCheck className="size-3.5 shrink-0 text-[var(--color-success)]" aria-hidden />
+                {repos.length} covered{state.bound.length > 0 ? ` · ${state.bound.length} shared` : ''}
+              </span>
             </div>
-          </div>
+
+            {canManage && suggestion && (
+              <SuggestionBanner suggestion={suggestion} busy={pending} onBind={doBind} />
+            )}
+
+            {repos.length > 8 && (
+              <div className="flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 focus-within:border-[var(--color-accent)]">
+                <Search className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Filter repositories…"
+                  aria-label="Filter repositories"
+                  className="min-h-11 w-full bg-transparent text-xs text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:outline-none"
+                />
+              </div>
+            )}
+
+            <div className="-mr-1 flex max-h-64 flex-col gap-1 overflow-y-auto pr-1">
+              {visibleRepos.map((repo) => {
+                const bound = boundByFullName.get(repo.full_name);
+                return (
+                  <RepoRow
+                    key={repo.id}
+                    fullName={repo.full_name}
+                    boundOrgSlug={bound?.orgSlug}
+                    selectable={canManage && !bound}
+                    selected={selected.has(repo.full_name)}
+                    onToggle={() => toggle(repo.full_name)}
+                    onUnbind={
+                      bound && manageableIds.has(bound.orgId)
+                        ? () => doUnbind(repo.full_name, bound.orgId)
+                        : undefined
+                    }
+                    busy={pending}
+                  />
+                );
+              })}
+              {visibleRepos.length === 0 && (
+                <p className="px-1 py-2 text-[11px] text-[var(--color-content-secondary)]">
+                  No repositories match &ldquo;{query}&rdquo;.
+                </p>
+              )}
+            </div>
+
+            {/* Action bar — only when there's something to share and somewhere to share it */}
+            {canManage && state.unbound.length > 0 && (
+              <BindActionBar
+                manageableOrgs={manageableOrgs}
+                targetOrgId={targetOrgId}
+                onTargetChange={setTargetOrgId}
+                selectedCount={selected.size}
+                busy={pending}
+                onBind={() => doBind(targetOrgId, [...selected])}
+                orgSelectId={orgSelectId}
+              />
+            )}
+
+            {/* No org to share with — point the user at where to make one */}
+            {!canManage && (
+              <p className="flex items-start gap-1.5 border-t border-[var(--color-border)] pt-3 text-[11px] leading-relaxed text-[var(--color-content-secondary)]">
+                <Info className="mt-0.5 size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                Create an organization under{' '}
+                <span className="font-medium text-[var(--color-content-primary)]">Settings → Organization</span>{' '}
+                to share these repositories&rsquo; PR review comments with your team.
+              </p>
+            )}
+          </>
         ) : (
-          <p className="flex items-center gap-1.5 text-xs text-[var(--color-content-tertiary)]">
-            <Info className="size-3.5 shrink-0" aria-hidden />
+          <p className="flex items-center gap-1.5 text-xs text-[var(--color-content-secondary)]">
+            <Info className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
             No repositories covered yet — add repos to this installation via GitHub.
-          </p>
-        )}
-
-        {/* Binding control (only when there is something to bind and somewhere to bind it) */}
-        {manageableOrgs.length > 0 && state.unbound.length > 0 && (
-          <RepoBindingPanel
-            unbound={state.unbound}
-            manageableOrgs={manageableOrgs}
-            suggestion={suggestion}
-            busy={pending}
-            onBind={doBind}
-          />
-        )}
-
-        {/* No org to bind to — point the user at where to make one */}
-        {manageableOrgs.length === 0 && repos.length > 0 && (
-          <p className="flex items-start gap-1.5 border-t border-[var(--color-border)] pt-3 text-[10px] leading-relaxed text-[var(--color-content-tertiary)]">
-            <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-            Create an organization under{' '}
-            <span className="font-medium text-[var(--color-content-secondary)]">Settings → Organization</span>{' '}
-            to share these repos&rsquo; PR lore with your team.
           </p>
         )}
       </div>
@@ -541,7 +584,7 @@ export function GithubAppManager({
         <p className="text-xs font-semibold text-[var(--color-content-primary)]">
           GitHub App installations
         </p>
-        <span className="rounded-full border border-[var(--color-accent-glow)] bg-[var(--color-accent-subtle)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-accent)]">
+        <span className="rounded-full border border-[var(--color-accent-glow)] bg-[var(--color-accent-subtle)] px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-[var(--color-accent)]">
           {installations.length}
         </span>
         {/* Manage action — opens the App's config page (add/remove repos, suspend,
@@ -574,15 +617,14 @@ export function GithubAppManager({
         </div>
       )}
 
-      {/* Visual distinction callout — only shown when repos exist */}
+      {/* How-it-works callout — only shown when repos exist */}
       {installations.some((i) => i.repositories.length > 0) && (
         <div className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
           <Info className="mt-0.5 size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-          <p className="text-[10px] leading-relaxed text-[var(--color-content-tertiary)]">
-            <span className="font-medium text-[var(--color-success)]">App-covered</span> repos
-            use the single GitHub App webhook secret — no per-repo secret needed.
-            Bind a repo to an <span className="font-medium text-[var(--color-accent)]">organization</span>{' '}
-            to share its PR lore with your team.
+          <p className="text-[11px] leading-relaxed text-[var(--color-content-secondary)]">
+            Covered repos need no per-repo webhook secret. Share one with an{' '}
+            <span className="font-medium text-[var(--color-accent)]">organization</span> and its
+            PR review comments become shared team memories instead of personal ones.
           </p>
         </div>
       )}
