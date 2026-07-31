@@ -189,6 +189,16 @@ jobs:
       # unlike CI's ephemeral mode against a throwaway local stack. Runs only when
       # the optional credentials are configured; otherwise the orgs suite is left
       # out and announced by smoke-rest, never a green suite that tested nothing.
+      #
+      # BEST-EFFORT: the orgs suite is opt-in, so a mint failure must NOT fail the
+      # deploy. mint-smoke-jwt.mjs exits non-zero when the fixed smoke user can't
+      # sign in (unseeded/unconfirmed user, wrong password, or email+password
+      # sign-in disabled on the project) — do not let that red the pipeline and
+      # block promotion to production. On failure we warn loudly and leave the
+      # `jwt` output empty, so smoke-rest runs the memories suite only and
+      # announces the orgs skip. To ENABLE the orgs suite, seed a confirmed
+      # email+password user on this project matching LOREKIT_SMOKE_EMAIL/PASSWORD.
+      # (`if <cmd>` suspends `set -e` for the mint, so a failure lands in `else`.)
       - name: Mint a user JWT for the orgs REST smoke (optional)
         id: smokejwt
         if: env.HAVE_ORG_SMOKE_CREDS == 'true'
@@ -198,9 +208,12 @@ jobs:
           LOREKIT_SMOKE_EMAIL: ${{ secrets.LOREKIT_SMOKE_EMAIL }}
           LOREKIT_SMOKE_PASSWORD: ${{ secrets.LOREKIT_SMOKE_PASSWORD }}
         run: |
-          JWT="$(node scripts/mint-smoke-jwt.mjs)"
-          echo "::add-mask::$JWT"
-          echo "jwt=$JWT" >> "$GITHUB_OUTPUT"
+          if JWT="$(node scripts/mint-smoke-jwt.mjs)"; then
+            echo "::add-mask::$JWT"
+            echo "jwt=$JWT" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Could not mint a smoke JWT — the orgs REST suite is skipped this run. Seed a confirmed email+password smoke user (matching LOREKIT_SMOKE_EMAIL/PASSWORD) on this project to enable it."
+          fi
 
       # REST Edge Functions end-to-end against the live preview stack — the
       # `memories` suite always (gated by LOREKIT_SMOKE_TOKEN), the `orgs` suite
