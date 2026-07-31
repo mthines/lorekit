@@ -206,16 +206,20 @@ export function retrospectiveNudge(scope, control) {
 }
 
 // Terse confirmation emitted via PostToolUse when a memory.write succeeded.
-// `key` is the lesson key from the tool response (may be null when the response
-// shape doesn't surface it). When the key is known the link opens that exact
-// lesson's detail sheet (`?scope=…&lesson=…`); otherwise it filters the Explorer
-// to the write scope — both JSON-encoded via the shared builder so they actually
-// open the intended view.
-export function writeConfirmation(scope, key) {
-  const writeScope = scope.repoScope || 'global';
+// `key` is the lesson key from the tool input (may be null when it isn't
+// surfaced). `writtenScope` is the ACTUAL scope the write targeted (from the tool
+// input) — the link must point there, not at `repoScope`: a `global` (or project)
+// write deep-linked to `repoScope` would open a lesson ref that doesn't exist.
+// Falls back to the cwd's repo scope, then `global`, when the write scope is
+// unknown. When the key is known the link opens that exact lesson's detail sheet
+// (`?scope=…&lesson=…`); otherwise it filters the Explorer to the write scope —
+// both JSON-encoded via the shared builder so they actually open the intended view.
+export function writeConfirmation(scope, key, writtenScope) {
+  const target =
+    typeof writtenScope === 'string' && writtenScope ? writtenScope : scope.repoScope || 'global';
   const keyPart = key ? ` · ${key}` : '';
-  const url = key ? buildLessonUrl(writeScope, key) : loreScopeUrl(writeScope);
-  return `LoreKit: memory saved to ${writeScope}${keyPart}\nView: ${url}`;
+  const url = key ? buildLessonUrl(target, key) : loreScopeUrl(target);
+  return `LoreKit: memory saved to ${target}${keyPart}\nView: ${url}`;
 }
 
 // The nudge emitted when a tool failure is detected.

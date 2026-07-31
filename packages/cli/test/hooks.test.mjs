@@ -395,6 +395,18 @@ test('writeConfirmation falls back to global scope', () => {
   assert.match(text, /lorekit\.io\/lore/);
 });
 
+test('writeConfirmation links to the ACTUAL write scope, not the cwd repo scope', () => {
+  // A global write under a repo cwd must deep-link to the global lesson — the
+  // old repoScope-based ref pointed at a lesson that does not exist.
+  const scope = fakeScope({ repoScope: 'repo::owner/repo' });
+  const text = writeConfirmation(scope, 'k', 'global');
+  assert.match(text, /memory saved to global/);
+  assert.doesNotMatch(text, /memory saved to repo::owner\/repo/);
+  // The lesson ref is scoped to global, JSON-encoded.
+  assert.match(text, /scope=%22global%22/);
+  assert.match(text, /lesson=%7B%22scope%22%3A%22global%22/);
+});
+
 // ── retrospectiveNudge includes lore URL ─────────────────────────────────────
 
 test('retrospectiveNudge includes a JSON-encoded lore deep link for the write scope', () => {

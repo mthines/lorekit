@@ -98,14 +98,44 @@ export function loreScopeUrl(scope, opts = {}) {
   return buildLoreUrl(params, opts);
 }
 
-// A shareable link that opens a specific lesson's detail sheet. Sets BOTH the
-// `lesson` param (which opens the sheet) AND `scope` (so the lesson is in the
-// fetched set — the sheet can render blank if the lesson isn't in the default
-// fetch). `scope` is the lesson's own scope. Pure.
+// A shareable link that opens a specific lesson's detail sheet. Sets the
+// `lesson` param (which opens the sheet) plus `scope` — NOT because scope is
+// needed to RESOLVE the lesson (the sidebar's `useLoreData` reads one unfiltered
+// recent set, `.limit(500)`, non-archived, so `scope` does not widen that
+// lookup), but so the Explorer list BEHIND the sheet is filtered to the lesson's
+// own scope, coherent with the detail view. A lesson older than that window or
+// archived can still open blank — a dashboard-side limitation the link can't fix.
+// `scope` is the lesson's own scope. Pure.
 export function buildLessonUrl(scope, key, opts = {}) {
   const params = { lesson: { scope, key } };
   if (scope) params.scope = scope;
   return buildLoreUrl(params, opts);
+}
+
+// Resolve a SINGLE positional `link` argument into a { scope, key } pair,
+// disambiguating a bare scope from the `<scope>::<key>` shorthand. `isScope` is
+// an injected validity predicate (the caller passes a `scopeIssue`-based check),
+// keeping this module zero-import.
+//
+// The rule: split at the LAST `::` and take it as `<scope>::<key>` ONLY when the
+// left side is itself a COMPLETE valid scope — otherwise the whole arg is the
+// scope. Splitting on the last `::` (not the first) keeps a multi-segment scope
+// whole (`repo::owner/name::key` → scope `repo::owner/name`, key `key`); gating
+// on a valid left side means a bare `repo::owner/name` is NOT mis-split, because
+// its left part `repo` is not a valid scope. This is the fix for the prior
+// first-`::` split, which turned `link repo::acme/widget` into scope="repo" plus
+// a bogus `acme/widget` key — breaking the shorthand for EVERY non-`global`
+// scope. A malformed arg falls through to the scope, never a fabricated key. Pure.
+export function resolveScopeArg(arg, isScope = () => false) {
+  const s = typeof arg === 'string' ? arg.trim() : '';
+  if (!s) return { scope: null, key: null };
+  const idx = s.lastIndexOf('::');
+  if (idx !== -1) {
+    const left = s.slice(0, idx).trim();
+    const right = s.slice(idx + 2).trim();
+    if (right && isScope(left)) return { scope: left, key: right };
+  }
+  return { scope: s, key: null };
 }
 
 // ── Flag → param coercion (pure, shared by the `link` command) ────────────────

@@ -17,7 +17,7 @@
 import process from 'node:process';
 import { resolveProjectRoot } from './config.mjs';
 import { deriveScope } from './scope.mjs';
-import { parseScopeKey } from './lessons-view.mjs';
+import { scopeIssue } from './lessons-view.mjs';
 import {
   resolveAppBase,
   buildLoreUrl,
@@ -25,6 +25,7 @@ import {
   parseOwnerArg,
   parseViewArg,
   parseRangeArg,
+  resolveScopeArg,
   surfaceFor,
 } from './deeplink-pure.mjs';
 import { log, err } from './util.mjs';
@@ -48,13 +49,13 @@ export async function link(args) {
     scope = first;
     key = second;
   } else if (first) {
-    const parsed = parseScopeKey(first);
-    if (parsed) {
-      scope = parsed.scope;
-      key = parsed.key;
-    } else {
-      scope = first;
-    }
+    // One positional: disambiguate a bare scope from the `<scope>::<key>`
+    // shorthand by scope validity, not by a naive first-`::` split — otherwise
+    // `link repo::owner/name` (a valid scope) is misread as scope="repo" + a
+    // bogus key. `scopeIssue(s) === null` is the canonical "is a valid scope".
+    const resolved = resolveScopeArg(first, (s) => scopeIssue(s) === null);
+    scope = resolved.scope;
+    key = resolved.key;
   }
   // `--scope` sets the scope when no positional scope was given (consistency
   // with the other read commands); an explicit positional always wins.

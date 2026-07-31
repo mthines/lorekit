@@ -28,9 +28,14 @@ import {
   parseOwnerArg,
   parseViewArg,
   parseRangeArg,
+  resolveScopeArg,
   mostSpecificScope,
   surfaceFor,
 } from '../src/deeplink-pure.mjs';
+import { scopeIssue } from '../src/lessons-view.mjs';
+
+// The real validity predicate the `link` command injects.
+const isScope = (s) => scopeIssue(s) === null;
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const tmp = (prefix) => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -138,6 +143,36 @@ test('mostSpecificScope picks the first non-global scope, else null', () => {
   assert.equal(mostSpecificScope({}), null);
 });
 
+test('resolveScopeArg: a valid scope (incl. `::` scopes) is a scope filter, never a bogus lesson', () => {
+  // The blocking regression: every non-global scope contains `::`, and a naive
+  // first-`::` split turned it into scope="repo" + a bogus key.
+  assert.deepEqual(resolveScopeArg('global', isScope), { scope: 'global', key: null });
+  assert.deepEqual(resolveScopeArg('repo::owner/repo', isScope), { scope: 'repo::owner/repo', key: null });
+  assert.deepEqual(resolveScopeArg('project::widget', isScope), { scope: 'project::widget', key: null });
+  assert.deepEqual(resolveScopeArg('branch::owner/repo::feat/x', isScope), {
+    scope: 'branch::owner/repo::feat/x',
+    key: null,
+  });
+});
+
+test('resolveScopeArg: `<scope>::<key>` shorthand splits at the LAST `::`, keeping multi-segment scopes intact', () => {
+  assert.deepEqual(resolveScopeArg('global::my-key', isScope), { scope: 'global', key: 'my-key' });
+  assert.deepEqual(resolveScopeArg('repo::owner/repo::my-key', isScope), {
+    scope: 'repo::owner/repo',
+    key: 'my-key',
+  });
+  assert.deepEqual(resolveScopeArg('branch::owner/repo::feat/x::my-key', isScope), {
+    scope: 'branch::owner/repo::feat/x',
+    key: 'my-key',
+  });
+});
+
+test('resolveScopeArg: an unresolvable/malformed arg becomes the scope, never a fabricated key', () => {
+  assert.deepEqual(resolveScopeArg('repo::owneronly', isScope), { scope: 'repo::owneronly', key: null });
+  assert.deepEqual(resolveScopeArg('', isScope), { scope: null, key: null });
+  assert.deepEqual(resolveScopeArg('   ', isScope), { scope: null, key: null });
+});
+
 test('surfaceFor classifies a params object', () => {
   assert.equal(surfaceFor({}), 'explorer');
   assert.equal(surfaceFor({ scope: 'global' }), 'scope');
@@ -222,6 +257,27 @@ test('link <scope::key> shorthand equals the two-positional form', () => {
   const b = run(['link', 'global', 'my-key'], { dir: root });
   assert.equal(a.status, 0, a.stderr);
   assert.equal(a.stdout.trim(), b.stdout.trim());
+});
+
+test('link <repo::owner/name> (single positional) is a scope filter, NOT a bogus lesson', () => {
+  // Regression guard for the blocking review finding.
+  const root = tmp('lk-link-proj-');
+  const res = run(['link', 'repo::acme/widget'], { dir: root });
+  assert.equal(res.status, 0, res.stderr);
+  assert.deepEqual(decodeParams(res.stdout.trim()), { scope: 'repo::acme/widget' });
+  assert.doesNotMatch(res.stdout, /lesson=/);
+});
+
+test('link <repo::owner/name::key> shorthand deep-links the lesson under the full repo scope', () => {
+  const root = tmp('lk-link-proj-');
+  const res = run(['link', 'repo::acme/widget::prefer-guards', '--json'], { dir: root });
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.surface, 'lesson');
+  assert.deepEqual(out.params, {
+    scope: 'repo::acme/widget',
+    lesson: { scope: 'repo::acme/widget', key: 'prefer-guards' },
+  });
 });
 
 test('link --json emits { url, surface, base, params }', () => {

@@ -122,7 +122,13 @@ async function run(args) {
         const key = (parsed.toolInput && typeof parsed.toolInput.key === 'string')
           ? parsed.toolInput.key
           : null;
-        emit(writeConfirmation(scope, key));
+        // The scope the write actually targeted (tool input) — the confirmation
+        // link must point there, not at the cwd's repo scope, or a global/project
+        // write would deep-link to a lesson ref that doesn't exist.
+        const writtenScope = (parsed.toolInput && typeof parsed.toolInput.scope === 'string' && parsed.toolInput.scope)
+          ? parsed.toolInput.scope
+          : null;
+        emit(writeConfirmation(scope, key, writtenScope));
       }
     } catch {
       // best-effort — never break the host
