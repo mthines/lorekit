@@ -14,7 +14,7 @@ import { applyKeyset, runPaginatedQuery, type FilterBuilderLike } from '@/lib/pa
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { scopeType } from '@/lib/scope';
 import { ownerFromMemoryRow } from '@/lib/ownership';
-import { normalizeTags } from '@/lib/tag-filter';
+import { normalizeTags, pgArrayLiteral } from '@/lib/tag-filter';
 
 // ── Edit / update ─────────────────────────────────────────────────────────────
 
@@ -230,12 +230,18 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
   }
 
   // Label filter — `contains` is Postgres' array `@>` operator, so a row must
-  // carry EVERY selected label (see `matchesAllTags`, the client-side mirror of
-  // this predicate). Normalized first so a hand-edited URL param carrying
-  // whitespace or duplicates can't produce an unsatisfiable filter.
+  // carry EVERY selected label. Normalized first, so a hand-edited URL param
+  // carrying whitespace or duplicates can't produce an unsatisfiable filter.
+  //
+  // The literal is built by `pgArrayLiteral`, NOT handed to `.contains` as a
+  // `string[]`: postgrest-js serialises an array with a bare `join(',')`
+  // (`cs.{a,b}`), and `memories.tags` is unconstrained free text, so a label
+  // containing a comma — or a brace, quote, or backslash — would silently
+  // filter as different labels. Passing a string makes postgrest-js emit
+  // `cs.<literal>` verbatim, so the quoting is ours to get right.
   const tags = normalizeTags(filters.tags);
   if (tags.length > 0) {
-    base = base.contains('tags', tags);
+    base = base.contains('tags', pgArrayLiteral(tags));
   }
 
   // Date range bounds on created_at.

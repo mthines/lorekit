@@ -3,6 +3,7 @@ import {
   normalizeTags,
   toggleTag,
   tallyTags,
+  pgArrayLiteral,
   visibleTags,
   type TagCount,
 } from './tag-filter';
@@ -73,6 +74,32 @@ describe('tallyTags', () => {
 
   it('counts a duplicated label on one row once', () => {
     expect(tallyTags([{ tags: ['perf', 'perf'] }])).toEqual([{ tag: 'perf', count: 1 }]);
+  });
+});
+
+describe('pgArrayLiteral', () => {
+  it('double-quotes every element', () => {
+    expect(pgArrayLiteral(['perf', 'ci'])).toBe('{"perf","ci"}');
+  });
+
+  it('keeps a label containing a comma as ONE label', () => {
+    // The bug this function exists for: postgrest-js's array path emits
+    // `cs.{perf,ci}` via a bare join, so `perf,ci` would filter as two labels.
+    expect(pgArrayLiteral(['perf,ci'])).toBe('{"perf,ci"}');
+  });
+
+  it('escapes backslashes and double quotes', () => {
+    expect(pgArrayLiteral(['a"b'])).toBe('{"a\\"b"}');
+    expect(pgArrayLiteral(['a\\b'])).toBe('{"a\\\\b"}');
+  });
+
+  it('passes braces through inside the quoted element', () => {
+    expect(pgArrayLiteral(['{ci}'])).toBe('{"{ci}"}');
+  });
+
+  it('normalizes before quoting and renders an empty selection as `{}`', () => {
+    expect(pgArrayLiteral([' perf ', 'perf', ''])).toBe('{"perf"}');
+    expect(pgArrayLiteral([])).toBe('{}');
   });
 });
 

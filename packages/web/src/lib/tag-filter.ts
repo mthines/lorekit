@@ -74,6 +74,25 @@ export function tallyTags(rows: readonly { tags?: string[] | null }[]): TagCount
     .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
 }
 
+/**
+ * Build a PostgreSQL array literal (`{"a","b,c"}`) from a label list.
+ *
+ * postgrest-js's `.contains(column, string[])` serialises an array with a bare
+ * `value.join(',')`, so a label containing a comma, brace, quote, or backslash
+ * is silently mis-parsed into different labels — and `memories.tags` is free
+ * text with no CHECK constraint, so such a label is reachable. Passing a STRING
+ * to `.contains` instead makes it emit `cs.<string>` verbatim, which lets this
+ * function own the quoting.
+ *
+ * Every element is double-quoted (legal for any element, and unambiguous) with
+ * `\` and `"` backslash-escaped, per the Postgres array-literal rules.
+ */
+export function pgArrayLiteral(values: readonly string[]): string {
+  const quoted = normalizeTags(values).map(
+    (value) => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`,
+  );
+  return `{${quoted.join(',')}}`;
+}
 
 /**
  * The labels to render in the filter bar, capped at `limit`.
