@@ -252,7 +252,7 @@ All signals carry these resource attributes:
 | `service.namespace` | `lorekit` |
 | `service.name` | `api` (Edge Functions), `web` (Next.js), `mcp-node` (Node MCP server), or `cli` (CLI) |
 | `service.version` | Git SHA (`VERCEL_GIT_COMMIT_SHA`) or `unknown`; the package version for the CLI |
-| `deployment.environment.name` | `production` / `preview` / `development` / `local` (not set by the CLI) |
+| `deployment.environment.name` | `production` / `preview` / `development` / `local`; the CLI omits it unless overridden. An explicit `DEPLOYMENT_ENVIRONMENT` env var overrides the ambient value on every component (used by `scripts/emit-correlated-trace.mts` to stamp `test`). |
 
 ---
 

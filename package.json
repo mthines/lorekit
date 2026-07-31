@@ -4,7 +4,8 @@
   "private": true,
   "license": "MIT",
   "scripts": {
-    "prepare": "husky"
+    "prepare": "husky",
+    "emit-trace": "node --experimental-transform-types scripts/emit-correlated-trace.mts"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.1.0",

@@ -41,14 +41,80 @@ agent ─traceparent→ mcp-node ─traceparent→ api (edge) ─→ Postgres
 
 | File | Proves |
 |------|--------|
-| `packages/mcp-core/src/otel-correlation.spec.ts` | CLI→api and MCP→api join one trace with correct parent/child linkage; N REST calls become siblings under the command span; the echoed header points back at the server span; a 3-service chain preserves one `trace_id`; invalid inbound → fresh root; the sampled flag is data, not an export gate; the zero-dep CLI header is byte-identical to `formatTraceparent`. |
-| `packages/mcp-core/src/otel-conventions.spec.ts` | Drift guards: the four components declare **distinct** `service.name` values (`cli`/`api`/`mcp-node`/`web`); `service.namespace=lorekit` everywhere; edge span kinds SERVER(root)/CLIENT(db)/INTERNAL(child) with OTLP wire values; `faas.name` distinguishes the five edge functions; export never branches on `sampled`; every tool span carries `lorekit.tool.name` and feeds the `lorekit.tool.duration` histogram with low-cardinality attributes. Plus unit coverage of the histogram accessor (name, memoization, no-throw record). |
-| `packages/cli/test/telemetry.test.mjs` (extended) | `os.type` / `host.arch` emit OTel-registry values (see bug below). |
+| `packages/mcp-core/src/otel-correlation.spec.ts` | CLI→api and MCP→api join one trace with correct parent/child linkage; N REST calls become siblings under the command span; the echoed header points back at the server span; a 3-service chain preserves one `trace_id`; invalid inbound → fresh root; the sampled flag is data, not an export gate; the zero-dep CLI header — source-scanned from the shipped `getActiveTraceparent` — renders byte-identically to `formatTraceparent`. |
+| `packages/mcp-core/src/otel-conventions.spec.ts` | Drift guards: the four components declare **distinct** `service.name` values (`cli`/`api`/`mcp-node`/`web`); `service.namespace=lorekit` everywhere; edge span kinds SERVER(root)/CLIENT(db)/INTERNAL(child) with OTLP wire values; `faas.name` distinguishes the five edge functions; the edge (`extractTraceContext`/`withTraceparent`) and CLI (`getActiveTraceparent`) source keeps routing propagation through the shared `parseTraceparent`/`formatTraceparent` seam; export never branches on `sampled`; every tool span carries `lorekit.tool.name` and feeds the `lorekit.tool.duration` histogram with low-cardinality attributes. Plus unit coverage of the histogram accessor (name, memoization, no-throw record). |
+| `packages/mcp-core/src/otel-harness.spec.ts` | The correlated-trace harness's pure builder emits three service blocks (`cli`/`api`/`mcp-node`) under ONE `trace_id`, each resource stamped `deployment.environment.name=test`; correct span kinds; and the real parentage — CLI→api, MCP→api, and every DB CLIENT span under an api SERVER span — all off the CLI root. |
+| `packages/cli/test/telemetry.test.mjs` (extended) | `os.type` / `host.arch` emit OTel-registry values, incl. `ppc`→`ppc32` (see bug below); `deployment.environment.name` is omitted by default and emitted only under an explicit `DEPLOYMENT_ENVIRONMENT` override. |
 
 These complement the pre-existing suites: `trace-context.spec.ts` (strict W3C
 parse/format), `edge-parity.spec.ts` (the CLI/edge mirror can't drift),
 `packages/mcp-server/src/otel-propagation.spec.ts` (OTel context API), and the
 existing `telemetry.test.mjs` (config, opt-out, payload shape, PII posture).
+
+---
+
+## Emitting a real correlated trace to Dash0 (the harness)
+
+The suites above run **offline** — they never boot an exporter, so nothing they
+run reaches Dash0. That is correct for a fast CI, but it leaves no way to
+**visually** confirm correlation in the backend. `scripts/emit-correlated-trace.mts`
+is the on-demand tool for exactly that: it emits **one** real, correlated
+cross-service trace to Dash0 and prints its `trace_id`.
+
+```bash
+# Point it at Dash0 (any OTLP endpoint + auth works; env only, no committed secret):
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://ingress.europe-west4.gcp.dash0-dev.com
+export OTEL_EXPORTER_OTLP_HEADERS='Authorization=Bearer <ingesting-only-token>, Dash0-Dataset=lorekit-test'
+
+pnpm emit-trace          # → node --experimental-transform-types scripts/emit-correlated-trace.mts
+```
+
+It prints the emitted `trace_id`, the endpoint host, the dataset, and the
+Dash0 filter to use. With no endpoint/token configured it **no-ops** with a
+clear message (never crashes, never needs a secret in git).
+
+**What it emits** — one trace covering all three production correlation paths:
+
+```
+cli (INTERNAL, service=cli)                       ← the CLI command span (root)
+├─ api SERVER (POST /memories, service=api)        ← CLI → api
+│   └─ api CLIENT (INSERT … memories)              ← multi-hop edge chain (server → db)
+└─ mcp-node SERVER (tools/call, service=mcp-node)  ← the MCP hop
+    └─ api SERVER (GET /memories, service=api)     ← MCP → api
+        └─ api CLIENT (SELECT … memories)          ← multi-hop edge chain
+```
+
+**Why it is faithful, not a mock.** Each span is built with the component's own
+emission code — the CLI's real `buildTracePayload`, the edge's real `Span` /
+`buildOtlpPayload` (`supabase/functions/_shared/otel.ts`) — and every parent→child
+edge is derived through the **real** W3C seam (`formatTraceparent` →
+`parseTraceparent`), exactly as the edge's `extractTraceContext` does on the
+wire. It runs in Node via `--experimental-transform-types` and shims `Deno.env`
+onto `process.env` so the edge code runs unmodified. (The `mcp-node` span is the
+one approximation: the Node MCP server emits through the OTel SDK, which can't be
+driven single-shot cross-package, so its span is produced by the same edge
+builder with `service.name=mcp-node` — identical OTLP wire shape.)
+
+### Isolating the `test` dataset in Dash0
+
+Every span the harness emits carries `deployment.environment.name=test` as a
+**global resource attribute** across all four service identities. This is the
+existing semconv attribute (elsewhere `production` / `preview` / `development` /
+`local`), so nothing new needs indexing — filter or route on it:
+
+- **Filter**: in any Dash0 view, add `deployment.environment.name = test`, then
+  open the printed `trace_id` to see the full waterfall.
+- **Isolate**: send it to a dedicated dataset with a `Dash0-Dataset` header (see
+  the `OTEL_EXPORTER_OTLP_HEADERS` above), and/or add a Dash0 routing rule keyed
+  on `deployment.environment.name = test` so these traces never mix with
+  production telemetry.
+
+The marker is wired through **one env-driven path** every component honours:
+`DEPLOYMENT_ENVIRONMENT` (the harness sets it to `test`). The edge's
+`resolveDeploymentEnv()` and the CLI's `resolveDeploymentEnvironment()` both read
+it first, ahead of the ambient `VERCEL_ENV` mapping; the Node `mcp-node` server
+reaches the same value natively via `OTEL_RESOURCE_ATTRIBUTES`. The CLI otherwise
+still omits the attribute by default (it has no ambient deployment).
 
 ---
 

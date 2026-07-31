@@ -188,8 +188,24 @@ export function normalizeHostArch(arch) {
   return HOST_ARCH_BY_PROCESS_ARCH[arch] ?? arch;
 }
 
-function resourceAttributes(version) {
-  return [
+/**
+ * Resolve the `deployment.environment.name` resource value, or `undefined` when
+ * none is set. The CLI runs on end-users' machines, so — unlike the edge/web/
+ * mcp-node deployments — it has no ambient environment and deliberately OMITS
+ * the attribute by default. It is emitted ONLY when explicitly overridden via
+ * `DEPLOYMENT_ENVIRONMENT` (falling back to `OTEL_DEPLOYMENT_ENVIRONMENT`) — the
+ * same single, env-driven knob the edge honours, which the correlated-trace
+ * harness (`scripts/emit-correlated-trace.mts`) uses to stamp `test`.
+ * @param {object} [env]  defaults to process.env
+ */
+export function resolveDeploymentEnvironment(env = process.env) {
+  const raw = env.DEPLOYMENT_ENVIRONMENT ?? env.OTEL_DEPLOYMENT_ENVIRONMENT;
+  const value = raw !== undefined ? String(raw).trim() : '';
+  return value || undefined;
+}
+
+function resourceAttributes(version, env = process.env) {
+  const attrs = [
     { key: 'service.name', value: { stringValue: 'cli' } },
     { key: 'service.namespace', value: { stringValue: 'lorekit' } },
     { key: 'service.version', value: { stringValue: String(version) } },
@@ -198,6 +214,9 @@ function resourceAttributes(version) {
     { key: 'os.type', value: { stringValue: normalizeOsType(process.platform) } },
     { key: 'host.arch', value: { stringValue: normalizeHostArch(process.arch) } },
   ];
+  const deploymentEnv = resolveDeploymentEnvironment(env);
+  if (deploymentEnv) attrs.push({ key: 'deployment.environment.name', value: { stringValue: deploymentEnv } });
+  return attrs;
 }
 
 // ── Payload builders (pure — unit-tested) ─────────────────────────────────────
