@@ -111,8 +111,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # `--output-style=stream` is deliberate: NX's default CI renderer wraps
+      # each task's output in a GitHub Actions log group (`::group::`), which the
+      # web UI COLLAPSES by default — so a failing task's errors/warnings are
+      # hidden inside a collapsed block and invisible to a human or agent scanning
+      # the run. `stream` pipes every task's stdout/stderr flat and inline
+      # (task-name-prefixed), so all errors and warnings are always visible.
       - name: NX — typecheck, test, lint (affected)
-        run: pnpm nx affected -t typecheck,test,lint --parallel=3
+        run: pnpm nx affected -t typecheck,test,lint --parallel=3 --output-style=stream
         env:
           NX_BASE: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
           NX_HEAD: ${{ github.sha }}
@@ -296,22 +302,32 @@ jobs:
           echo "| Job | Result |" >> "$GITHUB_STEP_SUMMARY"
           echo "| --- | ------ |" >> "$GITHUB_STEP_SUMMARY"
 
+          # Name each failed job in a `::error::` annotation. Branch protection
+          # surfaces THIS job as the single required check, so an agent inspecting
+          # the check needs to know exactly which upstream job to open — a generic
+          # "one or more jobs failed" gives it nowhere to look. Annotations render
+          # at the top of the run and are returned by the checks API verbatim.
           failed=0
+          failed_jobs=""
           while read -r job result; do
             case "$result" in
               success)   icon="✅ success" ;;
               skipped)   icon="⏭️ skipped (not applicable)" ;;
-              failure)   icon="❌ failure";   failed=1 ;;
-              cancelled) icon="🚫 cancelled"; failed=1 ;;
-              *)         icon="❓ $result";    failed=1 ;;
+              failure)   icon="❌ failure";   failed=1; failed_jobs="${failed_jobs}${job} "
+                         echo "::error::Job '${job}' failed — open the '${job}' job's logs for the full error/warning output." ;;
+              cancelled) icon="🚫 cancelled"; failed=1; failed_jobs="${failed_jobs}${job} "
+                         echo "::error::Job '${job}' was cancelled." ;;
+              *)         icon="❓ $result";    failed=1; failed_jobs="${failed_jobs}${job} "
+                         echo "::error::Job '${job}' ended in an unexpected state: ${result}." ;;
             esac
             echo "| \`$job\` | $icon |" >> "$GITHUB_STEP_SUMMARY"
           done < <(printf '%s' "$NEEDS_JSON" | jq -r 'to_entries[] | "\(.key) \(.value.result)"')
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
           if [ "$failed" -eq 1 ]; then
-            echo "**CI failed** — one or more required jobs did not succeed." >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::CI failed — one or more required jobs did not succeed. See the summary table."
+            echo "**CI failed** — the following job(s) did not succeed: \`${failed_jobs% }\`." >> "$GITHUB_STEP_SUMMARY"
+            echo "Open each failed job above and read its step logs for the concrete errors/warnings." >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::CI failed — job(s) did not succeed: ${failed_jobs% }. Open each failed job's logs for the concrete errors."
             exit 1
           fi
           echo "**CI passed** — every job succeeded or was intentionally skipped." >> "$GITHUB_STEP_SUMMARY"
