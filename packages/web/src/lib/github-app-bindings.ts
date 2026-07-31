@@ -4,7 +4,8 @@
  * "share this repo's lore with an org" control.
  *
  * No I/O, no React. The impure shell (server actions `bindScope`/`unbindScope`
- * from `lib/scope-bindings.ts`, the fetch in the webhooks page) lives elsewhere.
+ * from `lib/scope-bindings.ts`, the fetch in the Settings → Integrations page)
+ * lives elsewhere.
  * These helpers are node-vitest-tested, mirroring `lib/ownership.ts` /
  * `lib/org-ui.ts`.
  *
@@ -16,7 +17,7 @@
 import { roleCapabilities } from './org-ui';
 import type { OrgMembership } from './orgs';
 
-/** Scope → the org it is bound to. The webhooks page builds this from `listScopeBindings`. */
+/** Scope → the org it is bound to. The Integrations page builds this from `listScopeBindings`. */
 export type BindingsByScope = Record<string, { orgId: string; orgSlug: string }>;
 
 /** The canonical LoreKit scope string for a GitHub repo `full_name` (`owner/name`). */

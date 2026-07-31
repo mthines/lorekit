@@ -6,8 +6,8 @@
  * Displays the current user's linked GitHub App installations and the
  * repositories each covers, and lets an org admin/owner share a covered repo's
  * lore with a LoreKit Organization by binding its `repo::owner/name` scope
- * (reusing lib/scope-bindings.ts — no new backend). App-covered repos are
- * visually distinguished from the manual per-repo webhook secret setup.
+ * (reusing lib/scope-bindings.ts — no new backend). It is the only card on
+ * Settings → Integrations.
  *
  * Installation lifecycle (add/remove repos, suspend, uninstall) still happens on
  * GitHub via the "Manage" link — only the repo→org binding is done in LoreKit.
@@ -218,7 +218,7 @@ function RepoBindingPanel({
             disabled={busy}
             className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3 text-xs font-medium text-[#000] transition-opacity duration-150 disabled:opacity-50"
           >
-            {busy ? <Loader2 className="size-3.5 animate-spin" /> : <LinkIcon className="size-3.5" aria-hidden />}
+            {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <LinkIcon className="size-3.5" aria-hidden />}
             Bind all
           </button>
         </div>
@@ -285,7 +285,7 @@ function RepoBindingPanel({
           disabled={busy || selected.size === 0 || !targetOrgId}
           className="flex min-h-11 items-center justify-center gap-1.5 self-start rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[#000] transition-opacity duration-150 disabled:opacity-50"
         >
-          {busy ? <Loader2 className="size-4 animate-spin" /> : <LinkIcon className="size-4" aria-hidden />}
+          {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <LinkIcon className="size-4" aria-hidden />}
           Bind {selected.size > 0 ? `${selected.size} ` : ''}selected
         </button>
       </div>
@@ -309,8 +309,11 @@ function InstallationCard({
   const { showToast } = useToast();
   const [pending, startTransition] = useTransition();
 
-  // Local, optimistic view of the bindings so badges update without a round-trip
-  // (the server actions revalidate '/settings' for the next full load).
+  // Local, optimistic view of the bindings so badges update without a round-trip.
+  // Seeding from the prop once is correct here: the parent is a server component,
+  // so it never re-renders in place — `bindScope`/`unbindScope` call
+  // revalidatePath, and the fresh prop only arrives on the next navigation, which
+  // remounts this subtree and re-seeds. In-session updates are the optimistic ones.
   const [localBindings, setLocalBindings] = useState<BindingsByScope>(bindingsByScope);
   const manageableIds = useMemo(() => new Set(manageableOrgs.map((o) => o.id)), [manageableOrgs]);
 
@@ -522,9 +525,7 @@ interface GithubAppManagerProps {
  * GitHub App installation section for Settings → Integrations.
  *
  * Shows each linked installation with its covered repos, and lets an org
- * admin/owner share a repo's lore with a LoreKit Organization.  App-covered
- * repos are visually distinct from manually secret-configured repos (which are
- * rendered by the adjacent WebhookSecretManager under the same SectionPanel).
+ * admin/owner share a repo's lore with a LoreKit Organization.
  */
 export function GithubAppManager({
   installations,
