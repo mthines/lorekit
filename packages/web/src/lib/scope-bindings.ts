@@ -145,18 +145,21 @@ export async function unbindScope(orgId: string, scope: string): Promise<{ error
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { error: 'Not authenticated' };
 
+  // Normalise identically to bindScope — a scope is stored lowercased, so an
+  // un-lowercased unbind would silently match nothing.
+  const normalized = scope.trim().toLowerCase();
   const { error } = await supabase.rpc('lorekit_scope_unbind', {
     p_org_id: orgId,
-    p_scope: scope.trim(),
+    p_scope: normalized,
   });
   if (error) return { error: translateScopeError(error.message, error.code) };
 
   await recordAuditEvent({
     action: 'scope.unbind',
     resourceType: 'org_scope_binding',
-    resourceId: scope,
+    resourceId: normalized,
     target: orgId,
-    metadata: { scope },
+    metadata: { scope: normalized },
   });
 
   revalidatePath('/settings', 'layout');
