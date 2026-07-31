@@ -7,7 +7,10 @@
     "dev": "pnpm run env:pull && next dev --turbopack",
     "start": "next start",
     "lint": "next lint",
-    "env:pull": "vercel env pull .env.local"
+    "env:pull": "vercel env pull .env.local",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build",
+    "test-storybook": "vitest run --config vitest.storybook.config.ts"
   },
   "dependencies": {
     "@dash0/sdk-web": "0.23.0",
@@ -29,12 +32,19 @@
   "devDependencies": {
     "@next/eslint-plugin-next": "^15.3.8",
     "@nx/next": "22.4.0",
+    "@storybook/addon-vitest": "^10.5.5",
+    "@storybook/nextjs-vite": "^10.5.5",
+    "@storybook/react": "^10.5.5",
     "@tailwindcss/postcss": "^4.1.11",
     "@types/node": "20.19.9",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@vitest/browser": "4.0.9",
+    "@vitest/browser-playwright": "4.0.9",
     "babel-plugin-react-compiler": "^1.0.0",
     "eslint-plugin-react-hooks": "^5.2.0",
+    "playwright": "1.56.0",
+    "storybook": "^10.5.5",
     "tailwindcss": "^4.1.11"
   }
 }

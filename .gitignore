@@ -17,6 +17,14 @@ tmp/
 
 .mcp.json
 
+# Storybook build output
+**/storybook-static/
+
+# Vitest visual-regression run artifacts. The reference baselines
+# (__screenshots__/**/*-chromium-linux.png) ARE committed; the per-run
+# reference/actual/diff attachments Vitest writes on a mismatch are not.
+**/.vitest-attachments/
+
 # Autonomous workflow artifacts
 .agent/
 .vercel
