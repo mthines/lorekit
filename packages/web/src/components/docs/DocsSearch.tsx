@@ -104,6 +104,9 @@ export function DocsSearch({ index }: DocsSearchProps) {
           role="combobox"
           aria-expanded={showResults}
           aria-controls={listboxId}
+          aria-activedescendant={
+            showResults && hits.length > 0 ? `${listboxId}-opt-${active}` : undefined
+          }
           aria-autocomplete="list"
           placeholder="Search docs…"
           value={query}
@@ -119,7 +122,7 @@ export function DocsSearch({ index }: DocsSearchProps) {
 
       {showResults && (
         <ul
-          id="docs-search-results"
+          id={listboxId}
           role="listbox"
           className="absolute z-20 mt-2 w-[min(28rem,90vw)] max-w-[90vw] overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-elevated)] py-1 shadow-xl"
         >
@@ -129,7 +132,7 @@ export function DocsSearch({ index }: DocsSearchProps) {
             </li>
           ) : (
             hits.map((hit, i) => (
-              <li key={hit.slug} role="option" aria-selected={i === active}>
+              <li key={hit.slug} id={`${listboxId}-opt-${i}`} role="option" aria-selected={i === active}>
                 <button
                   type="button"
                   onMouseEnter={() => setActive(i)}
