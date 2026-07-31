@@ -22,6 +22,8 @@ import {
   User,
   CircleCheck,
   Info,
+  Plus,
+  ExternalLink,
 } from 'lucide-react';
 import type { GithubInstallation } from '@/lib/github-installations';
 
@@ -34,6 +36,31 @@ function relativeTime(iso: string): string {
   if (days === 1) return 'yesterday';
   if (days < 30) return `${days}d ago`;
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+// ── Install button — links to the App's public installation page ─────────────
+
+/**
+ * Anchor styled as a primary button that sends the user to GitHub's public
+ * "install this App" page. Renders only when an install URL is configured
+ * (NEXT_PUBLIC_GITHUB_APP_SLUG is set); callers pass `null` otherwise.
+ *
+ * `label` lets the empty state say "Install GitHub App" while an existing
+ * installation says "Add repositories" (the same page manages both).
+ */
+function InstallAppButton({ url, label }: { url: string; label: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-[var(--color-accent-glow)] bg-[var(--color-accent-subtle)] px-3 py-1.5 text-xs font-medium text-[var(--color-accent)] transition-colors hover:bg-[var(--color-accent)]/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
+    >
+      <Github className="size-3.5 shrink-0" aria-hidden />
+      {label}
+      <ExternalLink className="size-3 shrink-0 opacity-70" aria-hidden />
+    </a>
+  );
 }
 
 // ── Repo row — one App-covered repository ────────────────────────────────────
@@ -119,7 +146,7 @@ function InstallationCard({ installation }: { installation: GithubInstallation }
 
 // ── Empty / not-connected state ───────────────────────────────────────────────
 
-function NoInstallations() {
+function NoInstallations({ installUrl }: { installUrl: string | null }) {
   return (
     <div className="flex flex-col items-start gap-3 rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4 text-sm text-[var(--color-content-secondary)]">
       <div className="flex items-center gap-2">
@@ -131,10 +158,14 @@ function NoInstallations() {
         no manual webhook secret needed. Each repo added to the App installation
         is covered instantly.
       </p>
-      <p className="text-[10px] text-[var(--color-content-tertiary)]">
-        The App is available once GITHUB_APP_ENABLED is set post-merge.
-        See <code className="font-mono">docs/github-app.md</code> for the setup runbook.
-      </p>
+      {installUrl ? (
+        <InstallAppButton url={installUrl} label="Install GitHub App" />
+      ) : (
+        <p className="text-[10px] text-[var(--color-content-tertiary)]">
+          The App is available once GITHUB_APP_ENABLED is set post-merge.
+          See <code className="font-mono">docs/github-app.md</code> for the setup runbook.
+        </p>
+      )}
     </div>
   );
 }
@@ -143,6 +174,11 @@ function NoInstallations() {
 
 interface GithubAppManagerProps {
   installations: GithubInstallation[];
+  /**
+   * Public "install this App" URL (github.com/apps/<slug>/installations/new),
+   * or null when the App slug is not configured yet — see resolveGithubAppInstallUrl.
+   */
+  installUrl: string | null;
 }
 
 /**
@@ -152,7 +188,7 @@ interface GithubAppManagerProps {
  * are visually distinct from manually secret-configured repos (which are
  * rendered by the adjacent WebhookSecretManager under the same SectionPanel).
  */
-export function GithubAppManager({ installations }: GithubAppManagerProps) {
+export function GithubAppManager({ installations, installUrl }: GithubAppManagerProps) {
   return (
     <div className="flex flex-col gap-3">
       {/* Section label */}
@@ -164,11 +200,23 @@ export function GithubAppManager({ installations }: GithubAppManagerProps) {
         <span className="rounded-full border border-[var(--color-accent-glow)] bg-[var(--color-accent-subtle)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-accent)]">
           {installations.length}
         </span>
+        {/* Add-repos action, shown beside the count once at least one install exists */}
+        {installUrl && installations.length > 0 && (
+          <a
+            href={installUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-auto inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1 text-[11px] font-medium text-[var(--color-content-secondary)] transition-colors hover:border-[var(--color-accent-glow)] hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
+          >
+            <Plus className="size-3 shrink-0" aria-hidden />
+            Add repositories
+          </a>
+        )}
       </div>
 
       {/* Installation cards or empty state */}
       {installations.length === 0 ? (
-        <NoInstallations />
+        <NoInstallations installUrl={installUrl} />
       ) : (
         <div className="flex flex-col gap-3">
           <AnimatePresence>
