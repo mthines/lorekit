@@ -95,6 +95,19 @@ test('an explicit Dash0-Dataset in OTEL_EXPORTER_OTLP_HEADERS is never clobbered
   assert.equal(headerWinsOverEnv.headers['Dash0-Dataset'], 'custom');
 });
 
+test('a differently-cased dash0-dataset header is not duplicated by the default', () => {
+  // HTTP header names are case-insensitive, so a lowercase `dash0-dataset` from
+  // OTEL_EXPORTER_OTLP_HEADERS must suppress the `default` fallback — otherwise
+  // two conflicting dataset headers would be sent.
+  const cfg = resolveTelemetryConfig({
+    OTEL_EXPORTER_OTLP_ENDPOINT: 'https://otel.example.com',
+    OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer abc, dash0-dataset=custom',
+  });
+  const datasetKeys = Object.keys(cfg.headers).filter((k) => k.toLowerCase() === 'dash0-dataset');
+  assert.deepEqual(datasetKeys, ['dash0-dataset']);
+  assert.equal(cfg.headers['dash0-dataset'], 'custom');
+});
+
 // ── build-time token injection ─────────────────────────────────────────────────
 
 test('committed TELEMETRY_TOKEN is empty (no secret in git)', () => {

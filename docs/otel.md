@@ -245,7 +245,7 @@ All signals carry these resource attributes:
 | Attribute | Value |
 |-----------|-------|
 | `service.namespace` | `lorekit` |
-| `service.name` | `mcp` (Edge Function), `web` (Next.js), or `cli` (CLI) |
+| `service.name` | `api` (Edge Functions), `web` (Next.js), `mcp-node` (Node MCP server), or `cli` (CLI) |
 | `service.version` | Git SHA (`VERCEL_GIT_COMMIT_SHA`) or `unknown`; the package version for the CLI |
 | `deployment.environment.name` | `production` / `preview` / `development` / `local` (not set by the CLI) |
 

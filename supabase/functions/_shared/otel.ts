@@ -58,8 +58,11 @@ function getOtlpConfig(): { endpoint: string; headers: Record<string, string> } 
   // Dataset routing, highest precedence first: an explicit `Dash0-Dataset`
   // already parsed from OTEL_EXPORTER_OTLP_HEADERS wins and is never clobbered;
   // otherwise DASH0_DATASET; otherwise `default`, so edge telemetry lands
-  // alongside every other LoreKit component.
-  if (!('Dash0-Dataset' in headers)) {
+  // alongside every other LoreKit component. HTTP header names are
+  // case-insensitive, so match any casing the caller used rather than only the
+  // canonical spelling — otherwise a second, conflicting header would be added.
+  const hasDataset = Object.keys(headers).some((k) => k.toLowerCase() === 'dash0-dataset');
+  if (!hasDataset) {
     headers['Dash0-Dataset'] = Deno.env.get('DASH0_DATASET') || 'default';
   }
 
