@@ -3,6 +3,7 @@ import { Webhook, Github } from 'lucide-react';
 import { listWebhookSecrets } from '@/lib/webhook-secrets';
 import { listGithubInstallations } from '@/lib/github-installations';
 import { resolveMcpUrls } from '@/lib/mcp-url';
+import { resolveGithubAppInstallUrl } from '@/lib/github-app-url';
 import { OnboardingStepContent } from '@/components/dashboard/OnboardingStepContent';
 import { GithubAppManager } from '@/components/dashboard/GithubAppManager';
 import { SectionPanel } from '@/components/ui/SectionPanel';
@@ -16,6 +17,7 @@ export default async function WebhooksSettingsPage() {
     listGithubInstallations(),
   ]);
   const { mcpUrl, webhookUrl } = resolveMcpUrls();
+  const appInstallUrl = resolveGithubAppInstallUrl();
 
   return (
     <div className="flex flex-col gap-4">
@@ -25,7 +27,7 @@ export default async function WebhooksSettingsPage() {
         title="GitHub App"
         subtitle="Zero-configuration webhook coverage — install the App and repos are covered automatically, no per-repo secret required."
       >
-        <GithubAppManager installations={installations} />
+        <GithubAppManager installations={installations} installUrl={appInstallUrl} />
       </SectionPanel>
 
       {/* Per-repo manual webhook secrets (existing path — untouched) */}

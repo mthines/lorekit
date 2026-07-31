@@ -14,6 +14,7 @@
  * WebhookSecretManager, as the plan specifies (WRAP: sibling component).
  */
 
+import type { ReactNode } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Github,
@@ -22,6 +23,8 @@ import {
   User,
   CircleCheck,
   Info,
+  Plus,
+  ExternalLink,
 } from 'lucide-react';
 import type { GithubInstallation } from '@/lib/github-installations';
 
@@ -34,6 +37,53 @@ function relativeTime(iso: string): string {
   if (days === 1) return 'yesterday';
   if (days < 30) return `${days}d ago`;
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+// ── Install link — sends the user to the App's public installation page ──────
+
+/**
+ * Anchor to GitHub's public "install this App" page. Renders only when an
+ * install URL is configured (NEXT_PUBLIC_GITHUB_APP_SLUG is set); callers pass
+ * `null` otherwise.
+ *
+ * One component, two variants, so the new-tab semantics (target / rel / the
+ * screen-reader cue) live in exactly one place and can't drift:
+ *   - `primary` — the empty-state "Install GitHub App" call to action.
+ *   - `ghost`   — the quieter "Add repositories" action beside the count when
+ *                 an installation already exists (the same page manages both).
+ */
+function AppInstallLink({
+  url,
+  label,
+  variant,
+  icon,
+}: {
+  url: string;
+  label: string;
+  variant: 'primary' | 'ghost';
+  icon: ReactNode;
+}) {
+  const focusRing =
+    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]';
+  const variantClass =
+    variant === 'primary'
+      ? 'gap-2 border border-[var(--color-accent-glow)] bg-[var(--color-accent-subtle)] px-3.5 py-2 text-xs text-[var(--color-accent)] hover:bg-[var(--color-accent)]/15'
+      : 'ml-auto gap-1.5 border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-[11px] text-[var(--color-content-secondary)] hover:border-[var(--color-accent-glow)] hover:text-[var(--color-accent)]';
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={`inline-flex min-h-11 items-center rounded-lg font-medium transition-colors ${variantClass} ${focusRing}`}
+    >
+      {icon}
+      {label}
+      <span className="sr-only"> (opens in a new tab)</span>
+      {variant === 'primary' && (
+        <ExternalLink className="size-3 shrink-0 opacity-70" aria-hidden />
+      )}
+    </a>
+  );
 }
 
 // ── Repo row — one App-covered repository ────────────────────────────────────
@@ -119,7 +169,7 @@ function InstallationCard({ installation }: { installation: GithubInstallation }
 
 // ── Empty / not-connected state ───────────────────────────────────────────────
 
-function NoInstallations() {
+function NoInstallations({ installUrl }: { installUrl: string | null }) {
   return (
     <div className="flex flex-col items-start gap-3 rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-bg-raised)] p-4 text-sm text-[var(--color-content-secondary)]">
       <div className="flex items-center gap-2">
@@ -131,10 +181,19 @@ function NoInstallations() {
         no manual webhook secret needed. Each repo added to the App installation
         is covered instantly.
       </p>
-      <p className="text-[10px] text-[var(--color-content-tertiary)]">
-        The App is available once GITHUB_APP_ENABLED is set post-merge.
-        See <code className="font-mono">docs/github-app.md</code> for the setup runbook.
-      </p>
+      {installUrl ? (
+        <AppInstallLink
+          url={installUrl}
+          label="Install GitHub App"
+          variant="primary"
+          icon={<Github className="size-3.5 shrink-0" aria-hidden />}
+        />
+      ) : (
+        <p className="text-[10px] text-[var(--color-content-tertiary)]">
+          The App is available once GITHUB_APP_ENABLED is set post-merge.
+          See <code className="font-mono">docs/github-app.md</code> for the setup runbook.
+        </p>
+      )}
     </div>
   );
 }
@@ -143,6 +202,11 @@ function NoInstallations() {
 
 interface GithubAppManagerProps {
   installations: GithubInstallation[];
+  /**
+   * Public "install this App" URL (github.com/apps/<slug>/installations/new),
+   * or null when the App slug is not configured yet — see resolveGithubAppInstallUrl.
+   */
+  installUrl: string | null;
 }
 
 /**
@@ -152,7 +216,7 @@ interface GithubAppManagerProps {
  * are visually distinct from manually secret-configured repos (which are
  * rendered by the adjacent WebhookSecretManager under the same SectionPanel).
  */
-export function GithubAppManager({ installations }: GithubAppManagerProps) {
+export function GithubAppManager({ installations, installUrl }: GithubAppManagerProps) {
   return (
     <div className="flex flex-col gap-3">
       {/* Section label */}
@@ -164,11 +228,20 @@ export function GithubAppManager({ installations }: GithubAppManagerProps) {
         <span className="rounded-full border border-[var(--color-accent-glow)] bg-[var(--color-accent-subtle)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-accent)]">
           {installations.length}
         </span>
+        {/* Add-repos action, shown beside the count once at least one install exists */}
+        {installUrl && installations.length > 0 && (
+          <AppInstallLink
+            url={installUrl}
+            label="Add repositories"
+            variant="ghost"
+            icon={<Plus className="size-3 shrink-0" aria-hidden />}
+          />
+        )}
       </div>
 
       {/* Installation cards or empty state */}
       {installations.length === 0 ? (
-        <NoInstallations />
+        <NoInstallations installUrl={installUrl} />
       ) : (
         <div className="flex flex-col gap-3">
           <AnimatePresence>
