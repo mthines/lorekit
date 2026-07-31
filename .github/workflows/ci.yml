@@ -37,6 +37,7 @@ jobs:
       code: ${{ steps.filter.outputs.code }}
       api: ${{ steps.filter.outputs.api }}
       plugin: ${{ steps.filter.outputs.plugin }}
+      migrations: ${{ steps.filter.outputs.migrations }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -81,6 +82,13 @@ jobs:
             echo "plugin=true" >> "$GITHUB_OUTPUT"
           else
             echo "plugin=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Migration-order gate: run when a migration is added/changed, or when
+          # the guard/CI itself changes (so the guard is exercised on its own PR).
+          if printf '%s\n' "$CHANGED" | grep -qE '^(supabase/migrations/|scripts/check-migration-order\.mjs|\.github/workflows/ci\.yml)'; then
+            echo "migrations=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "migrations=false" >> "$GITHUB_OUTPUT"
           fi
 
   # ── Typecheck + Test + Lint (only affected packages) ─────────────────────────
@@ -151,6 +159,31 @@ jobs:
 
       - name: Plugin install smoke
         run: bash scripts/smoke-plugin.sh
+
+  # ── Migration-order guard — reject out-of-order migration prefixes ───────────
+  #    Fails a PR that ADDS a migration numbered <= the highest already on the
+  #    base branch — the collision that later wedges `supabase db push` on deploy
+  #    ("migration files to be inserted before the last migration on remote").
+  #    Sequential integer prefixes don't survive parallel PRs; this catches it at
+  #    review time. Path-gated, so unrelated PRs skip it (a skipped required check
+  #    is treated as passing by branch protection). See scripts/check-migration-order.mjs.
+  migration-order:
+    name: Migration order (no out-of-order prefixes)
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.migrations == 'true'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # need base + HEAD history to diff the added migrations
+
+      - name: Check migration ordering against the base branch
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/check-migration-order.mjs "$BASE"
 
   # ── Integration smoke — live stack wiring on a local Supabase ────────────────
   #    Boots a full local stack (migrations applied → serves the real Edge
@@ -320,7 +353,7 @@ jobs:
     # `always()` so the gate still runs (and reports) even when an upstream job
     # failed, was cancelled, or was skipped — otherwise it would be skipped too.
     if: always()
-    needs: [changes, check, plugin, integration]
+    needs: [changes, check, plugin, integration, migration-order]
     permissions: {}
     steps:
       - name: Aggregate job results into a pass/fail gate
