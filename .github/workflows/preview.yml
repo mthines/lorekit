@@ -217,13 +217,19 @@ jobs:
             exit 1
           fi
           # Drop any pulled Supabase vars so ours are the only definitions.
-          grep -vE '^(NEXT_PUBLIC_SUPABASE_URL|NEXT_PUBLIC_SUPABASE_ANON_KEY|NEXT_PUBLIC_SUPABASE_PROJECT_REF)=' \
+          grep -vE '^(NEXT_PUBLIC_SUPABASE_URL|NEXT_PUBLIC_SUPABASE_ANON_KEY|NEXT_PUBLIC_SUPABASE_PROJECT_REF|NEXT_PUBLIC_BACKEND_ENV)=' \
             "$ENV_FILE" > "$ENV_FILE.tmp" || true
           mv "$ENV_FILE.tmp" "$ENV_FILE"
           {
             echo "NEXT_PUBLIC_SUPABASE_URL=https://${PROJECT_REF}.supabase.co"
             echo "NEXT_PUBLIC_SUPABASE_PROJECT_REF=${PROJECT_REF}"
             echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${ANON_KEY}"
+            # Tags the bundle so EnvironmentBanner can show the "PREVIEW BACKEND"
+            # marker. This is the only signal that distinguishes this build from a
+            # push-triggered Vercel preview, which keeps the Vercel project's own
+            # Supabase vars — both are VERCEL_ENV=preview, only one talks to the
+            # preview database.
+            echo "NEXT_PUBLIC_BACKEND_ENV=preview"
           } >> "$ENV_FILE"
 
       - name: Build Vercel preview
