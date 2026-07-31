@@ -25,6 +25,10 @@ export interface UsageEventParams {
   outcome: 'ok' | 'cap_exceeded' | 'rate_limited' | 'permission_denied' | 'error';
   durationMs?: number | null;
   memoryCount?: number | null;
+  /** Records this event touched (read result length / rows expired). Nullable. */
+  resultCount?: number | null;
+  /** Client-supplied grouping key (PR / session / job). Bounded, nullable. */
+  correlationId?: string | null;
 }
 
 /**
@@ -46,6 +50,8 @@ export function recordUsageEvent(
     p_outcome:     params.outcome,
     p_duration_ms: params.durationMs ?? null,
     p_memory_count: params.memoryCount ?? null,
+    p_result_count: params.resultCount ?? null,
+    p_correlation_id: params.correlationId ?? null,
   }).then(() => { /* fire-and-forget */ }).catch(() => { /* swallow */ });
 
   const edgeRuntime = (globalThis as {

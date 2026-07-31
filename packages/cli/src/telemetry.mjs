@@ -165,16 +165,58 @@ function toOtlpAttributes(attributes) {
   return Object.entries(attributes).map(([key, value]) => ({ key, value: toOtlpValue(value) }));
 }
 
-function resourceAttributes(version) {
-  return [
+// OTel `os.type` / `host.arch` use their own bounded enum vocabularies, which
+// are NOT identical to Node's `process.platform` / `process.arch` spellings.
+// Node's `win32` / `sunos` and `x64` / `ia32` / `arm` are the ones that differ;
+// emitting them verbatim produces off-registry attribute values that a Dash0 /
+// OTel-native backend can't group with telemetry from other SDKs. Map the known
+// divergences and pass anything already-canonical (or unknown) through.
+//   os.type:   https://opentelemetry.io/docs/specs/semconv/registry/attributes/os/
+//   host.arch: https://opentelemetry.io/docs/specs/semconv/registry/attributes/host/
+const OS_TYPE_BY_PLATFORM = { win32: 'windows', sunos: 'solaris' };
+// Node's `process.arch` reports `ppc` for 32-bit PowerPC; the OTel `host.arch`
+// registry value for it is `ppc32` (its `ppc64` spelling already matches Node).
+const HOST_ARCH_BY_PROCESS_ARCH = { x64: 'amd64', ia32: 'x86', arm: 'arm32', ppc: 'ppc32' };
+
+/** Map a Node `process.platform` value to an OTel `os.type` registry value. */
+export function normalizeOsType(platform) {
+  return OS_TYPE_BY_PLATFORM[platform] ?? platform;
+}
+
+/** Map a Node `process.arch` value to an OTel `host.arch` registry value. */
+export function normalizeHostArch(arch) {
+  return HOST_ARCH_BY_PROCESS_ARCH[arch] ?? arch;
+}
+
+/**
+ * Resolve the `deployment.environment.name` resource value, or `undefined` when
+ * none is set. The CLI runs on end-users' machines, so — unlike the edge/web/
+ * mcp-node deployments — it has no ambient environment and deliberately OMITS
+ * the attribute by default. It is emitted ONLY when explicitly overridden via
+ * `DEPLOYMENT_ENVIRONMENT` (falling back to `OTEL_DEPLOYMENT_ENVIRONMENT`) — the
+ * same single, env-driven knob the edge honours, which the correlated-trace
+ * harness (`scripts/emit-correlated-trace.mts`) uses to stamp `test`.
+ * @param {object} [env]  defaults to process.env
+ */
+export function resolveDeploymentEnvironment(env = process.env) {
+  const raw = env.DEPLOYMENT_ENVIRONMENT ?? env.OTEL_DEPLOYMENT_ENVIRONMENT;
+  const value = raw !== undefined ? String(raw).trim() : '';
+  return value || undefined;
+}
+
+function resourceAttributes(version, env = process.env) {
+  const attrs = [
     { key: 'service.name', value: { stringValue: 'cli' } },
     { key: 'service.namespace', value: { stringValue: 'lorekit' } },
     { key: 'service.version', value: { stringValue: String(version) } },
     { key: 'process.runtime.name', value: { stringValue: 'nodejs' } },
     { key: 'process.runtime.version', value: { stringValue: process.versions.node } },
-    { key: 'os.type', value: { stringValue: process.platform } },
-    { key: 'host.arch', value: { stringValue: process.arch } },
+    { key: 'os.type', value: { stringValue: normalizeOsType(process.platform) } },
+    { key: 'host.arch', value: { stringValue: normalizeHostArch(process.arch) } },
   ];
+  const deploymentEnv = resolveDeploymentEnvironment(env);
+  if (deploymentEnv) attrs.push({ key: 'deployment.environment.name', value: { stringValue: deploymentEnv } });
+  return attrs;
 }
 
 // ── Payload builders (pure — unit-tested) ─────────────────────────────────────

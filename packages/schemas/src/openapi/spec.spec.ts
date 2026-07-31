@@ -27,6 +27,7 @@ describe('generateSpec', () => {
       '/memories/restore',
       '/memories/scopes',
       '/memories/search',
+      '/memories/usage',
       '/memories/{id}',
       '/memories/{id}/restore',
       '/orgs',
@@ -60,6 +61,7 @@ describe('generateSpec', () => {
       'OrgInvite',
       'OrgInviteList',
       'CreateInviteBody',
+      'UsageStatsResponse',
       'Error',
     ]) {
       expect(spec.components.schemas[name], `missing component: ${name}`).toBeDefined();

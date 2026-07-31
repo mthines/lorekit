@@ -2618,6 +2618,197 @@ begin
 end;
 $$;
 
+-- ── Usage statistics — 00043 / 00044 / 00045 ────────────────────────────────
+-- lorekit_usage_stats(p_user_id, p_since, p_until, p_correlation_id) backs GET
+-- /memories/usage. It aggregates usage_events (00034 + the 00044 dimensions) in
+-- Postgres, so these assertions are the only place the self-only visibility
+-- predicate, the half-open [since, until) window, the service-role escape hatch,
+-- the record_count roll-up (G1) and the correlation filter (G2) are executed.
+-- AC-1: A caller sees ONLY their own events, grouped by (tool, outcome, scope).
+-- AC-2: The window is half-open — p_since is inclusive, older rows excluded.
+-- AC-3: Rows come back sorted by event_count desc.
+-- AC-4: service-role (verified role claim) + NULL p_user_id sees everything (CI).
+-- AC-5: A non-service caller passing NULL p_user_id gets nothing (fails closed).
+-- AC-6: Granted to authenticated + service_role, never anon.
+-- AC-7: record_count sums result_count — the "read N RECORDS" figure (G1, 00044).
+-- AC-8: p_correlation_id narrows to one PR/session (G2, 00044).
+-- AC-9: purge_expired_memories records a memory.expired event = rows expired (G3, 00045).
+
+-- Isolate this section's fixture: earlier sections (the TTL purge tests) now emit
+-- a memory.expired usage event for a1 as a side effect of 00045, which would push
+-- a1's exact-total assertions below off by one. Clear both test users' ledgers so
+-- the counts assert only the rows this section seeds.
+delete from usage_events
+ where user_id in ('00000000-0000-0000-0000-0000000000a1',
+                   '00000000-0000-0000-0000-0000000000b2');
+
+-- User A (a1): 7 events — 3 recent list/ok/repo (10 records each → 30), 1 recent
+-- write/ok/repo, 1 recent write/cap_exceeded/repo, and 2 OLD (40d) list/ok/global
+-- for the window test. The three recent list rows + the recent write carry a
+-- correlation id 'pr-42' for the G2 filter test. User B (b2): 1 event A never sees.
+insert into usage_events (user_id, plan_name, tool_name, scope_type, auth_type, outcome, duration_ms, result_count, correlation_id, created_at) values
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',  'repo',   'api_key', 'ok',           10,   10, 'pr-42', now() - interval '10 minutes'),
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',  'repo',   'api_key', 'ok',           10,   10, 'pr-42', now() - interval '10 minutes'),
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',  'repo',   'api_key', 'ok',           10,   10, 'pr-42', now() - interval '10 minutes'),
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.write', 'repo',   'api_key', 'ok',           20, null, 'pr-42', now() - interval '10 minutes'),
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.write', 'repo',   'api_key', 'cap_exceeded',  5, null, null,    now() - interval '10 minutes'),
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',  'global', 'api_key', 'ok',           10,    5, null,    now() - interval '40 days'),
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',  'global', 'api_key', 'ok',           10,    5, null,    now() - interval '40 days'),
+  ('00000000-0000-0000-0000-0000000000b2', 'free', 'memory.read',  'global', 'jwt',     'ok',           10,    1, null,    now() - interval '10 minutes');
+
+do $$
+declare
+  v_sum   bigint;
+  v_rows  int;
+  v_top   text;
+begin
+  -- AC-1: A's all-time total is exactly its own 7 events (not 8 — B's leaks nowhere).
+  select coalesce(sum(event_count), 0) into v_sum
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', null, null);
+  assert v_sum = 7, format('usage AC-1: A must total 7 own events, got %s', v_sum);
+
+  -- AC-1: grouping — the three recent list/ok/repo rows collapse to one bucket of 3.
+  select event_count into v_sum
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', null, null)
+   where tool_name = 'memory.list' and outcome = 'ok' and scope_type = 'repo';
+  assert v_sum = 3, format('usage AC-1: (memory.list,ok,repo) must be 3, got %s', v_sum);
+
+  -- AC-1: the cap-hit is its own outcome bucket.
+  select event_count into v_sum
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', null, null)
+   where tool_name = 'memory.write' and outcome = 'cap_exceeded';
+  assert v_sum = 1, format('usage AC-1: (memory.write,cap_exceeded) must be 1, got %s', v_sum);
+
+  -- AC-1: A never sees B's event (B's only tool is memory.read).
+  select count(*) into v_rows
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', null, null)
+   where tool_name = 'memory.read';
+  assert v_rows = 0, 'usage AC-1: A must not see B''s memory.read event';
+
+  -- AC-2: a 7-day window excludes the two 40-day-old global rows (7 - 2 = 5),
+  -- and the global bucket disappears entirely.
+  select coalesce(sum(event_count), 0) into v_sum
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', now() - interval '7 days', null);
+  assert v_sum = 5, format('usage AC-2: 7-day window must total 5, got %s', v_sum);
+  select count(*) into v_rows
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', now() - interval '7 days', null)
+   where scope_type = 'global';
+  assert v_rows = 0, 'usage AC-2: the 40-day-old global bucket must be outside a 7-day window';
+
+  -- AC-3: sorted by event_count desc — the 3-row list bucket is first.
+  select tool_name into v_top
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', null, null)
+   limit 1;
+  assert v_top = 'memory.list', format('usage AC-3: top row must be memory.list (count 3), got %s', v_top);
+
+  -- B sees only its own single event.
+  select coalesce(sum(event_count), 0) into v_sum
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000b2', null, null);
+  assert v_sum = 1, format('usage AC-1: B must total 1 own event, got %s', v_sum);
+
+  -- AC-7 (G1): record_count is the SUM of result_count, distinct from the call
+  -- count — the (memory.list,ok,repo) bucket is 3 CALLS but 30 RECORDS read.
+  select record_count into v_sum
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', null, null)
+   where tool_name = 'memory.list' and outcome = 'ok' and scope_type = 'repo';
+  assert v_sum = 30, format('usage AC-7: (memory.list,ok,repo) record_count must be 30, got %s', v_sum);
+
+  -- AC-8 (G2): the correlation filter narrows to the 'pr-42' events only — the 3
+  -- recent list calls + the 1 recent write (4 events), NOT the cap-hit or the
+  -- 40-day-old global rows (which carry no correlation id).
+  select coalesce(sum(event_count), 0) into v_sum
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', null, null, 'pr-42');
+  assert v_sum = 4, format('usage AC-8: pr-42 correlation must total 4 events, got %s', v_sum);
+  -- And its records-read is the same 30 (the pr-42 list bucket).
+  select record_count into v_sum
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', null, null, 'pr-42')
+   where tool_name = 'memory.list';
+  assert v_sum = 30, format('usage AC-8: pr-42 list record_count must be 30, got %s', v_sum);
+  -- An unknown correlation id yields nothing.
+  select count(*) into v_rows
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', null, null, 'no-such-pr');
+  assert v_rows = 0, 'usage AC-8: an unmatched correlation id must return no rows';
+end;
+$$;
+
+-- AC-4 + AC-5: the NULL-p_user_id branch depends on the VERIFIED role claim.
+do $$
+declare
+  v_sum bigint;
+begin
+  -- AC-4: a service_role caller with NULL p_user_id sees every user's events (CI
+  -- escape hatch) — A's 7 plus B's 1.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  select coalesce(sum(event_count), 0) into v_sum
+    from lorekit_usage_stats(null, null, null);
+  assert v_sum >= 8, format('usage AC-4: service-role NULL must see all events (>=8), got %s', v_sum);
+
+  -- AC-5: an authenticated caller passing NULL p_user_id gets nothing — the
+  -- escape hatch is gated on the verified role, so it fails closed.
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  select coalesce(sum(event_count), 0) into v_sum
+    from lorekit_usage_stats(null, null, null);
+  assert v_sum = 0, format('usage AC-5: authenticated NULL p_user_id must fail closed (0), got %s', v_sum);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- AC-9 (G3): purge_expired_memories records ONE memory.expired usage event whose
+-- result_count equals the rows it deleted. Insert a fresh already-expired memory
+-- for A, purge, and assert the recorded expiry count matches the purge return
+-- (>= 1; other expired rows from earlier sections may raise it — the equality
+-- to v_purged is what proves the count is captured, not discarded).
+insert into memories (user_id, scope, key, value, expires_at) values
+  ('00000000-0000-0000-0000-0000000000a1', 'project::usage-expiry', 'ue-1', 'v', now() - interval '1 minute');
+
+do $$
+declare
+  v_purged   integer;
+  v_recorded bigint;
+  v_expired  bigint;
+begin
+  v_purged := purge_expired_memories('00000000-0000-0000-0000-0000000000a1');
+  assert v_purged >= 1, format('usage AC-9: purge must delete at least the 1 expired row, got %s', v_purged);
+
+  -- The synthetic expiry event carries the purged count as its result_count.
+  select result_count into v_recorded
+    from usage_events
+   where user_id = '00000000-0000-0000-0000-0000000000a1'
+     and tool_name = 'memory.expired'
+   order by created_at desc
+   limit 1;
+  assert v_recorded = v_purged,
+    format('usage AC-9: memory.expired result_count (%s) must equal rows purged (%s)', v_recorded, v_purged);
+
+  -- And it surfaces through the stats RPC as the memory.expired bucket's record_count.
+  select record_count into v_expired
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', null, null)
+   where tool_name = 'memory.expired';
+  assert v_expired = v_purged,
+    format('usage AC-9: stats memory.expired record_count (%s) must equal rows purged (%s)', v_expired, v_purged);
+end;
+$$;
+
+-- AC-6: grant surface — authenticated + service_role, never anon (the function
+-- takes a bare p_user_id, so anon EXECUTE would expose any user's aggregates).
+-- Signature is the 00044 4-arg form (added p_correlation_id).
+do $$
+declare
+  v_sig text := 'lorekit_usage_stats(uuid, timestamp with time zone, timestamp with time zone, text)';
+begin
+  assert has_function_privilege('authenticated', v_sig, 'EXECUTE'),
+    'usage AC-6: authenticated must have EXECUTE on lorekit_usage_stats';
+  assert has_function_privilege('service_role', v_sig, 'EXECUTE'),
+    'usage AC-6: service_role must have EXECUTE on lorekit_usage_stats';
+  assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
+    'usage AC-6: lorekit_usage_stats must NOT be granted to anon';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

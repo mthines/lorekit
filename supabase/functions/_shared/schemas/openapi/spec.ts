@@ -52,6 +52,10 @@ import {
   OrgSlugMemberParamsSchema,
   OrgSlugInviteParamsSchema,
 } from '../common.ts';
+import {
+  UsageStatsQuerySchema,
+  UsageStatsResponseSchema,
+} from '../usage.ts';
 
 let _cachedSpec: Record<string, unknown> | null = null;
 
@@ -95,6 +99,7 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   registry.register('RestoreResponse', RestoreResponseSchema);
   registry.register('PurgeResponse', PurgeResponseSchema);
   registry.register('ScopesResponse', ScopesResponseSchema);
+  registry.register('UsageStatsResponse', UsageStatsResponseSchema);
   registry.register('Org', OrgResponseSchema);
   registry.register('OrgList', OrgListResponseSchema);
   registry.register('CreateOrgBody', CreateOrgBodySchema);
@@ -181,6 +186,16 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     responses: {
       200: { description: 'Scopes', content: { 'application/json': { schema: ScopesResponseSchema } } },
       401: errorResponse, 403: errorResponse,
+    },
+  });
+  registry.registerPath({
+    method: 'get', path: '/memories/usage',
+    summary: 'Aggregate usage statistics for your own activity (reads, writes, outcomes, per scope-type) over an optional period',
+    tags: ['Memories'],
+    security, request: { query: UsageStatsQuerySchema },
+    responses: {
+      200: { description: 'Usage statistics', content: { 'application/json': { schema: UsageStatsResponseSchema } } },
+      400: errorResponse, 401: errorResponse, 403: errorResponse,
     },
   });
   registry.registerPath({

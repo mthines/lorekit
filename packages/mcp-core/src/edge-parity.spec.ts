@@ -82,6 +82,9 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   ['rest-audit-actor.ts', '_shared/rest-audit-actor.ts'],
   ['rest-response-outcome.ts', '_shared/rest-response-outcome.ts'],
   ['dry-run.ts', '_shared/dry-run.ts'],
+  // Pure aggregation/window logic for GET /memories/usage — mirrored into the
+  // _shared tree because the usage handler cannot cross-import mcp-core.
+  ['usage-stats.ts', '_shared/usage-stats.ts'],
 ];
 
 describe('edge-function mirror parity', () => {
