@@ -61,7 +61,7 @@ jobs:
       PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v3
@@ -134,7 +134,7 @@ jobs:
       HAVE_ORG_SMOKE_CREDS: ${{ secrets.LOREKIT_SMOKE_EMAIL != '' && secrets.LOREKIT_SMOKE_PASSWORD != '' && secrets.SUPABASE_ANON_KEY != '' }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
@@ -252,7 +252,7 @@ jobs:
       PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Install Supabase CLI
         uses: supabase/setup-cli@v3
@@ -318,7 +318,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
@@ -428,7 +428,7 @@ jobs:
       PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
     steps:
       - name: Checkout repository (with previous commit)
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 2
 
@@ -472,7 +472,7 @@ jobs:
       contents: read # checkout, so the local composite action is available
     steps:
       - name: Checkout repository (for the composite action)
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Identify the failed stage
         id: stage

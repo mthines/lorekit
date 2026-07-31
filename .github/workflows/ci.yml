@@ -41,7 +41,7 @@ jobs:
       migrations: ${{ steps.filter.outputs.migrations }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
@@ -114,7 +114,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0 # NX affected needs history to diff against the base
 
@@ -158,7 +158,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -195,7 +195,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0 # `vitest --changed <base>` needs history to diff
 
@@ -220,7 +220,7 @@ jobs:
         run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
@@ -231,7 +231,7 @@ jobs:
       # Cache the Vite/Storybook dep-optimizer so a warm run skips the cold
       # pre-bundle (the slow part of the first browser boot).
       - name: Cache Vite/Storybook optimizer
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             packages/web/node_modules/.vite
@@ -263,7 +263,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0 # need base + HEAD history to diff the added migrations
 
@@ -307,7 +307,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v6

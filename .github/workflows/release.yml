@@ -72,14 +72,14 @@ jobs:
     steps:
       - name: Mint a GitHub App token (so the release PR triggers required CI)
         id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ vars.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
       - name: Run release-please
         id: rp
-        uses: googleapis/release-please-action@v4
+        uses: googleapis/release-please-action@v5
         with:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
@@ -115,7 +115,7 @@ jobs:
       id-token: write # mint the OIDC token npm trades for publish rights
     steps:
       - name: Checkout the release commit (version already bumped on main)
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -179,7 +179,7 @@ jobs:
       contents: read # checkout, so the local composite action is available
     steps:
       - name: Checkout repository (for the composite action)
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Identify the failed stage
         id: stage
