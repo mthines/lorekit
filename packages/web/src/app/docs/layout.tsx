@@ -25,8 +25,8 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <div className="flex min-h-screen flex-col bg-[var(--color-bg)]">
-      <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 border-b border-[var(--color-border)] bg-[var(--color-bg)]/90 px-6 backdrop-blur md:px-10">
-        <Link href="/" className="flex shrink-0 items-center gap-2.5">
+      <header className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-[var(--color-border)] bg-[var(--color-bg)]/90 px-6 py-3 backdrop-blur sm:h-16 sm:py-0 md:px-10">
+        <Link href="/" className="order-1 flex shrink-0 items-center gap-2.5">
           <Image
             src="/icons/icon-192.png"
             alt="LoreKit"
@@ -40,17 +40,19 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
           </span>
         </Link>
 
-        <div className="hidden flex-1 justify-center sm:flex">
+        {/*
+          One search instance, repositioned by flex `order` — centred on desktop,
+          full-width on its own row on mobile — so the (~33 KB flattened) search
+          index is serialised into the docs payload only ONCE, not per breakpoint.
+        */}
+        <div className="order-3 w-full sm:order-2 sm:flex sm:w-auto sm:flex-1 sm:justify-center">
           <DocsSearch index={searchIndex} />
         </div>
 
-        <DocsAuthCta />
+        <div className="order-2 sm:order-3">
+          <DocsAuthCta />
+        </div>
       </header>
-
-      {/* Mobile search — full width below the header, where the centred box won't fit. */}
-      <div className="border-b border-[var(--color-border)] px-6 py-3 sm:hidden">
-        <DocsSearch index={searchIndex} />
-      </div>
 
       <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 px-6 py-8 md:flex-row md:gap-10 md:py-12">
         <DocsNav />

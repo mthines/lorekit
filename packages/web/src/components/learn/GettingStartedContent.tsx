@@ -206,25 +206,23 @@ export function GettingStartedContent({ isPublic = false }: Props) {
         </p>
       </div>
 
-      {!isPublic && (
-        <TutorialCallout>
-          <strong>Next steps:</strong> see the{' '}
-          <Link
-            href="/docs/remote"
-            className="text-[var(--color-accent)] underline underline-offset-2"
-          >
-            Remote storage
-          </Link>{' '}
-          tutorial for token tiers and CI injection, or{' '}
-          <Link
-            href="/docs/organization"
-            className="text-[var(--color-accent)] underline underline-offset-2"
-          >
-            Team sharing
-          </Link>{' '}
-          to share lore across your whole team.
-        </TutorialCallout>
-      )}
+      <TutorialCallout>
+        <strong>Next steps:</strong> see the{' '}
+        <Link
+          href="/docs/remote"
+          className="text-[var(--color-accent)] underline underline-offset-2"
+        >
+          Remote storage
+        </Link>{' '}
+        tutorial for token tiers and CI injection, or{' '}
+        <Link
+          href="/docs/organization"
+          className="text-[var(--color-accent)] underline underline-offset-2"
+        >
+          Team sharing
+        </Link>{' '}
+        to share lore across your whole team.
+      </TutorialCallout>
     </div>
   );
 }
