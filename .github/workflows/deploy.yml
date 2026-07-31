@@ -16,9 +16,11 @@
 #   preview     → SUPABASE_PROJECT_REF, SUPABASE_DB_PASSWORD, LOREKIT_SMOKE_TOKEN
 #   production  → SUPABASE_PROJECT_REF, SUPABASE_DB_PASSWORD, LOREKIT_SMOKE_TOKEN
 # Repo-level secret shared by both: SUPABASE_ACCESS_TOKEN (personal access token).
-# Optional (per environment) — enables the orgs REST smoke suite (see the "Mint a
-# user JWT" step); unset → that suite is announced-skipped, the memories suite
-# still runs: SUPABASE_ANON_KEY, LOREKIT_SMOKE_EMAIL, LOREKIT_SMOKE_PASSWORD.
+# Optional (preview only) — enables the orgs REST smoke suite in smoke-preview
+# (see its "Mint a user JWT" step); unset → that suite is announced-skipped and
+# the memories suite still runs. The write-heavy REST smoke runs against preview
+# only, never production (see the note in smoke-production for why):
+#   SUPABASE_ANON_KEY, LOREKIT_SMOKE_EMAIL, LOREKIT_SMOKE_PASSWORD.
 # Optional repo-level secret: DISCORD_WEBHOOK_URL — when set, notify-failure posts
 # a message there on any deploy-pipeline failure. Unset → notify-failure no-ops.
 # Add a required reviewer on the `production` environment for a manual gate.
@@ -280,10 +282,6 @@ jobs:
     environment: production
     permissions:
       contents: read
-    env:
-      # See smoke-preview: gates the optional orgs REST smoke suite on a
-      # configured fixed smoke user. Unset → the suite self-skips (announced).
-      HAVE_ORG_SMOKE_CREDS: ${{ secrets.LOREKIT_SMOKE_EMAIL != '' && secrets.LOREKIT_SMOKE_PASSWORD != '' && secrets.SUPABASE_ANON_KEY != '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -352,43 +350,29 @@ jobs:
           LOREKIT_BYOD_URL: ${{ secrets.LOREKIT_BYOD_URL }}
           LOREKIT_BYOD_TOKEN: ${{ secrets.LOREKIT_BYOD_TOKEN }}
 
-      # The two script-based smokes ci.yml's integration job runs (against a
-      # local Supabase), now replayed against the live production deploy — same
-      # transport + REST contracts the merge gate asserts. Mirrors smoke-preview.
-
       # Robust local stdio transport (`lorekit mcp`): initialize → tools/list →
-      # memory.list against the production endpoint. Same script as ci.yml.
+      # memory.list against the production endpoint — the same script ci.yml runs
+      # (against a local Supabase). This one is READ-ONLY (`memory.list`), so it
+      # adds no synthetic rows to the production tables and its flake profile
+      # matches the tools/list curl above; both gate rollback, which is fine.
       - name: Smoke — robust stdio transport handshakes against production
         run: node scripts/smoke-mcp-stdio.mjs "$URL" "$TOKEN"
         env:
           URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
 
-      # Mint a user JWT so smoke-rest can include the orgs suite (fixed-user
-      # mode; never provisions users in a real tenant). Optional — runs only when
-      # the credentials are configured; otherwise the orgs suite is announced-skipped.
-      - name: Mint a user JWT for the orgs REST smoke (optional)
-        id: smokejwt
-        if: env.HAVE_ORG_SMOKE_CREDS == 'true'
-        env:
-          LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          LOREKIT_SMOKE_EMAIL: ${{ secrets.LOREKIT_SMOKE_EMAIL }}
-          LOREKIT_SMOKE_PASSWORD: ${{ secrets.LOREKIT_SMOKE_PASSWORD }}
-        run: |
-          JWT="$(node scripts/mint-smoke-jwt.mjs)"
-          echo "::add-mask::$JWT"
-          echo "jwt=$JWT" >> "$GITHUB_OUTPUT"
-
-      # REST Edge Functions end-to-end against production — `memories` always,
-      # `orgs` only when the JWT was minted. Specs self-clean with timestamped
-      # keys. Same script as ci.yml.
-      - name: Smoke — REST API (memories + orgs) against production
-        env:
-          LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
-          LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
-          LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
-        run: node scripts/smoke-rest.mjs
+      # NOTE: the write-heavy REST smoke (scripts/smoke-rest.mjs) is deliberately
+      # NOT run here — it runs in smoke-preview only. Do NOT "restore parity" by
+      # re-adding it to production:
+      #   • It writes append-only rows (audit_log / usage_events) that no cleanup
+      #     can remove, so every prod deploy would leave synthetic audit trail in
+      #     the live tenant (the orgs sub-suite adds org.create/member.* on top).
+      #   • A flaky live vitest run would then trip rollback-production, auto-
+      #     redeploying the previous commit's functions on a test hiccup.
+      #   • It is redundant here: smoke-preview already exercised the full REST
+      #     contract against the IDENTICAL promoted function bundle on the staging
+      #     project before this job runs, and the self-cleaning `doctor --deep`
+      #     round-trip above already verifies the production write path.
 
   # ── 5. Rollback PRODUCTION functions on a production failure ──────────────────
   #    Redeploys the previous commit's edge functions. Migrations are forward-only
