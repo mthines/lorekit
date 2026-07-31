@@ -71,6 +71,7 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   ['tenant-scope.ts', 'mcp/tenant-scope.ts'],
   ['org-permissions.ts', 'mcp/org-permissions.ts'],
   ['webhook-installation.ts', 'mcp/webhook-installation.ts'],
+  ['github-app-jwt.ts', 'mcp/github-app-jwt.ts'],
   ['trace-context.ts', '_shared/trace-context.ts'],
   ['rest-tool-name.ts', '_shared/rest-tool-name.ts'],
   // Two rules lifted OUT of Deno-only files so vitest can assert them:

@@ -98,12 +98,12 @@ The edge function mirrors these byte-for-byte in
 
 ---
 
-## Setup-URL return bounce (AC-6, `?state=` correlation)
+## Setup-URL return bounce (`?state=` correlation)
 
 When a user installs the App, GitHub redirects back to the App's Setup URL:
 
 ```
-https://app.lorekit.dev/api/auth/callback?installation_id=<id>&setup_action=install[&state=<state>]
+https://lorekit.io/api/auth/callback?installation_id=<id>&setup_action=install[&state=<state>]
 ```
 
 `state` is correlation-only: it allows associating the install with an
@@ -115,9 +115,47 @@ from `auth.uid()` + RLS.
 `packages/web/src/app/api/auth/callback/route.ts` threads the params:
 
 1. OAuth `code` is exchanged first (so the session exists).
-2. If `installation_id` is present, `handleSetupReturn` attempts to link the
-   pending installation to the authenticated session.
+2. If `installation_id` is present, `handleSetupReturn`
+   (`packages/web/src/lib/github-installations.ts`) records the installation
+   **immediately**, decoupled from the webhook delivery and from
+   `GITHUB_APP_ENABLED`: it POSTs the caller's Supabase JWT + the
+   `installation_id` to the edge endpoint `…/functions/v1/mcp/installations/sync`.
 3. Redirects to `/settings/webhooks` so the user sees the linked installation.
+
+### The `installations/sync` endpoint
+
+`supabase/functions/mcp/installation-sync.ts` (routed from `mcp/index.ts`) is
+the reason an installation appears in the dashboard even when no webhook was
+delivered — the exact failure the webhook-first design left open (App installed
+on GitHub, `0` installations in LoreKit):
+
+1. Resolve the caller from their Supabase user JWT (`resolveAuth`) — never a
+   caller-supplied id; api_key / service callers are rejected.
+2. Resolve the installation's account + covered repos from GitHub using an
+   **App JWT** (`github-app-client.ts` — the only holder of
+   `GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY`, which stay **Supabase secrets**,
+   never Vercel env, never the browser). The RS256 JWT is minted with Web
+   Crypto; the deterministic byte work (base64url, PEM→PKCS#8) is the pure,
+   unit-tested `github-app-jwt.ts` (mirrored mcp-core ↔ edge, parity-guarded).
+3. Entitlement: link the row to the caller **only** when the installation's
+   account is the caller's own GitHub account
+   (`lorekit_find_user_by_github_id` resolves to their uid) — the same rule the
+   webhook reconcile uses. Otherwise the row is upserted `pending`, so an org
+   install can never be attributed to a user who doesn't own the account.
+4. Upsert via the SECURITY DEFINER `lorekit_installation_upsert` RPC.
+
+This endpoint depends on the App API credentials, **not** on
+`GITHUB_APP_ENABLED` (that flag gates only the webhook branch). When the App API
+key is absent it replies `app_not_configured`. On that — or on any other
+unsuccessful sync (installation not found, upsert error, endpoint
+unreachable) — `handleSetupReturn` falls back to `linkPendingInstallation`
+(the webhook-driven path), so behaviour is never worse than before.
+
+> **Known limitation:** an installation on an **organization** the caller
+> administers stays `pending` (its account id is not the caller's personal
+> GitHub id), matching the webhook reconcile. Linking org installs to an
+> administering member is a follow-up (verify org-admin membership via the
+> caller's OAuth token).
 
 ### Live-spike requirement (AC-6)
 
@@ -144,8 +182,22 @@ are completed:
 ### 1. Register the GitHub App
 
 - Navigate to GitHub → Settings → Developer settings → GitHub Apps → New GitHub App.
-- Set the Setup URL to `https://app.lorekit.dev/api/auth/callback`.
-- Configure webhook URL: `https://app.lorekit.dev/api/mcp/webhook`.
+- **User authorization callback URL:** `https://lorekit.io/api/auth/callback`.
+- **Post-install redirect — pick ONE, both land on the callback route:**
+  - If **"Request user authorization (OAuth) during installation"** is enabled
+    (recommended), GitHub **disables the separate "Setup URL" field** — the
+    callback URL above serves both roles, and the post-install redirect carries
+    `code` + `installation_id` together (`auth/callback/route.ts` already
+    exchanges the code first, then links). Nothing to set in "Setup URL".
+  - If OAuth-during-install is **off**, set **"Setup URL (optional)"** to the
+    same `https://lorekit.io/api/auth/callback` instead.
+- **Enable "Redirect on update".** Without it, re-configuring an
+  **already-installed** App never bounces back with the `installation_id`, so an
+  existing install can't be linked short of uninstalling and reinstalling. This
+  is the switch that lets `handleSetupReturn` record an install that predates
+  this endpoint.
+- Configure webhook URL:
+  `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp/webhooks/github`.
 - Generate a webhook secret (strong random value, 32+ bytes).
 - Download the private key.
 
@@ -158,6 +210,19 @@ supabase secrets set GITHUB_APP_WEBHOOK_SECRET=<the-webhook-secret>
 supabase secrets set GITHUB_APP_PRIVATE_KEY="$(cat path/to/private-key.pem)"
 supabase secrets set GITHUB_APP_ENABLED=true
 ```
+
+Which secret powers which path:
+
+| Secret | `installations/sync` (dashboard linking) | Webhook branch |
+| ------ | ---------------------------------------- | -------------- |
+| `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY` | **required** — mints the App JWT | not used |
+| `GITHUB_APP_WEBHOOK_SECRET` | not used | required — HMAC-verifies deliveries |
+| `GITHUB_APP_ENABLED` | **not consulted** | gates the whole App webhook branch |
+
+So the dashboard can record installations as soon as the App **ID + private
+key** are set, independent of `GITHUB_APP_ENABLED`. `GITHUB_APP_PRIVATE_KEY`
+accepts either the PKCS#1 (`BEGIN RSA PRIVATE KEY`, GitHub's download) or the
+PKCS#8 (`BEGIN PRIVATE KEY`) PEM — the endpoint converts as needed.
 
 ### 3. Surface the install button in the dashboard
 

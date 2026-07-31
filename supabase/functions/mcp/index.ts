@@ -25,6 +25,7 @@ import { traceRequest } from '../_shared/otel.ts';
 import { resolveAuth, getDb } from './auth.ts';
 import { handleMcp, jsonrpcError } from './mcp-handler.ts';
 import { handleWebhook } from './webhook.ts';
+import { handleInstallationSync } from './installation-sync.ts';
 import { checkRateLimit, rateLimitMessage, recordUsageEvent, getUserPlanName } from './limits.ts';
 import { resolveStorageAdapter } from './storage-adapter.ts';
 
@@ -58,6 +59,12 @@ Deno.serve(async (req: Request) => {
   // GitHub webhook
   if (url.pathname.endsWith('/webhooks/github')) {
     return handleWebhook(req);
+  }
+
+  // GitHub App installation sync — dashboard Setup-URL bounce records/links an
+  // installation directly (user JWT), decoupled from the webhook delivery path.
+  if (url.pathname.endsWith('/installations/sync')) {
+    return handleInstallationSync(req);
   }
 
   // MCP endpoint — all paths (including auth failures) are traced so every
