@@ -136,7 +136,7 @@ function OwnershipFilterBar({
 // "Labels: perf · ci · flaky" — multi-select, so it uses toggle-button
 // semantics (`aria-pressed`), NOT the single-select radiogroup shape the owner
 // bar uses. Selecting two labels narrows to memories carrying BOTH (the
-// `.contains('tags', …)` server predicate, mirrored by `matchesAllTags`), which
+// `.contains('tags', …)` server predicate), which
 // the group's `title` states outright — a filter whose combining rule the user
 // has to infer from results is a guessing game.
 //
