@@ -323,11 +323,14 @@ lorekit url --q "flaky test" --owner personal # search + ownership filter
 ```
 
 With no arguments it links to the cwd's **most-specific scope** ("share what I'm
-looking at"). Given a scope it links to the Explorer filtered to that scope;
-given a scope **and** key (or the `scope::key` shorthand) it links straight to
-that lesson's detail sheet — setting **both** the `lesson` and `scope` params so
-the sheet isn't blank. Filter flags mirror the Explorer: `--q` (search),
-`--owner <all|personal|orgId>`, `--range`/`--from`/`--to`, `--archived`,
+looking at"). A single argument that is a valid scope — including a `repo::…` or
+`branch::…::…` scope — links to the Explorer filtered to that scope; a scope
+**and** key (two positionals, or the `scope::key` shorthand) links straight to
+that lesson's detail sheet. It sets **both** the `lesson` param (which opens the
+sheet) and `scope` — not because scope is needed to find the lesson (the sidebar
+reads one unfiltered recent set), but so the Explorer list *behind* the sheet is
+filtered to the lesson's own scope. Filter flags mirror the Explorer: `--q`
+(search), `--owner <all|personal|orgId>`, `--range`/`--from`/`--to`, `--archived`,
 `--view <scope|time>`.
 
 Every param is `encodeURIComponent(JSON.stringify(value))` — the exact inverse of
@@ -339,11 +342,12 @@ default is `https://lorekit.io`. Read-only and network-free — it derives scope
 from git and builds a URL, never touching a store.
 
 The **read commands take a `--link` flag** that short-circuits to print the
-equivalent deep link for exactly the view you just asked for, reusing the same
-builder: `show <scope::key> --link` → the lesson link, `search foo --link` →
-`/lore?q="foo"` (+ scope), `list --link` / `tree --link` → the scope-filtered
-Explorer link. (The same JSON-encoded links now back the hooks' write-confirmation
-and retrospective nudges.)
+equivalent deep link, reusing the same builder: `show <scope::key> --link` → the
+lesson link, `search foo --link` → `/lore?q="foo"` (+ scope), and `list --link` /
+`tree --link` → the Explorer filtered to the **most-specific applicable scope**
+(or `--scope` when given) — the dashboard filters one scope at a time, so the
+multi-scope `list`/`tree` view maps to its primary scope. (The same JSON-encoded
+links now back the hooks' write-confirmation and retrospective nudges.)
 
 ### `lorekit hook`
 
@@ -578,8 +582,10 @@ active deny constraints.
 | `--no-hooks` | Skip wiring the lifecycle hooks; skills + MCP only (`install`) |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
-| `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe`) |
-| `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff` / `tree` / `lint` / `dedupe`; default: all applicable). For `scopes` it is a **substring filter** over the inventory |
+| `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `link`) |
+| `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff` / `tree` / `lint` / `dedupe` / `link`; default: all applicable). For `scopes` it is a **substring filter** over the inventory |
+| `--link` | Print the equivalent dashboard deep-link URL instead of running (`show` / `search` / `list` / `tree`) |
+| `--base <url>` | Dashboard base URL for deep links (`link` / `--link`; else `LOREKIT_APP_URL`, default `https://lorekit.io`) |
 | `--threshold <0..1>` | Duplicate-similarity cutoff (`dedupe`; default `0.8`) |
 | `--adapter <name>` | Host framework for `hook`: `claude` / `cursor` / `codex` |
 | `--event <name>` | Host hook event for `hook` (else read from the stdin payload) |

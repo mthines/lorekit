@@ -237,11 +237,13 @@ ${c.bold('Options')}
   -e, --endpoint <url>    Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
   -t, --token <token>     Remote token override (else .mcp.json / LOREKIT_TOKEN)
       --store <path>      Local project-tier store directory (default: .lorekit)
+      --link              Print the Explorer deep-link for the most-specific scope (or --scope) instead of running (with --base / --json)
 
 ${c.bold('Examples')}
   npx @lorekit/cli list
   npx @lorekit/cli list --json
   npx @lorekit/cli list --scope global
+  npx @lorekit/cli list --scope global --link
 `,
   search: `${c.bold('lorekit search')} — full-text search the applicable memories ${c.dim('(alias: grep)')}
 
@@ -261,11 +263,13 @@ ${c.bold('Options')}
   -e, --endpoint <url>    Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
   -t, --token <token>     Remote token override (else .mcp.json / LOREKIT_TOKEN)
       --store <path>      Local project-tier store directory (default: .lorekit)
+      --link              Print this view's dashboard deep-link URL instead of running (with --base / --json)
 
 ${c.bold('Examples')}
   npx @lorekit/cli search sandbox
   npx @lorekit/cli grep "flaky test" --json
   npx @lorekit/cli search migration --scope global
+  npx @lorekit/cli search "flaky test" --scope global --link
 `,
   write: `${c.bold('lorekit write')} — create or update a memory from the CLI
 
@@ -316,11 +320,13 @@ ${c.bold('Options')}
   -e, --endpoint <url>    Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
   -t, --token <token>     Remote token override (else .mcp.json / LOREKIT_TOKEN)
       --store <path>      Local project-tier store directory (default: .lorekit)
+      --link              Print this memory's dashboard deep-link URL instead of reading (with --base / --json)
 
 ${c.bold('Examples')}
   npx @lorekit/cli show global prefer-guard-clauses
   npx @lorekit/cli show global::prefer-guard-clauses
   npx @lorekit/cli show project::widget build-flags --json
+  npx @lorekit/cli show global prefer-guard-clauses --link
 `,
   stats: `${c.bold('lorekit stats')} — count the applicable memories per scope and per store
 
@@ -418,10 +424,12 @@ ${c.bold('Options')}
   -e, --endpoint <url>    Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
   -t, --token <token>     Remote token override (else .mcp.json / LOREKIT_TOKEN)
       --store <path>      Local project-tier store directory (default: .lorekit)
+      --link              Print the Explorer deep-link for the most-specific scope (or --scope) instead of running (with --base / --json)
 
 ${c.bold('Examples')}
   npx @lorekit/cli tree
   npx @lorekit/cli resolve --json
+  npx @lorekit/cli tree --scope global --link
 `,
   lint: `${c.bold('lorekit lint')} — flag low-quality memories across the applicable scopes
 
