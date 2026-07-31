@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import Image from 'next/image';
+import Link from 'next/link';
 import { LoginButton } from '@/components/auth/LoginButton';
 import { AuthHashCatcher } from '@/components/auth/AuthHashCatcher';
 import { SiteFooter } from '@/components/layout/SiteFooter';
@@ -83,6 +84,12 @@ export default function LoginPage() {
           <span className="text-sm font-semibold text-[var(--color-content-primary)]">LoreKit</span>
         </div>
         <div className="flex items-center gap-1 sm:gap-3">
+          <Link
+            href="/docs"
+            className="hidden items-center rounded-lg px-3 py-2 text-sm font-medium text-[var(--color-content-secondary)] transition-colors duration-200 hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] sm:inline-flex"
+          >
+            Docs
+          </Link>
           <a
             href="https://github.com/mthines/lorekit"
             target="_blank"

@@ -1,0 +1,121 @@
+---
+title: "Offline storage"
+description: "Store lore locally on your machine using the LoreKit CLI — no account, no network, full privacy. Memories live in a plain directory you own and control."
+order: 2
+keywords: ["offline", "local store", "cli", "install", "doctor", "mcp", "memory.write", "scope", ".lorekit.json", "deny", "mode", "search"]
+---
+
+<TutorialCallout variant="tip">
+
+Offline storage is the fastest way to start. You can migrate to remote storage later by adding a `LOREKIT_MCP_URL` and `LOREKIT_API_KEY` — the CLI reads both stores and merges them automatically.
+
+</TutorialCallout>
+
+<TutorialStep number={1} title="Install the CLI">
+
+```bash
+npx @lorekit/cli install
+```
+
+This scaffolds the `lorekit-memory` and `lorekit-setup` skills, the local MCP server, and the lifecycle hooks into your `.claude/` (project) or `~/.claude/` (global) directory.
+
+To skip hook injection (if you manage hooks separately):
+
+```bash
+npx @lorekit/cli install --no-hooks
+```
+
+</TutorialStep>
+
+<TutorialStep number={2} title="Verify the local store">
+
+```bash
+npx @lorekit/cli doctor
+```
+
+This checks connectivity, token permissions, and scope health. In offline-only mode it confirms that the local MCP server is reachable and the store directory is writable.
+
+</TutorialStep>
+
+<TutorialStep number={3} title="Write your first memory">
+
+```bash
+npx @lorekit/cli mcp
+```
+
+This starts the local stdio MCP server. Your agent can then call `memory.write` to store a memory:
+
+```json
+memory.write {
+  scope: "global",
+  key:   "my-first-lesson",
+  value: "Always run the unit tests before committing."
+}
+```
+
+Memories are stored as plain files under `.lorekit/` in your home directory.
+
+</TutorialStep>
+
+<TutorialStep number={4} title="List your memories">
+
+```bash
+npx @lorekit/cli list
+```
+
+Shows all memories in the applicable scopes (project → branch → repo → global), split into an **Offline** section (local files) and a **Remote** section (hosted, if configured).
+
+Filter to a specific scope:
+
+```bash
+npx @lorekit/cli list --scope global
+```
+
+</TutorialStep>
+
+<TutorialStep number={5} title="Search your memories">
+
+```bash
+npx @lorekit/cli search "commit"
+```
+
+Matches a literal, case-insensitive substring against the memory key or value. Works across all applicable scopes. Add `--scope` to narrow the search.
+
+</TutorialStep>
+
+<TutorialStep number={6} title="(Optional) Commit a project config file">
+
+Drop a `.lorekit.json` at the repo root to set the default memory mode for everyone on the team — no per-machine env var needed:
+
+```json
+// .lorekit.json  (safe to commit)
+{
+  "mode": "local"
+}
+```
+
+The same file also controls the local store path and deny constraints:
+
+```json
+{
+  "mode": "local",
+  "store": ".lorekit",      // path to the project-tier store (default: .lorekit)
+  "deny": ["remote"]        // prevent remote mode in this repo (e.g. for air-gapped CI)
+}
+```
+
+A user-level version of the same file lives at `~/.lorekit/config.json` and applies across all repos. User-level deny constraints are a ceiling the repo config can never lift — a user who sets `"deny": ["remote"]` is always offline, regardless of the repo default.
+
+<TutorialCallout variant="tip">
+
+Run `npx @lorekit/cli doctor` to see the resolved mode and which config source decided it. The output names the exact file or env var that won.
+
+</TutorialCallout>
+
+</TutorialStep>
+
+<TutorialCallout variant="info">
+
+**Next steps:** once you have offline lore working, you can add the remote hosted store for cross-machine access. See the [Remote storage tutorial](/docs/remote) to continue.
+
+</TutorialCallout>

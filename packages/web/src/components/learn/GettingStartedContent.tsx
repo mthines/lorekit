@@ -95,14 +95,6 @@ interface Props {
 export function GettingStartedContent({ isPublic = false }: Props) {
   return (
     <div className="flex flex-col gap-8">
-      <div>
-        <h2 className="text-xl font-semibold text-[var(--color-content-primary)]">Getting started</h2>
-        <p className="mt-1 text-sm text-[var(--color-content-secondary)]">
-          Connect LoreKit to your AI coding agent in three steps. Once connected, your agent
-          can read and write memories so knowledge accumulates across sessions.
-        </p>
-      </div>
-
       <div className="flex flex-col">
 
         {/* ── Step 1: API key ─────────────────────────────────────────────── */}
@@ -206,25 +198,23 @@ export function GettingStartedContent({ isPublic = false }: Props) {
         </p>
       </div>
 
-      {!isPublic && (
-        <TutorialCallout>
-          <strong>Next steps:</strong> see the{' '}
-          <Link
-            href="/learn/remote"
-            className="text-[var(--color-accent)] underline underline-offset-2"
-          >
-            Remote storage
-          </Link>{' '}
-          tutorial for token tiers and CI injection, or{' '}
-          <Link
-            href="/learn/organization"
-            className="text-[var(--color-accent)] underline underline-offset-2"
-          >
-            Team sharing
-          </Link>{' '}
-          to share lore across your whole team.
-        </TutorialCallout>
-      )}
+      <TutorialCallout>
+        <strong>Next steps:</strong> see the{' '}
+        <Link
+          href="/docs/remote"
+          className="text-[var(--color-accent)] underline underline-offset-2"
+        >
+          Remote storage
+        </Link>{' '}
+        tutorial for token tiers and CI injection, or{' '}
+        <Link
+          href="/docs/organization"
+          className="text-[var(--color-accent)] underline underline-offset-2"
+        >
+          Team sharing
+        </Link>{' '}
+        to share lore across your whole team.
+      </TutorialCallout>
     </div>
   );
 }

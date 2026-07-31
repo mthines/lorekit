@@ -1,0 +1,86 @@
+---
+title: "Private lore"
+description: "Every memory is personal by default — visible only to the user or token that wrote it. This tutorial explains how personal and org-owned lore coexist, and how to keep sensitive memories private even in a shared team environment."
+order: 5
+keywords: ["private lore", "personal", "org-owned", "memory.write", "scope binding", "explorer", "memory.archive", "memory.delete", "memory.restore", "token", "partition"]
+---
+
+<TutorialCallout variant="info">
+
+You never have to do anything to make a memory private. Omitting the `org` parameter on `memory.write` is all that is needed — the memory is personal by definition.
+
+</TutorialCallout>
+
+**Personal vs org-owned — the core distinction**
+
+| Property | Personal lore | Org-owned lore |
+| --- | --- | --- |
+| Who sees it | Your token / session only | Every org member |
+| Who writes it | Any lk_rw_ or lk_wo_ token | Write-capable member only |
+| How to write | Omit the org parameter | Pass org: "slug" on memory.write |
+| Explorer filter | Personal filter | `{org}` filter |
+
+<TutorialStep number={1} title="Write a private memory">
+
+Simply omit `org`. The memory is stored under your personal partition regardless of whether a scope binding exists:
+
+```json
+memory.write {
+  scope: "global",
+  key:   "my-api-key-pattern",
+  value: "Never commit API keys. Use environment variables."
+}
+// No "org" parameter → personal, only you can read it.
+```
+
+</TutorialStep>
+
+<TutorialStep number={2} title="Understand what happens at a bound scope">
+
+If an admin has bound a scope (e.g. `repo::myteam/api`) to an org (see [Settings → Organization → Shared scopes](/settings/organization)):
+
+- **You are a write-capable member** → write auto-routes to the org. Use a more-specific scope (e.g. a branch scope) to write personal instead.
+- **You are not a write-capable member** → the write falls back to personal, never rejected. You receive a `notice` in the response.
+
+<TutorialCallout variant="tip">
+
+To intentionally write personal lore under a bound scope, use a more-specific scope that is not bound (e.g. `branch::myteam/api::feat/my-branch`).
+
+</TutorialCallout>
+
+</TutorialStep>
+
+<TutorialStep number={3} title="Filter to personal lore in the Explorer">
+
+In the [Explorer](/lore), use the **Personal** filter in the **All · Personal · `{org}`** toolbar. This narrows the list to memories that belong only to you.
+
+</TutorialStep>
+
+<TutorialStep number={4} title="Archive or delete a private memory">
+
+Soft-archive (recoverable — hidden from reads, restorable via `memory.restore`):
+
+```json
+memory.archive {
+  scope: "global",
+  key:   "my-api-key-pattern"
+}
+```
+
+Hard-delete (permanent, requires explicit `force: true`):
+
+```json
+memory.delete {
+  scope: "global",
+  key:   "my-api-key-pattern",
+  force: true
+}
+```
+
+</TutorialStep>
+
+<TutorialCallout>
+
+**Next:** learn how to organise memories with tags and scope namespaces so the right memory surfaces at the right time. See the [Tags & scopes tutorial](/docs/tags).
+
+</TutorialCallout>

@@ -12,7 +12,7 @@ import { useOnboarding } from '@/components/providers/OnboardingProvider';
 const NAV = [
   { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { href: '/lore', label: 'Explorer', icon: BookOpen },
-  { href: '/learn', label: 'Getting started', mobileLabel: 'Getting started', icon: GraduationCap },
+  { href: '/docs', label: 'Getting started', mobileLabel: 'Getting started', icon: GraduationCap },
 ] as const;
 
 // Settings is a persistent utility destination kept in the sidebar footer —
@@ -57,7 +57,6 @@ export function Sidebar({ user }: SidebarProps) {
         <nav className="flex flex-1 flex-col gap-0.5 p-2" aria-label="Main navigation">
           {NAV.map(({ href, label, icon: Icon }) => {
             const active = pathname === href || pathname.startsWith(href + '/');
-            const isLearn = href === '/learn';
             return (
               <Link
                 key={href}
@@ -134,8 +133,8 @@ export function Sidebar({ user }: SidebarProps) {
           const { href, icon: Icon } = item;
           const label = 'mobileLabel' in item ? item.mobileLabel : item.label;
           const active = pathname === href || pathname.startsWith(href + '/');
-          const isLearn = href === '/learn';
-          const withProgressDot = isLearn && showProgress;
+          const isDocs = href === '/docs';
+          const withProgressDot = isDocs && showProgress;
           return (
             <Link
               key={href}

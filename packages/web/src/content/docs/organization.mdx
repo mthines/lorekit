@@ -1,0 +1,79 @@
+---
+title: "Team sharing"
+description: "Create an organization, invite teammates, and share one authoritative set of lore across the whole team. Updates are instant — no syncing, no copy-fan-out."
+order: 4
+keywords: ["organization", "team sharing", "org", "roles", "viewer", "member", "admin", "owner", "invite", "scope binding", "memory.write", "explorer", "ownership badge"]
+---
+
+<TutorialCallout variant="tip">
+
+Org sharing is **org-first**: there is a single shared row owned by the org, not a personal copy per member. Every team member reads and writes the same memory. When one person updates it, everyone sees the change immediately.
+
+</TutorialCallout>
+
+**Role capabilities**
+
+| Role | Read | Write | Hard-delete | Manage members | Rename / delete org |
+| --- | :---: | :---: | :---: | :---: | :---: |
+| `viewer` | ✓ | — | — | — | — |
+| `member` | ✓ | ✓ | — | — | — |
+| `admin` | ✓ | ✓ | ✓ | ✓ | — |
+| `owner` | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+<TutorialStep number={1} title="Create an organization">
+
+Go to [Settings → Organization](/settings/organization) and click **Create organization**. Enter a display name and a URL-safe slug (lowercase letters, digits, hyphens). The slug must be globally unique.
+
+You become the org's **owner** automatically.
+
+</TutorialStep>
+
+<TutorialStep number={2} title="Invite teammates">
+
+From the same page, enter a GitHub handle or an email address and pick a role. Only `admin` and `owner` can invite.
+
+- An **email** invite sends a transactional notification (if Resend is configured).
+- A **handle** invite is in-app only — the invitee sees a banner on their [Overview](/dashboard).
+
+Invites are secured by identity: when someone accepts, the new membership is bound to *their* verified `auth.uid()` — a forwarded invite email can only be redeemed by the identity it was addressed to.
+
+</TutorialStep>
+
+<TutorialStep number={3} title="Write org-owned lore">
+
+Agents write org-owned lore by passing the org slug on `memory.write`:
+
+```json
+memory.write {
+  scope:  "repo::myteam/api",
+  key:    "deployment-checklist",
+  value:  "Always run smoke tests on the staging env before promoting to prod.",
+  org:    "my-team"          // org slug
+}
+```
+
+Authorization is derived server-side — the write is accepted only if the caller is a write-capable member. A `viewer` or non-member is rejected.
+
+</TutorialStep>
+
+<TutorialStep number={4} title="Bind a scope to your org (optional)">
+
+Instead of passing `org` on every write, an admin can bind a scope to the org so writes auto-route:
+
+Go to [Settings → Organization → Shared scopes](/settings/organization) → enter a scope string (e.g. `repo::myteam/api`) → click **Bind scope**.
+
+After binding, any write under `repo::myteam/api` by a write-capable member routes to the org automatically. A non-member writing under a bound scope gets a graceful fallback to personal lore (never rejected) with a `notice` in the response.
+
+</TutorialStep>
+
+<TutorialStep number={5} title="Browse team lore in the Explorer">
+
+In the [Explorer](/lore), use the **All · Personal · `{org}`** filter to narrow to your org's lore. Org-owned memories show an ownership badge next to the scope badge. The detail panel shows the owning org and who last updated the memory.
+
+</TutorialStep>
+
+<TutorialCallout>
+
+**Next:** understand how personal and org-owned lore coexist and how scope precedence decides which memory wins. See the [Private lore tutorial](/docs/private).
+
+</TutorialCallout>
