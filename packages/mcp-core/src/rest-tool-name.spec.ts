@@ -25,6 +25,7 @@ describe('restToolName', () => {
       [{ fn: 'memories', method: 'POST', path: '/purge' }, 'memory.purge'],
       [{ fn: 'memories', method: 'POST', path: '/purge-expired' }, 'memory.purge_expired'],
       [{ fn: 'memories', method: 'GET', path: '/scopes' }, 'memory.scopes'],
+      [{ fn: 'memories', method: 'GET', path: '/usage' }, 'memory.usage'],
       [{ fn: 'memories', method: 'GET', path: '/:id' }, 'memory.read'],
       [{ fn: 'memories', method: 'PATCH', path: '/:id' }, 'memory.write'],
       [{ fn: 'memories', method: 'POST', path: '/:id/restore' }, 'memory.restore'],

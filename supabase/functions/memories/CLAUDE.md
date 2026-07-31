@@ -14,6 +14,7 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 | POST | /purge | purge.ts | write |
 | POST | /purge-expired | purge.ts | write |
 | GET | /scopes | scopes.ts | read |
+| GET | /usage | usage.ts | read |
 | GET | /:id | get.ts | read |
 | PATCH | /:id | update.ts | write |
 | DELETE | /:id | remove.ts | write |
@@ -100,6 +101,43 @@ The aggregation runs in Postgres (`lorekit_memory_scopes`, migration 00039), **n
 PostgREST's default row cap: the response is truncated with no error, so whole scopes go
 missing. Visibility inside the RPC composes `lorekit_member_org_ids` exactly as the
 `memories` RLS read policies do, so personal and org-shared scopes both appear.
+
+## `GET /usage`
+
+Aggregate usage statistics for the caller's **own** activity, read back from
+`usage_events` (migration 00034) — "how many reads/writes today, per scope-type,
+per outcome" so a human or agent can judge whether LoreKit is helping.
+
+```json
+{
+  "range": { "since": "2026-07-31T00:00:00.000Z", "until": null },
+  "summary": { "total_events": 812, "reads": 640, "writes": 120, "other": 52,
+               "by_outcome": { "ok": 780, "cap_exceeded": 2, "error": 30 } },
+  "by_tool": [{ "tool_name": "memory.list", "outcome": "ok", "scope_type": "repo",
+                "event_count": 600, "total_duration_ms": 42000 }],
+  "by_scope_type": [{ "scope_type": "repo", "event_count": 610 }]
+}
+```
+
+Query params (all optional): `period` (`24h`/`7d`/`30d`/`90d`/`all`), or an
+explicit ISO `since`/`until` (`since` overrides `period`; the window is half-open
+`[since, until)`). Omitting everything is all-time.
+
+The grouping runs in Postgres (`lorekit_usage_stats`, migration 00043), **not**
+as a `select` + client-side reduce — the client-side form is silently truncated
+past PostgREST's row cap, exactly like `GET /scopes`. Visibility is self-only
+(the RPC filters `user_id = caller`, with the same `service_role` + NULL
+escape hatch `lorekit_memory_scopes` uses); there is no `applyRestTenantScope`
+call because there is no query to scope. `summary` and `by_scope_type` are
+computed by the pure `summarizeUsageRows` / `rollupByScopeType`
+(`_shared/usage-stats.ts`, mirror of `packages/mcp-core/src/usage-stats.ts`)
+from the SAME rows returned as `by_tool`, so the headline totals can never
+disagree with the detail. Window validation is the pure `parseUsageWindow` in
+the same module; an inverted/malformed window is a `400`.
+
+Like `GET /scopes`, there is **no MCP tool** for this — an aggregate read has no
+scope-keyed MCP equivalent. Its `usage_events.tool_name` is `memory.usage`
+(`rest-tool-name.ts`).
 
 ## Audit events
 

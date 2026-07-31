@@ -2618,6 +2618,124 @@ begin
 end;
 $$;
 
+-- ── Usage statistics — 00043 ────────────────────────────────────────────────
+-- lorekit_usage_stats(p_user_id, p_since, p_until) backs GET /memories/usage.
+-- It aggregates usage_events (00034) in Postgres, so these assertions are the
+-- only place the self-only visibility predicate, the half-open [since, until)
+-- window, and the service-role escape hatch are actually executed.
+-- AC-1: A caller sees ONLY their own events, grouped by (tool, outcome, scope).
+-- AC-2: The window is half-open — p_since is inclusive, older rows excluded.
+-- AC-3: Rows come back sorted by event_count desc.
+-- AC-4: service-role (verified role claim) + NULL p_user_id sees everything (CI).
+-- AC-5: A non-service caller passing NULL p_user_id gets nothing (fails closed).
+-- AC-6: Granted to authenticated + service_role, never anon.
+
+-- User A (a1): 7 events — 3 recent list/ok/repo, 1 recent write/ok/repo,
+-- 1 recent write/cap_exceeded/repo, and 2 OLD (40d) list/ok/global for the
+-- window test. User B (b2): 1 event that A must never see.
+insert into usage_events (user_id, plan_name, tool_name, scope_type, auth_type, outcome, duration_ms, created_at) values
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',  'repo',   'api_key', 'ok',           10, now() - interval '10 minutes'),
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',  'repo',   'api_key', 'ok',           10, now() - interval '10 minutes'),
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',  'repo',   'api_key', 'ok',           10, now() - interval '10 minutes'),
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.write', 'repo',   'api_key', 'ok',           20, now() - interval '10 minutes'),
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.write', 'repo',   'api_key', 'cap_exceeded',  5, now() - interval '10 minutes'),
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',  'global', 'api_key', 'ok',           10, now() - interval '40 days'),
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',  'global', 'api_key', 'ok',           10, now() - interval '40 days'),
+  ('00000000-0000-0000-0000-0000000000b2', 'free', 'memory.read',  'global', 'jwt',     'ok',           10, now() - interval '10 minutes');
+
+do $$
+declare
+  v_sum   bigint;
+  v_rows  int;
+  v_top   text;
+begin
+  -- AC-1: A's all-time total is exactly its own 7 events (not 8 — B's leaks nowhere).
+  select coalesce(sum(event_count), 0) into v_sum
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', null, null);
+  assert v_sum = 7, format('usage AC-1: A must total 7 own events, got %s', v_sum);
+
+  -- AC-1: grouping — the three recent list/ok/repo rows collapse to one bucket of 3.
+  select event_count into v_sum
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', null, null)
+   where tool_name = 'memory.list' and outcome = 'ok' and scope_type = 'repo';
+  assert v_sum = 3, format('usage AC-1: (memory.list,ok,repo) must be 3, got %s', v_sum);
+
+  -- AC-1: the cap-hit is its own outcome bucket.
+  select event_count into v_sum
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', null, null)
+   where tool_name = 'memory.write' and outcome = 'cap_exceeded';
+  assert v_sum = 1, format('usage AC-1: (memory.write,cap_exceeded) must be 1, got %s', v_sum);
+
+  -- AC-1: A never sees B's event (B's only tool is memory.read).
+  select count(*) into v_rows
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', null, null)
+   where tool_name = 'memory.read';
+  assert v_rows = 0, 'usage AC-1: A must not see B''s memory.read event';
+
+  -- AC-2: a 7-day window excludes the two 40-day-old global rows (7 - 2 = 5),
+  -- and the global bucket disappears entirely.
+  select coalesce(sum(event_count), 0) into v_sum
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', now() - interval '7 days', null);
+  assert v_sum = 5, format('usage AC-2: 7-day window must total 5, got %s', v_sum);
+  select count(*) into v_rows
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', now() - interval '7 days', null)
+   where scope_type = 'global';
+  assert v_rows = 0, 'usage AC-2: the 40-day-old global bucket must be outside a 7-day window';
+
+  -- AC-3: sorted by event_count desc — the 3-row list bucket is first.
+  select tool_name into v_top
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000a1', null, null)
+   limit 1;
+  assert v_top = 'memory.list', format('usage AC-3: top row must be memory.list (count 3), got %s', v_top);
+
+  -- B sees only its own single event.
+  select coalesce(sum(event_count), 0) into v_sum
+    from lorekit_usage_stats('00000000-0000-0000-0000-0000000000b2', null, null);
+  assert v_sum = 1, format('usage AC-1: B must total 1 own event, got %s', v_sum);
+end;
+$$;
+
+-- AC-4 + AC-5: the NULL-p_user_id branch depends on the VERIFIED role claim.
+do $$
+declare
+  v_sum bigint;
+begin
+  -- AC-4: a service_role caller with NULL p_user_id sees every user's events (CI
+  -- escape hatch) — A's 7 plus B's 1.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  select coalesce(sum(event_count), 0) into v_sum
+    from lorekit_usage_stats(null, null, null);
+  assert v_sum >= 8, format('usage AC-4: service-role NULL must see all events (>=8), got %s', v_sum);
+
+  -- AC-5: an authenticated caller passing NULL p_user_id gets nothing — the
+  -- escape hatch is gated on the verified role, so it fails closed.
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  select coalesce(sum(event_count), 0) into v_sum
+    from lorekit_usage_stats(null, null, null);
+  assert v_sum = 0, format('usage AC-5: authenticated NULL p_user_id must fail closed (0), got %s', v_sum);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- AC-6: grant surface — authenticated + service_role, never anon (the function
+-- takes a bare p_user_id, so anon EXECUTE would expose any user's aggregates).
+do $$
+declare
+  v_sig text := 'lorekit_usage_stats(uuid, timestamp with time zone, timestamp with time zone)';
+begin
+  assert has_function_privilege('authenticated', v_sig, 'EXECUTE'),
+    'usage AC-6: authenticated must have EXECUTE on lorekit_usage_stats';
+  assert has_function_privilege('service_role', v_sig, 'EXECUTE'),
+    'usage AC-6: service_role must have EXECUTE on lorekit_usage_stats';
+  assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
+    'usage AC-6: lorekit_usage_stats must NOT be granted to anon';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

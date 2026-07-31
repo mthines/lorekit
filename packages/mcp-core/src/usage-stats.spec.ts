@@ -1,0 +1,113 @@
+import { describe, it, expect } from 'vitest';
+import {
+  parseUsageWindow,
+  usageToolKind,
+  summarizeUsageRows,
+  rollupByScopeType,
+  UsageStatsError,
+  USAGE_PERIODS,
+  type UsageStatRow,
+} from './usage-stats.js';
+
+const NOW = Date.parse('2026-07-31T12:00:00.000Z');
+
+describe('parseUsageWindow', () => {
+  it('returns an all-time window when nothing is supplied', () => {
+    expect(parseUsageWindow({}, NOW)).toEqual({ since: null, until: null });
+  });
+
+  it('resolves each rolling period back from now', () => {
+    expect(parseUsageWindow({ period: '24h' }, NOW).since).toBe('2026-07-30T12:00:00.000Z');
+    expect(parseUsageWindow({ period: '7d' }, NOW).since).toBe('2026-07-24T12:00:00.000Z');
+    expect(parseUsageWindow({ period: '30d' }, NOW).since).toBe('2026-07-01T12:00:00.000Z');
+    expect(parseUsageWindow({ period: 'all' }, NOW).since).toBeNull();
+  });
+
+  it('lets an explicit since override the period, and keeps until open-ended', () => {
+    const w = parseUsageWindow({ period: '7d', since: '2026-07-30T00:00:00.000Z' }, NOW);
+    expect(w).toEqual({ since: '2026-07-30T00:00:00.000Z', until: null });
+  });
+
+  it('accepts an explicit half-open [since, until)', () => {
+    const w = parseUsageWindow({ since: '2026-07-01T00:00:00Z', until: '2026-07-31T00:00:00Z' }, NOW);
+    expect(w.since).toBe('2026-07-01T00:00:00.000Z');
+    expect(w.until).toBe('2026-07-31T00:00:00.000Z');
+  });
+
+  it('treats empty-string params as absent', () => {
+    expect(parseUsageWindow({ since: '', until: '' }, NOW)).toEqual({ since: null, until: null });
+  });
+
+  it('rejects an unknown period', () => {
+    expect(() => parseUsageWindow({ period: '1y' }, NOW)).toThrow(UsageStatsError);
+  });
+
+  it('rejects an unparseable date', () => {
+    expect(() => parseUsageWindow({ since: 'not-a-date' }, NOW)).toThrow(UsageStatsError);
+  });
+
+  it('rejects an inverted window (until <= since)', () => {
+    expect(() => parseUsageWindow({ since: '2026-07-31T00:00:00Z', until: '2026-07-01T00:00:00Z' }, NOW))
+      .toThrow(/until must be strictly after since/);
+    expect(() => parseUsageWindow({ since: '2026-07-01T00:00:00Z', until: '2026-07-01T00:00:00Z' }, NOW))
+      .toThrow(UsageStatsError);
+  });
+
+  it('allows a future since (empty result, not an error)', () => {
+    expect(() => parseUsageWindow({ since: '2099-01-01T00:00:00Z' }, NOW)).not.toThrow();
+  });
+});
+
+describe('usageToolKind', () => {
+  it('classifies read tools', () => {
+    for (const t of ['memory.read', 'memory.list', 'memory.search', 'memory.scopes', 'memory.usage', 'org.list', 'member.list']) {
+      expect(usageToolKind(t), t).toBe('read');
+    }
+  });
+  it('classifies write tools', () => {
+    for (const t of ['memory.write', 'memory.delete', 'memory.archive', 'memory.purge_expired', 'org.create', 'member.remove']) {
+      expect(usageToolKind(t), t).toBe('write');
+    }
+  });
+  it('falls back to other for an unknown tool', () => {
+    expect(usageToolKind('memories.put.unmapped')).toBe('other');
+  });
+});
+
+const ROWS: UsageStatRow[] = [
+  { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', event_count: 600, total_duration_ms: 42000 },
+  { tool_name: 'memory.write', outcome: 'ok', scope_type: 'repo', event_count: 100, total_duration_ms: 5000 },
+  { tool_name: 'memory.write', outcome: 'cap_exceeded', scope_type: 'repo', event_count: 2, total_duration_ms: 40 },
+  { tool_name: 'memory.read', outcome: 'error', scope_type: null, event_count: 8, total_duration_ms: 90 },
+];
+
+describe('summarizeUsageRows', () => {
+  it('rolls rows into read/write/other + per-outcome totals', () => {
+    expect(summarizeUsageRows(ROWS)).toEqual({
+      total_events: 710,
+      reads: 608,
+      writes: 102,
+      other: 0,
+      by_outcome: { ok: 700, cap_exceeded: 2, error: 8 },
+    });
+  });
+
+  it('is empty-safe', () => {
+    expect(summarizeUsageRows([])).toEqual({ total_events: 0, reads: 0, writes: 0, other: 0, by_outcome: {} });
+  });
+});
+
+describe('rollupByScopeType', () => {
+  it('sums by scope_type, sorted by count desc', () => {
+    expect(rollupByScopeType(ROWS)).toEqual([
+      { scope_type: 'repo', event_count: 702 },
+      { scope_type: null, event_count: 8 },
+    ]);
+  });
+});
+
+describe('period lists', () => {
+  it('exposes the canonical token set', () => {
+    expect([...USAGE_PERIODS]).toEqual(['24h', '7d', '30d', '90d', 'all']);
+  });
+});
