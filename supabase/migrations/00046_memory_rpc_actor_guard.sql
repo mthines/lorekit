@@ -180,6 +180,23 @@ begin
      and archived_at is null   -- archived rows stay with purge_archived_memories
   ;
   get diagnostics v_count = row_count;
+
+  -- Preserve 00045's expiry-event recording (this migration is applied AFTER
+  -- 00045, so its create-or-replace would otherwise silently drop it). Record
+  -- for the RESOLVED actor, and only when something actually expired.
+  -- lorekit_record_usage_event swallows its own errors, so it can never break
+  -- the purge.
+  if v_count > 0 then
+    perform lorekit_record_usage_event(
+      p_user_id      => v_actor,
+      p_tool_name    => 'memory.expired',
+      p_scope_type   => null,
+      p_auth_type    => 'service',
+      p_outcome      => 'ok',
+      p_result_count => v_count
+    );
+  end if;
+
   return v_count;
 end;
 $$;

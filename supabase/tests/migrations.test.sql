@@ -3094,6 +3094,13 @@ declare
   v_recorded bigint;
   v_expired  bigint;
 begin
+  -- Since 00046, purge_expired_memories honours a caller-supplied p_user_id only
+  -- on a service-role connection (the actor guard) — which is how the edge/MCP
+  -- purge path invokes it. Adopt that context so this assertion exercises the
+  -- real purge-by-id instead of resolving to a NULL auth.uid() actor.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
   v_purged := purge_expired_memories('00000000-0000-0000-0000-0000000000a1');
   assert v_purged >= 1, format('usage AC-9: purge must delete at least the 1 expired row, got %s', v_purged);
 
@@ -3113,6 +3120,9 @@ begin
    where tool_name = 'memory.expired';
   assert v_expired = v_purged,
     format('usage AC-9: stats memory.expired record_count (%s) must equal rows purged (%s)', v_expired, v_purged);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
 end;
 $$;
 
