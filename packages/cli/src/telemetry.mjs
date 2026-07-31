@@ -5,8 +5,8 @@
 // otel.ts): OTLP/JSON over the global fetch (Node 18+), no @opentelemetry/*
 // packages. One span + one counter data point per human-facing command
 // (install / uninstall / doctor / list / search / show / stats / scopes / diff /
-// tree / lint / dedupe / migrate), fired to Dash0 so the maintainers can see
-// which commands people actually run.
+// tree / lint / dedupe / link / migrate), fired to Dash0 so the maintainers can
+// see which commands people actually run.
 //
 // Privacy — this runs on end-users' machines, so it is deliberately narrow:
 //   • Opt-out honored: LOREKIT_TELEMETRY=0|off|false|no|disable, or the
@@ -38,7 +38,7 @@ const DEFAULT_DATASET = 'default';
 
 // Flags worth counting (e.g. how many installs are --global). Bounded on
 // purpose: only these booleans are ever attached, never free-form values.
-const FLAG_ATTRS = ['global', 'project', 'deep', 'yes', 'force', 'no-hooks', 'json'];
+const FLAG_ATTRS = ['global', 'project', 'deep', 'yes', 'force', 'no-hooks', 'json', 'link'];
 
 const OFF_VALUES = new Set(['0', 'off', 'false', 'no', 'disable', 'disabled']);
 
@@ -322,7 +322,7 @@ function normalizeExitCode(result) {
  * counter point. Returns the command's exit code unchanged. Telemetry failures
  * are swallowed — the command result is never affected.
  *
- * @param {string} command  bounded: install | uninstall | doctor | list | search | show | stats | scopes | diff | tree | lint | dedupe | migrate
+ * @param {string} command  bounded: install | uninstall | doctor | list | search | show | stats | scopes | diff | tree | lint | dedupe | link | migrate
  * @param {object} args     parsed CLI args (read for allow-listed flags only)
  * @param {string} version  CLI version (from package.json)
  * @param {() => Promise<number>} run  the command handler

@@ -16,6 +16,7 @@ import { diff } from '../src/diff.mjs';
 import { tree } from '../src/tree.mjs';
 import { lint } from '../src/lint.mjs';
 import { dedupe } from '../src/dedupe.mjs';
+import { link } from '../src/link.mjs';
 import { hook } from '../src/hook.mjs';
 import { migrate } from '../src/migrate.mjs';
 import { bootstrap } from '../src/bootstrap.mjs';
@@ -81,6 +82,12 @@ ${c.bold('Commands')}
   dedupe      Find likely-duplicate memories via a zero-dep word-overlap HEURISTIC
               (Jaccard >= threshold, not semantic), grouped into clusters per
               store. --json, --scope <s>, --threshold <0..1>.
+  link (url)  Print a shareable dashboard deep-link URL for the current context,
+              a scope, or a specific lesson (opens its detail sheet). No args
+              links to the cwd's most-specific scope. Filter flags mirror the
+              Explorer (--q / --owner / --range / --archived / --view); --base or
+              LOREKIT_APP_URL override the dashboard host. --json. Pipe it:
+              lorekit link | pbcopy.
   bootstrap   Apply the BYOD schema to a user-supplied Supabase database.
               Only needed when using LOREKIT_STORAGE_URL / LOREKIT_STORAGE_ANON_KEY.
               See docs/byod.md for setup instructions.
@@ -102,8 +109,10 @@ ${c.bold('Options')}
   -t, --token <token>     LoreKit token (lk_rw_* to allow writes, lk_ro_* read-only)
       --mode <mode>       Memory mode: off | local | remote (doctor override)
       --store <path>      Local project-tier store directory (default: .lorekit)
-      --json              Machine-readable output (list / search / show / stats / scopes / diff / tree / lint / dedupe)
-      --scope <scope>     Restrict to a single scope; a substring filter for scopes (list / search / stats / scopes / diff / tree / lint / dedupe)
+      --json              Machine-readable output (list / search / show / stats / scopes / diff / tree / lint / dedupe / link)
+      --scope <scope>     Restrict to a single scope; a substring filter for scopes (list / search / stats / scopes / diff / tree / lint / dedupe / link)
+      --link              Print the equivalent dashboard deep-link URL instead of running (show / search / list / tree)
+      --base <url>        Dashboard base URL for deep links (link / --link; else LOREKIT_APP_URL, default https://lorekit.io)
       --threshold <0..1>  Duplicate-similarity cutoff (dedupe; default 0.8)
       --from <path>       Source store to migrate from (migrate)
       --to <tier>         Migration destination tier: home | project (migrate;
@@ -463,6 +472,42 @@ ${c.bold('Examples')}
   npx @lorekit/cli dedupe
   npx @lorekit/cli dedupe --threshold 0.6 --json
 `,
+  link: `${c.bold('lorekit link')} — print a shareable dashboard deep-link URL ${c.dim('(alias: url)')}
+
+${c.bold('Usage')}
+  npx @lorekit/cli link [scope] [key] [options]
+  npx @lorekit/cli link <scope::key> [options]
+
+Prints a ${c.cyan('lorekit.io/lore')} deep link to stdout — nothing else — so it pipes
+cleanly into your clipboard or a message. With no arguments it links to the
+current directory's most-specific scope ("share what I'm looking at"). Given a
+scope it links to the Explorer filtered to that scope; given a scope AND key (or
+the ${c.cyan('scope::key')} shorthand) it links straight to that lesson's detail sheet.
+
+Every param is JSON-encoded exactly as the dashboard reads it, so the link opens
+the intended view — a raw ${c.dim('?scope=global')} would silently mean "all scopes".
+
+${c.bold('Options')}
+  -d, --dir <path>        Target project root (default: current directory)
+      --scope <scope>     Scope to link to (when no positional scope is given)
+      --q <text>          Pre-fill the Explorer search box
+      --owner <o>         Ownership filter: all | personal | <orgId>
+      --range <json>      Date range as {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}
+      --from <date>       Range start (shorthand for --range)
+      --to <date>         Range end (shorthand for --range)
+      --archived          Include archived memories
+      --view <mode>       Explorer view: scope | time
+      --base <url>        Dashboard base URL (else LOREKIT_APP_URL, default https://lorekit.io)
+      --json              Machine-readable { url, surface, base, params }
+
+${c.bold('Examples')}
+  npx @lorekit/cli link                              # link to the current repo/branch context
+  npx @lorekit/cli link | pbcopy                     # copy it straight to the clipboard
+  npx @lorekit/cli link global                       # the Explorer filtered to global scope
+  npx @lorekit/cli link repo::owner/repo prefer-guards   # open one lesson's detail sheet
+  npx @lorekit/cli link global::prefer-guards --json     # { url, surface, base, params }
+  npx @lorekit/cli url --q "flaky test" --owner personal # search + ownership filter
+`,
   migrate: `${c.bold('lorekit migrate')} — relocate a LoreKit-format local store into the current layout
 
 ${c.bold('Usage')}
@@ -517,6 +562,7 @@ const KNOWN_FLAGS = [
   'from', 'to', 'apply', 'yes', 'no-hooks', 'force', 'deep', 'adapter',
   'event', 'json', 'scope', 'threshold', 'help', 'version',
   'value', 'tags', 'source-agent', 'trigger', 'ttl-days', 'org', 'remote', 'local',
+  'link', 'base', 'q', 'owner', 'range', 'view', 'archived',
 ];
 
 // Commands that write to disk / talk to the network on a human's behalf. These
@@ -524,12 +570,12 @@ const KNOWN_FLAGS = [
 // never fail on a stray flag, and only ever receive flags we control).
 const HUMAN_COMMANDS = new Set([
   'install', 'uninstall', 'doctor', 'list', 'search', 'show', 'stats', 'scopes',
-  'diff', 'tree', 'lint', 'dedupe', 'migrate', 'write',
+  'diff', 'tree', 'lint', 'dedupe', 'link', 'migrate', 'write',
 ]);
 
 // Command aliases — canonicalized before help / dispatch so `lorekit ls --help`
 // and telemetry both resolve to the real command name.
-const COMMAND_ALIASES = { ls: 'list', grep: 'search', resolve: 'tree' };
+const COMMAND_ALIASES = { ls: 'list', grep: 'search', resolve: 'tree', url: 'link' };
 
 async function main() {
   // Load a `.env` from the current directory (if any) before anything reads the
@@ -541,7 +587,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'json', 'remote', 'local'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'json', 'remote', 'local', 'link', 'archived'],
     known: KNOWN_FLAGS,
   });
 
@@ -616,6 +662,8 @@ async function main() {
       return traceCommand('lint', args, VERSION, () => lint(args));
     case 'dedupe':
       return traceCommand('dedupe', args, VERSION, () => dedupe(args));
+    case 'link':
+      return traceCommand('link', args, VERSION, () => link(args));
     case 'migrate':
       return traceCommand('migrate', args, VERSION, () => migrate(args));
     case 'bootstrap':

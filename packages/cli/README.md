@@ -308,6 +308,43 @@ coincidental overlaps. Any pair scoring at or above `--threshold` links (transit
 into one cluster; only clusters of 2+ members are reported, each with a similarity
 range. Cross-**store** divergence is `diff`'s job; `dedupe` looks within a store.
 
+### `lorekit link` (alias `url`)
+
+Print a shareable **dashboard deep-link URL** to stdout — nothing else, so it
+pipes straight into your clipboard or a PR/Slack message:
+
+```bash
+lorekit link                              # link to the current repo/branch context
+lorekit link | pbcopy                     # copy it straight to the clipboard
+lorekit link global                       # the Explorer filtered to global scope
+lorekit link repo::owner/repo prefer-guards   # open one lesson's detail sheet
+lorekit link global::prefer-guards --json     # { url, surface, base, params }
+lorekit url --q "flaky test" --owner personal # search + ownership filter
+```
+
+With no arguments it links to the cwd's **most-specific scope** ("share what I'm
+looking at"). Given a scope it links to the Explorer filtered to that scope;
+given a scope **and** key (or the `scope::key` shorthand) it links straight to
+that lesson's detail sheet — setting **both** the `lesson` and `scope` params so
+the sheet isn't blank. Filter flags mirror the Explorer: `--q` (search),
+`--owner <all|personal|orgId>`, `--range`/`--from`/`--to`, `--archived`,
+`--view <scope|time>`.
+
+Every param is `encodeURIComponent(JSON.stringify(value))` — the exact inverse of
+how the dashboard's `useUrlState` reads it back (`JSON.parse`, falling back to the
+default on failure). A raw `?scope=global` would silently mean "all scopes", so
+the link **must** be JSON-encoded to open the intended view. `--base <url>` (or
+`LOREKIT_APP_URL`) overrides the dashboard host for self-hosted setups; the
+default is `https://lorekit.io`. Read-only and network-free — it derives scopes
+from git and builds a URL, never touching a store.
+
+The **read commands take a `--link` flag** that short-circuits to print the
+equivalent deep link for exactly the view you just asked for, reusing the same
+builder: `show <scope::key> --link` → the lesson link, `search foo --link` →
+`/lore?q="foo"` (+ scope), `list --link` / `tree --link` → the scope-filtered
+Explorer link. (The same JSON-encoded links now back the hooks' write-confirmation
+and retrospective nudges.)
+
 ### `lorekit hook`
 
 The **shared hook engine** behind the Claude Code / Cursor / Codex plugins.
