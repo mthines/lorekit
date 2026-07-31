@@ -2848,6 +2848,55 @@ begin
 end;
 $$;
 
+-- ── 60f. NEGATIVE: memory_delete cannot be driven against another user ───────
+-- memory_delete (00020) is the destructive sibling added to the 00043 family:
+-- an authenticated caller naming another user's id must archive/delete NOTHING
+-- of that user's, and self-service must still work.
+insert into memories (user_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-del', 'del-victim', 'd4 owns this');
+
+do $$
+declare
+  r_force   record;
+  r_archive record;
+  r_self    record;
+begin
+  -- Attacker e5 (authenticated) names victim d4 on both force and soft paths.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000e5","role":"authenticated"}', true);
+
+  select * into r_force
+    from memory_delete('00000000-0000-0000-0000-0000000000d4', null, 'project::actor-guard-del', 'del-victim', true);
+  select * into r_archive
+    from memory_delete('00000000-0000-0000-0000-0000000000d4', null, 'project::actor-guard-del', 'del-victim', false);
+  reset role;
+
+  assert not r_force.deleted,
+    'IDOR: e5 hard-deleted d4''s row via memory_delete by naming d4 as p_user_id';
+  assert not r_archive.archived,
+    'IDOR: e5 archived d4''s row via memory_delete by naming d4 as p_user_id';
+  assert exists (select 1 from memories
+                 where user_id='00000000-0000-0000-0000-0000000000d4'
+                   and key='del-victim' and archived_at is null),
+    'IDOR: d4''s row was mutated by e5''s memory_delete';
+
+  -- Self-service: d4 archives, then hard-deletes, its OWN row.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000d4","role":"authenticated"}', true);
+  select * into r_self
+    from memory_delete('00000000-0000-0000-0000-0000000000d4', null, 'project::actor-guard-del', 'del-victim', true);
+  reset role;
+
+  assert r_self.deleted,
+    'self-service: d4 hard-deleting its OWN row via memory_delete must succeed';
+  assert not exists (select 1 from memories
+                     where user_id='00000000-0000-0000-0000-0000000000d4' and key='del-victim'),
+    'self-service: d4''s row should be gone after its own hard-delete';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

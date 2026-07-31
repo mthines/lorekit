@@ -228,3 +228,110 @@ comment on function purge_expired_memories(uuid) is
   'Hard-deletes the effective caller''s expired (non-archived) rows. Same
    service-role-gated actor rule and RLS-bypass caveat as
    purge_archived_memories (see 00043 header).';
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- 5. memory_delete — the omitted fifth RPC of this family.
+--
+-- 00020's memory_delete has the SAME caller-supplied-p_user_id flaw as the
+-- four above, and it is the most dangerous: SECURITY DEFINER, granted to
+-- `anon`, and it hard-DELETEs (p_force=true) or archives on a bare
+-- `where user_id = p_user_id` with no auth.uid()/service-role gate. Over
+-- PostgREST that is an anon-reachable, cross-tenant DESTRUCTIVE IDOR:
+--   POST /rest/v1/rpc/memory_delete
+--        { "p_user_id":"<victim>", "p_scope":"global", "p_key":"k", "p_force":true }
+-- The org branch is exploitable too — it gates on
+-- lorekit_org_can(p_user_id, ...) with the CALLER's p_user_id, so naming any
+-- privileged member deletes that org's lore as a non-member. It was simply
+-- omitted from this migration's original list; recreate it with the identical
+-- actor guard, applied to BOTH the personal user_id filter AND the org
+-- capability check, so the org path authorizes the REAL caller, never a named
+-- member. Behaviour-preserving: the edge api_key path (service-role) still
+-- names the token owner via coalesce; a JWT caller resolves to its own
+-- auth.uid() (which the edge already passes as p_user_id).
+create or replace function memory_delete(
+  p_user_id  uuid,
+  p_org_slug text default null,
+  p_scope    text default null,
+  p_key      text default null,
+  p_force    boolean default false
+)
+returns table (deleted boolean, archived boolean)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_org_id uuid;
+  v_count  integer;
+  v_actor  uuid := case
+    when auth.role() = 'service_role' then coalesce(p_user_id, auth.uid())
+    else auth.uid()
+  end;
+begin
+  if p_org_slug is not null then
+    select o.id into v_org_id from orgs o where o.slug = p_org_slug;
+    if v_org_id is null then
+      raise exception using
+        errcode = 'P0001',
+        message = format('unknown_org: %s', p_org_slug);
+    end if;
+
+    if p_force then
+      if not lorekit_org_can(v_actor, v_org_id, 'hard_delete') then
+        raise exception using
+          errcode = 'LK002',
+          message = format('org_permission_denied: org=%s capability=hard_delete', p_org_slug);
+      end if;
+
+      delete from memories
+       where org_id = v_org_id and scope = p_scope and key = p_key;
+      get diagnostics v_count = row_count;
+
+      return query select (v_count > 0), false;
+    else
+      if not lorekit_org_can(v_actor, v_org_id, 'archive') then
+        raise exception using
+          errcode = 'LK002',
+          message = format('org_permission_denied: org=%s capability=archive', p_org_slug);
+      end if;
+
+      update memories
+         set archived_at = now()
+       where org_id = v_org_id and scope = p_scope and key = p_key and archived_at is null;
+      get diagnostics v_count = row_count;
+
+      return query select false, (v_count > 0);
+    end if;
+  else
+    -- Personal delete: scoped to the RESOLVED actor, never a named p_user_id.
+    if p_force then
+      delete from memories
+       where user_id = v_actor and scope = p_scope and key = p_key;
+      get diagnostics v_count = row_count;
+
+      return query select (v_count > 0), false;
+    else
+      update memories
+         set archived_at = now()
+       where user_id = v_actor and scope = p_scope and key = p_key and archived_at is null;
+      get diagnostics v_count = row_count;
+
+      return query select false, (v_count > 0);
+    end if;
+  end if;
+end;
+$$;
+
+revoke execute on function memory_delete(uuid, text, text, text, boolean) from public;
+grant execute on function memory_delete(uuid, text, text, text, boolean) to authenticated, service_role;
+
+comment on function memory_delete(uuid, text, text, text, boolean) is
+  'Archives (p_force=false) or hard-deletes (p_force=true) the effective
+   caller''s own memory, or an org''s memory when p_org_slug is given and the
+   caller has the archive/hard_delete capability. The effective actor is
+   resolved by the same service-role-gated rule as the rest of this family
+   (00043) and lorekit_org_actor (00041): a caller-supplied p_user_id is
+   honoured only on a verified service-role connection, otherwise auth.uid()
+   wins — scoping BOTH the personal user_id filter and the org capability
+   check to the real caller. SECURITY DEFINER bypasses RLS; the actor is the
+   gate. Fails closed on a NULL actor.';
