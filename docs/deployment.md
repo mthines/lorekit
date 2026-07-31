@@ -116,11 +116,54 @@ right values:
 | `SUPABASE_DB_PASSWORD` | preview DB password | production DB password |
 | `LOREKIT_SMOKE_TOKEN` | preview `lk_rw_*` token | production `lk_rw_*` token |
 
+> `LOREKIT_SMOKE_TOKEN` should be an **`lk_rw_*`** token, not the service-role
+> key. The CLI `doctor --deep` write round-trip only runs for a read+write
+> `lk_*` token; a service-role key (or a JWT) classifies as an unrecognized
+> prefix and the round-trip **silently skips**, so the write path goes untested.
+
+**Optional — the orgs REST smoke suite (`smoke-preview` only).** Unset → the
+suite is announced-skipped and the memories suite still runs; the deploy is
+never blocked. Set all three to enable it:
+
+| Secret | `preview` environment |
+|--------|-----------------------|
+| `SUPABASE_ANON_KEY` | preview anon (publishable) key |
+| `LOREKIT_SMOKE_EMAIL` | fixed smoke user's email |
+| `LOREKIT_SMOKE_PASSWORD` | fixed smoke user's password |
+
+The org endpoints require a real Supabase **user JWT** (`lk_*` tokens and the
+service-role key are rejected), so `smoke-preview` mints one per run by signing
+in as this fixed user. That user must already exist on the project —
+seed it once with [`scripts/seed-smoke-user.mjs`](#seed-the-orgs-smoke-user)
+below.
+
 Repo-level secrets (not environment-scoped): `SUPABASE_ACCESS_TOKEN` (a Supabase
 personal access token) and — optionally — `DISCORD_WEBHOOK_URL` for
 [failure notifications](#failure-notifications-discord). Add a **required
 reviewer** on the `production` environment for a manual approval gate before prod
 is touched.
+
+#### Seed the orgs-smoke user
+
+The orgs smoke signs in as a fixed user; it never creates one (a smoke run must
+not provision users in a real tenant). Create that user **once per project**
+with the idempotent seed script — it creates + email-confirms the user, resets a
+drifted password on re-run, and verifies the sign-in works end-to-end before
+exiting 0:
+
+```bash
+SUPABASE_URL=https://<preview-ref>.supabase.co \
+SUPABASE_SERVICE_ROLE_KEY=<preview-service-role-key> \
+LOREKIT_SMOKE_EMAIL=<email> \
+LOREKIT_SMOKE_PASSWORD='<password>' \
+  node scripts/seed-smoke-user.mjs
+```
+
+Run it from a trusted admin shell — **not in CI**. Creating a confirmed user
+needs the service-role key (the Auth admin API), which the recurring deploy
+smoke path deliberately does not carry; CI only ever uses the anon key +
+email/password to mint the JWT. Re-run with the production ref + key to seed the
+production project too.
 
 ### Recommended branch protection
 

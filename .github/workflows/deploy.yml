@@ -21,6 +21,9 @@
 # the memories suite still runs. The write-heavy REST smoke runs against preview
 # only, never production (see the note in smoke-production for why):
 #   SUPABASE_ANON_KEY, LOREKIT_SMOKE_EMAIL, LOREKIT_SMOKE_PASSWORD.
+# The fixed smoke user those name must already exist on the project — seed it
+# once with `node scripts/seed-smoke-user.mjs` (see docs/deployment.md → "Seed
+# the orgs-smoke user"); the mint signs in as it, it is never auto-created.
 # Optional repo-level secret: DISCORD_WEBHOOK_URL — when set, notify-failure posts
 # a message there on any deploy-pipeline failure. Unset → notify-failure no-ops.
 # Add a required reviewer on the `production` environment for a manual gate.
