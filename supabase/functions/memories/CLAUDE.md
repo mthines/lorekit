@@ -111,33 +111,66 @@ per outcome" so a human or agent can judge whether LoreKit is helping.
 ```json
 {
   "range": { "since": "2026-07-31T00:00:00.000Z", "until": null },
+  "correlation_id": null,
   "summary": { "total_events": 812, "reads": 640, "writes": 120, "other": 52,
+               "records_read": 5120, "expired": 6,
                "by_outcome": { "ok": 780, "cap_exceeded": 2, "error": 30 } },
   "by_tool": [{ "tool_name": "memory.list", "outcome": "ok", "scope_type": "repo",
-                "event_count": 600, "total_duration_ms": 42000 }],
+                "event_count": 600, "record_count": 5000, "total_duration_ms": 42000 }],
   "by_scope_type": [{ "scope_type": "repo", "event_count": 610 }]
 }
 ```
 
+**Call counts vs record counts.** `event_count` / `reads` / `writes` count tool
+CALLS; `record_count` / `records_read` count the RECORDS those calls touched, so
+`records_read` is the literal "you read N memories today" figure, not the number
+of read calls. `expired` is "N lessons expired" — `sum(record_count)` over the
+`memory.expired` bucket that `purge_expired_memories` emits (migration 00045).
+
 Query params (all optional): `period` (`24h`/`7d`/`30d`/`90d`/`all`), or an
 explicit ISO `since`/`until` (`since` overrides `period`; the window is half-open
-`[since, until)`). Omitting everything is all-time.
+`[since, until)`); `correlation_id` to restrict to one PR / session / job.
+Omitting everything is all-time, unfiltered.
 
-The grouping runs in Postgres (`lorekit_usage_stats`, migration 00043), **not**
-as a `select` + client-side reduce — the client-side form is silently truncated
-past PostgREST's row cap, exactly like `GET /scopes`. Visibility is self-only
-(the RPC filters `user_id = caller`, with the same `service_role` + NULL
-escape hatch `lorekit_memory_scopes` uses); there is no `applyRestTenantScope`
-call because there is no query to scope. `summary` and `by_scope_type` are
-computed by the pure `summarizeUsageRows` / `rollupByScopeType`
-(`_shared/usage-stats.ts`, mirror of `packages/mcp-core/src/usage-stats.ts`)
-from the SAME rows returned as `by_tool`, so the headline totals can never
-disagree with the detail. Window validation is the pure `parseUsageWindow` in
-the same module; an inverted/malformed window is a `400`.
+The grouping runs in Postgres (`lorekit_usage_stats`, migrations 00043 + 00044),
+**not** as a `select` + client-side reduce — the client-side form is silently
+truncated past PostgREST's row cap, exactly like `GET /scopes`. Visibility is
+self-only (the RPC filters `user_id = caller`, with the same `service_role` +
+NULL escape hatch `lorekit_memory_scopes` uses); there is no
+`applyRestTenantScope` call because there is no query to scope. `summary` and
+`by_scope_type` are computed by the pure `summarizeUsageRows` /
+`rollupByScopeType` (`_shared/usage-stats.ts`, mirror of
+`packages/mcp-core/src/usage-stats.ts`) from the SAME rows returned as `by_tool`,
+so the headline totals can never disagree with the detail. Window + correlation
+validation are the pure `parseUsageWindow` / `parseCorrelationId` in the same
+module; an inverted/malformed window is a `400`.
 
 Like `GET /scopes`, there is **no MCP tool** for this — an aggregate read has no
 scope-keyed MCP equivalent. Its `usage_events.tool_name` is `memory.usage`
 (`rest-tool-name.ts`).
+
+### Usage write contract (how the numbers get populated)
+
+Two headers, both optional and read once in the router / MCP handler — never a
+per-handler concern:
+
+- **`X-LoreKit-Correlation-Id`** (request) — an opaque grouping key (a PR ref
+  like `mthines/lorekit#123`, a branch, a session id, a CI job id). Both the REST
+  router (`CORRELATION_HEADER`) and the MCP handler read it, validate it through
+  `parseCorrelationId` (≤200 chars, `[A-Za-z0-9_-./:#@]`; a bad value degrades to
+  null, never a 4xx), and stamp it on every `usage_events` row the request
+  writes. `GET /memories/usage?correlation_id=…` then answers "usage for this
+  PR". **Client contract:** any client can set it. The `lorekit` CLI emits it
+  automatically from the `LOREKIT_CORRELATION_ID` env var (`restFetch`,
+  `normalizeCorrelationId`) — a hook or CI job that exports that var (to the PR
+  ref / session id) tags every subsequent CLI call. Wiring a specific hook to
+  export it is the remaining client-side step.
+- **`X-LoreKit-Result-Count`** (response) — the collection read handlers
+  (`list`/`search`/`get`) set it to the number of records they returned; the
+  router reads it once (`RESULT_COUNT_HEADER`) and records it as the event's
+  `result_count`. Fail-safe: an absent/garbage value records no count, never
+  breaks the request. The MCP handler computes the same figure from the tool
+  result via `countRecords`.
 
 ## Audit events
 

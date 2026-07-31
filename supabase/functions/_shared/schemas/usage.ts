@@ -29,6 +29,10 @@ export const UsageStatsQuerySchema = z.object({
   period: z.enum(USAGE_PERIODS).optional(),
   since: z.string().datetime({ offset: true }).optional(),
   until: z.string().datetime({ offset: true }).optional(),
+  // Optional grouping key: restrict the result to one PR / session / job (see
+  // the X-LoreKit-Correlation-Id write contract). Bounded; the handler
+  // normalises it through the pure `parseCorrelationId`.
+  correlation_id: z.string().min(1).max(200).optional(),
 });
 export type UsageStatsQuery = z.infer<typeof UsageStatsQuerySchema>;
 
@@ -37,7 +41,9 @@ export const UsageStatRowSchema = z.object({
   tool_name: z.string(),
   outcome: z.string(),
   scope_type: z.string().nullable(),
+  // event_count = tool CALLS; record_count = the RECORDS those calls touched.
   event_count: z.number().int().nonnegative(),
+  record_count: z.number().int().nonnegative(),
   total_duration_ms: z.number().int().nonnegative().nullable(),
 });
 export type UsageStatRow = z.infer<typeof UsageStatRowSchema>;
@@ -47,6 +53,9 @@ export const UsageSummarySchema = z.object({
   reads: z.number().int().nonnegative(),
   writes: z.number().int().nonnegative(),
   other: z.number().int().nonnegative(),
+  // Record-level headline figures (distinct from the call counts above).
+  records_read: z.number().int().nonnegative(),
+  expired: z.number().int().nonnegative(),
   by_outcome: z.record(z.number().int().nonnegative()),
 });
 export type UsageSummary = z.infer<typeof UsageSummarySchema>;
@@ -61,6 +70,8 @@ export const UsageStatsResponseSchema = z.object({
     since: z.string().nullable(),
     until: z.string().nullable(),
   }),
+  // Echoes the applied correlation filter (null when unfiltered).
+  correlation_id: z.string().nullable(),
   summary: UsageSummarySchema,
   by_tool: z.array(UsageStatRowSchema),
   by_scope_type: z.array(UsageScopeTallySchema),

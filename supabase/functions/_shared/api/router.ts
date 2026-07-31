@@ -6,7 +6,24 @@ import { recordUsageEvent, getUserPlanName } from '../usage.ts';
 import type { UsageEventParams } from '../usage.ts';
 import { restToolName } from '../rest-tool-name.ts';
 import { classifyResponseOutcome } from '../rest-response-outcome.ts';
+import { parseCorrelationId, parseResultCountHeader } from '../usage-stats.ts';
 import type { Span } from '../otel.ts';
+
+/**
+ * Request header carrying a client-supplied grouping key (a PR ref, session id,
+ * or job id) so `GET /memories/usage` can answer "usage for THIS PR". Read once
+ * here, validated by the pure `parseCorrelationId`, and attached to every usage
+ * event this request records. Optional — absent means "no correlation".
+ */
+export const CORRELATION_HEADER = 'x-lorekit-correlation-id';
+
+/**
+ * Response header a collection handler (list/search/get) sets with the number
+ * of records it returned. The router reads it once to record the RECORD count
+ * on the usage event, so "read 600 memories" is a real record total, not a
+ * count of read calls. Fail-safe: an absent/garbage value records no count.
+ */
+export const RESULT_COUNT_HEADER = 'x-lorekit-result-count';
 
 export type Permission = 'read' | 'write' | 'jwt';
 
@@ -136,6 +153,9 @@ export function createRouter(routes: Route[], functionName: string) {
       // `getUserPlanName` never rejects (it fails open to null), so this can
       // not become an unhandled rejection.
       const planNamePromise = usageUserId !== null ? getUserPlanName(resolved.db, usageUserId) : null;
+      // Client-supplied grouping key (PR / session / job). Read once, bounded by
+      // the pure validator; a malformed header degrades to null, never a 4xx.
+      const correlationId = parseCorrelationId(req.headers.get(CORRELATION_HEADER));
       hs.setAttributes({ 'lorekit.tool.name': toolName, ...(scopeType ? { 'lorekit.scope.type': scopeType } : {}) });
       const startedMs = Date.now();
 
@@ -146,6 +166,8 @@ export function createRouter(routes: Route[], functionName: string) {
         if (planName) hs.setAttributes({ 'lorekit.plan': planName });
         hs.setAttributes({ 'http.response.status_code': res.status }).end();
         if (usageUserId !== null) {
+          // Record count from the handler's own header — fail-safe to null.
+          const resultCount = parseResultCountHeader(res.headers.get(RESULT_COUNT_HEADER));
           recordUsageEvent(resolved.db, {
             userId: usageUserId,
             planName,
@@ -154,6 +176,8 @@ export function createRouter(routes: Route[], functionName: string) {
             authType: usageAuthType(resolved.auth),
             outcome: await responseOutcome(res),
             durationMs,
+            resultCount,
+            correlationId,
           });
         }
         return res;
@@ -172,6 +196,7 @@ export function createRouter(routes: Route[], functionName: string) {
             // SQLSTATE→meaning map, so this can't drift from the 429 above.
             outcome: translateDbError(e)?.code === 'memory_cap' ? 'cap_exceeded' : 'error',
             durationMs,
+            correlationId,
           });
         }
         throw e;

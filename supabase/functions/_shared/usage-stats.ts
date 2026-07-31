@@ -149,31 +149,116 @@ export function usageToolKind(toolName: string): UsageToolKind {
   return 'other';
 }
 
+/**
+ * The synthetic tool_name recorded when `purge_expired_memories` deletes rows
+ * whose TTL has elapsed (migration 00045). Its `result_count` is the number of
+ * records that expired, so "6 lessons got expired" is `sum(record_count)` over
+ * this bucket. Classified `other`, not read/write — expiry is a system effect,
+ * not a caller action — and surfaced as the summary's `expired` field.
+ */
+export const EXPIRED_TOOL_NAME = 'memory.expired';
+
+/**
+ * How many records an event touched, from a tool RESULT of unknown shape.
+ * Total and fail-safe (returns null when it cannot tell), so a telemetry count
+ * can never break the call it is measuring:
+ *   - an array               → its length (org.list, …)
+ *   - `{ entries: [...] }` / `{ archived: [...] }` → that array's length (list/search)
+ *   - any other object       → 1 (a single record, e.g. memory.read)
+ *   - null / undefined       → 0 (a miss)
+ *   - anything else          → null
+ */
+export function countRecords(result: unknown): number | null {
+  if (Array.isArray(result)) return result.length;
+  if (result === null || result === undefined) return 0;
+  if (typeof result === 'object') {
+    const obj = result as Record<string, unknown>;
+    for (const key of ['entries', 'archived', 'results']) {
+      const v = obj[key];
+      if (Array.isArray(v)) return v.length;
+    }
+    return 1;
+  }
+  return null;
+}
+
+/**
+ * Parse the `X-LoreKit-Result-Count` response header a collection handler sets.
+ * Fail-safe: a non-integer / negative / absent value is `null`, never a throw —
+ * the recording path treats an unknown count as "no record count".
+ */
+export function parseResultCountHeader(raw: string | null | undefined): number | null {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) return null;
+  return n;
+}
+
+/** Max length of a correlation id — bounds cardinality and storage. */
+export const CORRELATION_ID_MAX = 200;
+
+// Correlation ids are opaque client-supplied grouping keys — a PR ref
+// (`mthines/lorekit#123`), a branch, a session id (`session_019…`). Restrict to
+// a safe, printable set so the value can be logged, indexed and echoed without
+// escaping concerns, and cannot smuggle control characters into analytics.
+const CORRELATION_ID_RE = /^[A-Za-z0-9_\-./:#@]+$/;
+
+/**
+ * Validate and normalise a client-supplied correlation id (from the
+ * `X-LoreKit-Correlation-Id` request header or the `correlation_id` query
+ * param). Total and fail-safe — an empty, over-long or out-of-charset value is
+ * `null` (no correlation / no filter), never an error, so a malformed header
+ * can never fail a request.
+ */
+export function parseCorrelationId(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined) return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0 || trimmed.length > CORRELATION_ID_MAX) return null;
+  if (!CORRELATION_ID_RE.test(trimmed)) return null;
+  return trimmed;
+}
+
 /** One grouped row as returned by `lorekit_usage_stats` (bigints Number-ised). */
 export interface UsageStatRow {
   tool_name: string;
   outcome: string;
   scope_type: string | null;
+  /** Number of EVENTS (tool calls / routes) in this bucket. */
   event_count: number;
+  /** Number of RECORDS those events touched (sum of `result_count`). */
+  record_count: number;
   total_duration_ms: number | null;
 }
 
 export interface UsageSummary {
+  /** Event (call) counts. */
   total_events: number;
   reads: number;
   writes: number;
   other: number;
+  /**
+   * RECORD counts — distinct from the call counts above. `records_read` is the
+   * literal "you read N memories" figure (sum of `record_count` over read
+   * events, not the number of read calls); `expired` is "N lessons expired"
+   * (sum of `record_count` over the `memory.expired` bucket).
+   */
+  records_read: number;
+  expired: number;
   by_outcome: Record<string, number>;
 }
 
 /**
- * Roll the raw grouped rows into headline totals. Pure: iterates once, adds
- * `event_count` into the read/write/other buckets (by `usageToolKind`) and into
- * a per-outcome map. A single source with the endpoint's `by_tool` — no second
- * DB query, so the numbers can never disagree with the rows they summarise.
+ * Roll the raw grouped rows into headline totals. Pure: iterates once, adding
+ * `event_count` into the read/write/other CALL buckets (by `usageToolKind`) and
+ * into a per-outcome map, and `record_count` into the RECORD totals
+ * (`records_read`, `expired`). A single source with the endpoint's `by_tool` —
+ * no second DB query, so the numbers can never disagree with the rows.
  */
 export function summarizeUsageRows(rows: readonly UsageStatRow[]): UsageSummary {
-  const summary: UsageSummary = { total_events: 0, reads: 0, writes: 0, other: 0, by_outcome: {} };
+  const summary: UsageSummary = {
+    total_events: 0, reads: 0, writes: 0, other: 0,
+    records_read: 0, expired: 0, by_outcome: {},
+  };
   const bucket: Record<UsageToolKind, 'reads' | 'writes' | 'other'> = {
     read: 'reads',
     write: 'writes',
@@ -181,8 +266,11 @@ export function summarizeUsageRows(rows: readonly UsageStatRow[]): UsageSummary 
   };
   for (const row of rows) {
     const n = row.event_count;
+    const kind = usageToolKind(row.tool_name);
     summary.total_events += n;
-    summary[bucket[usageToolKind(row.tool_name)]] += n;
+    summary[bucket[kind]] += n;
+    if (kind === 'read') summary.records_read += row.record_count;
+    if (row.tool_name === EXPIRED_TOOL_NAME) summary.expired += row.record_count;
     summary.by_outcome[row.outcome] = (summary.by_outcome[row.outcome] ?? 0) + n;
   }
   return summary;

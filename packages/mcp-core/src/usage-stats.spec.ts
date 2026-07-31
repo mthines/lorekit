@@ -4,8 +4,12 @@ import {
   usageToolKind,
   summarizeUsageRows,
   rollupByScopeType,
+  countRecords,
+  parseResultCountHeader,
+  parseCorrelationId,
   UsageStatsError,
   USAGE_PERIODS,
+  EXPIRED_TOOL_NAME,
   type UsageStatRow,
 } from './usage-stats.js';
 
@@ -75,25 +79,31 @@ describe('usageToolKind', () => {
 });
 
 const ROWS: UsageStatRow[] = [
-  { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', event_count: 600, total_duration_ms: 42000 },
-  { tool_name: 'memory.write', outcome: 'ok', scope_type: 'repo', event_count: 100, total_duration_ms: 5000 },
-  { tool_name: 'memory.write', outcome: 'cap_exceeded', scope_type: 'repo', event_count: 2, total_duration_ms: 40 },
-  { tool_name: 'memory.read', outcome: 'error', scope_type: null, event_count: 8, total_duration_ms: 90 },
+  { tool_name: 'memory.list', outcome: 'ok', scope_type: 'repo', event_count: 600, record_count: 6000, total_duration_ms: 42000 },
+  { tool_name: 'memory.write', outcome: 'ok', scope_type: 'repo', event_count: 100, record_count: 0, total_duration_ms: 5000 },
+  { tool_name: 'memory.write', outcome: 'cap_exceeded', scope_type: 'repo', event_count: 2, record_count: 0, total_duration_ms: 40 },
+  { tool_name: 'memory.read', outcome: 'error', scope_type: null, event_count: 8, record_count: 0, total_duration_ms: 90 },
+  { tool_name: 'memory.expired', outcome: 'ok', scope_type: null, event_count: 1, record_count: 6, total_duration_ms: null },
 ];
 
 describe('summarizeUsageRows', () => {
-  it('rolls rows into read/write/other + per-outcome totals', () => {
+  it('separates CALL counts (reads/writes) from RECORD counts (records_read/expired)', () => {
     expect(summarizeUsageRows(ROWS)).toEqual({
-      total_events: 710,
+      total_events: 711,
       reads: 608,
       writes: 102,
-      other: 0,
-      by_outcome: { ok: 700, cap_exceeded: 2, error: 8 },
+      other: 1,             // the memory.expired event
+      records_read: 6000,   // "read 6000 memories" — not 608 read calls
+      expired: 6,           // "6 lessons got expired"
+      by_outcome: { ok: 701, cap_exceeded: 2, error: 8 },
     });
   });
 
   it('is empty-safe', () => {
-    expect(summarizeUsageRows([])).toEqual({ total_events: 0, reads: 0, writes: 0, other: 0, by_outcome: {} });
+    expect(summarizeUsageRows([])).toEqual({
+      total_events: 0, reads: 0, writes: 0, other: 0,
+      records_read: 0, expired: 0, by_outcome: {},
+    });
   });
 });
 
@@ -101,8 +111,61 @@ describe('rollupByScopeType', () => {
   it('sums by scope_type, sorted by count desc', () => {
     expect(rollupByScopeType(ROWS)).toEqual([
       { scope_type: 'repo', event_count: 702 },
-      { scope_type: null, event_count: 8 },
+      { scope_type: null, event_count: 9 },
     ]);
+  });
+});
+
+describe('countRecords', () => {
+  it('counts arrays and known collection shapes', () => {
+    expect(countRecords([1, 2, 3])).toBe(3);
+    expect(countRecords({ entries: [1, 2] })).toBe(2);
+    expect(countRecords({ archived: [1] })).toBe(1);
+    expect(countRecords({ results: [] })).toBe(0);
+  });
+  it('counts a single record object as 1 and a miss as 0', () => {
+    expect(countRecords({ id: 'x', value: 'v' })).toBe(1);
+    expect(countRecords(null)).toBe(0);
+    expect(countRecords(undefined)).toBe(0);
+  });
+  it('returns null when it cannot tell (fail-safe)', () => {
+    expect(countRecords('str')).toBeNull();
+    expect(countRecords(5)).toBeNull();
+  });
+});
+
+describe('parseResultCountHeader', () => {
+  it('accepts non-negative integers', () => {
+    expect(parseResultCountHeader('5')).toBe(5);
+    expect(parseResultCountHeader('0')).toBe(0);
+  });
+  it('is fail-safe to null on anything else', () => {
+    for (const bad of [null, undefined, '', 'abc', '-1', '2.5']) {
+      expect(parseResultCountHeader(bad as string | null), String(bad)).toBeNull();
+    }
+  });
+});
+
+describe('parseCorrelationId', () => {
+  it('accepts bounded PR/session/branch identifiers, trimmed', () => {
+    expect(parseCorrelationId('mthines/lorekit#123')).toBe('mthines/lorekit#123');
+    expect(parseCorrelationId('session_019Xyz')).toBe('session_019Xyz');
+    expect(parseCorrelationId('  pr-42  ')).toBe('pr-42');
+    expect(parseCorrelationId('feat/usage-stats:1')).toBe('feat/usage-stats:1');
+  });
+  it('rejects empty, over-long, and out-of-charset values', () => {
+    expect(parseCorrelationId('')).toBeNull();
+    expect(parseCorrelationId('   ')).toBeNull();
+    expect(parseCorrelationId(null)).toBeNull();
+    expect(parseCorrelationId('a'.repeat(201))).toBeNull();
+    expect(parseCorrelationId('has spaces')).toBeNull();
+    expect(parseCorrelationId('tab\tchar')).toBeNull();
+  });
+});
+
+describe('usageToolKind — expiry', () => {
+  it('classifies the synthetic expiry tool as other', () => {
+    expect(usageToolKind(EXPIRED_TOOL_NAME)).toBe('other');
   });
 });
 

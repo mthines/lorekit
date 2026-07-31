@@ -6,6 +6,7 @@ import type { Span } from '../../_shared/otel.ts';
 import { UsageStatsQuerySchema } from '../../_shared/schemas/usage.ts';
 import {
   parseUsageWindow,
+  parseCorrelationId,
   summarizeUsageRows,
   rollupByScopeType,
   UsageStatsError,
@@ -18,6 +19,7 @@ interface RawUsageRow {
   outcome: string;
   scope_type: string | null;
   event_count: number | string;
+  record_count: number | string;
   total_duration_ms: number | string | null;
 }
 
@@ -54,6 +56,11 @@ export async function handleUsage(
     throw e;
   }
 
+  // Optional grouping filter — restrict to one PR / session / job. Bounded and
+  // normalised by the same validator the write paths use; an out-of-charset
+  // value degrades to null (no filter) rather than 400.
+  const correlationId = parseCorrelationId(v.data.correlation_id ?? null);
+
   const tracedDb = createTracedClient(db, span);
   // Service-role callers have no user id; the RPC recognises a null p_user_id
   // from a service_role JWT as "no tenant filter", matching GET /memories.
@@ -61,6 +68,7 @@ export async function handleUsage(
     p_user_id: auth.userId ?? null,
     p_since: window.since,
     p_until: window.until,
+    p_correlation_id: correlationId,
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
@@ -69,6 +77,7 @@ export async function handleUsage(
     outcome: r.outcome,
     scope_type: r.scope_type,
     event_count: Number(r.event_count),
+    record_count: Number(r.record_count),
     total_duration_ms: r.total_duration_ms == null ? null : Number(r.total_duration_ms),
   }));
 
@@ -76,6 +85,7 @@ export async function handleUsage(
 
   return ok({
     range: { since: window.since, until: window.until },
+    correlation_id: correlationId,
     summary: summarizeUsageRows(rows),
     by_tool: rows,
     by_scope_type: rollupByScopeType(rows),
