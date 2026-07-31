@@ -118,6 +118,25 @@ $$;
 -- No `anon` grant. The function returns only the caller's own resolved
 -- identity (or NULL), so it leaks nothing, but there is no reason for an
 -- unauthenticated role to call it — same posture as `lorekit_member_org_ids`.
+--
+-- THE `revoke ... from public` IS LOAD-BEARING, not belt-and-braces. Postgres
+-- grants EXECUTE on a newly created function to PUBLIC by default, and `anon`
+-- inherits it. Naming only `authenticated, service_role` in a GRANT therefore
+-- does NOT withhold it from `anon` — it just adds two roles that already had
+-- access. Every `revoke` below pairs with its `grant` for that reason.
+--
+-- This is not hypothetical: the assertion in `supabase/tests/migrations.test.sql`
+-- ("lorekit_org_members_list must not be granted to anon") FAILED the first
+-- time it ran against this migration, because 00024 created that function with
+-- a grant and no revoke. It returns other members' GitHub handles and avatars.
+--
+-- Known remaining gap, deliberately out of scope here: the same pattern applies
+-- to functions this migration does not define — `lorekit_member_org_ids`
+-- (00014), `lorekit_memory_count` (00035/00036), `lorekit_memory_scopes`
+-- (00039) and `lorekit_invite_org_details` (00028) are all still reachable by
+-- `anon` through PUBLIC. Closing those wants one sweep across the whole schema,
+-- not a half-fix smuggled into an org-actor migration.
+revoke execute on function lorekit_org_actor(uuid) from public;
 grant execute on function lorekit_org_actor(uuid) to authenticated, service_role;
 
 comment on function lorekit_org_actor(uuid) is
@@ -181,6 +200,7 @@ begin
 end;
 $$;
 
+revoke execute on function lorekit_org_create(text, text, uuid) from public;
 grant execute on function lorekit_org_create(text, text, uuid) to authenticated, service_role;
 
 drop function if exists lorekit_org_rename(uuid, text);
@@ -206,6 +226,7 @@ begin
 end;
 $$;
 
+revoke execute on function lorekit_org_rename(uuid, text, uuid) from public;
 grant execute on function lorekit_org_rename(uuid, text, uuid) to authenticated, service_role;
 
 drop function if exists lorekit_org_delete(uuid);
@@ -233,6 +254,7 @@ begin
 end;
 $$;
 
+revoke execute on function lorekit_org_delete(uuid, uuid) from public;
 grant execute on function lorekit_org_delete(uuid, uuid) to authenticated, service_role;
 
 -- ── 2. Invite lifecycle ──────────────────────────────────────────────────
@@ -277,6 +299,7 @@ begin
 end;
 $$;
 
+revoke execute on function lorekit_org_invite(uuid, text, text, text, uuid) from public;
 grant execute on function lorekit_org_invite(uuid, text, text, text, uuid) to authenticated, service_role;
 
 drop function if exists lorekit_org_invite_revoke(uuid);
@@ -314,6 +337,7 @@ begin
 end;
 $$;
 
+revoke execute on function lorekit_org_invite_revoke(uuid, uuid) from public;
 grant execute on function lorekit_org_invite_revoke(uuid, uuid) to authenticated, service_role;
 
 -- ── 3. Member management ─────────────────────────────────────────────────
@@ -365,6 +389,7 @@ begin
 end;
 $$;
 
+revoke execute on function lorekit_org_member_remove(uuid, uuid, uuid) from public;
 grant execute on function lorekit_org_member_remove(uuid, uuid, uuid) to authenticated, service_role;
 
 drop function if exists lorekit_org_member_role(uuid, uuid, text);
@@ -419,6 +444,7 @@ begin
 end;
 $$;
 
+revoke execute on function lorekit_org_member_role(uuid, uuid, text, uuid) from public;
 grant execute on function lorekit_org_member_role(uuid, uuid, text, uuid) to authenticated, service_role;
 
 -- ── 4. Member identity listing (read) ────────────────────────────────────
@@ -475,4 +501,5 @@ $$;
 -- return only booleans/ids): this function returns PII (handle, avatar_url)
 -- for other users, so it is authenticated-only, defense in depth beyond the
 -- membership gate above.
+revoke execute on function lorekit_org_members_list(uuid, uuid) from public;
 grant execute on function lorekit_org_members_list(uuid, uuid) to authenticated, service_role;
