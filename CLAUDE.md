@@ -68,6 +68,66 @@ pnpm nx start supabase         # start local Supabase
 pnpm nx fn:dev supabase        # run Edge Functions locally
 ```
 
+### Web Storybook tests (interaction + visual regression)
+
+The `@lorekit/web` dashboard has Storybook 10 (`@storybook/nextjs-vite`) wired to
+Vitest **browser mode** via `@storybook/addon-vitest`. Two story files per
+component, two suites, one browser run — driven by `packages/web/vitest.storybook.config.ts`
+(kept **separate** from `vitest.config.ts` so the node/jsdom `nx test` target
+never boots a browser):
+
+- **Interaction tests** — `*.test.stories.tsx` (the `/Tests` namespace, `tags: ['test']`,
+  `chromatic.disableSnapshot`); their `play` functions run as browser tests.
+- **Visual regression** — every OTHER story (`*.stories.tsx` `Default`/`Playground`)
+  is screenshotted by a Storybook-level `afterEach` in `.storybook/vitest.setup.ts`
+  using Vitest 4's `toMatchScreenshot`. Baselines are committed under
+  `src/**/__screenshots__/**/*-chromium-linux.png`.
+
+```bash
+cd packages/web
+npx vitest run --config vitest.storybook.config.ts                 # both suites
+npx vitest run --config vitest.storybook.config.ts --changed=main  # only changed stories
+npx vitest run --config vitest.storybook.config.ts -u              # update baselines
+```
+
+- Invoke with **`npx`**, not `pnpm exec` / `pnpm run` / `nx run` — those wrap the
+  process and keep the Playwright browser child's stdio open, so the run never
+  returns. An `nx test-storybook` target exists for graph awareness but is not
+  used by any CI gate for this reason.
+- **Playwright is pinned to `1.56.0`** (Chromium build 1194) via a root pnpm
+  override, so local runs and CI render on the same browser build and pixel
+  baselines compare like-for-like. Bumping it requires regenerating baselines
+  (`-u`) on Linux/Chromium.
+- CI runs these in the `web-test` job of `ci.yml`, gated by the `changes.web`
+  path filter and diff-optimized with `vitest --changed <base>` (a
+  one-component edit re-tests one component). It is a browser job, so it is NOT
+  part of the `check` job's `nx affected -t test`.
+
+**MSW-mocked full-page stories.** Page/subtree stories mock the Supabase REST
+(PostgREST) responses with [MSW](https://mswjs.io) so the app's real
+`@tanstack/react-query` hooks resolve against a stable dataset (no SWR — React
+Query is the one data layer). Pieces under `packages/web`: `public/mockServiceWorker.js`
+(committed via `msw init`, served in the deployed build via `staticDirs: ['../public']`
+so hosted stories mock too), `src/mocks/memories.ts` (`memoryHandlers()` + fixtures +
+`FROZEN_NOW`), `src/mocks/decorators.tsx` (`withQueryClient` — retries off/no refetch;
+`withFrozenClock` — pins `Date` so time-relative renders are deterministic;
+`withMemorySidebar` — the `/lore` tree's context), and `.storybook/preview.tsx`
+(`initialize()` + `mswLoader`, injects the public Supabase URL, and collapses `motion`
+animations for stable snapshots — inert for the existing component stories). A story opts
+in via `parameters.msw.handlers`. **Mixed rendering model:** `'use client'` pages story as
+true full pages (`app/(dashboard)/lore/LorePage.stories.tsx` — needs
+`parameters.nextjs.appDirectory: true` for `useRouter`/`useSearchParams`); server-component
+pages can't render in the browser, so story their largest client subtree instead
+(`components/dashboard/DashboardStats.stories.tsx` for the RSC `/dashboard`), never refactor
+an RSC page to client just to story it. The `/lore` lesson list reads the `listMemories`
+**server action** (gated on `getUser()` → empty in the mocked context), so its results panel
+shows the empty state while the browser-fetched scope tree + heatmap populate.
+- **Storybook deploys as its own Vercel project** via native Git integration (no CI job, no
+  `VERCEL_TOKEN`). `packages/web/vercel.json` is the **dashboard** project (Next.js → `.next`),
+  so the Storybook project uses Root Directory = repo root, Framework Preset = Other, Build
+  Command `pnpm --filter @lorekit/web build-storybook`, Output Directory
+  `packages/web/storybook-static`. Full runbook in [docs/storybook.md](./docs/storybook.md).
+
 ---
 
 ## PR workflow (mandatory — always follow this order)
