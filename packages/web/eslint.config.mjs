@@ -124,6 +124,13 @@ export default [
     },
   },
   {
-    ignores: ['.next/**', 'node_modules/**'],
+    // `storybook-static/**` is the Storybook build artifact (gitignored); the
+    // MSW worker is a generated vendor file — neither should be linted.
+    ignores: [
+      '.next/**',
+      'node_modules/**',
+      'storybook-static/**',
+      'public/mockServiceWorker.js',
+    ],
   },
 ];

@@ -1,0 +1,104 @@
+/**
+ * Storybook decorators for the MSW-mocked, React-Query-backed full-page stories.
+ *
+ * - {@link withQueryClient} wraps a story in a fresh, test-tuned
+ *   `QueryClientProvider` so the app's real hooks resolve against the MSW-mocked
+ *   responses deterministically (retries off, no background refetch, no cache
+ *   bleed between stories).
+ * - {@link withFrozenClock} pins `Date` to a fixed instant so every
+ *   time-relative render (freshness labels, trend chips, the contribution
+ *   heatmap) snapshots identically across runs.
+ */
+import type { Decorator } from '@storybook/nextjs-vite';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useState, type ReactNode } from 'react';
+import { MemorySidebarProvider } from '@/components/providers/MemorySidebarProvider';
+
+/**
+ * Wrap a story in a fresh `QueryClientProvider` tuned for deterministic tests.
+ *
+ * A new client is created per story mount (via `useState`), so no query cache
+ * leaks between stories. Retries and every refetch trigger are disabled and
+ * data is never considered stale, so a hook resolves exactly once against the
+ * MSW handler and the render settles immediately — no spinner captured
+ * mid-flight.
+ */
+function TestQueryProvider({ children }: { children: ReactNode }) {
+  const [client] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            retry: false,
+            refetchOnWindowFocus: false,
+            refetchOnMount: false,
+            refetchOnReconnect: false,
+            staleTime: Infinity,
+            gcTime: Infinity,
+          },
+          mutations: { retry: false },
+        },
+      }),
+  );
+
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+}
+
+export const withQueryClient: Decorator = (Story) => (
+  <TestQueryProvider>
+    <Story />
+  </TestQueryProvider>
+);
+
+/**
+ * Freeze `Date` to `fixedIso` for the story's render.
+ *
+ * The dashboard reads `new Date()` during render (trend windows, freshness
+ * labels, the 26-week heatmap grid), so the clock must be pinned before the
+ * story paints. Only the zero-argument constructor and `Date.now()` are
+ * overridden; `new Date(someArg)` still parses normally, so fixture timestamps
+ * are unaffected. The override is a subclass assignment on `globalThis.Date`;
+ * stories that render no date are untouched by it.
+ */
+export function withFrozenClock(fixedIso: string): Decorator {
+  const fixed = new Date(fixedIso).getTime();
+
+  const FrozenClock: Decorator = (Story) => {
+    // Idempotent: only install once per worker (all data stories freeze to the
+    // same instant). A Proxy over `Date` forwards every real construction/method
+    // except the zero-arg constructor and `Date.now()`, which return the fixed
+    // instant — so `new Date(someIso)` still parses fixtures normally.
+    if (!(globalThis.Date as unknown as { __frozen?: boolean }).__frozen) {
+      const RealDate = globalThis.Date;
+      const proxy = new Proxy(RealDate, {
+        construct(target, args) {
+          return args.length === 0
+            ? new target(fixed)
+            : new (target as unknown as { new (...a: unknown[]): Date })(...args);
+        },
+        get(target, prop, receiver) {
+          if (prop === '__frozen') return true;
+          if (prop === 'now') return () => fixed;
+          return Reflect.get(target, prop, receiver);
+        },
+      });
+      globalThis.Date = proxy as unknown as DateConstructor;
+    }
+    return <Story />;
+  };
+
+  return FrozenClock;
+}
+
+/**
+ * Provide the client context the `/lore` page tree needs when rendered outside
+ * the dashboard layout. `useMemorySidebar()` throws without its provider, and
+ * `LoreExplorer` reads it to drive the lesson detail sheet. The sheet only
+ * mounts once a lesson is opened, so at rest this adds no visible DOM to the
+ * snapshot.
+ */
+export const withMemorySidebar: Decorator = (Story) => (
+  <MemorySidebarProvider>
+    <Story />
+  </MemorySidebarProvider>
+);
