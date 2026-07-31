@@ -31,6 +31,9 @@ import { execFileSync } from 'node:child_process';
 
 const MIG_DIR = 'supabase/migrations';
 
+/** Format a migration number as its zero-padded 5-digit on-disk prefix. */
+const padPrefix = (n) => String(n).padStart(5, '0');
+
 function git(args) {
   return execFileSync('git', args, { encoding: 'utf8' });
 }
@@ -89,18 +92,18 @@ if (invokedDirectly) {
   if (bad.length === 0) {
     process.stdout.write(
       `migration-order: ${added.length} new migration(s) all sort after the base max ` +
-        `(${String(baseMax).padStart(5, '0')}) — ok\n`,
+        `(${padPrefix(baseMax)}) — ok\n`,
     );
     process.exit(0);
   }
 
-  const next = String(baseMax + 1).padStart(5, '0');
+  const next = padPrefix(baseMax + 1);
   process.stderr.write(
     '::error::Out-of-order migration(s) detected. Renumber so each sorts AFTER the ' +
-      `highest migration already on the base branch (${String(baseMax).padStart(5, '0')}):\n`,
+      `highest migration already on the base branch (${padPrefix(baseMax)}):\n`,
   );
   for (const { file, num } of bad) {
-    process.stderr.write(`  - ${file} (${String(num).padStart(5, '0')}) must be >= ${next}\n`);
+    process.stderr.write(`  - ${file} (${padPrefix(num)}) must be >= ${next}\n`);
   }
   process.stderr.write(
     'Rebase onto the base branch and renumber the file(s); `supabase db push` applies ' +
