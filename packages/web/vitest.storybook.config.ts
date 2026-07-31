@@ -48,7 +48,18 @@ export default defineConfig({
     browser: {
       enabled: true,
       headless: true,
-      provider: playwright(),
+      // Pin the Playwright browser-CONTEXT viewport. The committed baselines are
+      // 960x720 = the 1200x900 story iframe scaled by min(1, cw/1200, ch/900);
+      // 0.8 = 720/900, i.e. Playwright's default 1280x720 context. Pinning it
+      // makes that dependency explicit so a Playwright default change cannot
+      // silently invalidate every baseline.
+      //
+      // NOTE this is the context viewport, NOT `instances[].viewport`: the latter
+      // only sizes the test iframe, which @storybook/addon-vitest overwrites with
+      // 1200x900 for every story, so pinning it there would not pin anything.
+      provider: playwright({
+        contextOptions: { viewport: { width: 1280, height: 720 } },
+      }),
       instances: [{ browser: 'chromium' }],
     },
   },
