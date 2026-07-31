@@ -120,15 +120,23 @@ async function processSync(req: Request, span: Span): Promise<Response> {
     return json({ ok: false, error: 'upsert_failed' }, 200);
   }
 
+  // Only a caller entitled to this installation may see its GitHub account
+  // metadata.  `installation_id` is caller-supplied and `status` is needed by
+  // the dashboard's audit branch, so both are always returned; the account
+  // login, account type and repo count are withheld unless the row was linked
+  // to THIS caller — otherwise any authenticated user could POST an arbitrary
+  // installation_id and read back details of an install they do not own.
   return json(
-    {
-      ok: true,
-      status: verdict.kind,
-      installation_id: installationId,
-      account_login: info.accountLogin,
-      account_type: info.accountType,
-      repositories: info.repos.length,
-    },
+    verdict.kind === 'linked'
+      ? {
+          ok: true,
+          status: verdict.kind,
+          installation_id: installationId,
+          account_login: info.accountLogin,
+          account_type: info.accountType,
+          repositories: info.repos.length,
+        }
+      : { ok: true, status: verdict.kind, installation_id: installationId },
     200,
   );
 }
