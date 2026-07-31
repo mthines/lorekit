@@ -54,9 +54,11 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
         </div>
       </header>
 
-      <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 px-6 py-8 md:flex-row md:gap-10 md:py-12">
+      {/* Left-aligned (flush with the nav rail, like the dashboard) rather than a
+          centred column; the content itself is capped at a readable measure. */}
+      <div className="flex w-full flex-1 flex-col gap-8 px-6 py-8 md:flex-row md:gap-12 md:px-10 md:py-10">
         <DocsNav />
-        <main className="min-w-0 flex-1">{children}</main>
+        <main className="min-w-0 max-w-3xl flex-1">{children}</main>
       </div>
 
       <SiteFooter />

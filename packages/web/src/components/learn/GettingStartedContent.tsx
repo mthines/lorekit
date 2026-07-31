@@ -95,14 +95,6 @@ interface Props {
 export function GettingStartedContent({ isPublic = false }: Props) {
   return (
     <div className="flex flex-col gap-8">
-      <div>
-        <h2 className="text-xl font-semibold text-[var(--color-content-primary)]">Getting started</h2>
-        <p className="mt-1 text-sm text-[var(--color-content-secondary)]">
-          Connect LoreKit to your AI coding agent in three steps. Once connected, your agent
-          can read and write memories so knowledge accumulates across sessions.
-        </p>
-      </div>
-
       <div className="flex flex-col">
 
         {/* ── Step 1: API key ─────────────────────────────────────────────── */}
