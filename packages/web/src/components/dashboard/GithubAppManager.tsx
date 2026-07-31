@@ -4,14 +4,13 @@
  * GitHub App installation manager — dashboard section.
  *
  * Displays the current user's linked GitHub App installations and the
- * repositories each covers, visually distinguishing App-covered repos from
- * the manual per-repo webhook secret setup.
+ * repositories each covers.
  *
  * Read-only surface: mutations on GitHub App installations happen via the
  * GitHub App UI, not from within LoreKit (out of scope — see plan.md §Out of Scope).
  *
- * Mirrors the SectionPanel + motion-row + lucide-icon composition of
- * WebhookSecretManager, as the plan specifies (WRAP: sibling component).
+ * Follows the shared SectionPanel + motion-row + lucide-icon composition used
+ * across the settings sections.
  */
 
 import type { ReactNode } from 'react';
@@ -210,11 +209,11 @@ interface GithubAppManagerProps {
 }
 
 /**
- * GitHub App installation section for the webhooks settings page.
+ * GitHub App installation section for Settings → Integrations.
  *
- * Shows each linked installation with its covered repos.  App-covered repos
- * are visually distinct from manually secret-configured repos (which are
- * rendered by the adjacent WebhookSecretManager under the same SectionPanel).
+ * Shows each linked installation with its covered repos. It is the only card
+ * on the page — the manual per-repo webhook secret UI it used to sit beside
+ * was removed with the rename from /settings/webhooks.
  */
 export function GithubAppManager({ installations, installUrl }: GithubAppManagerProps) {
   return (
@@ -259,8 +258,6 @@ export function GithubAppManager({ installations, installUrl }: GithubAppManager
           <p className="text-[10px] leading-relaxed text-[var(--color-content-tertiary)]">
             <span className="font-medium text-[var(--color-success)]">App-covered</span> repos
             use the single GitHub App webhook secret — no per-repo secret needed.
-            Repos in the <span className="font-medium">&ldquo;Your repo secrets&rdquo;</span> section
-            below use the manual per-repo setup (unaffected by the App).
           </p>
         </div>
       )}
