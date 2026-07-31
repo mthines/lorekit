@@ -22,12 +22,16 @@ const API_PATH_PREFIX = '/functions/v1/';
 
 // Only these request headers are relayed upstream. Notably excludes Cookie.
 const FORWARD_HEADERS = ['authorization', 'content-type', 'accept', 'traceparent', 'tracestate'];
-// Hop-by-hop / encoding headers that must not be copied back verbatim.
+// Hop-by-hop / encoding headers that must not be copied back verbatim, plus
+// `set-cookie`: this response is same-origin with the docs page, so reflecting
+// an upstream cookie would plant it on the lorekit.io origin. The LoreKit API
+// is token-auth and sets no cookies today — this is defense in depth.
 const STRIP_RESPONSE_HEADERS = new Set([
   'content-encoding',
   'content-length',
   'transfer-encoding',
   'connection',
+  'set-cookie',
 ]);
 
 function resolveTarget(req: NextRequest): URL | null {

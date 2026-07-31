@@ -280,9 +280,10 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     'Persistent memory for AI coding agents.',
     '',
     '**Authentication** — every endpoint takes a Bearer token. Generate a LoreKit API',
-    'token in the dashboard (**Settings → Tokens**) and paste it into the **Authorize**',
+    'token in the dashboard (**Settings → API keys**) and paste it into the **Authorize**',
     'box above. Use a read-only `lk_ro_*` token to explore safely, or `lk_rw_*` to test',
-    'writes. Organization endpoints require a Supabase JWT rather than an API token.',
+    'writes. The Organizations, Members and Invites endpoints require a Supabase session',
+    'token instead — grab one from **Settings → API keys → “Session token for API docs”**.',
   ].join('\n');
 
   const gen = new OpenApiGeneratorV31(registry.definitions);
