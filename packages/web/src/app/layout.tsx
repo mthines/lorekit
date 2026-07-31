@@ -38,10 +38,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="min-h-screen antialiased">
         {/*
-         * Non-production marker. Renders null on production builds; on a
-         * preview/staging build it overlays a stripe + label naming the
-         * backend the bundle was built against. Mounted at the root so the
-         * auth pages carry it too — a preview build authenticates against the
+         * Mounted at the ROOT, not in the dashboard layout, so the auth pages
+         * carry the marker too — a preview build authenticates against the
          * preview Supabase project, which has its own user table.
          */}
         <EnvironmentBanner />

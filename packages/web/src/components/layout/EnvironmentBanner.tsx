@@ -1,21 +1,9 @@
 import { resolveEnvironmentBadge } from '@/lib/environment';
 
 /**
- * A persistent "this is not production" marker.
- *
- * Rendered from the ROOT layout so it is present on the auth pages too — the
- * login screen is exactly where the confusion bites, because a preview build
- * authenticates against the preview Supabase project and your production
- * account simply does not exist there.
- *
- * Deliberately `fixed` + `pointer-events-none`: the dashboard shell is a
- * `h-screen` flex column, so a banner in the normal flow would push the whole
- * app out of the viewport. This overlays instead of reflowing, and never
- * intercepts a click.
- *
- * The env vars are read at module scope on purpose — Next.js inlines the
- * `NEXT_PUBLIC_*` values listed in `next.config.ts` at build time, so this
- * costs nothing at runtime and works in both server and client rendering.
+ * Read at module scope on purpose — Next.js inlines the `NEXT_PUBLIC_*` values
+ * listed in `next.config.ts` at build time, so this costs nothing at runtime
+ * and works in both server and client rendering.
  */
 const badge = resolveEnvironmentBadge({
   backendEnv: process.env['NEXT_PUBLIC_BACKEND_ENV'],
@@ -34,6 +22,19 @@ const TONE = {
   },
 } as const;
 
+/**
+ * A persistent "this is not production" marker.
+ *
+ * Rendered from the ROOT layout so it is present on the auth pages too — the
+ * login screen is exactly where the confusion bites, because a preview build
+ * authenticates against the preview Supabase project and your production
+ * account simply does not exist there.
+ *
+ * Deliberately `fixed` + `pointer-events-none`: the dashboard shell is a
+ * `h-screen` flex column, so a banner in the normal flow would push the whole
+ * app out of the viewport. This overlays instead of reflowing, and never
+ * intercepts a click.
+ */
 export function EnvironmentBanner() {
   if (!badge) return null;
 
@@ -52,7 +53,7 @@ export function EnvironmentBanner() {
       <div className="flex justify-center">
         <div
           title={badge.description}
-          className={`mt-0 flex items-baseline gap-2 rounded-b-md border border-t-0 px-3 py-1 font-[family-name:var(--font-mono)] text-[10px] leading-none tracking-widest uppercase shadow-lg ${tone.pill}`}
+          className={`flex items-baseline gap-2 rounded-b-md border border-t-0 px-3 py-1 font-[family-name:var(--font-mono)] text-[10px] leading-none tracking-widest uppercase shadow-lg ${tone.pill}`}
         >
           <span className="font-semibold">{badge.label}</span>
           {badge.detail ? (

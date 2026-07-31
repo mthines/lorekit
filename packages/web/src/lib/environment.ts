@@ -63,9 +63,8 @@ export function resolveEnvironmentBadge(input: EnvironmentInput): EnvironmentBad
   //    it is the only signal that survives a production-looking frontend
   //    pointed at a non-production database.
   if (backendEnv && backendEnv !== 'production') {
-    const label = backendEnv === 'preview' ? 'PREVIEW BACKEND' : `${backendEnv.toUpperCase()} BACKEND`;
     return {
-      label,
+      label: `${backendEnv.toUpperCase()} BACKEND`,
       detail,
       description: `This build talks to the ${backendEnv} Supabase project — not production data.`,
       tone: 'preview',
@@ -73,7 +72,7 @@ export function resolveEnvironmentBadge(input: EnvironmentInput): EnvironmentBad
   }
 
   // 2. No explicit backend tag. Fall back to where the frontend is deployed.
-  if (backendEnv !== 'production' && vercelEnv === 'preview') {
+  if (!backendEnv && vercelEnv === 'preview') {
     return {
       label: 'PREVIEW DEPLOY',
       detail,
