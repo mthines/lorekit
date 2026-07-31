@@ -38,9 +38,11 @@
  *      Age comes from the SERVER's timestamp, not the client-minted name, so a
  *      skewed runner clock cannot make a live run's rows look sweepable.
  *   3. A service-role `LOREKIT_SMOKE_TOKEN` is REFUSED unless
- *      `--allow-service-role` is passed. Service-role bypasses RLS and every
- *      handler's tenant filter, so a sweep on it spans every tenant in the
- *      project — fine on a throwaway stack, never implicitly on a shared one.
+ *      `--allow-service-role` is passed — including under `--dry-run`, because
+ *      enumerating every tenant's `scope::key` into a CI log is a disclosure in
+ *      its own right. Service-role bypasses RLS and every handler's tenant
+ *      filter, so a sweep on it spans every tenant in the project — fine on a
+ *      throwaway stack, never implicitly on a shared one.
  *   4. `--dry-run` prints the plan and deletes nothing.
  *
  * EXIT CODE. 0 by default even when individual deletes fail — including on a
@@ -277,16 +279,24 @@ async function sweepMemories() {
     console.log('memories — SKIPPED (LOREKIT_SMOKE_TOKEN is not set).');
     return;
   }
-  if (isServiceRoleKey(TOKEN) && !args.dryRun && !args.allowServiceRole) {
+  if (isServiceRoleKey(TOKEN) && !args.allowServiceRole) {
     // Service-role bypasses RLS and every handler's tenant filter, so this sweep
     // would span EVERY tenant in the project. Legitimate against a throwaway
     // local stack (ci.yml), never something to do implicitly against a shared
     // one — so it takes an explicit flag.
+    //
+    // `--dry-run` does NOT exempt it. A dry run still ENUMERATES, and printing
+    // `scope::key` for every tenant into a CI log is its own disclosure: scope
+    // strings embed repo and project names, which is exactly why
+    // `lorekit_memory_scopes` carries no `anon` grant. Read-only is not the
+    // same as harmless.
     console.warn(
       'memories — REFUSED: LOREKIT_SMOKE_TOKEN is a service-role key.\n' +
-        '  Service-role bypasses RLS, so this would sweep smoke artefacts across EVERY\n' +
-        '  tenant in the project, not just the smoke user\'s. Use an lk_rw_* token, or\n' +
-        '  pass --allow-service-role if that blast radius is intended (a throwaway stack).',
+        '  Service-role bypasses RLS, so this would read (and, without --dry-run, delete)\n' +
+        '  smoke artefacts across EVERY tenant in the project, not just the smoke user\'s.\n' +
+        '  Scope strings embed repo/project names, so even listing them is a disclosure.\n' +
+        '  Use an lk_rw_* token, or pass --allow-service-role if that blast radius is\n' +
+        '  intended (a throwaway stack).',
     );
     fail('memories', BASE, 'refused: service-role credential without --allow-service-role');
     return;
