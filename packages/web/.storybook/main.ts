@@ -20,6 +20,11 @@ const config: StorybookConfig = {
     name: '@storybook/nextjs-vite',
     options: {},
   },
+  // Serve the Next.js `public/` dir at the Storybook root so the MSW service
+  // worker (`public/mockServiceWorker.js`, committed via `msw init`) is reachable
+  // at `/mockServiceWorker.js` — in both the Vitest browser run AND the deployed
+  // static Storybook, so the MSW-mocked stories work on the hosted Vercel build.
+  staticDirs: ['../public'],
   core: {
     disableTelemetry: true,
   },
