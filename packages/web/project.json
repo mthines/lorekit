@@ -42,7 +42,7 @@
       "executor": "nx:run-commands",
       "cache": true,
       "inputs": ["default", "^production"],
-      "outputs": ["{projectRoot}/src/**/__screenshots__"],
+      "outputs": [],
       "options": {
         "cwd": "packages/web",
         "command": "vitest run --config vitest.storybook.config.ts"
