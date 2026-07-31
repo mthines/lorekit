@@ -214,7 +214,11 @@ const memApi = (method, path) => req(`${BASE}/memories${path}`, { method, token:
 async function discoverScopes() {
   const { status, data } = await memApi('GET', '/scopes');
   if (status !== 200 || !Array.isArray(data?.scopes)) {
-    console.warn(`  ⚠ GET /memories/scopes → HTTP ${status}; sweeping the known suite scopes only.`);
+    // Recorded as a failure, not warned: a narrowed sweep is a sweep that will
+    // miss orphans in every scope it never looked at, and `--strict` exiting 0
+    // on that would report a clean run that did not happen. Same treatment as
+    // the page-safety stop below. The known scopes are still swept.
+    fail('scope-discovery', BASE, `GET /memories/scopes → HTTP ${status}`);
     return [...ALWAYS_SWEEP_SCOPES];
   }
   const discovered = data.scopes.map((s) => s.scope).filter((s) => typeof s === 'string');
