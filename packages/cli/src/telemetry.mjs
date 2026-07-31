@@ -41,19 +41,30 @@ const FLAG_ATTRS = ['global', 'project', 'deep', 'yes', 'force', 'no-hooks', 'js
 const OFF_VALUES = new Set(['0', 'off', 'false', 'no', 'disable', 'disabled']);
 
 // ── Active trace context (for traceparent propagation to REST calls) ──────────
-// Set at the start of each traced command run; used by RemoteStore to
-// forward the CLI span's trace identity to outgoing REST requests.
+// Set at the start of EVERY traced command run — including runs where export is
+// disabled. Context propagation is deliberately decoupled from export: a user
+// who opted out (or who simply has no OTLP endpoint configured) must still get
+// correlated server-side traces, they just don't contribute a CLI span.
 let _activeTraceId = null;
 let _activeSpanId = null;
+// Whether the current command's span will actually be exported. Drives the
+// W3C `sampled` bit only — never whether the header is sent.
+let _activeSampled = false;
 
 /**
- * Get the W3C traceparent for the currently-running CLI command, or null.
- * Called by RemoteStore to inject the header into REST fetches so CLI spans
- * are linked to REST API spans in Dash0.
+ * Get the W3C traceparent for the currently-running CLI command, or null when
+ * no command is running. Called by RemoteStore to inject the header into
+ * outgoing REST/MCP calls so the server span joins the CLI's trace.
+ *
+ * Flags are `01` when the CLI span is exported and `00` when it is not — the
+ * trace id is still carried either way, so the server can correlate. This
+ * mirrors `formatTraceparent` in `packages/mcp-core/src/trace-context.ts`
+ * (the CLI is zero-dep `.mjs` and cannot import the TS module); keep the two
+ * byte-consistent.
  */
 export function getActiveTraceparent() {
   if (!_activeTraceId || !_activeSpanId) return null;
-  return `00-${_activeTraceId}-${_activeSpanId}-01`;
+  return `00-${_activeTraceId}-${_activeSpanId}-${_activeSampled ? '01' : '00'}`;
 }
 
 // ── Config resolution ─────────────────────────────────────────────────────────
@@ -313,18 +324,32 @@ export async function traceCommand(command, args, version, run) {
     config = { enabled: false };
   }
 
+  // Generate trace context BEFORE the export gate below, so outgoing REST/MCP
+  // calls can forward it as `traceparent` even when telemetry is disabled.
+  // Propagation is decoupled from export: a user with no OTLP endpoint (the
+  // common case — TELEMETRY_TOKEN is empty in git) still gets a single
+  // correlated server-side trace. The `sampled` bit is what reflects export.
+  // The same IDs are reused in exportInvocation() to link the CLI span to
+  // REST spans.
+  _activeTraceId = randHex(16);
+  _activeSpanId = randHex(8);
+  _activeSampled = Boolean(config.enabled);
+
   // Fast path: no export configured → run with zero telemetry overhead. Still
   // normalize the result to a numeric exit code: commands may resolve to an
   // { exitCode, ...extra } object (e.g. `doctor`), and only the instrumented
   // path below unwraps it. Returning `run()` raw would leak that object all the
   // way to `process.exit(obj)` in the bin entry → ERR_INVALID_ARG_TYPE crash
   // (exit 1) for every user without an OTLP endpoint configured.
-  if (!config.enabled) return normalizeExitCode(await run());
-
-  // Generate trace context before run() so REST calls can forward it as traceparent.
-  // The same IDs are reused in exportInvocation() to link the CLI span to REST spans.
-  _activeTraceId = randHex(16);
-  _activeSpanId = randHex(8);
+  if (!config.enabled) {
+    try {
+      return normalizeExitCode(await run());
+    } finally {
+      _activeTraceId = null;
+      _activeSpanId = null;
+      _activeSampled = false;
+    }
+  }
 
   const startMs = Date.now();
   let exitCode = 0;
@@ -389,6 +414,7 @@ export async function traceCommand(command, args, version, run) {
     } finally {
       _activeTraceId = null;
       _activeSpanId = null;
+      _activeSampled = false;
     }
   }
 }

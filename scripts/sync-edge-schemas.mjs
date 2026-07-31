@@ -49,7 +49,9 @@ const mirrorDir = join(repoRoot, 'supabase/functions/_shared/schemas');
  * Mirroring only what is reachable keeps the copied surface minimal.
  */
 export const MIRRORED_SCHEMA_FILES = [
+  'audit.ts',
   'common.ts',
+  'filter.ts',
   'scope.ts',
   'memory.ts',
   'org.ts',

@@ -13,10 +13,12 @@
 // mapping the on-disk directory layout, which is lossy for `project::{name}`
 // (stored by basename only) — so every scope is reconstructed exactly.
 //
-// Remote enumeration is NOT possible: the hosted MCP surface exposes no "list
-// all scopes" tool — every read tool (memory.list / search / read) REQUIRES a
-// scope — so the Remote section is always an honest note (never faked), the same
-// way `stats` omits a cap-usage figure. It still degrades gracefully at exit 0.
+// Remote enumeration is EXACT too: `RemoteStore.listScopes()` calls
+// `GET /memories/scopes`, which aggregates one row per scope in Postgres (never
+// a truncatable `select('scope')` + client-side dedupe), so both sections are
+// real inventories rendered through the same pure helpers. A denied,
+// unconfigured, unreachable, or erroring remote still degrades to a short,
+// accurate note at exit 0 — never a throw.
 //
 // Graceful, read-only, human-facing (the bin wraps it in `traceCommand`).
 // `LOREKIT_DENY` suppresses a section; `--scope <s>` filters the inventory to
@@ -26,14 +28,8 @@ import process from 'node:process';
 import { resolveProjectRoot } from './config.mjs';
 import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { summarizeScopeInventory, filterScopeInventory } from './lessons-view.mjs';
+import { summarizeScopeInventory, filterScopeInventory, describeError } from './lessons-view.mjs';
 import { log, heading, status, c } from './util.mjs';
-
-// The honest note the Remote section shows when it isn't denied/unconfigured:
-// the hosted MCP surface simply can't enumerate scopes. Exported so tests can
-// assert the exact wording rather than a fragile substring.
-export const REMOTE_SCOPES_UNSUPPORTED =
-  'remote scope enumeration is not supported by the hosted MCP surface (memory.list requires a scope)';
 
 export async function scopes(args) {
   const root = resolveProjectRoot(args.dir);
@@ -63,16 +59,21 @@ export async function scopes(args) {
     offlineSection = { available: true, ...summarizeScopeInventory(inventory) };
   }
 
-  // Remote: never enumerable. A deny note, an unconfigured note, or the honest
-  // "not supported" note — all graceful (exit 0). Order matches the other
-  // commands' precedence: deny first, then connectivity, then the capability.
+  // Remote: the hosted enumeration, via `GET /memories/scopes`. Precedence is
+  // unchanged from the other read commands — deny first, then connectivity, then
+  // the call itself. A failed call degrades to the same bounded, non-PII
+  // `describeError` note a failed `list()` gets (network error / HTTP status),
+  // never a throw and never a faked inventory.
   let remoteSection;
   if (remoteDenied) {
     remoteSection = { available: false, reason: `disabled by deny constraint (${remoteDenied.source})` };
   } else if (!remote.usable()) {
     remoteSection = { available: false, reason: remoteUnavailableReason(connection) };
   } else {
-    remoteSection = { available: false, reason: REMOTE_SCOPES_UNSUPPORTED };
+    const res = await remote.listScopes();
+    remoteSection = res.ok
+      ? { available: true, ...summarizeScopeInventory(filterScopeInventory(res.scopes, filter)) }
+      : { available: false, reason: describeError(res) };
   }
 
   if (args.json) {
@@ -89,15 +90,17 @@ export async function scopes(args) {
     log('');
   }
 
-  // Bounded, non-PII telemetry extras (counts + a boolean) — never a scope
-  // string, path, or token. `remote_available` is always false: the surface
-  // can't enumerate, and saying so is the honest signal.
+  // Bounded, non-PII telemetry extras (counts + booleans) — never a scope
+  // string, path, or token. `remote_available` now reflects whether the hosted
+  // enumeration actually answered; the remote counts mirror the offline pair.
   return {
     exitCode: 0,
     'lorekit.cli.scopes.offline_scope_count': offlineSection.available ? offlineSection.scopes.length : 0,
     'lorekit.cli.scopes.offline_total': offlineSection.available ? offlineSection.total : 0,
     'lorekit.cli.scopes.filtered': Boolean(filter),
-    'lorekit.cli.scopes.remote_available': false,
+    'lorekit.cli.scopes.remote_scope_count': remoteSection.available ? remoteSection.scopes.length : 0,
+    'lorekit.cli.scopes.remote_total': remoteSection.available ? remoteSection.total : 0,
+    'lorekit.cli.scopes.remote_available': remoteSection.available,
   };
 }
 

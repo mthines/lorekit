@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { AUDIT_ACTIONS, buildAuditEntry, recordAudit, type AuditAction } from './audit.js';
+import { AUDIT_ACTIONS as CANONICAL_AUDIT_ACTIONS } from '@lorekit/schemas';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 function makeInsertDb(result: { error: null | { message: string } }) {
@@ -7,21 +8,36 @@ function makeInsertDb(result: { error: null | { message: string } }) {
   return { from: vi.fn().mockReturnValue({ insert }), insert } as unknown as SupabaseClient & { insert: typeof insert };
 }
 
+/**
+ * This block used to pin an 11-element literal list here. That list is GONE,
+ * deliberately: it was one of three copies (11 here, 23 in the SQL CHECK, 24
+ * in the web dashboard) that had silently drifted, and re-asserting a local
+ * copy is exactly what let the drift survive. `AUDIT_ACTIONS` now comes from
+ * `@lorekit/schemas` and this module only re-exports it.
+ *
+ * So what is asserted here is the RE-EXPORT — that `./audit.ts` still exposes
+ * the same array object the canonical module does, with no filtering,
+ * reordering or shadowing. The CONTENT of the list, and its agreement with the
+ * SQL CHECK and the web copy, is asserted by `audit-vocabulary.spec.ts`, which
+ * is a strictly stronger check than the literal this replaces.
+ */
 describe('AUDIT_ACTIONS', () => {
-  it('enumerates exactly the 11 bounded actions', () => {
-    expect(AUDIT_ACTIONS).toEqual([
-      'api_key.create',
-      'api_key.revoke',
-      'webhook_secret.create',
-      'webhook_secret.rotate',
-      'webhook_secret.deactivate',
-      'memory.create',
-      'memory.update',
-      'memory.archive',
-      'memory.restore',
-      'memory.delete',
-      'limit.override',
-    ]);
+  it('is the canonical @lorekit/schemas list, re-exported unchanged', () => {
+    expect(AUDIT_ACTIONS).toBe(CANONICAL_AUDIT_ACTIONS);
+  });
+
+  it('is non-empty and free of duplicates', () => {
+    expect(AUDIT_ACTIONS.length).toBeGreaterThan(0);
+    expect(new Set(AUDIT_ACTIONS).size).toBe(AUDIT_ACTIONS.length);
+  });
+
+  it('still contains the memory actions this module\'s own callers emit', () => {
+    // Anti-vacuity for the identity assertion above: if the canonical list
+    // were ever emptied or renamed wholesale, `toBe` would still pass but
+    // these would not.
+    for (const action of ['memory.create', 'memory.update', 'memory.archive', 'memory.restore', 'memory.delete'] as const) {
+      expect(AUDIT_ACTIONS).toContain(action);
+    }
   });
 });
 

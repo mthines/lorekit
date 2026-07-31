@@ -4,11 +4,13 @@ import { validateOrgSlug } from '../../../_shared/api/validate.ts';
 import { createTracedClient } from '../../../_shared/otel.ts';
 import type { Span } from '../../../_shared/otel.ts';
 import { translateDbError } from '../../../_shared/api/errors.ts';
+import { auditUserId } from '../../../_shared/api/auth.ts';
+import { recordAudit } from '../../../_shared/audit.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
 
 
 export async function handleDeleteOrg(
-  req: Request, _auth: AuthContext, db: DbClient, span: Span,
+  req: Request, auth: AuthContext, db: DbClient, span: Span,
   params: Record<string,string>, cors: Record<string,string>,
 ): Promise<Response> {
   const slug = params.slug ?? '';
@@ -27,13 +29,23 @@ export async function handleDeleteOrg(
   if (lookupErr) { span.error(lookupErr.message); throw lookupErr; }
   if (!org) return notFound('Organization', cors);
 
-  const { error } = await tracedDb.rpc('lorekit_org_delete', { p_org_id: (org as { id: string }).id });
+  const orgId = (org as { id: string }).id;
+  const { error } = await tracedDb.rpc('lorekit_org_delete', { p_org_id: orgId });
   if (error) {
     const m = translateDbError(error);
     if (m) return m.toResponse(cors);
     span.error(error.message);
     throw error;
   }
+
+  // Audit AFTER the (soft-)delete succeeded. Same shape as the dashboard's
+  // `deleteOrg` (packages/web/src/lib/orgs.ts): no `target` — the org is gone,
+  // and its id is the only durable handle.
+  await recordAudit(
+    db,
+    { action: 'org.delete', resourceType: 'org', resourceId: orgId },
+    auditUserId(auth),
+  );
 
   return noContent(cors);
 }

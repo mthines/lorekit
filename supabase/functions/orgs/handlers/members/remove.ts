@@ -4,6 +4,8 @@ import { validateUuid, validateOrgSlug } from '../../../_shared/api/validate.ts'
 import { createTracedClient } from '../../../_shared/otel.ts';
 import type { Span } from '../../../_shared/otel.ts';
 import { translateDbError } from '../../../_shared/api/errors.ts';
+import { auditUserId } from '../../../_shared/api/auth.ts';
+import { recordAudit } from '../../../_shared/audit.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
 
 export async function handleRemoveMember(
@@ -47,6 +49,22 @@ export async function handleRemoveMember(
     span.error(error.message);
     throw error;
   }
+
+  // Audit AFTER the removal succeeded. The action follows the SAME self-vs-
+  // other split the RPC choice does, and matches the two distinct dashboard
+  // actions (packages/web/src/lib/orgs.ts): `leaveOrg` records `member.leave`
+  // with the caller's own id, `removeMember` records `member.remove` with the
+  // target's — both with the org id as `target`.
+  await recordAudit(
+    db,
+    {
+      action: isSelf ? 'member.leave' : 'member.remove',
+      resourceType: 'org_member',
+      resourceId: idV.data,
+      target: orgId,
+    },
+    auditUserId(auth),
+  );
 
   return noContent(cors);
 }

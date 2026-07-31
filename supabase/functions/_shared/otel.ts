@@ -24,6 +24,7 @@
  */
 
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { formatTraceparent, parseTraceparent } from './trace-context.ts';
 
 /** PostgREST error shape returned by @supabase/supabase-js. */
 type PostgrestError = { message: string; details?: string | null; hint?: string | null; code?: string };
@@ -115,7 +116,23 @@ interface TraceContext {
   traceId: string;
   spanId: string;
   parentSpanId?: string;
+  /**
+   * The inbound W3C `sampled` flag (or `true` for a locally-originated root).
+   *
+   * IMPORTANT: this flag is RECORDED and PROPAGATED, never ACTED ON. LoreKit
+   * exports every span (AlwaysOn) and defers sampling to the Dash0 pipeline —
+   * see "Key decisions" in the root CLAUDE.md. Do not turn this into an
+   * export gate.
+   */
+  sampled: boolean;
 }
+
+// OTLP `Span.kind` values. Root request spans are SERVER, outgoing DB calls
+// are CLIENT; anything else stays INTERNAL. Without these no APM can draw
+// service-to-service edges.
+export const SPAN_KIND_INTERNAL = 1;
+export const SPAN_KIND_SERVER = 2;
+export const SPAN_KIND_CLIENT = 3;
 
 function randHex(bytes: number): string {
   const b = new Uint8Array(bytes);
@@ -123,15 +140,24 @@ function randHex(bytes: number): string {
   return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 }
 
+/**
+ * Resolve the trace context for an incoming request. A spec-invalid
+ * `traceparent` (wrong shape, non-hex, all-zero ids, version `ff`, …) is
+ * rejected by `parseTraceparent` and falls back to a NEW root trace rather
+ * than producing a corrupt, unlinkable span.
+ */
 function extractTraceContext(req: Request): TraceContext {
-  const tp = req.headers.get('traceparent');
-  if (tp) {
-    const parts = tp.split('-');
-    if (parts.length === 4 && parts[1]?.length === 32 && parts[2]?.length === 16) {
-      return { traceId: parts[1], spanId: randHex(8), parentSpanId: parts[2] };
-    }
+  const parsed = parseTraceparent(req.headers.get('traceparent'));
+  if (parsed) {
+    return {
+      traceId: parsed.traceId,
+      spanId: randHex(8),
+      parentSpanId: parsed.parentSpanId,
+      sampled: parsed.sampled,
+    };
   }
-  return { traceId: randHex(16), spanId: randHex(8) };
+  // Locally-originated trace: preserve today's AlwaysOn behaviour.
+  return { traceId: randHex(16), spanId: randHex(8), sampled: true };
 }
 
 // ── OTLP export batch ─────────────────────────────────────────────────────────
@@ -141,6 +167,7 @@ function extractTraceContext(req: Request): TraceContext {
 interface SpanPayload {
   ctx: TraceContext;
   name: string;
+  kind: number;
   startMs: number;
   endMs: number;
   attributes: Record<string, string | number | boolean>;
@@ -177,9 +204,21 @@ function buildOtlpPayload(spans: SpanPayload[]): unknown {
 
   const serviceVersion = Deno.env.get('VCS_REF_HEAD_REVISION') ?? Deno.env.get('GITHUB_SHA') ?? 'unknown';
 
-  // SERVICE_NAME is set per-function via Supabase secrets so spans carry the
-  // correct resource name regardless of which function emits them.
-  const serviceName = Deno.env.get('SERVICE_NAME') ?? 'lorekit';
+  // Every Supabase Edge Function is ONE logical service: `api`. The individual
+  // functions (memories, orgs, openapi, mcp, health) are operations on it, not
+  // separate services — they share a deployment, a database and a lifecycle,
+  // and splitting them would fragment the service map for no analytical gain.
+  //
+  // This is a build-time constant on purpose. It used to be a per-function
+  // `SERVICE_NAME` Supabase secret, which could not work: Supabase secrets are
+  // project-wide, not per-function, so a single value could never name five
+  // functions. Functions that went unconfigured silently fell back to a shared
+  // name anyway. The env var is still honoured as an escape hatch, but nothing
+  // needs to set it.
+  //
+  // Distinguish functions and operations with `faas.name` and the span name
+  // (`lorekit.memories`, `lorekit.mcp`, …), both set by `traceRequest`.
+  const serviceName = Deno.env.get('SERVICE_NAME') ?? 'api';
   const resourceAttributes = [
     { key: 'service.name', value: { stringValue: serviceName } },
     { key: 'service.namespace', value: { stringValue: 'lorekit' } },
@@ -201,7 +240,11 @@ function buildOtlpPayload(spans: SpanPayload[]): unknown {
           spanId: s.ctx.spanId,
           ...(s.ctx.parentSpanId ? { parentSpanId: s.ctx.parentSpanId } : {}),
           name: s.name,
-          kind: 1, // INTERNAL
+          kind: s.kind,
+          // W3C sampled bit, recorded for downstream consumers. Export itself
+          // stays AlwaysOn — sampling is deferred to the Dash0 pipeline, so
+          // never turn this into a drop condition.
+          flags: s.ctx.sampled ? 1 : 0,
           startTimeUnixNano: String(s.startMs * 1_000_000),
           endTimeUnixNano: String(s.endMs * 1_000_000),
           attributes: Object.entries(s.attributes).map(([key, value]) => ({ key, value: toOtlpValue(value) })),
@@ -256,18 +299,28 @@ export class Span {
     private name: string,
     ctx: TraceContext,
     private batch: ExportBatch,
+    /** OTLP span kind — SERVER for the root request span, CLIENT for DB calls. */
+    private kind: number = SPAN_KIND_INTERNAL,
   ) {
     this.ctx = ctx;
   }
 
-  /** Create a child span sharing the same trace ID. */
-  child(childName: string, initialAttrs: Record<string, string | number | boolean> = {}): Span {
+  /**
+   * Create a child span sharing the same trace ID. Children inherit the
+   * parent's `sampled` flag; `kind` defaults to INTERNAL.
+   */
+  child(
+    childName: string,
+    initialAttrs: Record<string, string | number | boolean> = {},
+    kind: number = SPAN_KIND_INTERNAL,
+  ): Span {
     const childCtx: TraceContext = {
       traceId: this.ctx.traceId,
       spanId: randHex(8),
       parentSpanId: this.ctx.spanId,
+      sampled: this.ctx.sampled,
     };
-    const s = new Span(childName, childCtx, this.batch);
+    const s = new Span(childName, childCtx, this.batch, kind);
     if (Object.keys(initialAttrs).length) s.setAttributes(initialAttrs);
     return s;
   }
@@ -305,6 +358,7 @@ export class Span {
     this.batch.add({
       ctx: this.ctx,
       name: this.name,
+      kind: this.kind,
       startMs: this.startMs,
       endMs: Date.now(),
       attributes: this.attributes,
@@ -315,6 +369,46 @@ export class Span {
 }
 
 // ── traceRequest — root entry point ──────────────────────────────────────────
+
+/**
+ * Derive the `faas.name` attribute from a root span's operation name.
+ *
+ * Operation names are `lorekit.<function>` (`lorekit.memories`,
+ * `lorekit.mcp`, `lorekit.webhook.github`, …). We take the segment after the
+ * `lorekit.` prefix, so `lorekit.webhook.github` reports `webhook.github` —
+ * the sub-operation is kept because it is a genuinely distinct entry point.
+ * A name without the prefix is passed through unchanged.
+ */
+function faasNameFrom(operationName: string): string {
+  return operationName.startsWith('lorekit.') ? operationName.slice('lorekit.'.length) : operationName;
+}
+
+/**
+ * Return a Response carrying the server span's `traceparent`, so a browser or
+ * CLI can correlate its request with the server-side trace.
+ *
+ * A Response's headers can be immutable (anything produced by `fetch()` or
+ * `Response.redirect()`), so we never mutate in place — we copy the headers and
+ * rebuild the Response, preserving status, statusText and body. Bodiless
+ * statuses (204/304) are safe: such a Response always has `body === null`, and
+ * `new Response(null, { status })` is legal for them.
+ *
+ * The header is only readable cross-origin because `api/cors.ts` emits
+ * `Access-Control-Expose-Headers: traceparent`.
+ */
+function withTraceparent<T extends Response>(response: T, ctx: TraceContext): T {
+  const headers = new Headers(response.headers);
+  headers.set('traceparent', formatTraceparent(ctx.traceId, ctx.spanId, ctx.sampled));
+  const correlated = new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+  // The generic exists only so callers keep their Response subtype; no
+  // subtype is used in this repo, and a plain Response is behaviourally
+  // identical for every caller.
+  return correlated as T;
+}
 
 /**
  * Wrap the entire request handler in a root span. Extracts incoming
@@ -339,18 +433,22 @@ export async function traceRequest<T extends Response>(
 ): Promise<T> {
   const batch = new ExportBatch();
   const ctx = extractTraceContext(req);
-  const span = new Span(operationName, ctx, batch);
+  const span = new Span(operationName, ctx, batch, SPAN_KIND_SERVER);
 
   span.setAttributes({
     'http.request.method': req.method,
     'url.path': new URL(req.url).pathname,
+    // Every edge function reports service.name = 'api', so this is what tells
+    // them apart. Derived from the operation name ('lorekit.memories' →
+    // 'memories') so a new function gets it for free and cannot forget to.
+    'faas.name': faasNameFrom(operationName),
   });
 
   let response: T;
   try {
     response = await fn(span);
     span.setAttributes({ 'http.response.status_code': response.status });
-    return response;
+    return withTraceparent(response, ctx);
   } catch (err) {
     span.error(`${(err as Error).name}: ${(err as Error).message}`);
     throw err;
@@ -486,7 +584,7 @@ export class TracedQuery<T = Record<string, unknown>> {
       'db.operation.name': this.state.op,
       'db.collection.name': this.state.table,
       'db.query.text': sql,
-    });
+    }, SPAN_KIND_CLIENT);
 
     // deno-lint-ignore no-explicit-any -- PostgREST builder is awaited as opaque; result is cast below
     const resultPromise = (this.state.qb as any) as Promise<PostgrestResponse<T[]>>;

@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@lorekit/schemas": "workspace:*",
     "@opentelemetry/api": "^1.9.0",
     "@supabase/supabase-js": "^2.0.0",
     "zod": "^3.0.0"

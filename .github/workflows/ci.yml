@@ -250,6 +250,36 @@ jobs:
           TOKEN: ${{ steps.supabase.outputs.service_role_key }}
         run: node scripts/smoke-mcp-stdio.mjs "http://127.0.0.1:54321/functions/v1/mcp" "$TOKEN"
 
+      # The orgs suite needs a Supabase USER JWT — every `lorekit_org_*` RPC is
+      # SECURITY DEFINER and resolves the actor as `auth.uid()`, so the
+      # service-role key and `lk_*` tokens are both rejected. A JWT cannot be a
+      # stored secret (it expires: `jwt_expiry` is 86400s locally, 3600s hosted,
+      # and an expired one makes the suite self-skip green), so it is minted
+      # per run against the throwaway local stack.
+      - name: Mint a user JWT for the orgs smoke suite
+        id: smokejwt
+        env:
+          SUPABASE_URL: http://127.0.0.1:54321
+          SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_role_key }}
+        run: |
+          JWT="$(node scripts/mint-smoke-jwt.mjs)"
+          echo "::add-mask::$JWT"
+          echo "jwt=$JWT" >> "$GITHUB_OUTPUT"
+
+      # Exercise the REST Edge Functions end-to-end against the live local
+      # stack. These specs self-skip without their credential, so wiring
+      # them here is what actually makes them a merge gate — without this step
+      # they exist but never run, and report a pass. They prove the `memories`
+      # and `orgs` functions boot, authenticate, and honour their request
+      # contracts (including the OR+AND `filter` on POST /memories/search),
+      # and read `audit_log` back to prove the audit trail is really written.
+      - name: Smoke — REST API (memories + orgs) against the live stack
+        env:
+          LOREKIT_SMOKE_TOKEN: ${{ steps.supabase.outputs.service_role_key }}
+          LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
+          LOREKIT_REST_BASE_URL: http://127.0.0.1:54321/functions/v1
+        run: node scripts/smoke-rest.mjs
+
       - name: Diagnose — edge runtime logs (on failure)
         if: failure()
         run: |

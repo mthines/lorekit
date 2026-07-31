@@ -59,6 +59,11 @@ inspector_port = 8083
 # so the gateway must not require a JWT. This mirrors the `--no-verify-jwt` flag
 # used when deploying, and lets `supabase start` serve them for CI integration
 # tests without a gateway 401.
+#
+# No SERVICE_NAME secrets here on purpose. Every function is one logical
+# service, `api`, hard-coded in `_shared/otel.ts`; the function is identified by
+# `faas.name` and the span name. Supabase secrets are project-wide rather than
+# per-function, so a per-function SERVICE_NAME could never have worked anyway.
 [functions.mcp]
 verify_jwt = false
 
@@ -88,15 +93,12 @@ verify_jwt = false
 # `edge-bare-specifier.spec.ts` fails the build if a bare specifier reappears.
 [functions.memories]
 verify_jwt = false
-[functions.memories.secrets]
 
 [functions.orgs]
 verify_jwt = false
-[functions.orgs.secrets]
 
 [functions.openapi]
 verify_jwt = false
-[functions.openapi.secrets]
 
 [analytics]
 enabled = true

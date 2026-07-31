@@ -69,3 +69,52 @@ export function hasPermission(auth: AuthContext, required: 'read' | 'write'): bo
 export function isJwtAuth(auth: AuthContext): boolean {
   return auth.type === 'user';
 }
+
+/**
+ * The actor to stamp on an `audit_log` row: the resolved user for BOTH
+ * `api_key` and user-JWT callers, `null` only for service-role.
+ *
+ * WHY the JWT branch returns the user (it used to return `null`):
+ * `resolveRestAuth` hands a JWT caller `userClient(jwt)` — ANON_KEY plus
+ * `Authorization: Bearer <jwt>` — so RLS applies and `auth.uid()` IS that
+ * user's id. `audit_log`'s insert policy is
+ * `rls_audit_log_insert ... with check (user_id = auth.uid())`
+ * (supabase/migrations/00010_audit_log.sql). Supplying the caller's own id is
+ * therefore exactly what makes the insert LEGAL; supplying `null` is exactly
+ * what made it fail the policy, and `recordAudit` — correctly non-throwing —
+ * swallowed the failure, so every JWT-authenticated REST mutation silently
+ * lost its audit row. The old reasoning ("mirror MCP's limitation, don't fix
+ * it here") is void: it described a behaviour that produced no rows at all,
+ * not a comparable one.
+ *
+ * Service-role stays `null` because there is no human actor to name; that
+ * client bypasses RLS, so the row is written with a null actor rather than
+ * refused.
+ *
+ * CONSEQUENCE, stated plainly: REST now attributes JWT callers correctly
+ * where MCP (`mcp/auth.ts`'s `getUserId`) still records `null` and still loses
+ * those rows. That asymmetry is the remaining bug, and `getUserId` is the side
+ * that should converge on this rule — not the reverse.
+ *
+ * The rule itself lives in the pure, unit-tested `_shared/rest-audit-actor.ts`
+ * (mirror of `packages/mcp-core/src/rest-audit-actor.ts`), re-exported here so
+ * every existing `import { auditUserId } from '…/api/auth.ts'` is unchanged.
+ */
+export { auditUserId } from '../rest-audit-actor.ts';
+
+/**
+ * The user a usage event is attributed to — unlike `auditUserId` this is the
+ * resolved user for BOTH api_key and JWT callers (mirroring `mcp-handler.ts`'s
+ * `analyticsUserId`), because `usage_events` is written with the caller's own
+ * client and carries no `auth.uid()` RLS predicate. `null` for service-role.
+ */
+export function analyticsUserId(auth: AuthContext): string | null {
+  return auth.type === 'service' ? null : (auth.userId ?? null);
+}
+
+/** `usage_events.auth_type` for a REST caller. */
+export function usageAuthType(auth: AuthContext): 'api_key' | 'jwt' | 'service' {
+  if (auth.type === 'api_key') return 'api_key';
+  if (auth.type === 'service') return 'service';
+  return 'jwt';
+}

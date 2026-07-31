@@ -1,9 +1,12 @@
 // Remote store: wraps the LoreKit REST API `memory.*` endpoints behind the
-// common store contract. Memory operations use the REST API for lower overhead
-// and W3C traceparent propagation. Org operations remain on MCP because org
-// RPCs require a Supabase JWT session (auth.uid() via SECURITY DEFINER
-// functions), which is incompatible with the lk_* api_key tokens that CLI
-// users have. Zero-dependency.
+// common store contract. EVERY memory operation goes over REST — list, search,
+// read, write, delete (soft-archive AND `?force=true` hard-delete) and the
+// store-wide `listScopes()` enumeration — for lower overhead and W3C
+// traceparent propagation. MCP remains ONLY for the four `org.*` calls and the
+// `ping` fallback: org RPCs require a Supabase JWT session (they resolve the
+// actor via auth.uid() inside SECURITY DEFINER functions), which is
+// incompatible with the lk_* api_key tokens that CLI users have.
+// Zero-dependency.
 import { mcpCall, restFetch, mcpToRestBase } from '../mcp.mjs';
 import { getActiveTraceparent } from '../telemetry.mjs';
 
@@ -39,7 +42,7 @@ class RemoteStore {
 
   async _mcp(name, args) {
     if (!this.usable()) return { ok: false, unusable: true };
-    return mcpCall(this.endpoint, this.token, 'tools/call', { name, arguments: args });
+    return mcpCall(this.endpoint, this.token, 'tools/call', { name, arguments: args }, { traceparent: this._tp() });
   }
 
   _mcpEntries(res) {
@@ -79,6 +82,8 @@ class RemoteStore {
     const p = new URLSearchParams();
     if (scope) p.set('scope', scope);
     if (key) p.set('key', key);
+    // scope+key is unique, so one row is all there can be — don't pull the default page of 50.
+    p.set('limit', '1');
     const res = await this._rest(`/memories?${p}`);
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
     const entries = res.data?.entries ?? [];
@@ -99,14 +104,12 @@ class RemoteStore {
     return { ok: res.ok, error: res.error, networkError: res.networkError };
   }
 
+  // Natural-key DELETE. Without `force` the server soft-archives (stamps
+  // `archived_at`); `?force=true` hard-deletes the row outright — both forms of
+  // the same REST route (supabase/functions/memories/handlers/remove.ts).
   async delete({ scope, key, force = false } = {}) {
-    if (force) {
-      // Hard-delete requires MCP — REST only supports soft-archive (archived_at)
-      const res = await this._mcp('memory.delete', { scope, key, force: true });
-      return { ok: res.ok, error: res.error, networkError: res.networkError };
-    }
-    // Soft-archive via natural-key REST endpoint
     const p = new URLSearchParams({ scope, key });
+    if (force) p.set('force', 'true');
     const res = await this._rest(`/memories?${p}`, { method: 'DELETE' });
     return { ok: res.ok, error: res.error, networkError: res.networkError };
   }
@@ -155,12 +158,22 @@ class RemoteStore {
     return { ok: true, ...(payload ?? {}) };
   }
 
-  // Store-wide scope enumeration is NOT possible against the hosted REST surface:
-  // every read tool requires a scope, and there is no "list all scopes" endpoint.
-  // Signal that honestly so the `scopes` command shows a clear note rather than
-  // faking an inventory.
+  // Store-wide scope enumeration — every distinct scope the caller can see with
+  // its count of active (non-archived, non-expired) memories. `GET
+  // /memories/scopes` aggregates in Postgres, so the answer is exact at any size
+  // (see supabase/functions/memories/handlers/scopes.ts).
+  //
+  // The `scopes` array is the SAME `[{ scope, count }]` inventory shape
+  // `LocalStore.listScopes()` returns, so `scopes.mjs` feeds both through the
+  // same pure `filterScopeInventory`/`summarizeScopeInventory` helpers. Ordering
+  // is not relied upon (the server sorts by scope asc; the view re-sorts by
+  // scope type). Failures use this store's standard `{ ok:false, error,
+  // networkError }` envelope so the caller can degrade gracefully.
   async listScopes() {
-    return { ok: false, unsupported: true };
+    const res = await this._rest('/memories/scopes');
+    if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError, unusable: res.unusable };
+    const scopes = Array.isArray(res.data?.scopes) ? res.data.scopes : [];
+    return { ok: true, scopes: scopes.map((s) => ({ scope: s.scope, count: Number(s.count) || 0 })) };
   }
 
   // Connectivity probe for doctor — a transport check, not a memory op.
@@ -171,11 +184,15 @@ class RemoteStore {
       ? `${this.restBase.replace(/\/functions\/v1$/, '')}/functions/v1/health`
       : null;
     if (healthUrl) {
+      const tp = this._tp();
       try {
-        const res = await fetch(healthUrl, { signal: AbortSignal.timeout(5000) });
+        const res = await fetch(healthUrl, {
+          signal: AbortSignal.timeout(5000),
+          ...(tp ? { headers: { traceparent: tp } } : {}),
+        });
         return { ok: res.ok, httpStatus: res.status };
       } catch (e) { return { ok: false, networkError: String(e?.message ?? e) }; }
     }
-    return mcpCall(this.endpoint, this.token, 'tools/list', {});
+    return mcpCall(this.endpoint, this.token, 'tools/list', {}, { traceparent: this._tp() });
   }
 }

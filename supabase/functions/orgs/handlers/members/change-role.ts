@@ -5,10 +5,12 @@ import { createTracedClient } from '../../../_shared/otel.ts';
 import type { Span } from '../../../_shared/otel.ts';
 import { UpdateMemberRoleBodySchema } from '../../../_shared/schemas/member.ts';
 import { translateDbError } from '../../../_shared/api/errors.ts';
+import { auditUserId } from '../../../_shared/api/auth.ts';
+import { recordAudit } from '../../../_shared/audit.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
 
 export async function handleChangeRole(
-  req: Request, _auth: AuthContext, db: DbClient, span: Span,
+  req: Request, auth: AuthContext, db: DbClient, span: Span,
   params: Record<string, string>, cors: Record<string, string>,
 ): Promise<Response> {
   const slug = params.slug ?? '';
@@ -36,8 +38,9 @@ export async function handleChangeRole(
   if (lookupErr) { span.error(lookupErr.message); throw lookupErr; }
   if (!org) return notFound('Organization', cors);
 
+  const orgId = (org as { id: string }).id;
   const { error } = await tracedDb.rpc('lorekit_org_member_role', {
-    p_org_id: (org as { id: string }).id,
+    p_org_id: orgId,
     p_target_user_id: idV.data,
     p_role: bodyV.data.role,
   });
@@ -47,6 +50,21 @@ export async function handleChangeRole(
     span.error(error.message);
     throw error;
   }
+
+  // Audit AFTER the role change succeeded. Same shape as the dashboard's
+  // `changeMemberRole` (packages/web/src/lib/orgs.ts): the SUBJECT of the
+  // change is `resourceId`, the org it happened in is `target`.
+  await recordAudit(
+    db,
+    {
+      action: 'member.role_change',
+      resourceType: 'org_member',
+      resourceId: idV.data,
+      target: orgId,
+      metadata: { role: bodyV.data.role },
+    },
+    auditUserId(auth),
+  );
 
   return ok({ slug, userId: idV.data, role: bodyV.data.role }, cors);
 }

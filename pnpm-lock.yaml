@@ -102,6 +102,9 @@ importers:
 
   packages/mcp-core:
     dependencies:
+      '@lorekit/schemas':
+        specifier: workspace:*
+        version: link:../schemas
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.1
