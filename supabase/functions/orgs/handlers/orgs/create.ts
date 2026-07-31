@@ -1,4 +1,5 @@
 import type { AuthContext } from '../../../_shared/api/auth.ts';
+import { actorUserId } from '../../../_shared/api/auth.ts';
 import { created } from '../../../_shared/api/respond.ts';
 import { validateBody } from '../../../_shared/api/validate.ts';
 import { createTracedClient } from '../../../_shared/otel.ts';
@@ -13,7 +14,15 @@ export async function handleCreateOrg(req: Request, auth: AuthContext, db: DbCli
   if (!v.ok) return v.response;
   span.setAttributes({ 'lorekit.operation': 'orgs.create', 'lorekit.org_slug': v.data.slug });
   const tracedDb = createTracedClient(db, span);
-  const { data, error } = await tracedDb.rpc('lorekit_org_create', { p_slug: v.data.slug, p_name: v.data.name });
+  // `p_actor_user_id` names the new org's owner. The RPC accepts it only from a
+  // verified service_role connection (00041) and raises LK002 -> 403 when it
+  // resolves to nobody, so a `service`-tier (CI) call cannot create an ownerless
+  // org.
+  const { data, error } = await tracedDb.rpc('lorekit_org_create', {
+    p_slug: v.data.slug,
+    p_name: v.data.name,
+    p_actor_user_id: actorUserId(auth),
+  });
   if (error) { const m = translateDbError(error); if (m) return m.toResponse(cors); span.error(error.message); throw error; }
 
   // Same shape as web's createOrg (packages/web/src/lib/orgs.ts) so the REST

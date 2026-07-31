@@ -2166,6 +2166,458 @@ end;
 $$;
 
 
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- Org actor override — 00041_org_actor_override.sql
+--
+-- 00041 gives eight org RPCs a trailing `p_actor_user_id uuid default null`
+-- so the REST `orgs` function can serve `lk_*` API tokens, which reach
+-- Postgres over a SERVICE-ROLE connection with no `auth.uid()` of their own.
+--
+-- The whole safety of that rests on one claim, and this section exists to
+-- PROVE it rather than assert it in a comment: an `authenticated` caller's
+-- `p_actor_user_id` is ignored completely. Only `auth.role() = 'service_role'`
+-- — a claim PostgREST copies out of an already-verified JWT, never out of
+-- request input — unlocks naming an actor.
+--
+-- The sessions below are forged exactly like §7/§8/§19-§28 above: `set local
+-- role` plus a `request.jwt.claims` GUC. The service-role sessions set
+-- `{"role":"service_role"}` with NO `sub`, which is precisely the shape a
+-- service-key connection has — and the reason `auth.uid()` is NULL there.
+-- ═════════════════════════════════════════════════════════════════════════
+
+insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
+values
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-00000000ac01', 'authenticated', 'authenticated', 'lk-actor-owner@test.local',   now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-00000000ac02', 'authenticated', 'authenticated', 'lk-actor-outsider@test.local', now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-00000000ac03', 'authenticated', 'authenticated', 'lk-actor-member@test.local',  now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-00000000ac04', 'authenticated', 'authenticated', 'lk-actor-admin@test.local',   now(), now()),
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-00000000ac05', 'authenticated', 'authenticated', 'lk-actor-target@test.local',  now(), now());
+
+insert into orgs (id, slug, name, created_by) values
+  ('00000000-0000-0000-0000-00000000ac10', 'actor-override-org', 'Actor Override Org', '00000000-0000-0000-0000-00000000ac01'),
+  ('00000000-0000-0000-0000-00000000ac11', 'actor-override-del', 'Actor Override Delete', '00000000-0000-0000-0000-00000000ac01');
+
+insert into org_members (org_id, user_id, role) values
+  ('00000000-0000-0000-0000-00000000ac10', '00000000-0000-0000-0000-00000000ac01', 'owner'),
+  ('00000000-0000-0000-0000-00000000ac10', '00000000-0000-0000-0000-00000000ac04', 'admin'),
+  ('00000000-0000-0000-0000-00000000ac10', '00000000-0000-0000-0000-00000000ac03', 'member'),
+  ('00000000-0000-0000-0000-00000000ac10', '00000000-0000-0000-0000-00000000ac05', 'member'),
+  ('00000000-0000-0000-0000-00000000ac11', '00000000-0000-0000-0000-00000000ac01', 'owner');
+
+-- ── 50. lorekit_org_actor resolves the actor per the documented rule ─────────
+-- The resolver in isolation, before any RPC uses it. Four cases, which
+-- together are the whole contract:
+--   authenticated + override        -> auth.uid()  (the override is ignored)
+--   authenticated, no override      -> auth.uid()
+--   service_role + override         -> the override
+--   service_role, no override, no sub -> NULL      (fails closed downstream)
+do $$
+declare
+  v_actor uuid;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-00000000ac02","role":"authenticated"}', true);
+
+  select lorekit_org_actor('00000000-0000-0000-0000-00000000ac01') into v_actor;
+  assert v_actor = '00000000-0000-0000-0000-00000000ac02',
+    format('lorekit_org_actor: an authenticated caller must resolve to auth.uid(), never to p_actor_user_id — got %s', v_actor);
+
+  select lorekit_org_actor(null) into v_actor;
+  assert v_actor = '00000000-0000-0000-0000-00000000ac02',
+    'lorekit_org_actor: an authenticated caller with no override must still resolve to auth.uid()';
+  reset role;
+
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  select lorekit_org_actor('00000000-0000-0000-0000-00000000ac01') into v_actor;
+  assert v_actor = '00000000-0000-0000-0000-00000000ac01',
+    format('lorekit_org_actor: service_role must be able to name an actor — got %s', v_actor);
+
+  select lorekit_org_actor(null) into v_actor;
+  assert v_actor is null,
+    format('lorekit_org_actor: service_role with no override and no sub must resolve to NULL (fail closed) — got %s', v_actor);
+  reset role;
+end;
+$$;
+
+-- ── 51. NEGATIVE: an authenticated caller cannot act as someone else ─────────
+-- The security case this whole migration turns on. AC02 is not a member of
+-- the org at all; AC01 is its owner. AC02 passes AC01's user id as
+-- `p_actor_user_id` on every RPC that accepts one and must be denied every
+-- time, with the org left untouched.
+--
+-- The mirror-image case is asserted too: the OWNER passing an outsider's id
+-- must still SUCCEED, because the parameter is ignored in both directions —
+-- it is not "whose permissions to use", it is inert for this caller.
+do $$
+declare
+  v_denied_rename        boolean := false;
+  v_denied_delete        boolean := false;
+  v_denied_invite        boolean := false;
+  v_denied_member_role   boolean := false;
+  v_denied_member_remove boolean := false;
+  v_member_count         int;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-00000000ac02","role":"authenticated"}', true);
+
+  begin
+    perform lorekit_org_rename('00000000-0000-0000-0000-00000000ac10', 'Hijacked By Outsider',
+                               '00000000-0000-0000-0000-00000000ac01');
+  exception when sqlstate 'LK002' then v_denied_rename := true; end;
+
+  begin
+    perform lorekit_org_delete('00000000-0000-0000-0000-00000000ac10',
+                               '00000000-0000-0000-0000-00000000ac01');
+  exception when sqlstate 'LK002' then v_denied_delete := true; end;
+
+  begin
+    perform lorekit_org_invite('00000000-0000-0000-0000-00000000ac10', 'hijack@test.local', null, 'member',
+                               '00000000-0000-0000-0000-00000000ac01');
+  exception when sqlstate 'LK002' then v_denied_invite := true; end;
+
+  begin
+    perform lorekit_org_member_role('00000000-0000-0000-0000-00000000ac10',
+                                    '00000000-0000-0000-0000-00000000ac05', 'admin',
+                                    '00000000-0000-0000-0000-00000000ac01');
+  exception when sqlstate 'LK002' then v_denied_member_role := true; end;
+
+  begin
+    perform lorekit_org_member_remove('00000000-0000-0000-0000-00000000ac10',
+                                      '00000000-0000-0000-0000-00000000ac05',
+                                      '00000000-0000-0000-0000-00000000ac01');
+  exception when sqlstate 'LK002' then v_denied_member_remove := true; end;
+
+  -- A membership-gated READ must be empty too, not merely "denied".
+  select count(*) into v_member_count
+    from lorekit_org_members_list('00000000-0000-0000-0000-00000000ac10',
+                                  '00000000-0000-0000-0000-00000000ac01');
+  reset role;
+
+  assert v_denied_rename,
+    'IMPERSONATION: an authenticated non-member passed the owner id as p_actor_user_id and lorekit_org_rename did NOT deny it';
+  assert v_denied_delete,
+    'IMPERSONATION: lorekit_org_delete honoured an authenticated caller''s p_actor_user_id';
+  assert v_denied_invite,
+    'IMPERSONATION: lorekit_org_invite honoured an authenticated caller''s p_actor_user_id';
+  assert v_denied_member_role,
+    'IMPERSONATION: lorekit_org_member_role honoured an authenticated caller''s p_actor_user_id';
+  assert v_denied_member_remove,
+    'IMPERSONATION: lorekit_org_member_remove honoured an authenticated caller''s p_actor_user_id';
+  assert v_member_count = 0,
+    format('IMPERSONATION: lorekit_org_members_list leaked %s rows to an authenticated non-member naming the owner as actor', v_member_count);
+
+  assert (select name from orgs where id = '00000000-0000-0000-0000-00000000ac10') = 'Actor Override Org',
+    'IMPERSONATION: the org name changed — a denied rename still mutated state';
+  assert (select deleted_at from orgs where id = '00000000-0000-0000-0000-00000000ac10') is null,
+    'IMPERSONATION: the org was soft-deleted by a denied delete';
+  assert not exists (select 1 from org_invites where org_id = '00000000-0000-0000-0000-00000000ac10' and invitee_email = 'hijack@test.local'),
+    'IMPERSONATION: a denied invite still inserted a row';
+  assert (select role from org_members where org_id = '00000000-0000-0000-0000-00000000ac10' and user_id = '00000000-0000-0000-0000-00000000ac05') = 'member',
+    'IMPERSONATION: a denied role change still applied';
+end;
+$$;
+
+-- ── 52. The override is inert for an authenticated caller in BOTH directions ─
+-- The owner naming an outsider as `p_actor_user_id` must still act as the
+-- OWNER. If the parameter were honoured for authenticated callers this would
+-- fail with LK002 — so this is the positive half of §51's proof, and it also
+-- pins the backward-compatibility promise (the same call with the parameter
+-- omitted behaves identically).
+do $$
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-00000000ac01","role":"authenticated"}', true);
+
+  perform lorekit_org_rename('00000000-0000-0000-0000-00000000ac10', 'Renamed Ignoring Override',
+                             '00000000-0000-0000-0000-00000000ac02');
+  reset role;
+  assert (select name from orgs where id = '00000000-0000-0000-0000-00000000ac10') = 'Renamed Ignoring Override',
+    'lorekit_org_rename: the owner''s own rename must succeed even when p_actor_user_id names an outsider (the parameter is inert)';
+
+  -- Backward compatibility: the pre-00041 two-argument call still resolves.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-00000000ac01","role":"authenticated"}', true);
+  perform lorekit_org_rename('00000000-0000-0000-0000-00000000ac10', 'Renamed Without Override');
+  reset role;
+  assert (select name from orgs where id = '00000000-0000-0000-0000-00000000ac10') = 'Renamed Without Override',
+    'lorekit_org_rename: omitting p_actor_user_id must keep working (the web server actions never pass it)';
+end;
+$$;
+
+-- ── 53. service_role WITH an actor succeeds; WITHOUT one fails closed ────────
+-- The REST api_key path in one pair of assertions: the edge function resolves
+-- the token's owner and names them, and a service-role call that names nobody
+-- gets nothing — `lorekit_org_can(null, …)` is false via a NULL role.
+do $$
+declare
+  v_denied_no_actor boolean := false;
+  v_denied_outsider boolean := false;
+  v_members int;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- WITH an actor who is the owner: allowed.
+  perform lorekit_org_rename('00000000-0000-0000-0000-00000000ac10', 'Renamed By Service Role',
+                             '00000000-0000-0000-0000-00000000ac01');
+
+  -- WITHOUT an actor: the actor resolves to NULL and everything denies.
+  begin
+    perform lorekit_org_rename('00000000-0000-0000-0000-00000000ac10', 'Renamed By Nobody');
+  exception when sqlstate 'LK002' then v_denied_no_actor := true; end;
+
+  -- WITH an actor who is not a member: denied. Naming an actor is not a
+  -- capability grant — it only says WHO is asking.
+  begin
+    perform lorekit_org_rename('00000000-0000-0000-0000-00000000ac10', 'Renamed By Outsider',
+                               '00000000-0000-0000-0000-00000000ac02');
+  exception when sqlstate 'LK002' then v_denied_outsider := true; end;
+
+  -- The membership-gated read behaves the same way.
+  select count(*) into v_members
+    from lorekit_org_members_list('00000000-0000-0000-0000-00000000ac10',
+                                  '00000000-0000-0000-0000-00000000ac01');
+  reset role;
+
+  assert (select name from orgs where id = '00000000-0000-0000-0000-00000000ac10') = 'Renamed By Service Role',
+    'service_role naming the owner as p_actor_user_id must be able to rename';
+  assert v_denied_no_actor,
+    'FAIL-CLOSED: service_role with no p_actor_user_id must be denied (auth.uid() is NULL there)';
+  assert v_denied_outsider,
+    'service_role naming a NON-MEMBER as p_actor_user_id must be denied — the override is an identity, not a grant';
+  assert v_members = 4,
+    format('lorekit_org_members_list: service_role naming a member should see all 4 members, got %s', v_members);
+end;
+$$;
+
+-- ── 54. service_role reads fail closed with no actor / a non-member actor ────
+do $$
+declare
+  v_none int;
+  v_outsider int;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  select count(*) into v_none
+    from lorekit_org_members_list('00000000-0000-0000-0000-00000000ac10');
+  select count(*) into v_outsider
+    from lorekit_org_members_list('00000000-0000-0000-0000-00000000ac10',
+                                  '00000000-0000-0000-0000-00000000ac02');
+  reset role;
+
+  assert v_none = 0,
+    format('FAIL-CLOSED: lorekit_org_members_list with no actor must return an empty set, got %s rows', v_none);
+  assert v_outsider = 0,
+    format('lorekit_org_members_list: a non-member actor must see nothing, got %s rows', v_outsider);
+end;
+$$;
+
+-- ── 55. lorekit_org_create: a NULL actor RAISES; an explicit actor owns ──────
+-- create has no `lorekit_org_can` gate to fail closed on (it IS the
+-- owner-bootstrap path), so 00041 gives it an explicit guard. Without it a
+-- service-role call with no actor would insert an org whose `created_by` is
+-- NULL and then trip the NOT NULL on `org_members.user_id` — a confusing
+-- 500 instead of an honest 403.
+do $$
+declare
+  v_raised boolean := false;
+  v_org_id uuid;
+  v_before int;
+  v_after  int;
+begin
+  select count(*) into v_before from orgs;
+
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  begin
+    perform lorekit_org_create('actor-null-org', 'Should Never Exist');
+  exception when sqlstate 'LK002' then v_raised := true; end;
+
+  -- With an explicit actor it works, and that actor becomes the sole owner.
+  select lorekit_org_create('actor-service-org', 'Service Created Org',
+                            '00000000-0000-0000-0000-00000000ac02') into v_org_id;
+  reset role;
+
+  assert v_raised,
+    'lorekit_org_create: a service_role call with no resolvable actor must raise LK002, not create an ownerless org';
+  assert not exists (select 1 from orgs where slug = 'actor-null-org'),
+    'lorekit_org_create: the ownerless org must not have been inserted';
+
+  assert v_org_id is not null, 'lorekit_org_create: an actor-named create must return the new org id';
+  assert (select created_by from orgs where id = v_org_id) = '00000000-0000-0000-0000-00000000ac02',
+    'lorekit_org_create: created_by must be the named actor, not NULL';
+  assert (select count(*) from org_members where org_id = v_org_id) = 1,
+    'lorekit_org_create: exactly one membership row must be created';
+  assert (select role from org_members where org_id = v_org_id) = 'owner'
+     and (select user_id from org_members where org_id = v_org_id) = '00000000-0000-0000-0000-00000000ac02',
+    'lorekit_org_create: the named actor must be the sole owner';
+
+  select count(*) into v_after from orgs;
+  assert v_after = v_before + 1,
+    format('lorekit_org_create: expected exactly one new org, orgs went from %s to %s', v_before, v_after);
+end;
+$$;
+
+-- ── 56. The remaining actor-aware RPCs work end-to-end over service_role ─────
+-- invite -> revoke, role change, member removal. Each is exercised with the
+-- ADMIN as the named actor (not the owner) so the capability matrix is
+-- genuinely consulted rather than trivially satisfied.
+do $$
+declare
+  v_invite_id uuid;
+  v_denied_member boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- A plain member named as the actor cannot invite: the role matrix still rules.
+  begin
+    perform lorekit_org_invite('00000000-0000-0000-0000-00000000ac10', 'nope@test.local', null, 'member',
+                               '00000000-0000-0000-0000-00000000ac03');
+  exception when sqlstate 'LK002' then v_denied_member := true; end;
+
+  select lorekit_org_invite('00000000-0000-0000-0000-00000000ac10', 'actor-invite@test.local', null, 'member',
+                            '00000000-0000-0000-0000-00000000ac04') into v_invite_id;
+
+  perform lorekit_org_invite_revoke(v_invite_id, '00000000-0000-0000-0000-00000000ac04');
+
+  perform lorekit_org_member_role('00000000-0000-0000-0000-00000000ac10',
+                                  '00000000-0000-0000-0000-00000000ac05', 'viewer',
+                                  '00000000-0000-0000-0000-00000000ac04');
+
+  perform lorekit_org_member_remove('00000000-0000-0000-0000-00000000ac10',
+                                    '00000000-0000-0000-0000-00000000ac05',
+                                    '00000000-0000-0000-0000-00000000ac04');
+  reset role;
+
+  assert v_denied_member,
+    'lorekit_org_invite: a member named as the actor must still be denied the invite capability';
+  assert (select invited_by from org_invites where id = v_invite_id) = '00000000-0000-0000-0000-00000000ac04',
+    'lorekit_org_invite: invited_by must record the NAMED actor, not NULL';
+  assert (select status from org_invites where id = v_invite_id) = 'revoked',
+    'lorekit_org_invite_revoke: the invite must be revoked by the named actor';
+  assert not exists (select 1 from org_members
+                      where org_id = '00000000-0000-0000-0000-00000000ac10'
+                        and user_id = '00000000-0000-0000-0000-00000000ac05'),
+    'lorekit_org_member_remove: the target must be removed by the named actor';
+end;
+$$;
+
+-- ── 57. lorekit_org_delete is STILL a soft delete after the recreate ─────────
+-- 00041 re-creates several functions that were last defined in 00024/00025,
+-- not 00022. Copying the 00022 body would have silently reverted the
+-- soft-delete introduced by 00025 — a real, permanent data-loss regression
+-- that no other assertion in this file would catch. This is that guard.
+do $$
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  perform lorekit_org_delete('00000000-0000-0000-0000-00000000ac11',
+                             '00000000-0000-0000-0000-00000000ac01');
+  reset role;
+
+  assert exists (select 1 from orgs where id = '00000000-0000-0000-0000-00000000ac11'),
+    'REGRESSION: lorekit_org_delete hard-deleted the row — 00041 must keep 00025''s soft delete';
+  assert (select deleted_at from orgs where id = '00000000-0000-0000-0000-00000000ac11') is not null,
+    'lorekit_org_delete: deleted_at must be stamped';
+  assert not exists (
+    select 1 from lorekit_member_org_ids('00000000-0000-0000-0000-00000000ac01') as t(org_id)
+     where t.org_id = '00000000-0000-0000-0000-00000000ac11'),
+    'lorekit_org_delete: a soft-deleted org must drop out of lorekit_member_org_ids';
+end;
+$$;
+
+-- ── 58. Exactly one overload of each recreated RPC exists ────────────────────
+-- 00041 DROPs before re-creating. A `create or replace` would instead have
+-- left the old signature in place, and PostgREST's named-argument resolution
+-- would then fail with "could not choose the best candidate function" on
+-- every call from the dashboard — an outage, not a degradation.
+do $$
+declare
+  v_fn   text;
+  v_n    int;
+  v_fns  text[] := array[
+    'lorekit_org_create', 'lorekit_org_rename', 'lorekit_org_delete',
+    'lorekit_org_invite', 'lorekit_org_invite_revoke',
+    'lorekit_org_member_remove', 'lorekit_org_member_role',
+    'lorekit_org_members_list'
+  ];
+begin
+  assert array_length(v_fns, 1) = 8,
+    'overload guard: expected 8 functions to check (anti-vacuity)';
+
+  foreach v_fn in array v_fns loop
+    select count(*) into v_n
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname = v_fn;
+    assert v_n = 1,
+      format('%s has %s overloads — 00041 must DROP the pre-existing signature, not create a second one', v_fn, v_n);
+
+    -- ...and the surviving one must actually accept the new parameter.
+    assert exists (
+      select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public' and p.proname = v_fn
+         and 'p_actor_user_id' = any (p.proargnames)),
+      format('%s does not declare p_actor_user_id', v_fn);
+  end loop;
+
+  -- The three deliberately-untouched RPCs must NOT have gained one.
+  foreach v_fn in array array['lorekit_org_invite_accept', 'lorekit_org_invite_decline', 'lorekit_org_leave'] loop
+    assert not exists (
+      select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public' and p.proname = v_fn
+         and 'p_actor_user_id' = any (p.proargnames)),
+      format('%s gained an actor override — accept/decline match the invite against VERIFIED JWT identity claims, which service_role has no equivalent of (see 00041''s header)', v_fn);
+  end loop;
+end;
+$$;
+
+-- ── 59. EXECUTE grants survived the drop/recreate ────────────────────────────
+-- DROP FUNCTION discards the grants with the function. Losing them would turn
+-- every dashboard org action into a permission-denied error.
+do $$
+declare
+  v_sig text;
+  v_sigs text[] := array[
+    'lorekit_org_actor(uuid)',
+    'lorekit_org_create(text, text, uuid)',
+    'lorekit_org_rename(uuid, text, uuid)',
+    'lorekit_org_delete(uuid, uuid)',
+    'lorekit_org_invite(uuid, text, text, text, uuid)',
+    'lorekit_org_invite_revoke(uuid, uuid)',
+    'lorekit_org_member_remove(uuid, uuid, uuid)',
+    'lorekit_org_member_role(uuid, uuid, text, uuid)',
+    'lorekit_org_members_list(uuid, uuid)'
+  ];
+begin
+  assert array_length(v_sigs, 1) = 9,
+    'grant guard: expected 9 signatures to check (anti-vacuity)';
+
+  foreach v_sig in array v_sigs loop
+    assert has_function_privilege('authenticated', v_sig, 'EXECUTE'),
+      format('authenticated lost EXECUTE on %s', v_sig);
+    assert has_function_privilege('service_role', v_sig, 'EXECUTE'),
+      format('service_role lost EXECUTE on %s', v_sig);
+  end loop;
+
+  -- PII-bearing and identity-resolving functions stay off `anon`, unchanged
+  -- from 00024/00022.
+  assert not has_function_privilege('anon', 'lorekit_org_members_list(uuid, uuid)', 'EXECUTE'),
+    'lorekit_org_members_list must not be granted to anon — it returns other users'' handles and avatars';
+  assert not has_function_privilege('anon', 'lorekit_org_actor(uuid)', 'EXECUTE'),
+    'lorekit_org_actor must not be granted to anon';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
