@@ -14,6 +14,7 @@
  * WebhookSecretManager, as the plan specifies (WRAP: sibling component).
  */
 
+import type { ReactNode } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Github,
@@ -38,28 +39,49 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-// ── Install button — links to the App's public installation page ─────────────
+// ── Install link — sends the user to the App's public installation page ──────
 
 /**
- * Anchor styled as a primary button that sends the user to GitHub's public
- * "install this App" page. Renders only when an install URL is configured
- * (NEXT_PUBLIC_GITHUB_APP_SLUG is set); callers pass `null` otherwise.
+ * Anchor to GitHub's public "install this App" page. Renders only when an
+ * install URL is configured (NEXT_PUBLIC_GITHUB_APP_SLUG is set); callers pass
+ * `null` otherwise.
  *
- * `label` lets the empty state say "Install GitHub App" while an existing
- * installation says "Add repositories" (the same page manages both).
+ * One component, two variants, so the new-tab semantics (target / rel / the
+ * screen-reader cue) live in exactly one place and can't drift:
+ *   - `primary` — the empty-state "Install GitHub App" call to action.
+ *   - `ghost`   — the quieter "Add repositories" action beside the count when
+ *                 an installation already exists (the same page manages both).
  */
-function InstallAppButton({ url, label }: { url: string; label: string }) {
+function AppInstallLink({
+  url,
+  label,
+  variant,
+  icon,
+}: {
+  url: string;
+  label: string;
+  variant: 'primary' | 'ghost';
+  icon: ReactNode;
+}) {
+  const focusRing =
+    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]';
+  const variantClass =
+    variant === 'primary'
+      ? 'gap-2 border border-[var(--color-accent-glow)] bg-[var(--color-accent-subtle)] px-3.5 py-2 text-xs text-[var(--color-accent)] hover:bg-[var(--color-accent)]/15'
+      : 'ml-auto gap-1.5 border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-[11px] text-[var(--color-content-secondary)] hover:border-[var(--color-accent-glow)] hover:text-[var(--color-accent)]';
   return (
     <a
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[var(--color-accent-glow)] bg-[var(--color-accent-subtle)] px-3.5 py-2 text-xs font-medium text-[var(--color-accent)] transition-colors hover:bg-[var(--color-accent)]/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
+      className={`inline-flex min-h-11 items-center rounded-lg font-medium transition-colors ${variantClass} ${focusRing}`}
     >
-      <Github className="size-3.5 shrink-0" aria-hidden />
+      {icon}
       {label}
       <span className="sr-only"> (opens in a new tab)</span>
-      <ExternalLink className="size-3 shrink-0 opacity-70" aria-hidden />
+      {variant === 'primary' && (
+        <ExternalLink className="size-3 shrink-0 opacity-70" aria-hidden />
+      )}
     </a>
   );
 }
@@ -160,7 +182,12 @@ function NoInstallations({ installUrl }: { installUrl: string | null }) {
         is covered instantly.
       </p>
       {installUrl ? (
-        <InstallAppButton url={installUrl} label="Install GitHub App" />
+        <AppInstallLink
+          url={installUrl}
+          label="Install GitHub App"
+          variant="primary"
+          icon={<Github className="size-3.5 shrink-0" aria-hidden />}
+        />
       ) : (
         <p className="text-[10px] text-[var(--color-content-tertiary)]">
           The App is available once GITHUB_APP_ENABLED is set post-merge.
@@ -203,16 +230,12 @@ export function GithubAppManager({ installations, installUrl }: GithubAppManager
         </span>
         {/* Add-repos action, shown beside the count once at least one install exists */}
         {installUrl && installations.length > 0 && (
-          <a
-            href={installUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-auto inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-[11px] font-medium text-[var(--color-content-secondary)] transition-colors hover:border-[var(--color-accent-glow)] hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
-          >
-            <Plus className="size-3 shrink-0" aria-hidden />
-            Add repositories
-            <span className="sr-only"> (opens in a new tab)</span>
-          </a>
+          <AppInstallLink
+            url={installUrl}
+            label="Add repositories"
+            variant="ghost"
+            icon={<Plus className="size-3 shrink-0" aria-hidden />}
+          />
         )}
       </div>
 

@@ -10,6 +10,12 @@
  *
  * Returns null when the slug is unset — the App is not registered yet, so the
  * UI falls back to the docs-runbook note instead of linking to a dead page.
+ *
+ * Ordering caveat: webhook coverage also requires `GITHUB_APP_ENABLED=true`, a
+ * Supabase secret the web app cannot read. Set this slug only after that flag
+ * is on; otherwise the button offers an install the backend silently ignores.
+ * The runbook (docs/github-app.md) sequences the flag before the slug for this
+ * reason.
  */
 export function resolveGithubAppInstallUrl(): string | null {
   const slug = process.env['NEXT_PUBLIC_GITHUB_APP_SLUG']?.trim();
