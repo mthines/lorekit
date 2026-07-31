@@ -12,7 +12,14 @@
 
 export interface TagCount {
   tag: string;
-  count: number;
+  /**
+   * How many memories carry the label, or `null` when that is unknown — a
+   * selected label the catalog does not cover (an empty or failed catalog
+   * fetch, or a label from a shared link that no longer matches anything).
+   * Renderers show a count only when it is a real number; inventing `0` for an
+   * unknown would state something false about the data.
+   */
+  count: number | null;
 }
 
 /**
@@ -67,42 +74,33 @@ export function tallyTags(rows: readonly { tags?: string[] | null }[]): TagCount
     .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
 }
 
-/**
- * Whether a memory carries EVERY selected label (conjunctive match).
- *
- * AND, not OR: selecting `perf` then `regression` means "memories about a perf
- * regression", which is what narrowing a list is for. An empty selection
- * matches everything, so the filter is inert until the user picks a label.
- *
- * This mirrors the server-side `.contains('tags', …)` predicate — it exists so
- * client-side surfaces (and tests) can apply the same rule without a round trip.
- */
-export function matchesAllTags(
-  row: { tags?: string[] | null },
-  selected: readonly string[],
-): boolean {
-  const wanted = normalizeTags(selected);
-  if (wanted.length === 0) return true;
-  const owned = new Set(normalizeTags(row.tags));
-  return wanted.every((tag) => owned.has(tag));
-}
 
 /**
  * The labels to render in the filter bar, capped at `limit`.
  *
- * Selected labels are always included even when they fall outside the cap —
- * an active filter chip that disappears from its own bar is unremovable
- * without editing the URL.
+ * Every selected label is included even when it falls outside the cap, and
+ * even when the catalog does not contain it at all (an empty or failed catalog
+ * fetch, or a label from a shared link that now matches nothing) — carried in
+ * with `count: null`. An active filter whose chip is missing from its own bar
+ * cannot be switched off without hand-editing the URL, which is the one state
+ * this bar must never reach.
  */
 export function visibleTags(
   catalog: readonly TagCount[],
   selected: readonly string[],
   limit: number,
 ): TagCount[] {
-  if (limit <= 0) return [];
-  const wanted = new Set(normalizeTags(selected));
-  const head = catalog.slice(0, limit);
+  const wanted = normalizeTags(selected);
+  const wantedSet = new Set(wanted);
+  const head = limit > 0 ? catalog.slice(0, limit) : [];
   const shown = new Set(head.map((t) => t.tag));
-  const pinned = catalog.filter((t) => wanted.has(t.tag) && !shown.has(t.tag));
-  return [...head, ...pinned];
+
+  const pinnedFromCatalog = catalog.filter((t) => wantedSet.has(t.tag) && !shown.has(t.tag));
+  for (const t of pinnedFromCatalog) shown.add(t.tag);
+
+  const uncatalogued: TagCount[] = wanted
+    .filter((tag) => !shown.has(tag))
+    .map((tag) => ({ tag, count: null }));
+
+  return [...head, ...pinnedFromCatalog, ...uncatalogued];
 }

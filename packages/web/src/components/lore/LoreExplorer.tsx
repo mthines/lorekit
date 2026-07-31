@@ -164,9 +164,13 @@ function LabelFilterBar({
     [catalog, selected, expanded],
   );
 
-  if (catalog.length === 0) return null;
+  // Hidden only when there is genuinely nothing to act on. A non-empty
+  // selection keeps the bar mounted even with an empty or failed catalog —
+  // otherwise a shared `?tags=` link filters the list server-side with no chip
+  // left to switch it off.
+  if (shown.length === 0) return null;
 
-  const hiddenCount = catalog.length - shown.length;
+  const hiddenCount = Math.max(catalog.length - shown.length, 0);
 
   return (
     <div
@@ -193,8 +197,11 @@ function LabelFilterBar({
             aria-pressed={active}
             // Without this the chip announces as "perf 12" — the bare count
             // reads as part of the label rather than as how many memories
-            // carry it.
-            aria-label={`${tag} — ${count} ${count === 1 ? 'memory' : 'memories'}`}
+            // carry it. A `null` count is unknown, so it is stated as neither
+            // a number nor a misleading zero.
+            aria-label={
+              count === null ? tag : `${tag} — ${count} ${count === 1 ? 'memory' : 'memories'}`
+            }
             className={[
               'flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors duration-150',
               active
@@ -203,7 +210,9 @@ function LabelFilterBar({
             ].join(' ')}
           >
             {tag}
-            <span className="text-[var(--color-content-tertiary)]">{count}</span>
+            {count !== null && (
+              <span className="text-[var(--color-content-tertiary)]">{count}</span>
+            )}
           </button>
         );
       })}

@@ -3,7 +3,6 @@ import {
   normalizeTags,
   toggleTag,
   tallyTags,
-  matchesAllTags,
   visibleTags,
   type TagCount,
 } from './tag-filter';
@@ -77,23 +76,6 @@ describe('tallyTags', () => {
   });
 });
 
-describe('matchesAllTags', () => {
-  it('matches everything when nothing is selected', () => {
-    expect(matchesAllTags({ tags: [] }, [])).toBe(true);
-  });
-
-  it('requires every selected label (AND, not OR)', () => {
-    const row = { tags: ['perf', 'ci'] };
-    expect(matchesAllTags(row, ['perf'])).toBe(true);
-    expect(matchesAllTags(row, ['perf', 'ci'])).toBe(true);
-    expect(matchesAllTags(row, ['perf', 'flaky'])).toBe(false);
-  });
-
-  it('does not match a row with no labels once a label is selected', () => {
-    expect(matchesAllTags({ tags: null }, ['perf'])).toBe(false);
-  });
-});
-
 describe('visibleTags', () => {
   const catalog: TagCount[] = [
     { tag: 'a', count: 5 },
@@ -114,7 +96,20 @@ describe('visibleTags', () => {
     expect(visibleTags(catalog, ['a'], 2).map((t) => t.tag)).toEqual(['a', 'b']);
   });
 
-  it('returns nothing for a non-positive limit', () => {
-    expect(visibleTags(catalog, ['a'], 0)).toEqual([]);
+  it('carries a selected label the catalog does not know with an unknown count', () => {
+    // An empty/failed catalog must still surface the active chips, otherwise a
+    // shared `?tags=` link filters with no way to switch the filter off.
+    expect(visibleTags([], ['perf', 'ci'], 12)).toEqual([
+      { tag: 'perf', count: null },
+      { tag: 'ci', count: null },
+    ]);
+  });
+
+  it('still surfaces the selection when the cap is non-positive', () => {
+    expect(visibleTags(catalog, ['a'], 0)).toEqual([{ tag: 'a', count: 5 }]);
+  });
+
+  it('returns nothing when there is no catalog and no selection', () => {
+    expect(visibleTags([], [], 0)).toEqual([]);
   });
 });
