@@ -189,3 +189,7 @@ to PostgREST lives in `@lorekit/schemas/filter` (`serializeFilterGroup`), applie
 3. Use `validateBody` / `validateQuery` / `validateUuid` from `_shared/api/validate.ts`.
 4. Always create a child span: `span.child('lorekit.memories.{operation}')`.
 5. Translate DB errors with `translateDbError` before re-throwing.
+6. If it mutates, honour dry-run: after all validation/auth/ownership checks and BEFORE the first
+   write, `if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);`
+   (`_shared/dry-run.ts` + `_shared/api/respond.ts`). `dry-run-coverage.spec.ts` fails the build
+   for any mutating route that skips it.

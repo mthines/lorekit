@@ -64,7 +64,22 @@ describe('generateSpec', () => {
     ]) {
       expect(spec.components.schemas[name], `missing component: ${name}`).toBeDefined();
     }
-    expect(spec.components.securitySchemes.BearerAuth).toBeDefined();
+    // One scheme: the session token (JWT) works on every endpoint, so the docs
+    // need a single Authorize field the user fills once.
+    expect(spec.components.securitySchemes.SessionJwt).toBeDefined();
+  });
+
+  // Dry-run safety flag: the docs default `X-LoreKit-Dry-Run` to true on every
+  // mutating operation, and never attach it to a read.
+  it('attaches the dry-run header to mutating operations only', () => {
+    const post = spec.paths['/memories']!.post as { parameters?: Array<{ name: string; in: string; schema?: { default?: unknown } }> };
+    const dryRun = post.parameters?.find((p) => p.name === 'X-LoreKit-Dry-Run');
+    expect(dryRun, 'POST /memories must document X-LoreKit-Dry-Run').toBeDefined();
+    expect(dryRun?.in).toBe('header');
+    expect(dryRun?.schema?.default).toBe(true);
+
+    const get = spec.paths['/memories']!.get as { parameters?: Array<{ name: string }> };
+    expect((get.parameters ?? []).some((p) => p.name === 'X-LoreKit-Dry-Run')).toBe(false);
   });
 
   // The hard-delete flag is a query param on BOTH delete forms — a caller that

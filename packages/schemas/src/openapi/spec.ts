@@ -274,11 +274,14 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   const description = [
     'Persistent memory for AI coding agents.',
     '',
-    '**Authentication** — every endpoint takes a Bearer token. Generate a LoreKit API',
-    'token in the dashboard (**Settings → API keys**) and paste it into the **Authorize**',
-    'box above. Use a read-only `lk_ro_*` token to explore safely, or `lk_rw_*` to test',
-    'writes. The Organizations, Members and Invites endpoints require a Supabase session',
-    'token instead — grab one from **Settings → API keys → “Session token for API docs”**.',
+    '**Authentication** — every endpoint accepts a Bearer token: a LoreKit API token',
+    '(`lk_ro_*` to explore, `lk_rw_*` to test writes) or your Supabase session (JWT).',
+    'Generate a token from [Settings → API keys](/settings/api-keys) and paste it into the',
+    '**Authorize** box above — one token works on every endpoint, orgs included.',
+    '',
+    '**Safe by default** — destructive calls run in *dry-run* mode: the `X-LoreKit-Dry-Run`',
+    'header defaults to `true`, so create / update / delete requests are validated and',
+    'authorized but make **no changes**. Clear that header on an operation to execute for real.',
   ].join('\n');
 
   const gen = new OpenApiGeneratorV31(registry.definitions);
@@ -299,6 +302,28 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     { name: 'Memories', tags: ['Memories'] },
     { name: 'Organizations', tags: ['Orgs', 'Members', 'Invites'] },
   ];
+
+  // Attach the dry-run header to every mutating operation, centrally rather
+  // than per-registerPath. It defaults to `true` so Scalar pre-fills it and the
+  // docs are safe by default; the caller clears it to execute for real. The
+  // backend contract lives in `_shared/dry-run.ts` (isDryRunHeader).
+  const MUTATING_METHODS = new Set(['post', 'patch', 'delete', 'put']);
+  const dryRunParam = {
+    name: 'X-LoreKit-Dry-Run',
+    in: 'header',
+    required: false,
+    description:
+      'Safe-explore mode. When `true` (the default here), the request is validated and ' +
+      'authorized but makes NO changes. Set it to `false` to execute for real.',
+    schema: { type: 'boolean', default: true },
+  };
+  const paths = (doc['paths'] ?? {}) as Record<string, Record<string, { parameters?: unknown[] }>>;
+  for (const operations of Object.values(paths)) {
+    for (const [method, operation] of Object.entries(operations)) {
+      if (!MUTATING_METHODS.has(method)) continue;
+      operation.parameters = [...(operation.parameters ?? []), dryRunParam];
+    }
+  }
 
   _cachedSpec = doc;
   return _cachedSpec;
