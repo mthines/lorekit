@@ -23,7 +23,7 @@ import {
   User,
   CircleCheck,
   Info,
-  Plus,
+  Settings2,
   ExternalLink,
 } from 'lucide-react';
 import type { GithubInstallation } from '@/lib/github-installations';
@@ -49,8 +49,8 @@ function relativeTime(iso: string): string {
  * One component, two variants, so the new-tab semantics (target / rel / the
  * screen-reader cue) live in exactly one place and can't drift:
  *   - `primary` — the empty-state "Install GitHub App" call to action.
- *   - `ghost`   — the quieter "Add repositories" action beside the count when
- *                 an installation already exists (the same page manages both).
+ *   - `ghost`   — the quieter "Manage" action beside the count when an
+ *                 installation already exists (the same page manages both).
  */
 function AppInstallLink({
   url,
@@ -228,13 +228,14 @@ export function GithubAppManager({ installations, installUrl }: GithubAppManager
         <span className="rounded-full border border-[var(--color-accent-glow)] bg-[var(--color-accent-subtle)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-accent)]">
           {installations.length}
         </span>
-        {/* Add-repos action, shown beside the count once at least one install exists */}
+        {/* Manage action — opens the App's config page (add/remove repos, suspend,
+            uninstall). Shown beside the count once at least one install exists. */}
         {installUrl && installations.length > 0 && (
           <AppInstallLink
             url={installUrl}
-            label="Add repositories"
+            label="Manage"
             variant="ghost"
-            icon={<Plus className="size-3 shrink-0" aria-hidden />}
+            icon={<Settings2 className="size-3 shrink-0" aria-hidden />}
           />
         )}
       </div>
