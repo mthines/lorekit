@@ -295,8 +295,19 @@ After adding variables, **Redeploy** in Vercel — `NEXT_PUBLIC_*` vars are bake
 
 The token is **not committed to git** — it is injected into the published tarball
 at release time from a GitHub Actions secret, so it can be rotated without a code
-change. The endpoint (`DEFAULT_ENDPOINT`) and dataset (`DEFAULT_DATASET`) are
-committed defaults in `packages/cli/src/telemetry.mjs`.
+change. The endpoint (`DEFAULT_ENDPOINT`) and dataset (`DEFAULT_DATASET`, now
+`default`) are committed defaults in `packages/cli/src/telemetry.mjs`.
+
+**Dataset precedence** (highest first): an explicit `Dash0-Dataset` passed via
+`OTEL_EXPORTER_OTLP_HEADERS` is preserved and never overwritten; otherwise
+`DASH0_DATASET`; otherwise the `default` fallback. The edge functions
+(`_shared/otel.ts`) follow the same order.
+
+> **Note:** the CLI `service.name` was `lorekit-cli` before this and is now `cli`
+> (aligning with the namespace-grouped `api` / `web` / `mcp-node` names). This is a
+> rename, not an alias — CLI telemetry emitted before and after the change lives
+> under two distinct `service.name` values in Dash0. Query `service.namespace = lorekit`
+> to see the CLI across both, or union `service.name in (cli, lorekit-cli)` for history.
 
 1. Create a Dash0 token with **Ingesting only** permissions (it can `POST` spans
    but cannot read, query, or manage anything — same reasoning as the browser

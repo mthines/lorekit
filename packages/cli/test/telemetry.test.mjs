@@ -73,6 +73,28 @@ test('Dash0-Dataset defaults to "default" when DASH0_DATASET is unset', () => {
   assert.equal(cfg.headers['Dash0-Dataset'], 'default');
 });
 
+test('DASH0_DATASET overrides the "default" fallback', () => {
+  const cfg = resolveTelemetryConfig({ ...ENABLED_ENV, DASH0_DATASET: 'staging' });
+  assert.equal(cfg.headers['Dash0-Dataset'], 'staging');
+});
+
+test('an explicit Dash0-Dataset in OTEL_EXPORTER_OTLP_HEADERS is never clobbered', () => {
+  // Regression: the "default" fallback must not overwrite a dataset the caller
+  // supplied via OTEL_EXPORTER_OTLP_HEADERS, whether or not DASH0_DATASET is set.
+  const viaHeaders = resolveTelemetryConfig({
+    OTEL_EXPORTER_OTLP_ENDPOINT: 'https://otel.example.com',
+    OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer abc, Dash0-Dataset=custom',
+  });
+  assert.equal(viaHeaders.headers['Dash0-Dataset'], 'custom');
+
+  const headerWinsOverEnv = resolveTelemetryConfig({
+    OTEL_EXPORTER_OTLP_ENDPOINT: 'https://otel.example.com',
+    OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer abc, Dash0-Dataset=custom',
+    DASH0_DATASET: 'staging',
+  });
+  assert.equal(headerWinsOverEnv.headers['Dash0-Dataset'], 'custom');
+});
+
 // ── build-time token injection ─────────────────────────────────────────────────
 
 test('committed TELEMETRY_TOKEN is empty (no secret in git)', () => {

@@ -55,10 +55,13 @@ function getOtlpConfig(): { endpoint: string; headers: Record<string, string> } 
     const idx = pair.indexOf('=');
     if (idx > 0) headers[pair.slice(0, idx).trim()] = pair.slice(idx + 1).trim();
   }
-  // Default to the `default` Dash0 dataset unless overridden, so edge telemetry
-  // lands alongside every other LoreKit component (all `default`).
-  const dataset = Deno.env.get('DASH0_DATASET') || 'default';
-  headers['Dash0-Dataset'] = dataset;
+  // Dataset routing, highest precedence first: an explicit `Dash0-Dataset`
+  // already parsed from OTEL_EXPORTER_OTLP_HEADERS wins and is never clobbered;
+  // otherwise DASH0_DATASET; otherwise `default`, so edge telemetry lands
+  // alongside every other LoreKit component.
+  if (!('Dash0-Dataset' in headers)) {
+    headers['Dash0-Dataset'] = Deno.env.get('DASH0_DATASET') || 'default';
+  }
 
   return { endpoint: endpoint.replace(/\/+$/, ''), headers };
 }

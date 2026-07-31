@@ -127,8 +127,13 @@ export function resolveTelemetryConfig(env = process.env, repoConfig) {
     return { enabled: false };
   }
 
-  const dataset = env.DASH0_DATASET || DEFAULT_DATASET;
-  if (dataset) headers['Dash0-Dataset'] = dataset;
+  // Dataset routing, highest precedence first: an explicit `Dash0-Dataset`
+  // already parsed from OTEL_EXPORTER_OTLP_HEADERS wins and is never clobbered;
+  // otherwise DASH0_DATASET; otherwise the baked-in DEFAULT_DATASET (`default`).
+  if (!('Dash0-Dataset' in headers)) {
+    const dataset = env.DASH0_DATASET || DEFAULT_DATASET;
+    if (dataset) headers['Dash0-Dataset'] = dataset;
+  }
 
   return { enabled: true, endpoint, headers };
 }
