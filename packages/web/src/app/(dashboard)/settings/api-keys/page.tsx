@@ -3,6 +3,7 @@ import { Key, ArrowUpRight } from 'lucide-react';
 import { listTokens } from '@/lib/tokens';
 import { resolveMcpUrls } from '@/lib/mcp-url';
 import { OnboardingStepContent } from '@/components/dashboard/OnboardingStepContent';
+import { SessionTokenPanel } from '@/components/dashboard/SessionTokenPanel';
 import { SectionPanel } from '@/components/ui/SectionPanel';
 
 export const metadata: Metadata = { title: 'API keys — Settings' };
@@ -19,6 +20,7 @@ export default async function ApiKeysSettingsPage() {
       subtitle="Tokens your agents use to reach LoreKit. The secret is shown once at creation — we store only the prefix, so it can never be revealed again."
     >
       <OnboardingStepContent step="connect" mcpUrl={mcpUrl} initialTokens={tokens} />
+      <SessionTokenPanel />
       <a
         href="/api-docs"
         target="_blank"

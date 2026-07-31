@@ -6,6 +6,7 @@ import { DocsNav } from '@/components/docs/DocsNav';
 import { DocsSearch } from '@/components/docs/DocsSearch';
 import { DocsAuthCta } from '@/components/docs/DocsAuthCta';
 import { DocsCommands } from '@/components/docs/DocsCommands';
+import { DocsSessionCommands } from '@/components/docs/DocsSessionCommands';
 import { getDocsSearchIndex } from '@/lib/docs/content';
 import { CommandPaletteProvider } from '@/components/command/CommandPaletteProvider';
 import { CommandPalette } from '@/components/command/CommandPalette';
@@ -35,6 +36,7 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
     <CommandPaletteProvider>
       <CommandPalette />
       <DocsCommands />
+      <DocsSessionCommands />
       <div className="flex min-h-screen flex-col bg-[var(--color-bg)]">
         <header className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-x-4 gap-y-2.5 border-b border-[var(--color-border)] bg-[var(--color-bg)]/90 px-6 py-2.5 backdrop-blur sm:h-14 sm:py-0 md:px-10">
           <Link href="/" className="order-1 flex shrink-0 items-center gap-2.5">
