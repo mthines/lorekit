@@ -91,7 +91,15 @@ async function listKeys(archived: boolean): Promise<unknown[]> {
   return ((data as JsonObj).entries as JsonObj[]).map((e) => e.key);
 }
 
-describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', () => {
+// A generous per-test timeout: these suites run against a LIVE endpoint (the
+// deploy pipeline points them at the hosted preview project), and the archive /
+// restore cases chain 4–5 sequential HTTP round-trips. At hosted latency
+// (~0.5–1.3s each) that overruns vitest's 5s default, even though every call
+// succeeds; locally each round-trip is sub-ms so this never bites. 30s is the
+// ceiling per test, not an expected duration.
+const REMOTE_TEST_TIMEOUT = 30_000;
+
+describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { timeout: REMOTE_TEST_TIMEOUT }, () => {
   let createdIdA = '';
   let createdIdB = '';
   let createdIdR = '';
@@ -102,7 +110,10 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', () =
     for (const id of [createdIdA, createdIdB, createdIdR, createdIdBackdated].filter(Boolean)) {
       await api('DELETE', `/${id}?force=true`).catch(() => undefined);
     }
-  });
+    // Hooks use hookTimeout (10s default), NOT the suite `timeout` above — and
+    // this cleanup chains 4 sequential DELETEs at hosted latency, so give it the
+    // same 30s ceiling as the tests.
+  }, REMOTE_TEST_TIMEOUT);
 
   // 1. list — baseline ────────────────────────────────────────────────────────
   it('GET /memories — returns a paged response', async () => {
@@ -538,7 +549,7 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', () =
  * The writes are fire-and-forget relative to the HTTP response, so every
  * read-back polls briefly rather than reading once.
  */
-describe.skipIf(SKIP)('LoreKit memories API — audit trail read-back (integration)', () => {
+describe.skipIf(SKIP)('LoreKit memories API — audit trail read-back (integration)', { timeout: REMOTE_TEST_TIMEOUT }, () => {
   const AUDIT_KEY = `${KEY_PREFIX}-audit`;
   /** Set by the capability probe in beforeAll. */
   let auditReadable = false;
@@ -590,7 +601,7 @@ describe.skipIf(SKIP)('LoreKit memories API — audit trail read-back (integrati
 
   afterAll(async () => {
     if (auditId) await api('DELETE', `/${auditId}?force=true`).catch(() => undefined);
-  });
+  }, REMOTE_TEST_TIMEOUT);
 
   it('the audit_log capability probe ran and reported a definite result', () => {
     // Anti-vacuity: proves beforeAll executed and reached a decision, so a

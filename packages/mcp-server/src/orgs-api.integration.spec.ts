@@ -88,11 +88,19 @@ async function restFetch(
   return { status: res.status, data };
 }
 
-describe.skipIf(SKIP)('LoreKit orgs API — smoke tests (integration)', () => {
+// Live-endpoint suite (hosted preview in the deploy pipeline): the org
+// lifecycle cases chain several sequential RPC round-trips, which overrun
+// vitest's 5s default at hosted latency though each call succeeds. Ceiling per
+// test, not an expected duration; sub-ms locally so it never bites there.
+const REMOTE_TEST_TIMEOUT = 30_000;
+
+describe.skipIf(SKIP)('LoreKit orgs API — smoke tests (integration)', { timeout: REMOTE_TEST_TIMEOUT }, () => {
   afterAll(async () => {
-    // Best-effort cleanup — delete the test org if it still exists
+    // Best-effort cleanup — delete the test org if it still exists.
+    // Hooks use hookTimeout (10s default), not the suite `timeout`; give this
+    // live-endpoint cleanup the same 30s ceiling.
     await restFetch('DELETE', `/${TEST_SLUG}`).catch(() => undefined);
-  });
+  }, REMOTE_TEST_TIMEOUT);
 
   // 1. auth: no token → 401/403 ───────────────────────────────────────────────
   it('GET /orgs — returns 401 or 403 when no auth token is provided', async () => {
@@ -224,7 +232,7 @@ describe.skipIf(SKIP)('LoreKit orgs API — smoke tests (integration)', () => {
  * NOTE: `.github/workflows/ci.yml` does NOT set `LOREKIT_SMOKE_JWT`, so this
  * whole file (pre-existing behaviour, unchanged here) does not run in CI.
  */
-describe.skipIf(SKIP)('LoreKit orgs API — audit trail read-back (integration)', () => {
+describe.skipIf(SKIP)('LoreKit orgs API — audit trail read-back (integration)', { timeout: REMOTE_TEST_TIMEOUT }, () => {
   const AUDIT_SLUG = `smoke-${Date.now()}-audit`;
   const ORG_NAME = 'Audit Read-Back Org';
   const startedAt = new Date().toISOString();
@@ -288,7 +296,7 @@ describe.skipIf(SKIP)('LoreKit orgs API — audit trail read-back (integration)'
 
   afterAll(async () => {
     await restFetch('DELETE', `/${AUDIT_SLUG}`).catch(() => undefined);
-  });
+  }, REMOTE_TEST_TIMEOUT);
 
   it('the audit_log capability probe ran and reported a definite result', () => {
     expect(probeStatus, 'the probe never issued a request').toBeGreaterThan(0);
