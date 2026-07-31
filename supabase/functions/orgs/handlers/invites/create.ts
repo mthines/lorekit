@@ -1,14 +1,17 @@
 import type { AuthContext } from '../../../_shared/api/auth.ts';
+import { actorUserId } from '../../../_shared/api/auth.ts';
 import { created, notFound } from '../../../_shared/api/respond.ts';
 import { validateBody, validateOrgSlug } from '../../../_shared/api/validate.ts';
 import { createTracedClient } from '../../../_shared/otel.ts';
 import type { Span } from '../../../_shared/otel.ts';
-import { CreateInviteBodySchema } from '../../../_shared/schemas/invite.ts';
+import { CreateInviteBodySchema } from '@lorekit/schemas/invite';
 import { translateDbError } from '../../../_shared/api/errors.ts';
+import { recordRestAudit } from '../../../_shared/audit.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
+import { isOrgMember } from '../../../_shared/api/tenant.ts';
 
 export async function handleCreateInvite(
-  req: Request, _auth: AuthContext, db: DbClient, span: Span,
+  req: Request, auth: AuthContext, db: DbClient, span: Span,
   params: Record<string, string>, cors: Record<string, string>,
 ): Promise<Response> {
   const slug = params.slug ?? '';
@@ -30,11 +33,18 @@ export async function handleCreateInvite(
   if (lookupErr) { span.error(lookupErr.message); throw lookupErr; }
   if (!org) return notFound('Organization', cors);
 
+  // Membership gate for the raw slug lookup (no RLS on the api_key tier) — a
+  // non-member gets the same 404 as a non-existent slug. The `invite`
+  // capability (admin/owner) is still enforced inside the RPC.
+  const orgId = (org as { id: string }).id;
+  if (!(await isOrgMember(db, auth, orgId, span))) return notFound('Organization', cors);
+
   const { data, error } = await tracedDb.rpc('lorekit_org_invite', {
-    p_org_id: (org as { id: string }).id,
+    p_org_id: orgId,
     p_invitee_email: v.data.email ?? null,
     p_invitee_handle: v.data.handle ?? null,
     p_role: v.data.role,
+    p_actor_user_id: actorUserId(auth),
   });
   if (error) {
     const m = translateDbError(error);
@@ -42,6 +52,18 @@ export async function handleCreateInvite(
     span.error(error.message);
     throw error;
   }
+
+  // Matches web's inviteMember: the invite id as resourceId, the org id as
+  // target, and `{ invitee, role }` in metadata. `invitee` is the single
+  // identity string web records — this route takes email/handle as separate
+  // fields, so whichever was supplied is the invitee.
+  await recordRestAudit(db, span, auth, {
+    action: 'member.invite',
+    resourceType: 'org_invite',
+    resourceId: typeof data === 'string' ? data : null,
+    target: orgId,
+    metadata: { invitee: v.data.email ?? v.data.handle ?? null, role: v.data.role },
+  });
 
   return created({ inviteId: data }, cors);
 }

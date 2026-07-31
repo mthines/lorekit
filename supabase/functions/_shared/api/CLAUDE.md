@@ -20,11 +20,50 @@ import { RestError, translateDbError } from '../_shared/api/errors.ts';
 ### auth.ts
 - `resolveRestAuth(req, parentSpan)` — 3-tier auth: service key → lk_ API token → Supabase JWT. Returns `{ auth, db } | null`. Creates a `lorekit.rest.auth` child span.
 - `hasPermission(auth, 'read' | 'write')` — returns true for service/user; checks `permissions` array for api_key.
-- `isJwtAuth(auth)` — returns true only for JWT users (org endpoints require this).
+- `isJwtAuth(auth)` — returns true only for JWT users. **No route uses `requires: 'jwt'` any more** (the org routes were the last, until migration 00041); the helper stays for a future route that genuinely cannot be served without a user session.
+- **`actorUserId(auth)`** — the actor to pass as `p_actor_user_id` to an org RPC. See below.
+
+#### `actorUserId` — the org-RPC actor
+
+Org RPCs resolve the acting user via `lorekit_org_actor(p_actor_user_id)`
+(`supabase/migrations/00041_org_actor_override.sql`), which honours the parameter ONLY on a
+verified `service_role` connection and otherwise falls back to `auth.uid()`. The api_key tier
+talks to Postgres with the service-role key and so has no `auth.uid()` at all — without an
+explicit actor, `lorekit_org_can(null, …)` denies every call.
+
+```typescript
+import { actorUserId } from '../../_shared/api/auth.ts';
+
+const { error } = await tracedDb.rpc('lorekit_org_rename', {
+  p_org_id: orgId,
+  p_name: v.data.name,
+  p_actor_user_id: actorUserId(auth),   // ← never `auth.userId ?? null` inline
+});
+```
+
+Rules:
+
+1. **Always the helper, never an inlined `auth.userId ?? null`.** Forgetting the argument breaks
+   only the api_key tier, which no JWT-based test exercises — so the consistency has to be
+   structural, not remembered. `packages/mcp-core/src/org-actor-usage.spec.ts` enforces both the
+   presence of `p_actor_user_id` and that it comes from `actorUserId`.
+2. **It is not caller input.** `auth.userId` comes from the `api_tokens` row matched by token
+   hash, or from the verified JWT — so a caller can only ever act as the identity its credential
+   belongs to. The RPC-side half of that guarantee is that an `authenticated` caller's
+   `p_actor_user_id` is ignored entirely; only the verified `role` claim unlocks it.
+3. **`service` auth resolves to `null` and everything fails closed.** CI keeps its RLS bypass for
+   direct table access but does not get to act as an anonymous org admin;
+   `lorekit_org_create` raises LK002 rather than creating an ownerless org.
+4. Three RPCs deliberately accept no override — `lorekit_org_invite_accept`,
+   `lorekit_org_invite_decline`, `lorekit_org_leave`. Accept/decline match the invite against the
+   caller's verified JWT identity claims, which service_role cannot supply.
 
 ### router.ts
 - `createRouter(routes, functionName)` — returns `{ dispatch(req, resolved, span, cors) }`.
 - Routes have `{ method, path, handler, requires: 'read' | 'write' | 'jwt' }`.
+- Every route in `memories` and `orgs` is `read` or `write` today. `'jwt'` still exists but has no
+  consumer: the org routes were the last, and migration 00041 plus the `tenant.ts` filters removed
+  the need for it (see `orgs/CLAUDE.md`). The gating semantics themselves are unchanged.
 - Path params use `:name` syntax (e.g. `/:id`, `/:slug/members/:userId`).
 - Dispatch creates a child span per handler call named `lorekit.{fn}.{method}.{path}`.
 - **`requires: 'jwt'` rejects the service-role key as well as `lk_*` tokens** — the gate is
@@ -85,11 +124,30 @@ import { RestError, translateDbError } from '../_shared/api/errors.ts';
   subvert the tenant predicate applied separately by `tenant.ts`.
 
 ### tenant.ts
+
+Everything here exists for one reason: **`api_key` auth uses a service-role client, so RLS is
+off**. A query that looks correctly scoped under a JWT returns every tenant's rows under a token.
+All of these no-op for `user` (RLS already scopes it) and for `service` (CI keeps full access — do
+not special-case it into a filter).
+
 - `getMemberOrgIds(db, userId, span)` — resolves the caller's org memberships via
-  `lorekit_member_org_ids`.
-- `applyRestTenantScope(query, userId, orgIds)` — the widened tenant-visibility predicate
-  for `api_key` auth (which uses a service-role client and therefore bypasses RLS).
-  JWT auth needs no call: RLS enforces visibility. Never inline `.eq('user_id', …)` instead.
+  `lorekit_member_org_ids`, the single tenant-visibility predicate. Fails closed to `[]`.
+- `needsExplicitTenantFilter(auth)` — the one place the "is this the api_key tier?" test lives.
+- `applyRestTenantScope(query, userId, orgIds)` — the widened tenant-visibility predicate for
+  `memories` reads. Never inline `.eq('user_id', …)` instead.
+- `applyOwnMembershipFilter(query, auth)` — narrows an `org_members` query to the caller's own
+  rows. `GET /orgs` is an unfiltered `from('org_members')` select; without this it returns every
+  membership row in the database.
+- `isOrgMember(db, auth, orgId, span)` — membership gate for a handler that resolves an org with
+  a raw `from('orgs')` slug lookup. **Answer `false` with the same `notFound('Organization')` you
+  return for a missing slug** — a 403 there leaks the org's existence to anyone who can guess it.
+- `hasOrgCapability(db, auth, orgId, capability, span)` — asks `lorekit_org_can`, for a raw read
+  whose JWT equivalent is a capability-based RLS policy (today only `org_invites`, whose
+  `rls_org_invites_select_manage` shows rows to `invite`-capable callers only). Fails closed.
+
+The org handlers' use of these is drift-guarded by
+`packages/mcp-core/src/org-actor-usage.spec.ts`; the MCP read path's use of `applyTenantScope` by
+`tenant-scope-usage.spec.ts`.
 
 ## Full example: memories/index.ts + one handler
 
