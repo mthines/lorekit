@@ -14,6 +14,8 @@ import { deriveScope } from './scope.mjs';
 import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
 import { scopeList, gather, renderSection } from './lessons-view.mjs';
+import { resolveAppBase, mostSpecificScope } from './deeplink-pure.mjs';
+import { emitLink } from './link.mjs';
 import { log, heading, c } from './util.mjs';
 
 // Abbreviate the user's home directory to `~` for readable paths.
@@ -39,6 +41,17 @@ export async function list(args) {
   // Default to every applicable scope; `--scope <s>` narrows to one (an explicit
   // scope outside the applicable set is honoured — the user asked for it).
   const scopes = args.scope && typeof args.scope === 'string' ? [args.scope] : scopeList(scopeInfo);
+
+  // `--link` short-circuits: print the Explorer deep link for the current
+  // context (the most-specific applicable scope, or `--scope`), no store reads.
+  if (args.link) {
+    const base = resolveAppBase({ base: args.base, env });
+    const scope =
+      args.scope && typeof args.scope === 'string' ? args.scope : mostSpecificScope(scopeInfo);
+    const params = {};
+    if (scope) params.scope = scope;
+    return emitLink({ params, base, json: args.json });
+  }
 
   const { local, remote, connection } = resolveStores(root, {
     env,

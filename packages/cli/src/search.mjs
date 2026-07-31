@@ -19,6 +19,8 @@ import { deriveScope } from './scope.mjs';
 import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
 import { scopeList, gather, filterGroups, renderSection } from './lessons-view.mjs';
+import { resolveAppBase, mostSpecificScope } from './deeplink-pure.mjs';
+import { emitLink } from './link.mjs';
 import { log, err, heading, c } from './util.mjs';
 
 export async function search(args) {
@@ -40,6 +42,17 @@ export async function search(args) {
   // Default to every applicable scope; `--scope <s>` narrows to one (an explicit
   // scope outside the applicable set is honoured — the user asked for it).
   const scopes = args.scope && typeof args.scope === 'string' ? [args.scope] : scopeList(scopeInfo);
+
+  // `--link` short-circuits: print the Explorer deep link for this search
+  // (`?q=…` plus the most-specific applicable scope), without touching a store.
+  if (args.link) {
+    const base = resolveAppBase({ base: args.base, env });
+    const scope =
+      args.scope && typeof args.scope === 'string' ? args.scope : mostSpecificScope(scopeInfo);
+    const params = { q: query };
+    if (scope) params.scope = scope;
+    return emitLink({ params, base, json: args.json });
+  }
 
   const { local, remote, connection } = resolveStores(root, {
     env,

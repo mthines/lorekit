@@ -27,6 +27,8 @@ import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
 import { resolvePrecedence } from './lessons-pure.mjs';
 import { gather, preview, shortDate } from './lessons-view.mjs';
+import { resolveAppBase, mostSpecificScope } from './deeplink-pure.mjs';
+import { emitLink } from './link.mjs';
 import { log, heading, status, c } from './util.mjs';
 
 export async function tree(args) {
@@ -38,6 +40,17 @@ export async function tree(args) {
   // Default to the injected resolution set (`readOrder`, most-specific first);
   // `--scope <s>` narrows to one (honored even outside the set — the user asked).
   const scopes = args.scope && typeof args.scope === 'string' ? [args.scope] : scopeInfo.readOrder;
+
+  // `--link` short-circuits: print the Explorer deep link for the resolved
+  // context (the most-specific applicable scope, or `--scope`), no store reads.
+  if (args.link) {
+    const base = resolveAppBase({ base: args.base, env });
+    const scope =
+      args.scope && typeof args.scope === 'string' ? args.scope : mostSpecificScope(scopeInfo);
+    const params = {};
+    if (scope) params.scope = scope;
+    return emitLink({ params, base, json: args.json });
+  }
 
   const { local, remote, connection } = resolveStores(root, {
     env,

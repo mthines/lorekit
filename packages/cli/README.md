@@ -308,6 +308,47 @@ coincidental overlaps. Any pair scoring at or above `--threshold` links (transit
 into one cluster; only clusters of 2+ members are reported, each with a similarity
 range. Cross-**store** divergence is `diff`'s job; `dedupe` looks within a store.
 
+### `lorekit link` (alias `url`)
+
+Print a shareable **dashboard deep-link URL** to stdout — nothing else, so it
+pipes straight into your clipboard or a PR/Slack message:
+
+```bash
+lorekit link                              # link to the current repo/branch context
+lorekit link | pbcopy                     # copy it straight to the clipboard
+lorekit link global                       # the Explorer filtered to global scope
+lorekit link repo::owner/repo prefer-guards   # open one lesson's detail sheet
+lorekit link global::prefer-guards --json     # { url, surface, base, params }
+lorekit url --q "flaky test" --owner personal # search + ownership filter
+```
+
+With no arguments it links to the cwd's **most-specific scope** ("share what I'm
+looking at"). A single argument that is a valid scope — including a `repo::…` or
+`branch::…::…` scope — links to the Explorer filtered to that scope; a scope
+**and** key (two positionals, or the `scope::key` shorthand) links straight to
+that lesson's detail sheet. It sets **both** the `lesson` param (which opens the
+sheet) and `scope` — not because scope is needed to find the lesson (the sidebar
+reads one unfiltered recent set), but so the Explorer list *behind* the sheet is
+filtered to the lesson's own scope. Filter flags mirror the Explorer: `--q`
+(search), `--owner <all|personal|orgId>`, `--range`/`--from`/`--to`, `--archived`,
+`--view <scope|time>`.
+
+Every param is `encodeURIComponent(JSON.stringify(value))` — the exact inverse of
+how the dashboard's `useUrlState` reads it back (`JSON.parse`, falling back to the
+default on failure). A raw `?scope=global` would silently mean "all scopes", so
+the link **must** be JSON-encoded to open the intended view. `--base <url>` (or
+`LOREKIT_APP_URL`) overrides the dashboard host for self-hosted setups; the
+default is `https://lorekit.io`. Read-only and network-free — it derives scopes
+from git and builds a URL, never touching a store.
+
+The **read commands take a `--link` flag** that short-circuits to print the
+equivalent deep link, reusing the same builder: `show <scope::key> --link` → the
+lesson link, `search foo --link` → `/lore?q="foo"` (+ scope), and `list --link` /
+`tree --link` → the Explorer filtered to the **most-specific applicable scope**
+(or `--scope` when given) — the dashboard filters one scope at a time, so the
+multi-scope `list`/`tree` view maps to its primary scope. (The same JSON-encoded
+links now back the hooks' write-confirmation and retrospective nudges.)
+
 ### `lorekit hook`
 
 The **shared hook engine** behind the Claude Code / Cursor / Codex plugins.
@@ -541,8 +582,10 @@ active deny constraints.
 | `--no-hooks` | Skip wiring the lifecycle hooks; skills + MCP only (`install`) |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
-| `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe`) |
-| `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff` / `tree` / `lint` / `dedupe`; default: all applicable). For `scopes` it is a **substring filter** over the inventory |
+| `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `link`) |
+| `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff` / `tree` / `lint` / `dedupe` / `link`; default: all applicable). For `scopes` it is a **substring filter** over the inventory |
+| `--link` | Print the equivalent dashboard deep-link URL instead of running (`show` / `search` / `list` / `tree`) |
+| `--base <url>` | Dashboard base URL for deep links (`link` / `--link`; else `LOREKIT_APP_URL`, default `https://lorekit.io`) |
 | `--threshold <0..1>` | Duplicate-similarity cutoff (`dedupe`; default `0.8`) |
 | `--adapter <name>` | Host framework for `hook`: `claude` / `cursor` / `codex` |
 | `--event <name>` | Host hook event for `hook` (else read from the stdin payload) |

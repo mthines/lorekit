@@ -343,35 +343,49 @@ test('nudges emit no instruction when hooksInstructions is missing or null for t
 
 // ── loreUrl ────────────────────────────────────────────────────────────────────
 
-test('loreUrl returns base URL for global scope', () => {
-  assert.equal(loreUrl('global'), 'https://lorekit.io/lore');
+test('loreUrl returns the bare base URL only for the null/empty (all-scopes) default', () => {
   assert.equal(loreUrl(null), 'https://lorekit.io/lore');
   assert.equal(loreUrl(''), 'https://lorekit.io/lore');
 });
 
-test('loreUrl encodes repo scope into the query string', () => {
+test('loreUrl JSON-encodes global as a real scope filter (not the all-scopes default)', () => {
+  // Regression: a raw `?scope=global` fails the app's JSON.parse and silently
+  // means "all scopes"; the param must be the JSON string "global", URL-encoded.
+  assert.equal(loreUrl('global'), 'https://lorekit.io/lore?scope=%22global%22');
+});
+
+test('loreUrl JSON-encodes a repo scope into the query string', () => {
+  // Was `scope=repo%3A%3Aowner%2Frepo` (raw) — broken: the app's JSON.parse
+  // rejected it and fell back to all-scopes. Now the JSON string is encoded, so
+  // the deep link actually filters to the repo scope.
   assert.equal(
     loreUrl('repo::owner/repo'),
-    'https://lorekit.io/lore?scope=repo%3A%3Aowner%2Frepo',
+    'https://lorekit.io/lore?scope=%22repo%3A%3Aowner%2Frepo%22',
   );
 });
 
 // ── writeConfirmation ─────────────────────────────────────────────────────────
 
-test('writeConfirmation includes scope and deep link', () => {
+test('writeConfirmation deep-links to the exact lesson (scope + lesson params)', () => {
   const scope = fakeScope({ repoScope: 'repo::owner/repo' });
   const text = writeConfirmation(scope, 'my-lesson-key');
   assert.match(text, /memory saved to repo::owner\/repo/);
   assert.match(text, /my-lesson-key/);
   assert.match(text, /lorekit\.io\/lore/);
-  assert.match(text, /q=my-lesson-key/);
+  // Opens the detail sheet: the `lesson` param plus the `scope` filter (so the
+  // lesson is in the fetched set). No `q=` search fallback anymore.
+  assert.match(text, /lesson=/);
+  assert.match(text, /scope=/);
+  assert.doesNotMatch(text, /q=/);
 });
 
-test('writeConfirmation omits q param when key is null', () => {
+test('writeConfirmation links to the scope filter when the key is null', () => {
   const scope = fakeScope({ repoScope: 'repo::owner/repo' });
   const text = writeConfirmation(scope, null);
   assert.match(text, /memory saved to repo::owner\/repo/);
   assert.doesNotMatch(text, /q=/);
+  assert.doesNotMatch(text, /lesson=/);
+  assert.match(text, /scope=/);
   assert.match(text, /lorekit\.io\/lore/);
 });
 
@@ -381,19 +395,34 @@ test('writeConfirmation falls back to global scope', () => {
   assert.match(text, /lorekit\.io\/lore/);
 });
 
+test('writeConfirmation links to the ACTUAL write scope, not the cwd repo scope', () => {
+  // A global write under a repo cwd must deep-link to the global lesson — the
+  // old repoScope-based ref pointed at a lesson that does not exist.
+  const scope = fakeScope({ repoScope: 'repo::owner/repo' });
+  const text = writeConfirmation(scope, 'k', 'global');
+  assert.match(text, /memory saved to global/);
+  assert.doesNotMatch(text, /memory saved to repo::owner\/repo/);
+  // The lesson ref is scoped to global, JSON-encoded.
+  assert.match(text, /scope=%22global%22/);
+  assert.match(text, /lesson=%7B%22scope%22%3A%22global%22/);
+});
+
 // ── retrospectiveNudge includes lore URL ─────────────────────────────────────
 
-test('retrospectiveNudge includes a lore deep link for the write scope', () => {
+test('retrospectiveNudge includes a JSON-encoded lore deep link for the write scope', () => {
   const scope = fakeScope({ repoScope: 'repo::owner/repo' });
   const text = retrospectiveNudge(scope);
   assert.match(text, /lorekit\.io\/lore/);
-  assert.match(text, /scope=repo%3A%3Aowner%2Frepo/);
+  // JSON-encoded (quoted) scope — not the old raw `scope=repo%3A%3A…` that the
+  // dashboard's JSON.parse rejected into an all-scopes fallback.
+  assert.match(text, /scope=%22repo%3A%3Aowner%2Frepo%22/);
 });
 
-test('retrospectiveNudge uses base URL for global scope', () => {
+test('retrospectiveNudge filters to the global scope when there is no repo', () => {
   const text = retrospectiveNudge({ repoScope: null });
-  assert.match(text, /https:\/\/lorekit\.io\/lore$/m);
-  assert.doesNotMatch(text, /scope=/);
+  // `global` is a real scope the Explorer can filter to, so the write-scope link
+  // targets it explicitly (JSON-encoded) rather than falling back to all scopes.
+  assert.match(text, /scope=%22global%22/);
 });
 
 // ── claude.isLoreWrite ────────────────────────────────────────────────────────

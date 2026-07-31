@@ -19,6 +19,8 @@ import { resolveProjectRoot } from './config.mjs';
 import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
 import { normalizeEntry, shortDate, describeError, recordsDiverge, parseScopeKey } from './lessons-view.mjs';
+import { resolveAppBase } from './deeplink-pure.mjs';
+import { emitLink } from './link.mjs';
 import { log, err, heading, status, c } from './util.mjs';
 
 // Read one scope::key from a store, normalizing the result into a small,
@@ -65,6 +67,13 @@ export async function show(args) {
     err(`       lorekit show <scope::key> [--json]`);
     err(`Both a scope and a key are required. Run ${c.cyan('lorekit show --help')} for options.`);
     return 1;
+  }
+
+  // `--link` short-circuits: print the deep link that opens THIS lesson's detail
+  // sheet (`?scope=…&lesson=…`) for the current args, without touching a store.
+  if (args.link) {
+    const base = resolveAppBase({ base: args.base, env });
+    return emitLink({ params: { scope, lesson: { scope, key } }, base, json: args.json });
   }
 
   const { local, remote, connection } = resolveStores(root, {
