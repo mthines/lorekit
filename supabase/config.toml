@@ -68,17 +68,14 @@ verify_jwt = false
 [functions.memories]
 verify_jwt = false
 [functions.memories.secrets]
-SERVICE_NAME = "memories"
 
 [functions.orgs]
 verify_jwt = false
 [functions.orgs.secrets]
-SERVICE_NAME = "orgs"
 
 [functions.openapi]
 verify_jwt = false
 [functions.openapi.secrets]
-SERVICE_NAME = "openapi"
 
 [analytics]
 enabled = true
