@@ -68,6 +68,41 @@ pnpm nx start supabase         # start local Supabase
 pnpm nx fn:dev supabase        # run Edge Functions locally
 ```
 
+### Web Storybook tests (interaction + visual regression)
+
+The `@lorekit/web` dashboard has Storybook 10 (`@storybook/nextjs-vite`) wired to
+Vitest **browser mode** via `@storybook/addon-vitest`. Two story files per
+component, two suites, one browser run — driven by `packages/web/vitest.storybook.config.ts`
+(kept **separate** from `vitest.config.ts` so the node/jsdom `nx test` target
+never boots a browser):
+
+- **Interaction tests** — `*.test.stories.tsx` (the `/Tests` namespace, `tags: ['test']`,
+  `chromatic.disableSnapshot`); their `play` functions run as browser tests.
+- **Visual regression** — every OTHER story (`*.stories.tsx` `Default`/`Playground`)
+  is screenshotted by a Storybook-level `afterEach` in `.storybook/vitest.setup.ts`
+  using Vitest 4's `toMatchScreenshot`. Baselines are committed under
+  `src/**/__screenshots__/**/*-chromium-linux.png`.
+
+```bash
+cd packages/web
+npx vitest run --config vitest.storybook.config.ts                 # both suites
+npx vitest run --config vitest.storybook.config.ts --changed=main  # only changed stories
+npx vitest run --config vitest.storybook.config.ts -u              # update baselines
+```
+
+- Invoke with **`npx`**, not `pnpm exec` / `pnpm run` / `nx run` — those wrap the
+  process and keep the Playwright browser child's stdio open, so the run never
+  returns. An `nx test-storybook` target exists for graph awareness but is not
+  used by any CI gate for this reason.
+- **Playwright is pinned to `1.56.0`** (Chromium build 1194) via a root pnpm
+  override, so local runs and CI render on the same browser build and pixel
+  baselines compare like-for-like. Bumping it requires regenerating baselines
+  (`-u`) on Linux/Chromium.
+- CI runs these in the `web-test` job of `ci.yml`, gated by the `changes.web`
+  path filter and diff-optimized with `vitest --changed <base>` (a
+  one-component edit re-tests one component). It is a browser job, so it is NOT
+  part of the `check` job's `nx affected -t test`.
+
 ---
 
 ## PR workflow (mandatory — always follow this order)
