@@ -17,6 +17,9 @@ interface Hit {
   description: string;
 }
 
+/** Don't search (or open the dropdown) until the query is at least this long. */
+const MIN_QUERY_LENGTH = 2;
+
 /**
  * Full-text search over the docs, powered by MiniSearch built in the browser
  * from the server-provided index. Matches title, keywords, description, and the
@@ -51,7 +54,7 @@ export function DocsSearch({ index }: DocsSearchProps) {
 
   const hits = useMemo<Hit[]>(() => {
     const q = query.trim();
-    if (q.length < 2) return [];
+    if (q.length < MIN_QUERY_LENGTH) return [];
     return engine
       .search(q)
       .slice(0, 8)
@@ -93,7 +96,7 @@ export function DocsSearch({ index }: DocsSearchProps) {
     }
   }
 
-  const showResults = open && query.trim().length >= 2;
+  const showResults = open && query.trim().length >= MIN_QUERY_LENGTH;
 
   return (
     <div ref={rootRef} className="relative w-full max-w-xs">

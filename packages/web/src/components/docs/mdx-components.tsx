@@ -15,6 +15,11 @@ import { SmartLink } from './SmartLink';
  * Prose element styling lives in {@link DocsProse} (Tailwind child selectors),
  * so it is intentionally absent here.
  */
+// The `as unknown as MDXComponents['div']` casts bridge our custom component
+// prop types to the MDX component-map slot type: MDXComponents keys are typed as
+// intrinsic-element renderers, but MDX passes our JSX props (`number`, `title`,
+// `variant`, `isPublic`) straight through at runtime, so the structural mismatch
+// is intentional and load-bearing.
 export const docsMdxComponents: MDXComponents = {
   a: SmartLink as MDXComponents['a'],
   TutorialStep: TutorialStep as unknown as MDXComponents['div'],
