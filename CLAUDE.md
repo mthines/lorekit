@@ -246,6 +246,13 @@ overridable (no billing built yet — see [docs/limits.md](./docs/limits.md)):
 | `packages/web/src/components/dashboard/GithubAppManager.tsx` | GitHub App installation section for the webhooks settings page; shows linked installations + App-covered repos; App-covered repos are visually distinct from manually secret-configured repos (mirrors `WebhookSecretManager` composition) |
 | `packages/web/src/lib/webhook-secrets.ts` | Server actions: `listWebhookSecrets`, `generateWebhookSecret(repo)` — per-repo, Supabase-JWT + RLS scoped (not an `lk_rw_*` API token path) |
 | `packages/web/src/lib/repo-format.ts` | Pure `normalizeRepo` — validates/lowercases a bare `owner/name` repo identifier |
+| `packages/web/src/lib/auth-redirect.ts` | Pure `safeNextPath` + `DEFAULT_POST_LOGIN_PATH` — the SINGLE same-origin rule for the attacker-controllable `?next=` param, shared by `/api/auth/callback` and the client-side password sign-in so the two can't drift |
+| `packages/web/src/lib/auth-callback-url.ts` | Pure `buildAuthCallbackUrl(base, next)` (sanitises `next` via `safeNextPath`) + browser-only `authCallbackOrigin()` — every `redirectTo`/`emailRedirectTo` in the dashboard is built here |
+| `packages/web/src/lib/password-policy.ts` | Pure `MIN_PASSWORD_LENGTH` (8) + `validatePassword` / `validatePasswordConfirmation` — client-side pre-flight only; the authoritative policy is the Supabase project's `minimum_password_length` (the hosted Auth setting, mirrored locally in `supabase/config.toml`), which must stay ≤ this value — the UI may be stricter than the backend, never laxer |
+| `packages/web/src/lib/auth-errors.ts` | Pure `friendlyAuthError` — the single Supabase-auth-error → user-copy mapping for every auth surface (password sign-in/sign-up, magic link, reset, settings). Invalid credentials map to one message for both "wrong password" and "no such account" — no enumeration oracle |
+| `packages/web/src/components/auth/LoginButton.tsx` | The whole sign-in flow: GitHub OAuth, email + password (sign in / create account), and magic link, plus the link to `/forgot-password`. Password sign-in navigates client-side via `router.push(safeNextPath(next))`; OAuth/magic-link/sign-up still round-trip through `/api/auth/callback` |
+| `packages/web/src/app/(auth)/forgot-password/` + `update-password/` | Password recovery: request a reset link (`resetPasswordForEmail` → `/api/auth/callback?next=/update-password`), then set the new password against the session the callback established. Both `noindex` |
+| `packages/web/src/components/settings/PasswordPanel.tsx` | Settings → User "Password" section — one `updateUser({ password })` form that both ADDS a password to a GitHub/magic-link account and rotates an existing one |
 | `supabase/migrations/00010_audit_log.sql` | `audit_log` table (bounded `action` CHECK over 11 actions), append-only RLS (SELECT + scoped INSERT only, no update/delete), `(user_id, created_at desc)` + `(action)` indexes, and the `audit_user_limits()` trigger (the D2 exception — see Key decisions) |
 | `supabase/migrations/00011_memory_write_inserted.sql` | Drop + recreate `memory_write` adding an additive `inserted boolean` (`RETURNING (xmax = 0) AS inserted`) so callers can discriminate `memory.create` vs `memory.update` for the audit log |
 | `packages/mcp-core/src/audit.ts` | `AUDIT_ACTIONS`/`AuditAction`, pure `buildAuditEntry`, non-throwing `recordAudit` — mirrored self-contained in `supabase/functions/mcp/audit.ts` for the Deno edge function |
@@ -311,7 +318,7 @@ placeholder for the MCP server URL.
 |-----|------|---------|
 | `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp` | Bearer token required | MCP server for agents |
 | `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/health` | None (public) | Uptime monitoring |
-| `https://lorekit.io` | GitHub OAuth | Web dashboard |
+| `https://lorekit.io` | GitHub OAuth, email + password, or magic link | Web dashboard |
 
 ---
 

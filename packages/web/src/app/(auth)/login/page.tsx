@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import Image from 'next/image';
 import { LoginButton } from '@/components/auth/LoginButton';
+import { AuthHashCatcher } from '@/components/auth/AuthHashCatcher';
 import { SiteFooter } from '@/components/layout/SiteFooter';
 import { BookOpen, Brain, GitBranch, Zap } from 'lucide-react';
 import { TerminalTheater } from '@/components/landing/TerminalTheater';
@@ -43,6 +44,13 @@ const FEATURES = [
 export default function LoginPage() {
   return (
     <main className="relative flex min-h-screen flex-col overflow-hidden bg-[var(--color-bg)]">
+      {/*
+        Renders nothing on an ordinary visit. Only fires when Supabase bounced
+        an implicit-flow auth result to the Site URL (i.e. here) instead of the
+        callback route — see AuthHashCatcher.
+      */}
+      <AuthHashCatcher />
+
       <div aria-hidden className="pointer-events-none fixed inset-0 overflow-hidden">
         <div
           className="absolute left-1/2 top-1/3 size-[700px] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-30"
@@ -162,7 +170,7 @@ export default function LoginPage() {
               <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] font-mono text-xs font-semibold text-[var(--color-accent)]">1</span>
               <div>
                 <p className="text-sm font-medium text-[var(--color-content-primary)] mb-1">Sign in and get your token</p>
-                <p className="text-xs text-[var(--color-content-secondary)]">GitHub OAuth or magic-link email — takes 30 seconds</p>
+                <p className="text-xs text-[var(--color-content-secondary)]">GitHub, email + password, or a magic link — takes 30 seconds</p>
               </div>
             </li>
             <li className="flex gap-3">
