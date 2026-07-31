@@ -62,25 +62,32 @@ async function fetchScopes(): Promise<ScopeNode[]> {
 // widen or switch. The catalog is filter-independent, exactly like the scope
 // tree, and shares its `select('…')`-plus-client-side-tally shape (and its
 // documented PostgREST row-cap caveat, see `lorekit_memory_scopes`).
+//
+// It IS however archived-aware: the bar renders in both the active and the
+// archived view, and `listMemories` partitions on `archived_at`, so a catalog
+// pinned to active rows would describe the wrong population in archived mode —
+// wrong counts, and archive-only labels missing from their own filter.
 // ---------------------------------------------------------------------------
 
-async function fetchTagCatalog(): Promise<TagCount[]> {
+async function fetchTagCatalog(showArchived: boolean): Promise<TagCount[]> {
   const supabase = createClient();
 
-  const { data, error } = await supabase
-    .from('memories')
-    .select('tags')
-    .is('archived_at', null);
+  const base = supabase.from('memories').select('tags');
+  const { data, error } = await (showArchived
+    ? base.not('archived_at', 'is', null)
+    : base.is('archived_at', null));
 
   if (error || !data) return [];
 
   return tallyTags(data as { tags: string[] | null }[]);
 }
 
-export function useTagCatalog() {
+export function useTagCatalog(showArchived = false) {
   return useQuery<TagCount[]>({
-    queryKey: ['lore-tags'],
-    queryFn: fetchTagCatalog,
+    // Keyed on the partition it describes — flipping "Archived" swaps the
+    // catalog instead of reusing the other view's counts.
+    queryKey: ['lore-tags', showArchived],
+    queryFn: () => fetchTagCatalog(showArchived),
     // Matches the scope tree: read-heavy, changes only when an agent writes.
     staleTime: 90_000,
   });

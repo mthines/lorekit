@@ -381,7 +381,9 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
 
   // Filter-independent label catalog (see `useTagCatalog`) — the chips must not
   // shrink to whatever the current filter happens to have loaded.
-  const { data: tagCatalog } = useTagCatalog();
+  // Archived-aware: the archived view is a different population, so it gets
+  // its own counts rather than the active view's.
+  const { data: tagCatalog } = useTagCatalog(showArchived);
 
   const lessons = useMemo(
     () => data?.pages.flatMap((page) => page.rows) ?? [],
