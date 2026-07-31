@@ -1,0 +1,15 @@
+CLAUDE.md
+packages/cli/README.md
+packages/cli/bin/lorekit.mjs
+packages/cli/src/mcp-server.mjs
+packages/cli/src/store/remote.mjs
+packages/cli/test/source-hygiene.test.mjs
+packages/cli/test/unit.test.mjs
+packages/mcp-core/src/rest-route-parity.spec.ts
+packages/mcp-server/src/memories-api.integration.spec.ts
+packages/schemas/src/memory.spec.ts
+packages/schemas/src/memory.ts
+packages/schemas/src/openapi/spec.spec.ts
+packages/schemas/src/openapi/spec.ts
+supabase/functions/memories/CLAUDE.md
+supabase/functions/memories/handlers/remove.ts

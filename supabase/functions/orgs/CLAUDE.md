@@ -1,36 +1,97 @@
 # orgs — REST org management
 
-Handles all org operations via HTTP. Auth is managed by the shared `resolveRestAuth` utility. **Org endpoints require a Supabase JWT — `lk_*` API key tokens receive 403.**
+Handles all org operations via HTTP. Auth is managed by the shared `resolveRestAuth` utility.
+**Every route accepts a Supabase JWT, a `lk_*` API token, or the service key** — gated by the
+route's declared read/write permission, not by auth tier.
 
 ## URL patterns
 
 | Method | Path | Handler | Permission |
 |--------|------|---------|------------|
-| GET | / | handlers/orgs/list.ts | JWT only |
-| POST | / | handlers/orgs/create.ts | JWT only |
-| GET | /:slug | handlers/orgs/get.ts | JWT only |
-| PATCH | /:slug | handlers/orgs/rename.ts | JWT only |
-| DELETE | /:slug | handlers/orgs/remove.ts | JWT only |
-| GET | /:slug/members | handlers/members/list.ts | JWT only |
-| PATCH | /:slug/members/:userId | handlers/members/role.ts | JWT only |
-| DELETE | /:slug/members/:userId | handlers/members/remove.ts | JWT only |
-| GET | /:slug/invites | handlers/invites/list.ts | JWT only |
-| POST | /:slug/invites | handlers/invites/create.ts | JWT only |
-| DELETE | /:slug/invites/:inviteId | handlers/invites/revoke.ts | JWT only |
+| GET | / | handlers/orgs/list.ts | read |
+| POST | / | handlers/orgs/create.ts | write |
+| GET | /:slug | handlers/orgs/get.ts | read |
+| PATCH | /:slug | handlers/orgs/rename.ts | write |
+| DELETE | /:slug | handlers/orgs/remove.ts | write |
+| GET | /:slug/members | handlers/members/list.ts | read |
+| PATCH | /:slug/members/:userId | handlers/members/change-role.ts | write |
+| DELETE | /:slug/members/:userId | handlers/members/remove.ts | write |
+| GET | /:slug/invites | handlers/invites/list.ts | read |
+| POST | /:slug/invites | handlers/invites/create.ts | write |
+| DELETE | /:slug/invites/:inviteId | handlers/invites/revoke.ts | write |
 
 ## Auth rules
 
-- **JWT required** — all org endpoints call RPCs that enforce `auth.uid()` server-side.
-- `lk_*` API tokens (read-only or read-write) are rejected with 403; orgs are personal/team resources tied to a user identity.
-- **The service-role key is rejected too — it never reaches a handler.** Every route here is
-  `requires: 'jwt'`, and the router's gate is `isJwtAuth(auth)` (`_shared/api/router.ts`), which
-  is true **only** for `auth.type === 'user'` (`_shared/api/auth.ts`). `resolveRestAuth` resolves
-  the service-role key to `type: 'service'`, so it fails that gate and gets
-  `403 "This endpoint requires a Supabase JWT (not an API token)"` — the same refusal an `lk_*`
-  token gets. This is correct, not an oversight: a service-role client has no session JWT, so
-  `auth.uid()` is null inside every `lorekit_org_*` SECURITY DEFINER RPC these handlers call, and
-  the RPC would refuse (or, worse, mis-attribute) the action anyway. Bypassing RLS is irrelevant
-  here — these endpoints are gated on *having an identity*, not on row visibility.
+These routes used to be `requires: 'jwt'`, so every `lk_*` token got a 403 and the CLI had to
+keep an MCP transport alive purely for `org.create` / `org.list` / `org.rename` / `org.delete`.
+They now accept API tokens. Two properties of the JWT client had to be replaced first, and BOTH
+are load-bearing.
+
+### 1. Token permission, not auth tier
+
+`requires: 'read'` on GET, `requires: 'write'` on POST/PATCH/DELETE, checked by the router's
+existing `hasPermission`. `lk_ro_*` may read and not write, `lk_wo_*` the reverse, `lk_rw_*` both.
+
+**A token's permission is orthogonal to its holder's org role.** A `lk_rw_*` token owned by a
+`viewer` still cannot rename the org — `lorekit_org_can` denies it and the LK002 surfaces as a
+403. The token says what the CREDENTIAL may attempt; the org role says what the PERSON may do.
+
+### 2. The actor override (`p_actor_user_id`, migration 00041)
+
+Every org RPC resolved its actor as `auth.uid()`. The api_key tier reaches Postgres over a
+SERVICE-ROLE connection where `auth.uid()` is NULL, so `lorekit_org_can(null, …)` denied
+everything. `00041_org_actor_override.sql` adds a trailing `p_actor_user_id uuid default null` to
+the eight RPCs this function calls, resolved through `lorekit_org_actor(p_actor_user_id)` — which
+honours the parameter **only** when `auth.role() = 'service_role'`, a claim PostgREST copies out
+of an already-verified JWT and never out of request input. An `authenticated` caller's
+`p_actor_user_id` is ignored outright, so no client can impersonate anyone. Proven in
+`supabase/tests/migrations.test.sql` §50–§59.
+
+**Every handler passes `p_actor_user_id: actorUserId(auth)`** (`_shared/api/auth.ts`). Use the
+helper, never an inlined `auth.userId ?? null`: omitting it breaks only the api_key tier, which is
+invisible in a JWT test run. `packages/mcp-core/src/org-actor-usage.spec.ts` fails the build if a
+call site drops it.
+
+### 3. Reads MUST carry their own tenant filter
+
+This is the dangerous half. `handleListOrgs` selects `org_members` with no filter and
+`handleGetOrg` selects `orgs` by slug with no membership check; both were correct **only** because
+RLS narrowed them. On the service-role client the api_key tier uses there is no RLS, so as written
+`GET /orgs` would return every org in the database and `GET /orgs/:slug` would hand over any org
+whose slug you can guess.
+
+The helpers live in `_shared/api/tenant.ts` and all no-op for JWT and service callers:
+
+| Helper | Use |
+|--------|-----|
+| `applyOwnMembershipFilter(q, auth)` | an `org_members` list query → the caller's own rows |
+| `isOrgMember(db, auth, orgId, span)` | after a raw `from('orgs')` slug lookup |
+| `hasOrgCapability(db, auth, orgId, cap, span)` | a raw read whose JWT equivalent is a `lorekit_org_can`-based RLS policy (today: `org_invites`) |
+
+Rules:
+
+- **A non-member gets the SAME `notFound('Organization')` as a non-existent slug.** Never a 403,
+  never a different body. Any difference turns the route into an org-existence oracle over the
+  whole slug namespace. This applies to the mutating handlers' slug lookups too, not just the
+  reads.
+- **Never special-case `auth.type === 'service'` into a filter.** Service-role (CI) keeps full
+  access, exactly as it does in `memories`.
+- Membership truth is `lorekit_member_org_ids` (via `getMemberOrgIds`) and the capability matrix
+  is `lorekit_org_can` — never a hand-rolled `org_members` query here.
+- `GET /:slug/invites` returns an empty list (200, not 403) to a member without the `invite`
+  capability, because that is exactly what `rls_org_invites_select_manage` gives a JWT member.
+  Matching it is what keeps the two tiers identical instead of quietly widening one.
+
+`packages/mcp-core/src/org-actor-usage.spec.ts` fails if a handler reads
+`orgs` / `org_members` / `org_invites` directly without referencing one of these helpers.
+
+### Known gap — self-removal via an API token
+
+`DELETE /:slug/members/:userId` routes self-removal to `lorekit_org_leave`, which 00041
+deliberately left on a pure `auth.uid()` actor (alongside `_invite_accept` / `_invite_decline`,
+which match the invite against verified JWT identity claims that service_role cannot supply). So
+"leave an org" over an API token fails closed with LK002 → 403. It is a documented follow-up, not
+an accident; the `ACTOR_EXEMPT_RPCS` entry in the drift guard records the reasoning.
 
 ## Router layout
 
@@ -39,7 +100,7 @@ The `index.ts` router dispatches to handler subdirectories:
 ```
 handlers/
   orgs/       — top-level org CRUD (list, create, get, rename, remove)
-  members/    — /:slug/members sub-resource (list, role, remove)
+  members/    — /:slug/members sub-resource (list, change-role, remove)
   invites/    — /:slug/invites sub-resource (list, create, revoke)
 ```
 
@@ -54,8 +115,36 @@ Handler signature: `async function handle{Name}(req, auth, db, span, params, cor
 | orgs/remove.ts | `lorekit_org_delete` | Requires owner role; soft-deletes |
 | invites/create.ts | `lorekit_org_invite` | Sends invite by email; requires admin/owner |
 | invites/revoke.ts | `lorekit_org_invite_revoke` | Requires admin/owner |
-| members/role.ts | `lorekit_org_member_role` | Requires owner to change roles |
-| members/remove.ts | `lorekit_org_leave` or `lorekit_org_member_remove` | See note below |
+| members/change-role.ts | `lorekit_org_member_role` | Requires admin/owner; cannot assign owner |
+| members/remove.ts | `lorekit_org_leave` or `lorekit_org_member_remove` | See note below. `_leave` takes NO actor override |
+
+## Audit events
+
+Every mutating handler writes to `audit_log` via `recordRestAudit`
+(`_shared/audit.ts`), **after** the RPC succeeds and never on an error/404 path. The
+field layout deliberately matches the equivalent web server action
+(`packages/web/src/lib/orgs.ts`, `org-invites.ts`) so the dashboard and the REST API
+produce comparable rows for the same operation.
+
+| Handler | Action | `resourceType` | `resourceId` | `target` | metadata |
+|---------|--------|----------------|--------------|----------|----------|
+| orgs/create.ts | `org.create` | `org` | new org id | org name | `{ slug }` |
+| orgs/rename.ts | `org.rename` | `org` | org id | new name | — |
+| orgs/remove.ts | `org.delete` | `org` | org id | — | — |
+| members/remove.ts | `member.leave` (self) / `member.remove` | `org_member` | affected user id | org id | — |
+| members/change-role.ts | `member.role_change` | `org_member` | affected user id | org id | `{ role }` |
+| invites/create.ts | `member.invite` | `org_invite` | invite id | org id | `{ invitee, role }` |
+| invites/revoke.ts | `member.revoke` | `org_invite` | invite id | — | — |
+
+`members/remove.ts` picks its action from **the RPC that actually ran**, not the route:
+the endpoint serves both "kick a member" (`lorekit_org_member_remove`) and "leave"
+(`lorekit_org_leave`), and web audits those as `member.remove` and `member.leave`
+respectively. Emitting `member.remove` for a self-removal would make one operation read
+differently depending on which client performed it.
+
+A failed audit write never fails the request — `recordRestAudit` cannot throw.
+`packages/mcp-core/src/rest-audit-usage.spec.ts` fails if any mutating route here stops
+calling it.
 
 ## Self-removal routing in `members/remove.ts`
 

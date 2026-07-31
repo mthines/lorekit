@@ -16,18 +16,38 @@ import { handleListInvites } from './handlers/invites/list.ts';
 import { handleCreateInvite } from './handlers/invites/create.ts';
 import { handleRevokeInvite } from './handlers/invites/revoke.ts';
 
+// Org routes are gated by TOKEN PERMISSION (read / write), not by auth tier.
+//
+// They used to all be `requires: 'jwt'`, which 403'd every `lk_rw_*` / `lk_ro_*`
+// caller — the reason the CLI still has to hold an MCP transport open purely for
+// `org.create` / `org.list` / `org.rename` / `org.delete`. Two things had to be
+// true before this could open up, and both now are:
+//
+//   1. The RPCs can identify an api_key caller. They resolve the acting user via
+//      `lorekit_org_actor(p_actor_user_id)` (00041_org_actor_override.sql),
+//      which honours an explicitly named actor ONLY on a verified service_role
+//      connection. Every handler here passes `actorUserId(auth)`.
+//   2. The READS carry their own tenant predicate. The api_key tier uses a
+//      service-role client that bypasses RLS, so `GET /orgs` and
+//      `GET /orgs/:slug` — which previously leaned entirely on RLS — now filter
+//      to the caller's own memberships explicitly (`_shared/api/tenant.ts`).
+//
+// Authorization itself is unchanged. The role -> capability matrix still lives
+// only in `lorekit_org_can`, and a token's read/write permission is orthogonal
+// to the holder's org role: a `lk_rw_*` token owned by a viewer still cannot
+// rename an org (LK002 -> 403).
 const router = createRouter([
-  { method: 'GET',    path: '/',                            handler: handleListOrgs,     requires: 'jwt' },
-  { method: 'POST',   path: '/',                            handler: handleCreateOrg,    requires: 'jwt' },
-  { method: 'GET',    path: '/:slug',                       handler: handleGetOrg,       requires: 'jwt' },
-  { method: 'PATCH',  path: '/:slug',                       handler: handleRenameOrg,    requires: 'jwt' },
-  { method: 'DELETE', path: '/:slug',                       handler: handleDeleteOrg,    requires: 'jwt' },
-  { method: 'GET',    path: '/:slug/members',               handler: handleListMembers,  requires: 'jwt' },
-  { method: 'PATCH',  path: '/:slug/members/:userId',       handler: handleChangeRole,   requires: 'jwt' },
-  { method: 'DELETE', path: '/:slug/members/:userId',       handler: handleRemoveMember, requires: 'jwt' },
-  { method: 'GET',    path: '/:slug/invites',               handler: handleListInvites,  requires: 'jwt' },
-  { method: 'POST',   path: '/:slug/invites',               handler: handleCreateInvite, requires: 'jwt' },
-  { method: 'DELETE', path: '/:slug/invites/:inviteId',     handler: handleRevokeInvite, requires: 'jwt' },
+  { method: 'GET',    path: '/',                            handler: handleListOrgs,     requires: 'read' },
+  { method: 'POST',   path: '/',                            handler: handleCreateOrg,    requires: 'write' },
+  { method: 'GET',    path: '/:slug',                       handler: handleGetOrg,       requires: 'read' },
+  { method: 'PATCH',  path: '/:slug',                       handler: handleRenameOrg,    requires: 'write' },
+  { method: 'DELETE', path: '/:slug',                       handler: handleDeleteOrg,    requires: 'write' },
+  { method: 'GET',    path: '/:slug/members',               handler: handleListMembers,  requires: 'read' },
+  { method: 'PATCH',  path: '/:slug/members/:userId',       handler: handleChangeRole,   requires: 'write' },
+  { method: 'DELETE', path: '/:slug/members/:userId',       handler: handleRemoveMember, requires: 'write' },
+  { method: 'GET',    path: '/:slug/invites',               handler: handleListInvites,  requires: 'read' },
+  { method: 'POST',   path: '/:slug/invites',               handler: handleCreateInvite, requires: 'write' },
+  { method: 'DELETE', path: '/:slug/invites/:inviteId',     handler: handleRevokeInvite, requires: 'write' },
 ], 'orgs');
 
 Deno.serve(async (req) => {
