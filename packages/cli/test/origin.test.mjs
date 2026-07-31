@@ -4,7 +4,7 @@
 // deterministic — no real repository, no real CI runner.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveOrigin, hasOrigin, mergeOrigin, prNumberFromEnv } from '../src/origin.mjs';
+import { deriveOrigin, isValidRef, mergeOrigin, prNumberFromEnv } from '../src/origin.mjs';
 
 /** A fake `git` that answers from a lookup table and returns null otherwise. */
 function fakeGit(answers) {
@@ -40,7 +40,6 @@ test('deriveOrigin degrades to all-null outside a git repository', () => {
     origin_commit: null,
     origin_pr: null,
   });
-  assert.equal(hasOrigin(origin), false);
 });
 
 test('deriveOrigin drops a detached HEAD rather than recording it as a branch', () => {
@@ -116,4 +115,36 @@ test('mergeOrigin omits unknown fields entirely — never sends null', () => {
 
 test('mergeOrigin on an empty derivation is an empty object', () => {
   assert.deepEqual(mergeOrigin({}, {}), {});
+});
+
+test('isValidRef accepts the exotic-but-legal git ref names an allow list would reject', () => {
+  for (const ref of ['feat/add+x', 'fix/issue#123', 'release/1.0(rc)', 'feat/café', 'user@host/x', 'a&b']) {
+    assert.equal(isValidRef(ref), true, `expected ${ref} to be a valid ref`);
+  }
+});
+
+test('isValidRef rejects what git itself rejects', () => {
+  for (const ref of ['has space', 'has~tilde', 'has^caret', 'has:colon', 'has?q', 'has*star', 'has[bracket', 'back\\slash', '/leading', 'trailing/', '.leading', 'trailing.', 'x.lock', 'a..b', 'a//b', 'a@{b', '']) {
+    assert.equal(isValidRef(ref), false, `expected ${JSON.stringify(ref)} to be rejected`);
+  }
+});
+
+test('deriveOrigin drops a derived branch git would reject rather than sending it', () => {
+  const run = fakeGit({ 'rev-parse --abbrev-ref HEAD': 'bad branch' });
+  assert.equal(deriveOrigin({ env: {}, run }).origin_branch, null);
+});
+
+test('deriveOrigin keeps an exotic-but-legal branch name', () => {
+  const run = fakeGit({ 'rev-parse --abbrev-ref HEAD': 'fix/issue#123' });
+  assert.equal(deriveOrigin({ env: {}, run }).origin_branch, 'fix/issue#123');
+});
+
+test('deriveOrigin drops a commit that is not a hex SHA', () => {
+  const run = fakeGit({ 'rev-parse HEAD': 'not-a-sha' });
+  assert.equal(deriveOrigin({ env: {}, run }).origin_commit, null);
+});
+
+test('deriveOrigin lowercases the commit SHA', () => {
+  const run = fakeGit({ 'rev-parse HEAD': 'ABC1234DEF' });
+  assert.equal(deriveOrigin({ env: {}, run }).origin_commit, 'abc1234def');
 });

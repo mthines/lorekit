@@ -116,13 +116,25 @@ export async function write(args) {
   // A field that is neither supplied nor derivable is omitted, never sent as
   // null — the server keeps the last KNOWN origin per field, so an omission
   // must not erase what an earlier write recorded.
+  // An explicitly supplied PR number is a caller assertion, so a malformed one
+  // is a usage error — silently ignoring it would record no provenance while
+  // the user believes they set it. Derived values, by contrast, degrade quietly.
+  let originPr = null;
+  if (args['origin-pr'] !== undefined) {
+    originPr = Number(args['origin-pr']);
+    if (!Number.isInteger(originPr) || originPr < 1) {
+      err(`${c.red('Error:')} --origin-pr must be a positive integer (got ${args['origin-pr']})`);
+      return 1;
+    }
+  }
+
   const origin = args['no-origin']
     ? {}
     : mergeOrigin(deriveOrigin({ cwd: root, env }), {
         origin_repo: typeof args['origin-repo'] === 'string' ? args['origin-repo'] : null,
         origin_branch: typeof args['origin-branch'] === 'string' ? args['origin-branch'] : null,
         origin_commit: typeof args['origin-commit'] === 'string' ? args['origin-commit'] : null,
-        origin_pr: args['origin-pr'] ? Number(args['origin-pr']) : null,
+        origin_pr: originPr,
       });
 
   // ── Resolve deny constraints ───────────────────────────────────────────────

@@ -15,7 +15,7 @@
  * Per otel-instrumentation skills: spans on all operations.
  */
 import { SpanStatusCode } from '@opentelemetry/api';
-import { createServiceClient, getTracer, write, validateScope } from '@lorekit/core';
+import { createServiceClient, getTracer, sanitizeOrigin, write, validateScope } from '@lorekit/core';
 import { logger } from '../logger.js';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { classifyWebhookAction, isSignalWorthy } from './signal-filter.js';
@@ -131,6 +131,14 @@ export async function handleGitHubWebhook(req: Request): Promise<Response> {
         | undefined;
       const issue = payload['issue'] as { number?: number; pull_request?: unknown } | undefined;
       const prNumber = pull?.number ?? (issue?.pull_request ? issue.number : undefined);
+      // Sanitised, not validated — a field we cannot make sense of is dropped
+      // rather than failing the ingest. Mirrors the edge receiver.
+      const origin = sanitizeOrigin({
+        origin_repo: repo,
+        origin_pr: prNumber,
+        origin_branch: pull?.head?.ref,
+        origin_commit: pull?.head?.sha,
+      });
 
       const db = createServiceClient(getSupabaseUrl(), getSupabaseServiceRoleKey());
       const key = `pr-webhook::${repo}::${Date.now()}`;
@@ -150,10 +158,7 @@ export async function handleGitHubWebhook(req: Request): Promise<Response> {
         ],
         source_agent: 'github-webhook',
         trigger: `${event}.${action}`,
-        origin_repo: repo,
-        ...(prNumber ? { origin_pr: prNumber } : {}),
-        ...(pull?.head?.ref ? { origin_branch: pull.head.ref } : {}),
-        ...(pull?.head?.sha ? { origin_commit: pull.head.sha } : {}),
+        ...origin,
       });
 
       span.setAttribute('lorekit.key', key);

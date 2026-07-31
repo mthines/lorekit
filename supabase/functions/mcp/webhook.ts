@@ -50,6 +50,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { validateScope } from '../_shared/scope.ts';
+import { sanitizeOrigin } from '../_shared/origin.ts';
 import { traceRequest, type Span } from '../_shared/otel.ts';
 import { toolWrite } from './tools.ts';
 import {
@@ -493,8 +494,16 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
     // so `prNumber` stays undefined and no origin PR is recorded.
     const prNumber = earlyPayload['pull_request']?.number
       ?? (earlyPayload['issue']?.pull_request ? earlyPayload['issue']?.number : undefined);
-    const prBranch = earlyPayload['pull_request']?.head?.ref;
-    const prSha = earlyPayload['pull_request']?.head?.sha;
+    // Sanitised, not validated: a head branch is whatever the contributor
+    // named it, so a field we cannot make sense of is dropped rather than
+    // failing the whole ingest — the comment is the payload, the provenance is
+    // decoration.
+    const origin = sanitizeOrigin({
+      origin_repo: repo,
+      origin_pr: prNumber,
+      origin_branch: earlyPayload['pull_request']?.head?.ref,
+      origin_commit: earlyPayload['pull_request']?.head?.sha,
+    });
 
     const scope = validateScope(`repo::${repo}`);
     span.setAttributes({ 'lorekit.scope': scope, 'lorekit.scope.type': 'repo' });
@@ -514,10 +523,7 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
       ],
       source_agent: 'github-webhook',
       trigger: `${event}.${action}`,
-      origin_repo: repo,
-      ...(prNumber ? { origin_pr: prNumber } : {}),
-      ...(prBranch ? { origin_branch: prBranch } : {}),
-      ...(prSha ? { origin_commit: prSha } : {}),
+      ...origin,
     }, null, span);
 
     return new Response('OK', { status: 200 });

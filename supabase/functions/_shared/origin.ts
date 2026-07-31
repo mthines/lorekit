@@ -41,8 +41,19 @@ export class OriginError extends Error {
 
 /** `owner/name`. Same charset as the repo half of a `repo::` scope. */
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
-/** Git branch names. Same charset as the branch half of a `branch::` scope. */
-const BRANCH_RE = /^[\w./-]+$/;
+/**
+ * Characters git itself forbids in a ref name (git-check-ref-format): ASCII
+ * control characters, space, and ` ~ ^ : ? * [ \ `.
+ *
+ * This is a DENY list on purpose. The branch half of a `branch::` scope uses
+ * an allow list (`[\w./-]`), which is safe there because a scope is a
+ * LoreKit-authored identifier — but an origin branch is whatever git reports,
+ * and `feat/add+x`, `fix/issue#123`, `release/1.0(rc)` and `feat/café` are all
+ * legal refs. Rejecting them would turn a cosmetic provenance miss into a
+ * failed write.
+ */
+// eslint-disable-next-line no-control-regex
+const BRANCH_FORBIDDEN_RE = /[\u0000-\u001f\u007f ~^:?*[\\]/;
 /** Abbreviated (>= 7) up to full (40) hex commit SHA. */
 const COMMIT_RE = /^[0-9a-f]{7,40}$/;
 
@@ -67,18 +78,6 @@ export interface OriginInput {
   origin_pr?: unknown;
 }
 
-/** An origin with nothing set — the result for a write that supplied none. */
-export const EMPTY_ORIGIN: MemoryOrigin = Object.freeze({
-  repo: null,
-  branch: null,
-  commit: null,
-  pr: null,
-});
-
-/** True when at least one origin field is populated. */
-export function hasOrigin(origin: MemoryOrigin): boolean {
-  return origin.repo !== null || origin.branch !== null || origin.commit !== null || origin.pr !== null;
-}
 
 function optionalString(input: unknown, paramName: string): string | null {
   if (input === undefined || input === null) return null;
@@ -119,10 +118,21 @@ export function parseOriginBranch(input: unknown): string | null {
   if (value.length > ORIGIN_BRANCH_MAX) {
     throw new OriginError(`origin_branch must be <= ${ORIGIN_BRANCH_MAX} characters`);
   }
-  if (!BRANCH_RE.test(value)) {
-    throw new OriginError(`origin_branch contains unsupported characters: ${value}`);
+  if (BRANCH_FORBIDDEN_RE.test(value)) {
+    throw new OriginError(`origin_branch contains characters git forbids in a ref: ${value}`);
   }
-  if (value.startsWith('/') || value.endsWith('/') || value.includes('..')) {
+  // The structural rules from git-check-ref-format that a character class
+  // cannot express.
+  if (
+    value.startsWith('/') ||
+    value.endsWith('/') ||
+    value.startsWith('.') ||
+    value.endsWith('.') ||
+    value.endsWith('.lock') ||
+    value.includes('..') ||
+    value.includes('//') ||
+    value.includes('@{')
+  ) {
     throw new OriginError(`origin_branch is not a valid git ref: ${value}`);
   }
   return value;
@@ -173,4 +183,39 @@ export function parseOrigin(input: OriginInput): MemoryOrigin {
     commit: parseOriginCommit(input.origin_commit),
     pr: parseOriginPr(input.origin_pr),
   };
+}
+
+/**
+ * Best-effort counterpart to {@link parseOrigin} for AMBIENT origin — values a
+ * producer observed rather than a caller asserted (the GitHub webhook's
+ * delivery payload, a CI environment, a git working directory).
+ *
+ * Drops any field that fails validation instead of throwing, so provenance
+ * degrades from "four fields" to "three fields" rather than failing the write
+ * it was only ever decorating. An explicitly supplied origin still goes through
+ * the strict `parseOrigin` — a caller that names a malformed PR deserves a 400,
+ * a repository that happens to have an exotic branch name does not.
+ *
+ * @returns an object containing only the fields that validated, suitable for
+ *   spreading into a `memory.write` argument object.
+ */
+export function sanitizeOrigin(input: OriginInput): OriginInput {
+  const out: OriginInput = {};
+  const fields = [
+    ['origin_repo', parseOriginRepo],
+    ['origin_branch', parseOriginBranch],
+    ['origin_commit', parseOriginCommit],
+    ['origin_pr', parseOriginPr],
+  ] as const;
+
+  for (const [field, parse] of fields) {
+    try {
+      const value = parse(input[field]);
+      if (value !== null) out[field] = value;
+    } catch {
+      // Ambient value we could not make sense of — omit the field entirely.
+      // The RPC coalesces, so omission preserves whatever was recorded before.
+    }
+  }
+  return out;
 }

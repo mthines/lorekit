@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-  hasOrigin,
   originBranchUrl,
   originCommitUrl,
   originLinks,
@@ -15,18 +14,6 @@ const FULL = {
   origin_commit: 'abc1234def5678',
   origin_pr: 482,
 };
-
-describe('hasOrigin', () => {
-  it('is false for an empty row', () => {
-    expect(hasOrigin({})).toBe(false);
-    expect(hasOrigin({ origin_repo: null, origin_branch: null, origin_commit: null, origin_pr: null })).toBe(false);
-  });
-
-  it('is true when any single field is present', () => {
-    expect(hasOrigin({ origin_pr: 1 })).toBe(true);
-    expect(hasOrigin({ origin_branch: 'main' })).toBe(true);
-  });
-});
 
 describe('url builders', () => {
   it('build every GitHub URL from a fully-populated origin', () => {

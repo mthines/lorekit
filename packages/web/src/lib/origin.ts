@@ -45,13 +45,6 @@ function repoOrNull(origin: MemoryOriginFields): string | null {
   return repo;
 }
 
-/** True when the row carries any provenance at all — the render guard. */
-export function hasOrigin(origin: MemoryOriginFields): boolean {
-  return Boolean(
-    origin.origin_repo || origin.origin_branch || origin.origin_commit || origin.origin_pr,
-  );
-}
-
 /** `https://github.com/owner/name`, or `null` when the repo is unknown/malformed. */
 export function originRepoUrl(origin: MemoryOriginFields): string | null {
   const repo = repoOrNull(origin);

@@ -1,16 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
-  EMPTY_ORIGIN,
   ORIGIN_BRANCH_MAX,
   ORIGIN_PR_MAX,
   ORIGIN_REPO_MAX,
   OriginError,
-  hasOrigin,
   parseOrigin,
   parseOriginBranch,
   parseOriginCommit,
   parseOriginPr,
   parseOriginRepo,
+  sanitizeOrigin,
 } from './origin.js';
 
 describe('parseOriginRepo', () => {
@@ -60,12 +59,33 @@ describe('parseOriginBranch', () => {
   });
 
   it.each([
+    ['a plus', 'feat/add+x'],
+    ['a hash', 'fix/issue#123'],
+    ['parentheses', 'release/1.0(rc)'],
+    ['non-ASCII', 'feat/café'],
+    ['an ampersand', 'a&b'],
+  ])('accepts %s — git does, and rejecting it would fail the write', (_label, value) => {
+    expect(parseOriginBranch(value)).toBe(value);
+  });
+
+  it.each([
     ['spaces', 'feat/my branch'],
+    ['a tilde', 'feat/x~1'],
+    ['a caret', 'feat/x^2'],
+    ['a colon', 'feat:x'],
+    ['a question mark', 'feat/x?'],
+    ['an asterisk', 'feat/*'],
+    ['an open bracket', 'feat/[x'],
+    ['a backslash', 'feat\\x'],
     ['a leading slash', '/feat/x'],
     ['a trailing slash', 'feat/x/'],
+    ['a double slash', 'feat//x'],
+    ['a leading dot', '.feat'],
+    ['a trailing dot', 'feat.'],
+    ['a .lock suffix', 'feat/x.lock'],
     ['a path traversal', 'feat/../../etc'],
-    ['a tilde', 'feat/x~1'],
-  ])('rejects %s', (_label, value) => {
+    ['a reflog expression', 'feat/x@{1}'],
+  ])('rejects %s — git rejects it too', (_label, value) => {
     expect(() => parseOriginBranch(value)).toThrow(OriginError);
   });
 
@@ -129,8 +149,7 @@ describe('parseOriginPr', () => {
 
 describe('parseOrigin', () => {
   it('returns an all-null origin when nothing is supplied', () => {
-    expect(parseOrigin({})).toEqual(EMPTY_ORIGIN);
-    expect(hasOrigin(parseOrigin({}))).toBe(false);
+    expect(parseOrigin({})).toEqual({ repo: null, branch: null, commit: null, pr: null });
   });
 
   it('normalises every field independently', () => {
@@ -152,10 +171,49 @@ describe('parseOrigin', () => {
   it('allows a partial origin (branch known, PR not yet opened)', () => {
     const origin = parseOrigin({ origin_repo: 'mthines/lorekit', origin_branch: 'feat/x' });
     expect(origin).toEqual({ repo: 'mthines/lorekit', branch: 'feat/x', commit: null, pr: null });
-    expect(hasOrigin(origin)).toBe(true);
   });
 
   it('rejects the whole write when one field is malformed', () => {
     expect(() => parseOrigin({ origin_repo: 'mthines/lorekit', origin_pr: -3 })).toThrow(OriginError);
+  });
+});
+
+describe('sanitizeOrigin', () => {
+  it('keeps every field of a fully-valid ambient origin, normalised', () => {
+    expect(
+      sanitizeOrigin({
+        origin_repo: 'MThines/LoreKit',
+        origin_branch: 'feat/x',
+        origin_commit: 'ABC1234',
+        origin_pr: '5',
+      }),
+    ).toEqual({
+      origin_repo: 'mthines/lorekit',
+      origin_branch: 'feat/x',
+      origin_commit: 'abc1234',
+      origin_pr: 5,
+    });
+  });
+
+  it('drops only the malformed field, never the whole origin', () => {
+    // A webhook delivery whose head branch git would reject must still record
+    // the repo and PR — provenance degrades, the write does not fail.
+    expect(
+      sanitizeOrigin({
+        origin_repo: 'mthines/lorekit',
+        origin_branch: 'bad branch',
+        origin_pr: 482,
+      }),
+    ).toEqual({ origin_repo: 'mthines/lorekit', origin_pr: 482 });
+  });
+
+  it('omits an unsupplied field rather than emitting null', () => {
+    const out = sanitizeOrigin({ origin_pr: 1 });
+    expect(out).toEqual({ origin_pr: 1 });
+    expect('origin_branch' in out).toBe(false);
+  });
+
+  it('never throws, whatever it is handed', () => {
+    expect(sanitizeOrigin({ origin_repo: 42, origin_pr: 'nope', origin_commit: 'HEAD' })).toEqual({});
   });
 });

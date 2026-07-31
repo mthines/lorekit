@@ -60,6 +60,26 @@ function toPositiveInt(raw) {
   return n;
 }
 
+/**
+ * Whether a string is a usable git ref name, per git-check-ref-format.
+ *
+ * A deny list, deliberately: a branch is whatever a contributor named it, and
+ * `feat/add+x` / `fix/issue#123` / `feat/café` are all legal. The canonical
+ * rule lives in `packages/mcp-core/src/origin.ts` (`parseOriginBranch`); this
+ * is the zero-dependency CLI copy, kept behaviourally identical so a branch the
+ * CLI derives is never one the server would reject.
+ */
+export function isValidRef(value) {
+  if (typeof value !== 'string' || value === '') return false;
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f ~^:?*[\\]/.test(value)) return false;
+  if (value.startsWith('/') || value.endsWith('/')) return false;
+  if (value.startsWith('.') || value.endsWith('.')) return false;
+  if (value.endsWith('.lock')) return false;
+  if (value.includes('..') || value.includes('//') || value.includes('@{')) return false;
+  return value.length <= 255;
+}
+
 function firstNonEmpty(...values) {
   for (const v of values) {
     if (typeof v === 'string' && v.trim() !== '') return v.trim();
@@ -87,8 +107,12 @@ export function deriveOrigin({ cwd = process.cwd(), env = process.env, run = git
 
   const repo = ownerRepoFromRemote(remote) ?? firstNonEmptyRepo(env);
   const branchRaw = firstNonEmpty(env.LOREKIT_BRANCH, env.GITHUB_HEAD_REF, gitBranch);
-  const branch = branchRaw && branchRaw !== 'HEAD' ? branchRaw : null;
-  const commit = firstNonEmpty(env.LOREKIT_COMMIT, gitCommit, env.GITHUB_SHA);
+  // A derived branch that the server would reject is dropped here rather than
+  // sent: provenance is decoration, and it must never fail the write it is
+  // decorating.
+  const branch = branchRaw && branchRaw !== 'HEAD' && isValidRef(branchRaw) ? branchRaw : null;
+  const commitRaw = firstNonEmpty(env.LOREKIT_COMMIT, gitCommit, env.GITHUB_SHA);
+  const commit = commitRaw && /^[0-9a-fA-F]{7,40}$/.test(commitRaw) ? commitRaw.toLowerCase() : null;
 
   return {
     origin_repo: repo,
@@ -105,14 +129,6 @@ function firstNonEmptyRepo(env) {
   if (!raw) return null;
   const normalized = raw.toLowerCase();
   return /^[\w.-]+\/[\w.-]+$/.test(normalized) ? normalized : null;
-}
-
-/** True when at least one origin field was resolved. */
-export function hasOrigin(origin) {
-  return Boolean(
-    origin &&
-      (origin.origin_repo || origin.origin_branch || origin.origin_commit || origin.origin_pr),
-  );
 }
 
 /**
