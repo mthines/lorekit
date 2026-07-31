@@ -4,6 +4,11 @@ const nextConfig: NextConfig = {
   // Disable Next.js's built-in ESLint step — NX runs it separately via nx lint
   eslint: { ignoreDuringBuilds: true },
 
+  // `@lorekit/schemas` is consumed as raw TS source (its `exports` point at
+  // `.ts` files), so Next must transpile it. Used server-side by /api-docs/spec
+  // to generate the OpenAPI document in-process.
+  transpilePackages: ['@lorekit/schemas'],
+
   // Emit source maps in production so Dash0 can translate minified JavaScript
   // stack traces back to their original source locations. Source maps are served
   // alongside the JS bundles; Dash0 downloads them on demand when a browser.error

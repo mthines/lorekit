@@ -1,6 +1,7 @@
 import type { AuthContext } from '../../../_shared/api/auth.ts';
 import { actorUserId } from '../../../_shared/api/auth.ts';
-import { noContent, notFound } from '../../../_shared/api/respond.ts';
+import { noContent, notFound, dryRun } from '../../../_shared/api/respond.ts';
+import { DRY_RUN_HEADER, isDryRunHeader } from '../../../_shared/dry-run.ts';
 import { validateOrgSlug } from '../../../_shared/api/validate.ts';
 import { createTracedClient } from '../../../_shared/otel.ts';
 import type { Span } from '../../../_shared/otel.ts';
@@ -36,6 +37,9 @@ export async function handleDeleteOrg(
   // owner-only inside the RPC.
   const orgId = (org as { id: string }).id;
   if (!(await isOrgMember(db, auth, orgId, span))) return notFound('Organization', cors);
+
+  // Dry-run: everything above validated + authorized; stop before any write.
+  if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
 
   const { error } = await tracedDb.rpc('lorekit_org_delete', {
     p_org_id: orgId,

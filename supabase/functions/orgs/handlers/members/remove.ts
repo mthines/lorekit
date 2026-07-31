@@ -1,6 +1,7 @@
 import type { AuthContext } from '../../../_shared/api/auth.ts';
 import { actorUserId } from '../../../_shared/api/auth.ts';
-import { noContent, notFound } from '../../../_shared/api/respond.ts';
+import { noContent, notFound, dryRun } from '../../../_shared/api/respond.ts';
+import { DRY_RUN_HEADER, isDryRunHeader } from '../../../_shared/dry-run.ts';
 import { validateUuid, validateOrgSlug } from '../../../_shared/api/validate.ts';
 import { createTracedClient } from '../../../_shared/otel.ts';
 import type { Span } from '../../../_shared/otel.ts';
@@ -11,7 +12,7 @@ import type { DbClient } from '../../../_shared/api/auth.ts';
 import { isOrgMember } from '../../../_shared/api/tenant.ts';
 
 export async function handleRemoveMember(
-  _req: Request, auth: AuthContext, db: DbClient, span: Span,
+  req: Request, auth: AuthContext, db: DbClient, span: Span,
   params: Record<string, string>, cors: Record<string, string>,
 ): Promise<Response> {
   const slug = params.slug ?? '';
@@ -44,6 +45,9 @@ export async function handleRemoveMember(
   if (!(await isOrgMember(db, auth, orgId, span))) return notFound('Organization', cors);
 
   const isSelf = auth.userId === idV.data;
+
+  // Dry-run: everything above validated + authorized; stop before any write.
+  if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
 
   // Self-removal uses lorekit_org_leave; removing another member uses lorekit_org_member_remove.
   //

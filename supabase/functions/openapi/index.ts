@@ -6,29 +6,19 @@ import { generateSpec } from '../_shared/schemas/openapi/spec.ts';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? 'https://pqokxlhvnosogizsjztg.supabase.co';
 const BASE_URL = `${SUPABASE_URL}/functions/v1`;
 
+// Canonical human-facing docs. The rendered API reference lives in the Next.js
+// dashboard (Scalar), NOT here: Supabase forcibly sandboxes any HTML served
+// from `*.supabase.co` (rewrites `text/html` → `text/plain` + injects a
+// `default-src 'none'; sandbox` CSP), so an HTML page served from this function
+// can never render. This function serves ONLY the machine-readable spec.
+const DOCS_URL = 'https://lorekit.io/api-docs';
+
 let _spec: Record<string, unknown> | null = null;
 
 function getSpec(): Record<string, unknown> {
   if (!_spec) _spec = generateSpec(BASE_URL);
   return _spec;
 }
-
-const SWAGGER_HTML = (specUrl: string) => `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LoreKit REST API</title>
-  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui.css">
-</head>
-<body>
-  <div id="swagger-ui"></div>
-  <script src="https://unpkg.com/swagger-ui-dist@5.17.14/swagger-ui-bundle.js" crossorigin></script>
-  <script>
-    SwaggerUIBundle({ url: "${specUrl}", dom_id: '#swagger-ui', presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset], layout: 'BaseLayout', tryItOutEnabled: false });
-  </script>
-</body>
-</html>`;
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return handlePreflight(req);
@@ -38,11 +28,11 @@ Deno.serve(async (req) => {
   return traceRequest(req, 'lorekit.openapi', async (span) => {
     span.setAttributes({ 'lorekit.function': 'openapi' });
 
+    // Legacy `/ui` route: the Swagger UI page used to be served here but could
+    // never render (see DOCS_URL note). Redirect to the real docs so old
+    // bookmarks keep working. A 302 has no HTML body, so the sandbox is moot.
     if (url.pathname.endsWith('/ui')) {
-      const specUrl = url.href.replace(/\/ui$/, '');
-      return new Response(SWAGGER_HTML(specUrl), {
-        headers: { 'Content-Type': 'text/html', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' unpkg.com; style-src 'self' 'unsafe-inline' unpkg.com", ...cors },
-      });
+      return new Response(null, { status: 302, headers: { Location: DOCS_URL, ...cors } });
     }
 
     try {

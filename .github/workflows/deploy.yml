@@ -91,7 +91,16 @@ jobs:
         run: supabase link --project-ref "$PROJECT_REF"
 
       - name: Push database migrations
-        run: supabase db push
+        # --include-all applies a migration even when a LOWER-numbered file was
+        # merged after a higher-numbered one already reached this remote — which
+        # happens when parallel PRs pick colliding sequential prefixes (e.g.
+        # #260 shipped 00042, then #266 shipped 00041). Without it `db push`
+        # aborts with "migration files to be inserted before the last migration
+        # on remote". Migrations are still applied in on-disk numeric order; the
+        # PR-time guard (scripts/check-migration-order.mjs, the `migration-order`
+        # CI job) is what stops an out-of-order file from landing in the first
+        # place, so this flag only ever applies already-reviewed, CI-tested ones.
+        run: supabase db push --include-all
 
       - name: Deploy edge functions (mcp + health)
         # Retry up to 3 times with 10 s back-off to tolerate transient OOM
@@ -273,7 +282,16 @@ jobs:
         run: supabase link --project-ref "$PROJECT_REF"
 
       - name: Push database migrations
-        run: supabase db push
+        # --include-all applies a migration even when a LOWER-numbered file was
+        # merged after a higher-numbered one already reached this remote — which
+        # happens when parallel PRs pick colliding sequential prefixes (e.g.
+        # #260 shipped 00042, then #266 shipped 00041). Without it `db push`
+        # aborts with "migration files to be inserted before the last migration
+        # on remote". Migrations are still applied in on-disk numeric order; the
+        # PR-time guard (scripts/check-migration-order.mjs, the `migration-order`
+        # CI job) is what stops an out-of-order file from landing in the first
+        # place, so this flag only ever applies already-reviewed, CI-tested ones.
+        run: supabase db push --include-all
 
       - name: Deploy edge functions (mcp + health)
         # Retry up to 3 times with 10 s back-off to tolerate transient OOM

@@ -271,12 +271,60 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     responses: { 204: { description: 'Revoked' }, 401: errorResponse, 403: errorResponse },
   });
 
+  const description = [
+    'Persistent memory for AI coding agents.',
+    '',
+    '**Authentication** — every endpoint accepts a Bearer token: a LoreKit API token',
+    '(`lk_ro_*` to explore, `lk_rw_*` to test writes) or your Supabase session (JWT).',
+    'Generate a token from [Settings → API keys](/settings/api-keys) and paste it into the',
+    '**Authorize** box above — one token works on every endpoint, orgs included.',
+    '',
+    '**Safe by default** — destructive calls run in *dry-run* mode: the `X-LoreKit-Dry-Run`',
+    'header defaults to `true`, so create / update / delete requests are validated and',
+    'authorized but make **no changes**. Clear that header on an operation to execute for real.',
+  ].join('\n');
+
   const gen = new OpenApiGeneratorV31(registry.definitions);
-  _cachedSpec = gen.generateDocument({
+  const doc = gen.generateDocument({
     openapi: '3.1.0',
-    info: { title: 'LoreKit REST API', version: '1.0.0', description: 'Persistent memory for AI coding agents.' },
+    info: { title: 'LoreKit REST API', version: '1.0.0', description },
     servers: [{ url: baseUrl, description: 'Supabase Edge Functions' }],
+    // Applied globally in addition to the per-operation `security` so the spec
+    // root itself declares the requirement (clients / linters that read the
+    // document-level default see auth is required everywhere).
+    security,
   }) as unknown as Record<string, unknown>;
 
+  // Sidebar hierarchy (Scalar / Redocly `x-tagGroups`): Members and Invites are
+  // sub-concepts of an organization, so nest them with Orgs under one group
+  // instead of the flat Memories/Orgs/Members/Invites list.
+  doc['x-tagGroups'] = [
+    { name: 'Memories', tags: ['Memories'] },
+    { name: 'Organizations', tags: ['Orgs', 'Members', 'Invites'] },
+  ];
+
+  // Attach the dry-run header to every mutating operation, centrally rather
+  // than per-registerPath. It defaults to `true` so Scalar pre-fills it and the
+  // docs are safe by default; the caller clears it to execute for real. The
+  // backend contract lives in `_shared/dry-run.ts` (isDryRunHeader).
+  const MUTATING_METHODS = new Set(['post', 'patch', 'delete', 'put']);
+  const dryRunParam = {
+    name: 'X-LoreKit-Dry-Run',
+    in: 'header',
+    required: false,
+    description:
+      'Safe-explore mode. When `true` (the default here), the request is validated and ' +
+      'authorized but makes NO changes. Set it to `false` to execute for real.',
+    schema: { type: 'boolean', default: true },
+  };
+  const paths = (doc['paths'] ?? {}) as Record<string, Record<string, { parameters?: unknown[] }>>;
+  for (const operations of Object.values(paths)) {
+    for (const [method, operation] of Object.entries(operations)) {
+      if (!MUTATING_METHODS.has(method)) continue;
+      operation.parameters = [...(operation.parameters ?? []), dryRunParam];
+    }
+  }
+
+  _cachedSpec = doc;
   return _cachedSpec;
 }

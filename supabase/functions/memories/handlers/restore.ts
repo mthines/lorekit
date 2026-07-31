@@ -1,7 +1,8 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { auditUserId } from '../../_shared/api/auth.ts';
 import { recordAudit } from '../../_shared/audit.ts';
-import { ok, notFound } from '../../_shared/api/respond.ts';
+import { ok, notFound, dryRun } from '../../_shared/api/respond.ts';
+import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
 import { validateBody, validateUuid } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
@@ -61,6 +62,9 @@ export async function handleRestore(
   // api_key auth uses service-role client — restrict to caller's own rows.
   // JWT auth uses RLS-scoped client — RLS handles access control.
   if (auth.type === 'api_key' && auth.userId) q = q.eq('user_id', auth.userId);
+
+  // Dry-run: everything above validated + authorized; stop before any write.
+  if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
 
   // `.select()` returns the affected rows: the `/:id` form has no scope+key of
   // its own, and the audit row needs them to match the MCP surface's shape.

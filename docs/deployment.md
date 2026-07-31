@@ -175,10 +175,50 @@ production project too.
 
 ### Recommended branch protection
 
-Require a PR to `main` and mark the `ci.yml` **`Typecheck, Test & Lint
-(affected)`** and **`Integration smoke (local Supabase)`** jobs as required
-status checks. Because `deploy.yml` no longer re-runs tests, these checks are
-the sole gate that keeps unverified (or migration-breaking) code off `main`.
+Require a PR to `main` and mark the single **`CI Summary`** job as the required
+status check. It aggregates every job above — `Typecheck, Test & Lint
+(affected)`, `Integration smoke (local Supabase)`, `Plugin smoke`, and
+`Migration order (no out-of-order prefixes)` — into one pass/fail verdict.
+Require **`CI Summary`** rather than those jobs directly: it always runs
+(`if: always()`) and collapses every job — including the path-gated ones that
+skip on unrelated PRs — into one definite pass/fail, so branch protection needs
+exactly one check and you never have to reason about how a *skipped* path-gated
+check is counted (GitHub's handling of that is inconsistent, which is the whole
+reason the aggregating job exists). Because `deploy.yml` no longer re-runs
+tests, this check is the sole gate that keeps unverified (or migration-breaking)
+code off `main`.
+
+Also enable **"Require branches to be up to date before merging."** It is what
+closes the last migration-ordering gap: the `migration-order` guard
+(below) rejects a PR whose new migration is numbered at or below `main`'s
+highest, but two PRs branched from the same base can each pass in isolation and
+still collide once both merge. Requiring an up-to-date branch forces the second
+to rebase — at which point the guard sees the now-merged higher number and
+fires.
+
+#### Migration ordering (sequential prefixes + parallel PRs)
+
+Migrations use sequential integer prefixes (`00042_…`), which **do not survive
+parallel PRs**: each branch picks "the next number" from its own base, so two
+concurrent PRs can merge a lower number *after* a higher one is already live.
+`supabase db push` then aborts on the next deploy with *"migration files to be
+inserted before the last migration on remote"* — which is exactly what happened
+when `#260` shipped `00042` and `#266` then shipped `00041`.
+
+Two layers keep this from wedging the deploy:
+
+1. **Prevention — the `migration-order` CI job** (`scripts/check-migration-order.mjs`)
+   fails any PR that adds a migration numbered ≤ the highest already on the base
+   branch, telling the author the next free number to rebase-and-renumber to.
+2. **Tolerance — `supabase db push --include-all`** in `deploy.yml` applies an
+   already-reviewed, CI-tested migration even if it sorts before one already on
+   the remote (migrations still apply in on-disk numeric order). This unwedges
+   the grandfathered `00041`/`00042` pair and any future edge case the guard
+   didn't pre-empt.
+
+The collision-proof end state is Supabase's **timestamp filenames**
+(`YYYYMMDDHHMMSS_…`), which are monotonic and parallel-safe — a larger,
+rename-everything change to consider separately.
 
 ---
 

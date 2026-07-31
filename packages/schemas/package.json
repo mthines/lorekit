@@ -16,9 +16,7 @@
     "./openapi/spec": "./src/openapi/spec.ts"
   },
   "dependencies": {
+    "@asteasolutions/zod-to-openapi": "^7.0.0",
     "zod": "^3.0.0"
-  },
-  "devDependencies": {
-    "@asteasolutions/zod-to-openapi": "^7.0.0"
   }
 }
