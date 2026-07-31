@@ -123,18 +123,19 @@ export default function LearnRemotePage() {
     LOREKIT_TOKEN: \${{ secrets.LOREKIT_TOKEN }}`}</code></pre>
         </TutorialStep>
 
-        <TutorialStep number={6} title="(Optional) Set up the GitHub webhook">
+        <TutorialStep number={6} title="(Optional) Install the GitHub App">
           <p>
             To have LoreKit automatically learn from PR review comments, go to{' '}
             <Link href="/settings/integrations" className="text-[var(--color-accent)] underline underline-offset-2">
-              Settings → Webhooks
-            </Link>, add your repo (<code>owner/repo</code>), copy the generated secret,
-            then configure a webhook on GitHub pointing at your MCP endpoint:
+              Settings → Integrations
+            </Link> and install the LoreKit GitHub App. Every repository you grant it is
+            covered instantly — there is no per-repo secret to copy and no webhook to
+            configure on GitHub:
           </p>
           <ul className="mt-2 list-disc pl-5 space-y-1">
-            <li><strong>Payload URL:</strong> <code>…/functions/v1/mcp/webhooks/github</code></li>
-            <li><strong>Content type:</strong> <code>application/json</code></li>
-            <li><strong>Events:</strong> Pull request review comments + Pull request reviews</li>
+            <li><strong>Covers:</strong> every repo you grant the App, as you add or remove them on GitHub</li>
+            <li><strong>Learns from:</strong> resolved pull request review comments and reviews</li>
+            <li><strong>Tags each memory:</strong> <code>source::pr-webhook</code></li>
           </ul>
         </TutorialStep>
       </div>
