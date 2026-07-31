@@ -68,6 +68,46 @@ test('OTEL_EXPORTER_OTLP_HEADERS is parsed and Dash0-Dataset applied', () => {
   assert.equal(cfg.headers['Dash0-Dataset'], 'my-set');
 });
 
+test('Dash0-Dataset defaults to "default" when DASH0_DATASET is unset', () => {
+  const cfg = resolveTelemetryConfig(ENABLED_ENV);
+  assert.equal(cfg.headers['Dash0-Dataset'], 'default');
+});
+
+test('DASH0_DATASET overrides the "default" fallback', () => {
+  const cfg = resolveTelemetryConfig({ ...ENABLED_ENV, DASH0_DATASET: 'staging' });
+  assert.equal(cfg.headers['Dash0-Dataset'], 'staging');
+});
+
+test('an explicit Dash0-Dataset in OTEL_EXPORTER_OTLP_HEADERS is never clobbered', () => {
+  // Regression: the "default" fallback must not overwrite a dataset the caller
+  // supplied via OTEL_EXPORTER_OTLP_HEADERS, whether or not DASH0_DATASET is set.
+  const viaHeaders = resolveTelemetryConfig({
+    OTEL_EXPORTER_OTLP_ENDPOINT: 'https://otel.example.com',
+    OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer abc, Dash0-Dataset=custom',
+  });
+  assert.equal(viaHeaders.headers['Dash0-Dataset'], 'custom');
+
+  const headerWinsOverEnv = resolveTelemetryConfig({
+    OTEL_EXPORTER_OTLP_ENDPOINT: 'https://otel.example.com',
+    OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer abc, Dash0-Dataset=custom',
+    DASH0_DATASET: 'staging',
+  });
+  assert.equal(headerWinsOverEnv.headers['Dash0-Dataset'], 'custom');
+});
+
+test('a differently-cased dash0-dataset header is not duplicated by the default', () => {
+  // HTTP header names are case-insensitive, so a lowercase `dash0-dataset` from
+  // OTEL_EXPORTER_OTLP_HEADERS must suppress the `default` fallback — otherwise
+  // two conflicting dataset headers would be sent.
+  const cfg = resolveTelemetryConfig({
+    OTEL_EXPORTER_OTLP_ENDPOINT: 'https://otel.example.com',
+    OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer abc, dash0-dataset=custom',
+  });
+  const datasetKeys = Object.keys(cfg.headers).filter((k) => k.toLowerCase() === 'dash0-dataset');
+  assert.deepEqual(datasetKeys, ['dash0-dataset']);
+  assert.equal(cfg.headers['dash0-dataset'], 'custom');
+});
+
 // ── build-time token injection ─────────────────────────────────────────────────
 
 test('committed TELEMETRY_TOKEN is empty (no secret in git)', () => {
@@ -152,7 +192,7 @@ test('buildTracePayload produces a valid single-span OTLP structure', () => {
   const resAttrs = Object.fromEntries(
     p.resourceSpans[0].resource.attributes.map((a) => [a.key, a.value.stringValue]),
   );
-  assert.equal(resAttrs['service.name'], 'lorekit-cli');
+  assert.equal(resAttrs['service.name'], 'cli');
   assert.equal(resAttrs['service.namespace'], 'lorekit');
   assert.equal(resAttrs['service.version'], '9.9.9');
 });

@@ -245,7 +245,7 @@ All signals carry these resource attributes:
 | Attribute | Value |
 |-----------|-------|
 | `service.namespace` | `lorekit` |
-| `service.name` | `mcp` (Edge Function), `web` (Next.js), or `lorekit-cli` (CLI) |
+| `service.name` | `api` (Edge Functions), `web` (Next.js), `mcp-node` (Node MCP server), or `cli` (CLI) |
 | `service.version` | Git SHA (`VERCEL_GIT_COMMIT_SHA`) or `unknown`; the package version for the CLI |
 | `deployment.environment.name` | `production` / `preview` / `development` / `local` (not set by the CLI) |
 
@@ -295,8 +295,19 @@ After adding variables, **Redeploy** in Vercel — `NEXT_PUBLIC_*` vars are bake
 
 The token is **not committed to git** — it is injected into the published tarball
 at release time from a GitHub Actions secret, so it can be rotated without a code
-change. The endpoint (`DEFAULT_ENDPOINT`) and dataset (`DEFAULT_DATASET`) are
-committed defaults in `packages/cli/src/telemetry.mjs`.
+change. The endpoint (`DEFAULT_ENDPOINT`) and dataset (`DEFAULT_DATASET`, now
+`default`) are committed defaults in `packages/cli/src/telemetry.mjs`.
+
+**Dataset precedence** (highest first): an explicit `Dash0-Dataset` passed via
+`OTEL_EXPORTER_OTLP_HEADERS` is preserved and never overwritten; otherwise
+`DASH0_DATASET`; otherwise the `default` fallback. The edge functions
+(`_shared/otel.ts`) follow the same order.
+
+> **Note:** the CLI `service.name` was `lorekit-cli` before this and is now `cli`
+> (aligning with the namespace-grouped `api` / `web` / `mcp-node` names). This is a
+> rename, not an alias — CLI telemetry emitted before and after the change lives
+> under two distinct `service.name` values in Dash0. Query `service.namespace = lorekit`
+> to see the CLI across both, or union `service.name in (cli, lorekit-cli)` for history.
 
 1. Create a Dash0 token with **Ingesting only** permissions (it can `POST` spans
    but cannot read, query, or manage anything — same reasoning as the browser
@@ -323,7 +334,7 @@ the baked-in token. End users can opt out entirely with `LOREKIT_TELEMETRY=0` or
 After a `memory.write` call, check Dash0 → Explore → filter `service.name = mcp` and `service.namespace = lorekit`.
 
 ### CLI
-After running `lorekit doctor` (with `DEFAULT_TOKEN` set, or `OTEL_EXPORTER_OTLP_*` exported), check Dash0 → Explore → filter `service.name = lorekit-cli` and `service.namespace = lorekit`. Group by `lorekit.cli.command` to count across `install`, `doctor`, `list`, `scopes`, `diff`, and the other human-facing commands.
+After running `lorekit doctor` (with `DEFAULT_TOKEN` set, or `OTEL_EXPORTER_OTLP_*` exported), check Dash0 → Explore → filter `service.name = cli` and `service.namespace = lorekit`. Group by `lorekit.cli.command` to count across `install`, `doctor`, `list`, `scopes`, `diff`, and the other human-facing commands.
 
 ### Browser
 Open Chrome DevTools → Network → filter by `v1/traces`. You should see POST requests to the Dash0 OTLP endpoint after page load and on each navigation.
