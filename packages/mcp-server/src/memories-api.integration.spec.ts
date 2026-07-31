@@ -584,7 +584,15 @@ describe.skipIf(SKIP)('LoreKit memories API — audit trail read-back (integrati
 
   it('every audit row this run wrote carries an action the CHECK admits', async ({ skip }) => {
     if (!auditReadable) skip();
-    const { rows } = await pgRest(`/audit_log?created_at=gte.${startedAt}&select=action&limit=200`);
+    // Scoped to the `memory.` namespace, not just to `created_at`: the orgs
+    // suite runs against the same database in the same window and writes
+    // `org.*` / `member.*` rows, which a timestamp-only filter would sweep in.
+    // Nothing is lost by the scoping — a memory route recording an action
+    // outside its own namespace is caught by the per-route assertions above,
+    // each of which names the exact action it requires.
+    const { rows } = await pgRest(
+      `/audit_log?created_at=gte.${startedAt}&action=like.memory.*&select=action&limit=200`,
+    );
     // A constraint-rejected action would never appear here at all, so this
     // asserts the complement: the actions that DID land are the expected set,
     // i.e. nothing was silently substituted.
@@ -618,14 +626,18 @@ describe.skipIf(SKIP)('LoreKit memories API — audit trail read-back (integrati
    */
   it('records no usage_events for a service-role caller, and does record them otherwise', async ({ skip }) => {
     if (!auditReadable) skip();
+    // Both queries are namespace-scoped for the same reason as the assertion
+    // above: the orgs suite shares this database and this time window, and it
+    // runs under a JWT, so its rows would both mis-classify the caller here and
+    // satisfy the usage assertion on another suite's evidence.
     const { rows: auditRows } = await pgRest(
-      `/audit_log?created_at=gte.${startedAt}&select=user_id&limit=200`,
+      `/audit_log?created_at=gte.${startedAt}&action=like.memory.*&select=user_id&limit=200`,
     );
     expect(auditRows.length, 'no audit rows to classify the caller from').toBeGreaterThan(0);
     const isServiceRole = auditRows.every((r) => r.user_id === null);
 
     const { status, rows: usageRows } = await pgRest(
-      `/usage_events?created_at=gte.${startedAt}&select=tool_name,auth_type&limit=200`,
+      `/usage_events?created_at=gte.${startedAt}&tool_name=like.memory.*&select=tool_name,auth_type&limit=200`,
     );
     expect(status, 'usage_events must be readable with the same credential').toBe(200);
 

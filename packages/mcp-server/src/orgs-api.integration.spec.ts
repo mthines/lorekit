@@ -33,11 +33,18 @@ const TEST_SLUG = `smoke-${Date.now()}-test`;
 
 type JsonObj = Record<string, unknown>;
 
+/**
+ * `token` defaults to the suite's JWT. Pass `null` — NOT `undefined` — to send
+ * no credential at all: a JS default parameter is applied whenever the argument
+ * is `undefined`, so `restFetch('GET', '/', undefined, undefined)` silently
+ * sent the JWT and the "no auth token" case asserted nothing. It only ever
+ * looked green because the whole suite was skipped for want of a JWT.
+ */
 async function restFetch(
   method: string,
   path: string,
   body?: unknown,
-  token: string | undefined = JWT,
+  token: string | null | undefined = JWT,
 ): Promise<{ status: number; data: unknown }> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -60,7 +67,7 @@ describe.skipIf(SKIP)('LoreKit orgs API — smoke tests (integration)', () => {
 
   // 1. auth: no token → 401/403 ───────────────────────────────────────────────
   it('GET /orgs — returns 401 or 403 when no auth token is provided', async () => {
-    const { status } = await restFetch('GET', '/', undefined, undefined);
+    const { status } = await restFetch('GET', '/', undefined, null);
     expect([401, 403], `expected 401 or 403; got ${status}`).toContain(status);
   });
 
@@ -79,7 +86,7 @@ describe.skipIf(SKIP)('LoreKit orgs API — smoke tests (integration)', () => {
     const { status, data } = await restFetch('GET', '/');
     expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
     const d = data as JsonObj;
-    expect(Array.isArray(d.orgs), 'orgs should be an array').toBe(true);
+    expect(Array.isArray(d.entries), 'the list response is { entries: [...] }').toBe(true);
   });
 
   // 4. create ─────────────────────────────────────────────────────────────────
@@ -117,7 +124,7 @@ describe.skipIf(SKIP)('LoreKit orgs API — smoke tests (integration)', () => {
     const { status, data } = await restFetch('GET', `/${TEST_SLUG}/members`);
     expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
     const d = data as JsonObj;
-    expect(Array.isArray(d.members), 'members should be an array').toBe(true);
+    expect(Array.isArray(d.entries), 'the member list response is { entries: [...] }').toBe(true);
   });
 
   // 8. list invites ───────────────────────────────────────────────────────────
@@ -125,7 +132,7 @@ describe.skipIf(SKIP)('LoreKit orgs API — smoke tests (integration)', () => {
     const { status, data } = await restFetch('GET', `/${TEST_SLUG}/invites`);
     expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
     const d = data as JsonObj;
-    expect(Array.isArray(d.invites), 'invites should be an array').toBe(true);
+    expect(Array.isArray(d.entries), 'the invite list response is { entries: [...] }').toBe(true);
   });
 
   // 9. delete ─────────────────────────────────────────────────────────────────
@@ -312,5 +319,43 @@ describe.skipIf(SKIP)('LoreKit orgs API — audit trail read-back (integration)'
     for (const expected of ['org.create', 'org.rename', 'member.invite', 'member.revoke', 'org.delete']) {
       expect(actions, `${expected} never landed in audit_log`).toContain(expected);
     }
+  });
+
+  /**
+   * The POSITIVE `usage_events` assertion — only reachable from this suite.
+   *
+   * `_shared/api/router.ts` records an event only when `analyticsUserId(auth)`
+   * resolves, i.e. for `api_key` and JWT callers and never for service-role.
+   * The memories suite runs under the service-role key, so it can only assert
+   * the negative (zero rows). This suite runs under a real user JWT, so it is
+   * the one place the recording path itself can be proven.
+   *
+   * Both halves work under RLS without a service-role read: the writer
+   * (`lorekit_record_usage_event`, 00034) is SECURITY DEFINER so the insert
+   * clears the table's insert-less policy set, and `rls_usage_events_select`
+   * is `user_id = auth.uid()` so this caller can read exactly its own rows.
+   */
+  it('a JWT caller records usage_events for the org routes it called', async ({ skip }) => {
+    if (!auditReadable) skip();
+    const { status, rows } = await pgRest(
+      `/usage_events?created_at=gte.${startedAt}&select=tool_name,auth_type,outcome&limit=200`,
+    );
+    expect(status, 'usage_events must be readable with this JWT').toBe(200);
+    expect(rows.length, 'a JWT caller must record usage events').toBeGreaterThan(0);
+
+    // RLS already scopes these to this caller, so every row is ours.
+    for (const r of rows) {
+      expect(r.auth_type, 'a JWT caller must be recorded as jwt, not user/api_key/service').toBe('jwt');
+    }
+
+    // `restToolName` maps each org route onto the MCP tool it is the
+    // equivalent of, so both surfaces aggregate as one series. This suite
+    // creates an org, so that mapping must have produced `org.create`.
+    const toolNames = new Set(rows.map((r) => r.tool_name as string));
+    expect(toolNames, `expected org.create among ${[...toolNames].join(', ')}`).toContain('org.create');
+
+    // A successful call must not be filed as a failure — that would quietly
+    // corrupt every error-rate rollup built on this table.
+    expect(rows.some((r) => r.outcome === 'ok'), 'no successful call was recorded as ok').toBe(true);
   });
 });
