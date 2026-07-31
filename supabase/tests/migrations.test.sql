@@ -2634,6 +2634,14 @@ $$;
 -- AC-8: p_correlation_id narrows to one PR/session (G2, 00044).
 -- AC-9: purge_expired_memories records a memory.expired event = rows expired (G3, 00045).
 
+-- Isolate this section's fixture: earlier sections (the TTL purge tests) now emit
+-- a memory.expired usage event for a1 as a side effect of 00045, which would push
+-- a1's exact-total assertions below off by one. Clear both test users' ledgers so
+-- the counts assert only the rows this section seeds.
+delete from usage_events
+ where user_id in ('00000000-0000-0000-0000-0000000000a1',
+                   '00000000-0000-0000-0000-0000000000b2');
+
 -- User A (a1): 7 events — 3 recent list/ok/repo (10 records each → 30), 1 recent
 -- write/ok/repo, 1 recent write/cap_exceeded/repo, and 2 OLD (40d) list/ok/global
 -- for the window test. The three recent list rows + the recent write carry a
