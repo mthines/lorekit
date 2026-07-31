@@ -1,6 +1,7 @@
 import type { AuthContext } from '../../../_shared/api/auth.ts';
 import { actorUserId } from '../../../_shared/api/auth.ts';
-import { noContent } from '../../../_shared/api/respond.ts';
+import { noContent, dryRun } from '../../../_shared/api/respond.ts';
+import { DRY_RUN_HEADER, isDryRunHeader } from '../../../_shared/dry-run.ts';
 import { validateUuid } from '../../../_shared/api/validate.ts';
 import { createTracedClient } from '../../../_shared/otel.ts';
 import type { Span } from '../../../_shared/otel.ts';
@@ -18,6 +19,8 @@ export async function handleRevokeInvite(req: Request, auth: AuthContext, db: Db
   // invite's own org, and requires the `revoke_invite` capability on it — so a
   // non-member gets LK002 -> 403 without any raw table read to leak from. The
   // actor still has to be named explicitly for the api_key tier (00041).
+  // Dry-run: everything above validated + authorized; stop before any write.
+  if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
   const { error } = await tracedDb.rpc('lorekit_org_invite_revoke', {
     p_invite_id: idV.data,
     p_actor_user_id: actorUserId(auth),

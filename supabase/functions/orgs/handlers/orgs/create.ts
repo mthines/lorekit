@@ -1,6 +1,7 @@
 import type { AuthContext } from '../../../_shared/api/auth.ts';
 import { actorUserId } from '../../../_shared/api/auth.ts';
-import { created } from '../../../_shared/api/respond.ts';
+import { created, dryRun } from '../../../_shared/api/respond.ts';
+import { DRY_RUN_HEADER, isDryRunHeader } from '../../../_shared/dry-run.ts';
 import { validateBody } from '../../../_shared/api/validate.ts';
 import { createTracedClient } from '../../../_shared/otel.ts';
 import type { Span } from '../../../_shared/otel.ts';
@@ -19,6 +20,8 @@ export async function handleCreateOrg(req: Request, auth: AuthContext, db: DbCli
   // verified service_role connection (00041) and raises LK002 -> 403 when it
   // resolves to nobody, so a `service`-tier (CI) call cannot create an ownerless
   // org.
+  // Dry-run: everything above validated + authorized; stop before any write.
+  if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
   const { data, error } = await tracedDb.rpc('lorekit_org_create', {
     p_slug: v.data.slug,
     p_name: v.data.name,

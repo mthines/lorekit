@@ -12,6 +12,10 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
+    // `@lorekit/schemas` is TS source whose internal imports carry `.ts`
+    // extensions; allow them here (safe under noEmit) so typecheck can follow
+    // into the package that /api-docs/spec generates the OpenAPI doc from.
+    "allowImportingTsExtensions": true,
     "jsx": "preserve",
     "incremental": true,
     "plugins": [{ "name": "next" }],

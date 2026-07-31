@@ -44,6 +44,7 @@ import {
   CreditCard,
   Rocket,
   FileCog,
+  FileCode,
   HardDrive,
   Cloud,
   Lock,
@@ -161,6 +162,17 @@ export function NavigationCommands() {
     icon: <Key className="size-4" />,
     group: 'Settings',
     onSelect: () => router.push('/settings/api-keys'),
+  });
+
+  useCommand({
+    id: 'settings-api-docs',
+    label: 'API Reference',
+    description: 'Open the REST API docs (opens in a new tab)',
+    icon: <FileCode className="size-4" />,
+    group: 'Settings',
+    onSelect: () => {
+      window.open('/api-docs', '_blank', 'noopener,noreferrer');
+    },
   });
 
   useCommand({

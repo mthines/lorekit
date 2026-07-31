@@ -1,13 +1,27 @@
-# openapi — OpenAPI spec + Swagger UI
+# openapi — OpenAPI spec
 
-Serves the LoreKit REST API specification and a browser-based exploration UI. No auth required — this is a public endpoint.
+Serves the LoreKit REST API specification (machine-readable JSON). No auth
+required — this is a public endpoint.
 
 ## URL patterns
 
 | Method | Path | Response |
 |--------|------|----------|
 | GET | / | `application/json` — OpenAPI 3.1 spec |
-| GET | /ui | `text/html` — Swagger UI page |
+| GET | /ui | `302` redirect → `https://lorekit.io/api-docs` (legacy path) |
+
+## Where the rendered docs live
+
+The browsable API reference is **NOT served here** — it lives in the Next.js
+dashboard at **`https://lorekit.io/api-docs`** (rendered with Scalar,
+`packages/web/src/app/api-docs/`). Supabase forcibly sandboxes any HTML served
+from `*.supabase.co` (it rewrites `text/html` → `text/plain` and injects a
+`default-src 'none'; sandbox` CSP), so an HTML UI page served from this function
+could never render. The dashboard page fetches this function's spec through a
+same-origin proxy (`/api-docs/spec`), so it works on localhost, preview, and
+production without depending on this function's CORS allow-origin. The old
+`GET /ui` route now 302-redirects to the dashboard page so existing bookmarks
+keep working.
 
 ## Spec generation
 
@@ -33,14 +47,6 @@ The `servers[0].url` in the generated spec is derived from the `SUPABASE_URL` en
 ```typescript
 const baseUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1`;
 ```
-
-## Swagger UI (`GET /ui`)
-
-Returns an HTML page that:
-1. Loads the Swagger UI assets from a CDN.
-2. Points `url` at the same function's `/` endpoint so it fetches the live spec.
-
-No separate hosting is needed — both routes are served by the same Edge Function.
 
 ## Updating the spec
 

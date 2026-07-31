@@ -37,3 +37,17 @@ export function methodNotAllowed(cors: Record<string, string> = {}): Response {
 export function internalError(cors: Record<string, string> = {}): Response {
   return new Response(JSON.stringify({ error: 'Internal server error', code: 'internal_error' }), { status: 500, headers: h(cors) });
 }
+/**
+ * Short-circuit response for a dry-run request: the handler validated and
+ * authorized the call but made no changes. Signals via a 200 body flag and the
+ * `X-LoreKit-Dry-Run: applied` header. See `_shared/dry-run.ts`.
+ */
+export function dryRun(cors: Record<string, string> = {}): Response {
+  return new Response(
+    JSON.stringify({
+      dry_run: true,
+      message: 'Validated and authorized; no changes were made. Set X-LoreKit-Dry-Run: false to execute.',
+    }),
+    { status: 200, headers: { ...h(cors), 'X-LoreKit-Dry-Run': 'applied' } },
+  );
+}

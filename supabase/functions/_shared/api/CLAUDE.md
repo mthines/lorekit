@@ -115,6 +115,14 @@ Rules:
 
 ### respond.ts
 - Thin wrappers for every HTTP status. Always pass `cors` as the last argument.
+- `dryRun(cors)` — 200 `{ dry_run: true }` + `X-LoreKit-Dry-Run: applied` header. Returned by a
+  mutating handler when the request carries a truthy `X-LoreKit-Dry-Run` header: validate and
+  authorize, then short-circuit BEFORE the write. The flag is parsed by `isDryRunHeader`
+  (`_shared/dry-run.ts`, mirror of `packages/mcp-core/src/dry-run.ts`); absent header ⇒ real
+  execution, so existing clients are unaffected. Every mutating route must honour it — enforced by
+  the source-scan `packages/mcp-core/src/dry-run-coverage.spec.ts` (empty `DRY_RUN_EXEMPT`), the
+  dry-run analogue of `audit-coverage.spec.ts`. The docs default the header to `true`
+  (`X-LoreKit-Dry-Run` param on every mutating op, added centrally in `openapi/spec.ts`).
 
 ### validate.ts
 - `validateBody(req, schema, cors)` — async; parses JSON body against schema.

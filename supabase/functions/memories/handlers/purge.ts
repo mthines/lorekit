@@ -1,7 +1,8 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { auditUserId } from '../../_shared/api/auth.ts';
 import { recordAudit } from '../../_shared/audit.ts';
-import { ok, forbidden, tooManyRequests } from '../../_shared/api/respond.ts';
+import { ok, forbidden, tooManyRequests, dryRun } from '../../_shared/api/respond.ts';
+import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
 import { validateOptionalBody } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { Span } from '../../_shared/otel.ts';
@@ -86,6 +87,9 @@ export async function handlePurge(
   const limited = await checkRateLimit(db, span, userId, cors);
   if (limited) return limited;
 
+  // Dry-run: validated + authorized + rate-limited above; stop before any write.
+  if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
+
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb.rpc('purge_archived_memories', {
     p_user_id: userId,
@@ -122,7 +126,7 @@ export async function handlePurge(
  * metadata `{ purged_expired }`).
  */
 export async function handlePurgeExpired(
-  _req: Request, auth: AuthContext, db: DbClient, span: Span,
+  req: Request, auth: AuthContext, db: DbClient, span: Span,
   _params: Record<string, string>, cors: Record<string, string>,
 ): Promise<Response> {
   const userId = requireUserId(auth, cors);
@@ -132,6 +136,9 @@ export async function handlePurgeExpired(
 
   const limited = await checkRateLimit(db, span, userId, cors);
   if (limited) return limited;
+
+  // Dry-run: validated + authorized + rate-limited above; stop before any write.
+  if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
 
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb.rpc('purge_expired_memories', { p_user_id: userId });

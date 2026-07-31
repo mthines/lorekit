@@ -9,10 +9,11 @@ export function corsHeaders(req: Request): Record<string, string> {
   // An empty string is not a valid header value and causes browser errors.
   const headers: Record<string, string> = {
     'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Authorization, Content-Type, traceparent, tracestate',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, traceparent, tracestate, X-LoreKit-Dry-Run',
     // Lets a browser read the server span's traceparent off the response
-    // (traceRequest sets it) so client-side RUM can link to the server trace.
-    'Access-Control-Expose-Headers': 'traceparent',
+    // (traceRequest sets it) so client-side RUM can link to the server trace,
+    // plus the dry-run acknowledgement so a client can confirm no-op execution.
+    'Access-Control-Expose-Headers': 'traceparent, X-LoreKit-Dry-Run',
     'Access-Control-Max-Age': '86400',
   };
   if (allow) headers['Access-Control-Allow-Origin'] = origin || '*';

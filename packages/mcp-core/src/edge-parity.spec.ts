@@ -80,6 +80,7 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   // import their mirror instead of holding a copy.
   ['rest-audit-actor.ts', '_shared/rest-audit-actor.ts'],
   ['rest-response-outcome.ts', '_shared/rest-response-outcome.ts'],
+  ['dry-run.ts', '_shared/dry-run.ts'],
 ];
 
 describe('edge-function mirror parity', () => {

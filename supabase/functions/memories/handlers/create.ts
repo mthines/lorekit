@@ -1,6 +1,7 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { auditUserId } from '../../_shared/api/auth.ts';
-import { created, tooManyRequests, badRequest } from '../../_shared/api/respond.ts';
+import { created, tooManyRequests, badRequest, dryRun } from '../../_shared/api/respond.ts';
+import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
 import { validateBody } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { Span } from '../../_shared/otel.ts';
@@ -48,6 +49,9 @@ export async function handleCreate(
     rlSpan.setAttributes({ 'rate_limit.allowed': !!row?.allowed, 'rate_limit.current': row?.current_count ?? 0 }).end();
     if (row && !row.allowed) return tooManyRequests(row.retry_after_seconds ?? 60, cors);
   }
+
+  // Dry-run: validated + rate-limited above; stop before any write.
+  if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
 
   // Use memory_write RPC rather than raw .upsert() — the memories table uses
   // partial unique indexes (WHERE archived_at IS NULL) introduced in migration
