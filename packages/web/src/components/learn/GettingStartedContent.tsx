@@ -196,7 +196,7 @@ export function GettingStartedContent({ isPublic = false }: Props) {
           ) : (
             <> Set this up any time from{' '}
               <Link
-                href="/settings/webhooks"
+                href="/settings/integrations"
                 className="text-[var(--color-accent)] underline underline-offset-2"
               >
                 Settings → Webhooks

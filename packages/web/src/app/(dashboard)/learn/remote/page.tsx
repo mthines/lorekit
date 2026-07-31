@@ -126,7 +126,7 @@ export default function LearnRemotePage() {
         <TutorialStep number={6} title="(Optional) Set up the GitHub webhook">
           <p>
             To have LoreKit automatically learn from PR review comments, go to{' '}
-            <Link href="/settings/webhooks" className="text-[var(--color-accent)] underline underline-offset-2">
+            <Link href="/settings/integrations" className="text-[var(--color-accent)] underline underline-offset-2">
               Settings → Webhooks
             </Link>, add your repo (<code>owner/repo</code>), copy the generated secret,
             then configure a webhook on GitHub pointing at your MCP endpoint:

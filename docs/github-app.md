@@ -117,7 +117,7 @@ from `auth.uid()` + RLS.
 1. OAuth `code` is exchanged first (so the session exists).
 2. If `installation_id` is present, `handleSetupReturn` attempts to link the
    pending installation to the authenticated session.
-3. Redirects to `/settings/webhooks` so the user sees the linked installation.
+3. Redirects to `/settings/integrations` so the user sees the linked installation.
 
 ### Live-spike requirement (AC-6)
 
@@ -161,7 +161,7 @@ supabase secrets set GITHUB_APP_ENABLED=true
 
 ### 3. Surface the install button in the dashboard
 
-The dashboard's "Install GitHub App" button (Settings → Webhooks) links to the
+The dashboard's "Install GitHub App" button (Settings → Integrations) links to the
 App's public installation page. It is resolved from the App's slug at build
 time, so set this **web** env var (Vercel — not a Supabase secret):
 
