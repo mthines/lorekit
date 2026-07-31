@@ -73,6 +73,16 @@ It prints the emitted `trace_id`, the endpoint host, the dataset, and the
 Dash0 filter to use. With no endpoint/token configured it **no-ops** with a
 clear message (never crashes, never needs a secret in git).
 
+**From CI (no local secret needed).** The `Emit correlated trace (manual)`
+workflow (`.github/workflows/emit-trace.yml`) runs the same harness on demand
+from the Actions tab (`workflow_dispatch`). It reuses the existing
+`LOREKIT_TELEMETRY_TOKEN` secret (the one the release job bakes into the CLI
+tarball), so the endpoint/auth are already wired — just click **Run workflow**.
+Two optional inputs: `environment` (the `deployment.environment.name` tag,
+default `test`) and `dataset` (blank → the token's default dataset). The
+`trace_id` appears in the job log. The button only shows once the workflow file
+is on the default branch.
+
 **What it emits** — one trace covering all three production correlation paths:
 
 ```
