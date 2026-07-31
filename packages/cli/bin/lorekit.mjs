@@ -45,10 +45,10 @@ ${c.bold('Commands')}
               the MCP server entry, and the lifecycle hooks for the chosen scope. Surgical —
               other servers, hooks, and settings are left untouched. Prompts
               project vs global; --project / --global choose non-interactively.
-  doctor      Verify the skill install, MCP connectivity, token, and scope.
+  doctor      Verify the skill install, remote connectivity, token, and scope.
   list (ls)   List the memories that apply to the current directory, split into
               an Offline section (local .lorekit/ + ~/.lorekit/) and a Remote
-              section (hosted MCP). Groups by scope (project/branch/repo/global).
+              section (the hosted LoreKit API). Groups by scope (project/branch/repo/global).
               --json for scripting, --scope <s> to narrow.
   search      Full-text search the applicable memories across both stores and all
     (grep)    scopes (case-insensitive, literal substring over key + value),
@@ -194,7 +194,7 @@ ${c.bold('Examples')}
 ${c.bold('Usage')}
   npx @lorekit/cli doctor [options]
 
-Checks the node runtime, skill install, resolved memory mode, MCP connectivity,
+Checks the node runtime, skill install, resolved memory mode, remote connectivity,
 token, and scope.
 
 ${c.bold('Options')}
@@ -217,8 +217,8 @@ ${c.bold('Usage')}
 
 Shows the memories for the scopes that resolve for the current directory
 (project/branch/repo/global), split into an Offline section (the local
-.lorekit/ + ~/.lorekit/ two-tier store) and a Remote section (the hosted MCP
-server). When no remote token/endpoint is configured the Remote section is a
+.lorekit/ + ~/.lorekit/ two-tier store) and a Remote section (the hosted LoreKit
+API). When no remote token/endpoint is configured the Remote section is a
 short note on how to set it up — never an error.
 
 ${c.bold('Options')}
@@ -320,7 +320,7 @@ ${c.bold('Usage')}
 
 Shows how many memories apply to the current directory's scopes (project/branch/
 repo/global), broken down per scope and per store (Offline = the local .lorekit/
-+ ~/.lorekit/ two-tier store; Remote = the hosted MCP server), with per-store and
++ ~/.lorekit/ two-tier store; Remote = the hosted LoreKit API), with per-store and
 grand totals. An unconfigured remote degrades to a short note, never an error.
 
 ${c.bold('Options')}

@@ -158,7 +158,13 @@ async function captureRestCalls(fn, { status = 200, body = '{}', throws = null }
   const original = globalThis.fetch;
   const calls = [];
   globalThis.fetch = async (url, init) => {
-    calls.push({ url: String(url), method: init?.method ?? 'GET' });
+    calls.push({
+      url: String(url),
+      method: init?.method ?? 'GET',
+      // `undefined` when the request carried no body at all — distinguishable
+      // from an empty one, which matters for the DELETE assertions.
+      body: init?.body === undefined ? undefined : JSON.parse(init.body),
+    });
     if (throws) throw new Error(throws);
     return {
       ok: status >= 200 && status < 300,
@@ -268,6 +274,187 @@ test('listScopes() on an unusable store never calls fetch', async () => {
     const res = await createRemoteStore({ endpoint: null, token: null }).listScopes();
     assert.equal(res.ok, false);
     assert.equal(res.unusable, true);
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+// ── RemoteStore: the four org.* operations go over REST too ───────────────────
+// This is the last transport the store held on MCP. `supabase/functions/orgs/`
+// serves `lk_*` tokens on every route as of 00041_org_actor_override.sql, so
+// there is nothing left to route through JSON-RPC.
+//
+// Each test asserts the exact URL, method and body, AND that `/mcp` is never
+// touched — a regression to `_mcp(...)` would otherwise still "work" against a
+// live backend and only show up as a lost trace and a different error shape.
+// The return SHAPES are asserted deliberately: `mcp-server.mjs` serialises them
+// straight into a `tools/call` result, so they are a published contract.
+
+/** Every org method must leave the JSON-RPC endpoint completely untouched. */
+function assertNoMcp(calls) {
+  const offenders = calls.filter((c) => c.url.includes('/functions/v1/mcp'));
+  assert.deepEqual(offenders, [], `org op hit the MCP endpoint: ${JSON.stringify(offenders)}`);
+}
+
+test('orgCreate() POSTs /orgs and rebuilds the { id, slug, name } contract', async () => {
+  const { result, calls } = await captureRestCalls(
+    (store) => store.orgCreate({ slug: 'acme', name: 'Acme Inc' }),
+    { status: 201, body: JSON.stringify('org-uuid-1') },
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(calls[0].url, `${REMOTE_REST_BASE}/orgs`);
+  assert.deepEqual(calls[0].body, { slug: 'acme', name: 'Acme Inc' });
+  assertNoMcp(calls);
+  // POST /orgs answers with the bare id; slug/name came from the caller.
+  assert.deepEqual(result, { ok: true, org: { id: 'org-uuid-1', slug: 'acme', name: 'Acme Inc' } });
+});
+
+test('orgList() GETs /orgs and returns { entries }', async () => {
+  const entries = [{ id: 'i', slug: 'acme', name: 'Acme Inc', role: 'owner', created_at: 't' }];
+  const { result, calls } = await captureRestCalls((store) => store.orgList(), {
+    status: 200,
+    body: JSON.stringify({ entries }),
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'GET');
+  assert.equal(calls[0].url, `${REMOTE_REST_BASE}/orgs`);
+  assert.equal(calls[0].body, undefined);
+  assertNoMcp(calls);
+  assert.deepEqual(result, { ok: true, entries });
+});
+
+test('orgList() returns an empty list when the response has no entries array', async () => {
+  const { result } = await captureRestCalls((store) => store.orgList(), { status: 200, body: '{}' });
+  assert.deepEqual(result, { ok: true, entries: [] });
+});
+
+test('orgRename() PATCHes /orgs/:slug with only the new name in the body', async () => {
+  const { result, calls } = await captureRestCalls(
+    (store) => store.orgRename({ slug: 'acme', name: 'Acme Corp' }),
+    { status: 200, body: JSON.stringify({ slug: 'acme', name: 'Acme Corp' }) },
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'PATCH');
+  assert.equal(calls[0].url, `${REMOTE_REST_BASE}/orgs/acme`);
+  // The slug is in the path, so it must NOT also be in the body.
+  assert.deepEqual(calls[0].body, { name: 'Acme Corp' });
+  assertNoMcp(calls);
+  assert.deepEqual(result, { ok: true, slug: 'acme', name: 'Acme Corp' });
+});
+
+test('orgDelete() DELETEs /orgs/:slug and synthesises deleted:true from the 204', async () => {
+  const { result, calls } = await captureRestCalls((store) => store.orgDelete({ slug: 'acme' }), {
+    status: 204,
+    body: '',
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'DELETE');
+  assert.equal(calls[0].url, `${REMOTE_REST_BASE}/orgs/acme`);
+  assert.equal(calls[0].body, undefined);
+  assertNoMcp(calls);
+  // 204 carries no body — the MCP tool returned { deleted: true, slug }, so the
+  // store reconstructs it rather than changing the contract.
+  assert.deepEqual(result, { ok: true, deleted: true, slug: 'acme' });
+});
+
+// Slugs are PATH segments now, not JSON-RPC arguments. An un-encoded `/` or `?`
+// would silently retarget the request at a different route.
+test('org slugs are URL-encoded into the path', async () => {
+  const nasty = 'a/b?c=d e#f';
+  const encoded = encodeURIComponent(nasty);
+  for (const [label, call] of [
+    ['orgRename', (store) => store.orgRename({ slug: nasty, name: 'N' })],
+    ['orgDelete', (store) => store.orgDelete({ slug: nasty })],
+  ]) {
+    const { calls } = await captureRestCalls(call, { status: 200, body: '{}' });
+    assert.equal(calls[0].url, `${REMOTE_REST_BASE}/orgs/${encoded}`, label);
+    // No raw separator leaked into the path.
+    assert.ok(!calls[0].url.slice(`${REMOTE_REST_BASE}/orgs/`.length).includes('/'), `${label}: unescaped /`);
+    assert.ok(!calls[0].url.includes('?'), `${label}: unescaped ?`);
+    assert.ok(!calls[0].url.includes('#'), `${label}: unescaped #`);
+  }
+});
+
+// ── Org ops degrade like every other store method ─────────────────────────────
+
+test('org ops degrade gracefully on a network failure', async () => {
+  for (const [label, call] of [
+    ['orgCreate', (store) => store.orgCreate({ slug: 'acme', name: 'A' })],
+    ['orgList', (store) => store.orgList()],
+    ['orgRename', (store) => store.orgRename({ slug: 'acme', name: 'A' })],
+    ['orgDelete', (store) => store.orgDelete({ slug: 'acme' })],
+  ]) {
+    const { result } = await captureRestCalls(call, { throws: 'ECONNREFUSED' });
+    assert.equal(result.ok, false, label);
+    assert.match(String(result.networkError), /ECONNREFUSED/, label);
+    // No half-populated success payload leaks out alongside the failure.
+    assert.equal(result.org, undefined, label);
+    assert.equal(result.entries, undefined, label);
+    assert.equal(result.deleted, undefined, label);
+  }
+});
+
+test('org ops degrade gracefully on a non-2xx (403 from an under-privileged role)', async () => {
+  for (const [label, call] of [
+    ['orgCreate', (store) => store.orgCreate({ slug: 'acme', name: 'A' })],
+    ['orgList', (store) => store.orgList()],
+    ['orgRename', (store) => store.orgRename({ slug: 'acme', name: 'A' })],
+    ['orgDelete', (store) => store.orgDelete({ slug: 'acme' })],
+  ]) {
+    const { result } = await captureRestCalls(call, {
+      status: 403,
+      body: JSON.stringify({ error: 'Insufficient permissions for this org action.', code: 'org_permission_denied' }),
+    });
+    assert.equal(result.ok, false, label);
+    assert.equal(result.error.code, 'org_permission_denied', label);
+    assert.match(result.error.message, /Insufficient permissions/, label);
+    assert.equal(result.networkError, undefined, label);
+  }
+});
+
+test('org ops on an unusable store never call fetch', async () => {
+  const original = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async () => { called = true; throw new Error('should not be reached'); };
+  try {
+    const store = createRemoteStore({ endpoint: null, token: null });
+    for (const res of [
+      await store.orgCreate({ slug: 'a', name: 'A' }),
+      await store.orgList(),
+      await store.orgRename({ slug: 'a', name: 'A' }),
+      await store.orgDelete({ slug: 'a' }),
+    ]) {
+      assert.equal(res.ok, false);
+    }
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+// ── ping() no longer falls back to the MCP endpoint ───────────────────────────
+
+test('ping() probes /health and never the MCP endpoint', async () => {
+  const { result, calls } = await captureRestCalls((store) => store.ping(), { status: 200, body: 'ok' });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'https://ref.supabase.co/functions/v1/health');
+  assertNoMcp(calls);
+  assert.equal(result.ok, true);
+  assert.equal(result.httpStatus, 200);
+});
+
+test('ping() reports an unparseable endpoint instead of falling back to JSON-RPC', async () => {
+  const original = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async () => { called = true; throw new Error('should not be reached'); };
+  try {
+    // `usable()` passes (endpoint + token are set) but mcpToRestBase() cannot
+    // parse it, so restBase is null — the old code POSTed JSON-RPC at it.
+    const res = await createRemoteStore({ endpoint: 'not-a-url', token: 'lk_rw_abc' }).ping();
+    assert.equal(res.ok, false);
+    assert.match(res.error.message, /not a valid URL/);
     assert.equal(called, false);
   } finally {
     globalThis.fetch = original;

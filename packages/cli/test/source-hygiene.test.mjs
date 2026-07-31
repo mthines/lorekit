@@ -38,3 +38,39 @@ test('no source file contains a raw NUL byte (would make git treat it as binary)
     `raw NUL byte(s) found — use the "\\x00" escape instead:\n${offenders.join('\n')}`,
   );
 });
+
+// ── The remote store speaks REST, and only REST ───────────────────────────────
+// `packages/cli/src/store/remote.mjs` used to hold an MCP JSON-RPC transport
+// open purely for the four `org.*` ops and a `ping` fallback. Those are REST
+// routes now (`supabase/functions/orgs/`, which serves `lk_*` tokens as of
+// migration 00041). Nothing in the store may reach for JSON-RPC again: a
+// re-added `mcpCall` would keep working against a live backend while silently
+// bypassing `restFetch`'s error shape and the REST route-parity guard.
+//
+// `src/mcp.mjs` itself is NOT dead — it backs the `lorekit mcp` stdio server
+// command and exports `mcpToRestBase`/`restFetch`. Only the store is guarded.
+const REMOTE_STORE = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'store', 'remote.mjs');
+
+test('the remote store contains no MCP transport call', () => {
+  const src = readFileSync(REMOTE_STORE, 'utf8');
+
+  // Anti-vacuity: prove we are reading the real file, not an empty/renamed one.
+  assert.match(src, /class RemoteStore/, 'remote.mjs did not parse as the remote store');
+  for (const method of ['orgCreate', 'orgList', 'orgRename', 'orgDelete', 'ping']) {
+    assert.ok(src.includes(`async ${method}(`), `remote.mjs is missing ${method}() — guard would be vacuous`);
+  }
+
+  // Strip comments: the header legitimately NAMES mcpCall to explain its absence.
+  const code = src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map((line) => line.replace(/^\s*\/\/.*$/, ''))
+    .join('\n');
+
+  for (const banned of ['mcpCall', '_mcp(', '_mcpEntries']) {
+    assert.ok(
+      !code.includes(banned),
+      `remote.mjs references "${banned}" — the store must issue REST calls only (see supabase/functions/orgs/)`,
+    );
+  }
+});
