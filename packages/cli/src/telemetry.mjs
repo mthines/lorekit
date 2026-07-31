@@ -165,6 +165,27 @@ function toOtlpAttributes(attributes) {
   return Object.entries(attributes).map(([key, value]) => ({ key, value: toOtlpValue(value) }));
 }
 
+// OTel `os.type` / `host.arch` use their own bounded enum vocabularies, which
+// are NOT identical to Node's `process.platform` / `process.arch` spellings.
+// Node's `win32` / `sunos` and `x64` / `ia32` / `arm` are the ones that differ;
+// emitting them verbatim produces off-registry attribute values that a Dash0 /
+// OTel-native backend can't group with telemetry from other SDKs. Map the known
+// divergences and pass anything already-canonical (or unknown) through.
+//   os.type:   https://opentelemetry.io/docs/specs/semconv/registry/attributes/os/
+//   host.arch: https://opentelemetry.io/docs/specs/semconv/registry/attributes/host/
+const OS_TYPE_BY_PLATFORM = { win32: 'windows', sunos: 'solaris' };
+const HOST_ARCH_BY_PROCESS_ARCH = { x64: 'amd64', ia32: 'x86', arm: 'arm32' };
+
+/** Map a Node `process.platform` value to an OTel `os.type` registry value. */
+export function normalizeOsType(platform) {
+  return OS_TYPE_BY_PLATFORM[platform] ?? platform;
+}
+
+/** Map a Node `process.arch` value to an OTel `host.arch` registry value. */
+export function normalizeHostArch(arch) {
+  return HOST_ARCH_BY_PROCESS_ARCH[arch] ?? arch;
+}
+
 function resourceAttributes(version) {
   return [
     { key: 'service.name', value: { stringValue: 'cli' } },
@@ -172,8 +193,8 @@ function resourceAttributes(version) {
     { key: 'service.version', value: { stringValue: String(version) } },
     { key: 'process.runtime.name', value: { stringValue: 'nodejs' } },
     { key: 'process.runtime.version', value: { stringValue: process.versions.node } },
-    { key: 'os.type', value: { stringValue: process.platform } },
-    { key: 'host.arch', value: { stringValue: process.arch } },
+    { key: 'os.type', value: { stringValue: normalizeOsType(process.platform) } },
+    { key: 'host.arch', value: { stringValue: normalizeHostArch(process.arch) } },
   ];
 }
 
