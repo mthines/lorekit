@@ -21,6 +21,14 @@
  * off the `npm:` specifier on the edge), so a whole-file executable-source
  * comparison does not apply — exactly as for limits.ts.
  *
+ * VOCABULARY: `AUDIT_ACTIONS` / `AuditAction` are NOT declared here. They are
+ * imported from `@lorekit/schemas` (`src/audit.ts`) and re-exported, so this
+ * module keeps its published surface while holding no second copy of the list.
+ * The edge mirror does the same via the generated `./schemas/audit.ts`. Before
+ * that, three independent copies (here, the SQL CHECK, and the web dashboard's)
+ * had silently drifted to 11 / 23 / 24 actions — see the schemas module's
+ * header for the failure that caused.
+ *
  * CAPTURE MODEL (Decision D1): every action here is recorded by an explicit
  * app-layer call right after its primary operation succeeds — NOT by a DB
  * trigger on the data tables. The one deliberate exception (Decision D2) is
@@ -33,22 +41,11 @@
  * mirroring the memory-cap exemption in limits.ts).
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { AUDIT_ACTIONS } from '@lorekit/schemas';
+import type { AuditAction } from '@lorekit/schemas';
 
-export const AUDIT_ACTIONS = [
-  'api_key.create',
-  'api_key.revoke',
-  'webhook_secret.create',
-  'webhook_secret.rotate',
-  'webhook_secret.deactivate',
-  'memory.create',
-  'memory.update',
-  'memory.archive',
-  'memory.restore',
-  'memory.delete',
-  'limit.override',
-] as const;
-
-export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+export { AUDIT_ACTIONS };
+export type { AuditAction };
 
 export interface AuditEntryInput {
   action: AuditAction;

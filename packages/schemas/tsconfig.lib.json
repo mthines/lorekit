@@ -11,9 +11,8 @@
     "module": "nodenext",
     "target": "ES2022",
     "moduleResolution": "nodenext",
-    "rootDir": "../../",
     "composite": false
   },
-  "include": ["src/**/*.ts", "../mcp-core/src/**/*.ts", "../schemas/src/**/*.ts"],
-  "exclude": ["src/**/*.spec.ts", "src/**/*.test.ts", "../mcp-core/src/**/*.spec.ts", "../mcp-core/src/**/*.test.ts", "../schemas/src/**/*.spec.ts"]
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.spec.ts", "src/**/*.test.ts", "src/openapi/generate.ts"]
 }

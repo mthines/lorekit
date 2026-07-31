@@ -73,6 +73,13 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   ['webhook-installation.ts', 'mcp/webhook-installation.ts'],
   ['trace-context.ts', '_shared/trace-context.ts'],
   ['rest-tool-name.ts', '_shared/rest-tool-name.ts'],
+  // Two rules lifted OUT of Deno-only files so vitest can assert them:
+  // rest-audit-actor.ts is `auditUserId` (was inline in _shared/api/auth.ts),
+  // rest-response-outcome.ts is the status→usage_events.outcome
+  // classification (was inline in _shared/api/router.ts). Both edge files now
+  // import their mirror instead of holding a copy.
+  ['rest-audit-actor.ts', '_shared/rest-audit-actor.ts'],
+  ['rest-response-outcome.ts', '_shared/rest-response-outcome.ts'],
 ];
 
 describe('edge-function mirror parity', () => {

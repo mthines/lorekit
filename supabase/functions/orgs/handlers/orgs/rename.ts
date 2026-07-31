@@ -5,11 +5,13 @@ import { createTracedClient } from '../../../_shared/otel.ts';
 import type { Span } from '../../../_shared/otel.ts';
 import { RenameOrgBodySchema } from '../../../_shared/schemas/org.ts';
 import { translateDbError } from '../../../_shared/api/errors.ts';
+import { auditUserId } from '../../../_shared/api/auth.ts';
+import { recordAudit } from '../../../_shared/audit.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
 
 
 export async function handleRenameOrg(
-  req: Request, _auth: AuthContext, db: DbClient, span: Span,
+  req: Request, auth: AuthContext, db: DbClient, span: Span,
   params: Record<string,string>, cors: Record<string,string>,
 ): Promise<Response> {
   const slug = params.slug ?? '';
@@ -31,13 +33,22 @@ export async function handleRenameOrg(
   if (lookupErr) { span.error(lookupErr.message); throw lookupErr; }
   if (!org) return notFound('Organization', cors);
 
-  const { error } = await tracedDb.rpc('lorekit_org_rename', { p_org_id: (org as { id: string }).id, p_name: v.data.name });
+  const orgId = (org as { id: string }).id;
+  const { error } = await tracedDb.rpc('lorekit_org_rename', { p_org_id: orgId, p_name: v.data.name });
   if (error) {
     const m = translateDbError(error);
     if (m) return m.toResponse(cors);
     span.error(error.message);
     throw error;
   }
+
+  // Audit AFTER the rename succeeded (never on the 404 or the RPC-error path).
+  // Same shape as the dashboard's `renameOrg` (packages/web/src/lib/orgs.ts).
+  await recordAudit(
+    db,
+    { action: 'org.rename', resourceType: 'org', resourceId: orgId, target: v.data.name },
+    auditUserId(auth),
+  );
 
   return ok({ slug, name: v.data.name }, cors);
 }

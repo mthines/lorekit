@@ -1,3 +1,4 @@
+export * from './audit.ts';
 export * from './scope.ts';
 export * from './common.ts';
 export * from './memory.ts';

@@ -71,25 +71,36 @@ export function isJwtAuth(auth: AuthContext): boolean {
 }
 
 /**
- * The actor to stamp on an `audit_log` row — the REST counterpart of
- * `mcp/auth.ts`'s `getUserId`, and deliberately identical to it:
- * the resolved user for `api_key` calls, `null` for service-role AND for
- * user-JWT calls.
+ * The actor to stamp on an `audit_log` row: the resolved user for BOTH
+ * `api_key` and user-JWT callers, `null` only for service-role.
  *
- * It is NOT `auth.userId`. REST's `AuthContext` does carry a `userId` for the
- * JWT path (MCP's does too — `getUserId` just declines to use it), so
- * returning it here would be trivial. It is deliberately not done, because the
- * two surfaces must produce comparable rows and this behaviour is load-bearing
- * on the JWT path: the JWT client is RLS-scoped, and `audit_log`'s INSERT
- * policy requires `user_id = auth.uid()`, so a `null` actor fails RLS and the
- * insert is swallowed by `recordAudit`. That is the documented limitation
- * described at the top of `_shared/audit.ts` — mirrored here, not "fixed"
- * here. Changing it is a cross-surface decision that belongs in one change
- * touching MCP, REST and the migration together.
+ * WHY the JWT branch returns the user (it used to return `null`):
+ * `resolveRestAuth` hands a JWT caller `userClient(jwt)` — ANON_KEY plus
+ * `Authorization: Bearer <jwt>` — so RLS applies and `auth.uid()` IS that
+ * user's id. `audit_log`'s insert policy is
+ * `rls_audit_log_insert ... with check (user_id = auth.uid())`
+ * (supabase/migrations/00010_audit_log.sql). Supplying the caller's own id is
+ * therefore exactly what makes the insert LEGAL; supplying `null` is exactly
+ * what made it fail the policy, and `recordAudit` — correctly non-throwing —
+ * swallowed the failure, so every JWT-authenticated REST mutation silently
+ * lost its audit row. The old reasoning ("mirror MCP's limitation, don't fix
+ * it here") is void: it described a behaviour that produced no rows at all,
+ * not a comparable one.
+ *
+ * Service-role stays `null` because there is no human actor to name; that
+ * client bypasses RLS, so the row is written with a null actor rather than
+ * refused.
+ *
+ * CONSEQUENCE, stated plainly: REST now attributes JWT callers correctly
+ * where MCP (`mcp/auth.ts`'s `getUserId`) still records `null` and still loses
+ * those rows. That asymmetry is the remaining bug, and `getUserId` is the side
+ * that should converge on this rule — not the reverse.
+ *
+ * The rule itself lives in the pure, unit-tested `_shared/rest-audit-actor.ts`
+ * (mirror of `packages/mcp-core/src/rest-audit-actor.ts`), re-exported here so
+ * every existing `import { auditUserId } from '…/api/auth.ts'` is unchanged.
  */
-export function auditUserId(auth: AuthContext): string | null {
-  return auth.type === 'api_key' ? (auth.userId ?? null) : null;
-}
+export { auditUserId } from '../rest-audit-actor.ts';
 
 /**
  * The user a usage event is attributed to — unlike `auditUserId` this is the

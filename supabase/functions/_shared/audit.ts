@@ -27,35 +27,42 @@
  * trigger (`audit_user_limits()`, in the 00010 migration) is the only way to
  * capture it. See CLAUDE.md "Key decisions" for the full rationale.
  *
- * `userId` is auth-type-sensitive (see auth.ts getUserId): the resolved
- * actor for api_key calls, `null` for service-role AND for user-JWT calls
- * (getUserId only returns non-null for the api_key auth type — RLS already
- * scopes JWT reads/writes, so no distinct app userId is resolved for that
- * path). A JWT-authenticated MCP call that mutates memory therefore audits
- * with user_id = null; because the audit_log INSERT policy requires
- * `user_id = auth.uid()`, and the edge's JWT-scoped db client enforces RLS,
- * that insert fails RLS and is swallowed by recordAudit below — a documented
- * limitation (see plan.md Edge Cases), not a bug. Service-role and api_key
- * calls use the service-role client (bypasses RLS), so their audit inserts
- * always succeed regardless of user_id.
+ * VOCABULARY: `AUDIT_ACTIONS` / `AuditAction` are NOT declared here. They come
+ * from the generated schema mirror `./schemas/audit.ts` (source of truth:
+ * `packages/schemas/src/audit.ts`, mirrored by
+ * `node scripts/sync-edge-schemas.mjs`) and are re-exported so every existing
+ * importer of this module is unchanged. The import path MUST stay relative —
+ * `edge-bare-specifier.spec.ts` fails the build on a bare specifier, and the
+ * edge runtime is given no import map. Before the list was centralised, the
+ * copy here (11 actions), the SQL CHECK (23) and the dashboard's (24) had
+ * silently diverged, and every `github_app.installation_linked` audit row was
+ * dropped by the CHECK.
+ *
+ * `userId` is auth-type-sensitive, and the two edge surfaces resolve it
+ * DIFFERENTLY today:
+ *
+ *   - REST (`_shared/api/auth.ts` `auditUserId`): the resolved user for BOTH
+ *     `api_key` and user-JWT callers; `null` only for service-role. A JWT
+ *     caller's db client is the RLS-scoped one, and `rls_audit_log_insert`
+ *     requires `user_id = auth.uid()` — so supplying that user's own id is
+ *     exactly what makes the insert legal. It used to pass `null` there,
+ *     which failed the policy and lost the row.
+ *   - MCP (`mcp/auth.ts` `getUserId`): the resolved user for `api_key` only;
+ *     `null` for service-role AND user-JWT. The JWT branch therefore still
+ *     writes `user_id = null` through an RLS-scoped client, still fails the
+ *     INSERT policy, and is still swallowed below. That is the remaining gap,
+ *     and MCP is the side that should converge on the REST behaviour — not
+ *     the reverse.
+ *
+ * Service-role and `api_key` callers use the service-role client (bypasses
+ * RLS), so their inserts succeed regardless of `user_id`.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { AUDIT_ACTIONS } from './schemas/audit.ts';
+import type { AuditAction } from './schemas/audit.ts';
 
-export const AUDIT_ACTIONS = [
-  'api_key.create',
-  'api_key.revoke',
-  'webhook_secret.create',
-  'webhook_secret.rotate',
-  'webhook_secret.deactivate',
-  'memory.create',
-  'memory.update',
-  'memory.archive',
-  'memory.restore',
-  'memory.delete',
-  'limit.override',
-] as const;
-
-export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+export { AUDIT_ACTIONS };
+export type { AuditAction };
 
 export interface AuditEntryInput {
   action: AuditAction;

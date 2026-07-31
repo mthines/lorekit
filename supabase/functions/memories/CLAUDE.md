@@ -89,12 +89,16 @@ Three invariants, all mirrored from the MCP side:
   `if (purged > 0)`.
 - **It can never fail the request.** `recordAudit` does not throw; a failed insert is logged
   and swallowed.
-- **The actor is auth-type-sensitive** (`auditUserId` in `_shared/api/auth.ts`, the REST twin of
-  `mcp/auth.ts`'s `getUserId`): the resolved user for `api_key` callers, `null` for service-role
-  **and** for user-JWT callers. On the JWT path the client is RLS-scoped and `audit_log`'s INSERT
-  policy is `user_id = auth.uid()`, so a null actor fails RLS and the row is swallowed — the same
-  documented limitation the MCP surface has (see the header of `_shared/audit.ts`). It is
-  mirrored here on purpose rather than "fixed" on one surface only.
+- **The actor is auth-type-sensitive** (`auditUserId` in `_shared/api/auth.ts`, re-exported from
+  the pure `_shared/rest-audit-actor.ts`): the resolved user for BOTH `api_key` and user-JWT
+  callers, `null` ONLY for service-role. It previously returned `null` for JWT callers too, and
+  that was a bug: the JWT client is RLS-scoped, `audit_log`'s INSERT policy is
+  `with check (user_id = auth.uid())`, and `auth.uid()` is that caller's id — so passing the id
+  is what makes the insert legal, and passing `null` is what made it fail the policy and be
+  swallowed. Every JWT-authenticated REST mutation lost its audit row until this was fixed.
+  Service-role stays `null`: no human actor, and that client bypasses RLS anyway.
+  The MCP surface (`mcp/auth.ts`'s `getUserId`) still returns `null` for JWT and still loses
+  those rows — that is the remaining gap, and MCP is the side that should converge on this rule.
 
 ## `POST /search` body
 

@@ -21,6 +21,24 @@ import { RestError, translateDbError } from '../_shared/api/errors.ts';
 - `resolveRestAuth(req, parentSpan)` — 3-tier auth: service key → lk_ API token → Supabase JWT. Returns `{ auth, db } | null`. Creates a `lorekit.rest.auth` child span.
 - `hasPermission(auth, 'read' | 'write')` — returns true for service/user; checks `permissions` array for api_key.
 - `isJwtAuth(auth)` — returns true only for JWT users (org endpoints require this).
+- `auditUserId(auth)` — the `audit_log.user_id` actor: **the resolved user for BOTH `api_key`
+  and user-JWT callers, `null` only for service-role.** Re-exported from the pure, unit-tested
+  `_shared/rest-audit-actor.ts` (mirror of `packages/mcp-core/src/rest-audit-actor.ts`), so the
+  rule has a test home — this file has none.
+  **It used to return `null` for JWT callers, and that was a bug, not a design.** A JWT caller
+  gets `userClient(jwt)` (ANON_KEY + `Authorization: Bearer <jwt>`), so RLS applies and
+  `auth.uid()` is that user's id; `audit_log`'s insert policy is
+  `rls_audit_log_insert … with check (user_id = auth.uid())` (migration 00010). Passing the
+  caller's own id is what makes the insert legal; passing `null` violated the policy, and
+  `recordAudit` — correctly non-throwing — swallowed the rejection, so every JWT-authenticated
+  REST mutation silently lost its audit row. Service-role stays `null`: no human actor, and that
+  client bypasses RLS anyway.
+  **Cross-surface consequence:** REST now attributes JWT callers correctly where MCP
+  (`mcp/auth.ts`'s `getUserId`) still records `null` and still loses those rows. `getUserId` is
+  the side that should converge on this rule — do not "restore symmetry" by reverting REST.
+- `analyticsUserId(auth)` / `usageAuthType(auth)` — the `usage_events` actor and auth-type
+  labels. `analyticsUserId` is `null` for service-role, which is why a service-role caller
+  records no usage events at all.
 
 ### router.ts
 - `createRouter(routes, functionName)` — returns `{ dispatch(req, resolved, span, cors) }`.
@@ -38,9 +56,13 @@ import { RestError, translateDbError } from '../_shared/api/errors.ts';
   re-exports it, it is not a second copy. The route→`tool_name` mapping is the pure, unit-tested
   `_shared/rest-tool-name.ts` (mirror of `packages/mcp-core/src/rest-tool-name.ts`), which maps
   each REST route onto the MCP tool name it is the equivalent of (`POST /memories` →
-  `memory.write`) so the two surfaces aggregate as one series. Guard: `auth.type !== 'service'`
+  `memory.write`) so the two surfaces aggregate as one series.   Guard: `auth.type !== 'service'`
   and a resolved user; there is no BYOD/`supportsHostedBilling` equivalent because the REST
   functions have no storage adapter and always target the hosted database.
+- The response→`usage_events.outcome` classification is the pure, unit-tested
+  `_shared/rest-response-outcome.ts` (`classifyResponseOutcome(status, bodyCode)`, mirror of
+  `packages/mcp-core/src/rest-response-outcome.ts`). Only the body read for the 429 cap-vs-rate
+  split stays in the router — the decision itself is not inline here any more.
 
 ### cors.ts
 - `corsHeaders(req)` — returns CORS headers; respects `ALLOWED_ORIGINS` env var.

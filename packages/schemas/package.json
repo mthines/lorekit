@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./audit": "./src/audit.ts",
     "./scope": "./src/scope.ts",
     "./common": "./src/common.ts",
     "./filter": "./src/filter.ts",

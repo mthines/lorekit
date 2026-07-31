@@ -5,6 +5,7 @@ import { translateDbError } from './errors.ts';
 import { recordUsageEvent, getUserPlanName } from '../usage.ts';
 import type { UsageEventParams } from '../usage.ts';
 import { restToolName } from '../rest-tool-name.ts';
+import { classifyResponseOutcome } from '../rest-response-outcome.ts';
 import type { Span } from '../otel.ts';
 
 export type Permission = 'read' | 'write' | 'jwt';
@@ -59,33 +60,27 @@ export function relativePath(pathname: string, functionName: string): string {
 }
 
 /**
- * Classify a handler's response into a `usage_events.outcome`, mirroring the
- * MCP handler's values.
+ * Read the `code` field a 429 body may carry, then classify.
  *
- *   2xx/3xx                     → ok
- *   403                         → permission_denied
- *   429 + `code: memory_cap`    → cap_exceeded   (the LK001 cap trigger)
- *   429 otherwise               → rate_limited   (lorekit_check_rate_limit)
- *   any other 4xx/5xx           → error          (the MCP side records every
- *                                                 thrown handler error as
- *                                                 `error`, including client
- *                                                 input faults)
- *
- * The 429 split is the only case that needs the body: `translateDbError` maps
- * the cap SQLSTATE to a 429 as well, so status alone cannot tell a storage cap
- * from a request-rate limit. The clone is paid for on that rare path only, and
- * never on the response actually returned to the caller.
+ * The CLASSIFICATION is the pure, unit-tested `classifyResponseOutcome`
+ * (`_shared/rest-response-outcome.ts`, mirror of
+ * `packages/mcp-core/src/rest-response-outcome.ts`) — see that module for the
+ * full status→outcome mapping and why 429 is the one case needing the body.
+ * Only the I/O stays here: the response is cloned on that rare path alone, and
+ * never on the response actually returned to the caller. A body that is
+ * absent, not JSON, or has no `code` yields `null`, which the classifier maps
+ * to `rate_limited` — the same fallback the previous inline `catch` produced.
  */
 async function responseOutcome(res: Response): Promise<UsageEventParams['outcome']> {
-  if (res.status < 400) return 'ok';
-  if (res.status === 403) return 'permission_denied';
-  if (res.status !== 429) return 'error';
+  if (res.status !== 429) return classifyResponseOutcome(res.status);
+  let bodyCode: string | null = null;
   try {
     const body = await res.clone().json() as { code?: string } | null;
-    return body?.code === 'memory_cap' ? 'cap_exceeded' : 'rate_limited';
+    bodyCode = body?.code ?? null;
   } catch {
-    return 'rate_limited';
+    bodyCode = null;
   }
+  return classifyResponseOutcome(res.status, bodyCode);
 }
 
 export function createRouter(routes: Route[], functionName: string) {

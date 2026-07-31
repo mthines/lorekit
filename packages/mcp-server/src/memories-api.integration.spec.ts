@@ -15,11 +15,18 @@
  *     pnpm nx test mcp-server -- --reporter=verbose --testPathPattern=memories-api.integration
  */
 
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 
 const BASE = (process.env['LOREKIT_REST_BASE_URL'] ?? 'http://localhost:54321/functions/v1').replace(/\/$/, '');
 const TOKEN = process.env['LOREKIT_SMOKE_TOKEN'];
 const SKIP = !TOKEN;
+
+/**
+ * PostgREST base, derived from the Edge-Function base by swapping the mount
+ * point (`…/functions/v1` → `…/rest/v1`). Both are served by the same Supabase
+ * gateway, locally and hosted, so this needs no extra environment variable.
+ */
+const PGREST = BASE.replace(/\/functions\/v1$/, '/rest/v1');
 
 const KEY_PREFIX = `memories-smoke-${Date.now()}`;
 const SCOPE = 'global';
@@ -45,6 +52,29 @@ async function api(method: string, path: string, body?: unknown): Promise<{ stat
   let data: unknown;
   try { data = JSON.parse(text); } catch { data = text; }
   return { status: res.status, data };
+}
+
+/**
+ * Read a table directly through PostgREST. `apikey` + `Authorization` are both
+ * required by the gateway; with the service-role key this bypasses RLS, which
+ * is what makes `audit_log` / `usage_events` readable at all (their SELECT
+ * policies are `user_id = auth.uid()`, and a service credential has no uid).
+ */
+async function pgRest(pathAndQuery: string): Promise<{ status: number; rows: JsonObj[] }> {
+  const res = await fetch(`${PGREST}${pathAndQuery}`, {
+    headers: {
+      apikey: TOKEN ?? '',
+      Authorization: `Bearer ${TOKEN}`,
+      Accept: 'application/json',
+    },
+  });
+  const text = await res.text();
+  let rows: JsonObj[] = [];
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (Array.isArray(parsed)) rows = parsed as JsonObj[];
+  } catch { /* leave rows empty; the status is the signal */ }
+  return { status: res.status, rows };
 }
 
 /** Create a memory and return its id — used by the restore / force-delete cases. */
@@ -418,5 +448,190 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', () =
   it('POST /memories/purge-expired — returns a numeric purged count', async () => {
     const { status, data } = await api('POST', '/purge-expired');
     expectPurgeResult(status, data);
+  });
+});
+
+/**
+ * Audit-trail read-back — the assertion the CRUD suite above cannot make
+ * ------------------------------------------------------------------------
+ * Every test above proves the REST surface RESPONDED correctly. None proves
+ * the side effect that is invisible from the response: an `audit_log` row.
+ * `recordAudit` is deliberately non-throwing, so a mutation whose audit insert
+ * is rejected (by RLS, by the action CHECK, by anything) returns exactly the
+ * same 200/201/204 as one whose audit row landed. That is precisely how the
+ * `github_app.installation_linked` rows were lost for the life of the feature,
+ * and how a JWT-authenticated REST mutation lost every row until `auditUserId`
+ * was fixed. So: mutate, then READ THE ROW BACK.
+ *
+ * Readability is CAPABILITY-PROBED, not assumed. In CI the smoke token is the
+ * local service-role key (`.github/workflows/ci.yml` → `steps.supabase.outputs
+ * .service_role_key`), which bypasses RLS and can read `audit_log` through
+ * PostgREST. With an `lk_*` API token it cannot — `lk_*` is a LoreKit token,
+ * not a Postgres credential, and the gateway rejects it outright. In that case
+ * these tests skip with a LOUD console warning naming the reason, so a reduced
+ * run is visible in the log rather than passing silently as a full one.
+ *
+ * The writes are fire-and-forget relative to the HTTP response, so every
+ * read-back polls briefly rather than reading once.
+ */
+describe.skipIf(SKIP)('LoreKit memories API — audit trail read-back (integration)', () => {
+  const AUDIT_KEY = `${KEY_PREFIX}-audit`;
+  /** Set by the capability probe in beforeAll. */
+  let auditReadable = false;
+  let probeStatus = 0;
+  /** Everything in this block happens after this instant. */
+  const startedAt = new Date().toISOString();
+  let auditId = '';
+
+  /** Poll `audit_log` for a row matching `query` (a PostgREST filter string). */
+  async function findAuditRow(query: string, attempts = 12): Promise<JsonObj | undefined> {
+    for (let i = 0; i < attempts; i++) {
+      const { rows } = await pgRest(
+        `/audit_log?${query}&created_at=gte.${startedAt}&order=created_at.desc&limit=5`,
+      );
+      if (rows.length > 0) return rows[0];
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return undefined;
+  }
+
+
+  /**
+   * Poll, then narrow. Returning a definite row (throwing with a useful
+   * message when the poll times out) keeps the assertions below free of
+   * non-null assertions AND makes a timeout report WHICH row was missing.
+   */
+  async function requireAuditRow(query: string, what: string): Promise<JsonObj> {
+    const row = await findAuditRow(query);
+    if (!row) throw new Error(`no ${what} audit row found (query: ${query})`);
+    return row;
+  }
+
+  beforeAll(async () => {
+    const probe = await pgRest('/audit_log?select=id&limit=1');
+    probeStatus = probe.status;
+    auditReadable = probe.status === 200;
+    if (!auditReadable) {
+      console.warn(
+        '\n  ⚠ AUDIT READ-BACK SKIPPED — audit_log is NOT readable with this credential.\n' +
+          `    Probe: GET ${PGREST}/audit_log → HTTP ${probe.status}.\n` +
+          '    Cause: LOREKIT_SMOKE_TOKEN is not the Supabase service-role key (an lk_* LoreKit\n' +
+          '    API token is not a Postgres credential, and a user JWT only sees its own rows).\n' +
+          '    Effect: this run does NOT verify that any audit row was actually written —\n' +
+          '    the CRUD suite above still passed, but the audit side effect is UNVERIFIED.\n' +
+          '    Fix: run with the service-role key, as .github/workflows/ci.yml does.\n',
+      );
+    }
+  });
+
+  afterAll(async () => {
+    if (auditId) await api('DELETE', `/${auditId}?force=true`).catch(() => undefined);
+  });
+
+  it('the audit_log capability probe ran and reported a definite result', () => {
+    // Anti-vacuity: proves beforeAll executed and reached a decision, so a
+    // silently-never-run probe cannot leave every test below "skipped" by
+    // accident rather than by the documented reason.
+    expect(probeStatus, 'the probe never issued a request').toBeGreaterThan(0);
+    expect(auditReadable).toBe(probeStatus === 200);
+  });
+
+  it('POST /memories writes a memory.create audit row', async ({ skip }) => {
+    if (!auditReadable) skip();
+    auditId = await create(AUDIT_KEY, 'audit-me');
+
+    const found = await requireAuditRow(`action=eq.memory.create&target=eq.${encodeURIComponent(AUDIT_KEY)}`, 'memory.create');
+    expect(found.action).toBe('memory.create');
+    expect(found.resource_type).toBe('memory');
+    expect(found.resource_id).toBe(auditId);
+    expect(found.target).toBe(AUDIT_KEY);
+    expect((found.metadata as JsonObj).key).toBe(AUDIT_KEY);
+    expect((found.metadata as JsonObj).scope).toBe(SCOPE);
+  });
+
+  it('PATCH /memories/:id writes a memory.update audit row', async ({ skip }) => {
+    if (!auditReadable) skip();
+    expect(auditId, 'the create step must have run').toBeTruthy();
+    const { status } = await api('PATCH', `/${auditId}`, { value: 'audit-me-updated' });
+    expect(status).toBe(200);
+
+    const found = await requireAuditRow(`action=eq.memory.update&target=eq.${encodeURIComponent(AUDIT_KEY)}`, 'memory.update');
+    expect(found.resource_id).toBe(auditId);
+  });
+
+  it('DELETE /memories/:id writes a memory.archive audit row (not memory.delete)', async ({ skip }) => {
+    if (!auditReadable) skip();
+    const { status } = await api('DELETE', `/${auditId}`);
+    expect(status).toBe(204);
+
+    const found = await requireAuditRow(`action=eq.memory.archive&target=eq.${encodeURIComponent(AUDIT_KEY)}`, 'memory.archive');
+    expect((found.metadata as JsonObj).force, 'a soft archive must record force=false').toBe(false);
+
+    // The distinguishing assertion: a soft archive must NOT look like a hard
+    // delete in the trail.
+    const wrong = await findAuditRow(`action=eq.memory.delete&target=eq.${encodeURIComponent(AUDIT_KEY)}`, 1);
+    expect(wrong, 'an archive must not be recorded as memory.delete').toBeUndefined();
+  });
+
+  it('POST /memories/restore writes a memory.restore audit row', async ({ skip }) => {
+    if (!auditReadable) skip();
+    const { status } = await api('POST', '/restore', { scope: SCOPE, key: AUDIT_KEY });
+    expect(status).toBe(200);
+
+    const found = await requireAuditRow(`action=eq.memory.restore&target=eq.${encodeURIComponent(AUDIT_KEY)}`, 'memory.restore');
+    expect((found.metadata as JsonObj).scope).toBe(SCOPE);
+  });
+
+  it('every audit row this run wrote carries an action the CHECK admits', async ({ skip }) => {
+    if (!auditReadable) skip();
+    const { rows } = await pgRest(`/audit_log?created_at=gte.${startedAt}&select=action&limit=200`);
+    // A constraint-rejected action would never appear here at all, so this
+    // asserts the complement: the actions that DID land are the expected set,
+    // i.e. nothing was silently substituted.
+    expect(rows.length, 'this run wrote no audit rows at all').toBeGreaterThan(0);
+    const actions = new Set(rows.map((r) => r.action as string));
+    for (const a of actions) expect(a).toMatch(/^[a-z_]+\.[a-z_]+$/);
+    expect([...actions].sort()).toEqual(
+      ['memory.archive', 'memory.create', 'memory.restore', 'memory.update'].filter((a) => actions.has(a)).sort(),
+    );
+  });
+
+  /**
+   * `usage_events` and the service-role caller — the NEGATIVE that is actually
+   * true.
+   *
+   * The router records a usage event only when `analyticsUserId(auth) !== null`,
+   * i.e. for `api_key` and JWT callers. A service-role caller resolves to
+   * `null` and records NOTHING. Asserting "a usage_events row exists" under the
+   * CI credential would therefore be an assertion that can only ever fail, and
+   * asserting it "if any exist" would be one that can only ever be vacuous. So
+   * the branch is chosen from an OBSERVED fact — whether the audit rows this
+   * run wrote carry a null actor, which is the service-role signature — and
+   * each branch asserts the full contract of its own case.
+   */
+  it('records no usage_events for a service-role caller, and does record them otherwise', async ({ skip }) => {
+    if (!auditReadable) skip();
+    const { rows: auditRows } = await pgRest(
+      `/audit_log?created_at=gte.${startedAt}&select=user_id&limit=200`,
+    );
+    expect(auditRows.length, 'no audit rows to classify the caller from').toBeGreaterThan(0);
+    const isServiceRole = auditRows.every((r) => r.user_id === null);
+
+    const { status, rows: usageRows } = await pgRest(
+      `/usage_events?created_at=gte.${startedAt}&select=tool_name,auth_type&limit=200`,
+    );
+    expect(status, 'usage_events must be readable with the same credential').toBe(200);
+
+    if (isServiceRole) {
+      // The real, non-vacuous negative: a service-role caller is deliberately
+      // untracked, so this run must have produced ZERO usage events despite
+      // having just issued several successful REST calls.
+      expect(usageRows, 'a service-role caller must record no usage events').toEqual([]);
+    } else {
+      // A resolved-user caller (lk_* token or JWT) must record them.
+      expect(usageRows.length, 'a non-service caller must record usage events').toBeGreaterThan(0);
+      for (const r of usageRows) expect(['api_key', 'jwt']).toContain(r.auth_type);
+      expect(usageRows.map((r) => r.tool_name)).toContain('memory.write');
+    }
   });
 });
