@@ -104,7 +104,7 @@ if (invokedDirectly) {
   }
   process.stderr.write(
     'Rebase onto the base branch and renumber the file(s); `supabase db push` applies ' +
-      'migrations in numeric order, so a lower number added after a higher one is already ' +
+      'migrations in numeric order, so a lower number added after a higher one that is already ' +
       'live cannot be applied without --include-all and risks an order the tests never saw.\n',
   );
   process.exit(1);
