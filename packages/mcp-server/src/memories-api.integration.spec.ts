@@ -20,6 +20,7 @@ import {
   createSmokeNamespace,
   describeSweepFailures,
   sweepSmokeArtefacts,
+  type SmokeNamespace,
 } from './smoke-cleanup.js';
 
 const BASE = (process.env['LOREKIT_REST_BASE_URL'] ?? 'http://localhost:54321/functions/v1').replace(/\/$/, '');
@@ -137,9 +138,9 @@ async function hardDeleteKey(key: string): Promise<void> {
   }
 }
 
-/** Sweep every key minted so far, reporting (never throwing) what it could not remove. */
-async function sweepMintedKeys(context: string): Promise<void> {
-  const report = await sweepSmokeArtefacts(NS.minted(), hardDeleteKey);
+/** Sweep the keys one namespace minted, reporting (never throwing) what it could not remove. */
+async function sweepMintedKeys(ns: SmokeNamespace, context: string): Promise<void> {
+  const report = await sweepSmokeArtefacts(ns.minted(), hardDeleteKey);
   const warning = describeSweepFailures(report, context);
   if (warning) console.warn(warning);
 }
@@ -157,7 +158,7 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
     // Hooks use hookTimeout (10s default), NOT the suite `timeout` above — and
     // this chains one DELETE per key at hosted latency, so give it the same 30s
     // ceiling as the tests.
-    await sweepMintedKeys('memories REST smoke');
+    await sweepMintedKeys(NS, 'memories REST smoke');
   }, REMOTE_TEST_TIMEOUT);
 
   // 1. list — baseline ────────────────────────────────────────────────────────
@@ -661,7 +662,15 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
  * read-back polls briefly rather than reading once.
  */
 describe.skipIf(SKIP)('LoreKit memories API — audit trail read-back (integration)', { timeout: REMOTE_TEST_TIMEOUT }, () => {
-  const AUDIT_KEY = NS.name('audit');
+  // Its OWN namespace, so this suite's hook sweeps only this suite's key.
+  // Sharing `NS` coupled the two: the CRUD hook issued a DELETE for AUDIT_KEY
+  // before this suite had created it, and this hook re-deleted every CRUD key.
+  // Both were harmless (a 404 counts as removed) but neither was intended.
+  //
+  // Two namespaces minted in the same millisecond share a PREFIX, which is fine
+  // — names collide only on the same suffix, and no suffix is minted twice.
+  const AUDIT_NS = createSmokeNamespace('memories');
+  const AUDIT_KEY = AUDIT_NS.name('audit');
   /** Set by the capability probe in beforeAll. */
   let auditReadable = false;
   let probeStatus = 0;
@@ -714,7 +723,7 @@ describe.skipIf(SKIP)('LoreKit memories API — audit trail read-back (integrati
     // By key, not by `auditId`: the id is only set once the create test has
     // asserted its way to the end, so a failure anywhere before that left the
     // row behind. The key exists from the moment it was minted.
-    await sweepMintedKeys('memories REST audit read-back');
+    await sweepMintedKeys(AUDIT_NS, 'memories REST audit read-back');
   }, REMOTE_TEST_TIMEOUT);
 
   it('the audit_log capability probe ran and reported a definite result', () => {
