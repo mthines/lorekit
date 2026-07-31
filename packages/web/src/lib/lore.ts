@@ -14,6 +14,7 @@ import { applyKeyset, runPaginatedQuery, type FilterBuilderLike } from '@/lib/pa
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { scopeType } from '@/lib/scope';
 import { ownerFromMemoryRow } from '@/lib/ownership';
+import { normalizeTags } from '@/lib/tag-filter';
 
 // ── Edit / update ─────────────────────────────────────────────────────────────
 
@@ -157,6 +158,11 @@ export interface MemoryFilters {
   search?: string;
   /** Inclusive `from`/`to` interval on `created_at`. */
   range?: DateRangeInput | null;
+  /**
+   * Labels (`memories.tags`) a row must carry — ALL of them, not any.
+   * Absent or empty means "no label filter".
+   */
+  tags?: string[];
   /** Page size, default 50, hard max 100. */
   pageSize?: number;
   /** Opaque keyset cursor from a previous page's `nextCursor`. */
@@ -221,6 +227,15 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
   // already escaped for LIKE metacharacters by `substringNeedle`.
   if (needle) {
     base = base.or(`key.ilike.%${needle}%,value.ilike.%${needle}%`);
+  }
+
+  // Label filter — `contains` is Postgres' array `@>` operator, so a row must
+  // carry EVERY selected label (see `matchesAllTags`, the client-side mirror of
+  // this predicate). Normalized first so a hand-edited URL param carrying
+  // whitespace or duplicates can't produce an unsatisfiable filter.
+  const tags = normalizeTags(filters.tags);
+  if (tags.length > 0) {
+    base = base.contains('tags', tags);
   }
 
   // Date range bounds on created_at.

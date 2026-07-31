@@ -20,6 +20,9 @@
  * ## URL state
  * - `scope` param:    selected scope (null → all scopes). Shareable.
  * - `q` param:        search query, debounced write. Shareable.
+ * - `tags` param:     selected labels (JSON array). A memory must carry ALL of
+ *   them. Server-side, shareable — "every perf regression we've learned" is a
+ *   link you can paste to a teammate.
  * - `range` param:    date range, shareable. Scoped to /lore. Shared by the
  *   heatmap click, scope view, and feed view — one param drives all three.
  * - `view` param:     'scope' | 'time'. Persisted in URL so a shared link
@@ -32,7 +35,7 @@
  */
 
 import { useMemo, useTransition, useState } from 'react';
-import { Search, BookOpen, ChevronDown, ChevronUp, Loader2, List, LayoutGrid, Archive, User, Building2, Users } from 'lucide-react';
+import { Search, BookOpen, ChevronDown, ChevronUp, Loader2, List, LayoutGrid, Archive, User, Building2, Users, Tag } from 'lucide-react';
 import { ScopeTree, type ScopeNode } from './ScopeTree';
 import { LessonCard } from './LessonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -40,7 +43,8 @@ import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDebouncedUrlState } from '@/lib/hooks/useDebouncedUrlState';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
-import { useMemories } from '@/lib/queries/lore';
+import { useMemories, useTagCatalog } from '@/lib/queries/lore';
+import { normalizeTags, toggleTag, visibleTags, type TagCount } from '@/lib/tag-filter';
 import { useReducedMotion } from 'motion/react';
 import type { LessonEntry } from './LessonCard';
 import { ContributionHeatmap } from '@/components/activity/ContributionHeatmap';
@@ -48,6 +52,10 @@ import { ActivityFeed } from '@/components/activity/ActivityFeed';
 import { filterByOwnership, type OwnerFilter } from '@/lib/org-ui';
 
 type ViewMode = 'scope' | 'time';
+
+// Module-scoped so the reference is stable across renders — `useUrlState`
+// documents that mutable defaults must be memoized at the call site.
+const NO_TAGS: string[] = [];
 
 // ── Ownership filter bar ──────────────────────────────────────────────────────
 // "Owner: All · Personal · {org}" per ux-design §4 — only rendered when at least
@@ -120,6 +128,106 @@ function OwnershipFilterBar({
           {chip.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+// ── Label filter bar ──────────────────────────────────────────────────────────
+// "Labels: perf · ci · flaky" — multi-select, so it uses toggle-button
+// semantics (`aria-pressed`), NOT the single-select radiogroup shape the owner
+// bar uses. Selecting two labels narrows to memories carrying BOTH (the
+// `.contains('tags', …)` server predicate, mirrored by `matchesAllTags`), which
+// the group's `title` states outright — a filter whose combining rule the user
+// has to infer from results is a guessing game.
+//
+// Only rendered when the account actually has labels; an always-present empty
+// bar is chrome that teaches nothing. Long tails collapse behind "Show all",
+// with the count in the label so the affordance is honest about what it hides.
+
+const VISIBLE_TAG_LIMIT = 12;
+
+function LabelFilterBar({
+  catalog,
+  selected,
+  onToggle,
+  onClear,
+}: {
+  catalog: TagCount[];
+  selected: string[];
+  onToggle: (tag: string) => void;
+  onClear: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  const shown = useMemo(
+    () => visibleTags(catalog, selected, expanded ? catalog.length : VISIBLE_TAG_LIMIT),
+    [catalog, selected, expanded],
+  );
+
+  if (catalog.length === 0) return null;
+
+  const hiddenCount = catalog.length - shown.length;
+
+  return (
+    <div
+      role="group"
+      // The combining rule lives in the accessible name, not only the `title`:
+      // a tooltip is mouse-only, and "why did picking a second label empty the
+      // list?" is exactly the question a screen-reader user also has to answer.
+      aria-label="Filter by label — shows only memories carrying every selected label"
+      title="Show only memories carrying every selected label"
+      className="flex flex-wrap items-center gap-1.5 border-b border-[var(--color-border)] px-3 py-2"
+    >
+      <span className="mr-0.5 flex items-center gap-1 text-xs font-medium text-[var(--color-content-tertiary)]">
+        <Tag className="size-3 shrink-0" aria-hidden />
+        Labels
+      </span>
+
+      {shown.map(({ tag, count }) => {
+        const active = selected.includes(tag);
+        return (
+          <button
+            key={tag}
+            type="button"
+            onClick={() => onToggle(tag)}
+            aria-pressed={active}
+            // Without this the chip announces as "perf 12" — the bare count
+            // reads as part of the label rather than as how many memories
+            // carry it.
+            aria-label={`${tag} — ${count} ${count === 1 ? 'memory' : 'memories'}`}
+            className={[
+              'flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors duration-150',
+              active
+                ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
+                : 'border-[var(--color-border)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
+            ].join(' ')}
+          >
+            {tag}
+            <span className="text-[var(--color-content-tertiary)]">{count}</span>
+          </button>
+        );
+      })}
+
+      {(hiddenCount > 0 || expanded) && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          className="flex min-h-9 items-center rounded-full px-2 text-xs font-medium text-[var(--color-content-secondary)] underline-offset-2 transition-colors duration-150 hover:text-[var(--color-content-primary)] hover:underline"
+        >
+          {expanded ? 'Show fewer labels' : `Show all ${catalog.length} labels`}
+        </button>
+      )}
+
+      {selected.length > 0 && (
+        <button
+          type="button"
+          onClick={onClear}
+          className="flex min-h-9 items-center rounded-full px-2 text-xs font-medium text-[var(--color-content-secondary)] underline-offset-2 transition-colors duration-150 hover:text-[var(--color-content-primary)] hover:underline"
+        >
+          Clear labels
+        </button>
+      )}
     </div>
   );
 }
@@ -234,6 +342,17 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     cleanOnPathname: '/lore',
   });
 
+  // URL-backed label selection — server-side filtered (AND across labels), so
+  // it belongs in the query, not in a client-side narrowing like `owner`.
+  const [rawSelectedTags, setSelectedTags] = useUrlState<string[]>('tags', NO_TAGS, {
+    cleanOnPathname: '/lore',
+  });
+
+  // The `tags` param is user-editable text, so it can arrive as anything JSON
+  // can express. Normalizing once here means every consumer below (the query,
+  // the chips, the empty-state copy) reads a real `string[]`.
+  const selectedTags = useMemo(() => normalizeTags(rawSelectedTags), [rawSelectedTags]);
+
   // URL-backed view mode so a shared link lands on the right tab.
   const [view, setView] = useUrlState<ViewMode>('view', 'scope');
 
@@ -258,7 +377,11 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     hasNextPage,
     isFetchingNextPage,
     fetchNextPage,
-  } = useMemories({ scope: selectedScope, search: committedSearch, range, showArchived });
+  } = useMemories({ scope: selectedScope, search: committedSearch, range, tags: selectedTags, showArchived });
+
+  // Filter-independent label catalog (see `useTagCatalog`) — the chips must not
+  // shrink to whatever the current filter happens to have loaded.
+  const { data: tagCatalog } = useTagCatalog();
 
   const lessons = useMemo(
     () => data?.pages.flatMap((page) => page.rows) ?? [],
@@ -285,7 +408,22 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   );
 
   const isFiltered =
-    search.trim() !== '' || range !== null || showArchived || ownerFilter !== 'all';
+    search.trim() !== '' ||
+    range !== null ||
+    showArchived ||
+    ownerFilter !== 'all' ||
+    selectedTags.length > 0;
+
+  function handleToggleTag(tag: string) {
+    setSelectedTags((prev) => toggleTag(prev, tag));
+    // Close the sidebar — the open lesson may not carry the new label set.
+    closeLesson();
+  }
+
+  function handleClearTags() {
+    setSelectedTags(NO_TAGS);
+    closeLesson();
+  }
 
   function handleToggleArchived() {
     setShowArchived(!showArchived);
@@ -410,7 +548,9 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             showArchived
               ? 'Archive a memory from its detail panel to see it here.'
               : isFiltered
-                ? 'Try a different search term or date range.'
+                ? selectedTags.length > 1
+                  ? 'No memory carries all of the selected labels — try removing one.'
+                  : 'Try a different search term, label, or date range.'
                 : 'Memories will appear here once your agents start writing.'
           }
         />
@@ -555,6 +695,13 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             onToggleArchived={handleToggleArchived}
           />
 
+          <LabelFilterBar
+            catalog={tagCatalog ?? []}
+            selected={selectedTags}
+            onToggle={handleToggleTag}
+            onClear={handleClearTags}
+          />
+
           <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
 
           <div className="flex-1 overflow-y-auto p-3">
@@ -601,6 +748,13 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           onRangeChange={setRange}
           showArchived={showArchived}
           onToggleArchived={handleToggleArchived}
+        />
+
+        <LabelFilterBar
+          catalog={tagCatalog ?? []}
+          selected={selectedTags}
+          onToggle={handleToggleTag}
+          onClear={handleClearTags}
         />
 
         <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
