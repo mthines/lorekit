@@ -1,11 +1,9 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { MDXRemote } from 'next-mdx-remote/rsc';
-import remarkGfm from 'remark-gfm';
-import rehypeSlug from 'rehype-slug';
-import rehypeAutolinkHeadings from 'rehype-autolink-headings';
 import { getAllDocs, getDoc } from '@/lib/docs/content';
 import { docsMdxComponents } from '@/components/docs/mdx-components';
+import { docsMdxOptions } from '@/lib/docs/mdx-render-options';
 import { DocsProse } from '@/components/docs/DocsProse';
 
 // Statically generate one page per known doc slug; reject anything else (404)
@@ -45,16 +43,7 @@ export default async function DocPage({ params }: { params: Promise<{ slug: stri
       </header>
 
       <DocsProse>
-        <MDXRemote
-          source={doc.body}
-          components={docsMdxComponents}
-          options={{
-            mdxOptions: {
-              remarkPlugins: [remarkGfm],
-              rehypePlugins: [rehypeSlug, [rehypeAutolinkHeadings, { behavior: 'wrap' }]],
-            },
-          }}
-        />
+        <MDXRemote source={doc.body} components={docsMdxComponents} options={docsMdxOptions} />
       </DocsProse>
     </article>
   );
