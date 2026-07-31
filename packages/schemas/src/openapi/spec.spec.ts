@@ -75,6 +75,43 @@ describe('generateSpec', () => {
     expect(del.parameters.some((p) => p.name === 'force' && p.in === 'query'), JSON.stringify(del.parameters)).toBe(true);
   });
 
+  // `?org=<slug>` is the only way to archive or hard-delete ORG-OWNED lore over
+  // REST — it routes through the role-gated memory_delete RPC instead of a
+  // direct query. Undiscoverable in the spec means unusable by a REST client,
+  // which was exactly the gap this closed.
+  it.each(['/memories', '/memories/{id}'])('documents ?org=<slug> on DELETE %s', (path) => {
+    const del = spec.paths[path]!.delete as {
+      parameters: Array<{ name: string; in: string; required?: boolean; schema?: { type?: string } }>;
+    };
+    const org = del.parameters.find((p) => p.name === 'org' && p.in === 'query');
+    expect(org, JSON.stringify(del.parameters)).toBeDefined();
+    // Optional — every existing caller omits it and must keep working.
+    expect(org!.required ?? false).toBe(false);
+    expect(org!.schema?.type).toBe('string');
+  });
+
+  // A role denial inside memory_delete is SQLSTATE LK002, which translateDbError
+  // maps to a 403. A caller reading only the spec must know that DELETE can now
+  // answer 403, not just 400/401/404.
+  it('documents a 403 on DELETE /memories (org role denial)', () => {
+    const del = spec.paths['/memories']!.delete as { responses: Record<string, unknown> };
+    expect(Object.keys(del.responses)).toContain('403');
+  });
+
+  // The org REST routes accept lk_* tokens as of migration 00041; the security
+  // scheme must not still tell readers they need a JWT.
+  it('does not claim org endpoints are JWT-only', () => {
+    const scheme = spec.components.securitySchemes.BearerAuth as { description?: string };
+    expect(scheme.description).toBeDefined();
+    expect(scheme.description!.toLowerCase()).not.toContain('org endpoints require jwt');
+    for (const [path, ops] of Object.entries(spec.paths)) {
+      for (const [method, op] of Object.entries(ops)) {
+        const summary = (op as { summary?: string }).summary ?? '';
+        expect(summary, `${method.toUpperCase()} ${path}`).not.toContain('JWT only');
+      }
+    }
+  });
+
   it('documents a response body for every new memory endpoint', () => {
     for (const [path, method] of [
       ['/memories/restore', 'post'],

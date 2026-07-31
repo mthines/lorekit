@@ -4,7 +4,9 @@ LoreKit exposes ten `memory.*` tools and four `org.*` tools via the MCP protocol
 
 `memory.*` tools require a valid API token (see [api-tokens.md](./api-tokens.md)).
 
-`org.*` tools require a **Supabase user JWT** (browser/dashboard session) — they are not available via `lk_*` API tokens because org management RPCs derive the actor from `auth.uid()` inside `SECURITY DEFINER` functions.
+`org.*` **MCP** tools require a **Supabase user JWT** (browser/dashboard session) — they are not available via `lk_*` API tokens, because these tool handlers call the org management RPCs without naming an actor, and those RPCs then derive it from `auth.uid()` inside `SECURITY DEFINER` functions (NULL on the service-role connection an API token gets).
+
+**The REST `orgs` endpoints do accept `lk_*` tokens**, as of `supabase/migrations/00041_org_actor_override.sql` — the handlers there pass the token owner explicitly as `p_actor_user_id`, which the RPCs honour only on a verified service-role connection. Prefer `GET/POST/PATCH/DELETE /functions/v1/orgs` over these MCP tools when you are authenticating with an API token. Bringing the MCP `org.*` tools onto the same path is a follow-up.
 
 **Endpoint:** `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp`
 

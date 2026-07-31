@@ -116,7 +116,7 @@ and `global`) — split into two clearly-labelled sections so you can see where
 each lesson lives:
 
 - **Offline** — the local two-tier store (`.lorekit/` in the repo + `~/.lorekit/`).
-- **Remote** — the hosted MCP store. When no token/endpoint is configured this
+- **Remote** — the hosted LoreKit store, reached over the REST API. When no token/endpoint is configured this
   section is a short note on how to set it up; it is **never an error** (the
   command still exits 0 and shows your offline lessons). A network/server error
   is likewise a per-scope warning, not a crash.
@@ -192,7 +192,7 @@ which is the point of an overview). An unconfigured remote degrades to a short
 note — never an error, always exit 0. `--endpoint` / `--token` / `--store`
 behave as in `list`. Remote counts reflect what the hosted `memory.list` returns
 per scope (the server's default page size); there is no cap-usage `N / limit`
-figure because the MCP surface exposes no total-count or cap tool.
+figure because the REST API exposes no total-count or cap endpoint.
 
 ### `lorekit scopes`
 
@@ -367,7 +367,7 @@ Memory has a controllable backend. Three **modes**:
 |------|--------------------|-------|
 | `off` | nowhere | Memory is disabled — every hook event and store op is a silent no-op. |
 | `local` | markdown files in two tiers (see below) | **Local means _not_ on the hosted website** — local lessons never sync to the LoreKit dashboard. That is the point of local: private-by-default, greppable, git-native. |
-| `remote` | the LoreKit MCP server (hosted) | The shared, cross-machine backend. Reads stay silent until an endpoint + token are configured. This is the default. |
+| `remote` | the hosted LoreKit API (REST) | The shared, cross-machine backend. Reads stay silent until an endpoint + token are configured. This is the default. |
 
 ### Local store layout — two tiers
 

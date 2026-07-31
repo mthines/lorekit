@@ -1,4 +1,5 @@
 import type { AuthContext } from '../../../_shared/api/auth.ts';
+import { actorUserId } from '../../../_shared/api/auth.ts';
 import { created, notFound } from '../../../_shared/api/respond.ts';
 import { validateBody, validateOrgSlug } from '../../../_shared/api/validate.ts';
 import { createTracedClient } from '../../../_shared/otel.ts';
@@ -8,6 +9,7 @@ import { translateDbError } from '../../../_shared/api/errors.ts';
 import { auditUserId } from '../../../_shared/api/auth.ts';
 import { recordAudit } from '../../../_shared/audit.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
+import { isOrgMember } from '../../../_shared/api/tenant.ts';
 
 export async function handleCreateInvite(
   req: Request, auth: AuthContext, db: DbClient, span: Span,
@@ -32,12 +34,18 @@ export async function handleCreateInvite(
   if (lookupErr) { span.error(lookupErr.message); throw lookupErr; }
   if (!org) return notFound('Organization', cors);
 
+  // Membership gate for the raw slug lookup (no RLS on the api_key tier) — a
+  // non-member gets the same 404 as a non-existent slug. The `invite`
+  // capability (admin/owner) is still enforced inside the RPC.
   const orgId = (org as { id: string }).id;
+  if (!(await isOrgMember(db, auth, orgId, span))) return notFound('Organization', cors);
+
   const { data, error } = await tracedDb.rpc('lorekit_org_invite', {
     p_org_id: orgId,
     p_invitee_email: v.data.email ?? null,
     p_invitee_handle: v.data.handle ?? null,
     p_role: v.data.role,
+    p_actor_user_id: actorUserId(auth),
   });
   if (error) {
     const m = translateDbError(error);

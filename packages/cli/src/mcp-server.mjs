@@ -11,10 +11,12 @@
 //   off    → advertise no tools; a call reports "disabled"
 //
 // org.* tools are always advertised regardless of memory mode. They proxy to
-// the remote endpoint because org management requires a server-side session
-// (JWT auth, SECURITY DEFINER RPCs). In local/off mode a transient RemoteStore
-// is built from the configured endpoint + token. If no remote is configured,
-// a clear error is returned.
+// the remote endpoint because orgs are server-side state — there is no local
+// equivalent to serve them from. (They no longer require a Supabase JWT: the
+// store calls the REST `/orgs` routes, which accept `lk_*` API tokens as of
+// 00041_org_actor_override.sql.) In local/off mode a transient RemoteStore is
+// built from the configured endpoint + token. If no remote is configured, a
+// clear error is returned.
 //
 // Machine-facing: ONLY JSON-RPC frames go to stdout — any diagnostics go to
 // stderr. The server never throws on malformed or partial input; a bad frame

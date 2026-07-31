@@ -648,13 +648,21 @@ export type Database = {
         Args: { p_capability: string; p_org_id: string; p_user_id: string }
         Returns: boolean
       }
-      lorekit_org_create: {
-        Args: { p_name: string; p_slug: string }
+      lorekit_org_actor: {
+        Args: { p_actor_user_id: string }
         Returns: string
       }
-      lorekit_org_delete: { Args: { p_org_id: string }; Returns: undefined }
+      lorekit_org_create: {
+        Args: { p_actor_user_id?: string; p_name: string; p_slug: string }
+        Returns: string
+      }
+      lorekit_org_delete: {
+        Args: { p_actor_user_id?: string; p_org_id: string }
+        Returns: undefined
+      }
       lorekit_org_invite: {
         Args: {
+          p_actor_user_id?: string
           p_invitee_email?: string
           p_invitee_handle?: string
           p_org_id: string
@@ -671,20 +679,29 @@ export type Database = {
         Returns: undefined
       }
       lorekit_org_invite_revoke: {
-        Args: { p_invite_id: string }
+        Args: { p_actor_user_id?: string; p_invite_id: string }
         Returns: undefined
       }
       lorekit_org_leave: { Args: { p_org_id: string }; Returns: undefined }
       lorekit_org_member_remove: {
-        Args: { p_org_id: string; p_target_user_id: string }
+        Args: {
+          p_actor_user_id?: string
+          p_org_id: string
+          p_target_user_id: string
+        }
         Returns: undefined
       }
       lorekit_org_member_role: {
-        Args: { p_org_id: string; p_role: string; p_target_user_id: string }
+        Args: {
+          p_actor_user_id?: string
+          p_org_id: string
+          p_role: string
+          p_target_user_id: string
+        }
         Returns: undefined
       }
       lorekit_org_members_list: {
-        Args: { p_org_id: string }
+        Args: { p_actor_user_id?: string; p_org_id: string }
         Returns: {
           avatar_url: string
           handle: string
@@ -695,7 +712,7 @@ export type Database = {
       }
       lorekit_org_purge: { Args: { p_org_id: string }; Returns: undefined }
       lorekit_org_rename: {
-        Args: { p_name: string; p_org_id: string }
+        Args: { p_actor_user_id?: string; p_name: string; p_org_id: string }
         Returns: undefined
       }
       lorekit_org_role: {

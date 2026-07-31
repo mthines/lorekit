@@ -110,7 +110,7 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   const bearerAuth = registry.registerComponent('securitySchemes', 'BearerAuth', {
     type: 'http',
     scheme: 'bearer',
-    description: 'LoreKit API token (lk_rw_*, lk_ro_*) or Supabase JWT. Org endpoints require JWT.',
+    description: 'LoreKit API token (lk_rw_*, lk_ro_*, lk_wo_*) or Supabase JWT. Every route — memories and orgs alike — accepts either; access is gated by the token read/write permission, not by auth tier.',
   });
 
   const security = [{ [bearerAuth.name]: [] }];
@@ -154,9 +154,9 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   });
   registry.registerPath({
     method: 'delete', path: '/memories',
-    summary: 'Archive (or, with force=true, hard-delete) a memory by scope+key', tags: ['Memories'],
+    summary: 'Archive (or, with force=true, hard-delete) a memory by scope+key; ?org=<slug> targets org-owned lore', tags: ['Memories'],
     security, request: { query: DeleteMemoryQuerySchema },
-    responses: { 204: { description: 'Archived or deleted' }, 400: errorResponse, 401: errorResponse, 404: errorResponse },
+    responses: { 204: { description: 'Archived or deleted' }, 400: errorResponse, 401: errorResponse, 403: errorResponse, 404: errorResponse },
   });
   registry.registerPath({
     method: 'post', path: '/memories/restore', summary: 'Restore an archived memory by scope+key', tags: ['Memories'],
@@ -211,40 +211,40 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
 
   // ── Orgs ─────────────────────────────────────────────────────────────────
   registry.registerPath({
-    method: 'get', path: '/orgs', summary: 'List my organizations (JWT only)', tags: ['Orgs'],
+    method: 'get', path: '/orgs', summary: 'List my organizations', tags: ['Orgs'],
     security,
     responses: { 200: { description: 'Orgs', content: { 'application/json': { schema: OrgListResponseSchema } } }, 401: errorResponse },
   });
   registry.registerPath({
-    method: 'post', path: '/orgs', summary: 'Create an organization (JWT only)', tags: ['Orgs'],
+    method: 'post', path: '/orgs', summary: 'Create an organization', tags: ['Orgs'],
     security, request: { body: { content: { 'application/json': { schema: CreateOrgBodySchema } } } },
     responses: { 201: { description: 'Created org', content: { 'application/json': { schema: OrgResponseSchema } } }, 400: errorResponse, 401: errorResponse, 403: errorResponse },
   });
   registry.registerPath({
-    method: 'get', path: '/orgs/{slug}', summary: 'Get organization (JWT only)', tags: ['Orgs'],
+    method: 'get', path: '/orgs/{slug}', summary: 'Get organization', tags: ['Orgs'],
     security, request: { params: OrgSlugParamsSchema },
     responses: { 200: { description: 'Org', content: { 'application/json': { schema: OrgResponseSchema } } }, 404: errorResponse, 401: errorResponse },
   });
   registry.registerPath({
-    method: 'patch', path: '/orgs/{slug}', summary: 'Rename organization (JWT only)', tags: ['Orgs'],
+    method: 'patch', path: '/orgs/{slug}', summary: 'Rename organization', tags: ['Orgs'],
     security,
     request: { params: OrgSlugParamsSchema, body: { content: { 'application/json': { schema: RenameOrgBodySchema } } } },
     responses: { 200: { description: 'Updated org', content: { 'application/json': { schema: OrgResponseSchema } } }, 400: errorResponse, 401: errorResponse, 403: errorResponse },
   });
   registry.registerPath({
-    method: 'delete', path: '/orgs/{slug}', summary: 'Delete organization — owner only (JWT only)', tags: ['Orgs'],
+    method: 'delete', path: '/orgs/{slug}', summary: 'Delete organization — owner only', tags: ['Orgs'],
     security, request: { params: OrgSlugParamsSchema },
     responses: { 204: { description: 'Deleted' }, 401: errorResponse, 403: errorResponse },
   });
 
   // ── Members ───────────────────────────────────────────────────────────────
   registry.registerPath({
-    method: 'get', path: '/orgs/{slug}/members', summary: 'List members (JWT only)', tags: ['Members'],
+    method: 'get', path: '/orgs/{slug}/members', summary: 'List members', tags: ['Members'],
     security, request: { params: OrgSlugParamsSchema },
     responses: { 200: { description: 'Members', content: { 'application/json': { schema: OrgMemberListResponseSchema } } }, 401: errorResponse, 403: errorResponse },
   });
   registry.registerPath({
-    method: 'patch', path: '/orgs/{slug}/members/{userId}', summary: 'Update member role (JWT only)', tags: ['Members'],
+    method: 'patch', path: '/orgs/{slug}/members/{userId}', summary: 'Update member role', tags: ['Members'],
     security,
     request: {
       params: OrgSlugMemberParamsSchema,
@@ -253,25 +253,25 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     responses: { 200: { description: 'Updated' }, 400: errorResponse, 401: errorResponse, 403: errorResponse },
   });
   registry.registerPath({
-    method: 'delete', path: '/orgs/{slug}/members/{userId}', summary: 'Remove member (JWT only)', tags: ['Members'],
+    method: 'delete', path: '/orgs/{slug}/members/{userId}', summary: 'Remove member', tags: ['Members'],
     security, request: { params: OrgSlugMemberParamsSchema },
     responses: { 204: { description: 'Removed' }, 401: errorResponse, 403: errorResponse },
   });
 
   // ── Invites ───────────────────────────────────────────────────────────────
   registry.registerPath({
-    method: 'get', path: '/orgs/{slug}/invites', summary: 'List pending invites (JWT only)', tags: ['Invites'],
+    method: 'get', path: '/orgs/{slug}/invites', summary: 'List pending invites', tags: ['Invites'],
     security, request: { params: OrgSlugParamsSchema },
     responses: { 200: { description: 'Invites', content: { 'application/json': { schema: OrgInviteListResponseSchema } } }, 401: errorResponse, 403: errorResponse },
   });
   registry.registerPath({
-    method: 'post', path: '/orgs/{slug}/invites', summary: 'Send an invite (JWT only)', tags: ['Invites'],
+    method: 'post', path: '/orgs/{slug}/invites', summary: 'Send an invite', tags: ['Invites'],
     security,
     request: { params: OrgSlugParamsSchema, body: { content: { 'application/json': { schema: CreateInviteBodySchema } } } },
     responses: { 201: { description: 'Invite sent', content: { 'application/json': { schema: OrgInviteSchema } } }, 400: errorResponse, 401: errorResponse, 403: errorResponse },
   });
   registry.registerPath({
-    method: 'delete', path: '/orgs/{slug}/invites/{inviteId}', summary: 'Revoke an invite (JWT only)', tags: ['Invites'],
+    method: 'delete', path: '/orgs/{slug}/invites/{inviteId}', summary: 'Revoke an invite', tags: ['Invites'],
     security, request: { params: OrgSlugInviteParamsSchema },
     responses: { 204: { description: 'Revoked' }, 401: errorResponse, 403: errorResponse },
   });

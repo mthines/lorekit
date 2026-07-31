@@ -136,6 +136,20 @@ const sdk = new NodeSDK({
           }
         },
       },
+      // W3C traceparent propagation for outgoing fetch() calls:
+      // @opentelemetry/instrumentation-undici (included in getNodeAutoInstrumentations)
+      // instruments Node 18+'s global fetch, which is undici-backed. Any fetch()
+      // called inside a tool handler automatically carries the active OTel context
+      // as a traceparent header — no manual plumbing required.
+      //
+      // Trace chain when a client sends traceparent on the MCP request:
+      //   Client (traceparent header)
+      //     → MCP server HTTP span (traceparent extracted by instrumentation-http)
+      //       → tool handler outgoing fetch (traceparent injected by instrumentation-undici)
+      //         → Supabase / REST API
+      //
+      // This means Agent0 → MCP server → REST API appears as a single Dash0 trace
+      // with no additional code in tool handlers.
     }),
   ],
 });

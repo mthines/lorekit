@@ -1,13 +1,24 @@
-// Remote store: wraps the LoreKit REST API `memory.*` endpoints behind the
-// common store contract. EVERY memory operation goes over REST — list, search,
-// read, write, delete (soft-archive AND `?force=true` hard-delete) and the
-// store-wide `listScopes()` enumeration — for lower overhead and W3C
-// traceparent propagation. MCP remains ONLY for the four `org.*` calls and the
-// `ping` fallback: org RPCs require a Supabase JWT session (they resolve the
-// actor via auth.uid() inside SECURITY DEFINER functions), which is
-// incompatible with the lk_* api_key tokens that CLI users have.
+// Remote store: wraps the LoreKit REST API behind the common store contract.
+// EVERY operation this store performs goes over REST — memory list, search,
+// read, write, delete (soft-archive AND `?force=true` hard-delete), the
+// store-wide `listScopes()` enumeration, all four `org.*` operations, and the
+// `ping` connectivity probe. There is NO MCP transport left here: the store
+// imports `restFetch`/`mcpToRestBase` and nothing else.
+//
+// Org ops used to be the one holdout. The org RPCs resolved their actor from
+// `auth.uid()`, which is NULL on the service-role connection an `lk_*` api_key
+// token gets, so `/orgs` 403'd every CLI caller and the store had to keep a
+// JSON-RPC transport alive purely for `org.create`/`org.list`/`org.rename`/
+// `org.delete`. `00041_org_actor_override.sql` added a `p_actor_user_id`
+// override that the RPCs honour only on a verified service_role connection,
+// and the `orgs` edge function now passes it plus its own tenant filters — so
+// every `/orgs*` route serves api_key tokens and the holdout is gone.
+//
+// `packages/cli/src/mcp.mjs` still exists and is still used: it backs the
+// `lorekit mcp` stdio server command and provides `mcpToRestBase`. It is just
+// no longer a transport for this store.
 // Zero-dependency.
-import { mcpCall, restFetch, mcpToRestBase } from '../mcp.mjs';
+import { restFetch, mcpToRestBase } from '../mcp.mjs';
 import { getActiveTraceparent } from '../telemetry.mjs';
 
 // Drop undefined/null args so JSON payloads stay tidy.
@@ -23,7 +34,12 @@ export function createRemoteStore({ endpoint, token } = {}) {
 
 class RemoteStore {
   constructor(endpoint, token) {
-    this.endpoint = endpoint; // MCP URL (kept for org ops)
+    // The configured endpoint is still spelled as the `/mcp` URL (that is what
+    // `.mcp.json` / LOREKIT_MCP_URL hold, and changing that config key is a
+    // separate migration). Nothing here speaks MCP: it exists only so
+    // `usable()` can judge the configuration and `mcpToRestBase` can derive the
+    // REST base from it.
+    this.endpoint = endpoint;
     this.token = token;
     this.restBase = mcpToRestBase(endpoint); // REST base URL for memory ops
     this.mode = 'remote';
@@ -38,22 +54,6 @@ class RemoteStore {
   async _rest(path, opts = {}) {
     if (!this.usable()) return { ok: false, unusable: true };
     return restFetch(this.restBase, this.token, path, { ...opts, traceparent: this._tp() });
-  }
-
-  async _mcp(name, args) {
-    if (!this.usable()) return { ok: false, unusable: true };
-    return mcpCall(this.endpoint, this.token, 'tools/call', { name, arguments: args }, { traceparent: this._tp() });
-  }
-
-  _mcpEntries(res) {
-    if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
-    // MCP wraps results in { content: [{ type: 'text', text: '<json>' }] }
-    let payload = null;
-    if (Array.isArray(res.result?.content)) {
-      const text = res.result.content.map((c) => c?.text ?? '').join('');
-      try { payload = JSON.parse(text); } catch { /* ignore */ }
-    } else { payload = res.result; }
-    return { ok: true, entries: Array.isArray(payload?.entries) ? payload.entries : [] };
   }
 
   // ── Memory operations → REST ──────────────────────────────────────────────
@@ -119,43 +119,54 @@ class RemoteStore {
     return this.delete({ scope, key, force: false });
   }
 
-  // ── Org operations ─────────────────────────────────────────────────────────
-  // Org RPCs (lorekit_org_*) use auth.uid() server-side via SECURITY DEFINER
-  // functions, which only works with a Supabase JWT session. CLI uses lk_*
-  // api_key tokens which provide no JWT context, so the REST /orgs endpoint
-  // returns 403 for api_key callers. Org ops stay on the MCP endpoint which
-  // handles this correctly (the Deno edge function has its own auth path).
-  // TODO: if org RPCs ever gain api_key support, switch these to REST too.
+  // ── Org operations → REST ─────────────────────────────────────────────────
+  // `supabase/functions/orgs/` serves `lk_*` tokens on every route as of
+  // 00041_org_actor_override.sql (see the file header). Each method's RETURN
+  // SHAPE is unchanged from the MCP era — `packages/cli/src/mcp-server.mjs`
+  // serialises these objects straight into a `tools/call` result, so the shape
+  // is a published contract, not an internal detail.
+  //
+  // Slugs are interpolated into the PATH, so they must be encodeURIComponent'd.
+  // A slug is server-side constrained to `[a-z0-9-]`, but the CLI passes
+  // whatever the user typed and an un-encoded `../` or `?` would retarget the
+  // request at a different route entirely.
 
+  // POST /orgs → 201 with the created org object, `{ id, slug, name, created_at }`.
+  // The handler reads the row back after the RPC (`orgs/handlers/orgs/create.ts`);
+  // `created_at` is absent only on the read-back miss, where it falls back to
+  // `{ id, slug, name }`. A bare JSON id string is the LEGACY shape an older
+  // deployed backend can still return — that is what the string branch below is
+  // for, not the normal case. Either way this method reassembles the
+  // `{ id, slug, name }` triple, because `packages/cli/src/mcp-server.mjs`
+  // serialises it straight into a `tools/call` result and that shape is a
+  // published contract.
   async orgCreate({ slug, name } = {}) {
-    const res = await this._mcp('org.create', { slug, name });
+    const res = await this._rest('/orgs', { method: 'POST', body: { slug, name } });
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
-    let payload = null;
-    if (Array.isArray(res.result?.content)) {
-      try { payload = JSON.parse(res.result.content.map((c) => c?.text ?? '').join('')); } catch {}
-    } else { payload = res.result; }
-    return { ok: true, org: payload };
+    const id = typeof res.data === 'string' ? res.data : (res.data?.id ?? null);
+    return { ok: true, org: { id, slug, name } };
   }
 
+  // GET /orgs → { entries: [{ id, slug, name, role, created_at }] }
   async orgList() {
-    const res = await this._mcp('org.list', {});
-    return this._mcpEntries(res);
+    const res = await this._rest('/orgs');
+    if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
+    return { ok: true, entries: Array.isArray(res.data?.entries) ? res.data.entries : [] };
   }
 
+  // PATCH /orgs/:slug → 200 { slug, name }
   async orgRename({ slug, name } = {}) {
-    const res = await this._mcp('org.rename', { slug, name });
+    const res = await this._rest(`/orgs/${encodeURIComponent(slug)}`, { method: 'PATCH', body: { name } });
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
-    let payload = null;
-    try { payload = Array.isArray(res.result?.content) ? JSON.parse(res.result.content.map((c) => c?.text ?? '').join('')) : res.result; } catch {}
-    return { ok: true, ...(payload ?? {}) };
+    return { ok: true, ...(res.data ?? { slug, name }) };
   }
 
+  // DELETE /orgs/:slug → 204 with no body, so `deleted: true` is synthesised to
+  // preserve the `{ ok, deleted, slug }` shape the MCP tool returned.
   async orgDelete({ slug } = {}) {
-    const res = await this._mcp('org.delete', { slug });
+    const res = await this._rest(`/orgs/${encodeURIComponent(slug)}`, { method: 'DELETE' });
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
-    let payload = null;
-    try { payload = Array.isArray(res.result?.content) ? JSON.parse(res.result.content.map((c) => c?.text ?? '').join('')) : res.result; } catch {}
-    return { ok: true, ...(payload ?? {}) };
+    return { ok: true, deleted: true, slug };
   }
 
   // Store-wide scope enumeration — every distinct scope the caller can see with
@@ -177,22 +188,25 @@ class RemoteStore {
   }
 
   // Connectivity probe for doctor — a transport check, not a memory op.
+  //
+  // There is no MCP fallback: a `restBase` we could not derive means the
+  // configured endpoint is not a URL, and a JSON-RPC POST to that same
+  // unparseable string could only fail in a less legible way. Report the
+  // configuration problem instead.
   async ping() {
     if (!this.usable()) return { ok: false, unusable: true };
     // Use the /health function as a connectivity probe (public, no auth)
-    const healthUrl = this.restBase
-      ? `${this.restBase.replace(/\/functions\/v1$/, '')}/functions/v1/health`
-      : null;
-    if (healthUrl) {
-      const tp = this._tp();
-      try {
-        const res = await fetch(healthUrl, {
-          signal: AbortSignal.timeout(5000),
-          ...(tp ? { headers: { traceparent: tp } } : {}),
-        });
-        return { ok: res.ok, httpStatus: res.status };
-      } catch (e) { return { ok: false, networkError: String(e?.message ?? e) }; }
+    if (!this.restBase) {
+      return { ok: false, error: { message: `Endpoint is not a valid URL: ${this.endpoint}` } };
     }
-    return mcpCall(this.endpoint, this.token, 'tools/list', {}, { traceparent: this._tp() });
+    const healthUrl = `${this.restBase.replace(/\/functions\/v1$/, '')}/functions/v1/health`;
+    const tp = this._tp();
+    try {
+      const res = await fetch(healthUrl, {
+        signal: AbortSignal.timeout(5000),
+        ...(tp ? { headers: { traceparent: tp } } : {}),
+      });
+      return { ok: res.ok, httpStatus: res.status };
+    } catch (e) { return { ok: false, networkError: String(e?.message ?? e) }; }
   }
 }

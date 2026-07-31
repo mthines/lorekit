@@ -118,3 +118,29 @@ export function usageAuthType(auth: AuthContext): 'api_key' | 'jwt' | 'service' 
   if (auth.type === 'service') return 'service';
   return 'jwt';
 }
+
+/**
+ * The actor to pass as `p_actor_user_id` to an org RPC (migration
+ * `00041_org_actor_override.sql`).
+ *
+ * Org RPCs resolve the acting user through `lorekit_org_actor(p_actor_user_id)`,
+ * which honours the parameter ONLY on a verified `service_role` connection and
+ * otherwise falls back to `auth.uid()`. The `api_key` tier talks to Postgres
+ * with the service-role key and therefore has no `auth.uid()` at all, so
+ * without this the RPC's `lorekit_org_can(null, …)` denies every call.
+ *
+ * The value is never taken from the request: `resolveRestAuth` sets
+ * `auth.userId` from the `api_tokens` row it matched by token hash (or from the
+ * verified JWT), so a caller can only ever act as the identity its credential
+ * belongs to. `service` auth has no user at all and resolves to `null`, which
+ * makes every capability check fail closed — CI keeps its RLS bypass for direct
+ * table access, but does not get to act as an anonymous org admin.
+ *
+ * This exists as ONE helper rather than an inlined `auth.userId ?? null` at each
+ * call site so a new org handler cannot quietly forget it (the omission is
+ * invisible under JWT auth and only breaks the api_key tier). Enforced by
+ * `packages/mcp-core/src/org-actor-usage.spec.ts`.
+ */
+export function actorUserId(auth: AuthContext): string | null {
+  return auth.userId ?? null;
+}
