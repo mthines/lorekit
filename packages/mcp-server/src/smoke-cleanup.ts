@@ -68,6 +68,24 @@ export function smokeArtefactTimestamp(name: string): number | null {
 }
 
 /**
+ * Age of an artefact derived from its NAME alone.
+ *
+ * This is the FALLBACK rule. The sweeper prefers the server's `updated_at` /
+ * `created_at`, because the name's epoch is minted by `Date.now()` on whatever
+ * machine ran the suite: a runner with a slow clock would otherwise mint names
+ * that look already-stale and have its live rows deleted mid-run. The name stays
+ * the authority on RECOGNITION (see {@link smokeArtefactTimestamp}); it is only
+ * consulted for AGE when a row carries no server timestamp.
+ *
+ * `-Infinity` for an unrecognised name, so it can never clear a threshold. A
+ * future-dated name yields a negative age and is likewise never swept.
+ */
+export function smokeArtefactAgeMs(name: string, now: number): number {
+  const mintedAt = smokeArtefactTimestamp(name);
+  return mintedAt === null ? -Infinity : now - mintedAt;
+}
+
+/**
  * Is `name` a smoke artefact old enough to be an ORPHAN rather than the working
  * set of a run that is still in flight?
  *
@@ -79,14 +97,7 @@ export function isStaleSmokeArtefact(
   name: string,
   opts: { now: number; minAgeMs: number },
 ): boolean {
-  const mintedAt = smokeArtefactTimestamp(name);
-  if (mintedAt === null) return false;
-  // A future-dated name yields a negative age, which fails the comparison for
-  // any non-negative `minAgeMs` — so a clock-skewed runner cannot make the
-  // sweeper treat a live run's rows as orphans. Written as a subtraction rather
-  // than a special case because that is the same arithmetic the mirrored
-  // sweeper does.
-  return opts.now - mintedAt >= opts.minAgeMs;
+  return smokeArtefactAgeMs(name, opts.now) >= opts.minAgeMs;
 }
 
 /**

@@ -20,6 +20,7 @@ import {
   createSmokeNamespace,
   describeSweepFailures,
   isStaleSmokeArtefact,
+  smokeArtefactAgeMs,
   smokeArtefactTimestamp,
   sweepSmokeArtefacts,
 } from './smoke-cleanup.js';
@@ -55,6 +56,17 @@ describe('SMOKE_ARTEFACT_PATTERN / smokeArtefactTimestamp', () => {
     '',
   ])('does not recognise %s', (name) => {
     expect(smokeArtefactTimestamp(name)).toBeNull();
+  });
+});
+
+describe('smokeArtefactAgeMs', () => {
+  it('is -Infinity for a name it does not recognise, so no threshold can clear it', () => {
+    expect(smokeArtefactAgeMs('a-real-lesson', Date.now())).toBe(-Infinity);
+  });
+
+  it('is negative for a future-dated name', () => {
+    const minted = 1_700_000_000_000;
+    expect(smokeArtefactAgeMs(`smoke-${minted}-a`, minted - 60_000)).toBe(-60_000);
   });
 });
 
@@ -189,8 +201,16 @@ describe('mirror parity with scripts/smoke-cleanup.mjs', () => {
     // The regex alone is not the contract — a sweeper that recognises a name but
     // computes its age differently is just as broken.
     expect(sweeperSource).toContain('function smokeArtefactTimestamp(');
-    expect(sweeperSource).toContain('function isStaleSmokeArtefact(');
-    expect(sweeperSource).toContain('now - mintedAt >= minAgeMs');
+    expect(sweeperSource).toContain('function nameAgeMs(');
+    expect(sweeperSource).toContain('mintedAt === null ? -Infinity : now - mintedAt');
+  });
+
+  it('takes age from the server timestamp and recognition from the name', () => {
+    // The two must not be conflated: ANDing the name-derived staleness into the
+    // filter lets a fast client clock veto a purge the server's age warrants.
+    expect(sweeperSource).toContain('function rowAgeMs(');
+    expect(sweeperSource).toContain('function orgAgeMs(');
+    expect(sweeperSource).not.toContain('isStaleSmokeArtefact(');
   });
 
   it('never exits non-zero on a phase error unless --strict', () => {

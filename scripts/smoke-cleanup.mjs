@@ -68,11 +68,18 @@ function smokeArtefactTimestamp(name) {
   return Number.isFinite(ms) ? ms : null;
 }
 
-/** Old enough to be an orphan rather than a run still in flight? */
-function isStaleSmokeArtefact(name, now, minAgeMs) {
+/**
+ * Age of an artefact derived from its NAME alone — the fallback used when a row
+ * carries no server timestamp. `-Infinity` for an unrecognised name, so it can
+ * never clear an age threshold.
+ *
+ * Mirrors `smokeArtefactAgeMs` in packages/mcp-server/src/smoke-cleanup.ts.
+ * A future-dated name yields a negative age and so is never swept: a runner
+ * whose clock ran fast must not have its live rows treated as orphans.
+ */
+function nameAgeMs(name, now) {
   const mintedAt = smokeArtefactTimestamp(name);
-  if (mintedAt === null) return false;
-  return now - mintedAt >= minAgeMs;
+  return mintedAt === null ? -Infinity : now - mintedAt;
 }
 
 // ── args + env ────────────────────────────────────────────────────────────────
@@ -241,8 +248,7 @@ async function discoverScopes() {
 function rowAgeMs(entry) {
   const stamp = Date.parse(entry.updated_at ?? entry.created_at ?? '');
   if (Number.isFinite(stamp)) return NOW - stamp;
-  const minted = smokeArtefactTimestamp(entry.key);
-  return minted === null ? -Infinity : NOW - minted;
+  return nameAgeMs(entry.key, NOW);
 }
 
 /** Page through one scope/archived combination, returning the stale smoke keys. */
@@ -343,8 +349,13 @@ async function sweepOrgs() {
     return;
   }
   const entries = data.entries ?? [];
+  // Same split of responsibilities as the memories path: the NAME decides
+  // whether the row is ours to touch, the SERVER's timestamp decides whether it
+  // is old enough. ANDing in `isStaleSmokeArtefact` as well would re-introduce
+  // the client clock as a veto — a slug minted by a runner whose clock ran fast
+  // would then never be purged, however old the row actually is.
   const stale = entries.filter(
-    (o) => o?.slug && o?.id && isStaleSmokeArtefact(o.slug, NOW, MIN_AGE_MS) && orgAgeMs(o) >= MIN_AGE_MS,
+    (o) => o?.slug && o?.id && smokeArtefactTimestamp(o.slug) !== null && orgAgeMs(o) >= MIN_AGE_MS,
   );
   console.log(`orgs — ${stale.length} stale smoke org(s) of ${entries.length} visible`);
 
@@ -367,8 +378,7 @@ async function sweepOrgs() {
 function orgAgeMs(org) {
   const stamp = Date.parse(org.created_at ?? '');
   if (Number.isFinite(stamp)) return NOW - stamp;
-  const minted = smokeArtefactTimestamp(org.slug);
-  return minted === null ? -Infinity : NOW - minted;
+  return nameAgeMs(org.slug, NOW);
 }
 
 // ── 3. orgs a previous run already soft-deleted ───────────────────────────────
@@ -407,8 +417,9 @@ async function sweepSoftDeletedOrgs() {
     scanned += data.length;
     // Same predicate as the live sweep above — id and slug both required, so a
     // malformed row can never become `id=eq.undefined` in a DELETE.
+    // Recognition by name, age by the server clock — see sweepOrgs.
     stale = stale.concat(
-      data.filter((o) => o?.slug && o?.id && isStaleSmokeArtefact(o.slug, NOW, MIN_AGE_MS) && orgAgeMs(o) >= MIN_AGE_MS),
+      data.filter((o) => o?.slug && o?.id && smokeArtefactTimestamp(o.slug) !== null && orgAgeMs(o) >= MIN_AGE_MS),
     );
     if (data.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
