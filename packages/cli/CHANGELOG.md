@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.24.0](https://github.com/mthines/lorekit/compare/cli-v1.23.0...cli-v1.24.0) (2026-07-31)
+
+
+### Features
+
+* **otel:** CLI service.name "cli" and default dataset "default" ([#271](https://github.com/mthines/lorekit/issues/271)) ([56e0742](https://github.com/mthines/lorekit/commit/56e0742d451fb550c0b8f3227244ed6795c6fceb))
+
 ## [1.23.0](https://github.com/mthines/lorekit/compare/cli-v1.22.0...cli-v1.23.0) (2026-07-31)
 
 
