@@ -6,8 +6,9 @@ import { Tooltip } from './Tooltip';
 /**
  * Interaction tests for {@link Tooltip} — the `play` functions run in a real
  * browser via `@storybook/addon-vitest`. Kept in the `/Tests` namespace and
- * `test`-tagged so the `storybook-interaction` Vitest project picks them up and
- * the `storybook-visual` project skips them (no snapshots).
+ * `test`-tagged, with `chromatic.disableSnapshot` so the visual-regression
+ * `afterEach` in `.storybook/vitest.setup.ts` skips them (no snapshots) while
+ * their `play` functions still run.
  */
 const meta: Meta<typeof Tooltip> = {
   title: 'UI/Tooltip/Tests',

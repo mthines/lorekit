@@ -15,13 +15,14 @@ import { playwright } from '@vitest/browser-playwright';
 // It runs BOTH test kinds the two-file convention produces, in one browser run:
 //   • Interaction tests — the `play` functions in `*.test.stories.tsx`
 //     (`/Tests` namespace) are executed by `@storybook/addon-vitest`.
-//   • Visual regression  — the `.storybook/vitest.setup.visual.ts` hook
+//   • Visual regression  — the `afterEach` hook in `.storybook/vitest.setup.ts`
 //     screenshots every OTHER story (the Default / Playground visual stories)
 //     and diffs it against the committed baseline.
 //
-// Preview annotations (the dark-surface decorator in `.storybook/preview.tsx`)
-// are applied automatically by addon-vitest ≥ 10.3 — no `setProjectAnnotations`
-// setup file is needed.
+// The `setupFiles` entry below (`.storybook/vitest.setup.ts`) applies the
+// preview annotations (the dark-surface decorator in `.storybook/preview.tsx`)
+// via `setProjectAnnotations` AND registers the visual-regression `afterEach`
+// hook — the hook is why the setup file is required, not optional.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
