@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion, MotionConfig } from 'motion/react';
-import type { LucideIcon } from 'lucide-react';
+import { ArrowUpRight, type LucideIcon } from 'lucide-react';
 
 export interface SectionNavItem {
   id: string;
@@ -20,6 +20,12 @@ export interface SectionNavItem {
    * Hidden on mobile (horizontal scroll strips the visual grouping context).
    */
   divider?: string;
+  /**
+   * Links OUT of the section to another surface (e.g. the /api-docs Scalar page,
+   * which is a route handler, not an app-router page). Renders a plain anchor
+   * that opens in a new tab with a trailing ↗, and is never marked active.
+   */
+  external?: boolean;
 }
 
 interface SectionNavProps {
@@ -60,8 +66,38 @@ export function SectionNav({ items, ariaLabel, layoutId = 'section-nav-active' }
         aria-label={ariaLabel}
         className="flex gap-1 overflow-x-auto border-b border-[var(--color-border)] pb-2 md:w-52 md:shrink-0 md:flex-col md:overflow-visible md:border-b-0 md:pb-0"
       >
-        {items.map(({ id, label, href, icon: Icon, badgeCount, divider }) => {
-          const active = pathname === href || pathname.startsWith(href + '/');
+        {items.map(({ id, label, href, icon: Icon, badgeCount, divider, external }) => {
+          const active = !external && (pathname === href || pathname.startsWith(href + '/'));
+          const className = [
+            // 44px min touch target (WCAG 2.2 SC 2.5.8)
+            'relative flex min-h-11 shrink-0 items-center gap-2.5 whitespace-nowrap rounded-lg px-3 text-sm transition-colors duration-150',
+            active
+              ? 'text-[var(--color-accent)]'
+              : 'text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]',
+          ].join(' ');
+          const inner = (
+            <>
+              {active && (
+                <motion.span
+                  layoutId={layoutId}
+                  className="absolute inset-0 rounded-lg bg-[var(--color-accent-subtle)]"
+                  transition={{ type: 'spring', stiffness: 900, damping: 48, mass: 0.5 }}
+                  aria-hidden
+                />
+              )}
+              <Icon className="relative size-4 shrink-0" aria-hidden />
+              <span className="relative font-medium">{label}</span>
+              {external && <ArrowUpRight className="relative ml-auto size-3.5 shrink-0 opacity-70" aria-hidden />}
+              {Boolean(badgeCount && badgeCount > 0) && (
+                <span
+                  className="relative ml-auto flex h-4.5 min-w-4.5 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent)] px-1 text-[10px] font-semibold text-[#000]"
+                  aria-label={`${badgeCount} pending`}
+                >
+                  {badgeCount}
+                </span>
+              )}
+            </>
+          );
           return (
             <div key={id} className="contents">
               {/* Divider — desktop only; hidden in mobile horizontal scroll */}
@@ -76,38 +112,21 @@ export function SectionNav({ items, ariaLabel, layoutId = 'section-nav-active' }
                   <div className="flex-1 border-t border-[var(--color-border)]" />
                 </div>
               )}
-              <Link
-                href={href}
-                prefetch
-                ref={active ? activeRef : undefined}
-                aria-current={active ? 'page' : undefined}
-                className={[
-                  // 44px min touch target (WCAG 2.2 SC 2.5.8)
-                  'relative flex min-h-11 shrink-0 items-center gap-2.5 whitespace-nowrap rounded-lg px-3 text-sm transition-colors duration-150',
-                  active
-                    ? 'text-[var(--color-accent)]'
-                    : 'text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]',
-                ].join(' ')}
-              >
-                {active && (
-                  <motion.span
-                    layoutId={layoutId}
-                    className="absolute inset-0 rounded-lg bg-[var(--color-accent-subtle)]"
-                    transition={{ type: 'spring', stiffness: 900, damping: 48, mass: 0.5 }}
-                    aria-hidden
-                  />
-                )}
-                <Icon className="relative size-4 shrink-0" aria-hidden />
-                <span className="relative font-medium">{label}</span>
-                {Boolean(badgeCount && badgeCount > 0) && (
-                  <span
-                    className="relative ml-auto flex h-4.5 min-w-4.5 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent)] px-1 text-[10px] font-semibold text-[#000]"
-                    aria-label={`${badgeCount} pending`}
-                  >
-                    {badgeCount}
-                  </span>
-                )}
-              </Link>
+              {external ? (
+                <a href={href} target="_blank" rel="noopener noreferrer" className={className}>
+                  {inner}
+                </a>
+              ) : (
+                <Link
+                  href={href}
+                  prefetch
+                  ref={active ? activeRef : undefined}
+                  aria-current={active ? 'page' : undefined}
+                  className={className}
+                >
+                  {inner}
+                </Link>
+              )}
             </div>
           );
         })}

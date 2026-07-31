@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useState, useTransition } from 'react';
 import { Copy, CheckCheck, ShieldAlert, Loader2, Eye, EyeOff, Clock, ArrowUpRight } from 'lucide-react';
 import { getSessionToken } from '@/lib/session-token';
@@ -110,13 +109,15 @@ export function SessionTokenPanel() {
         </div>
       )}
 
-      <Link
+      <a
         href="/api-docs"
+        target="_blank"
+        rel="noopener noreferrer"
         className="inline-flex items-center gap-1 self-start text-xs font-medium text-[var(--color-accent)] transition-opacity hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
       >
         Open the API reference
         <ArrowUpRight className="size-3.5 shrink-0" aria-hidden />
-      </Link>
+      </a>
     </div>
   );
 }
