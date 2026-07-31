@@ -260,6 +260,13 @@ jobs:
     environment: preview
     permissions:
       contents: read
+    env:
+      # Gate for the optional orgs REST smoke suite. The org endpoints require a
+      # Supabase USER JWT (lk_* tokens and the service-role key are rejected), so
+      # it runs only when a fixed smoke user is configured. Mapped from secrets
+      # here so a step `if:` can read it — a step `if:` cannot reference secrets
+      # via env of the same step. Unset → the suite self-skips (announced).
+      HAVE_ORG_SMOKE_CREDS: ${{ secrets.LOREKIT_SMOKE_EMAIL != '' && secrets.LOREKIT_SMOKE_PASSWORD != '' && secrets.SUPABASE_ANON_KEY != '' }}
     steps:
       - name: Checkout PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -307,6 +314,56 @@ jobs:
         env:
           URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
+
+      # Robust local stdio transport (`lorekit mcp`): spawns the CLI's stdio
+      # server in remote-passthrough mode and drives initialize → tools/list →
+      # memory.list against the endpoint — proving the transport a `.mcp.json`
+      # points at launches and reaches the backend. Same script as deploy.yml.
+      - name: Smoke — robust stdio transport handshakes against preview
+        run: node scripts/smoke-mcp-stdio.mjs "$URL" "$TOKEN"
+        env:
+          URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
+          TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
+
+      # Mint a user JWT so smoke-rest can include the orgs suite. Fixed-user mode
+      # (LOREKIT_SMOKE_EMAIL/PASSWORD) — never provisions users in a real tenant.
+      # Runs only when the optional credentials are configured; otherwise the
+      # orgs suite is left out and announced by smoke-rest, never a green suite
+      # that tested nothing.
+      #
+      # BEST-EFFORT: the orgs suite is opt-in, so a mint failure must NOT fail the
+      # preview run. mint-smoke-jwt.mjs exits non-zero when the fixed smoke user
+      # can't sign in (unseeded/unconfirmed user, wrong password, or email+password
+      # sign-in disabled on the project) — do not let that red the preview. On
+      # failure we warn loudly and leave the `jwt` output empty, so smoke-rest runs
+      # the memories suite only and announces the orgs skip.
+      # (`if <cmd>` suspends `set -e` for the mint, so a failure lands in `else`.)
+      - name: Mint a user JWT for the orgs REST smoke (optional)
+        id: smokejwt
+        if: env.HAVE_ORG_SMOKE_CREDS == 'true'
+        env:
+          LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          LOREKIT_SMOKE_EMAIL: ${{ secrets.LOREKIT_SMOKE_EMAIL }}
+          LOREKIT_SMOKE_PASSWORD: ${{ secrets.LOREKIT_SMOKE_PASSWORD }}
+        run: |
+          if JWT="$(node scripts/mint-smoke-jwt.mjs)"; then
+            echo "::add-mask::$JWT"
+            echo "jwt=$JWT" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Could not mint a smoke JWT — the orgs REST suite is skipped this run. Seed a confirmed email+password smoke user (matching LOREKIT_SMOKE_EMAIL/PASSWORD) on this project to enable it."
+          fi
+
+      # REST Edge Functions end-to-end against the live preview stack — the
+      # `memories` suite always (gated by LOREKIT_SMOKE_TOKEN), the `orgs` suite
+      # only when the JWT above was minted. Same script as deploy.yml; the specs
+      # self-clean with timestamped keys, so this is safe against a live project.
+      - name: Smoke — REST API (memories + orgs) against preview
+        env:
+          LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
+          LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
+          LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
+        run: node scripts/smoke-rest.mjs
 
   report:
     name: Post result comment
