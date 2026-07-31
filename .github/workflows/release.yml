@@ -115,7 +115,7 @@ jobs:
       id-token: write # mint the OIDC token npm trades for publish rights
     steps:
       - name: Checkout the release commit (version already bumped on main)
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -179,7 +179,7 @@ jobs:
       contents: read # checkout, so the local composite action is available
     steps:
       - name: Checkout repository (for the composite action)
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Identify the failed stage
         id: stage
