@@ -21,35 +21,50 @@ const httpServer = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
 
   // Read request body with a hard size cap. Reject early on a declared
-  // Content-Length over the limit, and abort mid-stream if the accumulated
-  // bytes exceed it — never buffering more than MAX_BODY_BYTES.
+  // Content-Length over the limit, and stop mid-stream if the accumulated bytes
+  // exceed it — never buffering more than MAX_BODY_BYTES. `tooLarge` is tracked
+  // as a flag (not a promise rejection) so a genuine transport error is NOT
+  // mislabelled as a size violation.
   const declaredLen = Number(req.headers['content-length']);
   let tooLarge = Number.isFinite(declaredLen) && declaredLen > MAX_BODY_BYTES;
+  let streamError = false;
   const bodyChunks: Buffer[] = [];
   if (!tooLarge) {
     let bodyBytes = 0;
-    try {
-      await new Promise<void>((resolve, reject) => {
-        req.on('data', (chunk: Buffer) => {
-          bodyBytes += chunk.length;
-          if (bodyBytes > MAX_BODY_BYTES) {
-            reject(new Error('request body exceeds MAX_BODY_BYTES'));
-            return;
-          }
-          bodyChunks.push(chunk);
-        });
-        req.on('end', resolve);
-        req.on('error', reject);
+    await new Promise<void>((resolve) => {
+      req.on('data', (chunk: Buffer) => {
+        if (tooLarge) return; // already over the limit; drop trailing chunks
+        bodyBytes += chunk.length;
+        if (bodyBytes > MAX_BODY_BYTES) {
+          tooLarge = true;
+          resolve();
+          return;
+        }
+        bodyChunks.push(chunk);
       });
-    } catch {
-      tooLarge = true;
-    }
+      req.on('end', resolve);
+      req.on('error', () => {
+        streamError = true;
+        resolve();
+      });
+    });
   }
   if (tooLarge) {
-    req.destroy();
+    // Write the 413 BEFORE tearing down the socket, or the client may never
+    // receive it. `Connection: close` tells the client we won't read the rest.
     if (!res.headersSent) {
-      res.writeHead(413, { 'Content-Type': 'text/plain' });
+      res.writeHead(413, { 'Content-Type': 'text/plain', Connection: 'close' });
       res.end('Payload Too Large');
+    }
+    req.destroy();
+    return;
+  }
+  if (streamError) {
+    // A client abort / transport error — not a size violation. Respond 400 if
+    // the socket is still writable; otherwise there's nothing to send.
+    if (!res.headersSent && res.writable) {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      res.end('Bad Request');
     }
     return;
   }
