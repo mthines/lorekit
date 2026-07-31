@@ -7,6 +7,7 @@ import { translateCapError } from '../limits.js';
 import { translateOrgPermissionError } from '../org-permissions.js';
 import { parseCreatedAt } from '../created-at.js';
 import { parseTtl } from '../ttl.js';
+import { parseOrigin } from '../origin.js';
 import { recordAudit } from '../audit.js';
 
 const MAX_VALUE_BYTES = 65_536;
@@ -38,6 +39,16 @@ export const WriteInputSchema = z.object({
   // When true, clears an existing expires_at (makes the memory permanent again).
   // Ignored when any ttl_* field is also supplied — clear takes precedence inside the RPC.
   clear_ttl: z.boolean().optional().default(false),
+  // Optional provenance: WHERE this lesson was recorded from, as opposed to
+  // `scope`, which says where it applies. Each field is independently optional
+  // and validated (shape, charset, bounds) by parseOrigin below rather than by
+  // zod, so the rules stay shared with the edge mirror. On an UPDATE the RPC
+  // keeps the last KNOWN value per field — a write that omits one never erases
+  // what an earlier write recorded.
+  origin_repo: z.string().optional(),
+  origin_branch: z.string().optional(),
+  origin_commit: z.string().optional(),
+  origin_pr: z.union([z.number(), z.string()]).optional(),
 });
 
 export type WriteInput = z.infer<typeof WriteInputSchema>;
@@ -56,6 +67,7 @@ export async function write(
     ttl_minutes: input.ttl_minutes,
     ttl_seconds: input.ttl_seconds,
   });
+  const origin = parseOrigin(input);
   const tracer = getTracer();
   const hist = getToolDurationHistogram();
   const startTime = Date.now();
@@ -76,6 +88,12 @@ export async function write(
       // alert rules that query lorekit.ttl_days).
       if (ttlSeconds !== null) span.setAttribute('lorekit.ttl_seconds', ttlSeconds);
       if (input.clear_ttl) span.setAttribute('lorekit.clear_ttl', true);
+      // Origin attributes are bounded, low-cardinality-per-repo identifiers, and
+      // only emitted when actually supplied.
+      if (origin.repo) span.setAttribute('lorekit.origin.repo', origin.repo);
+      if (origin.branch) span.setAttribute('lorekit.origin.branch', origin.branch);
+      if (origin.commit) span.setAttribute('lorekit.origin.commit', origin.commit);
+      if (origin.pr !== null) span.setAttribute('lorekit.origin.pr', origin.pr);
 
       try {
         // 00003 replaced the plain unique constraint with PARTIAL indexes
@@ -101,6 +119,10 @@ export async function write(
             p_org_slug: input.org ?? null,
             p_ttl_seconds: ttlSeconds,
             p_clear_ttl: input.clear_ttl ?? false,
+            p_origin_repo: origin.repo,
+            p_origin_branch: origin.branch,
+            p_origin_commit: origin.commit,
+            p_origin_pr: origin.pr,
           })
           .single();
 

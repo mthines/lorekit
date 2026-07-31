@@ -52,7 +52,17 @@ export interface MemoryRow {
   updated_by: string | null;
   /** Embedded `orgs(name,slug)` join — null for personal lore. */
   orgs: { name: string; slug: string } | null;
+  /** Provenance (migration 00046) — where the memory was recorded FROM. */
+  origin_repo: string | null;
+  origin_branch: string | null;
+  origin_commit: string | null;
+  origin_pr: number | null;
 }
+
+/** The origin half of a fixture row. Every field independently optional. */
+type OriginFixture = Partial<
+  Pick<MemoryRow, 'origin_repo' | 'origin_branch' | 'origin_commit' | 'origin_pr'>
+>;
 
 function row(
   id: string,
@@ -62,6 +72,7 @@ function row(
   tags: string[],
   hAgo: number,
   source_agent: string | null,
+  origin: OriginFixture = {},
 ): MemoryRow {
   const created = hoursAgo(hAgo);
   return {
@@ -80,6 +91,10 @@ function row(
     created_by: null,
     updated_by: null,
     orgs: null,
+    origin_repo: origin.origin_repo ?? null,
+    origin_branch: origin.origin_branch ?? null,
+    origin_commit: origin.origin_commit ?? null,
+    origin_pr: origin.origin_pr ?? null,
   };
 }
 
@@ -89,13 +104,13 @@ function row(
  * lesson list all read as a lived-in workspace.
  */
 export const MEMORY_ROWS: MemoryRow[] = [
-  row('m01', 'global', 'aw-lessons::worktree-isolation', 'Always branch a worktree from the stacked PR head, never from main, or the diff double-counts the parent branch.', ['loop::aw-lessons', 'source::stuck-loop'], 3, 'aw'),
+  row('m01', 'global', 'aw-lessons::worktree-isolation', 'Always branch a worktree from the stacked PR head, never from main, or the diff double-counts the parent branch.', ['loop::aw-lessons', 'source::stuck-loop'], 3, 'aw', { origin_repo: 'mthines/lorekit', origin_branch: 'feat/Origin-Provenance', origin_commit: 'a1b2c3d4e5f60718', origin_pr: 482 }),
   row('m02', 'global', 'aw-lessons::npx-over-pnpm-exec', 'Run browser-mode Vitest via npx — pnpm exec keeps the Playwright child stdio open and the run never returns.', ['loop::aw-lessons'], 30, 'aw'),
-  row('m03', 'repo::mthines/lorekit', 'edge-parity::mirror-pattern', 'Pure logic that both mcp-core and the Deno edge need lives once in mcp-core and is mirrored self-contained; a spec guards drift.', ['architecture'], 26, 'claude'),
+  row('m03', 'repo::mthines/lorekit', 'edge-parity::mirror-pattern', 'Pure logic that both mcp-core and the Deno edge need lives once in mcp-core and is mirrored self-contained; a spec guards drift.', ['architecture'], 26, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'main' }),
   row('m04', 'repo::mthines/lorekit', 'scope-format::double-colon', 'The canonical scope separator is :: — a single colon is a 400. All segments lowercased.', ['scope', 'validation'], 50, 'claude'),
   row('m05', 'repo::mthines/lorekit', 'audit::one-vocabulary', 'AUDIT_ACTIONS is the single list; the SQL CHECK, the web copy, and the edge mirror are all asserted equal by a drift spec.', ['audit'], 74, 'claude'),
   row('m06', 'repo::mthines/lorekit', 'rls::service-role-user-filter', 'api_key auth uses the service-role client — every query MUST .eq(user_id, userId) or it leaks across tenants.', ['security', 'rls'], 98, 'claude'),
-  row('m07', 'branch::mthines/lorekit::feat/storybook', 'msw::wildcard-origin', 'Match PostgREST with a */rest/v1 wildcard so the handler survives an unset NEXT_PUBLIC_SUPABASE_URL.', ['storybook', 'msw'], 5 * 24, 'claude'),
+  row('m07', 'branch::mthines/lorekit::feat/storybook', 'msw::wildcard-origin', 'Match PostgREST with a */rest/v1 wildcard so the handler survives an unset NEXT_PUBLIC_SUPABASE_URL.', ['storybook', 'msw'], 5 * 24, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'feat/storybook', origin_pr: 311 }),
   row('m08', 'branch::mthines/lorekit::feat/storybook', 'snapshot::freeze-the-clock', 'Freeze Date before rendering any time-relative UI, or "3d ago" and trend chips flake the baseline overnight.', ['storybook', 'flake'], 5 * 24 + 6, 'claude'),
   row('m09', 'project::agent-skills', 'routing::tier-detection', 'When in doubt, route Full — an over-planned Micro wastes compute, but an under-planned architectural task ships wrong code.', ['aw', 'routing'], 10 * 24, 'aw'),
   row('m10', 'project::agent-skills', 'confidence::plan-gate', 'A failed deterministic rule caps the confidence gate at 89% regardless of the LLM score.', ['aw', 'confidence'], 12 * 24, 'aw'),

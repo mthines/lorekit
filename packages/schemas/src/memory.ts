@@ -13,6 +13,11 @@ export const MemoryWriteSchema = z.object({
   created_at: z.string().optional(), org: z.string().optional(),
   ttl_days: z.number().int().min(1).max(365).optional(),
   clear_ttl: z.boolean().optional().default(false),
+  // Provenance — where the memory was RECORDED FROM (vs `scope`, which says
+  // where it applies). Every field is independently optional; the shared
+  // `parseOrigin` validator (mcp-core / _shared/origin.ts) owns the shape rules.
+  origin_repo: z.string().optional(), origin_branch: z.string().optional(),
+  origin_commit: z.string().optional(), origin_pr: z.union([z.number(), z.string()]).optional(),
 });
 export type MemoryWrite = z.infer<typeof MemoryWriteSchema>;
 
@@ -102,8 +107,20 @@ export type ScopeCount = z.infer<typeof ScopeCountSchema>;
 export const ScopesResponseSchema = z.object({ scopes: z.array(ScopeCountSchema) });
 export type ScopesResponse = z.infer<typeof ScopesResponseSchema>;
 
+/**
+ * PATCH /memories/:id body.
+ *
+ * The origin (provenance) fields are deliberately OMITTED: they record where a
+ * memory was written FROM, which is a fact about a write, not an editable
+ * property of the row. `handleUpdate` copies body fields straight into the
+ * column patch, so admitting them here would also bypass the shared
+ * `parseOrigin` normalisation that every real write path goes through.
+ */
 export const UpdateMemoryBodySchema = MemoryWriteSchema
-  .omit({ scope: true, key: true, created_at: true }).partial()
+  .omit({
+    scope: true, key: true, created_at: true,
+    origin_repo: true, origin_branch: true, origin_commit: true, origin_pr: true,
+  }).partial()
   .refine((d) => Object.keys(d).some((k) => d[k as keyof typeof d] !== undefined), { message: 'PATCH body must contain at least one field' });
 export type UpdateMemoryBody = z.infer<typeof UpdateMemoryBodySchema>;
 
@@ -120,6 +137,8 @@ export const MemoryEntrySchema = z.object({
   tags: z.array(z.string()), source_agent: z.string().nullable(), trigger: z.string().nullable(),
   created_at: z.string().datetime(), updated_at: z.string().datetime(),
   expires_at: z.string().datetime().nullable(), archived_at: z.string().datetime().nullable(),
+  origin_repo: z.string().nullable().optional(), origin_branch: z.string().nullable().optional(),
+  origin_commit: z.string().nullable().optional(), origin_pr: z.number().nullable().optional(),
 });
 export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
 

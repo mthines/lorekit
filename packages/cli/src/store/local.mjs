@@ -91,7 +91,10 @@ class LocalStore {
   // existing key (a creation date never moves). Returns { ok:false, error } on
   // an invalid or future-dated value rather than throwing, matching the store
   // contract's error surfacing.
-  async write({ scope, key, value, tags, source_agent, trigger, created_at } = {}) {
+  async write({
+    scope, key, value, tags, source_agent, trigger, created_at,
+    origin_repo, origin_branch, origin_commit, origin_pr,
+  } = {}) {
     let override;
     try {
       override = normalizeCreatedAt(created_at);
@@ -109,6 +112,13 @@ class LocalStore {
       tags: Array.isArray(tags) ? tags : [],
       source_agent: source_agent || null,
       trigger: trigger || null,
+      // Provenance keeps the last KNOWN value per field, mirroring the hosted
+      // memory_write upsert: a write that does not know a field must not erase
+      // what a previous write recorded.
+      origin_repo: origin_repo ?? existing?.entry.origin_repo ?? null,
+      origin_branch: origin_branch ?? existing?.entry.origin_branch ?? null,
+      origin_commit: origin_commit ?? existing?.entry.origin_commit ?? null,
+      origin_pr: origin_pr ?? existing?.entry.origin_pr ?? null,
       created,
       updated: existing ? now : override || now,
       archived_at: null,
@@ -135,6 +145,10 @@ class LocalStore {
       tags: Array.isArray(entry.tags) ? entry.tags : [],
       source_agent: entry.source_agent ?? null,
       trigger: entry.trigger ?? null,
+      origin_repo: entry.origin_repo ?? null,
+      origin_branch: entry.origin_branch ?? null,
+      origin_commit: entry.origin_commit ?? null,
+      origin_pr: entry.origin_pr ?? null,
       created: entry.created ?? now,
       updated: entry.updated ?? now,
       archived_at: entry.archived_at ?? null,

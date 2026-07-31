@@ -26,7 +26,7 @@ export async function handleSearch(
 
   let q: TracedQuery<MemoryRow> = tracedDb
     .from<MemoryRow>('memories')
-    .select('id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at')
+    .select('id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,origin_repo,origin_branch,origin_commit,origin_pr')
     .is('archived_at', null)
     .or('expires_at.is.null,expires_at.gt.now()')
     .order('updated_at', { ascending: false })

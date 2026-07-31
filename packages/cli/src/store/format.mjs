@@ -17,6 +17,13 @@ export const FIELDS = [
   'created',
   'updated',
   'archived_at',
+  // Provenance — where the lesson was recorded FROM (see src/origin.mjs).
+  // Appended, never reordered: parseEntry is tolerant, so a file written before
+  // these existed simply decodes them as absent.
+  'origin_repo',
+  'origin_branch',
+  'origin_commit',
+  'origin_pr',
 ];
 
 // Serialize an entry ({ ...columns, value }) into file text.

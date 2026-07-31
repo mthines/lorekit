@@ -6,6 +6,7 @@ import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, U
 import { Controller, useWatch, type UseFormReturn } from 'react-hook-form';
 import { useQueryClient } from '@tanstack/react-query';
 import { ScopeBadge } from '@/components/memory/ScopeBadge';
+import { MemoryOrigin } from '@/components/memory/MemoryOrigin';
 import { OwnershipBadge } from '@/components/memory/OwnershipBadge';
 import { EditableField } from '@/components/ui/EditableField';
 import { TagsField } from '@/components/ui/TagsField';
@@ -497,6 +498,12 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
                         </div>
                       );
                     })()}
+                    {/* Provenance — where this memory was RECORDED FROM (the
+                        PR / branch / commit the agent was working in), as
+                        opposed to the Repo row above, which is derived from
+                        the scope and says where the lesson APPLIES. Renders
+                        nothing for a memory with no recorded origin. */}
+                    <MemoryOrigin origin={lesson} />
                   </dl>
                 </section>
               </div>

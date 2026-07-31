@@ -21,6 +21,10 @@ test('serializeEntry / parseEntry round-trip', () => {
     created: '2026-07-24T10:00:00.000Z',
     updated: '2026-07-24T10:00:00.000Z',
     archived_at: null,
+    origin_repo: null,
+    origin_branch: null,
+    origin_commit: null,
+    origin_pr: null,
     value: 'First line of the lesson.\nSecond line with details.',
   };
   const parsed = parseEntry(serializeEntry(entry));
@@ -165,6 +169,10 @@ test('putEntry upserts verbatim by scope+key, preserving created/updated/archive
     created: '2026-01-01T00:00:00.000Z',
     updated: '2026-02-02T00:00:00.000Z',
     archived_at: '2026-03-03T00:00:00.000Z',
+    origin_repo: null,
+    origin_branch: null,
+    origin_commit: null,
+    origin_pr: null,
     value: 'preserved body',
   };
   await store.putEntry(entry);
@@ -252,4 +260,79 @@ test('two-tier delete/archive peels the project shadow first, revealing the home
     const { entries } = await store.list({ scope: 'repo::o/r' });
     assert.deepEqual(entries.map((e) => e.value), ['home-val']); // list mirrors read
   }
+});
+
+// ── Provenance (origin_*) round-trip and last-known-wins upsert ───────────────
+
+test('origin fields round-trip through the on-disk format', () => {
+  const entry = {
+    scope: 'global',
+    key: 'aw-lessons::origin',
+    tags: [],
+    source_agent: 'aw',
+    trigger: null,
+    created: '2026-07-24T10:00:00.000Z',
+    updated: '2026-07-24T10:00:00.000Z',
+    archived_at: null,
+    origin_repo: 'mthines/lorekit',
+    origin_branch: 'feat/Origin-Provenance',
+    origin_commit: 'a1b2c3d4e5f6',
+    origin_pr: 482,
+    value: 'A lesson learned in a pull request.',
+  };
+  assert.deepEqual(parseEntry(serializeEntry(entry)), entry);
+});
+
+test('an entry written before origin existed still parses (fields absent)', () => {
+  const legacy = [
+    '---',
+    'scope: "global"',
+    'key: "legacy"',
+    'tags: []',
+    'source_agent: null',
+    'trigger: null',
+    'created: "2026-01-01T00:00:00.000Z"',
+    'updated: "2026-01-01T00:00:00.000Z"',
+    'archived_at: null',
+    '---',
+    'Legacy body.',
+  ].join('\n');
+  const parsed = parseEntry(legacy);
+  assert.equal(parsed.key, 'legacy');
+  assert.equal(parsed.origin_pr, undefined);
+});
+
+test('local write stores origin and keeps the last KNOWN value per field', async () => {
+  const store = createLocalStore(tmpDir());
+  await store.write({
+    scope: 'global',
+    key: 'k',
+    value: 'v1',
+    origin_repo: 'mthines/lorekit',
+    origin_branch: 'feat/a',
+    origin_commit: 'abc1234',
+    origin_pr: 12,
+  });
+
+  // A later write from a machine with no PR/commit context must not erase what
+  // the first write recorded — mirrors the hosted memory_write coalesce rule.
+  const { entry } = await store.write({
+    scope: 'global',
+    key: 'k',
+    value: 'v2',
+    origin_branch: 'feat/b',
+  });
+
+  assert.equal(entry.value, 'v2');
+  assert.equal(entry.origin_branch, 'feat/b');
+  assert.equal(entry.origin_repo, 'mthines/lorekit');
+  assert.equal(entry.origin_commit, 'abc1234');
+  assert.equal(entry.origin_pr, 12);
+});
+
+test('local write leaves origin null when none is supplied', async () => {
+  const store = createLocalStore(tmpDir());
+  const { entry } = await store.write({ scope: 'global', key: 'k', value: 'v' });
+  assert.equal(entry.origin_repo, null);
+  assert.equal(entry.origin_pr, null);
 });

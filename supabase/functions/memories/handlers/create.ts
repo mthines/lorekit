@@ -8,6 +8,7 @@ import type { Span } from '../../_shared/otel.ts';
 import { CreateMemoryBodySchema } from '../../_shared/schemas/memory.ts';
 import { translateDbError } from '../../_shared/api/errors.ts';
 import { parseCreatedAt, CreatedAtError } from '../../_shared/created-at.ts';
+import { parseOrigin, OriginError } from '../../_shared/origin.ts';
 import { recordAudit } from '../../_shared/audit.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Database } from '../../_shared/database.types.ts';
@@ -38,6 +39,19 @@ export async function handleCreate(
     throw err;
   }
   if (createdAtOverride) span.setAttributes({ 'lorekit.created_at': createdAtOverride });
+
+  // Optional provenance (repo / branch / commit / PR the write came from).
+  // Same posture as created_at: the schema only types the fields, the SEMANTIC
+  // rules live once in `_shared/origin.ts` — the module mcp/tools.ts's
+  // toolWrite calls — and a malformed value is a 400 naming the problem rather
+  // than a silently dropped origin.
+  let origin;
+  try {
+    origin = parseOrigin(body);
+  } catch (err) {
+    if (err instanceof OriginError) return badRequest(err.message, undefined, cors);
+    throw err;
+  }
 
   // Rate limit check — exempt service-role callers (userId is null for service auth).
   if (auth.userId) {
@@ -76,6 +90,10 @@ export async function handleCreate(
     // mcp/tools.ts and mcp-core's write.ts normalise via parseTtl().
     p_ttl_seconds: body.ttl_days != null ? body.ttl_days * 86_400 : null,
     p_clear_ttl: body.clear_ttl ?? false,
+    p_origin_repo: origin.repo,
+    p_origin_branch: origin.branch,
+    p_origin_commit: origin.commit,
+    p_origin_pr: origin.pr,
     // `.single()` because memory_write RETURNS TABLE — without it the traced
     // client resolves an array and the `row?.id` guard below always throws.
   }).single();
@@ -97,7 +115,7 @@ export async function handleCreate(
   }
   const { data: entry, error: fetchErr } = await createTracedClient(db, span)
     .from('memories')
-    .select('id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at')
+    .select('id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,origin_repo,origin_branch,origin_commit,origin_pr')
     .eq('id', row.id)
     .single();
 

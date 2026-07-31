@@ -485,6 +485,17 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
       return new Response('OK', { status: 200 });
     }
 
+    // Provenance: the delivery already carries the pull request this comment
+    // belongs to, so record it as first-class origin instead of leaving the
+    // link buried in an untyped `url::` tag. `issue_comment` on a PR reports
+    // the number under `issue`; the three pull_request_* events under
+    // `pull_request`. A comment on a plain issue has no `pull_request` key,
+    // so `prNumber` stays undefined and no origin PR is recorded.
+    const prNumber = earlyPayload['pull_request']?.number
+      ?? (earlyPayload['issue']?.pull_request ? earlyPayload['issue']?.number : undefined);
+    const prBranch = earlyPayload['pull_request']?.head?.ref;
+    const prSha = earlyPayload['pull_request']?.head?.sha;
+
     const scope = validateScope(`repo::${repo}`);
     span.setAttributes({ 'lorekit.scope': scope, 'lorekit.scope.type': 'repo' });
 
@@ -503,6 +514,10 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
       ],
       source_agent: 'github-webhook',
       trigger: `${event}.${action}`,
+      origin_repo: repo,
+      ...(prNumber ? { origin_pr: prNumber } : {}),
+      ...(prBranch ? { origin_branch: prBranch } : {}),
+      ...(prSha ? { origin_commit: prSha } : {}),
     }, null, span);
 
     return new Response('OK', { status: 200 });

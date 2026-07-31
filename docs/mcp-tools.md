@@ -47,6 +47,28 @@ Store or update a lesson. Requires a token with write permission (`lk_rw_*` or `
 | `ttl_days` | | Integer 1–365. The memory auto-expires after this many days. Mutually exclusive with `ttl_minutes` and `ttl_seconds`; supply at most one. On an update, refreshes the expiry; omitting all three leaves the existing expiry unchanged. |
 | `ttl_minutes` | | Integer 1–525600 (365 days in minutes). The memory auto-expires after this many minutes. Mutually exclusive with `ttl_days` and `ttl_seconds`. |
 | `ttl_seconds` | | Integer 1–31536000 (365 days in seconds). The memory auto-expires after this many seconds. Useful for short-lived session memories (e.g. 30 s, 5 min). Mutually exclusive with `ttl_days` and `ttl_minutes`. |
+| `origin_repo` | | Provenance: `owner/name` of the repository the lesson was recorded from. Lowercased. |
+| `origin_branch` | | Provenance: the git branch the lesson was recorded from. Stored **verbatim** (case-sensitive) so the dashboard's `/tree/` link resolves. |
+| `origin_commit` | | Provenance: the commit SHA (7–40 hex characters) checked out when the lesson was recorded. |
+| `origin_pr` | | Provenance: the pull request number the lesson came out of. Rendered as a link to the PR when combined with `origin_repo`. |
+
+**Provenance (`origin_*`).** `scope` says where a lesson **applies**; the four
+`origin_*` fields say where it was **recorded from**, and the dashboard turns
+them into links back to the pull request, branch, and commit. They matter most
+for a `global` or `project::` lesson, whose scope names no repository at all.
+
+Every field is independently optional and **the last KNOWN value wins**: on an
+update, a field you omit keeps whatever a previous write recorded rather than
+being erased, so a write from a machine with no git context is never
+destructive. A malformed value is rejected (a 400 / tool error), never silently
+dropped.
+
+The `lorekit` CLI fills these in automatically from git and the CI environment
+(`LOREKIT_PR`, then `GITHUB_REF`'s `refs/pull/<n>/merge`, then
+`GITHUB_PR_NUMBER`); pass `--no-origin` to opt out or `--origin-pr <n>` and
+friends to override. Over the hosted MCP server the client has to supply them —
+the server can only see what the call carries. The GitHub webhook receiver
+records the PR, head branch, and head SHA of the delivery it ingested.
 
 **Scope→org binding.** If you omit `org` but the scope is **bound to an org** (an admin set that up — see [org-sharing.md](./org-sharing.md#scope--org-binding-auto-routing)), the write auto-routes to that org **when you're a write-capable member**. If you're *not* a member, it's saved to your personal lore instead (never rejected) and the response carries a `notice` explaining that. An explicit `org` always overrides the binding.
 

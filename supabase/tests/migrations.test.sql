@@ -3271,6 +3271,119 @@ begin
 end;
 $$;
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- Memory origin (provenance) — memory_write's four origin params (00048)
+-- ═════════════════════════════════════════════════════════════════════════
+
+-- ── 62. origin: INSERT stores all four fields; UPSERT keeps the last KNOWN
+-- value for a field the newer write omits (AC: never regress to unknown) ────
+do $$
+declare
+  v_id1 uuid;
+  v_id2 uuid;
+  v_row record;
+begin
+  select id into v_id1
+    from memory_write(
+      '00000000-0000-0000-0000-0000000000e5', 'global', 'origin-key', 'v1',
+      '{}'::text[], null, null, null, null, null, false,
+      'mthines/lorekit', 'feat/Origin-Provenance', 'abc1234def5678', 42);
+
+  select * into v_row from memories where id = v_id1;
+  assert v_row.origin_repo = 'mthines/lorekit',
+    format('origin insert: origin_repo should be stored, got %s', v_row.origin_repo);
+  assert v_row.origin_branch = 'feat/Origin-Provenance',
+    format('origin insert: origin_branch must keep its verbatim case, got %s', v_row.origin_branch);
+  assert v_row.origin_commit = 'abc1234def5678',
+    format('origin insert: origin_commit should be stored, got %s', v_row.origin_commit);
+  assert v_row.origin_pr = 42,
+    format('origin insert: origin_pr should be stored, got %s', v_row.origin_pr);
+
+  -- A second write from the same branch that does NOT know the commit or PR
+  -- (an agent with no CI context) must not erase what the first write knew.
+  select id into v_id2
+    from memory_write(
+      '00000000-0000-0000-0000-0000000000e5', 'global', 'origin-key', 'v2',
+      '{}'::text[], null, null, null, null, null, false,
+      null, 'feat/Later-Branch', null, null);
+
+  assert v_id2 = v_id1, 'origin upsert: should update the existing row, not insert a new one';
+  select * into v_row from memories where id = v_id1;
+  assert v_row.value = 'v2', 'origin upsert: value should be updated';
+  assert v_row.origin_branch = 'feat/Later-Branch',
+    format('origin upsert: a supplied origin_branch must win, got %s', v_row.origin_branch);
+  assert v_row.origin_repo = 'mthines/lorekit',
+    format('origin upsert: an omitted origin_repo must be preserved, got %s', v_row.origin_repo);
+  assert v_row.origin_commit = 'abc1234def5678',
+    format('origin upsert: an omitted origin_commit must be preserved, got %s', v_row.origin_commit);
+  assert v_row.origin_pr = 42,
+    format('origin upsert: an omitted origin_pr must be preserved, got %s', v_row.origin_pr);
+end;
+$$;
+
+-- ── 63. origin: every field is optional — a write that supplies none still
+-- succeeds and leaves all four NULL (back-compat with every existing caller) ─
+do $$
+declare
+  v_id  uuid;
+  v_row record;
+begin
+  select id into v_id
+    from memory_write('00000000-0000-0000-0000-0000000000e5', 'global', 'origin-none-key', 'v');
+  select * into v_row from memories where id = v_id;
+  assert v_row.origin_repo is null and v_row.origin_branch is null
+     and v_row.origin_commit is null and v_row.origin_pr is null,
+    'origin: a write with no origin params must leave all four columns NULL';
+end;
+$$;
+
+-- ── 64. origin: the CHECK constraints are the backstop for anything that
+-- bypasses the app-layer validator (a direct SQL insert, a future client) ────
+do $$
+declare
+  v_rejected boolean;
+begin
+  v_rejected := false;
+  begin
+    insert into memories (user_id, scope, key, value, origin_pr)
+    values ('00000000-0000-0000-0000-0000000000e5', 'global', 'origin-bad-pr', 'v', 0);
+  exception when check_violation then v_rejected := true;
+  end;
+  assert v_rejected, 'origin: origin_pr = 0 must be rejected by memories_origin_pr_check';
+
+  v_rejected := false;
+  begin
+    insert into memories (user_id, scope, key, value, origin_commit)
+    values ('00000000-0000-0000-0000-0000000000e5', 'global', 'origin-bad-sha', 'v', 'HEAD');
+  exception when check_violation then v_rejected := true;
+  end;
+  assert v_rejected, 'origin: a non-hex origin_commit must be rejected by memories_origin_commit_check';
+
+  v_rejected := false;
+  begin
+    insert into memories (user_id, scope, key, value, origin_repo)
+    values ('00000000-0000-0000-0000-0000000000e5', 'global', 'origin-bad-repo', 'v', 'lorekit');
+  exception when check_violation then v_rejected := true;
+  end;
+  assert v_rejected, 'origin: an origin_repo without a slash must be rejected by memories_origin_repo_check';
+end;
+$$;
+
+-- ── 65. origin: grant surface — the widened 15-arg memory_write signature is
+-- granted to the same three roles the 11-arg form was (00038) ───────────────
+do $$
+declare
+  v_sig text := 'memory_write(uuid, text, text, text, text[], text, text, timestamp with time zone, text, integer, boolean, text, text, text, integer)';
+begin
+  assert has_function_privilege('anon', v_sig, 'EXECUTE'),
+    'origin: anon must have EXECUTE on the widened memory_write';
+  assert has_function_privilege('authenticated', v_sig, 'EXECUTE'),
+    'origin: authenticated must have EXECUTE on the widened memory_write';
+  assert has_function_privilege('service_role', v_sig, 'EXECUTE'),
+    'origin: service_role must have EXECUTE on the widened memory_write';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

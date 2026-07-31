@@ -28,6 +28,7 @@ import { resolveProjectRoot } from './config.mjs';
 import { loadControl } from './control.mjs';
 import { createStore } from './store/index.mjs';
 import { createRemoteStore } from './store/remote.mjs';
+import { deriveOrigin, mergeOrigin } from './origin.mjs';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_INFO = { name: 'lorekit-local', version: '1.0.0' };
@@ -54,6 +55,27 @@ export const MEMORY_TOOL_DEFS = [
           format: 'date-time',
           description:
             'Optional ISO 8601 creation date for migrating a pre-existing memory. Rejected if invalid or in the future. Applies only when the memory is first created.',
+        },
+        origin_repo: {
+          type: 'string',
+          description:
+            'Provenance: the owner/name of the repository this memory was recorded from. Derived from the working directory when omitted.',
+        },
+        origin_branch: {
+          type: 'string',
+          description:
+            'Provenance: the git branch this memory was recorded from. Derived from the working directory when omitted.',
+        },
+        origin_commit: {
+          type: 'string',
+          description:
+            'Provenance: the commit SHA checked out when this memory was recorded. Derived from the working directory when omitted.',
+        },
+        origin_pr: {
+          type: 'integer',
+          minimum: 1,
+          description:
+            'Provenance: the pull request number this memory came out of. Pass it when you know it — the server can only infer it from CI environment variables.',
         },
       },
     },
@@ -151,13 +173,32 @@ export const TOOL_DEFS = [...MEMORY_TOOL_DEFS, ...ORG_TOOL_DEFS];
 // tool name → (store, args) → store result. The store destructures the args it
 // needs, so the raw `arguments` object is passed straight through.
 const MEMORY_DISPATCH = {
-  'memory.write': (store, a) => store.write(a),
+  // An agent calling memory.write knows the lesson, not the working directory
+  // it is running in. Fill in whatever provenance the environment can supply,
+  // with anything the caller DID pass taking precedence.
+  'memory.write': (store, a) => store.write({ ...a, ...withDerivedOrigin(a) }),
   'memory.read': (store, a) => store.read(a),
   'memory.list': (store, a) => store.list(a),
   'memory.search': (store, a) => store.search(a),
   'memory.delete': (store, a) => store.delete(a),
   'memory.archive': (store, a) => store.archive(a),
 };
+
+// Provenance for a tool call: the caller's explicit values win, the working
+// directory and CI environment fill the rest. Best-effort — a failure to shell
+// out to git must never fail the write, so it degrades to no origin at all.
+function withDerivedOrigin(args = {}) {
+  try {
+    return mergeOrigin(deriveOrigin(), {
+      origin_repo: args.origin_repo ?? null,
+      origin_branch: args.origin_branch ?? null,
+      origin_commit: args.origin_commit ?? null,
+      origin_pr: args.origin_pr ?? null,
+    });
+  } catch {
+    return {};
+  }
+}
 
 // org.* dispatch — always routed to the remote store.
 const ORG_DISPATCH = {

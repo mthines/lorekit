@@ -121,6 +121,17 @@ export async function handleGitHubWebhook(req: Request): Promise<Response> {
         return new Response('OK', { status: 200 });
       }
 
+      // Provenance: the delivery already names the pull request this comment
+      // belongs to, so record it as first-class origin rather than leaving the
+      // link buried in an untyped `url::` tag. Mirrors the edge receiver
+      // (supabase/functions/mcp/webhook.ts). A comment on a plain issue has no
+      // `pull_request` key, so no PR origin is recorded.
+      const pull = payload['pull_request'] as
+        | { number?: number; head?: { ref?: string; sha?: string } }
+        | undefined;
+      const issue = payload['issue'] as { number?: number; pull_request?: unknown } | undefined;
+      const prNumber = pull?.number ?? (issue?.pull_request ? issue.number : undefined);
+
       const db = createServiceClient(getSupabaseUrl(), getSupabaseServiceRoleKey());
       const key = `pr-webhook::${repo}::${Date.now()}`;
 
@@ -139,6 +150,10 @@ export async function handleGitHubWebhook(req: Request): Promise<Response> {
         ],
         source_agent: 'github-webhook',
         trigger: `${event}.${action}`,
+        origin_repo: repo,
+        ...(prNumber ? { origin_pr: prNumber } : {}),
+        ...(pull?.head?.ref ? { origin_branch: pull.head.ref } : {}),
+        ...(pull?.head?.sha ? { origin_commit: pull.head.sha } : {}),
       });
 
       span.setAttribute('lorekit.key', key);
