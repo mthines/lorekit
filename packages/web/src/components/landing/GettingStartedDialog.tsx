@@ -125,7 +125,7 @@ function SetupContent() {
         <p className="mt-1 text-sm text-[var(--color-content-secondary)]">
           Connect a GitHub webhook and every resolved PR review comment becomes a memory automatically,
           tagged <code className="rounded bg-[var(--color-bg-elevated)] px-1 font-mono text-xs">source::pr-webhook</code>.
-          Set this up from <strong>Settings → Webhooks</strong> after signing in.
+          Set this up from <strong>Settings → Integrations</strong> after signing in.
         </p>
       </div>
     </div>

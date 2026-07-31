@@ -2,12 +2,17 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { X, Webhook, ArrowRight } from 'lucide-react';
+import { X, Github, ArrowRight } from 'lucide-react';
 import { useOnboarding } from '@/components/providers/OnboardingProvider';
 
+/**
+ * Unchanged after the rename to `GithubAppTeaser` — the key records "this user
+ * dismissed this card", and renaming it would silently un-dismiss it for
+ * everyone who already had.
+ */
 const WEBHOOK_TEASER_DISMISSED_KEY = 'lorekit:webhook-teaser-dismissed';
 
-interface WebhookTeaserProps {
+interface GithubAppTeaserProps {
   /**
    * Whether the server has already seen a `source::pr-webhook` lesson — i.e.
    * the webhook is active and delivering. When true, the teaser is irrelevant
@@ -18,12 +23,12 @@ interface WebhookTeaserProps {
 }
 
 /**
- * WebhookTeaser — a lightweight, dismissible discovery card shown on the
+ * GithubAppTeaser — a lightweight, dismissible discovery card shown on the
  * Overview once the user has connected an agent (connect step done) but
- * before they have set up the GitHub webhook (hasWebhook is false).
+ * before any PR-review memory has arrived (hasWebhook is false).
  *
  * Design rationale (UX review, July 2026):
- * - The webhook is an optional enrichment feature, not a mandatory setup step.
+ * - The GitHub App is an optional enrichment feature, not a mandatory setup step.
  *   Presenting it as a peer of "Connect your agent" creates a false mandate
  *   and inflates the perceived setup cost for new users.
  * - Progressive disclosure: show the value proposition at the moment of peak
@@ -32,7 +37,7 @@ interface WebhookTeaserProps {
  * - Independent dismiss: the card disappears on its own and never blocks
  *   `allDone` — the onboarding checklist completes as soon as an agent connects.
  */
-export function WebhookTeaser({ hasWebhook }: WebhookTeaserProps) {
+export function GithubAppTeaser({ hasWebhook }: GithubAppTeaserProps) {
   const { isServerDone, hydrated } = useOnboarding();
   const [dismissed, setDismissed] = useState(false);
   const [localHydrated, setLocalHydrated] = useState(false);
@@ -78,7 +83,7 @@ export function WebhookTeaser({ hasWebhook }: WebhookTeaserProps) {
       {/* Dismiss button */}
       <button
         onClick={handleDismiss}
-        aria-label="Dismiss webhook suggestion"
+        aria-label="Dismiss GitHub App suggestion"
         title="Dismiss"
         className="absolute right-3 top-3 flex size-7 items-center justify-center rounded-md text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-secondary)]"
       >
@@ -88,7 +93,7 @@ export function WebhookTeaser({ hasWebhook }: WebhookTeaserProps) {
       <div className="flex items-start gap-3 pr-8">
         {/* Icon */}
         <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-secondary)]">
-          <Webhook className="size-4" aria-hidden />
+          <Github className="size-4" aria-hidden />
         </div>
 
         <div className="min-w-0 flex-1">
@@ -96,12 +101,12 @@ export function WebhookTeaser({ hasWebhook }: WebhookTeaserProps) {
             Auto-memories from PR reviews
           </p>
           <p className="mt-0.5 text-xs text-[var(--color-content-tertiary)]">
-            Connect a GitHub webhook and every resolved review comment becomes a
+            Install the GitHub App and every resolved review comment becomes a
             memory automatically — no manual writes needed.
           </p>
 
           <Link
-            href="/settings/webhooks"
+            href="/settings/integrations"
             className="group mt-3 inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1.5 text-xs font-medium text-[var(--color-content-secondary)] transition-colors duration-150 hover:border-[var(--color-accent)] hover:text-[var(--color-accent)]"
           >
             Set up in Settings

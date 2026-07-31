@@ -120,7 +120,7 @@ from `auth.uid()` + RLS.
    **immediately**, decoupled from the webhook delivery and from
    `GITHUB_APP_ENABLED`: it POSTs the caller's Supabase JWT + the
    `installation_id` to the edge endpoint `…/functions/v1/mcp/installations/sync`.
-3. Redirects to `/settings/webhooks` so the user sees the linked installation.
+3. Redirects to `/settings/integrations` so the user sees the linked installation.
 
 ### The `installations/sync` endpoint
 
@@ -226,7 +226,7 @@ PKCS#8 (`BEGIN PRIVATE KEY`) PEM — the endpoint converts as needed.
 
 ### 3. Surface the install button in the dashboard
 
-The dashboard's "Install GitHub App" button (Settings → Webhooks) links to the
+The dashboard's "Install GitHub App" button (Settings → Integrations) links to the
 App's public installation page. It is resolved from the App's slug at build
 time, so set this **web** env var (Vercel — not a Supabase secret):
 

@@ -131,7 +131,7 @@ export async function GET(request: NextRequest) {
           });
 
           // Redirect to the webhooks settings page so the user can see the result.
-          return NextResponse.redirect(`${origin}/settings/webhooks`);
+          return NextResponse.redirect(`${origin}/settings/integrations`);
         }
       }
 

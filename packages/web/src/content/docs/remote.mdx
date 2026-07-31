@@ -109,13 +109,13 @@ Store a read-only token as `LOREKIT_TOKEN` in your repo secrets, then inject glo
 
 </TutorialStep>
 
-<TutorialStep number={6} title="(Optional) Set up the GitHub webhook">
+<TutorialStep number={6} title="(Optional) Install the GitHub App">
 
-To have LoreKit automatically learn from PR review comments, go to [Settings → Webhooks](/settings/webhooks), add your repo (`owner/repo`), copy the generated secret, then configure a webhook on GitHub pointing at your MCP endpoint:
+To have LoreKit automatically learn from PR review comments, go to [Settings → Integrations](/settings/integrations) and install the LoreKit GitHub App. Every repository you grant it is covered instantly — there is no per-repo secret to copy and no webhook to configure on GitHub:
 
-- **Payload URL:** `…/functions/v1/mcp/webhooks/github`
-- **Content type:** `application/json`
-- **Events:** Pull request review comments + Pull request reviews
+- **Covers:** every repo you grant the App, as you add or remove them on GitHub
+- **Learns from:** resolved pull request review comments and reviews
+- **Tags each memory:** `source::pr-webhook`
 
 </TutorialStep>
 
