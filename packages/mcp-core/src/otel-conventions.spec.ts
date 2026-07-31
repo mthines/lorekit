@@ -106,6 +106,43 @@ describe('faas.name distinguishes the five edge functions', () => {
   });
 });
 
+describe('edge + CLI route trace propagation through the shared W3C seam', () => {
+  // The correlation contract (otel-correlation.spec.ts) is proven against
+  // reference COPIES of the wiring. These source-scans keep those copies honest
+  // by asserting the shipped edge/CLI code still routes propagation through the
+  // single `parseTraceparent` / `formatTraceparent` seam — the property the
+  // correlation proofs assume. If a component stopped using the seam (or
+  // hand-rolled a divergent header/parser), CLI/MCP traces could silently
+  // orphan and no behavioural copy-test would notice.
+  const edge = read('supabase/functions/_shared/otel.ts');
+  const cli = read('packages/cli/src/telemetry.mjs');
+
+  it('the edge receiver (extractTraceContext) parses inbound context via parseTraceparent', () => {
+    const fn = edge.match(/function extractTraceContext\([\s\S]*?\n\}/);
+    expect(fn, 'extractTraceContext not found').not.toBeNull();
+    expect(fn![0]).toMatch(/parseTraceparent\(/);
+  });
+
+  it('the edge sender (withTraceparent) formats the response header via formatTraceparent', () => {
+    const fn = edge.match(/function withTraceparent<[\s\S]*?\n\}/);
+    expect(fn, 'withTraceparent not found').not.toBeNull();
+    expect(fn![0]).toMatch(/formatTraceparent\(/);
+  });
+
+  it('the edge imports both seam functions from the shared trace-context module', () => {
+    expect(edge).toMatch(/import\s*\{[^}]*\bformatTraceparent\b[^}]*\bparseTraceparent\b[^}]*\}\s*from\s*'\.\/trace-context\.ts'/);
+  });
+
+  it('the CLI (getActiveTraceparent) emits a version-00 W3C header from the active ids', () => {
+    const fn = cli.match(/export function getActiveTraceparent\(\)\s*\{[\s\S]*?\n\}/);
+    expect(fn, 'getActiveTraceparent not found').not.toBeNull();
+    // A version-00, four-field traceparent driven by the active trace/span ids
+    // and the sampled bit — the byte-identity to formatTraceparent is proven in
+    // otel-correlation.spec.ts by rendering this exact template.
+    expect(fn![0]).toMatch(/`00-\$\{_activeTraceId\}-\$\{_activeSpanId\}-\$\{_activeSampled \? '01' : '00'\}`/);
+  });
+});
+
 describe('AlwaysOn: the sampled flag is recorded, never an export gate', () => {
   const otel = read('supabase/functions/_shared/otel.ts');
 

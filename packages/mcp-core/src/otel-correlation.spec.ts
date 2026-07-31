@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { formatTraceparent, parseTraceparent } from './trace-context.js';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+const readRepo = (rel: string) => readFileSync(path.join(repoRoot, rel), 'utf8');
 
 /**
  * Cross-service trace-context correlation contract.
@@ -17,14 +23,21 @@ import { formatTraceparent, parseTraceparent } from './trace-context.js';
  * `getActiveTraceparent`). So the correlation contract is provable purely from
  * that seam, without booting a Deno isolate or an OTel SDK.
  *
- * The reference helpers below mirror the wiring in
- * `supabase/functions/_shared/otel.ts` exactly:
+ * The reference helpers below RE-STATE the wiring in
+ * `supabase/functions/_shared/otel.ts` so the correlation *semantics* can be
+ * asserted without a Deno isolate:
  *   - `serverContinue`  ≡ `extractTraceContext` (continue inbound, or new root)
  *   - `echoTraceparent` ≡ `withTraceparent`     (server → response header)
  *   - `cliTraceparent`  ≡ CLI `getActiveTraceparent`
- * A drift guard (`otel-conventions.spec.ts`) asserts the edge/CLI source keeps
- * using this seam, so these behavioural proofs cannot silently detach from the
- * shipped code.
+ * Because they are copies, two drift guards keep them honest against the SHIPPED
+ * code rather than against themselves:
+ *   - the "zero-dep CLI header" test below source-scans the CLI's ACTUAL
+ *     `getActiveTraceparent` template and proves it renders byte-identically to
+ *     `formatTraceparent`;
+ *   - `otel-conventions.spec.ts` ("edge + CLI route propagation through the
+ *     shared W3C seam") source-scans that `extractTraceContext` /
+ *     `withTraceparent` / `getActiveTraceparent` still route through
+ *     `parseTraceparent` / `formatTraceparent`.
  */
 
 // Fresh, spec-valid ids — mirrors `randHex(16)` (trace) / `randHex(8)` (span).
@@ -56,7 +69,11 @@ function echoTraceparent(ctx: { traceId: string; spanId: string; sampled: boolea
   return formatTraceparent(ctx.traceId, ctx.spanId, ctx.sampled);
 }
 
-/** Byte-for-byte re-implementation of the CLI's `getActiveTraceparent`. */
+/**
+ * Reference re-statement of the CLI's `getActiveTraceparent` header, used by the
+ * behavioural correlation proofs below. It is a COPY — the "zero-dep CLI header"
+ * test guards it against the shipped CLI source, so it can't silently drift.
+ */
 const cliTraceparent = (traceId: string, spanId: string, sampled: boolean) =>
   `00-${traceId}-${spanId}-${sampled ? '01' : '00'}`;
 
@@ -186,15 +203,39 @@ describe('sender/receiver seam is self-consistent', () => {
     expect(parsed).toEqual({ traceId: TRACE_ID, parentSpanId: SPAN_ID, sampled });
   });
 
-  it('the zero-dep CLI header is byte-identical to formatTraceparent', () => {
+  it('the zero-dep CLI header (shipped source) is byte-identical to formatTraceparent', () => {
     // The CLI cannot import the TS module (it is zero-dependency .mjs), so it
     // hand-rolls the header. If these two ever diverge, a CLI-emitted header
     // could stop parsing server-side and silently orphan every CLI trace.
+    //
+    // Guard the ACTUAL shipped code, not a copy: pull the template literal out
+    // of the CLI's real `getActiveTraceparent` and prove that RENDERING it with
+    // concrete ids yields exactly what `formatTraceparent` produces. If the CLI
+    // source drifts (version prefix, field order, the sampled ternary) this
+    // fails — which a byte-comparison of two in-file copies never would.
+    const cliSrc = readRepo('packages/cli/src/telemetry.mjs');
+    const fnBody = cliSrc.match(/export function getActiveTraceparent\(\)\s*\{([\s\S]*?)\n\}/);
+    expect(fnBody, 'getActiveTraceparent not found in telemetry.mjs').not.toBeNull();
+    const tpl = fnBody![1].match(/return\s*`([^`]*)`/);
+    expect(tpl, 'no returned template literal in getActiveTraceparent').not.toBeNull();
+    const template = tpl![1];
+
+    // Sanity: it is a version-00, four-field header driven by the trace/span ids.
+    expect(template.startsWith('00-')).toBe(true);
+    expect(template).toContain('${_activeTraceId}');
+    expect(template).toContain('${_activeSpanId}');
+
+    const render = (t: string, s: string, sampled: boolean) =>
+      template
+        .replace('${_activeTraceId}', t)
+        .replace('${_activeSpanId}', s)
+        .replace(/\$\{_activeSampled[^}]*\}/, sampled ? '01' : '00');
+
     for (const sampled of [true, false]) {
       for (let i = 0; i < 32; i++) {
         const t = freshTraceId();
         const s = freshSpanId();
-        expect(cliTraceparent(t, s, sampled)).toBe(formatTraceparent(t, s, sampled));
+        expect(render(t, s, sampled)).toBe(formatTraceparent(t, s, sampled));
       }
     }
   });
