@@ -200,9 +200,31 @@ grant execute on function restore_memory(uuid, text, text)             to authen
 grant execute on function purge_archived_memories(uuid, integer)       to authenticated, service_role;
 grant execute on function purge_expired_memories(uuid)                 to authenticated, service_role;
 
+-- Correct the record on all four functions. 00003's file comment above
+-- archive_memory claimed "Uses SECURITY DEFINER so the RLS update policy
+-- (user_id = auth.uid()) still applies" — backwards: DEFINER runs as the table
+-- owner and, absent FORCE ROW LEVEL SECURITY, BYPASSES that policy. What
+-- actually scopes each of these is the resolved actor below, not RLS. A
+-- `comment on function` is the durable place to say so (a comment on a
+-- superseded body in 00003 can't be edited forward-only).
+comment on function archive_memory(uuid, text, text) is
+  'Soft-archives the effective caller''s own row. SECURITY DEFINER BYPASSES the
+   memories RLS policies (no FORCE ROW LEVEL SECURITY), so the row is scoped by
+   the resolved actor, NOT by RLS — correcting 00003''s backwards note. The
+   actor is resolved by the same service-role-gated rule as lorekit_org_actor
+   (00041): a caller-supplied p_user_id is honoured only on a verified
+   service-role connection, otherwise auth.uid() wins. Fails closed on NULL.';
+comment on function restore_memory(uuid, text, text) is
+  'Restores the effective caller''s own archived row. Same actor rule and same
+   RLS-bypass caveat as archive_memory (see 00043 header; corrects 00003).';
 comment on function purge_archived_memories(uuid, integer) is
-  'Hard-deletes the CALLER''s archived rows past the retention window. The
-   effective user id is resolved by the same service-role-gated rule as
-   lorekit_org_actor (00041): a caller-supplied p_user_id is honoured only on
-   a verified service-role connection and is otherwise ignored in favour of
-   auth.uid(). Fails closed on a NULL actor.';
+  'Hard-deletes the effective caller''s archived rows past the retention window.
+   The effective user id is resolved by the same service-role-gated rule as
+   lorekit_org_actor (00041): a caller-supplied p_user_id is honoured only on a
+   verified service-role connection and is otherwise ignored in favour of
+   auth.uid(). SECURITY DEFINER bypasses RLS; the actor scopes the delete.
+   Fails closed on a NULL actor.';
+comment on function purge_expired_memories(uuid) is
+  'Hard-deletes the effective caller''s expired (non-archived) rows. Same
+   service-role-gated actor rule and RLS-bypass caveat as
+   purge_archived_memories (see 00043 header).';

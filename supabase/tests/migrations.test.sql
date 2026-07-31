@@ -2728,12 +2728,19 @@ begin
 end;
 $$;
 
--- ── 60c. Read-hiding: archived rows (RLS) and expired rows (app predicate) ───
+-- ── 60c. Read-hiding is the read TOOLS' job, not RLS ────────────────────────
 -- The article's most-wanted assertion: an archived or expired row is absent
--- from what a read returns. Archived rows are hidden by the rls_read policy
--- (archived_at is null); expiry is NOT in RLS — the read tools apply
--- `(expires_at is null or expires_at > now())` in the query layer, so this
--- replicates that exact predicate.
+-- from what a read returns. The crucial subtlety is WHERE that hiding happens.
+-- `memories` has TWO permissive SELECT policies — `rls_read` (archived_at is
+-- null) AND `rls_read_archived` (archived_at is NOT null, for the dashboard
+-- Archive tab, 00003/00015) — and permissive policies OR, so an OWNER's plain
+-- SELECT returns BOTH active and archived rows. Expiry is not in RLS at all.
+-- What actually hides archived AND expired rows from a read is the query-layer
+-- predicate the read tools apply together — read.ts/list.ts/search.ts:
+--   .is('archived_at', null).or('expires_at.is.null,expires_at.gt.now()')
+-- So this replicates that exact tool predicate (both clauses), and separately
+-- shows raw RLS does NOT hide either — proving the filters, not RLS, are load-
+-- bearing. (A prior version wrongly assumed RLS hid archived rows; it does not.)
 insert into memories (user_id, scope, key, value, archived_at, expires_at) values
   ('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-read', 'hidden-archived', 'x', now(), null),
   ('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-read', 'hidden-expired',  'x', null, now() - interval '1 hour'),
@@ -2741,36 +2748,45 @@ insert into memories (user_id, scope, key, value, archived_at, expires_at) value
 
 do $$
 declare
-  v_active_visible            int;
-  v_archived_visible          int;
-  v_expired_without_predicate int;
-  v_expired_via_predicate     int;
+  v_active_tool       int;
+  v_archived_tool     int;
+  v_expired_tool      int;
+  v_archived_raw_rls  int;
+  v_expired_raw_rls   int;
 begin
   set local role authenticated;
   perform set_config('request.jwt.claims',
     '{"sub":"00000000-0000-0000-0000-0000000000d4","role":"authenticated"}', true);
 
-  select count(*) into v_active_visible
-    from memories where scope='project::actor-guard-read' and key='visible-active';
-  select count(*) into v_archived_visible
+  -- Under the read tools' exact predicate (both filters together).
+  select count(*) into v_active_tool
+    from memories where scope='project::actor-guard-read' and key='visible-active'
+     and archived_at is null and (expires_at is null or expires_at > now());
+  select count(*) into v_archived_tool
+    from memories where scope='project::actor-guard-read' and key='hidden-archived'
+     and archived_at is null and (expires_at is null or expires_at > now());
+  select count(*) into v_expired_tool
+    from memories where scope='project::actor-guard-read' and key='hidden-expired'
+     and archived_at is null and (expires_at is null or expires_at > now());
+
+  -- Raw RLS, no tool predicate: the owner still sees BOTH rows.
+  select count(*) into v_archived_raw_rls
     from memories where scope='project::actor-guard-read' and key='hidden-archived';
-  select count(*) into v_expired_without_predicate
+  select count(*) into v_expired_raw_rls
     from memories where scope='project::actor-guard-read' and key='hidden-expired';
-  select count(*) into v_expired_via_predicate
-    from memories
-   where scope='project::actor-guard-read' and key='hidden-expired'
-     and (expires_at is null or expires_at > now());
 
   reset role;
 
-  assert v_active_visible = 1,
-    'read-hiding: an active row must be visible to a normal read';
-  assert v_archived_visible = 0,
-    'read-hiding: an archived row must be hidden from a normal RLS-scoped read (rls_read: archived_at is null)';
-  assert v_expired_without_predicate = 1,
-    'read-hiding: expiry is app-layer, so RLS alone still returns an expired row — guards against assuming RLS hides it';
-  assert v_expired_via_predicate = 0,
-    'read-hiding: the read tools'' (expires_at is null or expires_at > now()) predicate must exclude an expired row';
+  assert v_active_tool = 1,
+    'read-hiding: an active row must be visible through the read tools'' predicate';
+  assert v_archived_tool = 0,
+    'read-hiding: the read tools'' archived_at-is-null filter must exclude an archived row';
+  assert v_expired_tool = 0,
+    'read-hiding: the read tools'' (expires_at is null or expires_at > now()) filter must exclude an expired row';
+  assert v_archived_raw_rls = 1,
+    'read-hiding: raw RLS exposes an owner''s archived row (rls_read_archived) — the tool filter, not RLS, is what hides it';
+  assert v_expired_raw_rls = 1,
+    'read-hiding: expiry is app-layer, so raw RLS still returns an expired row — the tool filter, not RLS, is what hides it';
 end;
 $$;
 
@@ -2796,6 +2812,39 @@ begin
     assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
       format('%s must not be executable by anon after 00043 (default PUBLIC grant revoked)', v_sig);
   end loop;
+end;
+$$;
+
+-- ── 60e. POSITIVE: the service-role branch honours a named p_user_id ─────────
+-- Invariant 5 of 00043 — the edge/MCP purge path. On a verified service-role
+-- connection a supplied p_user_id IS honoured (coalesce(p_user_id, auth.uid())),
+-- so the RPC acts on exactly the named user. Without this the edge purge path
+-- could regress to a NULL actor silently. e5 owns the rows; a service-role
+-- caller names e5 and its expired/archived rows are purged.
+insert into memories (user_id, scope, key, value, archived_at, expires_at) values
+  ('00000000-0000-0000-0000-0000000000e5', 'project::actor-guard-svc', 'svc-expired',  'x', null, now() - interval '1 hour'),
+  ('00000000-0000-0000-0000-0000000000e5', 'project::actor-guard-svc', 'svc-archived', 'x', now() - interval '90 days', null);
+
+do $$
+declare
+  v_purged_exp  int;
+  v_purged_arch int;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  select purge_expired_memories('00000000-0000-0000-0000-0000000000e5') into v_purged_exp;
+  select purge_archived_memories('00000000-0000-0000-0000-0000000000e5', 0) into v_purged_arch;
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  assert v_purged_exp = 1,
+    format('service-role branch: purge_expired_memories must honour the named p_user_id and delete e5''s expired row, got %s', v_purged_exp);
+  assert v_purged_arch = 1,
+    format('service-role branch: purge_archived_memories must honour the named p_user_id and delete e5''s archived row, got %s', v_purged_arch);
+  assert not exists (select 1 from memories where scope='project::actor-guard-svc'),
+    'service-role branch: both of e5''s rows should be physically gone after the service-role purge';
 end;
 $$;
 
