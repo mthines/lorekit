@@ -1,6 +1,10 @@
 import type { AuthContext, ResolvedAuth, DbClient } from './auth.ts';
-import { hasPermission, isJwtAuth } from './auth.ts';
+import { hasPermission, isJwtAuth, analyticsUserId, usageAuthType } from './auth.ts';
 import { forbidden, notFound, methodNotAllowed } from './respond.ts';
+import { translateDbError } from './errors.ts';
+import { recordUsageEvent, getUserPlanName } from '../usage.ts';
+import type { UsageEventParams } from '../usage.ts';
+import { restToolName } from '../rest-tool-name.ts';
 import type { Span } from '../otel.ts';
 
 export type Permission = 'read' | 'write' | 'jwt';
@@ -54,6 +58,36 @@ export function relativePath(pathname: string, functionName: string): string {
   return pathname || '/';
 }
 
+/**
+ * Classify a handler's response into a `usage_events.outcome`, mirroring the
+ * MCP handler's values.
+ *
+ *   2xx/3xx                     → ok
+ *   403                         → permission_denied
+ *   429 + `code: memory_cap`    → cap_exceeded   (the LK001 cap trigger)
+ *   429 otherwise               → rate_limited   (lorekit_check_rate_limit)
+ *   any other 4xx/5xx           → error          (the MCP side records every
+ *                                                 thrown handler error as
+ *                                                 `error`, including client
+ *                                                 input faults)
+ *
+ * The 429 split is the only case that needs the body: `translateDbError` maps
+ * the cap SQLSTATE to a 429 as well, so status alone cannot tell a storage cap
+ * from a request-rate limit. The clone is paid for on that rare path only, and
+ * never on the response actually returned to the caller.
+ */
+async function responseOutcome(res: Response): Promise<UsageEventParams['outcome']> {
+  if (res.status < 400) return 'ok';
+  if (res.status === 403) return 'permission_denied';
+  if (res.status !== 429) return 'error';
+  try {
+    const body = await res.clone().json() as { code?: string } | null;
+    return body?.code === 'memory_cap' ? 'cap_exceeded' : 'rate_limited';
+  } catch {
+    return 'rate_limited';
+  }
+}
+
 export function createRouter(routes: Route[], functionName: string) {
   return {
     async dispatch(req: Request, resolved: ResolvedAuth, span: Span, cors: Record<string, string>): Promise<Response> {
@@ -72,12 +106,79 @@ export function createRouter(routes: Route[], functionName: string) {
       if (route.requires === 'write' && !hasPermission(resolved.auth, 'write')) return forbidden('Write permission required', cors);
 
       const hs = span.child(`lorekit.${functionName}.${method.toLowerCase()}${route.path}`, { 'http.route': route.path });
+
+      // ── usage event (one recording site for the whole REST surface) ────────
+      //
+      // The structural analogue of mcp-handler.ts's tool dispatch, and for the
+      // same reason: an event recorded per handler is an event the next handler
+      // forgets. Recorded here, every current and future route is covered by
+      // construction.
+      //
+      // The guard mirrors the MCP one — `auth.type !== 'service' && userId` —
+      // minus `adapter.supportsHostedBilling`, which has no REST equivalent:
+      // that flag exists to suppress billing telemetry when an MCP caller's
+      // data lives in their OWN Supabase project (BYOD). The REST functions
+      // have no storage adapter and no BYOD mode at all; they always read and
+      // write the hosted database, so the BYOD branch is not merely absent but
+      // unrepresentable, and the flag would be a constant `true`.
+      const usageUserId = analyticsUserId(resolved.auth);
+      // Only from the query string: the router must not consume the request
+      // body to peek at a scope, so body-carried scopes report null. Same
+      // bounded values as the MCP side (`global`/`project`/`repo`/`branch`).
+      const rawScope = url.searchParams.get('scope');
+      const scopeType = rawScope ? (rawScope.split('::')[0] ?? 'unknown') : null;
+      const toolName = restToolName({
+        fn: functionName,
+        method,
+        path: route.path,
+        force: url.searchParams.get('force') === 'true',
+      });
+      // Started, deliberately NOT awaited, before the handler runs. The plan
+      // name is only needed to annotate the usage event afterwards, so awaiting
+      // it here would put a serial DB round-trip in front of every single REST
+      // request purely for telemetry. Kicking it off now and collecting it
+      // after means it overlaps the real work and usually costs nothing.
+      // `getUserPlanName` never rejects (it fails open to null), so this can
+      // not become an unhandled rejection.
+      const planNamePromise = usageUserId !== null ? getUserPlanName(resolved.db, usageUserId) : null;
+      hs.setAttributes({ 'lorekit.tool.name': toolName, ...(scopeType ? { 'lorekit.scope.type': scopeType } : {}) });
+      const startedMs = Date.now();
+
       try {
         const res = await route.handler(req, resolved.auth, resolved.db, hs, params, cors);
+        const durationMs = Date.now() - startedMs;
+        const planName = planNamePromise ? await planNamePromise : null;
+        if (planName) hs.setAttributes({ 'lorekit.plan': planName });
         hs.setAttributes({ 'http.response.status_code': res.status }).end();
+        if (usageUserId !== null) {
+          recordUsageEvent(resolved.db, {
+            userId: usageUserId,
+            planName,
+            toolName,
+            scopeType,
+            authType: usageAuthType(resolved.auth),
+            outcome: await responseOutcome(res),
+            durationMs,
+          });
+        }
         return res;
       } catch (e) {
+        const durationMs = Date.now() - startedMs;
         hs.error(`${(e as Error).name}: ${(e as Error).message}`).end();
+        if (usageUserId !== null) {
+          recordUsageEvent(resolved.db, {
+            userId: usageUserId,
+            planName: null, // skip the plan lookup on the error path to keep it fast
+            toolName,
+            scopeType,
+            authType: usageAuthType(resolved.auth),
+            // A handler that threw a raw cap rejection still counts as a cap
+            // hit, not a generic fault — translateDbError is the single
+            // SQLSTATE→meaning map, so this can't drift from the 429 above.
+            outcome: translateDbError(e)?.code === 'memory_cap' ? 'cap_exceeded' : 'error',
+            durationMs,
+          });
+        }
         throw e;
       }
     },

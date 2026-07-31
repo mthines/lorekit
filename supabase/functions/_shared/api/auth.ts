@@ -69,3 +69,41 @@ export function hasPermission(auth: AuthContext, required: 'read' | 'write'): bo
 export function isJwtAuth(auth: AuthContext): boolean {
   return auth.type === 'user';
 }
+
+/**
+ * The actor to stamp on an `audit_log` row — the REST counterpart of
+ * `mcp/auth.ts`'s `getUserId`, and deliberately identical to it:
+ * the resolved user for `api_key` calls, `null` for service-role AND for
+ * user-JWT calls.
+ *
+ * It is NOT `auth.userId`. REST's `AuthContext` does carry a `userId` for the
+ * JWT path (MCP's does too — `getUserId` just declines to use it), so
+ * returning it here would be trivial. It is deliberately not done, because the
+ * two surfaces must produce comparable rows and this behaviour is load-bearing
+ * on the JWT path: the JWT client is RLS-scoped, and `audit_log`'s INSERT
+ * policy requires `user_id = auth.uid()`, so a `null` actor fails RLS and the
+ * insert is swallowed by `recordAudit`. That is the documented limitation
+ * described at the top of `_shared/audit.ts` — mirrored here, not "fixed"
+ * here. Changing it is a cross-surface decision that belongs in one change
+ * touching MCP, REST and the migration together.
+ */
+export function auditUserId(auth: AuthContext): string | null {
+  return auth.type === 'api_key' ? (auth.userId ?? null) : null;
+}
+
+/**
+ * The user a usage event is attributed to — unlike `auditUserId` this is the
+ * resolved user for BOTH api_key and JWT callers (mirroring `mcp-handler.ts`'s
+ * `analyticsUserId`), because `usage_events` is written with the caller's own
+ * client and carries no `auth.uid()` RLS predicate. `null` for service-role.
+ */
+export function analyticsUserId(auth: AuthContext): string | null {
+  return auth.type === 'service' ? null : (auth.userId ?? null);
+}
+
+/** `usage_events.auth_type` for a REST caller. */
+export function usageAuthType(auth: AuthContext): 'api_key' | 'jwt' | 'service' {
+  if (auth.type === 'api_key') return 'api_key';
+  if (auth.type === 'service') return 'service';
+  return 'jwt';
+}

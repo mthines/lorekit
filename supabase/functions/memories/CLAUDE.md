@@ -36,6 +36,18 @@ The literal routes are registered before the `/:id` routes in `index.ts` so a fu
 | Purge archived | `POST /purge` with an optional `{ "retention_days": 1–365 }` (default 30) → `200 { "purged": <n> }`. Body may be omitted entirely. |
 | Purge expired | `POST /purge-expired` (no body) → `200 { "purged": <n> }`. |
 
+## `created_at` on `POST /`
+
+`created_at` is an **optional creation-date override** for the `lorekit migrate` backdating
+case, and it is honoured (it used to be silently dropped — `p_created_at` was hard-coded to
+`null`). The value is validated by `_shared/created-at.ts`'s `parseCreatedAt`, the very same
+module the MCP `memory.write` tool uses: parseable date-time, normalised to ISO, and **rejected
+if it is in the future** beyond a 60s clock-skew allowance. An invalid value is a `400` naming
+the problem, never a silent drop and never a 500. Omitting the field leaves the DB's `now()`
+default in place.
+
+`ttl_minutes` / `ttl_seconds` remain **MCP-only**; REST accepts `ttl_days` only.
+
 Both purge endpoints are user-scoped: they call RPCs keyed on `p_user_id`, so a
 **service-role** token — which resolves no user — gets a `403`, not a `400`. The request is
 well-formed; it is the credential that cannot name a purge target. Both are also
@@ -56,10 +68,33 @@ PostgREST's default row cap: the response is truncated with no error, so whole s
 missing. Visibility inside the RPC composes `lorekit_member_org_ids` exactly as the
 `memories` RLS read policies do, so personal and org-shared scopes both appear.
 
-**No audit events.** None of these handlers write to `audit_log` — the REST surface has no
-audit writer at all (there is no `_shared` equivalent of `mcp/audit.ts`, and `create.ts` /
-`update.ts` do not audit either). The MCP tools do. Closing that gap is a separate change;
-do not add a second, divergent audit path from one handler.
+## Audit events
+
+Every mutating handler writes to `audit_log` through **the one shared edge writer**,
+`_shared/audit.ts` — the same `recordAudit` the MCP tools call (it was promoted out of
+`mcp/audit.ts`; there is deliberately no second writer under `_shared/api/`).
+
+| Handler | Action | Notes |
+|---------|--------|-------|
+| `create.ts` | `memory.create` / `memory.update` | Discriminated by the `inserted` flag `memory_write` returns (migration 00011), exactly as `toolWrite` does. Carries `resourceId`. |
+| `update.ts` | `memory.update` | Only when the PATCH matched a row (a 404 audits nothing). |
+| `remove.ts` | `memory.delete` (`?force=true`) / `memory.archive` | One event per affected row; `metadata.force` records which branch ran. |
+| `restore.ts` | `memory.restore` | Only when a row was actually un-archived. |
+| `purge.ts` | `memory.delete` | One **summary** event per run (`target: "<n> archived memories"` / `"<n> expired memories"`), only when `purged > 0` — the RPCs return a count, not rows. |
+
+Three invariants, all mirrored from the MCP side:
+
+- **After, and only if it changed something.** The audit call comes after the primary
+  operation committed, guarded the way the MCP tools guard on `if (archived)` / `if (deleted)` /
+  `if (purged > 0)`.
+- **It can never fail the request.** `recordAudit` does not throw; a failed insert is logged
+  and swallowed.
+- **The actor is auth-type-sensitive** (`auditUserId` in `_shared/api/auth.ts`, the REST twin of
+  `mcp/auth.ts`'s `getUserId`): the resolved user for `api_key` callers, `null` for service-role
+  **and** for user-JWT callers. On the JWT path the client is RLS-scoped and `audit_log`'s INSERT
+  policy is `user_id = auth.uid()`, so a null actor fails RLS and the row is swallowed — the same
+  documented limitation the MCP surface has (see the header of `_shared/audit.ts`). It is
+  mirrored here on purpose rather than "fixed" on one surface only.
 
 ## `POST /search` body
 

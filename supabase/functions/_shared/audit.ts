@@ -3,11 +3,22 @@
  * API-key lifecycle, webhook-secret changes, memory mutations, and limit
  * overrides (supabase/migrations/00010_audit_log.sql).
  *
+ * THE single audit writer for the whole edge tree. It lives in `_shared/`
+ * (not `mcp/`) because both surfaces use it: the MCP tools
+ * (`supabase/functions/mcp/tools.ts`) and the REST handlers
+ * (`supabase/functions/memories/handlers/*.ts`). There must never be a second
+ * edge audit writer — the two surfaces must produce comparable rows.
+ *
  * Self-contained mirror of the shared Node audit writer (`@lorekit/core`'s
  * `src/audit.ts`) — the edge function has no cross-package imports (Deno /
  * Node.js MCP SDK incompatibility), so this module deliberately duplicates
  * the logic rather than importing it. Keep buildAuditEntry's body
  * byte-consistent with that copy; the vitest suite over it is the shared guard.
+ * NOTE: the two copies are NOT whole-file comparable by
+ * `packages/mcp-core/src/edge-parity.spec.ts` — they differ in their client
+ * typing (`SupabaseClient` from the bare `@supabase/supabase-js` import in
+ * mcp-core vs `ReturnType<typeof createClient>` off the `npm:` specifier
+ * here), which is precisely the Node/Deno import split the mirror exists for.
  *
  * CAPTURE MODEL (Decision D1): every action here is recorded by an explicit
  * app-layer call right after its primary operation succeeds — NOT by a DB

@@ -65,10 +65,11 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', () =
   let createdIdA = '';
   let createdIdB = '';
   let createdIdR = '';
+  let createdIdBackdated = '';
 
   afterAll(async () => {
     // Best-effort cleanup. `force=true` so archived leftovers are removed too.
-    for (const id of [createdIdA, createdIdB, createdIdR].filter(Boolean)) {
+    for (const id of [createdIdA, createdIdB, createdIdR, createdIdBackdated].filter(Boolean)) {
       await api('DELETE', `/${id}?force=true`).catch(() => undefined);
     }
   });
@@ -116,6 +117,54 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', () =
     const d = data as JsonObj;
     expect(d.id).toBe(createdIdA);
     expect(d.value).toBe('rest-smoke-alpha');
+  });
+
+  // 4a. created_at round-trip ─────────────────────────────────────────────────
+  //
+  // `POST /memories` used to pass `p_created_at: null` unconditionally, so an
+  // explicit `created_at` was accepted by the schema, sent by the CLI, and then
+  // silently discarded — `lorekit migrate`'s backdating was a no-op over REST.
+  // These two cases pin both halves of the contract: a valid past date is
+  // HONOURED (not replaced by now()), and a future date is REFUSED with a 400
+  // (not silently dropped, and not a 500).
+  it('POST /memories — honours an explicit past created_at', async () => {
+    const backdated = '2020-03-04T05:06:07.000Z';
+    const key = `${KEY_PREFIX}-backdated`;
+
+    const { status, data } = await api('POST', '/', {
+      scope: SCOPE, key, value: 'migrated-from-elsewhere', created_at: backdated,
+    });
+    expect(status, `expected 201; got ${status}: ${JSON.stringify(data)}`).toBe(201);
+    const id = (data as JsonObj).id as string;
+    createdIdBackdated = id;
+
+    // The distinguishing assertion: a dropped override would give us now().
+    const roundTrip = new Date((data as JsonObj).created_at as string).toISOString();
+    expect(roundTrip, `created_at was not honoured: ${JSON.stringify(data)}`).toBe(backdated);
+
+    // And it is persisted, not just echoed back by the write path.
+    const got = await api('GET', `/${id}`);
+    expect(got.status, `expected 200; got ${got.status}`).toBe(200);
+    expect(new Date((got.data as JsonObj).created_at as string).toISOString()).toBe(backdated);
+  });
+
+  it('POST /memories — rejects a future created_at with a 400', async () => {
+    // Well past the 60s clock-skew allowance in parseCreatedAt.
+    const future = new Date(Date.now() + 86_400_000).toISOString();
+    const { status, data } = await api('POST', '/', {
+      scope: SCOPE, key: `${KEY_PREFIX}-future`, value: 'from-the-future', created_at: future,
+    });
+    expect(status, `expected 400; got ${status}: ${JSON.stringify(data)}`).toBe(400);
+    expect((data as JsonObj).error, JSON.stringify(data)).toBeTruthy();
+    expect(String((data as JsonObj).error).toLowerCase()).toContain('future');
+  });
+
+  it('POST /memories — rejects an unparseable created_at with a 400', async () => {
+    const { status, data } = await api('POST', '/', {
+      scope: SCOPE, key: `${KEY_PREFIX}-badcreated`, value: 'nope', created_at: 'not-a-date',
+    });
+    expect(status, `expected 400; got ${status}: ${JSON.stringify(data)}`).toBe(400);
+    expect((data as JsonObj).error, JSON.stringify(data)).toBeTruthy();
   });
 
   // 5. update ─────────────────────────────────────────────────────────────────

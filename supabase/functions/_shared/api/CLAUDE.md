@@ -27,6 +27,20 @@ import { RestError, translateDbError } from '../_shared/api/errors.ts';
 - Routes have `{ method, path, handler, requires: 'read' | 'write' | 'jwt' }`.
 - Path params use `:name` syntax (e.g. `/:id`, `/:slug/members/:userId`).
 - Dispatch creates a child span per handler call named `lorekit.{fn}.{method}.{path}`.
+- **`requires: 'jwt'` rejects the service-role key as well as `lk_*` tokens** — the gate is
+  `isJwtAuth`, true only for `type === 'user'`. A service credential has no `auth.uid()`, which
+  is what those routes actually need.
+- **Dispatch is the one place REST usage events are recorded** (`usage_events`, migration 00034),
+  on both the returned-response and the thrown-error path — the structural analogue of
+  `mcp/mcp-handler.ts`'s per-tool-call recording. One site covers every current and future route;
+  a per-handler call is one the next handler forgets. The writer is `_shared/usage.ts`
+  (`recordUsageEvent` / `getUserPlanName`), shared with the MCP handler — `mcp/limits.ts`
+  re-exports it, it is not a second copy. The route→`tool_name` mapping is the pure, unit-tested
+  `_shared/rest-tool-name.ts` (mirror of `packages/mcp-core/src/rest-tool-name.ts`), which maps
+  each REST route onto the MCP tool name it is the equivalent of (`POST /memories` →
+  `memory.write`) so the two surfaces aggregate as one series. Guard: `auth.type !== 'service'`
+  and a resolved user; there is no BYOD/`supportsHostedBilling` equivalent because the REST
+  functions have no storage adapter and always target the hosted database.
 
 ### cors.ts
 - `corsHeaders(req)` — returns CORS headers; respects `ALLOWED_ORIGINS` env var.

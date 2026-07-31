@@ -1,4 +1,6 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
+import { auditUserId } from '../../_shared/api/auth.ts';
+import { recordAudit } from '../../_shared/audit.ts';
 import { ok, notFound } from '../../_shared/api/respond.ts';
 import { validateBody, validateUuid } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
@@ -27,8 +29,9 @@ type MemoryRow = Tables<'memories'>;
  * `restored` is always `true` when a 200 is returned — the zero-match case is the
  * 404, never `{ restored: false }`.
  *
- * No audit event is written — see the note in remove.ts: the REST surface has no
- * audit writer, so this deliberately does not invent a second one.
+ * Audits `memory.restore` through the one shared edge writer
+ * (`_shared/audit.ts`), with toolRestore's exact resourceType/target/metadata
+ * shape, and only when a row was actually restored.
  */
 export async function handleRestore(
   req: Request, auth: AuthContext, db: DbClient, span: Span,
@@ -59,10 +62,21 @@ export async function handleRestore(
   // JWT auth uses RLS-scoped client — RLS handles access control.
   if (auth.type === 'api_key' && auth.userId) q = q.eq('user_id', auth.userId);
 
-  const { count, error } = await q;
+  // `.select()` returns the affected rows: the `/:id` form has no scope+key of
+  // its own, and the audit row needs them to match the MCP surface's shape.
+  const { data, count, error } = await q.select('id,scope,key');
   if (error) { span.error(`DB: ${error.message}`); throw error; }
   const restored = (count ?? 0) > 0;
   span.setAttributes({ 'lorekit.result.restored': restored });
   if (!restored) return notFound('Archived memory', cors);
+
+  const actor = auditUserId(auth);
+  for (const row of ((data ?? []) as unknown as Array<{ scope: string; key: string }>)) {
+    await recordAudit(
+      db,
+      { action: 'memory.restore', resourceType: 'memory', target: row.key, metadata: { scope: row.scope, key: row.key } },
+      actor,
+    );
+  }
   return ok({ restored: true }, cors);
 }

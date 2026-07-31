@@ -1,10 +1,13 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { created, tooManyRequests } from '../../_shared/api/respond.ts';
+import { auditUserId } from '../../_shared/api/auth.ts';
+import { created, tooManyRequests, badRequest } from '../../_shared/api/respond.ts';
 import { validateBody } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { Span } from '../../_shared/otel.ts';
 import { CreateMemoryBodySchema } from '../../_shared/schemas/memory.ts';
 import { translateDbError } from '../../_shared/api/errors.ts';
+import { parseCreatedAt, CreatedAtError } from '../../_shared/created-at.ts';
+import { recordAudit } from '../../_shared/audit.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Database } from '../../_shared/database.types.ts';
 
@@ -19,6 +22,21 @@ export async function handleCreate(
   const body = v.data;
 
   span.setAttributes({ 'lorekit.operation': 'memories.create', 'lorekit.scope': body.scope, 'lorekit.key': body.key });
+
+  // Optional creation-date override (the `lorekit migrate` backdating case).
+  // `CreateMemoryBodySchema` only types it as a string; the SEMANTIC rule
+  // (parseable, not in the future beyond a 60s skew, normalised to ISO) lives
+  // in exactly one place for both surfaces — `_shared/created-at.ts`, the same
+  // module `mcp/tools.ts`'s toolWrite calls. An invalid value is a client
+  // error: a 400 naming the problem, never a silent drop and never a 500.
+  let createdAtOverride: string | null;
+  try {
+    createdAtOverride = parseCreatedAt(body.created_at);
+  } catch (err) {
+    if (err instanceof CreatedAtError) return badRequest(err.message, undefined, cors);
+    throw err;
+  }
+  if (createdAtOverride) span.setAttributes({ 'lorekit.created_at': createdAtOverride });
 
   // Rate limit check — exempt service-role callers (userId is null for service auth).
   if (auth.userId) {
@@ -44,7 +62,7 @@ export async function handleCreate(
     p_tags: body.tags ?? [],
     p_source_agent: body.source_agent ?? null,
     p_trigger: body.trigger ?? null,
-    p_created_at: null,
+    p_created_at: createdAtOverride,
     p_org_slug: body.org ?? null,
     // Migration 00038 replaced p_ttl_days with p_ttl_seconds. PostgREST resolves
     // an RPC by argument NAME, so sending the old name misses the function
@@ -66,7 +84,9 @@ export async function handleCreate(
   }
 
   // Fetch the full row so the response matches MemoryEntrySchema.
-  const row = data as { id: string; created_at: string; expires_at?: string | null } | null;
+  // `inserted` (migration 00011) discriminates a create from an update — the
+  // same signal mcp/tools.ts's toolWrite audits on.
+  const row = data as { id: string; created_at: string; inserted?: boolean; expires_at?: string | null } | null;
   if (!row?.id) {
     span.error('memory_write returned no id');
     throw new Error('memory_write returned no id');
@@ -78,6 +98,21 @@ export async function handleCreate(
     .single();
 
   if (fetchErr) { span.error(`DB: ${fetchErr.message}`); throw fetchErr; }
-  span.setAttributes({ 'lorekit.memory_id': row.id });
+  span.setAttributes({ 'lorekit.memory_id': row.id, 'lorekit.write.inserted': row.inserted !== false });
+
+  // Audit AFTER the write succeeded. Same action/resource/target/metadata
+  // shape as toolWrite, so the MCP and REST surfaces produce comparable rows.
+  // recordAudit never throws, so a failed audit cannot fail the request.
+  await recordAudit(
+    db,
+    {
+      action: row.inserted === false ? 'memory.update' : 'memory.create',
+      resourceType: 'memory',
+      resourceId: row.id,
+      target: body.key,
+      metadata: { scope: body.scope, key: body.key },
+    },
+    auditUserId(auth),
+  );
   return created(entry, cors);
 }

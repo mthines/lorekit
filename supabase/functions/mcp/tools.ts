@@ -17,9 +17,9 @@ import { validateScope } from '../_shared/scope.ts';
 import { createTracedClient, type Span } from '../_shared/otel.ts';
 import { translateCapError } from './limits.ts';
 import { translateOrgPermissionError } from './org-permissions.ts';
-import { parseCreatedAt } from './created-at.ts';
+import { parseCreatedAt } from '../_shared/created-at.ts';
 import { parseTtl } from './ttl.ts';
-import { recordAudit } from './audit.ts';
+import { recordAudit } from '../_shared/audit.ts';
 import { applyTenantScope } from './tenant-scope.ts';
 
 export const MAX_VALUE_BYTES = 65_536;

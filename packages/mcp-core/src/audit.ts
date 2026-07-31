@@ -11,10 +11,15 @@
  *     are logged, not surfaced.
  *
  * Mirrored self-contained (no cross-package import) into
- * supabase/functions/mcp/audit.ts for the Deno edge function — the edge
- * runtime cannot cross-import this package (same pattern as limits.ts,
- * created-at.ts, webhook-secret-select.ts). Keep buildAuditEntry's body
- * byte-consistent between the two copies.
+ * supabase/functions/_shared/audit.ts — the single audit writer for the whole
+ * edge tree (MCP tools AND REST handlers). The edge runtime cannot
+ * cross-import this package (same pattern as limits.ts, created-at.ts,
+ * webhook-secret-select.ts). Keep buildAuditEntry's body byte-consistent
+ * between the two copies. The pair is deliberately NOT in
+ * `edge-parity.spec.ts`'s MIRRORS list: the two differ in how the Supabase
+ * client is typed (`SupabaseClient` here vs `ReturnType<typeof createClient>`
+ * off the `npm:` specifier on the edge), so a whole-file executable-source
+ * comparison does not apply — exactly as for limits.ts.
  *
  * CAPTURE MODEL (Decision D1): every action here is recorded by an explicit
  * app-layer call right after its primary operation succeeds — NOT by a DB

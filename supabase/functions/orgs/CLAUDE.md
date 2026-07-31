@@ -22,7 +22,15 @@ Handles all org operations via HTTP. Auth is managed by the shared `resolveRestA
 
 - **JWT required** — all org endpoints call RPCs that enforce `auth.uid()` server-side.
 - `lk_*` API tokens (read-only or read-write) are rejected with 403; orgs are personal/team resources tied to a user identity.
-- Service role key bypasses RLS but still routes through the same handlers.
+- **The service-role key is rejected too — it never reaches a handler.** Every route here is
+  `requires: 'jwt'`, and the router's gate is `isJwtAuth(auth)` (`_shared/api/router.ts`), which
+  is true **only** for `auth.type === 'user'` (`_shared/api/auth.ts`). `resolveRestAuth` resolves
+  the service-role key to `type: 'service'`, so it fails that gate and gets
+  `403 "This endpoint requires a Supabase JWT (not an API token)"` — the same refusal an `lk_*`
+  token gets. This is correct, not an oversight: a service-role client has no session JWT, so
+  `auth.uid()` is null inside every `lorekit_org_*` SECURITY DEFINER RPC these handlers call, and
+  the RPC would refuse (or, worse, mis-attribute) the action anyway. Bypassing RLS is irrelevant
+  here — these endpoints are gated on *having an identity*, not on row visibility.
 
 ## Router layout
 

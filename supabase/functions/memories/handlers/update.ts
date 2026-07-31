@@ -1,4 +1,6 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
+import { auditUserId } from '../../_shared/api/auth.ts';
+import { recordAudit } from '../../_shared/audit.ts';
 import { ok, notFound } from '../../_shared/api/respond.ts';
 import { validateUuid, validateBody } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
@@ -34,6 +36,22 @@ export async function handleUpdate(
     .maybeSingle();
 
   if (error) { span.error(`DB: ${error.message}`); throw error; }
+  // Audit only when the update actually matched a row — the REST analogue of
+  // the MCP tools' `if (archived)` / `if (deleted)` guards. A 404 changed
+  // nothing and must not leave an audit trail claiming otherwise.
   if (!data) return notFound('Memory', cors);
+
+  const updated = data as unknown as { id: string; scope: string; key: string };
+  await recordAudit(
+    db,
+    {
+      action: 'memory.update',
+      resourceType: 'memory',
+      resourceId: updated.id,
+      target: updated.key,
+      metadata: { scope: updated.scope, key: updated.key },
+    },
+    auditUserId(auth),
+  );
   return ok(data, cors);
 }

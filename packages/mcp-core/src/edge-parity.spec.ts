@@ -48,17 +48,31 @@ function executableSource(file: string): string {
 }
 
 // Each entry is [mcp-core file name, edge path relative to supabase/functions].
-// Most mirrors are MCP-only (`mcp/`); trace-context.ts lives in `_shared/`
-// because every edge function (REST + MCP) parses the inbound traceparent.
+// Some mirrors are MCP-only (`mcp/`); the `_shared/` ones are used by more than
+// one edge function — trace-context.ts because every function (REST + MCP)
+// parses the inbound traceparent, created-at.ts because both the MCP
+// `memory.write` tool and the REST `POST /memories` handler validate the
+// optional `created_at` override with it, and rest-tool-name.ts because the
+// REST router derives its usage-event tool name from it.
+//
+// `audit.ts` is mirrored too (packages/mcp-core/src/audit.ts ↔
+// supabase/functions/_shared/audit.ts) but is deliberately ABSENT here: like
+// limits.ts, the edge copy is not import-free — it types the client as
+// `ReturnType<typeof createClient>` off an `npm:` specifier where mcp-core
+// types it as an imported `SupabaseClient`. Those two lines are the only
+// executable difference, but they are a real one, so a whole-file comparison
+// does not apply. buildAuditEntry/recordAudit are covered by audit.spec.ts on
+// the mcp-core copy.
 const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   ['auth-token.ts', 'mcp/auth-token.ts'],
-  ['created-at.ts', 'mcp/created-at.ts'],
+  ['created-at.ts', '_shared/created-at.ts'],
   ['ttl.ts', 'mcp/ttl.ts'],
   ['webhook-secret-select.ts', 'mcp/webhook-secret-select.ts'],
   ['tenant-scope.ts', 'mcp/tenant-scope.ts'],
   ['org-permissions.ts', 'mcp/org-permissions.ts'],
   ['webhook-installation.ts', 'mcp/webhook-installation.ts'],
   ['trace-context.ts', '_shared/trace-context.ts'],
+  ['rest-tool-name.ts', '_shared/rest-tool-name.ts'],
 ];
 
 describe('edge-function mirror parity', () => {
