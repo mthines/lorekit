@@ -67,4 +67,23 @@ describe('expandScopeForSearch', () => {
       expect(result.like).toMatch(/%$/);
     }
   });
+
+  it('returns like pattern for a project wildcard', () => {
+    const result = expandScopeForSearch('project::*');
+    expect(result).toEqual({ like: 'project::%' });
+  });
+
+  // SECURITY: a wildcard scope is interpolated into a PostgREST `.or()` filter,
+  // so PostgREST-structural characters must be rejected to prevent filter
+  // injection (extra OR predicates) — see expandScopeForSearch.
+  it('rejects a wildcard scope carrying PostgREST filter metacharacters', () => {
+    for (const evil of [
+      'a,value.not.is.null,scope.like.z::*',
+      'repo::mthines),(value.ilike.*x*/*',
+      'repo::"owner"/*',
+      'project::a b::*',
+    ]) {
+      expect(() => expandScopeForSearch(evil)).toThrow(ScopeValidationError);
+    }
+  });
 });

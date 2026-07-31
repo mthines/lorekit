@@ -114,9 +114,20 @@ export function expandScopeForSearch(raw: string): ScopeFilter {
   const normalized = raw.toLowerCase().trim();
   // Owner wildcard: repo::owner/* or project::*
   if (normalized.endsWith('/*') || normalized.endsWith('::*')) {
-    const base = normalized.endsWith('/*')
-      ? normalized.slice(0, -1) // keep trailing slash, replace * with %
-      : normalized.slice(0, -1); // keep ::, replace * with %
+    const base = normalized.slice(0, -1); // drop the trailing '*', keep '/' or '::'
+    // SECURITY: `base` is interpolated verbatim into a PostgREST `.or()` filter
+    // string as `scope.like.<base>%`, where `,` `(` `)` are structural grammar.
+    // A canonical scope only ever contains [a-z0-9._:/-] (see validateScope), so
+    // reject anything else — otherwise a crafted wildcard like
+    // `a,value.not.is.null,scope.like.z::*` would inject extra OR predicates into
+    // the filter tree. The exact-scope branch below is already safe by
+    // construction because validateScope's charset admits no quotes/commas.
+    if (!/^[a-z0-9._:/-]+$/.test(base)) {
+      throw new ScopeValidationError(
+        `Invalid wildcard scope "${raw}": a wildcard scope may contain only ` +
+          `[a-z0-9._:/-] before the trailing "*"`,
+      );
+    }
     return { like: base + '%' };
   }
   return { exact: validateScope(raw) };
