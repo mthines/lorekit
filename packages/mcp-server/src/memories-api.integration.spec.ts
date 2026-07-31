@@ -498,6 +498,65 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
     expect(scopes.map((s) => s.scope)).toEqual([...scopes.map((s) => s.scope)].sort());
   });
 
+  // ── Usage statistics ─────────────────────────────────────────────────────────
+  // GET /memories/usage aggregates usage_events through lorekit_usage_stats. Like
+  // /scopes the concrete numbers depend on the credential (a service-role smoke
+  // token records no usage events but reads all via the CI escape hatch; an lk_* /
+  // JWT token sees only its own), so these assert the response CONTRACT and that
+  // the params the route registers are accepted end to end — NOT that a particular
+  // row exists. Without this nothing exercised the route: a 500 would mean the
+  // p_correlation_id RPC arg drifted, a 400 that a documented param was rejected,
+  // a 405 that the literal route was swallowed by /:id.
+  interface UsageBody {
+    range: { since: string | null; until: string | null };
+    correlation_id: string | null;
+    summary: JsonObj;
+    by_tool: JsonObj[];
+    by_scope_type: JsonObj[];
+  }
+  function expectUsageShape(data: unknown): UsageBody {
+    const d = data as UsageBody;
+    expect(typeof d.summary, JSON.stringify(data)).toBe('object');
+    for (const k of ['total_events', 'reads', 'writes', 'other', 'records_read', 'expired']) {
+      expect(typeof d.summary[k], `summary.${k}: ${JSON.stringify(data)}`).toBe('number');
+    }
+    expect(typeof d.summary.by_outcome).toBe('object');
+    expect(Array.isArray(d.by_tool), JSON.stringify(data)).toBe(true);
+    expect(Array.isArray(d.by_scope_type), JSON.stringify(data)).toBe(true);
+    return d;
+  }
+
+  it('GET /memories/usage — returns the aggregate usage summary shape', async () => {
+    const { status, data } = await api('GET', '/usage');
+    expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    expectUsageShape(data);
+  });
+
+  it('GET /memories/usage?period=7d — accepts the rolling-window param', async () => {
+    const { status, data } = await api('GET', '/usage?period=7d');
+    expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    const d = expectUsageShape(data);
+    expect(d.range.since, 'a 7d window must set a since bound').not.toBeNull();
+  });
+
+  it('GET /memories/usage?period=nope — rejects an unknown period with 400', async () => {
+    const { status, data } = await api('GET', '/usage?period=nope');
+    expect(status, `expected 400; got ${status}: ${JSON.stringify(data)}`).toBe(400);
+    expect((data as JsonObj).error, JSON.stringify(data)).toBeTruthy();
+  });
+
+  it('GET /memories/usage?correlation_id= — applies the G2 filter (p_correlation_id resolves)', async () => {
+    // A well-formed but unmatched correlation id: the RPC arg must resolve (no
+    // 500) and the filter must narrow to nothing — proving p_correlation_id is
+    // wired, not silently ignored. The value is within parseCorrelationId's
+    // charset, so it is a real filter, not a degrade-to-null.
+    const { status, data } = await api('GET', `/usage?correlation_id=${KEY_PREFIX}-no-such-pr`);
+    expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    const d = expectUsageShape(data);
+    expect(d.correlation_id, 'the applied correlation id must be echoed back').toBe(`${KEY_PREFIX}-no-such-pr`);
+    expect(d.by_tool, 'an unmatched correlation id must aggregate to nothing').toEqual([]);
+  });
+
   // ── Purge ───────────────────────────────────────────────────────────────────
   // Both purge endpoints are user-scoped. LOREKIT_SMOKE_TOKEN may legitimately be
   // either a user-scoped `lk_*` token or the service-role key, and the two have
