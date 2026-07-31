@@ -36,5 +36,8 @@ export async function handleGet(
   const { data, error } = await q.maybeSingle();
   if (error) { span.error(`DB: ${error.message}`); throw error; }
   if (!data) return notFound('Memory', cors);
-  return ok(data, cors);
+  // One record read — surfaced for the router's usage event (RESULT_COUNT_HEADER).
+  const res = ok(data, cors);
+  res.headers.set('X-LoreKit-Result-Count', '1');
+  return res;
 }

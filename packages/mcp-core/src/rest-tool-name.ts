@@ -10,7 +10,8 @@
 // equivalent of, and the two aggregate as one series.
 //
 // Where no MCP tool exists (the `orgs` function's member/invite sub-resources,
-// `GET /memories/scopes`) the name is drawn from the vocabulary already used
+// the aggregate `GET /memories/scopes` and `GET /memories/usage`) the name is
+// drawn from the vocabulary already used
 // for the same concept elsewhere: the `org.*` MCP tools, and the `member.*`
 // `audit_log` actions (supabase/migrations/00023_audit_log_org_actions.sql).
 // No new naming scheme is introduced here.
@@ -48,6 +49,7 @@ export const REST_TOOL_NAMES: Readonly<Record<string, string>> = {
   'memories POST /purge': 'memory.purge',
   'memories POST /purge-expired': 'memory.purge_expired',
   'memories GET /scopes': 'memory.scopes',
+  'memories GET /usage': 'memory.usage',
   'memories GET /:id': 'memory.read',
   'memories PATCH /:id': 'memory.write',
   'memories POST /:id/restore': 'memory.restore',

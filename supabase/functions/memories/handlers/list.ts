@@ -67,5 +67,9 @@ export async function handleList(
 
   const page = buildPage(data ?? [], params.limit);
   span.setAttributes({ 'lorekit.result_count': page.entries.length, 'lorekit.has_more': page.hasMore });
-  return ok(page, cors);
+  // Let the router record the RECORD count (not just the call) — see
+  // RESULT_COUNT_HEADER in _shared/api/router.ts.
+  const res = ok(page, cors);
+  res.headers.set('X-LoreKit-Result-Count', String(page.entries.length));
+  return res;
 }

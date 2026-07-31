@@ -38,6 +38,8 @@ Single source of truth for all lorekit data shapes — Zod schemas for both MCP 
 | `ScopeSchema` | `scope.ts` | MCP tool input validation |
 | `RawScopeSchema` | `scope.ts` | REST query params, OpenAPI |
 | `FilterGroupSchema` | `common.ts` | REST POST /memories/search `filter` |
+| `UsageStatsQuerySchema` | `usage.ts` | REST GET /memories/usage query params |
+| `UsageStatsResponseSchema` | `usage.ts` | REST GET /memories/usage response |
 | `serializeFilterGroup` | `filter.ts` | `_shared/api/filter.ts` (edge adapter) |
 
 ## Behaviour lives here, not in the edge adapter

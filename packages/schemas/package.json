@@ -13,6 +13,7 @@
     "./org": "./src/org.ts",
     "./member": "./src/member.ts",
     "./invite": "./src/invite.ts",
+    "./usage": "./src/usage.ts",
     "./openapi/spec": "./src/openapi/spec.ts"
   },
   "dependencies": {
