@@ -65,6 +65,27 @@ verify_jwt = false
 [functions.health]
 verify_jwt = false
 
+# No function declares an import map, and none needs one: every specifier under
+# `supabase/functions/` is either relative or a fully-qualified `npm:` / `node:`
+# one that Deno resolves on its own.
+#
+# That is deliberate. memories/orgs/openapi used to import `@lorekit/schemas/*`
+# and `zod` as BARE specifiers, which only resolve if something hands Deno
+# `supabase/functions/import_map.json`. Nothing did — older Supabase CLI
+# versions auto-discovered that filename, current ones do not, and `setup-cli`
+# pins `version: latest`, so the behaviour changed with no commit to blame. All
+# three died at boot with `Relative import path "@lorekit/schemas/memory" not
+# prefixed with / or ./ or ../`, surfacing only as an opaque 503 BOOT_ERROR
+# through the REST passthrough. Declaring `import_map` per function here was
+# tried and did NOT reach the local `supabase start` runtime.
+#
+# The schemas are now mirrored into `supabase/functions/_shared/schemas/`
+# (`node scripts/sync-edge-schemas.mjs`, guarded by `edge-schema-parity.spec.ts`)
+# and imported relatively, matching the `limits.ts` / `permissions.ts` mirrors
+# and the "Edge Function is self-contained Deno" decision in CLAUDE.md. mcp and
+# health always followed that rule, which is exactly why they never broke.
+#
+# `edge-bare-specifier.spec.ts` fails the build if a bare specifier reappears.
 [functions.memories]
 verify_jwt = false
 [functions.memories.secrets]
