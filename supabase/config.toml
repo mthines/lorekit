@@ -65,18 +65,39 @@ verify_jwt = false
 [functions.health]
 verify_jwt = false
 
+# memories/orgs/openapi are the three functions that import `@lorekit/schemas/*`
+# and `zod` as BARE specifiers, so they are the three that need the import map
+# declared. It is not implicit: older Supabase CLI versions auto-discovered
+# `supabase/functions/import_map.json`, current ones do not, and because
+# `setup-cli` here pins `version: latest` the behaviour changed under us with no
+# commit to blame. Without this line Deno never sees the map and dies at boot
+# with `Relative import path "@lorekit/schemas/memory" not prefixed with / or
+# ./ or ../` — a BOOT_ERROR, not an import error, which is why it surfaced only
+# as an opaque 503 from the REST passthrough.
+#
+# mcp/health deliberately have no entry: they are self-contained (only
+# `npm:@supabase/supabase-js@2`, a fully-qualified specifier that needs no map),
+# per the "Edge Function is self-contained Deno" decision in CLAUDE.md. That is
+# also why those two kept booting fine while these three did not.
+#
+# The path is relative to this file's directory (`supabase/`).
+# `edge-import-map.spec.ts` fails the build if a function starts using a bare
+# specifier without an entry here.
 [functions.memories]
 verify_jwt = false
+import_map = "./functions/import_map.json"
 [functions.memories.secrets]
 SERVICE_NAME = "memories"
 
 [functions.orgs]
 verify_jwt = false
+import_map = "./functions/import_map.json"
 [functions.orgs.secrets]
 SERVICE_NAME = "orgs"
 
 [functions.openapi]
 verify_jwt = false
+import_map = "./functions/import_map.json"
 [functions.openapi.secrets]
 SERVICE_NAME = "openapi"
 
