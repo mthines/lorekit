@@ -591,8 +591,15 @@ describe.skipIf(SKIP)('LoreKit memories API — audit trail read-back (integrati
     expect(rows.length, 'this run wrote no audit rows at all').toBeGreaterThan(0);
     const actions = new Set(rows.map((r) => r.action as string));
     for (const a of actions) expect(a).toMatch(/^[a-z_]+\.[a-z_]+$/);
-    expect([...actions].sort()).toEqual(
-      ['memory.archive', 'memory.create', 'memory.restore', 'memory.update'].filter((a) => actions.has(a)).sort(),
+
+    // Every mutation this suite performs, and the action each one must record.
+    // `memory.delete` belongs here because the suite hard-deletes: the
+    // `?force=true` cases assert it directly, and `afterAll` cleans up with
+    // force so it does not leave rows behind. Any action OUTSIDE this set means
+    // a handler recorded something other than what its route promises.
+    const PRODUCIBLE = ['memory.archive', 'memory.create', 'memory.delete', 'memory.restore', 'memory.update'];
+    expect([...actions].sort(), `unexpected action(s) recorded by this run`).toEqual(
+      PRODUCIBLE.filter((a) => actions.has(a)).sort(),
     );
   });
 
