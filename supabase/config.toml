@@ -87,19 +87,16 @@ verify_jwt = false
 verify_jwt = false
 import_map = "./functions/import_map.json"
 [functions.memories.secrets]
-SERVICE_NAME = "memories"
 
 [functions.orgs]
 verify_jwt = false
 import_map = "./functions/import_map.json"
 [functions.orgs.secrets]
-SERVICE_NAME = "orgs"
 
 [functions.openapi]
 verify_jwt = false
 import_map = "./functions/import_map.json"
 [functions.openapi.secrets]
-SERVICE_NAME = "openapi"
 
 [analytics]
 enabled = true
