@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.0](https://github.com/mthines/lorekit/compare/cli-v1.21.0...cli-v1.22.0) (2026-07-31)
+
+
+### Features
+
+* REST API completion and end-to-end trace correlation (rollup of [#242](https://github.com/mthines/lorekit/issues/242)–[#249](https://github.com/mthines/lorekit/issues/249)) ([#260](https://github.com/mthines/lorekit/issues/260)) ([24a265c](https://github.com/mthines/lorekit/commit/24a265cb67bd0fde42c2c941b525eaf7d2e5eaf1))
+
 ## [1.21.0](https://github.com/mthines/lorekit/compare/cli-v1.20.1...cli-v1.21.0) (2026-07-30)
 
 
