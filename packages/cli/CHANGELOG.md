@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.24.1](https://github.com/mthines/lorekit/compare/cli-v1.24.0...cli-v1.24.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* **cli:** rename OTel instrumentation scope to cli ([#290](https://github.com/mthines/lorekit/issues/290)) ([f9efb7d](https://github.com/mthines/lorekit/commit/f9efb7de9004d73afa5de2abf825cf770a7ca3e1))
+
 ## [1.24.0](https://github.com/mthines/lorekit/compare/cli-v1.23.0...cli-v1.24.0) (2026-07-31)
 
 
