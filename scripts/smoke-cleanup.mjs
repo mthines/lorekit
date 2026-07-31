@@ -142,15 +142,16 @@ const PAGE_SAFETY_STOP = 1000;
  *
  * `lorekit_memory_scopes` counts only ACTIVE rows, so a scope whose remaining
  * smoke rows are all archived disappears from discovery — and archived residue
- * is precisely what the old soft-delete cleanup left behind. These are the
- * scopes the live suites actually write to, so they are swept unconditionally.
+ * is precisely what the old soft-delete cleanup left behind. `global` is the one
+ * scope every REST/MCP-reachable suite writes to, so it is swept unconditionally.
+ *
+ * The BYOD suite's four scopes are deliberately NOT listed. It targets a
+ * different Supabase project entirely (`LOREKIT_BYOD_URL`) over MCP, not the
+ * REST base this script sweeps — so naming them here would duplicate that
+ * suite's `SCOPES` map with no parity guard while never matching a row. That
+ * suite hard-deletes all four keys deterministically in its own `afterAll`.
  */
-const ALWAYS_SWEEP_SCOPES = [
-  'global',
-  'project::lorekit-byod-test',
-  'repo::mthines/lorekit',
-  'branch::mthines/lorekit::feat/byod-deno-db-routing',
-];
+const ALWAYS_SWEEP_SCOPES = ['global'];
 
 const plan = [];
 const failures = [];
