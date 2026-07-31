@@ -120,7 +120,7 @@ Handler signature: `async function handle{Name}(req, auth, db, span, params, cor
 
 ## Audit events
 
-Every mutating handler writes to `audit_log` via `recordRestAudit`
+Every mutating handler writes to `audit_log` via `recordAudit`
 (`_shared/audit.ts`), **after** the RPC succeeds and never on an error/404 path. The
 field layout deliberately matches the equivalent web server action
 (`packages/web/src/lib/orgs.ts`, `org-invites.ts`) so the dashboard and the REST API
@@ -142,7 +142,7 @@ the endpoint serves both "kick a member" (`lorekit_org_member_remove`) and "leav
 respectively. Emitting `member.remove` for a self-removal would make one operation read
 differently depending on which client performed it.
 
-A failed audit write never fails the request — `recordRestAudit` cannot throw.
+A failed audit write never fails the request — `recordAudit` cannot throw.
 `packages/mcp-core/src/rest-audit-usage.spec.ts` fails if any mutating route here stops
 calling it.
 

@@ -126,9 +126,25 @@ const RAW_READ_PATTERN = new RegExp(
   String.raw`\.\bfrom\b\s*(?:<[^>]*>)?\s*\(\s*'(${TENANT_TABLES.join('|')})'\s*\)`,
 );
 
-const rawReadFiles = handlerFiles.filter((f) => RAW_READ_PATTERN.test(readFileSync(f, 'utf8')));
+/**
+ * Handlers whose raw tenant-table read needs no membership check, with the
+ * reason. Keep this as close to empty as possible — an entry here is a hole in
+ * the guard, so it must be justified by the read being unable to see another
+ * tenant's row by construction, never merely "it looked fine".
+ */
+const RAW_READ_EXEMPT: Record<string, string> = {
+  'supabase/functions/orgs/handlers/orgs/create.ts':
+    'The only read is the created row echoed back by id — `.eq("id", orgId)` where orgId is ' +
+    'what lorekit_org_create just returned, and that RPC makes the caller the org owner in the ' +
+    'same transaction. A membership check could not fail, and there is no other tenant\'s row ' +
+    'the query could reach. The read exists because the route\'s OpenAPI response schema is an ' +
+    'Org object while the RPC yields only a bare uuid.',
+};
 
 const rel = (f: string) => path.relative(repoRoot, f);
+
+const rawReadFilesAll = handlerFiles.filter((f) => RAW_READ_PATTERN.test(readFileSync(f, 'utf8')));
+const rawReadFiles = rawReadFilesAll.filter((f) => !(rel(f) in RAW_READ_EXEMPT));
 
 describe('org handler scan (anti-vacuity)', () => {
   // Without these floors a stale regex yields an empty set and every
@@ -148,9 +164,17 @@ describe('org handler scan (anti-vacuity)', () => {
 
   it('found the handlers that read a tenant table directly', () => {
     expect(
-      rawReadFiles.length,
+      rawReadFilesAll.length,
       'no handler was found reading orgs/org_members/org_invites directly — RAW_READ_PATTERN is probably stale',
     ).toBeGreaterThanOrEqual(7);
+  });
+
+  it('has no stale entry in RAW_READ_EXEMPT', () => {
+    // An exemption for a handler that no longer reads a tenant table is dead
+    // weight that makes the next reader trust a hole that isn't there.
+    const reading = new Set(rawReadFilesAll.map(rel));
+    const stale = Object.keys(RAW_READ_EXEMPT).filter((f) => !reading.has(f));
+    expect(stale, 'RAW_READ_EXEMPT names handlers that no longer read a tenant table — drop them').toEqual([]);
   });
 
   it('has no stale entry in ACTOR_EXEMPT_RPCS', () => {

@@ -4,7 +4,7 @@ import { ok, notFound, badRequest } from '../../../_shared/api/respond.ts';
 import { validateBody, validateOrgSlug } from '../../../_shared/api/validate.ts';
 import { createTracedClient } from '../../../_shared/otel.ts';
 import type { Span } from '../../../_shared/otel.ts';
-import { RenameOrgBodySchema } from '@lorekit/schemas/org';
+import { RenameOrgBodySchema } from '../../../_shared/schemas/org.ts';
 import { translateDbError } from '../../../_shared/api/errors.ts';
 import { auditUserId } from '../../../_shared/api/auth.ts';
 import { recordAudit } from '../../../_shared/audit.ts';
