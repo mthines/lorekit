@@ -2690,6 +2690,7 @@ begin
   select restore_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived') into v_rest_id;
 
   reset role;
+  perform set_config('request.jwt.claims', '', true);
 
   assert v_purged_arch = 0,
     format('IDOR: e5 hard-deleted %s of d4''s archived rows by naming d4 as p_user_id', v_purged_arch);
@@ -2731,6 +2732,7 @@ begin
   select purge_expired_memories('00000000-0000-0000-0000-0000000000d4') into v_purged_exp;
 
   reset role;
+  perform set_config('request.jwt.claims', '', true);
 
   assert v_arch_id is not null, 'self-service: d4 archiving its OWN active row must succeed';
   assert v_rest_id is not null, 'self-service: d4 restoring its OWN archived row must succeed';
@@ -2789,6 +2791,7 @@ begin
     from memories where scope='project::actor-guard-read' and key='hidden-expired';
 
   reset role;
+  perform set_config('request.jwt.claims', '', true);
 
   assert v_active_tool = 1,
     'read-hiding: an active row must be visible through the read tools'' predicate';
@@ -2811,11 +2814,12 @@ declare
     'archive_memory(uuid, text, text)',
     'restore_memory(uuid, text, text)',
     'purge_archived_memories(uuid, integer)',
-    'purge_expired_memories(uuid)'
+    'purge_expired_memories(uuid)',
+    'memory_delete(uuid, text, text, text, boolean)'
   ];
 begin
-  assert array_length(v_sigs, 1) = 4,
-    'grant guard: expected 4 signatures to check (anti-vacuity)';
+  assert array_length(v_sigs, 1) = 5,
+    'grant guard: expected 5 signatures to check (anti-vacuity)';
 
   foreach v_sig in array v_sigs loop
     assert has_function_privilege('authenticated', v_sig, 'EXECUTE'),
@@ -2901,12 +2905,40 @@ begin
   select * into r_self
     from memory_delete('00000000-0000-0000-0000-0000000000d4', null, 'project::actor-guard-del', 'del-victim', true);
   reset role;
+  perform set_config('request.jwt.claims', '', true);
 
   assert r_self.deleted,
     'self-service: d4 hard-deleting its OWN row via memory_delete must succeed';
   assert not exists (select 1 from memories
                      where user_id='00000000-0000-0000-0000-0000000000d4' and key='del-victim'),
     'self-service: d4''s row should be gone after its own hard-delete';
+end;
+$$;
+
+-- ── 60g. POSITIVE: memory_delete's org branch under an AUTHENTICATED caller ──
+-- §18 exercises the org branch under service_role (the edge api_key path); this
+-- covers the OTHER actor path — an authenticated member acting as ITSELF, so
+-- the actor resolves to auth.uid() and lorekit_org_can(auth.uid(), ...) stays
+-- tested. d4 is a member of phase2-org (f2) with the 'archive' capability
+-- (established in §16-18).
+insert into memories (org_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000f2', 'global', 'p2-authpath-key', 'v');
+
+do $$
+declare r record;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000d4","role":"authenticated"}', true);
+
+  select * into r
+    from memory_delete('00000000-0000-0000-0000-0000000000d4', 'phase2-org', 'global', 'p2-authpath-key', false);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  assert r.archived and not r.deleted,
+    format('memory_delete org branch: an authenticated member must archive via the auth.uid() actor path (archived=%s deleted=%s)', r.archived, r.deleted);
 end;
 $$;
 

@@ -322,7 +322,12 @@ begin
 end;
 $$;
 
-revoke execute on function memory_delete(uuid, text, text, text, boolean) from public;
+-- 00020:92 granted memory_delete to `anon` EXPLICITLY (unlike the 00003/00030
+-- RPCs, which only had the default PUBLIC grant). `revoke ... from public` does
+-- NOT remove a per-role grant, so anon must be revoked by name too — otherwise
+-- anon keeps EXECUTE (the actor guard makes the call inert, but least-privilege
+-- means removing the grant, not just relying on the guard).
+revoke execute on function memory_delete(uuid, text, text, text, boolean) from public, anon;
 grant execute on function memory_delete(uuid, text, text, text, boolean) to authenticated, service_role;
 
 comment on function memory_delete(uuid, text, text, text, boolean) is
