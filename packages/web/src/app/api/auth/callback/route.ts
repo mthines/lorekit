@@ -5,7 +5,7 @@ import { withSpan, logger, SpanKind, SpanStatusCode } from '@/lib/telemetry';
 // `safeNextPath` is shared with the client-side password sign-in so both
 // redirect paths enforce the exact same same-origin rule.
 import { safeNextPath } from '@/lib/auth-redirect';
-import { classifyAuthCallback } from '@/lib/auth-callback-params';
+import { classifyAuthCallback, isGithubAppSetupReturn } from '@/lib/auth-callback-params';
 
 /**
  * Auth callback route — handles three flows:
@@ -33,8 +33,10 @@ import { classifyAuthCallback } from '@/lib/auth-callback-params';
  *
  * Flows 1 and 2 can arrive together: GitHub sends both `code` (OAuth) and
  * `installation_id` when the user installs the App for the first time while
- * also completing OAuth. Session establishment runs first so the session
- * exists when we call handleSetupReturn.
+ * also completing OAuth. That `code` is GitHub's, not Supabase's, so
+ * `classifyAuthCallback` reports `none` for it (see `isGithubAppSetupReturn`)
+ * and this route goes straight to the installation association using the
+ * session the user already has in this browser.
  */
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
@@ -52,6 +54,7 @@ export async function GET(request: NextRequest) {
       'auth.callback.kind': callback.kind,
       'auth.callback.otp_type': callback.kind === 'token_hash' ? callback.type : 'none',
       'auth.callback.has_installation_id': !!rawInstallationId,
+      'auth.callback.github_setup': isGithubAppSetupReturn(searchParams),
       'auth.callback.next': next,
     },
     async (span) => {
@@ -123,6 +126,12 @@ export async function GET(request: NextRequest) {
         const installationId = Number(rawInstallationId);
         if (Number.isFinite(installationId) && installationId > 0) {
           span.setAttribute('auth.callback.installation_id', installationId);
+          if (!sessionEstablished) {
+            // Distinguishes "GitHub bounced the user back here" from the
+            // `no_auth_params` bare hit below, which it would otherwise be
+            // indistinguishable from in telemetry.
+            span.setAttribute('auth.callback.outcome', 'github_setup');
+          }
           // handleSetupReturn is safe to call even if the user is not yet linked
           // (pending installs stay pending until a matching identity is found).
           // Errors here are non-fatal — we still redirect to the settings page.
