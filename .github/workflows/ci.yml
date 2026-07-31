@@ -85,7 +85,9 @@ jobs:
           fi
           # Migration-order gate: run when a migration is added/changed, or when
           # the guard/CI itself changes (so the guard is exercised on its own PR).
-          if printf '%s\n' "$CHANGED" | grep -qE '^(supabase/migrations/|scripts/check-migration-order\.mjs|\.github/workflows/ci\.yml)'; then
+          # `scripts/check-migration-order` (no extension) matches BOTH the guard
+          # and its `.test.mjs` — so a test-only edit still triggers this job.
+          if printf '%s\n' "$CHANGED" | grep -qE '^(supabase/migrations/|scripts/check-migration-order|\.github/workflows/ci\.yml)'; then
             echo "migrations=true" >> "$GITHUB_OUTPUT"
           else
             echo "migrations=false" >> "$GITHUB_OUTPUT"

@@ -179,12 +179,14 @@ Require a PR to `main` and mark the single **`CI Summary`** job as the required
 status check. It aggregates every job above — `Typecheck, Test & Lint
 (affected)`, `Integration smoke (local Supabase)`, `Plugin smoke`, and
 `Migration order (no out-of-order prefixes)` — into one pass/fail verdict.
-Require **`CI Summary`** rather than those jobs directly: they are path-gated and
-intentionally skip on unrelated PRs, and GitHub treats a *skipped* required job
-as pending forever (which would wedge a docs- or web-only PR), whereas
-`CI Summary` reports success when every job either passed or was skipped. Because
-`deploy.yml` no longer re-runs tests, this check is the sole gate that keeps
-unverified (or migration-breaking) code off `main`.
+Require **`CI Summary`** rather than those jobs directly: it always runs
+(`if: always()`) and collapses every job — including the path-gated ones that
+skip on unrelated PRs — into one definite pass/fail, so branch protection needs
+exactly one check and you never have to reason about how a *skipped* path-gated
+check is counted (GitHub's handling of that is inconsistent, which is the whole
+reason the aggregating job exists). Because `deploy.yml` no longer re-runs
+tests, this check is the sole gate that keeps unverified (or migration-breaking)
+code off `main`.
 
 Also enable **"Require branches to be up to date before merging."** It is what
 closes the last migration-ordering gap: the `migration-order` guard
