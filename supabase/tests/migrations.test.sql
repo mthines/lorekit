@@ -1799,6 +1799,7 @@ declare
   v_uid        uuid := '00000000-0000-0000-0000-0000000000a1';
   v_purged     int;
   v_blocked    boolean;
+  v_prev_claims text;
 begin
   -- AC-1: Write a memory with p_ttl_seconds=604800 (7 days); expires_at must be ~7 days ahead.
   select id, expires_at into v_id, v_expires_at
@@ -1858,7 +1859,19 @@ begin
   insert into memories (user_id, scope, key, value, expires_at)
   values (v_uid, 'global', 'ttl-expired-purge', 'gone', now() - interval '1 minute');
 
+  -- 00043 resolves the effective actor from auth.uid() (a caller-supplied p_user_id
+  -- is honoured only on a service-role connection), so the purge must run under the
+  -- OWNING user's authenticated session — the same self-service idiom as §60b.
+  -- The claims in force here are whatever an earlier section left behind, so save
+  -- and restore them to keep this block hermetic.
+  v_prev_claims := current_setting('request.jwt.claims', true);
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
   select purge_expired_memories(v_uid) into v_purged;
+
+  reset role;
   assert v_purged >= 1,
     format('TTL AC-6: purge_expired_memories must delete >= 1 expired row, got %s', v_purged);
   select count(*) into v_count
@@ -1875,7 +1888,16 @@ begin
   -- AC-8: Rows with expires_at IS NULL are unaffected by purge_expired_memories.
   insert into memories (user_id, scope, key, value)
   values (v_uid, 'global', 'ttl-no-expiry', 'permanent');
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
   select purge_expired_memories(v_uid) into v_purged;
+
+  reset role;
+  perform set_config('request.jwt.claims', coalesce(v_prev_claims, ''), true);
+
   select count(*) into v_count
    from memories where user_id = v_uid and key = 'ttl-no-expiry';
   assert v_count = 1,
