@@ -284,6 +284,21 @@ jobs:
           LOREKIT_SMOKE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
 
+      # BYOD (bring-your-own-database) round-trip against a self-hosted Supabase
+      # project running the same edge function in BYOD mode. Kept in lock-step
+      # with deploy.yml's smoke-preview so a `/preview` run on the PR exercises
+      # the SAME suite the post-merge deploy gate does — otherwise a BYOD-only
+      # regression (e.g. an under-provisioned test timeout) first surfaces on
+      # main. Opt-in coverage:
+      #   • unset LOREKIT_BYOD_URL / LOREKIT_BYOD_TOKEN → the test self-skips.
+      #   • byod-smoke.integration.spec.ts absent → --passWithNoTests keeps it green.
+      # Only a real BYOD assertion failure fails the step.
+      - name: Run BYOD integration test (all four scope types)
+        run: pnpm nx test mcp-server -- byod-smoke.integration --passWithNoTests
+        env:
+          LOREKIT_BYOD_URL: ${{ secrets.LOREKIT_BYOD_URL }}
+          LOREKIT_BYOD_TOKEN: ${{ secrets.LOREKIT_BYOD_TOKEN }}
+
       - name: Onboarding smoke (doctor --deep)
         run: |
           node packages/cli/bin/lorekit.mjs install --project --no-hooks --yes \

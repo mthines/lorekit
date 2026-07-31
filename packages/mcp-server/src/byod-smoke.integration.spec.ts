@@ -240,7 +240,11 @@ describe.skipIf(SKIP)('LoreKit BYOD smoke tests (integration)', () => {
     );
     const value = typeof result === 'string' ? result : (result as { value?: string })?.value;
     expect(value).toBe(updated);
-  });
+    // 30s ceiling: unlike every other test here this makes two sequential
+    // live round-trips (write + read). A single BYOD write/read has been
+    // observed at >3s in CI, so the pair routinely blows the default 5s
+    // timeout — matching the sibling smoke suite's 30s ceiling for slow calls.
+  }, 30_000);
 
   // ── 4. List — scope listing returns the written key ────────────────────────
 
