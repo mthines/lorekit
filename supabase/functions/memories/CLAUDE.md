@@ -32,6 +32,39 @@ The literal routes are registered before the `/:id` routes in `index.ts` so a fu
 | List archived lore | `GET /?archived=true` — **this is the `memory.list-archived` equivalent**; there is no separate route. `?archived=false` (the default) lists only live, non-expired rows. |
 | Archive (soft-delete) | `DELETE /:id` or `DELETE /?scope=…&key=…` → `204`. Stamps `archived_at`; the row stays recoverable. |
 | Hard-delete | Add `?force=true` to either DELETE form → `204`. Performs a real row delete, is **irreversible**, and (unlike the archive path) also applies to already-archived rows. Mirrors the MCP `memory.delete` tool's `force` branch, down to the `lorekit.delete.force` span attribute. `force` accepts only the literal strings `true`/`false`; anything else is a `400`. |
+| Archive/hard-delete **org-owned** lore | Add `?org=<slug>` to the `scope`+`key` DELETE form → `204`. See below. |
+
+### `?org=<slug>` — the role-gated delete
+
+`DELETE /?scope=…&key=…&org=<slug>` (optionally `&force=true`) targets lore owned by an
+organization instead of the caller. It does **not** run the direct
+`.delete()` / `.update()` the personal branch runs; it calls the `memory_delete` SECURITY
+DEFINER RPC (`supabase/migrations/00020_memory_delete_org.sql`) with exactly the argument
+set the MCP `memory.delete` tool uses — `p_user_id`, `p_org_slug`, `p_scope`, `p_key`,
+`p_force`.
+
+That is not a stylistic choice. The api_key tier reaches Postgres over a **service-role
+client that bypasses RLS**, so a raw org-targeted query would have no role gate at all. The
+gate (`lorekit_org_can` — `archive` for a soft-delete, `hard_delete` for `?force=true`)
+lives inside the RPC and nowhere else.
+
+Rules:
+
+- **`org` requires `scope` + `key`.** The RPC is keyed on the natural key and has no id
+  parameter, so `DELETE /:id?org=…` is a **400**, never a silent fall-through — ignoring
+  `org` there would delete the caller's *personal* row while they believed they were
+  deleting the org's.
+- **A role denial is `LK002` → 403.** It is translated at the call site with
+  `translateDbError` rather than left to bubble, so the mapping cannot be lost to a generic
+  500 path.
+- **An unresolvable slug raises `unknown_org` (P0001)** inside the RPC — same as
+  `memory_write`.
+- **The audit action comes from what the RPC reports it did** (`deleted` vs `archived`), not
+  from the requested `force`, and metadata carries `org`. This mirrors `toolDelete` exactly.
+- **`POST /restore` has no `org` form**, deliberately: the MCP `toolRestore` has no org
+  branch either (it is a plain `.eq('user_id', …)` update). Restoring org-owned lore is an
+  open gap on **both** surfaces; adding it to only one would break parity in the other
+  direction.
 | Restore | `POST /:id/restore`, or `POST /restore` with `{ "scope": …, "key": … }` → `200 { "restored": true }`. Only matches archived rows, so restoring a live row (or a nonexistent one) is a `404`. |
 | Purge archived | `POST /purge` with an optional `{ "retention_days": 1–365 }` (default 30) → `200 { "purged": <n> }`. Body may be omitted entirely. |
 | Purge expired | `POST /purge-expired` (no body) → `200 { "purged": <n> }`. |
@@ -78,7 +111,7 @@ Every mutating handler writes to `audit_log` through **the one shared edge write
 |---------|--------|-------|
 | `create.ts` | `memory.create` / `memory.update` | Discriminated by the `inserted` flag `memory_write` returns (migration 00011), exactly as `toolWrite` does. Carries `resourceId`. |
 | `update.ts` | `memory.update` | Only when the PATCH matched a row (a 404 audits nothing). |
-| `remove.ts` | `memory.delete` (`?force=true`) / `memory.archive` | One event per affected row; `metadata.force` records which branch ran. |
+| `remove.ts` | `memory.delete` (`?force=true`) / `memory.archive` | One event per affected row; `metadata.force` records which branch ran. The `?org=` form audits what the `memory_delete` RPC reported it did, not what was asked for. |
 | `restore.ts` | `memory.restore` | Only when a row was actually un-archived. |
 | `purge.ts` | `memory.delete` | One **summary** event per run (`target: "<n> archived memories"` / `"<n> expired memories"`), only when `purged > 0` — the RPCs return a count, not rows. |
 
