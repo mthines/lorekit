@@ -14,6 +14,13 @@ import { join } from 'node:path';
  *
  * This asserts every (method, path) the CLI issues exists in the corresponding
  * function's route table, from source alone — no network, no token, no Deno.
+ *
+ * It is function-agnostic by construction: `normalize()` takes the FIRST path
+ * segment as the Edge Function name and `routeTable()` reads that function's
+ * `index.ts`, so `/orgs…` calls are resolved against `supabase/functions/orgs/`
+ * without any special-casing. The anti-vacuity assertions below name both
+ * `memories` and `orgs` explicitly, so a regex that silently stops matching one
+ * of them fails loudly instead of passing over an empty set.
  */
 
 const REPO_ROOT = join(import.meta.dirname, '../../..');
@@ -65,7 +72,21 @@ describe('CLI ↔ REST route parity', () => {
 
   it('finds the CLI REST call sites (guard against the regex silently matching nothing)', () => {
     expect(calls.length).toBeGreaterThanOrEqual(5);
-    expect(calls.map((c) => c.fn)).toContain('memories');
+    const fns = calls.map((c) => c.fn);
+    expect(fns).toContain('memories');
+    // The CLI dropped MCP entirely; org ops are REST calls now, so this file is
+    // the guard for them too. Without this floor a regex that stopped matching
+    // the org call sites would leave them unchecked and the suite still green.
+    expect(fns).toContain('orgs');
+  });
+
+  it('parses a route table for every function the CLI talks to', () => {
+    for (const fn of new Set(calls.map((c) => c.fn))) {
+      // A function whose index.ts we cannot parse would make every route in it
+      // "missing" — or, if the set came back empty for another reason, would
+      // make the parity check below trivially satisfiable. Neither is acceptable.
+      expect(routeTable(fn).size, `no routes parsed out of supabase/functions/${fn}/index.ts`).toBeGreaterThan(0);
+    }
   });
 
   it('every route the CLI calls is registered by its Edge Function', () => {
@@ -80,5 +101,18 @@ describe('CLI ↔ REST route parity', () => {
 
   it('registers the natural-key soft-archive the CLI depends on', () => {
     expect(routeTable('memories')).toContain('DELETE /');
+  });
+
+  // The four org operations the CLI moved off MCP. Named individually rather
+  // than counted, so dropping any single one is a failure and not just a lower
+  // total. `:param` is the normalised form of the interpolated slug.
+  it('covers all four org operations the CLI moved onto REST', () => {
+    const issued = new Set(calls.filter((c) => c.fn === 'orgs').map((c) => `${c.method} ${c.path}`));
+    expect([...issued].sort()).toEqual(['DELETE /:param', 'GET /', 'PATCH /:param', 'POST /']);
+
+    const routes = routeTable('orgs');
+    for (const wanted of issued) {
+      expect(routes.has(wanted), `${wanted} is not registered in supabase/functions/orgs/index.ts`).toBe(true);
+    }
   });
 });

@@ -39,6 +39,43 @@ describe('DeleteMemoryQuerySchema', () => {
   it('rejects an empty scope', () => {
     expect(DeleteMemoryQuerySchema.safeParse({ scope: '', key: 'k' }).success).toBe(false);
   });
+
+  // `?org=<slug>` switches handlers/remove.ts onto the role-gated memory_delete
+  // RPC (00020) instead of a direct query. It is optional and, when absent, must
+  // not appear in the parsed output at all — the handler branches on truthiness.
+  it('omits org entirely when the param is absent', () => {
+    expect('org' in DeleteMemoryQuerySchema.parse({ scope: 'global', key: 'k' })).toBe(false);
+  });
+
+  it('accepts the org form alongside scope+key and force', () => {
+    expect(DeleteMemoryQuerySchema.parse({ scope: 'global', key: 'k', force: 'true', org: 'acme' })).toEqual({
+      scope: 'global', key: 'k', force: 'true', org: 'acme',
+    });
+  });
+
+  it('accepts the org form without force (soft-archive default)', () => {
+    const r = DeleteMemoryQuerySchema.parse({ scope: 'global', key: 'k', org: 'acme' });
+    expect(r.org).toBe('acme');
+    expect(r.force).toBe('false');
+  });
+
+  // `?org=` (present but empty) would otherwise parse to '' — falsy, so the
+  // handler would silently take the PERSONAL branch on a request that plainly
+  // asked for the org one. Reject it instead of guessing.
+  it('rejects an empty org', () => {
+    expect(DeleteMemoryQuerySchema.safeParse({ scope: 'global', key: 'k', org: '' }).success).toBe(false);
+  });
+
+  it('rejects an org slug longer than the 50-char column bound', () => {
+    expect(DeleteMemoryQuerySchema.safeParse({ scope: 'global', key: 'k', org: 'a'.repeat(51) }).success).toBe(false);
+  });
+
+  // The `/:id` + `org` refusal is a HANDLER concern, not a schema one: the id is
+  // a path param and never reaches this schema. Documented here so the absence
+  // of a schema-level rule reads as deliberate.
+  it('does not itself constrain org to the scope+key form (the handler rejects /:id + org)', () => {
+    expect(DeleteMemoryQuerySchema.safeParse({ org: 'acme' }).success).toBe(true);
+  });
 });
 
 describe('PurgeMemoriesBodySchema', () => {

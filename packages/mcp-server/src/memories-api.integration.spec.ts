@@ -264,6 +264,70 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', () =
     expect(status, 'expected 400, not 405 (the route must exist)').toBe(400);
   });
 
+  // ── Org-scoped delete (?org=<slug>) ────────────────────────────────────────
+  // The org form routes through the role-gated `memory_delete` RPC (00020)
+  // instead of a direct query. These cases assert the parts that hold for ANY
+  // credential and ANY org membership — the shape of the contract, not a
+  // particular tenant's data:
+  //
+  //   * `/:id` + `org` is refused outright (the RPC has no id parameter),
+  //   * `org` without `scope`+`key` is refused,
+  //   * a well-formed org delete never 400s and never 405s — it resolves to
+  //     403 (role denied), 404 (no such row / unknown org) or 204 (done).
+  //
+  // Asserting a concrete 204 would need this run to own an org AND write
+  // org-owned lore into it, which LOREKIT_SMOKE_TOKEN is not guaranteed to be
+  // able to do (a service-role key resolves no actor at all). Pinning the
+  // outcome set keeps the test honest for every credential while still failing
+  // on the regressions that matter: an unregistered param silently ignored, a
+  // 500, or the personal branch being taken by mistake.
+
+  it('DELETE /memories/:id?org= — 400, because the org form is addressed by scope+key', async () => {
+    const id = await create(`${KEY_PREFIX}-org-id-form`);
+    try {
+      const { status, data } = await api('DELETE', `/${id}?org=lorekit-smoke-nonexistent`);
+      expect(status, `expected 400; got ${status}: ${JSON.stringify(data)}`).toBe(400);
+      expect(String((data as JsonObj).error)).toMatch(/scope\+key|scope and key/i);
+
+      // Load-bearing: the 400 must be a refusal, NOT a refusal-after-deleting.
+      // Silently ignoring `org` here would archive the caller's personal row.
+      const got = await api('GET', `/${id}`);
+      expect(got.status, 'the row must be untouched by the rejected request').toBe(200);
+    } finally {
+      await api('DELETE', `/${id}?force=true`).catch(() => undefined);
+    }
+  });
+
+  it('DELETE /memories?org= — 400 without scope and key', async () => {
+    const { status, data } = await api('DELETE', '/?org=lorekit-smoke-nonexistent');
+    expect(status, `expected 400; got ${status}: ${JSON.stringify(data)}`).toBe(400);
+    expect((data as JsonObj).error).toBeTruthy();
+  });
+
+  it('DELETE /memories?org= — rejects an empty org rather than falling back to the personal branch', async () => {
+    const { status, data } = await api('DELETE', `/?scope=${SCOPE}&key=whatever&org=`);
+    expect(status, `expected 400; got ${status}: ${JSON.stringify(data)}`).toBe(400);
+  });
+
+  it.each([
+    ['soft-archive', ''],
+    ['hard-delete', '&force=true'],
+  ])('DELETE /memories?scope=&key=&org= (%s) — routes to the role-gated RPC, never 400/405/500', async (_label, forceQs) => {
+    const { status, data } = await api(
+      'DELETE',
+      `/?scope=${SCOPE}&key=${encodeURIComponent(`${KEY_PREFIX}-org`)}&org=lorekit-smoke-nonexistent${forceQs}`,
+    );
+    // 404: unknown org / no matching row. 403: LK002, the caller lacks the
+    // archive/hard_delete capability. 204: it really did delete something.
+    expect([204, 403, 404], `got ${status}: ${JSON.stringify(data)}`).toContain(status);
+    // A 400 would mean the param was never registered; a 405 that the route
+    // does not exist; a 500 that LK002 escaped translateDbError.
+    expect(status).not.toBe(400);
+    expect(status).not.toBe(405);
+    expect(status).not.toBe(500);
+    if (status === 403) expect((data as JsonObj).code).toBe('org_permission_denied');
+  });
+
   // 10. invalid body ──────────────────────────────────────────────────────────
   it('POST /memories — returns 400 for missing required fields', async () => {
     const { status, data } = await api('POST', '/', { value: 'no-scope-or-key' });
