@@ -129,5 +129,12 @@ begin
 end;
 $$;
 
+-- The `revoke ... from public` is LOAD-BEARING, not belt-and-braces — the same
+-- reason 00041 pairs one with every grant. Postgres grants EXECUTE on a newly
+-- created function to PUBLIC by default and `anon` inherits it, so naming only
+-- `authenticated, service_role` in the GRANT does NOT withhold it from `anon`.
+-- This function takes a bare p_user_id, so an `anon` caller with EXECUTE could
+-- read ANY user's usage aggregates.
+revoke execute on function lorekit_usage_stats(uuid, timestamptz, timestamptz, text) from public;
 grant execute on function lorekit_usage_stats(uuid, timestamptz, timestamptz, text)
   to authenticated, service_role;
