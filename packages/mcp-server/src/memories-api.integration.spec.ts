@@ -91,7 +91,15 @@ async function listKeys(archived: boolean): Promise<unknown[]> {
   return ((data as JsonObj).entries as JsonObj[]).map((e) => e.key);
 }
 
-describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', () => {
+// A generous per-test timeout: these suites run against a LIVE endpoint (the
+// deploy pipeline points them at the hosted preview project), and the archive /
+// restore cases chain 4–5 sequential HTTP round-trips. At hosted latency
+// (~0.5–1.3s each) that overruns vitest's 5s default, even though every call
+// succeeds; locally each round-trip is sub-ms so this never bites. 30s is the
+// ceiling per test, not an expected duration.
+const REMOTE_TEST_TIMEOUT = 30_000;
+
+describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { timeout: REMOTE_TEST_TIMEOUT }, () => {
   let createdIdA = '';
   let createdIdB = '';
   let createdIdR = '';
@@ -474,7 +482,7 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', () =
  * The writes are fire-and-forget relative to the HTTP response, so every
  * read-back polls briefly rather than reading once.
  */
-describe.skipIf(SKIP)('LoreKit memories API — audit trail read-back (integration)', () => {
+describe.skipIf(SKIP)('LoreKit memories API — audit trail read-back (integration)', { timeout: REMOTE_TEST_TIMEOUT }, () => {
   const AUDIT_KEY = `${KEY_PREFIX}-audit`;
   /** Set by the capability probe in beforeAll. */
   let auditReadable = false;
