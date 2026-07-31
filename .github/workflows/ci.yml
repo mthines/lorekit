@@ -228,11 +228,14 @@ jobs:
             packages/web/node_modules/.cache/storybook
           key: web-vite-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'packages/web/.storybook/**', 'packages/web/vitest.storybook.config.ts') }}
 
+      # Invoked via `npx` (not `pnpm exec` / `nx`): those wrap the process and
+      # keep the Playwright browser child's stdio open, so the run never returns.
+      # `npx` execs Vitest directly. `--changed <base>` is the diff-optimizer.
       - name: Storybook tests (interaction + visual, changed only)
         working-directory: packages/web
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
-        run: pnpm exec vitest run --config vitest.storybook.config.ts --changed="$BASE" --passWithNoTests
+        run: npx vitest run --config vitest.storybook.config.ts --changed="$BASE" --passWithNoTests
 
   # ── Integration smoke — live stack wiring on a local Supabase ────────────────
   #    Boots a full local stack (migrations applied → serves the real Edge
