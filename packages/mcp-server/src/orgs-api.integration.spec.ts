@@ -44,9 +44,17 @@ const PGREST = BASE.replace(/\/functions\/v1$/, '/rest/v1');
  * `lk_rw_` = read + write, `lk_ro_` = read only, `lk_wo_` = write only. The org routes
  * are gated on exactly these, so the expectations below branch on the prefix rather than
  * assuming a read-write token.
+ *
+ * `isLkToken` gates that reasoning. `LOREKIT_SMOKE_TOKEN` is NOT necessarily an `lk_*`
+ * token — in CI it is the service-role key, which `resolveRestAuth` resolves to
+ * `type: 'service'`, an entirely different auth tier with unconditional access. Deriving
+ * "can it read?" from a prefix the value does not have would classify it as write-only and
+ * then assert 403 on a request that legitimately returns 200.
  */
-const tokenCanRead = !!API_TOKEN && (API_TOKEN.startsWith('lk_rw_') || API_TOKEN.startsWith('lk_ro_'));
-const tokenCanWrite = !!API_TOKEN && (API_TOKEN.startsWith('lk_rw_') || API_TOKEN.startsWith('lk_wo_'));
+const tokenPrefix = API_TOKEN ?? '';
+const isLkToken = tokenPrefix.startsWith('lk_');
+const tokenCanRead = isLkToken && (tokenPrefix.startsWith('lk_rw_') || tokenPrefix.startsWith('lk_ro_'));
+const tokenCanWrite = isLkToken && (tokenPrefix.startsWith('lk_rw_') || tokenPrefix.startsWith('lk_wo_'));
 
 // Slug must be unique and match ^[a-z0-9][a-z0-9-]*[a-z0-9]$
 const TEST_SLUG = `smoke-${Date.now()}-test`;
@@ -101,8 +109,12 @@ describe.skipIf(SKIP)('LoreKit orgs API — smoke tests (integration)', () => {
   // 403 case is not dropped, it moves to the write-only token below (and to the
   // read-only-token-cannot-POST case in the api_key suite).
   it('GET /orgs — an lk_* token is accepted or rejected by its read permission', async () => {
-    if (!API_TOKEN) {
-      console.log('  ⚠ LOREKIT_SMOKE_TOKEN not set — skipping lk_* permission assertion');
+    if (!isLkToken) {
+      console.log(
+        `  ⚠ LOREKIT_SMOKE_TOKEN is ${API_TOKEN ? 'not an lk_* token (service-role key?)' : 'not set'}` +
+          ' — skipping the lk_* permission assertion. It needs a real API token, since a' +
+          ' service-role credential is a different auth tier with unconditional access.',
+      );
       return;
     }
     const { status, data } = await restFetch('GET', '/', undefined, API_TOKEN);
@@ -408,8 +420,15 @@ describe.skipIf(SKIP)('LoreKit orgs API — audit trail read-back (integration)'
  * A regression in either shows up here as a 403 (the actor was lost) or as a
  * result set that is too large (the tenant filter was lost) — and in nothing
  * the JWT suite runs.
+ *
+ * Gated on `isLkToken`, not merely on a token being present. CI supplies the
+ * SERVICE-ROLE key as `LOREKIT_SMOKE_TOKEN`, which `resolveRestAuth` resolves to
+ * `type: 'service'` — a different tier that bypasses both the permission gate
+ * and the tenant filters this suite exists to exercise. Running it with that
+ * credential would not test the api_key path at all; it would just assert the
+ * service tier's behaviour under an api_key suite's name.
  */
-describe.skipIf(SKIP || !API_TOKEN)('LoreKit orgs API — api_key tier (integration)', () => {
+describe.skipIf(SKIP || !isLkToken)('LoreKit orgs API — api_key tier (integration)', () => {
   afterAll(async () => {
     await restFetch('DELETE', `/${TOKEN_SLUG}`).catch(() => undefined);
   });
