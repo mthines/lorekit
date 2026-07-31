@@ -17,8 +17,13 @@
  * the page cannot tell the two apart, which is what makes "I tested it on the
  * preview URL" ambiguous.
  *
- * So the badge reports the BACKEND first and falls back to the frontend
- * environment only when the backend was not explicitly tagged.
+ * The marker therefore tracks the BACKEND only, and only when a deploy
+ * explicitly tagged it. `VERCEL_ENV` is deliberately NOT a trigger: an ordinary
+ * push-triggered Vercel preview is a routine part of every PR, talks to the
+ * same backend the Vercel project is configured with, and marking it would make
+ * the badge ambient noise — which is exactly how a warning stops being read.
+ * Only a `/preview` deploy (repointed at another Supabase project) and local
+ * development get a marker.
  */
 
 export type EnvironmentTone = 'preview' | 'local';
@@ -49,9 +54,9 @@ export interface EnvironmentInput {
 const normalise = (value: string | undefined) => (value ?? '').trim().toLowerCase();
 
 /**
- * Returns the badge to show, or `null` when this is a plain production build
- * (production frontend + production backend) — the only case that must render
- * nothing at all.
+ * Returns the badge to show, or `null` for anything that talks to the normal
+ * backend: production, and any untagged deploy including a push-triggered
+ * Vercel preview.
  */
 export function resolveEnvironmentBadge(input: EnvironmentInput): EnvironmentBadge | null {
   const backendEnv = normalise(input.backendEnv);
@@ -71,18 +76,7 @@ export function resolveEnvironmentBadge(input: EnvironmentInput): EnvironmentBad
     };
   }
 
-  // 2. No explicit backend tag. Fall back to where the frontend is deployed.
-  if (!backendEnv && vercelEnv === 'preview') {
-    return {
-      label: 'PREVIEW DEPLOY',
-      detail,
-      description:
-        'Preview deployment. The backend was not tagged, so it may point at the production Supabase project.',
-      tone: 'preview',
-    };
-  }
-
-  // 3. Untagged backend and no deployed frontend environment. `vercel dev`
+  // 2. Untagged backend and no deployed frontend environment. `vercel dev`
   //    reports 'development' where plain `next dev` reports nothing; both are
   //    local, and leaving 'development' unhandled would fall through to `null`
   //    — a non-production build silently rendering as if it were production.
@@ -95,6 +89,7 @@ export function resolveEnvironmentBadge(input: EnvironmentInput): EnvironmentBad
     };
   }
 
-  // Production frontend + production (or untagged-but-production) backend.
+  // Production, and every untagged deploy — including an ordinary
+  // push-triggered Vercel preview, which is not marked by design.
   return null;
 }

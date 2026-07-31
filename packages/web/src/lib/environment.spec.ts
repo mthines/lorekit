@@ -40,10 +40,23 @@ describe('resolveEnvironmentBadge', () => {
     expect(badge?.tone).toBe('preview');
   });
 
-  it('falls back to the Vercel environment when the backend is untagged', () => {
-    const badge = resolveEnvironmentBadge({ vercelEnv: 'preview', projectRef: 'someref12345678' });
-    expect(badge?.label).toBe('PREVIEW DEPLOY');
-    expect(badge?.description).toContain('not tagged');
+  // A push-triggered Vercel preview is a routine part of every PR and talks to
+  // whatever backend the Vercel project is configured with. Marking it would
+  // make the badge ambient noise, so VERCEL_ENV alone must never trigger it —
+  // only an explicitly tagged backend does.
+  it('renders nothing for an untagged Vercel preview', () => {
+    expect(
+      resolveEnvironmentBadge({ vercelEnv: 'preview', projectRef: 'someref12345678' }),
+    ).toBeNull();
+  });
+
+  it('renders nothing for an untagged Vercel preview even with no project ref', () => {
+    expect(resolveEnvironmentBadge({ vercelEnv: 'preview' })).toBeNull();
+  });
+
+  it('still marks a /preview deploy, which tags the backend on top of VERCEL_ENV=preview', () => {
+    const badge = resolveEnvironmentBadge({ backendEnv: 'preview', vercelEnv: 'preview' });
+    expect(badge?.label).toBe('PREVIEW BACKEND');
   });
 
   it('labels local builds, where neither env var is set', () => {
