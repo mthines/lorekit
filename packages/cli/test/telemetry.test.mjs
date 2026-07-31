@@ -11,6 +11,9 @@ import {
   exportInvocation,
   traceCommand,
   getActiveTraceparent,
+  normalizeOsType,
+  normalizeHostArch,
+  resolveDeploymentEnvironment,
 } from '../src/telemetry.mjs';
 import { TELEMETRY_TOKEN } from '../src/telemetry-token.mjs';
 import { injectToken } from '../../../scripts/inject-telemetry-token.mjs';
@@ -167,6 +170,91 @@ test('commandAttributes merges extraAttrs into the attribute bag', () => {
     extraAttrs: { 'lorekit.cli.doctor.failed_checks': 'connectivity,token' },
   });
   assert.equal(attrs['lorekit.cli.doctor.failed_checks'], 'connectivity,token');
+});
+
+// ── resource attributes: OTel-registry os.type / host.arch ────────────────────
+
+test('normalizeOsType maps Node platforms to the OTel os.type vocabulary', () => {
+  // The two Node spellings that are NOT valid os.type registry values.
+  assert.equal(normalizeOsType('win32'), 'windows');
+  assert.equal(normalizeOsType('sunos'), 'solaris');
+  // Already-canonical values pass through unchanged.
+  for (const v of ['linux', 'darwin', 'freebsd', 'openbsd', 'aix']) {
+    assert.equal(normalizeOsType(v), v);
+  }
+});
+
+test('normalizeHostArch maps Node arches to the OTel host.arch vocabulary', () => {
+  assert.equal(normalizeHostArch('x64'), 'amd64');
+  assert.equal(normalizeHostArch('ia32'), 'x86');
+  assert.equal(normalizeHostArch('arm'), 'arm32');
+  // Node reports `ppc` for 32-bit PowerPC; the OTel registry value is `ppc32`.
+  assert.equal(normalizeHostArch('ppc'), 'ppc32');
+  // Already-canonical / unmapped values pass through unchanged.
+  for (const v of ['arm64', 's390x', 'ppc64']) {
+    assert.equal(normalizeHostArch(v), v);
+  }
+});
+
+// ── resource attributes: deployment.environment.name (opt-in override) ────────
+
+test('resolveDeploymentEnvironment is undefined by default (CLI has no ambient env)', () => {
+  assert.equal(resolveDeploymentEnvironment({}), undefined);
+  // Whitespace-only override is treated as absent.
+  assert.equal(resolveDeploymentEnvironment({ DEPLOYMENT_ENVIRONMENT: '   ' }), undefined);
+});
+
+test('resolveDeploymentEnvironment reads DEPLOYMENT_ENVIRONMENT then OTEL_DEPLOYMENT_ENVIRONMENT', () => {
+  assert.equal(resolveDeploymentEnvironment({ DEPLOYMENT_ENVIRONMENT: 'test' }), 'test');
+  assert.equal(resolveDeploymentEnvironment({ OTEL_DEPLOYMENT_ENVIRONMENT: 'staging' }), 'staging');
+  // DEPLOYMENT_ENVIRONMENT wins when both are set.
+  assert.equal(
+    resolveDeploymentEnvironment({ DEPLOYMENT_ENVIRONMENT: 'test', OTEL_DEPLOYMENT_ENVIRONMENT: 'staging' }),
+    'test',
+  );
+});
+
+test('buildTracePayload omits deployment.environment.name unless overridden', () => {
+  const prev = process.env.DEPLOYMENT_ENVIRONMENT;
+  delete process.env.DEPLOYMENT_ENVIRONMENT;
+  try {
+    const p = buildTracePayload({ version: '1', name: 'lorekit.cli.list', attributes: {}, startMs: 1, endMs: 2, status: 'ok' });
+    const keys = p.resourceSpans[0].resource.attributes.map((a) => a.key);
+    assert.ok(!keys.includes('deployment.environment.name'));
+  } finally {
+    if (prev === undefined) delete process.env.DEPLOYMENT_ENVIRONMENT;
+    else process.env.DEPLOYMENT_ENVIRONMENT = prev;
+  }
+});
+
+test('buildTracePayload emits deployment.environment.name=test when overridden (harness path)', () => {
+  const prev = process.env.DEPLOYMENT_ENVIRONMENT;
+  process.env.DEPLOYMENT_ENVIRONMENT = 'test';
+  try {
+    const p = buildTracePayload({ version: '1', name: 'lorekit.cli.list', attributes: {}, startMs: 1, endMs: 2, status: 'ok' });
+    const resAttrs = Object.fromEntries(
+      p.resourceSpans[0].resource.attributes.map((a) => [a.key, a.value.stringValue]),
+    );
+    assert.equal(resAttrs['deployment.environment.name'], 'test');
+  } finally {
+    if (prev === undefined) delete process.env.DEPLOYMENT_ENVIRONMENT;
+    else process.env.DEPLOYMENT_ENVIRONMENT = prev;
+  }
+});
+
+test('buildTracePayload emits os.type / host.arch as OTel-registry values', () => {
+  const p = buildTracePayload({
+    version: '1', name: 'lorekit.cli.list', attributes: {}, startMs: 1, endMs: 2, status: 'ok',
+  });
+  const resAttrs = Object.fromEntries(
+    p.resourceSpans[0].resource.attributes.map((a) => [a.key, a.value.stringValue]),
+  );
+  // Whatever this test host reports, the emitted value is never a Node-only
+  // spelling that the registry doesn't define.
+  assert.equal(resAttrs['os.type'], normalizeOsType(process.platform));
+  assert.equal(resAttrs['host.arch'], normalizeHostArch(process.arch));
+  assert.ok(!['win32', 'sunos'].includes(resAttrs['os.type']));
+  assert.ok(!['x64', 'ia32', 'arm'].includes(resAttrs['host.arch']));
 });
 
 // ── payload shape ──────────────────────────────────────────────────────────────

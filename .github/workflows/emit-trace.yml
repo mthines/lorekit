@@ -1,0 +1,70 @@
+name: Emit correlated trace (manual)
+
+# Manual-only. Fire this to push ONE real, correlated cross-service trace to
+# Dash0 — cli → api (edge SERVER) → Postgres (edge CLIENT), plus the MCP hop
+# (mcp-node SERVER → api SERVER) — as a single trace_id, so you can visually
+# confirm cross-service correlation in the backend that the offline unit suites
+# (otel-correlation.spec.ts / otel-conventions.spec.ts) can only prove in code.
+#
+# Every span is stamped `deployment.environment.name=<environment>` (default
+# `test`) so these traces are trivially filtered/routed and never pollute
+# production telemetry. Reuses the SAME `LOREKIT_TELEMETRY_TOKEN` secret the
+# release job bakes into the CLI tarball — no new secret to configure.
+#
+# NOTE: workflow_dispatch buttons only appear once this file is on the default
+# branch, so it becomes runnable from the Actions tab after PR #287 merges.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "deployment.environment.name to tag every span with (isolates these traces in Dash0)"
+        required: false
+        default: test
+      dataset:
+        description: "Dash0 dataset to route to (blank = the token's default dataset)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  emit-trace:
+    name: Emit one correlated trace to Dash0
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      # The harness strips TS types at runtime via --experimental-transform-types,
+      # which needs Node >= 22.7 (the rest of CI runs on 20).
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      # The harness no-ops (exit 0) when it finds no OTLP token — which would look
+      # like a green run that emitted nothing. Fail loudly instead so a missing
+      # secret is unmistakable.
+      - name: Verify telemetry token is present
+        env:
+          LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+        run: |
+          if [ -z "${LOREKIT_TELEMETRY_TOKEN}" ]; then
+            echo "::error::LOREKIT_TELEMETRY_TOKEN secret is not set — cannot emit to Dash0." >&2
+            exit 1
+          fi
+
+      # No `pnpm install`: the harness imports only self-contained / zero-dep
+      # source (edge _shared/otel.ts, cli telemetry.mjs, mcp-core trace-context.ts),
+      # so `pnpm run` executes the underlying `node` command with no dependencies.
+      - name: Emit correlated trace
+        env:
+          LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+          DEPLOYMENT_ENVIRONMENT: ${{ inputs.environment }}
+          DASH0_DATASET: ${{ inputs.dataset }}
+        run: pnpm emit-trace

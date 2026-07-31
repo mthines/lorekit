@@ -190,14 +190,23 @@ function toOtlpValue(v: string | number | boolean) {
 }
 
 /**
- * Resolve deployment environment from Supabase secrets.
- * Set VERCEL_ENV as a Supabase secret matching the Vercel-injected value:
- *   production  → production deployment
- *   preview     → preview/staging deployment
- *   development → local `vercel dev` or staging
- *   (absent)    → 'local'
+ * Resolve deployment environment for the `deployment.environment.name` resource
+ * attribute.
+ *
+ * Priority:
+ *   1. `DEPLOYMENT_ENVIRONMENT` — an explicit override. This is the single,
+ *      env-driven path every LoreKit component honours so a correlated-trace
+ *      run can stamp `test` uniformly (see `scripts/emit-correlated-trace.mts`)
+ *      and any deployment can name its environment directly.
+ *   2. `VERCEL_ENV` — mapped to production / preview / development.
+ *   3. (absent) → 'local'.
+ *
+ * Set either as a Supabase secret. The override wins so it can pin the value
+ * regardless of the ambient Vercel signal.
  */
 function resolveDeploymentEnv(): string {
+  const override = Deno.env.get('DEPLOYMENT_ENVIRONMENT');
+  if (override) return override;
   const env = Deno.env.get('VERCEL_ENV');
   if (env === 'production') return 'production';
   if (env === 'preview') return 'preview';
@@ -205,7 +214,7 @@ function resolveDeploymentEnv(): string {
   return 'local';
 }
 
-function buildOtlpPayload(spans: SpanPayload[]): unknown {
+export function buildOtlpPayload(spans: SpanPayload[]): unknown {
   // Build vcs.* resource attributes once per payload (they are constant for
   // the lifetime of the isolate — resolved from Supabase secrets at startup).
   const vcsAttrs = getVcsResourceAttributes();
@@ -266,10 +275,22 @@ function buildOtlpPayload(spans: SpanPayload[]): unknown {
   };
 }
 
-class ExportBatch {
+export class ExportBatch {
   private spans: SpanPayload[] = [];
 
   add(span: SpanPayload): void { this.spans.push(span); }
+
+  /**
+   * Remove and return the collected spans. Used by the offline correlated-trace
+   * harness to hand the real, edge-built spans to `buildOtlpPayload` without
+   * going through the fire-and-forget `flush()` (which reads Deno secrets and
+   * posts). Not used on the request path.
+   */
+  drain(): SpanPayload[] {
+    const spans = this.spans;
+    this.spans = [];
+    return spans;
+  }
 
   /** Fire-and-forget flush — use EdgeRuntime.waitUntil when available. */
   flush(): void {
