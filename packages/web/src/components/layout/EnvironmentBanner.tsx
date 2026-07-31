@@ -34,6 +34,14 @@ const TONE = {
  * `h-screen` flex column, so a banner in the normal flow would push the whole
  * app out of the viewport. This overlays instead of reflowing, and never
  * intercepts a click.
+ *
+ * A11y: `role="note"`, not `role="status"`. The content is static and present
+ * from first paint, so a live region would make a screen reader re-announce it
+ * on every page load. The visible label speaks for itself; the longer
+ * explanation is appended as `sr-only` text rather than an `aria-label`, which
+ * would have *replaced* the visible text as the accessible name. There is no
+ * `title` tooltip either — `pointer-events-none` means the pill can never
+ * become a hover target, so a native tooltip could never fire.
  */
 export function EnvironmentBanner() {
   if (!badge) return null;
@@ -41,24 +49,20 @@ export function EnvironmentBanner() {
   const tone = TONE[badge.tone];
 
   return (
-    <div
-      role="status"
-      aria-label={badge.description}
-      className="pointer-events-none fixed inset-x-0 top-0 z-[100]"
-    >
+    <div role="note" className="pointer-events-none fixed inset-x-0 top-0 z-[100]">
       {/* Full-width stripe — visible at a glance, even on a screenshot. */}
       <div className={`h-[3px] w-full ${tone.stripe}`} />
 
       {/* Pill. Top-centre keeps it clear of the bottom-right toast portal. */}
       <div className="flex justify-center">
         <div
-          title={badge.description}
           className={`flex items-baseline gap-2 rounded-b-md border border-t-0 px-3 py-1 font-[family-name:var(--font-mono)] text-[10px] leading-none tracking-widest uppercase shadow-lg ${tone.pill}`}
         >
           <span className="font-semibold">{badge.label}</span>
           {badge.detail ? (
             <span className="tracking-normal normal-case opacity-70">{badge.detail}</span>
           ) : null}
+          <span className="sr-only">. {badge.description}</span>
         </div>
       </div>
     </div>
