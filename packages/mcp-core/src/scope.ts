@@ -82,9 +82,19 @@ export function validateScope(raw: string): string {
 
   if (prefix === 'branch') {
     const parts = rest.split('::');
-    if (parts.length !== 2 || !parts[0]?.match(/^[\w.-]+\/[\w.-]+$/) || !parts[1]) {
+    // The branch-name segment allows `/` (e.g. "feat/x") but is otherwise
+    // restricted to the canonical charset — crucially it must NOT admit `"` or
+    // `,`, which are structural in the PostgREST `scope.in.("...")` filter the
+    // search tool builds from validated scopes. Leaving it merely "non-empty"
+    // let `branch::o/r::a",value.not.is.null` break out of that filter.
+    if (
+      parts.length !== 2 ||
+      !parts[0]?.match(/^[\w.-]+\/[\w.-]+$/) ||
+      !parts[1]?.match(/^[\w./-]+$/)
+    ) {
       throw new ScopeValidationError(
-        `Invalid branch scope "${raw}": expected format "branch::owner/repo::branch-name"`,
+        `Invalid branch scope "${raw}": expected format "branch::owner/repo::branch-name" ` +
+          `(branch name may contain only letters, digits, "._-/")`,
       );
     }
   }
@@ -128,7 +138,11 @@ export function expandScopeForSearch(raw: string): ScopeFilter {
           `[a-z0-9._:/-] before the trailing "*"`,
       );
     }
-    return { like: base + '%' };
+    // Escape the LIKE single-character wildcard `_` in the literal owner prefix
+    // so `repo::my_org/*` stays owner-exact instead of also matching
+    // `repo::myXorg/*`. (`%` and `\` can't occur — the charset above excludes
+    // them.) `\` is LIKE's default escape character.
+    return { like: base.replace(/_/g, '\\_') + '%' };
   }
   return { exact: validateScope(raw) };
 }

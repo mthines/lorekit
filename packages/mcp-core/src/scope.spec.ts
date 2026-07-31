@@ -44,6 +44,23 @@ describe('validateScope', () => {
   it('throws on branch scope without second ::', () => {
     expect(() => validateScope('branch::mthines/gw-tools')).toThrow(ScopeValidationError);
   });
+
+  it('accepts a branch name containing a slash', () => {
+    expect(validateScope('branch::mthines/gw-tools::feat/x')).toBe('branch::mthines/gw-tools::feat/x');
+  });
+
+  // SECURITY: a validated scope is interpolated into the search tool's
+  // `scope.in.("<scope>")` PostgREST filter, so a branch name must not admit `"`
+  // or `,` (they would break out of the quoted value). See validateScope.
+  it('rejects a branch name carrying PostgREST filter metacharacters', () => {
+    for (const evil of [
+      'branch::o/r::a",value.not.is.null',
+      'branch::o/r::a,scope.like.z',
+      'branch::o/r::a)',
+    ]) {
+      expect(() => validateScope(evil)).toThrow(ScopeValidationError);
+    }
+  });
 });
 
 describe('scopeType', () => {
