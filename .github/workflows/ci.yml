@@ -244,6 +244,16 @@ jobs:
           TOKEN: ${{ steps.supabase.outputs.service_role_key }}
         run: node scripts/smoke-mcp-stdio.mjs "http://127.0.0.1:54321/functions/v1/mcp" "$TOKEN"
 
+      - name: Diagnose — edge runtime logs (on failure)
+        if: failure()
+        run: |
+          echo '--- containers ---'
+          docker ps -a --format '{{.Names}}\t{{.Status}}' || true
+          echo '--- supabase_edge_runtime_lorekit ---'
+          docker logs supabase_edge_runtime_lorekit 2>&1 | tail -200 || true
+          echo '--- supabase status ---'
+          supabase status || true
+
       # Assert the business rules that live only in SQL — the cap/rate triggers
       # and RPCs, RLS isolation, memory_write's created_at semantics, and the
       # webhook-secret constraints. Runs directly on Postgres (not PostgREST),
