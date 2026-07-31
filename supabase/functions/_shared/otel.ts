@@ -55,8 +55,10 @@ function getOtlpConfig(): { endpoint: string; headers: Record<string, string> } 
     const idx = pair.indexOf('=');
     if (idx > 0) headers[pair.slice(0, idx).trim()] = pair.slice(idx + 1).trim();
   }
-  const dataset = Deno.env.get('DASH0_DATASET');
-  if (dataset) headers['Dash0-Dataset'] = dataset;
+  // Default to the `default` Dash0 dataset unless overridden, so edge telemetry
+  // lands alongside every other LoreKit component (all `default`).
+  const dataset = Deno.env.get('DASH0_DATASET') || 'default';
+  headers['Dash0-Dataset'] = dataset;
 
   return { endpoint: endpoint.replace(/\/+$/, ''), headers };
 }

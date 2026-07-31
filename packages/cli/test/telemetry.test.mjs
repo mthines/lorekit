@@ -68,6 +68,11 @@ test('OTEL_EXPORTER_OTLP_HEADERS is parsed and Dash0-Dataset applied', () => {
   assert.equal(cfg.headers['Dash0-Dataset'], 'my-set');
 });
 
+test('Dash0-Dataset defaults to "default" when DASH0_DATASET is unset', () => {
+  const cfg = resolveTelemetryConfig(ENABLED_ENV);
+  assert.equal(cfg.headers['Dash0-Dataset'], 'default');
+});
+
 // ── build-time token injection ─────────────────────────────────────────────────
 
 test('committed TELEMETRY_TOKEN is empty (no secret in git)', () => {
@@ -152,7 +157,7 @@ test('buildTracePayload produces a valid single-span OTLP structure', () => {
   const resAttrs = Object.fromEntries(
     p.resourceSpans[0].resource.attributes.map((a) => [a.key, a.value.stringValue]),
   );
-  assert.equal(resAttrs['service.name'], 'lorekit-cli');
+  assert.equal(resAttrs['service.name'], 'cli');
   assert.equal(resAttrs['service.namespace'], 'lorekit');
   assert.equal(resAttrs['service.version'], '9.9.9');
 });

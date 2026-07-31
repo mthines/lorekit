@@ -32,7 +32,9 @@ import { readLorekitJson } from './config.mjs';
 // (empty in the source tree, so default export stays off until built/injected).
 const DEFAULT_ENDPOINT = 'https://ingress.europe-west4.gcp.dash0-dev.com';
 const DEFAULT_TOKEN = TELEMETRY_TOKEN; // injected from LOREKIT_TELEMETRY_TOKEN at publish
-const DEFAULT_DATASET = '';
+// Ship to the `default` Dash0 dataset unless `DASH0_DATASET` overrides it, so
+// CLI telemetry lands alongside every other LoreKit component (all `default`).
+const DEFAULT_DATASET = 'default';
 
 // Flags worth counting (e.g. how many installs are --global). Bounded on
 // purpose: only these booleans are ever attached, never free-form values.
@@ -156,7 +158,7 @@ function toOtlpAttributes(attributes) {
 
 function resourceAttributes(version) {
   return [
-    { key: 'service.name', value: { stringValue: 'lorekit-cli' } },
+    { key: 'service.name', value: { stringValue: 'cli' } },
     { key: 'service.namespace', value: { stringValue: 'lorekit' } },
     { key: 'service.version', value: { stringValue: String(version) } },
     { key: 'process.runtime.name', value: { stringValue: 'nodejs' } },

@@ -245,7 +245,7 @@ All signals carry these resource attributes:
 | Attribute | Value |
 |-----------|-------|
 | `service.namespace` | `lorekit` |
-| `service.name` | `mcp` (Edge Function), `web` (Next.js), or `lorekit-cli` (CLI) |
+| `service.name` | `mcp` (Edge Function), `web` (Next.js), or `cli` (CLI) |
 | `service.version` | Git SHA (`VERCEL_GIT_COMMIT_SHA`) or `unknown`; the package version for the CLI |
 | `deployment.environment.name` | `production` / `preview` / `development` / `local` (not set by the CLI) |
 
@@ -323,7 +323,7 @@ the baked-in token. End users can opt out entirely with `LOREKIT_TELEMETRY=0` or
 After a `memory.write` call, check Dash0 → Explore → filter `service.name = mcp` and `service.namespace = lorekit`.
 
 ### CLI
-After running `lorekit doctor` (with `DEFAULT_TOKEN` set, or `OTEL_EXPORTER_OTLP_*` exported), check Dash0 → Explore → filter `service.name = lorekit-cli` and `service.namespace = lorekit`. Group by `lorekit.cli.command` to count across `install`, `doctor`, `list`, `scopes`, `diff`, and the other human-facing commands.
+After running `lorekit doctor` (with `DEFAULT_TOKEN` set, or `OTEL_EXPORTER_OTLP_*` exported), check Dash0 → Explore → filter `service.name = cli` and `service.namespace = lorekit`. Group by `lorekit.cli.command` to count across `install`, `doctor`, `list`, `scopes`, `diff`, and the other human-facing commands.
 
 ### Browser
 Open Chrome DevTools → Network → filter by `v1/traces`. You should see POST requests to the Dash0 OTLP endpoint after page load and on each navigation.
