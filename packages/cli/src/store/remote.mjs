@@ -131,9 +131,15 @@ class RemoteStore {
   // whatever the user typed and an un-encoded `../` or `?` would retarget the
   // request at a different route entirely.
 
-  // POST /orgs → 201 with the new org's id as a bare JSON string. The MCP tool
-  // returned `{ id, slug, name }`; the id is the only part the server knows and
-  // the caller supplied the rest, so the triple is reassembled here.
+  // POST /orgs → 201 with the created org object, `{ id, slug, name, created_at }`.
+  // The handler reads the row back after the RPC (`orgs/handlers/orgs/create.ts`);
+  // `created_at` is absent only on the read-back miss, where it falls back to
+  // `{ id, slug, name }`. A bare JSON id string is the LEGACY shape an older
+  // deployed backend can still return — that is what the string branch below is
+  // for, not the normal case. Either way this method reassembles the
+  // `{ id, slug, name }` triple, because `packages/cli/src/mcp-server.mjs`
+  // serialises it straight into a `tools/call` result and that shape is a
+  // published contract.
   async orgCreate({ slug, name } = {}) {
     const res = await this._rest('/orgs', { method: 'POST', body: { slug, name } });
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
