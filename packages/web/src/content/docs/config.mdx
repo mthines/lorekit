@@ -1,0 +1,149 @@
+---
+title: "Configuration"
+description: "LoreKit reads two optional JSON config files that decide the memory mode, the store location, and write & hook behaviour. Both files share the same schema and every field is optional — start with an empty file and add only what you need."
+order: 7
+keywords: ["configuration", ".lorekit.json", "config.json", "mode", "store", "deny", "hooks", "tags.default", "scope.defaults", "telemetry", "environment variables", "precedence"]
+---
+
+**The two config layers**
+
+| Layer | File | Scope |
+| --- | --- | --- |
+| Repo / team | `.lorekit.json` | Repo root — safe to commit, holds no secrets. |
+| User / machine | `~/.lorekit/config.json` | Personal overrides — not committed. |
+
+**Property reference**
+
+| Property | Type | Layer | Description |
+| --- | --- | --- | --- |
+| `mode` | `"off" \| "local" \| "remote"` | Both | Select the memory backend. off disables storage, local uses on-disk markdown, remote syncs to the hosted server. |
+| `store` | `string` | Both | Project-tier store path for local mode, relative to the repo root or absolute. Defaults to .lorekit. |
+| `deny` | `("local" \| "remote")[]` | Both | Forbid modes outright. Deny always wins and is a union across every layer — a ceiling no other layer can lift. |
+| `mcp.endpoint` | `string` | Repo | Committable MCP URL without a token, so the connection can live in VCS. The token still comes from .mcp.json or LOREKIT_TOKEN. |
+| `tags.default` | `string[]` | Both | Tags appended to every memory.write. Both layers are merged: repo tags first, then user tags. |
+| `scope.defaults` | `Record<string, { tags: string[] }>` | Repo | Per-scope tag defaults, applied to writes whose scope starts with the key (prefix match, no wildcards). A team-level write policy. |
+| `hooks.disabled` | `("SessionStart" \| "PostToolUseFailure" \| "Stop")[]` | Both | Suppress specific lifecycle hook events. Union across layers — either layer can turn an event off. |
+| `hooks.adapter` | `"claude" \| "cursor" \| "codex"` | Both | Explicit host adapter when auto-detection is ambiguous. Repo wins over user. |
+| `hooks.instructions` | `Record<"SessionStart" \| "PostToolUseFailure" \| "Stop", string \| null>` | Both | Per-event custom text appended to the hook output. Lets teams embed project-specific guidance (e.g. "focus on migration safety") into the injected agent context. Both layers are merged: repo instructions first, then user. null or an absent key means no instruction for that event. |
+| `telemetry.disabled` | `boolean` | Repo | Team-level opt-out of anonymous CLI usage telemetry, read from .lorekit.json only. The env var LOREKIT_TELEMETRY=0 always wins if set. |
+| `dedupe.threshold` | `number (0–1)` | Repo | Jaccard similarity cutoff for lorekit dedupe. The --threshold flag wins when passed explicitly. Defaults to 0.8. |
+
+**Layer** notes where a property is read from: `Both` layers, the `Repo` file only (team-level policy), or the `User` file only.
+
+<TutorialStep number={1} title="Commit team defaults to .lorekit.json">
+
+Put team-wide policy — the connection URL, default tags, per-scope write rules — in a `.lorekit.json` at the repo root. It carries no secrets, so it is safe to commit:
+
+```json
+// .lorekit.json — repo root, safe to commit (no secrets)
+{
+  "mode": "local",
+  "store": ".lorekit",
+  "mcp.endpoint": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
+  "tags.default": ["team", "project::my-app"],
+  "scope.defaults": {
+    "repo::owner/name":     { "tags": ["team"] },
+    "branch::owner/name::": { "tags": ["ephemeral"] }
+  },
+  "hooks.disabled": ["Stop"],
+  "hooks.instructions": {
+    "SessionStart":       "Focus on migration safety. Any lesson tagged 'migration' is high-priority.",
+    "PostToolUseFailure": "When recording a failure, include the exact command and exit code.",
+    "Stop":               null
+  },
+  "telemetry.disabled": true,
+  "dedupe.threshold": 0.8
+}
+```
+
+</TutorialStep>
+
+<TutorialStep number={2} title="Keep personal overrides in ~/.lorekit/config.json">
+
+Machine-local preferences live in `~/.lorekit/config.json`. This is where a privacy or compliance `deny` ceiling belongs — it can never be lifted by any repo default or env flag:
+
+```json
+// ~/.lorekit/config.json — user/machine, not committed
+{
+  "deny": ["remote"],
+  "tags.default": ["mads"],
+  "hooks.adapter": "claude"
+}
+```
+
+</TutorialStep>
+
+<TutorialStep number={3} title="Add project-specific hook instructions">
+
+Use `hooks.instructions` to inject custom guidance into the three hook events. The agent sees your text appended to each event's output — your default LoreKit messages stay unchanged:
+
+```json
+// .lorekit.json
+{
+  "hooks.instructions": {
+    // Injected at session start, after the memory index.
+    "SessionStart":       "Focus on migration safety. Any lesson tagged 'migration' is high-priority.",
+    // Injected alongside the failure nudge when a tool call fails.
+    "PostToolUseFailure": "When recording a failure, include the exact command and exit code.",
+    // Injected with the retrospective nudge at end-of-turn (null = disabled for this event).
+    "Stop":               null
+  }
+}
+```
+
+Both config layers are merged — repo instructions come first, user instructions follow. Run `lorekit doctor` to see what's resolved for each event.
+
+</TutorialStep>
+
+<TutorialStep number={4} title="Understand precedence & deny">
+
+A *selection* (which mode to use) is resolved highest-precedence first:
+
+```text
+env LOREKIT_MODE → user config "mode" → repo config "mode" → built-in default ("remote")
+```
+
+A *constraint* (`deny`) always wins, regardless of the selection. Denies are a union across every layer and only accumulate:
+
+- A user with `"deny": ["remote"]` can never be flipped to remote by a repo default or env flag.
+- A repo or CI job with `"deny": ["local"]` makes local unselectable there, even against `LOREKIT_MODE=local`.
+- `off` is never deniable, so it is always the terminal fallback.
+
+</TutorialStep>
+
+<TutorialStep number={5} title="Check the resolved mode">
+
+Run the CLI doctor to see the resolved mode, **which source decided it**, and any active deny constraints:
+
+```bash
+npx @lorekit/cli doctor
+```
+
+</TutorialStep>
+
+**Environment variables**
+
+The core mode, store, and connection settings have env-var equivalents that outrank the config files — useful in CI where you cannot commit a config change.
+
+| Variable | Purpose |
+| --- | --- |
+| `LOREKIT_MODE` | Select a mode: off / local / remote |
+| `LOREKIT_DENY` | Comma-separated modes to forbid (deny-wins), e.g. remote |
+| `LOREKIT_HOME` | Home-tier root + config directory (default ~/.lorekit) |
+| `LOREKIT_STORE` | Project-tier store directory (default .lorekit) |
+| `LOREKIT_MCP_URL / LOREKIT_ENDPOINT` | Endpoint fallback for remote mode |
+| `LOREKIT_TOKEN` | Token fallback for remote mode |
+| `LOREKIT_TELEMETRY` | Set to 0 / off / false to disable usage telemetry |
+| `DO_NOT_TRACK` | Set to 1 to disable usage telemetry (cross-vendor standard) |
+
+<TutorialCallout variant="tip">
+
+Tokens never belong in `.lorekit.json` — it is meant to be committed. Keep the `lk_rw_…` token in your agent's `.mcp.json` (gitignored) or the `LOREKIT_TOKEN` env var. See the [Getting started](/docs/setup) guide for the connection setup.
+
+</TutorialCallout>
+
+<TutorialCallout>
+
+**Next:** learn how scopes and tags shape what gets written and read in the [Tags & scopes](/docs/tags) tutorial.
+
+</TutorialCallout>

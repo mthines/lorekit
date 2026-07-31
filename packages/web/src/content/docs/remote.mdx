@@ -1,0 +1,126 @@
+---
+title: "Remote storage"
+description: "Sync lore to the hosted LoreKit MCP server so your memories are available on every machine, from every agent, without any extra setup on each device."
+order: 3
+keywords: ["remote", "hosted", "mcp server", "api token", "lk_rw", "lk_ro", "lk_wo", "doctor", "ci", "github actions", "webhook", "memory.write", "memory.read"]
+---
+
+<TutorialCallout variant="tip">
+
+You can use the hosted instance at `lorekit.io` or self-host your own. This tutorial uses the hosted instance. For self-hosting see the [Installation Guide](https://github.com/mthines/lorekit/blob/main/docs/install.md).
+
+</TutorialCallout>
+
+<TutorialStep number={1} title="Generate an API token">
+
+Go to [Settings → API keys](/settings/api-keys) and click **Generate new token**. Enter a name (e.g. `claude-local`, `ci-prod`) and choose a permission tier:
+
+- `lk_rw_…` — read + write (agents that learn)
+- `lk_ro_…` — read only (CI context injection)
+- `lk_wo_…` — write only (one-way memory feeders)
+
+The token is shown **once only** — copy it before closing the modal.
+
+</TutorialStep>
+
+<TutorialStep number={2} title="Point your agent at the MCP server">
+
+The fastest path is `npx @lorekit/cli install` — it scaffolds the skills, wires the MCP server, and installs the lifecycle hooks in one command. Or add the endpoint manually to your agent's MCP config:
+
+```json
+// .mcp.json (Claude Code / Cursor / opencode — project-local)
+{
+  "mcpServers": {
+    "lorekit": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote",
+               "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp",
+               "--header", "Authorization:Bearer lk_rw_<your-token>"]
+    }
+  }
+}
+```
+
+<TutorialCallout variant="tip">
+
+Keep `.mcp.json` out of version control — it contains your token. Commit a `.lorekit.json` instead to set the team default mode (e.g. `{ "mode": "remote" }`).
+
+</TutorialCallout>
+
+</TutorialStep>
+
+<TutorialStep number={3} title="Verify the connection">
+
+```bash
+npx @lorekit/cli doctor
+```
+
+The doctor command checks connectivity, token permissions, and scope health. Look for the **Remote** section in the output — it should show a green `ok` status.
+
+</TutorialStep>
+
+<TutorialStep number={4} title="Write and read a memory">
+
+Write a test memory via the MCP endpoint:
+
+```json
+memory.write {
+  scope: "global",
+  key:   "hello-remote",
+  value: "Remote lore is working."
+}
+```
+
+Read it back from any machine:
+
+```json
+memory.read {
+  scope: "global",
+  key:   "hello-remote"
+}
+// → { "value": "Remote lore is working.", "updated_at": "…" }
+```
+
+</TutorialStep>
+
+<TutorialStep number={5} title="Use in CI / GitHub Actions">
+
+Store a read-only token as `LOREKIT_TOKEN` in your repo secrets, then inject global memories before any AI step:
+
+```yaml
+- name: Inject LoreKit context
+  run: |
+    curl -s -X POST "$LOREKIT_MCP_URL" \
+      -H "Authorization: Bearer $LOREKIT_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "memory.list",
+          "arguments": { "scope": "global", "limit": 20 }
+        }
+      }'
+  env:
+    LOREKIT_MCP_URL: https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp
+    LOREKIT_TOKEN: ${{ secrets.LOREKIT_TOKEN }}
+```
+
+</TutorialStep>
+
+<TutorialStep number={6} title="(Optional) Set up the GitHub webhook">
+
+To have LoreKit automatically learn from PR review comments, go to [Settings → Webhooks](/settings/webhooks), add your repo (`owner/repo`), copy the generated secret, then configure a webhook on GitHub pointing at your MCP endpoint:
+
+- **Payload URL:** `…/functions/v1/mcp/webhooks/github`
+- **Content type:** `application/json`
+- **Events:** Pull request review comments + Pull request reviews
+
+</TutorialStep>
+
+<TutorialCallout>
+
+**Next steps:** share memories with your whole team by setting up an organization. See the [Team sharing tutorial](/docs/organization).
+
+</TutorialCallout>

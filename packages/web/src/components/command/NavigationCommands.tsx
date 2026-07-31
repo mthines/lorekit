@@ -11,19 +11,19 @@
  *
  * ### Navigate
  * Top-level destinations with "g → X" chained shortcuts (Gmail / Linear style):
- *   g h → Dashboard (Home)
+ *   g o → Dashboard (Home)
  *   g e → Lore Explorer
  *   g s → Settings
- *   g l → Getting Started
+ *   g g → Docs
  *
  * ### Settings
  * Direct jumps to each settings section (no extra shortcuts — use search):
- *   API Keys · Webhooks · Organization · Audit Logs · User profile
+ *   Plan · API Keys · Webhooks · Organization · Audit Logs · User profile
  *
- * ### Learn
- * Direct jumps to the Getting Started page and each tutorial:
- *   Setup · Offline storage · Remote storage · Team sharing ·
- *   Private lore · Tags & scopes · Configuration · Use cases
+ * ### Docs
+ * Direct jumps to each public docs page (driven by the single `DOCS_SECTIONS`
+ * table so the palette can never drift from the nav rail) plus the REST API
+ * reference. The docs pages are also full-text searchable at `/docs`.
  *
  * ### Lore
  * "Open Lesson…" — async nested list of the 20 most-recent memories;
@@ -42,19 +42,13 @@ import {
   ShieldCheck,
   UserCircle,
   CreditCard,
-  Rocket,
-  FileCog,
   FileCode,
-  HardDrive,
-  Cloud,
-  Lock,
-  Tag,
-  Zap,
   Library,
 } from 'lucide-react';
 import { useCommand } from './useCommand';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { useLoreData } from '@/lib/queries/lore';
+import { DOCS_SECTIONS, type DocsSection } from '@/lib/docs/sections';
 
 // ── Lore sub-commands helper ──────────────────────────────────────────────────
 //
@@ -101,6 +95,37 @@ function LoreCommands() {
   return null;
 }
 
+// ── Docs sub-commands ─────────────────────────────────────────────────────────
+//
+// One command per docs page, driven by the shared DOCS_SECTIONS table (the same
+// source the /docs nav rail uses) so adding a page registers it everywhere at
+// once. Each item is its own component so useCommand is called at a stable hook
+// position rather than inside a .map() in the parent.
+
+function DocsCommandItem({ section }: { section: DocsSection }) {
+  const router = useRouter();
+  const Icon = section.icon;
+  useCommand({
+    id: `docs-${section.id}`,
+    label: section.label,
+    description: section.summary,
+    icon: <Icon className="size-4" />,
+    group: 'Docs',
+    onSelect: () => router.push(`/docs/${section.id}`),
+  });
+  return null;
+}
+
+function DocsCommands() {
+  return (
+    <>
+      {DOCS_SECTIONS.map((section) => (
+        <DocsCommandItem key={section.id} section={section} />
+      ))}
+    </>
+  );
+}
+
 // ── Main registration component ───────────────────────────────────────────────
 
 export function NavigationCommands() {
@@ -136,12 +161,12 @@ export function NavigationCommands() {
   });
 
   useCommand({
-    id: 'nav-learn',
-    label: 'Go to Getting Started',
+    id: 'nav-docs',
+    label: 'Go to Docs',
     icon: <GraduationCap className="size-4" />,
     group: 'Navigate',
     shortcut: { keys: ['g', 'g'] },
-    onSelect: () => router.push('/learn'),
+    onSelect: () => router.push('/docs'),
   });
 
   // ── Settings ──────────────────────────────────────────────────────────────
@@ -162,17 +187,6 @@ export function NavigationCommands() {
     icon: <Key className="size-4" />,
     group: 'Settings',
     onSelect: () => router.push('/settings/api-keys'),
-  });
-
-  useCommand({
-    id: 'settings-api-docs',
-    label: 'API Reference',
-    description: 'Open the REST API docs (opens in a new tab)',
-    icon: <FileCode className="size-4" />,
-    group: 'Settings',
-    onSelect: () => {
-      window.open('/api-docs', '_blank', 'noopener,noreferrer');
-    },
   });
 
   useCommand({
@@ -211,83 +225,26 @@ export function NavigationCommands() {
     onSelect: () => router.push('/settings/user'),
   });
 
-  // ── Learn ─────────────────────────────────────────────────────────────────
+  // ── Docs ────────────────────────────────────────────────────────────────────
 
   useCommand({
-    id: 'learn-setup',
-    label: 'Getting Started Guide',
-    description: 'Connect your agent and generate a token',
-    icon: <Rocket className="size-4" />,
-    group: 'Learn',
-    onSelect: () => router.push('/learn/setup'),
-  });
-
-  useCommand({
-    id: 'learn-offline',
-    label: 'Tutorial: Offline Storage',
-    description: 'Store lessons locally without a server',
-    icon: <HardDrive className="size-4" />,
-    group: 'Learn',
-    onSelect: () => router.push('/learn/offline'),
-  });
-
-  useCommand({
-    id: 'learn-remote',
-    label: 'Tutorial: Remote Storage',
-    description: 'Sync lessons to the hosted LoreKit server',
-    icon: <Cloud className="size-4" />,
-    group: 'Learn',
-    onSelect: () => router.push('/learn/remote'),
-  });
-
-  useCommand({
-    id: 'learn-organization',
-    label: 'Tutorial: Team Sharing',
-    description: 'Share lore across your organization',
-    icon: <Users className="size-4" />,
-    group: 'Learn',
-    onSelect: () => router.push('/learn/organization'),
-  });
-
-  useCommand({
-    id: 'learn-private',
-    label: 'Tutorial: Private Lore',
-    description: 'Keep sensitive lessons private',
-    icon: <Lock className="size-4" />,
-    group: 'Learn',
-    onSelect: () => router.push('/learn/private'),
-  });
-
-  useCommand({
-    id: 'learn-tags',
-    label: 'Tutorial: Tags & Scopes',
-    description: 'Organise lessons by scope and tag',
-    icon: <Tag className="size-4" />,
-    group: 'Learn',
-    onSelect: () => router.push('/learn/tags'),
-  });
-
-  useCommand({
-    id: 'learn-config',
-    label: 'Configuration Reference',
-    description: 'All .lorekit.json / config.json options',
-    icon: <FileCog className="size-4" />,
-    group: 'Learn',
-    onSelect: () => router.push('/learn/config'),
-  });
-
-  useCommand({
-    id: 'learn-use-cases',
-    label: 'Tutorial: Use Cases',
-    description: 'Common patterns and workflows',
-    icon: <Zap className="size-4" />,
-    group: 'Learn',
-    onSelect: () => router.push('/learn/use-cases'),
+    id: 'docs-api-reference',
+    label: 'API Reference',
+    description: 'Open the REST API docs (opens in a new tab)',
+    icon: <FileCode className="size-4" />,
+    group: 'Docs',
+    onSelect: () => {
+      window.open('/api-docs', '_blank', 'noopener,noreferrer');
+    },
   });
 
   return (
-    // LoreCommands hooks into MemorySidebarProvider — rendered as a sibling so
-    // the hook calls stay within the correct provider tree.
-    <LoreCommands />
+    <>
+      {/* Docs pages, driven by DOCS_SECTIONS. */}
+      <DocsCommands />
+      {/* LoreCommands hooks into MemorySidebarProvider — rendered as a sibling so
+          the hook calls stay within the correct provider tree. */}
+      <LoreCommands />
+    </>
   );
 }

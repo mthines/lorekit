@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 
-// /learn lands on the setup checklist — the natural first destination.
-export default function LearnIndexPage() {
-  redirect('/learn/setup');
+// Getting started now lives in the public docs at /docs.
+export default function LearnIndexRedirect() {
+  redirect('/docs');
 }

@@ -1,0 +1,213 @@
+---
+title: "Use cases"
+description: "End-to-end examples showing how scopes, tags, and org sharing come together for real development workflows."
+order: 8
+keywords: ["use cases", "autonomous workflow", "aw", "stuck-loop", "ci", "github actions", "org sharing", "scope binding", "branch scope", "ttl_days", "memory.purge_expired", "runbook"]
+---
+
+### Autonomous workflow self-improvement
+
+The [autonomous-workflow](https://github.com/mthines/agent-skills/tree/main/skills/workflow/autonomous-workflow) skill (part of [mthines/agent-skills](https://github.com/mthines/agent-skills)) defines a multi-phase agent dispatcher. The `aw` executor reads memories at Phase 1 (planning) and writes new ones at Phase 4 (stuck-loop) and Phase 7 (end-of-run). Universal memories go to `global`; repo-bound memories go to `repo::{owner}/{repo}`.
+
+**Read memories before planning**
+
+Narrow-to-broad fan-out — more specific wins.
+
+```json
+// Phase 1 — read narrow first, then global
+memory.list {
+  scope: "repo::mthines/lorekit",
+  tags:  ["loop::aw-lessons"],
+  limit: 50
+}
+memory.list {
+  scope: "global",
+  tags:  ["loop::aw-lessons"],
+  limit: 50
+}
+```
+
+**Record a stuck-loop memory**
+
+Write when the agent is stuck for the third iteration on the same area.
+
+```json
+memory.write {
+  scope:        "repo::mthines/lorekit",
+  key:          "aw-lessons::supabase-rls-debugging",
+  value:        "RLS failures return 200 with an empty array, not a 4xx. Always\ncheck .data.length before concluding the query returned no rows.",
+  tags:         ["loop::aw-lessons", "skill::aw", "source::stuck-loop"],
+  source_agent: "aw-executor",
+  trigger:      "stuck-loop"
+}
+```
+
+The memory is repo-scoped so it only surfaces for this codebase, not globally.
+
+### CI / GitHub Actions context injection
+
+Inject global and repo-scoped memories into any CI step so AI-assisted jobs have the same context as local agents. Generate a read-only token in [Settings → API keys](/settings/api-keys) and store it as `LOREKIT_TOKEN` in your repo secrets.
+
+**Inject memories before an AI step**
+
+Use a read-only token (lk_ro_…) stored as LOREKIT_TOKEN.
+
+```yaml
+- name: Inject LoreKit context
+  run: |
+    curl -s -X POST "$LOREKIT_MCP_URL" \
+      -H "Authorization: Bearer $LOREKIT_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "jsonrpc":"2.0","id":1,"method":"tools/call",
+        "params":{
+          "name":"memory.list",
+          "arguments":{
+            "scope":"repo::${{ github.repository }}",
+            "tags":["loop::aw-lessons"],
+            "limit":20
+          }
+        }
+      }'
+  env:
+    LOREKIT_MCP_URL: https://…/functions/v1/mcp
+    LOREKIT_TOKEN: ${{ secrets.LOREKIT_TOKEN }}
+```
+
+### Team playbook with org sharing
+
+Store deployment checklists, incident runbooks, and coding standards in an org so every team member's agent gets the same context automatically. Set up your org in [Settings → Organization](/settings/organization).
+
+**Write a shared team runbook**
+
+An admin writes; every member's agent reads it during planning.
+
+```json
+// Write once by a member/admin
+memory.write {
+  scope: "global",
+  key:   "team::incident-runbook",
+  value: "On-call: 1. Check Dash0. 2. Ping #incidents. 3. Write a post-mortem within 48h.",
+  org:   "my-team",
+  tags:  ["team::runbook", "source::manual"]
+}
+
+// Every agent in the org reads it
+memory.list {
+  scope: "global",
+  tags:  ["team::runbook"]
+}
+// → includes the org-owned entry for every member
+```
+
+**Bind a repo scope to the org**
+
+After binding, member agents auto-route writes without passing org every time.
+
+```json
+// Admin binds the scope from Settings → Organization → Shared scopes
+// scope: "repo::myteam/api" → org: "my-team"
+
+// Now any member write under this scope auto-routes to the org
+memory.write {
+  scope: "repo::myteam/api",
+  key:   "deploy-checklist",
+  value: "Always smoke-test staging before promoting."
+  // no "org" needed — binding routes it automatically
+}
+```
+
+### Branch-scoped experimentation
+
+Keep experimental memories on a feature branch so they don't pollute the repo set. Browse them in the [Explorer](/lore) with a branch scope filter, then promote to repo scope after the branch merges.
+
+**Write to a branch scope**
+
+Memory only surfaces when the agent is on this branch.
+
+```json
+memory.write {
+  scope: "branch::mthines/lorekit::feat/new-cache",
+  key:   "cache-invalidation-strategy",
+  value: "Use write-through for the session store; write-behind for lesson aggregates.",
+  tags:  ["wip"]
+}
+```
+
+**Promote to repo scope after merging**
+
+Once proven, promote the memory so it persists beyond the branch.
+
+```json
+// After merge: write the same key at repo scope, delete the branch copy
+memory.write {
+  scope: "repo::mthines/lorekit",
+  key:   "cache-invalidation-strategy",
+  value: "Use write-through for session store; write-behind for lesson aggregates."
+}
+memory.delete {
+  scope: "branch::mthines/lorekit::feat/new-cache",
+  key:   "cache-invalidation-strategy"
+}
+```
+
+### Transient memories with auto-expiry
+
+Not every memory should live forever. Pass `ttl_days` to `memory.write` and the entry automatically becomes invisible once the TTL elapses — no manual cleanup required. This is ideal for session-scoped signals: issues already triaged, PR reviews in progress, or any fact that is only relevant for a few days.
+
+**Flag a triaged issue (expires in 7 days)**
+
+The entry disappears automatically, so the agent won't revisit it next session.
+
+```json
+memory.write {
+  scope:    "repo::mthines/lorekit",
+  key:      "triage::ENG-123",
+  value:    "Already triaged — assigned to backend team, no action needed.",
+  ttl_days: 7
+}
+// → response includes expires_at so you can confirm the deadline
+// { id: "…", created_at: "…", expires_at: "2026-08-04T…" }
+```
+
+On an update, omitting ttl_days leaves the existing expiry unchanged. Pass a new ttl_days to refresh the countdown.
+
+**Renew a TTL on the next encounter**
+
+Update the value without resetting the expiry, or refresh both at once.
+
+```json
+// Update only the value — expiry stays where it was
+memory.write {
+  scope: "repo::mthines/lorekit",
+  key:   "triage::ENG-123",
+  value: "Triaged — backend confirmed fix ships Friday."
+}
+
+// Extend the countdown by supplying a new ttl_days
+memory.write {
+  scope:    "repo::mthines/lorekit",
+  key:      "triage::ENG-123",
+  value:    "Triaged — backend confirmed fix ships Friday.",
+  ttl_days: 3
+}
+```
+
+**Clean up expired entries explicitly**
+
+Expired rows are invisible to reads immediately. Call memory.purge_expired to reclaim storage.
+
+```json
+// Expired rows are hidden from all reads once expires_at passes.
+// Call memory.purge_expired to physically remove them and reclaim storage:
+memory.purge_expired {}
+// → { purged: 4 }
+```
+
+The CLI `npx @lorekit/cli list` always skips expired entries — you'll never see stale data in read results.
+
+<TutorialCallout variant="tip">
+
+The CLI `npx @lorekit/cli tree` command shows the full scope precedence hierarchy — which memory wins per key, and which are shadowed — so you can audit exactly what an agent will see before a task. You can also browse memories visually in the [Explorer](/lore).
+
+</TutorialCallout>

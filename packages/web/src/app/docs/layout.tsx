@@ -1,0 +1,63 @@
+import type { Metadata } from 'next';
+import Image from 'next/image';
+import Link from 'next/link';
+import { SiteFooter } from '@/components/layout/SiteFooter';
+import { DocsNav } from '@/components/docs/DocsNav';
+import { DocsSearch } from '@/components/docs/DocsSearch';
+import { DocsAuthCta } from '@/components/docs/DocsAuthCta';
+import { getDocsSearchIndex } from '@/lib/docs/content';
+
+export const metadata: Metadata = {
+  title: { default: 'Documentation', template: '%s — LoreKit docs' },
+  description: 'Guides and reference for LoreKit — shared, persistent memory for AI coding agents.',
+};
+
+/**
+ * Public docs shell. Deliberately NOT under `(dashboard)` — it has no auth gate,
+ * so a logged-out visitor can read every guide. Provides its own chrome (logo,
+ * full-text search, sign-in CTA), the `/docs` nav rail, and the shared footer.
+ *
+ * The search index is read once, server-side, and embedded into this statically
+ * rendered layout, so search works with zero runtime filesystem access.
+ */
+export default function DocsLayout({ children }: { children: React.ReactNode }) {
+  const searchIndex = getDocsSearchIndex();
+
+  return (
+    <div className="flex min-h-screen flex-col bg-[var(--color-bg)]">
+      <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 border-b border-[var(--color-border)] bg-[var(--color-bg)]/90 px-6 backdrop-blur md:px-10">
+        <Link href="/" className="flex shrink-0 items-center gap-2.5">
+          <Image
+            src="/icons/icon-192.png"
+            alt="LoreKit"
+            width={32}
+            height={32}
+            className="shrink-0 rounded-xl"
+            priority
+          />
+          <span className="text-sm font-semibold text-[var(--color-content-primary)]">
+            LoreKit <span className="text-[var(--color-content-tertiary)]">docs</span>
+          </span>
+        </Link>
+
+        <div className="hidden flex-1 justify-center sm:flex">
+          <DocsSearch index={searchIndex} />
+        </div>
+
+        <DocsAuthCta />
+      </header>
+
+      {/* Mobile search — full width below the header, where the centred box won't fit. */}
+      <div className="border-b border-[var(--color-border)] px-6 py-3 sm:hidden">
+        <DocsSearch index={searchIndex} />
+      </div>
+
+      <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 px-6 py-8 md:flex-row md:gap-10 md:py-12">
+        <DocsNav />
+        <main className="min-w-0 flex-1">{children}</main>
+      </div>
+
+      <SiteFooter />
+    </div>
+  );
+}

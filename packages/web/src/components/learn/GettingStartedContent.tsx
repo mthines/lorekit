@@ -210,14 +210,14 @@ export function GettingStartedContent({ isPublic = false }: Props) {
         <TutorialCallout>
           <strong>Next steps:</strong> see the{' '}
           <Link
-            href="/learn/remote"
+            href="/docs/remote"
             className="text-[var(--color-accent)] underline underline-offset-2"
           >
             Remote storage
           </Link>{' '}
           tutorial for token tiers and CI injection, or{' '}
           <Link
-            href="/learn/organization"
+            href="/docs/organization"
             className="text-[var(--color-accent)] underline underline-offset-2"
           >
             Team sharing

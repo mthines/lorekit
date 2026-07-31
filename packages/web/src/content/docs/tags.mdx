@@ -1,0 +1,137 @@
+---
+title: "Tags & scopes"
+description: "Scopes partition lore by location (global, repo, branch). Tags are free-form labels that cut across scopes — use them to identify memory type, source agent, workflow, or any dimension you care about."
+order: 6
+keywords: ["tags", "scopes", "global", "project", "repo", "branch", "namespace", "memory.write", "memory.list", "memory.search", "wildcards", "precedence", "cli"]
+---
+
+**Scope reference**
+
+| Type | Format | When to use |
+| --- | --- | --- |
+| `global` | `global` | Universal principles — always apply |
+| `project` | `project::{name}` | Memories shared across a monorepo |
+| `repo` | `repo::{owner}/{repo}` | Memories about this repo's codebase |
+| `branch` | `branch::{owner}/{repo}::{branch}` | Experimental learnings on a feature branch |
+
+`::` is the only valid separator. Single `:` or `/` returns a 400 error. All segments are lowercased on ingest.
+
+<TutorialStep number={1} title="Choose the right scope">
+
+Use the narrowest scope that correctly describes where the memory applies:
+
+```text
+// Universal: always apply to every agent everywhere
+scope: "global"
+
+// Repo-level: applies to this codebase
+scope: "repo::mthines/my-app"
+
+// Branch-level: experimental, won't pollute the repo set
+scope: "branch::mthines/my-app::feat/new-auth"
+
+// Project-level: shared across a monorepo
+scope: "project::my-monorepo"
+```
+
+</TutorialStep>
+
+<TutorialStep number={2} title="Add tags when writing">
+
+Tags are arbitrary strings. Use a `namespace::value` convention to keep them readable:
+
+```json
+memory.write {
+  scope:  "global",
+  key:    "aw-lessons::worktree-naming",
+  value:  "Always use the branch name as the worktree directory name.",
+  tags:   ["skill::aw", "source::stuck-loop", "loop::aw-lessons"],
+  source_agent: "aw-executor",
+  trigger: "stuck-loop"
+}
+```
+
+Common tag namespaces used in the ecosystem:
+
+- `skill::aw` / `skill::fix-bug` — which skill owns the memory (see the [autonomous-workflow](https://github.com/mthines/agent-skills/tree/main/skills/workflow/autonomous-workflow) skill in [mthines/agent-skills](https://github.com/mthines/agent-skills))
+- `loop::aw-lessons` — part of the AW self-improvement loop
+- `source::stuck-loop` / `source::pr-webhook` — what triggered the write
+
+</TutorialStep>
+
+<TutorialStep number={3} title="Filter by tag when listing">
+
+Pass `tags` to `memory.list` to narrow results:
+
+```json
+memory.list {
+  scope: "global",
+  tags:  ["loop::aw-lessons"],
+  limit: 50
+}
+```
+
+</TutorialStep>
+
+<TutorialStep number={4} title="Search across scopes with wildcards">
+
+`memory.search` supports owner-level wildcards in the `scopes` parameter:
+
+```json
+memory.search {
+  q:      "worktree naming conflict",
+  scopes: ["repo::mthines/*", "global"],
+  tags:   ["skill::aw"],
+  limit:  10
+}
+```
+
+Wildcards only work in `memory.search` — not in `memory.read`, `memory.list`, or `memory.delete`.
+
+</TutorialStep>
+
+<TutorialStep number={5} title="Read narrow-to-broad before a task">
+
+Agents should read from specific scopes first, then merge with broader ones. More-specific scopes win when the same key exists at multiple levels:
+
+```json
+// Read order for a task on branch feat/x in mthines/gw-tools
+memory.list { scope: "branch::mthines/gw-tools::feat/x" }
+memory.list { scope: "repo::mthines/gw-tools" }
+memory.list { scope: "project::gw-tools" }    // monorepo only
+memory.list { scope: "global" }
+```
+
+</TutorialStep>
+
+<TutorialStep number={6} title="Inspect with the CLI">
+
+The CLI offers several commands that respect the same scope/tag logic. You can also browse memories visually in the [Explorer](/lore).
+
+```bash
+# Human-readable view of all applicable memories
+npx @lorekit/cli list
+
+# Full-text search
+npx @lorekit/cli search "worktree"
+
+# Inspect one memory in full
+npx @lorekit/cli show --scope global --key aw-lessons::worktree-naming
+
+# Scope precedence tree (which memory wins per key)
+npx @lorekit/cli tree
+
+# Flag low-quality or malformed memories
+npx @lorekit/cli lint
+
+# Find near-duplicates (Jaccard similarity)
+npx @lorekit/cli dedupe
+```
+
+</TutorialStep>
+
+<TutorialCallout>
+
+**Next:** see how tags, scopes, and org sharing come together in real-world patterns. See the [Use cases tutorial](/docs/use-cases).
+
+</TutorialCallout>
