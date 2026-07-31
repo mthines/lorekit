@@ -46,9 +46,17 @@ export async function handleCreate(
     p_trigger: body.trigger ?? null,
     p_created_at: null,
     p_org_slug: body.org ?? null,
-    p_ttl_days: body.ttl_days ?? null,
+    // Migration 00038 replaced p_ttl_days with p_ttl_seconds. PostgREST resolves
+    // an RPC by argument NAME, so sending the old name misses the function
+    // entirely (PGRST202) — which surfaces as an opaque 500, not a 404.
+    // `ttl_days` stays the REST field name (CreateMemoryBodySchema bounds it to
+    // an integer 1–365); the days→seconds conversion happens here, exactly as
+    // mcp/tools.ts and mcp-core's write.ts normalise via parseTtl().
+    p_ttl_seconds: body.ttl_days != null ? body.ttl_days * 86_400 : null,
     p_clear_ttl: body.clear_ttl ?? false,
-  });
+    // `.single()` because memory_write RETURNS TABLE — without it the traced
+    // client resolves an array and the `row?.id` guard below always throws.
+  }).single();
 
   if (error) {
     const mapped = translateDbError(error);
