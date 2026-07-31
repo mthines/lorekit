@@ -181,9 +181,20 @@ are completed:
 ### 1. Register the GitHub App
 
 - Navigate to GitHub → Settings → Developer settings → GitHub Apps → New GitHub App.
-- Set the Setup URL to `https://lorekit.io/api/auth/callback` and enable
-  "Redirect on update" so re-configuring an existing install also bounces back
-  (this is what lets `handleSetupReturn` record an already-existing install).
+- **User authorization callback URL:** `https://lorekit.io/api/auth/callback`.
+- **Post-install redirect — pick ONE, both land on the callback route:**
+  - If **"Request user authorization (OAuth) during installation"** is enabled
+    (recommended), GitHub **disables the separate "Setup URL" field** — the
+    callback URL above serves both roles, and the post-install redirect carries
+    `code` + `installation_id` together (`auth/callback/route.ts` already
+    exchanges the code first, then links). Nothing to set in "Setup URL".
+  - If OAuth-during-install is **off**, set **"Setup URL (optional)"** to the
+    same `https://lorekit.io/api/auth/callback` instead.
+- **Enable "Redirect on update".** Without it, re-configuring an
+  **already-installed** App never bounces back with the `installation_id`, so an
+  existing install can't be linked short of uninstalling and reinstalling. This
+  is the switch that lets `handleSetupReturn` record an install that predates
+  this endpoint.
 - Configure webhook URL:
   `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp/webhooks/github`.
 - Generate a webhook secret (strong random value, 32+ bytes).
