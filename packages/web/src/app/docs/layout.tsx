@@ -36,14 +36,14 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
       <CommandPalette />
       <DocsCommands />
       <div className="flex min-h-screen flex-col bg-[var(--color-bg)]">
-        <header className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-b border-[var(--color-border)] bg-[var(--color-bg)]/90 px-6 py-3 backdrop-blur sm:h-16 sm:py-0 md:px-10">
+        <header className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-x-4 gap-y-2.5 border-b border-[var(--color-border)] bg-[var(--color-bg)]/90 px-6 py-2.5 backdrop-blur sm:h-14 sm:py-0 md:px-10">
           <Link href="/" className="order-1 flex shrink-0 items-center gap-2.5">
             <Image
               src="/icons/icon-192.png"
               alt="LoreKit"
-              width={32}
-              height={32}
-              className="shrink-0 rounded-xl"
+              width={28}
+              height={28}
+              className="shrink-0 rounded-lg"
               priority
             />
             <span className="text-sm font-semibold text-[var(--color-content-primary)]">

@@ -38,10 +38,13 @@ export function DocsAuthCta() {
   return (
     <Link
       href={href}
-      className="inline-flex min-h-11 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 text-sm font-medium text-[#000] transition-opacity duration-200 hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
+      // Subtle, secondary affordance — a hairline-bordered ghost button that
+      // warms to the accent on hover — so it sits with the header rather than
+      // shouting over the content (was a solid amber fill).
+      className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 text-sm font-medium text-[var(--color-content-secondary)] transition-colors duration-200 hover:border-[var(--color-accent-glow)] hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
     >
       {label}
-      <ArrowRight className="size-4" aria-hidden />
+      <ArrowRight className="size-3.5 opacity-70" aria-hidden />
     </Link>
   );
 }
