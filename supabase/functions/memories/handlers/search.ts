@@ -4,7 +4,7 @@ import { validateBody } from '../../_shared/api/validate.ts';
 import { buildPage, decodeCursor } from '../../_shared/api/paginate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
-import { SearchMemoriesBodySchema } from '@lorekit/schemas/memory';
+import { SearchMemoriesBodySchema } from '../../_shared/schemas/memory.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
 import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';

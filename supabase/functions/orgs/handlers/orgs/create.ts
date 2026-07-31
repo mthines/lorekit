@@ -3,7 +3,7 @@ import { created } from '../../../_shared/api/respond.ts';
 import { validateBody } from '../../../_shared/api/validate.ts';
 import { createTracedClient } from '../../../_shared/otel.ts';
 import type { Span } from '../../../_shared/otel.ts';
-import { CreateOrgBodySchema } from '@lorekit/schemas/org';
+import { CreateOrgBodySchema } from '../../../_shared/schemas/org.ts';
 import { translateDbError } from '../../../_shared/api/errors.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
 

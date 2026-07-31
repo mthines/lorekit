@@ -1,7 +1,7 @@
 import { traceRequest } from '../_shared/otel.ts';
 import { corsHeaders, handlePreflight } from '../_shared/api/cors.ts';
 import { internalError } from '../_shared/api/respond.ts';
-import { generateSpec } from '@lorekit/schemas/openapi/spec';
+import { generateSpec } from '../_shared/schemas/openapi/spec.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? 'https://pqokxlhvnosogizsjztg.supabase.co';
 const BASE_URL = `${SUPABASE_URL}/functions/v1`;

@@ -65,37 +65,37 @@ verify_jwt = false
 [functions.health]
 verify_jwt = false
 
-# memories/orgs/openapi are the three functions that import `@lorekit/schemas/*`
-# and `zod` as BARE specifiers, so they are the three that need the import map
-# declared. It is not implicit: older Supabase CLI versions auto-discovered
-# `supabase/functions/import_map.json`, current ones do not, and because
-# `setup-cli` here pins `version: latest` the behaviour changed under us with no
-# commit to blame. Without this line Deno never sees the map and dies at boot
-# with `Relative import path "@lorekit/schemas/memory" not prefixed with / or
-# ./ or ../` — a BOOT_ERROR, not an import error, which is why it surfaced only
-# as an opaque 503 from the REST passthrough.
+# No function declares an import map, and none needs one: every specifier under
+# `supabase/functions/` is either relative or a fully-qualified `npm:` / `node:`
+# one that Deno resolves on its own.
 #
-# mcp/health deliberately have no entry: they are self-contained (only
-# `npm:@supabase/supabase-js@2`, a fully-qualified specifier that needs no map),
-# per the "Edge Function is self-contained Deno" decision in CLAUDE.md. That is
-# also why those two kept booting fine while these three did not.
+# That is deliberate. memories/orgs/openapi used to import `@lorekit/schemas/*`
+# and `zod` as BARE specifiers, which only resolve if something hands Deno
+# `supabase/functions/import_map.json`. Nothing did — older Supabase CLI
+# versions auto-discovered that filename, current ones do not, and `setup-cli`
+# pins `version: latest`, so the behaviour changed with no commit to blame. All
+# three died at boot with `Relative import path "@lorekit/schemas/memory" not
+# prefixed with / or ./ or ../`, surfacing only as an opaque 503 BOOT_ERROR
+# through the REST passthrough. Declaring `import_map` per function here was
+# tried and did NOT reach the local `supabase start` runtime.
 #
-# The path is relative to this file's directory (`supabase/`).
-# `edge-import-map.spec.ts` fails the build if a function starts using a bare
-# specifier without an entry here.
+# The schemas are now mirrored into `supabase/functions/_shared/schemas/`
+# (`node scripts/sync-edge-schemas.mjs`, guarded by `edge-schema-parity.spec.ts`)
+# and imported relatively, matching the `limits.ts` / `permissions.ts` mirrors
+# and the "Edge Function is self-contained Deno" decision in CLAUDE.md. mcp and
+# health always followed that rule, which is exactly why they never broke.
+#
+# `edge-bare-specifier.spec.ts` fails the build if a bare specifier reappears.
 [functions.memories]
 verify_jwt = false
-import_map = "./functions/import_map.json"
 [functions.memories.secrets]
 
 [functions.orgs]
 verify_jwt = false
-import_map = "./functions/import_map.json"
 [functions.orgs.secrets]
 
 [functions.openapi]
 verify_jwt = false
-import_map = "./functions/import_map.json"
 [functions.openapi.secrets]
 
 [analytics]
