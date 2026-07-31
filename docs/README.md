@@ -10,6 +10,7 @@
 | [api-tokens.md](./api-tokens.md) | Developers | Token types, permissions, generation, CI usage |
 | [limits.md](./limits.md) | Agents + developers | Memory cap, rate limiting, per-user overrides, 429 semantics |
 | [otel.md](./otel.md) | Developers | Dash0 setup, custom spans, environment variables |
+| [telemetry-quality-review.md](./telemetry-quality-review.md) | Developers | Cross-service `traceparent` correlation contract, telemetry-quality review vs OTel semantic conventions, and the tests that guard it |
 | [deployment.md](./deployment.md) | Developers | Step-by-step deployment for all three pieces |
 | [storybook.md](./storybook.md) | Developers | Web Storybook: MSW-mocked full-page stories, determinism, and deploying Storybook as a second Vercel project |
 | [releasing.md](./releasing.md) | Developers | Automated `@lorekit/cli` npm releases via release-please + conventional commits |

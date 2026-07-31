@@ -13,6 +13,11 @@ LoreKit emits traces, metrics, and logs to Dash0 from every layer of the stack.
 
 All signals carry `service.namespace=lorekit` so you can filter the full stack in one Dash0 query.
 
+> For how the four services correlate into one trace (W3C `traceparent`
+> propagation), a review of telemetry quality against the OTel semantic
+> conventions, and the tests that guard both, see
+> [telemetry-quality-review.md](./telemetry-quality-review.md).
+
 ---
 
 ## Custom spans (Edge Function)

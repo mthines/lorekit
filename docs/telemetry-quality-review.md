@@ -1,0 +1,114 @@
+# Telemetry quality & cross-service correlation review
+
+_Reviewed: 2026-07 · Scope: traces, metrics, and W3C context propagation across
+`cli`, `api` (edge), `mcp-node`, and `web`._
+
+This review answers two questions: **(1) is LoreKit's telemetry actually
+generated correctly and correlated across services?** and **(2) does it meet
+OTel semantic-convention and instrumentation best practices?** It was graded
+against the Dash0 `otel-semantic-conventions` and `otel-instrumentation` skills.
+
+Verdict: **the correlation architecture is sound and now regression-guarded by
+tests.** One clear semantic-convention bug was found and fixed; the rest are
+lower-severity recommendations.
+
+---
+
+## How correlation works (verified)
+
+Every component propagates one W3C `traceparent` through a single pure seam:
+`parseTraceparent` (receiver) and `formatTraceparent` (sender), which live in
+`packages/mcp-core/src/trace-context.ts` and are mirrored verbatim into every
+edge function (`supabase/functions/_shared/trace-context.ts`). The zero-dep CLI
+re-implements the same header format in `packages/cli/src/telemetry.mjs`.
+
+```
+agent ─traceparent→ mcp-node ─traceparent→ api (edge) ─→ Postgres
+  cli ─traceparent→ api (edge)
+  web ─traceparent→ api (edge)          (browser + server, via @vercel/otel)
+```
+
+- **CLI → api / MCP → api**: the receiver continues the inbound trace (same
+  `trace_id`, fresh `span_id`, `parent_span_id` = caller's span) or, if the
+  header is invalid, starts a **new root** rather than emitting a corrupt span.
+- **Response echo**: the edge echoes its SERVER span back as a `traceparent`
+  response header (`Access-Control-Expose-Headers: traceparent`) so the caller
+  can link to it.
+- **Sampled flag** is recorded (`flags`) and propagated but never gates export —
+  export is AlwaysOn, sampling is deferred to the Dash0 pipeline.
+
+### Tests added
+
+| File | Proves |
+|------|--------|
+| `packages/mcp-core/src/otel-correlation.spec.ts` | CLI→api and MCP→api join one trace with correct parent/child linkage; N REST calls become siblings under the command span; the echoed header points back at the server span; a 3-service chain preserves one `trace_id`; invalid inbound → fresh root; the sampled flag is data, not an export gate; the zero-dep CLI header is byte-identical to `formatTraceparent`. |
+| `packages/mcp-core/src/otel-conventions.spec.ts` | Drift guards: the four components declare **distinct** `service.name` values (`cli`/`api`/`mcp-node`/`web`); `service.namespace=lorekit` everywhere; edge span kinds SERVER(root)/CLIENT(db)/INTERNAL(child) with OTLP wire values; `faas.name` distinguishes the five edge functions; export never branches on `sampled`; every tool span carries `lorekit.tool.name` and feeds the `lorekit.tool.duration` histogram with low-cardinality attributes. Plus unit coverage of the histogram accessor (name, memoization, no-throw record). |
+| `packages/cli/test/telemetry.test.mjs` (extended) | `os.type` / `host.arch` emit OTel-registry values (see bug below). |
+
+These complement the pre-existing suites: `trace-context.spec.ts` (strict W3C
+parse/format), `edge-parity.spec.ts` (the CLI/edge mirror can't drift),
+`packages/mcp-server/src/otel-propagation.spec.ts` (OTel context API), and the
+existing `telemetry.test.mjs` (config, opt-out, payload shape, PII posture).
+
+---
+
+## Bug fixed
+
+**`os.type` / `host.arch` emitted Node spellings, not OTel-registry values**
+(`packages/cli/src/telemetry.mjs`). The CLI resource set `os.type` from
+`process.platform` (`win32`, `sunos`) and `host.arch` from `process.arch`
+(`x64`, `ia32`, `arm`). Those Node spellings are **not** members of the OTel
+`os.type` / `host.arch` registries (`windows`, `solaris` / `amd64`, `x86`,
+`arm32`), so a Dash0/OTel-native backend can't group them with telemetry from
+other SDKs. Fixed with pure `normalizeOsType` / `normalizeHostArch` mappings
+(canonical/unknown values pass through) plus tests. Low blast radius: CLI
+resource attributes only.
+
+---
+
+## Recommendations (not applied — design/judgment calls)
+
+1. **`db.query.text` and DB span names inline literal filter values**
+   (`_shared/otel.ts` `buildSql`). Span names like
+   `SELECT ... FROM memories WHERE scope = 'repo::acme/x' AND key = '...'` are
+   **high-cardinality** (an anti-pattern for span names, which should group) and
+   put user-controlled values (scope, key, filter args) into `db.query.text`,
+   which the semantic conventions define as the **parameterized/sanitized**
+   statement. Recommend: name the span by operation + table
+   (`SELECT memories`) and set `db.query.text` to the statement with
+   placeholders (`... WHERE scope = $1 AND key = $2`), keeping literal values off
+   the span. This is a deliberate design change to all edge DB spans, so it is
+   left for maintainer sign-off rather than auto-applied.
+
+2. **`error.message` is a non-registry attribute.** `Span.error()` /
+   `clientError()` set `error.message`; the conventions use `exception.message`
+   (with `exception.type`) or `error.type`. Also, PostgREST error strings placed
+   there can carry incidental detail. Recommend migrating to `error.type` +
+   `exception.message`, and confirming no user data reaches the message.
+
+3. **Unhandled throws skip the response `traceparent` echo.** `traceRequest`'s
+   `catch` path rethrows without `withTraceparent`, so a caller can't correlate a
+   truly-thrown 500. Most handlers return error `Response`s (which are echoed),
+   so impact is small; consider echoing on the throw path too.
+
+4. **Successful spans set status `OK` explicitly.** The spec recommends leaving
+   status `UNSET` for success unless there's a reason to assert `OK`. Cosmetic;
+   consistent across CLI and edge, so low priority.
+
+---
+
+## What's already good
+
+- One `service.namespace=lorekit`; distinct, documented `service.name` per
+  component; the "five edge functions are one `api` service, told apart by
+  `faas.name`" decision is correct and now guarded.
+- Correct span kinds for service-map edges (SERVER/CLIENT), with the API-enum vs
+  OTLP-wire kind values used correctly in each layer.
+- Strong **no-PII posture** in CLI telemetry: bounded flag allow-list, bounded
+  error labels (`err.code` / constructor name, never `err.message`), opt-out via
+  `LOREKIT_TELEMETRY` / `DO_NOT_TRACK`.
+- `lorekit.tool.duration` histogram uses unit `s` and low-cardinality dimensions
+  (`lorekit.tool.name`, `lorekit.scope.type`); the CLI counter is a monotonic
+  DELTA sum — both appropriate.
+- Context propagation is **decoupled from export**: even a telemetry-disabled
+  CLI still sends `traceparent` so server-side traces correlate.
