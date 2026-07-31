@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { Github } from 'lucide-react';
 import { listGithubInstallations } from '@/lib/github-installations';
 import { listMyOrgs } from '@/lib/orgs';
-import { listScopeBindings } from '@/lib/scope-bindings';
+import { listScopeBindingsForOrgs } from '@/lib/scope-bindings';
 import { manageableOrgs, type BindingsByScope } from '@/lib/github-app-bindings';
 import { resolveGithubAppInstallUrl } from '@/lib/github-app-url';
 import { GithubAppManager } from '@/components/dashboard/GithubAppManager';
@@ -28,16 +28,17 @@ export default async function IntegrationsSettingsPage() {
   const appInstallUrl = resolveGithubAppInstallUrl();
 
   // Repo→org binding context for the GitHub App card. Bindings from EVERY org
-  // the user belongs to (so a repo bound by any org shows its badge); the
-  // admin/owner-only bind/unbind affordances are gated to `manageable` orgs.
-  const orgBindings = await Promise.all(orgs.map((org) => listScopeBindings(org.id)));
+  // the user belongs to (so a repo bound by any org shows its badge) in one
+  // RLS-scoped read; the admin/owner-only bind/unbind affordances are gated to
+  // `manageable` orgs in the card.
+  const orgBySlugId = new Map(orgs.map((org) => [org.id, org]));
+  const bindings = await listScopeBindingsForOrgs(orgs.map((org) => org.id));
   const bindingsByScope: BindingsByScope = {};
-  orgs.forEach((org, i) => {
-    for (const binding of orgBindings[i]) {
-      // A scope is globally unique to one org (00026), so no cross-org collision.
-      bindingsByScope[binding.scope] = { orgId: org.id, orgSlug: org.slug };
-    }
-  });
+  for (const binding of bindings) {
+    const org = orgBySlugId.get(binding.org_id);
+    // A scope is globally unique to one org (00026), so no cross-org collision.
+    if (org) bindingsByScope[binding.scope] = { orgId: org.id, orgSlug: org.slug };
+  }
 
   return (
     <div className="flex flex-col gap-4">

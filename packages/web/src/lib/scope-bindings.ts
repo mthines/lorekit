@@ -95,6 +95,31 @@ export async function listScopeBindings(orgId: string): Promise<ScopeBinding[]> 
   return (data ?? []) as ScopeBinding[];
 }
 
+/**
+ * List scope bindings across several orgs in ONE RLS-scoped read, instead of
+ * one `listScopeBindings` call (client + `auth.getUser()`) per org. RLS
+ * (`rls_scope_bindings_select`) already restricts rows to orgs the caller is a
+ * member of, so a non-member org id in `orgIds` simply returns nothing.
+ */
+export async function listScopeBindingsForOrgs(orgIds: string[]): Promise<ScopeBinding[]> {
+  if (orgIds.length === 0) return [];
+  const supabase = await createServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return [];
+
+  const { data, error } = await supabase
+    .from('org_scope_bindings')
+    .select('id, org_id, scope, created_by, created_at')
+    .in('org_id', orgIds)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('[listScopeBindingsForOrgs] DB error:', error.message);
+    return [];
+  }
+  return (data ?? []) as ScopeBinding[];
+}
+
 /** Translate a raw Supabase error from a scope-binding RPC into a user-facing message. */
 function translateScopeError(message: string, code: string | undefined): string {
   if (message.startsWith('scope_bound_elsewhere:')) {
