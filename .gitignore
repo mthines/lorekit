@@ -29,6 +29,9 @@ tmp/
 .agent/
 .vercel
 
+# Agent-isolation worktrees (transient; harness-created, auto-cleaned)
+.claude/worktrees/
+
 # aw-tester captured auth sessions (secrets — never commit)
 .auth/
 
