@@ -2618,6 +2618,165 @@ begin
 end;
 $$;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 60. Memory RPC actor guard — 00043_memory_rpc_actor_guard.sql
+-- ═══════════════════════════════════════════════════════════════════════════
+-- archive_memory / restore_memory / purge_archived_memories /
+-- purge_expired_memories are SECURITY DEFINER and act on a caller-supplied
+-- p_user_id. 00043 makes that id inert for any non-service-role caller: the
+-- effective actor is auth.uid() unless the connection is service-role. These
+-- assertions are the security case the migration turns on — an authenticated
+-- caller naming another user's id must mutate NOTHING of that user's — plus a
+-- self-service regression check and a behavioural read-hiding check.
+
+insert into memories (user_id, scope, key, value, archived_at, expires_at) values
+  ('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived', 'd4 archived', now() - interval '90 days', null),
+  ('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-expired',  'd4 expired',  null, now() - interval '1 day'),
+  ('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-active',   'd4 active',   null, null),
+  ('00000000-0000-0000-0000-0000000000e5', 'project::actor-guard-mig', 'ag-e5',       'e5 active',   null, null);
+
+-- ── 60a. NEGATIVE: an authenticated caller cannot act on another user ────────
+-- e5 is authenticated and names d4 on every RPC. The guard forces e5's own id,
+-- so each call operates on e5's (empty) row set and d4's rows are untouched.
+do $$
+declare
+  v_purged_arch int;
+  v_purged_exp  int;
+  v_arch_id     uuid;
+  v_rest_id     uuid;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000e5","role":"authenticated"}', true);
+
+  select purge_archived_memories('00000000-0000-0000-0000-0000000000d4', 0) into v_purged_arch;
+  select purge_expired_memories('00000000-0000-0000-0000-0000000000d4')     into v_purged_exp;
+  select archive_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-active')   into v_arch_id;
+  select restore_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived') into v_rest_id;
+
+  reset role;
+
+  assert v_purged_arch = 0,
+    format('IDOR: e5 hard-deleted %s of d4''s archived rows by naming d4 as p_user_id', v_purged_arch);
+  assert v_purged_exp = 0,
+    format('IDOR: e5 hard-deleted %s of d4''s expired rows by naming d4 as p_user_id', v_purged_exp);
+  assert v_arch_id is null,
+    'IDOR: e5 archived one of d4''s rows by naming d4 as p_user_id';
+  assert v_rest_id is null,
+    'IDOR: e5 restored one of d4''s rows by naming d4 as p_user_id';
+
+  -- d4's three rows are all exactly as seeded.
+  assert exists (select 1 from memories
+                 where user_id='00000000-0000-0000-0000-0000000000d4'
+                   and key='ag-archived' and archived_at is not null),
+    'IDOR: d4''s archived row was purged or restored by e5';
+  assert exists (select 1 from memories
+                 where user_id='00000000-0000-0000-0000-0000000000d4' and key='ag-expired'),
+    'IDOR: d4''s expired row was purged by e5';
+  assert exists (select 1 from memories
+                 where user_id='00000000-0000-0000-0000-0000000000d4'
+                   and key='ag-active' and archived_at is null),
+    'IDOR: d4''s active row was archived by e5';
+end;
+$$;
+
+-- ── 60b. Self-service still works — d4 acting as itself ──────────────────────
+do $$
+declare
+  v_arch_id    uuid;
+  v_rest_id    uuid;
+  v_purged_exp int;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000d4","role":"authenticated"}', true);
+
+  select archive_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-active')   into v_arch_id;
+  select restore_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived') into v_rest_id;
+  select purge_expired_memories('00000000-0000-0000-0000-0000000000d4') into v_purged_exp;
+
+  reset role;
+
+  assert v_arch_id is not null, 'self-service: d4 archiving its OWN active row must succeed';
+  assert v_rest_id is not null, 'self-service: d4 restoring its OWN archived row must succeed';
+  assert v_purged_exp >= 1,     'self-service: d4 purging its OWN expired row must delete it';
+  assert not exists (select 1 from memories
+                     where user_id='00000000-0000-0000-0000-0000000000d4' and key='ag-expired'),
+    'self-service: d4''s expired row should be gone after its own purge';
+end;
+$$;
+
+-- ── 60c. Read-hiding: archived rows (RLS) and expired rows (app predicate) ───
+-- The article's most-wanted assertion: an archived or expired row is absent
+-- from what a read returns. Archived rows are hidden by the rls_read policy
+-- (archived_at is null); expiry is NOT in RLS — the read tools apply
+-- `(expires_at is null or expires_at > now())` in the query layer, so this
+-- replicates that exact predicate.
+insert into memories (user_id, scope, key, value, archived_at, expires_at) values
+  ('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-read', 'hidden-archived', 'x', now(), null),
+  ('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-read', 'hidden-expired',  'x', null, now() - interval '1 hour'),
+  ('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-read', 'visible-active',  'x', null, null);
+
+do $$
+declare
+  v_active_visible            int;
+  v_archived_visible          int;
+  v_expired_without_predicate int;
+  v_expired_via_predicate     int;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000d4","role":"authenticated"}', true);
+
+  select count(*) into v_active_visible
+    from memories where scope='project::actor-guard-read' and key='visible-active';
+  select count(*) into v_archived_visible
+    from memories where scope='project::actor-guard-read' and key='hidden-archived';
+  select count(*) into v_expired_without_predicate
+    from memories where scope='project::actor-guard-read' and key='hidden-expired';
+  select count(*) into v_expired_via_predicate
+    from memories
+   where scope='project::actor-guard-read' and key='hidden-expired'
+     and (expires_at is null or expires_at > now());
+
+  reset role;
+
+  assert v_active_visible = 1,
+    'read-hiding: an active row must be visible to a normal read';
+  assert v_archived_visible = 0,
+    'read-hiding: an archived row must be hidden from a normal RLS-scoped read (rls_read: archived_at is null)';
+  assert v_expired_without_predicate = 1,
+    'read-hiding: expiry is app-layer, so RLS alone still returns an expired row — guards against assuming RLS hides it';
+  assert v_expired_via_predicate = 0,
+    'read-hiding: the read tools'' (expires_at is null or expires_at > now()) predicate must exclude an expired row';
+end;
+$$;
+
+-- ── 60d. Grant guard: least-privilege EXECUTE, never anon ────────────────────
+do $$
+declare
+  v_sig  text;
+  v_sigs text[] := array[
+    'archive_memory(uuid, text, text)',
+    'restore_memory(uuid, text, text)',
+    'purge_archived_memories(uuid, integer)',
+    'purge_expired_memories(uuid)'
+  ];
+begin
+  assert array_length(v_sigs, 1) = 4,
+    'grant guard: expected 4 signatures to check (anti-vacuity)';
+
+  foreach v_sig in array v_sigs loop
+    assert has_function_privilege('authenticated', v_sig, 'EXECUTE'),
+      format('authenticated lost EXECUTE on %s', v_sig);
+    assert has_function_privilege('service_role', v_sig, 'EXECUTE'),
+      format('service_role lost EXECUTE on %s', v_sig);
+    assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
+      format('%s must not be executable by anon after 00043 (default PUBLIC grant revoked)', v_sig);
+  end loop;
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
