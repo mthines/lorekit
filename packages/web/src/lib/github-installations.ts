@@ -22,6 +22,7 @@ import { createServerClient } from '@/lib/supabase/server';
 import { createAdminClient, SupabaseAdminConfigError } from '@/lib/supabase/admin';
 import { revalidatePath } from 'next/cache';
 import { recordAuditEvent } from '@/lib/audit-log';
+import { resolveMcpUrls } from '@/lib/mcp-url';
 
 export interface GithubInstallation {
   id: string;
@@ -95,21 +96,25 @@ export async function listGithubInstallations(): Promise<GithubInstallation[]> {
  * with query params:
  *   ?installation_id=<id>&setup_action=install[&state=<state>]
  *
- * This action:
- *   1. Verifies the user is authenticated (RLS — no trust of caller-supplied ids).
- *   2. Associates the installation with the user's session if the installation
- *      is pending and the github_account_id matches their GitHub identity.
- *   3. Records an audit event.
+ * This action records the installation immediately, so it appears in the
+ * dashboard WITHOUT waiting on a webhook delivery or on GITHUB_APP_ENABLED:
+ *   1. Verifies the user is authenticated (no trust of caller-supplied ids).
+ *   2. Calls the edge `installations/sync` endpoint with the user's JWT. That
+ *      endpoint resolves the installation's account + repos via the App private
+ *      key (a Supabase secret — never exposed to this Next.js runtime), applies
+ *      the same own-account entitlement rule the webhook reconcile uses, and
+ *      upserts the row.
+ *   3. Records an audit event when the row is linked to the caller.
  *
- * The `state` parameter is correlation-only — it never grants access.  Access
- * is always derived from the authenticated session (auth.uid() + RLS).
+ * If the App credentials are not provisioned (endpoint replies
+ * `app_not_configured`) or the endpoint is unreachable, it falls back to the
+ * webhook-driven linking path (`linkPendingInstallation`) — behaviour is never
+ * worse than before.
+ *
+ * The `state` parameter is correlation-only — it never grants access. Access is
+ * always derived from the authenticated session (auth.uid() + RLS).
  *
  * Returns { ok: true } on success, { ok: false, error } on any failure.
- *
- * NOTE: In production the App must be registered and GITHUB_APP_ENABLED set.
- * Until then, installations arrive but stay pending until the next login.
- * This action gracefully handles the pending case (no-op when no matching
- * installation exists for the session user's GitHub account id).
  */
 export async function handleSetupReturn(
   installationId: number,
@@ -120,30 +125,85 @@ export async function handleSetupReturn(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: 'not_authenticated' };
 
-  // Resolve the user's GitHub account id from their GitHub identity.
-  // user.identities contains one entry per linked OAuth provider; look for the
-  // github entry directly rather than checking app_metadata.providers (which
-  // may be absent for single-provider GitHub-only users).
-  const githubProviderData = user.identities?.find((identity) => identity.provider === 'github');
+  // Forward the caller's session JWT to the edge endpoint so authorization is
+  // server-derived from a verified identity, never a caller-supplied id.
+  const { data: { session } } = await supabase.auth.getSession();
+  const accessToken = session?.access_token;
 
-  if (!githubProviderData) {
-    // The user hasn't signed in via GitHub — cannot auto-associate.
-    // Log and return ok (no-op) so the dashboard still loads cleanly.
-    return { ok: true };
+  if (accessToken) {
+    const { mcpUrl } = resolveMcpUrls();
+    try {
+      const res = await fetch(`${mcpUrl}/installations/sync`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ installation_id: installationId }),
+        cache: 'no-store',
+      });
+      const result = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        status?: string;
+        account_login?: string;
+        error?: string;
+      };
+
+      if (res.ok && result.ok) {
+        if (result.status === 'linked') {
+          await recordAuditEvent({
+            action: 'github_app.installation_linked',
+            resourceType: 'github_installation',
+            resourceId: String(installationId),
+            target: String(installationId),
+            metadata: {
+              setup_action: setupAction,
+              state: state ?? null,
+              account_login: result.account_login ?? null,
+            },
+          });
+        }
+        revalidatePath('/settings', 'layout');
+        return { ok: true };
+      }
+
+      // Only fall back when the App path is not provisioned; a genuine sync
+      // failure (bad installation, upsert error) is surfaced, not masked.
+      if (result.error && result.error !== 'app_not_configured') {
+        return { ok: false, error: result.error };
+      }
+    } catch {
+      // Endpoint unreachable — fall through to the webhook-driven fallback.
+    }
   }
+
+  return linkPendingInstallation(user, installationId, setupAction, state);
+}
+
+/**
+ * Fallback linker for when the sync endpoint's App credentials are absent.
+ *
+ * Links a pending installation row that a webhook delivery already created,
+ * scoped to the caller's own GitHub account id. This is the pre-sync-endpoint
+ * behaviour, retained so a deployment with a live webhook but no App API key
+ * still links installations. A no-op when no matching pending row exists.
+ */
+async function linkPendingInstallation(
+  user: { id: string; identities?: Array<{ provider: string; id: string }> },
+  installationId: number,
+  setupAction: string,
+  state?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  // Resolve the user's GitHub account id from their GitHub identity.
+  const githubProviderData = user.identities?.find((identity) => identity.provider === 'github');
+  if (!githubProviderData) return { ok: true };
 
   const githubAccountId = Number(githubProviderData.id);
   if (!githubAccountId) return { ok: true };
 
-  // Attempt to associate: update any pending installation for this account id
-  // with the current user's id (transition pending → linked).
-  // This is a service-role call because the pending row has user_id = NULL and
-  // is therefore invisible via RLS (which requires user_id = auth.uid()).
-  // We use a targeted update scoped to (installation_id, github_account_id)
-  // so we cannot affect any other user's installation.
-  // Shared helper: fails fast with a named error when the deployment is
-  // missing SUPABASE_SERVICE_ROLE_KEY, instead of supabase-js' opaque
-  // `supabaseKey is required.`
+  // Service-role call: the pending row has user_id = NULL and is invisible via
+  // RLS. Scoped to (installation_id, github_account_id) so it cannot affect any
+  // other user's installation.
   let supabaseAdmin;
   try {
     supabaseAdmin = createAdminClient();
@@ -161,31 +221,17 @@ export async function handleSetupReturn(
     .eq('github_account_id', githubAccountId)
     .maybeSingle();
 
-  if (lookupError) {
-    return { ok: false, error: lookupError.message };
-  }
+  if (lookupError) return { ok: false, error: lookupError.message };
+  if (!pendingInstall) return { ok: true };
+  if (pendingInstall.status === 'linked') return { ok: true };
 
-  if (!pendingInstall) {
-    // Installation not found — it may arrive shortly via webhook delivery.
-    // This is a safe no-op: the webhook reconcile will link it when it arrives.
-    return { ok: true };
-  }
-
-  if (pendingInstall.status === 'linked') {
-    // Already linked — idempotent no-op.
-    return { ok: true };
-  }
-
-  // Transition to linked.
   const { error: updateError } = await supabaseAdmin
     .from('github_installations')
     .update({ user_id: user.id, status: 'linked', updated_at: new Date().toISOString() })
     .eq('id', pendingInstall.id)
     .eq('status', 'pending');
 
-  if (updateError) {
-    return { ok: false, error: updateError.message };
-  }
+  if (updateError) return { ok: false, error: updateError.message };
 
   await recordAuditEvent({
     action: 'github_app.installation_linked',
