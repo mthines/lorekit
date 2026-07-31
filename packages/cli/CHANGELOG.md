@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.0](https://github.com/mthines/lorekit/compare/cli-v1.22.0...cli-v1.23.0) (2026-07-31)
+
+
+### Features
+
+* **rest:** org endpoints for API tokens, CLI fully on REST, and MCP traceparent (rollup of [#261](https://github.com/mthines/lorekit/issues/261) + [#232](https://github.com/mthines/lorekit/issues/232)) ([#266](https://github.com/mthines/lorekit/issues/266)) ([60cff35](https://github.com/mthines/lorekit/commit/60cff35d4569c604b850b915af2c08d6f716c376))
+
 ## [1.22.0](https://github.com/mthines/lorekit/compare/cli-v1.21.0...cli-v1.22.0) (2026-07-31)
 
 
