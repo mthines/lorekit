@@ -5,6 +5,7 @@ import { validateUuid } from '../../../_shared/api/validate.ts';
 import { createTracedClient } from '../../../_shared/otel.ts';
 import type { Span } from '../../../_shared/otel.ts';
 import { translateDbError } from '../../../_shared/api/errors.ts';
+import { recordRestAudit } from '../../../_shared/audit.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
 
 export async function handleRevokeInvite(req: Request, auth: AuthContext, db: DbClient, span: Span, params: Record<string,string>, cors: Record<string,string>): Promise<Response> {
@@ -21,5 +22,16 @@ export async function handleRevokeInvite(req: Request, auth: AuthContext, db: Db
     p_actor_user_id: actorUserId(auth),
   });
   if (error) { const m = translateDbError(error); if (m) return m.toResponse(cors); span.error(error.message); throw error; }
+
+  // Matches web's revokeInvite: the invite id only, no target — the org is not
+  // resolved on this path (the RPC derives it from the invite), and inventing a
+  // lookup purely to enrich the audit row would add a read the route does not
+  // otherwise need.
+  await recordRestAudit(db, span, auth, {
+    action: 'member.revoke',
+    resourceType: 'org_invite',
+    resourceId: idV.data,
+  });
+
   return noContent(cors);
 }

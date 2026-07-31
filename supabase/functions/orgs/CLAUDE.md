@@ -143,8 +143,10 @@ respectively. Emitting `member.remove` for a self-removal would make one operati
 differently depending on which client performed it.
 
 A failed audit write never fails the request — `recordRestAudit` cannot throw.
-`packages/mcp-core/src/rest-audit-usage.spec.ts` fails if any mutating route here stops
-calling it.
+`packages/mcp-core/src/rest-org-audit-usage.spec.ts` fails if any mutating route here
+stops calling it (and if a GET route starts). It resolves handlers through this
+function's own route table and imports, so a new route is covered the moment it is
+registered.
 
 ## Self-removal routing in `members/remove.ts`
 

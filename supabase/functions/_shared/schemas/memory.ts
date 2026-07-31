@@ -53,11 +53,17 @@ export type CreateMemoryBody = z.infer<typeof CreateMemoryBodySchema>;
  * handler, and scope+key are optional because the `/:id` form supplies neither.
  * `RawScopeSchema` (shape-only) rather than `ScopeSchema` for the same reason the
  * other REST schemas use it — normalisation happens downstream.
+ *
+ * `org` names an organization slug and switches the handler onto the role-gated
+ * `memory_delete` RPC (00020), exactly as the MCP `memory.delete` tool's `org`
+ * argument does. It is keyed on the natural key, so it is only valid together
+ * with `scope` + `key` — the `/:id` form plus `org` is rejected as a 400.
  */
 export const DeleteMemoryQuerySchema = z.object({
   scope: RawScopeSchema.optional(),
   key: z.string().min(1).max(512).optional(),
   force: z.enum(['true', 'false']).optional().default('false'),
+  org: z.string().min(1).max(50).optional(),
 });
 export type DeleteMemoryQuery = z.infer<typeof DeleteMemoryQuerySchema>;
 

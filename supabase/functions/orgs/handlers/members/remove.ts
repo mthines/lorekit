@@ -5,6 +5,7 @@ import { validateUuid, validateOrgSlug } from '../../../_shared/api/validate.ts'
 import { createTracedClient } from '../../../_shared/otel.ts';
 import type { Span } from '../../../_shared/otel.ts';
 import { translateDbError } from '../../../_shared/api/errors.ts';
+import { recordRestAudit } from '../../../_shared/audit.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
 import { isOrgMember } from '../../../_shared/api/tenant.ts';
 
@@ -64,6 +65,19 @@ export async function handleRemoveMember(
     span.error(error.message);
     throw error;
   }
+
+  // Two web server actions back this one route, and they audit under different
+  // actions: leaveOrg -> `member.leave`, removeMember -> `member.remove`. Both
+  // are admitted by the audit_log CHECK, and both record the affected user as
+  // resourceId with the org id as target, so the REST row is indistinguishable
+  // from the dashboard's. Discriminating on `isSelf` (the same flag that chose
+  // the RPC) keeps "I left" from reading as "someone removed me".
+  await recordRestAudit(db, span, auth, {
+    action: isSelf ? 'member.leave' : 'member.remove',
+    resourceType: 'org_member',
+    resourceId: idV.data,
+    target: orgId,
+  });
 
   return noContent(cors);
 }

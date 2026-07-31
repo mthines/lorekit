@@ -8,7 +8,13 @@ function makeInsertDb(result: { error: null | { message: string } }) {
 }
 
 describe('AUDIT_ACTIONS', () => {
-  it('enumerates exactly the 11 bounded actions', () => {
+  // Pinned to the audit_log `action` CHECK as last (re)defined by
+  // supabase/migrations/00042_audit_log_rest_org_actions.sql — same values,
+  // same order. An action missing here is a compile error at the call site; an
+  // action here that the CHECK rejects is SILENT audit loss (recordAudit
+  // swallows the rejection), which is why this is an exact-equality assertion
+  // and not a `toContain` set.
+  it('enumerates exactly the 24 bounded actions the audit_log CHECK admits', () => {
     expect(AUDIT_ACTIONS).toEqual([
       'api_key.create',
       'api_key.revoke',
@@ -21,6 +27,19 @@ describe('AUDIT_ACTIONS', () => {
       'memory.restore',
       'memory.delete',
       'limit.override',
+      'org.create',
+      'org.rename',
+      'org.delete',
+      'member.invite',
+      'member.accept',
+      'member.decline',
+      'member.revoke',
+      'member.remove',
+      'member.role_change',
+      'member.leave',
+      'scope.bind',
+      'scope.unbind',
+      'github_app.installation_linked',
     ]);
   });
 });

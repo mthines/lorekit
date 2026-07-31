@@ -6,6 +6,7 @@ import { createTracedClient } from '../../../_shared/otel.ts';
 import type { Span } from '../../../_shared/otel.ts';
 import { CreateOrgBodySchema } from '../../../_shared/schemas/org.ts';
 import { translateDbError } from '../../../_shared/api/errors.ts';
+import { recordRestAudit } from '../../../_shared/audit.ts';
 import type { DbClient } from '../../../_shared/api/auth.ts';
 
 export async function handleCreateOrg(req: Request, auth: AuthContext, db: DbClient, span: Span, _p: Record<string,string>, cors: Record<string,string>): Promise<Response> {
@@ -23,5 +24,16 @@ export async function handleCreateOrg(req: Request, auth: AuthContext, db: DbCli
     p_actor_user_id: actorUserId(auth),
   });
   if (error) { const m = translateDbError(error); if (m) return m.toResponse(cors); span.error(error.message); throw error; }
+
+  // Matches web's createOrg: the new org id as resourceId, the name as target,
+  // the slug in metadata. `lorekit_org_create` returns the bare id.
+  await recordRestAudit(db, span, auth, {
+    action: 'org.create',
+    resourceType: 'org',
+    resourceId: typeof data === 'string' ? data : null,
+    target: v.data.name,
+    metadata: { slug: v.data.slug },
+  });
+
   return created(data, cors);
 }

@@ -6,8 +6,17 @@
  * THE single audit writer for the whole edge tree. It lives in `_shared/`
  * (not `mcp/`) because both surfaces use it: the MCP tools
  * (`supabase/functions/mcp/tools.ts`) and the REST handlers
- * (`supabase/functions/memories/handlers/*.ts`). There must never be a second
- * edge audit writer — the two surfaces must produce comparable rows.
+ * (`supabase/functions/memories/handlers/*.ts` and
+ * `supabase/functions/orgs/handlers/**`). There must never be a second edge
+ * audit writer — the two surfaces must produce comparable rows.
+ *
+ * `recordRestAudit` (bottom of this file) is a thin REST-facing WRAPPER around
+ * `recordAudit`, not a second writer: it resolves the actor from an
+ * `AuthContext` and delegates the insert. It is the one member of this module
+ * with no counterpart in the Node mirror, because `AuthContext`/`Span` are edge
+ * concepts that do not exist in `@lorekit/core`. Everything above it —
+ * `AUDIT_ACTIONS`, the types, `buildAuditEntry`, `recordAudit` — stays
+ * line-for-line identical to the mirror apart from the import lines.
  *
  * Self-contained mirror of the shared Node audit writer (`@lorekit/core`'s
  * `src/audit.ts`) — the edge function has no cross-package imports (Deno /
@@ -40,7 +49,19 @@
  * always succeed regardless of user_id.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { auditUserId } from './api/auth.ts';
+import type { AuthContext, DbClient } from './api/auth.ts';
+import type { Span } from './otel.ts';
 
+/**
+ * The bounded audit vocabulary. This list MUST equal — same values, same
+ * order — the `audit_log_action_check` CHECK constraint as last (re)defined by
+ * `supabase/migrations/00042_audit_log_rest_org_actions.sql`, and the
+ * independently re-declared union in `packages/web/src/lib/audit-actions.ts`.
+ * An action the CHECK rejects is silent audit loss: `recordAudit` never throws,
+ * so Postgres' rejection is logged and swallowed. Widen the CHECK with a new
+ * forward-only migration first, then this list, then the web union.
+ */
 export const AUDIT_ACTIONS = [
   'api_key.create',
   'api_key.revoke',
@@ -53,6 +74,19 @@ export const AUDIT_ACTIONS = [
   'memory.restore',
   'memory.delete',
   'limit.override',
+  'org.create',
+  'org.rename',
+  'org.delete',
+  'member.invite',
+  'member.accept',
+  'member.decline',
+  'member.revoke',
+  'member.remove',
+  'member.role_change',
+  'member.leave',
+  'scope.bind',
+  'scope.unbind',
+  'github_app.installation_linked',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -107,5 +141,50 @@ export async function recordAudit(
     }
   } catch (err) {
     console.error(`[recordAudit] unexpected error for action=${input.action}:`, (err as Error).message);
+  }
+}
+
+/**
+ * The REST-facing convenience wrapper around {@link recordAudit}.
+ *
+ * A REST handler holds an `AuthContext`, not a resolved actor id, and every
+ * handler resolving that id itself is exactly how the two surfaces drift. This
+ * takes the context and resolves the actor through the ONE existing helper,
+ * `auditUserId` (`_shared/api/auth.ts`) — the rule is never re-derived here.
+ * The insert itself is delegated to `recordAudit`; this adds no second write
+ * path, so there remains exactly one edge audit writer.
+ *
+ * It also opens a `lorekit.rest.audit` child span, so an audit write is
+ * attributable in a trace instead of being an invisible tail latency on the
+ * handler's own span.
+ *
+ * NEVER THROWS — it inherits that guarantee from `recordAudit` (whose body is
+ * wholly wrapped in try/catch) and adds nothing outside it that can reject:
+ * `auditUserId` is total and the span is ended in a `finally`.
+ *
+ * KNOWN LIMITATION, MIRRORED ON PURPOSE: on the JWT (`type: 'user'`) path
+ * `auditUserId` returns `null`, even though `auth.userId` is populated. The
+ * JWT client is RLS-scoped and `audit_log`'s INSERT policy requires
+ * `user_id = auth.uid()`, so a null actor fails RLS and the insert is silently
+ * swallowed. That is the deliberate mirror of MCP's `getUserId` behaviour
+ * (documented at the top of this file and on `auditUserId`), NOT a bug
+ * introduced by the REST handlers: changing it is one cross-surface decision
+ * spanning MCP, REST and the RLS policy, not a per-handler one. `api_key` and
+ * `service` callers use the service-role client, which bypasses RLS, so their
+ * rows always land — and `api_key` is precisely the tier the org routes were
+ * opened to by `00041_org_actor_override.sql`.
+ */
+export async function recordRestAudit(
+  db: DbClient,
+  span: Span,
+  auth: AuthContext,
+  input: AuditEntryInput,
+): Promise<void> {
+  const auditSpan = span.child('lorekit.rest.audit');
+  try {
+    auditSpan.setAttributes({ 'lorekit.audit.action': input.action });
+    await recordAudit(db, input, auditUserId(auth));
+  } finally {
+    auditSpan.end();
   }
 }

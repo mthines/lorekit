@@ -19,7 +19,11 @@
  * `edge-parity.spec.ts`'s MIRRORS list: the two differ in how the Supabase
  * client is typed (`SupabaseClient` here vs `ReturnType<typeof createClient>`
  * off the `npm:` specifier on the edge), so a whole-file executable-source
- * comparison does not apply — exactly as for limits.ts.
+ * comparison does not apply — exactly as for limits.ts. The edge copy also
+ * carries one extra export with no counterpart here, `recordRestAudit`: a thin
+ * wrapper that resolves the actor from the edge-only `AuthContext` and
+ * delegates straight to `recordAudit`. Everything this file exports stays
+ * line-for-line identical to the edge copy apart from the import lines.
  *
  * CAPTURE MODEL (Decision D1): every action here is recorded by an explicit
  * app-layer call right after its primary operation succeeds — NOT by a DB
@@ -34,6 +38,15 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+/**
+ * The bounded audit vocabulary. This list MUST equal — same values, same
+ * order — the `audit_log_action_check` CHECK constraint as last (re)defined by
+ * `supabase/migrations/00042_audit_log_rest_org_actions.sql`, and the
+ * independently re-declared union in `packages/web/src/lib/audit-actions.ts`.
+ * An action the CHECK rejects is silent audit loss: `recordAudit` never throws,
+ * so Postgres' rejection is logged and swallowed. Widen the CHECK with a new
+ * forward-only migration first, then this list, then the web union.
+ */
 export const AUDIT_ACTIONS = [
   'api_key.create',
   'api_key.revoke',
@@ -46,6 +59,19 @@ export const AUDIT_ACTIONS = [
   'memory.restore',
   'memory.delete',
   'limit.override',
+  'org.create',
+  'org.rename',
+  'org.delete',
+  'member.invite',
+  'member.accept',
+  'member.decline',
+  'member.revoke',
+  'member.remove',
+  'member.role_change',
+  'member.leave',
+  'scope.bind',
+  'scope.unbind',
+  'github_app.installation_linked',
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
