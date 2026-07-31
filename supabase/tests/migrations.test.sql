@@ -621,6 +621,16 @@ begin
   insert into memories (org_id, scope, key, value) values
     ('00000000-0000-0000-0000-0000000000f2', 'global', 'p2-del-key', 'v');
 
+  -- Since 00046, memory_delete resolves the org capability check against the
+  -- EFFECTIVE actor, honouring a caller-supplied p_user_id only on a
+  -- service-role connection — which is exactly how the edge api_key path
+  -- invokes the org branch (a service-role client naming the token owner).
+  -- Adopt that context so each named role-holder (viewer c3 / member d4 /
+  -- admin e5) is authorized as itself; without it the actor resolves to a
+  -- stale auth.uid() and every capability check denies.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
   -- viewer denied soft-archive
   begin
     perform memory_delete('00000000-0000-0000-0000-0000000000c3', 'phase2-org', 'global', 'p2-del-key', false);
@@ -656,6 +666,9 @@ begin
   select * into r from memory_delete('00000000-0000-0000-0000-0000000000a1', null, 'global', 'p2-personal-del-key', false);
   assert r.archived and not r.deleted,
     'memory_delete: a personal soft-archive (no org selector) should behave as before';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
 end;
 $$;
 
@@ -1799,6 +1812,7 @@ declare
   v_uid        uuid := '00000000-0000-0000-0000-0000000000a1';
   v_purged     int;
   v_blocked    boolean;
+  v_prev_claims text;
 begin
   -- AC-1: Write a memory with p_ttl_seconds=604800 (7 days); expires_at must be ~7 days ahead.
   select id, expires_at into v_id, v_expires_at
@@ -1858,7 +1872,19 @@ begin
   insert into memories (user_id, scope, key, value, expires_at)
   values (v_uid, 'global', 'ttl-expired-purge', 'gone', now() - interval '1 minute');
 
+  -- 00046 resolves the effective actor from auth.uid() (a caller-supplied p_user_id
+  -- is honoured only on a service-role connection), so the purge must run under the
+  -- OWNING user's authenticated session — the same self-service idiom as §60b.
+  -- The claims in force here are whatever an earlier section left behind, so save
+  -- and restore them to keep this block hermetic.
+  v_prev_claims := current_setting('request.jwt.claims', true);
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
   select purge_expired_memories(v_uid) into v_purged;
+
+  reset role;
   assert v_purged >= 1,
     format('TTL AC-6: purge_expired_memories must delete >= 1 expired row, got %s', v_purged);
   select count(*) into v_count
@@ -1875,7 +1901,16 @@ begin
   -- AC-8: Rows with expires_at IS NULL are unaffected by purge_expired_memories.
   insert into memories (user_id, scope, key, value)
   values (v_uid, 'global', 'ttl-no-expiry', 'permanent');
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
   select purge_expired_memories(v_uid) into v_purged;
+
+  reset role;
+  perform set_config('request.jwt.claims', coalesce(v_prev_claims, ''), true);
+
   select count(*) into v_count
    from memories where user_id = v_uid and key = 'ttl-no-expiry';
   assert v_count = 1,
@@ -2618,6 +2653,294 @@ begin
 end;
 $$;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 60. Memory RPC actor guard — 00046_memory_rpc_actor_guard.sql
+-- ═══════════════════════════════════════════════════════════════════════════
+-- archive_memory / restore_memory / purge_archived_memories /
+-- purge_expired_memories are SECURITY DEFINER and act on a caller-supplied
+-- p_user_id. 00046 makes that id inert for any non-service-role caller: the
+-- effective actor is auth.uid() unless the connection is service-role. These
+-- assertions are the security case the migration turns on — an authenticated
+-- caller naming another user's id must mutate NOTHING of that user's — plus a
+-- self-service regression check and a behavioural read-hiding check.
+
+insert into memories (user_id, scope, key, value, archived_at, expires_at) values
+  ('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived', 'd4 archived', now() - interval '90 days', null),
+  ('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-expired',  'd4 expired',  null, now() - interval '1 day'),
+  ('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-active',   'd4 active',   null, null),
+  ('00000000-0000-0000-0000-0000000000e5', 'project::actor-guard-mig', 'ag-e5',       'e5 active',   null, null);
+
+-- ── 60a. NEGATIVE: an authenticated caller cannot act on another user ────────
+-- e5 is authenticated and names d4 on every RPC. The guard forces e5's own id,
+-- so each call operates on e5's (empty) row set and d4's rows are untouched.
+do $$
+declare
+  v_purged_arch int;
+  v_purged_exp  int;
+  v_arch_id     uuid;
+  v_rest_id     uuid;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000e5","role":"authenticated"}', true);
+
+  select purge_archived_memories('00000000-0000-0000-0000-0000000000d4', 0) into v_purged_arch;
+  select purge_expired_memories('00000000-0000-0000-0000-0000000000d4')     into v_purged_exp;
+  select archive_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-active')   into v_arch_id;
+  select restore_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived') into v_rest_id;
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  assert v_purged_arch = 0,
+    format('IDOR: e5 hard-deleted %s of d4''s archived rows by naming d4 as p_user_id', v_purged_arch);
+  assert v_purged_exp = 0,
+    format('IDOR: e5 hard-deleted %s of d4''s expired rows by naming d4 as p_user_id', v_purged_exp);
+  assert v_arch_id is null,
+    'IDOR: e5 archived one of d4''s rows by naming d4 as p_user_id';
+  assert v_rest_id is null,
+    'IDOR: e5 restored one of d4''s rows by naming d4 as p_user_id';
+
+  -- d4's three rows are all exactly as seeded.
+  assert exists (select 1 from memories
+                 where user_id='00000000-0000-0000-0000-0000000000d4'
+                   and key='ag-archived' and archived_at is not null),
+    'IDOR: d4''s archived row was purged or restored by e5';
+  assert exists (select 1 from memories
+                 where user_id='00000000-0000-0000-0000-0000000000d4' and key='ag-expired'),
+    'IDOR: d4''s expired row was purged by e5';
+  assert exists (select 1 from memories
+                 where user_id='00000000-0000-0000-0000-0000000000d4'
+                   and key='ag-active' and archived_at is null),
+    'IDOR: d4''s active row was archived by e5';
+end;
+$$;
+
+-- ── 60b. Self-service still works — d4 acting as itself ──────────────────────
+do $$
+declare
+  v_arch_id    uuid;
+  v_rest_id    uuid;
+  v_purged_exp int;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000d4","role":"authenticated"}', true);
+
+  select archive_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-active')   into v_arch_id;
+  select restore_memory('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-mig', 'ag-archived') into v_rest_id;
+  select purge_expired_memories('00000000-0000-0000-0000-0000000000d4') into v_purged_exp;
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  assert v_arch_id is not null, 'self-service: d4 archiving its OWN active row must succeed';
+  assert v_rest_id is not null, 'self-service: d4 restoring its OWN archived row must succeed';
+  assert v_purged_exp >= 1,     'self-service: d4 purging its OWN expired row must delete it';
+  assert not exists (select 1 from memories
+                     where user_id='00000000-0000-0000-0000-0000000000d4' and key='ag-expired'),
+    'self-service: d4''s expired row should be gone after its own purge';
+end;
+$$;
+
+-- ── 60c. Read-hiding is the read TOOLS' job, not RLS ────────────────────────
+-- The article's most-wanted assertion: an archived or expired row is absent
+-- from what a read returns. The crucial subtlety is WHERE that hiding happens.
+-- `memories` has TWO permissive SELECT policies — `rls_read` (archived_at is
+-- null) AND `rls_read_archived` (archived_at is NOT null, for the dashboard
+-- Archive tab, 00003/00015) — and permissive policies OR, so an OWNER's plain
+-- SELECT returns BOTH active and archived rows. Expiry is not in RLS at all.
+-- What actually hides archived AND expired rows from a read is the query-layer
+-- predicate the read tools apply together — read.ts/list.ts/search.ts:
+--   .is('archived_at', null).or('expires_at.is.null,expires_at.gt.now()')
+-- So this replicates that exact tool predicate (both clauses), and separately
+-- shows raw RLS does NOT hide either — proving the filters, not RLS, are load-
+-- bearing. (A prior version wrongly assumed RLS hid archived rows; it does not.)
+insert into memories (user_id, scope, key, value, archived_at, expires_at) values
+  ('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-read', 'hidden-archived', 'x', now(), null),
+  ('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-read', 'hidden-expired',  'x', null, now() - interval '1 hour'),
+  ('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-read', 'visible-active',  'x', null, null);
+
+do $$
+declare
+  v_active_tool       int;
+  v_archived_tool     int;
+  v_expired_tool      int;
+  v_archived_raw_rls  int;
+  v_expired_raw_rls   int;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000d4","role":"authenticated"}', true);
+
+  -- Under the read tools' exact predicate (both filters together).
+  select count(*) into v_active_tool
+    from memories where scope='project::actor-guard-read' and key='visible-active'
+     and archived_at is null and (expires_at is null or expires_at > now());
+  select count(*) into v_archived_tool
+    from memories where scope='project::actor-guard-read' and key='hidden-archived'
+     and archived_at is null and (expires_at is null or expires_at > now());
+  select count(*) into v_expired_tool
+    from memories where scope='project::actor-guard-read' and key='hidden-expired'
+     and archived_at is null and (expires_at is null or expires_at > now());
+
+  -- Raw RLS, no tool predicate: the owner still sees BOTH rows.
+  select count(*) into v_archived_raw_rls
+    from memories where scope='project::actor-guard-read' and key='hidden-archived';
+  select count(*) into v_expired_raw_rls
+    from memories where scope='project::actor-guard-read' and key='hidden-expired';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  assert v_active_tool = 1,
+    'read-hiding: an active row must be visible through the read tools'' predicate';
+  assert v_archived_tool = 0,
+    'read-hiding: the read tools'' archived_at-is-null filter must exclude an archived row';
+  assert v_expired_tool = 0,
+    'read-hiding: the read tools'' (expires_at is null or expires_at > now()) filter must exclude an expired row';
+  assert v_archived_raw_rls = 1,
+    'read-hiding: raw RLS exposes an owner''s archived row (rls_read_archived) — the tool filter, not RLS, is what hides it';
+  assert v_expired_raw_rls = 1,
+    'read-hiding: expiry is app-layer, so raw RLS still returns an expired row — the tool filter, not RLS, is what hides it';
+end;
+$$;
+
+-- ── 60d. Grant guard: least-privilege EXECUTE, never anon ────────────────────
+do $$
+declare
+  v_sig  text;
+  v_sigs text[] := array[
+    'archive_memory(uuid, text, text)',
+    'restore_memory(uuid, text, text)',
+    'purge_archived_memories(uuid, integer)',
+    'purge_expired_memories(uuid)',
+    'memory_delete(uuid, text, text, text, boolean)'
+  ];
+begin
+  assert array_length(v_sigs, 1) = 5,
+    'grant guard: expected 5 signatures to check (anti-vacuity)';
+
+  foreach v_sig in array v_sigs loop
+    assert has_function_privilege('authenticated', v_sig, 'EXECUTE'),
+      format('authenticated lost EXECUTE on %s', v_sig);
+    assert has_function_privilege('service_role', v_sig, 'EXECUTE'),
+      format('service_role lost EXECUTE on %s', v_sig);
+    assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
+      format('%s must not be executable by anon after 00046 (default PUBLIC grant revoked)', v_sig);
+  end loop;
+end;
+$$;
+
+-- ── 60e. POSITIVE: the service-role branch honours a named p_user_id ─────────
+-- Invariant 5 of 00046 — the edge/MCP purge path. On a verified service-role
+-- connection a supplied p_user_id IS honoured (coalesce(p_user_id, auth.uid())),
+-- so the RPC acts on exactly the named user. Without this the edge purge path
+-- could regress to a NULL actor silently. e5 owns the rows; a service-role
+-- caller names e5 and its expired/archived rows are purged.
+insert into memories (user_id, scope, key, value, archived_at, expires_at) values
+  ('00000000-0000-0000-0000-0000000000e5', 'project::actor-guard-svc', 'svc-expired',  'x', null, now() - interval '1 hour'),
+  ('00000000-0000-0000-0000-0000000000e5', 'project::actor-guard-svc', 'svc-archived', 'x', now() - interval '90 days', null);
+
+do $$
+declare
+  v_purged_exp  int;
+  v_purged_arch int;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  select purge_expired_memories('00000000-0000-0000-0000-0000000000e5') into v_purged_exp;
+  select purge_archived_memories('00000000-0000-0000-0000-0000000000e5', 0) into v_purged_arch;
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  assert v_purged_exp = 1,
+    format('service-role branch: purge_expired_memories must honour the named p_user_id and delete e5''s expired row, got %s', v_purged_exp);
+  assert v_purged_arch = 1,
+    format('service-role branch: purge_archived_memories must honour the named p_user_id and delete e5''s archived row, got %s', v_purged_arch);
+  assert not exists (select 1 from memories where scope='project::actor-guard-svc'),
+    'service-role branch: both of e5''s rows should be physically gone after the service-role purge';
+end;
+$$;
+
+-- ── 60f. NEGATIVE: memory_delete cannot be driven against another user ───────
+-- memory_delete (00020) is the destructive sibling added to the 00046 family:
+-- an authenticated caller naming another user's id must archive/delete NOTHING
+-- of that user's, and self-service must still work.
+insert into memories (user_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000d4', 'project::actor-guard-del', 'del-victim', 'd4 owns this');
+
+do $$
+declare
+  r_force   record;
+  r_archive record;
+  r_self    record;
+begin
+  -- Attacker e5 (authenticated) names victim d4 on both force and soft paths.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000e5","role":"authenticated"}', true);
+
+  select * into r_force
+    from memory_delete('00000000-0000-0000-0000-0000000000d4', null, 'project::actor-guard-del', 'del-victim', true);
+  select * into r_archive
+    from memory_delete('00000000-0000-0000-0000-0000000000d4', null, 'project::actor-guard-del', 'del-victim', false);
+  reset role;
+
+  assert not r_force.deleted,
+    'IDOR: e5 hard-deleted d4''s row via memory_delete by naming d4 as p_user_id';
+  assert not r_archive.archived,
+    'IDOR: e5 archived d4''s row via memory_delete by naming d4 as p_user_id';
+  assert exists (select 1 from memories
+                 where user_id='00000000-0000-0000-0000-0000000000d4'
+                   and key='del-victim' and archived_at is null),
+    'IDOR: d4''s row was mutated by e5''s memory_delete';
+
+  -- Self-service: d4 archives, then hard-deletes, its OWN row.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000d4","role":"authenticated"}', true);
+  select * into r_self
+    from memory_delete('00000000-0000-0000-0000-0000000000d4', null, 'project::actor-guard-del', 'del-victim', true);
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  assert r_self.deleted,
+    'self-service: d4 hard-deleting its OWN row via memory_delete must succeed';
+  assert not exists (select 1 from memories
+                     where user_id='00000000-0000-0000-0000-0000000000d4' and key='del-victim'),
+    'self-service: d4''s row should be gone after its own hard-delete';
+end;
+$$;
+
+-- ── 60g. POSITIVE: memory_delete's org branch under an AUTHENTICATED caller ──
+-- §18 exercises the org branch under service_role (the edge api_key path); this
+-- covers the OTHER actor path — an authenticated member acting as ITSELF, so
+-- the actor resolves to auth.uid() and lorekit_org_can(auth.uid(), ...) stays
+-- tested. d4 is a member of phase2-org (f2) with the 'archive' capability
+-- (established in §16-18).
+insert into memories (org_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000f2', 'global', 'p2-authpath-key', 'v');
+
+do $$
+declare r record;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000d4","role":"authenticated"}', true);
+
+  select * into r
+    from memory_delete('00000000-0000-0000-0000-0000000000d4', 'phase2-org', 'global', 'p2-authpath-key', false);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  assert r.archived and not r.deleted,
+    format('memory_delete org branch: an authenticated member must archive via the auth.uid() actor path (archived=%s deleted=%s)', r.archived, r.deleted);
+end;
+$$;
 -- ── Usage statistics — 00043 / 00044 / 00045 ────────────────────────────────
 -- lorekit_usage_stats(p_user_id, p_since, p_until, p_correlation_id) backs GET
 -- /memories/usage. It aggregates usage_events (00034 + the 00044 dimensions) in
@@ -2771,6 +3094,13 @@ declare
   v_recorded bigint;
   v_expired  bigint;
 begin
+  -- Since 00046, purge_expired_memories honours a caller-supplied p_user_id only
+  -- on a service-role connection (the actor guard) — which is how the edge/MCP
+  -- purge path invokes it. Adopt that context so this assertion exercises the
+  -- real purge-by-id instead of resolving to a NULL auth.uid() actor.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
   v_purged := purge_expired_memories('00000000-0000-0000-0000-0000000000a1');
   assert v_purged >= 1, format('usage AC-9: purge must delete at least the 1 expired row, got %s', v_purged);
 
@@ -2790,6 +3120,9 @@ begin
    where tool_name = 'memory.expired';
   assert v_expired = v_purged,
     format('usage AC-9: stats memory.expired record_count (%s) must equal rows purged (%s)', v_expired, v_purged);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
 end;
 $$;
 

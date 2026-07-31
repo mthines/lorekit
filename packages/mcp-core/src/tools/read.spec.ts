@@ -94,3 +94,45 @@ describe('read', () => {
     expect(result).toMatchObject({ value: 'v' });
   });
 });
+
+// ── negative retrieval: archived and expired rows are filtered out ────────────
+// A behavioural absence assertion lives in supabase/tests/migrations.test.sql
+// §60c (against real Postgres). This is the unit-level guard that the query the
+// tool builds actually carries both filters, so a dropped filter fails here
+// instead of silently surfacing hidden rows.
+
+function makeCapturingDb() {
+  const calls: { is: unknown[][]; or: unknown[][] } = { is: [], or: [] };
+  const chain: Record<string, ReturnType<typeof vi.fn>> = {};
+  chain['eq'] = vi.fn(() => chain);
+  chain['is'] = vi.fn((...args: unknown[]) => {
+    calls.is.push(args);
+    return chain;
+  });
+  chain['or'] = vi.fn((...args: unknown[]) => {
+    calls.or.push(args);
+    return chain;
+  });
+  chain['maybeSingle'] = vi.fn().mockResolvedValue({
+    data: { value: 'v', updated_at: '2026-01-01T00:00:00Z' },
+    error: null,
+  });
+  const db = {
+    from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue(chain) }),
+  } as unknown as SupabaseClient;
+  return { db, calls };
+}
+
+describe('read excludes archived and expired rows', () => {
+  it('applies the archived_at-is-null filter', async () => {
+    const { db, calls } = makeCapturingDb();
+    await read(db, { scope: 'global', key: 'k' });
+    expect(calls.is).toContainEqual(['archived_at', null]);
+  });
+
+  it('applies the expires_at active-window filter', async () => {
+    const { db, calls } = makeCapturingDb();
+    await read(db, { scope: 'global', key: 'k' });
+    expect(calls.or).toContainEqual(['expires_at.is.null,expires_at.gt.now()']);
+  });
+});

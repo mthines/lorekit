@@ -105,3 +105,42 @@ describe('list', () => {
     await expect(list(db, { scope: 'global' })).rejects.toThrow('connection refused');
   });
 });
+
+// ── negative retrieval: archived and expired rows are filtered out ────────────
+// Behavioural absence is asserted in supabase/tests/migrations.test.sql §60c;
+// this guards that the query the tool builds carries both filters.
+
+function makeCapturingDb() {
+  const calls: { is: unknown[][]; or: unknown[][] } = { is: [], or: [] };
+  const chain: Record<string, ReturnType<typeof vi.fn>> = {};
+  for (const m of ['eq', 'limit', 'overlaps']) {
+    chain[m] = vi.fn(() => chain);
+  }
+  chain['is'] = vi.fn((...args: unknown[]) => {
+    calls.is.push(args);
+    return chain;
+  });
+  chain['or'] = vi.fn((...args: unknown[]) => {
+    calls.or.push(args);
+    return chain;
+  });
+  chain['order'] = vi.fn().mockResolvedValue({ data: [], error: null });
+  const db = {
+    from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue(chain) }),
+  } as unknown as SupabaseClient;
+  return { db, calls };
+}
+
+describe('list excludes archived and expired rows', () => {
+  it('applies the archived_at-is-null filter', async () => {
+    const { db, calls } = makeCapturingDb();
+    await list(db, { scope: 'global' });
+    expect(calls.is).toContainEqual(['archived_at', null]);
+  });
+
+  it('applies the expires_at active-window filter', async () => {
+    const { db, calls } = makeCapturingDb();
+    await list(db, { scope: 'global' });
+    expect(calls.or).toContainEqual(['expires_at.is.null,expires_at.gt.now()']);
+  });
+});
