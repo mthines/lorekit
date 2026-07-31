@@ -33,7 +33,7 @@ const read = (rel: string) => readFileSync(path.join(repoRoot, rel), 'utf8');
 const SERVICE_NAME_SITES: ReadonlyArray<readonly [string, string, RegExp, string]> = [
   ['cli', 'packages/cli/src/telemetry.mjs', /service\.name',\s*value:\s*\{\s*stringValue:\s*'([^']+)'/, 'cli'],
   ['api (edge)', 'supabase/functions/_shared/otel.ts', /SERVICE_NAME'\)\s*\?\?\s*'([^']+)'/, 'api'],
-  ['mcp-node', 'packages/mcp-server/src/instrumentation.ts', /OTEL_SERVICE_NAME'\]\s*\?\?\s*'([^']+)'/, 'mcp-node'],
+  ['mcp (Node MCP server)', 'packages/mcp-server/src/instrumentation.ts', /OTEL_SERVICE_NAME'\]\s*\?\?\s*'([^']+)'/, 'mcp'],
   ['web', 'packages/web/src/instrumentation.ts', /serviceName:\s*'([^']+)'/, 'web'],
 ];
 
@@ -57,7 +57,7 @@ describe('service.name inventory', () => {
 
   it('every component reports a DISTINCT service.name (no service-map collision)', () => {
     const names = SERVICE_NAME_SITES.map(([, file, pattern]) => read(file).match(pattern)?.[1]);
-    expect(names).toEqual(['cli', 'api', 'mcp-node', 'web']);
+    expect(names).toEqual(['cli', 'api', 'mcp', 'web']);
     expect(new Set(names).size).toBe(SERVICE_NAME_SITES.length);
   });
 });

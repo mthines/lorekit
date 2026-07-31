@@ -44,6 +44,23 @@ describe('validateScope', () => {
   it('throws on branch scope without second ::', () => {
     expect(() => validateScope('branch::mthines/gw-tools')).toThrow(ScopeValidationError);
   });
+
+  it('accepts a branch name containing a slash', () => {
+    expect(validateScope('branch::mthines/gw-tools::feat/x')).toBe('branch::mthines/gw-tools::feat/x');
+  });
+
+  // SECURITY: a validated scope is interpolated into the search tool's
+  // `scope.in.("<scope>")` PostgREST filter, so a branch name must not admit `"`
+  // or `,` (they would break out of the quoted value). See validateScope.
+  it('rejects a branch name carrying PostgREST filter metacharacters', () => {
+    for (const evil of [
+      'branch::o/r::a",value.not.is.null',
+      'branch::o/r::a,scope.like.z',
+      'branch::o/r::a)',
+    ]) {
+      expect(() => validateScope(evil)).toThrow(ScopeValidationError);
+    }
+  });
 });
 
 describe('scopeType', () => {
@@ -65,6 +82,25 @@ describe('expandScopeForSearch', () => {
     if ('like' in result) {
       expect(result.like).toMatch(/^repo::mthines\//);
       expect(result.like).toMatch(/%$/);
+    }
+  });
+
+  it('returns like pattern for a project wildcard', () => {
+    const result = expandScopeForSearch('project::*');
+    expect(result).toEqual({ like: 'project::%' });
+  });
+
+  // SECURITY: a wildcard scope is interpolated into a PostgREST `.or()` filter,
+  // so PostgREST-structural characters must be rejected to prevent filter
+  // injection (extra OR predicates) — see expandScopeForSearch.
+  it('rejects a wildcard scope carrying PostgREST filter metacharacters', () => {
+    for (const evil of [
+      'a,value.not.is.null,scope.like.z::*',
+      'repo::mthines),(value.ilike.*x*/*',
+      'repo::"owner"/*',
+      'project::a b::*',
+    ]) {
+      expect(() => expandScopeForSearch(evil)).toThrow(ScopeValidationError);
     }
   });
 });

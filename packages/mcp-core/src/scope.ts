@@ -82,9 +82,19 @@ export function validateScope(raw: string): string {
 
   if (prefix === 'branch') {
     const parts = rest.split('::');
-    if (parts.length !== 2 || !parts[0]?.match(/^[\w.-]+\/[\w.-]+$/) || !parts[1]) {
+    // The branch-name segment allows `/` (e.g. "feat/x") but is otherwise
+    // restricted to the canonical charset — crucially it must NOT admit `"` or
+    // `,`, which are structural in the PostgREST `scope.in.("...")` filter the
+    // search tool builds from validated scopes. Leaving it merely "non-empty"
+    // let `branch::o/r::a",value.not.is.null` break out of that filter.
+    if (
+      parts.length !== 2 ||
+      !parts[0]?.match(/^[\w.-]+\/[\w.-]+$/) ||
+      !parts[1]?.match(/^[\w./-]+$/)
+    ) {
       throw new ScopeValidationError(
-        `Invalid branch scope "${raw}": expected format "branch::owner/repo::branch-name"`,
+        `Invalid branch scope "${raw}": expected format "branch::owner/repo::branch-name" ` +
+          `(branch name may contain only letters, digits, "._-/")`,
       );
     }
   }
@@ -114,10 +124,25 @@ export function expandScopeForSearch(raw: string): ScopeFilter {
   const normalized = raw.toLowerCase().trim();
   // Owner wildcard: repo::owner/* or project::*
   if (normalized.endsWith('/*') || normalized.endsWith('::*')) {
-    const base = normalized.endsWith('/*')
-      ? normalized.slice(0, -1) // keep trailing slash, replace * with %
-      : normalized.slice(0, -1); // keep ::, replace * with %
-    return { like: base + '%' };
+    const base = normalized.slice(0, -1); // drop the trailing '*', keep '/' or '::'
+    // SECURITY: `base` is interpolated verbatim into a PostgREST `.or()` filter
+    // string as `scope.like.<base>%`, where `,` `(` `)` are structural grammar.
+    // A canonical scope only ever contains [a-z0-9._:/-] (see validateScope), so
+    // reject anything else — otherwise a crafted wildcard like
+    // `a,value.not.is.null,scope.like.z::*` would inject extra OR predicates into
+    // the filter tree. The exact-scope branch below is already safe by
+    // construction because validateScope's charset admits no quotes/commas.
+    if (!/^[a-z0-9._:/-]+$/.test(base)) {
+      throw new ScopeValidationError(
+        `Invalid wildcard scope "${raw}": a wildcard scope may contain only ` +
+          `[a-z0-9._:/-] before the trailing "*"`,
+      );
+    }
+    // Escape the LIKE single-character wildcard `_` in the literal owner prefix
+    // so `repo::my_org/*` stays owner-exact instead of also matching
+    // `repo::myXorg/*`. (`%` and `\` can't occur — the charset above excludes
+    // them.) `\` is LIKE's default escape character.
+    return { like: base.replace(/_/g, '\\_') + '%' };
   }
   return { exact: validateScope(raw) };
 }

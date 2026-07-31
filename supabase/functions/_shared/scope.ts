@@ -31,6 +31,15 @@ export function validateScope(raw: string): string {
   if (sepIdx === -1) throw new UserInputError(`Invalid scope "${raw}": unknown scope type`);
   const prefix = normalized.slice(0, sepIdx) as ScopePrefix;
   if (!VALID_PREFIXES.has(prefix)) throw new UserInputError(`Invalid scope prefix "${prefix}"`);
+  // SECURITY: a validated scope is interpolated into a PostgREST `.or()` filter
+  // by the search handler (`scope.in.("<scope>")`), where `"` `,` `(` `)` are
+  // structural. A canonical scope only ever uses word chars plus `. : / -`, so
+  // reject anything else — otherwise `project::a",value.not.is.null` would break
+  // out of the quoted filter value. (This mirror is intentionally lighter than
+  // packages/mcp-core/src/scope.ts, so this guard must live here in its own right.)
+  if (!/^[\w.:/-]+$/.test(normalized)) {
+    throw new UserInputError(`Invalid scope "${raw}": contains unsupported characters`);
+  }
   return normalized;
 }
 
