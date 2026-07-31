@@ -106,10 +106,10 @@ export async function listGithubInstallations(): Promise<GithubInstallation[]> {
  *      upserts the row.
  *   3. Records an audit event when the row is linked to the caller.
  *
- * If the App credentials are not provisioned (endpoint replies
- * `app_not_configured`) or the endpoint is unreachable, it falls back to the
- * webhook-driven linking path (`linkPendingInstallation`) — behaviour is never
- * worse than before.
+ * If the sync does not succeed for any reason — App credentials not
+ * provisioned (`app_not_configured`), installation not found, upsert error, or
+ * the endpoint unreachable — it falls back to the webhook-driven linking path
+ * (`linkPendingInstallation`), so behaviour is never worse than before.
  *
  * The `state` parameter is correlation-only — it never grants access. Access is
  * always derived from the authenticated session (auth.uid() + RLS).
@@ -167,11 +167,13 @@ export async function handleSetupReturn(
         return { ok: true };
       }
 
-      // Only fall back when the App path is not provisioned; a genuine sync
-      // failure (bad installation, upsert error) is surfaced, not masked.
-      if (result.error && result.error !== 'app_not_configured') {
-        return { ok: false, error: result.error };
-      }
+      // Fall through to the webhook-driven fallback on ANY non-ok sync, not
+      // only `app_not_configured`.  The sole caller
+      // (app/api/auth/callback/route.ts) awaits this inside a `.catch()` and
+      // discards the returned object, so an early return here surfaced the
+      // error to nobody and cost us the fallback.  linkPendingInstallation is
+      // idempotent and scoped to the caller's own GitHub account id, so
+      // retrying through it is safe on every unsuccessful sync result.
     } catch {
       // Endpoint unreachable — fall through to the webhook-driven fallback.
     }

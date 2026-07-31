@@ -146,9 +146,10 @@ on GitHub, `0` installations in LoreKit):
 
 This endpoint depends on the App API credentials, **not** on
 `GITHUB_APP_ENABLED` (that flag gates only the webhook branch). When the App API
-key is absent it replies `app_not_configured` and `handleSetupReturn` falls
-back to `linkPendingInstallation` (the webhook-driven path), so behaviour is
-never worse than before.
+key is absent it replies `app_not_configured`. On that — or on any other
+unsuccessful sync (installation not found, upsert error, endpoint
+unreachable) — `handleSetupReturn` falls back to `linkPendingInstallation`
+(the webhook-driven path), so behaviour is never worse than before.
 
 > **Known limitation:** an installation on an **organization** the caller
 > administers stays `pending` (its account id is not the caller's personal
