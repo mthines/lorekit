@@ -237,7 +237,7 @@ All signals carry these resource attributes:
 | Attribute | Value |
 |-----------|-------|
 | `service.namespace` | `lorekit` |
-| `service.name` | `api` (Edge Functions), `web` (Next.js), `mcp-node` (Node MCP server), or `cli` (CLI) |
+| `service.name` | `api` (Edge Functions), `web` (Next.js), `mcp` (Node MCP server), or `cli` (CLI) |
 | `service.version` | Git SHA (`VERCEL_GIT_COMMIT_SHA`) or `unknown`; the package version for the CLI |
 | `deployment.environment.name` | `production` / `preview` / `development` / `local` (not set by the CLI) |
 
@@ -296,7 +296,7 @@ change. The endpoint (`DEFAULT_ENDPOINT`) and dataset (`DEFAULT_DATASET`, now
 (`_shared/otel.ts`) follow the same order.
 
 > **Note:** the CLI `service.name` was `lorekit-cli` before this and is now `cli`
-> (aligning with the namespace-grouped `api` / `web` / `mcp-node` names). This is a
+> (aligning with the namespace-grouped `api` / `web` / `mcp` names). This is a
 > rename, not an alias — CLI telemetry emitted before and after the change lives
 > under two distinct `service.name` values in Dash0. Query `service.namespace = lorekit`
 > to see the CLI across both, or union `service.name in (cli, lorekit-cli)` for history.

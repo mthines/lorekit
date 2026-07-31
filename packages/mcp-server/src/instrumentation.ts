@@ -6,10 +6,11 @@
  * Exporter: OTLP HTTP/protobuf → Dash0 (or any OTLP endpoint)
  *
  * Required env vars:
- *   OTEL_SERVICE_NAME            defaults to "mcp-node" (deliberately distinct
- *                                from the Deno Edge Function's "mcp" — they are
- *                                two deployments of the same logical service
- *                                and must be separable in the service map)
+ *   OTEL_SERVICE_NAME            defaults to "mcp". The Supabase Edge Functions
+ *                                (including supabase/functions/mcp/) all report
+ *                                service.name = "api", differentiated by
+ *                                faas.name — so this Fly.io Node deployment owns
+ *                                the "mcp" name outright, no collision.
  *   OTEL_TRACES_EXPORTER         set to "otlp" to enable
  *   OTEL_METRICS_EXPORTER        set to "otlp" to enable
  *   OTEL_LOGS_EXPORTER           set to "otlp" to enable
@@ -39,11 +40,11 @@ import { SpanStatusCode, trace } from '@opentelemetry/api';
 
 // Read service version from package.json at startup
 const SERVICE_VERSION = process.env['npm_package_version'] ?? '0.0.1';
-// 'mcp-node' — deliberately NOT 'mcp'. The Deno Edge Function at
-// supabase/functions/mcp/ reports service.name = 'mcp'; this Fly.io Node
-// deployment is a separate runtime of the same logical service and must be a
-// distinct node in the service map.
-const SERVICE_NAME = process.env['OTEL_SERVICE_NAME'] ?? 'mcp-node';
+// 'mcp' — the namespace ('lorekit') already carries the product. The Deno Edge
+// Functions (including supabase/functions/mcp/) all report service.name = 'api'
+// and are told apart by faas.name, so this Fly.io Node deployment owns 'mcp'
+// with no service-map collision.
+const SERVICE_NAME = process.env['OTEL_SERVICE_NAME'] ?? 'mcp';
 
 /**
  * Resolve vcs.* OTel resource attributes from environment variables.
