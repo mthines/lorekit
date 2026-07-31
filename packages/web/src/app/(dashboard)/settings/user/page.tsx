@@ -18,6 +18,7 @@ export default async function UserSettingsPage() {
   return (
     <div className="flex flex-col gap-6">
       <SectionPanel
+        anchorId="account"
         icon={<UserCircle className="size-4.5" />}
         title="User"
         subtitle="Your account info and danger-zone actions."
@@ -33,6 +34,7 @@ export default async function UserSettingsPage() {
       */}
       <SectionPanel
         collapsible
+        anchorId="password"
         icon={<KeyRound className="size-4.5" />}
         title="Password"
         subtitle="Add or change a password so you can sign in with just your email address."

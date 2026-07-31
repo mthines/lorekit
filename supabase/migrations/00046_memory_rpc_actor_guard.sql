@@ -216,7 +216,7 @@ comment on function archive_memory(uuid, text, text) is
    service-role connection, otherwise auth.uid() wins. Fails closed on NULL.';
 comment on function restore_memory(uuid, text, text) is
   'Restores the effective caller''s own archived row. Same actor rule and same
-   RLS-bypass caveat as archive_memory (see 00043 header; corrects 00003).';
+   RLS-bypass caveat as archive_memory (see 00046 header; corrects 00003).';
 comment on function purge_archived_memories(uuid, integer) is
   'Hard-deletes the effective caller''s archived rows past the retention window.
    The effective user id is resolved by the same service-role-gated rule as
@@ -227,7 +227,7 @@ comment on function purge_archived_memories(uuid, integer) is
 comment on function purge_expired_memories(uuid) is
   'Hard-deletes the effective caller''s expired (non-archived) rows. Same
    service-role-gated actor rule and RLS-bypass caveat as
-   purge_archived_memories (see 00043 header).';
+   purge_archived_memories (see 00046 header).';
 
 -- ═════════════════════════════════════════════════════════════════════════
 -- 5. memory_delete — the omitted fifth RPC of this family.
@@ -335,7 +335,7 @@ comment on function memory_delete(uuid, text, text, text, boolean) is
    caller''s own memory, or an org''s memory when p_org_slug is given and the
    caller has the archive/hard_delete capability. The effective actor is
    resolved by the same service-role-gated rule as the rest of this family
-   (00043) and lorekit_org_actor (00041): a caller-supplied p_user_id is
+   (00046) and lorekit_org_actor (00041): a caller-supplied p_user_id is
    honoured only on a verified service-role connection, otherwise auth.uid()
    wins — scoping BOTH the personal user_id filter and the org capability
    check to the real caller. SECURITY DEFINER bypasses RLS; the actor is the

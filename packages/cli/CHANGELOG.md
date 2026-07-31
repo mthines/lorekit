@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.25.0](https://github.com/mthines/lorekit/compare/cli-v1.24.1...cli-v1.25.0) (2026-07-31)
+
+
+### Features
+
+* **usage:** usage-statistics API (GET /memories/usage) with record, correlation, and expiry counts ([#289](https://github.com/mthines/lorekit/issues/289)) ([24a8e21](https://github.com/mthines/lorekit/commit/24a8e214a402aed73cc6972b60af8706c0848cf4))
+
+## [1.24.1](https://github.com/mthines/lorekit/compare/cli-v1.24.0...cli-v1.24.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* **cli:** rename OTel instrumentation scope to cli ([#290](https://github.com/mthines/lorekit/issues/290)) ([f9efb7d](https://github.com/mthines/lorekit/commit/f9efb7de9004d73afa5de2abf825cf770a7ca3e1))
+
 ## [1.24.0](https://github.com/mthines/lorekit/compare/cli-v1.23.0...cli-v1.24.0) (2026-07-31)
 
 

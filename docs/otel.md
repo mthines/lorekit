@@ -13,6 +13,11 @@ LoreKit emits traces, metrics, and logs to Dash0 from every layer of the stack.
 
 All signals carry `service.namespace=lorekit` so you can filter the full stack in one Dash0 query.
 
+> For how the four services correlate into one trace (W3C `traceparent`
+> propagation), a review of telemetry quality against the OTel semantic
+> conventions, and the tests that guard both, see
+> [telemetry-quality-review.md](./telemetry-quality-review.md).
+
 ---
 
 ## Custom spans (Edge Function)
@@ -189,14 +194,6 @@ and the outbound Supabase fetch calls; the custom spans add business context
 | `lorekit.api_token.generate` | `lorekit.api_token.permissions`, `lorekit.api_token.id` (on success), `lorekit.api_token.limit_reached` (when cap is hit) |
 | `lorekit.api_token.revoke` | `lorekit.api_token.id`, `lorekit.api_token.prefix` |
 
-### Webhook secrets (`lib/webhook-secrets.ts`)
-
-| Span name | Key attributes |
-|-----------|---------------|
-| `lorekit.webhook_secret.generate` | `vcs.repository.name`, `lorekit.webhook_secret.is_rotation`, `lorekit.webhook_secret.id` (on success) |
-| `lorekit.webhook_secret.verify` | `vcs.repository.name`, `lorekit.webhook_secret.verify.ok`, `lorekit.webhook_secret.verify.code`, `http.response.status_code` |
-| `lorekit.webhook_secret.delete` | `lorekit.webhook_secret.id`, `vcs.repository.name` |
-
 On **any RPC/DB failure** the span also carries:
 
 | Attribute | Value |
@@ -245,9 +242,9 @@ All signals carry these resource attributes:
 | Attribute | Value |
 |-----------|-------|
 | `service.namespace` | `lorekit` |
-| `service.name` | `api` (Edge Functions), `web` (Next.js), `mcp-node` (Node MCP server), or `cli` (CLI) |
+| `service.name` | `api` (Edge Functions), `web` (Next.js), `mcp` (Node MCP server), or `cli` (CLI) |
 | `service.version` | Git SHA (`VERCEL_GIT_COMMIT_SHA`) or `unknown`; the package version for the CLI |
-| `deployment.environment.name` | `production` / `preview` / `development` / `local` (not set by the CLI) |
+| `deployment.environment.name` | `production` / `preview` / `development` / `local`; the CLI omits it unless overridden. An explicit `DEPLOYMENT_ENVIRONMENT` env var overrides the ambient value on every component (used by `scripts/emit-correlated-trace.mts` to stamp `test`). |
 
 ---
 
@@ -304,7 +301,7 @@ change. The endpoint (`DEFAULT_ENDPOINT`) and dataset (`DEFAULT_DATASET`, now
 (`_shared/otel.ts`) follow the same order.
 
 > **Note:** the CLI `service.name` was `lorekit-cli` before this and is now `cli`
-> (aligning with the namespace-grouped `api` / `web` / `mcp-node` names). This is a
+> (aligning with the namespace-grouped `api` / `web` / `mcp` names). This is a
 > rename, not an alias — CLI telemetry emitted before and after the change lives
 > under two distinct `service.name` values in Dash0. Query `service.namespace = lorekit`
 > to see the CLI across both, or union `service.name in (cli, lorekit-cli)` for history.

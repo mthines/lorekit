@@ -28,6 +28,14 @@ import {
 import { type Span } from '../_shared/otel.ts';
 import { LimitError, recordUsageEvent, getUserPlanName } from './limits.ts';
 import { toolRequires } from './permissions.ts';
+import { countRecords, parseCorrelationId, usageToolKind } from '../_shared/usage-stats.ts';
+
+/**
+ * Request header carrying a client-supplied grouping key (PR / session / job),
+ * the same seam the REST router reads (`CORRELATION_HEADER`), so a usage event
+ * from either surface can be grouped by "this PR". Optional and bounded.
+ */
+const CORRELATION_HEADER = 'x-lorekit-correlation-id';
 
 // memory.* tools — dispatched with (db, args, userId, span)
 const MEMORY_TOOLS = {
@@ -389,6 +397,10 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
       : null;
     if (planName) toolSpan.setAttributes({ 'lorekit.plan': planName });
 
+    // Client-supplied grouping key (same header as the REST surface). Bounded by
+    // the pure validator; a malformed value degrades to null, never an error.
+    const correlationId = parseCorrelationId(req.headers.get(CORRELATION_HEADER));
+
     const toolStartMs = Date.now();
 
     try {
@@ -410,8 +422,12 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
       toolSpan.setAttributes({ 'lorekit.duration_ms': durationMs });
       toolSpan.end();
 
-      // Record successful usage event (fire-and-forget).
+      // Record successful usage event (fire-and-forget). For read tools, capture
+      // the RECORD count from the result so "read N memories" is a real record
+      // total, not a count of read calls. Fail-safe: countRecords returns null
+      // when the shape is unknown.
       if (auth.type !== 'service' && analyticsUserId && adapter.supportsHostedBilling) {
+        const resultCount = usageToolKind(toolName) === 'read' ? countRecords(result) : null;
         recordUsageEvent(db, {
           userId: analyticsUserId,
           planName,
@@ -420,6 +436,8 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           authType: auth.type as 'api_key' | 'jwt',
           outcome: 'ok',
           durationMs,
+          resultCount,
+          correlationId,
         });
       }
 
@@ -456,6 +474,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           authType: auth.type as 'api_key' | 'jwt',
           outcome,
           durationMs,
+          correlationId,
         });
       }
 

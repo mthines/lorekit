@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { OnboardingChecklist } from '@/components/dashboard/OnboardingChecklist';
-import { WebhookTeaser } from '@/components/dashboard/WebhookTeaser';
+import { GithubAppTeaser } from '@/components/dashboard/GithubAppTeaser';
 import { buildOnboardingSteps } from '@/lib/onboarding-steps';
 import { getOnboardingState } from '@/lib/onboarding-server';
 import { listPendingInvitesForMe } from '@/lib/org-invites';
@@ -36,7 +36,7 @@ export default async function DashboardPage() {
 
       {/* Progressive disclosure: show the webhook upsell only after the agent
           is connected. Rendered as a separate card so it never blocks allDone. */}
-      <WebhookTeaser hasWebhook={onboardingState.hasWebhook} />
+      <GithubAppTeaser hasWebhook={onboardingState.hasWebhook} />
 
       {/* Scope health stats — fetched client-side with TanStack Query so
           navigation back to this page is instant after the first load. */}

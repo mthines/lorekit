@@ -124,16 +124,36 @@ export function mcpToRestBase(mcpEndpointUrl) {
  * @param {number} [opts.timeoutMs=10000]
  * @param {string} [opts.traceparent] - W3C traceparent header value
  */
+/**
+ * Normalise a client-supplied usage correlation id (a PR ref, session id, or CI
+ * job id). Bounded + charset-restricted to match the server's `parseCorrelationId`
+ * (supabase/functions/_shared/usage-stats.ts); returns null for empty/over-long/
+ * out-of-charset input so a bad value is simply not sent. Zero-dep (the CLI does
+ * not import mcp-core), so the small regex is duplicated intentionally.
+ */
+export function normalizeCorrelationId(raw) {
+  if (typeof raw !== 'string') return null;
+  const t = raw.trim();
+  if (!t || t.length > 200) return null;
+  return /^[A-Za-z0-9_\-./:#@]+$/.test(t) ? t : null;
+}
+
 export async function restFetch(baseUrl, token, path, { method = 'GET', body, timeoutMs = 10000, traceparent } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const url = `${baseUrl}${path}`;
+    // Opt-in usage correlation: when LOREKIT_CORRELATION_ID is set (e.g. by a CI
+    // job or a hook to a PR/session id), tag every REST call so GET
+    // /memories/usage?correlation_id=… can report "usage for this PR". Absent env
+    // ⇒ no header ⇒ existing behaviour unchanged.
+    const correlationId = normalizeCorrelationId(process.env.LOREKIT_CORRELATION_ID);
     const headers = {
       accept: 'application/json',
       ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(traceparent ? { traceparent } : {}),
+      ...(correlationId ? { 'x-lorekit-correlation-id': correlationId } : {}),
     };
     const res = await fetch(url, {
       method,

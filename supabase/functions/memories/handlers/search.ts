@@ -50,5 +50,8 @@ export async function handleSearch(
   if (error) { span.error(`DB: ${error.message}`); throw error; }
   const page = buildPage(data ?? [], body.limit);
   span.setAttributes({ 'lorekit.result_count': page.entries.length });
-  return ok(page, cors);
+  // Record count for the router's usage event — see RESULT_COUNT_HEADER.
+  const res = ok(page, cors);
+  res.headers.set('X-LoreKit-Result-Count', String(page.entries.length));
+  return res;
 }

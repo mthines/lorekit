@@ -18,7 +18,7 @@
  *
  * ### Settings
  * Direct jumps to each settings section (no extra shortcuts — use search):
- *   Plan · API Keys · Webhooks · Organization · Audit Logs · User profile
+ *   Plan · API Keys · Integrations · Organization · Audit Logs · User profile
  *
  * ### Docs
  * Direct jumps to each public docs page (driven by the single `DOCS_SECTIONS`
@@ -37,7 +37,7 @@ import {
   Settings,
   GraduationCap,
   Key,
-  Webhook,
+  Blocks,
   Users,
   ShieldCheck,
   UserCircle,
@@ -190,12 +190,14 @@ export function NavigationCommands() {
   });
 
   useCommand({
-    id: 'settings-webhooks',
-    label: 'Webhooks',
-    description: 'Configure GitHub webhook integration',
-    icon: <Webhook className="size-4" />,
+    id: 'settings-integrations',
+    // "webhook" stays in the description so anyone searching the palette for
+    // the old name still lands here.
+    label: 'Integrations',
+    description: 'Install the GitHub App — PR review comments and webhooks',
+    icon: <Blocks className="size-4" />,
     group: 'Settings',
-    onSelect: () => router.push('/settings/webhooks'),
+    onSelect: () => router.push('/settings/integrations'),
   });
 
   useCommand({
