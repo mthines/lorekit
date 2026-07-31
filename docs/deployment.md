@@ -175,10 +175,15 @@ production project too.
 
 ### Recommended branch protection
 
-Require a PR to `main` and mark the `ci.yml` **`Typecheck, Test & Lint
-(affected)`**, **`Integration smoke (local Supabase)`**, and **`Migration order
-(no out-of-order prefixes)`** jobs as required status checks. Because
-`deploy.yml` no longer re-runs tests, these checks are the sole gate that keeps
+Require a PR to `main` and mark the single **`CI Summary`** job as the required
+status check. It aggregates every job above — `Typecheck, Test & Lint
+(affected)`, `Integration smoke (local Supabase)`, `Plugin smoke`, and
+`Migration order (no out-of-order prefixes)` — into one pass/fail verdict.
+Require **`CI Summary`** rather than those jobs directly: they are path-gated and
+intentionally skip on unrelated PRs, and GitHub treats a *skipped* required job
+as pending forever (which would wedge a docs- or web-only PR), whereas
+`CI Summary` reports success when every job either passed or was skipped. Because
+`deploy.yml` no longer re-runs tests, this check is the sole gate that keeps
 unverified (or migration-breaking) code off `main`.
 
 Also enable **"Require branches to be up to date before merging."** It is what

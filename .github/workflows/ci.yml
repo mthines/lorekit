@@ -180,6 +180,17 @@ jobs:
         with:
           fetch-depth: 0 # need base + HEAD history to diff the added migrations
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      # Self-test the guard's pure logic first (node's built-in runner, zero deps)
+      # so a regression in the ordering check is caught here, not by letting a bad
+      # migration through or blocking a good PR.
+      - name: Unit-test the guard
+        run: node --test scripts/check-migration-order.test.mjs
+
       - name: Check migration ordering against the base branch
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
