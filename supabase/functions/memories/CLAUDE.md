@@ -143,7 +143,13 @@ NULL escape hatch `lorekit_memory_scopes` uses); there is no
 `packages/mcp-core/src/usage-stats.ts`) from the SAME rows returned as `by_tool`,
 so the headline totals can never disagree with the detail. Window + correlation
 validation are the pure `parseUsageWindow` / `parseCorrelationId` in the same
-module; an inverted/malformed window is a `400`.
+module; an inverted/malformed window is a `400`, and a **malformed
+`correlation_id` query param is a `400` too** — a read fails loud rather than
+silently widening to account-wide totals dressed up as one PR's. This is the one
+deliberate asymmetry with the write side: the `X-LoreKit-Correlation-Id` *header*
+degrades a bad value to null (a benign "don't group it"), because on a write the
+caller didn't ask to filter anything; on a read they did, and returning the wrong
+scope of data silently is the trap.
 
 Like `GET /scopes`, there is **no MCP tool** for this — an aggregate read has no
 scope-keyed MCP equivalent. Its `usage_events.tool_name` is `memory.usage`

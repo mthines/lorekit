@@ -557,6 +557,15 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
     expect(d.by_tool, 'an unmatched correlation id must aggregate to nothing').toEqual([]);
   });
 
+  it('GET /memories/usage?correlation_id=<malformed> — 400, not a silent widen to account-wide totals', async () => {
+    // `pr+42` (the '+' is out of parseCorrelationId's charset) passes the schema
+    // but is not a valid filter. A read must fail loud rather than degrade to
+    // null and return unfiltered totals dressed up as one PR's.
+    const { status, data } = await api('GET', '/usage?correlation_id=pr%2B42');
+    expect(status, `expected 400; got ${status}: ${JSON.stringify(data)}`).toBe(400);
+    expect((data as JsonObj).error, JSON.stringify(data)).toBeTruthy();
+  });
+
   // ── Purge ───────────────────────────────────────────────────────────────────
   // Both purge endpoints are user-scoped. LOREKIT_SMOKE_TOKEN may legitimately be
   // either a user-scoped `lk_*` token or the service-role key, and the two have

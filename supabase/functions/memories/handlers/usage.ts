@@ -56,10 +56,21 @@ export async function handleUsage(
     throw e;
   }
 
-  // Optional grouping filter — restrict to one PR / session / job. Bounded and
-  // normalised by the same validator the write paths use; an out-of-charset
-  // value degrades to null (no filter) rather than 400.
-  const correlationId = parseCorrelationId(v.data.correlation_id ?? null);
+  // Optional grouping filter — restrict to one PR / session / job. On a READ we
+  // fail loud: a malformed correlation_id that silently degraded to null would
+  // return account-wide totals dressed up as one PR's — a misleading analytics
+  // number. (The write header keeps degrade-to-null; a bad tag there is benign,
+  // it just doesn't get grouped. Here the caller asked to filter and we can't.)
+  let correlationId: string | null = null;
+  if (v.data.correlation_id != null) {
+    correlationId = parseCorrelationId(v.data.correlation_id);
+    if (correlationId === null) {
+      return badRequest(
+        'correlation_id contains characters outside [A-Za-z0-9_-./:#@] or exceeds 200 chars',
+        cors,
+      );
+    }
+  }
 
   const tracedDb = createTracedClient(db, span);
   // Service-role callers have no user id; the RPC recognises a null p_user_id
