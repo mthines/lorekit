@@ -331,7 +331,16 @@ export async function toolSearch(
     const likePatterns: string[] = [];
     for (const s of scopes) {
       if (s.endsWith('/*') || s.endsWith('::*')) {
-        likePatterns.push(s.replace(/\*$/, '%'));
+        const base = s.toLowerCase().trim().slice(0, -1); // drop trailing '*'
+        // SECURITY: `base` is interpolated into a PostgREST `.or()` filter as
+        // `scope.like.<base>%`, where `,` `(` `)` are structural. A canonical
+        // scope only contains [a-z0-9._:/-]; skip anything else so a crafted
+        // wildcard (e.g. `a),(value.ilike.*x*::*`) cannot inject OR predicates —
+        // same posture as skipping an invalid exact scope below.
+        // Escape the LIKE single-char wildcard `_` so an owner prefix stays
+        // owner-exact (`\` is LIKE's default escape char; `%`/`\` can't occur
+        // here — the charset above excludes them).
+        if (/^[a-z0-9._:/-]+$/.test(base)) likePatterns.push(base.replace(/_/g, '\\_') + '%');
       } else {
         try { exactScopes.push(validateScope(s)); } catch { /* skip invalid */ }
       }
