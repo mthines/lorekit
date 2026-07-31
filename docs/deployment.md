@@ -120,6 +120,14 @@ right values:
 > key. The CLI `doctor --deep` write round-trip only runs for a read+write
 > `lk_*` token; a service-role key (or a JWT) classifies as an unrecognized
 > prefix and the round-trip **silently skips**, so the write path goes untested.
+>
+> Trade-off to name explicitly: with an `lk_rw_*` token, the REST smoke's
+> **`audit_log` read-back** sub-assertions self-skip — reading `audit_log`
+> directly needs the service-role key (RLS bypass) or a user JWT (its own
+> rows), which an `lk_*` API token is not. The CRUD/write path is still fully
+> exercised; only the "was an audit row written" verification is traded away.
+> The orgs audit read-back runs off `LOREKIT_SMOKE_JWT` (a user JWT) and is
+> unaffected.
 
 **Optional — the orgs REST smoke suite (`smoke-preview` only).** Unset → the
 suite is announced-skipped and the memories suite still runs; the deploy is

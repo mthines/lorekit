@@ -110,7 +110,10 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
     for (const id of [createdIdA, createdIdB, createdIdR, createdIdBackdated].filter(Boolean)) {
       await api('DELETE', `/${id}?force=true`).catch(() => undefined);
     }
-  });
+    // Hooks use hookTimeout (10s default), NOT the suite `timeout` above — and
+    // this cleanup chains 4 sequential DELETEs at hosted latency, so give it the
+    // same 30s ceiling as the tests.
+  }, REMOTE_TEST_TIMEOUT);
 
   // 1. list — baseline ────────────────────────────────────────────────────────
   it('GET /memories — returns a paged response', async () => {
@@ -534,7 +537,7 @@ describe.skipIf(SKIP)('LoreKit memories API — audit trail read-back (integrati
 
   afterAll(async () => {
     if (auditId) await api('DELETE', `/${auditId}?force=true`).catch(() => undefined);
-  });
+  }, REMOTE_TEST_TIMEOUT);
 
   it('the audit_log capability probe ran and reported a definite result', () => {
     // Anti-vacuity: proves beforeAll executed and reached a decision, so a

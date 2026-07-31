@@ -164,15 +164,20 @@ const created = await authFetch(`${supabaseUrl}/auth/v1/admin/users`, apikey, {
 if (created.ok) {
   log('  created a new confirmed user');
 } else {
-  // Already exists (or another 4xx). Treat "already registered" as the
-  // heal-the-password path; anything else is a real, reported failure.
-  const msg = JSON.stringify(created.body ?? created.text ?? '').toLowerCase();
+  // Take the heal-the-password path ONLY for a genuine "already registered".
+  // A bare 422 is NOT a reliable signal — GoTrue also returns 422 for
+  // weak_password / invalid email, which would wrongly enter the heal branch
+  // and then die in findUserId ("already existing but was not found"). Match
+  // GoTrue's exists signal precisely (error_code email_exists /
+  // user_already_exists, or the "already been registered" message); 409
+  // Conflict is unambiguous. Anything else is a real, reported failure.
+  const errText = JSON.stringify(created.body ?? created.text ?? '').toLowerCase();
   const alreadyExists =
-    created.status === 422 ||
     created.status === 409 ||
-    msg.includes('already') ||
-    msg.includes('exists') ||
-    msg.includes('registered');
+    errText.includes('email_exists') ||
+    errText.includes('user_already_exists') ||
+    errText.includes('already been registered') ||
+    errText.includes('already registered');
   if (!alreadyExists) {
     fail(
       `admin user creation failed (HTTP ${created.status})\n` +

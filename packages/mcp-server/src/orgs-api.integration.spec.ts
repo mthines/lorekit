@@ -67,9 +67,11 @@ const REMOTE_TEST_TIMEOUT = 30_000;
 
 describe.skipIf(SKIP)('LoreKit orgs API — smoke tests (integration)', { timeout: REMOTE_TEST_TIMEOUT }, () => {
   afterAll(async () => {
-    // Best-effort cleanup — delete the test org if it still exists
+    // Best-effort cleanup — delete the test org if it still exists.
+    // Hooks use hookTimeout (10s default), not the suite `timeout`; give this
+    // live-endpoint cleanup the same 30s ceiling.
     await restFetch('DELETE', `/${TEST_SLUG}`).catch(() => undefined);
-  });
+  }, REMOTE_TEST_TIMEOUT);
 
   // 1. auth: no token → 401/403 ───────────────────────────────────────────────
   it('GET /orgs — returns 401 or 403 when no auth token is provided', async () => {
@@ -250,7 +252,7 @@ describe.skipIf(SKIP)('LoreKit orgs API — audit trail read-back (integration)'
 
   afterAll(async () => {
     await restFetch('DELETE', `/${AUDIT_SLUG}`).catch(() => undefined);
-  });
+  }, REMOTE_TEST_TIMEOUT);
 
   it('the audit_log capability probe ran and reported a definite result', () => {
     expect(probeStatus, 'the probe never issued a request').toBeGreaterThan(0);
