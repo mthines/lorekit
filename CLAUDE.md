@@ -436,7 +436,7 @@ unique.
 | `service.name` | Component | Set in |
 |---|---|---|
 | `api` | **All** Supabase Edge Functions (`memories`, `orgs`, `openapi`, `mcp`, `health`) | Hard-coded in `supabase/functions/_shared/otel.ts`. No configuration required. |
-| `mcp-node` | Node MCP server (Fly.io) | `OTEL_SERVICE_NAME`, default in `packages/mcp-server/src/instrumentation.ts` |
+| `mcp` | Node MCP server (Fly.io) | `OTEL_SERVICE_NAME`, default in `packages/mcp-server/src/instrumentation.ts` |
 | `web` | Next.js (server + browser) | `packages/web/src/instrumentation.ts`, `packages/web/src/instrumentation-client.ts`, `packages/web/src/components/providers/Dash0Provider.tsx` |
 | `cli` | CLI | `packages/cli/src/telemetry.mjs` |
 
@@ -454,8 +454,10 @@ unique.
 - `service.namespace` is **`lorekit`** everywhere — hard-coded in each component's resource
   (including `packages/mcp-server/src/instrumentation.ts`, which no longer delegates it to
   `OTEL_RESOURCE_ATTRIBUTES`), never env-dependent.
-- The Node MCP server is `mcp-node`, deliberately distinct from the edge `api`: it is a
-  separate deployment (Fly.io) with its own lifecycle, so it stays its own service.
+- The Node MCP server is `mcp`: the `lorekit` namespace already carries the product, and the
+  edge functions report `api` (told apart by `faas.name`), so `mcp` names this Fly.io
+  deployment cleanly with no service-map collision. It stays its own service, distinct from the
+  edge `api`, because it is a separate deployment (Fly.io) with its own lifecycle.
 - The Supabase origin pattern used for browser + server trace-context propagation lives in one
   place: `packages/web/src/lib/otel-origins.ts`.
 

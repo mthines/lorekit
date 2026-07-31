@@ -195,6 +195,7 @@ test('buildTracePayload produces a valid single-span OTLP structure', () => {
   assert.equal(resAttrs['service.name'], 'cli');
   assert.equal(resAttrs['service.namespace'], 'lorekit');
   assert.equal(resAttrs['service.version'], '9.9.9');
+  assert.equal(p.resourceSpans[0].scopeSpans[0].scope.name, 'cli');
 });
 
 test('buildTracePayload uses provided traceId and spanId when given', () => {
@@ -232,6 +233,7 @@ test('buildMetricsPayload emits a monotonic delta counter of 1', () => {
     startMs: 1,
     endMs: 2,
   });
+  assert.equal(p.resourceMetrics[0].scopeMetrics[0].scope.name, 'cli');
   const metric = p.resourceMetrics[0].scopeMetrics[0].metrics[0];
   assert.equal(metric.name, 'lorekit.cli.invocations');
   assert.equal(metric.sum.isMonotonic, true);

@@ -200,7 +200,7 @@ export function buildTracePayload({ version, name, attributes, startMs, endMs, s
         resource: { attributes: resourceAttributes(version) },
         scopeSpans: [
           {
-            scope: { name: 'lorekit-cli', version: String(version) },
+            scope: { name: 'cli', version: String(version) },
             spans: [
               {
                 traceId: traceId ?? randHex(16),
@@ -230,7 +230,7 @@ export function buildMetricsPayload({ version, attributes, startMs, endMs }) {
         resource: { attributes: resourceAttributes(version) },
         scopeMetrics: [
           {
-            scope: { name: 'lorekit-cli', version: String(version) },
+            scope: { name: 'cli', version: String(version) },
             metrics: [
               {
                 name: 'lorekit.cli.invocations',
