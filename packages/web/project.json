@@ -37,6 +37,16 @@
       "options": {
         "lintFilePatterns": ["packages/web/**/*.{ts,tsx,js,jsx}"]
       }
+    },
+    "test-storybook": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": ["default", "^production"],
+      "outputs": [],
+      "options": {
+        "cwd": "packages/web",
+        "command": "vitest run --config vitest.storybook.config.ts"
+      }
     }
   }
 }
