@@ -4,6 +4,15 @@ const nextConfig: NextConfig = {
   // Disable Next.js's built-in ESLint step — NX runs it separately via nx lint
   eslint: { ignoreDuringBuilds: true },
 
+  // `/settings/webhooks` was renamed to `/settings/integrations`. The old path
+  // is in bookmarks, docs, and any link shared before the rename, so it
+  // redirects rather than 404s.
+  async redirects() {
+    return [
+      { source: '/settings/webhooks', destination: '/settings/integrations', permanent: true },
+    ];
+  },
+
   // `@lorekit/schemas` is consumed as raw TS source (its `exports` point at
   // `.ts` files), so Next must transpile it. Used server-side by /api-docs/spec
   // to generate the OpenAPI document in-process.

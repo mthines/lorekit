@@ -184,14 +184,14 @@ export function GettingStartedContent({ isPublic = false }: Props) {
           automatically, tagged{' '}
           <code className="rounded bg-[var(--color-bg-elevated)] px-1 font-mono text-xs">source::pr-webhook</code>.
           {isPublic ? (
-            <> Set this up any time from <strong>Settings → Webhooks</strong> after signing in.</>
+            <> Set this up any time from <strong>Settings → Integrations</strong> after signing in.</>
           ) : (
             <> Set this up any time from{' '}
               <Link
-                href="/settings/webhooks"
+                href="/settings/integrations"
                 className="text-[var(--color-accent)] underline underline-offset-2"
               >
-                Settings → Webhooks
+                Settings → Integrations
               </Link>.
             </>
           )}

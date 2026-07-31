@@ -189,14 +189,6 @@ and the outbound Supabase fetch calls; the custom spans add business context
 | `lorekit.api_token.generate` | `lorekit.api_token.permissions`, `lorekit.api_token.id` (on success), `lorekit.api_token.limit_reached` (when cap is hit) |
 | `lorekit.api_token.revoke` | `lorekit.api_token.id`, `lorekit.api_token.prefix` |
 
-### Webhook secrets (`lib/webhook-secrets.ts`)
-
-| Span name | Key attributes |
-|-----------|---------------|
-| `lorekit.webhook_secret.generate` | `vcs.repository.name`, `lorekit.webhook_secret.is_rotation`, `lorekit.webhook_secret.id` (on success) |
-| `lorekit.webhook_secret.verify` | `vcs.repository.name`, `lorekit.webhook_secret.verify.ok`, `lorekit.webhook_secret.verify.code`, `http.response.status_code` |
-| `lorekit.webhook_secret.delete` | `lorekit.webhook_secret.id`, `vcs.repository.name` |
-
 On **any RPC/DB failure** the span also carries:
 
 | Attribute | Value |

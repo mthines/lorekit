@@ -1,9 +1,11 @@
 'use client';
 
-import { useId, useState, type ReactNode } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import { motion, MotionConfig } from 'motion/react';
 import { ChevronDown } from 'lucide-react';
 import { disclosurePanelProps, disclosureTriggerProps } from './disclosure';
+import { isPanelTargeted } from './section-nav';
+import { useHash } from '@/lib/hooks/useHash';
 
 interface SectionPanelProps {
   icon: ReactNode;
@@ -25,6 +27,16 @@ interface SectionPanelProps {
   collapsible?: boolean;
   /** Only meaningful with `collapsible`. Defaults to closed. */
   defaultOpen?: boolean;
+  /**
+   * Makes the panel an in-page anchor target (`#{anchorId}`), so a
+   * {@link SectionNav} sub-item can jump to it. Must match the sub-item's `id`.
+   *
+   * A collapsible panel that is the current anchor target opens itself —
+   * jumping someone to a collapsed header looks like a broken link. It never
+   * closes on its own: navigating away from an anchor should not undo a
+   * disclosure the user is reading.
+   */
+  anchorId?: string;
 }
 
 /**
@@ -44,9 +56,15 @@ export function SectionPanel({
   children,
   collapsible = false,
   defaultOpen = false,
+  anchorId,
 }: SectionPanelProps) {
   const panelId = useId();
   const [open, setOpen] = useState(defaultOpen);
+
+  const targeted = isPanelTargeted(useHash(), anchorId);
+  useEffect(() => {
+    if (targeted) setOpen(true);
+  }, [targeted]);
 
   // A non-collapsible panel is always open; its body is a plain container with
   // no ARIA wiring, exactly as before.
@@ -64,10 +82,20 @@ export function SectionPanel({
   return (
     <MotionConfig reducedMotion="user">
       <motion.section
+        id={anchorId}
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
-        className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
+        // `scroll-mt` keeps the header clear of the sticky app chrome when the
+        // browser jumps to this panel — so it applies only to a panel that is
+        // an anchor target. A panel with no `anchorId` is never jumped to, and
+        // giving it a scroll margin would change scroll anchoring for every
+        // existing caller. Written as a whole literal so Tailwind's class
+        // scanner still emits the utility.
+        className={[
+          'overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]',
+          anchorId ? 'scroll-mt-20' : '',
+        ].join(' ')}
       >
         {collapsible ? (
           // The border only separates the header from a body that is showing.

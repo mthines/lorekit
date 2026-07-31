@@ -8,7 +8,7 @@ import { resolveMcpUrls } from '@/lib/mcp-url';
  * Build the onboarding steps (title, icon, and rendered content) on the server.
  *
  * Only the `connect` step belongs here. The GitHub webhook is an optional
- * enrichment — surfaced post-connect via `WebhookTeaser`, not as a required
+ * enrichment — surfaced post-connect via `GithubAppTeaser`, not as a required
  * checklist step.
  *
  * Used by the Overview page (dashboard). The `/learn/setup` page has its own

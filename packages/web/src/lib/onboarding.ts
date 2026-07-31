@@ -12,7 +12,7 @@ import type { ReactNode } from 'react';
 
 // The one mandatory setup step: connect an agent via MCP.
 // The GitHub webhook is an optional enrichment feature, not a gate — it is
-// surfaced separately via WebhookTeaser once the connect step is done.
+// surfaced separately via GithubAppTeaser once the connect step is done.
 export const ONBOARDING_STEP_IDS = ['connect'] as const;
 export type OnboardingStepId = (typeof ONBOARDING_STEP_IDS)[number];
 
