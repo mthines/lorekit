@@ -52,6 +52,12 @@ describe('resolveEnvironmentBadge', () => {
     expect(badge?.tone).toBe('local');
   });
 
+  it('labels a `vercel dev` build, which reports VERCEL_ENV=development', () => {
+    const badge = resolveEnvironmentBadge({ vercelEnv: 'development' });
+    expect(badge?.label).toBe('LOCAL');
+    expect(badge?.tone).toBe('local');
+  });
+
   it('omits the detail line when no project ref is baked in', () => {
     expect(resolveEnvironmentBadge({ backendEnv: 'preview' })?.detail).toBeNull();
   });

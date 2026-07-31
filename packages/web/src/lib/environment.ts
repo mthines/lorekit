@@ -36,7 +36,11 @@ export interface EnvironmentBadge {
 export interface EnvironmentInput {
   /** NEXT_PUBLIC_BACKEND_ENV — set explicitly by the deploy workflow. */
   backendEnv?: string | undefined;
-  /** NEXT_PUBLIC_VERCEL_ENV — 'production' | 'preview' | '' (local). */
+  /**
+   * NEXT_PUBLIC_VERCEL_ENV — 'production' | 'preview' | 'development' | ''.
+   * Vercel sets 'development' for `vercel dev`; plain `next dev` leaves it
+   * empty. Both are local, and both must still be marked.
+   */
   vercelEnv?: string | undefined;
   /** NEXT_PUBLIC_SUPABASE_PROJECT_REF — the Supabase project the build targets. */
   projectRef?: string | undefined;
@@ -79,7 +83,11 @@ export function resolveEnvironmentBadge(input: EnvironmentInput): EnvironmentBad
     };
   }
 
-  if (!backendEnv && !vercelEnv) {
+  // 3. Untagged backend and no deployed frontend environment. `vercel dev`
+  //    reports 'development' where plain `next dev` reports nothing; both are
+  //    local, and leaving 'development' unhandled would fall through to `null`
+  //    — a non-production build silently rendering as if it were production.
+  if (!backendEnv && (!vercelEnv || vercelEnv === 'development')) {
     return {
       label: 'LOCAL',
       detail,
