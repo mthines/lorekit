@@ -621,6 +621,16 @@ begin
   insert into memories (org_id, scope, key, value) values
     ('00000000-0000-0000-0000-0000000000f2', 'global', 'p2-del-key', 'v');
 
+  -- Since 00043, memory_delete resolves the org capability check against the
+  -- EFFECTIVE actor, honouring a caller-supplied p_user_id only on a
+  -- service-role connection — which is exactly how the edge api_key path
+  -- invokes the org branch (a service-role client naming the token owner).
+  -- Adopt that context so each named role-holder (viewer c3 / member d4 /
+  -- admin e5) is authorized as itself; without it the actor resolves to a
+  -- stale auth.uid() and every capability check denies.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
   -- viewer denied soft-archive
   begin
     perform memory_delete('00000000-0000-0000-0000-0000000000c3', 'phase2-org', 'global', 'p2-del-key', false);
@@ -656,6 +666,9 @@ begin
   select * into r from memory_delete('00000000-0000-0000-0000-0000000000a1', null, 'global', 'p2-personal-del-key', false);
   assert r.archived and not r.deleted,
     'memory_delete: a personal soft-archive (no org selector) should behave as before';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
 end;
 $$;
 
