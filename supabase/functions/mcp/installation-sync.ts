@@ -55,7 +55,11 @@ async function processSync(req: Request, span: Span): Promise<Response> {
 
   let payload: { installation_id?: unknown } = {};
   try {
-    payload = await req.json();
+    const parsed: unknown = await req.json();
+    // A valid-JSON but non-object body (e.g. literal `null`, a number, a string)
+    // must not crash the property read below into a 500 — coerce to {} so it
+    // falls through to the clean `invalid_installation_id` 400.
+    if (parsed && typeof parsed === 'object') payload = parsed as { installation_id?: unknown };
   } catch {
     return json({ ok: false, error: 'invalid_body' }, 400);
   }
