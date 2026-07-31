@@ -111,19 +111,21 @@ async function trySignIn(supabaseUrl, apikey, email, password) {
 /** Find an existing user's id by email, paging through the admin list. */
 async function findUserId(supabaseUrl, apikey, serviceKey, email) {
   const wanted = email.toLowerCase();
-  const perPage = 200;
-  // Cap the paging so a large project can never spin here forever.
+  // Request 200/page, but terminate on an EMPTY page rather than a short one:
+  // GoTrue may cap `per_page` below what we ask (its default is 50), so a page
+  // shorter than requested is NOT proof it's the last one — only an empty page
+  // is. The page cap is a runaway backstop, not the normal exit.
   for (let page = 1; page <= 50; page++) {
     const { ok, status, body, text } = await authFetch(
-      `${supabaseUrl}/auth/v1/admin/users?page=${page}&per_page=${perPage}`,
+      `${supabaseUrl}/auth/v1/admin/users?page=${page}&per_page=200`,
       apikey,
       { headers: { Authorization: `Bearer ${serviceKey}` } },
     );
     if (!ok) fail(`admin user list failed (HTTP ${status})\n  ${body ? JSON.stringify(body) : text.slice(0, 300)}`);
     const users = Array.isArray(body) ? body : (body?.users ?? []);
+    if (users.length === 0) return null; // genuinely past the last page, no match
     const match = users.find((u) => String(u?.email ?? '').toLowerCase() === wanted);
     if (match?.id) return match.id;
-    if (users.length < perPage) return null; // last page reached, no match
   }
   return null;
 }
