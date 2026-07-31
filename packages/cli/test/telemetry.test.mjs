@@ -187,6 +187,8 @@ test('normalizeHostArch maps Node arches to the OTel host.arch vocabulary', () =
   assert.equal(normalizeHostArch('x64'), 'amd64');
   assert.equal(normalizeHostArch('ia32'), 'x86');
   assert.equal(normalizeHostArch('arm'), 'arm32');
+  // Node reports `ppc` for 32-bit PowerPC; the OTel registry value is `ppc32`.
+  assert.equal(normalizeHostArch('ppc'), 'ppc32');
   // Already-canonical / unmapped values pass through unchanged.
   for (const v of ['arm64', 's390x', 'ppc64']) {
     assert.equal(normalizeHostArch(v), v);

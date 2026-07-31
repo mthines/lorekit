@@ -174,7 +174,9 @@ function toOtlpAttributes(attributes) {
 //   os.type:   https://opentelemetry.io/docs/specs/semconv/registry/attributes/os/
 //   host.arch: https://opentelemetry.io/docs/specs/semconv/registry/attributes/host/
 const OS_TYPE_BY_PLATFORM = { win32: 'windows', sunos: 'solaris' };
-const HOST_ARCH_BY_PROCESS_ARCH = { x64: 'amd64', ia32: 'x86', arm: 'arm32' };
+// Node's `process.arch` reports `ppc` for 32-bit PowerPC; the OTel `host.arch`
+// registry value for it is `ppc32` (its `ppc64` spelling already matches Node).
+const HOST_ARCH_BY_PROCESS_ARCH = { x64: 'amd64', ia32: 'x86', arm: 'arm32', ppc: 'ppc32' };
 
 /** Map a Node `process.platform` value to an OTel `os.type` registry value. */
 export function normalizeOsType(platform) {
