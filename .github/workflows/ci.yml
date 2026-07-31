@@ -220,7 +220,7 @@ jobs:
         run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
@@ -231,7 +231,7 @@ jobs:
       # Cache the Vite/Storybook dep-optimizer so a warm run skips the cold
       # pre-bundle (the slow part of the first browser boot).
       - name: Cache Vite/Storybook optimizer
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             packages/web/node_modules/.vite
