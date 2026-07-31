@@ -16,6 +16,11 @@
  */
 
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';
+import {
+  createSmokeNamespace,
+  describeSweepFailures,
+  sweepSmokeArtefacts,
+} from './smoke-cleanup.js';
 
 const BASE = (process.env['LOREKIT_REST_BASE_URL'] ?? 'http://localhost:54321/functions/v1').replace(/\/$/, '');
 const TOKEN = process.env['LOREKIT_SMOKE_TOKEN'];
@@ -28,14 +33,25 @@ const SKIP = !TOKEN;
  */
 const PGREST = BASE.replace(/\/functions\/v1$/, '/rest/v1');
 
-const KEY_PREFIX = `memories-smoke-${Date.now()}`;
+/**
+ * Every memory key this file writes is minted through `NS`, which REGISTERS it
+ * at mint time. Cleanup then derives its work set from what was actually minted
+ * instead of from ids captured mid-test — the old approach lost a row whenever a
+ * test threw before its `createdId… =` line, and silently missed keys (`KEY_F`,
+ * `…-audit`) that were only ever deleted inside the test that created them.
+ *
+ * Adding a key here is therefore self-cleaning by construction: `NS.name(...)`
+ * is the only way to spell one, and `afterAll` sweeps the whole namespace.
+ */
+const NS = createSmokeNamespace('memories');
+const KEY_PREFIX = NS.prefix;
 const SCOPE = 'global';
-const KEY_A = `${KEY_PREFIX}-a`;
-const KEY_B = `${KEY_PREFIX}-b`;
+const KEY_A = NS.name('a');
+const KEY_B = NS.name('b');
 // Restore / hard-delete keys. Kept separate from A/B so the archive-and-restore
 // round trip can't perturb the CRUD assertions above it.
-const KEY_R = `${KEY_PREFIX}-restore`;
-const KEY_F = `${KEY_PREFIX}-force`;
+const KEY_R = NS.name('restore');
+const KEY_F = NS.name('force');
 
 type JsonObj = Record<string, unknown>;
 
@@ -99,20 +115,49 @@ async function listKeys(archived: boolean): Promise<unknown[]> {
 // ceiling per test, not an expected duration.
 const REMOTE_TEST_TIMEOUT = 30_000;
 
+/**
+ * Hard-delete one key by its NATURAL key.
+ *
+ * Addressed by scope+key, not by id, on purpose: an id is only known if the
+ * create assertion that captured it ran to completion, which is exactly the
+ * case a failing test breaks. The key is known from the moment it is minted.
+ *
+ * `force=true` removes the row outright — a soft archive would leave it in the
+ * table, which is the leak this cleanup exists to close. A 404 means the row is
+ * already gone (the test deleted it, or a sweep beat us to it); that is the
+ * desired end state, so it is a success, not an error.
+ */
+async function hardDeleteKey(key: string): Promise<void> {
+  const { status, data } = await api(
+    'DELETE',
+    `/?scope=${SCOPE}&key=${encodeURIComponent(key)}&force=true`,
+  );
+  if (status !== 204 && status !== 404) {
+    throw new Error(`DELETE ${key} → HTTP ${status}: ${JSON.stringify(data)}`);
+  }
+}
+
+/** Sweep every key minted so far, reporting (never throwing) what it could not remove. */
+async function sweepMintedKeys(context: string): Promise<void> {
+  const report = await sweepSmokeArtefacts(NS.minted(), hardDeleteKey);
+  const warning = describeSweepFailures(report, context);
+  if (warning) console.warn(warning);
+}
+
 describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { timeout: REMOTE_TEST_TIMEOUT }, () => {
   let createdIdA = '';
-  let createdIdB = '';
   let createdIdR = '';
-  let createdIdBackdated = '';
 
   afterAll(async () => {
-    // Best-effort cleanup. `force=true` so archived leftovers are removed too.
-    for (const id of [createdIdA, createdIdB, createdIdR, createdIdBackdated].filter(Boolean)) {
-      await api('DELETE', `/${id}?force=true`).catch(() => undefined);
-    }
+    // Sweeps the whole namespace, not a list of captured ids. The old hook
+    // deleted four ids and therefore missed `…-force`, `…-org-id-form` and every
+    // key whose test threw before the assignment; those rows accumulated in the
+    // live project on every deploy.
+    //
     // Hooks use hookTimeout (10s default), NOT the suite `timeout` above — and
-    // this cleanup chains 4 sequential DELETEs at hosted latency, so give it the
-    // same 30s ceiling as the tests.
+    // this chains one DELETE per key at hosted latency, so give it the same 30s
+    // ceiling as the tests.
+    await sweepMintedKeys('memories REST smoke');
   }, REMOTE_TEST_TIMEOUT);
 
   // 1. list — baseline ────────────────────────────────────────────────────────
@@ -146,7 +191,6 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
     });
     expect(status, `expected 201; got ${status}: ${JSON.stringify(data)}`).toBe(201);
     const d = data as JsonObj;
-    createdIdB = d.id as string;
     expect(Array.isArray(d.tags)).toBe(true);
   });
 
@@ -170,14 +214,13 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
   // (not silently dropped, and not a 500).
   it('POST /memories — honours an explicit past created_at', async () => {
     const backdated = '2020-03-04T05:06:07.000Z';
-    const key = `${KEY_PREFIX}-backdated`;
+    const key = NS.name('backdated');
 
     const { status, data } = await api('POST', '/', {
       scope: SCOPE, key, value: 'migrated-from-elsewhere', created_at: backdated,
     });
     expect(status, `expected 201; got ${status}: ${JSON.stringify(data)}`).toBe(201);
     const id = (data as JsonObj).id as string;
-    createdIdBackdated = id;
 
     // The distinguishing assertion: a dropped override would give us now().
     const roundTrip = new Date((data as JsonObj).created_at as string).toISOString();
@@ -193,7 +236,7 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
     // Well past the 60s clock-skew allowance in parseCreatedAt.
     const future = new Date(Date.now() + 86_400_000).toISOString();
     const { status, data } = await api('POST', '/', {
-      scope: SCOPE, key: `${KEY_PREFIX}-future`, value: 'from-the-future', created_at: future,
+      scope: SCOPE, key: NS.name('future'), value: 'from-the-future', created_at: future,
     });
     expect(status, `expected 400; got ${status}: ${JSON.stringify(data)}`).toBe(400);
     expect((data as JsonObj).error, JSON.stringify(data)).toBeTruthy();
@@ -202,7 +245,7 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
 
   it('POST /memories — rejects an unparseable created_at with a 400', async () => {
     const { status, data } = await api('POST', '/', {
-      scope: SCOPE, key: `${KEY_PREFIX}-badcreated`, value: 'nope', created_at: 'not-a-date',
+      scope: SCOPE, key: NS.name('badcreated'), value: 'nope', created_at: 'not-a-date',
     });
     expect(status, `expected 400; got ${status}: ${JSON.stringify(data)}`).toBe(400);
     expect((data as JsonObj).error, JSON.stringify(data)).toBeTruthy();
@@ -373,7 +416,7 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
   // 500, or the personal branch being taken by mistake.
 
   it('DELETE /memories/:id?org= — 400, because the org form is addressed by scope+key', async () => {
-    const id = await create(`${KEY_PREFIX}-org-id-form`);
+    const id = await create(NS.name('org-id-form'));
     try {
       const { status, data } = await api('DELETE', `/${id}?org=lorekit-smoke-nonexistent`);
       expect(status, `expected 400; got ${status}: ${JSON.stringify(data)}`).toBe(400);
@@ -405,7 +448,7 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
   ])('DELETE /memories?scope=&key=&org= (%s) — routes to the role-gated RPC, never 400/405/500', async (_label, forceQs) => {
     const { status, data } = await api(
       'DELETE',
-      `/?scope=${SCOPE}&key=${encodeURIComponent(`${KEY_PREFIX}-org`)}&org=lorekit-smoke-nonexistent${forceQs}`,
+      `/?scope=${SCOPE}&key=${encodeURIComponent(NS.name('org'))}&org=lorekit-smoke-nonexistent${forceQs}`,
     );
     // 404: unknown org / no matching row. 403: LK002, the caller lacks the
     // archive/hard_delete capability. 204: it really did delete something.
@@ -618,7 +661,7 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
  * read-back polls briefly rather than reading once.
  */
 describe.skipIf(SKIP)('LoreKit memories API — audit trail read-back (integration)', { timeout: REMOTE_TEST_TIMEOUT }, () => {
-  const AUDIT_KEY = `${KEY_PREFIX}-audit`;
+  const AUDIT_KEY = NS.name('audit');
   /** Set by the capability probe in beforeAll. */
   let auditReadable = false;
   let probeStatus = 0;
@@ -668,7 +711,10 @@ describe.skipIf(SKIP)('LoreKit memories API — audit trail read-back (integrati
   });
 
   afterAll(async () => {
-    if (auditId) await api('DELETE', `/${auditId}?force=true`).catch(() => undefined);
+    // By key, not by `auditId`: the id is only set once the create test has
+    // asserted its way to the end, so a failure anywhere before that left the
+    // row behind. The key exists from the moment it was minted.
+    await sweepMintedKeys('memories REST audit read-back');
   }, REMOTE_TEST_TIMEOUT);
 
   it('the audit_log capability probe ran and reported a definite result', () => {

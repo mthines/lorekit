@@ -29,6 +29,7 @@
  */
 
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';
+import { createSmokeNamespace } from './smoke-cleanup.js';
 
 const BASE = (process.env['LOREKIT_REST_BASE_URL'] ?? 'http://localhost:54321/functions/v1').replace(/\/$/, '');
 const JWT = process.env['LOREKIT_SMOKE_JWT'];
@@ -56,9 +57,12 @@ const isLkToken = tokenPrefix.startsWith('lk_');
 const tokenCanRead = isLkToken && (tokenPrefix.startsWith('lk_rw_') || tokenPrefix.startsWith('lk_ro_'));
 const tokenCanWrite = isLkToken && (tokenPrefix.startsWith('lk_rw_') || tokenPrefix.startsWith('lk_wo_'));
 
-// Slug must be unique and match ^[a-z0-9][a-z0-9-]*[a-z0-9]$
-const TEST_SLUG = `smoke-${Date.now()}-test`;
-const TOKEN_SLUG = `smoke-${Date.now()}-tok`;
+// Slug must be unique and match ^[a-z0-9][a-z0-9-]*[a-z0-9]$. Minted through the
+// shared namespace so `scripts/smoke-cleanup.mjs` recognises an orphaned org by
+// its slug, and so both suites below share one run identifier.
+const NS = createSmokeNamespace('smoke');
+const TEST_SLUG = NS.name('test');
+const TOKEN_SLUG = NS.name('tok');
 
 type JsonObj = Record<string, unknown>;
 
@@ -94,12 +98,87 @@ async function restFetch(
 // test, not an expected duration; sub-ms locally so it never bites there.
 const REMOTE_TEST_TIMEOUT = 30_000;
 
+/**
+ * ── Org cleanup: PURGE, never DELETE ─────────────────────────────────────────
+ *
+ * `DELETE /orgs/:slug` maps to `lorekit_org_delete`, which since migration
+ * 00025 is a SOFT delete — it stamps `deleted_at` and leaves the row, its
+ * memberships and its invites in place. Using it as cleanup meant every smoke
+ * run added a permanent org to the live project, and worse, an INVISIBLE one:
+ * `lorekit_member_org_ids` filters soft-deleted orgs out of every RLS read, so
+ * nothing short of a service-role query could ever find them again.
+ *
+ * `lorekit_org_purge` (same migration, same owner-only `delete_org` gate) is
+ * the real cascading delete. It is SQL-only — no REST route exposes it, by
+ * design — so cleanup calls it through PostgREST with the suite's own JWT,
+ * which owns every org these tests create.
+ *
+ * The org id is remembered at CREATE time because a purge after the delete test
+ * has run cannot look it up: the org is already hidden from reads.
+ */
+const createdOrgIds = new Map<string, string>();
+
+/** Record the id from a create response so cleanup can purge by id later. */
+function rememberOrg(slug: string, data: unknown): void {
+  const id = (data as JsonObj | null)?.id;
+  if (typeof id === 'string' && id) createdOrgIds.set(slug, id);
+}
+
+async function orgIdFor(slug: string, token: string | null | undefined = JWT): Promise<string | null> {
+  const remembered = createdOrgIds.get(slug);
+  if (remembered) return remembered;
+  // Not remembered (the create test threw before its assertion) — the org may
+  // still be live, in which case a read gets us the id.
+  const { status, data } = await restFetch('GET', `/${slug}`, undefined, token);
+  const id = status === 200 ? (data as JsonObj).id : null;
+  return typeof id === 'string' ? id : null;
+}
+
+/**
+ * Remove one org for good. Reports rather than throws: cleanup runs in
+ * `afterAll`, where a throw would mask the suite's real result — but a leak
+ * that cannot be cleaned must still be visible in the CI log.
+ */
+async function purgeOrg(slug: string, token: string | null | undefined = JWT): Promise<void> {
+  try {
+    const id = await orgIdFor(slug, token);
+    if (!id) return; // never created, or already purged — nothing to do.
+
+    // The purge RPC authorises via `auth.uid()`, so it needs the user JWT even
+    // when the org was created with an API token (same user, per the suite's
+    // documented env contract).
+    const res = await fetch(`${PGREST}/rpc/lorekit_org_purge`, {
+      method: 'POST',
+      headers: {
+        apikey: JWT ?? '',
+        Authorization: `Bearer ${JWT}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ p_org_id: id }),
+    });
+    if (res.ok) return;
+
+    // Purge refused (no JWT, or a credential that does not own the org). Fall
+    // back to the soft delete so the org at least stops being visible, and say
+    // so — the row is now only reachable by the service-role sweep in
+    // scripts/smoke-cleanup.mjs.
+    console.warn(
+      `  ⚠ could not purge org ${slug} (HTTP ${res.status}); falling back to a soft delete. ` +
+        'Run `node scripts/smoke-cleanup.mjs` with LOREKIT_SWEEP_SERVICE_ROLE_KEY to remove it.',
+    );
+    await restFetch('DELETE', `/${slug}`, undefined, token);
+  } catch (err) {
+    console.warn(`  ⚠ org cleanup for ${slug} failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 describe.skipIf(SKIP)('LoreKit orgs API — smoke tests (integration)', { timeout: REMOTE_TEST_TIMEOUT }, () => {
   afterAll(async () => {
-    // Best-effort cleanup — delete the test org if it still exists.
+    // Purge, not delete — see purgeOrg. The old `DELETE` left a soft-deleted org
+    // in the live project on every single run, unreachable by any later read.
     // Hooks use hookTimeout (10s default), not the suite `timeout`; give this
     // live-endpoint cleanup the same 30s ceiling.
-    await restFetch('DELETE', `/${TEST_SLUG}`).catch(() => undefined);
+    await purgeOrg(TEST_SLUG);
   }, REMOTE_TEST_TIMEOUT);
 
   // 1. auth: no token → 401/403 ───────────────────────────────────────────────
@@ -147,6 +226,7 @@ describe.skipIf(SKIP)('LoreKit orgs API — smoke tests (integration)', { timeou
       slug: TEST_SLUG,
       name: 'Smoke Test Org',
     });
+    rememberOrg(TEST_SLUG, data);
     expect(status, `expected 201; got ${status}: ${JSON.stringify(data)}`).toBe(201);
     const d = data as JsonObj;
     expect(d.slug).toBe(TEST_SLUG);
@@ -233,7 +313,7 @@ describe.skipIf(SKIP)('LoreKit orgs API — smoke tests (integration)', { timeou
  * whole file (pre-existing behaviour, unchanged here) does not run in CI.
  */
 describe.skipIf(SKIP)('LoreKit orgs API — audit trail read-back (integration)', { timeout: REMOTE_TEST_TIMEOUT }, () => {
-  const AUDIT_SLUG = `smoke-${Date.now()}-audit`;
+  const AUDIT_SLUG = NS.name('audit');
   const ORG_NAME = 'Audit Read-Back Org';
   const startedAt = new Date().toISOString();
   let auditReadable = false;
@@ -295,7 +375,7 @@ describe.skipIf(SKIP)('LoreKit orgs API — audit trail read-back (integration)'
   });
 
   afterAll(async () => {
-    await restFetch('DELETE', `/${AUDIT_SLUG}`).catch(() => undefined);
+    await purgeOrg(AUDIT_SLUG);
   }, REMOTE_TEST_TIMEOUT);
 
   it('the audit_log capability probe ran and reported a definite result', () => {
@@ -306,6 +386,7 @@ describe.skipIf(SKIP)('LoreKit orgs API — audit trail read-back (integration)'
   it('POST /orgs writes an org.create audit row attributed to the JWT caller', async ({ skip }) => {
     if (!auditReadable) skip();
     const { status, data } = await restFetch('POST', '/', { slug: AUDIT_SLUG, name: ORG_NAME });
+    rememberOrg(AUDIT_SLUG, data);
     expect(status, `expected 201; got ${status}: ${JSON.stringify(data)}`).toBe(201);
 
     const found = await requireAuditRow(`action=eq.org.create&target=eq.${encodeURIComponent(ORG_NAME)}`,
@@ -438,8 +519,8 @@ describe.skipIf(SKIP)('LoreKit orgs API — audit trail read-back (integration)'
  */
 describe.skipIf(SKIP || !isLkToken)('LoreKit orgs API — api_key tier (integration)', () => {
   afterAll(async () => {
-    await restFetch('DELETE', `/${TOKEN_SLUG}`).catch(() => undefined);
-  });
+    await purgeOrg(TOKEN_SLUG, API_TOKEN);
+  }, REMOTE_TEST_TIMEOUT);
 
   // ── permission gating ─────────────────────────────────────────────────────
 
@@ -470,6 +551,7 @@ describe.skipIf(SKIP || !isLkToken)('LoreKit orgs API — api_key tier (integrat
   it('POST /orgs — creates an org owned by the TOKEN OWNER', async () => {
     if (!tokenCanWrite) return;
     const { status, data } = await restFetch('POST', '/', { slug: TOKEN_SLUG, name: 'Token Created Org' }, API_TOKEN);
+    rememberOrg(TOKEN_SLUG, data);
     expect(
       status,
       `expected 201 — a 403 here means the actor override was lost (see migration 00041); got ${status}: ${JSON.stringify(data)}`,

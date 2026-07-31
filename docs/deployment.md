@@ -103,6 +103,114 @@ Database migrations are **forward-only** and intentionally *not* reverted —
 keep migrations backward-compatible (expand/contract) and enable **PITR**
 (Point-in-Time Recovery) in the Supabase dashboard as the database safety net.
 
+### Smoke-test data hygiene
+
+The smoke suites write to **real projects** — the preview/staging project in
+`smoke-preview`, and (via `doctor --deep`) production itself. Every row they
+create is a row in a live tenant, so cleanup is part of the contract, not an
+afterthought. It has two layers, because one hook cannot cover both failure
+modes:
+
+| Layer | Covers | Where |
+|-------|--------|-------|
+| **Self-cleanup** — each suite hard-deletes everything it minted in `afterAll` | a suite that FAILED partway through | `packages/mcp-server/src/smoke-cleanup.ts` + each `*.integration.spec.ts` |
+| **Orphan sweep** — deletes leftovers from earlier runs, matched by name pattern and age | a run that never reached `afterAll` (crash, OOM, cancelled workflow, job timeout) | `scripts/smoke-cleanup.mjs`, run as an `if: always()` step after every smoke job |
+
+Two rules make the difference between "cleaned up" and "looks cleaned up":
+
+- **Deletes must be hard deletes.** `memory.delete` and `DELETE /memories`
+  default to a soft *archive*, and `DELETE /orgs/:slug` maps to
+  `lorekit_org_delete`, a soft delete since migration 00025. Both leave the row
+  in the table. Cleanup therefore passes `force=true` for memories and calls
+  `lorekit_org_purge` for orgs.
+- **Every artefact name is minted through `createSmokeNamespace`**, which
+  registers it at mint time. Cleanup sweeps the registry, so a key created by a
+  test that threw before recording its id is still removed — and the sweeper
+  recognises the name later if the process died first.
+
+Run the sweep by hand against any project:
+
+```bash
+LOREKIT_REST_BASE_URL="https://<ref>.supabase.co/functions/v1" \
+LOREKIT_SMOKE_TOKEN="<lk_rw_* token>" \
+LOREKIT_SMOKE_JWT="<supabase user JWT>" \
+  node scripts/smoke-cleanup.mjs --dry-run
+```
+
+Drop `--dry-run` to delete. `--min-age-minutes` (default 30) protects a smoke
+run that is still in flight; artefacts younger than that are left alone, judged
+by the server's timestamp rather than the client-minted name so a skewed runner
+clock cannot make a live run look sweepable.
+
+Use the same `lk_rw_*` token as `LOREKIT_SMOKE_TOKEN` here, **not** the
+service-role key. Service-role bypasses RLS and every handler's tenant filter,
+so a sweep on it spans every tenant in the project; the script refuses such a
+credential unless `--allow-service-role` is passed (CI does, against the
+throwaway local stack, where there is only one tenant).
+
+#### Wiring the sweep into CI (one-time, must be committed by a human)
+
+The GitHub App that opens automated PRs cannot modify `.github/workflows/**`
+(no `workflows` permission), so the three steps below are **not** applied by the
+PR that added the sweeper — add them by hand. Everything else (the suites'
+self-cleanup, the script) works without them; these are what make the orphan
+sweep run automatically.
+
+**1. `ci.yml` → `integration` job**, after `Smoke — REST API (memories + orgs)
+against the live stack`. This is the only place the sweeper itself is exercised
+on every PR, so a regression in it fails here rather than silently no-opping
+against staging for months. `--allow-service-role` is safe (and required) here
+because the local stack is a single-tenant throwaway; `--strict` is safe because
+nothing downstream rolls back on this job.
+
+```yaml
+      - name: Smoke cleanup — sweep leftover artefacts (self-test of the sweeper)
+        if: always()
+        env:
+          LOREKIT_SMOKE_TOKEN: ${{ steps.supabase.outputs.service_role_key }}
+          LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
+          LOREKIT_SWEEP_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_role_key }}
+          LOREKIT_REST_BASE_URL: http://127.0.0.1:54321/functions/v1
+        run: node scripts/smoke-cleanup.mjs --min-age-minutes 0 --allow-service-role --strict
+```
+
+**2. `deploy.yml` → `smoke-preview` job**, as the last step. `if: always()` is
+the point — the runs that leak are exactly the ones where an earlier step failed.
+No `--strict`: cleanup must never red a deploy.
+
+```yaml
+      - name: Smoke cleanup — sweep orphaned artefacts from preview
+        if: always()
+        env:
+          LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
+          LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
+          LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
+        run: node scripts/smoke-cleanup.mjs --min-age-minutes 30
+```
+
+**3. `deploy.yml` → `smoke-production` job**, as the last step — **report-only**.
+Nothing in that job mints smoke artefacts (the `doctor --deep` probe uses a fixed
+key the pattern deliberately does not match, and force-deletes it in a `finally`),
+so a non-empty plan here is a signal to act on, not something to delete inside a
+job whose failure triggers `rollback-production`. `--dry-run` +
+`continue-on-error` keep it unable to influence the deploy outcome.
+
+```yaml
+      - name: Smoke residue check — report anything left in production
+        if: always()
+        continue-on-error: true
+        env:
+          LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
+          LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
+        run: node scripts/smoke-cleanup.mjs --min-age-minutes 30 --dry-run
+```
+
+**Historical residue.** Orgs that earlier runs *soft*-deleted are invisible to
+every RLS read (`lorekit_member_org_ids` filters them out), so no API surface can
+list them. Set `LOREKIT_SWEEP_SERVICE_ROLE_KEY` to the project's service-role key
+and the sweeper will find and purge those too. This is a one-off cleanup — the
+suites no longer create them.
+
 ### Environments and secrets
 
 The pipeline targets **two Supabase projects** (a dedicated preview project +

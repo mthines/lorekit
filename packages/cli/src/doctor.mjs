@@ -282,14 +282,22 @@ async function deepCheckRemote(store, root, record) {
     record('fail', 'round-trip', `write failed: ${w.error ? w.error.message || w.error.code : w.networkError}`);
     return;
   }
-  const r = await store.read({ scope: writeScope, key });
-  const readBack = r.ok && JSON.stringify(r.entry || '').includes('round-trip');
-  record(
-    readBack ? 'pass' : 'warn',
-    'round-trip',
-    readBack ? `wrote + read back in ${writeScope}` : 'wrote, but read-back was inconclusive',
-  );
-  await store.delete({ scope: writeScope, key, force: true });
+  // Everything after a SUCCESSFUL write runs under `finally`, because this
+  // probe writes to the user's REAL project (CI runs it against production on
+  // every deploy). A throw or an early return between the write and the delete
+  // leaves a synthetic row in that tenant with nothing to remove it — the read
+  // is a diagnostic, never a reason to abandon the row it created.
+  try {
+    const r = await store.read({ scope: writeScope, key });
+    const readBack = r.ok && JSON.stringify(r.entry || '').includes('round-trip');
+    record(
+      readBack ? 'pass' : 'warn',
+      'round-trip',
+      readBack ? `wrote + read back in ${writeScope}` : 'wrote, but read-back was inconclusive',
+    );
+  } finally {
+    await store.delete({ scope: writeScope, key, force: true }).catch(() => {});
+  }
 }
 
 async function deepCheckLocal(store, scope, record) {
@@ -302,14 +310,19 @@ async function deepCheckLocal(store, scope, record) {
     tags: ['skill::lorekit-memory', 'source::doctor'],
     trigger: 'manual',
   });
-  const r = await store.read({ scope: writeScope, key });
-  const readBack = w.ok && r.ok && r.entry && String(r.entry.value).includes('round-trip');
-  record(
-    readBack ? 'pass' : 'warn',
-    'round-trip',
-    readBack ? `wrote + read back in ${writeScope}` : 'write/read-back was inconclusive',
-  );
-  await store.delete({ scope: writeScope, key, force: true });
+  // Same `finally` contract as the remote probe: the local store is a real
+  // store too, and a half-finished probe should not leave a row in it.
+  try {
+    const r = await store.read({ scope: writeScope, key });
+    const readBack = w.ok && r.ok && r.entry && String(r.entry.value).includes('round-trip');
+    record(
+      readBack ? 'pass' : 'warn',
+      'round-trip',
+      readBack ? `wrote + read back in ${writeScope}` : 'write/read-back was inconclusive',
+    );
+  } finally {
+    await store.delete({ scope: writeScope, key, force: true }).catch(() => {});
+  }
 }
 
 // Returns the list of CLAUDE_HOOK_EVENTS whose lorekit hook command appears in
