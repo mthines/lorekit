@@ -276,12 +276,34 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     responses: { 204: { description: 'Revoked' }, 401: errorResponse, 403: errorResponse },
   });
 
+  const description = [
+    'Persistent memory for AI coding agents.',
+    '',
+    '**Authentication** — every endpoint takes a Bearer token. Generate a LoreKit API',
+    'token in the dashboard (**Settings → Tokens**) and paste it into the **Authorize**',
+    'box above. Use a read-only `lk_ro_*` token to explore safely, or `lk_rw_*` to test',
+    'writes. Organization endpoints require a Supabase JWT rather than an API token.',
+  ].join('\n');
+
   const gen = new OpenApiGeneratorV31(registry.definitions);
-  _cachedSpec = gen.generateDocument({
+  const doc = gen.generateDocument({
     openapi: '3.1.0',
-    info: { title: 'LoreKit REST API', version: '1.0.0', description: 'Persistent memory for AI coding agents.' },
+    info: { title: 'LoreKit REST API', version: '1.0.0', description },
     servers: [{ url: baseUrl, description: 'Supabase Edge Functions' }],
+    // Applied globally in addition to the per-operation `security` so the spec
+    // root itself declares the requirement (clients / linters that read the
+    // document-level default see auth is required everywhere).
+    security,
   }) as unknown as Record<string, unknown>;
 
+  // Sidebar hierarchy (Scalar / Redocly `x-tagGroups`): Members and Invites are
+  // sub-concepts of an organization, so nest them with Orgs under one group
+  // instead of the flat Memories/Orgs/Members/Invites list.
+  doc['x-tagGroups'] = [
+    { name: 'Memories', tags: ['Memories'] },
+    { name: 'Organizations', tags: ['Orgs', 'Members', 'Invites'] },
+  ];
+
+  _cachedSpec = doc;
   return _cachedSpec;
 }
