@@ -37,12 +37,13 @@
  *      so a concurrently-running smoke suite is never swept out from under.
  *      Age comes from the SERVER's timestamp, not the client-minted name, so a
  *      skewed runner clock cannot make a live run's rows look sweepable.
- *   3. A service-role `LOREKIT_SMOKE_TOKEN` is REFUSED unless
- *      `--allow-service-role` is passed — including under `--dry-run`, because
- *      enumerating every tenant's `scope::key` into a CI log is a disclosure in
- *      its own right. Service-role bypasses RLS and every handler's tenant
- *      filter, so a sweep on it spans every tenant in the project — fine on a
- *      throwaway stack, never implicitly on a shared one.
+ *   3. Anything cross-tenant is REFUSED unless `--allow-service-role` is
+ *      passed — a service-role `LOREKIT_SMOKE_TOKEN`, and the soft-deleted-org
+ *      phase, which is service-role by construction. Including under
+ *      `--dry-run`, because enumerating every tenant's `scope::key` into a CI
+ *      log is a disclosure in its own right. Service-role bypasses RLS and every
+ *      handler's tenant filter, so a sweep on it spans every tenant in the
+ *      project — fine on a throwaway stack, never implicitly on a shared one.
  *   4. `--dry-run` prints the plan and deletes nothing.
  *
  * EXIT CODE. 0 by default even when individual deletes fail — including on a
@@ -118,8 +119,9 @@ if (args.help) {
       '\n' +
       '  --dry-run             print the plan, delete nothing\n' +
       '  --strict              exit non-zero if anything could not be swept\n' +
-      '  --allow-service-role  permit a service-role LOREKIT_SMOKE_TOKEN, which\n' +
-      '                        sweeps ACROSS EVERY TENANT (throwaway stacks only)\n' +
+      '  --allow-service-role  permit the cross-tenant phases: a service-role\n' +
+      '                        LOREKIT_SMOKE_TOKEN, and the soft-deleted-org sweep\n' +
+      '                        (service-role bypasses RLS, so both span EVERY tenant)\n' +
       '  --min-age-minutes N   leave artefacts younger than N alone (default 30)',
   );
   process.exit(0);
@@ -392,6 +394,21 @@ async function sweepSoftDeletedOrgs() {
     );
     return;
   }
+  if (!args.allowServiceRole) {
+    // This phase is service-role BY CONSTRUCTION — there is no other credential
+    // that can see a soft-deleted org — which is exactly why it needs the same
+    // opt-in the memories phase does, not an exemption from it. Setting the env
+    // var says "I have the key"; the flag says "I accept that this reads and
+    // deletes across every tenant in the project". Those are different claims,
+    // and only the second one authorises a cross-tenant delete.
+    console.warn(
+      'soft-deleted orgs — REFUSED: this phase is inherently cross-tenant.\n' +
+        '  It reads and deletes org rows across EVERY tenant in the project (service-role\n' +
+        '  bypasses RLS). Pass --allow-service-role to confirm that is intended.',
+    );
+    fail('soft-deleted-orgs', PGREST, 'refused: cross-tenant phase without --allow-service-role');
+    return;
+  }
   if (!HAVE_PGREST) {
     console.log(`soft-deleted orgs — SKIPPED (cannot derive a PostgREST base from ${BASE}).`);
     return;
@@ -423,6 +440,12 @@ async function sweepSoftDeletedOrgs() {
     );
     if (data.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
+    // Same treatment as staleKeysIn's stop: exhausting the safety limit means
+    // the oldest residue was never looked at, and a silent exit would report
+    // that as a clean scan.
+    if (page === PAGE_SAFETY_STOP - 1) {
+      fail('soft-deleted-org-list', PGREST, `exceeded ${PAGE_SAFETY_STOP} pages`);
+    }
   }
   console.log(`soft-deleted orgs — ${stale.length} stale smoke org(s) of ${scanned} scanned`);
 

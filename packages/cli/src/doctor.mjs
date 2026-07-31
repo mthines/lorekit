@@ -296,7 +296,28 @@ async function deepCheckRemote(store, root, record) {
       readBack ? `wrote + read back in ${writeScope}` : 'wrote, but read-back was inconclusive',
     );
   } finally {
-    await store.delete({ scope: writeScope, key, force: true }).catch(() => {});
+    await removeProbeRow(store, writeScope, key, record);
+  }
+}
+
+/**
+ * Delete the probe row, reporting rather than swallowing a failure.
+ *
+ * A silent `.catch` here means a synthetic row left in the user's REAL project
+ * with no signal anywhere — the same class of invisible leak this cleanup work
+ * exists to end. It is a `warn`, not a `fail`: the round-trip the user asked
+ * about did happen, so this must not flip doctor's verdict; it must just be
+ * impossible to miss. Both the thrown case and the `{ ok: false }` case are
+ * covered, because a REST delete reports its failure in the return value.
+ */
+async function removeProbeRow(store, writeScope, key, record) {
+  try {
+    const d = await store.delete({ scope: writeScope, key, force: true });
+    if (d && d.ok === false) {
+      record('warn', 'round-trip cleanup', `could not remove ${writeScope}::${key} — delete it manually`);
+    }
+  } catch (err) {
+    record('warn', 'round-trip cleanup', `could not remove ${writeScope}::${key}: ${err && err.message ? err.message : err}`);
   }
 }
 
@@ -321,7 +342,7 @@ async function deepCheckLocal(store, scope, record) {
       readBack ? `wrote + read back in ${writeScope}` : 'write/read-back was inconclusive',
     );
   } finally {
-    await store.delete({ scope: writeScope, key, force: true }).catch(() => {});
+    await removeProbeRow(store, writeScope, key, record);
   }
 }
 

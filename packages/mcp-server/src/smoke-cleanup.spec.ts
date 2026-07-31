@@ -19,7 +19,6 @@ import {
   SMOKE_ARTEFACT_PATTERN,
   createSmokeNamespace,
   describeSweepFailures,
-  isStaleSmokeArtefact,
   smokeArtefactAgeMs,
   smokeArtefactTimestamp,
   sweepSmokeArtefacts,
@@ -70,26 +69,27 @@ describe('smokeArtefactAgeMs', () => {
   });
 });
 
-describe('isStaleSmokeArtefact', () => {
+describe('the age guard (smokeArtefactAgeMs + the caller\'s minAgeMs)', () => {
   const minted = 1_700_000_000_000;
   const name = `smoke-${minted}-a`;
+  const stale = (now: number, minAgeMs: number) => smokeArtefactAgeMs(name, now) >= minAgeMs;
 
   it('leaves an artefact younger than the age guard alone', () => {
     // The load-bearing case: a concurrent run's rows must survive the sweep.
-    expect(isStaleSmokeArtefact(name, { now: minted + 5 * MINUTE, minAgeMs: 30 * MINUTE })).toBe(false);
+    expect(stale(minted + 5 * MINUTE, 30 * MINUTE)).toBe(false);
   });
 
   it('sweeps an artefact at or beyond the age guard', () => {
-    expect(isStaleSmokeArtefact(name, { now: minted + 30 * MINUTE, minAgeMs: 30 * MINUTE })).toBe(true);
-    expect(isStaleSmokeArtefact(name, { now: minted + 99 * MINUTE, minAgeMs: 30 * MINUTE })).toBe(true);
+    expect(stale(minted + 30 * MINUTE, 30 * MINUTE)).toBe(true);
+    expect(stale(minted + 99 * MINUTE, 30 * MINUTE)).toBe(true);
   });
 
   it('never sweeps a name it does not recognise, however old', () => {
-    expect(isStaleSmokeArtefact('a-real-lesson', { now: Number.MAX_SAFE_INTEGER, minAgeMs: 0 })).toBe(false);
+    expect(smokeArtefactAgeMs('a-real-lesson', Number.MAX_SAFE_INTEGER) >= 0).toBe(false);
   });
 
   it('leaves a future-dated artefact alone (a skewed clock must not delete live rows)', () => {
-    expect(isStaleSmokeArtefact(name, { now: minted - MINUTE, minAgeMs: 0 })).toBe(false);
+    expect(stale(minted - MINUTE, 0)).toBe(false);
   });
 });
 
@@ -220,8 +220,18 @@ describe('mirror parity with scripts/smoke-cleanup.mjs', () => {
     expect(sweeperSource).toContain('process.exit(args.strict && failures.length ? 1 : 0)');
   });
 
-  it('refuses a service-role credential without an explicit opt-in', () => {
+  it('refuses every cross-tenant path without an explicit opt-in', () => {
     expect(sweeperSource).toContain('allowServiceRole');
     expect(sweeperSource).toContain("json?.role === 'service_role'");
+    // Two independent gates: the service-role TOKEN, and the soft-deleted-org
+    // phase, which is service-role by construction and so needs the same claim.
+    expect(sweeperSource.match(/!args\.allowServiceRole/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    // The token gate must not be exempted by --dry-run: enumeration is itself a
+    // disclosure, since scope strings embed repo and project names.
+    expect(sweeperSource).not.toContain('!args.dryRun && !args.allowServiceRole');
+  });
+
+  it('reports an exhausted page walk on both scans, never exits it silently', () => {
+    expect(sweeperSource.match(/exceeded \$\{PAGE_SAFETY_STOP\} pages/g)?.length ?? 0).toBe(2);
   });
 });

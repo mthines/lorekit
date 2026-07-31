@@ -208,8 +208,17 @@ job whose failure triggers `rollback-production`. `--dry-run` +
 **Historical residue.** Orgs that earlier runs *soft*-deleted are invisible to
 every RLS read (`lorekit_member_org_ids` filters them out), so no API surface can
 list them. Set `LOREKIT_SWEEP_SERVICE_ROLE_KEY` to the project's service-role key
-and the sweeper will find and purge those too. This is a one-off cleanup — the
-suites no longer create them.
+**and pass `--allow-service-role`** — that phase reads and deletes across every
+tenant in the project, so holding the key and intending a cross-tenant delete are
+kept as two separate claims:
+
+```bash
+LOREKIT_REST_BASE_URL="https://<ref>.supabase.co/functions/v1" \
+LOREKIT_SWEEP_SERVICE_ROLE_KEY="<service-role key>" \
+  node scripts/smoke-cleanup.mjs --allow-service-role --dry-run
+```
+
+This is a one-off cleanup — the suites no longer create them.
 
 ### Environments and secrets
 

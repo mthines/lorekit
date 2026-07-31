@@ -78,27 +78,19 @@ export function smokeArtefactTimestamp(name: string): number | null {
  * consulted for AGE when a row carries no server timestamp.
  *
  * `-Infinity` for an unrecognised name, so it can never clear a threshold. A
- * future-dated name yields a negative age and is likewise never swept.
+ * future-dated name yields a negative age and is likewise never swept — a
+ * runner whose clock ran fast must not have its live rows treated as orphans.
+ *
+ * The caller compares this against its own `minAgeMs`, which is the guard that
+ * keeps two legitimately-overlapping smoke runs (a preview deploy and a
+ * developer's local run against the same project) from sweeping each other's
+ * working set mid-suite.
  */
 export function smokeArtefactAgeMs(name: string, now: number): number {
   const mintedAt = smokeArtefactTimestamp(name);
   return mintedAt === null ? -Infinity : now - mintedAt;
 }
 
-/**
- * Is `name` a smoke artefact old enough to be an ORPHAN rather than the working
- * set of a run that is still in flight?
- *
- * `minAgeMs` is the load-bearing guard: two smoke runs can legitimately overlap
- * (a preview deploy and a developer's local run against the same project), and
- * sweeping by pattern alone would have one delete the other's rows mid-suite.
- */
-export function isStaleSmokeArtefact(
-  name: string,
-  opts: { now: number; minAgeMs: number },
-): boolean {
-  return smokeArtefactAgeMs(name, opts.now) >= opts.minAgeMs;
-}
 
 /**
  * A suite's artefact namespace. Every key or slug the suite uses is minted here
