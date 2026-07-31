@@ -21,6 +21,14 @@ const nextConfig: NextConfig = {
   // can build the correct CORS URL pattern for W3C trace propagation headers.
   env: {
     NEXT_PUBLIC_SUPABASE_PROJECT_REF: process.env['NEXT_PUBLIC_SUPABASE_PROJECT_REF'] ?? '',
+    // Which backend this bundle was built against — 'preview' | 'staging' |
+    // 'production'. Set explicitly by .github/workflows/preview.yml alongside
+    // the Supabase override, because VERCEL_ENV alone cannot express it: a
+    // Vercel *preview* deployment normally points at whatever Supabase project
+    // the Vercel project has configured, while a /preview build is repointed at
+    // the preview Supabase project. EnvironmentBanner reads this to tell the
+    // two apart. Absent (local dev, push-triggered Vercel previews) → ''.
+    NEXT_PUBLIC_BACKEND_ENV: process.env['NEXT_PUBLIC_BACKEND_ENV'] ?? '',
     // Vercel injects VERCEL_GIT_COMMIT_SHA server-side; expose to client for service.version
     NEXT_PUBLIC_OTEL_SERVICE_VERSION: process.env['VERCEL_GIT_COMMIT_SHA'] ?? 'unknown',
     // Vercel injects VERCEL_ENV = 'production' | 'preview' | 'development'.
