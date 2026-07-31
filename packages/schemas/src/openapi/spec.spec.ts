@@ -64,9 +64,9 @@ describe('generateSpec', () => {
     ]) {
       expect(spec.components.schemas[name], `missing component: ${name}`).toBeDefined();
     }
-    // One scheme: the session token (JWT) works on every endpoint, so the docs
-    // need a single Authorize field the user fills once.
-    expect(spec.components.securitySchemes.SessionJwt).toBeDefined();
+    // One scheme: a Bearer credential (lk_* API token or Supabase JWT) works on
+    // every endpoint, so the docs need a single Authorize field the user fills once.
+    expect(spec.components.securitySchemes.BearerAuth).toBeDefined();
   });
 
   // Dry-run safety flag: the docs default `X-LoreKit-Dry-Run` to true on every
