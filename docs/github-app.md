@@ -159,7 +159,20 @@ supabase secrets set GITHUB_APP_PRIVATE_KEY="$(cat path/to/private-key.pem)"
 supabase secrets set GITHUB_APP_ENABLED=true
 ```
 
-### 3. Verify
+### 3. Surface the install button in the dashboard
+
+The dashboard's "Install GitHub App" button (Settings → Webhooks) links to the
+App's public installation page. It is resolved from the App's slug at build
+time, so set this **web** env var (Vercel — not a Supabase secret):
+
+```bash
+NEXT_PUBLIC_GITHUB_APP_SLUG=<the-app-slug>   # e.g. lorekitbot (from github.com/apps/<slug>)
+```
+
+When unset, the dashboard falls back to the "available once `GITHUB_APP_ENABLED`
+is set" note instead of rendering a link to a non-existent App page.
+
+### 4. Verify
 
 - Install the App on a test repo.
 - Confirm a `github_installations` row appears with `status='linked'`.

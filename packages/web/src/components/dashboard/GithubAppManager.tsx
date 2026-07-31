@@ -54,10 +54,11 @@ function InstallAppButton({ url, label }: { url: string; label: string }) {
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-[var(--color-accent-glow)] bg-[var(--color-accent-subtle)] px-3 py-1.5 text-xs font-medium text-[var(--color-accent)] transition-colors hover:bg-[var(--color-accent)]/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
+      className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[var(--color-accent-glow)] bg-[var(--color-accent-subtle)] px-3.5 py-2 text-xs font-medium text-[var(--color-accent)] transition-colors hover:bg-[var(--color-accent)]/15 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
     >
       <Github className="size-3.5 shrink-0" aria-hidden />
       {label}
+      <span className="sr-only"> (opens in a new tab)</span>
       <ExternalLink className="size-3 shrink-0 opacity-70" aria-hidden />
     </a>
   );
@@ -206,10 +207,11 @@ export function GithubAppManager({ installations, installUrl }: GithubAppManager
             href={installUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="ml-auto inline-flex min-h-8 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1 text-[11px] font-medium text-[var(--color-content-secondary)] transition-colors hover:border-[var(--color-accent-glow)] hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
+            className="ml-auto inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-[11px] font-medium text-[var(--color-content-secondary)] transition-colors hover:border-[var(--color-accent-glow)] hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
           >
             <Plus className="size-3 shrink-0" aria-hidden />
             Add repositories
+            <span className="sr-only"> (opens in a new tab)</span>
           </a>
         )}
       </div>
