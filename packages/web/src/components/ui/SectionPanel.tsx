@@ -87,8 +87,15 @@ export function SectionPanel({
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
         // `scroll-mt` keeps the header clear of the sticky app chrome when the
-        // browser jumps to this panel.
-        className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] scroll-mt-20"
+        // browser jumps to this panel — so it applies only to a panel that is
+        // an anchor target. A panel with no `anchorId` is never jumped to, and
+        // giving it a scroll margin would change scroll anchoring for every
+        // existing caller. Written as a whole literal so Tailwind's class
+        // scanner still emits the utility.
+        className={[
+          'overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]',
+          anchorId ? 'scroll-mt-20' : '',
+        ].join(' ')}
       >
         {collapsible ? (
           // The border only separates the header from a body that is showing.
