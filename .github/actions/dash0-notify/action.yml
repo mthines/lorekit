@@ -47,6 +47,19 @@ runs:
           exit 0
         fi
 
+        # A set-but-malformed secret is the same class of problem as an unset
+        # one, and must produce the same no-op. A value that is not an https URL
+        # sent curl chasing a hostname it could not resolve ("curl: (6) Could
+        # not resolve host"), which failed the step and painted a SECOND red X
+        # on a run whose real failure was already reported.
+        case "$DASH0_WEBHOOK_URL" in
+          https://*) ;;
+          *)
+            echo "::warning::DASH0_WEBHOOK_URL is set but is not an https:// URL — skipping Dash0 notification. Re-copy the automation's trigger URL under Settings ▸ Secrets and variables ▸ Actions."
+            exit 0
+            ;;
+        esac
+
         jq -n \
           --arg workflow "$WORKFLOW" \
           --arg failed "$FAILED_STAGE" \
@@ -68,7 +81,16 @@ runs:
             triggered_by: $actor,
             summary: "\($workflow) failed at stage: \($failed) (\($repo)@\($sha[0:7]), branch \($ref)). Run: \($url)"
           }' \
-        | curl -sS --fail-with-body -X POST "$DASH0_WEBHOOK_URL" \
-            -H "Content-Type: application/json" \
-            -d @-
-        echo "Dash0 failure notification sent (workflow: $WORKFLOW, failed stage: $FAILED_STAGE)."
+        | {
+          # Same reasoning as the guards above: a notification that cannot be
+          # delivered (DNS, TLS, a 5xx from the trigger endpoint) must not turn
+          # into a second, misleading red X on top of the failure it is
+          # reporting. Warn with the exit code and succeed.
+          if curl -sS --fail-with-body -X POST "$DASH0_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -d @-; then
+            echo "Dash0 failure notification sent (workflow: $WORKFLOW, failed stage: $FAILED_STAGE)."
+          else
+            echo "::warning::Could not POST the Dash0 failure notification (curl exit $?). The underlying failure is still reported by the job that broke."
+          fi
+        }
