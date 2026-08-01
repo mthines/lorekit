@@ -129,7 +129,7 @@ function SuggestionBanner({
         type="button"
         onClick={() => onBind(suggestion.org.id, suggestion.repos)}
         disabled={busy}
-        className="flex min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3.5 text-xs font-semibold text-[var(--color-bg)] transition-opacity duration-150 hover:opacity-90 disabled:opacity-50"
+        className="flex min-h-11 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3.5 text-xs font-semibold text-[var(--color-bg)] transition-opacity duration-150 hover:opacity-90 disabled:opacity-50"
       >
         {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <LinkIcon className="size-3.5" aria-hidden />}
         Share all
@@ -191,7 +191,8 @@ function RepoRow({
   // Static rows: covered-but-not-shared (icon only) or shared (org chip + unbind).
   return (
     <div className="flex min-h-11 items-center gap-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
-      <GitBranch className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+      {/* size-4 matches the selectable row's checkbox so both start the name column at the same offset. */}
+      <GitBranch className="size-4 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
       {name}
       {boundOrgSlug && (
         <span className="flex shrink-0 items-center gap-0.5 rounded-full bg-[var(--color-accent-subtle)] py-0.5 pl-2 pr-1 text-[11px] font-medium text-[var(--color-accent)] ring-1 ring-inset ring-[var(--color-accent-glow)]">
