@@ -8,6 +8,7 @@ import { blogMdxComponents } from '@/components/blog/mdx-components';
 import { blogMdxOptions } from '@/lib/blog/mdx-render-options';
 import { BlogProse } from '@/components/blog/BlogProse';
 import { TableOfContents } from '@/components/blog/TableOfContents';
+import { MobileTableOfContents } from '@/components/blog/MobileTableOfContents';
 import { ReadingProgress } from '@/components/blog/ReadingProgress';
 import { formatPostDate, readingLabel } from '@/lib/blog/format';
 
@@ -42,7 +43,7 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
     <>
       <ReadingProgress />
 
-      <div className="mx-auto max-w-5xl lg:flex lg:justify-center lg:gap-12">
+      <main className="mx-auto max-w-5xl lg:flex lg:justify-center lg:gap-12">
         <article className="mx-auto min-w-0 max-w-2xl lg:mx-0 lg:flex-1">
           <Link
             href="/blog"
@@ -78,6 +79,10 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
             </div>
           </header>
 
+          {/* Mobile/tablet TOC — sticky collapsible, shown below `lg` where the
+              right rail is hidden. Same scroll-spy state as the desktop rail. */}
+          {post.toc.length > 0 && <MobileTableOfContents items={post.toc} />}
+
           <BlogProse>
             <MDXRemote source={post.body} components={blogMdxComponents} options={blogMdxOptions} />
           </BlogProse>
@@ -92,7 +97,7 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
             </div>
           </aside>
         )}
-      </div>
+      </main>
     </>
   );
 }
