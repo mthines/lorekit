@@ -217,6 +217,37 @@ test('write --remote errors when no remote is configured', () => {
   assert.match(res.stderr, /not configured/);
 });
 
+// ── TTL / expiry flags on a local write ───────────────────────────────────────
+
+test('write --local --ttl-days sets expires_at on the offline row', () => {
+  const { root, home } = seedProject();
+  const res = runWrite(root, home, ['global', 'k', 'v', '--local', '--ttl-days', '30', '--json']);
+  assert.equal(res.status, 0);
+  const files = fs.readdirSync(path.join(home, 'global'));
+  const onDisk = fs.readFileSync(path.join(home, 'global', files[0]), 'utf8');
+  const m = /expires_at: "([^"]+)"/.exec(onDisk);
+  assert.ok(m, 'expires_at is persisted to frontmatter');
+  const days = (Date.parse(m[1]) - Date.now()) / (24 * 60 * 60 * 1000);
+  assert.ok(days > 29 && days < 31, `expiry ≈ 30 days out (got ${days})`);
+});
+
+test('write --local --clear-ttl removes an existing expiry', () => {
+  const { root, home } = seedProject();
+  runWrite(root, home, ['global', 'k', 'v1', '--local', '--ttl-days', '30']);
+  const res = runWrite(root, home, ['global', 'k', 'v2', '--local', '--clear-ttl', '--json']);
+  assert.equal(res.status, 0);
+  const files = fs.readdirSync(path.join(home, 'global'));
+  const onDisk = fs.readFileSync(path.join(home, 'global', files[0]), 'utf8');
+  assert.match(onDisk, /expires_at: null/);
+});
+
+test('write --local --ttl-days rejects an out-of-range value', () => {
+  const { root, home } = seedProject();
+  const res = runWrite(root, home, ['global', 'k', 'v', '--local', '--ttl-days', '999']);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /365/);
+});
+
 // ── deny-wins suppression ─────────────────────────────────────────────────────
 
 test('LOREKIT_DENY=local errors when no remote configured', () => {

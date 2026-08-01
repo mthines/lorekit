@@ -288,7 +288,8 @@ ${c.bold('Options')}
       --tags <a,b,c>       Comma-separated tags (default: none)
       --source-agent <n>   Source agent name to record (default: none)
       --trigger <slug>     Trigger context slug (default: none)
-      --ttl-days <n>       Days until auto-expiry 1–365 (remote only)
+      --ttl-days <n>       Days until auto-expiry 1–365 (local or remote)
+      --clear-ttl          Remove any existing expiry (make it permanent)
       --org <slug>         Write to this org's scope (remote only)
       --origin-repo <o/n>  Override the derived provenance repository
       --origin-branch <b>  Override the derived provenance branch
@@ -574,7 +575,7 @@ const KNOWN_FLAGS = [
   'dir', 'project', 'global', 'endpoint', 'token', 'mode', 'store',
   'from', 'to', 'apply', 'yes', 'no-hooks', 'force', 'deep', 'adapter',
   'event', 'json', 'scope', 'threshold', 'help', 'version',
-  'value', 'tags', 'source-agent', 'trigger', 'ttl-days', 'org', 'remote', 'local',
+  'value', 'tags', 'source-agent', 'trigger', 'ttl-days', 'clear-ttl', 'org', 'remote', 'local',
   'link', 'base', 'q', 'owner', 'range', 'view', 'archived',
   'origin-repo', 'origin-branch', 'origin-commit', 'origin-pr', 'no-origin',
 ];
@@ -601,7 +602,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'no-origin', 'json', 'remote', 'local', 'link', 'archived'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl'],
     known: KNOWN_FLAGS,
   });
 

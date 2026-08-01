@@ -14,6 +14,7 @@
 //   --source-agent <name>  Which agent recorded this lesson (default: none)
 //   --trigger <slug>       What prompted the write (default: none)
 //   --ttl-days <n>         Days until the memory auto-expires (1–365)
+//   --clear-ttl            Remove any existing expiry (make the memory permanent)
 //   --org <slug>           Write to this org (remote only)
 //
 // Provenance — where the lesson is being recorded FROM. Derived automatically
@@ -109,6 +110,7 @@ export async function write(args) {
   const sourceAgent = typeof args['source-agent'] === 'string' ? args['source-agent'] : undefined;
   const trigger = typeof args.trigger === 'string' ? args.trigger : undefined;
   const ttlDays = args['ttl-days'] ? Number(args['ttl-days']) : undefined;
+  const clearTtl = Boolean(args['clear-ttl']);
   const orgSlug = typeof args.org === 'string' ? args.org : undefined;
 
   // ── Provenance ────────────────────────────────────────────────────────────
@@ -198,6 +200,7 @@ export async function write(args) {
     ...(sourceAgent ? { source_agent: sourceAgent } : {}),
     ...(trigger ? { trigger } : {}),
     ...(ttlDays ? { ttl_days: ttlDays } : {}),
+    ...(clearTtl ? { clear_ttl: true } : {}),
     ...(orgSlug ? { org: orgSlug } : {}),
     ...origin,
   };
@@ -249,5 +252,6 @@ export async function write(args) {
     'lorekit.cli.write.inserted': inserted,
     'lorekit.cli.write.has_tags': tags.length > 0,
     'lorekit.cli.write.has_ttl': Boolean(ttlDays),
+    'lorekit.cli.write.clear_ttl': clearTtl,
   };
 }
