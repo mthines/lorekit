@@ -74,6 +74,52 @@ any job fails ─▶ notify-failure   Discord webhook (see below)
 
 Production is never touched until preview has been deployed and smoke-tested.
 
+### Migration drift on the shared preview project
+
+`preview` is a **shared** Supabase project, and two workflows push migrations to
+it: `deploy.yml` on every merge to `main`, and `preview.yml` on a `/preview`
+comment — from an **open PR's head SHA**. So the preview project's migration
+history can legitimately carry versions that do not exist on `main` yet.
+
+`supabase db push` treats a remote that is merely *ahead* as fatal:
+
+```
+Remote migration versions not found in local migrations directory.
+supabase migration repair --status reverted 00049 00050 00051
+```
+
+…even when `main` has nothing left to apply. That is not a hypothetical: a
+`/preview` run on PR #311 applied `00049`–`00051` to the shared project and
+every subsequent deploy of `main` failed on this check, with zero pending work.
+
+`deploy-preview` therefore classifies the drift *before* pushing, via
+[`scripts/check-remote-migration-drift.mjs`](../scripts/check-remote-migration-drift.mjs):
+
+| Remote state | Local pending | Outcome |
+|---|---|---|
+| in sync, or behind | any | **push** — `supabase db push --include-all`, unchanged |
+| ahead (unknown versions) | none | **skip** — the push would be a no-op; warn and continue |
+| ahead (unknown versions) | one or more | **fail** — ambiguous; the annotation names both sides |
+
+The `skip` outcome is safe by construction: with zero local-pending migrations
+there is no work a successful push would have done. The unknown versions
+reconcile on their own when the PR that introduced them merges. The step never
+runs `migration repair` and never mutates the remote's migration history —
+reverting a history row does not undo the schema objects, so a later merge of
+those same files would fail on "already exists".
+
+The `fail` outcome is the one that needs a human. Either merge the PR that owns
+the drifted versions, or — if those changes were abandoned — revert them on the
+preview project and clear the history rows the annotation names:
+
+```bash
+supabase migration repair --status reverted 00049 00050 00051
+```
+
+`deploy-production` is deliberately **not** given this tolerance: nothing but
+`deploy.yml` ever pushes to production, so a remote ahead of `main` there is a
+real anomaly and must stop the pipeline.
+
 ### Failure notifications (Discord)
 
 A `notify-failure` job runs whenever **any** pipeline job reports `failure` — a
