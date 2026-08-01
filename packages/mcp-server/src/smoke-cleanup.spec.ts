@@ -119,6 +119,16 @@ describe('createSmokeNamespace', () => {
     expect(() => createSmokeNamespace('orgs')).toThrow(/SMOKE_ARTEFACT_PATTERN/);
   });
 
+  it('refuses a SUFFIX the pattern would not recognise', () => {
+    // Same failure one level down: the label can be valid and the minted name
+    // still unrecognisable, which is a leak the sweeper can never clean up.
+    const ns = createSmokeNamespace('smoke', 1_700_000_000_000);
+    for (const bad of ['Upper', 'has_underscore', 'has.dot', 'has:colon', 'has space']) {
+      expect(() => ns.name(bad), bad).toThrow(/SMOKE_ARTEFACT_PATTERN/);
+    }
+    expect(ns.minted(), 'a refused suffix must not be registered').toEqual([]);
+  });
+
   it('registers at MINT time, which is what makes cleanup failure-proof', () => {
     // The regression this whole module exists for: a key created by a test that
     // threw before recording its id was never cleaned up. Minting is the only
@@ -165,6 +175,18 @@ describe('describeSweepFailures', () => {
     expect(describeSweepFailures({ removed: ['a'], failed: [] }, 'ctx')).toBeNull();
   });
 
+  it('does not promise the orphan sweeper where it cannot reach', () => {
+    // The BYOD suite writes to its own project over MCP; telling a reader the
+    // sweeper will pick it up turns a visible leak into one believed handled.
+    const msg = describeSweepFailures(
+      { removed: [], failed: [{ name: 'byod-smoke-1700000000000-repo', reason: 'HTTP 500' }] },
+      'BYOD smoke',
+      { sweeperCovers: false },
+    );
+    expect(msg).toContain('Delete them by hand');
+    expect(msg).not.toContain('will be removed by the next');
+  });
+
   it('names every leftover, so a leak is never invisible', () => {
     const msg = describeSweepFailures(
       { removed: [], failed: [{ name: 'smoke-1700000000000-a', reason: 'HTTP 500' }] },
@@ -189,12 +211,20 @@ describe('mirror parity with scripts/smoke-cleanup.mjs', () => {
     expect(m?.[1]).toBe(SMOKE_ARTEFACT_PATTERN.toString());
   });
 
+  /**
+   * Both strings below also appear in the sweeper's PROSE, so a bare
+   * `toContain` stays green even if the real call loses them — the guard would
+   * then be asserting its own documentation. Each is matched against the
+   * executable line instead.
+   */
   it('hard-deletes rather than archiving — an archived row is still a leaked row', () => {
-    expect(sweeperSource).toContain('force=true');
+    // The literal DELETE template, not the word "force" in a comment.
+    expect(sweeperSource).toMatch(/key=\$\{encodeURIComponent\(key\)\}&force=true/);
   });
 
   it('purges orgs rather than soft-deleting them', () => {
-    expect(sweeperSource).toContain('lorekit_org_purge');
+    // The RPC path in the request URL, not the function name in a comment.
+    expect(sweeperSource).toMatch(/\$\{PGREST\}\/rpc\/lorekit_org_purge/);
   });
 
   it('mirrors the two recognition helpers, not just the pattern', () => {

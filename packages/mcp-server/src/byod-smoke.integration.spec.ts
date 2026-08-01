@@ -127,7 +127,9 @@ describe.skipIf(SKIP)('LoreKit BYOD smoke tests (integration)', () => {
     const report = await sweepSmokeArtefacts([...scopeOfKey.keys()], async (key) => {
       await mcpCall('memory.delete', { scope: scopeOfKey.get(key), key, force: true });
     });
-    const warning = describeSweepFailures(report, 'BYOD smoke');
+    // `sweeperCovers: false` — the orphan sweeper targets LOREKIT_REST_BASE_URL,
+    // and this suite writes to its own project (LOREKIT_BYOD_URL) over MCP.
+    const warning = describeSweepFailures(report, 'BYOD smoke', { sweeperCovers: false });
     if (warning) console.warn(warning);
   }, 30_000);
 

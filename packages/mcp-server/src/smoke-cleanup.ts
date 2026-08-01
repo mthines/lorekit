@@ -107,7 +107,8 @@ export interface SmokeNamespace {
 }
 
 /**
- * Create a namespace whose names match {@link SMOKE_ARTEFACT_PATTERN}.
+ * Create a namespace whose names match {@link SMOKE_ARTEFACT_PATTERN} — both the
+ * label (here) and every suffix (in `name`).
  *
  * Throws on a label the pattern does not admit. That is the point: a suite that
  * mints unrecognised names is a suite the orphan sweeper silently ignores, and
@@ -129,6 +130,16 @@ export function createSmokeNamespace(label: string, now: number = Date.now()): S
     prefix,
     name(suffix: string): string {
       const full = `${prefix}-${suffix}`;
+      // The FULL name, not just the prefix. The pattern constrains the suffix to
+      // `[a-z0-9-]`, so an underscore, a dot, a colon or any uppercase letter
+      // mints a name the orphan sweeper will never recognise — the same silent
+      // leak the label check above exists to prevent, one level down.
+      if (!SMOKE_ARTEFACT_PATTERN.test(full)) {
+        throw new Error(
+          `smoke suffix "${suffix}" produces "${full}", which SMOKE_ARTEFACT_PATTERN does not match — ` +
+            'the orphan sweeper would never clean it up. Suffixes are lowercase [a-z0-9-].',
+        );
+      }
       if (!minted.includes(full)) minted.push(full);
       return full;
     },
@@ -183,12 +194,25 @@ export async function sweepSmokeArtefacts(
  * guaranteeing that a leak is never silent: whatever is left behind is named in
  * the CI log, which is the only place a human will ever see it.
  */
-export function describeSweepFailures(report: SweepReport, context: string): string | null {
+export function describeSweepFailures(
+  report: SweepReport,
+  context: string,
+  opts: { sweeperCovers?: boolean } = {},
+): string | null {
   if (report.failed.length === 0) return null;
   const lines = report.failed.map((f) => `      - ${f.name}: ${f.reason}`).join('\n');
+  // Only promise the sweeper where it can actually reach. It targets
+  // `LOREKIT_REST_BASE_URL`, so a BYOD leftover — a different project, over MCP
+  // — is NOT covered, and telling a reader otherwise turns a visible leak into
+  // one they believe is already handled.
+  const followUp =
+    opts.sweeperCovers === false
+      ? '    Nothing else will remove them: this suite writes to its own project, which\n' +
+        '    `scripts/smoke-cleanup.mjs` does not target. Delete them by hand.\n'
+      : '    They will be removed by the next `node scripts/smoke-cleanup.mjs` sweep.\n';
   return (
     `\n  ⚠ SMOKE CLEANUP INCOMPLETE (${context}) — ${report.failed.length} artefact(s) were left behind:\n` +
     `${lines}\n` +
-    '    They will be removed by the next `node scripts/smoke-cleanup.mjs` sweep.\n'
+    followUp
   );
 }
