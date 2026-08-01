@@ -20,8 +20,14 @@
 import { createClient } from '@/lib/supabase/client';
 
 /**
- * The signed-in user's access token, or `null` when there is no session —
- * a signed-out read is an empty result, not an error.
+ * The signed-in user's access token, or `null` when there is no session.
+ *
+ * Returning `null` rather than throwing keeps the decision with the caller,
+ * and the two callers make it differently on purpose: the client read hooks
+ * (`queries/lore.ts`) turn it into a `NotAuthenticatedError` so a lapsed
+ * session is distinguishable from an empty account, while the server actions
+ * (`lib/lore.ts`) turn it into their `{ error: 'Not authenticated' }` result
+ * shape. Neither treats a signed-out read as "no data".
  */
 export async function browserAccessToken(): Promise<string | null> {
   const { data } = await createClient().auth.getSession();

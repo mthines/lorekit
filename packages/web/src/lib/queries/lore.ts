@@ -35,15 +35,44 @@ const LEGACY_PAGE_SIZE = 100;
  * and ships one row per group instead of one per memory.
  *
  * The token is the browser session's own access token; the API re-verifies it
- * and RLS applies exactly as it did to the direct queries.
+ * and RLS applies exactly as it did to the direct queries. With no session the
+ * read REJECTS with {@link NotAuthenticatedError} instead of resolving empty —
+ * see that class for why, and `isNotAuthenticated` for how a consumer tells it
+ * apart from a real failure.
  */
 
-/** No session yet (or signed out) — every read below answers "nothing". */
-class NotAuthenticatedError extends Error {
+/**
+ * No session (signed out, or the refresh failed mid-session) — the read below
+ * could not be attempted at all.
+ *
+ * These hooks FAIL rather than resolving to an empty result, deliberately: an
+ * empty Explorer and a signed-out Explorer look identical, and a user whose
+ * session lapsed while the tab was open would be told they have no lore. The
+ * cost of that choice is that every consumer must be able to tell this error
+ * apart from a real failure, which is what {@link isNotAuthenticated} is for —
+ * exported alongside the class because `instanceof` across a bundle boundary is
+ * a trap the check should not leave to each call site.
+ */
+export class NotAuthenticatedError extends Error {
   constructor() {
     super('Not authenticated');
     this.name = 'NotAuthenticatedError';
   }
+}
+
+/** True when a query rejected because there was no session to read with. */
+export function isNotAuthenticated(error: unknown): boolean {
+  return error instanceof NotAuthenticatedError;
+}
+
+/**
+ * TanStack retries a failed query three times by default. Being signed out is
+ * not transient — retrying it costs three round trips and three renders to
+ * reach the same answer — so it is the one error that fails immediately.
+ * Everything else (a dropped connection, a 5xx) keeps the default budget.
+ */
+export function retryUnlessSignedOut(failureCount: number, error: unknown): boolean {
+  return !isNotAuthenticated(error) && failureCount < 3;
 }
 
 async function requireBrowserToken(): Promise<string> {
@@ -104,6 +133,7 @@ export function useTagCatalog(showArchived = false) {
     queryFn: ({ signal }) => fetchTagCatalog(showArchived, signal),
     // Matches the scope tree: read-heavy, changes only when an agent writes.
     staleTime: 90_000,
+    retry: retryUnlessSignedOut,
   });
 }
 
@@ -113,6 +143,7 @@ export function useScopeTree() {
     queryFn: ({ signal }) => fetchScopes(signal),
     // Scope tree is read-heavy — keep data for 90 s before refetching.
     staleTime: 90_000,
+    retry: retryUnlessSignedOut,
   });
 }
 
@@ -159,6 +190,7 @@ export function useLoreData() {
     queryFn: ({ signal }) => fetchLoreData(signal),
     // Lore explorer is read-heavy — keep data for 90 s before refetching.
     staleTime: 90_000,
+    retry: retryUnlessSignedOut,
   });
 }
 
