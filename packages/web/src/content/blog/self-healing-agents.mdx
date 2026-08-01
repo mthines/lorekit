@@ -143,7 +143,7 @@ npx @lorekit/cli doctor      # confirm the loop is wired
 npx @lorekit/cli tree        # see exactly which lesson wins per scope, before a run
 ```
 
-That one command drops in two skills, not one: `lorekit-memory` does the runtime read and write, and `lorekit-setup` wires this whole two-tier loop — guardrails and all — into a skill, workflow, or agent of your own. It's how the autonomous-workflow above got its memory in the first place.
+That one command drops in two skills, not one: `lorekit-memory` does the runtime read and write, and `lorekit-setup` wires this whole two-tier loop — guardrails and all — into a skill, workflow, or agent of your own. It's the shortest path to the same two-tier setup the autonomous-workflow above runs.
 
 That gives your agent the read-fail-write loop against a local store — no account, no server, no config. When you want it to compound across sessions and teammates, point it at the hosted store and turn on org sharing.
 
