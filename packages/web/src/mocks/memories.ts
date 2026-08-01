@@ -187,7 +187,22 @@ function activityFrom(rows: MemoryRow[], unit: 'hour' | 'day') {
   );
 }
 
-/** `GET /memories` — the filters the dashboard actually sends. */
+/**
+ * `GET /memories` — the filters the dashboard actually sends.
+ *
+ * This is a REIMPLEMENTATION, and it proves nothing about the handler: `q` here
+ * is a lowercased substring over `key + value`, where the real path is
+ * `likeNeedle` → `ilikeClause` → PostgREST, and `tags` here is
+ * `Array.includes`, where the real path is `parseTagsParam` → `pgArrayLiteral`
+ * → `contains`/`overlaps`. A green story therefore says the COMPONENTS behave,
+ * never that the filter does — `handleList` threw on every `?tags=` request for
+ * a whole commit with this suite passing.
+ *
+ * The filters themselves are covered against a live stack in
+ * `packages/mcp-server/src/memories-api.integration.spec.ts` → "list filters".
+ * Keep the semantics here roughly faithful so stories stay realistic, but never
+ * treat this as the check.
+ */
 function listFrom(rows: MemoryRow[], url: URL) {
   const scope = url.searchParams.get('scope');
   const key = url.searchParams.get('key');
