@@ -34,6 +34,12 @@ describe('parseOriginRepo', () => {
     ['a full URL', 'https://github.com/mthines/lorekit'],
     ['a quote (PostgREST filter injection shape)', 'mthines/lore"kit'],
     ['a comma', 'mthines/lore,kit'],
+    // https://github.com/../evil resolves in the browser to github.com/evil,
+    // so a relative segment is a link to a repository the memory never
+    // came from. Both segments match [\w.-]+, so REPO_RE alone lets it through.
+    ['a parent-directory segment', '../evil'],
+    ['a trailing parent-directory segment', 'owner/..'],
+    ['a current-directory segment', './evil'],
   ])('rejects %s', (_label, value) => {
     expect(() => parseOriginRepo(value)).toThrow(OriginError);
   });

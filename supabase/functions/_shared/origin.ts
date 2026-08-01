@@ -42,6 +42,14 @@ export class OriginError extends Error {
 /** `owner/name`. Same charset as the repo half of a `repo::` scope. */
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 /**
+ * A path segment that is only dots. `.` and `..` both satisfy REPO_RE's
+ * `[\w.-]+`, so `../evil` is a well-formed "owner/name" as far as that regex
+ * is concerned — and `https://github.com/../evil` resolves in the browser to
+ * `https://github.com/evil`, i.e. a link to a repository the memory did not
+ * come from. Neither is a legal GitHub owner or repository name anyway.
+ */
+const DOTS_ONLY_SEGMENT_RE = /^\.+$/;
+/**
  * Characters git itself forbids in a ref name (git-check-ref-format): ASCII
  * control characters, space, and ` ~ ^ : ? * [ \ `.
  *
@@ -101,6 +109,9 @@ export function parseOriginRepo(input: unknown): string | null {
   const lowered = value.toLowerCase();
   if (!REPO_RE.test(lowered)) {
     throw new OriginError(`origin_repo must be "owner/name": ${value}`);
+  }
+  if (lowered.split('/').some((segment) => DOTS_ONLY_SEGMENT_RE.test(segment))) {
+    throw new OriginError(`origin_repo must not contain a relative path segment: ${value}`);
   }
   return lowered;
 }

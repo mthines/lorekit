@@ -38,12 +38,28 @@ export interface OriginLink {
 
 /** Same conservative `owner/name` shape the scope and origin validators use. */
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
+/**
+ * A path segment made only of dots. `.` and `..` satisfy `[\w.-]+`, so
+ * `../evil` passes REPO_RE — and the browser resolves
+ * `https://github.com/../evil` to `https://github.com/evil`, a link to a
+ * repository the memory never came from.
+ *
+ * The write path rejects this too (`parseOriginRepo`), but the render path is
+ * what turns a stored string into a clickable href, so it re-checks rather than
+ * trusting the row: rows can predate the validator or arrive via direct SQL.
+ */
+const DOTS_ONLY_SEGMENT_RE = /^\.+$/;
+
+/** True when any `/`-separated segment of `value` is only dots. */
+function hasRelativeSegment(value: string): boolean {
+  return value.split('/').some((segment) => DOTS_ONLY_SEGMENT_RE.test(segment));
+}
 /** How many leading characters of a SHA to show. Matches git's short form. */
 export const SHORT_SHA_LENGTH = 7;
 
 function repoOrNull(origin: MemoryOriginFields): string | null {
   const repo = origin.origin_repo?.trim();
-  if (!repo || !REPO_RE.test(repo)) return null;
+  if (!repo || !REPO_RE.test(repo) || hasRelativeSegment(repo)) return null;
   return repo;
 }
 
@@ -70,7 +86,9 @@ export function originPullRequestUrl(origin: MemoryOriginFields): string | null 
 export function originBranchUrl(origin: MemoryOriginFields): string | null {
   const repo = repoOrNull(origin);
   const branch = origin.origin_branch?.trim();
-  if (!repo || !branch) return null;
+  // `encodeURIComponent` leaves a bare `..` segment intact, so the traversal
+  // check has to happen before it, not instead of it.
+  if (!repo || !branch || hasRelativeSegment(branch)) return null;
   return `https://github.com/${repo}/tree/${branch.split('/').map(encodeURIComponent).join('/')}`;
 }
 

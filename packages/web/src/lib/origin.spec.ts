@@ -38,6 +38,18 @@ describe('url builders', () => {
     expect(originCommitUrl({ origin_commit: 'abc1234' })).toBeNull();
   });
 
+  it('refuse a repo with a relative path segment — it would retarget the link', () => {
+    // https://github.com/../evil resolves in the browser to github.com/evil.
+    expect(originRepoUrl({ origin_repo: '../evil' })).toBeNull();
+    expect(originRepoUrl({ origin_repo: './evil' })).toBeNull();
+    expect(originRepoUrl({ origin_repo: 'owner/..' })).toBeNull();
+    expect(originPullRequestUrl({ origin_repo: '../evil', origin_pr: 1 })).toBeNull();
+  });
+
+  it('refuse a branch with a .. segment — encodeURIComponent leaves it intact', () => {
+    expect(originBranchUrl({ origin_repo: 'a/b', origin_branch: 'feat/../../x' })).toBeNull();
+  });
+
   it('return null for a malformed repo rather than a broken href', () => {
     expect(originRepoUrl({ origin_repo: 'not-a-repo' })).toBeNull();
     expect(originRepoUrl({ origin_repo: 'https://github.com/a/b' })).toBeNull();

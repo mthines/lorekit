@@ -3339,9 +3339,10 @@ $$;
 
 -- ── 64. origin: the CHECK constraints are the backstop for anything that
 -- bypasses the app-layer validator (a direct SQL insert, a future client) ────
-do $$
+do $
 declare
   v_rejected boolean;
+  v_case     text;
 begin
   v_rejected := false;
   begin
@@ -3366,8 +3367,35 @@ begin
   exception when check_violation then v_rejected := true;
   end;
   assert v_rejected, 'origin: an origin_repo without a slash must be rejected by memories_origin_repo_check';
+
+  -- Path traversal: "../evil" is a well-formed owner/name to a naive check, and
+  -- https://github.com/../evil resolves in the browser to github.com/evil — a
+  -- link to a repository the memory never came from.
+  for v_case in select unnest(array['../evil', 'a/..', './x', 'owner/../evil']) loop
+    v_rejected := false;
+    begin
+      insert into memories (user_id, scope, key, value, origin_repo)
+      values ('00000000-0000-0000-0000-0000000000e5', 'global', 'origin-trav-' || v_case, 'v', v_case);
+    exception when check_violation then v_rejected := true;
+    end;
+    assert v_rejected,
+      format('origin: origin_repo %L must be rejected as a relative path', v_case);
+  end loop;
+
+  v_rejected := false;
+  begin
+    insert into memories (user_id, scope, key, value, origin_branch)
+    values ('00000000-0000-0000-0000-0000000000e5', 'global', 'origin-trav-branch', 'v', 'feat/../../x');
+  exception when check_violation then v_rejected := true;
+  end;
+  assert v_rejected, 'origin: an origin_branch with a .. segment must be rejected';
+
+  -- ...and the legitimate shapes still pass, so the guard is not vacuous.
+  insert into memories (user_id, scope, key, value, origin_repo, origin_branch)
+  values ('00000000-0000-0000-0000-0000000000e5', 'global', 'origin-ok', 'v',
+          'my-org/repo.name_1', 'fix/issue#123');
 end;
-$$;
+$;
 
 -- ── 65. origin: grant surface — the widened 15-arg memory_write signature is
 -- granted to the same three roles the 11-arg form was (00038) ───────────────
