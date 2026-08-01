@@ -6,7 +6,7 @@ import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import { ListMemoriesQuerySchema, MEMORY_SELECT, shapeMemoryRow } from '../../_shared/schemas/memory.ts';
 import { parseTagsParam, pgArrayLiteral } from '../../_shared/schemas/tags.ts';
-import { likeNeedle } from '../../_shared/schemas/filter.ts';
+import { likeNeedle, ilikeClause } from '../../_shared/schemas/filter.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
 import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';
@@ -58,11 +58,14 @@ export async function handleList(
     q = params.tags_mode === 'all' ? q.contains('tags', literal) : q.overlaps('tags', literal);
   }
 
-  // Substring filter over key OR value. `likeNeedle` escapes the LIKE and
-  // PostgREST metacharacters so a query containing `%`, `_`, `,` or a bracket
-  // matches literally instead of widening the pattern or splitting the clause.
+  // Substring filter over key OR value. `likeNeedle` escapes the LIKE
+  // metacharacters (so a `%` the user typed is data, not a wildcard) and
+  // `ilikeClause` double-quotes the finished pattern, which is how PostgREST's
+  // URL grammar carries a reserved character (`,` `.` `:` `()`) inside a logic
+  // tree — the SAME composition `serializeFilterGroup` uses for a `contains`
+  // condition, so the two search paths cannot encode differently.
   const needle = likeNeedle(params.q);
-  if (needle) q = q.or(`key.ilike.%${needle}%,value.ilike.%${needle}%`);
+  if (needle) q = q.or(`${ilikeClause('key', needle)},${ilikeClause('value', needle)}`);
 
   // Half-open [created_since, created_until) window. Both bounds are validated
   // as an ISO date/timestamp by the schema before reaching PostgREST.

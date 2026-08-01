@@ -73,6 +73,34 @@ Rules:
 | Purge archived | `POST /purge` with an optional `{ "retention_days": 1–365 }` (default 30) → `200 { "purged": <n> }`. Body may be omitted entirely. |
 | Purge expired | `POST /purge-expired` (no body) → `200 { "purged": <n> }`. |
 
+## Filtering `GET /` — `?q=` and `?tags=`
+
+`q` is a **case-insensitive substring** match over `key` OR `value` (the as-you-type filter),
+deliberately not the stemmed full-text `q` of `POST /search`. Every character in it is DATA:
+
+- LIKE metacharacters (`%`, `_`, `\`) are escaped by `likeNeedle`, so searching `100%` finds
+  the text `100%` instead of matching every row.
+- PostgREST-reserved characters (`,` `.` `:` `()`) are carried by **double-quoting** the
+  finished pattern (`ilikeClause` → `key.ilike."%a,b(c)%"`), which is the only mechanism the
+  URL grammar defines for them. Percent-encoding does not work here and is not a matter of
+  taste: the clause reaches the wire through postgrest-js `.or()` →
+  `URLSearchParams.append`, which re-encodes the `%`, so a hand-written `%2C` arrives as the
+  literal four-character text `%2C`. Both halves live in `@lorekit/schemas`'s `filter.ts` and
+  are shared with the `filter` tree of `POST /search`, so the two search paths cannot drift.
+
+`tags` is a comma-separated label list; `tags_mode=any` (default) is overlap (`&&`) and
+`tags_mode=all` is containment (`@>`). The list is quoted into a Postgres array literal by
+`pgArrayLiteral` — postgrest-js would otherwise `join(',')` an array and mis-parse a label
+containing a comma, brace, quote or backslash, all of which `memories.tags` permits. A label
+containing a comma is unreachable over this parameter by construction (the wire format splits
+on commas); `POST /search`'s `filter` is the way to express one.
+
+Both filters are covered end-to-end in
+`packages/mcp-server/src/memories-api.integration.spec.ts` → "list filters", against a live
+stack. That is deliberate: the Storybook MSW handler reimplements both, so it can only ever
+confirm itself — `handleList` threw on every `?tags=` request for a whole commit while that
+suite was green.
+
 ## `created_at` on `POST /`
 
 `created_at` is an **optional creation-date override** for the `lorekit migrate` backdating

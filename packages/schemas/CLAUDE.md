@@ -31,7 +31,7 @@ Single source of truth for all lorekit data shapes — Zod schemas for both MCP 
 | `ScopesResponseSchema` | `memory.ts` | REST GET /memories/scopes |
 | `ListTagsQuerySchema` / `TagsResponseSchema` | `memory.ts` | REST GET /memories/tags |
 | `ActivityQuerySchema` / `ActivityResponseSchema` | `memory.ts` | REST GET /memories/activity |
-| `likeNeedle` | `filter.ts` | `GET /memories?q=` substring escaping |
+| `likeNeedle` / `quoteFilterValue` / `ilikeClause` | `filter.ts` | `GET /memories?q=` substring escaping, and the shared logic-tree value encoding |
 | `parseTagsParam` / `pgArrayLiteral` | `tags.ts` | `GET /memories?tags=`, and the dashboard's label picker |
 | `OrgResponseSchema` | `org.ts` | REST /orgs |
 | `OrgListResponseSchema` | `org.ts` | REST GET /orgs |
@@ -64,6 +64,17 @@ Postgres array quoting are needed by the `GET /memories` handler AND by the
 dashboard's label picker, and getting the quoting wrong silently filters on the
 wrong labels. `filter.ts`'s `likeNeedle` is the third — an unescaped `%` turns an
 as-you-type filter into a match-everything wildcard.
+
+**There is ONE value encoding for a logic tree, and both search paths use it.**
+`likeNeedle` escapes LIKE metacharacters (`%`, `_`, `\`); `quoteFilterValue`
+double-quotes the finished value, which is how PostgREST's URL grammar carries
+a reserved character (`,` `.` `:` `()`); `ilikeClause` composes the two so the
+`GET /memories?q=` filter and a `contains` condition of a `FilterGroup` cannot
+encode differently. Do NOT percent-encode instead: every expression reaches the
+wire through postgrest-js `.or()`, i.e. `URLSearchParams.append`, which
+re-encodes the `%` — a hand-written `%2C` arrives as the literal text `%2C` and
+matches nothing. Quoting is only valid INSIDE a logic tree; a top-level filter
+(`?key=ilike.…`) is parsed by `pSingleVal`, which strips nothing.
 
 Apply the same reasoning to any future logic that is (a) pure, (b) part of the
 wire contract, and (c) needed by more than one runtime.
