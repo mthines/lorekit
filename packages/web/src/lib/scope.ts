@@ -33,20 +33,44 @@ export function scopeType(scope: string): ScopePrefix {
  * for a branch that was authored with upper-case characters may 404 — an
  * accepted trade-off for pointing directly at the branch.
  */
-export function scopeRepoUrl(scope: string): string | null {
+/**
+ * What a scope string already tells the reader about a repository.
+ *
+ * This is the counterpart to `lib/origin.ts` and exists so the two never
+ * contradict or duplicate each other: `scopeRepoRef` says what the scope
+ * ALREADY conveys (and therefore what the "Repo" metadata row already links),
+ * and `originLinks` renders only the provenance the scope cannot express.
+ *
+ * `repo` and `branch` are `null` for `global` / `project` / malformed scopes.
+ */
+export interface ScopeRepoRef {
+  /** `owner/name`, lowercased by the canonical scope format. */
+  repo: string | null;
+  /** The branch a `branch::` scope names; `null` for every other scope type. */
+  branch: string | null;
+}
+
+export function scopeRepoRef(scope: string): ScopeRepoRef {
   const type = scopeType(scope);
 
   if (type === 'repo') {
     const ownerRepo = scope.slice('repo::'.length);
-    if (!/^[\w.-]+\/[\w.-]+$/.test(ownerRepo)) return null;
-    return `https://github.com/${ownerRepo}`;
+    return REPO_RE.test(ownerRepo) ? { repo: ownerRepo, branch: null } : { repo: null, branch: null };
   }
 
   if (type === 'branch') {
     const [, ownerRepo, branch] = scope.split('::');
-    if (!ownerRepo || !branch || !/^[\w.-]+\/[\w.-]+$/.test(ownerRepo)) return null;
-    return `https://github.com/${ownerRepo}/tree/${branch}`;
+    if (!ownerRepo || !branch || !REPO_RE.test(ownerRepo)) return { repo: null, branch: null };
+    return { repo: ownerRepo, branch };
   }
 
-  return null;
+  return { repo: null, branch: null };
+}
+
+const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
+
+export function scopeRepoUrl(scope: string): string | null {
+  const { repo, branch } = scopeRepoRef(scope);
+  if (!repo) return null;
+  return branch ? `https://github.com/${repo}/tree/${branch}` : `https://github.com/${repo}`;
 }

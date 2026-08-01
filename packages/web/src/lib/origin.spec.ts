@@ -69,15 +69,16 @@ describe('originLinks', () => {
     expect(originLinks({})).toEqual([]);
   });
 
-  it('orders most-specific first and omits the redundant repo link', () => {
+  it('lists every known origin, context-first, when no scope is given', () => {
     expect(originLinks(FULL)).toEqual([
+      { kind: 'repo', label: 'mthines/lorekit', url: 'https://github.com/mthines/lorekit' },
       { kind: 'pull-request', label: '#482', url: 'https://github.com/mthines/lorekit/pull/482' },
       { kind: 'branch', label: 'feat/Origin-Provenance', url: 'https://github.com/mthines/lorekit/tree/feat/Origin-Provenance' },
       { kind: 'commit', label: 'abc1234', url: 'https://github.com/mthines/lorekit/commit/abc1234def5678' },
     ]);
   });
 
-  it('falls back to the repo link when nothing more specific is known', () => {
+  it('renders the repo link on its own when nothing more specific is known', () => {
     expect(originLinks({ origin_repo: 'mthines/lorekit' })).toEqual([
       { kind: 'repo', label: 'mthines/lorekit', url: 'https://github.com/mthines/lorekit' },
     ]);
@@ -90,8 +91,89 @@ describe('originLinks', () => {
   });
 
   it('handles the late-binding case: branch known, PR not opened yet', () => {
-    expect(originLinks({ origin_repo: 'a/b', origin_branch: 'feat/x' }).map((l) => l.kind)).toEqual([
+    expect(
+      originLinks({ origin_repo: 'a/b', origin_branch: 'feat/x' }, 'repo::a/b').map((l) => l.kind),
+    ).toEqual(['branch']);
+  });
+});
+
+// The rules that keep the origin rows COMPLEMENTARY to the scope-derived
+// "Repo" metadata row (`scopeRepoUrl`) rather than a second copy of it.
+describe('originLinks — complements the scope, never repeats it', () => {
+  it('drops the repo row when the scope already names the same repo', () => {
+    expect(originLinks(FULL, 'repo::mthines/lorekit').map((l) => l.kind)).toEqual([
+      'pull-request',
       'branch',
+      'commit',
     ]);
+  });
+
+  it('matches the scope repo case-insensitively (scopes are lowercased)', () => {
+    expect(
+      originLinks({ origin_repo: 'MThines/LoreKit' }, 'repo::mthines/lorekit'),
+    ).toEqual([]);
+  });
+
+  it('keeps the repo row for a global lesson — its scope names no repo', () => {
+    expect(originLinks(FULL, 'global')[0]).toEqual({
+      kind: 'repo',
+      label: 'mthines/lorekit',
+      url: 'https://github.com/mthines/lorekit',
+    });
+  });
+
+  it('keeps the repo row when the lesson was recorded in a DIFFERENT repo', () => {
+    expect(originLinks(FULL, 'repo::acme/other').map((l) => l.kind)).toEqual([
+      'repo',
+      'pull-request',
+      'branch',
+      'commit',
+    ]);
+  });
+
+  it("drops the branch row when a branch:: scope already links that branch", () => {
+    expect(
+      originLinks(
+        { origin_repo: 'mthines/lorekit', origin_branch: 'feat/x' },
+        'branch::mthines/lorekit::feat/x',
+      ),
+    ).toEqual([]);
+  });
+
+  it('keeps a branch that differs from the one the scope names', () => {
+    expect(
+      originLinks(
+        { origin_repo: 'mthines/lorekit', origin_branch: 'feat/y' },
+        'branch::mthines/lorekit::feat/x',
+      ).map((l) => l.kind),
+    ).toEqual(['branch']);
+  });
+
+  it('keeps a same-named branch of a different repo — it is a different branch', () => {
+    expect(
+      originLinks(
+        { origin_repo: 'acme/other', origin_branch: 'feat/x' },
+        'branch::mthines/lorekit::feat/x',
+      ).map((l) => l.kind),
+    ).toEqual(['repo', 'branch']);
+  });
+
+  it('never suppresses a pull request or commit — no scope can express them', () => {
+    expect(
+      originLinks(
+        { origin_repo: 'mthines/lorekit', origin_branch: 'feat/x', origin_commit: 'abc1234', origin_pr: 7 },
+        'branch::mthines/lorekit::feat/x',
+      ).map((l) => l.kind),
+    ).toEqual(['pull-request', 'commit']);
+  });
+
+  it('is unaffected by a project/malformed scope, which names no repo', () => {
+    expect(originLinks(FULL, 'project::lorekit').map((l) => l.kind)).toEqual([
+      'repo',
+      'pull-request',
+      'branch',
+      'commit',
+    ]);
+    expect(originLinks(FULL, 'repo::not-a-repo').map((l) => l.kind)).toContain('repo');
   });
 });

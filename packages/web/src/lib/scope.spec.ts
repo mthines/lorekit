@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { scopeType, scopeRepoUrl } from './scope';
+import { scopeType, scopeRepoUrl, scopeRepoRef } from './scope';
 
 describe('scopeType', () => {
   it('returns "global" for the literal string "global"', () => {
@@ -55,5 +55,32 @@ describe('scopeRepoUrl', () => {
     expect(scopeRepoUrl('repo::not-a-repo')).toBeNull(); // missing owner/name split
     expect(scopeRepoUrl('branch::owner/repo')).toBeNull(); // missing branch segment
     expect(scopeRepoUrl('branch::not-a-repo::main')).toBeNull(); // bad owner/name
+  });
+});
+
+describe('scopeRepoRef', () => {
+  it('extracts the repo a repo:: scope names', () => {
+    expect(scopeRepoRef('repo::mthines/lorekit')).toEqual({ repo: 'mthines/lorekit', branch: null });
+  });
+
+  it('extracts both halves of a branch:: scope', () => {
+    expect(scopeRepoRef('branch::mthines/lorekit::feat/x')).toEqual({
+      repo: 'mthines/lorekit',
+      branch: 'feat/x',
+    });
+  });
+
+  it('names no repo for global / project / malformed scopes', () => {
+    const none = { repo: null, branch: null };
+    expect(scopeRepoRef('global')).toEqual(none);
+    expect(scopeRepoRef('project::lorekit')).toEqual(none);
+    expect(scopeRepoRef('repo::not-a-repo')).toEqual(none);
+    expect(scopeRepoRef('branch::owner/repo')).toEqual(none);
+  });
+
+  it('agrees with scopeRepoUrl — one derivation, two consumers', () => {
+    for (const scope of ['global', 'project::x', 'repo::a/b', 'branch::a/b::feat/x', 'repo::bad']) {
+      expect(scopeRepoRef(scope).repo === null).toBe(scopeRepoUrl(scope) === null);
+    }
   });
 });

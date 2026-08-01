@@ -10,6 +10,10 @@ import { originLinks, type MemoryOriginFields, type OriginLinkKind } from '@/lib
  * lesson (migration 00046). A `global` lesson learned while reviewing a PR has
  * no repo in its scope, so this cannot be derived and has to be stored.
  *
+ * The two never duplicate each other: the memory's `scope` is passed to
+ * `originLinks`, which drops any origin the Repo row above already links (same
+ * repo, or a `branch::` scope's own branch) — see `lib/origin.ts`.
+ *
  * Renders `<div>` rows shaped exactly like the sibling metadata rows so it can
  * be dropped inside the existing `<dl>`; renders nothing when the memory
  * carries no origin (every pre-00046 memory, and any write with no git
@@ -23,8 +27,8 @@ const ROW_META: Record<OriginLinkKind, { label: string; Icon: typeof GitBranch }
   repo: { label: 'Recorded in', Icon: Github },
 };
 
-export function MemoryOrigin({ origin }: { origin: MemoryOriginFields }) {
-  const links = originLinks(origin);
+export function MemoryOrigin({ origin, scope }: { origin: MemoryOriginFields; scope?: string }) {
+  const links = originLinks(origin, scope);
   if (links.length === 0) return null;
 
   return (

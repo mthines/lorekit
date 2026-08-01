@@ -15,6 +15,8 @@
  * fewer links, never a throw and never a broken href.
  */
 
+import { scopeRepoRef } from './scope';
+
 /** The origin columns as they arrive on a memory row. */
 export interface MemoryOriginFields {
   origin_repo?: string | null;
@@ -88,13 +90,36 @@ export function shortSha(commit: string): string {
 /**
  * The ordered set of links to render in the "Recorded from" block.
  *
- * Ordered most-specific first — the pull request is what a reader is usually
- * looking for, the repository is the weakest signal and is therefore only
- * included when nothing more specific is present (the scope already links the
- * repo in most cases, and a duplicate link is noise).
+ * **Complements the scope, never repeats it.** The Metadata list already has a
+ * "Repo" row derived from the scope (`scopeRepoUrl`) — that row answers "where
+ * does this lesson APPLY". Passing the memory's `scope` here makes this
+ * function emit only what that row cannot already say:
+ *
+ * - the **repo** row appears only when the scope does NOT already name the same
+ *   repository — i.e. for a `global` / `project` lesson (whose scope names no
+ *   repo at all), or when the lesson was recorded in a DIFFERENT repo than the
+ *   one it applies to. Same repo ⇒ suppressed, because the "Repo" row above is
+ *   already that link.
+ * - the **branch** row is suppressed when a `branch::` scope already names the
+ *   same branch of the same repo — that scope's "Repo" row links `/tree/<branch>`.
+ * - **pull request** and **commit** are always kept: no scope can express them.
+ *
+ * Omitting the `scope` argument disables the suppression and returns every
+ * known origin (the standalone view — nothing else on screen carries the repo).
+ *
+ * Order is context-first: repo (when it adds information) → pull request →
+ * branch → commit.
  */
-export function originLinks(origin: MemoryOriginFields): OriginLink[] {
+export function originLinks(origin: MemoryOriginFields, scope?: string): OriginLink[] {
   const links: OriginLink[] = [];
+  const scoped = scope ? scopeRepoRef(scope) : { repo: null, branch: null };
+  const repo = origin.origin_repo?.trim();
+  const sameRepo = Boolean(repo && scoped.repo && repo.toLowerCase() === scoped.repo.toLowerCase());
+
+  // Repo — only when the scope doesn't already put the same link on screen.
+  if (repo && !sameRepo) {
+    links.push({ kind: 'repo', label: repo, url: originRepoUrl(origin) });
+  }
 
   if (typeof origin.origin_pr === 'number' && origin.origin_pr >= 1) {
     links.push({
@@ -105,18 +130,18 @@ export function originLinks(origin: MemoryOriginFields): OriginLink[] {
   }
 
   const branch = origin.origin_branch?.trim();
-  if (branch) {
+  // A `branch::` scope's Repo row already links this exact branch — but only
+  // when it is the same repo; the same branch NAME in another repo is a
+  // different branch and must still be shown.
+  const branchInScope =
+    sameRepo && Boolean(scoped.branch && branch && scoped.branch.toLowerCase() === branch.toLowerCase());
+  if (branch && !branchInScope) {
     links.push({ kind: 'branch', label: branch, url: originBranchUrl(origin) });
   }
 
   const commit = origin.origin_commit?.trim();
   if (commit) {
     links.push({ kind: 'commit', label: shortSha(commit), url: originCommitUrl(origin) });
-  }
-
-  const repo = origin.origin_repo?.trim();
-  if (repo && links.length === 0) {
-    links.push({ kind: 'repo', label: repo, url: originRepoUrl(origin) });
   }
 
   return links;

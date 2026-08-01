@@ -501,9 +501,12 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
                     {/* Provenance — where this memory was RECORDED FROM (the
                         PR / branch / commit the agent was working in), as
                         opposed to the Repo row above, which is derived from
-                        the scope and says where the lesson APPLIES. Renders
-                        nothing for a memory with no recorded origin. */}
-                    <MemoryOrigin origin={lesson} />
+                        the scope and says where the lesson APPLIES. The scope
+                        is passed in so these rows COMPLEMENT that one instead
+                        of repeating it: an origin the Repo row already links
+                        (same repo, or a branch:: scope's own branch) is
+                        dropped. Renders nothing when nothing is left to add. */}
+                    <MemoryOrigin origin={lesson} scope={lesson.scope} />
                   </dl>
                 </section>
               </div>

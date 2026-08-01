@@ -63,6 +63,16 @@ being erased, so a write from a machine with no git context is never
 destructive. A malformed value is rejected (a 400 / tool error), never silently
 dropped.
 
+**They complement `scope`, they never contradict it.** Always send the full
+origin, including `origin_repo`, even when the scope already names that repo —
+storage stays complete so a lesson keeps its provenance if it is later re-scoped
+or promoted from `branch::` to `repo::`. The *dashboard* is what de-duplicates:
+the Metadata list shows one scope-derived **Repo** row (where the lesson
+applies) and then only the origin rows that add something the scope cannot say.
+A same-repo `origin_repo` is therefore not rendered twice, a `branch::` scope's
+own branch is not repeated, and an origin in a *different* repo than the scope
+is called out explicitly — that mismatch is a signal, not a bug.
+
 The `lorekit` CLI fills these in automatically from git and the CI environment
 (`LOREKIT_PR`, then `GITHUB_REF`'s `refs/pull/<n>/merge`, then
 `GITHUB_PR_NUMBER`); pass `--no-origin` to opt out or `--origin-pr <n>` and
