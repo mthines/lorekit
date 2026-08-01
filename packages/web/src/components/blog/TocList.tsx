@@ -47,42 +47,37 @@ export function TocList({ items, activeId, onNavigate, layoutId }: TocListProps)
 
   return (
     <MotionConfig reducedMotion="user">
-      <ul className="relative flex flex-col gap-0.5">
-        {/* Continuous rail behind every row — the "progress spine". */}
+      <ul className="relative flex flex-col gap-px">
+        {/* Continuous rail behind every row — the reading "track" the active
+            marker slides along. */}
         <span className="absolute inset-y-1 left-0 w-px bg-[var(--color-border)]" aria-hidden />
         {items.map(({ id, text, depth }) => {
           const active = id === activeId;
           return (
-            <li key={id} className={depth === 3 ? 'pl-3' : ''}>
+            <li key={id}>
               <a
                 ref={active ? activeRef : undefined}
                 href={`#${id}`}
                 onClick={(event) => handleClick(event, id)}
                 aria-current={active ? 'location' : undefined}
                 className={[
-                  'relative flex min-h-9 items-center rounded-md py-1.5 pr-3 pl-3 leading-snug transition-colors duration-150',
+                  'relative flex min-h-8 items-center rounded-md py-1.5 pr-2 leading-snug transition-colors duration-150',
+                  // Depth-based indent conveys hierarchy; h3 is smaller + steps in.
+                  depth === 3 ? 'pl-7 text-[13px]' : 'pl-4 text-sm',
                   active
-                    ? 'text-[var(--color-accent)]'
-                    : 'text-[var(--color-content-secondary)] hover:text-[var(--color-content-primary)]',
+                    ? 'font-medium text-[var(--color-accent)]'
+                    : 'text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]/60 hover:text-[var(--color-content-primary)]',
                 ].join(' ')}
               >
                 {active && (
-                  <>
-                    {/* Sliding amber fill (shared layoutId — the signature pill). */}
-                    <motion.span
-                      layoutId={`${layoutId}-active`}
-                      className="absolute inset-0 rounded-md bg-[var(--color-accent-subtle)]"
-                      transition={{ type: 'spring', stiffness: 700, damping: 44, mass: 0.5 }}
-                      aria-hidden
-                    />
-                    {/* Accent tick on the rail, so the spine reads as progress. */}
-                    <motion.span
-                      layoutId={`${layoutId}-tick`}
-                      className="absolute -left-px top-1.5 bottom-1.5 w-0.5 rounded-full bg-[var(--color-accent)]"
-                      transition={{ type: 'spring', stiffness: 700, damping: 44, mass: 0.5 }}
-                      aria-hidden
-                    />
-                  </>
+                  // A single sliding accent bar on the track — sleeker than a
+                  // filled pill, and it reads as "you are here" on the spine.
+                  <motion.span
+                    layoutId={`${layoutId}-marker`}
+                    className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-[var(--color-accent)]"
+                    transition={{ type: 'spring', stiffness: 700, damping: 44, mass: 0.5 }}
+                    aria-hidden
+                  />
                 )}
                 <span className="relative">{text}</span>
               </a>
