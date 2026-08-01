@@ -4,7 +4,9 @@ import {
   toggleTag,
   tallyTags,
   pgArrayLiteral,
-  visibleTags,
+  tagOptions,
+  searchTags,
+  tagTriggerLabel,
   type TagCount,
 } from './tag-filter';
 
@@ -103,40 +105,85 @@ describe('pgArrayLiteral', () => {
   });
 });
 
-describe('visibleTags', () => {
+
+describe('tagOptions', () => {
   const catalog: TagCount[] = [
-    { tag: 'a', count: 5 },
-    { tag: 'b', count: 4 },
-    { tag: 'c', count: 3 },
-    { tag: 'd', count: 2 },
+    { tag: 'perf', count: 5 },
+    { tag: 'ci', count: 4 },
   ];
 
-  it('caps the bar at `limit`', () => {
-    expect(visibleTags(catalog, [], 2).map((t) => t.tag)).toEqual(['a', 'b']);
+  it('preserves catalog order and does not hoist the selection', () => {
+    // A list that reorders on toggle moves the next option out from under the
+    // pointer mid-click.
+    expect(tagOptions(catalog, ['ci']).map((t) => t.tag)).toEqual(['perf', 'ci']);
   });
 
-  it('pins a selected label that falls outside the cap so it stays removable', () => {
-    expect(visibleTags(catalog, ['d'], 2).map((t) => t.tag)).toEqual(['a', 'b', 'd']);
+  it('appends a selected label the catalog does not cover, with an unknown count', () => {
+    expect(tagOptions(catalog, ['flaky'])).toEqual([
+      { tag: 'perf', count: 5 },
+      { tag: 'ci', count: 4 },
+      { tag: 'flaky', count: null },
+    ]);
   });
 
-  it('never duplicates a selected label that is already inside the cap', () => {
-    expect(visibleTags(catalog, ['a'], 2).map((t) => t.tag)).toEqual(['a', 'b']);
-  });
-
-  it('carries a selected label the catalog does not know with an unknown count', () => {
-    // An empty/failed catalog must still surface the active chips, otherwise a
-    // shared `?tags=` link filters with no way to switch the filter off.
-    expect(visibleTags([], ['perf', 'ci'], 12)).toEqual([
+  it('surfaces the whole selection when the catalog is empty or failed', () => {
+    expect(tagOptions([], ['perf', 'ci'])).toEqual([
       { tag: 'perf', count: null },
       { tag: 'ci', count: null },
     ]);
   });
 
-  it('still surfaces the selection when the cap is non-positive', () => {
-    expect(visibleTags(catalog, ['a'], 0)).toEqual([{ tag: 'a', count: 5 }]);
+  it('never duplicates a selected label that is already catalogued', () => {
+    expect(tagOptions(catalog, ['perf', 'ci']).map((t) => t.tag)).toEqual(['perf', 'ci']);
+  });
+});
+
+describe('searchTags', () => {
+  const options: TagCount[] = [
+    { tag: 'perf-regression', count: 5 },
+    { tag: 'ci/flaky', count: 4 },
+    { tag: 'Docs', count: 1 },
+  ];
+
+  it('returns everything for a blank or whitespace-only query', () => {
+    expect(searchTags(options, '')).toHaveLength(3);
+    expect(searchTags(options, '   ')).toHaveLength(3);
   });
 
-  it('returns nothing when there is no catalog and no selection', () => {
-    expect(visibleTags([], [], 0)).toEqual([]);
+  it('matches a substring, not just a prefix', () => {
+    expect(searchTags(options, 'regression').map((t) => t.tag)).toEqual(['perf-regression']);
+    expect(searchTags(options, 'flaky').map((t) => t.tag)).toEqual(['ci/flaky']);
+  });
+
+  it('is case-insensitive in both directions', () => {
+    expect(searchTags(options, 'docs').map((t) => t.tag)).toEqual(['Docs']);
+    expect(searchTags(options, 'PERF').map((t) => t.tag)).toEqual(['perf-regression']);
+  });
+
+  it('matches regex metacharacters literally rather than compiling them', () => {
+    expect(searchTags(options, '.*')).toEqual([]);
+    expect(searchTags(options, 'ci/')).toHaveLength(1);
+  });
+
+  it('returns an empty list when nothing matches', () => {
+    expect(searchTags(options, 'zzz')).toEqual([]);
+  });
+});
+
+describe('tagTriggerLabel', () => {
+  it('falls back to the dimension name when nothing is selected', () => {
+    expect(tagTriggerLabel([])).toBe('Labels');
+  });
+
+  it('names the single selected label', () => {
+    expect(tagTriggerLabel(['perf'])).toBe('perf');
+  });
+
+  it('names the first label and counts the rest', () => {
+    expect(tagTriggerLabel(['perf', 'ci', 'flaky'])).toBe('perf +2');
+  });
+
+  it('normalizes before summarising so a dirty URL param cannot inflate the count', () => {
+    expect(tagTriggerLabel([' perf ', 'perf', ''])).toBe('perf');
   });
 });

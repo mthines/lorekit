@@ -35,7 +35,7 @@
  */
 
 import { useMemo, useTransition, useState } from 'react';
-import { Search, BookOpen, ChevronDown, ChevronUp, Loader2, List, LayoutGrid, Archive, User, Building2, Users, Tag } from 'lucide-react';
+import { Search, BookOpen, ChevronDown, ChevronUp, Loader2, List, LayoutGrid, Archive, User, Building2, Users } from 'lucide-react';
 import { ScopeTree, type ScopeNode } from './ScopeTree';
 import { LessonCard } from './LessonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -44,7 +44,8 @@ import { useDebouncedUrlState } from '@/lib/hooks/useDebouncedUrlState';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
 import { useMemories, useTagCatalog } from '@/lib/queries/lore';
-import { normalizeTags, toggleTag, visibleTags, type TagCount } from '@/lib/tag-filter';
+import { normalizeTags, toggleTag, type TagCount } from '@/lib/tag-filter';
+import { LabelFilter } from './LabelFilter';
 import { useReducedMotion } from 'motion/react';
 import type { LessonEntry } from './LessonCard';
 import { ContributionHeatmap } from '@/components/activity/ContributionHeatmap';
@@ -132,128 +133,27 @@ function OwnershipFilterBar({
   );
 }
 
-// ── Label filter bar ──────────────────────────────────────────────────────────
-// "Labels: perf · ci · flaky" — multi-select, so it uses toggle-button
-// semantics (`aria-pressed`), NOT the single-select radiogroup shape the owner
-// bar uses. Selecting two labels narrows to memories carrying BOTH (the
-// `.contains('tags', …)` server predicate), which
-// the group's `title` states outright — a filter whose combining rule the user
-// has to infer from results is a guessing game.
-//
-// Only rendered when the account actually has labels; an always-present empty
-// bar is chrome that teaches nothing. Long tails collapse behind "Show all",
-// with the count in the label so the affordance is honest about what it hides.
-
-const VISIBLE_TAG_LIMIT = 12;
-
-function LabelFilterBar({
-  catalog,
-  selected,
-  onToggle,
-  onClear,
-}: {
-  catalog: TagCount[];
-  selected: string[];
-  onToggle: (tag: string) => void;
-  onClear: () => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-
-  const shown = useMemo(
-    () => visibleTags(catalog, selected, expanded ? catalog.length : VISIBLE_TAG_LIMIT),
-    [catalog, selected, expanded],
-  );
-
-  // Hidden only when there is genuinely nothing to act on. A non-empty
-  // selection keeps the bar mounted even with an empty or failed catalog —
-  // otherwise a shared `?tags=` link filters the list server-side with no chip
-  // left to switch it off.
-  if (shown.length === 0) return null;
-
-  const hiddenCount = Math.max(catalog.length - shown.length, 0);
-
-  return (
-    <div
-      role="group"
-      // The combining rule lives in the accessible name, not only the `title`:
-      // a tooltip is mouse-only, and "why did picking a second label empty the
-      // list?" is exactly the question a screen-reader user also has to answer.
-      aria-label="Filter by label — shows only memories carrying every selected label"
-      title="Show only memories carrying every selected label"
-      className="flex flex-wrap items-center gap-1.5 border-b border-[var(--color-border)] px-3 py-2"
-    >
-      <span className="mr-0.5 flex items-center gap-1 text-xs font-medium text-[var(--color-content-tertiary)]">
-        <Tag className="size-3 shrink-0" aria-hidden />
-        Labels
-      </span>
-
-      {shown.map(({ tag, count }) => {
-        const active = selected.includes(tag);
-        return (
-          <button
-            key={tag}
-            type="button"
-            onClick={() => onToggle(tag)}
-            aria-pressed={active}
-            // Without this the chip announces as "perf 12" — the bare count
-            // reads as part of the label rather than as how many memories
-            // carry it. A `null` count is unknown, so it is stated as neither
-            // a number nor a misleading zero.
-            aria-label={
-              count === null ? tag : `${tag} — ${count} ${count === 1 ? 'memory' : 'memories'}`
-            }
-            className={[
-              'flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors duration-150',
-              active
-                ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
-                : 'border-[var(--color-border)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
-            ].join(' ')}
-          >
-            {tag}
-            {count !== null && (
-              <span className="text-[var(--color-content-tertiary)]">{count}</span>
-            )}
-          </button>
-        );
-      })}
-
-      {(hiddenCount > 0 || expanded) && (
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          aria-expanded={expanded}
-          className="flex min-h-9 items-center rounded-full px-2 text-xs font-medium text-[var(--color-content-secondary)] underline-offset-2 transition-colors duration-150 hover:text-[var(--color-content-primary)] hover:underline"
-        >
-          {expanded ? 'Show fewer labels' : `Show all ${catalog.length} labels`}
-        </button>
-      )}
-
-      {selected.length > 0 && (
-        <button
-          type="button"
-          onClick={onClear}
-          className="flex min-h-9 items-center rounded-full px-2 text-xs font-medium text-[var(--color-content-secondary)] underline-offset-2 transition-colors duration-150 hover:text-[var(--color-content-primary)] hover:underline"
-        >
-          Clear labels
-        </button>
-      )}
-    </div>
-  );
-}
-
-// ── Filter bar (search + date + archived) ─────────────────────────────────────
+// ── Filter bar (search + labels + date + archived) ────────────────────────────
 // Shared by both tabs and both breakpoints. `variant` carries the only two
 // differences between the desktop and mobile renders: the desktop bar sits in a
 // bordered header (`border-b`/padding), uses smaller type + the page `bg`, and
-// shows an "Archived" text label + hover affordances; the mobile bar is a bare
-// row with an icon-only archived toggle on the raised `bg`. Everything else —
-// the search input, the date picker, the toggle behaviour — is identical, so it
+// shows text labels + hover affordances; the mobile bar is a bare row with
+// icon-only toggles on the raised `bg`. Everything else — the search input, the
+// label picker, the date picker, the toggle behaviour — is identical, so it
 // lives here once instead of near-verbatim in each breakpoint branch.
+//
+// The label picker is a popover rather than an expanded chip row: labels are
+// the one dimension here that grows without bound, so an inline bar would push
+// the results it filters below the fold. See `LabelFilter`.
 
 function FilterBar({
   variant,
   search,
   onSearchChange,
+  tagCatalog,
+  selectedTags,
+  onToggleTag,
+  onClearTags,
   range,
   onRangeChange,
   showArchived,
@@ -262,6 +162,10 @@ function FilterBar({
   variant: 'desktop' | 'mobile';
   search: string;
   onSearchChange: (value: string) => void;
+  tagCatalog: TagCount[];
+  selectedTags: string[];
+  onToggleTag: (tag: string) => void;
+  onClearTags: () => void;
   range: DateRange | null;
   onRangeChange: (range: DateRange | null) => void;
   showArchived: boolean;
@@ -285,6 +189,14 @@ function FilterBar({
           ].join(' ')}
         />
       </div>
+      <LabelFilter
+        catalog={tagCatalog}
+        selected={selectedTags}
+        onToggle={onToggleTag}
+        onClear={onClearTags}
+        variant={variant}
+        className="shrink-0"
+      />
       <DateRangePicker value={range} onChange={onRangeChange} className="shrink-0" />
       <button
         type="button"
@@ -700,17 +612,14 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             variant="desktop"
             search={search}
             onSearchChange={setSearch}
+            tagCatalog={tagCatalog ?? []}
+            selectedTags={selectedTags}
+            onToggleTag={handleToggleTag}
+            onClearTags={handleClearTags}
             range={range}
             onRangeChange={setRange}
             showArchived={showArchived}
             onToggleArchived={handleToggleArchived}
-          />
-
-          <LabelFilterBar
-            catalog={tagCatalog ?? []}
-            selected={selectedTags}
-            onToggle={handleToggleTag}
-            onClear={handleClearTags}
           />
 
           <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
@@ -755,17 +664,14 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           variant="mobile"
           search={search}
           onSearchChange={setSearch}
+          tagCatalog={tagCatalog ?? []}
+          selectedTags={selectedTags}
+          onToggleTag={handleToggleTag}
+          onClearTags={handleClearTags}
           range={range}
           onRangeChange={setRange}
           showArchived={showArchived}
           onToggleArchived={handleToggleArchived}
-        />
-
-        <LabelFilterBar
-          catalog={tagCatalog ?? []}
-          selected={selectedTags}
-          onToggle={handleToggleTag}
-          onClear={handleClearTags}
         />
 
         <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />

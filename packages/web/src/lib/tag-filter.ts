@@ -95,31 +95,58 @@ export function pgArrayLiteral(values: readonly string[]): string {
 }
 
 /**
- * The labels to render in the filter bar, capped at `limit`.
+ * The full option list for the label picker: the catalog, plus any selected
+ * label the catalog does not cover (an empty or failed catalog fetch, or a
+ * label from a shared link that now matches nothing) appended with
+ * `count: null`.
  *
- * Every selected label is included even when it falls outside the cap, and
- * even when the catalog does not contain it at all (an empty or failed catalog
- * fetch, or a label from a shared link that now matches nothing) — carried in
- * with `count: null`. An active filter whose chip is missing from its own bar
- * cannot be switched off without hand-editing the URL, which is the one state
- * this bar must never reach.
+ * Catalog order is preserved and selected options are NOT hoisted to the top:
+ * a list that reorders itself on every toggle moves the next option out from
+ * under the pointer mid-click. An option's selected state is shown in place.
+ *
+ * The uncatalogued tail is what guarantees a selected label always has a row
+ * to switch it off — an active filter you can only clear by hand-editing the
+ * URL is the one state this control must never reach.
  */
-export function visibleTags(
+export function tagOptions(
   catalog: readonly TagCount[],
   selected: readonly string[],
-  limit: number,
 ): TagCount[] {
-  const wanted = normalizeTags(selected);
-  const wantedSet = new Set(wanted);
-  const head = limit > 0 ? catalog.slice(0, limit) : [];
-  const shown = new Set(head.map((t) => t.tag));
-
-  const pinnedFromCatalog = catalog.filter((t) => wantedSet.has(t.tag) && !shown.has(t.tag));
-  for (const t of pinnedFromCatalog) shown.add(t.tag);
-
-  const uncatalogued: TagCount[] = wanted
-    .filter((tag) => !shown.has(tag))
+  const known = new Set(catalog.map((t) => t.tag));
+  const uncatalogued: TagCount[] = normalizeTags(selected)
+    .filter((tag) => !known.has(tag))
     .map((tag) => ({ tag, count: null }));
 
-  return [...head, ...pinnedFromCatalog, ...uncatalogued];
+  return [...catalog, ...uncatalogued];
+}
+
+/**
+ * Narrow an option list by the picker's search box: case-insensitive substring
+ * against the label text. A blank or whitespace-only query matches everything.
+ *
+ * Substring, not prefix or fuzzy: labels are frequently namespaced (`ci/flaky`,
+ * `perf-regression`), so the memorable fragment is often in the middle, and a
+ * fuzzy matcher would surface confusing hits for a set this small.
+ *
+ * The query is matched literally — no regex is compiled from user input.
+ */
+export function searchTags(options: readonly TagCount[], query: string): TagCount[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [...options];
+  return options.filter((option) => option.tag.toLowerCase().includes(needle));
+}
+
+/**
+ * The trigger's summary text: `Labels` when nothing is picked, the single label
+ * when one is, and `<first> +N` beyond that.
+ *
+ * The first label is named rather than showing a bare count, because "perf +2"
+ * tells you what the list is filtered by without opening the picker, while
+ * "3 labels" does not.
+ */
+export function tagTriggerLabel(selected: readonly string[]): string {
+  const picked = normalizeTags(selected);
+  if (picked.length === 0) return 'Labels';
+  if (picked.length === 1) return picked[0] as string;
+  return `${picked[0]} +${picked.length - 1}`;
 }
