@@ -249,10 +249,16 @@ async function gatherStore(store, onlyScope = null) {
   }
   const entries = [];
   for (const scope of scopeNames) {
-    // Page by cursor until the store reports no more. The remote caps a read at
-    // 100 rows/request and continues via nextCursor; the local store returns
-    // every row in one call and reports no `hasMore`, so the loop runs once —
-    // the same call works for both, no per-store branch.
+    // Page by cursor until the store reports no more. No `limit` is sent, so the
+    // remote serves ListMemoriesQuerySchema's DEFAULT of 50 rows/request (100 is
+    // the max, not the default) and continues via nextCursor; the local store
+    // returns every row in one call and reports no `hasMore`, so the loop runs
+    // once — the same call works for both, no per-store branch.
+    //
+    // Do NOT "optimise" this by passing `limit: 100`: LocalStore.list applies
+    // `rows.slice(0, limit)` and reports no `hasMore` (store/local.mjs:66-76), so
+    // a local scope with more than `limit` entries would be silently truncated
+    // and the rest of it dropped from the migration.
     let cursor = null;
     do {
       const listed = await store.list({ scope, cursor });

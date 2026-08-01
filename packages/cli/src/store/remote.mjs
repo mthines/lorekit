@@ -66,8 +66,10 @@ class RemoteStore {
     if (cursor) p.set('cursor', cursor);
     const res = await this._rest(`/memories?${p}`);
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
-    // hasMore / nextCursor let a caller page a scope with more rows than the
-    // server's per-request cap (100). Additive — existing callers ignore them.
+    // hasMore / nextCursor let a caller page a scope with more rows than one
+    // request returns. With no `limit` the server serves its default of 50
+    // (ListMemoriesQuerySchema; 100 is the max, not the default). Additive —
+    // existing callers ignore them.
     return {
       ok: true,
       entries: res.data?.entries ?? [],
