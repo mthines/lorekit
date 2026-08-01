@@ -52,6 +52,7 @@ export const MIRRORED_SCHEMA_FILES = [
   'audit.ts',
   'common.ts',
   'filter.ts',
+  'tags.ts',
   'scope.ts',
   'memory.ts',
   'org.ts',

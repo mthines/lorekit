@@ -32,6 +32,38 @@ export const ALLOWED_FILTER_FIELDS: ReadonlySet<string> = new Set([
   'trigger',
 ]);
 
+// PostgREST/`ilike` reserved characters that must be escaped so a substring
+// search matches literally instead of being interpreted as a LIKE wildcard or
+// a PostgREST filter-list separator.
+const ILIKE_ESCAPE_RE = /[%_\\,()]/g;
+const ILIKE_ESCAPE_MAP: Record<string, string> = {
+  '%': '\\%',
+  _: '\\_',
+  '\\': '\\\\',
+  ',': '\\,',
+  '(': '\\(',
+  ')': '\\)',
+};
+
+/**
+ * Trim, validate, and LIKE/PostgREST-escape a raw substring query.
+ *
+ * Returns `null` for absent/whitespace-only input, meaning "apply no filter" —
+ * so a caller can pass the raw user input straight through. Unicode content is
+ * preserved as-is; only the reserved ASCII metacharacters above are escaped.
+ *
+ * Shared rather than re-derived per surface because BOTH the dashboard (whose
+ * audit-log search builds the same `ilike` clause) and the `GET /memories`
+ * handler's `q` filter must escape identically — an unescaped `%` silently
+ * turns an as-you-type filter into a match-everything wildcard.
+ */
+export function likeNeedle(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(ILIKE_ESCAPE_RE, (ch) => ILIKE_ESCAPE_MAP[ch] ?? ch);
+}
+
 /**
  * Percent-encode the characters that are structural in a PostgREST filter
  * expression. Without this a value containing `,` or `)` could terminate the

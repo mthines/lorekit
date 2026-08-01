@@ -6,6 +6,7 @@ import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
 import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';
+import { MEMORY_SELECT, shapeMemoryRow } from '../../_shared/schemas/memory.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -21,7 +22,7 @@ export async function handleGet(
   const tracedDb = createTracedClient(db, span);
   let q: TracedQuery<MemoryRow> = tracedDb
     .from<MemoryRow>('memories')
-    .select('id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,origin_repo,origin_branch,origin_commit,origin_pr')
+    .select(MEMORY_SELECT)
     .eq('id', v.data)
     .is('archived_at', null)
     .or('expires_at.is.null,expires_at.gt.now()');
@@ -37,7 +38,7 @@ export async function handleGet(
   if (error) { span.error(`DB: ${error.message}`); throw error; }
   if (!data) return notFound('Memory', cors);
   // One record read — surfaced for the router's usage event (RESULT_COUNT_HEADER).
-  const res = ok(data, cors);
+  const res = ok(shapeMemoryRow(data as Record<string, unknown>), cors);
   res.headers.set('X-LoreKit-Result-Count', '1');
   return res;
 }

@@ -9,6 +9,7 @@
     "./scope": "./src/scope.ts",
     "./common": "./src/common.ts",
     "./filter": "./src/filter.ts",
+    "./tags": "./src/tags.ts",
     "./memory": "./src/memory.ts",
     "./org": "./src/org.ts",
     "./member": "./src/member.ts",

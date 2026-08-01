@@ -3412,6 +3412,219 @@ begin
 end;
 $$;
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- Dashboard aggregate reads — 00049 / 00050 / 00051
+--
+-- The dashboard used to compute all three of these in the browser from a
+-- capped `select … limit 1000`, which is silently wrong past PostgREST's row
+-- cap. These functions move the aggregation into Postgres, so — exactly as for
+-- lorekit_memory_scopes (§47) — this file is the only place their visibility
+-- predicate, partitioning and ordering are actually executed.
+-- ═════════════════════════════════════════════════════════════════════════
+
+-- Fixtures: user A (a1) gets labelled rows in both partitions plus two rows with
+-- pinned created_at values in distinct UTC days/hours. User B (b2) gets a
+-- labelled row of their own so the tenant predicate has something to exclude.
+insert into memories (user_id, scope, key, value, tags) values
+  ('00000000-0000-0000-0000-0000000000a1', 'project::agg-a', 'agg-1', 'v', array['perf','auth']),
+  ('00000000-0000-0000-0000-0000000000a1', 'project::agg-a', 'agg-2', 'v', array['perf']);
+insert into memories (user_id, scope, key, value, tags, archived_at) values
+  ('00000000-0000-0000-0000-0000000000a1', 'project::agg-a', 'agg-archived', 'v', array['retired'], now());
+insert into memories (user_id, scope, key, value, tags, expires_at) values
+  ('00000000-0000-0000-0000-0000000000a1', 'project::agg-a', 'agg-expired', 'v', array['ghost'], now() - interval '1 minute');
+insert into memories (user_id, scope, key, value, tags) values
+  ('00000000-0000-0000-0000-0000000000b2', 'project::agg-b', 'agg-b-1', 'v', array['bee']);
+
+insert into memories (user_id, scope, key, value, created_at) values
+  ('00000000-0000-0000-0000-0000000000a1', 'project::agg-t', 'agg-t-1', 'v', timestamptz '2026-03-01 01:15:00+00'),
+  ('00000000-0000-0000-0000-0000000000a1', 'project::agg-t', 'agg-t-2', 'v', timestamptz '2026-03-01 01:45:00+00'),
+  ('00000000-0000-0000-0000-0000000000a1', 'project::agg-t', 'agg-t-3', 'v', timestamptz '2026-03-02 05:00:00+00');
+
+-- ── 66. lorekit_memory_scopes exposes last_activity (00049) ─────────────────
+-- AC-1: last_activity is max(created_at) over exactly the counted rows.
+-- AC-2: the archived / expired siblings that are excluded from `count` are
+--       excluded from `last_activity` too (one predicate, not two).
+do $$
+declare
+  v_last     timestamptz;
+  v_expected timestamptz;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  select last_activity into v_last
+    from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000a1')
+   where scope = 'project::agg-t';
+  select max(created_at) into v_expected
+    from memories
+   where user_id = '00000000-0000-0000-0000-0000000000a1'
+     and scope = 'project::agg-t';
+  assert v_last = v_expected,
+    format('scopes last_activity AC-1: expected %s, got %s', v_expected, v_last);
+
+  -- project::agg-a holds an archived and an already-expired row created AFTER
+  -- the two active ones, so a last_activity computed over the wrong row set
+  -- would be strictly greater than the active maximum.
+  select last_activity into v_last
+    from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000a1')
+   where scope = 'project::agg-a';
+  select max(created_at) into v_expected
+    from memories
+   where user_id = '00000000-0000-0000-0000-0000000000a1'
+     and scope = 'project::agg-a'
+     and archived_at is null
+     and (expires_at is null or expires_at > now());
+  assert v_last = v_expected,
+    format('scopes last_activity AC-2: archived/expired rows must not move last_activity (expected %s, got %s)', v_expected, v_last);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 67. lorekit_memory_tags — the label catalog (00050) ─────────────────────
+-- AC-1: counts every visible ACTIVE row carrying the label.
+-- AC-2: archived and expired rows are excluded from the active partition.
+-- AC-3: p_archived => true returns the archived partition instead.
+-- AC-4: another user's labels are never counted.
+-- AC-5: an org co-member sees labels on org-owned rows.
+-- AC-6: ordering is count desc, then tag asc.
+do $$
+declare
+  v_count  bigint;
+  v_rows   int;
+  v_tags   text[];
+  v_sorted text[];
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- AC-1: 'perf' is on both active rows.
+  select count into v_count
+    from lorekit_memory_tags('00000000-0000-0000-0000-0000000000a1', false)
+   where tag = 'perf';
+  assert v_count = 2, format('memory tags AC-1: perf must count 2, got %s', v_count);
+
+  -- AC-2: the archived-only and expired-only labels are absent from the active
+  -- catalog altogether — not present with a zero count.
+  select count(*) into v_rows
+    from lorekit_memory_tags('00000000-0000-0000-0000-0000000000a1', false)
+   where tag in ('retired', 'ghost');
+  assert v_rows = 0,
+    'memory tags AC-2: archived and expired rows must not contribute to the active catalog';
+
+  -- AC-3: the archived partition is the archived rows' labels, and only those.
+  select count into v_count
+    from lorekit_memory_tags('00000000-0000-0000-0000-0000000000a1', true)
+   where tag = 'retired';
+  assert v_count = 1, format('memory tags AC-3: retired must count 1 in the archived partition, got %s', v_count);
+  select count(*) into v_rows
+    from lorekit_memory_tags('00000000-0000-0000-0000-0000000000a1', true)
+   where tag = 'perf';
+  assert v_rows = 0, 'memory tags AC-3b: an active-only label must not appear in the archived partition';
+
+  -- AC-4: B's label is invisible to A, and vice versa.
+  select count(*) into v_rows
+    from lorekit_memory_tags('00000000-0000-0000-0000-0000000000a1', false)
+   where tag = 'bee';
+  assert v_rows = 0, 'memory tags AC-4: a caller must never see another user''s labels';
+
+  -- AC-5: an org-owned row's labels reach every co-member (user_id IS NULL, so
+  -- only the lorekit_member_org_ids branch of the predicate can admit it).
+  insert into memories (user_id, org_id, scope, key, value, tags) values
+    (null, '00000000-0000-0000-0000-0000000000fa', 'repo::acme/scopes-org', 'agg-org-1', 'v', array['shared']);
+  select count into v_count
+    from lorekit_memory_tags('00000000-0000-0000-0000-0000000000b2', false)
+   where tag = 'shared';
+  assert v_count = 1, format('memory tags AC-5: an org co-member must see the org row''s label, got %s', v_count);
+
+  -- AC-6: count desc, then tag asc — a picker that reshuffles for equal counts
+  -- moves options out from under the cursor.
+  select array_agg(tag) into v_tags from lorekit_memory_tags('00000000-0000-0000-0000-0000000000a1', false);
+  select array_agg(t.tag order by t.count desc, t.tag asc) into v_sorted
+    from lorekit_memory_tags('00000000-0000-0000-0000-0000000000a1', false) t;
+  assert v_tags = v_sorted,
+    format('memory tags AC-6: results must be ordered count desc, tag asc, got %s', v_tags);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 68. lorekit_memory_activity — per-bucket creation counts (00051) ────────
+-- AC-1: day buckets are UTC-midnight-anchored and count the rows in each day.
+-- AC-2: hour buckets split a single day at the UTC hour boundary.
+-- AC-3: the [since, until) window is half-open.
+-- AC-4: another user's rows are never counted.
+-- AC-5: an invalid bucket unit raises rather than being interpolated.
+do $$
+declare
+  v_count   bigint;
+  v_rows    int;
+  v_bucket  timestamptz;
+  v_raised  boolean;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- AC-1: two rows on 2026-03-01, one on 2026-03-02, both anchored at midnight.
+  select bucket, count into v_bucket, v_count
+    from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day',
+      timestamptz '2026-03-01 00:00:00+00', timestamptz '2026-03-03 00:00:00+00')
+   where scope = 'project::agg-t'
+   order by bucket asc
+   limit 1;
+  assert v_bucket = timestamptz '2026-03-01 00:00:00+00',
+    format('memory activity AC-1: first day bucket must be UTC midnight, got %s', v_bucket);
+  assert v_count = 2, format('memory activity AC-1: 2026-03-01 must count 2, got %s', v_count);
+
+  -- AC-2: both of those rows fall in the SAME hour bucket (01:00), so the hour
+  -- granularity must still produce one row of 2 — not two rows of 1.
+  select count(*) into v_rows
+    from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-03-01 00:00:00+00', timestamptz '2026-03-02 00:00:00+00')
+   where scope = 'project::agg-t';
+  assert v_rows = 1, format('memory activity AC-2: 2026-03-01 must yield exactly one hour bucket, got %s', v_rows);
+  select bucket, count into v_bucket, v_count
+    from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-03-01 00:00:00+00', timestamptz '2026-03-02 00:00:00+00')
+   where scope = 'project::agg-t';
+  assert v_bucket = timestamptz '2026-03-01 01:00:00+00' and v_count = 2,
+    format('memory activity AC-2: expected the 01:00 bucket with 2 rows, got %s / %s', v_bucket, v_count);
+
+  -- AC-3: `until` is EXCLUSIVE — a window ending exactly at the second day's
+  -- midnight must not pick up 2026-03-02, and `since` is inclusive.
+  select count(*) into v_rows
+    from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day',
+      timestamptz '2026-03-01 00:00:00+00', timestamptz '2026-03-02 00:00:00+00')
+   where scope = 'project::agg-t';
+  assert v_rows = 1, format('memory activity AC-3: the window must be half-open, got %s buckets', v_rows);
+
+  -- AC-4: B's rows are invisible to A.
+  select count(*) into v_rows
+    from lorekit_memory_activity('00000000-0000-0000-0000-0000000000a1', 'day', null, null)
+   where scope = 'project::agg-b';
+  assert v_rows = 0, 'memory activity AC-4: a caller must never see another user''s activity';
+
+  -- AC-5: p_bucket is interpolated into date_trunc, so anything outside the
+  -- bounded categorical must raise rather than reach the query.
+  v_raised := false;
+  begin
+    perform * from lorekit_memory_activity('00000000-0000-0000-0000-0000000000a1', 'week', null, null);
+  exception when others then
+    v_raised := true;
+  end;
+  assert v_raised, 'memory activity AC-5: an unsupported bucket unit must raise';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

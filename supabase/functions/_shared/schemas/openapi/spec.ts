@@ -28,6 +28,10 @@ import {
   RestoreResponseSchema,
   PurgeResponseSchema,
   ScopesResponseSchema,
+  ListTagsQuerySchema,
+  TagsResponseSchema,
+  ActivityQuerySchema,
+  ActivityResponseSchema,
 } from '../memory.ts';
 import {
   OrgResponseSchema,
@@ -186,6 +190,24 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     responses: {
       200: { description: 'Scopes', content: { 'application/json': { schema: ScopesResponseSchema } } },
       401: errorResponse, 403: errorResponse,
+    },
+  });
+  registry.registerPath({
+    method: 'get', path: '/memories/tags',
+    summary: 'List every visible label with how many memories carry it', tags: ['Memories'],
+    security, request: { query: ListTagsQuerySchema },
+    responses: {
+      200: { description: 'Labels', content: { 'application/json': { schema: TagsResponseSchema } } },
+      400: errorResponse, 401: errorResponse, 403: errorResponse,
+    },
+  });
+  registry.registerPath({
+    method: 'get', path: '/memories/activity',
+    summary: 'Memories created per UTC hour/day per scope over a window', tags: ['Memories'],
+    security, request: { query: ActivityQuerySchema },
+    responses: {
+      200: { description: 'Activity buckets', content: { 'application/json': { schema: ActivityResponseSchema } } },
+      400: errorResponse, 401: errorResponse, 403: errorResponse,
     },
   });
   registry.registerPath({

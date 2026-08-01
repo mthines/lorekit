@@ -14,6 +14,8 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 | POST | /purge | purge.ts | write |
 | POST | /purge-expired | purge.ts | write |
 | GET | /scopes | scopes.ts | read |
+| GET | /tags | tags.ts | read |
+| GET | /activity | activity.ts | read |
 | GET | /usage | usage.ts | read |
 | GET | /:id | get.ts | read |
 | PATCH | /:id | update.ts | write |
@@ -22,7 +24,8 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 
 **Route order is load-bearing.** `matchPath` (`_shared/api/router.ts`) matches on segment
 count and returns *every* path match, then picks the first whose method matches — so
-`/search`, `/restore`, `/purge`, `/purge-expired` and `/scopes` all collide with `/:id`.
+`/search`, `/restore`, `/purge`, `/purge-expired`, `/scopes`, `/tags` and `/activity` all
+collide with `/:id`.
 The literal routes are registered before the `/:id` routes in `index.ts` so a future
 `POST /:id` cannot silently swallow them.
 
@@ -93,7 +96,12 @@ Returns every distinct scope the caller can see with its count of active (non-ar
 non-expired) memories, sorted by scope ascending:
 
 ```json
-{ "scopes": [{ "scope": "global", "count": 12 }, { "scope": "repo::acme/app", "count": 3 }] }
+{
+  "scopes": [
+    { "scope": "global", "count": 12, "last_activity": "2026-07-30T09:12:00.000Z" },
+    { "scope": "repo::acme/app", "count": 3, "last_activity": "2026-07-28T17:04:00.000Z" }
+  ]
+}
 ```
 
 The aggregation runs in Postgres (`lorekit_memory_scopes`, migration 00039), **not** as a
@@ -101,6 +109,55 @@ The aggregation runs in Postgres (`lorekit_memory_scopes`, migration 00039), **n
 PostgREST's default row cap: the response is truncated with no error, so whole scopes go
 missing. Visibility inside the RPC composes `lorekit_member_org_ids` exactly as the
 `memories` RLS read policies do, so personal and org-shared scopes both appear.
+
+`last_activity` (migration 00049) is `max(created_at)` over exactly the counted rows, so a
+caller can render per-scope freshness without listing rows to reduce them — the row-cap trap
+this endpoint exists to avoid.
+
+## `GET /tags`
+
+The label catalog: every distinct `memories.tags` value the caller can see with how many
+memories carry it, ordered count desc then label asc.
+
+```json
+{ "tags": [{ "tag": "perf", "count": 9 }, { "tag": "auth", "count": 4 }] }
+```
+
+`?archived=true` returns the archived partition instead, exactly as it does on `GET /`. The
+catalog must describe the population it will be used to filter: active and archived are
+different populations, so a catalog pinned to one has the wrong counts — and hides
+archive-only labels — in the other.
+
+Same rationale as `/scopes` for aggregating in Postgres (`lorekit_memory_tags`, migration
+00050), and the same tenant predicate.
+
+## `GET /activity`
+
+Memories created per UTC hour or day per scope, over a half-open `[since, until)` window:
+
+```json
+{
+  "bucket": "day",
+  "since": "2026-01-01T00:00:00.000Z",
+  "until": "2026-07-19T00:00:00.000Z",
+  "buckets": [{ "bucket": "2026-07-18T00:00:00.000Z", "scope": "global", "count": 4 }]
+}
+```
+
+| Param | Default | Meaning |
+|-------|---------|---------|
+| `bucket` | `day` | `hour` or `day` granularity. |
+| `since` | `until` − 200 days | Inclusive lower bound on `created_at`. |
+| `until` | now | **Exclusive** upper bound. |
+
+`date_trunc` anchors each bucket at the START of the UTC hour/day (`lorekit_memory_activity`,
+migration 00051), which is where a JS client's own `Math.floor(t / HOUR)` / `Date.UTC(y,m,d)`
+boundaries fall — so a client re-tallying these cells gets the same numbers it would have
+got from raw rows. The response is sparse: only buckets with activity come back, so its
+size is bounded by distinct active (hour, scope) pairs rather than by memory count.
+
+The window is bounded by default deliberately: an unbounded aggregate over `memories` grows
+with account age and no caller wants "all time".
 
 ## `GET /usage`
 

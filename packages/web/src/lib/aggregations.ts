@@ -1,68 +1,75 @@
 /**
- * Pure aggregation helpers shared between the dashboard and activity queries.
- * Extracted here so they can be unit-tested independently of Supabase/TanStack.
- */
-
-/** A raw row returned by the memories table (dashboard projection). */
-export interface MemoryRow {
-  scope: string;
-  created_at: string;
-  updated_at?: string;
-}
-
-export interface ScopeAggregate {
-  scope: string;
-  total: number;
-  lastActivity: string;
-}
-
-/**
- * Group an array of memory rows by scope, counting total lessons and tracking
- * the most-recent `created_at` timestamp per scope.
+ * Pure aggregation helpers for the dashboard and activity views.
  *
- * Rows are processed in a single pass — O(n) with no sorting required.
+ * The rollups that used to live here (per-scope totals, per-day counts over raw
+ * rows) moved into Postgres behind `GET /memories/scopes` and
+ * `GET /memories/activity` — a browser-side rollup over a capped row set is
+ * silently wrong past that cap. What remains is the pure shaping of those
+ * responses plus the stat-card trend maths, all unit-testable without Supabase
+ * or TanStack.
  */
-export function aggregateByScope(rows: MemoryRow[]): ScopeAggregate[] {
-  const map = new Map<string, ScopeAggregate>();
-  for (const row of rows) {
-    const existing = map.get(row.scope);
-    if (!existing) {
-      map.set(row.scope, { scope: row.scope, total: 1, lastActivity: row.created_at });
-    } else {
-      existing.total++;
-      if (row.created_at > existing.lastActivity) {
-        existing.lastActivity = row.created_at;
-      }
-    }
-  }
-  return Array.from(map.values()).sort((a, b) =>
-    b.lastActivity.localeCompare(a.lastActivity),
-  );
-}
 
-/** A raw row returned by the memories table (activity projection). */
-export interface ActivityRow {
-  created_at: string;
-}
-
+/** A per-calendar-day (UTC) count, as the contribution heatmap renders it. */
 export interface DayCount {
   date: string; // YYYY-MM-DD
   count: number;
 }
 
+// ── GET /memories/activity → the shapes the stat cards and heatmap consume ──
+
 /**
- * Count memory rows per calendar day (UTC).
- * Returns an array sorted by date ascending.
+ * One `(bucket, scope, count)` cell from `GET /memories/activity`: memories
+ * created in that UTC hour/day under that scope.
  */
-export function aggregateByDay(rows: ActivityRow[]): DayCount[] {
+export interface ActivityBucketRow {
+  /** UTC start of the interval, ISO. */
+  bucket: string;
+  scope: string;
+  count: number;
+}
+
+/**
+ * Roll activity buckets up into per-calendar-day counts (UTC) for the
+ * contribution heatmap.
+ *
+ * Works for either granularity: hour buckets collapse into their day because
+ * the date prefix is all that is read. Returned sorted by date ascending, the
+ * same contract as {@link aggregateByDay}.
+ */
+export function dayCountsFromActivity(rows: readonly ActivityBucketRow[]): DayCount[] {
   const map = new Map<string, number>();
   for (const row of rows) {
-    const day = row.created_at.slice(0, 10);
-    map.set(day, (map.get(day) ?? 0) + 1);
+    const day = row.bucket.slice(0, 10);
+    map.set(day, (map.get(day) ?? 0) + row.count);
   }
   return Array.from(map.entries())
     .map(([date, count]) => ({ date, count }))
     .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * Expand activity buckets back into the one-row-per-memory shape
+ * {@link computeRangeTrends} takes.
+ *
+ * This is lossless for every question that function asks. It buckets by UTC
+ * hour or day, and `date_trunc` on the server anchors each bucket at exactly
+ * those boundaries, so `count` rows placed at the bucket start fall in the same
+ * bucket the original timestamps did — and `scope` is carried per cell, so the
+ * distinct-scope counts are unaffected too. What is deliberately NOT preserved
+ * is sub-bucket precision, which no trend or sparkbar reads.
+ *
+ * Expanding here rather than teaching `computeRangeTrends` a second input shape
+ * keeps that function — the one with the period-over-period comparison logic
+ * and the tests that pin it — untouched by the move to the API.
+ */
+export function trendRowsFromActivity(rows: readonly ActivityBucketRow[]): TrendRow[] {
+  const out: TrendRow[] = [];
+  for (const row of rows) {
+    for (let i = 0; i < row.count; i++) {
+      out.push({ scope: row.scope, created_at: row.bucket });
+    }
+  }
+  return out;
 }
 
 // ── Stat-card trend series (dashboard sparkbars) ──────────────────────────────
