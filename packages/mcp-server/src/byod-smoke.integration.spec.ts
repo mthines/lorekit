@@ -20,6 +20,7 @@
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
+import { createSmokeNamespace, describeSweepFailures, sweepSmokeArtefacts } from './smoke-cleanup.js';
 
 const BASE_URL = (process.env['LOREKIT_BYOD_URL'] ?? '').replace(/\/$/, '');
 const TOKEN    = process.env['LOREKIT_BYOD_TOKEN'];
@@ -27,7 +28,11 @@ const TOKEN    = process.env['LOREKIT_BYOD_TOKEN'];
 const SKIP = !BASE_URL || !TOKEN;
 
 // Unique run prefix to avoid collisions across concurrent or retried runs.
-const PREFIX = `byod-smoke-${Date.now()}`;
+// Minted through the shared namespace, which throws on a label the orphan
+// sweeper would not recognise — a hand-built prefix looks identical today and
+// leaks silently the day someone edits it.
+const NS = createSmokeNamespace('byod');
+const PREFIX = NS.prefix;
 
 // All four canonical scope types.
 const SCOPES = {
@@ -41,10 +46,10 @@ type ScopeName = keyof typeof SCOPES;
 
 // One key per scope — written, then read back, then deleted in afterAll.
 const keys: Record<ScopeName, string> = {
-  global:  `${PREFIX}-global`,
-  project: `${PREFIX}-project`,
-  repo:    `${PREFIX}-repo`,
-  branch:  `${PREFIX}-branch`,
+  global:  NS.name('global'),
+  project: NS.name('project'),
+  repo:    NS.name('repo'),
+  branch:  NS.name('branch'),
 };
 
 // ── MCP JSON-RPC helper (same shape as smoke.integration.spec.ts) ──────────
@@ -109,12 +114,24 @@ describe.skipIf(SKIP)('LoreKit BYOD smoke tests (integration)', () => {
   // Best-effort cleanup — run regardless of pass/fail so the BYOD project
   // stays tidy across repeated CI runs.
   afterAll(async () => {
-    await Promise.allSettled(
-      (Object.keys(SCOPES) as ScopeName[]).map((s) =>
-        mcpCall('memory.delete', { scope: SCOPES[s], key: keys[s], force: true }),
-      ),
+    // `Promise.allSettled` used to swallow every rejection here, so a BYOD
+    // project could accumulate rows run after run with nothing in the log to
+    // say so. The sweep is sequential (a live endpoint with a per-user rate
+    // limit) and names whatever it could not remove.
+    // Keyed by the memory key (what a leak is actually named), with the scope
+    // recovered from it, so a reported leftover can be pasted straight into a
+    // manual delete.
+    const scopeOfKey = new Map<string, string>(
+      (Object.keys(SCOPES) as ScopeName[]).map((s) => [keys[s], SCOPES[s]]),
     );
-  });
+    const report = await sweepSmokeArtefacts([...scopeOfKey.keys()], async (key) => {
+      await mcpCall('memory.delete', { scope: scopeOfKey.get(key), key, force: true });
+    });
+    // `sweeperCovers: false` — the orphan sweeper targets LOREKIT_REST_BASE_URL,
+    // and this suite writes to its own project (LOREKIT_BYOD_URL) over MCP.
+    const warning = describeSweepFailures(report, 'BYOD smoke', { sweeperCovers: false });
+    if (warning) console.warn(warning);
+  }, 30_000);
 
   // ── 1. Write — all four scope types in parallel ──────────────────────────────
   // Each write uses a scope-specific unique phrase for FTS verification below.

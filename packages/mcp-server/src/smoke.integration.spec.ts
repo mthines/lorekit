@@ -17,17 +17,25 @@
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
+import {
+  createSmokeNamespace,
+  describeSweepFailures,
+  sweepSmokeArtefacts,
+} from './smoke-cleanup.js';
 
 const BASE_URL = (process.env['LOREKIT_SMOKE_URL'] ?? 'http://localhost:3000/mcp').replace(/\/$/, '');
 const TOKEN = process.env['LOREKIT_SMOKE_TOKEN'];
 
 const SKIP = !TOKEN;
 
-// Unique prefix so parallel runs (and prior failed runs) don't collide.
-const KEY_PREFIX = `smoke-${Date.now()}`;
+// Unique prefix so parallel runs (and prior failed runs) don't collide. Keys are
+// minted through the namespace so `afterAll` cleans up EVERY key this run used,
+// derived from what was minted rather than from a hand-maintained list.
+const NS = createSmokeNamespace('smoke');
+const KEY_PREFIX = NS.prefix;
 const SCOPE = 'global';
-const KEY_A = `${KEY_PREFIX}-a`;
-const KEY_B = `${KEY_PREFIX}-b`;
+const KEY_A = NS.name('a');
+const KEY_B = NS.name('b');
 
 // ── MCP JSON-RPC helper ──────────────────────────────────────────────────────
 
@@ -99,12 +107,22 @@ async function mcpCallInner<T = unknown>(tool: string, args: Record<string, unkn
 // ── Suite ────────────────────────────────────────────────────────────────────
 
 describe.skipIf(SKIP)('LoreKit MCP smoke tests (integration)', () => {
-  // Best-effort cleanup — runs regardless of pass/fail.
+  // Cleanup — runs regardless of pass/fail, and HARD-deletes.
+  //
+  // This used to call `memory.delete` with no `force`, which is a soft ARCHIVE:
+  // the rows survived every run, so each deploy added two permanent archived
+  // memories to a real tenant. `force: true` is what actually removes them.
+  //
+  // A leftover is reported as a warning, never as a thrown hook — a leaked row
+  // must be visible in the log without turning a passing suite red. Anything
+  // this misses is picked up by `node scripts/smoke-cleanup.mjs`.
   afterAll(async () => {
-    for (const key of [KEY_A, KEY_B]) {
-      await mcpCall('memory.delete', { scope: SCOPE, key }).catch(() => undefined);
-    }
-  });
+    const report = await sweepSmokeArtefacts(NS.minted(), async (key) => {
+      await mcpCall('memory.delete', { scope: SCOPE, key, force: true });
+    });
+    const warning = describeSweepFailures(report, `MCP smoke, scope=${SCOPE}`);
+    if (warning) console.warn(warning);
+  }, 30_000);
 
   // 1. write — create ─────────────────────────────────────────────────────────
   it('memory.write — creates a new entry', async () => {
