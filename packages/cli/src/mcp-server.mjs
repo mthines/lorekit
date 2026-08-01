@@ -170,13 +170,15 @@ export const ORG_TOOL_DEFS = [
 // Legacy alias kept so existing code that imports TOOL_DEFS still compiles.
 export const TOOL_DEFS = [...MEMORY_TOOL_DEFS, ...ORG_TOOL_DEFS];
 
-// tool name → (store, args) → store result. The store destructures the args it
-// needs, so the raw `arguments` object is passed straight through.
+// tool name → (store, args, ctx) → store result. The store destructures the
+// args it needs, so the raw `arguments` object is passed straight through.
+// `ctx.root` is the resolved project root (`--dir`), NOT the process cwd — an
+// MCP client launched from elsewhere would otherwise stamp the wrong origin.
 const MEMORY_DISPATCH = {
   // An agent calling memory.write knows the lesson, not the working directory
   // it is running in. Fill in whatever provenance the environment can supply,
   // with anything the caller DID pass taking precedence.
-  'memory.write': (store, a) => store.write({ ...a, ...withDerivedOrigin(a) }),
+  'memory.write': (store, a, ctx) => store.write({ ...a, ...withDerivedOrigin(a, ctx) }),
   'memory.read': (store, a) => store.read(a),
   'memory.list': (store, a) => store.list(a),
   'memory.search': (store, a) => store.search(a),
@@ -187,9 +189,9 @@ const MEMORY_DISPATCH = {
 // Provenance for a tool call: the caller's explicit values win, the working
 // directory and CI environment fill the rest. Best-effort — a failure to shell
 // out to git must never fail the write, so it degrades to no origin at all.
-function withDerivedOrigin(args = {}) {
+function withDerivedOrigin(args = {}, { root } = {}) {
   try {
-    return mergeOrigin(deriveOrigin(), {
+    return mergeOrigin(deriveOrigin({ cwd: root }), {
       origin_repo: args.origin_repo ?? null,
       origin_branch: args.origin_branch ?? null,
       origin_commit: args.origin_commit ?? null,
@@ -229,7 +231,7 @@ function toolResult(id, payload) {
 
 // Build the per-message handler over a resolved control model. `store` is null
 // when mode is `off`. Org tools are always advertised regardless of mode.
-export function createHandler(control) {
+export function createHandler(control, { root = process.cwd() } = {}) {
   const store = createStore(control);
   const memoryTools = store ? MEMORY_TOOL_DEFS : [];
 
@@ -298,7 +300,7 @@ export function createHandler(control) {
       const fn = MEMORY_DISPATCH[name];
       if (!fn) return errorReply(id, -32601, `Unknown tool: ${name}`);
 
-      const result = await fn(store, args);
+      const result = await fn(store, args, { root });
       return toolResult(id, result);
     }
 
@@ -400,7 +402,7 @@ export async function mcpServer(
 ) {
   const root = resolveProjectRoot(args.dir);
   const control = loadControl(root, { env: withOverrides(args, env) });
-  const handle = createHandler(control);
+  const handle = createHandler(control, { root });
   // A human who runs `lorekit mcp` in a terminal would otherwise see a silent
   // hang with no sign it is alive. Reassure them on stderr — but only when
   // stdin is a TTY, so a piped MCP client never sees the banner on either channel.
