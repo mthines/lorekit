@@ -28,6 +28,7 @@
  * - `view` param:     'scope' | 'time'. Persisted in URL so a shared link
  *   lands on the correct tab.
  * - `scopePanelOpen`: local useState — ephemeral mobile accordion, NOT in URL.
+ *   Defaults to closed so the phone layout leads with the memories.
  * - `heatmapOpen`:    local useState — ephemeral panel collapse, NOT in URL.
  *
  * ## SSR note
@@ -279,8 +280,11 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
 
   // Local-only: mobile accordion state. Ephemeral UI — not shareable, not
   // persisted. Putting this in URL state would pollute every share link and
-  // fire a router.replace on every tap.
-  const [scopePanelOpen, setScopePanelOpen] = useState(true);
+  // fire a router.replace on every tap. Starts CLOSED so the phone layout opens
+  // on the memories themselves — the scope tree is a filter, not the content,
+  // and expanding it by default pushed the first card below the fold. The
+  // collapsed header still shows the active scope, so nothing is hidden.
+  const [scopePanelOpen, setScopePanelOpen] = useState(false);
 
   // Local-only: heatmap panel collapse. Ephemeral UI — not shareable.
   const [heatmapOpen, setHeatmapOpen] = useState(true);
