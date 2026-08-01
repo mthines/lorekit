@@ -16,7 +16,7 @@ import type { LessonEntry } from './LessonCard';
 import { updateLesson } from '@/lib/lore';
 import { listMemberIdentities } from '@/lib/org-members';
 import { scopeRepoUrl } from '@/lib/scope';
-import { useMediaQuery } from '@/lib/hooks/useMediaQuery';
+import { useIsMobile } from '@/lib/hooks/useMediaQuery';
 import { shouldDismissSheet } from '@/components/ui/bottom-sheet';
 import { toast } from 'sonner';
 
@@ -138,8 +138,9 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
   const closeRef = useRef<HTMLButtonElement>(null);
   const queryClient = useQueryClient();
   // Below `md` the panel is a bottom sheet; at/above it a right-side drawer.
-  // An explicit `layout` overrides the breakpoint (Storybook).
-  const belowMd = useMediaQuery('(max-width: 767px)');
+  // `useIsMobile` shares one matchMedia listener across all consumers. An
+  // explicit `layout` overrides the breakpoint (Storybook).
+  const belowMd = useIsMobile();
   const isSheet = layout === 'sheet' || (layout === 'auto' && belowMd);
   const dragControls = useDragControls();
   const archiveMutation = useArchiveLesson();
