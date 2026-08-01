@@ -15,11 +15,11 @@ Here's a bug you've already paid for, probably more than once.
 
 Your agent runs a Supabase query, gets back `200 OK` and an empty array, and confidently concludes the row doesn't exist. It doesn't. RLS silently filtered it out. The agent burns ten minutes going down the wrong path, you nudge it, it recovers.
 
-Next session? Same query. Same empty array. Same wrong conclusion. Same ten minutes. 😐
+Next session? Same query. Same empty array. Same wrong conclusion. Same ten minutes.
 
 It's not a dumb agent. It's an agent with anterograde amnesia — every session starts from zero, so every lesson dies at the end of the conversation that earned it. You're not paying for one mistake. You're paying rent on it, forever.
 
-"Self-healing agents" and "self-improving agents" are the shiny words for fixing this. And they get pitched like an ML problem — fine-tune the model, train on your traces, wait a week, hope. 🙄
+"Self-healing agents" and "self-improving agents" are the shiny words for fixing this. And they get pitched like an ML problem — fine-tune the model, train on your traces, wait a week, hope.
 
 It's not an ML problem. It's a loop you forgot to build.
 
@@ -35,7 +35,7 @@ That's the whole thing. No new model call. No fine-tune. No embeddings pipeline 
 
 LoreKit runs that loop through deterministic lifecycle hooks — the same `SessionStart` / tool-result / `Stop` events your coding agent already fires. On `SessionStart` it injects the lessons relevant to where you are. When a tool call fails it looks up the lessons that match the failure and drops them in — *before* the agent retries. On `Stop` it nudges a short retrospective.
 
-The important detail — the one that makes this shippable instead of scary — is that **every hook exits 0, best-effort, and never blocks the host**. Memory is down? No matches? Store not connected? The hook shrugs and the agent runs exactly as it did before. Self-healing that can't break the patient. 🩹
+The important detail — the one that makes this shippable instead of scary — is that **every hook exits 0, best-effort, and never blocks the host**. Memory is down? No matches? Store not connected? The hook shrugs and the agent runs exactly as it did before. Self-healing that can't break the patient.
 
 ## The failure is the trigger
 
@@ -74,7 +74,7 @@ memory.write {
 }
 ```
 
-Next time a Supabase call comes back empty, that lesson is already on the table before the agent talks itself into the wrong answer. The ten minutes never happen. 🙌
+Next time a Supabase call comes back empty, that lesson is already on the table before the agent talks itself into the wrong answer. The ten minutes never happen.
 
 ## Memory has a gradient
 
@@ -113,7 +113,7 @@ Everything so far is one agent getting better at its own job. Point the same loo
 
 One engineer's agent learns the RLS gotcha on a Tuesday. Because that lesson lives on a shared, org-owned scope, **every teammate's agent knows it on Wednesday** — nobody re-derives it, nobody gets paged for it twice. Bind a repo scope to an org once and member writes under it route to the shared store automatically, no `org` field on every call.
 
-Your deploy checklist, your incident runbook, the three things that always break the staging smoke test — they stop living in one person's head and one person's agent, and start being context every agent on the team reads before it touches the code. Self-healing at one machine is convenient. Self-healing across a team is a moat. 💪
+Your deploy checklist, your incident runbook, the three things that always break the staging smoke test — they stop living in one person's head and one person's agent, and start being context every agent on the team reads before it touches the code. Self-healing at one machine is convenient. Self-healing across a team is a moat.
 
 ## What it doesn't do
 
@@ -121,7 +121,7 @@ Let me be honest about the edges, because "self-healing" oversells if you let it
 
 This isn't self-awareness. The matcher is a literal, case-insensitive substring match — not a semantic model that *understands* your failure. It's fast, deterministic, and dependency-free, and that's a deliberate trade: no embeddings drift, no surprise inference bill, but it won't connect two lessons that describe the same thing in different words. You get out roughly the discipline you put into keys and tags.
 
-And one real caveat: the offline store keys `project::` scope by the working directory's **basename**. Two unrelated repos that happen to sit in folders with the same name can cross-surface each other's project-scoped lessons offline. The hosted store scopes by the real project name and isn't affected — but if you're local-only, prefer `repo::` for anything that matters. I'd rather tell you that than let you find it at 2am. 🫠
+And one real caveat: the offline store keys `project::` scope by the working directory's **basename**. Two unrelated repos that happen to sit in folders with the same name can cross-surface each other's project-scoped lessons offline. The hosted store scopes by the real project name and isn't affected — but if you're local-only, prefer `repo::` for anything that matters. I'd rather tell you that than let you find it at 2am.
 
 Self-healing here means a deterministic loop that gets measurably less dumb over time — not a mind. That's the honest version, and honestly it's the useful one.
 
@@ -137,6 +137,4 @@ npx @lorekit/cli tree        # see exactly which lesson wins per scope, before a
 
 That gives your agent the read-fail-write loop against a local store — no account, no server, no config. When you want it to compound across sessions and teammates, point it at the hosted store and turn on org sharing.
 
-Then go break something. 😄 The next time your agent hits the same wall, watch it walk around it instead.
-
-Want to give your agents a memory? Start with `npx @lorekit/cli install`, and read the [self-improvement loop guide](/docs/use-cases) for the full wiring. 👇
+Then go break something. The next time your agent hits the same wall, watch it walk around it instead — and when you're ready to wire the full loop, the [self-improvement loop guide](/docs/use-cases) has every hook.
