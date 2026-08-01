@@ -16,6 +16,13 @@ describe('formatPostDate', () => {
     expect(formatPostDate('not-a-date')).toBe('not-a-date');
     expect(formatPostDate('')).toBe('');
   });
+
+  it('returns the raw input for an out-of-range date instead of rolling it over', () => {
+    // Month 13 / day 45 would roll over to a valid-but-wrong date via Date.UTC.
+    expect(formatPostDate('2026-13-45')).toBe('2026-13-45');
+    expect(formatPostDate('2026-02-30')).toBe('2026-02-30');
+    expect(formatPostDate('2026-00-10')).toBe('2026-00-10');
+  });
 });
 
 describe('readingLabel', () => {

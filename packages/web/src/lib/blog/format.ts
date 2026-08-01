@@ -5,15 +5,27 @@
  */
 
 /** `2026-08-01` → `August 1, 2026`. Returns the raw input unchanged when it doesn't
- *  start with a `YYYY-MM-DD` prefix, so a malformed frontmatter date degrades instead
- *  of throwing. A prefix that matches but is out of range is not rejected — it rolls
- *  over the way `Date.UTC` does (`2026-13-45` → `February 14, 2027`). */
+ *  start with a `YYYY-MM-DD` prefix OR when that prefix is out of range (e.g.
+ *  `2026-13-45`), so a malformed frontmatter date degrades to the raw string instead
+ *  of silently rolling over to a valid-but-wrong date (`Date.UTC` rolls month 13 into
+ *  the next January). */
 export function formatPostDate(iso: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
   if (!match) return iso;
   const [, y, m, d] = match;
-  // The regex guarantees three finite integers, so `Date.UTC` can never return NaN here.
-  const date = new Date(Date.UTC(Number(y), Number(m) - 1, Number(d)));
+  const year = Number(y);
+  const month = Number(m);
+  const day = Number(d);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  // Require the constructed date to round-trip back to the exact parts; any mismatch
+  // means `Date.UTC` rolled an out-of-range value over, so degrade to the raw input.
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return iso;
+  }
   return date.toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',
