@@ -17,7 +17,7 @@
  * bindScope/unbindScope server actions).
  */
 
-import { useEffect, useId, useMemo, useState, useTransition, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, useTransition, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Github,
@@ -343,6 +343,20 @@ function InstallationCard({
     });
   }
 
+  // Keep keyboard focus with the disclosure: entering share mode focuses the org
+  // picker, leaving it returns focus to the entry button — never dropping to
+  // <body>. Skip the mount run so we don't steal focus on first paint.
+  const shareEntryRef = useRef<HTMLButtonElement>(null);
+  const focusOnMount = useRef(true);
+  useEffect(() => {
+    if (focusOnMount.current) {
+      focusOnMount.current = false;
+      return;
+    }
+    if (sharing) document.getElementById(orgSelectId)?.focus();
+    else shareEntryRef.current?.focus();
+  }, [sharing, orgSelectId]);
+
   function doBind(orgId: string, fullNames: string[]) {
     const org = manageableOrgs.find((o) => o.id === orgId);
     if (!org || fullNames.length === 0) return;
@@ -483,24 +497,29 @@ function InstallationCard({
               )}
             </div>
 
-            {/* View mode: a single quiet entry into the share flow */}
+            {/* Read mode: the suggestion nudge (if any) stays visible here so
+                users who haven't shared yet see it, plus one entry into manual
+                multi-select. */}
             {canManage && !sharing && state.unbound.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setSharing(true)}
-                className="flex min-h-11 items-center justify-center gap-1.5 self-start rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 text-xs font-medium text-[var(--color-content-secondary)] transition-colors hover:border-[var(--color-accent-glow)] hover:text-[var(--color-accent)]"
-              >
-                <LinkIcon className="size-3.5 shrink-0" aria-hidden />
-                Share repositories with an organization
-              </button>
-            )}
-
-            {/* Select mode: the picker + multi-select controls, revealed on demand */}
-            {canManage && sharing && (
-              <div className="flex flex-col gap-3 border-t border-[var(--color-border)] pt-3">
+              <div className="flex flex-col gap-2">
                 {suggestion && (
                   <SuggestionBanner suggestion={suggestion} busy={pending} onBind={doBind} />
                 )}
+                <button
+                  ref={shareEntryRef}
+                  type="button"
+                  onClick={() => setSharing(true)}
+                  className="flex min-h-11 items-center justify-center gap-1.5 self-start rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 text-xs font-medium text-[var(--color-content-secondary)] transition-colors hover:border-[var(--color-accent-glow)] hover:text-[var(--color-accent)]"
+                >
+                  <LinkIcon className="size-3.5 shrink-0" aria-hidden />
+                  {suggestion ? 'Choose specific repos to share' : 'Share repositories with an organization'}
+                </button>
+              </div>
+            )}
+
+            {/* Select mode: the org picker + multi-select controls, revealed on demand */}
+            {canManage && sharing && (
+              <div className="flex flex-col gap-3 border-t border-[var(--color-border)] pt-3">
                 <BindActionBar
                   manageableOrgs={manageableOrgs}
                   targetOrgId={targetOrgId}
@@ -510,14 +529,12 @@ function InstallationCard({
                   onBind={() => doBind(targetOrgId, [...selected])}
                   orgSelectId={orgSelectId}
                 />
+                {/* Exit only — bindings apply on Share, so leaving keeps any
+                    in-progress selection rather than silently discarding it. */}
                 <button
                   type="button"
-                  onClick={() => {
-                    setSharing(false);
-                    setSelected(new Set());
-                    setQuery('');
-                  }}
-                  className="min-h-9 self-start text-[11px] text-[var(--color-content-secondary)] transition-colors hover:text-[var(--color-content-primary)]"
+                  onClick={() => setSharing(false)}
+                  className="min-h-11 self-start text-[11px] text-[var(--color-content-secondary)] transition-colors hover:text-[var(--color-content-primary)]"
                 >
                   Done
                 </button>
