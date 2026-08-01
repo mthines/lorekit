@@ -100,3 +100,18 @@ test('annotate — skip warns and names the drifted versions; fail errors and na
   const push = annotate(classifyDrift({ local: ['00048'], remote: [] }));
   assert.doesNotMatch(push, /^::(warning|error)::/);
 });
+
+test('annotate — the fail-safe push never claims a clean remote, and names the drift', () => {
+  // `classifyDrift` reaches `push` twice: once because the remote carries nothing
+  // unknown, and once as the fail-safe when no local versions were parsed. Only the
+  // first one may say the remote is clean — on the second, `remoteOnly` is non-empty.
+  const failsafe = annotate(classifyDrift({ local: [], remote: ['00049'] }));
+  assert.match(failsafe, /^::warning::/);
+  assert.doesNotMatch(failsafe, /no unknown versions on the remote/);
+  assert.match(failsafe, /00049/);
+
+  // …and the ordinary push path is unchanged.
+  const clean = annotate(classifyDrift({ local: ['00048'], remote: ['00048'] }));
+  assert.match(clean, /no unknown versions on the remote/);
+  assert.doesNotMatch(clean, /^::(warning|error)::/);
+});

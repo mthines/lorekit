@@ -95,6 +95,20 @@ export function classifyDrift({ local = [], remote = [] } = {}) {
 /** Human-readable annotation for a classification. Pure — returned, not printed. */
 export function annotate({ action, localPending, remoteOnly }) {
   if (action === 'push') {
+    // `classifyDrift` has TWO push paths. The second is the fail-safe: no local
+    // versions were parsed, so we push to restore the previous behaviour exactly
+    // — and `remoteOnly` is non-empty there. Claiming a clean remote in that case
+    // is false at the one moment the operator has least to go on.
+    if (remoteOnly.length > 0) {
+      return (
+        `::warning::migration-drift: no local migration versions were parsed from ` +
+        `\`supabase migration list\` (a CLI error, or a change to its table format), ` +
+        `while the remote reports ${remoteOnly.join(', ')}. The drift is therefore ` +
+        `unverifiable, and skipping on a guess is never allowed — falling back to ` +
+        `\`supabase db push\`, which restores the previous behaviour exactly, ` +
+        `including its error message.`
+      );
+    }
     return `migration-drift: no unknown versions on the remote — pushing ${localPending.length} pending migration(s).`;
   }
   if (action === 'skip') {
