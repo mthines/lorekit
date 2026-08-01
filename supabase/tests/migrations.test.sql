@@ -3217,7 +3217,19 @@ declare
   v_svc_null    int;
   v_b2_scopes   int;
   v_b2_count    jsonb;
+  v_b2_personal int;
+  v_a1_personal int;
 begin
+  -- Ground truth for the count assertion below, computed the way
+  -- lorekit_memory_count computes personal_count (active = not archived; the
+  -- personal branch deliberately does not filter on expires_at). b2 is NOT a
+  -- blank user in this fixture — earlier sections give it its own rows — so
+  -- the property is "b2 sees b2's own total", never a hardcoded zero.
+  select count(*) into v_b2_personal from memories
+   where user_id = '00000000-0000-0000-0000-0000000000b2' and archived_at is null;
+  select count(*) into v_a1_personal from memories
+   where user_id = '00000000-0000-0000-0000-0000000000a1' and archived_at is null;
+
   set local role service_role;
   perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   select count(*) into v_svc_scopes
@@ -3247,8 +3259,15 @@ begin
     format('readfn guard: service-role NULL p_user_id (CI escape hatch) must see a1''s scope, got %s', v_svc_null);
   assert v_b2_scopes = 0,
     format('readfn guard: authenticated b2 naming a1 must NOT enumerate a1''s scopes (IDOR closed), got %s', v_b2_scopes);
-  assert coalesce((v_b2_count->>'personal_count')::int, -1) = 0,
-    format('readfn guard: authenticated b2 memory_count(a1) must report b2''s own 0 personal, got %s', v_b2_count->>'personal_count');
+  -- Anti-vacuity: the two users' active personal totals must differ, otherwise
+  -- "b2 got b2's number" and "b2 got a1's number" would be indistinguishable
+  -- and the assertion below could not prove the actor was pinned.
+  assert v_a1_personal <> v_b2_personal,
+    format('readfn guard fixture: a1 and b2 must hold a different number of active personal rows for the count assertion to be meaningful (a1=%s, b2=%s)',
+           v_a1_personal, v_b2_personal);
+  assert coalesce((v_b2_count->>'personal_count')::int, -1) = v_b2_personal,
+    format('readfn guard: authenticated b2 memory_count(a1) must report b2''s OWN personal total (%s), not a1''s (%s), got %s',
+           v_b2_personal, v_a1_personal, v_b2_count->>'personal_count');
 end;
 $$;
 
