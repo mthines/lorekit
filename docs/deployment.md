@@ -120,6 +120,79 @@ supabase migration repair --status reverted 00049 00050 00051
 `deploy.yml` ever pushes to production, so a remote ahead of `main` there is a
 real anomaly and must stop the pipeline.
 
+#### Wiring the classifier into the workflows
+
+Like the smoke sweeper above, **the workflow steps are documented, not
+committed** — the GitHub App that opens automated PRs has no `workflows`
+permission, so a human applies these three edits once.
+
+**1.** In `.github/workflows/deploy.yml`, in the **`deploy-preview`** job only,
+replace the `Push database migrations` step with the following (the
+`deploy-production` job is left exactly as it is):
+
+```yaml
+      - name: Set up Node.js (for the migration-drift classifier)
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      # `preview` is a SHARED Supabase project, and preview.yml ALSO pushes
+      # migrations to it — from an OPEN PR's head SHA, on a `/preview` comment.
+      # So its migration history can legitimately carry versions that do not
+      # exist on this ref yet, and `supabase db push` treats a remote that is
+      # merely AHEAD as fatal even when this ref has nothing left to apply.
+      # Classify the drift first and react proportionally; this step never
+      # repairs or mutates the remote's migration history.
+      - name: Classify migration drift against preview
+        id: drift
+        run: |
+          # Tolerate a non-zero exit here: the classifier decides, not the CLI.
+          # A listing it cannot parse yields `push` — the previous behaviour,
+          # error message included.
+          supabase migration list --linked > /tmp/migration-list.txt 2>&1 || true
+          cat /tmp/migration-list.txt
+          node scripts/check-remote-migration-drift.mjs < /tmp/migration-list.txt
+
+      - name: Push database migrations
+        if: steps.drift.outputs.action == 'push'
+        # --include-all applies a migration even when a LOWER-numbered file was
+        # merged after a higher-numbered one already reached this remote — which
+        # happens when parallel PRs pick colliding sequential prefixes (e.g.
+        # #260 shipped 00042, then #266 shipped 00041). Without it `db push`
+        # aborts with "migration files to be inserted before the last migration
+        # on remote". Migrations are still applied in on-disk numeric order; the
+        # PR-time guard (scripts/check-migration-order.mjs, the `migration-order`
+        # CI job) is what stops an out-of-order file from landing in the first
+        # place, so this flag only ever applies already-reviewed, CI-tested ones.
+        run: supabase db push --include-all
+```
+
+**2.** In `.github/workflows/ci.yml`, widen the `migrations` path filter in the
+`changes` job so a change to the classifier or its test triggers the gate:
+
+```yaml
+          if printf '%s\n' "$CHANGED" | grep -qE '^(supabase/migrations/|scripts/check-migration-order|scripts/check-remote-migration-drift|\.github/workflows/ci\.yml)'; then
+```
+
+**3.** In the same file, add a second self-test to the `migration-order` job,
+right after `Unit-test the guard`:
+
+```yaml
+      # The deploy-time counterpart: the PR-time guard above stops an
+      # out-of-order file from landing, while the drift classifier decides what
+      # deploy.yml does when the SHARED preview project's migration history is
+      # ahead of the ref being deployed. Its verdict gates a `supabase db push`,
+      # so it is unit-tested here too.
+      - name: Unit-test the remote-migration-drift classifier
+        run: node --test scripts/check-remote-migration-drift.test.mjs
+```
+
+Until step 1 is applied, the classifier ships but is not wired in, and a
+`/preview` run on an open PR that adds migrations will keep wedging `main`'s
+deploy. The interim manual unblock is to run the classifier's own advice:
+confirm nothing is pending locally, then let the next deploy through by
+repairing the drifted rows on the preview project.
+
 ### Failure notifications (Discord)
 
 A `notify-failure` job runs whenever **any** pipeline job reports `failure` — a
