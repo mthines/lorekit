@@ -33,8 +33,8 @@ export interface ActivityBucketRow {
  * contribution heatmap.
  *
  * Works for either granularity: hour buckets collapse into their day because
- * the date prefix is all that is read. Returned sorted by date ascending, the
- * same contract as {@link aggregateByDay}.
+ * the date prefix is all that is read. Returned sorted by date ascending — the
+ * heatmap renders the array in order, so the sort is part of the contract.
  */
 export function dayCountsFromActivity(rows: readonly ActivityBucketRow[]): DayCount[] {
   const map = new Map<string, number>();
