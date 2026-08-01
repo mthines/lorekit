@@ -72,7 +72,13 @@ export async function updateLesson(
       p_source_agent: (current as { source_agent: string | null }).source_agent ?? null,
       p_trigger: (current as { trigger: string | null }).trigger ?? null,
       p_created_at: null,
-      p_ttl_days: input.ttl_days ?? null,
+      // Migration 00038 renamed p_ttl_days to p_ttl_seconds. PostgREST resolves
+      // an RPC by argument NAME, so the old name matched no function at all
+      // (PGRST202) and every edit made through this action failed — the stale
+      // `p_ttl_days` key in the hand-edited generated types was what let it
+      // typecheck. `ttl_days` stays the input field name; the days→seconds
+      // conversion happens here, exactly as memories/handlers/create.ts does it.
+      p_ttl_seconds: input.ttl_days != null ? input.ttl_days * 86_400 : null,
       p_clear_ttl: input.clear_ttl ?? false,
     })
     .single();

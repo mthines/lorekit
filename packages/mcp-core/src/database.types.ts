@@ -772,7 +772,7 @@ export type Database = {
           p_source_agent?: string
           p_tags?: string[]
           p_trigger?: string
-          p_ttl_days?: number
+          p_ttl_seconds?: number
           p_user_id: string
           p_value: string
         }
