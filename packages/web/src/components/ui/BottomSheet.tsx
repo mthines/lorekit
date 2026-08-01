@@ -72,6 +72,7 @@ export function BottomSheet({
   const reduceMotion = useReducedMotion();
   const dragControls = useDragControls();
   const panelRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
 
@@ -110,6 +111,28 @@ export function BottomSheet({
     };
   }, [open, contained]);
 
+  // Make everything behind the sheet inert while it is open, so Tab and
+  // assistive tech cannot reach page content the modal claims is unavailable
+  // (`aria-modal`). The portal root is a direct child of <body>, so its
+  // siblings are the page; `inert` removes them from the tab order and the a11y
+  // tree in one attribute. Skipped when contained — the frame is not the
+  // viewport — and any element already inert is left inert on cleanup.
+  useEffect(() => {
+    if (!open || contained) return;
+    const root = overlayRef.current;
+    if (!root || root.parentElement !== document.body) return;
+    const siblings = (Array.from(document.body.children) as HTMLElement[]).filter(
+      (el) => el !== root,
+    );
+    const wasInert = siblings.map((el) => el.hasAttribute('inert'));
+    siblings.forEach((el) => el.setAttribute('inert', ''));
+    return () => {
+      siblings.forEach((el, i) => {
+        if (!wasInert[i]) el.removeAttribute('inert');
+      });
+    };
+  }, [open, contained]);
+
   // Move focus into the sheet on open and restore it to the opener on close —
   // the baseline dialog contract. A child that manages its own focus (e.g. a
   // search input) can still steal it afterwards; this only guarantees focus is
@@ -138,7 +161,7 @@ export function BottomSheet({
   return createPortal(
     <AnimatePresence>
       {open && (
-        <div className={`${position} inset-0 z-50 flex flex-col justify-end`}>
+        <div ref={overlayRef} className={`${position} inset-0 z-50 flex flex-col justify-end`}>
           {/* Blurred backdrop — tap to dismiss. */}
           <motion.div
             aria-hidden

@@ -207,9 +207,12 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
       if (result.error) return result.error;
       // Keep the sidebar open — the user may want to keep reading or editing.
       // Invalidate the list caches so the updated value/tags appear behind the
-      // panel without requiring a page refresh.
+      // panel without requiring a page refresh. `lore-tags` is included because
+      // an edit can add or remove a label, which changes the filter catalog and
+      // its per-label counts; without this they stay stale for the 90s staleTime.
       void queryClient.invalidateQueries({ queryKey: ['memories'] });
       void queryClient.invalidateQueries({ queryKey: ['lore'] });
+      void queryClient.invalidateQueries({ queryKey: ['lore-tags'] });
       toast.success('Memory saved', { description: lesson.key });
     },
   });

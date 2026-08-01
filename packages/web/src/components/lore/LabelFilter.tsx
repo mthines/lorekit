@@ -118,12 +118,20 @@ export function LabelFilter({
       ?.scrollIntoView({ block: 'nearest' });
   }, [activeIndex, open]);
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Escape') {
-      e.stopPropagation();
-      setOpen(false);
-      return;
+  // Close on Escape from anywhere in the popover, not just the search input:
+  // once a click moves focus onto an option button, an input-only handler would
+  // miss it. Bound at the document level (desktop popover only — the mobile
+  // sheet owns its own Escape), mirroring DateRangePicker.
+  useEffect(() => {
+    if (!open || useSheet) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
     }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, useSheet]);
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setActiveIndex((i) => (matches.length === 0 ? 0 : (i + 1) % matches.length));
@@ -277,7 +285,9 @@ export function LabelFilter({
         title={desktop ? triggerDescription : undefined}
         className={[
           'flex min-h-9 shrink-0 items-center rounded-lg border transition-colors duration-150',
-          desktop ? 'gap-1.5 px-2.5 py-1.5 text-xs font-medium' : 'gap-1 px-2 py-2',
+          // Extra right padding on desktop when active leaves room for the
+          // clear button that sits over the trigger's right edge.
+          desktop ? `gap-1.5 py-1.5 pl-2.5 text-xs font-medium ${active ? 'pr-7' : 'pr-2.5'}` : 'gap-1 px-2 py-2',
           active
             ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
             : 'border-[var(--color-border)] bg-[var(--color-bg-raised)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
@@ -289,27 +299,22 @@ export function LabelFilter({
         ) : (
           active && <span className="text-xs font-medium tabular-nums">{selected.length}</span>
         )}
-        {active && desktop && (
-          <span
-            role="button"
-            tabIndex={0}
-            aria-label="Clear label filter"
-            onClick={(e) => {
-              e.stopPropagation();
-              onClear();
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.stopPropagation();
-                onClear();
-              }
-            }}
-            className="-mr-1 ml-0.5 flex size-4 items-center justify-center rounded-full hover:bg-[var(--color-bg-elevated)]"
-          >
-            <X className="size-3" aria-hidden />
-          </span>
-        )}
       </button>
+
+      {/* Clear — a real sibling <button>, not a role="button" span nested inside
+          the trigger (interactive-in-interactive is invalid, and a span's Space
+          key scrolls the page instead of activating). Positioned over the
+          trigger's right edge; a native button handles Enter/Space correctly. */}
+      {active && desktop && (
+        <button
+          type="button"
+          aria-label="Clear label filter"
+          onClick={onClear}
+          className="absolute right-1.5 top-1/2 flex size-4 -translate-y-1/2 items-center justify-center rounded-full text-[var(--color-accent)] transition-colors hover:bg-[var(--color-bg-elevated)]"
+        >
+          <X className="size-3" aria-hidden />
+        </button>
+      )}
 
       {useSheet ? (
         // Mobile: options live in a native-style bottom sheet.
