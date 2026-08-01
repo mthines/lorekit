@@ -25,6 +25,9 @@ export interface DecodedCursor {
   sort: SortColumn;
 }
 
+/** A cursor's `id` is a `memories` primary key, which is a `uuid` (00001). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function decodeCursor(c: string): DecodedCursor | null {
   try {
     const p = c.replace(/-/g,'+').replace(/_/g,'/');
@@ -34,8 +37,17 @@ export function decodeCursor(c: string): DecodedCursor | null {
     const sort: SortColumn = typeof d.updated_at === 'string' ? 'updated_at' : 'created_at';
     const ts = d[sort];
     if (typeof ts !== 'string') return null;
-    // Validate the timestamp is a safe ISO value — blocks PostgREST filter injection
+    // BOTH fields are interpolated unquoted into a PostgREST logic tree by the
+    // callers (`handleList` and `handleSearch` build
+    // `or(<sort>.lt.<ts>,and(<sort>.eq.<ts>,id.lt.<id>))`), so both are shape-
+    // validated here, at the boundary where the cursor is parsed. A crafted
+    // value cannot cross tenants — the tenant predicate is a separate `.or()`
+    // conjunct that PostgREST ANDs, and RLS is untouched — but it can mangle
+    // the keyset predicate or make PostgREST reject the request, so the gate
+    // fails closed: a cursor that does not match is dropped and the caller
+    // gets the first page rather than a wrong one.
     if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}/.test(ts)) return null;
+    if (!UUID_RE.test(d.id)) return null;
     return { id: d.id, ts, sort };
   } catch { return null; }
 }
