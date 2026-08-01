@@ -460,10 +460,13 @@ erases your cross-repo home lesson.
 > sharing comes from the account/token, so remote needs no second location.
 > Different mechanism, same concept.
 
-### `lorekit migrate` — relocation / rename tool
+### `lorekit migrate` — move memories between stores
 
-Moved or renamed a local store (e.g. an old `.lore/`)? `migrate` re-writes its
-entries into the current two-tier layout so lessons are never stranded:
+`migrate` has two modes, chosen by what `--from` / `--to` name.
+
+**1. Relocation (local → local).** Moved or renamed a local store (e.g. an old
+`.lore/`)? `--from <path>` re-writes its entries into the current two-tier
+layout so lessons are never stranded:
 
 ```bash
 lorekit migrate --from .lore              # dry-run: preview counts per scope
@@ -471,9 +474,31 @@ lorekit migrate --from .lore --yes        # apply, routing each entry by scope
 lorekit migrate --from .lore --to project --yes   # force all entries into the project tier
 ```
 
-Dry-run (preview) by default; `--yes` (or `--apply`) applies. Idempotent — a
-re-run is a no-op. It reads LoreKit's own on-disk format only (it does **not**
-import persistent-memory's `~/.agent-memory/<bucket>/` format).
+Relocation upserts **verbatim** by scope+key, including archived entries.
+
+**2. Cross-store (local ↔ remote).** `local` and `remote` are reserved
+`--from` / `--to` keywords naming the resolved stores themselves, so you can
+push an offline store up to the hosted service or pull it back down:
+
+```bash
+lorekit migrate --from local --to remote          # dry-run: preview a push
+lorekit migrate --from local --to remote --yes    # apply
+lorekit migrate --from remote --to local --yes    # pull the hosted store down
+lorekit migrate --from remote --to local --scope global --yes   # one scope only
+```
+
+Cross-store transfers go through each store's public API, so only **active**
+(non-archived, non-expired) memories move. `remote → local` preserves
+created / updated / `expires_at` / origin verbatim; `local → remote` preserves
+`created_at` + origin and converts a memory's absolute expiry back to a
+remaining `ttl_days` (whole days), since the hosted write API takes a relative
+TTL rather than an instant. `--scope <scope>` limits the run to one exact
+scope and is cross-store only; supplying it without a value is a usage error,
+never a silent "all scopes".
+
+Dry-run (preview) by default in both modes; `--yes` (or `--apply`) applies.
+Idempotent — a re-run is a no-op. It reads LoreKit's own on-disk format only
+(it does **not** import persistent-memory's `~/.agent-memory/<bucket>/` format).
 
 ### The control model — two layers, deny-wins
 
@@ -575,15 +600,15 @@ active deny constraints.
 | `-t, --token <token>` | LoreKit token |
 | `--mode <mode>` | Memory mode override for `doctor`: `off` / `local` / `remote` |
 | `--store <path>` | Local project-tier store directory (default `.lorekit`) |
-| `--from <path>` | Source store to migrate from (`migrate`) |
-| `--to <tier>` | Migration destination tier: `home` / `project` (`migrate`; default routes by scope) |
+| `--from <src>` | Migration source (`migrate`): a local store **path**, or the keyword `local` / `remote` |
+| `--to <dest>` | Migration destination (`migrate`): tier `home` / `project` for a relocation (default routes by scope), or the keyword `local` / `remote` for a cross-store move |
 | `--apply` | Apply the migration — alias of `--yes` (`migrate`) |
 | `-y, --yes` | Non-interactive / apply; never prompt |
 | `--no-hooks` | Skip wiring the lifecycle hooks; skills + MCP only (`install`) |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
 | `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `link`) |
-| `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff` / `tree` / `lint` / `dedupe` / `link`; default: all applicable). For `scopes` it is a **substring filter** over the inventory |
+| `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff` / `tree` / `lint` / `dedupe` / `link`; default: all applicable). For `scopes` it is a **substring filter** over the inventory. For a cross-store `migrate` it limits the run to one exact scope, and a value-less `--scope` is rejected rather than widened to all scopes |
 | `--link` | Print the equivalent dashboard deep-link URL instead of running (`show` / `search` / `list` / `tree`) |
 | `--base <url>` | Dashboard base URL for deep links (`link` / `--link`; else `LOREKIT_APP_URL`, default `https://lorekit.io`) |
 | `--threshold <0..1>` | Duplicate-similarity cutoff (`dedupe`; default `0.8`) |
