@@ -3142,6 +3142,95 @@ begin
 end;
 $$;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 61. Read-function grant hardening — 00047_readfn_grant_hardening.sql
+-- ═══════════════════════════════════════════════════════════════════════════
+-- The clearly-safe half of the deferred grant sweep: the caller-supplied-
+-- p_user_id read RPCs (lorekit_memory_scopes/_count) get the actor guard and
+-- lose anon EXECUTE; the service-role-only functions (find_user_by_github_id,
+-- the installation RPCs, the two purge procedures) lose PUBLIC EXECUTE.
+
+-- ── 61a. Grant surface ──────────────────────────────────────────────────────
+do $$
+declare
+  v_sig  text;
+  -- Reads: authenticated + service_role, never anon.
+  v_read text[] := array[
+    'lorekit_memory_scopes(uuid)',
+    'lorekit_memory_count(uuid)'
+  ];
+  -- Service-role-only: never anon, never authenticated.
+  v_svc  text[] := array[
+    'lorekit_find_user_by_github_id(text)',
+    'lorekit_installation_upsert(bigint, bigint, text, text, uuid, text, text[])',
+    'lorekit_installation_remove_repos(bigint, text[])',
+    'lorekit_installation_remove(bigint)',
+    'lorekit_purge_old_usage_events(interval)',
+    'lorekit_purge_all_expired_memories()'
+  ];
+begin
+  assert array_length(v_read, 1) = 2 and array_length(v_svc, 1) = 6,
+    'readfn grant guard: expected 2 read + 6 service-only signatures (anti-vacuity)';
+
+  foreach v_sig in array v_read loop
+    assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
+      format('%s must NOT be executable by anon after 00047', v_sig);
+    assert has_function_privilege('authenticated', v_sig, 'EXECUTE'),
+      format('%s must stay executable by authenticated', v_sig);
+    assert has_function_privilege('service_role', v_sig, 'EXECUTE'),
+      format('%s must stay executable by service_role', v_sig);
+  end loop;
+
+  foreach v_sig in array v_svc loop
+    assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
+      format('%s must NOT be executable by anon after 00047', v_sig);
+    assert not has_function_privilege('authenticated', v_sig, 'EXECUTE'),
+      format('%s must NOT be executable by authenticated after 00047 (service-role only)', v_sig);
+    assert has_function_privilege('service_role', v_sig, 'EXECUTE'),
+      format('%s must stay executable by service_role', v_sig);
+  end loop;
+end;
+$$;
+
+-- ── 61b. Actor guard: an authenticated caller cannot read another user ──────
+-- a1 owns a distinctively-named scope. An authenticated b2 naming a1 must see
+-- NONE of a1's scopes/counts (resolved to b2's own auth.uid()); a service-role
+-- caller naming a1 sees a1's, as the edge GET /memories/scopes path does.
+insert into memories (user_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000a1', 'project::readfn-guard-secret', 'k', 'v');
+
+do $$
+declare
+  v_svc_scopes  int;
+  v_b2_scopes   int;
+  v_b2_count    jsonb;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  select count(*) into v_svc_scopes
+    from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000a1')
+   where scope = 'project::readfn-guard-secret';
+  reset role;
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}', true);
+  select count(*) into v_b2_scopes
+    from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000a1')
+   where scope = 'project::readfn-guard-secret';
+  select lorekit_memory_count('00000000-0000-0000-0000-0000000000a1') into v_b2_count;
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  assert v_svc_scopes = 1,
+    format('readfn guard: service-role naming a1 must see a1''s scope, got %s', v_svc_scopes);
+  assert v_b2_scopes = 0,
+    format('readfn guard: authenticated b2 naming a1 must NOT enumerate a1''s scopes (IDOR closed), got %s', v_b2_scopes);
+  assert coalesce((v_b2_count->>'personal_count')::int, -1) = 0,
+    format('readfn guard: authenticated b2 memory_count(a1) must report b2''s own 0 personal, got %s', v_b2_count->>'personal_count');
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

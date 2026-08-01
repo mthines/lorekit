@@ -11,8 +11,18 @@ raised. Each item below is written to convert 1:1 into a Linear issue.
 |----|--------|-------|
 | #288 | `725f5f3` | DB access-control IDOR family — actor guard on `archive_memory`, `restore_memory`, `purge_archived_memories`, `purge_expired_memories`, **`memory_delete`** (migration `00046`), least-privilege grants, `migrations.test.sql` §60. |
 | #293 | `2dd5f88` | App-layer — PostgREST filter-injection closed at scope validation; `mcp-server` pre-auth body-size DoS cap. |
+| _readfn hardening_ | migration `00047` | **The clearly-safe half of this backlog.** Actor guard + anon-revoke on `lorekit_memory_scopes`/`lorekit_memory_count`; `revoke ... from public` on `lorekit_find_user_by_github_id`, the 3 installation RPCs, `lorekit_purge_old_usage_events`, `lorekit_purge_all_expired_memories`. `migrations.test.sql` §61. |
 
-Everything below is **out of scope of those two PRs** and still open.
+Everything below is **out of scope of those PRs** and still open.
+
+### ✅ Resolved in the `00047` read-function grant-hardening pass
+
+Struck from the backlog — do **not** open Linear issues for these:
+
+- **SEC-2** — GitHub App installation RPCs anon-writable → revoked to service-role only.
+- **SEC-3 (safe subset)** — `lorekit_memory_scopes`, `lorekit_memory_count` (actor guard + anon-revoke), `lorekit_find_user_by_github_id` (service-role only). *`lorekit_member_org_ids` remains — see SEC-3 below.*
+- **SEC-4** — `lorekit_purge_old_usage_events` anon global wipe → service-role only.
+- **SEC-13 (safe subset)** — `lorekit_purge_all_expired_memories` → service-role only. *`lorekit_org_role`/`_can` and `lorekit_get_limit`/`_org_limit`/`default_limit` remain — see SEC-13 below.*
 
 ## The one big caveat before you action these
 
@@ -54,67 +64,26 @@ trust tier; drop the `|| process.env.LOREKIT_TOKEN` fallback for repo-sourced en
 
 ---
 
-## SEC-2 — [HIGH] GitHub App installation RPCs are anon-writable
+## SEC-3 — [MEDIUM→LOW] `lorekit_member_org_ids` anon-reachable (remaining half)
 
-- **Severity:** High (dormant until `GITHUB_APP_ENABLED=true`, but deployed) · **Labels:** security, database, github-app · **[safe-sweep]**
-- **Files:** `supabase/migrations/00037_github_installations.sql` — `lorekit_installation_upsert` (grant ~L173), `lorekit_installation_remove_repos` (~L195), `lorekit_installation_remove` (~L219)
+> The `memory_scopes` / `memory_count` / `find_user_by_github_id` parts of this finding — flagged by
+> the atlas analysis and a second session — were **fixed in `00047`**. Only the RLS-embedded
+> `lorekit_member_org_ids` remains.
 
-**Problem.** All three are SECURITY DEFINER, granted `to service_role` but **PUBLIC EXECUTE never
-revoked**, so `anon`/`authenticated` can call them over PostgREST, bypassing `github_installations` RLS.
+- **Severity:** Low (org-membership UUIDs only) · **Labels:** security, database · **[rls/hot-path]**
+- **File:** `lorekit_member_org_ids(uuid)` — `00014_orgs.sql` (grant ~L78)
 
-**Exploit.** `lorekit_installation_upsert(installation_id, github_account_id, …, p_user_id=<self|victim>,
-status='linked', repos)` **forges/hijacks** an installation→user link; `lorekit_installation_remove(id)`
-**disables** a victim's integration. Barrier is only knowing a non-secret `installation_id`.
+**Problem.** SECURITY DEFINER, bare `p_user_id`, retains `anon`/`authenticated` EXECUTE → anon
+enumerates any user's org-membership UUIDs.
 
-**Fix.** `revoke execute … from public` on all three (service-role only; no `authenticated` grant needed).
+**Fix.** `revoke execute … from public` (and `anon` if not needed) — **but** this function is called
+**inside the `memories`/`orgs` RLS read policies** with `auth.uid()`, so the querying role must keep
+EXECUTE for RLS to evaluate. **Do NOT add an actor guard** and do **not** revoke `authenticated`/`anon`
+without an `migrations.test.sql` assertion proving the `memories` RLS read path still returns rows for a
+normal user. Because RLS always passes `auth.uid()` (never request input), the practical leak is small;
+weigh the change against the RLS-regression risk.
 
-**Effort:** S · low risk (not RLS-embedded).
-
----
-
-## SEC-3 — [MEDIUM] Info-disclosure: caller-supplied `p_user_id` read RPCs anon-reachable
-
-> **This is the item flagged by the atlas analysis and a second session** ("`lorekit_memory_scopes`
-> likely has the same latent anon-execute gap"). Same shape as the #288 mutation family, but read-only.
-
-- **Severity:** Medium · **Labels:** security, database · mixed **[safe-sweep]** / **[rls/hot-path]**
-- **Files:**
-  - `lorekit_memory_scopes(uuid)` — `00039_memory_scopes.sql` (grant ~L81) **[safe]**
-  - `lorekit_memory_count(uuid)` — `00036_fix_memory_count.sql` (grant ~L86, explicit `anon`) **[safe]**
-  - `find_user_by_github_id(text)` — `00037_github_installations.sql` (grant ~L241) **[safe]**
-  - `lorekit_member_org_ids(uuid)` — `00014_orgs.sql` (grant ~L78) **[rls/hot-path — used in `memories` RLS read policy]**
-
-**Problem.** Each is SECURITY DEFINER, takes a bare `p_user_id` (or github id), never compares it to
-`auth.uid()`, and retains `anon` EXECUTE. Their comments claim "NOT granted to anon" but no
-`revoke from public` exists.
-
-**Exploit.** Over PostgREST an **anon (or any authenticated) caller** reads *another user's* scope names
-(which embed repo/project names) + active counts (`memory_scopes`), memory count + plan tier
-(`memory_count`), GitHub-id → internal-UUID mapping (`find_user_by_github_id`), or org-membership UUIDs
-(`member_org_ids`).
-
-**Fix.** For the three **[safe]** functions: apply the `00046`/`00041` **actor guard** (honour
-`p_user_id` only under `service_role`, else `auth.uid()`) — this closes both the anon *and* the
-authenticated cross-user read, and the edge always calls them service-role so it's behaviour-preserving.
-For `lorekit_member_org_ids` **[rls/hot-path]**: it is called inside the `memories` RLS read policy with
-`auth.uid()`, so `revoke from public` is fine (keep the explicit `authenticated`/`anon` grants the
-policy needs) but **do not** add an actor guard without proving the RLS read path still returns rows.
-
-**Effort:** M · the safe three are quick; `member_org_ids` needs an RLS-path assertion.
-
----
-
-## SEC-4 — [MEDIUM] `lorekit_purge_old_usage_events` — anon global analytics wipe
-
-- **Severity:** Medium · **Labels:** security, database · **[safe-sweep]**
-- **File:** `supabase/migrations/00034_usage_events.sql` (grant ~L83, `to service_role`, PUBLIC not revoked)
-
-**Exploit.** `POST /rpc/lorekit_purge_old_usage_events { "p_older_than": "0 seconds" }` runs
-`delete from usage_events where created_at < now()` → **wipes every usage/analytics row for all users**.
-
-**Fix.** `revoke execute … from public` (cron/service-role only).
-
-**Effort:** S.
+**Effort:** M · needs an RLS-path assertion; low value.
 
 ---
 
@@ -252,18 +221,21 @@ but the asymmetry means one RLS-policy regression silently becomes cross-tenant 
 
 ---
 
-## SEC-13 — [LOW] Assorted anon-reachable DEFINER probes / global purge
+## SEC-13 — [LOW] Assorted anon-reachable DEFINER probes (remaining)
 
-- **Severity:** Low · **Labels:** security, database · mixed **[safe]** / **[rls/hot-path]**
+> `lorekit_purge_all_expired_memories` was **fixed in `00047`**. The functions below all touch the RLS
+> policies or the memory-insert/rate-limit hot path, so they were deliberately left here.
+
+- **Severity:** Low · **Labels:** security, database · **[rls/hot-path]**
 - **Files & functions:**
-  - `lorekit_purge_all_expired_memories()` — `00033` (~L88) — anon triggers a global expired-purge (only read-invisible rows; ≈ running the nightly cron early). **[safe]**
-  - `lorekit_org_role(uuid,uuid)` / `lorekit_org_can(uuid,uuid,text)` — `00017` (~L48/L81, explicit `anon`) — boolean/text oracle of any user's role/capability in any org. **[rls/hot-path — used in org RLS + capability checks]**
-  - `lorekit_get_limit` / `lorekit_get_org_limit` (`00032`/`00018` ~L60) / `lorekit_default_limit` — leak a user's/org's numeric limit (≈ plan tier). **[safe]**
+  - `lorekit_org_role(uuid,uuid)` / `lorekit_org_can(uuid,uuid,text)` — `00017` (~L48/L81, explicit `anon`) — boolean/text oracle of any user's role/capability in any org. **Used in the `orgs`/`org_members`/`org_invites` RLS policies and every org capability check.**
+  - `lorekit_get_limit(uuid,text)` / `lorekit_get_org_limit(uuid,text)` (`00004`/`00018` ~L60) / `lorekit_default_limit` — leak a user's/org's numeric limit (≈ plan tier). **Called by the `enforce_memory_cap` trigger on every memory insert** (it is `SECURITY DEFINER`, so the internal call survives a revoke, but confirm no invoker path).
 
-**Fix.** `revoke execute … from public`, granting only the roles that need them; **do not** touch
-`lorekit_org_role`/`_can` grants without an RLS-path assertion (they gate `memories`/`orgs` policies).
+**Fix.** `revoke execute … from public`, granting only the roles that need them — but **do not** touch
+`lorekit_org_role`/`_can` grants without an `migrations.test.sql` assertion that the org RLS read path
+still evaluates, and confirm nothing calls `get_limit` as an invoker before revoking `authenticated`.
 
-**Effort:** M (mostly for the RLS-embedded pair).
+**Effort:** M · low value, real regression risk — do carefully.
 
 ---
 
@@ -322,8 +294,12 @@ Not vulnerabilities — product/quality items the analysis raised. Listed so the
 
 ## Suggested triage order
 
-1. **SEC-1** (High, real token exfil, no user action) and **SEC-2** (High, anon installation hijack).
-2. The **[safe-sweep]** grant revokes: **SEC-2, SEC-4, SEC-3** (the three safe read fns), **SEC-13** (safe subset) — batchable into one small, well-tested migration.
-3. **SEC-5, SEC-6, SEC-10** (small, isolated code fixes).
-4. **SEC-3** (`member_org_ids`), **SEC-8, SEC-9, SEC-13** (`org_role`/`_can`) — the **[rls/hot-path]** grant changes, each with an RLS-path assertion in `migrations.test.sql`. **Do these carefully.**
-5. **SEC-7, SEC-11, SEC-12, SEC-14** and the **SEC-15** hardening batch.
+The clearly-safe grant sweep (former SEC-2/SEC-4 + the safe subsets of SEC-3/SEC-13) already shipped in
+`00047`. Remaining:
+
+1. **SEC-1** (High) — CLI token exfiltration. The only High left; behaviour-sensitive, needs tests.
+2. **SEC-5, SEC-6, SEC-10** — small, isolated code fixes (MCP error-leak, CLI store path escape, cursor-id).
+3. The **[rls/hot-path]** grant changes — **SEC-3** (`member_org_ids`), **SEC-8** (`check_rate_limit`),
+   **SEC-9** (`record_usage_event`), **SEC-13** (`org_role`/`_can`, `get_limit`/`_org_limit`) — each with an
+   RLS-path / hot-path assertion in `migrations.test.sql`. **Do these carefully; low value, real risk.**
+4. **SEC-7, SEC-11, SEC-12, SEC-14** and the **SEC-15** hardening batch.
