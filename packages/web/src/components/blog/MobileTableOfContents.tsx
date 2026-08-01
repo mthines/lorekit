@@ -24,8 +24,9 @@ interface MobileTableOfContentsProps {
  *
  * The expand/collapse uses a `grid-template-rows: 0fr → 1fr` transition (no fixed
  * height needed, and the global `prefers-reduced-motion` rule in `globals.css`
- * neutralises it for reduced-motion users). Scroll-spy state is shared with the
- * desktop rail via {@link useActiveHeading}.
+ * neutralises it for reduced-motion users). The scroll-spy behaviour comes from the
+ * same {@link useActiveHeading} hook as the desktop rail — each instance owns its
+ * own state, but only one is mounted per viewport (rail `md:block`, this `md:hidden`).
  */
 export function MobileTableOfContents({ items }: MobileTableOfContentsProps) {
   const { activeId, navigate } = useActiveHeading(items);
