@@ -5,9 +5,10 @@ import { formatPostDate, readingLabel } from '@/lib/blog/format';
 
 /**
  * A single post row on the `/blog` index. Title-led hierarchy (the focal point),
- * a two-line description, and a monospace meta line (date · reading time) for the
- * developer-tool feel. The whole card is the link; on hover the accent border and
- * the trailing arrow give a single, coherent "go here" affordance.
+ * a three-line description (`line-clamp-3`), and a monospace meta line (date ·
+ * reading time) for the developer-tool feel. The whole card is the link; on hover
+ * the accent border and the trailing arrow give a single, coherent "go here"
+ * affordance.
  */
 export function BlogPostCard({ post }: { post: PostMeta }) {
   return (
