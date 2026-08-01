@@ -232,19 +232,31 @@ export function sameContent(dest, src) {
 // contract. `listScopes()` shape differs by store (local returns the bare
 // `[{ scope, count }]` array; remote returns `{ ok, scopes }`), so normalize it.
 // Returns `{ ok, entries, error }`.
-async function gatherStore(store) {
+async function gatherStore(store, onlyScope = null) {
   const res = await store.listScopes();
-  const scopes = Array.isArray(res) ? res : res && res.ok ? res.scopes : null;
+  let scopes = Array.isArray(res) ? res : res && res.ok ? res.scopes : null;
   if (!scopes) {
     return { ok: false, entries: [], error: (res && res.error && res.error.message) || 'could not list scopes' };
   }
+  // With --scope, list only the one requested scope rather than every scope of
+  // the source (each skipped scope is a network round-trip for a remote source).
+  if (onlyScope) scopes = scopes.filter((s) => s.scope === onlyScope);
   const entries = [];
-  for (const { scope, count } of scopes) {
-    const listed = await store.list({ scope, limit: Math.max(Number(count) || 0, 1) });
-    if (!listed.ok) {
-      return { ok: false, entries: [], error: (listed.error && listed.error.message) || `could not list ${scope}` };
-    }
-    for (const e of listed.entries || []) entries.push(readFields(e));
+  for (const { scope } of scopes) {
+    // The remote read is capped at 100 rows/request, so page it by cursor until
+    // the server reports no more. The local store has no cap — one uncapped call
+    // returns every row (passing a limit would slice it), so it never paginates.
+    let cursor = null;
+    do {
+      const listed = store.mode === 'remote'
+        ? await store.list({ scope, limit: 100, cursor })
+        : await store.list({ scope });
+      if (!listed.ok) {
+        return { ok: false, entries: [], error: (listed.error && listed.error.message) || `could not list ${scope}` };
+      }
+      for (const e of listed.entries || []) entries.push(readFields(e));
+      cursor = listed.hasMore ? listed.nextCursor : null;
+    } while (cursor);
   }
   return { ok: true, entries, error: null };
 }
@@ -334,13 +346,12 @@ async function migrateCrossStore(args, root, from, to) {
   if (onlyScope) log(`  scope: ${c.dim(onlyScope)}`);
   log(`  mode: ${apply ? c.bold('apply') : 'dry-run — pass --yes to apply'}`);
 
-  const gathered = await gatherStore(sourceStore);
+  const gathered = await gatherStore(sourceStore, onlyScope);
   if (!gathered.ok) {
     err(`\n${c.red('migrate:')} could not read the ${from} store: ${gathered.error}`);
     return 1;
   }
-  let entries = gathered.entries;
-  if (onlyScope) entries = entries.filter((e) => e.scope === onlyScope);
+  const entries = gathered.entries;
   log(`  found: ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}\n`);
 
   const now = new Date();

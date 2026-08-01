@@ -86,8 +86,15 @@ function startMockRemote({ byScope = {}, posts = [] } = {}) {
         res.statusCode = 200;
         res.end(JSON.stringify({ ok: true, inserted: true }));
       } else if (rawPath.endsWith('/memories') && req.method === 'GET') {
-        const scope = params.get('scope');
-        res.end(JSON.stringify({ entries: byScope[scope] || [], hasMore: false, nextCursor: null }));
+        // Real cursor pagination keyed by a numeric offset, so a scope with more
+        // than one page exercises the CLI's paging loop. Caps at the server's 100.
+        const all = byScope[params.get('scope')] || [];
+        const limit = Math.min(Number(params.get('limit')) || all.length, 100);
+        const start = params.get('cursor') ? Number(params.get('cursor')) : 0;
+        const page = all.slice(start, start + limit);
+        const next = start + limit;
+        const hasMore = next < all.length;
+        res.end(JSON.stringify({ entries: page, hasMore, nextCursor: hasMore ? String(next) : null }));
       } else {
         res.statusCode = 404;
         res.end('{}');
@@ -190,6 +197,46 @@ test('migrate --from local --to remote pushes entries, converting expiry to ttl_
     assert.match(body.created_at, /^\d{4}-\d\d-\d\dT/); // creation date preserved
     assert.ok(body.ttl_days >= 29 && body.ttl_days <= 30, `ttl_days ≈ 30 (got ${body.ttl_days})`);
     assert.equal(body.origin_repo, 'o/r');
+  });
+});
+
+test('migrate --from remote --to local pages a scope with more than 100 memories', async () => {
+  const home = tmp('lk-xmig-page-home-');
+  const root = tmp('lk-xmig-page-root-');
+  const many = Array.from({ length: 150 }, (_, i) => ({
+    scope: 'global', key: `g${i}`, value: `v${i}`, tags: [],
+    created_at: '2024-01-01T00:00:00.000Z',
+  }));
+  const server = startMockRemote({ byScope: { global: many } });
+  await withServer(server, async (port) => {
+    const env = { LOREKIT_MCP_URL: `http://127.0.0.1:${port}/mcp`, LOREKIT_TOKEN: 'lk_rw_test' };
+    const res = await runMigrate(root, home, ['--from', 'remote', '--to', 'local', '--yes'], env);
+    assert.equal(res.status, 0, res.stderr);
+    const store = createLocalStore(home);
+    // Every page landed — including the boundary rows on either side of page 1/2.
+    assert.equal((await store.list({ scope: 'global' })).entries.length, 150);
+    assert.ok(store.getEntry({ scope: 'global', key: 'g0' }));
+    assert.ok(store.getEntry({ scope: 'global', key: 'g100' }));
+    assert.ok(store.getEntry({ scope: 'global', key: 'g149' }));
+  });
+});
+
+test('migrate --from remote --to local honours --scope (only that scope moves)', async () => {
+  const home = tmp('lk-xmig-scope-home-');
+  const root = tmp('lk-xmig-scope-root-');
+  const server = startMockRemote({
+    byScope: {
+      global: [{ scope: 'global', key: 'g1', value: 'gv', created_at: '2024-01-01T00:00:00.000Z' }],
+      'repo::o/r': [{ scope: 'repo::o/r', key: 'r1', value: 'rv', created_at: '2024-01-01T00:00:00.000Z' }],
+    },
+  });
+  await withServer(server, async (port) => {
+    const env = { LOREKIT_MCP_URL: `http://127.0.0.1:${port}/mcp`, LOREKIT_TOKEN: 'lk_rw_test' };
+    const res = await runMigrate(root, home, ['--from', 'remote', '--to', 'local', '--scope', 'global', '--yes'], env);
+    assert.equal(res.status, 0, res.stderr);
+    const store = createLocalStore(home);
+    assert.ok(store.getEntry({ scope: 'global', key: 'g1' }));
+    assert.equal(store.getEntry({ scope: 'repo::o/r', key: 'r1' }), null); // filtered out
   });
 });
 

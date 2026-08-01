@@ -91,8 +91,9 @@ ${c.bold('Commands')}
   bootstrap   Apply the BYOD schema to a user-supplied Supabase database.
               Only needed when using LOREKIT_STORAGE_URL / LOREKIT_STORAGE_ANON_KEY.
               See docs/byod.md for setup instructions.
-  migrate     Relocate a LoreKit-format local store into the current layout.
-              Dry-run by default; pass --yes to apply. Idempotent.
+  migrate     Move memories between stores: relocate a local store into the
+              current layout, or migrate local <-> remote (--from/--to
+              local|remote). Dry-run by default; pass --yes to apply. Idempotent.
   hook        Hook engine for Claude Code / Cursor / Codex. Reads the host's
               JSON on stdin and injects memories or a retrospective nudge.
               Not run by hand — wired into a plugin's hook config.
