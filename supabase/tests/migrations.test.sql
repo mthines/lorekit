@@ -3339,7 +3339,7 @@ $$;
 
 -- ── 64. origin: the CHECK constraints are the backstop for anything that
 -- bypasses the app-layer validator (a direct SQL insert, a future client) ────
-do $
+do $$
 declare
   v_rejected boolean;
   v_case     text;
@@ -3395,7 +3395,7 @@ begin
   values ('00000000-0000-0000-0000-0000000000e5', 'global', 'origin-ok', 'v',
           'my-org/repo.name_1', 'fix/issue#123');
 end;
-$;
+$$;
 
 -- ── 65. origin: grant surface — the widened 15-arg memory_write signature is
 -- granted to the same three roles the 11-arg form was (00038) ───────────────

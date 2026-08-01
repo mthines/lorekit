@@ -1,0 +1,104 @@
+import { describe, it, expect } from 'vitest';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import { findQuotingIssues } from './sql-quoting.js';
+
+/**
+ * Structural guard: every `.sql` file in the repository has balanced quoting.
+ *
+ * This lives here, alongside the other source-scan guards (`edge-parity`,
+ * `edge-bare-specifier`, `audit-vocabulary`), for the same reason they do:
+ * there is no test harness on the SQL side, so a vitest suite in mcp-core is
+ * the only place a rule about those files can actually fail a PR.
+ *
+ * The concrete regression: a migration whose repo CHECK ended in `…+$'` and a
+ * `do $$` block in the SQL test suite were both mangled by a
+ * `String.prototype.replace` whose replacement text contained `$'` and `$$`.
+ * Every TypeScript gate stayed green — SQL is never compiled — and the failure
+ * surfaced only when `supabase start` refused to apply the migration, with an
+ * error naming neither the file nor the line.
+ */
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(here, '../../..');
+const SQL_ROOTS = ['supabase/migrations', 'supabase/tests'];
+
+/** Every `.sql` file under `target`, recursively. */
+function collectSqlFiles(target: string): string[] {
+  if (statSync(target).isFile()) return target.endsWith('.sql') ? [target] : [];
+  return readdirSync(target, { withFileTypes: true }).flatMap((entry) =>
+    collectSqlFiles(path.join(target, entry.name)),
+  );
+}
+
+const sqlFiles = SQL_ROOTS.flatMap((root) => collectSqlFiles(path.join(repoRoot, root))).sort();
+
+describe('SQL quoting guard — repository scan', () => {
+  // Anti-vacuity floor: if the roots move or a glob breaks, the scan below
+  // would pass by finding nothing. The repo has well over 40 migrations.
+  it('finds the SQL tree', () => {
+    expect(sqlFiles.length).toBeGreaterThan(40);
+  });
+
+  it.each(sqlFiles.map((f) => [path.relative(repoRoot, f), f]))(
+    '%s has balanced quoting',
+    (_label, file) => {
+      expect(findQuotingIssues(readFileSync(file, 'utf8'))).toEqual([]);
+    },
+  );
+});
+
+describe('findQuotingIssues', () => {
+  it('accepts a balanced dollar-quoted function body', () => {
+    const sql = ['create function f() returns void language plpgsql as $$', 'begin', '  perform 1;', 'end;', '$$;'].join('\n');
+    expect(findQuotingIssues(sql)).toEqual([]);
+  });
+
+  it('accepts a tagged dollar quote', () => {
+    expect(findQuotingIssues("select $tag$ body with 'quotes' $tag$;")).toEqual([]);
+  });
+
+  it('accepts a regex literal containing $ anchors', () => {
+    const sql = "alter table t add constraint c check (col ~ '^[a-z]+$' and col !~ '(^|/)\\.+(/|$)');";
+    expect(findQuotingIssues(sql)).toEqual([]);
+  });
+
+  it('accepts the SQL escaped-quote form', () => {
+    expect(findQuotingIssues("select 'it''s fine';")).toEqual([]);
+  });
+
+  it('ignores quotes inside a line comment', () => {
+    expect(findQuotingIssues("-- it's only a comment\nselect 1;")).toEqual([]);
+  });
+
+  it('ignores quotes inside a block comment', () => {
+    expect(findQuotingIssues("/* it's $$ only a comment */\nselect 1;")).toEqual([]);
+  });
+
+  it('does not flag a positional parameter', () => {
+    expect(findQuotingIssues('select * from t where id = $1;')).toEqual([]);
+  });
+
+  it("flags a truncated string literal — the `$'` replacement bug", () => {
+    const issues = findQuotingIssues("alter table t add constraint c check (col ~ '^[a-z]+\nselect 1;");
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.message).toMatch(/unterminated ' string literal/);
+  });
+
+  it('flags a collapsed `do $` — the `$$` replacement bug', () => {
+    const issues = findQuotingIssues('do $\nbegin\nend;\n$$;\n');
+    expect(issues.length).toBeGreaterThanOrEqual(1);
+    expect(issues[0]?.message).toMatch(/lone `\$`/);
+  });
+
+  it('flags an unterminated dollar-quoted body', () => {
+    const issues = findQuotingIssues('do $$\nbegin\n  perform 1;\nend;\n');
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.message).toMatch(/unterminated \$\$ dollar-quoted string/);
+  });
+
+  it('reports the line of the opening quote, not the end of the file', () => {
+    expect(findQuotingIssues("select 1;\nselect 2;\nselect 'unclosed\n")[0]?.line).toBe(3);
+  });
+});
