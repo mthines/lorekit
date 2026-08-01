@@ -9,8 +9,8 @@ interface TableOfContentsProps {
 }
 
 /**
- * The desktop "On this page" rail — a sticky scroll-spy list shown from `lg` up
- * (the page renders {@link MobileTableOfContents} below `lg`). Scroll-spy state
+ * The desktop "On this page" rail — a sticky scroll-spy list shown from `md` up
+ * (the page renders {@link MobileTableOfContents} below `md`). Scroll-spy state
  * and navigation come from {@link useActiveHeading}; the list itself is the shared
  * {@link TocList}. See that hook for the active-resolution + a11y details.
  */
