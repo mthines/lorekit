@@ -1,5 +1,5 @@
 import type { ComponentPropsWithoutRef } from 'react';
-import { BookText, FileCode } from 'lucide-react';
+import { BookText, FileCode, Newspaper } from 'lucide-react';
 
 const DISCORD_URL = 'https://discord.gg/B9m6BzMRjg';
 const ICON_LINK_CLASS =
@@ -63,6 +63,13 @@ export function SiteFooter({ className = '', ...props }: ComponentPropsWithoutRe
       <a href="/docs" className={ICON_LINK_CLASS}>
         <BookText aria-hidden className="size-4" />
         Docs
+      </a>
+
+      <span aria-hidden className="text-[var(--color-border)]">·</span>
+
+      <a href="/blog" className={ICON_LINK_CLASS}>
+        <Newspaper aria-hidden className="size-4" />
+        Blog
       </a>
 
       <span aria-hidden className="text-[var(--color-border)]">·</span>

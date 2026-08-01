@@ -14,6 +14,9 @@ export interface McpClientConfig {
   filename: string;
   hint: string;
   snippet: string;
+  /** Optional pre-highlighted Shiki HTML for `snippet` (docs/server context).
+   *  When absent, the raw `snippet` renders as plain text. */
+  snippetHtml?: string;
 }
 
 // ── Greyscale logo marks ──────────────────────────────────────────────────────
@@ -124,7 +127,7 @@ const LOGOS: Record<string, React.ComponentType<{ className?: string }>> = {
 
 // ── Code block with copy ──────────────────────────────────────────────────────
 
-function CopyableCode({ code, filename }: { code: string; filename: string }) {
+function CopyableCode({ code, filename, html }: { code: string; filename: string; html?: string }) {
   const [copied, setCopied] = useState(false);
 
   function handleCopy() {
@@ -150,9 +153,20 @@ function CopyableCode({ code, filename }: { code: string; filename: string }) {
             : <><Copy className="size-3" /> Copy</>}
         </button>
       </div>
-      <pre className="overflow-x-auto p-3 font-mono text-xs leading-relaxed text-[var(--color-content-secondary)] whitespace-pre">
-        {code.trim()}
-      </pre>
+      {html ? (
+        // Highlighted (docs/server context). The `!` utilities neutralise the box's
+        // frame onto Shiki's <pre>: flush padding, no rounding/margin/bg — the
+        // outer box already supplies those. Also overrides any ambient prose
+        // `[&_pre]` styling (e.g. DocsProse) that would otherwise double-frame it.
+        <div
+          className="overflow-x-auto p-3 text-xs leading-relaxed [&_pre]:!m-0 [&_pre]:!rounded-none [&_pre]:!border-0 [&_pre]:!bg-transparent [&_pre]:!p-0"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      ) : (
+        <pre className="overflow-x-auto p-3 font-mono text-xs leading-relaxed text-[var(--color-content-secondary)] whitespace-pre">
+          {code.trim()}
+        </pre>
+      )}
     </div>
   );
 }
@@ -222,7 +236,7 @@ export function ClientConfigTabs({ clients }: ClientConfigTabsProps) {
         id={`client-panel-${active.id}`}
         aria-labelledby={`client-tab-${active.id}`}
       >
-        <CopyableCode code={active.snippet} filename={active.filename} />
+        <CopyableCode code={active.snippet} filename={active.filename} html={active.snippetHtml} />
         <p className="mt-1.5 text-[10px] text-[var(--color-content-tertiary)]">
           {active.hint}
         </p>

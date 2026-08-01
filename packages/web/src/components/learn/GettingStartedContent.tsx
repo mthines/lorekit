@@ -5,9 +5,11 @@ import { ClientConfigTabs, type McpClientConfig } from '@/components/dashboard/C
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const MCP_URL = 'https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp';
+// Exported so the async server wrapper (`GettingStartedContentServer`) can
+// pre-highlight these exact snippets with Shiki and pass the HTML back in.
+export const MCP_URL = 'https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp';
 
-const JSON_SNIPPET = `{
+export const JSON_SNIPPET = `{
   "mcpServers": {
     "lorekit": {
       "command": "npx",
@@ -16,7 +18,7 @@ const JSON_SNIPPET = `{
   }
 }`;
 
-const YAML_SNIPPET = `mcp:
+export const YAML_SNIPPET = `mcp:
   servers:
     lorekit:
       command: npx
@@ -27,13 +29,15 @@ const YAML_SNIPPET = `mcp:
         - --header
         - "Authorization:Bearer lk_rw_…"`;
 
-const WRITE_SNIPPET = `memory.write {
+export const WRITE_SNIPPET = `memory.write {
   scope: "global",
   key:   "hello-lorekit",
   value: "Connection is working."
 }`;
 
-const MCP_CLIENTS: McpClientConfig[] = [
+export const DOCTOR_CMD = 'npx @lorekit/cli doctor';
+
+export const MCP_CLIENTS: McpClientConfig[] = [
   {
     id: 'claude-code',
     name: 'Claude Code',
@@ -78,6 +82,19 @@ const MCP_CLIENTS: McpClientConfig[] = [
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
+/**
+ * Pre-rendered Shiki HTML for the code in this tutorial, keyed by the snippet's
+ * raw string (config snippets) plus the two standalone blocks. Supplied by
+ * {@link GettingStartedContentServer} in the docs (server) context; absent in
+ * client contexts (the dialog), where the code falls back to plain text.
+ */
+export interface HighlightedSnippets {
+  /** snippet string → highlighted HTML (the config-tab snippets). */
+  snippets?: Record<string, string>;
+  write?: string;
+  doctor?: string;
+}
+
 interface Props {
   /**
    * When true, renders without auth-gated internal links (e.g. on the login
@@ -85,6 +102,20 @@ interface Props {
    * Defaults to false (authenticated dashboard context).
    */
   isPublic?: boolean;
+  /** Optional pre-highlighted code (docs/server context); plain text if absent. */
+  highlighted?: HighlightedSnippets;
+}
+
+/** A code block that renders pre-highlighted Shiki HTML when available, else the
+ *  raw code as plain text — so the same component works in server (highlighted)
+ *  and client (plain) contexts. */
+function CodeSnippet({ html, code }: { html?: string; code: string }) {
+  if (html) return <div className="mt-2" dangerouslySetInnerHTML={{ __html: html }} />;
+  return (
+    <pre className="mt-2">
+      <code>{code}</code>
+    </pre>
+  );
 }
 
 /**
@@ -92,7 +123,12 @@ interface Props {
  * (isPublic=true) and inside the authenticated /learn/setup page
  * (isPublic=false). Single source of truth — no duplication between surfaces.
  */
-export function GettingStartedContent({ isPublic = false }: Props) {
+export function GettingStartedContent({ isPublic = false, highlighted }: Props) {
+  // Attach pre-highlighted HTML to each config tab when available (docs context).
+  const clients = MCP_CLIENTS.map((client) => ({
+    ...client,
+    snippetHtml: highlighted?.snippets?.[client.snippet],
+  }));
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-col">
@@ -136,7 +172,7 @@ export function GettingStartedContent({ isPublic = false }: Props) {
           </p>
 
           <div className="mt-4">
-            <ClientConfigTabs clients={MCP_CLIENTS} />
+            <ClientConfigTabs clients={clients} />
           </div>
 
           <TutorialCallout variant="tip">
@@ -151,7 +187,7 @@ export function GettingStartedContent({ isPublic = false }: Props) {
           <p>
             Start a new session in your agent and ask it to write a test memory:
           </p>
-          <pre className="mt-2"><code>{WRITE_SNIPPET}</code></pre>
+          <CodeSnippet html={highlighted?.write} code={WRITE_SNIPPET} />
           {isPublic ? (
             <p className="mt-2">
               If the write succeeds, the <strong>Lore Explorer</strong> (in the dashboard) will
@@ -169,7 +205,7 @@ export function GettingStartedContent({ isPublic = false }: Props) {
               will show the memory. You can also run the CLI health check:
             </p>
           )}
-          <pre className="mt-2"><code>npx @lorekit/cli doctor</code></pre>
+          <CodeSnippet html={highlighted?.doctor} code={DOCTOR_CMD} />
         </TutorialStep>
 
       </div>
