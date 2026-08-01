@@ -411,6 +411,15 @@ jobs:
           LOREKIT_REST_BASE_URL: http://127.0.0.1:54321/functions/v1
         run: node scripts/smoke-rest.mjs
 
+      - name: Smoke cleanup — sweep leftover artefacts (self-test of the sweeper)
+        if: always()
+        env:
+          LOREKIT_SMOKE_TOKEN: ${{ steps.supabase.outputs.service_role_key }}
+          LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
+          LOREKIT_SWEEP_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_role_key }}
+          LOREKIT_REST_BASE_URL: http://127.0.0.1:54321/functions/v1
+        run: node scripts/smoke-cleanup.mjs --min-age-minutes 0 --allow-service-role --strict
+
       - name: Diagnose — edge runtime logs (on failure)
         if: failure()
         run: |

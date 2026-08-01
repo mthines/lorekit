@@ -238,6 +238,14 @@ jobs:
           LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
         run: node scripts/smoke-rest.mjs
 
+      - name: Smoke cleanup — sweep orphaned artefacts from preview
+        if: always()
+        env:
+          LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
+          LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
+          LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
+        run: node scripts/smoke-cleanup.mjs --min-age-minutes 30
+
   # ── 3. Deploy to PRODUCTION (only reached if preview is green) ────────────────
   deploy-production:
     name: Deploy → production
@@ -407,6 +415,14 @@ jobs:
       #     contract against the IDENTICAL promoted function bundle on the staging
       #     project before this job runs, and the self-cleaning `doctor --deep`
       #     round-trip above already verifies the production write path.
+
+      - name: Smoke residue check — report anything left in production
+        if: always()
+        continue-on-error: true
+        env:
+          LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
+          LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
+        run: node scripts/smoke-cleanup.mjs --min-age-minutes 30 --dry-run
 
   # ── 5. Rollback PRODUCTION functions on a production failure ──────────────────
   #    Redeploys the previous commit's edge functions. Migrations are forward-only
