@@ -187,7 +187,11 @@ function groupToOrString(g: FilterGroup): string | null {
  *   { field: 'scope', op: 'is', value: 'global' },
  *   { or: [ { field: 'key', op: 'contains', value: 'auth' } ] },
  * ]});
- * // → ['scope.eq.global', 'key.ilike.%auth%']
+ * // → ['scope.eq."global"', 'key.ilike."%auth%"']
+ *
+ * Every value is double-quoted by {@link quoteFilterValue} — that is how the
+ * logic-tree grammar carries a reserved character, so the quotes are part of
+ * the contract, not decoration.
  */
 export function serializeFilterGroup(filter: FilterGroup | undefined): string[] {
   if (!filter) return [];
