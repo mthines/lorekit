@@ -2,6 +2,7 @@ import type { MDXRemoteProps } from 'next-mdx-remote/rsc';
 import remarkGfm from 'remark-gfm';
 import rehypeSlug from 'rehype-slug';
 import rehypeAutolinkHeadings from 'rehype-autolink-headings';
+import { rehypeShiki, rehypeShikiOptions } from '@/lib/mdx/rehype-shiki';
 
 /**
  * Shared `next-mdx-remote` options for rendering docs pages — the single place
@@ -18,6 +19,12 @@ export const docsMdxOptions: NonNullable<MDXRemoteProps['options']> = {
   blockJS: false,
   mdxOptions: {
     remarkPlugins: [remarkGfm],
-    rehypePlugins: [rehypeSlug, [rehypeAutolinkHeadings, { behavior: 'wrap' }]],
+    // Slug headings → highlight code (shared Shiki config with the blog) → wrap
+    // headings in self-links.
+    rehypePlugins: [
+      rehypeSlug,
+      [rehypeShiki, rehypeShikiOptions],
+      [rehypeAutolinkHeadings, { behavior: 'wrap' }],
+    ],
   },
 };

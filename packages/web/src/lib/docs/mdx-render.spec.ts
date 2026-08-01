@@ -22,7 +22,9 @@ describe('docs MDX render options (blockJS)', () => {
   it('preserves JSX attribute expressions (number={1}) with the shared options', async () => {
     const out = await serialize(STEP_SNIPPET, docsMdxOptions);
     expect(out.compiledSource).toMatch(/number/);
-  });
+    // Generous timeout: the first serialize through the shared options warms
+    // Shiki's highlighter (a few seconds, once); warm calls are fast.
+  }, 30_000);
 
   it('the library default (blockJS:true) would strip them — hazard is real', async () => {
     const out = await serialize(STEP_SNIPPET /* default blockJS: true */);
@@ -34,5 +36,5 @@ describe('docs MDX render options (blockJS)', () => {
     expect(content).toContain('number={'); // sanity: the source really uses expression attrs
     const out = await serialize(content, docsMdxOptions);
     expect(out.compiledSource).toMatch(/number/);
-  });
+  }, 30_000);
 });

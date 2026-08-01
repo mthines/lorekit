@@ -25,7 +25,9 @@ describe('blog MDX render (heading ids ↔ TOC)', () => {
     for (const id of ids) {
       expect(out.compiledSource, `rendered output missing heading id "${id}"`).toContain(id);
     }
-  });
+    // Generous timeout: the first serialize warms Shiki's highlighter + grammars
+    // (a few seconds, once); warm calls are fast.
+  }, 30_000);
 
   it('adds no heading ids without the plugin — the guard is not vacuous', async () => {
     // Default options run no id plugin, so the slugs must be absent. Uses a

@@ -1,6 +1,7 @@
 import type { MDXRemoteProps } from 'next-mdx-remote/rsc';
 import remarkGfm from 'remark-gfm';
 import rehypeAutolinkHeadings from 'rehype-autolink-headings';
+import { rehypeShiki, rehypeShikiOptions } from '@/lib/mdx/rehype-shiki';
 import { slugify } from './toc';
 
 /**
@@ -60,6 +61,13 @@ export const blogMdxOptions: NonNullable<MDXRemoteProps['options']> = {
   blockJS: false,
   mdxOptions: {
     remarkPlugins: [remarkGfm],
-    rehypePlugins: [rehypeHeadingIds, [rehypeAutolinkHeadings, { behavior: 'wrap' }]],
+    // Order: stamp heading ids → highlight code (Shiki) → wrap headings in
+    // self-links. Shiki is independent of the heading plugins (it only touches
+    // `pre > code`), but must run before serialization completes.
+    rehypePlugins: [
+      rehypeHeadingIds,
+      [rehypeShiki, rehypeShikiOptions],
+      [rehypeAutolinkHeadings, { behavior: 'wrap' }],
+    ],
   },
 };
