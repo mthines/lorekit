@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.25.1](https://github.com/mthines/lorekit/compare/cli-v1.25.0...cli-v1.25.1) (2026-08-01)
+
+
+### Bug Fixes
+
+* **smoke:** clean up the data live smoke tests write to real projects ([#297](https://github.com/mthines/lorekit/issues/297)) ([ab5ad0f](https://github.com/mthines/lorekit/commit/ab5ad0f058f499808e73a6de2f9327ae193c9662))
+
 ## [1.25.0](https://github.com/mthines/lorekit/compare/cli-v1.24.1...cli-v1.25.0) (2026-07-31)
 
 
