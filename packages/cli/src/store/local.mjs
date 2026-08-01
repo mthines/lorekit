@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { serializeEntry, parseEntry, slugify, scopeToDir } from './format.mjs';
 import { normalizeCreatedAt } from './created-at.mjs';
-import { parseTtlDays, expiresAtFrom, isExpired } from './ttl.mjs';
+import { isLive, resolveExpiresAt } from './ttl.mjs';
 
 export function createLocalStore(baseDir) {
   return new LocalStore(baseDir);
@@ -67,7 +67,7 @@ class LocalStore {
     const now = new Date();
     let rows = this._readAll(scope)
       .map((r) => r.entry)
-      .filter((e) => !e.archived_at && !isExpired(e.expires_at, now));
+      .filter((e) => isLive(e, now));
     if (Array.isArray(tags) && tags.length) {
       rows = rows.filter((e) => tags.every((t) => (e.tags || []).includes(t)));
     }
@@ -79,8 +79,7 @@ class LocalStore {
   // read({ scope, key }) → { ok, entry } — null when absent, archived, or expired.
   async read({ scope, key } = {}) {
     const found = this._findByKey(scope, key);
-    const live = found && !found.entry.archived_at && !isExpired(found.entry.expires_at);
-    return { ok: true, entry: live ? found.entry : null };
+    return { ok: true, entry: found && isLive(found.entry) ? found.entry : null };
   }
 
   // write(...) → { ok, entry } — upsert by scope+key. Preserves `created` and
@@ -97,28 +96,20 @@ class LocalStore {
     scope, key, value, tags, source_agent, trigger, created_at, ttl_days, clear_ttl,
     origin_repo, origin_branch, origin_commit, origin_pr,
   } = {}) {
-    let override, ttlDays;
+    const now = new Date().toISOString();
+    const existing = this._findByKey(scope, key);
+    let override, expires_at;
     try {
       override = normalizeCreatedAt(created_at);
-      // clear_ttl short-circuits ttl_days entirely, mirroring memory_write
-      // (00031): when clearing, an accompanying ttl_days is never validated, so
-      // a contradictory { clear_ttl, invalid ttl_days } clears rather than erroring.
-      ttlDays = clear_ttl ? null : parseTtlDays(ttl_days);
+      expires_at = resolveExpiresAt({
+        clearTtl: clear_ttl, ttlDays: ttl_days, now, current: existing?.entry.expires_at,
+      });
     } catch (e) {
       return { ok: false, error: e.message };
     }
     const dir = this._dir(scope);
     fs.mkdirSync(dir, { recursive: true });
-    const now = new Date().toISOString();
-    const existing = this._findByKey(scope, key);
     const created = existing ? existing.entry.created || now : override || now;
-    // Expiry tri-state, mirroring memory_write (00030/00031): clear beats set;
-    // an update that supplies neither keeps whatever expiry the row already had.
-    const expires_at = clear_ttl
-      ? null
-      : ttlDays != null
-        ? expiresAtFrom(ttlDays, now)
-        : existing?.entry.expires_at ?? null;
     const entry = {
       scope,
       key,
@@ -276,7 +267,7 @@ class LocalStore {
     const now = new Date();
     const counts = new Map();
     for (const { entry } of this._walkEntries()) {
-      if (entry.archived_at || !entry.scope || isExpired(entry.expires_at, now)) continue;
+      if (!entry.scope || !isLive(entry, now)) continue;
       counts.set(entry.scope, (counts.get(entry.scope) || 0) + 1);
     }
     return [...counts.entries()].map(([scope, count]) => ({ scope, count }));
@@ -414,7 +405,7 @@ class TwoTierStore {
     const tiers = this.projectActive() ? [this.project, this.home] : [this.home];
     for (const tier of tiers) {
       for (const { entry } of tier._walkEntries()) {
-        if (entry.archived_at || !entry.scope || isExpired(entry.expires_at, now)) continue;
+        if (!entry.scope || !isLive(entry, now)) continue;
         const id = `${entry.scope}\x00${entry.key ?? ''}`;
         if (seen.has(id)) continue;
         seen.add(id);

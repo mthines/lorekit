@@ -7,7 +7,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseTtlDays, expiresAtFrom, isExpired, TTL_MAX_DAYS } from '../src/store/ttl.mjs';
+import {
+  parseTtlDays, expiresAtFrom, isExpired, isLive, resolveExpiresAt, TTL_MAX_DAYS,
+} from '../src/store/ttl.mjs';
 import { createLocalStore } from '../src/store/local.mjs';
 import { parseEntry } from '../src/store/format.mjs';
 
@@ -52,6 +54,28 @@ test('isExpired: absent never expires; unparseable fails safe; past expires', ()
   assert.equal(isExpired('garbage', now), false); // fail-safe: never hide on corruption
   assert.equal(isExpired('2026-05-31T23:59:59.000Z', now), true);
   assert.equal(isExpired('2026-06-02T00:00:00.000Z', now), false);
+});
+
+test('isLive: an entry is live unless archived or expired', () => {
+  const now = new Date('2026-06-01T00:00:00.000Z');
+  assert.equal(isLive({ expires_at: null, archived_at: null }, now), true);
+  assert.equal(isLive({ expires_at: null, archived_at: '2026-01-01T00:00:00Z' }, now), false);
+  assert.equal(isLive({ expires_at: '2026-05-01T00:00:00Z', archived_at: null }, now), false);
+  assert.equal(isLive({ expires_at: '2026-07-01T00:00:00Z', archived_at: null }, now), true);
+});
+
+test('resolveExpiresAt: clear wins, then set, then keep', () => {
+  const now = '2026-01-01T00:00:00.000Z';
+  // clear beats an (even invalid) ttl — never validated
+  assert.equal(resolveExpiresAt({ clearTtl: true, ttlDays: 999, now, current: 'x' }), null);
+  // set from now
+  assert.equal(resolveExpiresAt({ ttlDays: 1, now, current: null }), '2026-01-02T00:00:00.000Z');
+  // keep existing when neither clear nor ttl supplied
+  assert.equal(resolveExpiresAt({ now, current: '2030-01-01T00:00:00.000Z' }), '2030-01-01T00:00:00.000Z');
+  // nothing supplied and no existing → permanent
+  assert.equal(resolveExpiresAt({ now, current: null }), null);
+  // an invalid ttl (not clearing) throws so the caller surfaces ok:false
+  assert.throws(() => resolveExpiresAt({ ttlDays: 999, now }), /<= 365/);
 });
 
 // ── LocalStore wiring ───────────────────────────────────────────────────────

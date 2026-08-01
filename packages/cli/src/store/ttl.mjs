@@ -45,3 +45,25 @@ export function isExpired(expiresAt, now = new Date()) {
   if (Number.isNaN(ms)) return false;
   return ms <= now.getTime();
 }
+
+// Whether a stored entry is currently visible to reads: not archived and not
+// expired. The SINGLE definition of "live", shared by every read path (list /
+// read / listScopes) so a future hidden dimension is added once, never
+// re-spelled per call site. The raw primitives (getEntry / _findByKey for
+// delete / archive) deliberately bypass this so they can still act on hidden rows.
+export function isLive(entry, now = new Date()) {
+  return !entry.archived_at && !isExpired(entry.expires_at, now);
+}
+
+// Resolve a write's `expires_at` from the tri-state TTL inputs, mirroring
+// memory_write (00030/00031): `clearTtl` wins (→ permanent, and `ttlDays` is
+// never even validated); else a supplied `ttlDays` sets expiry from `now`; else
+// the row keeps whatever `current` expiry it already had. Throws (via
+// parseTtlDays) on an invalid `ttlDays` only when NOT clearing, so the caller
+// can surface `{ ok:false }`.
+export function resolveExpiresAt({ clearTtl, ttlDays, now, current } = {}) {
+  if (clearTtl) return null;
+  const days = parseTtlDays(ttlDays);
+  if (days != null) return expiresAtFrom(days, now);
+  return current ?? null;
+}
