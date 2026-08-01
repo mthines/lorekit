@@ -37,6 +37,7 @@ function readDollarTag(text: string, index: number): string | null {
  * Recognises, in the order the Postgres scanner does:
  *   - `--` line comments and block comments (quotes inside are inert)
  *   - single-quoted string literals, including the `''` escape
+ *   - double-quoted identifiers, including the `""` escape
  *   - dollar-quoted strings with an optional tag: `$$ … $$`, `$tag$ … $tag$`
  *
  * Stops at the first unterminated construct: everything after it is, by
@@ -67,14 +68,22 @@ export function findQuotingIssues(text: string): QuotingIssue[] {
       continue;
     }
 
-    if (text[i] === "'") {
+    // Single-quoted string literals AND double-quoted identifiers. Both are
+    // scanned, and both double their own delimiter to escape it. The
+    // double-quoted case matters even though no identifier in this repo needs
+    // quoting today: this guard runs over the whole SQL tree, and without the
+    // state a `'` inside a `"…"` identifier would open a phantom literal and
+    // desync every quote after it.
+    if (text[i] === "'" || text[i] === '"') {
+      const delim = text[i];
+      const label = delim === "'" ? "' string literal" : '" quoted identifier';
       const start = i;
       i += 1;
       let closed = false;
       while (i < text.length) {
-        if (text[i] === "'") {
-          // '' is an escaped quote, not a terminator.
-          if (text[i + 1] === "'") {
+        if (text[i] === delim) {
+          // A doubled delimiter is an escape, not a terminator.
+          if (text[i + 1] === delim) {
             i += 2;
             continue;
           }
@@ -85,7 +94,7 @@ export function findQuotingIssues(text: string): QuotingIssue[] {
         i += 1;
       }
       if (!closed) {
-        findings.push({ line: lineOf(start), message: "unterminated ' string literal" });
+        findings.push({ line: lineOf(start), message: `unterminated ${label}` });
         break;
       }
       continue;

@@ -119,7 +119,11 @@ export function deriveOrigin({ cwd = process.cwd(), env = process.env, run = git
     ? run(['rev-parse', 'HEAD^2'], cwd)
     : run(['rev-parse', 'HEAD'], cwd);
 
-  const repo = ownerRepoFromRemote(remote) ?? firstNonEmptyRepo(env);
+  // `ownerRepoFromRemote` parses whatever the remote URL happens to be, so an
+  // odd remote can yield a string the server's strict `parseOriginRepo`
+  // rejects — which would 400 the write this provenance only decorates.
+  // Validate here so an unusable value is DROPPED, never sent.
+  const repo = isValidRepo(ownerRepoFromRemote(remote)) ?? firstNonEmptyRepo(env);
   const branchRaw = firstNonEmpty(env.LOREKIT_BRANCH, env.GITHUB_HEAD_REF, gitBranch);
   // A derived branch that the server would reject is dropped here rather than
   // sent: provenance is decoration, and it must never fail the write it is
@@ -140,13 +144,27 @@ export function deriveOrigin({ cwd = process.cwd(), env = process.env, run = git
   };
 }
 
+/**
+ * Normalise a candidate `owner/name`, or null when it is not one.
+ *
+ * The single repo rule for every derivation path, matching the server's
+ * `parseOriginRepo` (`packages/mcp-core/src/origin.ts`) — including its
+ * rejection of a dots-only segment, which `[\\w.-]+` alone admits and which
+ * would render as a link to a different repository.
+ */
+export function isValidRepo(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === '' || normalized.length > 140) return null;
+  if (!/^[\w.-]+\/[\w.-]+$/.test(normalized)) return null;
+  if (normalized.split('/').some((segment) => /^\.+$/.test(segment))) return null;
+  return normalized;
+}
+
 // `GITHUB_REPOSITORY` is `owner/name` already; it is the fallback for a CI
 // checkout with no `origin` remote configured.
 function firstNonEmptyRepo(env) {
-  const raw = firstNonEmpty(env.LOREKIT_REPO, env.GITHUB_REPOSITORY);
-  if (!raw) return null;
-  const normalized = raw.toLowerCase();
-  return /^[\w.-]+\/[\w.-]+$/.test(normalized) ? normalized : null;
+  return isValidRepo(firstNonEmpty(env.LOREKIT_REPO, env.GITHUB_REPOSITORY));
 }
 
 /**

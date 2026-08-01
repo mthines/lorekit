@@ -4,7 +4,7 @@
 // deterministic — no real repository, no real CI runner.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { deriveOrigin, isValidRef, mergeOrigin, prNumberFromEnv } from '../src/origin.mjs';
+import { deriveOrigin, isValidRef, isValidRepo, mergeOrigin, prNumberFromEnv } from '../src/origin.mjs';
 
 /** A fake `git` that answers from a lookup table and returns null otherwise. */
 function fakeGit(answers) {
@@ -186,4 +186,25 @@ test('deriveOrigin runs git in the directory it was given, not the process cwd',
   };
   deriveOrigin({ cwd: '/some/repo', env: {}, run });
   assert.deepEqual([...new Set(seen)], ['/some/repo']);
+});
+
+test('isValidRepo enforces the same rule as the server validator', () => {
+  assert.equal(isValidRepo('MThines/LoreKit'), 'mthines/lorekit');
+  assert.equal(isValidRepo('my-org/some.repo_name'), 'my-org/some.repo_name');
+  for (const bad of ['lorekit', 'a/b/c', 'my org/repo', '../evil', 'owner/..', './x', '', null, 42]) {
+    assert.equal(isValidRepo(bad), null, `expected ${JSON.stringify(bad)} to be rejected`);
+  }
+});
+
+test('deriveOrigin drops a remote-derived repo the server would reject', () => {
+  // `ownerRepoFromRemote` parses whatever the remote happens to be; sending an
+  // unusable value would 400 the write this provenance only decorates.
+  const run = fakeGit({ 'config --get remote.origin.url': 'git@github.com:evil/../weird.git' });
+  assert.equal(deriveOrigin({ env: {}, run }).origin_repo, null);
+});
+
+test('deriveOrigin falls back to GITHUB_REPOSITORY when the remote is unusable', () => {
+  const run = fakeGit({ 'config --get remote.origin.url': 'not-a-url' });
+  const origin = deriveOrigin({ env: { GITHUB_REPOSITORY: 'MThines/LoreKit' }, run });
+  assert.equal(origin.origin_repo, 'mthines/lorekit');
 });

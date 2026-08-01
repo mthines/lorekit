@@ -84,3 +84,24 @@ describe('scopeRepoRef', () => {
     }
   });
 });
+
+describe('scopeRepoUrl — relative path segments', () => {
+  it('refuses a scope whose repo contains a parent-directory segment', () => {
+    // `..` matches `[\w.-]+`, so `repo::../evil` is a well-formed scope — and
+    // https://github.com/../evil resolves in the browser to github.com/evil.
+    expect(scopeRepoUrl('repo::../evil')).toBeNull();
+    expect(scopeRepoUrl('repo::./evil')).toBeNull();
+    expect(scopeRepoUrl('repo::owner/..')).toBeNull();
+  });
+
+  it('refuses a branch scope whose branch contains a .. segment', () => {
+    expect(scopeRepoUrl('branch::owner/repo::feat/../../x')).toBeNull();
+  });
+
+  it('still resolves a legitimate repo and branch scope', () => {
+    expect(scopeRepoUrl('repo::mthines/lorekit')).toBe('https://github.com/mthines/lorekit');
+    expect(scopeRepoUrl('branch::mthines/lorekit::feat/x')).toBe(
+      'https://github.com/mthines/lorekit/tree/feat/x',
+    );
+  });
+});

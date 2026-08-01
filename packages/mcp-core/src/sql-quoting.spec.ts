@@ -102,3 +102,21 @@ describe('findQuotingIssues', () => {
     expect(findQuotingIssues("select 1;\nselect 2;\nselect 'unclosed\n")[0]?.line).toBe(3);
   });
 });
+
+describe('findQuotingIssues — double-quoted identifiers', () => {
+  it("does not let a ' inside a quoted identifier open a phantom literal", () => {
+    // Without a double-quote state the apostrophe below would open a string
+    // that swallows the rest of the file and desyncs every later quote.
+    expect(findQuotingIssues(`select "it's a column" from t where x = 'v';`)).toEqual([]);
+  });
+
+  it('accepts the doubled-quote escape inside an identifier', () => {
+    expect(findQuotingIssues('select "a""b" from t;')).toEqual([]);
+  });
+
+  it('flags an unterminated quoted identifier', () => {
+    const issues = findQuotingIssues('select "unclosed from t;\n');
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.message).toMatch(/unterminated " quoted identifier/);
+  });
+});

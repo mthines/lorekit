@@ -69,8 +69,23 @@ export function scopeRepoRef(scope: string): ScopeRepoRef {
 
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 
+/**
+ * True when any `/`-separated segment of `value` is made only of dots.
+ *
+ * `.` and `..` both satisfy `[\w.-]+`, so `repo::../evil` is a well-formed
+ * scope as far as `REPO_RE` is concerned — and the browser resolves
+ * `https://github.com/../evil` to `https://github.com/evil`, a link to a
+ * repository the scope does not name. `lib/origin.ts` applies the same rule to
+ * the stored provenance; a scope is no more trustworthy, since a write can
+ * name any scope string.
+ */
+function hasRelativeSegment(value: string): boolean {
+  return value.split('/').some((segment) => /^\.+$/.test(segment));
+}
+
 export function scopeRepoUrl(scope: string): string | null {
   const { repo, branch } = scopeRepoRef(scope);
-  if (!repo) return null;
+  if (!repo || hasRelativeSegment(repo)) return null;
+  if (branch && hasRelativeSegment(branch)) return null;
   return branch ? `https://github.com/${repo}/tree/${branch}` : `https://github.com/${repo}`;
 }
