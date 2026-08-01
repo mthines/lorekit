@@ -100,7 +100,10 @@ class LocalStore {
     let override, ttlDays;
     try {
       override = normalizeCreatedAt(created_at);
-      ttlDays = parseTtlDays(ttl_days);
+      // clear_ttl short-circuits ttl_days entirely, mirroring memory_write
+      // (00031): when clearing, an accompanying ttl_days is never validated, so
+      // a contradictory { clear_ttl, invalid ttl_days } clears rather than erroring.
+      ttlDays = clear_ttl ? null : parseTtlDays(ttl_days);
     } catch (e) {
       return { ok: false, error: e.message };
     }

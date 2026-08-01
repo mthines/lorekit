@@ -116,6 +116,17 @@ test('LocalStore clear_ttl beats ttl_days when both are supplied', async () => {
   assert.equal(res.entry.expires_at, null);
 });
 
+test('LocalStore clear_ttl short-circuits an INVALID ttl_days (remote parity)', async () => {
+  // memory_write (00031) never validates ttl_days when clearing, so a
+  // contradictory { clear_ttl, out-of-range ttl_days } clears rather than erroring.
+  const store = createLocalStore(tmpDir());
+  const res = await store.write({
+    scope: 'global', key: 'k', value: 'v', ttl_days: 999, clear_ttl: true,
+  });
+  assert.equal(res.ok, true);
+  assert.equal(res.entry.expires_at, null);
+});
+
 test('LocalStore update without ttl keeps the existing expiry', async () => {
   const store = createLocalStore(tmpDir());
   const set = await store.write({ scope: 'global', key: 'k', value: 'v1', ttl_days: 10 });
