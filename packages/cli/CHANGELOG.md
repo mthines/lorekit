@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.1](https://github.com/mthines/lorekit/compare/cli-v1.26.0...cli-v1.26.1) (2026-08-01)
+
+
+### Bug Fixes
+
+* **cli:** honor TTL/expiry in the local file store (format parity) ([#308](https://github.com/mthines/lorekit/issues/308)) ([13ae559](https://github.com/mthines/lorekit/commit/13ae559d45360449d24c37c2da4e3515989dbf50))
+
 ## [1.26.0](https://github.com/mthines/lorekit/compare/cli-v1.25.1...cli-v1.26.0) (2026-08-01)
 
 
