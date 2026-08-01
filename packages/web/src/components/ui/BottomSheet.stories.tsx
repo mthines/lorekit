@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react';
 import { useState } from 'react';
-import { Check, Tag } from 'lucide-react';
+import { Check, Search, Tag } from 'lucide-react';
 
 import { BottomSheet } from './BottomSheet';
 
@@ -63,11 +63,12 @@ const SAMPLE_LABELS = [
 function LabelBody({ selected = ['auth'] }: { selected?: string[] }) {
   return (
     <>
-      <div className="border-b border-[var(--color-border)] p-2">
+      <div className="flex items-center gap-2 px-3 py-2.5">
+        <Search className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
         <input
           readOnly
           placeholder="Search labels…"
-          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1.5 text-xs text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)]"
+          className="flex-1 bg-transparent text-xs text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] !outline-none"
         />
       </div>
       <div className="p-1">

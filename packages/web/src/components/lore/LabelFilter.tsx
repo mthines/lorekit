@@ -157,12 +157,14 @@ export function LabelFilter({
   const listMaxH = useSheet ? 'max-h-[55vh]' : 'max-h-56';
   const panel = (
     <>
-      {/* Search */}
-      <div className="relative border-b border-[var(--color-border)] p-2">
-        <Search
-          className="pointer-events-none absolute left-4 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-content-tertiary)]"
-          aria-hidden
-        />
+      {/* Search — borderless, transparent, and with no separator below it, so
+          it reads as part of the surface and flows straight into the options
+          (mirrors CommandPalette's search field). The input holds focus the
+          whole time the popover/sheet is open, so its focus ring is suppressed
+          (`!outline-none` beats the app's global `:focus-visible` outline); the
+          highlighted active option is the affordance instead. */}
+      <div className="flex items-center gap-2 px-3 py-2.5">
+        <Search className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
         <input
           ref={inputRef}
           type="text"
@@ -181,7 +183,7 @@ export function LabelFilter({
             setActiveIndex(0);
           }}
           onKeyDown={handleKeyDown}
-          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] py-1.5 pl-7 pr-2 text-xs text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none"
+          className="flex-1 bg-transparent text-xs text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] !outline-none"
         />
       </div>
 
