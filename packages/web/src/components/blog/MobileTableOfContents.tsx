@@ -92,9 +92,13 @@ export function MobileTableOfContents({ items }: MobileTableOfContentsProps) {
         />
       </button>
 
-      {/* grid-rows 0fr→1fr disclosure — reduced-motion handled globally. */}
+      {/* grid-rows 0fr→1fr disclosure — reduced-motion handled globally.
+          `inert` while collapsed: `overflow-hidden` only clips the panel visually, it
+          does not remove the links from the tab order, so without this a keyboard user
+          tabs into invisible links while `aria-expanded` is false. */}
       <div
         id={panelId}
+        inert={!open}
         className={[
           'grid transition-[grid-template-rows] duration-200 ease-out',
           open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
