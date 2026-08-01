@@ -328,7 +328,21 @@ async function migrateCrossStore(args, root, from, to) {
   const sourceStore = from === 'remote' ? remote : local;
   const destStore = to === 'remote' ? remote : local;
   const apply = Boolean(args.apply || args.yes);
-  const onlyScope = typeof args.scope === 'string' ? args.scope : null;
+
+  // `--scope` is a caller assertion that the run is limited to ONE scope, so a
+  // malformed one is a usage error rather than a silent widening. `parseArgs`
+  // turns a valueless `--scope` into boolean `true` (util.mjs:148-155) and
+  // `--scope=` into '', and both would otherwise fall through to "every scope" —
+  // on an --apply run that rewrites the WHOLE store instead of the one scope the
+  // user named. Mirrors write.mjs's --origin-pr seam.
+  let onlyScope = null;
+  if (args.scope !== undefined) {
+    onlyScope = typeof args.scope === 'string' ? args.scope.trim() : '';
+    if (!onlyScope) {
+      err(`${c.red('migrate:')} --scope needs a scope name (got ${JSON.stringify(args.scope)})`);
+      return 1;
+    }
+  }
 
   heading('LoreKit migrate (cross-store)');
   log(`  from: ${c.dim(from)}`);

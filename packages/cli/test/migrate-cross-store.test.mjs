@@ -240,6 +240,48 @@ test('migrate --from remote --to local honours --scope (only that scope moves)',
   });
 });
 
+// A valueless `--scope` is boolean `true` and `--scope=` is '' (util.mjs:148-155).
+// Both used to fall through to "every scope", so `--scope --yes` silently rewrote
+// the whole destination store instead of the one scope the user named.
+test('migrate rejects a --scope with no usable value instead of migrating everything', async () => {
+  for (const malformed of [['--scope', '--yes'], ['--scope='], ['--scope', '   ']]) {
+    const home = tmp('lk-xmig-badscope-home-');
+    const root = tmp('lk-xmig-badscope-root-');
+    const server = startMockRemote({
+      byScope: {
+        global: [{ scope: 'global', key: 'g1', value: 'gv', created_at: '2024-01-01T00:00:00.000Z' }],
+        'repo::o/r': [{ scope: 'repo::o/r', key: 'r1', value: 'rv', created_at: '2024-01-01T00:00:00.000Z' }],
+      },
+    });
+    await withServer(server, async (port) => {
+      const env = { LOREKIT_MCP_URL: `http://127.0.0.1:${port}/mcp`, LOREKIT_TOKEN: 'lk_rw_test' };
+      const res = await runMigrate(root, home, ['--from', 'remote', '--to', 'local', ...malformed], env);
+      assert.equal(res.status, 1, `${malformed.join(' ')} should be a usage error: ${res.stdout}`);
+      assert.match(res.stderr, /--scope needs a scope name/);
+      // Nothing moved — the whole point: a malformed --scope must not widen the run.
+      const store = createLocalStore(home);
+      assert.equal(store.getEntry({ scope: 'global', key: 'g1' }), null);
+      assert.equal(store.getEntry({ scope: 'repo::o/r', key: 'r1' }), null);
+    });
+  }
+});
+
+test('migrate --scope tolerates surrounding whitespace', async () => {
+  const home = tmp('lk-xmig-trimscope-home-');
+  const root = tmp('lk-xmig-trimscope-root-');
+  const server = startMockRemote({
+    byScope: {
+      global: [{ scope: 'global', key: 'g1', value: 'gv', created_at: '2024-01-01T00:00:00.000Z' }],
+    },
+  });
+  await withServer(server, async (port) => {
+    const env = { LOREKIT_MCP_URL: `http://127.0.0.1:${port}/mcp`, LOREKIT_TOKEN: 'lk_rw_test' };
+    const res = await runMigrate(root, home, ['--from', 'remote', '--to', 'local', '--scope', ' global ', '--yes'], env);
+    assert.equal(res.status, 0, res.stderr);
+    assert.ok(createLocalStore(home).getEntry({ scope: 'global', key: 'g1' }));
+  });
+});
+
 test('migrate rejects remote↔remote and same-store', async () => {
   const home = tmp('lk-xmig-home3-');
   const root = tmp('lk-xmig-root3-');
