@@ -3,7 +3,7 @@
  *
  * A memory's `scope` says WHERE the lesson applies; `lib/scope.ts`'s
  * `scopeRepoUrl` derives a repo link from it. The origin columns (migration
- * 00046) say where the lesson was RECORDED FROM — the repo, branch, commit,
+ * 00048) say where the lesson was RECORDED FROM — the repo, branch, commit,
  * and pull request the agent was actually working in when it wrote the lesson.
  * A `global` lesson learned while reviewing PR #482 has no repo in its scope
  * at all, so this cannot be derived from the scope and has to be stored.

@@ -52,7 +52,7 @@ export interface MemoryRow {
   updated_by: string | null;
   /** Embedded `orgs(name,slug)` join — null for personal lore. */
   orgs: { name: string; slug: string } | null;
-  /** Provenance (migration 00046) — where the memory was recorded FROM. */
+  /** Provenance (migration 00048) — where the memory was recorded FROM. */
   origin_repo: string | null;
   origin_branch: string | null;
   origin_commit: string | null;

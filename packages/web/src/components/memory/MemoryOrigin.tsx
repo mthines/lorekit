@@ -7,7 +7,7 @@ import { originLinks, type MemoryOriginFields, type OriginLinkKind } from '@/lib
  * `ScopeBadge`/the `Repo` row already answer "where does this lesson APPLY".
  * These rows answer the different question "where did it COME FROM" — the pull
  * request, branch, and commit the agent was working in when it wrote the
- * lesson (migration 00046). A `global` lesson learned while reviewing a PR has
+ * lesson (migration 00048). A `global` lesson learned while reviewing a PR has
  * no repo in its scope, so this cannot be derived and has to be stored.
  *
  * The two never duplicate each other: the memory's `scope` is passed to
@@ -16,7 +16,7 @@ import { originLinks, type MemoryOriginFields, type OriginLinkKind } from '@/lib
  *
  * Renders `<div>` rows shaped exactly like the sibling metadata rows so it can
  * be dropped inside the existing `<dl>`; renders nothing when the memory
- * carries no origin (every pre-00046 memory, and any write with no git
+ * carries no origin (every pre-00048 memory, and any write with no git
  * context), so the section never shows an empty "unknown" state.
  */
 

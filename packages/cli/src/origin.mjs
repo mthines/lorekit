@@ -5,7 +5,7 @@
 // a lesson APPLIES; an origin says where it was written: the repository, the
 // branch, the checked-out commit, and the pull request the work belonged to.
 // The dashboard renders it as a "recorded from" block with links straight back
-// to the PR, branch, and commit (migration 00046).
+// to the PR, branch, and commit (migration 00048).
 //
 // Nothing here is required: every field independently degrades to `null` when
 // it cannot be determined (no git, detached HEAD, no PR context), and a write
