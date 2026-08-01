@@ -235,7 +235,7 @@ function BindActionBar({
   orgSelectId: string;
 }) {
   return (
-    <div className="flex flex-col gap-2.5 border-t border-[var(--color-border)] pt-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-2">
         <label htmlFor={orgSelectId} className="shrink-0 text-[11px] text-[var(--color-content-secondary)]">
           Share with
@@ -313,6 +313,11 @@ function InstallationCard({
   const [targetOrgId, setTargetOrgId] = useState(() => suggestion?.org.id ?? manageableOrgs[0]?.id ?? '');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
+  // Progressive disclosure: the card is a calm read-only coverage list by
+  // default; the org-picker + multi-select "share" controls stay hidden until
+  // the user opts in, so the three jobs (see coverage / see what's shared /
+  // share more) don't crowd each other.
+  const [sharing, setSharing] = useState(false);
 
   // Once a repo is bound it leaves `unbound`; prune it from `selected` so the
   // "Share N" count stays truthful and a second click can't re-submit it.
@@ -438,10 +443,6 @@ function InstallationCard({
               </span>
             </div>
 
-            {canManage && suggestion && (
-              <SuggestionBanner suggestion={suggestion} busy={pending} onBind={doBind} />
-            )}
-
             {repos.length > 8 && (
               <div className="flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 focus-within:border-[var(--color-accent)]">
                 <Search className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
@@ -463,7 +464,7 @@ function InstallationCard({
                     key={repo.id}
                     fullName={repo.full_name}
                     boundOrgSlug={bound?.orgSlug}
-                    selectable={canManage && !bound}
+                    selectable={sharing && canManage && !bound}
                     selected={selected.has(repo.full_name)}
                     onToggle={() => toggle(repo.full_name)}
                     onUnbind={
@@ -482,17 +483,45 @@ function InstallationCard({
               )}
             </div>
 
-            {/* Action bar — only when there's something to share and somewhere to share it */}
-            {canManage && state.unbound.length > 0 && (
-              <BindActionBar
-                manageableOrgs={manageableOrgs}
-                targetOrgId={targetOrgId}
-                onTargetChange={setTargetOrgId}
-                selectedCount={selected.size}
-                busy={pending}
-                onBind={() => doBind(targetOrgId, [...selected])}
-                orgSelectId={orgSelectId}
-              />
+            {/* View mode: a single quiet entry into the share flow */}
+            {canManage && !sharing && state.unbound.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setSharing(true)}
+                className="flex min-h-11 items-center justify-center gap-1.5 self-start rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3.5 text-xs font-medium text-[var(--color-content-secondary)] transition-colors hover:border-[var(--color-accent-glow)] hover:text-[var(--color-accent)]"
+              >
+                <LinkIcon className="size-3.5 shrink-0" aria-hidden />
+                Share repositories with an organization
+              </button>
+            )}
+
+            {/* Select mode: the picker + multi-select controls, revealed on demand */}
+            {canManage && sharing && (
+              <div className="flex flex-col gap-3 border-t border-[var(--color-border)] pt-3">
+                {suggestion && (
+                  <SuggestionBanner suggestion={suggestion} busy={pending} onBind={doBind} />
+                )}
+                <BindActionBar
+                  manageableOrgs={manageableOrgs}
+                  targetOrgId={targetOrgId}
+                  onTargetChange={setTargetOrgId}
+                  selectedCount={selected.size}
+                  busy={pending}
+                  onBind={() => doBind(targetOrgId, [...selected])}
+                  orgSelectId={orgSelectId}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSharing(false);
+                    setSelected(new Set());
+                    setQuery('');
+                  }}
+                  className="min-h-9 self-start text-[11px] text-[var(--color-content-secondary)] transition-colors hover:text-[var(--color-content-primary)]"
+                >
+                  Done
+                </button>
+              </div>
             )}
 
             {/* No org to share with — point the user at where to make one */}
