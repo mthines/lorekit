@@ -8,9 +8,12 @@ export default function LorePage() {
   // useScopeTree: lightweight scope-only fetch — tree renders immediately while
   // the lesson list streams in separately via useMemories inside LoreExplorer.
   const { data: scopes, isLoading: scopesLoading, isError: scopesError, error: scopesErr } = useScopeTree();
-  // useLoreData: full 500-row fetch used only for heatmapData (the 26-week
-  // contribution graph). Runs in parallel — the heatmap can load after the
-  // scope tree; the lesson list + feed stream in via useMemories separately.
+  // useLoreData: the legacy combined fetch, kept only for heatmapData (the
+  // 26-week contribution graph), which now comes from `GET /memories/activity`
+  // — bucketed in Postgres, so it is not bounded by the page it ships with
+  // (`LEGACY_PAGE_SIZE` in queries/lore.ts owns that size). Runs in parallel —
+  // the heatmap can load after the scope tree; the lesson list + feed stream in
+  // via useMemories separately.
   const { data: loreData } = useLoreData();
 
   const isLoading = scopesLoading;
