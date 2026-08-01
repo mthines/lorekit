@@ -3610,8 +3610,9 @@ begin
    where scope = 'project::agg-b';
   assert v_rows = 0, 'memory activity AC-4: a caller must never see another user''s activity';
 
-  -- AC-5: p_bucket is interpolated into date_trunc, so anything outside the
-  -- bounded categorical must raise rather than reach the query.
+  -- AC-5: p_bucket is a bounded categorical. It is a date_trunc ARGUMENT, not
+  -- interpolated SQL, so this is not an injection guard — it is what turns an
+  -- opaque 22023 from inside date_trunc into a named, catchable error.
   v_raised := false;
   begin
     perform * from lorekit_memory_activity('00000000-0000-0000-0000-0000000000a1', 'week', null, null);

@@ -20,8 +20,12 @@
 -- window, and the edge handler defaults it rather than leaving it unbounded.
 --
 -- p_bucket is a bounded categorical ('hour' | 'day'), validated here as well as
--- at the edge — it is interpolated into date_trunc, so an unvalidated value
--- would be the one injection surface in this function. Anything else raises.
+-- at the edge. It is passed to date_trunc as a plpgsql function ARGUMENT, not
+-- interpolated into SQL text, so there is no injection surface — this function
+-- builds no dynamic SQL at all (no EXECUTE, no format()). The check earns its
+-- place anyway: date_trunc on an unknown field raises an opaque 22023 from
+-- inside the query, so validating up front turns that into a named, testable
+-- error (AC-5 in supabase/tests/migrations.test.sql). Anything else raises.
 --
 -- Actor resolution, visibility, grants, and plpgsql-for-ordering are the
 -- 00046/00047 rule verbatim.
