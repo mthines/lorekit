@@ -2031,6 +2031,15 @@ declare
   v_scopes       text[];
   v_sorted       text[];
 begin
+  -- 00047 gave lorekit_memory_scopes the service-role-gated actor guard: a
+  -- caller-supplied p_user_id is honoured only on a verified service-role
+  -- connection, otherwise auth.uid() wins. Adopt that context — it is exactly
+  -- how the edge GET /memories/scopes path invokes it (a service-role client
+  -- naming the token owner). Without it the actor resolves to a NULL auth.uid()
+  -- and every assertion below reads an empty result set.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
   -- AC-1 + AC-3 + AC-4: A's own scope is present, counting ONLY the two active
   -- rows — the archived and the expired sibling in the same scope are excluded.
   select count into v_count
@@ -2080,6 +2089,9 @@ begin
   select array_agg(s order by s) into v_sorted from unnest(v_scopes) as s;
   assert v_scopes = v_sorted,
     format('memory scopes AC-8: results must be sorted by scope asc, got %s', v_scopes);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
 end;
 $$;
 
