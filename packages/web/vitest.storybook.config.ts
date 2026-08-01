@@ -35,12 +35,15 @@ export default defineConfig({
   resolve: {
     alias: { '@': path.resolve(dirname, 'src') },
   },
-  // Pre-bundle the deps the setup file pulls in so Vite doesn't discover them
-  // mid-run and reload (which crashes the run on a COLD cache — i.e. every CI
-  // run). Without this, the first invocation flakes with "Vite unexpectedly
-  // reloaded a test".
+  // Pre-bundle the deps the setup file and stories pull in so Vite doesn't
+  // discover them mid-run and reload (which crashes the run on a COLD cache —
+  // i.e. every CI run — with "Failed to fetch dynamically imported module" as
+  // the optimized react shim is re-hashed out from under an in-flight import).
+  // `react-dom` (via `createPortal`) and `motion/react` (drag/AnimatePresence)
+  // both first enter the story graph through `BottomSheet`, so declare them
+  // here alongside the setup-file deps.
   optimizeDeps: {
-    include: ['@storybook/nextjs-vite', 'storybook/test'],
+    include: ['@storybook/nextjs-vite', 'storybook/test', 'react-dom', 'motion/react'],
   },
   test: {
     name: 'storybook',

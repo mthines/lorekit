@@ -20,6 +20,9 @@
  * ## URL state
  * - `scope` param:    selected scope (null → all scopes). Shareable.
  * - `q` param:        search query, debounced write. Shareable.
+ * - `tags` param:     selected labels (JSON array). A memory must carry ALL of
+ *   them. Server-side, shareable — "every perf regression we've learned" is a
+ *   link you can paste to a teammate.
  * - `range` param:    date range, shareable. Scoped to /lore. Shared by the
  *   heatmap click, scope view, and feed view — one param drives all three.
  * - `view` param:     'scope' | 'time'. Persisted in URL so a shared link
@@ -40,7 +43,9 @@ import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDebouncedUrlState } from '@/lib/hooks/useDebouncedUrlState';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
-import { useMemories } from '@/lib/queries/lore';
+import { useMemories, useTagCatalog } from '@/lib/queries/lore';
+import { normalizeTags, toggleTag, type TagCount } from '@/lib/tag-filter';
+import { LabelFilter } from './LabelFilter';
 import { useReducedMotion } from 'motion/react';
 import type { LessonEntry } from './LessonCard';
 import { ContributionHeatmap } from '@/components/activity/ContributionHeatmap';
@@ -48,6 +53,10 @@ import { ActivityFeed } from '@/components/activity/ActivityFeed';
 import { filterByOwnership, type OwnerFilter } from '@/lib/org-ui';
 
 type ViewMode = 'scope' | 'time';
+
+// Module-scoped so the reference is stable across renders — `useUrlState`
+// documents that mutable defaults must be memoized at the call site.
+const NO_TAGS: string[] = [];
 
 // ── Ownership filter bar ──────────────────────────────────────────────────────
 // "Owner: All · Personal · {org}" per ux-design §4 — only rendered when at least
@@ -124,19 +133,27 @@ function OwnershipFilterBar({
   );
 }
 
-// ── Filter bar (search + date + archived) ─────────────────────────────────────
+// ── Filter bar (search + labels + date + archived) ────────────────────────────
 // Shared by both tabs and both breakpoints. `variant` carries the only two
 // differences between the desktop and mobile renders: the desktop bar sits in a
 // bordered header (`border-b`/padding), uses smaller type + the page `bg`, and
-// shows an "Archived" text label + hover affordances; the mobile bar is a bare
-// row with an icon-only archived toggle on the raised `bg`. Everything else —
-// the search input, the date picker, the toggle behaviour — is identical, so it
+// shows text labels + hover affordances; the mobile bar is a bare row with
+// icon-only toggles on the raised `bg`. Everything else — the search input, the
+// label picker, the date picker, the toggle behaviour — is identical, so it
 // lives here once instead of near-verbatim in each breakpoint branch.
+//
+// The label picker is a popover rather than an expanded chip row: labels are
+// the one dimension here that grows without bound, so an inline bar would push
+// the results it filters below the fold. See `LabelFilter`.
 
 function FilterBar({
   variant,
   search,
   onSearchChange,
+  tagCatalog,
+  selectedTags,
+  onToggleTag,
+  onClearTags,
   range,
   onRangeChange,
   showArchived,
@@ -145,6 +162,10 @@ function FilterBar({
   variant: 'desktop' | 'mobile';
   search: string;
   onSearchChange: (value: string) => void;
+  tagCatalog: TagCount[];
+  selectedTags: string[];
+  onToggleTag: (tag: string) => void;
+  onClearTags: () => void;
   range: DateRange | null;
   onRangeChange: (range: DateRange | null) => void;
   showArchived: boolean;
@@ -168,6 +189,14 @@ function FilterBar({
           ].join(' ')}
         />
       </div>
+      <LabelFilter
+        catalog={tagCatalog}
+        selected={selectedTags}
+        onToggle={onToggleTag}
+        onClear={onClearTags}
+        variant={variant}
+        className="shrink-0"
+      />
       <DateRangePicker value={range} onChange={onRangeChange} className="shrink-0" />
       <button
         type="button"
@@ -234,6 +263,17 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     cleanOnPathname: '/lore',
   });
 
+  // URL-backed label selection — server-side filtered (AND across labels), so
+  // it belongs in the query, not in a client-side narrowing like `owner`.
+  const [rawSelectedTags, setSelectedTags] = useUrlState<string[]>('tags', NO_TAGS, {
+    cleanOnPathname: '/lore',
+  });
+
+  // The `tags` param is user-editable text, so it can arrive as anything JSON
+  // can express. Normalizing once here means every consumer below (the query,
+  // the chips, the empty-state copy) reads a real `string[]`.
+  const selectedTags = useMemo(() => normalizeTags(rawSelectedTags), [rawSelectedTags]);
+
   // URL-backed view mode so a shared link lands on the right tab.
   const [view, setView] = useUrlState<ViewMode>('view', 'scope');
 
@@ -258,7 +298,13 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     hasNextPage,
     isFetchingNextPage,
     fetchNextPage,
-  } = useMemories({ scope: selectedScope, search: committedSearch, range, showArchived });
+  } = useMemories({ scope: selectedScope, search: committedSearch, range, tags: selectedTags, showArchived });
+
+  // Filter-independent label catalog (see `useTagCatalog`) — the chips must not
+  // shrink to whatever the current filter happens to have loaded.
+  // Archived-aware: the archived view is a different population, so it gets
+  // its own counts rather than the active view's.
+  const { data: tagCatalog } = useTagCatalog(showArchived);
 
   const lessons = useMemo(
     () => data?.pages.flatMap((page) => page.rows) ?? [],
@@ -285,7 +331,22 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   );
 
   const isFiltered =
-    search.trim() !== '' || range !== null || showArchived || ownerFilter !== 'all';
+    search.trim() !== '' ||
+    range !== null ||
+    showArchived ||
+    ownerFilter !== 'all' ||
+    selectedTags.length > 0;
+
+  function handleToggleTag(tag: string) {
+    setSelectedTags((prev) => toggleTag(prev, tag));
+    // Close the sidebar — the open lesson may not carry the new label set.
+    closeLesson();
+  }
+
+  function handleClearTags() {
+    setSelectedTags(NO_TAGS);
+    closeLesson();
+  }
 
   function handleToggleArchived() {
     setShowArchived(!showArchived);
@@ -410,7 +471,9 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             showArchived
               ? 'Archive a memory from its detail panel to see it here.'
               : isFiltered
-                ? 'Try a different search term or date range.'
+                ? selectedTags.length > 1
+                  ? 'No memory carries all of the selected labels — try removing one.'
+                  : 'Try a different search term, label, or date range.'
                 : 'Memories will appear here once your agents start writing.'
           }
         />
@@ -549,6 +612,10 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             variant="desktop"
             search={search}
             onSearchChange={setSearch}
+            tagCatalog={tagCatalog ?? []}
+            selectedTags={selectedTags}
+            onToggleTag={handleToggleTag}
+            onClearTags={handleClearTags}
             range={range}
             onRangeChange={setRange}
             showArchived={showArchived}
@@ -597,6 +664,10 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           variant="mobile"
           search={search}
           onSearchChange={setSearch}
+          tagCatalog={tagCatalog ?? []}
+          selectedTags={selectedTags}
+          onToggleTag={handleToggleTag}
+          onClearTags={handleClearTags}
           range={range}
           onRangeChange={setRange}
           showArchived={showArchived}

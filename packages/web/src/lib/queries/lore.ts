@@ -9,6 +9,7 @@ import type { ScopeNode } from '@/components/lore/ScopeTree';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { listMemories, archiveLesson, restoreLesson, type MemoryFilters, type MemoryPage } from '@/lib/lore';
 import type { DateRange } from '@/components/ui/DateRangePicker';
+import { normalizeTags, tallyTags, type TagCount } from '@/lib/tag-filter';
 
 export interface LoreData {
   scopes: ScopeNode[];
@@ -51,6 +52,45 @@ async function fetchScopes(): Promise<ScopeNode[]> {
         count,
       };
     });
+}
+
+// ---------------------------------------------------------------------------
+// Label (tag) catalog — powers the Explorer's label filter bar.
+// Deliberately a SEPARATE query from the lesson list: the list is server-side
+// filtered, so deriving the catalog from the loaded pages would make the
+// available labels shrink as soon as one is picked — you could narrow but never
+// widen or switch. The catalog is filter-independent, exactly like the scope
+// tree, and shares its `select('…')`-plus-client-side-tally shape (and its
+// documented PostgREST row-cap caveat, see `lorekit_memory_scopes`).
+//
+// It IS however archived-aware: the bar renders in both the active and the
+// archived view, and `listMemories` partitions on `archived_at`, so a catalog
+// pinned to active rows would describe the wrong population in archived mode —
+// wrong counts, and archive-only labels missing from their own filter.
+// ---------------------------------------------------------------------------
+
+async function fetchTagCatalog(showArchived: boolean): Promise<TagCount[]> {
+  const supabase = createClient();
+
+  const base = supabase.from('memories').select('tags');
+  const { data, error } = await (showArchived
+    ? base.not('archived_at', 'is', null)
+    : base.is('archived_at', null));
+
+  if (error || !data) return [];
+
+  return tallyTags(data as { tags: string[] | null }[]);
+}
+
+export function useTagCatalog(showArchived = false) {
+  return useQuery<TagCount[]>({
+    // Keyed on the partition it describes — flipping "Archived" swaps the
+    // catalog instead of reusing the other view's counts.
+    queryKey: ['lore-tags', showArchived],
+    queryFn: () => fetchTagCatalog(showArchived),
+    // Matches the scope tree: read-heavy, changes only when an agent writes.
+    staleTime: 90_000,
+  });
 }
 
 export function useScopeTree() {
@@ -157,6 +197,8 @@ export interface UseMemoriesFilters {
   search: string;
   /** Date range filter on created_at. */
   range: DateRange | null;
+  /** Labels a memory must ALL carry. Empty means no label filter. */
+  tags?: string[];
   /** When true, fetches archived memories instead of active ones. */
   showArchived?: boolean;
 }
@@ -170,12 +212,23 @@ export interface UseMemoriesFilters {
  */
 export function useMemories(filters: UseMemoriesFilters) {
   return useInfiniteQuery<MemoryPage>({
-    queryKey: ['memories', filters.scope, filters.search, filters.range, filters.showArchived ?? false],
+    // `tags` is APPENDED, never inserted: the archive mutations select archived
+    // vs active pages by `queryKey[4]`, so the first five segments are a fixed
+    // contract. Extend this key at the end only.
+    queryKey: [
+      'memories',
+      filters.scope,
+      filters.search,
+      filters.range,
+      filters.showArchived ?? false,
+      normalizeTags(filters.tags),
+    ],
     queryFn: ({ pageParam }) => {
       const args: MemoryFilters = {
         scope: filters.scope ?? undefined,
         search: filters.search || undefined,
         range: filters.range,
+        tags: normalizeTags(filters.tags),
         cursor: pageParam as string | null,
         showArchived: filters.showArchived,
       };
@@ -272,8 +325,10 @@ export function useArchiveLesson() {
       }
     },
     onSettled: () => {
-      // Whether success or failure, sync the scope tree and legacy lore cache.
+      // Whether success or failure, sync the scope tree, the label catalog,
+      // and the legacy lore cache.
       void queryClient.invalidateQueries({ queryKey: ['lore-scopes'] });
+      void queryClient.invalidateQueries({ queryKey: ['lore-tags'] });
       void queryClient.invalidateQueries({ queryKey: ['lore'] });
       // Invalidate archived list so it picks up the newly archived row.
       void queryClient.invalidateQueries({
@@ -310,6 +365,7 @@ export function useRestoreLesson() {
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ['lore-scopes'] });
+      void queryClient.invalidateQueries({ queryKey: ['lore-tags'] });
       void queryClient.invalidateQueries({ queryKey: ['lore'] });
       // Invalidate active list so the restored memory reappears.
       void queryClient.invalidateQueries({
