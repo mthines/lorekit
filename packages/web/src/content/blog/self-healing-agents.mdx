@@ -3,7 +3,7 @@ title: "Self-healing agents are just a loop you forgot to build"
 description: "Self-healing and self-improving agents sound like an ML problem. They're not. It's a plain read-fail-write loop over shared memory — no fine-tuning, no new model call. Here's how LoreKit does it, guardrails and all."
 date: "2026-08-01"
 author: "Mads Thines"
-readingMinutes: 8
+readingMinutes: 9
 tags: ["self-healing", "self-improving", "agents", "memory", "hooks"]
 order: 1
 keywords: ["self-healing agents", "self-improving agents", "agent memory", "lorekit", "mcp", "hooks", "scope precedence", "retrospective", "loop lessons", "entrenchment"]
@@ -76,6 +76,14 @@ memory.write {
 
 Next time a Supabase call comes back empty, that lesson is already on the table before the agent talks itself into the wrong answer. The ten minutes never happen.
 
+## You reuse it when you build, not just when you break
+
+Writing on failure is only half the loop. The other half is quieter and runs far more often: **reading**. Every run starts by pulling the lessons relevant to what you're about to do — and "about to do" includes shipping a new feature, not just cleaning up after a broken one.
+
+Here's that in practice. The [autonomous-workflow skill](https://github.com/mthines/agent-skills/tree/main/skills/workflow/autonomous-workflow) — a full plan → build → test → PR loop for shipping a feature end to end — reads its `loop::aw-lessons` bucket *before* it writes the plan. That's the same `aw-lessons` bucket from the `memory.write` above. So the RLS lesson your agent wrote the day it got burned becomes a constraint on the plan for the next feature that touches Supabase — before a single line of code exists. The scar turns into guidance.
+
+That's the "improving" half of self-improving. You're not only healing from failures; you're building on what you already worked out, every time you build.
+
 ## Memory has a gradient
 
 Not every lesson deserves to follow you everywhere. "RLS returns 200 with an empty array" is a Supabase truth — it belongs to this repo. "Always run the typecheck before you claim you're done" is a you-truth — it belongs everywhere.
@@ -130,10 +138,12 @@ Self-healing here means a deterministic loop that gets measurably less dumb over
 You don't need the hosted server to feel this. Start local:
 
 ```bash
-npx @lorekit/cli install     # scaffolds the memory skill, hooks, and MCP server
+npx @lorekit/cli install     # scaffolds the memory + setup skills, hooks, and MCP server
 npx @lorekit/cli doctor      # confirm the loop is wired
 npx @lorekit/cli tree        # see exactly which lesson wins per scope, before a run
 ```
+
+That one command drops in two skills, not one: `lorekit-memory` does the runtime read and write, and `lorekit-setup` wires this whole two-tier loop — guardrails and all — into a skill, workflow, or agent of your own. It's the shortest path to the same two-tier setup the autonomous-workflow above runs.
 
 That gives your agent the read-fail-write loop against a local store — no account, no server, no config. When you want it to compound across sessions and teammates, point it at the hosted store and turn on org sharing.
 
