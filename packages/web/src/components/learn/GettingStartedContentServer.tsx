@@ -21,7 +21,9 @@ export async function GettingStartedContentServer({ isPublic }: { isPublic?: boo
   const [json, yaml, write, doctor] = await Promise.all([
     highlightToHtml(JSON_SNIPPET, 'json'),
     highlightToHtml(YAML_SNIPPET, 'yaml'),
-    highlightToHtml(WRITE_SNIPPET, 'json'),
+    // `ts`, not `json`: WRITE_SNIPPET is an MCP tool call with unquoted keys, which
+    // the JSON grammar tags as invalid and the theme then renders error-red.
+    highlightToHtml(WRITE_SNIPPET, 'ts'),
     highlightToHtml(DOCTOR_CMD, 'bash'),
   ]);
 
