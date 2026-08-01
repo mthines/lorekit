@@ -114,7 +114,11 @@ from `auth.uid()` + RLS.
 
 `packages/web/src/app/api/auth/callback/route.ts` threads the params:
 
-1. OAuth `code` is exchanged first (so the session exists).
+1. A **Supabase** auth `code` / `token_hash` is exchanged first (so the session
+   exists). A GitHub App Setup-URL return is **not**: its `code` is GitHub's, so
+   `classifyAuthCallback` reports `none` for it (see `isGithubAppSetupReturn` in
+   `packages/web/src/lib/auth-callback-params.ts`) and the route goes straight to
+   step 2 on the session the browser already has.
 2. If `installation_id` is present, `handleSetupReturn`
    (`packages/web/src/lib/github-installations.ts`) records the installation
    **immediately**, decoupled from the webhook delivery and from
@@ -187,8 +191,9 @@ are completed:
   - If **"Request user authorization (OAuth) during installation"** is enabled
     (recommended), GitHub **disables the separate "Setup URL" field** — the
     callback URL above serves both roles, and the post-install redirect carries
-    `code` + `installation_id` together (`auth/callback/route.ts` already
-    exchanges the code first, then links). Nothing to set in "Setup URL".
+    `code` + `installation_id` together (`auth/callback/route.ts` recognises that
+    shape and links the installation *without* exchanging GitHub's `code`).
+    Nothing to set in "Setup URL".
   - If OAuth-during-install is **off**, set **"Setup URL (optional)"** to the
     same `https://lorekit.io/api/auth/callback` instead.
 - **Enable "Redirect on update".** Without it, re-configuring an
