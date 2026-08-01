@@ -58,8 +58,11 @@ export async function GET(request: NextRequest) {
       'auth.callback.next': next,
     },
     async (span) => {
-      // 1. Establish the session — always attempted first so it exists before
-      //    the GitHub App association below.
+      // 1. Establish the session, when this redirect actually carries Supabase
+      //    auth params. A GitHub App Setup-URL return does not — its `code` is
+      //    GitHub's, so `classifyAuthCallback` reports `none` for it (see
+      //    `isGithubAppSetupReturn`) and it falls straight through to the
+      //    association below, on the session the browser already has.
       let sessionEstablished = false;
 
       if (callback.kind === 'error') {
