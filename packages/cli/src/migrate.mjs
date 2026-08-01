@@ -233,24 +233,29 @@ export function sameContent(dest, src) {
 // `[{ scope, count }]` array; remote returns `{ ok, scopes }`), so normalize it.
 // Returns `{ ok, entries, error }`.
 async function gatherStore(store, onlyScope = null) {
-  const res = await store.listScopes();
-  let scopes = Array.isArray(res) ? res : res && res.ok ? res.scopes : null;
-  if (!scopes) {
-    return { ok: false, entries: [], error: (res && res.error && res.error.message) || 'could not list scopes' };
+  // With --scope we already know the one scope to read, so skip the listScopes
+  // enumeration entirely (a round-trip for a remote store); otherwise discover
+  // every scope the store holds.
+  let scopeNames;
+  if (onlyScope) {
+    scopeNames = [onlyScope];
+  } else {
+    const res = await store.listScopes();
+    const scopes = Array.isArray(res) ? res : res && res.ok ? res.scopes : null;
+    if (!scopes) {
+      return { ok: false, entries: [], error: (res && res.error && res.error.message) || 'could not list scopes' };
+    }
+    scopeNames = scopes.map((s) => s.scope);
   }
-  // With --scope, list only the one requested scope rather than every scope of
-  // the source (each skipped scope is a network round-trip for a remote source).
-  if (onlyScope) scopes = scopes.filter((s) => s.scope === onlyScope);
   const entries = [];
-  for (const { scope } of scopes) {
-    // The remote read is capped at 100 rows/request, so page it by cursor until
-    // the server reports no more. The local store has no cap — one uncapped call
-    // returns every row (passing a limit would slice it), so it never paginates.
+  for (const scope of scopeNames) {
+    // Page by cursor until the store reports no more. The remote caps a read at
+    // 100 rows/request and continues via nextCursor; the local store returns
+    // every row in one call and reports no `hasMore`, so the loop runs once —
+    // the same call works for both, no per-store branch.
     let cursor = null;
     do {
-      const listed = store.mode === 'remote'
-        ? await store.list({ scope, limit: 100, cursor })
-        : await store.list({ scope });
+      const listed = await store.list({ scope, cursor });
       if (!listed.ok) {
         return { ok: false, entries: [], error: (listed.error && listed.error.message) || `could not list ${scope}` };
       }
@@ -266,24 +271,9 @@ async function gatherStore(store, onlyScope = null) {
 // destinations use write() — the server stamps its own `updated`, and the
 // absolute expiry is converted to a remaining ttl_days.
 async function putToStore(dest, destKind, f, now) {
-  if (destKind === 'local') {
-    return dest.putEntry({
-      scope: f.scope,
-      key: f.key,
-      value: f.value,
-      tags: f.tags,
-      source_agent: f.source_agent,
-      trigger: f.trigger,
-      created: f.created,
-      updated: f.updated,
-      archived_at: null,
-      expires_at: f.expires_at,
-      origin_repo: f.origin_repo,
-      origin_branch: f.origin_branch,
-      origin_commit: f.origin_commit,
-      origin_pr: f.origin_pr,
-    });
-  }
+  // `f` is a full readFields() record and putEntry stores it verbatim (defaulting
+  // the absent archived_at to null), so the fields are preserved exactly.
+  if (destKind === 'local') return dest.putEntry(f);
   return dest.write({
     scope: f.scope,
     key: f.key,
@@ -354,12 +344,22 @@ async function migrateCrossStore(args, root, from, to) {
   const entries = gathered.entries;
   log(`  found: ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}\n`);
 
+  // Snapshot the destination ONCE (same paginated gather), keyed by scope::key,
+  // rather than a per-entry read — one page-sized read per scope instead of one
+  // network round-trip per source entry. scope+key is unique, so an in-memory
+  // lookup classifies add/update/noop exactly as a live read would.
+  const destSnap = await gatherStore(destStore, onlyScope);
+  if (!destSnap.ok) {
+    err(`\n${c.red('migrate:')} could not read the ${to} store: ${destSnap.error}`);
+    return 1;
+  }
+  const destByKey = new Map(destSnap.entries.map((e) => [`${e.scope}\x00${e.key}`, e]));
+
   const now = new Date();
   const totals = { add: 0, update: 0, noop: 0, failed: 0 };
   const byScope = new Map();
   for (const f of entries) {
-    const existingRes = await destStore.read({ scope: f.scope, key: f.key });
-    const existing = existingRes && existingRes.ok ? existingRes.entry : null;
+    const existing = destByKey.get(`${f.scope}\x00${f.key}`) || null;
     let verdict;
     if (!existing) verdict = 'add';
     else if (sameContent(existing, f)) verdict = 'noop';
