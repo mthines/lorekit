@@ -1,0 +1,142 @@
+---
+title: "Self-healing agents are just a loop you forgot to build"
+description: "Self-healing and self-improving agents sound like an ML problem. They're not. It's a plain read-fail-write loop over shared memory — no fine-tuning, no new model call. Here's how LoreKit does it, guardrails and all."
+date: "2026-08-01"
+author: "Mads Thines"
+readingMinutes: 8
+tags: ["self-healing", "self-improving", "agents", "memory", "hooks"]
+order: 1
+keywords: ["self-healing agents", "self-improving agents", "agent memory", "lorekit", "mcp", "hooks", "scope precedence", "retrospective", "loop lessons", "entrenchment"]
+---
+
+## Your agent has amnesia
+
+Here's a bug you've already paid for, probably more than once.
+
+Your agent runs a Supabase query, gets back `200 OK` and an empty array, and confidently concludes the row doesn't exist. It doesn't. RLS silently filtered it out. The agent burns ten minutes going down the wrong path, you nudge it, it recovers.
+
+Next session? Same query. Same empty array. Same wrong conclusion. Same ten minutes. 😐
+
+It's not a dumb agent. It's an agent with anterograde amnesia — every session starts from zero, so every lesson dies at the end of the conversation that earned it. You're not paying for one mistake. You're paying rent on it, forever.
+
+"Self-healing agents" and "self-improving agents" are the shiny words for fixing this. And they get pitched like an ML problem — fine-tune the model, train on your traces, wait a week, hope. 🙄
+
+It's not an ML problem. It's a loop you forgot to build.
+
+## Self-healing isn't magic — it's read → fail → write
+
+Strip the mystique away and a self-improving agent is three verbs:
+
+- **Read** what you learned last time, at the start of the run.
+- **Fail** — hit friction, a stuck loop, a gate that should've caught something.
+- **Write** the lesson down so the next run reads it.
+
+That's the whole thing. No new model call. No fine-tune. No embeddings pipeline you have to babysit.
+
+LoreKit runs that loop through deterministic lifecycle hooks — the same `SessionStart` / tool-result / `Stop` events your coding agent already fires. On `SessionStart` it injects the lessons relevant to where you are. When a tool call fails it looks up the lessons that match the failure and drops them in — *before* the agent retries. On `Stop` it nudges a short retrospective.
+
+The important detail — the one that makes this shippable instead of scary — is that **every hook exits 0, best-effort, and never blocks the host**. Memory is down? No matches? Store not connected? The hook shrugs and the agent runs exactly as it did before. Self-healing that can't break the patient. 🩹
+
+## The failure is the trigger
+
+Most memory systems write on success. You finish something, you save a summary, you move on. Fine — but success is the boring case. Nobody rediscovers how they shipped the thing that worked.
+
+The interesting move is writing on **failure**. That's where the reusable knowledge actually lives.
+
+So the trigger is a failing tool call. LoreKit reads the tool result and asks a deliberately conservative question — did this actually fail?
+
+```javascript
+// packages/cli/src/core/failure.mjs — framework-agnostic, conservative on purpose
+export function isFailure(toolName, response) {
+  if (!response || typeof response !== 'object') return false;
+  if (response.is_error === true || response.isError === true) return true;
+  if (response.interrupted === true) return false; // user abort, not a lesson
+  for (const field of ['exit_code', 'exitCode', 'code', 'returnCode']) {
+    const n = num(response[field]);
+    if (n !== null) return n !== 0;
+  }
+  if (typeof response.status === 'string') return /^(error|fail(ed)?)$/i.test(response.status);
+  return false;
+}
+```
+
+Conservative on purpose — a false "you failed" nags the agent for no reason, so the bar to trigger is high. When it does trigger, LoreKit distils search terms from the tool name and the error text, pulls the matching prior lessons (capped at 3, so it's a hint, not a wall of text), and injects them right there. Then it nudges: *write down what you just learned.*
+
+The agent that hit the RLS empty-array trap once writes this:
+
+```json
+memory.write {
+  scope:   "repo::mthines/lorekit",
+  key:     "aw-lessons::supabase-rls-debugging",
+  value:   "RLS failures return 200 with an empty array, not a 4xx.\nAlways check .data.length before concluding the query returned no rows.",
+  tags:    ["loop::aw-lessons", "source::stuck-loop"],
+  trigger: "stuck-loop"
+}
+```
+
+Next time a Supabase call comes back empty, that lesson is already on the table before the agent talks itself into the wrong answer. The ten minutes never happen. 🙌
+
+## Memory has a gradient
+
+Not every lesson deserves to follow you everywhere. "RLS returns 200 with an empty array" is a Supabase truth — it belongs to this repo. "Always run the typecheck before you claim you're done" is a you-truth — it belongs everywhere.
+
+LoreKit gives memory a gradient through **scopes**, resolved most-specific-first:
+
+```text
+project::lorekit                          ← this working directory
+branch::mthines/lorekit::feat/new-cache   ← this branch only
+repo::mthines/lorekit                     ← this repository
+global                                    ← follows you across every repo
+```
+
+On a read, the narrow scope wins. First-seen wins — a `branch::` lesson shadows the `repo::` one with the same key, which shadows `global`. So an experiment on a feature branch can hold an opinion that contradicts the repo-wide rule, without leaking that opinion into `main`.
+
+And lessons **climb**. A note starts life on a branch, proves itself, gets promoted to repo scope after the branch merges — then the branch copy gets deleted. Knowledge earns its way up the gradient instead of being born global and wrong.
+
+## The dangerous part: not entrenching your own mistakes
+
+Here's where most "self-improving agent" posts stop, right before the interesting part. Because a loop that writes down its own conclusions and reads them back is *also* a loop that can convince itself of something false and then defend it forever. "Approach X always fails" — stored, obeyed, never re-tested. That's not learning. That's a superstition with a database.
+
+So the actual engineering isn't the writing. It's the guardrails on the writing. LoreKit's self-improvement loop ships five, and they're the point:
+
+1. **Lessons are advisory, never auto-applied.** A lesson biases a run. It can *never* silently disable a gate, skip a step, or lower a limit. The only path from a lesson to changed behaviour runs through a human.
+2. **Recurrence gates promotion, not a single run.** A lesson hardens into a permanent rule only after it's recurred — `seen_count >= 3`. One bad run can't rewrite anything.
+3. **Everything expires.** ~90 days from the last time it was seen. Stale beliefs decay on their own instead of calcifying. A lesson nobody's needed in three months should stop shouting.
+4. **Contradiction is surfaced, not silently overwritten.** The dedup search finds the prior lesson first, so a genuine reversal is a decision someone makes — not an accident.
+5. **The privacy pre-flight is never skipped.** A candidate lesson carrying a secret, token, or PII is dropped, not stored. Stricter for `repo::` writes, because those are team-visible.
+
+Two tiers, one gate between them: a **fast** episodic tier (cheap LoreKit lessons, advisory) and a **slow** procedural tier (a real edit to the agent's own rules, human-reviewed). A lesson only crosses from fast to slow once recurrence proves it's real. That gate is the difference between an agent that gets wiser and an agent that gets weirder.
+
+## It compounds across your team
+
+Everything so far is one agent getting better at its own job. Point the same loop at an org and it stops being personal.
+
+One engineer's agent learns the RLS gotcha on a Tuesday. Because that lesson lives on a shared, org-owned scope, **every teammate's agent knows it on Wednesday** — nobody re-derives it, nobody gets paged for it twice. Bind a repo scope to an org once and member writes under it route to the shared store automatically, no `org` field on every call.
+
+Your deploy checklist, your incident runbook, the three things that always break the staging smoke test — they stop living in one person's head and one person's agent, and start being context every agent on the team reads before it touches the code. Self-healing at one machine is convenient. Self-healing across a team is a moat. 💪
+
+## What it doesn't do
+
+Let me be honest about the edges, because "self-healing" oversells if you let it.
+
+This isn't self-awareness. The matcher is a literal, case-insensitive substring match — not a semantic model that *understands* your failure. It's fast, deterministic, and dependency-free, and that's a deliberate trade: no embeddings drift, no surprise inference bill, but it won't connect two lessons that describe the same thing in different words. You get out roughly the discipline you put into keys and tags.
+
+And one real caveat: the offline store keys `project::` scope by the working directory's **basename**. Two unrelated repos that happen to sit in folders with the same name can cross-surface each other's project-scoped lessons offline. The hosted store scopes by the real project name and isn't affected — but if you're local-only, prefer `repo::` for anything that matters. I'd rather tell you that than let you find it at 2am. 🫠
+
+Self-healing here means a deterministic loop that gets measurably less dumb over time — not a mind. That's the honest version, and honestly it's the useful one.
+
+## Try it — it's one command offline
+
+You don't need the hosted server to feel this. Start local:
+
+```bash
+npx @lorekit/cli install     # scaffolds the memory skill, hooks, and MCP server
+npx @lorekit/cli doctor      # confirm the loop is wired
+npx @lorekit/cli tree        # see exactly which lesson wins per scope, before a run
+```
+
+That gives your agent the read-fail-write loop against a local store — no account, no server, no config. When you want it to compound across sessions and teammates, point it at the hosted store and turn on org sharing.
+
+Then go break something. 😄 The next time your agent hits the same wall, watch it walk around it instead.
+
+Want to give your agents a memory? Start with `npx @lorekit/cli install`, and read the [self-improvement loop guide](/docs/use-cases) for the full wiring. 👇
