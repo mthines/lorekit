@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, motion, useDragControls } from 'motion/react';
 import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer } from 'lucide-react';
 import { Controller, useWatch, type UseFormReturn } from 'react-hook-form';
 import { useQueryClient } from '@tanstack/react-query';
@@ -16,6 +16,8 @@ import type { LessonEntry } from './LessonCard';
 import { updateLesson } from '@/lib/lore';
 import { listMemberIdentities } from '@/lib/org-members';
 import { scopeRepoUrl } from '@/lib/scope';
+import { useMediaQuery } from '@/lib/hooks/useMediaQuery';
+import { shouldDismissSheet } from '@/components/ui/bottom-sheet';
 import { toast } from 'sonner';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -25,6 +27,13 @@ interface LessonDetailSheetProps {
   onClose: () => void;
   /** Called after a successful archive, restore, or save so the parent can refresh its list. */
   onMutated?: () => void;
+  /**
+   * Presentation: a right-side drawer (`drawer`) or a bottom sheet (`sheet`).
+   * `auto` (default) picks the sheet below the `md` breakpoint and the drawer
+   * above it. An explicit value overrides the breakpoint — used by Storybook to
+   * snapshot each presentation deterministically.
+   */
+  layout?: 'auto' | 'drawer' | 'sheet';
 }
 
 interface LessonFormValues {
@@ -125,9 +134,14 @@ function ExpiryControl({ currentExpiresAt, form, disabled }: ExpiryControlProps)
   );
 }
 
-export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSheetProps) {
+export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' }: LessonDetailSheetProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const queryClient = useQueryClient();
+  // Below `md` the panel is a bottom sheet; at/above it a right-side drawer.
+  // An explicit `layout` overrides the breakpoint (Storybook).
+  const belowMd = useMediaQuery('(max-width: 767px)');
+  const isSheet = layout === 'sheet' || (layout === 'auto' && belowMd);
+  const dragControls = useDragControls();
   const archiveMutation = useArchiveLesson();
   const restoreMutation = useRestoreLesson();
   const isPending = archiveMutation.isPending || restoreMutation.isPending;
@@ -275,6 +289,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
           {/* Backdrop */}
           <motion.div
             key="backdrop"
+            data-testid="lesson-sheet-backdrop"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -284,18 +299,57 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
             aria-hidden
           />
 
-          {/* Panel — slides in from right */}
+          {/* Panel — a right-side drawer on desktop, a native-style bottom sheet
+              on mobile (same convention as the Explorer's filters; the sheet
+              geometry + drag-to-close reuse `shouldDismissSheet`, but the panel
+              hosts a pinned footer, which the single-scroll `BottomSheet` body
+              can't, so it adopts the geometry directly rather than nesting). */}
           <motion.aside
             key="panel"
-            initial={{ x: '100%', opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: '100%', opacity: 0 }}
-            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed inset-y-0 right-0 z-50 flex w-full max-w-lg flex-col border-l border-[var(--color-border)] bg-[var(--color-bg-raised)] shadow-2xl"
+            drag={isSheet ? 'y' : false}
+            dragControls={dragControls}
+            dragListener={false}
+            dragConstraints={{ top: 0, bottom: 0 }}
+            dragElastic={{ top: 0, bottom: 0.7 }}
+            onDragEnd={
+              isSheet
+                ? (_e, info) => {
+                    if (shouldDismissSheet({ offsetY: info.offset.y, velocityY: info.velocity.y })) {
+                      onClose();
+                    }
+                  }
+                : undefined
+            }
+            initial={isSheet ? { y: '100%' } : { x: '100%', opacity: 0 }}
+            animate={isSheet ? { y: 0 } : { x: 0, opacity: 1 }}
+            exit={isSheet ? { y: '100%' } : { x: '100%', opacity: 0 }}
+            transition={
+              isSheet
+                ? { type: 'spring', damping: 34, stiffness: 340 }
+                : { duration: 0.25, ease: [0.16, 1, 0.3, 1] }
+            }
+            className={[
+              'fixed z-50 flex flex-col bg-[var(--color-bg-raised)] shadow-2xl',
+              isSheet
+                ? 'inset-x-0 bottom-0 max-h-[90vh] rounded-t-2xl border-t border-[var(--color-border)] pb-[env(safe-area-inset-bottom)]'
+                : 'inset-y-0 right-0 w-full max-w-lg border-l border-[var(--color-border)]',
+            ].join(' ')}
             role="dialog"
             aria-modal="true"
             aria-label="Memory detail"
           >
+            {/* Drag handle — bottom sheet only. Grabbing it starts the drag; the
+                body scrolls independently (dragListener is off). */}
+            {isSheet && (
+              <div
+                data-testid="lesson-sheet-drag-handle"
+                onPointerDown={(e) => dragControls.start(e)}
+                className="flex shrink-0 cursor-grab touch-none justify-center pb-1 pt-2.5 active:cursor-grabbing"
+              >
+                <span aria-hidden className="h-1 w-9 rounded-full bg-[var(--color-border)]" />
+              </div>
+            )}
+
             {/* Header */}
             <div className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] p-5">
               <div className="flex flex-col gap-1.5">
@@ -339,7 +393,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated }: LessonDetailSh
             {/* Body — scrollable */}
             <form
               onSubmit={handleSubmit}
-              className="flex flex-1 flex-col overflow-hidden"
+              className="flex min-h-0 flex-1 flex-col overflow-hidden"
               aria-label="Edit memory"
             >
               <div className="group flex flex-1 flex-col gap-5 overflow-y-auto p-5">
