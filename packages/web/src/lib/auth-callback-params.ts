@@ -39,6 +39,26 @@ export type EmailOtpType = (typeof EMAIL_OTP_TYPES)[number];
 export type AuthCallbackKind = 'code' | 'token_hash' | 'error' | 'none';
 
 /**
+ * Is this redirect a GitHub App Setup-URL return rather than a Supabase auth
+ * redirect?
+ *
+ * GitHub bounces the user back to the App's Setup URL with
+ * `?installation_id=…&setup_action=install` and — when the install also
+ * completed GitHub's own OAuth — its own `?code=…`. That `code` is a GitHub
+ * OAuth code; it is NOT a Supabase PKCE code and there is no Supabase code
+ * verifier in this browser's storage to exchange it against. Handing it to
+ * `exchangeCodeForSession` always fails with `pkce_code_verifier_not_found`.
+ *
+ * Both params are required: `setup_action` accompanies `installation_id` per
+ * the GitHub App Setup-URL spec, and requiring the pair keeps a stray
+ * `?installation_id=` on a genuine Supabase redirect from suppressing a real
+ * exchange.
+ */
+export function isGithubAppSetupReturn(params: URLSearchParams): boolean {
+  return !!params.get('installation_id') && !!params.get('setup_action');
+}
+
+/**
  * Discriminated on `kind` so consumers narrow to exactly the fields that shape
  * carries — no optional-field juggling and no non-null assertions at the call
  * site.
@@ -60,6 +80,11 @@ function isEmailOtpType(value: string | null): value is EmailOtpType {
  * what else is present, and a `token_hash` is preferred over a `code` because
  * verifying it does not depend on this browser having started the flow.
  *
+ * A `code` that arrives on a GitHub App Setup-URL return is deliberately NOT
+ * classified as a PKCE code — see `isGithubAppSetupReturn`. It belongs to
+ * GitHub, so there is nothing here for Supabase to exchange and the callback
+ * has no session work to do.
+ *
  * Total function — anything unrecognised is `{ kind: 'none' }`.
  */
 export function classifyAuthCallback(params: URLSearchParams): AuthCallbackParams {
@@ -80,7 +105,7 @@ export function classifyAuthCallback(params: URLSearchParams): AuthCallbackParam
   }
 
   const code = params.get('code');
-  if (code) return { kind: 'code', code };
+  if (code && !isGithubAppSetupReturn(params)) return { kind: 'code', code };
 
   return { kind: 'none' };
 }

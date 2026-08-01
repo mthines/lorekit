@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   classifyAuthCallback,
   fragmentCarriesAuthResult,
+  isGithubAppSetupReturn,
   EMAIL_OTP_TYPES,
 } from './auth-callback-params';
 
@@ -69,6 +70,55 @@ describe('classifyAuthCallback', () => {
   it('returns none for an empty or unrelated query string', () => {
     expect(classifyAuthCallback(q(''))).toEqual({ kind: 'none' });
     expect(classifyAuthCallback(q('utm_source=newsletter'))).toEqual({ kind: 'none' });
+  });
+
+  // Regression: the GitHub App Setup-URL return carries GitHub's own OAuth
+  // `code`. Classifying it as PKCE sent it to `exchangeCodeForSession`, which
+  // failed with `pkce_code_verifier_not_found` and redirected the user to
+  // `/dashboard?error=…` instead of associating their installation.
+  it('does not classify a GitHub App Setup-URL code as a Supabase PKCE code', () => {
+    expect(
+      classifyAuthCallback(
+        q('code=ddecac6946df5f3899f9&installation_id=150410512&setup_action=install'),
+      ),
+    ).toEqual({ kind: 'none' });
+  });
+
+  it('still exchanges a code when only a stray installation_id is present', () => {
+    expect(classifyAuthCallback(q('code=abc&installation_id=150410512'))).toEqual({
+      kind: 'code',
+      code: 'abc',
+    });
+  });
+
+  it('still exchanges a code when only a stray setup_action is present', () => {
+    expect(classifyAuthCallback(q('code=abc&setup_action=install'))).toEqual({
+      kind: 'code',
+      code: 'abc',
+    });
+  });
+
+  it('keeps an explicit provider error terminal on a setup return', () => {
+    expect(
+      classifyAuthCallback(
+        q('error=access_denied&installation_id=150410512&setup_action=install'),
+      ),
+    ).toMatchObject({ kind: 'error', errorCode: 'access_denied' });
+  });
+});
+
+describe('isGithubAppSetupReturn', () => {
+  it('is true only when both Setup-URL params are present', () => {
+    expect(isGithubAppSetupReturn(q('installation_id=1&setup_action=install'))).toBe(true);
+    expect(isGithubAppSetupReturn(q('installation_id=1&setup_action=update'))).toBe(true);
+  });
+
+  it('is false when either param is missing or empty', () => {
+    expect(isGithubAppSetupReturn(q('installation_id=1'))).toBe(false);
+    expect(isGithubAppSetupReturn(q('setup_action=install'))).toBe(false);
+    expect(isGithubAppSetupReturn(q('installation_id=&setup_action=install'))).toBe(false);
+    expect(isGithubAppSetupReturn(q('installation_id=1&setup_action='))).toBe(false);
+    expect(isGithubAppSetupReturn(q(''))).toBe(false);
   });
 });
 
