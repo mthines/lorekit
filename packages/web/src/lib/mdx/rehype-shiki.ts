@@ -1,8 +1,9 @@
 import rehypeShiki from '@shikijs/rehype';
 import type { RehypeShikiOptions } from '@shikijs/rehype';
 
-// Derive the transformer type from the options rather than importing from `shiki`
-// (a transitive dep we don't declare) — keeps the dependency surface minimal.
+// Derive the transformer type from the options rather than importing `ShikiTransformer`
+// from `shiki` directly, so it always matches whichever `shiki` version
+// `@shikijs/rehype` resolves — even if that differs from our own declared one.
 type ShikiTransformer = NonNullable<RehypeShikiOptions['transformers']>[number];
 
 /** The single dark theme every code surface uses (the app is dark-only). */
