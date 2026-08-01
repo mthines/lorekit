@@ -95,7 +95,10 @@ containing a comma, brace, quote or backslash, all of which `memories.tags` perm
 containing a comma is unreachable over this parameter by construction (the wire format splits
 on commas); `POST /search` is the way to express one — either its `tags` array, whose JSON
 body carries the label verbatim and which goes through the same `pgArrayLiteral`, or its
-`filter` tree.
+`filter` tree. `SearchMemoriesBodySchema` requires at least one of `q`, `scopes` or `filter`
+(`packages/schemas/src/memory.ts:265`), so a `tags`-only body is a 400 `Validation failed` —
+pair the `tags` array with one of those three, or express the label through the `filter`
+tree, which satisfies the requirement on its own.
 
 Both filters are covered end-to-end in
 `packages/mcp-server/src/memories-api.integration.spec.ts` → "list filters", against a live
