@@ -118,18 +118,18 @@ export function LabelFilter({
       ?.scrollIntoView({ block: 'nearest' });
   }, [activeIndex, open]);
 
-  // Close on Escape from anywhere in the popover, not just the search input:
-  // once a click moves focus onto an option button, an input-only handler would
-  // miss it. Bound at the document level (desktop popover only — the mobile
-  // sheet owns its own Escape), mirroring DateRangePicker.
-  useEffect(() => {
-    if (!open || useSheet) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false);
+  // Close on Escape from anywhere inside the popover — the search input OR an
+  // option button a click has moved focus onto. Handled on the container in the
+  // bubble phase (not a document listener) so `stopPropagation` keeps this same
+  // Escape from ALSO reaching LessonDetailSheet's document listener and closing
+  // an open lesson behind the popover. The old input-only handler stopped that
+  // but missed Escape once focus left the input; this covers both.
+  function handleContainerKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key === 'Escape' && open && !useSheet) {
+      e.stopPropagation();
+      setOpen(false);
     }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, useSheet]);
+  }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'ArrowDown') {
@@ -275,7 +275,7 @@ export function LabelFilter({
   );
 
   return (
-    <div ref={containerRef} className={`relative ${className}`}>
+    <div ref={containerRef} onKeyDown={handleContainerKeyDown} className={`relative ${className}`}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -286,8 +286,8 @@ export function LabelFilter({
         className={[
           'flex min-h-9 shrink-0 items-center rounded-lg border transition-colors duration-150',
           // Extra right padding on desktop when active leaves room for the
-          // clear button that sits over the trigger's right edge.
-          desktop ? `gap-1.5 py-1.5 pl-2.5 text-xs font-medium ${active ? 'pr-7' : 'pr-2.5'}` : 'gap-1 px-2 py-2',
+          // clear button (a 24px target) that sits over the trigger's right edge.
+          desktop ? `gap-1.5 py-1.5 pl-2.5 text-xs font-medium ${active ? 'pr-8' : 'pr-2.5'}` : 'gap-1 px-2 py-2',
           active
             ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
             : 'border-[var(--color-border)] bg-[var(--color-bg-raised)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
@@ -310,7 +310,10 @@ export function LabelFilter({
           type="button"
           aria-label="Clear label filter"
           onClick={onClear}
-          className="absolute right-1.5 top-1/2 flex size-4 -translate-y-1/2 items-center justify-center rounded-full text-[var(--color-accent)] transition-colors hover:bg-[var(--color-bg-elevated)]"
+          // size-6 (24px) meets WCAG 2.5.8's minimum target size — the spacing
+          // exception can't apply because it overlays the trigger; the icon
+          // stays size-3.
+          className="absolute right-1 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-full text-[var(--color-accent)] transition-colors hover:bg-[var(--color-bg-elevated)]"
         >
           <X className="size-3" aria-hidden />
         </button>

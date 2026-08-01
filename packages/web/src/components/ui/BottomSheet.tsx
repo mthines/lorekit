@@ -131,7 +131,10 @@ export function BottomSheet({
         if (!wasInert[i]) el.removeAttribute('inert');
       });
     };
-  }, [open, contained]);
+    // `target` is a dep so a sheet mounted already-open still inerts: the first
+    // run happens before the portal commits (overlayRef null → early return),
+    // and re-runs once `target` resolves and the overlay exists.
+  }, [open, contained, target]);
 
   // Move focus into the sheet on open and restore it to the opener on close —
   // the baseline dialog contract. A child that manages its own focus (e.g. a

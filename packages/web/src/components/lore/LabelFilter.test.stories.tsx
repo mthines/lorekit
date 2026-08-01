@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react';
 import { useState } from 'react';
-import { expect, userEvent, waitFor, within } from 'storybook/test';
+import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 
 import { LabelFilter } from './LabelFilter';
 import type { TagCount } from '@/lib/tag-filter';
@@ -111,9 +111,22 @@ export const EscapeClosesEvenFromAnOption: Story = {
       await expect(canvas.getByRole('dialog')).toBeInTheDocument();
     });
 
-    await step('Escape still closes the popover (document-level listener)', async () => {
-      await userEvent.keyboard('{Escape}');
-      await waitFor(() => expect(canvas.queryByRole('dialog')).not.toBeInTheDocument());
+    await step('Escape closes the popover without leaking to document listeners', async () => {
+      // A sibling document-level Escape listener (e.g. LessonDetailSheet's)
+      // must NOT fire — the container handler stops propagation. This guards the
+      // regression where one Escape closed both the popover and an open lesson.
+      const docEscape = fn();
+      const onDocKey = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') docEscape();
+      };
+      document.addEventListener('keydown', onDocKey);
+      try {
+        await userEvent.keyboard('{Escape}');
+        await waitFor(() => expect(canvas.queryByRole('dialog')).not.toBeInTheDocument());
+        await expect(docEscape).not.toHaveBeenCalled();
+      } finally {
+        document.removeEventListener('keydown', onDocKey);
+      }
     });
   },
 };
