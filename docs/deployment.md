@@ -122,9 +122,9 @@ real anomaly and must stop the pipeline.
 
 #### Wiring the classifier into the workflows
 
-Like the smoke sweeper above, **the workflow steps are documented, not
-committed** — the GitHub App that opens automated PRs has no `workflows`
-permission, so a human applies these three edits once.
+Like the "Wiring the sweep into CI" section below, **the workflow steps are
+documented, not committed** — the GitHub App that opens automated PRs has no
+`workflows` permission, so a human applies these three edits once.
 
 **1.** In `.github/workflows/deploy.yml`, in the **`deploy-preview`** job only,
 replace the `Push database migrations` step with the following (the
