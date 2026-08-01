@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.0](https://github.com/mthines/lorekit/compare/cli-v1.25.1...cli-v1.26.0) (2026-08-01)
+
+
+### Features
+
+* **memory:** record and surface where a memory came from ([#299](https://github.com/mthines/lorekit/issues/299)) ([dab4ca8](https://github.com/mthines/lorekit/commit/dab4ca8f48a3b75845a7a0aba9bb4af0c913d2c6))
+
 ## [1.25.1](https://github.com/mthines/lorekit/compare/cli-v1.25.0...cli-v1.25.1) (2026-08-01)
 
 
