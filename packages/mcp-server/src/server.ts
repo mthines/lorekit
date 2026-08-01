@@ -42,6 +42,10 @@ export function createMcpServer(auth: AuthContext, adapter: StorageAdapter): Mcp
       created_at: z.string().optional().describe('Optional ISO 8601 creation date. Use when migrating a pre-existing memory so it is dated by its original time instead of now. Rejected if invalid or in the future. Applies only when the memory is first created.'),
       ttl_days: z.number().int().min(1).max(365).optional().describe('Number of days until the memory auto-expires (1–365). Omit for a permanent memory. On an update, supplying ttl_days refreshes the expiry; omitting it leaves the existing expiry unchanged.'),
       clear_ttl: z.boolean().optional().describe('When true, removes the existing expiry and makes the memory permanent again.'),
+      origin_repo: z.string().optional().describe("Provenance: the owner/name of the repository this memory was recorded from. Distinct from `scope`, which says where the lesson APPLIES."),
+      origin_branch: z.string().optional().describe("Provenance: the git branch this memory was recorded from. Stored verbatim (case-sensitive) so its GitHub link resolves."),
+      origin_commit: z.string().optional().describe("Provenance: the commit SHA (7-40 hex characters) checked out when this memory was recorded."),
+      origin_pr: z.number().int().min(1).optional().describe("Provenance: the pull request number this memory was recorded from. Combined with origin_repo it renders as a link to the PR."),
     },
     async (args) => {
       try {

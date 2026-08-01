@@ -50,6 +50,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { validateScope } from '../_shared/scope.ts';
+import { sanitizeOrigin } from '../_shared/origin.ts';
 import { traceRequest, type Span } from '../_shared/otel.ts';
 import { toolWrite } from './tools.ts';
 import {
@@ -485,6 +486,25 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
       return new Response('OK', { status: 200 });
     }
 
+    // Provenance: the delivery already carries the pull request this comment
+    // belongs to, so record it as first-class origin instead of leaving the
+    // link buried in an untyped `url::` tag. `issue_comment` on a PR reports
+    // the number under `issue`; the three pull_request_* events under
+    // `pull_request`. A comment on a plain issue has no `pull_request` key,
+    // so `prNumber` stays undefined and no origin PR is recorded.
+    const prNumber = earlyPayload['pull_request']?.number
+      ?? (earlyPayload['issue']?.pull_request ? earlyPayload['issue']?.number : undefined);
+    // Sanitised, not validated: a head branch is whatever the contributor
+    // named it, so a field we cannot make sense of is dropped rather than
+    // failing the whole ingest — the comment is the payload, the provenance is
+    // decoration.
+    const origin = sanitizeOrigin({
+      origin_repo: repo,
+      origin_pr: prNumber,
+      origin_branch: earlyPayload['pull_request']?.head?.ref,
+      origin_commit: earlyPayload['pull_request']?.head?.sha,
+    });
+
     const scope = validateScope(`repo::${repo}`);
     span.setAttributes({ 'lorekit.scope': scope, 'lorekit.scope.type': 'repo' });
 
@@ -503,6 +523,7 @@ async function processWebhook(req: Request, span: Span): Promise<Response> {
       ],
       source_agent: 'github-webhook',
       trigger: `${event}.${action}`,
+      ...origin,
     }, null, span);
 
     return new Response('OK', { status: 200 });

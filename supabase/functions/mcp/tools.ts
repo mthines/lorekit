@@ -19,6 +19,7 @@ import { translateCapError } from './limits.ts';
 import { translateOrgPermissionError } from './org-permissions.ts';
 import { parseCreatedAt } from '../_shared/created-at.ts';
 import { parseTtl } from './ttl.ts';
+import { parseOrigin } from '../_shared/origin.ts';
 import { recordAudit } from '../_shared/audit.ts';
 import { applyTenantScope } from './tenant-scope.ts';
 
@@ -67,7 +68,7 @@ export async function toolWrite(
   userId: string | null,
   span: Span,
 ) {
-  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false } = params;
+  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr } = params;
   if (!rawScope || !key || !value) throw new Error('scope, key, and value are required');
   if (value.length > MAX_VALUE_BYTES) throw new Error(`value exceeds ${MAX_VALUE_BYTES} bytes`);
   const scope = validateScope(rawScope);
@@ -75,6 +76,10 @@ export async function toolWrite(
   // future dates; null when omitted so the DB applies its now() default.
   const createdAt = parseCreatedAt(created_at);
   const ttlSeconds = parseTtl({ ttl_days, ttl_minutes, ttl_seconds });
+  // Optional provenance: where the write happened (repo / branch / commit / PR).
+  // Every field is independently optional; the RPC keeps the last KNOWN value
+  // per field, so omitting one never erases what an earlier write recorded.
+  const origin = parseOrigin({ origin_repo, origin_branch, origin_commit, origin_pr });
 
   span.setAttributes({
     'lorekit.scope': scope,
@@ -87,6 +92,10 @@ export async function toolWrite(
     ...(org ? { 'lorekit.org': org } : {}),
     ...(ttlSeconds !== null ? { 'lorekit.ttl_seconds': ttlSeconds } : {}),
     ...(clear_ttl ? { 'lorekit.clear_ttl': true } : {}),
+    ...(origin.repo ? { 'lorekit.origin.repo': origin.repo } : {}),
+    ...(origin.branch ? { 'lorekit.origin.branch': origin.branch } : {}),
+    ...(origin.commit ? { 'lorekit.origin.commit': origin.commit } : {}),
+    ...(origin.pr !== null ? { 'lorekit.origin.pr': origin.pr } : {}),
   });
 
   // 00003 replaced the plain unique constraint with PARTIAL indexes
@@ -107,6 +116,10 @@ export async function toolWrite(
       p_org_slug: org ?? null,
       p_ttl_seconds: ttlSeconds,
       p_clear_ttl: clear_ttl,
+      p_origin_repo: origin.repo,
+      p_origin_branch: origin.branch,
+      p_origin_commit: origin.commit,
+      p_origin_pr: origin.pr,
     })
     .single();
   if (error) {

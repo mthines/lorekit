@@ -290,6 +290,11 @@ ${c.bold('Options')}
       --trigger <slug>     Trigger context slug (default: none)
       --ttl-days <n>       Days until auto-expiry 1–365 (remote only)
       --org <slug>         Write to this org's scope (remote only)
+      --origin-repo <o/n>  Override the derived provenance repository
+      --origin-branch <b>  Override the derived provenance branch
+      --origin-commit <s>  Override the derived provenance commit SHA
+      --origin-pr <n>      The pull request this lesson came out of
+      --no-origin          Record no provenance at all
       --remote             Force write to the remote store
       --local              Force write to the local offline store
       --json               Machine-readable output
@@ -571,6 +576,7 @@ const KNOWN_FLAGS = [
   'event', 'json', 'scope', 'threshold', 'help', 'version',
   'value', 'tags', 'source-agent', 'trigger', 'ttl-days', 'org', 'remote', 'local',
   'link', 'base', 'q', 'owner', 'range', 'view', 'archived',
+  'origin-repo', 'origin-branch', 'origin-commit', 'origin-pr', 'no-origin',
 ];
 
 // Commands that write to disk / talk to the network on a human's behalf. These
@@ -595,7 +601,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'json', 'remote', 'local', 'link', 'archived'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'no-origin', 'json', 'remote', 'local', 'link', 'archived'],
     known: KNOWN_FLAGS,
   });
 

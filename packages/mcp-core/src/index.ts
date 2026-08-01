@@ -48,6 +48,13 @@ export {
 export { purgeExpired } from './tools/purge-expired.js';
 export { parseTtlDays, TtlError, TTL_MIN_DAYS, TTL_MAX_DAYS } from './ttl.js';
 export {
+  parseOrigin,
+  sanitizeOrigin,
+  OriginError,
+  type MemoryOrigin,
+  type OriginInput,
+} from './origin.js';
+export {
   type StorageAdapter,
   createHostedAdapter,
   createBYODAdapter,

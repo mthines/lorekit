@@ -161,6 +161,10 @@ export type Database = {
           id: string
           key: string
           org_id: string | null
+          origin_branch: string | null
+          origin_commit: string | null
+          origin_pr: number | null
+          origin_repo: string | null
           scope: string
           source_agent: string | null
           tags: string[]
@@ -179,6 +183,10 @@ export type Database = {
           id?: string
           key: string
           org_id?: string | null
+          origin_branch?: string | null
+          origin_commit?: string | null
+          origin_pr?: number | null
+          origin_repo?: string | null
           scope: string
           source_agent?: string | null
           tags?: string[]
@@ -197,6 +205,10 @@ export type Database = {
           id?: string
           key?: string
           org_id?: string | null
+          origin_branch?: string | null
+          origin_commit?: string | null
+          origin_pr?: number | null
+          origin_repo?: string | null
           scope?: string
           source_agent?: string | null
           tags?: string[]
@@ -769,11 +781,15 @@ export type Database = {
           p_created_at?: string
           p_key: string
           p_org_slug?: string
+          p_origin_branch?: string
+          p_origin_commit?: string
+          p_origin_pr?: number
+          p_origin_repo?: string
           p_scope: string
           p_source_agent?: string
           p_tags?: string[]
           p_trigger?: string
-          p_ttl_days?: number
+          p_ttl_seconds?: number
           p_user_id: string
           p_value: string
         }

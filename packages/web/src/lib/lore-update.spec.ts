@@ -124,7 +124,7 @@ describe('updateLesson', () => {
       p_source_agent: 'agent0',
       p_trigger: 'hook',
       p_created_at: null,
-      p_ttl_days: null,
+      p_ttl_seconds: null,
       p_clear_ttl: false,
     });
 
@@ -164,5 +164,24 @@ describe('updateLesson', () => {
     const args = rpcCall?.[1] as Record<string, unknown>;
     expect(args['p_source_agent']).toBe('claude-3');
     expect(args['p_trigger']).toBe('pre_tool_use');
+  });
+
+  it('sends p_ttl_seconds, not the p_ttl_days name 00038 removed', async () => {
+    // Regression: PostgREST resolves an RPC by argument NAME, so `p_ttl_days`
+    // matched no function (PGRST202) and every TTL edit failed silently.
+    (mockFromChain.single as Mock).mockReturnValue({
+      data: { source_agent: null, trigger: null },
+      error: null,
+    });
+    mockSingle.mockResolvedValue({
+      data: { id: 'mem-ttl', created_at: '2026-07-01T00:00:00Z', inserted: false },
+      error: null,
+    });
+
+    await updateLesson('global', 'k', { value: 'v', tags: [], ttl_days: 7 });
+
+    const args = (mockSupabase.rpc as Mock).mock.calls.at(-1)?.[1] as Record<string, unknown>;
+    expect(args.p_ttl_seconds).toBe(7 * 86_400);
+    expect('p_ttl_days' in args).toBe(false);
   });
 });

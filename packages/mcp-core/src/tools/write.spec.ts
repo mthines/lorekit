@@ -330,3 +330,65 @@ describe('write TTL mutual exclusivity', () => {
     expect(db.rpc).not.toHaveBeenCalled();
   });
 });
+
+// ── origin (provenance) ──────────────────────────────────────────────────────
+
+describe('write — origin', () => {
+  function rpcArgs(db: SupabaseClient) {
+    return (db.rpc as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[1] as Record<
+      string,
+      unknown
+    >;
+  }
+
+  it('forwards all four origin fields to the RPC, normalised', async () => {
+    const db = makeDb(fakeResult);
+    await write(db, {
+      scope: 'global',
+      key: 'k',
+      value: 'v',
+      origin_repo: 'MThines/LoreKit',
+      origin_branch: 'feat/Origin-Provenance',
+      origin_commit: 'ABC1234DEF',
+      origin_pr: 482,
+    });
+    expect(rpcArgs(db)).toMatchObject({
+      p_origin_repo: 'mthines/lorekit',
+      // Not lowercased — the GitHub /tree/ link must resolve for a mixed-case branch.
+      p_origin_branch: 'feat/Origin-Provenance',
+      p_origin_commit: 'abc1234def',
+      p_origin_pr: 482,
+    });
+  });
+
+  it('sends null for every origin field when none is supplied', async () => {
+    const db = makeDb(fakeResult);
+    await write(db, { scope: 'global', key: 'k', value: 'v' });
+    expect(rpcArgs(db)).toMatchObject({
+      p_origin_repo: null,
+      p_origin_branch: null,
+      p_origin_commit: null,
+      p_origin_pr: null,
+    });
+  });
+
+  it('accepts a partial origin (branch known, PR not opened yet)', async () => {
+    const db = makeDb(fakeResult);
+    await write(db, { scope: 'global', key: 'k', value: 'v', origin_branch: 'feat/x' });
+    expect(rpcArgs(db)).toMatchObject({ p_origin_branch: 'feat/x', p_origin_pr: null });
+  });
+
+  it('coerces a numeric-string PR number (env vars arrive as strings)', async () => {
+    const db = makeDb(fakeResult);
+    await write(db, { scope: 'global', key: 'k', value: 'v', origin_pr: '7' });
+    expect(rpcArgs(db)).toMatchObject({ p_origin_pr: 7 });
+  });
+
+  it('rejects a malformed origin before touching the DB', async () => {
+    const db = makeDb(fakeResult);
+    await expect(
+      write(db, { scope: 'global', key: 'k', value: 'v', origin_repo: 'not-a-repo' }),
+    ).rejects.toThrow(/origin_repo/);
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+});

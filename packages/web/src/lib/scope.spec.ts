@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { scopeType, scopeRepoUrl } from './scope';
+import { scopeType, scopeRepoUrl, scopeRepoRef } from './scope';
 
 describe('scopeType', () => {
   it('returns "global" for the literal string "global"', () => {
@@ -55,5 +55,53 @@ describe('scopeRepoUrl', () => {
     expect(scopeRepoUrl('repo::not-a-repo')).toBeNull(); // missing owner/name split
     expect(scopeRepoUrl('branch::owner/repo')).toBeNull(); // missing branch segment
     expect(scopeRepoUrl('branch::not-a-repo::main')).toBeNull(); // bad owner/name
+  });
+});
+
+describe('scopeRepoRef', () => {
+  it('extracts the repo a repo:: scope names', () => {
+    expect(scopeRepoRef('repo::mthines/lorekit')).toEqual({ repo: 'mthines/lorekit', branch: null });
+  });
+
+  it('extracts both halves of a branch:: scope', () => {
+    expect(scopeRepoRef('branch::mthines/lorekit::feat/x')).toEqual({
+      repo: 'mthines/lorekit',
+      branch: 'feat/x',
+    });
+  });
+
+  it('names no repo for global / project / malformed scopes', () => {
+    const none = { repo: null, branch: null };
+    expect(scopeRepoRef('global')).toEqual(none);
+    expect(scopeRepoRef('project::lorekit')).toEqual(none);
+    expect(scopeRepoRef('repo::not-a-repo')).toEqual(none);
+    expect(scopeRepoRef('branch::owner/repo')).toEqual(none);
+  });
+
+  it('agrees with scopeRepoUrl — one derivation, two consumers', () => {
+    for (const scope of ['global', 'project::x', 'repo::a/b', 'branch::a/b::feat/x', 'repo::bad']) {
+      expect(scopeRepoRef(scope).repo === null).toBe(scopeRepoUrl(scope) === null);
+    }
+  });
+});
+
+describe('scopeRepoUrl — relative path segments', () => {
+  it('refuses a scope whose repo contains a parent-directory segment', () => {
+    // `..` matches `[\w.-]+`, so `repo::../evil` is a well-formed scope — and
+    // https://github.com/../evil resolves in the browser to github.com/evil.
+    expect(scopeRepoUrl('repo::../evil')).toBeNull();
+    expect(scopeRepoUrl('repo::./evil')).toBeNull();
+    expect(scopeRepoUrl('repo::owner/..')).toBeNull();
+  });
+
+  it('refuses a branch scope whose branch contains a .. segment', () => {
+    expect(scopeRepoUrl('branch::owner/repo::feat/../../x')).toBeNull();
+  });
+
+  it('still resolves a legitimate repo and branch scope', () => {
+    expect(scopeRepoUrl('repo::mthines/lorekit')).toBe('https://github.com/mthines/lorekit');
+    expect(scopeRepoUrl('branch::mthines/lorekit::feat/x')).toBe(
+      'https://github.com/mthines/lorekit/tree/feat/x',
+    );
   });
 });

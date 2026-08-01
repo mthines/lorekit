@@ -180,6 +180,10 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
                 description:
                   'When true, removes the existing expiry and makes the memory permanent again. Takes precedence over ttl_days when both are supplied.',
               },
+              origin_repo: { type: 'string', description: "Provenance: the owner/name of the repository this memory was recorded from. Distinct from `scope`, which says where the lesson APPLIES." },
+              origin_branch: { type: 'string', description: "Provenance: the git branch this memory was recorded from. Stored verbatim (case-sensitive) so its GitHub link resolves." },
+              origin_commit: { type: 'string', description: "Provenance: the commit SHA (7-40 hex characters) checked out when this memory was recorded." },
+              origin_pr: { type: 'integer', minimum: 1, description: "Provenance: the pull request number this memory was recorded from. Combined with origin_repo it renders as a link to the PR." },
             },
           },
         },

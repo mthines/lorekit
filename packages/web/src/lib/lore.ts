@@ -73,7 +73,13 @@ export async function updateLesson(
       p_source_agent: (current as { source_agent: string | null }).source_agent ?? null,
       p_trigger: (current as { trigger: string | null }).trigger ?? null,
       p_created_at: null,
-      p_ttl_days: input.ttl_days ?? null,
+      // Migration 00038 renamed p_ttl_days to p_ttl_seconds. PostgREST resolves
+      // an RPC by argument NAME, so the old name matched no function at all
+      // (PGRST202) and every edit made through this action failed — the stale
+      // `p_ttl_days` key in the hand-edited generated types was what let it
+      // typecheck. `ttl_days` stays the input field name; the days→seconds
+      // conversion happens here, exactly as memories/handlers/create.ts does it.
+      p_ttl_seconds: input.ttl_days != null ? input.ttl_days * 86_400 : null,
       p_clear_ttl: input.clear_ttl ?? false,
     })
     .single();
@@ -208,7 +214,7 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
   // cursor still can't widen past it.
   let base = supabase
     .from('memories')
-    .select('id, scope, key, value, tags, created_at, updated_at, archived_at, expires_at, source_agent, trigger, org_id, created_by, updated_by, orgs(name, slug)');
+    .select('id, scope, key, value, tags, created_at, updated_at, archived_at, expires_at, source_agent, trigger, origin_repo, origin_branch, origin_commit, origin_pr, org_id, created_by, updated_by, orgs(name, slug)');
 
   // archived_at filter: active (IS NULL) vs archived (IS NOT NULL).
   if (filters.showArchived) {
@@ -272,6 +278,10 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
       expires_at: (row.expires_at as string | null) ?? null,
       source_agent: (row.source_agent as string | null) ?? null,
       trigger: (row.trigger as string | null) ?? null,
+      origin_repo: (row.origin_repo as string | null) ?? null,
+      origin_branch: (row.origin_branch as string | null) ?? null,
+      origin_commit: (row.origin_commit as string | null) ?? null,
+      origin_pr: (row.origin_pr as number | null) ?? null,
       org_id: orgId,
       created_by: (row.created_by as string | null) ?? null,
       updated_by: (row.updated_by as string | null) ?? null,

@@ -265,7 +265,12 @@ export async function exportOrgLore(
   // without a separate count query.
   const { data, error } = await supabase
     .from('memories')
-    .select('scope, key, value, tags, created_at, updated_at, archived_at, source_agent, trigger')
+    // Provenance is part of what makes an exported lesson auditable later —
+    // this is the last-chance copy taken before an org is deleted, so it must
+    // not be the one artifact that drops where each lesson came from.
+    .select(
+      'scope, key, value, tags, created_at, updated_at, archived_at, source_agent, trigger, origin_repo, origin_branch, origin_commit, origin_pr',
+    )
     .eq('org_id', orgId)
     .order('created_at', { ascending: true })
     .limit(ORG_EXPORT_ROW_LIMIT + 1);

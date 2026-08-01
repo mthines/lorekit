@@ -16,6 +16,16 @@
 //   --ttl-days <n>         Days until the memory auto-expires (1–365)
 //   --org <slug>           Write to this org (remote only)
 //
+// Provenance — where the lesson is being recorded FROM. Derived automatically
+// from git + the CI environment (repo, branch, commit, and the pull request
+// from LOREKIT_PR / GITHUB_REF); the dashboard turns it into links back to the
+// PR, branch and commit. Each can be overridden, and the whole thing skipped:
+//   --origin-repo <owner/name>  Override the derived repository
+//   --origin-branch <name>      Override the derived branch
+//   --origin-commit <sha>       Override the derived commit
+//   --origin-pr <n>             The pull request this lesson came out of
+//   --no-origin                 Record no provenance at all
+//
 // Store targeting (default: remote if configured, else local):
 //   --remote               Force write to the remote store
 //   --local                Force write to the local offline store
@@ -32,6 +42,7 @@ import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
 import { log, err, heading, status, c } from './util.mjs';
 import { parseScopeKey } from './lessons-view.mjs';
+import { deriveOrigin, mergeOrigin } from './origin.mjs';
 
 // Read all of stdin to a string. Resolves to '' when stdin IS a TTY (no pipe).
 function readStdin() {
@@ -100,6 +111,32 @@ export async function write(args) {
   const ttlDays = args['ttl-days'] ? Number(args['ttl-days']) : undefined;
   const orgSlug = typeof args.org === 'string' ? args.org : undefined;
 
+  // ── Provenance ────────────────────────────────────────────────────────────
+  // Derived from git + CI unless --no-origin; explicit --origin-* flags win.
+  // A field that is neither supplied nor derivable is omitted, never sent as
+  // null — the server keeps the last KNOWN origin per field, so an omission
+  // must not erase what an earlier write recorded.
+  // An explicitly supplied PR number is a caller assertion, so a malformed one
+  // is a usage error — silently ignoring it would record no provenance while
+  // the user believes they set it. Derived values, by contrast, degrade quietly.
+  let originPr = null;
+  if (args['origin-pr'] !== undefined) {
+    originPr = Number(args['origin-pr']);
+    if (!Number.isInteger(originPr) || originPr < 1) {
+      err(`${c.red('Error:')} --origin-pr must be a positive integer (got ${args['origin-pr']})`);
+      return 1;
+    }
+  }
+
+  const origin = args['no-origin']
+    ? {}
+    : mergeOrigin(deriveOrigin({ cwd: root, env }), {
+        origin_repo: typeof args['origin-repo'] === 'string' ? args['origin-repo'] : null,
+        origin_branch: typeof args['origin-branch'] === 'string' ? args['origin-branch'] : null,
+        origin_commit: typeof args['origin-commit'] === 'string' ? args['origin-commit'] : null,
+        origin_pr: originPr,
+      });
+
   // ── Resolve deny constraints ───────────────────────────────────────────────
   const { localDenied, remoteDenied } = resolveDenies(root, { env });
 
@@ -162,6 +199,7 @@ export async function write(args) {
     ...(trigger ? { trigger } : {}),
     ...(ttlDays ? { ttl_days: ttlDays } : {}),
     ...(orgSlug ? { org: orgSlug } : {}),
+    ...origin,
   };
 
   let result;
@@ -192,6 +230,7 @@ export async function write(args) {
       tags,
       source_agent: sourceAgent || null,
       trigger: trigger || null,
+      origin,
     }, null, 2));
   } else {
     const verb = inserted === true ? 'Created' : inserted === false ? 'Updated' : 'Written';

@@ -32,7 +32,7 @@ export async function handleList(
 
   let q: TracedQuery<MemoryRow> = tracedDb
     .from<MemoryRow>('memories')
-    .select('id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at')
+    .select('id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,origin_repo,origin_branch,origin_commit,origin_pr')
     .order('updated_at', { ascending: false })
     .order('id', { ascending: false })
     .limit(params.limit + 1);

@@ -36,7 +36,7 @@ export async function handleUpdate(
   if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
 
   const { data, error } = await q
-    .select('id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at')
+    .select('id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,origin_repo,origin_branch,origin_commit,origin_pr')
     .maybeSingle();
 
   if (error) { span.error(`DB: ${error.message}`); throw error; }

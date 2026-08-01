@@ -91,7 +91,10 @@ class RemoteStore {
   }
 
   async write(args = {}) {
-    const { scope, key, value, tags, source_agent, trigger, org, ttl_days, clear_ttl, created_at } = args;
+    const {
+      scope, key, value, tags, source_agent, trigger, org, ttl_days, clear_ttl, created_at,
+      origin_repo, origin_branch, origin_commit, origin_pr,
+    } = args;
     const body = { scope, key, value };
     if (tags !== undefined) body.tags = tags;
     if (source_agent !== undefined) body.source_agent = source_agent;
@@ -100,6 +103,13 @@ class RemoteStore {
     if (ttl_days !== undefined) body.ttl_days = ttl_days;
     if (clear_ttl !== undefined) body.clear_ttl = clear_ttl;
     if (created_at !== undefined) body.created_at = created_at;
+    // Provenance — only sent when known. Omitting a field leaves whatever the
+    // row already recorded intact (the RPC coalesces), which is what makes a
+    // write from a machine with no git context non-destructive.
+    if (origin_repo !== undefined) body.origin_repo = origin_repo;
+    if (origin_branch !== undefined) body.origin_branch = origin_branch;
+    if (origin_commit !== undefined) body.origin_commit = origin_commit;
+    if (origin_pr !== undefined) body.origin_pr = origin_pr;
     const res = await this._rest('/memories', { method: 'POST', body });
     return { ok: res.ok, error: res.error, networkError: res.networkError };
   }

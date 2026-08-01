@@ -15,7 +15,7 @@
  * Per otel-instrumentation skills: spans on all operations.
  */
 import { SpanStatusCode } from '@opentelemetry/api';
-import { createServiceClient, getTracer, write, validateScope } from '@lorekit/core';
+import { createServiceClient, getTracer, sanitizeOrigin, write, validateScope } from '@lorekit/core';
 import { logger } from '../logger.js';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { classifyWebhookAction, isSignalWorthy } from './signal-filter.js';
@@ -121,6 +121,25 @@ export async function handleGitHubWebhook(req: Request): Promise<Response> {
         return new Response('OK', { status: 200 });
       }
 
+      // Provenance: the delivery already names the pull request this comment
+      // belongs to, so record it as first-class origin rather than leaving the
+      // link buried in an untyped `url::` tag. Mirrors the edge receiver
+      // (supabase/functions/mcp/webhook.ts). A comment on a plain issue has no
+      // `pull_request` key, so no PR origin is recorded.
+      const pull = payload['pull_request'] as
+        | { number?: number; head?: { ref?: string; sha?: string } }
+        | undefined;
+      const issue = payload['issue'] as { number?: number; pull_request?: unknown } | undefined;
+      const prNumber = pull?.number ?? (issue?.pull_request ? issue.number : undefined);
+      // Sanitised, not validated — a field we cannot make sense of is dropped
+      // rather than failing the ingest. Mirrors the edge receiver.
+      const origin = sanitizeOrigin({
+        origin_repo: repo,
+        origin_pr: prNumber,
+        origin_branch: pull?.head?.ref,
+        origin_commit: pull?.head?.sha,
+      });
+
       const db = createServiceClient(getSupabaseUrl(), getSupabaseServiceRoleKey());
       const key = `pr-webhook::${repo}::${Date.now()}`;
 
@@ -139,6 +158,7 @@ export async function handleGitHubWebhook(req: Request): Promise<Response> {
         ],
         source_agent: 'github-webhook',
         trigger: `${event}.${action}`,
+        ...origin,
       });
 
       span.setAttribute('lorekit.key', key);

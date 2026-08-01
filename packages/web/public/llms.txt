@@ -118,6 +118,12 @@ Arguments:
 | `ttl_days` | | Integer 1–365. Auto-expires the lesson. On update, refreshes expiry. |
 | `clear_ttl` | | Boolean. When true, removes expiry (makes permanent again). Overrides `ttl_days`. |
 | `created_at` | | ISO 8601 timestamp. Use when migrating a pre-existing lesson. Rejected if in the future. |
+| `origin_repo` | | Provenance: `owner/name` of the repository the lesson was recorded from. Lowercased. |
+| `origin_branch` | | Provenance: the git branch it was recorded from. Stored verbatim (case-sensitive). |
+| `origin_commit` | | Provenance: the commit SHA (7–40 hex characters) that was checked out. |
+| `origin_pr` | | Provenance: the pull request number the lesson came out of. |
+
+**Provenance (`origin_*`):** `scope` says where a lesson *applies*; the four `origin_*` fields say where it was *recorded from*. Each is independently optional and the last KNOWN value wins — on an update, a field you omit keeps whatever a previous write recorded rather than being erased. A malformed value is rejected, never silently dropped.
 
 Returns: `{ "id": "<uuid>", "created_at": "<iso>" }` — plus optional `"expires_at"` and `"notice"` (when a write fell back to personal because the scope is bound to an org the caller cannot write to).
 

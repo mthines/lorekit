@@ -67,6 +67,7 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   ['auth-token.ts', 'mcp/auth-token.ts'],
   ['created-at.ts', '_shared/created-at.ts'],
   ['ttl.ts', 'mcp/ttl.ts'],
+  ['origin.ts', '_shared/origin.ts'],
   ['webhook-secret-select.ts', 'mcp/webhook-secret-select.ts'],
   ['tenant-scope.ts', 'mcp/tenant-scope.ts'],
   ['org-permissions.ts', 'mcp/org-permissions.ts'],
