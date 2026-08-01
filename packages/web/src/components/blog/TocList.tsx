@@ -1,7 +1,7 @@
 'use client';
 
+import { useEffect, useRef, type MouseEvent } from 'react';
 import { motion, MotionConfig } from 'motion/react';
-import type { MouseEvent } from 'react';
 import type { TocItem } from '@/lib/blog/toc';
 
 interface TocListProps {
@@ -24,6 +24,22 @@ interface TocListProps {
  * disclosure render the exact same list from one source of truth.
  */
 export function TocList({ items, activeId, onNavigate, layoutId }: TocListProps) {
+  const activeRef = useRef<HTMLAnchorElement | null>(null);
+
+  // Keep the active item visible: if the list lives in its own scroll container
+  // (`[data-toc-scroll]` — the desktop rail on a long post, or the mobile panel)
+  // and the active item has scrolled out of view, nudge ONLY that container into
+  // view. Guarded to the container so it never scrolls the page.
+  useEffect(() => {
+    const el = activeRef.current;
+    const scroller = el?.closest('[data-toc-scroll]');
+    if (!el || !(scroller instanceof HTMLElement)) return;
+    const item = el.getBoundingClientRect();
+    const box = scroller.getBoundingClientRect();
+    if (item.top < box.top) scroller.scrollBy({ top: item.top - box.top - 8 });
+    else if (item.bottom > box.bottom) scroller.scrollBy({ top: item.bottom - box.bottom + 8 });
+  }, [activeId]);
+
   const handleClick = (event: MouseEvent<HTMLAnchorElement>, id: string) => {
     // Only take over if the target exists; otherwise let the browser jump.
     if (onNavigate(id)) event.preventDefault();
@@ -39,6 +55,7 @@ export function TocList({ items, activeId, onNavigate, layoutId }: TocListProps)
           return (
             <li key={id} className={depth === 3 ? 'pl-3' : ''}>
               <a
+                ref={active ? activeRef : undefined}
                 href={`#${id}`}
                 onClick={(event) => handleClick(event, id)}
                 aria-current={active ? 'location' : undefined}

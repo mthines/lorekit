@@ -43,8 +43,8 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
     <>
       <ReadingProgress />
 
-      <main className="mx-auto max-w-5xl lg:flex lg:justify-center lg:gap-12">
-        <article className="mx-auto min-w-0 max-w-2xl lg:mx-0 lg:flex-1">
+      <main className="mx-auto max-w-5xl md:flex md:justify-center md:gap-8 lg:gap-12">
+        <article className="mx-auto min-w-0 max-w-2xl md:mx-0 md:flex-1">
           <Link
             href="/blog"
             className="mb-8 inline-flex items-center gap-1.5 text-sm text-[var(--color-content-tertiary)] transition-colors hover:text-[var(--color-content-primary)]"
@@ -79,8 +79,8 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
             </div>
           </header>
 
-          {/* Mobile/tablet TOC — sticky collapsible, shown below `lg` where the
-              right rail is hidden. Same scroll-spy state as the desktop rail. */}
+          {/* Mobile TOC — sticky collapsible, shown below `md` where the right
+              rail is hidden. Same scroll-spy state as the desktop rail. */}
           {post.toc.length > 0 && <MobileTableOfContents items={post.toc} />}
 
           <BlogProse>
@@ -89,10 +89,14 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
         </article>
 
         {post.toc.length > 0 && (
-          <aside className="mt-12 hidden shrink-0 lg:mt-0 lg:block lg:w-56">
+          <aside className="mt-12 hidden shrink-0 md:mt-0 md:block md:w-48 lg:w-56">
             {/* Sticky so the TOC stays in view; `top-20` clears the sticky header
-                + reading-progress bar. Its own scroll for very long posts. */}
-            <div className="sticky top-20 max-h-[calc(100vh-6rem)] overflow-y-auto py-1">
+                + reading-progress bar. `data-toc-scroll` marks it as the scroll
+                container the active item auto-scrolls within on long posts. */}
+            <div
+              data-toc-scroll
+              className="sticky top-20 max-h-[calc(100vh-6rem)] overflow-y-auto py-1"
+            >
               <TableOfContents items={post.toc} />
             </div>
           </aside>

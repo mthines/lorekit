@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { ChevronDown, List } from 'lucide-react';
 import type { TocItem } from '@/lib/blog/toc';
 import { useActiveHeading } from './useActiveHeading';
@@ -11,12 +11,16 @@ interface MobileTableOfContentsProps {
 }
 
 /**
- * The mobile/tablet "On this page" control — shown below `lg`, where there's no
- * room for the sticky right rail. A collapsible bar that sticks below the header
- * so the TOC is reachable anywhere in the post (not just at the top), and whose
- * trigger doubles as a "you are here" indicator: collapsed, it shows the current
- * section's name. Tapping expands the shared {@link TocList}; choosing a section
- * scrolls there and collapses.
+ * The mobile "On this page" control — shown below `md`, where there's no room
+ * for the sticky right rail. A collapsible bar that sticks below the header so
+ * the TOC is reachable anywhere in the post, and whose trigger doubles as a
+ * "you are here" indicator: collapsed, it shows the current section's name.
+ *
+ * Starts EXPANDED so the reader sees the whole outline up front, then tucks
+ * itself away once they scroll into the article (so it doesn't sit over the
+ * content while reading) — a one-shot auto-collapse that never fights a manual
+ * re-open. Tapping expands the shared {@link TocList}, which keeps the active
+ * item scrolled into view; choosing a section scrolls there and collapses.
  *
  * The expand/collapse uses a `grid-template-rows: 0fr → 1fr` transition (no fixed
  * height needed, and the global `prefers-reduced-motion` rule in `globals.css`
@@ -25,8 +29,26 @@ interface MobileTableOfContentsProps {
  */
 export function MobileTableOfContents({ items }: MobileTableOfContentsProps) {
   const { activeId, navigate } = useActiveHeading(items);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const panelId = useId();
+  // Auto-collapse only fires until the reader interacts (opens/closes) once.
+  const touchedRef = useRef(false);
+
+  // Tuck the default-expanded panel away once the reader scrolls into the article,
+  // so it doesn't cover the content. One-shot, and skipped after any manual toggle.
+  useEffect(() => {
+    const onScroll = () => {
+      if (touchedRef.current) return;
+      if (window.scrollY > 200) setOpen(false);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  const toggle = () => {
+    touchedRef.current = true;
+    setOpen((v) => !v);
+  };
 
   // Escape closes the expanded panel — standard disclosure a11y.
   useEffect(() => {
@@ -45,11 +67,11 @@ export function MobileTableOfContents({ items }: MobileTableOfContentsProps) {
   return (
     <nav
       aria-label="On this page"
-      className="sticky top-14 z-20 -mx-6 mb-8 border-y border-[var(--color-border)] bg-[var(--color-bg)]/90 px-6 backdrop-blur md:-mx-10 md:px-10 lg:hidden"
+      className="sticky top-14 z-20 -mx-6 mb-8 border-y border-[var(--color-border)] bg-[var(--color-bg)]/90 px-6 backdrop-blur md:hidden"
     >
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
         aria-expanded={open}
         aria-controls={panelId}
         className="flex min-h-11 w-full items-center gap-2 text-sm"
@@ -79,7 +101,7 @@ export function MobileTableOfContents({ items }: MobileTableOfContentsProps) {
         ].join(' ')}
       >
         <div className="overflow-hidden">
-          <div className="max-h-[60vh] overflow-y-auto pb-3 pt-1 text-sm">
+          <div data-toc-scroll className="max-h-[60vh] overflow-y-auto pb-3 pt-1 text-sm">
             <TocList
               items={items}
               activeId={activeId}
