@@ -248,6 +248,35 @@ test('write --local --ttl-days rejects an out-of-range value', () => {
   assert.match(res.stderr, /365/);
 });
 
+// A supplied `--ttl-days` must always reach the validator. These three inputs used
+// to be swallowed by a truthiness test and exit 0 having written no expiry at all,
+// which is indistinguishable from a permanent memory — the one thing `--clear-ttl`
+// is for. Each must now be a usage error that writes nothing.
+test('write --local --ttl-days 0 is a usage error and writes nothing', () => {
+  const { root, home } = seedProject();
+  const res = runWrite(root, home, ['global', 'k', 'v', '--local', '--ttl-days', '0']);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /ttl-days/);
+  assert.equal(fs.existsSync(path.join(home, 'global')), false, 'no row was written');
+});
+
+test('write --local --ttl-days with a non-numeric value is a usage error', () => {
+  const { root, home } = seedProject();
+  const res = runWrite(root, home, ['global', 'k', 'v', '--local', '--ttl-days', 'abc']);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /ttl-days/);
+  assert.equal(fs.existsSync(path.join(home, 'global')), false, 'no row was written');
+});
+
+test('write --local with a bare --ttl-days (no value) is a usage error, not 1 day', () => {
+  const { root, home } = seedProject();
+  // `--ttl-days` immediately followed by another flag leaves it valueless.
+  const res = runWrite(root, home, ['global', 'k', 'v', '--local', '--ttl-days', '--json']);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /ttl-days/);
+  assert.equal(fs.existsSync(path.join(home, 'global')), false, 'no row was written');
+});
+
 // ── deny-wins suppression ─────────────────────────────────────────────────────
 
 test('LOREKIT_DENY=local errors when no remote configured', () => {

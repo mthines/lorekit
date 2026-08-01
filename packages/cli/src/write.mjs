@@ -44,6 +44,7 @@ import { resolveStores, remoteUnavailableReason } from './stores.mjs';
 import { log, err, heading, status, c } from './util.mjs';
 import { parseScopeKey } from './lessons-view.mjs';
 import { deriveOrigin, mergeOrigin } from './origin.mjs';
+import { parseTtlDays } from './store/ttl.mjs';
 
 // Read all of stdin to a string. Resolves to '' when stdin IS a TTY (no pipe).
 function readStdin() {
@@ -109,7 +110,27 @@ export async function write(args) {
   const tags = args.tags ? String(args.tags).split(',').map((t) => t.trim()).filter(Boolean) : [];
   const sourceAgent = typeof args['source-agent'] === 'string' ? args['source-agent'] : undefined;
   const trigger = typeof args.trigger === 'string' ? args.trigger : undefined;
-  const ttlDays = args['ttl-days'] ? Number(args['ttl-days']) : undefined;
+  // `--ttl-days` is validated HERE, at the flag seam, rather than being left to the
+  // store: a truthiness test silently swallowed `--ttl-days 0` (falsy) and
+  // `--ttl-days abc` (NaN, dropped again by the `ttl_days` spread further down), so
+  // both exited 0 having written no expiry while `--ttl-days 999` correctly errored.
+  // The seam matters as much as the check — `store/remote.mjs` forwards `ttl_days`
+  // verbatim and `JSON.stringify(NaN)` would reach the server as `null`, so a
+  // store-side fix would leave the remote path silently broken. Mirrors how
+  // `--origin-pr` is handled below: an explicitly supplied value is a caller
+  // assertion, so a malformed one is a usage error.
+  let ttlDays;
+  if (args['ttl-days'] !== undefined) {
+    // A bare `--ttl-days` with no value parses as boolean `true` (see parseArgs);
+    // feed NaN so the shared validator rejects it instead of silently meaning 1 day.
+    const rawTtlDays = args['ttl-days'] === true ? NaN : args['ttl-days'];
+    try {
+      ttlDays = parseTtlDays(rawTtlDays);
+    } catch (e) {
+      err(`${c.red('Error:')} --ttl-days is invalid — ${(e && e.message) || String(e)}`);
+      return 1;
+    }
+  }
   const clearTtl = Boolean(args['clear-ttl']);
   const orgSlug = typeof args.org === 'string' ? args.org : undefined;
 
