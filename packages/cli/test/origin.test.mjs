@@ -148,3 +148,42 @@ test('deriveOrigin lowercases the commit SHA', () => {
   const run = fakeGit({ 'rev-parse HEAD': 'ABC1234DEF' });
   assert.equal(deriveOrigin({ env: {}, run }).origin_commit, 'abc1234def');
 });
+
+test('deriveOrigin takes the PR head commit, not the merge commit, on a merge checkout', () => {
+  // On a GitHub Actions pull_request run HEAD is a detached merge commit that
+  // exists on neither branch, so branch and commit would name different refs.
+  const run = fakeGit({
+    'rev-parse --abbrev-ref HEAD': 'HEAD',
+    'rev-parse HEAD': 'aaaaaaaaaaaaaaaa',
+    'rev-parse HEAD^2': 'bbbbbbbbbbbbbbbb',
+  });
+  const origin = deriveOrigin({ env: { GITHUB_HEAD_REF: 'feat/x', GITHUB_SHA: 'aaaaaaaaaaaaaaaa' }, run });
+  assert.equal(origin.origin_branch, 'feat/x');
+  assert.equal(origin.origin_commit, 'bbbbbbbbbbbbbbbb');
+});
+
+test('deriveOrigin records no commit rather than a mismatched one on a shallow merge checkout', () => {
+  // actions/checkout's default fetch-depth: 1 has no second parent to resolve.
+  const run = fakeGit({
+    'rev-parse --abbrev-ref HEAD': 'HEAD',
+    'rev-parse HEAD': 'aaaaaaaaaaaaaaaa',
+  });
+  const origin = deriveOrigin({ env: { GITHUB_HEAD_REF: 'feat/x', GITHUB_SHA: 'aaaaaaaaaaaaaaaa' }, run });
+  assert.equal(origin.origin_branch, 'feat/x');
+  assert.equal(origin.origin_commit, null, 'GITHUB_SHA is the merge commit here and must not be used');
+});
+
+test('deriveOrigin still uses GITHUB_SHA off a merge checkout', () => {
+  const origin = deriveOrigin({ env: { GITHUB_SHA: 'deadbeef1234' }, run: () => null });
+  assert.equal(origin.origin_commit, 'deadbeef1234');
+});
+
+test('deriveOrigin runs git in the directory it was given, not the process cwd', () => {
+  const seen = [];
+  const run = (args, cwd) => {
+    seen.push(cwd);
+    return null;
+  };
+  deriveOrigin({ cwd: '/some/repo', env: {}, run });
+  assert.deepEqual([...new Set(seen)], ['/some/repo']);
+});

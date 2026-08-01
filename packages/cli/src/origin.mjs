@@ -103,7 +103,21 @@ function firstNonEmpty(...values) {
 export function deriveOrigin({ cwd = process.cwd(), env = process.env, run = gitRunner } = {}) {
   const remote = run(['config', '--get', 'remote.origin.url'], cwd);
   const gitBranch = run(['rev-parse', '--abbrev-ref', 'HEAD'], cwd);
-  const gitCommit = run(['rev-parse', 'HEAD'], cwd);
+
+  // On a GitHub Actions `pull_request` run the checkout is a DETACHED MERGE
+  // COMMIT of the head branch into the base, so `HEAD` (and `GITHUB_SHA`) name
+  // a commit that exists on neither branch. Since the branch below deliberately
+  // reports `GITHUB_HEAD_REF` — the real source branch — taking the merge SHA
+  // here would have the two fields describe different refs.
+  //
+  // The head commit is the merge commit's SECOND parent. A shallow checkout
+  // (actions/checkout's default `fetch-depth: 1`) does not have it, in which
+  // case we record NO commit: an absent field is honest, a mismatched one is
+  // worse than nothing.
+  const onMergeCheckout = Boolean(firstNonEmpty(env.GITHUB_HEAD_REF));
+  const gitCommit = onMergeCheckout
+    ? run(['rev-parse', 'HEAD^2'], cwd)
+    : run(['rev-parse', 'HEAD'], cwd);
 
   const repo = ownerRepoFromRemote(remote) ?? firstNonEmptyRepo(env);
   const branchRaw = firstNonEmpty(env.LOREKIT_BRANCH, env.GITHUB_HEAD_REF, gitBranch);
@@ -111,7 +125,11 @@ export function deriveOrigin({ cwd = process.cwd(), env = process.env, run = git
   // sent: provenance is decoration, and it must never fail the write it is
   // decorating.
   const branch = branchRaw && branchRaw !== 'HEAD' && isValidRef(branchRaw) ? branchRaw : null;
-  const commitRaw = firstNonEmpty(env.LOREKIT_COMMIT, gitCommit, env.GITHUB_SHA);
+  // GITHUB_SHA is only a safe fallback OFF a merge checkout — on one it is the
+  // merge commit, the very value the branch above exists to avoid.
+  const commitRaw = onMergeCheckout
+    ? firstNonEmpty(env.LOREKIT_COMMIT, gitCommit)
+    : firstNonEmpty(env.LOREKIT_COMMIT, gitCommit, env.GITHUB_SHA);
   const commit = commitRaw && /^[0-9a-fA-F]{7,40}$/.test(commitRaw) ? commitRaw.toLowerCase() : null;
 
   return {
