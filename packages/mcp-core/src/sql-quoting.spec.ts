@@ -120,3 +120,35 @@ describe('findQuotingIssues — double-quoted identifiers', () => {
     expect(issues[0]?.message).toMatch(/unterminated " quoted identifier/);
   });
 });
+
+describe('findQuotingIssues — escape-string syntax', () => {
+  it("treats a backslash-escaped quote inside E'…' as escaped, not a terminator", () => {
+    // A phantom finding here would be worse than a missed one: the scan stops
+    // at the first issue, so it would mask every real finding after it.
+    expect(findQuotingIssues("select E'it\\'s ok';")).toEqual([]);
+  });
+
+  it('handles an escaped backslash at the end of an escape string', () => {
+    expect(findQuotingIssues("select E'trailing\\\\';")).toEqual([]);
+  });
+
+  it('accepts a lowercase e prefix', () => {
+    expect(findQuotingIssues("select e'it\\'s ok';")).toEqual([]);
+  });
+
+  it('does not treat a backslash as an escape in an ordinary literal', () => {
+    // Without the E prefix the backslash is just a character, and the quote
+    // that follows it really does terminate the string.
+    expect(findQuotingIssues("select 'a\\', 'b';")).toEqual([]);
+  });
+
+  it('does not mistake an identifier ending in e for an escape-string prefix', () => {
+    expect(findQuotingIssues("select value'x';")).toEqual([]);
+  });
+
+  it('still flags an unterminated escape string', () => {
+    const issues = findQuotingIssues("select E'unclosed\n");
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.message).toMatch(/unterminated ' string literal/);
+  });
+});

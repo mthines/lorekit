@@ -208,3 +208,21 @@ test('deriveOrigin falls back to GITHUB_REPOSITORY when the remote is unusable',
   const origin = deriveOrigin({ env: { GITHUB_REPOSITORY: 'MThines/LoreKit' }, run });
   assert.equal(origin.origin_repo, 'mthines/lorekit');
 });
+
+test('LOREKIT_REPO wins over the git remote, like every other LOREKIT_ override', () => {
+  const run = fakeGit({ 'config --get remote.origin.url': 'git@github.com:MThines/LoreKit.git' });
+  const origin = deriveOrigin({ env: { LOREKIT_REPO: 'other/repo' }, run });
+  assert.equal(origin.origin_repo, 'other/repo');
+});
+
+test('an unusable remote falls through to GITHUB_REPOSITORY instead of shadowing it', () => {
+  const run = fakeGit({ 'config --get remote.origin.url': 'git@github.com:evil/../weird.git' });
+  const origin = deriveOrigin({ env: { GITHUB_REPOSITORY: 'MThines/LoreKit' }, run });
+  assert.equal(origin.origin_repo, 'mthines/lorekit');
+});
+
+test('an unusable LOREKIT_REPO falls through to the git remote', () => {
+  const run = fakeGit({ 'config --get remote.origin.url': 'git@github.com:MThines/LoreKit.git' });
+  const origin = deriveOrigin({ env: { LOREKIT_REPO: 'not-a-repo' }, run });
+  assert.equal(origin.origin_repo, 'mthines/lorekit');
+});

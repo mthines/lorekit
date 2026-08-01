@@ -78,9 +78,21 @@ export function findQuotingIssues(text: string): QuotingIssue[] {
       const delim = text[i];
       const label = delim === "'" ? "' string literal" : '" quoted identifier';
       const start = i;
+      // Postgres escape-string syntax: in `E'…'` (and only there) a backslash
+      // escapes the next character, so `E'it\'s'` is one literal. Reading that
+      // `\'` as a terminator would leave the scanner one quote out of step and
+      // report a phantom finding — worse than missing one, because the scan
+      // stops at the first issue and would mask every real one after it.
+      // The `E` must be a standalone prefix, not the tail of an identifier —
+      // `value'…'` is not escape-string syntax.
+      const escaped = delim === "'" && /(?:^|[^\w$])[Ee]$/.test(text.slice(Math.max(0, i - 2), i));
       i += 1;
       let closed = false;
       while (i < text.length) {
+        if (escaped && text[i] === '\\') {
+          i += 2;
+          continue;
+        }
         if (text[i] === delim) {
           // A doubled delimiter is an escape, not a terminator.
           if (text[i + 1] === delim) {

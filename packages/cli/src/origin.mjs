@@ -119,11 +119,18 @@ export function deriveOrigin({ cwd = process.cwd(), env = process.env, run = git
     ? run(['rev-parse', 'HEAD^2'], cwd)
     : run(['rev-parse', 'HEAD'], cwd);
 
-  // `ownerRepoFromRemote` parses whatever the remote URL happens to be, so an
-  // odd remote can yield a string the server's strict `parseOriginRepo`
-  // rejects — which would 400 the write this provenance only decorates.
-  // Validate here so an unusable value is DROPPED, never sent.
-  const repo = isValidRepo(ownerRepoFromRemote(remote)) ?? firstNonEmptyRepo(env);
+  // Precedence matches every other field: the explicit `LOREKIT_*` override
+  // first, then what the environment can work out. `LOREKIT_REPO` losing to the
+  // git remote would make it the one override that does not override.
+  //
+  // Each candidate goes through `isValidRepo` individually rather than only the
+  // winner, so an odd remote FALLS THROUGH to `GITHUB_REPOSITORY` instead of
+  // shadowing it with a value the server's strict `parseOriginRepo` rejects —
+  // which would 400 the write this provenance only decorates.
+  const repo =
+    isValidRepo(env.LOREKIT_REPO) ??
+    isValidRepo(ownerRepoFromRemote(remote)) ??
+    isValidRepo(env.GITHUB_REPOSITORY);
   const branchRaw = firstNonEmpty(env.LOREKIT_BRANCH, env.GITHUB_HEAD_REF, gitBranch);
   // A derived branch that the server would reject is dropped here rather than
   // sent: provenance is decoration, and it must never fail the write it is
@@ -159,12 +166,6 @@ export function isValidRepo(value) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(normalized)) return null;
   if (normalized.split('/').some((segment) => /^\.+$/.test(segment))) return null;
   return normalized;
-}
-
-// `GITHUB_REPOSITORY` is `owner/name` already; it is the fallback for a CI
-// checkout with no `origin` remote configured.
-function firstNonEmptyRepo(env) {
-  return isValidRepo(firstNonEmpty(env.LOREKIT_REPO, env.GITHUB_REPOSITORY));
 }
 
 /**
