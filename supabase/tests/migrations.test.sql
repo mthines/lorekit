@@ -3214,6 +3214,7 @@ insert into memories (user_id, scope, key, value) values
 do $$
 declare
   v_svc_scopes  int;
+  v_svc_null    int;
   v_b2_scopes   int;
   v_b2_count    jsonb;
 begin
@@ -3221,6 +3222,12 @@ begin
   perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
   select count(*) into v_svc_scopes
     from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000a1')
+   where scope = 'project::readfn-guard-secret';
+  -- CI escape hatch: a service-role caller with NULL p_user_id sees EVERY
+  -- scope (v_actor resolves NULL → the `v_actor is null and service_role`
+  -- branch), so a1's secret scope is visible without naming any user.
+  select count(*) into v_svc_null
+    from lorekit_memory_scopes(null)
    where scope = 'project::readfn-guard-secret';
   reset role;
 
@@ -3236,6 +3243,8 @@ begin
 
   assert v_svc_scopes = 1,
     format('readfn guard: service-role naming a1 must see a1''s scope, got %s', v_svc_scopes);
+  assert v_svc_null = 1,
+    format('readfn guard: service-role NULL p_user_id (CI escape hatch) must see a1''s scope, got %s', v_svc_null);
   assert v_b2_scopes = 0,
     format('readfn guard: authenticated b2 naming a1 must NOT enumerate a1''s scopes (IDOR closed), got %s', v_b2_scopes);
   assert coalesce((v_b2_count->>'personal_count')::int, -1) = 0,
