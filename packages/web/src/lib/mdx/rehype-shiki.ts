@@ -5,6 +5,9 @@ import type { RehypeShikiOptions } from '@shikijs/rehype';
 // (a transitive dep we don't declare) — keeps the dependency surface minimal.
 type ShikiTransformer = NonNullable<RehypeShikiOptions['transformers']>[number];
 
+/** The single dark theme every code surface uses (the app is dark-only). */
+export const SHIKI_THEME = 'github-dark-default';
+
 /**
  * Shared Shiki syntax-highlighting config for every MDX surface (docs AND blog),
  * so both render code identically and can never drift.
@@ -26,7 +29,7 @@ type ShikiTransformer = NonNullable<RehypeShikiOptions['transformers']>[number];
  * code — while Shiki still colours the tokens. Keeping Shiki's own (near-black)
  * background would make fenced blocks a different shade from inline code.
  */
-const stripBackground: ShikiTransformer = {
+export const stripBackground: ShikiTransformer = {
   name: 'lorekit:strip-background',
   pre(node) {
     const style = node.properties['style'];
@@ -38,7 +41,7 @@ const stripBackground: ShikiTransformer = {
 };
 
 export const rehypeShikiOptions: RehypeShikiOptions = {
-  theme: 'github-dark-default',
+  theme: SHIKI_THEME,
   fallbackLanguage: 'text',
   transformers: [stripBackground],
 };

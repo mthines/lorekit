@@ -1,7 +1,7 @@
 import type { MDXComponents } from 'mdx/types';
 import { TutorialStep } from '@/components/learn/TutorialStep';
 import { TutorialCallout } from '@/components/learn/TutorialCallout';
-import { GettingStartedContent } from '@/components/learn/GettingStartedContent';
+import { GettingStartedContentServer } from '@/components/learn/GettingStartedContentServer';
 import { SmartLink } from './SmartLink';
 
 /**
@@ -24,5 +24,8 @@ export const docsMdxComponents: MDXComponents = {
   a: SmartLink as MDXComponents['a'],
   TutorialStep: TutorialStep as unknown as MDXComponents['div'],
   TutorialCallout: TutorialCallout as unknown as MDXComponents['div'],
-  GettingStartedContent: GettingStartedContent as unknown as MDXComponents['div'],
+  // The async server wrapper pre-highlights the tutorial's code (the docs MDX
+  // render is server-side, so async is fine); the client dialog keeps using the
+  // plain component directly.
+  GettingStartedContent: GettingStartedContentServer as unknown as MDXComponents['div'],
 };
