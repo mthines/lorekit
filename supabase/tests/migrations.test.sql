@@ -2031,6 +2031,15 @@ declare
   v_scopes       text[];
   v_sorted       text[];
 begin
+  -- 00047 gave lorekit_memory_scopes the service-role-gated actor guard: a
+  -- caller-supplied p_user_id is honoured only on a verified service-role
+  -- connection, otherwise auth.uid() wins. Adopt that context — it is exactly
+  -- how the edge GET /memories/scopes path invokes it (a service-role client
+  -- naming the token owner). Without it the actor resolves to a NULL auth.uid()
+  -- and every assertion below reads an empty result set.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
   -- AC-1 + AC-3 + AC-4: A's own scope is present, counting ONLY the two active
   -- rows — the archived and the expired sibling in the same scope are excluded.
   select count into v_count
@@ -2080,6 +2089,9 @@ begin
   select array_agg(s order by s) into v_sorted from unnest(v_scopes) as s;
   assert v_scopes = v_sorted,
     format('memory scopes AC-8: results must be sorted by scope asc, got %s', v_scopes);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
 end;
 $$;
 
@@ -3139,6 +3151,123 @@ begin
     'usage AC-6: service_role must have EXECUTE on lorekit_usage_stats';
   assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
     'usage AC-6: lorekit_usage_stats must NOT be granted to anon';
+end;
+$$;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 61. Read-function grant hardening — 00047_readfn_grant_hardening.sql
+-- ═══════════════════════════════════════════════════════════════════════════
+-- The clearly-safe half of the deferred grant sweep: the caller-supplied-
+-- p_user_id read RPCs (lorekit_memory_scopes/_count) get the actor guard and
+-- lose anon EXECUTE; the service-role-only functions (find_user_by_github_id,
+-- the installation RPCs, the two purge procedures) lose PUBLIC EXECUTE.
+
+-- ── 61a. Grant surface ──────────────────────────────────────────────────────
+do $$
+declare
+  v_sig  text;
+  -- Reads: authenticated + service_role, never anon.
+  v_read text[] := array[
+    'lorekit_memory_scopes(uuid)',
+    'lorekit_memory_count(uuid)'
+  ];
+  -- Service-role-only: never anon, never authenticated.
+  v_svc  text[] := array[
+    'lorekit_find_user_by_github_id(text)',
+    'lorekit_installation_upsert(bigint, bigint, text, text, uuid, text, text[])',
+    'lorekit_installation_remove_repos(bigint, text[])',
+    'lorekit_installation_remove(bigint)',
+    'lorekit_purge_old_usage_events(interval)',
+    'lorekit_purge_all_expired_memories()'
+  ];
+begin
+  assert array_length(v_read, 1) = 2 and array_length(v_svc, 1) = 6,
+    'readfn grant guard: expected 2 read + 6 service-only signatures (anti-vacuity)';
+
+  foreach v_sig in array v_read loop
+    assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
+      format('%s must NOT be executable by anon after 00047', v_sig);
+    assert has_function_privilege('authenticated', v_sig, 'EXECUTE'),
+      format('%s must stay executable by authenticated', v_sig);
+    assert has_function_privilege('service_role', v_sig, 'EXECUTE'),
+      format('%s must stay executable by service_role', v_sig);
+  end loop;
+
+  foreach v_sig in array v_svc loop
+    assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
+      format('%s must NOT be executable by anon after 00047', v_sig);
+    assert not has_function_privilege('authenticated', v_sig, 'EXECUTE'),
+      format('%s must NOT be executable by authenticated after 00047 (service-role only)', v_sig);
+    assert has_function_privilege('service_role', v_sig, 'EXECUTE'),
+      format('%s must stay executable by service_role', v_sig);
+  end loop;
+end;
+$$;
+
+-- ── 61b. Actor guard: an authenticated caller cannot read another user ──────
+-- a1 owns a distinctively-named scope. An authenticated b2 naming a1 must see
+-- NONE of a1's scopes/counts (resolved to b2's own auth.uid()); a service-role
+-- caller naming a1 sees a1's, as the edge GET /memories/scopes path does.
+insert into memories (user_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000a1', 'project::readfn-guard-secret', 'k', 'v');
+
+do $$
+declare
+  v_svc_scopes  int;
+  v_svc_null    int;
+  v_b2_scopes   int;
+  v_b2_count    jsonb;
+  v_b2_personal int;
+  v_a1_personal int;
+begin
+  -- Ground truth for the count assertion below, computed the way
+  -- lorekit_memory_count computes personal_count (active = not archived; the
+  -- personal branch deliberately does not filter on expires_at). b2 is NOT a
+  -- blank user in this fixture — earlier sections give it its own rows — so
+  -- the property is "b2 sees b2's own total", never a hardcoded zero.
+  select count(*) into v_b2_personal from memories
+   where user_id = '00000000-0000-0000-0000-0000000000b2' and archived_at is null;
+  select count(*) into v_a1_personal from memories
+   where user_id = '00000000-0000-0000-0000-0000000000a1' and archived_at is null;
+
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  select count(*) into v_svc_scopes
+    from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000a1')
+   where scope = 'project::readfn-guard-secret';
+  -- CI escape hatch: a service-role caller with NULL p_user_id sees EVERY
+  -- scope (v_actor resolves NULL → the `v_actor is null and service_role`
+  -- branch), so a1's secret scope is visible without naming any user.
+  select count(*) into v_svc_null
+    from lorekit_memory_scopes(null)
+   where scope = 'project::readfn-guard-secret';
+  reset role;
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}', true);
+  select count(*) into v_b2_scopes
+    from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000a1')
+   where scope = 'project::readfn-guard-secret';
+  select lorekit_memory_count('00000000-0000-0000-0000-0000000000a1') into v_b2_count;
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  assert v_svc_scopes = 1,
+    format('readfn guard: service-role naming a1 must see a1''s scope, got %s', v_svc_scopes);
+  assert v_svc_null = 1,
+    format('readfn guard: service-role NULL p_user_id (CI escape hatch) must see a1''s scope, got %s', v_svc_null);
+  assert v_b2_scopes = 0,
+    format('readfn guard: authenticated b2 naming a1 must NOT enumerate a1''s scopes (IDOR closed), got %s', v_b2_scopes);
+  -- Anti-vacuity: the two users' active personal totals must differ, otherwise
+  -- "b2 got b2's number" and "b2 got a1's number" would be indistinguishable
+  -- and the assertion below could not prove the actor was pinned.
+  assert v_a1_personal <> v_b2_personal,
+    format('readfn guard fixture: a1 and b2 must hold a different number of active personal rows for the count assertion to be meaningful (a1=%s, b2=%s)',
+           v_a1_personal, v_b2_personal);
+  assert coalesce((v_b2_count->>'personal_count')::int, -1) = v_b2_personal,
+    format('readfn guard: authenticated b2 memory_count(a1) must report b2''s OWN personal total (%s), not a1''s (%s), got %s',
+           v_b2_personal, v_a1_personal, v_b2_count->>'personal_count');
 end;
 $$;
 
