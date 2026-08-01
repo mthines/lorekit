@@ -5,6 +5,7 @@ import { buildPage, decodeCursor } from '../../_shared/api/paginate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import { SearchMemoriesBodySchema, MEMORY_SELECT, shapeMemoryRow } from '../../_shared/schemas/memory.ts';
+import { normalizeTagList, pgArrayLiteral } from '../../_shared/schemas/tags.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
 import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';
@@ -41,7 +42,13 @@ export async function handleSearch(
   }
   if (body.q) q = q.textSearch('fts', body.q, { type: 'websearch', config: 'english' });
   if (body.scopes?.length) q = q.in('scope', body.scopes);
-  if (body.tags?.length) q = q.overlaps('tags', body.tags);
+  // A STRING array literal, never a string[] — postgrest-js joins an array with
+  // a bare `,`, which mis-parses a label containing a comma/brace/quote into
+  // several labels (`@lorekit/schemas/tags`), and `memories.tags` has no CHECK.
+  // Reachable HERE in a way `GET /memories?tags=` is not: that wire format
+  // splits on commas, while this JSON body carries such a label verbatim.
+  const tags = normalizeTagList(body.tags);
+  if (tags.length) q = q.overlaps('tags', pgArrayLiteral(tags));
   // OR+AND structured filter tree — whitelisted fields only (see _shared/api/filter.ts)
   if (body.filter) q = applyFilter(q, body.filter);
   if (body.cursor) { const c = decodeCursor(body.cursor); if (c && c.sort === 'updated_at') q = q.or(`updated_at.lt.${c.ts},and(updated_at.eq.${c.ts},id.lt.${c.id})`); }

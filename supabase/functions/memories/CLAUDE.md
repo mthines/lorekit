@@ -93,7 +93,9 @@ deliberately not the stemmed full-text `q` of `POST /search`. Every character in
 `pgArrayLiteral` — postgrest-js would otherwise `join(',')` an array and mis-parse a label
 containing a comma, brace, quote or backslash, all of which `memories.tags` permits. A label
 containing a comma is unreachable over this parameter by construction (the wire format splits
-on commas); `POST /search`'s `filter` is the way to express one.
+on commas); `POST /search` is the way to express one — either its `tags` array, whose JSON
+body carries the label verbatim and which goes through the same `pgArrayLiteral`, or its
+`filter` tree.
 
 Both filters are covered end-to-end in
 `packages/mcp-server/src/memories-api.integration.spec.ts` → "list filters", against a live
