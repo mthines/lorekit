@@ -56,6 +56,18 @@ export const MEMORY_TOOL_DEFS = [
           description:
             'Optional ISO 8601 creation date for migrating a pre-existing memory. Rejected if invalid or in the future. Applies only when the memory is first created.',
         },
+        ttl_days: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 365,
+          description:
+            'Optional time-to-live in days (1–365). The memory auto-expires that many days after this write and is then hidden from reads.',
+        },
+        clear_ttl: {
+          type: 'boolean',
+          description:
+            'Remove any existing expiry, making the memory permanent again. Takes precedence over ttl_days when both are supplied.',
+        },
         origin_repo: {
           type: 'string',
           description:

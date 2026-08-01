@@ -24,6 +24,10 @@ export const FIELDS = [
   'origin_branch',
   'origin_commit',
   'origin_pr',
+  // Expiry — the absolute ISO instant this lesson auto-expires (see src/store/
+  // ttl.mjs). Null / absent means it never expires. Appended like the origin
+  // columns: a file written before this existed simply decodes it as absent.
+  'expires_at',
 ];
 
 // Serialize an entry ({ ...columns, value }) into file text.

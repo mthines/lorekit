@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { serializeEntry, parseEntry, slugify, scopeToDir } from './format.mjs';
 import { normalizeCreatedAt } from './created-at.mjs';
+import { isLive, resolveExpiresAt } from './ttl.mjs';
 
 export function createLocalStore(baseDir) {
   return new LocalStore(baseDir);
@@ -61,11 +62,12 @@ class LocalStore {
   }
 
   // list({ scope, tags, limit }) → { ok, entries } — newest-first, tag-filtered,
-  // archived hidden.
+  // archived hidden, expired hidden (lazily, mirroring the remote read paths).
   async list({ scope, tags, limit } = {}) {
+    const now = new Date();
     let rows = this._readAll(scope)
       .map((r) => r.entry)
-      .filter((e) => !e.archived_at);
+      .filter((e) => isLive(e, now));
     if (Array.isArray(tags) && tags.length) {
       rows = rows.filter((e) => tags.every((t) => (e.tags || []).includes(t)));
     }
@@ -74,11 +76,10 @@ class LocalStore {
     return { ok: true, entries: rows };
   }
 
-  // read({ scope, key }) → { ok, entry } — null when absent or archived.
+  // read({ scope, key }) → { ok, entry } — null when absent, archived, or expired.
   async read({ scope, key } = {}) {
     const found = this._findByKey(scope, key);
-    const entry = found && !found.entry.archived_at ? found.entry : null;
-    return { ok: true, entry };
+    return { ok: true, entry: found && isLive(found.entry) ? found.entry : null };
   }
 
   // write(...) → { ok, entry } — upsert by scope+key. Preserves `created` and
@@ -92,19 +93,22 @@ class LocalStore {
   // an invalid or future-dated value rather than throwing, matching the store
   // contract's error surfacing.
   async write({
-    scope, key, value, tags, source_agent, trigger, created_at,
+    scope, key, value, tags, source_agent, trigger, created_at, ttl_days, clear_ttl,
     origin_repo, origin_branch, origin_commit, origin_pr,
   } = {}) {
-    let override;
+    const now = new Date().toISOString();
+    const existing = this._findByKey(scope, key);
+    let override, expires_at;
     try {
       override = normalizeCreatedAt(created_at);
+      expires_at = resolveExpiresAt({
+        clearTtl: clear_ttl, ttlDays: ttl_days, now, current: existing?.entry.expires_at,
+      });
     } catch (e) {
       return { ok: false, error: e.message };
     }
     const dir = this._dir(scope);
     fs.mkdirSync(dir, { recursive: true });
-    const now = new Date().toISOString();
-    const existing = this._findByKey(scope, key);
     const created = existing ? existing.entry.created || now : override || now;
     const entry = {
       scope,
@@ -122,6 +126,7 @@ class LocalStore {
       created,
       updated: existing ? now : override || now,
       archived_at: null,
+      expires_at,
       value: value == null ? '' : String(value),
     };
     const file = existing ? existing.file : this._freshPath(dir, key);
@@ -152,6 +157,7 @@ class LocalStore {
       created: entry.created ?? now,
       updated: entry.updated ?? now,
       archived_at: entry.archived_at ?? null,
+      expires_at: entry.expires_at ?? null,
       value: entry.value == null ? '' : String(entry.value),
     };
     const file = existing ? existing.file : this._freshPath(dir, entry.key);
@@ -258,9 +264,10 @@ class LocalStore {
   // lossy for `project::{name}` (stored by basename only). Returns
   // `[{ scope, count }]`, unsorted.
   async listScopes() {
+    const now = new Date();
     const counts = new Map();
     for (const { entry } of this._walkEntries()) {
-      if (entry.archived_at || !entry.scope) continue;
+      if (!entry.scope || !isLive(entry, now)) continue;
       counts.set(entry.scope, (counts.get(entry.scope) || 0) + 1);
     }
     return [...counts.entries()].map(([scope, count]) => ({ scope, count }));
@@ -392,12 +399,13 @@ class TwoTierStore {
   // a lesson present in both tiers is counted once — project shadows home, the
   // same first-wins merge `list()` uses. Returns `[{ scope, count }]`, unsorted.
   async listScopes() {
+    const now = new Date();
     const seen = new Set(); // `${scope}\x00${key}` — dedup across tiers
     const counts = new Map();
     const tiers = this.projectActive() ? [this.project, this.home] : [this.home];
     for (const tier of tiers) {
       for (const { entry } of tier._walkEntries()) {
-        if (entry.archived_at || !entry.scope) continue;
+        if (!entry.scope || !isLive(entry, now)) continue;
         const id = `${entry.scope}\x00${entry.key ?? ''}`;
         if (seen.has(id)) continue;
         seen.add(id);
