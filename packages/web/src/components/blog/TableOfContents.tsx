@@ -4,10 +4,12 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react
 import { motion, MotionConfig } from 'motion/react';
 import type { TocItem } from '@/lib/blog/toc';
 
-/** Offset (px) from the viewport top a heading must pass to become "active" —
- *  clears the sticky header (56px) + reading-progress bar + a little breathing
- *  room. Kept in sync with `BlogProse`'s `scroll-mt-28` (7rem = 112px). */
-const ACTIVE_OFFSET = 104;
+/** The "reading line" (px from viewport top): a heading is the active section
+ *  once its top rises above this. Deliberately a hair BELOW `BlogProse`'s
+ *  `scroll-mt-28` (7rem = 112px) resting position — so a heading you click/anchor
+ *  to (which lands at ~112px) counts as active, instead of leaving the previous
+ *  section lit. */
+const ACTIVE_OFFSET = 128;
 
 interface TableOfContentsProps {
   items: readonly TocItem[];
