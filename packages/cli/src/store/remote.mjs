@@ -58,14 +58,24 @@ class RemoteStore {
 
   // ── Memory operations → REST ──────────────────────────────────────────────
 
-  async list({ scope, tags, limit } = {}) {
+  async list({ scope, tags, limit, cursor } = {}) {
     const p = new URLSearchParams();
     if (scope) p.set('scope', scope);
     if (tags?.length) p.set('tags', Array.isArray(tags) ? tags.join(',') : tags);
     if (limit) p.set('limit', String(limit));
+    if (cursor) p.set('cursor', cursor);
     const res = await this._rest(`/memories?${p}`);
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
-    return { ok: true, entries: res.data?.entries ?? [] };
+    // hasMore / nextCursor let a caller page a scope with more rows than one
+    // request returns. With no `limit` the server serves its default of 50
+    // (ListMemoriesQuerySchema; 100 is the max, not the default). Additive —
+    // existing callers ignore them.
+    return {
+      ok: true,
+      entries: res.data?.entries ?? [],
+      hasMore: Boolean(res.data?.hasMore),
+      nextCursor: res.data?.nextCursor ?? null,
+    };
   }
 
   async search({ q, scopes, tags } = {}) {

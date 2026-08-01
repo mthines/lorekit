@@ -91,8 +91,9 @@ ${c.bold('Commands')}
   bootstrap   Apply the BYOD schema to a user-supplied Supabase database.
               Only needed when using LOREKIT_STORAGE_URL / LOREKIT_STORAGE_ANON_KEY.
               See docs/byod.md for setup instructions.
-  migrate     Relocate a LoreKit-format local store into the current layout.
-              Dry-run by default; pass --yes to apply. Idempotent.
+  migrate     Move memories between stores: relocate a local store into the
+              current layout, or migrate local <-> remote (--from/--to
+              local|remote). Dry-run by default; pass --yes to apply. Idempotent.
   hook        Hook engine for Claude Code / Cursor / Codex. Reads the host's
               JSON on stdin and injects memories or a retrospective nudge.
               Not run by hand — wired into a plugin's hook config.
@@ -522,23 +523,32 @@ ${c.bold('Examples')}
   npx @lorekit/cli link global::prefer-guards --json     # { url, surface, base, params }
   npx @lorekit/cli url --q "flaky test" --owner personal # search + ownership filter
 `,
-  migrate: `${c.bold('lorekit migrate')} — relocate a LoreKit-format local store into the current layout
+  migrate: `${c.bold('lorekit migrate')} — move memories between stores (relocate, or local ↔ remote)
 
 ${c.bold('Usage')}
-  npx @lorekit/cli migrate --from <path> [options]
+  npx @lorekit/cli migrate --from <path> [--to home|project] [options]
+  npx @lorekit/cli migrate --from local  --to remote [options]
+  npx @lorekit/cli migrate --from remote --to local  [options]
 
 Dry-run by default; pass --yes (or --apply) to write. Idempotent.
 
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
-      --from <path>       Source store to migrate from (required)
-      --to <tier>         Destination tier: home | project (default routes by scope)
+      --from <src>        Source: a store PATH, or "local" / "remote"
+      --to <dest>         Destination: home | project (relocation), or "local" / "remote"
+      --scope <scope>     Cross-store only: limit to one exact scope
       --apply             Apply the migration (alias of --yes)
   -y, --yes               Apply the migration; never prompt
+
+Cross-store (local ↔ remote) moves only ACTIVE memories via each store's API.
+remote → local preserves timestamps/expiry/origin verbatim; local → remote
+preserves created_at + origin and converts expiry to a remaining ttl_days.
 
 ${c.bold('Examples')}
   npx @lorekit/cli migrate --from .lore                 # preview a rename
   npx @lorekit/cli migrate --from .lore --to project --yes
+  npx @lorekit/cli migrate --from local --to remote     # preview a push
+  npx @lorekit/cli migrate --from remote --to local --yes
 `,
   hook: `${c.bold('lorekit hook')} — hook engine for Claude Code / Cursor / Codex
 
