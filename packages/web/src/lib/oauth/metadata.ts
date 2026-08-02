@@ -26,12 +26,25 @@
  * knowledge left in the edge tree, and `oauth-discovery.spec.ts` source-scans
  * both sides to keep them agreeing with this file.
  *
- * Pure: the issuer is an argument, not an env read, so a test pins the whole
- * document without stubbing `process.env`.
+ * Pure: the issuer and the resource are arguments, not env reads, so a test
+ * pins the whole document without stubbing `process.env`. The routes do the
+ * env resolution and pass the values in.
  */
 
-/** The MCP resource this authorization server issues tokens for. */
-export const MCP_RESOURCE_URL = 'https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp';
+import { PRODUCTION_MCP_URL } from '@/lib/mcp-url';
+
+/**
+ * The MCP resource this authorization server issues tokens for.
+ *
+ * The DEFAULT only. The resource is a per-deployment fact — a preview stack
+ * and a local stack each have their own MCP endpoint — so both builders below
+ * take it as an argument and their routes pass `resolveMcpUrl()`
+ * (`lib/mcp-url.ts`, the single derivation from `NEXT_PUBLIC_SUPABASE_URL`).
+ * Hardcoding it here would make a preview deployment advertise production's
+ * MCP server as its resource, and clients compare that value against the
+ * server they are talking to.
+ */
+export const MCP_RESOURCE_URL = PRODUCTION_MCP_URL;
 
 /** Canonical origin of the LoreKit authorization server (the dashboard). */
 export const DEFAULT_ISSUER = 'https://lorekit.io';

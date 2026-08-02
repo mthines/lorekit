@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { resolveMcpUrl } from '@/lib/mcp-url';
 import { DEFAULT_ISSUER, protectedResourceMetadata } from '@/lib/oauth/metadata';
 
 /**
@@ -22,8 +23,12 @@ import { DEFAULT_ISSUER, protectedResourceMetadata } from '@/lib/oauth/metadata'
  * cross-origin.
  */
 export async function GET() {
+  // Both are per-deployment facts: a preview or local stack has its own MCP
+  // endpoint and its own origin. Resolving them here (rather than baking
+  // production constants into the document) is what lets a non-production
+  // stack be authorized against at all.
   const issuer = process.env['NEXT_PUBLIC_APP_URL'] || DEFAULT_ISSUER;
-  return NextResponse.json(protectedResourceMetadata(undefined, issuer), {
+  return NextResponse.json(protectedResourceMetadata(resolveMcpUrl(), issuer), {
     headers: {
       'Cache-Control': 'public, max-age=300, s-maxage=3600',
       'Access-Control-Allow-Origin': '*',

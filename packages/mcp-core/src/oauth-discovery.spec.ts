@@ -29,6 +29,7 @@ const read = (rel: string) => readFileSync(path.join(repoRoot, rel), 'utf8');
 const edgeMetadata = read('supabase/functions/mcp/oauth-metadata.ts');
 const edgeIndex = read('supabase/functions/mcp/index.ts');
 const webMetadata = read('packages/web/src/lib/oauth/metadata.ts');
+const mcpUrlLib = read('packages/web/src/lib/mcp-url.ts');
 const webResourceRoute = read(
   'packages/web/src/app/.well-known/oauth-protected-resource/route.ts',
 );
@@ -39,28 +40,58 @@ const METADATA_URL = `${ISSUER}/.well-known/oauth-protected-resource`;
 const MCP_URL = 'https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp';
 
 describe('issuer agreement', () => {
-  it('the edge names the dashboard as the authorization server', () => {
+  it('the edge defaults to the dashboard as the authorization server', () => {
     expect(edgeMetadata).toContain(`export const AUTHORIZATION_SERVER_ISSUER = '${ISSUER}';`);
   });
 
-  it('web declares the same issuer', () => {
+  it('web declares the same default issuer', () => {
     expect(webMetadata).toContain(`export const DEFAULT_ISSUER = '${ISSUER}';`);
   });
 
-  it('web describes the concrete MCP resource, never a <ref> placeholder', () => {
-    // Pinning the exact literal is what enforces the no-placeholder rule; a
-    // blanket scan for `<ref>` would also match the prose that states the rule.
-    expect(webMetadata).toContain(`export const MCP_RESOURCE_URL = '${MCP_URL}';`);
+  it('the production MCP URL is declared once, as a concrete URL', () => {
+    // Pinning the exact literal is what enforces the no-<ref>-placeholder
+    // rule; a blanket scan for `<ref>` would also match the prose stating it.
+    // It lives in mcp-url.ts because that is the ONE derivation of this
+    // deployment's MCP endpoint — the OAuth document consumes it rather than
+    // holding a second copy.
+    expect(mcpUrlLib).toContain(`export const PRODUCTION_MCP_URL =\n  '${MCP_URL}';`);
+    expect(webMetadata).toContain("import { PRODUCTION_MCP_URL } from '@/lib/mcp-url';");
+    expect(webMetadata).toContain('export const MCP_RESOURCE_URL = PRODUCTION_MCP_URL;');
+  });
+});
+
+describe('both sides are per-deployment, not pinned to production', () => {
+  /**
+   * The failure this prevents is quiet and bad: a staging Supabase project
+   * challenging clients toward production `lorekit.io`, which then issues a
+   * token for the wrong resource. It also makes the flow untestable anywhere
+   * but production, which is how that bug would survive.
+   */
+  it('the edge issuer is overridable by LOREKIT_APP_URL', () => {
+    expect(edgeMetadata).toContain("Deno.env.get('LOREKIT_APP_URL')");
+    expect(edgeMetadata).toContain('export function authorizationServerIssuer()');
+    // The challenge and the redirect must both go through it — a literal
+    // baked into either one would silently re-pin that path to production.
+    expect(edgeMetadata).toContain(
+      "return 'Bearer resource_metadata=\"' + protectedResourceMetadataUrl() + '\"';",
+    );
+    expect(edgeMetadata).toContain('Location: protectedResourceMetadataUrl()');
+  });
+
+  it('the web resource document resolves the MCP URL per deployment', () => {
+    expect(webResourceRoute).toContain("import { resolveMcpUrl } from '@/lib/mcp-url';");
+    expect(webResourceRoute).toContain('protectedResourceMetadata(resolveMcpUrl(), issuer)');
+    expect(webResourceRoute).toContain("process.env['NEXT_PUBLIC_APP_URL']");
   });
 });
 
 describe('the challenge points at a document that is actually served', () => {
   it('the edge builds the challenge from the dashboard metadata URL', () => {
     expect(edgeMetadata).toContain(
-      "export const PROTECTED_RESOURCE_METADATA_URL =\n  AUTHORIZATION_SERVER_ISSUER + '/.well-known/oauth-protected-resource';",
+      "return authorizationServerIssuer() + '/.well-known/oauth-protected-resource';",
     );
     expect(edgeMetadata).toContain(
-      `return 'Bearer resource_metadata="' + PROTECTED_RESOURCE_METADATA_URL + '"';`,
+      `return 'Bearer resource_metadata="' + protectedResourceMetadataUrl() + '"';`,
     );
   });
 
@@ -99,7 +130,7 @@ describe('the resource server wires the challenge and the redirect', () => {
     expect(edgeIndex).toContain('isProtectedResourceMetadataPath(url.pathname)');
     expect(edgeIndex).toContain('protectedResourceMetadataRedirect()');
     expect(edgeMetadata).toContain('status: 308');
-    expect(edgeMetadata).toContain('Location: PROTECTED_RESOURCE_METADATA_URL');
+    expect(edgeMetadata).toContain('Location: protectedResourceMetadataUrl()');
   });
 
   it('the redirect is reachable cross-origin', () => {

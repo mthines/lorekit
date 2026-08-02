@@ -23,13 +23,30 @@
 /** Canonical origin of the LoreKit authorization server (the dashboard). */
 export const AUTHORIZATION_SERVER_ISSUER = 'https://lorekit.io';
 
+/**
+ * The dashboard origin THIS deployment points clients at.
+ *
+ * Defaults to production, overridable with the `LOREKIT_APP_URL` secret. The
+ * override is not a convenience: without it the staging Supabase project
+ * challenges clients toward production `lorekit.io`, which would issue a token
+ * for the wrong resource — and a local stack could not be authorized against
+ * at all, so the flow would only ever be exercisable in production. This is
+ * the "deploy tooling that legitimately targets multiple projects" carve-out
+ * to the static-URL rule, not a placeholder in user-facing copy.
+ */
+export function authorizationServerIssuer(): string {
+  const configured = Deno.env.get('LOREKIT_APP_URL');
+  return (configured && configured.replace(/\/+$/, '')) || AUTHORIZATION_SERVER_ISSUER;
+}
+
 /** Absolute URL of the RFC 9728 document, served by the dashboard. */
-export const PROTECTED_RESOURCE_METADATA_URL =
-  AUTHORIZATION_SERVER_ISSUER + '/.well-known/oauth-protected-resource';
+export function protectedResourceMetadataUrl(): string {
+  return authorizationServerIssuer() + '/.well-known/oauth-protected-resource';
+}
 
 /** The `WWW-Authenticate` value returned with a 401 on a credential-less request. */
 export function wwwAuthenticateChallenge(): string {
-  return 'Bearer resource_metadata="' + PROTECTED_RESOURCE_METADATA_URL + '"';
+  return 'Bearer resource_metadata="' + protectedResourceMetadataUrl() + '"';
 }
 
 /** True when the request path is asking for the protected-resource document. */
@@ -40,15 +57,15 @@ export function isProtectedResourceMetadataPath(pathname: string): boolean {
 /**
  * Redirect a path-constructed metadata request to the document itself.
  *
- * 308 (permanent, method-preserving) rather than 302: the location never
- * changes per-request, and preserving the method keeps a client that probes
- * with something other than GET from silently switching verbs.
+ * 308 (permanent, method-preserving) rather than 302: the location is fixed
+ * per deployment, and preserving the method keeps a client that probes with
+ * something other than GET from silently switching verbs.
  */
 export function protectedResourceMetadataRedirect(): Response {
   return new Response(null, {
     status: 308,
     headers: {
-      Location: PROTECTED_RESOURCE_METADATA_URL,
+      Location: protectedResourceMetadataUrl(),
       'Cache-Control': 'public, max-age=3600',
       'Access-Control-Allow-Origin': '*',
     },
