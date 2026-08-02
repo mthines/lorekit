@@ -197,7 +197,56 @@ class RemoteStore {
     return { ok: true, scopes: scopes.map((s) => ({ scope: s.scope, count: Number(s.count) || 0 })) };
   }
 
+  // Authentication probe for doctor — does the configured token STILL work?
+  //
+  // `ping()` deliberately hits the PUBLIC `/health` function, so it stays green
+  // for a revoked, deleted or mistyped token: it proves the network path, and
+  // nothing about the credential. This probe is the missing half. It makes one
+  // authenticated, side-effect-free request (`GET /memories?limit=1`) and
+  // classifies the answer:
+  //
+  //   200 → the token was accepted AND may read.
+  //   401 → the token was REJECTED (revoked, deleted, or never valid). This is
+  //         `resolveRestAuth` finding no `api_tokens` row for the hash
+  //         (supabase/functions/_shared/api/auth.ts).
+  //   403 → the token was ACCEPTED, but lacks read permission — the normal,
+  //         healthy answer for a write-only `lk_wo_*` token, so it must never
+  //         be reported as an auth failure.
+  //   429 → rate limited. The request never reached the route, but it DID get
+  //         past auth, so the token is live.
+  //
+  // Returns { ok, authenticated, permitted, rateLimited, httpStatus, error,
+  // networkError, unusable }. `authenticated` is null when the answer does not
+  // settle the question — the caller must not turn "don't know" into "broken".
+  async verifyAuth() {
+    if (!this.usable()) return { ok: false, unusable: true, authenticated: null };
+    if (!this.restBase) {
+      return { ok: false, authenticated: null, error: { message: `Endpoint is not a valid URL: ${this.endpoint}` } };
+    }
+    // limit=1 keeps the probe cheap; the rows themselves are never read.
+    const res = await this._rest('/memories?limit=1');
+    if (res.networkError) return { ok: false, authenticated: null, networkError: res.networkError };
+    if (res.ok) return { ok: true, authenticated: true, permitted: true, httpStatus: res.httpStatus };
+
+    const httpStatus = res.httpStatus ?? null;
+    if (httpStatus === 401) {
+      return { ok: false, authenticated: false, permitted: false, httpStatus, error: res.error };
+    }
+    if (httpStatus === 403) {
+      return { ok: true, authenticated: true, permitted: false, httpStatus, error: res.error };
+    }
+    if (httpStatus === 429) {
+      return { ok: true, authenticated: true, permitted: null, rateLimited: true, httpStatus, error: res.error };
+    }
+    return { ok: false, authenticated: null, httpStatus, error: res.error };
+  }
+
   // Connectivity probe for doctor — a transport check, not a memory op.
+  //
+  // NOTE: this is deliberately UNAUTHENTICATED (the `/health` function is
+  // public), so a green result says the endpoint is reachable and says NOTHING
+  // about the token. `verifyAuth()` above is what answers that; doctor runs
+  // both and reports them as separate checks.
   //
   // There is no MCP fallback: a `restBase` we could not derive means the
   // configured endpoint is not a URL, and a JSON-RPC POST to that same

@@ -53,6 +53,13 @@ lk_wo_<32 chars>   # write only
 Tokens never expire unless revoked. Stored as SHA-256 hashes — shown once on creation.
 Maximum 20 tokens per account. Generate and revoke at lorekit.io.
 
+A revoked token is rejected with HTTP 401 (`{"error":"Authentication required","code":"unauthorized"}`)
+on REST and `-32001` on MCP. `npx @lorekit/cli doctor` verifies this directly: its
+`connectivity` check probes the public `/health` function (network path only) and its
+`authentication` check makes one authenticated request — `PASS` when the token is accepted
+(including a `lk_wo_*` token answered 403 on a read), `FAIL` on 401. Replace a revoked token
+with `npx @lorekit/cli install --force`, which offers to keep, replace, or remove the stored one.
+
 ### Permission matrix
 
 | Tool | lk_rw_ | lk_ro_ | lk_wo_ |

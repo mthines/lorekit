@@ -8,7 +8,8 @@
 // status line for each install location.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
+import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -107,6 +108,133 @@ test('doctor warns when hooks are registered in both project and global settings
   assert.match(dupeLine, /WARN/, `expected hooks duplicate WARN, got: ${dupeLine}`);
   assert.match(dupeLine, /SessionStart/, `expected SessionStart in duplicate line, got: ${dupeLine}`);
   assert.match(dupeLine, /lorekit uninstall/, `expected uninstall hint, got: ${dupeLine}`);
+});
+
+// ── the token is actually VERIFIED, not just prefix-checked ──────────────────
+//
+// Regression guard for the dogfood finding that motivated this: with a REVOKED
+// token, doctor reported `token — read+write (lk_rw_*)` and `connectivity —
+// reachable` and summarised "0 failed", while every remote read in `lorekit
+// list` answered "Authentication required". Both green checks were honest about
+// what they measured and neither measured the credential: `token` reads the
+// PREFIX of a string, and `connectivity` probes the PUBLIC `/health` function.
+// These tests pin the authenticated probe that closes that gap.
+
+// A mock LoreKit deployment: a public `/functions/v1/health` plus a
+// `/functions/v1/memories` that answers with whatever status the case needs.
+function startMockDeployment({ memoriesStatus = 200, memoriesBody = '{"entries":[]}' } = {}) {
+  const server = http.createServer((req, res) => {
+    req.on('data', () => {}); // drain
+    req.on('end', () => {
+      const { pathname } = new URL(req.url, 'http://localhost');
+      res.setHeader('content-type', 'application/json');
+      if (pathname === '/functions/v1/health') {
+        res.statusCode = 200;
+        res.end('{"status":"ok"}');
+        return;
+      }
+      if (pathname === '/functions/v1/memories') {
+        res.statusCode = memoriesStatus;
+        res.end(memoriesBody);
+        return;
+      }
+      res.statusCode = 404;
+      res.end('{"error":"Route not found","code":"not_found"}');
+    });
+  });
+  return server;
+}
+
+function listen(server) {
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
+}
+
+// Run doctor in remote mode against a mock deployment; returns its output.
+//
+// Async `spawn`, never `spawnSync`: the mock server lives in THIS process, so a
+// synchronous child would block the event loop that has to answer its requests
+// and every probe would time out.
+function runRemoteDoctor(dir, home, port, token) {
+  return new Promise((resolve) => {
+    const child = spawn(
+      process.execPath,
+      [
+        BIN, 'doctor',
+        '--mode', 'remote',
+        '--endpoint', `http://127.0.0.1:${port}/functions/v1/mcp`,
+        '--token', token,
+        '--dir', dir,
+      ],
+      { env: { ...process.env, NO_COLOR: '1', HOME: home, USERPROFILE: home, LOREKIT_TELEMETRY: '0' } },
+    );
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => (stdout += d));
+    child.stderr.on('data', (d) => (stderr += d));
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+const lineFor = (stdout, label) => stdout.split('\n').find((l) => l.includes(label)) ?? '';
+
+test('doctor FAILS the authentication check when the token has been revoked (401)', async () => {
+  const root = tmp('lk-doc-revoked-');
+  const home = tmp('lk-doc-revoked-home-');
+  const server = startMockDeployment({
+    memoriesStatus: 401,
+    memoriesBody: '{"error":"Authentication required","code":"unauthorized"}',
+  });
+  const port = await listen(server);
+  try {
+    const res = await runRemoteDoctor(root, home, port, 'lk_rw_revoked');
+
+    // The transport really is reachable — that check stays honest, and says so.
+    const connectivity = lineFor(res.stdout, 'connectivity');
+    assert.match(connectivity, /PASS/, `expected connectivity PASS, got: ${connectivity}`);
+    assert.match(connectivity, /token not checked/, `connectivity must not imply the token works: ${connectivity}`);
+
+    // …and the credential is reported as broken, not silently accepted.
+    const auth = lineFor(res.stdout, 'authentication');
+    assert.match(auth, /FAIL/, `expected authentication FAIL, got: ${auth}`);
+    assert.match(auth, /revoked/i, `expected an actionable revoked-token message, got: ${auth}`);
+    assert.match(auth, /install --force/, `expected the remediation hint, got: ${auth}`);
+    assert.equal(res.status, 1, 'a rejected token makes doctor exit non-zero');
+  } finally {
+    server.close();
+  }
+});
+
+test('doctor PASSES the authentication check for a token the server accepts', async () => {
+  const root = tmp('lk-doc-livetok-');
+  const home = tmp('lk-doc-livetok-home-');
+  const server = startMockDeployment({ memoriesStatus: 200 });
+  const port = await listen(server);
+  try {
+    const res = await runRemoteDoctor(root, home, port, 'lk_rw_live');
+    const auth = lineFor(res.stdout, 'authentication');
+    assert.match(auth, /PASS/, `expected authentication PASS, got: ${auth}`);
+    assert.match(auth, /read access confirmed/, auth);
+  } finally {
+    server.close();
+  }
+});
+
+test('doctor does not call a write-only token broken: 403 is accepted-but-unpermitted', async () => {
+  const root = tmp('lk-doc-wo-');
+  const home = tmp('lk-doc-wo-home-');
+  const server = startMockDeployment({
+    memoriesStatus: 403,
+    memoriesBody: '{"error":"Read permission required","code":"forbidden"}',
+  });
+  const port = await listen(server);
+  try {
+    const res = await runRemoteDoctor(root, home, port, 'lk_wo_live');
+    const auth = lineFor(res.stdout, 'authentication');
+    assert.match(auth, /PASS/, `a write-only token is healthy, got: ${auth}`);
+    assert.match(auth, /no read permission/, auth);
+  } finally {
+    server.close();
+  }
 });
 
 test('doctor does NOT warn about duplicates when hooks exist only in one scope', async () => {
