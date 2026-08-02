@@ -15,6 +15,7 @@ import { useMemo, useRef, useEffect, useState, useCallback } from 'react';
 import { BookOpen, ChevronDown, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useLoreData } from '@/lib/queries/lore';
+import { useMemoryTotal } from '@/lib/queries/plan';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { MemoryCard, memoryFromLesson } from '@/components/memory/MemoryCard';
 import type { LessonEntry } from '@/components/lore/LessonCard';
@@ -36,6 +37,7 @@ export function MemoryExpandButton({
   className = '',
 }: MemoryExpandButtonProps) {
   const { data, isLoading } = useLoreData();
+  const { data: memoryTotal = 0 } = useMemoryTotal();
   const { openLesson, openLessonById, closeLesson } = useMemorySidebar();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -70,10 +72,16 @@ export function MemoryExpandButton({
     return base.slice(0, previewCount);
   }, [data, scope, previewCount]);
 
+  // The badge count must NOT come from `data.lessons` — that is only the first
+  // page of the list (capped at the API's 100-row maximum), so counting it stuck
+  // the badge at "100 memories" for any larger account. The unscoped total is the
+  // SAME figure the /settings/plan page shows (`useMemoryTotal` → the shared
+  // `lorekit_memory_count` RPC), so the two never disagree. A `scope`-filtered
+  // instance falls back to the exact per-scope aggregate from GET /memories/scopes.
   const total = useMemo(() => {
-    if (!data?.lessons) return 0;
-    return scope ? data.lessons.filter((l) => l.scope === scope).length : data.lessons.length;
-  }, [data, scope]);
+    if (scope) return data?.scopes.find((s) => s.scope === scope)?.count ?? 0;
+    return memoryTotal;
+  }, [data, scope, memoryTotal]);
 
   if (isLoading) {
     return (

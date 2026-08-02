@@ -33,7 +33,7 @@ export const LoadsMockedStats: Story = {
 
     await step('Scope-health data resolves from the MSW-mocked query', async () => {
       // The card label appears only after the query settles — findBy waits for it.
-      await expect(await canvas.findByText('Total memories')).toBeInTheDocument();
+      await expect(await canvas.findByText('Memories written')).toBeInTheDocument();
       await expect(canvas.getByText('Scopes')).toBeInTheDocument();
     });
   },
@@ -42,14 +42,14 @@ export const LoadsMockedStats: Story = {
 export const RangeSelectorSwitches: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
-    await canvas.findByText('Total memories');
+    await canvas.findByText('Memories written');
 
     const totalRange = await canvas.findByRole('radiogroup', {
-      name: /time range for total memories/i,
+      name: /time range for memories written/i,
     });
     const group = within(totalRange);
 
-    await step('7d is the default range for Total memories', async () => {
+    await step('7d is the default range for Memories written', async () => {
       await expect(group.getByRole('radio', { name: '7d' })).toBeChecked();
     });
 
