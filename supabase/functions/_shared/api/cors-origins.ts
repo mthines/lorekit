@@ -29,8 +29,25 @@ export function expandAllowedOrigins(configured: string[]): string[] {
 }
 
 // Whether a request Origin is permitted by an already-expanded allowlist.
+//
+// Loopback dev origins (localhost / 127.0.0.1 / [::1], any port or scheme) are
+// ALWAYS admitted so a locally-running dashboard can talk to the deployed edge
+// functions without the loopback host being in ALLOWED_ORIGINS. Safe: every
+// request is authenticated with a Bearer token a cross-origin page cannot obtain.
 export function isOriginAllowed(allowed: string[], origin: string): boolean {
-  return allowed.includes('*') || allowed.includes(origin);
+  return allowed.includes('*') || allowed.includes(origin) || isLoopbackOrigin(origin);
+}
+
+// True for a loopback dev origin. Matched on the EXACT host, so a lookalike such
+// as `localhost.evil.com` is NOT loopback. The empty origin is never loopback.
+function isLoopbackOrigin(origin: string): boolean {
+  if (!origin) return false;
+  try {
+    const { hostname } = new URL(origin);
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+  } catch {
+    return false;
+  }
 }
 
 // The origin-independent half of the CORS response. `Access-Control-Expose-Headers`

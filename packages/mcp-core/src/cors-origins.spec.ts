@@ -94,6 +94,24 @@ describe('isOriginAllowed', () => {
     expect(isOriginAllowed(expandAllowedOrigins(['https://lorekit.io']), '')).toBe(false);
     expect(isOriginAllowed(expandAllowedOrigins(['*']), '')).toBe(true);
   });
+
+  it('always admits loopback dev origins even when not in the allowlist', () => {
+    // A locally-run dashboard (http://localhost:3000) pointed at the deployed
+    // edge functions must not be CORS-blocked.
+    const allowed = expandAllowedOrigins(['https://lorekit.io']);
+    expect(isOriginAllowed(allowed, 'http://localhost:3000')).toBe(true);
+    expect(isOriginAllowed(allowed, 'http://localhost:5173')).toBe(true);
+    expect(isOriginAllowed(allowed, 'https://localhost')).toBe(true);
+    expect(isOriginAllowed(allowed, 'http://127.0.0.1:3000')).toBe(true);
+    expect(isOriginAllowed(allowed, 'http://[::1]:3000')).toBe(true);
+  });
+
+  it('does not treat a loopback lookalike host as loopback', () => {
+    const allowed = expandAllowedOrigins(['https://lorekit.io']);
+    expect(isOriginAllowed(allowed, 'http://localhost.evil.com')).toBe(false);
+    expect(isOriginAllowed(allowed, 'https://notlocalhost')).toBe(false);
+    expect(isOriginAllowed(allowed, 'https://127.0.0.1.evil.com')).toBe(false);
+  });
 });
 
 // `corsHeaders(req)` in the Deno-only `_shared/api/cors.ts` is now nothing but

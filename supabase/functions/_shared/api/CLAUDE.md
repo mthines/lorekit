@@ -117,7 +117,10 @@ Rules:
 - `expandAllowedOrigins(configured)` — the effective allowlist: `expandOriginSiblings` over every
   configured origin, deduplicated.
 - `isOriginAllowed(allowed, origin)` — true when the expanded allowlist contains `*` or the exact
-  origin.
+  origin, OR the origin is a **loopback** dev host (`localhost` / `127.0.0.1` / `[::1]`, any port or
+  scheme, exact host match). Loopback is always admitted so a locally-run dashboard can reach the
+  deployed edge functions without the loopback host being in `ALLOWED_ORIGINS`; safe because every
+  request is Bearer-authenticated, so CORS is not the access control here.
 - `corsResponseHeaders(allowed, origin)` — the static CORS headers plus
   `Access-Control-Allow-Origin` **only when the origin is allowed**. A disallowed origin gets no
   such header rather than an empty one: the empty string is not a valid header value and a browser
