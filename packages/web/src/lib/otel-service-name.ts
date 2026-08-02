@@ -10,11 +10,11 @@
  * let a = e.OTEL_SERVICE_NAME || t.serviceName || "app";
  * ```
  *
- * (`dist/node/index.js`, v1.13.0 — `e` is the parsed environment, `t` the
- * `registerOTel` config). The env var WINS. So `registerOTel({ serviceName:
- * 'web' })` is inert on any deployment that also sets `OTEL_SERVICE_NAME`, and
- * the OTel env resource detector independently applies the same var, so there
- * is no config-side way to out-rank it.
+ * (`dist/node/index.js`, v1.14.2 — the lockfile-resolved version; `e` is the
+ * parsed environment, `t` the `registerOTel` config). The env var WINS. So
+ * `registerOTel({ serviceName: 'web' })` is inert on any deployment that also
+ * sets `OTEL_SERVICE_NAME`, and the OTel env resource detector independently
+ * applies the same var, so there is no config-side way to out-rank it.
  *
  * Observed in production: the Next.js server runtime reported
  * `service.name = 'lorekit'` — the `service.namespace` value — for 326 spans in
