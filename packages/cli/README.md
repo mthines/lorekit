@@ -75,11 +75,40 @@ lorekit install --global      # set it up for every project
 ```
 
 In a TTY it prompts for the scope (and for `--endpoint` / `--token` if missing).
-Flags: `--project` / `--global` pick the scope non-interactively; `--no-hooks`
-installs the skills + MCP only (memory stays model-invoked); `--yes` runs
+Flags: `--project` / `--global` pick the scope non-interactively; `--yes` runs
 non-interactively (endpoint required via flag/env; scope defaults to project);
 `--force` overwrites an existing skill copy. Re-running is idempotent — the hook
 entries are updated in place, never duplicated.
+
+#### Choosing the hooks
+
+The hooks are a separate, explicit choice — they add a `lorekit hook` subprocess
+to three Claude Code lifecycle events and write into `settings.json`, so install
+asks rather than assuming. **None of them writes memory:** they inject context,
+and the write is still the model calling `memory.write`.
+
+| Mode | Wires | What you get |
+|------|-------|--------------|
+| `all` | `SessionStart`, `PostToolUseFailure`, `Stop` | Lessons injected at session start, plus a nudge on a tool failure and a friction-gated one at end of turn |
+| `read-only` | `SessionStart` | Lessons injected; nothing ever nudges |
+| `none` | — | Skills + MCP only; memory stays model-invoked |
+
+```bash
+lorekit install --hooks read-only   # inject lessons, never nudge
+lorekit install --hooks none        # remove any wired hooks
+lorekit install --no-hooks --yes    # don't wire new ones; leave existing alone
+```
+
+In a TTY the prompt preselects whatever is **already wired**, so re-running
+install never resurrects hooks you declined; a genuinely fresh install
+preselects `all`. `--yes` / a non-TTY takes that same preselected value without
+asking — `all` on a fresh install, otherwise whatever is already wired (`none`
+if you previously removed them), and a hand-wired set that matches no preset
+keeps exactly that set — no event is added or removed, though a stale hook
+command is still refreshed. Pass `--hooks <mode>` to choose explicitly.
+`--hooks none` removes hooks that are already there; `--no-hooks` only skips
+wiring new ones. `lorekit doctor` reports which events are wired, and in which
+scope.
 
 **Replacing a token.** A plain re-run reuses the token already in your config.
 An interactive `lorekit install --force` instead asks what to do with it —
@@ -535,13 +564,20 @@ Both files share this schema — all fields optional:
                            // tags appended to every memory.write from this repo/user
                            // both layers merged: repo tags first, then user tags
 
+  "ttl.default": 90,
+                           // days until a write that named no TTL expires
+                           // repo wins over user (a scalar policy cannot merge)
+                           // omit for the historical behaviour: memories are permanent
+
   "scope.defaults": {
     "repo::owner/name":     { "tags": ["team"] },
-    "branch::owner/name::": { "tags": ["ephemeral"] }
+    "branch::owner/name::": { "tags": ["ephemeral"], "ttl_days": 14 },
+    "global":               { "ttl_days": null }
   },
-                           // per-scope tag defaults applied to writes whose scope
+                           // per-scope tag and TTL defaults applied to writes whose scope
                            // starts with the key; matched by prefix (no wildcards needed)
                            // repo config only — this is a team-level write policy
+                           // ttl_days: null means "permanent", overriding ttl.default
 
   // ── Hook behaviour ─────────────────────────────────────────────────────────
   "hooks.disabled": ["Stop"],
@@ -605,6 +641,58 @@ cannot override**:
 `lorekit doctor` to see the resolved mode, **which source decided it**, and any
 active deny constraints.
 
+### Default TTL
+
+A memory with no TTL never expires. That is still the out-of-the-box behaviour,
+and it is the right default for a lesson someone deliberately curated — but it is
+the wrong one for the steady drip of observations a hook nudges an agent into
+writing at the end of every run. `ttl.default` and
+`scope.defaults.<prefix>.ttl_days` let a repo say how long its lore stays fresh.
+
+**Precedence, most specific first:**
+
+| # | Source | Wins because |
+| - | ------ | ------------ |
+| 1 | `--ttl-days` / `--clear-ttl` | An explicit flag is the caller's assertion about this one memory. `--clear-ttl` is how you keep something forever in a repo that defaults to expiring. |
+| 2 | The longest matching `scope.defaults` prefix with a `ttl_days` key | The most specific scope is the one the config author meant. `null` there means permanent. |
+| 3 | `ttl.default` | The repo-wide (or user-wide) fallback. |
+| 4 | No expiry | Nothing configured. |
+
+Prefix matching is `::`-delimited, so `branch::` covers every branch scope while
+`repo::owner` does **not** cover `repo::owner/name` — `owner/name` is a single
+segment. Tags from `scope.defaults` union across every matching prefix; a TTL
+cannot, so exactly one entry wins.
+
+A configured TTL that is out of range (or not a number) is **ignored** — the
+write succeeds with no expiry rather than failing. Config is ambient state that
+must never break an unrelated write; `--ttl-days 999`, by contrast, is a usage
+error, because you typed it. `lorekit write` names the source in its output:
+
+```
+  expires in 90 days (from config)
+```
+
+**Two limits worth knowing.** First, this is a **client-side** default: the
+hosted `memory.write` contract is unchanged, so omitting `ttl_*` there still
+means permanent. An agent talking straight to the MCP endpoint never sees your
+config file. Second, a **hook cannot apply it** — hooks only read lore and emit
+text; the write happens afterwards, in the agent's context. So the nudges instead
+*advise* the resolved number:
+
+```
+LoreKit: hit any friction worth remembering … Set ttl_days: 90 (this scope's
+configured default) unless the lesson is durable enough to keep forever.
+```
+
+That is advice, not enforcement. An agent that ignores it writes a permanent
+memory, exactly as before.
+
+**Refresh on update is free.** `memory_write` refreshes `expires_at` only when a
+`ttl_*` is supplied, so re-writing the same `scope`+`key` with the default
+applied slides the window forward — a lesson that keeps recurring keeps living,
+and one nobody has seen in 90 days decays. Expired rows are swept nightly, which
+also returns their headroom against the plan's memory cap.
+
 ## Options
 
 | Flag | Meaning |
@@ -620,7 +708,8 @@ active deny constraints.
 | `--to <tier>` | Migration destination tier: `home` / `project` (`migrate`; default routes by scope) |
 | `--apply` | Apply the migration — alias of `--yes` (`migrate`) |
 | `-y, --yes` | Non-interactive / apply; never prompt |
-| `--no-hooks` | Skip wiring the lifecycle hooks; skills + MCP only (`install`) |
+| `--hooks <mode>` | Lifecycle hooks to wire: `all` / `read-only` / `none` (`install`; `none` removes any already wired) |
+| `--no-hooks` | Skip wiring the lifecycle hooks; skills + MCP only. Leaves already-wired hooks alone (`install`) |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
 | `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `link`) |

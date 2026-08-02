@@ -17,9 +17,15 @@ Offline storage is the fastest way to start. You can migrate to remote storage l
 npx @lorekit/cli install
 ```
 
-This scaffolds the `lorekit-memory` and `lorekit-setup` skills, the local MCP server, and the lifecycle hooks into your `.claude/` (project) or `~/.claude/` (global) directory.
+This scaffolds the `lorekit-memory` and `lorekit-setup` skills and the local MCP server into your `.claude/` (project) or `~/.claude/` (global) directory, then asks whether to wire the lifecycle hooks.
 
-To skip hook injection (if you manage hooks separately):
+The hooks inject context into your agent — they never write memory themselves. Pick `all` (inject lessons at session start, nudge on a tool failure and at end of turn), `read-only` (inject lessons, never nudge), or `none`. Choose non-interactively with `--hooks`:
+
+```bash
+npx @lorekit/cli install --hooks read-only
+```
+
+To skip hook injection entirely (if you manage hooks separately):
 
 ```bash
 npx @lorekit/cli install --no-hooks
