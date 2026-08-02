@@ -129,6 +129,72 @@ test('the nudge fires at most once per session (throttle)', () => {
   assert.equal(b.stdout, ''); // second call in the same session is suppressed
 });
 
+// ── Stop friction gating vs. the asynchronous transcript write ───────────────
+// friction.test.mjs covers the clean/friction end-to-end pair. These cover the
+// case that pair cannot reach: the transcript is written asynchronously and may
+// lag the current turn, so a Stop right after a failing tool call can read a
+// positively-clean `false`. The PostToolUseFailure marker is the
+// transcript-independent witness the Stop path falls back to.
+
+// Write a Claude-shaped JSONL transcript to disk and return its path.
+function writeTranscript(dir, ...lines) {
+  const file = path.join(dir, 'transcript.jsonl');
+  fs.writeFileSync(file, lines.map((content) => JSON.stringify({ message: { content } })).join('\n'));
+  return file;
+}
+
+test('claude Stop still nudges on a clean transcript when the session recorded a tool failure', () => {
+  const dir = freshStateDir();
+  const clean = writeTranscript(dir, [{ type: 'tool_result', content: 'ok' }]);
+  const failure = runHook({
+    adapter: 'claude',
+    input: { hook_event_name: 'PostToolUseFailure', session_id: 'lagging-1', tool_name: 'Edit', tool_response: {} },
+    env: { CLAUDE_PLUGIN_DATA: dir },
+  });
+  assert.match(failure.stdout, /failed/); // the marker was written
+  const stop = runHook({
+    adapter: 'claude',
+    input: { hook_event_name: 'Stop', session_id: 'lagging-1', transcript_path: clean },
+    env: { CLAUDE_PLUGIN_DATA: dir },
+  });
+  assert.match(JSON.parse(stop.stdout).hookSpecificOutput.additionalContext, /a failed tool call/);
+});
+
+test('a failure marker from a DIFFERENT session does not resurrect the nudge', () => {
+  const dir = freshStateDir();
+  const clean = writeTranscript(dir, [{ type: 'tool_result', content: 'ok' }]);
+  runHook({
+    adapter: 'claude',
+    input: { hook_event_name: 'PostToolUseFailure', session_id: 'other-session', tool_name: 'Edit', tool_response: {} },
+    env: { CLAUDE_PLUGIN_DATA: dir },
+  });
+  const { stdout } = runHook({
+    adapter: 'claude',
+    input: { hook_event_name: 'Stop', session_id: 'lagging-2', transcript_path: clean },
+    env: { CLAUDE_PLUGIN_DATA: dir },
+  });
+  assert.equal(stdout, '');
+});
+
+test('the Stop friction gate does not consume the retro marker when it stays silent', () => {
+  const dir = freshStateDir();
+  const clean = writeTranscript(dir, [{ type: 'tool_result', content: 'ok' }]);
+  const first = runHook({
+    adapter: 'claude',
+    input: { hook_event_name: 'Stop', session_id: 'late-friction', transcript_path: clean },
+    env: { CLAUDE_PLUGIN_DATA: dir },
+  });
+  assert.equal(first.stdout, '');
+  // Same session, later turn: the transcript now carries the failure.
+  fs.appendFileSync(clean, `\n${JSON.stringify({ message: { content: [{ type: 'tool_result', content: 'boom', is_error: true }] } })}`);
+  const second = runHook({
+    adapter: 'claude',
+    input: { hook_event_name: 'Stop', session_id: 'late-friction', transcript_path: clean },
+    env: { CLAUDE_PLUGIN_DATA: dir },
+  });
+  assert.match(JSON.parse(second.stdout).hookSpecificOutput.additionalContext, /a failed tool call/);
+});
+
 // A mock REST endpoint returning a fixed lesson set for any scope.
 // remote.mjs now calls restFetch (REST API) for memory.list, not mcpCall.
 function mockLessonServer(entries) {
