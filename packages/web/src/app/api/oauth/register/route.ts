@@ -46,7 +46,9 @@ export async function POST(request: NextRequest) {
         grant_types: client.grant_types,
         response_types: ['code'],
         token_endpoint_auth_method: 'none',
-        // 0 = the registration does not expire (RFC 7591 §3.2.1).
+        // Seconds since the epoch at which the client_id was issued
+        // (RFC 7591 §3.2.1). No `client_id_expires_at` is emitted: the field is
+        // optional, and a LoreKit registration does not expire.
         client_id_issued_at: Math.floor(Date.now() / 1000),
       },
       { status: 201, headers: { 'Cache-Control': 'no-store' } },
