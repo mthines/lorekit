@@ -672,7 +672,7 @@ test('env LOREKIT_TELEMETRY=0 still wins over telemetry.disabled: false', () => 
 // token or a moved endpoint has a failure signal instead of just going quiet.
 
 // A stand-in OTLP collector that records what it received and answers `status`.
-function otlpServer(status = 200) {
+function otlpServer(status = 200, body = '{}') {
   const received = [];
   const server = http.createServer((req, res) => {
     const chunks = [];
@@ -686,7 +686,7 @@ function otlpServer(status = 200) {
       });
       res.statusCode = status;
       res.setHeader('content-type', 'application/json');
-      res.end('{}');
+      res.end(body);
     });
   });
   const listen = () =>
@@ -766,6 +766,68 @@ test('probeTelemetryExport surfaces an unreachable endpoint instead of swallowin
   );
   assert.ok(res.networkError, 'the caller must see the transport error');
   assert.equal(res.ok, undefined);
+});
+
+// OTLP/HTTP reports a dropped span as a 2xx carrying `partialSuccess`, so a
+// status-only verdict turns a rejected probe into a green CI gate — the one
+// outcome `doctor --telemetry` exists to make impossible.
+test('probeTelemetryExport treats a 200 with rejectedSpans as a rejection, not an acceptance', async () => {
+  const { server, listen } = otlpServer(
+    200,
+    JSON.stringify({ partialSuccess: { rejectedSpans: '1', errorMessage: 'dataset not found' } }),
+  );
+  const port = await listen();
+  try {
+    const res = await probeTelemetryExport({
+      enabled: true,
+      endpoint: `http://127.0.0.1:${port}`,
+      headers: {},
+    });
+    assert.equal(res.ok, false, 'the probe span was dropped — the gate must not go green');
+    assert.equal(res.httpStatus, 200);
+    assert.equal(res.rejectedSpans, 1, 'the int64-as-string count is coerced, not compared as text');
+    assert.equal(res.rejectionMessage, 'dataset not found');
+    assert.equal(res.unauthorized, false, 'a dropped span is not a credential problem');
+  } finally {
+    server.close();
+  }
+});
+
+test('probeTelemetryExport keeps accepting a 200 whose partialSuccess rejected nothing', async () => {
+  const { server, listen } = otlpServer(200, JSON.stringify({ partialSuccess: {} }));
+  const port = await listen();
+  try {
+    const res = await probeTelemetryExport({
+      enabled: true,
+      endpoint: `http://127.0.0.1:${port}`,
+      headers: {},
+    });
+    assert.equal(res.ok, true, 'an empty partialSuccess envelope is a full success');
+    assert.equal(res.rejectedSpans, undefined);
+  } finally {
+    server.close();
+  }
+});
+
+// The downgrade is one-directional on purpose: a collector that answers 2xx
+// with an empty or non-OTLP body is healthy, and must never be failed on the
+// grounds that we could not parse it.
+test('probeTelemetryExport falls back to the HTTP status when the body is not OTLP JSON', async () => {
+  for (const body of ['', 'OK', '<html>accepted</html>']) {
+    const { server, listen } = otlpServer(200, body);
+    const port = await listen();
+    try {
+      const res = await probeTelemetryExport({
+        enabled: true,
+        endpoint: `http://127.0.0.1:${port}`,
+        headers: {},
+      });
+      assert.equal(res.ok, true, `an unparseable body (${JSON.stringify(body)}) must not fail the gate`);
+      assert.equal(res.rejectedSpans, undefined);
+    } finally {
+      server.close();
+    }
+  }
 });
 
 test('probeTelemetryExport is a no-op when export is disabled', async () => {

@@ -536,6 +536,17 @@ async function checkTelemetryExport(args, root, record) {
       `probe span REJECTED (HTTP ${probe.httpStatus}) — the OTLP token is revoked, expired, or was never valid. ` +
         'Mint a new Dash0 ingesting-only token and update the LOREKIT_TELEMETRY_TOKEN secret.',
     );
+  } else if (probe.rejectedSpans) {
+    // A 2xx that dropped the span. Reporting the bare status here would read as
+    // a contradiction ("rejected (HTTP 200)"), so name the partial-success
+    // envelope the collector actually answered with.
+    record(
+      'fail',
+      'telemetry export',
+      `probe span REJECTED by the collector (HTTP ${probe.httpStatus}, partialSuccess.rejectedSpans=${probe.rejectedSpans}) — ` +
+        'the endpoint answered success but did not ingest the span' +
+        (probe.rejectionMessage ? `: ${probe.rejectionMessage}` : '.'),
+    );
   } else if (probe.ok) {
     record('pass', 'telemetry export', `probe span accepted (HTTP ${probe.httpStatus}) — the token can ingest`);
   } else {

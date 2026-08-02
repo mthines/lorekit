@@ -371,7 +371,14 @@ export async function exportInvocation(config, { version, name, attributes, star
  * filtered out of usage dashboards, and carries the same bounded, non-PII
  * attribute set as a real command span.
  *
- * @returns {Promise<{skipped?: boolean, ok?: boolean, unauthorized?: boolean, httpStatus?: number, networkError?: string}>}
+ * `ok` means the span was INGESTED, not merely that the POST returned 2xx —
+ * OTLP/HTTP reports a dropped span as a 2xx carrying
+ * `partialSuccess.rejectedSpans`, so a status-only verdict would report a
+ * rejected probe as accepted. That false green is the exact failure this probe
+ * exists to catch, and the probe sends exactly one span, so any non-zero
+ * `rejectedSpans` means the thing we sent was dropped.
+ *
+ * @returns {Promise<{skipped?: boolean, ok?: boolean, unauthorized?: boolean, httpStatus?: number, rejectedSpans?: number, rejectionMessage?: string, networkError?: string}>}
  */
 export async function probeTelemetryExport(config, { version = '0.0.0', timeoutMs = 5000 } = {}) {
   if (!config || !config.enabled) return { skipped: true };
@@ -399,10 +406,40 @@ export async function probeTelemetryExport(config, { version = '0.0.0', timeoutM
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
+    const httpStatus = res.status;
+    const accepted = httpStatus >= 200 && httpStatus < 300;
+
+    // A 2xx only means the collector took the REQUEST. Read the OTLP
+    // partial-success envelope to find out whether it took the SPAN.
+    // Deliberately one-directional: only a positively parsed, non-zero
+    // `rejectedSpans` downgrades the verdict. An empty, non-JSON, or
+    // unreadable body leaves the status-based answer alone, so a terse but
+    // healthy collector can never be turned into a false red — and the read is
+    // wrapped in its own try so a failure here cannot erase an HTTP status we
+    // already have by falling into the transport `catch` below.
+    let rejectedSpans = 0;
+    let rejectionMessage;
+    if (accepted) {
+      try {
+        const partial = JSON.parse(await res.text())?.['partialSuccess'];
+        const count = Number(partial?.['rejectedSpans'] ?? 0);
+        if (Number.isFinite(count) && count > 0) {
+          rejectedSpans = count;
+          const message = partial?.['errorMessage'];
+          // Collector-controlled free text — bounded before it reaches output.
+          if (typeof message === 'string' && message) rejectionMessage = message.slice(0, 200);
+        }
+      } catch {
+        // Unreadable or non-OTLP body — fall back to the status alone.
+      }
+    }
+
     return {
-      httpStatus: res.status,
-      ok: res.status >= 200 && res.status < 300,
-      unauthorized: res.status === 401 || res.status === 403,
+      httpStatus,
+      ok: accepted && rejectedSpans === 0,
+      unauthorized: httpStatus === 401 || httpStatus === 403,
+      ...(rejectedSpans > 0 ? { rejectedSpans } : {}),
+      ...(rejectionMessage ? { rejectionMessage } : {}),
     };
   } catch (e) {
     const networkError =

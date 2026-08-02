@@ -365,6 +365,49 @@ test('doctor --telemetry reports an unusable OTLP header as a credential problem
   assert.doesNotMatch(run.stdout, /opted out/);
 });
 
+// Wiring counterpart to the in-process partial-success tests: prove the new
+// verdict reaches the EXIT CODE. A collector that answers 200 while dropping
+// the span used to produce a green gate, which is the precise CI outcome this
+// flag exists to prevent.
+test('doctor --telemetry FAILS on a 200 that rejected the probe span', async () => {
+  const collector = http.createServer((req, res) => {
+    req.resume();
+    res.statusCode = 200;
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ partialSuccess: { rejectedSpans: '1', errorMessage: 'dataset not found' } }));
+  });
+  const port = await listen(collector);
+  try {
+    // Async `spawn` for the same reason `runRemoteDoctor` uses it: the
+    // collector lives in THIS process, so a synchronous child would block the
+    // event loop that has to answer the probe.
+    const dir = tmp('lk-doc-otlp-partial-');
+    const res = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [BIN, 'doctor', '--telemetry', '--dir', dir], {
+        env: {
+          ...process.env,
+          NO_COLOR: '1',
+          HOME: dir,
+          USERPROFILE: dir,
+          OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${port}`,
+          OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer probe_tok',
+          LOREKIT_TELEMETRY: '',
+          DO_NOT_TRACK: '',
+        },
+      });
+      let stdout = '';
+      child.stdout.on('data', (d) => (stdout += d));
+      child.on('close', (status) => resolve({ status, stdout }));
+    });
+
+    assert.equal(res.status, 1, 'a dropped span must not pass the gate just because the POST returned 200');
+    assert.match(res.stdout, /rejectedSpans=1/);
+    assert.match(res.stdout, /dataset not found/);
+  } finally {
+    collector.close();
+  }
+});
+
 test('doctor --telemetry is focused — it does not run the skill or backend checks', () => {
   // A bare temp dir has no skills and no .mcp.json. If the focused run swept
   // those too, its exit code would say nothing about telemetry specifically.
