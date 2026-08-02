@@ -455,8 +455,12 @@ const WEB_SOURCES_PRESENT = WEB_SOURCES.every((p) => fs.existsSync(p));
 
 // Extract every URL-backed param from `use[Debounced]UrlState<…>('key', <default>, …)`
 // calls into a Map of key → raw default token (as written in source).
+// The type parameter is OPTIONAL in the pattern: the inference-only form
+// `useDebouncedUrlState('name', '', …)` (already used in `AuditLogFeed.tsx`) carries
+// no `<…>`, and requiring one would silently skip a future no-generic Explorer
+// filter — the guard would still pass while no longer guarding.
 function extractUrlStateParams(src) {
-  const re = /use(?:Debounced)?UrlState<[^>]*>\(\s*'([^']+)'\s*,\s*([^,)]+?)\s*[,)]/g;
+  const re = /use(?:Debounced)?UrlState(?:<[^>]*>)?\(\s*'([^']+)'\s*,\s*([^,)]+?)\s*[,)]/g;
   const found = new Map();
   let m;
   while ((m = re.exec(src)) !== null) {
