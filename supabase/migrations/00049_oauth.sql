@@ -165,7 +165,13 @@ declare
   v_codes  integer;
   v_tokens integer;
 begin
-  if auth.role() is distinct from 'service_role' then
+  -- `auth.role()` reads the role claim PostgREST sets from a verified JWT, so
+  -- it is NULL whenever there is no request context at all — pg_cron, psql,
+  -- the dashboard SQL editor. Those callers are already gated by the
+  -- REVOKE/GRANT below (00004 and 00034's reapers rely on that alone), so only
+  -- a caller that DID present a JWT is checked here. Without the null arm the
+  -- guard raises under pg_cron and the scheduled sweep can never run.
+  if auth.role() is not null and auth.role() is distinct from 'service_role' then
     raise exception 'lorekit_purge_expired_oauth: service role required'
       using errcode = 'LK002';
   end if;
