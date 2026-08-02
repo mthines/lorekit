@@ -14,6 +14,8 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 | POST | /purge | purge.ts | write |
 | POST | /purge-expired | purge.ts | write |
 | GET | /scopes | scopes.ts | read |
+| GET | /tags | tags.ts | read |
+| GET | /activity | activity.ts | read |
 | GET | /usage | usage.ts | read |
 | GET | /:id | get.ts | read |
 | PATCH | /:id | update.ts | write |
@@ -22,7 +24,8 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 
 **Route order is load-bearing.** `matchPath` (`_shared/api/router.ts`) matches on segment
 count and returns *every* path match, then picks the first whose method matches — so
-`/search`, `/restore`, `/purge`, `/purge-expired` and `/scopes` all collide with `/:id`.
+`/search`, `/restore`, `/purge`, `/purge-expired`, `/scopes`, `/tags` and `/activity` all
+collide with `/:id`.
 The literal routes are registered before the `/:id` routes in `index.ts` so a future
 `POST /:id` cannot silently swallow them.
 
@@ -70,6 +73,52 @@ Rules:
 | Purge archived | `POST /purge` with an optional `{ "retention_days": 1–365 }` (default 30) → `200 { "purged": <n> }`. Body may be omitted entirely. |
 | Purge expired | `POST /purge-expired` (no body) → `200 { "purged": <n> }`. |
 
+## Filtering `GET /` — `?q=` and `?tags=`
+
+`q` is a **case-insensitive substring** match over `key` OR `value` (the as-you-type filter),
+deliberately not the stemmed full-text `q` of `POST /search`. Every character in it is DATA:
+
+- LIKE metacharacters (`%`, `_`, `\`) are escaped by `likeNeedle`, so searching `100%` finds
+  the text `100%` instead of matching every row.
+- PostgREST-reserved characters (`,` `.` `:` `()`) are carried by **double-quoting** the
+  finished pattern (`ilikeClause` → `key.ilike."%a,b(c)%"`), which is the only mechanism the
+  URL grammar defines for them. Percent-encoding does not work here and is not a matter of
+  taste: the clause reaches the wire through postgrest-js `.or()` →
+  `URLSearchParams.append`, which re-encodes the `%`, so a hand-written `%2C` arrives as the
+  literal four-character text `%2C`. Both halves live in `@lorekit/schemas`'s `filter.ts` and
+  are shared with the `filter` tree of `POST /search`, so the two search paths cannot drift.
+
+`tags` is a comma-separated label list; `tags_mode=any` (default) is overlap (`&&`) and
+`tags_mode=all` is containment (`@>`). The list is quoted into a Postgres array literal by
+`pgArrayLiteral` — postgrest-js would otherwise `join(',')` an array and mis-parse a label
+containing a comma, brace, quote or backslash, all of which `memories.tags` permits. A label
+containing a comma is unreachable over this parameter by construction (the wire format splits
+on commas); `POST /search`'s `tags` array is the way to express one — its JSON body carries
+the label verbatim and it goes through the same `pgArrayLiteral`. `SearchMemoriesBodySchema`
+requires at least one of `q`, `scopes` or `filter` (`packages/schemas/src/memory.ts:265`) and
+the `tags` array is none of the three, so a `tags`-only body is a 400 `Validation failed` —
+pair it with a `q` or a `scopes` list.
+
+**The `filter` tree is not a second route to a `tags` predicate.** `serializeFilterGroup` has
+no per-column type dispatch (`packages/schemas/src/filter.ts:136-154`), so a condition naming
+`tags` serialises as if the column were `text`: `tags.ilike."%x%"` for the pattern operators
+(asserted verbatim at `packages/schemas/src/filter.spec.ts:75`) and `tags.eq."x"` for `is`.
+`memories.tags` is `text[]` (`supabase/migrations/00001_memories.sql:11`) and Postgres has
+neither operator for that type, so the query errors and `handleSearch` re-throws it as a 500;
+only `is_set` / `is_not_set` are valid there, and both are degenerate on a
+`not null default '{}'` column. This predates the REST-client work and is **not** fixed here —
+a working `tags` condition needs the array operators (`cs` / `ov`) and a live-stack test,
+which the token-gated `memories-api.integration.spec.ts` cannot supply from CI. Until then
+`tags` remains in `ALLOWED_FILTER_FIELDS` (`filter.ts:26-33`) and in the `POST /search`
+OpenAPI example (`packages/schemas/src/openapi/spec.ts:75`): both advertise more than the
+code delivers.
+
+Both filters are covered end-to-end in
+`packages/mcp-server/src/memories-api.integration.spec.ts` → "list filters", against a live
+stack. That is deliberate: the Storybook MSW handler reimplements both, so it can only ever
+confirm itself — `handleList` threw on every `?tags=` request for a whole commit while that
+suite was green.
+
 ## `created_at` on `POST /`
 
 `created_at` is an **optional creation-date override** for the `lorekit migrate` backdating
@@ -93,7 +142,12 @@ Returns every distinct scope the caller can see with its count of active (non-ar
 non-expired) memories, sorted by scope ascending:
 
 ```json
-{ "scopes": [{ "scope": "global", "count": 12 }, { "scope": "repo::acme/app", "count": 3 }] }
+{
+  "scopes": [
+    { "scope": "global", "count": 12, "last_activity": "2026-07-30T09:12:00.000Z" },
+    { "scope": "repo::acme/app", "count": 3, "last_activity": "2026-07-28T17:04:00.000Z" }
+  ]
+}
 ```
 
 The aggregation runs in Postgres (`lorekit_memory_scopes`, migration 00039), **not** as a
@@ -101,6 +155,55 @@ The aggregation runs in Postgres (`lorekit_memory_scopes`, migration 00039), **n
 PostgREST's default row cap: the response is truncated with no error, so whole scopes go
 missing. Visibility inside the RPC composes `lorekit_member_org_ids` exactly as the
 `memories` RLS read policies do, so personal and org-shared scopes both appear.
+
+`last_activity` (migration 00049) is `max(created_at)` over exactly the counted rows, so a
+caller can render per-scope freshness without listing rows to reduce them — the row-cap trap
+this endpoint exists to avoid.
+
+## `GET /tags`
+
+The label catalog: every distinct `memories.tags` value the caller can see with how many
+memories carry it, ordered count desc then label asc.
+
+```json
+{ "tags": [{ "tag": "perf", "count": 9 }, { "tag": "auth", "count": 4 }] }
+```
+
+`?archived=true` returns the archived partition instead, exactly as it does on `GET /`. The
+catalog must describe the population it will be used to filter: active and archived are
+different populations, so a catalog pinned to one has the wrong counts — and hides
+archive-only labels — in the other.
+
+Same rationale as `/scopes` for aggregating in Postgres (`lorekit_memory_tags`, migration
+00050), and the same tenant predicate.
+
+## `GET /activity`
+
+Memories created per UTC hour or day per scope, over a half-open `[since, until)` window:
+
+```json
+{
+  "bucket": "day",
+  "since": "2026-01-01T00:00:00.000Z",
+  "until": "2026-07-19T00:00:00.000Z",
+  "buckets": [{ "bucket": "2026-07-18T00:00:00.000Z", "scope": "global", "count": 4 }]
+}
+```
+
+| Param | Default | Meaning |
+|-------|---------|---------|
+| `bucket` | `day` | `hour` or `day` granularity. |
+| `since` | `until` − 200 days | Inclusive lower bound on `created_at`. |
+| `until` | now | **Exclusive** upper bound. |
+
+`date_trunc` anchors each bucket at the START of the UTC hour/day (`lorekit_memory_activity`,
+migration 00051), which is where a JS client's own `Math.floor(t / HOUR)` / `Date.UTC(y,m,d)`
+boundaries fall — so a client re-tallying these cells gets the same numbers it would have
+got from raw rows. The response is sparse: only buckets with activity come back, so its
+size is bounded by distinct active (hour, scope) pairs rather than by memory count.
+
+The window is bounded by default deliberately: an unbounded aggregate over `memories` grows
+with account age and no caller wants "all time".
 
 ## `GET /usage`
 
@@ -233,14 +336,18 @@ Filterable fields are whitelisted — `scope`, `key`, `value`, `tags`, `source_a
 `trigger`. A condition naming any other column is **dropped silently** (it is not an
 error) so a caller can never filter on `user_id`/`org_id` and subvert tenant scoping.
 
+`tags` is in that list but does not work: it is the one `text[]` column, and
+`serializeFilterGroup` emits the `text` operators for it. See "`tags`" above — use the
+top-level `tags` array (or `GET /memories?tags=`) instead.
+
 ```jsonc
 {
   "filter": {
     "and": [
       { "field": "scope", "op": "is", "value": "global" },
       { "or": [
-        { "field": "key",  "op": "contains", "value": "auth" },
-        { "field": "tags", "op": "contains", "value": "pr-webhook" }
+        { "field": "key",          "op": "contains", "value": "auth" },
+        { "field": "source_agent", "op": "is",       "value": "claude" }
       ]}
     ]
   },

@@ -542,6 +542,138 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
     expect(scopes.map((s) => s.scope)).toEqual([...scopes.map((s) => s.scope)].sort());
   });
 
+  // ── List filters: ?tags= and ?q= ────────────────────────────────────────────
+  //
+  // These two filters had NO executing coverage on any surface until now, and
+  // the gap was not theoretical: `?tags=` threw a TypeError on every request at
+  // `5c9799f` while the whole mocked suite stayed green, because the Storybook
+  // MSW handler reimplements both filters instead of calling `handleList`. A
+  // mock that reimplements a filter can only ever confirm itself, so the check
+  // belongs here, against a live PostgREST.
+  //
+  // Each case pins the property that a plausible-but-wrong implementation would
+  // break, not merely that a row comes back:
+  //
+  //   * `tags_mode=all` is containment (@>), `any` is overlap (&&) — swapping
+  //     them still returns rows, just the wrong ones;
+  //   * a label carrying a double quote survives the Postgres array literal —
+  //     the quoting `pgArrayLiteral` exists for;
+  //   * `%` in `q` is DATA, so it must not widen the pattern;
+  //   * a comma / parenthesis in `q` must match literally — that is the
+  //     PostgREST-reserved-character path, which percent-encoding got wrong
+  //     (`%2C` arrives as literal text after `URLSearchParams` re-encodes it)
+  //     and unquoted interpolation gets wrong in the other direction (the value
+  //     terminates its own clause).
+  describe('list filters', () => {
+    const KEY_TAGGED_BOTH = NS.name('filters-both');
+    const KEY_TAGGED_ONE = NS.name('filters-one');
+    const KEY_QUOTED_LABEL = NS.name('filters-quoted-label');
+    const KEY_PERCENT = NS.name('filters-percent');
+    const KEY_PLAIN_HUNDRED = NS.name('filters-hundred');
+    const KEY_RESERVED = NS.name('filters-reserved');
+
+    // Namespaced so a concurrent run (or leftovers from an earlier one) cannot
+    // satisfy an assertion that this run's write was supposed to satisfy.
+    const LABEL_X = `${KEY_PREFIX}-x`;
+    const LABEL_Y = `${KEY_PREFIX}-y`;
+    const LABEL_QUOTED = `${KEY_PREFIX}-needs "quoting"`;
+    const RESERVED_PHRASE = `${KEY_PREFIX} a,b(c).d`;
+
+    /** Create with labels, returning nothing — the sweep owns the cleanup. */
+    async function createTagged(key: string, value: string, tags: string[]): Promise<void> {
+      const { status, data } = await api('POST', '/', { scope: SCOPE, key, value, tags });
+      expect(status, `create ${key}: expected 201; got ${status}: ${JSON.stringify(data)}`).toBe(201);
+    }
+
+    /** Keys returned by `GET /memories` with an arbitrary query string. */
+    async function listWith(query: string): Promise<string[]> {
+      const { status, data } = await api('GET', `/?scope=${SCOPE}&limit=100&${query}`);
+      expect(status, `GET /?${query} → ${status}: ${JSON.stringify(data)}`).toBe(200);
+      return ((data as JsonObj).entries as JsonObj[]).map((e) => String(e.key));
+    }
+
+    beforeAll(async () => {
+      if (SKIP) return;
+      await createTagged(KEY_TAGGED_BOTH, 'carries both labels', [LABEL_X, LABEL_Y]);
+      await createTagged(KEY_TAGGED_ONE, 'carries one label', [LABEL_X]);
+      await createTagged(KEY_QUOTED_LABEL, 'label with a double quote', [LABEL_QUOTED]);
+      await createTagged(KEY_PERCENT, `${KEY_PREFIX} 100% coverage`, []);
+      await createTagged(KEY_PLAIN_HUNDRED, `${KEY_PREFIX} 1000 coverage`, []);
+      await createTagged(KEY_RESERVED, RESERVED_PHRASE, []);
+    }, REMOTE_TEST_TIMEOUT);
+
+    it('?tags= with tags_mode=all requires EVERY label (containment)', async () => {
+      const keys = await listWith(
+        `tags=${encodeURIComponent(`${LABEL_X},${LABEL_Y}`)}&tags_mode=all`,
+      );
+      expect(keys, 'the row carrying both labels must match').toContain(KEY_TAGGED_BOTH);
+      expect(keys, 'a row carrying only one of them must not').not.toContain(KEY_TAGGED_ONE);
+    });
+
+    it('?tags= with tags_mode=any (the default) matches EITHER label (overlap)', async () => {
+      const keys = await listWith(`tags=${encodeURIComponent(`${LABEL_X},${LABEL_Y}`)}`);
+      expect(keys).toContain(KEY_TAGGED_BOTH);
+      expect(keys, 'overlap must also return the single-label row').toContain(KEY_TAGGED_ONE);
+    });
+
+    it('?tags= matches a label containing a double quote', async () => {
+      // `memories.tags` is free text with no CHECK, so this label is reachable.
+      // A bare `join(',')` array serialisation mangles it into other labels and
+      // the row silently stops matching its own filter.
+      const keys = await listWith(`tags=${encodeURIComponent(LABEL_QUOTED)}&tags_mode=all`);
+      expect(keys, `expected ${KEY_QUOTED_LABEL} for label ${LABEL_QUOTED}`).toContain(KEY_QUOTED_LABEL);
+      expect(keys).not.toContain(KEY_TAGGED_BOTH);
+    });
+
+    it('?tags= naming a label nothing carries returns an empty page, not everything', async () => {
+      const keys = await listWith(`tags=${encodeURIComponent(`${KEY_PREFIX}-absent`)}&tags_mode=all`);
+      expect(keys).toEqual([]);
+    });
+
+    it('?q= matches a substring of the value', async () => {
+      const keys = await listWith(`q=${encodeURIComponent('carries both labels')}`);
+      expect(keys).toContain(KEY_TAGGED_BOTH);
+      expect(keys).not.toContain(KEY_QUOTED_LABEL);
+    });
+
+    it('?q= matches a substring of the key', async () => {
+      const keys = await listWith(`q=${encodeURIComponent(KEY_QUOTED_LABEL)}`);
+      expect(keys, 'the OR arm over `key` must apply too').toContain(KEY_QUOTED_LABEL);
+    });
+
+    it('?q= treats % as data, not a LIKE wildcard', async () => {
+      const keys = await listWith(`q=${encodeURIComponent(`${KEY_PREFIX} 100%`)}`);
+      expect(keys, 'the row whose value literally contains "100%"').toContain(KEY_PERCENT);
+      // The discriminator: unescaped, `…100%%` would also match "1000 coverage".
+      expect(keys, 'an unescaped % would widen the pattern to this row too').not.toContain(
+        KEY_PLAIN_HUNDRED,
+      );
+    });
+
+    it('?q= matches PostgREST-reserved characters literally', async () => {
+      const keys = await listWith(`q=${encodeURIComponent('a,b(c).d')}`);
+      expect(
+        keys,
+        'a comma, parentheses and a dot must reach ILIKE as data — this is the case both prior encodings got wrong',
+      ).toContain(KEY_RESERVED);
+      expect(keys).not.toContain(KEY_TAGGED_BOTH);
+    });
+
+    it('?q= with a value that tries to close the clause and add a predicate matches nothing', async () => {
+      // If the value escaped its quoting, this would parse as a second
+      // disjunct rather than as text nobody wrote.
+      const keys = await listWith(`q=${encodeURIComponent('",or(key.eq.' + KEY_TAGGED_BOTH + ')')}`);
+      expect(keys, `injection attempt must not return rows: ${JSON.stringify(keys)}`).toEqual([]);
+    });
+
+    it('?q= combines with ?tags= as AND, not OR', async () => {
+      const keys = await listWith(
+        `tags=${encodeURIComponent(LABEL_X)}&tags_mode=all&q=${encodeURIComponent('carries one label')}`,
+      );
+      expect(keys).toEqual([KEY_TAGGED_ONE]);
+    });
+  });
+
   // ── Usage statistics ─────────────────────────────────────────────────────────
   // GET /memories/usage aggregates usage_events through lorekit_usage_stats. Like
   // /scopes the concrete numbers depend on the credential (a service-role smoke

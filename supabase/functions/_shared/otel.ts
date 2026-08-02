@@ -540,7 +540,28 @@ export class TracedQuery<T = Record<string, unknown>> {
   lte(col: string, val: unknown): this  { this.state.filters.push(`${col} <= '${val}'`); this.state.qb = this.state.qb.lte(col, val); return this; }
   is(col: string, val: unknown): this   { this.state.filters.push(`${col} IS ${val}`);   this.state.qb = this.state.qb.is(col, val); return this; }
   in<V = unknown>(col: string, vals: V[]): this    { this.state.filters.push(`${col} IN (${vals.map((v) => `'${v}'`).join(', ')})`); this.state.qb = this.state.qb.in(col, vals); return this; }
-  overlaps<V = unknown>(col: string, val: V[]): this { this.state.filters.push(`${col} && '{${val.join(',')}}'`); this.state.qb = this.state.qb.overlaps(col, val); return this; }
+  // `val` may be a STRING array literal (`{"a","b,c"}`) as well as an array.
+  // postgrest-js forwards a string verbatim as `ov.<val>` / `cs.<val>`
+  // (PostgrestFilterBuilder 2.110.8) — that overload is what lets
+  // `pgArrayLiteral` (@lorekit/schemas/tags) own the Postgres quoting. An
+  // ARRAY is joined with a bare `,`, which mis-parses a label containing a
+  // comma/brace/quote into several labels, so do NOT narrow these back to
+  // `V[]`: `memories.tags` is free text with no CHECK constraint.
+  overlaps<V = unknown>(col: string, val: V[] | string): this {
+    this.state.filters.push(`${col} && '${typeof val === 'string' ? val : `{${val.join(',')}}`}'`);
+    // deno-lint-ignore no-explicit-any -- the string|array overload isn't in the narrowed public type
+    this.state.qb = (this.state.qb as any).overlaps(col, val);
+    return this;
+  }
+  contains<V = unknown>(col: string, val: V[] | string | Record<string, unknown>): this {
+    const rendered = typeof val === 'string'
+      ? val
+      : Array.isArray(val) ? `{${val.join(',')}}` : JSON.stringify(val);
+    this.state.filters.push(`${col} @> '${rendered}'`);
+    // deno-lint-ignore no-explicit-any -- PostgREST builder's .contains() overloads vary by version
+    this.state.qb = (this.state.qb as any).contains(col, val);
+    return this;
+  }
   textSearch(col: string, query: string, opts?: { type?: string; config?: string }): this {
     this.state.filters.push(`${col} @@ to_tsquery('${query}')`);
     // deno-lint-ignore no-explicit-any -- PostgREST builder lacks textSearch overload in its public type

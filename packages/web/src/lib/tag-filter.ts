@@ -7,8 +7,14 @@
  *
  * Kept dependency-free (no React, no Supabase) so every decision the filter
  * makes is unit-testable in the node vitest project, mirroring `org-ui.ts`
- * and `pagination/filters.ts`.
+ * and `pagination/filters.ts`. The two primitives the SERVER also needs —
+ * label normalisation and Postgres array quoting — live in
+ * `@lorekit/schemas/tags` (itself dependency-free) and are re-exported below,
+ * so the picker and the `GET /memories` handler can never disagree about what
+ * a label list means.
  */
+
+import { normalizeTagList, pgArrayLiteral } from '@lorekit/schemas/tags';
 
 export interface TagCount {
   tag: string;
@@ -28,20 +34,13 @@ export interface TagCount {
  * Total function: `undefined`, a non-array, or an array holding non-strings all
  * degrade to the labels that ARE usable rather than throwing — the input can
  * come from a URL param a user typed by hand.
+ *
+ * Re-exported from `@lorekit/schemas/tags` rather than re-implemented: the
+ * `GET /memories` handler normalizes the `tags` query param with the SAME
+ * function, so the labels the picker sends and the labels the server filters on
+ * cannot drift. The alias keeps the dashboard's `normalizeTags` name.
  */
-export function normalizeTags(values: readonly unknown[] | undefined | null): string[] {
-  if (!Array.isArray(values)) return [];
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const value of values) {
-    if (typeof value !== 'string') continue;
-    const trimmed = value.trim();
-    if (!trimmed || seen.has(trimmed)) continue;
-    seen.add(trimmed);
-    out.push(trimmed);
-  }
-  return out;
-}
+export const normalizeTags = normalizeTagList;
 
 /**
  * Add `tag` to the selection when absent, remove it when present.
@@ -58,41 +57,14 @@ export function toggleTag(selected: readonly string[], tag: string): string[] {
 }
 
 /**
- * Tally every label across a set of memories into `{ tag, count }` rows,
- * sorted by count descending then alphabetically so the ordering is stable
- * for equal counts (an unstable label bar reshuffles under the cursor).
- */
-export function tallyTags(rows: readonly { tags?: string[] | null }[]): TagCount[] {
-  const counts = new Map<string, number>();
-  for (const row of rows) {
-    for (const tag of normalizeTags(row.tags)) {
-      counts.set(tag, (counts.get(tag) ?? 0) + 1);
-    }
-  }
-  return Array.from(counts.entries())
-    .map(([tag, count]) => ({ tag, count }))
-    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
-}
-
-/**
  * Build a PostgreSQL array literal (`{"a","b,c"}`) from a label list.
  *
- * postgrest-js's `.contains(column, string[])` serialises an array with a bare
- * `value.join(',')`, so a label containing a comma, brace, quote, or backslash
- * is silently mis-parsed into different labels — and `memories.tags` is free
- * text with no CHECK constraint, so such a label is reachable. Passing a STRING
- * to `.contains` instead makes it emit `cs.<string>` verbatim, which lets this
- * function own the quoting.
- *
- * Every element is double-quoted (legal for any element, and unambiguous) with
- * `\` and `"` backslash-escaped, per the Postgres array-literal rules.
+ * Lives in `@lorekit/schemas/tags` because the edge `GET /memories` handler
+ * needs the identical quoting for its `tags_mode=all` branch and the edge tree
+ * cannot import this package. Re-exported here so the dashboard's existing
+ * import path is unchanged.
  */
-export function pgArrayLiteral(values: readonly string[]): string {
-  const quoted = normalizeTags(values).map(
-    (value) => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`,
-  );
-  return `{${quoted.join(',')}}`;
-}
+export { pgArrayLiteral };
 
 /**
  * The full option list for the label picker: the catalog, plus any selected
