@@ -32,3 +32,32 @@ export function expandAllowedOrigins(configured: string[]): string[] {
 export function isOriginAllowed(allowed: string[], origin: string): boolean {
   return allowed.includes('*') || allowed.includes(origin);
 }
+
+// The origin-independent half of the CORS response. `Access-Control-Expose-Headers`
+// is what lets a browser read the server span's `traceparent` off the response
+// (traceRequest sets it) so client-side RUM can link to the server trace, plus the
+// dry-run acknowledgement so a client can confirm no-op execution.
+const STATIC_CORS_HEADERS: Readonly<Record<string, string>> = {
+  'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type, traceparent, tracestate, X-LoreKit-Dry-Run',
+  'Access-Control-Expose-Headers': 'traceparent, X-LoreKit-Dry-Run',
+  'Access-Control-Max-Age': '86400',
+};
+
+// Build the CORS response headers for one request Origin against an
+// already-expanded allowlist.
+//
+// `Access-Control-Allow-Origin` is emitted ONLY when the origin is allowed. A
+// disallowed origin gets NO such header rather than an empty one: the empty
+// string is not a valid header value, and a browser reports that as a malformed
+// response instead of a clean CORS rejection.
+//
+// A request that carries no Origin header at all (server-to-server, curl) falls
+// back to `*` — reachable only when the allowlist itself is a wildcard, since
+// `isOriginAllowed` rejects the empty origin otherwise — so the header is always
+// a valid value whenever it is present.
+export function corsResponseHeaders(allowed: string[], origin: string): Record<string, string> {
+  const headers: Record<string, string> = { ...STATIC_CORS_HEADERS };
+  if (isOriginAllowed(allowed, origin)) headers['Access-Control-Allow-Origin'] = origin || '*';
+  return headers;
+}

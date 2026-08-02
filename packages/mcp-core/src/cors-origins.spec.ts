@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { expandOriginSiblings, expandAllowedOrigins, isOriginAllowed } from './cors-origins.ts';
+import {
+  expandOriginSiblings,
+  expandAllowedOrigins,
+  isOriginAllowed,
+  corsResponseHeaders,
+} from './cors-origins.ts';
 
 // Regression guard for the CORS www/apex mismatch that broke the dashboard after
 // it moved off PostgREST onto the REST edge functions: the app is served from the
@@ -88,5 +93,69 @@ describe('isOriginAllowed', () => {
   it('rejects an empty origin unless the wildcard is set', () => {
     expect(isOriginAllowed(expandAllowedOrigins(['https://lorekit.io']), '')).toBe(false);
     expect(isOriginAllowed(expandAllowedOrigins(['*']), '')).toBe(true);
+  });
+});
+
+// `corsHeaders(req)` in the Deno-only `_shared/api/cors.ts` is now nothing but
+// the `ALLOWED_ORIGINS` read plus a call into `corsResponseHeaders`, so these
+// cover the two rules that used to be inline and untestable: the suppress-the-
+// header-when-disallowed rule and the `origin || '*'` fallback.
+describe('corsResponseHeaders', () => {
+  const ALLOWLIST = expandAllowedOrigins(['https://lorekit.io']);
+  const WILDCARD = expandAllowedOrigins(['*']);
+
+  it('always emits the origin-independent headers', () => {
+    for (const headers of [
+      corsResponseHeaders(ALLOWLIST, 'https://lorekit.io'),
+      corsResponseHeaders(ALLOWLIST, 'https://evil.com'),
+    ]) {
+      expect(headers['Access-Control-Allow-Methods']).toBe('GET, POST, PATCH, DELETE, OPTIONS');
+      expect(headers['Access-Control-Allow-Headers']).toBe(
+        'Authorization, Content-Type, traceparent, tracestate, X-LoreKit-Dry-Run',
+      );
+      // Without this a browser cannot read the server span's traceparent, which
+      // is what links client-side RUM to the server trace.
+      expect(headers['Access-Control-Expose-Headers']).toBe('traceparent, X-LoreKit-Dry-Run');
+      expect(headers['Access-Control-Max-Age']).toBe('86400');
+    }
+  });
+
+  it('echoes an allowed origin back verbatim', () => {
+    expect(corsResponseHeaders(ALLOWLIST, 'https://lorekit.io')['Access-Control-Allow-Origin']).toBe(
+      'https://lorekit.io',
+    );
+    // The www/apex sibling the allowlist never named explicitly — the regression.
+    expect(
+      corsResponseHeaders(ALLOWLIST, 'https://www.lorekit.io')['Access-Control-Allow-Origin'],
+    ).toBe('https://www.lorekit.io');
+  });
+
+  it('omits Access-Control-Allow-Origin entirely for a disallowed origin', () => {
+    const headers = corsResponseHeaders(ALLOWLIST, 'https://evil.com');
+    // Absent, not empty: an empty header value is invalid and surfaces to the
+    // browser as a malformed response rather than a clean CORS rejection.
+    expect('Access-Control-Allow-Origin' in headers).toBe(false);
+  });
+
+  it('omits Access-Control-Allow-Origin for a request that sends no Origin', () => {
+    expect('Access-Control-Allow-Origin' in corsResponseHeaders(ALLOWLIST, '')).toBe(false);
+  });
+
+  it('falls back to `*` for a request with no Origin when the allowlist is a wildcard', () => {
+    expect(corsResponseHeaders(WILDCARD, '')['Access-Control-Allow-Origin']).toBe('*');
+  });
+
+  it('echoes the concrete origin, not `*`, when the allowlist is a wildcard', () => {
+    expect(corsResponseHeaders(WILDCARD, 'https://anything.com')['Access-Control-Allow-Origin']).toBe(
+      'https://anything.com',
+    );
+  });
+
+  it('returns a fresh object per call so a caller cannot mutate the shared statics', () => {
+    const first = corsResponseHeaders(ALLOWLIST, 'https://lorekit.io');
+    first['Access-Control-Max-Age'] = '0';
+    expect(corsResponseHeaders(ALLOWLIST, 'https://lorekit.io')['Access-Control-Max-Age']).toBe(
+      '86400',
+    );
   });
 });
