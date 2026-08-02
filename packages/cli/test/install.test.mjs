@@ -278,6 +278,35 @@ test('a non-interactive re-install leaves a hand-wired custom hook set alone', a
   }
 });
 
+test('preserving a hand-wired custom set still refreshes a stale hook command', async () => {
+  // Preserving the SET must not mean skipping the write: a re-install is the
+  // one moment a hook command left pointing at an old runner gets repaired.
+  const root = tmp('lk-hooks-custom-stale-');
+  const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
+  await install(base);
+
+  // Hand-wire a subset no preset matches AND rot its command string.
+  const file = path.join(root, '.claude', 'settings.json');
+  const seeded = JSON.parse(fs.readFileSync(file, 'utf8'));
+  delete seeded.hooks.SessionStart;
+  delete seeded.hooks.PostToolUseFailure;
+  const stale = 'lorekit hook --adapter claude --event Stop --stale-flag';
+  seeded.hooks.Stop[0].hooks[0].command = stale;
+  fs.writeFileSync(file, JSON.stringify(seeded));
+  assert.deepEqual(installedHookEvents(root, 'project'), ['Stop'], 'custom set seeded');
+
+  await install({ ...base, force: true });
+
+  const after = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(installedHookEvents(root, 'project'), ['Stop'], 'the hand-wired set survives');
+  assert.notEqual(after.hooks.Stop[0].hooks[0].command, stale, 'the stale command was refreshed');
+  assert.match(
+    after.hooks.Stop[0].hooks[0].command,
+    /--event Stop --dir/,
+    'refreshed to the current command shape',
+  );
+});
+
 test('install --hooks none removes hooks that are already wired', async () => {
   const root = tmp('lk-hooks-none-');
   const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };

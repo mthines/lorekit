@@ -328,8 +328,15 @@ export async function install(args) {
   // parse that file either, so no lorekit hook is firing from it. Any mode that
   // WIRES still goes through `upsertClaudeHooks`, whose throwing read surfaces
   // the parse error rather than clobbering the file.
-  const touchHooks =
-    !preserveCustomHooks && !skipHooksOnly && (hookEvents.length > 0 || wiredEvents.length > 0);
+  //
+  // Preserving a `custom` set does NOT mean skipping the write. Passing
+  // `hookEvents` (== `wiredEvents` here) keeps exactly that set — nothing is
+  // added, and the prune loop finds no lorekit entry on the events outside it,
+  // so `removed` is always 0 — while still REFRESHING a stale command string.
+  // Skipping the call instead left a `--force` re-install unable to repair a
+  // hook command pointing at an old runner, which is the one thing a re-install
+  // is for.
+  const touchHooks = !skipHooksOnly && (hookEvents.length > 0 || wiredEvents.length > 0);
   let hooks = null;
   if (touchHooks) {
     hooks = upsertClaudeHooks(root, scope, resolveHookRunner(), hookEvents);
@@ -357,11 +364,9 @@ export async function install(args) {
     status(
       'info',
       'hooks',
-      preserveCustomHooks
-        ? `left as-is — a hand-wired set (${wiredEvents.join(', ')}) matching no preset; pass --hooks ${HOOK_MODES.join('|')} to change it`
-        : skipHooksOnly
-          ? 'skipped (--no-hooks) — the skills still work, but memory stays model-invoked'
-          : 'none — the skills still work, but memory stays model-invoked',
+      skipHooksOnly
+        ? 'skipped (--no-hooks) — the skills still work, but memory stays model-invoked'
+        : 'none — the skills still work, but memory stays model-invoked',
     );
   } else {
     const n = hooks.added + hooks.updated + hooks.removed;
@@ -372,7 +377,17 @@ export async function install(args) {
     ].filter(Boolean);
     const hookState = n === 0 ? 'already wired' : hookParts.join(', ');
     const wired = hookEvents.length > 0 ? ` (${hookEvents.join(', ')})` : '';
-    status(n === 0 ? 'info' : 'pass', `hooks ${hookMode}`, `${hookState} → ${display(hooks.file)}${wired}`);
+    // The preserved-`custom` run DOES write, so it lands here rather than in the
+    // "left as-is" branch — but it is still the one state the three modes cannot
+    // express, so it keeps its own explanation of how to leave it.
+    const kept = preserveCustomHooks
+      ? `; a hand-wired set matching no preset, pass --hooks ${HOOK_MODES.join('|')} to change it`
+      : '';
+    status(
+      n === 0 ? 'info' : 'pass',
+      `hooks ${hookMode}`,
+      `${hookState} → ${display(hooks.file)}${wired}${kept}`,
+    );
   }
 
   const kind = tokenKind(token);
