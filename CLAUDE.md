@@ -130,10 +130,43 @@ shows the empty state while the browser-fetched scope tree + heatmap populate.
 
 ---
 
+## User-facing docs (mandatory on every change)
+
+**Any change that alters what a user can do, see, or configure MUST update the user-facing
+docs AND `packages/web/public/llms.txt` in the SAME PR.** Docs are not a follow-up — a shipped
+capability nobody can find is unshipped, and a documented capability that no longer behaves that
+way is worse than no documentation.
+
+This applies to a new or changed MCP tool / REST route / CLI command or flag, a new config key or
+env var, a changed limit, token prefix, scope rule, or error contract, and any new dashboard
+surface. It does NOT apply to a pure refactor, a test-only change, or an internal rename with no
+observable effect.
+
+| Surface | Path | Update when |
+|---------|------|-------------|
+| **`llms.txt`** | `packages/web/public/llms.txt` (served at `https://lorekit.io/llms.txt`) | **Always** — it is the agent-readable mirror of the whole product surface: quickstart, endpoint, tokens, permission matrix, tools, scopes, limits. Hand-maintained, **no generator and no drift guard**, so nothing fails when it goes stale. |
+| Public docs | `packages/web/src/content/docs/*.mdx` | The change affects setup, config, offline/remote mode, orgs, labels, or a use case. Adding a page = drop the `.mdx` **and** add its `lib/docs/sections.ts` entry (`sections.spec.ts` fails on drift). |
+| Dashboard copy | `packages/web/src/**` | The change alters an in-product flow the copy describes. |
+| Contributor docs | `docs/*.md` + the index table in `docs/README.md` | The change affects architecture, deployment, limits, tokens, OTel, or a runbook. |
+| `README.md` | repo root | The change alters the pitch, the install path, or the package map. |
+
+Writing rules for all of the above: always the concrete MCP endpoint, never a `<ref>` placeholder
+(see Endpoints and Key decisions); tag every fenced code block with its language; keep `llms.txt`
+consistent with the MDX docs — when the two disagree, agents read `llms.txt` and get it wrong.
+
+Definition of done: the diff either touches the surfaces above, or the PR description says in one
+line why none applied.
+
+---
+
 ## PR workflow (mandatory — always follow this order)
 
 Every PR in this repository goes through a fixed five-step sequence.
 Do NOT skip steps or change the order, whether the PR is a draft or ready for review.
+
+Before Step 1, settle the docs: apply
+[User-facing docs](#user-facing-docs-mandatory-on-every-change) and commit those edits with the
+change they document, so `/polish` and the review bot see the finished diff.
 
 ### Prerequisites — install agent-skills (once per sandbox)
 
@@ -220,6 +253,7 @@ check. Skip if CI is already fully green.
 | Step | Action | Who triggers |
 |------|--------|--------------|
 | 0 | Clone agent-skills + run sync-symlinks.sh (once per sandbox) | Agent |
+| 0.5 | Update user-facing docs + `packages/web/public/llms.txt` (or state why none applied) | Agent |
 | 1 | Run `/polish` — review + simplify, auto-fix all findings, commit each pass | Agent |
 | 2 | Open / push the PR (draft or ready) | Agent |
 | 3 | Wait for `dash0-dev` bot review comment | Automatic (Dash0 bot) |
