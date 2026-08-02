@@ -59,7 +59,22 @@ function extractFunctionBody(src: string, fnName: string): string {
 
 describe('tenant-scope usage guard (edge read handlers)', () => {
   it('imports applyTenantScope from the shared tenant-scope module', () => {
-    expect(source).toMatch(/import\s*\{\s*applyTenantScope\s*\}\s*from\s*['"]\.\/tenant-scope\.(ts|js)['"]/);
+    // The module now also exports intersectTokenOrgIds (the OAuth org
+    // allow-list narrowing), so the import list is matched loosely on the
+    // binding rather than pinned to a single-specifier import. What must not
+    // drift is WHERE applyTenantScope comes from.
+    expect(source).toMatch(
+      /import\s*\{[^}]*\bapplyTenantScope\b[^}]*\}\s*from\s*['"]\.\/tenant-scope\.(ts|js)['"]/,
+    );
+  });
+
+  it('narrows org visibility through intersectTokenOrgIds, never a hand-rolled filter', () => {
+    // An OAuth token's org allow-list must be applied by the ONE shared
+    // narrowing function, for the same reason the tenant predicate itself is
+    // singular: a second, hand-rolled intersection is a place for the
+    // "membership is the authority" property to be lost.
+    expect(source).toMatch(/intersectTokenOrgIds\(/);
+    expect(source).not.toMatch(/tokenOrgIds\.(includes|filter)\(/);
   });
 
   it.each(READ_HANDLERS)('%s routes its memories read through applyTenantScope', (fnName) => {

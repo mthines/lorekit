@@ -26,6 +26,16 @@ export interface AuthContext {
   jwt?: string;
   /** api_key only: ['read'], ['write'], or ['read', 'write'] */
   permissions?: string[];
+  /**
+   * api_key only. The org allow-list the user picked on the OAuth consent
+   * screen, or `null` for a personal dashboard token (and for every token
+   * minted before OAuth existed), which means "every org the user belongs to".
+   *
+   * It is an INTERSECTION applied on top of `lorekit_member_org_ids`, never a
+   * substitute for it: a token may narrow what the user can reach, never widen
+   * it, so leaving an org still revokes access even while the token names it.
+   */
+  orgIds?: string[] | null;
 }
 
 async function sha256hex(text: string): Promise<string> {
@@ -61,11 +71,20 @@ export async function resolveAuth(
     });
     const { data } = await serviceDb
       .from('api_tokens')
-      .select('user_id, permissions')
+      .select('user_id, permissions, expires_at, org_ids')
       .eq('token_hash', hash)
       .maybeSingle();
     if (!data) {
       span?.setAttributes({ 'auth.outcome': 'api_key_invalid', 'auth.type': 'api_key' });
+      return null;
+    }
+    // OAuth-issued tokens expire (00049_oauth.sql). Checked here rather than
+    // left to the nightly sweeper so an expired credential stops working at
+    // the instant it expires, not whenever housekeeping next runs. Personal
+    // dashboard tokens have a NULL expires_at and are unaffected.
+    const expiresAt = data.expires_at as string | null;
+    if (expiresAt && new Date(expiresAt).getTime() <= Date.now()) {
+      span?.setAttributes({ 'auth.outcome': 'api_key_expired', 'auth.type': 'api_key' });
       return null;
     }
     // Best-effort last_used_at bump — don't block the response on it, but hand
@@ -96,6 +115,7 @@ export async function resolveAuth(
       type: 'api_key',
       userId: data.user_id as string,
       permissions: data.permissions as string[],
+      orgIds: (data.org_ids as string[] | null) ?? null,
     };
   }
 

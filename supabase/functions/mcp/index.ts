@@ -23,6 +23,12 @@
 
 import { traceRequest } from '../_shared/otel.ts';
 import { resolveAuth, getDb } from './auth.ts';
+import { extractToken } from './auth-token.ts';
+import {
+  isProtectedResourceMetadataPath,
+  protectedResourceMetadata,
+  wwwAuthenticateChallenge,
+} from './oauth-metadata.ts';
 import { handleMcp, jsonrpcError } from './mcp-handler.ts';
 import { handleWebhook } from './webhook.ts';
 import { handleInstallationSync } from './installation-sync.ts';
@@ -56,6 +62,20 @@ Deno.serve(async (req: Request) => {
     });
   }
 
+  // OAuth protected-resource metadata (RFC 9728) — public, unauthenticated.
+  // An MCP client that got a 401 reads WWW-Authenticate, fetches this exact
+  // URL, and learns which authorization server to send the user to. CORS-open
+  // because browser-based clients fetch it cross-origin.
+  if (isProtectedResourceMetadataPath(url.pathname)) {
+    return new Response(JSON.stringify(protectedResourceMetadata()), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'public, max-age=300',
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
+  }
+
   // GitHub webhook
   if (url.pathname.endsWith('/webhooks/github')) {
     return handleWebhook(req);
@@ -74,20 +94,59 @@ Deno.serve(async (req: Request) => {
     // resolveAuth checks Authorization header first, then ?token= query param as fallback.
     // Pass the root span so auth outcome attributes (auth.type, auth.outcome,
     // auth.user_id) land on the request span — no separate child span needed.
+    const presentedToken = extractToken(
+      req.headers.get('authorization'),
+      url.searchParams.get('token'),
+    );
     const auth = await resolveAuth(req.headers.get('authorization'), url.searchParams.get('token'), span);
     if (!auth) {
-      // Fail fast on a missing / invalid / rotated token — never hang. Return
-      // the error IN-BAND: HTTP 200 (not 401) with a JSON-RPC error carrying the
-      // REAL request id. A 401 makes streamable-HTTP clients (mcp-remote) treat
-      // it as a session-auth failure and stall; an id:null body can't be matched
-      // to the pending tools/call and also hangs — so we peek the id and echo it.
-      // This is a token-based server with no OAuth flow for a 401 to drive.
+      // ── Two different failures, two different answers ──────────────────
+      //
+      // NO CREDENTIAL AT ALL → 401 + WWW-Authenticate (RFC 9728). This is the
+      // OAuth discovery trigger: it is the ONLY way a client's "Authorize"
+      // button can learn where our authorization server is. The original
+      // no-401 rule was written when this was "a token-based server with no
+      // OAuth flow for a 401 to drive" — there is one now, so the rule is
+      // narrowed rather than kept. It is safe to narrow here and nowhere else:
+      // a client that sent no credential has no pending, correlated tools/call
+      // to hang (it has not been configured yet), so the stall the rule exists
+      // to prevent cannot occur on this branch.
+      //
+      // A CREDENTIAL THAT DID NOT RESOLVE → unchanged: HTTP 200 with an
+      // in-band JSON-RPC error echoing the real request id. This is the
+      // configured-but-rotated-token case, and it is exactly where a 401 made
+      // streamable-HTTP clients (mcp-remote) treat the response as a session
+      // failure, silently retry, and hang for the length of the session.
+      if (!presentedToken) {
+        span.setAttributes({ 'auth.result': 'challenged', 'http.response.status_code': 401 });
+        return new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: null,
+            error: {
+              code: -32001,
+              message:
+                'Authorization required. Use your MCP client\'s "Authorize" action, or set a LoreKit API token.',
+            },
+          }),
+          {
+            status: 401,
+            headers: {
+              'Content-Type': 'application/json',
+              'WWW-Authenticate': wwwAuthenticateChallenge(),
+              'Access-Control-Expose-Headers': 'WWW-Authenticate',
+            },
+          },
+        );
+      }
+
+      // Fail fast on an invalid / rotated / expired token — never hang.
       const reqId = await peekRequestId(req);
       span.setAttributes({ 'auth.result': 'failed', 'http.response.status_code': 200 });
       return jsonrpcError(
         reqId,
         -32001,
-        'Invalid or unknown API token. Check the token in your LoreKit MCP server URL or config (it may have been rotated).',
+        'Invalid, expired or unknown API token. Check the token in your LoreKit MCP server URL or config (it may have been rotated), or re-authorize from your MCP client.',
       );
     }
 

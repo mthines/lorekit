@@ -1,6 +1,13 @@
 # API Tokens
 
-LoreKit uses durable API tokens for agent and CI authentication. Tokens are generated in the web dashboard and never expire unless revoked.
+LoreKit has **two** ways to authenticate an agent:
+
+| | Where it comes from | Expires | Org access | Best for |
+|---|---|---|---|---|
+| **OAuth ("Authorize")** | Your MCP client's Authorize button | 30 days | Only the orgs you tick on the consent screen | Attaching an editor / agent on a machine you use interactively |
+| **Personal token** | Dashboard → Settings → API keys | Never (until revoked) | Every org you belong to | CI, scripts, headless jobs |
+
+Both produce the same `lk_*` credential and are listed and revoked in the same place. Start with OAuth unless you need a token that never expires. The OAuth flow is described in [Authorizing an MCP client](#authorizing-an-mcp-client-oauth) below; the rest of this page covers personal tokens.
 
 ## Token format
 
@@ -93,3 +100,67 @@ In the dashboard → Overview → Step 2 → your token list → click the trash
 - Maximum 20 tokens per user account.
 - No expiry — tokens are valid until revoked.
 - `last_used_at` is updated on every successful authentication.
+
+## Authorizing an MCP client (OAuth)
+
+Modern MCP hosts (Claude Code, Cursor, ChatGPT, VS Code) show an **Authorize**
+action next to a server that requires authentication. LoreKit implements the
+OAuth 2.1 authorization-code flow with PKCE that those buttons drive, so you can
+connect a client without generating or pasting a token.
+
+### Using it
+
+1. Add the LoreKit MCP server to your client **without** a token:
+
+   ```jsonc
+   {
+     "mcpServers": {
+       "lorekit": {
+         "url": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp"
+       }
+     }
+   }
+   ```
+
+2. Press **Authorize**. Your browser opens `https://lorekit.io/oauth/authorize`.
+3. Sign in if you are not already.
+4. On the consent screen choose:
+   - **Access level** — read + write, or read only.
+   - **Which lore** — your personal lore is always included; each organization
+     you belong to is a separate, opt-in checkbox.
+5. Press **Authorize**. The browser hands the client a token and you are done.
+
+The issued token appears in **Settings → API keys** alongside your personal
+tokens, named after the client that requested it, and can be revoked there.
+
+### What the consent choices mean
+
+- **Organizations are narrowing, never widening.** Ticking an org lets the
+  connection reach it; leaving one unticked hides it. Leaving the organization
+  itself revokes access immediately, whatever the token says — membership is
+  always re-checked per request.
+- **The token expires after 30 days.** Re-authorizing is the same one-click
+  flow, and it replaces the previous token rather than accumulating dead ones.
+- **Re-authorizing with different orgs replaces the grant.** There is one live
+  OAuth token per client per user.
+
+### How discovery works
+
+| Step | Endpoint |
+|---|---|
+| Client calls the MCP server with no credential | `401` + `WWW-Authenticate: Bearer resource_metadata="…"` |
+| Client fetches the resource metadata (RFC 9728) | `GET …/functions/v1/mcp/.well-known/oauth-protected-resource` |
+| Client fetches the authorization-server metadata (RFC 8414) | `GET https://lorekit.io/.well-known/oauth-authorization-server` |
+| Client registers itself (RFC 7591) | `POST https://lorekit.io/api/oauth/register` |
+| User consents | `GET https://lorekit.io/oauth/authorize` |
+| Client exchanges code + PKCE verifier | `POST https://lorekit.io/api/oauth/token` |
+| Client hands the token back on disconnect | `POST https://lorekit.io/api/oauth/revoke` |
+
+The MCP server on `*.supabase.co` is the **resource** server; the dashboard on
+`lorekit.io` is the **authorization** server. Only a request that presents *no*
+credential gets a `401` — a request carrying an invalid or expired token still
+gets an in-band JSON-RPC error, because a `401` there makes streamable-HTTP
+clients retry silently and hang.
+
+PKCE is mandatory and only `S256` is accepted. There is no client secret:
+LoreKit registers public clients only.

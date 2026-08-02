@@ -86,6 +86,10 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   // Pure aggregation/window logic for GET /memories/usage — mirrored into the
   // _shared tree because the usage handler cannot cross-import mcp-core.
   ['usage-stats.ts', '_shared/usage-stats.ts'],
+  // RFC 9728 protected-resource metadata + the WWW-Authenticate challenge the
+  // MCP endpoint returns on a credential-less request. `mcp/` and not
+  // `_shared/`: the MCP endpoint is the only OAuth-protected resource.
+  ['oauth-metadata.ts', 'mcp/oauth-metadata.ts'],
 ];
 
 describe('edge-function mirror parity', () => {

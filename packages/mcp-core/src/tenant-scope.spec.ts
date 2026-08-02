@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { applyTenantScope } from './tenant-scope.js';
+import { applyTenantScope, intersectTokenOrgIds } from './tenant-scope.js';
 
 interface FakeQuery {
   eq: ReturnType<typeof vi.fn>;
@@ -41,5 +41,33 @@ describe('applyTenantScope', () => {
     applyTenantScope(query, 'user-1', []);
     const orFragments = query.or.mock.calls.map((call) => call[0] as string);
     expect(orFragments.some((f) => f.includes('org_id.in.()'))).toBe(false);
+  });
+});
+
+describe('intersectTokenOrgIds', () => {
+  it('null allow-list: an unrestricted credential sees every membership', () => {
+    // The pre-OAuth behaviour every personal dashboard token keeps — this is
+    // what makes 00049 additive with no backfill.
+    expect(intersectTokenOrgIds(null, ['org-a', 'org-b'])).toEqual(['org-a', 'org-b']);
+    expect(intersectTokenOrgIds(undefined, ['org-a'])).toEqual(['org-a']);
+  });
+
+  it('empty allow-list is meaningful: personal lore only, not "unrestricted"', () => {
+    expect(intersectTokenOrgIds([], ['org-a', 'org-b'])).toEqual([]);
+  });
+
+  it('narrows to the intersection', () => {
+    expect(intersectTokenOrgIds(['org-b'], ['org-a', 'org-b'])).toEqual(['org-b']);
+  });
+
+  it('can never WIDEN: an org named by the token but not by membership is dropped', () => {
+    // The security property. Membership stays the authority, so leaving an org
+    // revokes access immediately even though the token still names it.
+    expect(intersectTokenOrgIds(['org-a', 'org-ghost'], ['org-a'])).toEqual(['org-a']);
+    expect(intersectTokenOrgIds(['org-ghost'], [])).toEqual([]);
+  });
+
+  it('preserves membership order so the emitted PostgREST filter is stable', () => {
+    expect(intersectTokenOrgIds(['org-b', 'org-a'], ['org-a', 'org-b'])).toEqual(['org-a', 'org-b']);
   });
 });
