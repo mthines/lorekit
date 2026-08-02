@@ -121,9 +121,13 @@ function main(): void {
  *      compares realpath against symlink and never matches. Hence the
  *      `realpathSync` arm.
  *
- * Both forms are compared: the plain one still covers `--preserve-symlinks`,
- * where `import.meta.url` is itself the symlinked path. `realpathSync` throws
- * when the path does not exist, which is not an entry-point match either.
+ * Both forms are compared because neither one covers every invocation: under
+ * `--preserve-symlinks-main` — NOT plain `--preserve-symlinks`, which leaves
+ * the entry module on its realpath — `import.meta.url` is itself the symlinked
+ * path, so the plain comparison is the arm that matches and `realpathSync` is
+ * the arm that does not. Verified on node v24.18.0 across all four flag
+ * combinations. `realpathSync` throws when the path does not exist, which is
+ * not an entry-point match either.
  */
 function isEntryPoint(entry: string | undefined): boolean {
   if (entry === undefined) return false;
