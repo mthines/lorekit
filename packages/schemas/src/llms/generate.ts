@@ -14,7 +14,7 @@
  */
 
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
-import { join, dirname, basename } from 'node:path';
+import { join, dirname, basename, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderLlmsTxt, type DocsIndexEntry } from './render.ts';
 
@@ -106,4 +106,9 @@ function main(): void {
   console.log('llms.txt written to', OUTPUT_PATH);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main();
+// Compare decoded paths, not a URL against a raw path: `import.meta.url`
+// percent-encodes (a checkout under `/My Repos/` becomes `/My%20Repos/`) while
+// `process.argv[1]` does not, so the string form silently skips `main()` and
+// makes `--check` exit 0 without ever running the generator.
+const entry = process.argv[1];
+if (entry !== undefined && fileURLToPath(import.meta.url) === resolve(entry)) main();
