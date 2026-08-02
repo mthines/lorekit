@@ -1,23 +1,20 @@
+import { corsResponseHeaders, expandAllowedOrigins } from './cors-origins.ts';
+
 const RAW = Deno.env.get('ALLOWED_ORIGINS') ?? '';
 const IS_PROD = Deno.env.get('VERCEL_ENV') === 'production';
-const ALLOWED: string[] = RAW ? RAW.split(',').map((o) => o.trim()).filter(Boolean) : IS_PROD ? ['https://lorekit.io'] : ['*'];
+const CONFIGURED: string[] = RAW ? RAW.split(',').map((o) => o.trim()).filter(Boolean) : IS_PROD ? ['https://lorekit.io'] : ['*'];
 
+// Admit BOTH the apex and the `www.` host for every configured origin — the
+// dashboard is served from the canonical https://www.lorekit.io while the
+// allowlist commonly names only the apex https://lorekit.io. See cors-origins.ts.
+const ALLOWED: string[] = expandAllowedOrigins(CONFIGURED);
+
+// The env read is all that is left here — the header decision itself (which
+// origins get `Access-Control-Allow-Origin`, and the `*` fallback for a request
+// that sends no Origin) lives in the mirrored pure `cors-origins.ts` so it has a
+// vitest home; this file has none. See cors-origins.spec.ts in mcp-core.
 export function corsHeaders(req: Request): Record<string, string> {
-  const origin = req.headers.get('Origin') ?? '';
-  const allow = ALLOWED.includes('*') || ALLOWED.includes(origin);
-  // Only emit Access-Control-Allow-Origin when the origin is allowed.
-  // An empty string is not a valid header value and causes browser errors.
-  const headers: Record<string, string> = {
-    'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Authorization, Content-Type, traceparent, tracestate, X-LoreKit-Dry-Run',
-    // Lets a browser read the server span's traceparent off the response
-    // (traceRequest sets it) so client-side RUM can link to the server trace,
-    // plus the dry-run acknowledgement so a client can confirm no-op execution.
-    'Access-Control-Expose-Headers': 'traceparent, X-LoreKit-Dry-Run',
-    'Access-Control-Max-Age': '86400',
-  };
-  if (allow) headers['Access-Control-Allow-Origin'] = origin || '*';
-  return headers;
+  return corsResponseHeaders(ALLOWED, req.headers.get('Origin') ?? '');
 }
 
 export function handlePreflight(req: Request): Response {

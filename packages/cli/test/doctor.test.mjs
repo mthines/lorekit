@@ -8,7 +8,8 @@
 // status line for each install location.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
+import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -109,6 +110,133 @@ test('doctor warns when hooks are registered in both project and global settings
   assert.match(dupeLine, /lorekit uninstall/, `expected uninstall hint, got: ${dupeLine}`);
 });
 
+// ── the token is actually VERIFIED, not just prefix-checked ──────────────────
+//
+// Regression guard for the dogfood finding that motivated this: with a REVOKED
+// token, doctor reported `token — read+write (lk_rw_*)` and `connectivity —
+// reachable` and summarised "0 failed", while every remote read in `lorekit
+// list` answered "Authentication required". Both green checks were honest about
+// what they measured and neither measured the credential: `token` reads the
+// PREFIX of a string, and `connectivity` probes the PUBLIC `/health` function.
+// These tests pin the authenticated probe that closes that gap.
+
+// A mock LoreKit deployment: a public `/functions/v1/health` plus a
+// `/functions/v1/memories` that answers with whatever status the case needs.
+function startMockDeployment({ memoriesStatus = 200, memoriesBody = '{"entries":[]}' } = {}) {
+  const server = http.createServer((req, res) => {
+    req.on('data', () => {}); // drain
+    req.on('end', () => {
+      const { pathname } = new URL(req.url, 'http://localhost');
+      res.setHeader('content-type', 'application/json');
+      if (pathname === '/functions/v1/health') {
+        res.statusCode = 200;
+        res.end('{"status":"ok"}');
+        return;
+      }
+      if (pathname === '/functions/v1/memories') {
+        res.statusCode = memoriesStatus;
+        res.end(memoriesBody);
+        return;
+      }
+      res.statusCode = 404;
+      res.end('{"error":"Route not found","code":"not_found"}');
+    });
+  });
+  return server;
+}
+
+function listen(server) {
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
+}
+
+// Run doctor in remote mode against a mock deployment; returns its output.
+//
+// Async `spawn`, never `spawnSync`: the mock server lives in THIS process, so a
+// synchronous child would block the event loop that has to answer its requests
+// and every probe would time out.
+function runRemoteDoctor(dir, home, port, token) {
+  return new Promise((resolve) => {
+    const child = spawn(
+      process.execPath,
+      [
+        BIN, 'doctor',
+        '--mode', 'remote',
+        '--endpoint', `http://127.0.0.1:${port}/functions/v1/mcp`,
+        '--token', token,
+        '--dir', dir,
+      ],
+      { env: { ...process.env, NO_COLOR: '1', HOME: home, USERPROFILE: home, LOREKIT_TELEMETRY: '0' } },
+    );
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => (stdout += d));
+    child.stderr.on('data', (d) => (stderr += d));
+    child.on('close', (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+const lineFor = (stdout, label) => stdout.split('\n').find((l) => l.includes(label)) ?? '';
+
+test('doctor FAILS the authentication check when the token has been revoked (401)', async () => {
+  const root = tmp('lk-doc-revoked-');
+  const home = tmp('lk-doc-revoked-home-');
+  const server = startMockDeployment({
+    memoriesStatus: 401,
+    memoriesBody: '{"error":"Authentication required","code":"unauthorized"}',
+  });
+  const port = await listen(server);
+  try {
+    const res = await runRemoteDoctor(root, home, port, 'lk_rw_revoked');
+
+    // The transport really is reachable — that check stays honest, and says so.
+    const connectivity = lineFor(res.stdout, 'connectivity');
+    assert.match(connectivity, /PASS/, `expected connectivity PASS, got: ${connectivity}`);
+    assert.match(connectivity, /token not checked/, `connectivity must not imply the token works: ${connectivity}`);
+
+    // …and the credential is reported as broken, not silently accepted.
+    const auth = lineFor(res.stdout, 'authentication');
+    assert.match(auth, /FAIL/, `expected authentication FAIL, got: ${auth}`);
+    assert.match(auth, /revoked/i, `expected an actionable revoked-token message, got: ${auth}`);
+    assert.match(auth, /install --force/, `expected the remediation hint, got: ${auth}`);
+    assert.equal(res.status, 1, 'a rejected token makes doctor exit non-zero');
+  } finally {
+    server.close();
+  }
+});
+
+test('doctor PASSES the authentication check for a token the server accepts', async () => {
+  const root = tmp('lk-doc-livetok-');
+  const home = tmp('lk-doc-livetok-home-');
+  const server = startMockDeployment({ memoriesStatus: 200 });
+  const port = await listen(server);
+  try {
+    const res = await runRemoteDoctor(root, home, port, 'lk_rw_live');
+    const auth = lineFor(res.stdout, 'authentication');
+    assert.match(auth, /PASS/, `expected authentication PASS, got: ${auth}`);
+    assert.match(auth, /read access confirmed/, auth);
+  } finally {
+    server.close();
+  }
+});
+
+test('doctor does not call a write-only token broken: 403 is accepted-but-unpermitted', async () => {
+  const root = tmp('lk-doc-wo-');
+  const home = tmp('lk-doc-wo-home-');
+  const server = startMockDeployment({
+    memoriesStatus: 403,
+    memoriesBody: '{"error":"Read permission required","code":"forbidden"}',
+  });
+  const port = await listen(server);
+  try {
+    const res = await runRemoteDoctor(root, home, port, 'lk_wo_live');
+    const auth = lineFor(res.stdout, 'authentication');
+    assert.match(auth, /PASS/, `a write-only token is healthy, got: ${auth}`);
+    assert.match(auth, /no read permission/, auth);
+  } finally {
+    server.close();
+  }
+});
+
 test('doctor does NOT warn about duplicates when hooks exist only in one scope', async () => {
   const root = tmp('lk-doc-nodupe-');
   const home = tmp('lk-doc-nodupe-home-');
@@ -119,4 +247,46 @@ test('doctor does NOT warn about duplicates when hooks exist only in one scope',
   const res = runDoctor(root, home);
   const dupeLine = res.stdout.split('\n').find((l) => l.includes('hooks duplicate')) ?? '';
   assert.equal(dupeLine, '', `expected no hooks duplicate line, got: ${dupeLine}`);
+});
+
+// ── Hook wiring is a user choice, so doctor must report it ───────────────────
+
+test('doctor reports which hooks are wired and in which scope', async () => {
+  const root = tmp('lk-doc-hooks-');
+  const home = tmp('lk-doc-hooks-home-');
+  await installWith({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true }, home);
+
+  const line = (runDoctor(root, home).stdout.split('\n').find((l) => l.includes('hooks project'))) ?? '';
+  assert.match(line, /PASS/, `expected a passing hooks line, got: ${line}`);
+  assert.match(line, /all/, 'names the resolved mode');
+  for (const event of ['SessionStart', 'PostToolUseFailure', 'Stop']) {
+    assert.match(line, new RegExp(event), `names ${event}`);
+  }
+});
+
+test('doctor says so when no hooks are wired, so a deliberate opt-out is legible', async () => {
+  const root = tmp('lk-doc-nohooks-');
+  const home = tmp('lk-doc-nohooks-home-');
+  await installWith(
+    { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true, hooks: 'none' },
+    home,
+  );
+
+  const out = runDoctor(root, home).stdout;
+  const line = out.split('\n').find((l) => /\bhooks\b/.test(l)) ?? '';
+  assert.match(line, /none wired/, `expected a "none wired" line, got: ${line}`);
+  assert.match(line, /--hooks all/, 'tells the user how to change it');
+});
+
+test('doctor reports read-only hook wiring distinctly from all', async () => {
+  const root = tmp('lk-doc-rohooks-');
+  const home = tmp('lk-doc-rohooks-home-');
+  await installWith(
+    { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true, hooks: 'read-only' },
+    home,
+  );
+
+  const line = (runDoctor(root, home).stdout.split('\n').find((l) => l.includes('hooks project'))) ?? '';
+  assert.match(line, /read-only/, `expected read-only, got: ${line}`);
+  assert.doesNotMatch(line, /Stop/, 'the retrospective nudge is not wired');
 });

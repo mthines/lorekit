@@ -7,7 +7,6 @@ import { activityRequest, listScopesRequest } from '@/lib/api/memories';
 
 export interface DashboardData {
   scopes: ScopeHealth[];
-  totalLessons: number;
   /**
    * Raw trend rows (scope + created_at), one per memory in the trend window.
    * The stat cards compute their per-card range trends from these client-side,
@@ -43,7 +42,7 @@ const DAY_MS = 86_400_000;
  */
 async function fetchDashboardData(signal?: AbortSignal): Promise<DashboardData> {
   const token = await browserAccessToken();
-  if (!token) return { scopes: [], totalLessons: 0, rows: [] };
+  if (!token) return { scopes: [], rows: [] };
 
   const since = new Date(Date.now() - TREND_WINDOW_DAYS * DAY_MS).toISOString();
   const [scopesRes, activity] = await Promise.all([
@@ -65,9 +64,6 @@ async function fetchDashboardData(signal?: AbortSignal): Promise<DashboardData> 
 
   return {
     scopes,
-    // Summing exact per-scope counts, not counting fetched rows — the figure is
-    // now correct above the row cap that used to silently truncate it.
-    totalLessons: scopesRes.scopes.reduce((sum, s) => sum + s.count, 0),
     rows: trendRowsFromActivity(activity.buckets),
   };
 }

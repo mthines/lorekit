@@ -48,6 +48,12 @@ export {
 export { purgeExpired } from './tools/purge-expired.js';
 export { parseTtlDays, TtlError, TTL_MIN_DAYS, TTL_MAX_DAYS } from './ttl.js';
 export {
+  WEBHOOK_TTL_DAYS_BY_TIER,
+  webhookSignalTier,
+  webhookTtlDays,
+  type WebhookSignalTier,
+} from './ttl-defaults.js';
+export {
   parseOrigin,
   sanitizeOrigin,
   OriginError,
