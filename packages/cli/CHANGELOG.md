@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.29.0](https://github.com/mthines/lorekit/compare/cli-v1.28.0...cli-v1.29.0) (2026-08-02)
+
+
+### Features
+
+* **cli:** make hook wiring an explicit choice during install ([8af37d9](https://github.com/mthines/lorekit/commit/8af37d9115a7a65d479108fad388786dcc778020))
+
+
+### Bug Fixes
+
+* **cli:** keep a hand-wired hook set on a non-interactive install ([2c0747f](https://github.com/mthines/lorekit/commit/2c0747fffbbb75c1833cac2ed33323267bad91b9))
+* **cli:** refresh a stale hook command when preserving a custom set ([e3d238d](https://github.com/mthines/lorekit/commit/e3d238d16e1c48a6d53236e233b17c3628247a9a))
+* **cli:** reject a valueless --hooks instead of falling back silently ([2965e1d](https://github.com/mthines/lorekit/commit/2965e1d93aed126032f5124df994e76bd3ee030b))
+* **cli:** report the TTL that landed, not the flag, when --clear-ttl wins ([7590b87](https://github.com/mthines/lorekit/commit/7590b872fb2d486e488ea34840745df9e1b033e6))
+
+
+### Documentation
+
+* **cli:** align the preserved hook-set copy with the refresh behaviour ([9aac586](https://github.com/mthines/lorekit/commit/9aac58615f561fd61044fbad9df619afcb31611a))
+* **cli:** correct the --yes / non-TTY hook default in the three doc surfaces ([45bf80d](https://github.com/mthines/lorekit/commit/45bf80d1934e1a600e6b86e83f8a72442633f4b8))
+
 ## [1.28.0](https://github.com/mthines/lorekit/compare/cli-v1.27.0...cli-v1.28.0) (2026-08-02)
 
 
