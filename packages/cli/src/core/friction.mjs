@@ -24,7 +24,9 @@ export const STUCK_LOOP_THRESHOLD = 3;
 export const FRICTION_FAILURE = 'failure';
 export const FRICTION_STUCK_LOOP = 'stuck-loop';
 
-// Pure: scan a Claude/Codex JSONL transcript for friction signals.
+// Pure: scan a Claude Code JSONL transcript for friction signals. (Only Claude
+// Code surfaces a transcript path to the hook; the Cursor/Codex adapters don't,
+// so friction there is always `null` — see readSessionFriction / shouldRetrospect.)
 // Returns { friction: boolean, reasons: string[] }. Never throws.
 export function detectFriction(transcriptText, { stuckLoopThreshold = STUCK_LOOP_THRESHOLD } = {}) {
   const reasons = new Set();
