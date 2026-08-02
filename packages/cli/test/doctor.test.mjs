@@ -120,3 +120,45 @@ test('doctor does NOT warn about duplicates when hooks exist only in one scope',
   const dupeLine = res.stdout.split('\n').find((l) => l.includes('hooks duplicate')) ?? '';
   assert.equal(dupeLine, '', `expected no hooks duplicate line, got: ${dupeLine}`);
 });
+
+// ── Hook wiring is a user choice, so doctor must report it ───────────────────
+
+test('doctor reports which hooks are wired and in which scope', async () => {
+  const root = tmp('lk-doc-hooks-');
+  const home = tmp('lk-doc-hooks-home-');
+  await installWith({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true }, home);
+
+  const line = (runDoctor(root, home).stdout.split('\n').find((l) => l.includes('hooks project'))) ?? '';
+  assert.match(line, /PASS/, `expected a passing hooks line, got: ${line}`);
+  assert.match(line, /all/, 'names the resolved mode');
+  for (const event of ['SessionStart', 'PostToolUseFailure', 'Stop']) {
+    assert.match(line, new RegExp(event), `names ${event}`);
+  }
+});
+
+test('doctor says so when no hooks are wired, so a deliberate opt-out is legible', async () => {
+  const root = tmp('lk-doc-nohooks-');
+  const home = tmp('lk-doc-nohooks-home-');
+  await installWith(
+    { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true, hooks: 'none' },
+    home,
+  );
+
+  const out = runDoctor(root, home).stdout;
+  const line = out.split('\n').find((l) => /\bhooks\b/.test(l)) ?? '';
+  assert.match(line, /none wired/, `expected a "none wired" line, got: ${line}`);
+  assert.match(line, /--hooks all/, 'tells the user how to change it');
+});
+
+test('doctor reports read-only hook wiring distinctly from all', async () => {
+  const root = tmp('lk-doc-rohooks-');
+  const home = tmp('lk-doc-rohooks-home-');
+  await installWith(
+    { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true, hooks: 'read-only' },
+    home,
+  );
+
+  const line = (runDoctor(root, home).stdout.split('\n').find((l) => l.includes('hooks project'))) ?? '';
+  assert.match(line, /read-only/, `expected read-only, got: ${line}`);
+  assert.doesNotMatch(line, /Stop/, 'the retrospective nudge is not wired');
+});

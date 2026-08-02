@@ -8,9 +8,9 @@ import {
   SKILLS,
   resolveProjectRoot,
   skillInstallDir,
-  settingsPath,
   CLAUDE_HOOK_EVENTS,
-  LOREKIT_HOOK_RE,
+  installedHookEvents,
+  hookModeFromEvents,
   readLorekitServer,
   readMcpConfig,
   tokenKind,
@@ -63,6 +63,28 @@ export async function doctor(args) {
       record('pass', `skill ${skill.name}`, rel && !rel.startsWith('..') ? rel : prettyPath(skillMd));
     } else {
       record('fail', `skill ${skill.name}`, 'not found — run `lorekit install`');
+    }
+  }
+
+  // 2.4. Which hooks are actually wired, and where. Hooks are an install-time
+  // CHOICE (`--hooks all|read-only|none`, or the prompt), so "why does nothing
+  // get remembered?" is answered HERE — without a positive report the only way
+  // to tell a deliberate `none` from a broken install is to read settings.json.
+  {
+    const perScope = ['project', 'global']
+      .map((s) => ({ scope: s, events: installedHookEvents(root, s) }))
+      .filter((entry) => entry.events.length > 0);
+    if (perScope.length === 0) {
+      record(
+        'info',
+        'hooks',
+        'none wired — the skills work, but memory is model-invoked only. ' +
+          'Run `lorekit install --hooks all` to wire them.',
+      );
+    } else {
+      for (const { scope, events } of perScope) {
+        record('pass', `hooks ${scope}`, `${hookModeFromEvents(events)} — ${events.join(', ')}`);
+      }
     }
   }
 
@@ -349,43 +371,14 @@ async function deepCheckLocal(store, scope, record) {
 // Returns the list of CLAUDE_HOOK_EVENTS whose lorekit hook command appears in
 // BOTH the project settings file (.claude/settings.json) and the global one
 // (~/.claude/settings.json). An empty array means no duplicates — healthy.
+//
+// Both sides read through `installedHookEvents`, the SAME detection `install`
+// uses to preselect its hook prompt, so the two surfaces can never disagree
+// about what is wired.
 function detectDuplicateHooks(root) {
-  const dupes = [];
-  const projectFile = settingsPath(root, 'project');
-  const globalFile = settingsPath(root, 'global');
-
-  let projectHooks = {};
-  let globalHooks = {};
-  try {
-    const cfg = JSON.parse(fs.readFileSync(projectFile, 'utf8'));
-    if (cfg && typeof cfg.hooks === 'object') projectHooks = cfg.hooks;
-  } catch { /* absent or unparseable — treat as empty */ }
-  try {
-    const cfg = JSON.parse(fs.readFileSync(globalFile, 'utf8'));
-    if (cfg && typeof cfg.hooks === 'object') globalHooks = cfg.hooks;
-  } catch { /* absent or unparseable — treat as empty */ }
-
-  for (const event of CLAUDE_HOOK_EVENTS) {
-    const hasInProject = hooksForEvent(projectHooks, event).some((cmd) => LOREKIT_HOOK_RE.test(cmd));
-    const hasInGlobal = hooksForEvent(globalHooks, event).some((cmd) => LOREKIT_HOOK_RE.test(cmd));
-    if (hasInProject && hasInGlobal) dupes.push(event);
-  }
-  return dupes;
-}
-
-// Extract the flat list of hook command strings for one event from a hooks
-// object. Handles the nested-group shape Claude Code uses:
-// { [event]: [ { hooks: [ { type, command } ] } ] }
-function hooksForEvent(hooksObj, event) {
-  const groups = Array.isArray(hooksObj[event]) ? hooksObj[event] : [];
-  const commands = [];
-  for (const group of groups) {
-    const inner = group && Array.isArray(group.hooks) ? group.hooks : [];
-    for (const h of inner) {
-      if (h && typeof h.command === 'string') commands.push(h.command);
-    }
-  }
-  return commands;
+  const inProject = new Set(installedHookEvents(root, 'project'));
+  const inGlobal = new Set(installedHookEvents(root, 'global'));
+  return CLAUDE_HOOK_EVENTS.filter((event) => inProject.has(event) && inGlobal.has(event));
 }
 
 async function checkBYODStorage(record) {

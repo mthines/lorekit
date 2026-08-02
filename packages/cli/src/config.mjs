@@ -144,20 +144,94 @@ function readServerFromFile(file) {
   return { server, url: url || null };
 }
 
+// The hook wiring presets `install` offers. They are presets over
+// CLAUDE_HOOK_EVENTS, NOT a per-event checkbox list — the meaningful decision a
+// user makes is "read my lessons / also nudge me / neither", and `hooks.disabled`
+// already exists for surgical per-event suppression after the fact.
+//   all       — every lifecycle event (the recommended default)
+//   read-only — SessionStart only: lessons are injected, nothing ever nudges
+//   none      — no hooks; the skills stay model-invoked only
+export const HOOK_MODES = ['all', 'read-only', 'none'];
+
+// Pure: the events a mode wires. An unknown mode yields the full set, so a
+// mis-typed value can never silently disable the hooks — `install` validates the
+// flag up front and refuses instead.
+export function hookEventsForMode(mode) {
+  if (mode === 'none') return [];
+  if (mode === 'read-only') return ['SessionStart'];
+  return [...CLAUDE_HOOK_EVENTS];
+}
+
+// Pure inverse of `hookEventsForMode`: which mode does this set of wired events
+// correspond to? `custom` for anything that matches no preset (e.g. someone hand-
+// wired only `Stop`) — the caller must not silently rewrite such a setup.
+export function hookModeFromEvents(events) {
+  const set = new Set(events || []);
+  for (const mode of HOOK_MODES) {
+    const want = hookEventsForMode(mode);
+    if (want.length === set.size && want.every((e) => set.has(e))) return mode;
+  }
+  return 'custom';
+}
+
+// Extract the flat list of hook command strings for one event out of the nested
+// group shape Claude Code uses: { [event]: [ { hooks: [ { type, command } ] } ] }.
+export function hookCommandsForEvent(hooksObj, event) {
+  const groups = hooksObj && Array.isArray(hooksObj[event]) ? hooksObj[event] : [];
+  const commands = [];
+  for (const group of groups) {
+    const inner = group && Array.isArray(group.hooks) ? group.hooks : [];
+    for (const h of inner) {
+      if (h && typeof h.command === 'string') commands.push(h.command);
+    }
+  }
+  return commands;
+}
+
+// Which CLAUDE_HOOK_EVENTS currently have a lorekit hook wired in this scope's
+// settings file. Best-effort: an absent or unparseable file reads as none — this
+// is a detection helper (it decides a prompt default and a doctor line), never a
+// write path, so it must not throw. The single reader shared by `install` and
+// `doctor` so the two can never disagree about what is wired.
+export function installedHookEvents(root, scope = 'project') {
+  let hooks = {};
+  try {
+    const cfg = JSON.parse(fs.readFileSync(settingsPath(root, scope), 'utf8'));
+    if (cfg && typeof cfg.hooks === 'object' && cfg.hooks) hooks = cfg.hooks;
+  } catch {
+    return [];
+  }
+  return CLAUDE_HOOK_EVENTS.filter((event) =>
+    hookCommandsForEvent(hooks, event).some((cmd) => LOREKIT_HOOK_RE.test(cmd)),
+  );
+}
+
 // Wire the lorekit hook engine into Claude Code settings for the scope,
 // preserving all other settings and any non-lorekit hooks. Idempotent: an
 // existing lorekit hook entry per event is updated in place, never duplicated.
 // `runner` is the command prefix (e.g. 'lorekit' or 'npx -y @lorekit/cli').
-export function upsertClaudeHooks(root, scope, runner) {
+//
+// `events` selects WHICH of CLAUDE_HOOK_EVENTS to wire (default: all of them).
+// Any lorekit entry for a CLAUDE_HOOK_EVENT *not* in the list is REMOVED — that
+// pruning is what makes a downgrade (all → read-only) an actual downgrade rather
+// than an additive no-op that leaves the nudges firing. Only lorekit's own
+// entries are touched; a co-located third-party hook on the same event survives.
+export function upsertClaudeHooks(root, scope, runner, events = CLAUDE_HOOK_EVENTS) {
   const file = settingsPath(root, scope);
   const config = readJsonIfExists(file) || {};
   if (!config.hooks || typeof config.hooks !== 'object') config.hooks = {};
 
+  const wanted = new Set(events);
   let added = 0;
   let updated = 0;
   let unchanged = 0;
+  let removed = 0;
 
   for (const event of CLAUDE_HOOK_EVENTS) {
+    if (!wanted.has(event)) {
+      removed += pruneLorekitHooks(config.hooks, event);
+      continue;
+    }
     const command = `${runner} hook --adapter claude --event ${event} --dir "\${CLAUDE_PROJECT_DIR}"`;
     if (!Array.isArray(config.hooks[event])) config.hooks[event] = [];
     const groups = config.hooks[event];
@@ -183,8 +257,31 @@ export function upsertClaudeHooks(root, scope, runner) {
     }
   }
 
+  if (Object.keys(config.hooks).length === 0) delete config.hooks;
+
   writeFileAtomic(file, JSON.stringify(config, null, 2) + '\n');
-  return { file, added, updated, unchanged };
+  return { file, added, updated, unchanged, removed };
+}
+
+// Drop every lorekit hook entry for one event from a hooks object, tidying up
+// the groups and the event key it empties. Returns how many entries went. Shared
+// by `upsertClaudeHooks`'s pruning and `removeClaudeHooks`'s full teardown.
+function pruneLorekitHooks(hooksObj, event) {
+  const groups = hooksObj[event];
+  if (!Array.isArray(groups)) return 0;
+
+  let removed = 0;
+  for (const group of groups) {
+    if (!group || !Array.isArray(group.hooks)) continue;
+    const before = group.hooks.length;
+    group.hooks = group.hooks.filter(
+      (h) => !(h && typeof h.command === 'string' && LOREKIT_HOOK_RE.test(h.command)),
+    );
+    removed += before - group.hooks.length;
+  }
+  hooksObj[event] = groups.filter((g) => g && Array.isArray(g.hooks) && g.hooks.length > 0);
+  if (hooksObj[event].length === 0) delete hooksObj[event];
+  return removed;
 }
 
 // Throwing read — used by `install` so a corrupt .mcp.json aborts the write
@@ -279,20 +376,9 @@ export function removeClaudeHooks(root, scope = 'project') {
   }
 
   let removed = 0;
+  // Snapshot the keys: pruneLorekitHooks deletes the ones it empties.
   for (const event of Object.keys(config.hooks)) {
-    const groups = config.hooks[event];
-    if (!Array.isArray(groups)) continue;
-    for (const group of groups) {
-      if (!group || !Array.isArray(group.hooks)) continue;
-      const before = group.hooks.length;
-      group.hooks = group.hooks.filter(
-        (h) => !(h && typeof h.command === 'string' && LOREKIT_HOOK_RE.test(h.command)),
-      );
-      removed += before - group.hooks.length;
-    }
-    // Drop groups we emptied, then the event key if it has no groups left.
-    config.hooks[event] = groups.filter((g) => g && Array.isArray(g.hooks) && g.hooks.length > 0);
-    if (config.hooks[event].length === 0) delete config.hooks[event];
+    removed += pruneLorekitHooks(config.hooks, event);
   }
   if (Object.keys(config.hooks).length === 0) delete config.hooks;
 
