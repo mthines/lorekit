@@ -168,6 +168,11 @@ async function run(args) {
     // consumed, so a clean early turn stays silent without burning the marker —
     // a later turn that does hit friction can still fire (once).
     const stopMode = control.hooksStop || 'friction';
+    // Once the retro has fired, short-circuit BEFORE the (growing) transcript
+    // read — the 'retro' marker is only ever SET on emit below, so a clean
+    // earlier turn never reaches that line to consume it, and every later Stop
+    // this session skips the re-parse cheaply (read-only peek, never consumed).
+    if (sessionMarkerExists(parsed.sessionId, 'retro')) return 0;
     let reasons = [];
     let friction = null;
     if (stopMode === 'friction') {
