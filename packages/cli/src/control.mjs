@@ -53,6 +53,19 @@ function firstNumber(v) {
   return null;
 }
 
+// Whether a config layer DECLARED a scalar policy value — the layer-selection
+// predicate for keys that cannot merge. Same shape as the `hooks.adapter` guard
+// below: a layer that put something usable-looking there owns the decision, even
+// when the something turns out to be unparseable. Selecting the layer on the
+// PARSED value instead is the bug: `firstNumber(repo) ?? firstNumber(user)` makes
+// a garbage repo value (`"ttl.default": "90 days"`) indistinguishable from an
+// absent one, so the user layer silently takes over and the retention a write
+// gets depends on state outside the repository — two developers on the same
+// commit would disagree, and neither could tell from the checkout.
+function declaresScalar(v) {
+  return typeof v === 'number' || (typeof v === 'string' && v.trim() !== '');
+}
+
 function asList(v) {
   if (Array.isArray(v)) return v;
   if (typeof v === 'string') return v.split(',').map((s) => s.trim()).filter(Boolean);
@@ -142,8 +155,17 @@ export function resolveControl({
   //    typo must not make `lorekit list` throw. The value is bounds-checked at
   //    the point of use (resolveDefaultTtlDays), where an invalid one degrades
   //    to "no default".
-  const ttlDefault =
-    firstNumber(repoConfig['ttl.default']) ?? firstNumber(userConfig['ttl.default']) ?? null;
+  //
+  //    Which is exactly why the LAYER is chosen before the value is parsed (see
+  //    declaresScalar): "repo wins" has to hold for a repo value that is wrong,
+  //    or a typo'd project policy silently becomes a per-machine one instead of
+  //    degrading to "no default". An absent key and an explicit `null` still
+  //    fall through to the user layer — only a declared, usable-looking value
+  //    claims the decision.
+  const ttlDefaultRaw = declaresScalar(repoConfig['ttl.default'])
+    ? repoConfig['ttl.default']
+    : userConfig['ttl.default'];
+  const ttlDefault = firstNumber(ttlDefaultRaw);
 
   // `scope.defaults` — repo layer only (team-scoped write policy).
   //    Schema: { "<scope-prefix>": { "tags": [...], "ttl_days": <n> | null } }

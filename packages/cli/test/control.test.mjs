@@ -314,6 +314,46 @@ test('ttl.default: a non-numeric value resolves to null instead of throwing', ()
   }
 });
 
+test('ttl.default: an unusable repo value does NOT promote the user layer', () => {
+  // The repo declared a policy and got it wrong. "Repo wins" has to hold for the
+  // wrong value too, or a typo in a committed .lorekit.json silently hands the
+  // project's retention policy to whatever each developer has in ~/.lorekit —
+  // and `lorekit write` would print "(from config)" for a number the repo never
+  // asked for. The bad value degrades to "no default", as documented.
+  const r = resolveControl({
+    repoConfig: { 'ttl.default': '90 days' },
+    userConfig: { 'ttl.default': 7 },
+    connection: NO_CONN,
+  });
+  assert.equal(r.ttlDefault, null);
+});
+
+test('ttl.default: layer selection matches hooks.adapter on the same input', () => {
+  // Both keys are scalar policies that cannot merge, so a garbage repo value
+  // must beat the user layer in both — the comment in control.mjs cites
+  // hooks.adapter as the precedent, and this pins the two together.
+  const r = resolveControl({
+    repoConfig: { 'ttl.default': '90 days', 'hooks.adapter': 'bogus' },
+    userConfig: { 'ttl.default': 7, 'hooks.adapter': 'cursor' },
+    connection: NO_CONN,
+  });
+  assert.equal(r.hooksAdapter, 'bogus');
+  assert.equal(r.ttlDefault, null);
+});
+
+test('ttl.default: an explicit repo null still falls through to the user layer', () => {
+  // `null` is "I did not set one", not a declaration — unlike scope.defaults,
+  // where an explicit `ttl_days: null` is the spelling of "permanent".
+  for (const absent of [null, undefined, true, {}, []]) {
+    const r = resolveControl({
+      repoConfig: { 'ttl.default': absent },
+      userConfig: { 'ttl.default': 7 },
+      connection: NO_CONN,
+    });
+    assert.equal(r.ttlDefault, 7, `ttl.default=${JSON.stringify(absent)}`);
+  }
+});
+
 test('ttl.default: out-of-range values survive resolveControl untouched', () => {
   // Bounds are NOT this function's job; resolveDefaultTtlDays drops them.
   const r = resolveControl({ repoConfig: { 'ttl.default': 900 }, connection: NO_CONN });
