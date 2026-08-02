@@ -1,18 +1,54 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 
-// The SDK is never really initialised in a unit test — these specs cover the
-// pure decision helpers, which are the parts that had drifted between the two
-// former copies. `initDash0Rum` itself is an impure shell over `init()` and is
-// exercised by running the app.
-vi.mock('@dash0/sdk-web', () => ({
-  init: vi.fn(),
-  addSignalAttribute: vi.fn(),
-  identify: vi.fn(),
-}));
+// The real SDK never runs in a unit test, but the ATTRIBUTE SEMANTICS do: this
+// stand-in mirrors the Dash0 web SDK (`sdk-web`) 0.23.0 exactly — `addSignalAttribute`
+// APPENDS, `removeSignalAttribute` splices the first match, and `identify`
+// removes any existing `user.id` before adding one. That append-vs-replace
+// distinction is the whole point of the identity specs below, so a stubbed
+// `vi.fn()` would assert nothing about it.
+vi.mock('@dash0/sdk-web', () => {
+  const signalAttributes: Array<{ key: string; value: unknown }> = [];
+  const remove = (key: string) => {
+    const index = signalAttributes.findIndex((attr) => attr.key === key);
+    if (index !== -1) signalAttributes.splice(index, 1);
+  };
+  return {
+    init: () => undefined,
+    addSignalAttribute: (key: string, value: unknown) => {
+      signalAttributes.push({ key, value });
+    },
+    removeSignalAttribute: remove,
+    identify: (id?: string) => {
+      remove('user.id');
+      if (id != null) signalAttributes.push({ key: 'user.id', value: id });
+    },
+    __signalAttributes: signalAttributes,
+  };
+});
 
-const { isValidOtlpEndpoint, resolveDeploymentEnv, buildVcsSignalAttributes } = await import('./dash0-rum');
+const {
+  isValidOtlpEndpoint,
+  resolveDeploymentEnv,
+  buildVcsSignalAttributes,
+  initDash0Rum,
+  identifyDash0User,
+} = await import('./dash0-rum');
+
+const { __signalAttributes: signalAttributes } = (await import('@dash0/sdk-web')) as unknown as {
+  __signalAttributes: Array<{ key: string; value: unknown }>;
+};
 
 const ORIGINAL_ENV = { ...process.env };
+
+// `initDash0Rum` is guarded to run once per module instance, so the state it
+// leaves behind is captured here and each identity spec restores it.
+process.env['NEXT_PUBLIC_DASH0_OTLP_ENDPOINT'] = 'https://ingress.example.com';
+process.env['NEXT_PUBLIC_DASH0_AUTH_TOKEN'] = 'auth-token';
+const INITIALISED = initDash0Rum();
+const AFTER_INIT = [...signalAttributes];
+
+const valuesOf = (key: string) =>
+  signalAttributes.filter((attr) => attr.key === key).map((attr) => attr.value);
 
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
@@ -112,5 +148,26 @@ describe('buildVcsSignalAttributes', () => {
   it('adds the revision on its own', () => {
     process.env['NEXT_PUBLIC_VCS_REF_HEAD_REVISION'] = 'abc1234';
     expect(buildVcsSignalAttributes()).toEqual({ 'vcs.ref.head.revision': 'abc1234' });
+  });
+});
+
+describe('signal identity and route attributes', () => {
+  beforeEach(() => {
+    signalAttributes.splice(0, signalAttributes.length, ...AFTER_INIT);
+  });
+
+  it('initialises once and identifies the visitor anonymously', () => {
+    expect(INITIALISED).toBe(true);
+    expect(initDash0Rum()).toBe(false);
+  });
+
+  it('carries exactly one user.id after init — identify() must not be paired with an append', () => {
+    expect(valuesOf('user.id')).toHaveLength(1);
+    expect(String(valuesOf('user.id')[0])).toMatch(/^anon:/);
+  });
+
+  it('REPLACES the anonymous id on login instead of leaving a second user.id behind', () => {
+    identifyDash0User('user-abc');
+    expect(valuesOf('user.id')).toEqual(['user-abc']);
   });
 });

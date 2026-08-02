@@ -167,9 +167,13 @@ export function initDash0Rum(): boolean {
   // Identify BEFORE anything is emitted, so no event ever ships without a
   // `user.id`. An authenticated visitor is re-identified by
   // `identifyDash0User` a few milliseconds later, once React has the session.
-  const anonymousId = resolveAnonymousId();
-  identify(anonymousId);
-  addSignalAttribute('user.id', anonymousId);
+  //
+  // `identify()` is the ONLY call that sets `user.id` here: it removes any
+  // existing entry before adding one, whereas `addSignalAttribute` appends. A
+  // paired `addSignalAttribute('user.id', …)` would leave two entries on every
+  // signal — and, worse, `identify()` later removes only the FIRST of them, so
+  // the anonymous id would survive the upgrade to the authenticated one.
+  identify(resolveAnonymousId());
 
   if (typeof window !== 'undefined') {
     addSignalAttribute('page.url.path', window.location.pathname);
@@ -187,11 +191,14 @@ export function initDash0Rum(): boolean {
  *
  * No-op before initialisation, so a caller never has to order its effects
  * against the SDK's readiness.
+ *
+ * `identify()` replaces the existing `user.id` rather than adding a second
+ * one — see {@link initDash0Rum} for why it must not be paired with
+ * `addSignalAttribute`.
  */
 export function identifyDash0User(userId: string): void {
   if (!initialized || !userId) return;
   identify(userId);
-  addSignalAttribute('user.id', userId);
 }
 
 /**
