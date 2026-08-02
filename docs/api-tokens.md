@@ -149,7 +149,7 @@ tokens, named after the client that requested it, and can be revoked there.
 | Step | Endpoint |
 |---|---|
 | Client calls the MCP server with no credential | `401` + `WWW-Authenticate: Bearer resource_metadata="…"` |
-| Client fetches the resource metadata (RFC 9728) | `GET …/functions/v1/mcp/.well-known/oauth-protected-resource` |
+| Client fetches the resource metadata (RFC 9728) | `GET https://lorekit.io/.well-known/oauth-protected-resource` |
 | Client fetches the authorization-server metadata (RFC 8414) | `GET https://lorekit.io/.well-known/oauth-authorization-server` |
 | Client registers itself (RFC 7591) | `POST https://lorekit.io/api/oauth/register` |
 | User consents | `GET https://lorekit.io/oauth/authorize` |
@@ -157,10 +157,15 @@ tokens, named after the client that requested it, and can be revoked there.
 | Client hands the token back on disconnect | `POST https://lorekit.io/api/oauth/revoke` |
 
 The MCP server on `*.supabase.co` is the **resource** server; the dashboard on
-`lorekit.io` is the **authorization** server. Only a request that presents *no*
-credential gets a `401` — a request carrying an invalid or expired token still
-gets an in-band JSON-RPC error, because a `401` there makes streamable-HTTP
-clients retry silently and hang.
+`lorekit.io` is the **authorization** server and serves both discovery
+documents. (The MCP endpoint also answers
+`…/functions/v1/mcp/.well-known/oauth-protected-resource` with a `308` to the
+dashboard copy, for clients that build that URL themselves instead of reading
+it from the header.)
+
+Only a request that presents *no* credential gets a `401` — a request carrying
+an invalid or expired token still gets an in-band JSON-RPC error, because a
+`401` there makes streamable-HTTP clients retry silently and hang.
 
 PKCE is mandatory and only `S256` is accepted. There is no client secret:
 LoreKit registers public clients only.

@@ -1,25 +1,30 @@
 /**
- * Authorization-server metadata (RFC 8414).
+ * OAuth discovery metadata — BOTH documents, served from this app.
  *
- * Two discovery documents exist and they are served by two different origins,
- * on purpose:
+ * The flow involves two documents that RFC 9728 / RFC 8414 imagine living on
+ * two origins (the resource server and the authorization server). LoreKit
+ * serves both from the dashboard:
  *
- *   * The RESOURCE server (the MCP Edge Function on *.supabase.co) serves the
- *     RFC 9728 protected-resource document and emits the `WWW-Authenticate`
- *     header that points at it. That half lives in
- *     `packages/mcp-core/src/oauth-metadata.ts`, mirrored into
- *     `supabase/functions/mcp/oauth-metadata.ts`. It is deliberately NOT
- *     duplicated here — one owner per document.
+ *   * `/.well-known/oauth-protected-resource` (RFC 9728) — describes the MCP
+ *     endpoint on *.supabase.co and names this app as its authorization
+ *     server.
+ *   * `/.well-known/oauth-authorization-server` (RFC 8414) — describes where
+ *     /authorize, /token, /register and /revoke are.
  *
- *   * The AUTHORIZATION server (this Next.js app) serves the RFC 8414
- *     document below, describing where its /authorize, /token, /register and
- *     /revoke endpoints are.
+ * WHY BOTH LIVE HERE. RFC 9728 §3.1 lets the resource point at its metadata
+ * with an absolute `resource_metadata` URL in `WWW-Authenticate`, and the MCP
+ * spec requires clients to follow that value — so the document does not have
+ * to be same-origin with the resource. Keeping it here buys one owner, one
+ * pair of constants, and no pure module mirrored into the self-contained Deno
+ * tree (which cannot import this package, so the alternative was a verbatim
+ * copy plus an edge-parity entry for two string constants).
  *
- * The two constants that must agree across the packages (the resource URL and
- * the issuer) are asserted by `packages/mcp-core/src/oauth-metadata.spec.ts`,
- * which source-scans this file — the same posture as the audit-vocabulary
- * guard, and the reason web can keep its own copy without depending on
- * `@lorekit/core`.
+ * The edge function still ANSWERS the same path — as a redirect here — so a
+ * client that constructs the metadata URL from the resource identifier
+ * (RFC 9728 §3.1's path-insertion form) instead of reading the header still
+ * resolves. That redirect and the challenge string are the only OAuth
+ * knowledge left in the edge tree, and `oauth-discovery.spec.ts` source-scans
+ * both sides to keep them agreeing with this file.
  *
  * Pure: the issuer is an argument, not an env read, so a test pins the whole
  * document without stubbing `process.env`.
@@ -73,4 +78,52 @@ export function authorizationServerMetadata(
     scopes_supported: [...SUPPORTED_SCOPES],
     service_documentation: `${base}/docs/remote`,
   };
+}
+
+export interface ProtectedResourceMetadata {
+  resource: string;
+  authorization_servers: string[];
+  bearer_methods_supported: string[];
+  scopes_supported: string[];
+  resource_documentation: string;
+}
+
+/**
+ * RFC 9728 — describes the MCP endpoint and names its authorization server.
+ *
+ * `resource` is the CANONICAL MCP URL, not this app's origin: the document
+ * describes the resource, wherever it is served from. A client compares this
+ * value against the server it is talking to, so it must be the concrete
+ * production URL — never a `<ref>` placeholder.
+ */
+export function protectedResourceMetadata(
+  resource: string = MCP_RESOURCE_URL,
+  issuer: string = DEFAULT_ISSUER,
+): ProtectedResourceMetadata {
+  const base = issuer.replace(/\/+$/, '');
+  return {
+    resource,
+    authorization_servers: [base],
+    bearer_methods_supported: ['header'],
+    scopes_supported: [...SUPPORTED_SCOPES],
+    resource_documentation: `${base}/docs/remote`,
+  };
+}
+
+/** Absolute URL of the protected-resource document. */
+export function protectedResourceMetadataUrl(issuer: string = DEFAULT_ISSUER): string {
+  return `${issuer.replace(/\/+$/, '')}/.well-known/oauth-protected-resource`;
+}
+
+/**
+ * The `WWW-Authenticate` value the MCP endpoint returns on a credential-less
+ * request. This header IS the discovery trigger — an MCP client reads
+ * `resource_metadata`, fetches it, finds the authorization server, and only
+ * then can it offer the user an "Authorize" button.
+ *
+ * Exported here as the single definition, and asserted against the literal the
+ * Deno edge function emits by `oauth-discovery.spec.ts`.
+ */
+export function wwwAuthenticateChallenge(issuer: string = DEFAULT_ISSUER): string {
+  return `Bearer resource_metadata="${protectedResourceMetadataUrl(issuer)}"`;
 }

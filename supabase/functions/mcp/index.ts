@@ -26,7 +26,7 @@ import { resolveAuth, getDb } from './auth.ts';
 import { extractToken } from './auth-token.ts';
 import {
   isProtectedResourceMetadataPath,
-  protectedResourceMetadata,
+  protectedResourceMetadataRedirect,
   wwwAuthenticateChallenge,
 } from './oauth-metadata.ts';
 import { handleMcp, jsonrpcError } from './mcp-handler.ts';
@@ -62,18 +62,13 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // OAuth protected-resource metadata (RFC 9728) — public, unauthenticated.
-  // An MCP client that got a 401 reads WWW-Authenticate, fetches this exact
-  // URL, and learns which authorization server to send the user to. CORS-open
-  // because browser-based clients fetch it cross-origin.
+  // OAuth protected-resource metadata (RFC 9728). The document itself is
+  // served by the dashboard, which is where both discovery documents live;
+  // this path exists for a client that DERIVES the metadata URL from the
+  // resource identifier instead of reading the absolute one out of
+  // WWW-Authenticate, and it redirects there. Public and unauthenticated.
   if (isProtectedResourceMetadataPath(url.pathname)) {
-    return new Response(JSON.stringify(protectedResourceMetadata()), {
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'public, max-age=300',
-        'Access-Control-Allow-Origin': '*',
-      },
-    });
+    return protectedResourceMetadataRedirect();
   }
 
   // GitHub webhook

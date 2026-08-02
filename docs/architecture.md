@@ -95,17 +95,35 @@ Two paths, one credential type:
   user chose on the consent screen.
 
 The **resource** server is the MCP Edge Function: on a request with *no*
-credential it answers `401` + `WWW-Authenticate` and serves
-`/.well-known/oauth-protected-resource` (RFC 9728). A request carrying a bad
-token still gets an in-band JSON-RPC error at HTTP 200 — a `401` there makes
-streamable-HTTP clients retry silently and hang.
+credential it answers `401` + `WWW-Authenticate: Bearer resource_metadata="…"`.
+A request carrying a bad token still gets an in-band JSON-RPC error at HTTP
+200 — a `401` there makes streamable-HTTP clients retry silently and hang.
 
-The **authorization** server is the Next.js dashboard (`lorekit.io`): it serves
-`/.well-known/oauth-authorization-server` (RFC 8414), `/api/oauth/register`
-(RFC 7591 dynamic client registration), the `/oauth/authorize` consent screen,
-`/api/oauth/token`, and `/api/oauth/revoke` (RFC 7009). It lives there because
-it needs the Supabase-Auth session, the user's org list, and the `api_tokens`
-write path — all of which already exist in `packages/web`.
+Everything else — **both** discovery documents and every endpoint — is served
+by the Next.js dashboard (`lorekit.io`):
+
+| Document / endpoint | Spec |
+|---|---|
+| `/.well-known/oauth-protected-resource` | RFC 9728 |
+| `/.well-known/oauth-authorization-server` | RFC 8414 |
+| `/api/oauth/register` | RFC 7591 dynamic client registration |
+| `/oauth/authorize` | consent screen |
+| `/api/oauth/token` | RFC 6749 §4.1.3 + PKCE |
+| `/api/oauth/revoke` | RFC 7009 |
+
+The protected-resource document describes the MCP endpoint but is *served*
+here: RFC 9728 §3.1 lets the challenge carry an absolute metadata URL, so
+co-location is not required, and one owner beats a pure module mirrored
+verbatim into the self-contained Deno tree for the sake of two string
+constants. The edge function still answers that path — with a `308` here — for
+a client that derives the URL from the resource identifier rather than reading
+the header. The three strings that span the split (issuer, metadata URL,
+challenge shape) are source-scanned by
+`packages/mcp-core/src/oauth-discovery.spec.ts`.
+
+The authorization server lives in the dashboard because it needs the
+Supabase-Auth session, the user's org list, and the `api_tokens` write path —
+all of which already exist in `packages/web`.
 
 `api_tokens.org_ids` is **narrowing only**: it is intersected with
 `lorekit_member_org_ids` (via `intersectTokenOrgIds` / `tokenAllowsOrgId` in

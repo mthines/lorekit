@@ -142,10 +142,13 @@ describe('index.ts auth-failure guard', () => {
     expect(authBlock).not.toMatch(/jsonrpcError\(\s*null/);
   });
 
-  it('serves the RFC 9728 protected-resource document the challenge points at', () => {
-    // A challenge naming a document the server does not serve is a dead end:
-    // the client fetches it, 404s, and the Authorize button fails silently.
+  it('answers the RFC 9728 protected-resource path instead of 404ing it', () => {
+    // The document itself is served by the dashboard (both discovery documents
+    // live there), but a client that DERIVES this URL from the resource
+    // identifier must still land somewhere — a 404 here is a dead end the
+    // Authorize button fails silently on. The redirect target and the
+    // challenge are cross-checked in oauth-discovery.spec.ts.
     expect(index).toMatch(/isProtectedResourceMetadataPath\(url\.pathname\)/);
-    expect(index).toMatch(/protectedResourceMetadata\(\)/);
+    expect(index).toMatch(/protectedResourceMetadataRedirect\(\)/);
   });
 });

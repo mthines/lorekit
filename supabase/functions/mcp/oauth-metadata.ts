@@ -1,79 +1,56 @@
 /**
- * OAuth protected-resource metadata for the MCP endpoint (RFC 9728).
+ * The only OAuth knowledge in the edge tree.
  *
- * This is the RESOURCE server's half of MCP authorization. It answers one
- * question for a client that just got a 401: *which authorization server do I
- * go to?* Without it the host's "Authorize" button has nothing to point at and
- * the only way to attach a client stays "paste a token into a config file".
+ * LoreKit's authorization server is the Next.js dashboard, and BOTH discovery
+ * documents are served from there (see
+ * packages/web/src/lib/oauth/metadata.ts for the reasoning). What has to live
+ * here is the part only the resource server can do:
  *
- * The authorization server itself is the Next.js dashboard
- * (https://lorekit.io) — it already owns the Supabase-Auth session, the org
- * list the consent screen renders, and the api_tokens write path. The two live
- * on different origins, which RFC 9728 explicitly supports: the resource
- * advertises the AS, the AS advertises its own endpoints (RFC 8414).
+ *   1. Emit `WWW-Authenticate` on a credential-less request. This header is
+ *      the entire discovery trigger — without it an MCP client's "Authorize"
+ *      button has nothing to point at.
+ *   2. Answer the protected-resource path with a redirect to the real
+ *      document, for a client that derives the metadata URL from the resource
+ *      identifier (RFC 9728 §3.1's path-insertion form) rather than reading
+ *      the absolute URL out of the header.
  *
- * Import-free so it can be mirrored verbatim into
- * supabase/functions/mcp/oauth-metadata.ts (guarded by edge-parity.spec.ts) —
- * the auth-token.ts pattern. The web package keeps its own AS-metadata builder
- * in packages/web/src/lib/oauth/metadata.ts for the same reason web/lib/scope.ts
- * is a local copy: web must not depend on @lorekit/core. The two constants that
- * MUST agree across all three copies are asserted by oauth-metadata.spec.ts.
+ * This file is NOT a mirror of a mcp-core module — there is no pure logic to
+ * share, only two constants. `packages/mcp-core/src/oauth-discovery.spec.ts`
+ * source-scans this file and the web builder to assert they agree, which is
+ * cheaper and more direct than an edge-parity entry over a copied module.
  */
 
-/**
- * The MCP resource this metadata describes.
- *
- * Written as the concrete production URL, never a `<ref>` placeholder — the
- * hosted MCP server lives at a fixed Supabase project ref and this string is
- * user-facing (a client displays it during authorization).
- */
-export const MCP_RESOURCE_URL = 'https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp';
-
-/** The authorization server that issues tokens for the resource above. */
+/** Canonical origin of the LoreKit authorization server (the dashboard). */
 export const AUTHORIZATION_SERVER_ISSUER = 'https://lorekit.io';
 
-/** Scopes a token may carry. Mirrors api_tokens.permissions. */
-export const OAUTH_SCOPES = ['read', 'write'];
+/** Absolute URL of the RFC 9728 document, served by the dashboard. */
+export const PROTECTED_RESOURCE_METADATA_URL =
+  AUTHORIZATION_SERVER_ISSUER + '/.well-known/oauth-protected-resource';
 
-export interface ProtectedResourceMetadata {
-  resource: string;
-  authorization_servers: string[];
-  bearer_methods_supported: string[];
-  scopes_supported: string[];
-  resource_documentation: string;
-}
-
-/** Build the RFC 9728 document served by the MCP endpoint. */
-export function protectedResourceMetadata(
-  resource: string = MCP_RESOURCE_URL,
-  issuer: string = AUTHORIZATION_SERVER_ISSUER,
-): ProtectedResourceMetadata {
-  const base = issuer.replace(/\/+$/, '');
-  return {
-    resource,
-    authorization_servers: [base],
-    bearer_methods_supported: ['header'],
-    scopes_supported: OAUTH_SCOPES.slice(),
-    resource_documentation: base + '/docs/remote',
-  };
-}
-
-/** Absolute URL of the protected-resource document for a given resource. */
-export function protectedResourceMetadataUrl(resource: string = MCP_RESOURCE_URL): string {
-  return resource.replace(/\/+$/, '') + '/.well-known/oauth-protected-resource';
-}
-
-/**
- * The `WWW-Authenticate` value returned with a 401 on a credential-less
- * request. This header IS the discovery trigger — an MCP client reads
- * `resource_metadata`, fetches it, finds the authorization server, and only
- * then can it offer the user an "Authorize" button.
- */
-export function wwwAuthenticateChallenge(resource: string = MCP_RESOURCE_URL): string {
-  return 'Bearer resource_metadata="' + protectedResourceMetadataUrl(resource) + '"';
+/** The `WWW-Authenticate` value returned with a 401 on a credential-less request. */
+export function wwwAuthenticateChallenge(): string {
+  return 'Bearer resource_metadata="' + PROTECTED_RESOURCE_METADATA_URL + '"';
 }
 
 /** True when the request path is asking for the protected-resource document. */
 export function isProtectedResourceMetadataPath(pathname: string): boolean {
   return pathname.endsWith('/.well-known/oauth-protected-resource');
+}
+
+/**
+ * Redirect a path-constructed metadata request to the document itself.
+ *
+ * 308 (permanent, method-preserving) rather than 302: the location never
+ * changes per-request, and preserving the method keeps a client that probes
+ * with something other than GET from silently switching verbs.
+ */
+export function protectedResourceMetadataRedirect(): Response {
+  return new Response(null, {
+    status: 308,
+    headers: {
+      Location: PROTECTED_RESOURCE_METADATA_URL,
+      'Cache-Control': 'public, max-age=3600',
+      'Access-Control-Allow-Origin': '*',
+    },
+  });
 }
