@@ -109,8 +109,8 @@ export async function register() {
     // @vercel/otel's fetch instrumentation propagates trace context ONLY to
     // Vercel deployment URLs by default. Without this every server action /
     // RSC fetch to Supabase produced an ORPHAN PostgREST / Edge Function span.
-    // The origin pattern is shared with the browser side (Dash0Provider,
-    // instrumentation-client) so the two can never drift.
+    // The origin pattern is shared with the browser side (`lib/dash0-rum.ts`,
+    // the single RUM init path) so the two can never drift.
     instrumentationConfig: {
       fetch: {
         propagateContextUrls: [supabaseOriginPattern()],
