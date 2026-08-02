@@ -4,12 +4,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { install } from '../src/install.mjs';
-import { skillInstallDir, mcpConfigPath, homeDir } from '../src/config.mjs';
+import { install, defaultHookMode, HOOK_PROMPT_OPTIONS } from '../src/install.mjs';
+import { skillInstallDir, mcpConfigPath, homeDir, installedHookEvents, HOOK_MODES } from '../src/config.mjs';
 
 function tmp(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
+
+// `install` returns the traceCommand result shape ({ exitCode, ...bounded attrs }),
+// the same contract `doctor` uses, so tests read the code off that.
+const exitOf = (result) => (result !== null && typeof result === 'object' ? result.exitCode : result);
 
 const ENDPOINT = 'https://ref.supabase.co/functions/v1/mcp';
 const TOKEN = 'lk_rw_test';
@@ -29,7 +33,7 @@ test('path helpers resolve project vs global targets', () => {
 test('install --project writes into the repo, not home', async () => {
   const root = tmp('lk-proj-');
   const code = await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true });
-  assert.equal(code, 0);
+  assert.equal(exitOf(code), 0);
 
   assert.ok(fs.existsSync(path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md')));
   // Every skill the CLI ships is installed, not just the primary one.
@@ -57,7 +61,7 @@ test('install --global writes into ~/.claude and preserves existing user config'
   process.env.USERPROFILE = home;
   try {
     const code = await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, global: true });
-    assert.equal(code, 0);
+    assert.equal(exitOf(code), 0);
 
     // Skill + server land under home, not the project.
     assert.ok(fs.existsSync(path.join(home, '.claude', 'skills', 'lorekit-memory', 'SKILL.md')));
@@ -153,11 +157,11 @@ test('install reports already-installed and exits 0 without --force on a complet
   const root = tmp('lk-already-');
   const opts = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
   const firstCode = await install(opts);
-  assert.equal(firstCode, 0, 'first install succeeds');
+  assert.equal(exitOf(firstCode), 0, 'first install succeeds');
 
   // Second run without --force: should be a graceful no-op exit 0.
   const secondCode = await install(opts);
-  assert.equal(secondCode, 0, 'second install exits 0');
+  assert.equal(exitOf(secondCode), 0, 'second install exits 0');
 
   // Files are unchanged — skills and MCP server are still present.
   assert.ok(fs.existsSync(path.join(root, '.claude', 'skills', 'lorekit-memory', 'SKILL.md')));
@@ -188,4 +192,203 @@ test('install rejects on a corrupt settings.json instead of clobbering it', asyn
     install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true }),
     /Failed to parse/,
   );
+});
+
+// ── Hook wiring is an explicit choice ────────────────────────────────────────
+
+test('install prompt offers the three hook modes and preselects all on a fresh install', () => {
+  // The prompt itself needs a pty, so assert on the option set it is built from
+  // plus the pure preselection rule — together those ARE the prompt's contract.
+  assert.deepEqual(HOOK_PROMPT_OPTIONS.map((o) => o.value), HOOK_MODES);
+  for (const option of HOOK_PROMPT_OPTIONS) {
+    assert.ok(option.label && option.hint, `${option.value} option is labelled and hinted`);
+    // No hook writes memory — they inject context and nudge. Copy that claims
+    // otherwise asks for consent to something that does not happen.
+    assert.doesNotMatch(option.hint, /write/i, `${option.value} hint does not claim writes`);
+  }
+  assert.equal(defaultHookMode({ freshInstall: true, wiredEvents: [] }), 'all');
+});
+
+test('install preselects the detected hook state on a re-install, not a constant', () => {
+  // A user who declined must not have the hooks resurrected by a later re-run
+  // (token refresh, --force, completing a partial install).
+  assert.equal(defaultHookMode({ freshInstall: false, wiredEvents: [] }), 'none');
+  assert.equal(defaultHookMode({ freshInstall: false, wiredEvents: ['SessionStart'] }), 'read-only');
+  assert.equal(
+    defaultHookMode({ freshInstall: false, wiredEvents: ['SessionStart', 'PostToolUseFailure', 'Stop'] }),
+    'all',
+  );
+  // A hand-wired subset matching no preset falls back to the recommended one —
+  // there is no preset to re-offer, and the user still picks from the list.
+  assert.equal(defaultHookMode({ freshInstall: false, wiredEvents: ['Stop'] }), 'all');
+});
+
+test('install --hooks read-only wires only SessionStart', async () => {
+  const root = tmp('lk-hooks-ro-');
+  const result = await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true, hooks: 'read-only' });
+  assert.equal(exitOf(result), 0);
+
+  const settings = JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8'));
+  assert.ok(settings.hooks.SessionStart?.length, 'SessionStart wired');
+  assert.equal(settings.hooks.PostToolUseFailure, undefined, 'no failure nudge');
+  assert.equal(settings.hooks.Stop, undefined, 'no retrospective nudge');
+});
+
+test('install --hooks read-only downgrades an existing all-hooks install', async () => {
+  const root = tmp('lk-hooks-downgrade-');
+  const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
+  await install(base);
+  await install({ ...base, hooks: 'read-only' });
+
+  const settings = JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8'));
+  assert.ok(settings.hooks.SessionStart?.length, 'SessionStart still wired');
+  assert.equal(settings.hooks.Stop, undefined, 'Stop pruned, not left firing');
+});
+
+test('a non-interactive re-install leaves a hand-wired custom hook set alone', async () => {
+  // `defaultHookMode` maps `custom` -> `all` for the PROMPT, where the user then
+  // picks. A --yes / non-TTY run has no such moment, so taking that value would
+  // silently re-add the events the user hand-removed. Covers both paths that
+  // reach the hook step without an explicit --hooks: --force and a partial
+  // install (the fully-installed short-circuit returns before it).
+  for (const [label, extra, mutate] of [
+    ['--force', { force: true }, () => {}],
+    ['partial install', {}, (root) => fs.rmSync(path.join(root, '.mcp.json'))],
+  ]) {
+    const root = tmp('lk-hooks-custom-');
+    const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
+    await install(base);
+
+    // Hand-wire a subset no preset matches: keep Stop, drop the other two.
+    const file = path.join(root, '.claude', 'settings.json');
+    const seeded = JSON.parse(fs.readFileSync(file, 'utf8'));
+    delete seeded.hooks.SessionStart;
+    delete seeded.hooks.PostToolUseFailure;
+    fs.writeFileSync(file, JSON.stringify(seeded));
+    assert.deepEqual(installedHookEvents(root, 'project'), ['Stop'], `${label}: custom set seeded`);
+    mutate(root);
+
+    const result = await install({ ...base, ...extra });
+    assert.deepEqual(
+      installedHookEvents(root, 'project'),
+      ['Stop'],
+      `${label}: the hand-wired set survives`,
+    );
+    assert.equal(result['lorekit.cli.hooks_mode'], 'custom', `${label}: reported as custom`);
+  }
+});
+
+test('preserving a hand-wired custom set still refreshes a stale hook command', async () => {
+  // Preserving the SET must not mean skipping the write: a re-install is the
+  // one moment a hook command left pointing at an old runner gets repaired.
+  const root = tmp('lk-hooks-custom-stale-');
+  const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
+  await install(base);
+
+  // Hand-wire a subset no preset matches AND rot its command string.
+  const file = path.join(root, '.claude', 'settings.json');
+  const seeded = JSON.parse(fs.readFileSync(file, 'utf8'));
+  delete seeded.hooks.SessionStart;
+  delete seeded.hooks.PostToolUseFailure;
+  const stale = 'lorekit hook --adapter claude --event Stop --stale-flag';
+  seeded.hooks.Stop[0].hooks[0].command = stale;
+  fs.writeFileSync(file, JSON.stringify(seeded));
+  assert.deepEqual(installedHookEvents(root, 'project'), ['Stop'], 'custom set seeded');
+
+  await install({ ...base, force: true });
+
+  const after = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(installedHookEvents(root, 'project'), ['Stop'], 'the hand-wired set survives');
+  assert.notEqual(after.hooks.Stop[0].hooks[0].command, stale, 'the stale command was refreshed');
+  assert.match(
+    after.hooks.Stop[0].hooks[0].command,
+    /--event Stop --dir/,
+    'refreshed to the current command shape',
+  );
+});
+
+test('install --hooks none removes hooks that are already wired', async () => {
+  const root = tmp('lk-hooks-none-');
+  const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
+  await install(base);
+  assert.ok(installedHookEvents(root, 'project').length === 3, 'hooks wired by the first run');
+
+  await install({ ...base, hooks: 'none' });
+  assert.deepEqual(installedHookEvents(root, 'project'), [], 'declining removes them');
+});
+
+test('install --hooks none preserves co-located third-party hooks', async () => {
+  const root = tmp('lk-hooks-none-other-');
+  const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
+  await install(base);
+
+  const file = path.join(root, '.claude', 'settings.json');
+  const seeded = JSON.parse(fs.readFileSync(file, 'utf8'));
+  seeded.hooks.SessionStart.push({ hooks: [{ type: 'command', command: 'echo hi' }] });
+  fs.writeFileSync(file, JSON.stringify(seeded));
+
+  await install({ ...base, hooks: 'none' });
+  const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const cmds = (settings.hooks?.SessionStart ?? []).flatMap((g) => g.hooks.map((h) => h.command));
+  assert.deepEqual(cmds, ['echo hi'], 'only lorekit entries removed');
+});
+
+test('install --no-hooks is skip-only and leaves already-wired hooks in place', async () => {
+  const root = tmp('lk-hooks-skiponly-');
+  const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
+  await install(base);
+
+  // --no-hooks has always meant "do not wire", never "take away" — changing
+  // that silently would be a breaking change for anyone scripting it.
+  await install({ ...base, 'no-hooks': true });
+  assert.equal(installedHookEvents(root, 'project').length, 3, 'existing hooks untouched');
+});
+
+test('install --hooks with an invalid mode exits non-zero and names the valid modes', async () => {
+  const root = tmp('lk-hooks-bogus-');
+  const result = await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true, hooks: 'sometimes' });
+  assert.equal(exitOf(result), 1);
+  // Nothing was written — validation happens before any disk work.
+  assert.ok(!fs.existsSync(path.join(root, '.mcp.json')), 'no partial install on a bad flag');
+});
+
+test('install --hooks with no value exits non-zero instead of falling back to the detected mode', async () => {
+  // `hooks` is not a boolean flag in the parser, so `--hooks --yes` and a
+  // trailing `--hooks` both arrive here as `true`, and `--hooks=` as ''. Each is
+  // a usage error: silently resolving to the detected mode is exactly the
+  // "different wiring than asked for" the validation exists to prevent.
+  for (const value of [true, '', '   ']) {
+    const root = tmp('lk-hooks-novalue-');
+    const result = await install({
+      dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true, hooks: value,
+    });
+    assert.equal(exitOf(result), 1, `--hooks ${JSON.stringify(value)} must exit 1`);
+    assert.ok(!fs.existsSync(path.join(root, '.mcp.json')), 'no partial install on a valueless flag');
+  }
+});
+
+test('install reports the resolved hooks_mode as a bounded telemetry attribute', async () => {
+  const root = tmp('lk-hooks-attr-');
+  const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
+
+  const all = await install(base);
+  assert.equal(all['lorekit.cli.hooks_mode'], 'all');
+
+  const readOnly = await install({ ...base, hooks: 'read-only' });
+  assert.equal(readOnly['lorekit.cli.hooks_mode'], 'read-only');
+
+  // The already-installed short-circuit reports what is wired, not a guess.
+  const again = await install(base);
+  assert.equal(again['lorekit.cli.hooks_mode'], 'read-only');
+});
+
+test('an explicit --hooks reaches the hook step even on a complete install', async () => {
+  const root = tmp('lk-hooks-bypass-');
+  const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
+  await install({ ...base, hooks: 'none' });
+
+  // Without the bypass this run would hit the already-installed short-circuit
+  // and the user would have to --force a full reinstall to flip one setting.
+  await install({ ...base, hooks: 'all' });
+  assert.equal(installedHookEvents(root, 'project').length, 3);
 });

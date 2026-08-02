@@ -13,6 +13,11 @@ import {
   onPath,
   resolveHookRunner,
   writeFileAtomic,
+  CLAUDE_HOOK_EVENTS,
+  hookEventsForMode,
+  hookModeFromEvents,
+  installedHookEvents,
+  upsertClaudeHooks,
 } from '../src/config.mjs';
 
 function tmpRoot() {
@@ -155,4 +160,60 @@ test('resolveProjectConnection ignores placeholder mcp.endpoint', () => {
   );
   const conn = resolveProjectConnection(root, splitEndpoint);
   assert.equal(conn.endpoint, null);
+});
+
+// ── Hook modes: the vocabulary `install` and `doctor` share ──────────────────
+
+test('hookEventsForMode maps each preset to its event set', () => {
+  assert.deepEqual(hookEventsForMode('all'), CLAUDE_HOOK_EVENTS);
+  assert.deepEqual(hookEventsForMode('read-only'), ['SessionStart']);
+  assert.deepEqual(hookEventsForMode('none'), []);
+  // An unknown mode must never silently disable the hooks — it falls back to
+  // the full set, and `install` refuses the flag before it ever gets here.
+  assert.deepEqual(hookEventsForMode('nonsense'), CLAUDE_HOOK_EVENTS);
+});
+
+test('hookModeFromEvents is the inverse, and reports an unrecognised set as custom', () => {
+  assert.equal(hookModeFromEvents(CLAUDE_HOOK_EVENTS), 'all');
+  assert.equal(hookModeFromEvents(['SessionStart']), 'read-only');
+  assert.equal(hookModeFromEvents([]), 'none');
+  assert.equal(hookModeFromEvents(undefined), 'none');
+  assert.equal(hookModeFromEvents(['Stop']), 'custom');
+  assert.equal(hookModeFromEvents(['SessionStart', 'Stop']), 'custom');
+  // Order must not matter — the settings file is not ordered.
+  assert.equal(hookModeFromEvents([...CLAUDE_HOOK_EVENTS].reverse()), 'all');
+});
+
+test('installedHookEvents reads only lorekit entries, and never throws', () => {
+  const root = tmpRoot();
+  assert.deepEqual(installedHookEvents(root, 'project'), [], 'absent settings file → none');
+
+  fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+  const settings = path.join(root, '.claude', 'settings.json');
+
+  fs.writeFileSync(settings, '{ not json');
+  assert.deepEqual(installedHookEvents(root, 'project'), [], 'corrupt settings → none, no throw');
+
+  fs.writeFileSync(
+    settings,
+    JSON.stringify({
+      hooks: {
+        SessionStart: [{ hooks: [{ type: 'command', command: 'npx -y @lorekit/cli hook --event SessionStart' }] }],
+        Stop: [{ hooks: [{ type: 'command', command: 'echo not-ours' }] }],
+      },
+    }),
+  );
+  assert.deepEqual(installedHookEvents(root, 'project'), ['SessionStart'], 'third-party hooks ignored');
+});
+
+test('upsertClaudeHooks prunes lorekit entries for events outside the selected set', () => {
+  const root = tmpRoot();
+  upsertClaudeHooks(root, 'project', 'lorekit');
+  assert.deepEqual(installedHookEvents(root, 'project'), CLAUDE_HOOK_EVENTS);
+
+  // Downgrading must REMOVE, not just stop adding — otherwise the nudges keep
+  // firing after the user asked for read-only.
+  const result = upsertClaudeHooks(root, 'project', 'lorekit', hookEventsForMode('read-only'));
+  assert.equal(result.removed, 2);
+  assert.deepEqual(installedHookEvents(root, 'project'), ['SessionStart']);
 });

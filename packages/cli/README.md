@@ -75,11 +75,40 @@ lorekit install --global      # set it up for every project
 ```
 
 In a TTY it prompts for the scope (and for `--endpoint` / `--token` if missing).
-Flags: `--project` / `--global` pick the scope non-interactively; `--no-hooks`
-installs the skills + MCP only (memory stays model-invoked); `--yes` runs
+Flags: `--project` / `--global` pick the scope non-interactively; `--yes` runs
 non-interactively (endpoint required via flag/env; scope defaults to project);
 `--force` overwrites an existing skill copy. Re-running is idempotent — the hook
 entries are updated in place, never duplicated.
+
+#### Choosing the hooks
+
+The hooks are a separate, explicit choice — they add a `lorekit hook` subprocess
+to three Claude Code lifecycle events and write into `settings.json`, so install
+asks rather than assuming. **None of them writes memory:** they inject context,
+and the write is still the model calling `memory.write`.
+
+| Mode | Wires | What you get |
+|------|-------|--------------|
+| `all` | `SessionStart`, `PostToolUseFailure`, `Stop` | Lessons injected at session start, plus a nudge on a tool failure and a friction-gated one at end of turn |
+| `read-only` | `SessionStart` | Lessons injected; nothing ever nudges |
+| `none` | — | Skills + MCP only; memory stays model-invoked |
+
+```bash
+lorekit install --hooks read-only   # inject lessons, never nudge
+lorekit install --hooks none        # remove any wired hooks
+lorekit install --no-hooks --yes    # don't wire new ones; leave existing alone
+```
+
+In a TTY the prompt preselects whatever is **already wired**, so re-running
+install never resurrects hooks you declined; a genuinely fresh install
+preselects `all`. `--yes` / a non-TTY takes that same preselected value without
+asking — `all` on a fresh install, otherwise whatever is already wired (`none`
+if you previously removed them), and a hand-wired set that matches no preset
+keeps exactly that set — no event is added or removed, though a stale hook
+command is still refreshed. Pass `--hooks <mode>` to choose explicitly.
+`--hooks none` removes hooks that are already there; `--no-hooks` only skips
+wiring new ones. `lorekit doctor` reports which events are wired, and in which
+scope.
 
 > The hook command uses a global `lorekit` when one is on your `PATH` (fast),
 > otherwise `npx -y @lorekit/cli`. Installing the CLI globally
@@ -594,7 +623,8 @@ active deny constraints.
 | `--to <tier>` | Migration destination tier: `home` / `project` (`migrate`; default routes by scope) |
 | `--apply` | Apply the migration — alias of `--yes` (`migrate`) |
 | `-y, --yes` | Non-interactive / apply; never prompt |
-| `--no-hooks` | Skip wiring the lifecycle hooks; skills + MCP only (`install`) |
+| `--hooks <mode>` | Lifecycle hooks to wire: `all` / `read-only` / `none` (`install`; `none` removes any already wired) |
+| `--no-hooks` | Skip wiring the lifecycle hooks; skills + MCP only. Leaves already-wired hooks alone (`install`) |
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
 | `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `link`) |

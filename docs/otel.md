@@ -142,6 +142,7 @@ endpoint, repo, or scope string):
 | `lorekit.cli.outcome` | `ok` | `ok` \| `error` |
 | `lorekit.cli.exit_code` | `0` | Command exit code |
 | `lorekit.cli.flag.<name>` | `true` | Only when set; allow-list: `global`, `project`, `deep`, `yes`, `force`, `no-hooks`, `json`, `link` |
+| `lorekit.cli.hooks_mode` | `all` | `install` only. Bounded: `all` \| `read-only` \| `none` \| `custom` — which hook wiring the run resolved to (from the flag, the prompt, or the detected state). Counts the CHOICE, not the `--no-hooks` flag |
 
 **Opt-out / config:**
 
