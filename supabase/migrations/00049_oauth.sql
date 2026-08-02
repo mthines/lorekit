@@ -90,8 +90,11 @@ create table if not exists oauth_authorization_codes (
   -- The consent decision, verbatim: which orgs, and which token permissions.
   org_ids               uuid[] not null default '{}',
   permissions           text[] not null default '{"read","write"}',
-  -- Echoed back on the authorize redirect for CSRF protection; stored only so
-  -- the token response can be correlated in the audit trail.
+  -- The `scope` string the client asked for, verbatim. Stored only so the
+  -- exchange can be correlated in the audit trail — the granted access is
+  -- `permissions` + `org_ids` above, never this string. (`state` is a
+  -- different parameter: it is echoed back on the authorize redirect for CSRF
+  -- protection and is deliberately not persisted on this row.)
   scope                 text,
   expires_at            timestamptz not null,
   -- Single use. Set on the first successful exchange; a second attempt is a
