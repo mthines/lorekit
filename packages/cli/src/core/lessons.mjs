@@ -13,6 +13,7 @@ import { resolvePrecedence, matchesQuery } from '../lessons-pure.mjs';
 // correctly (a raw `?scope=global` silently means "all scopes") and can't drift
 // from the command-line links.
 import { loreScopeUrl, buildLessonUrl } from '../deeplink-pure.mjs';
+import { FRICTION_FAILURE, FRICTION_STUCK_LOOP } from './friction.mjs';
 
 const MAX_LESSONS = 15;
 // Cap on lessons injected on a failure — a small, focused "you've seen this
@@ -192,8 +193,8 @@ export function loreUrl(writeScope) {
 // One-line phrases for the detected friction reason codes (see core/friction.mjs),
 // so the nudge names what happened instead of a generic prompt.
 const REASON_PHRASES = {
-  failure: 'a failed tool call',
-  'stuck-loop': 'a repeated retry',
+  [FRICTION_FAILURE]: 'a failed tool call',
+  [FRICTION_STUCK_LOOP]: 'a repeated retry',
 };
 
 // Join detected reason codes into a readable clause ("a failed tool call and a
