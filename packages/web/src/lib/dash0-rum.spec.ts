@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 
 // The real SDK never runs in a unit test, but the ATTRIBUTE SEMANTICS do: this
-// stand-in mirrors the Dash0 web SDK (`sdk-web`) 0.23.0 exactly — `addSignalAttribute`
-// APPENDS, `removeSignalAttribute` splices the first match, and `identify`
-// removes any existing `user.id` before adding one. That append-vs-replace
-// distinction is the whole point of the identity specs below, so a stubbed
-// `vi.fn()` would assert nothing about it.
+// stand-in mirrors the Dash0 web SDK (`sdk-web`) 0.23.0 exactly —
+// `addSignalAttribute` APPENDS, `removeSignalAttribute` splices the first
+// match, and `identify` removes any existing `user.id` before adding one. That
+// append-vs-replace distinction is the whole point of the identity specs below,
+// so a stubbed `vi.fn()` would assert nothing about it. The append-only pair is
+// kept in the stand-in even though the module no longer calls it, so a spec can
+// still catch a regression that reintroduces an appended attribute.
 vi.mock('@dash0/sdk-web', () => {
   const signalAttributes: Array<{ key: string; value: unknown }> = [];
   const remove = (key: string) => {
@@ -32,7 +34,6 @@ const {
   buildVcsSignalAttributes,
   initDash0Rum,
   identifyDash0User,
-  setDash0PagePath,
 } = await import('./dash0-rum');
 
 const { __signalAttributes: signalAttributes } = (await import('@dash0/sdk-web')) as unknown as {
@@ -152,7 +153,7 @@ describe('buildVcsSignalAttributes', () => {
   });
 });
 
-describe('signal identity and route attributes', () => {
+describe('signal identity attributes', () => {
   beforeEach(() => {
     signalAttributes.splice(0, signalAttributes.length, ...AFTER_INIT);
   });
@@ -172,10 +173,7 @@ describe('signal identity and route attributes', () => {
     expect(valuesOf('user.id')).toEqual(['user-abc']);
   });
 
-  it('keeps a single page.url.path across repeated navigations', () => {
-    setDash0PagePath('/lore');
-    setDash0PagePath('/settings');
-    setDash0PagePath('/settings'); // the second Dash0Provider mount
-    expect(valuesOf('page.url.path')).toEqual(['/settings']);
+  it('never writes its own page.url.path — the SDK derives one per signal', () => {
+    expect(valuesOf('page.url.path')).toEqual([]);
   });
 });

@@ -29,16 +29,13 @@
  * Next.js evaluates outside the React tree, and also server-side during static
  * prerendering) can import it as safely as a client component can.
  */
-import { init, addSignalAttribute, removeSignalAttribute, identify } from '@dash0/sdk-web';
+import { init, identify } from '@dash0/sdk-web';
 
 import { resolveAnonymousId } from './anonymous-id';
 import { supabaseOriginPattern } from './otel-origins';
 
 /** OTel `service.name` for the browser bundle. Matches the server runtime. */
 const SERVICE_NAME = 'web';
-
-/** Signal attribute carrying the current route. */
-const PAGE_PATH_ATTRIBUTE = 'page.url.path';
 
 /**
  * Process-wide initialisation guard. Module-level (not per-component) so the
@@ -173,10 +170,6 @@ export function initDash0Rum(): boolean {
   // the anonymous id would survive the upgrade to the authenticated one.
   identify(resolveAnonymousId());
 
-  if (typeof window !== 'undefined') {
-    setDash0PagePath(window.location.pathname);
-  }
-
   return true;
 }
 
@@ -200,18 +193,10 @@ export function identifyDash0User(userId: string): void {
 }
 
 /**
- * Record the current route on all subsequent signals, REPLACING the previously
- * recorded one.
- *
- * `addSignalAttribute` appends, so the paired `removeSignalAttribute` is what
- * keeps a signal to a single `page.url.path`. Without it every client-side
- * navigation would add another entry — twice per navigation, since
- * `Dash0Provider` is mounted in both the root and the dashboard layout.
- *
- * No-op before initialisation.
+ * The route is NOT set here. The SDK derives `page.url.path` itself, from
+ * `window.location.href`, on every signal it emits (`addCommonAttributes` →
+ * `addUrlAttributes` with the `page` prefix — sdk-web 0.23.0), and it reads the
+ * location at emit time, so the value is already correct after a client-side
+ * navigation. An app-side `addSignalAttribute('page.url.path', …)` only adds a
+ * SECOND entry for the same key on every signal.
  */
-export function setDash0PagePath(path: string): void {
-  if (!initialized) return;
-  removeSignalAttribute(PAGE_PATH_ATTRIBUTE);
-  addSignalAttribute(PAGE_PATH_ATTRIBUTE, path);
-}

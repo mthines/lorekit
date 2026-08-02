@@ -1,29 +1,29 @@
 'use client';
 
 /**
- * Dash0Provider — attaches identity and route context to browser RUM.
+ * Dash0Provider — attaches identity to browser RUM.
  *
  * The SDK itself is initialised by `lib/dash0-rum.ts`, which
  * `instrumentation-client.ts` calls before React mounts. This component calls
  * the same idempotent initialiser (so the SDK is up even if the Next.js hook
- * did not run) and then owns the two things that need the React tree:
+ * did not run) and then owns the one thing that needs the React tree: upgrading
+ * the anonymous visitor id to the authenticated user id.
  *
- *   1. Upgrading the anonymous visitor id to the authenticated user id.
- *   2. Emitting the current route on every client-side navigation.
+ * The route needs no handling here: the SDK derives `page.url.path` from
+ * `window.location.href` on every signal it emits.
  *
  * Mount it in the ROOT layout so public pages — marketing, `/docs`, `/login` —
- * get route tracking too, and pass `userId` from the authenticated layout. It
- * is safe to mount twice: initialisation is guarded, and both mounts set the
- * same attributes.
+ * are identified too, and pass `userId` from the authenticated layout. It is
+ * safe to mount twice: initialisation is guarded, and only the mount that was
+ * given a `userId` ever touches the identity.
  *
  * VCS resource attributes are read from NEXT_PUBLIC_VCS_* env vars baked in at
  * build time via next.config.ts (sourced from Vercel system env vars).
  */
 
-import { useEffect, useRef } from 'react';
-import { usePathname } from 'next/navigation';
+import { useEffect } from 'react';
 
-import { initDash0Rum, identifyDash0User, setDash0PagePath } from '@/lib/dash0-rum';
+import { initDash0Rum, identifyDash0User } from '@/lib/dash0-rum';
 
 interface Dash0ProviderProps {
   /**
@@ -35,9 +35,6 @@ interface Dash0ProviderProps {
 }
 
 export function Dash0Provider({ userId }: Dash0ProviderProps) {
-  const pathname = usePathname();
-  const prevPathname = useRef<string | null>(null);
-
   // Initialise on first render. Idempotent — `instrumentation-client.ts` has
   // normally done this already.
   useEffect(() => {
@@ -50,13 +47,6 @@ export function Dash0Provider({ userId }: Dash0ProviderProps) {
     if (!userId) return;
     identifyDash0User(userId);
   }, [userId]);
-
-  // Emit the current route on every client-side navigation.
-  useEffect(() => {
-    if (prevPathname.current === pathname) return;
-    prevPathname.current = pathname;
-    setDash0PagePath(pathname);
-  }, [pathname]);
 
   return null;
 }

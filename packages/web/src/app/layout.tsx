@@ -39,9 +39,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-screen antialiased">
         {/*
          * Mounted at the ROOT so public pages — marketing, /docs, /login — are
-         * instrumented too. They previously emitted RUM with no route tracking
-         * and no identity at all, which is why 29 of 36 sessions were
-         * indistinguishable anonymous traffic.
+         * instrumented too. They previously emitted RUM with no identity at
+         * all, which is why 29 of 36 sessions were indistinguishable anonymous
+         * traffic.
          *
          * No userId here: an unauthenticated visitor keeps the anonymous id
          * assigned at init. The dashboard layout mounts a second instance WITH
