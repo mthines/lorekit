@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.29.1](https://github.com/mthines/lorekit/compare/cli-v1.29.0...cli-v1.29.1) (2026-08-02)
+
+
+### Bug Fixes
+
+* **cli:** a 429 on the verifyAuth probe cannot vouch for the token ([f155c8e](https://github.com/mthines/lorekit/commit/f155c8e5c13327a10dfbb64f05d9dc730c972f3c))
+* **cli:** verify the token in doctor and offer to replace it on install --force ([0f15def](https://github.com/mthines/lorekit/commit/0f15defd785d2fb3a14b346b4529d222baf0ad1a))
+
 ## [1.29.0](https://github.com/mthines/lorekit/compare/cli-v1.28.0...cli-v1.29.0) (2026-08-02)
 
 
