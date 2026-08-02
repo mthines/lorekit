@@ -53,7 +53,8 @@ without needing a marketplace:
 3. **Hooks** — the *deterministic* layer: lessons injected on every
    `SessionStart`, and on a tool failure (`PostToolUseFailure`) any lessons that
    look **relevant to that failure** ("you've hit this before") plus a nudge to
-   record the fix, and a retrospective nudge on `Stop`. These fire the shared
+   record the fix, and a retrospective nudge on `Stop` — by default only when the
+   session actually hit friction (`hooks.stop`). These fire the shared
    `lorekit hook` engine and are merged into `settings.json` (existing hooks
    preserved).
 
@@ -320,6 +321,7 @@ lorekit link global                       # the Explorer filtered to global scop
 lorekit link repo::owner/repo prefer-guards   # open one lesson's detail sheet
 lorekit link global::prefer-guards --json     # { url, surface, base, params }
 lorekit url --q "flaky test" --owner personal # search + ownership filter
+lorekit link global --tags "perf,ci"          # Explorer filtered to labels
 ```
 
 With no arguments it links to the cwd's **most-specific scope** ("share what I'm
@@ -330,8 +332,9 @@ that lesson's detail sheet. It sets **both** the `lesson` param (which opens the
 sheet) and `scope` — not because scope is needed to find the lesson (the sidebar
 reads one unfiltered recent set), but so the Explorer list *behind* the sheet is
 filtered to the lesson's own scope. Filter flags mirror the Explorer: `--q`
-(search), `--owner <all|personal|orgId>`, `--range`/`--from`/`--to`, `--archived`,
-`--view <scope|time>`.
+(search), `--owner <all|personal|orgId>`, `--tags <a,b,c>` (label filter, AND
+across labels; comma-separated or a JSON array), `--range`/`--from`/`--to`,
+`--archived`, `--view <scope|time>`.
 
 Every param is `encodeURIComponent(JSON.stringify(value))` — the exact inverse of
 how the dashboard's `useUrlState` reads it back (`JSON.parse`, falling back to the
@@ -525,6 +528,18 @@ Both files share this schema — all fields optional:
   "hooks.disabled": ["Stop"],
                            // suppress specific hook events; union across layers
                            // values: "SessionStart" | "PostToolUseFailure" | "Stop"
+
+  "hooks.stop": "friction",
+                           // gate the end-of-turn retrospective nudge:
+                           //   "friction" (default) — only nudge once/session when the
+                           //     session hit friction (a failed tool call or a stuck
+                           //     retry loop, read from the transcript); silent otherwise
+                           //   "always"             — nudge once per session regardless
+                           //   "off"                — never (same effect as disabling Stop)
+                           // repo wins over user
+                           // (friction is detectable only on Claude Code, which exposes a
+                           //  transcript; on Cursor/Codex there is none, so "friction"
+                           //  falls back to firing so no lesson is silently lost)
 
   "hooks.adapter": "claude",
                            // explicit adapter when auto-detection is ambiguous

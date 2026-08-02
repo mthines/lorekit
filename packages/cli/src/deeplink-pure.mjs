@@ -29,14 +29,17 @@ export const LORE_PARAM_DEFAULTS = {
   q: '', // string search query
   range: null, // { from, to } | null (DateRange, "YYYY-MM-DD")
   owner: 'all', // 'all' | 'personal' | { orgId }
+  tags: [], // string[] — label filter (AND across labels); [] means "no filter"
   view: 'scope', // 'scope' | 'time'
   archived: false, // boolean
   lesson: null, // { scope, key } | null — opens the detail sheet
 };
 
 // A stable, readable param order (also makes URLs deterministic for tests).
-// `scope` precedes `lesson` so a lesson link reads `?scope=…&lesson=…`.
-const PARAM_ORDER = ['scope', 'q', 'range', 'owner', 'view', 'archived', 'lesson'];
+// Mirrors the `useUrlState` call order in `LoreExplorer.tsx` (+ the `lesson`
+// param last), so `tags` sits between `owner` and `view`. `scope` precedes
+// `lesson` so a lesson link reads `?scope=…&lesson=…`.
+const PARAM_ORDER = ['scope', 'q', 'range', 'owner', 'tags', 'view', 'archived', 'lesson'];
 
 // Strip trailing slashes from a base URL, falling back to the default when the
 // input is empty/absent. Pure.
@@ -152,6 +155,44 @@ export function parseOwnerArg(owner) {
 // else (incl. absent/invalid) → 'scope'. Pure.
 export function parseViewArg(view) {
   return view === 'time' ? 'time' : 'scope';
+}
+
+// Coerce the `--tags` flag to a normalized `string[]` label filter, mirroring the
+// web app's `normalizeTags` (`packages/web/src/lib/tag-filter.ts`): trim each
+// entry, drop empties, de-duplicate, preserve first-seen order. Accepts either a
+// JSON array string (`'["perf","ci"]'`) or the friendlier comma-separated form
+// (`'perf, ci'`); a malformed JSON array falls back to comma-splitting rather
+// than throwing. Returns `[]` for absent/empty input (the default → omitted from
+// the URL). Pure.
+export function parseTagsArg(tags) {
+  if (Array.isArray(tags)) return normalizeTagList(tags);
+  if (typeof tags !== 'string' || !tags.trim()) return [];
+  const s = tags.trim();
+  if (s.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(s);
+      if (Array.isArray(parsed)) return normalizeTagList(parsed);
+    } catch {
+      /* malformed JSON array → fall through to comma-splitting */
+    }
+  }
+  return normalizeTagList(s.split(','));
+}
+
+// Trim, drop non-string/empty entries, and de-duplicate preserving order. The
+// CLI-side twin of the web's `normalizeTags`; kept inline to keep this module
+// zero-import. Pure.
+function normalizeTagList(list) {
+  const seen = new Set();
+  const out = [];
+  for (const item of list) {
+    if (typeof item !== 'string') continue;
+    const t = item.trim();
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
 }
 
 // Coerce the date-range flags to a `{ from, to }` DateRange or null. `--range`

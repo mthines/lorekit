@@ -74,6 +74,140 @@ any job fails ─▶ notify-failure   Discord webhook (see below)
 
 Production is never touched until preview has been deployed and smoke-tested.
 
+### Migration drift on the shared preview project
+
+`preview` is a **shared** Supabase project, and two workflows push migrations to
+it: `deploy.yml` on every merge to `main`, and `preview.yml` on a `/preview`
+comment — from an **open PR's head SHA**. So the preview project's migration
+history can legitimately carry versions that do not exist on `main` yet.
+
+`supabase db push` treats a remote that is merely *ahead* as fatal:
+
+```
+Remote migration versions not found in local migrations directory.
+supabase migration repair --status reverted 00049 00050 00051
+```
+
+…even when `main` has nothing left to apply. That is not a hypothetical: a
+`/preview` run on PR #311 applied `00049`–`00051` to the shared project and
+every subsequent deploy of `main` failed on this check, with zero pending work.
+
+`deploy-preview` therefore classifies the drift *before* pushing, via
+[`scripts/check-remote-migration-drift.mjs`](../scripts/check-remote-migration-drift.mjs):
+
+| Remote state | Local pending | Outcome |
+|---|---|---|
+| in sync, or behind | any | **push** — `supabase db push --include-all`, unchanged |
+| ahead (unknown versions) | none | **skip** — the push would be a no-op; warn and continue |
+| ahead (unknown versions) | one or more | **fail** — ambiguous; the annotation names both sides |
+
+The `skip` outcome is safe by construction: with zero local-pending migrations
+there is no work a successful push would have done. The unknown versions
+reconcile on their own when the PR that introduced them merges. The step never
+runs `migration repair` and never mutates the remote's migration history —
+reverting a history row does not undo the schema objects, so a later merge of
+those same files would fail on "already exists".
+
+The `fail` outcome is the one that needs a human. Either merge the PR that owns
+the drifted versions, or — if those changes were abandoned — revert them on the
+preview project and clear the history rows the annotation names:
+
+```bash
+supabase migration repair --status reverted 00049 00050 00051
+```
+
+`deploy-production` is deliberately **not** given this tolerance: nothing but
+`deploy.yml` ever pushes to production, so a remote ahead of `main` there is a
+real anomaly and must stop the pipeline.
+
+#### How the classifier is wired in
+
+The classifier is live in the workflows (no manual step — unlike the older
+"Wiring the sweep into CI" section below, this one was committed directly):
+
+- **`.github/workflows/deploy.yml`**, `deploy-preview` job only: a
+  `Classify migration drift against preview` step (`id: drift`) runs
+  `supabase migration list --linked` through the classifier after `Link`, and
+  the `Push database migrations` step is gated on `steps.drift.outputs.action ==
+  'push'`. A `fail` verdict exits non-zero and stops the deploy; `skip` continues
+  to the function deploy without pushing. `deploy-production` is left strict.
+- **`.github/workflows/ci.yml`**: the `changes` job's migration path filter also
+  matches `scripts/check-remote-migration-drift`, and the `migration-order` job
+  unit-tests the classifier (`node --test scripts/check-remote-migration-drift.test.mjs`)
+  alongside the ordering guard.
+
+If the classifier ever returns `fail`, the interim manual unblock is its own
+advice: confirm nothing is pending locally, then let the next deploy through by
+repairing the drifted rows on the preview project — or just run the rebuild
+workflow below, which clears the drift wholesale.
+
+### Rebuilding the shared preview project
+
+The classifier above teaches `main`'s deploy to **tolerate** drift; it never
+removes it. Because migrations are forward-only, a `/preview` run on a PR that
+is later edited or abandoned leaves its versions **and their schema objects** on
+the shared project permanently — so over time the preview database accumulates
+orphan tables/functions and history rows that no migration file describes. The
+`skip` outcome hides that indefinitely, and a genuine `fail` (a real migration
+landing while drift is present) needs a human every time.
+
+The preview project is **disposable** — nothing of lasting value lives there, it
+exists only to smoke-test deploys and back the Vercel preview — so the correct
+reconciliation is not a surgical per-PR cleanup (impossible without down
+migrations) but a periodic **full rebuild** from the migration files:
+
+```
+supabase db reset --linked
+```
+
+`db reset --linked` drops and re-provisions the linked remote database the same
+way Supabase originally created it, then re-applies every migration on this ref.
+Grants and RLS defaults come back natively — this is deliberately **not** a
+hand-rolled `DROP SCHEMA public CASCADE`, which would then have to restore the
+public-schema grants exactly or silently break `anon`/RLS access. One rebuild
+clears every drifted history row and orphan object at once, so accumulation is
+bounded regardless of how many previews piled up between rebuilds.
+
+This is a companion to the classifier, not a replacement: the classifier keeps
+`main` shipping **between** rebuilds; the rebuild keeps the shared project from
+rotting. Neither needs Supabase branching (unavailable on the free plan).
+
+The rebuild **is destructive and the project is shared** — it wipes any
+in-flight `/preview` state, so re-run `/preview` on a PR afterwards. It runs
+on-demand and on a low-traffic weekly cron, never silently mid-deploy.
+
+#### The rebuild workflow
+
+The rebuild is committed as
+[`.github/workflows/rebuild-preview.yml`](../.github/workflows/rebuild-preview.yml).
+It runs `supabase db reset --linked` against the `preview` project (Environment-
+scoped secrets + an explicit production-ref guard), then redeploys the edge
+functions. Three ways to trigger it:
+
+- **Actions ▸ Run workflow** (`workflow_dispatch`) — the manual path.
+- **A `/reset-preview` comment on any PR** — gated to OWNER/MEMBER/COLLABORATOR
+  by a guard job modeled on `preview.yml`'s `/preview`. Unlike `/preview` it does
+  **not** check out the PR head; it rebuilds to `main`'s migration baseline. It's
+  the ergonomic surface — you notice drift on a PR, so you clear it from that
+  thread — but the reset is shared and destructive, so it still wipes every other
+  in-flight preview. That's acceptable for a disposable project; it's why the
+  comment path is maintainer-gated.
+- **A weekly `cron`** (Sundays 04:00 UTC) — the unattended flush.
+
+The **first** manual `workflow_dispatch` run is worth doing deliberately: it
+clears any current drift wholesale (so a live wedge needs no manual `migration
+repair`), and it's where you confirm whether the pinned Supabase CLI prompts on
+`db reset --linked` in CI — before the cron ever fires. If it hangs on a prompt,
+drive it non-interactively with whatever confirmation flag the installed CLI
+exposes.
+
+A reset wipes **everything**, including the seeded orgs-smoke user (see "Seed the
+orgs-smoke user" below), so the orgs REST smoke self-skips until you re-seed it.
+Re-seeding needs the service-role key and is deliberately **not** wired into the
+workflow (the recurring smoke path never carries that key) — the workflow only
+emits a reminder. After a rebuild, run `scripts/seed-smoke-user.mjs` from a
+trusted admin shell against the preview project.
+
 ### Failure notifications (Discord)
 
 A `notify-failure` job runs whenever **any** pipeline job reports `failure` — a

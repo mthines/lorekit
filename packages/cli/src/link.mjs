@@ -25,6 +25,7 @@ import {
   parseOwnerArg,
   parseViewArg,
   parseRangeArg,
+  parseTagsArg,
   resolveScopeArg,
   surfaceFor,
 } from './deeplink-pure.mjs';
@@ -66,6 +67,7 @@ export async function link(args) {
   const owner = parseOwnerArg(args.owner);
   const view = parseViewArg(args.view);
   const range = parseRangeArg(args);
+  const tags = parseTagsArg(args.tags);
   const archived = Boolean(args.archived);
 
   const gaveAnyInput =
@@ -75,6 +77,7 @@ export async function link(args) {
     owner !== 'all' ||
     view !== 'scope' ||
     range !== null ||
+    tags.length > 0 ||
     archived;
 
   // Bare `lorekit link` (no scope, no lesson, no filters) → the cwd's
@@ -90,6 +93,7 @@ export async function link(args) {
   if (key) params.lesson = { scope, key };
   if (q) params.q = q;
   if (owner !== 'all') params.owner = owner;
+  if (tags.length) params.tags = tags;
   if (view !== 'scope') params.view = view;
   if (range !== null) params.range = range;
   if (archived) params.archived = true;

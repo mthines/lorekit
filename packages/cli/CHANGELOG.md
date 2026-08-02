@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.28.0](https://github.com/mthines/lorekit/compare/cli-v1.27.0...cli-v1.28.0) (2026-08-02)
+
+
+### Features
+
+* **cli:** deep-links docs page + `tags` param + web↔CLI drift guard ([#321](https://github.com/mthines/lorekit/issues/321)) ([7b80f90](https://github.com/mthines/lorekit/commit/7b80f904f753f6078bde4d60c38d138812de8b11))
+
+## [1.27.0](https://github.com/mthines/lorekit/compare/cli-v1.26.1...cli-v1.27.0) (2026-08-02)
+
+
+### Features
+
+* **cli:** friction-gate the Stop retrospective nudge (hooks.stop) ([#315](https://github.com/mthines/lorekit/issues/315)) ([f2d7ebf](https://github.com/mthines/lorekit/commit/f2d7ebf4f7d1649f3297b21a1f272fc14d6f4e76))
+
 ## [1.26.1](https://github.com/mthines/lorekit/compare/cli-v1.26.0...cli-v1.26.1) (2026-08-01)
 
 

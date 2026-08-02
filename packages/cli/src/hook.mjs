@@ -18,7 +18,8 @@ import {
   writeConfirmation,
 } from './core/lessons.mjs';
 import { isFailure } from './core/failure.mjs';
-import { firstTimeThisSession } from './core/state.mjs';
+import { readSessionFriction, shouldRetrospect, FRICTION_FAILURE } from './core/friction.mjs';
+import { firstTimeThisSession, sessionMarkerExists } from './core/state.mjs';
 import { recordFixture } from './core/record.mjs';
 import { claude } from './adapters/claude.mjs';
 import { cursor } from './adapters/cursor.mjs';
@@ -160,8 +161,34 @@ async function run(args) {
   }
 
   if (intent === 'retrospective') {
+    // `hooks.stop` gates the retrospective: `friction` (default) reads the
+    // session transcript and only nudges when it hit real friction; `always`
+    // keeps the once-per-session nudge; `off` is silent. The friction read is
+    // side-effect-free and happens BEFORE the once-per-session throttle is
+    // consumed, so a clean early turn stays silent without burning the marker —
+    // a later turn that does hit friction can still fire (once).
+    const stopMode = control.hooksStop || 'friction';
+    let reasons = [];
+    let friction = null;
+    if (stopMode === 'friction') {
+      ({ friction, reasons } = readSessionFriction(parsed.transcriptPath));
+      // The transcript is written ASYNCHRONOUSLY and may lag the current turn
+      // (Claude Code hooks reference, `transcript_path`), so a Stop fired right
+      // after a failing tool call can read a positively-clean `false`. The
+      // PostToolUseFailure hook already left a session-keyed marker when it
+      // fired, which is a transcript-independent witness of the exact same
+      // predicate `detectFriction` calls FRICTION_FAILURE (any errored tool
+      // result anywhere this session). Peek at it (read-only — never consume
+      // the marker) and upgrade. This covers the `failure` signal ONLY;
+      // `stuck-loop` remains transcript-only and is still exposed to the lag.
+      if (friction === false && sessionMarkerExists(parsed.sessionId, 'failure')) {
+        friction = true;
+        reasons = [FRICTION_FAILURE];
+      }
+    }
+    if (!shouldRetrospect(stopMode, friction)) return 0;
     if (!firstTimeThisSession(parsed.sessionId, 'retro')) return 0;
-    emit(retrospectiveNudge(scope, control));
+    emit(retrospectiveNudge(scope, control, { reasons }));
     return 0;
   }
 

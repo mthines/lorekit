@@ -6,13 +6,13 @@ import { ArrowRight } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
 /**
- * Small hydration island for the public docs header: shows "Open dashboard" to a
+ * Small hydration island for the public docs header: shows "Dashboard" to a
  * signed-in reader and "Sign in" to everyone else. Kept client-side (a browser
  * session check) so the rest of the `/docs` layout stays statically rendered.
  *
  * Until the session resolves it renders the neutral "Sign in" affordance, so the
  * header never flashes empty; a logged-in reader briefly sees "Sign in" then it
- * swaps to "Open dashboard".
+ * swaps to "Dashboard".
  */
 export function DocsAuthCta() {
   const [signedIn, setSignedIn] = useState(false);
@@ -33,7 +33,7 @@ export function DocsAuthCta() {
   }, []);
 
   const href = signedIn ? '/dashboard' : '/login';
-  const label = signedIn ? 'Open dashboard' : 'Sign in';
+  const label = signedIn ? 'Dashboard' : 'Sign in';
 
   return (
     <Link
@@ -41,7 +41,7 @@ export function DocsAuthCta() {
       // Subtle, secondary affordance — a hairline-bordered ghost button that
       // warms to the accent on hover — so it sits with the header rather than
       // shouting over the content (was a solid amber fill).
-      className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 text-sm font-medium text-[var(--color-content-secondary)] transition-colors duration-200 hover:border-[var(--color-accent-glow)] hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
+      className="inline-flex min-h-9 items-center gap-1.5 whitespace-nowrap rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 text-sm font-medium text-[var(--color-content-secondary)] transition-colors duration-200 hover:border-[var(--color-accent-glow)] hover:text-[var(--color-content-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-accent)]"
     >
       {label}
       <ArrowRight className="size-3.5 opacity-70" aria-hidden />

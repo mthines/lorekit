@@ -7,6 +7,7 @@
 //   tags.default    — array of tags appended to every write (both layers merged)
 //   ttl.default     — days until a write with no explicit TTL expires
 //   hooks.disabled  — array of hook event names to suppress (e.g. ["Stop"])
+//   hooks.stop      — Stop-hook gating ("friction" default | "always" | "off")
 //   hooks.adapter   — explicit adapter override ("claude" | "cursor" | "codex")
 //
 // Two layers of config, two kinds of statement:
@@ -38,6 +39,19 @@ export function normalizeMode(v) {
   if (['off', 'disabled', 'none', 'false'].includes(s)) return 'off';
   if (['local', 'markdown', 'file', 'files'].includes(s)) return 'local';
   if (['remote', 'lorekit', 'mcp', 'hosted'].includes(s)) return 'remote';
+  return null;
+}
+
+// Stop-hook behaviour: `friction` (default — only nudge on detected friction),
+// `always` (nudge once per session regardless), or `off` (never). Accepts a few
+// friendly spellings so config stays forgiving.
+export const STOP_MODES = ['friction', 'always', 'off'];
+export function normalizeStopMode(v) {
+  if (typeof v !== 'string') return null;
+  const s = v.trim().toLowerCase();
+  if (['off', 'none', 'false', 'disabled', 'never'].includes(s)) return 'off';
+  if (['always', 'all', 'on', 'true', 'every'].includes(s)) return 'always';
+  if (['friction', 'smart', 'auto'].includes(s)) return 'friction';
   return null;
 }
 
@@ -183,6 +197,13 @@ export function resolveControl({
     ...asList(userConfig['hooks.disabled']),
   ]);
 
+  // `hooks.stop` — repo layer wins over user layer, default `friction`. Gates the
+  // end-of-turn retrospective: friction-only (default), always, or off.
+  const hooksStop =
+    normalizeStopMode(repoConfig['hooks.stop']) ||
+    normalizeStopMode(userConfig['hooks.stop']) ||
+    'friction';
+
   // `hooks.adapter` — repo layer wins over user layer (explicit project override).
   const hooksAdapter =
     (typeof repoConfig['hooks.adapter'] === 'string' && repoConfig['hooks.adapter'].trim()) ||
@@ -220,6 +241,7 @@ export function resolveControl({
     ttlDefault,
     scopeDefaults,
     hooksDisabled,
+    hooksStop,
     hooksAdapter,
     hooksInstructions,
   };

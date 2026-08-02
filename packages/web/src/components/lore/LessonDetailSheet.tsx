@@ -17,6 +17,7 @@ import type { LessonEntry } from './LessonCard';
 import { updateLesson } from '@/lib/lore';
 import { listMemberIdentities } from '@/lib/org-members';
 import { scopeRepoUrl } from '@/lib/scope';
+import { originLinks } from '@/lib/origin';
 import { useIsMobile } from '@/lib/hooks/useMediaQuery';
 import { shouldDismissSheet } from '@/components/ui/bottom-sheet';
 import { toast } from 'sonner';
@@ -438,134 +439,177 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
                   <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
                     Metadata
                   </h2>
-                  <dl className="flex flex-col gap-2">
-                    {/* Ownership (org-owned lore only) — Owner, last-updated-by
-                        author, and "Visible to N members", resolved from the
-                        Phase 4 identity RPC above. */}
-                    {lesson.org && (
-                      <div className="flex items-center gap-2 text-xs">
-                        <Users className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                        <dt className="text-[var(--color-content-tertiary)]">Owner</dt>
-                        <dd className="ml-auto font-medium text-[var(--color-content-secondary)]">
-                          {lesson.org.name}
-                        </dd>
-                      </div>
-                    )}
-                    {lesson.org && (
-                      <div className="flex items-center gap-2 text-xs">
-                        <UserCircle className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                        <dt className="text-[var(--color-content-tertiary)]">Last updated by</dt>
-                        <dd className="ml-auto text-[var(--color-content-secondary)]">
-                          {updatedByHandle ? `@${updatedByHandle}` : 'a team member'}
-                        </dd>
-                      </div>
-                    )}
-                    {lesson.org && memberCount !== null && (
-                      <div className="flex items-center gap-2 text-xs">
-                        <Users className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                        <dt className="text-[var(--color-content-tertiary)]">Visible to</dt>
-                        <dd className="ml-auto text-[var(--color-content-secondary)]">
-                          {memberCount} {memberCount === 1 ? 'member' : 'members'}
-                        </dd>
-                      </div>
-                    )}
-                    {lesson.source_agent && (
-                      <div className="flex items-center gap-2 text-xs">
-                        <Bot className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                        <dt className="text-[var(--color-content-tertiary)]">Source agent</dt>
-                        <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
-                          {lesson.source_agent}
-                        </dd>
-                      </div>
-                    )}
-                    {lesson.trigger && (
-                      <div className="flex items-center gap-2 text-xs">
-                        <Zap className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                        <dt className="text-[var(--color-content-tertiary)]">Trigger</dt>
-                        <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
-                          {lesson.trigger}
-                        </dd>
-                      </div>
-                    )}
-                    <div className="flex items-center gap-2 text-xs">
-                      <CalendarClock className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                      <dt className="text-[var(--color-content-tertiary)]">Created</dt>
-                      <dd className="ml-auto text-[var(--color-content-secondary)]">
-                        {new Date(lesson.created_at).toLocaleString()}
-                      </dd>
-                    </div>
-                    <div className="flex items-center gap-2 text-xs">
-                      <Clock className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                      <dt className="text-[var(--color-content-tertiary)]">Last updated</dt>
-                      <dd className="ml-auto text-[var(--color-content-secondary)]">
-                        {new Date(lesson.updated_at).toLocaleString()}
-                      </dd>
-                    </div>
-                    {/* Expiry — editable TTL control */}
-                    {!isArchived && (
-                      <div className="flex items-start gap-2 text-xs">
-                        <Timer className="size-3.5 shrink-0 mt-0.5 text-[var(--color-content-tertiary)]" aria-hidden />
-                        <dt className="text-[var(--color-content-tertiary)] pt-0.5">Expires</dt>
-                        <dd className="ml-auto">
-                          <ExpiryControl
-                            currentExpiresAt={lesson.expires_at}
-                            form={form}
-                            disabled={isSaving}
-                          />
-                        </dd>
-                      </div>
-                    )}
-                    {isArchived && lesson.expires_at && (
-                      <div className="flex items-center gap-2 text-xs">
-                        <Timer className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                        <dt className="text-[var(--color-content-tertiary)]">Expires</dt>
-                        <dd className="ml-auto text-[var(--color-content-secondary)]">
-                          {new Date(lesson.expires_at) < new Date()
-                            ? <span className="text-amber-400">Expired</span>
-                            : new Date(lesson.expires_at).toLocaleString()}
-                        </dd>
-                      </div>
-                    )}
-                    {lesson.archived_at && (
-                      <div className="flex items-center gap-2 text-xs">
-                        <Archive className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                        <dt className="text-[var(--color-content-tertiary)]">Archived</dt>
-                        <dd className="ml-auto text-[var(--color-content-secondary)]">
-                          {new Date(lesson.archived_at).toLocaleString()}
-                        </dd>
-                      </div>
-                    )}
-                    {(() => {
-                      const repoUrl = scopeRepoUrl(lesson.scope);
-                      if (!repoUrl) return null;
-                      const display = lesson.scope.replace(/^(repo|branch)::/, '');
-                      return (
-                        <div className="flex items-center gap-2 text-xs">
-                          <Github className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                          <dt className="text-[var(--color-content-tertiary)]">Repo</dt>
-                          <dd className="ml-auto">
-                            <a
-                              href={repoUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="font-mono text-[var(--color-content-secondary)] hover:text-[var(--color-accent)] hover:underline transition-colors duration-150"
-                            >
-                              {display}
-                            </a>
+                  {(() => {
+                    const repoUrl = scopeRepoUrl(lesson.scope);
+                    const repoDisplay = lesson.scope.replace(/^(repo|branch)::/, '');
+                    const hasOrigin = originLinks(lesson, lesson.scope).length > 0;
+                    // Grouped into related clusters (ownership · source ·
+                    // timeline · location & provenance) separated by a larger
+                    // gap so the list is scannable. Each group renders only
+                    // when it has at least one row, so an empty group never
+                    // leaves a stray gap.
+                    // The `<dl>` gap gives the intra-cluster rhythm; the first
+                    // row of every cluster after the first adds a top margin
+                    // (`mt-2`) so clusters read as grouped WITHOUT a second
+                    // `<div>` nesting layer — every `<dt>`/`<dd>` pair stays a
+                    // direct `dl > div` child, which the HTML `dl` content model
+                    // requires (a `<div>` that wraps more `<div>`s drops the
+                    // term/definition semantics for assistive tech).
+                    const clusterStart = 'mt-2';
+                    return (
+                      <dl className="flex flex-col gap-2">
+                        {/* Ownership (org-owned lore only) — Owner,
+                            last-updated-by author, and "Visible to N members",
+                            resolved from the Phase 4 identity RPC above.
+                            First cluster: no top margin. */}
+                        {lesson.org && (
+                          <>
+                            <div className="flex items-center gap-2 text-xs">
+                              <Users className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                              <dt className="text-[var(--color-content-tertiary)]">Owner</dt>
+                              <dd className="ml-auto font-medium text-[var(--color-content-secondary)]">
+                                {lesson.org.name}
+                              </dd>
+                            </div>
+                            <div className="flex items-center gap-2 text-xs">
+                              <UserCircle className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                              <dt className="text-[var(--color-content-tertiary)]">Last updated by</dt>
+                              <dd className="ml-auto text-[var(--color-content-secondary)]">
+                                {updatedByHandle ? `@${updatedByHandle}` : 'a team member'}
+                              </dd>
+                            </div>
+                            {memberCount !== null && (
+                              <div className="flex items-center gap-2 text-xs">
+                                <Users className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                                <dt className="text-[var(--color-content-tertiary)]">Visible to</dt>
+                                <dd className="ml-auto text-[var(--color-content-secondary)]">
+                                  {memberCount} {memberCount === 1 ? 'member' : 'members'}
+                                </dd>
+                              </div>
+                            )}
+                          </>
+                        )}
+
+                        {/* Source — which agent recorded this and what triggered it. */}
+                        {(lesson.source_agent || lesson.trigger) && (
+                          <>
+                            {lesson.source_agent && (
+                              <div className={`flex items-center gap-2 text-xs ${lesson.org ? clusterStart : ''}`}>
+                                <Bot className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                                <dt className="text-[var(--color-content-tertiary)]">Source agent</dt>
+                                <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
+                                  {lesson.source_agent}
+                                </dd>
+                              </div>
+                            )}
+                            {lesson.trigger && (
+                              <div className={`flex items-center gap-2 text-xs ${lesson.org && !lesson.source_agent ? clusterStart : ''}`}>
+                                <Zap className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                                <dt className="text-[var(--color-content-tertiary)]">Trigger</dt>
+                                <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
+                                  {lesson.trigger}
+                                </dd>
+                              </div>
+                            )}
+                          </>
+                        )}
+
+                        {/* Timeline — created / updated / expiry / archived.
+                            Preceded by ownership and/or source, so the first row
+                            always starts a new cluster. */}
+                        <div className={`flex items-center gap-2 text-xs ${lesson.org || lesson.source_agent || lesson.trigger ? clusterStart : ''}`}>
+                          <CalendarClock className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                          <dt className="text-[var(--color-content-tertiary)]">Created</dt>
+                          <dd className="ml-auto text-[var(--color-content-secondary)]">
+                            {new Date(lesson.created_at).toLocaleString()}
                           </dd>
                         </div>
-                      );
-                    })()}
-                    {/* Provenance — where this memory was RECORDED FROM (the
-                        PR / branch / commit the agent was working in), as
-                        opposed to the Repo row above, which is derived from
-                        the scope and says where the lesson APPLIES. The scope
-                        is passed in so these rows COMPLEMENT that one instead
-                        of repeating it: an origin the Repo row already links
-                        (same repo, or a branch:: scope's own branch) is
-                        dropped. Renders nothing when nothing is left to add. */}
-                    <MemoryOrigin origin={lesson} scope={lesson.scope} />
-                  </dl>
+                        <div className="flex items-center gap-2 text-xs">
+                          <Clock className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                          <dt className="text-[var(--color-content-tertiary)]">Last updated</dt>
+                          <dd className="ml-auto text-[var(--color-content-secondary)]">
+                            {new Date(lesson.updated_at).toLocaleString()}
+                          </dd>
+                        </div>
+                        {/* Expiry — editable TTL control */}
+                        {!isArchived && (
+                          <div className="flex items-start gap-2 text-xs">
+                            <Timer className="size-3.5 shrink-0 mt-0.5 text-[var(--color-content-tertiary)]" aria-hidden />
+                            <dt className="text-[var(--color-content-tertiary)] pt-0.5">Expires</dt>
+                            <dd className="ml-auto">
+                              <ExpiryControl
+                                currentExpiresAt={lesson.expires_at}
+                                form={form}
+                                disabled={isSaving}
+                              />
+                            </dd>
+                          </div>
+                        )}
+                        {isArchived && lesson.expires_at && (
+                          <div className="flex items-center gap-2 text-xs">
+                            <Timer className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                            <dt className="text-[var(--color-content-tertiary)]">Expires</dt>
+                            <dd className="ml-auto text-[var(--color-content-secondary)]">
+                              {new Date(lesson.expires_at) < new Date()
+                                ? <span className="text-amber-400">Expired</span>
+                                : new Date(lesson.expires_at).toLocaleString()}
+                            </dd>
+                          </div>
+                        )}
+                        {lesson.archived_at && (
+                          <div className="flex items-center gap-2 text-xs">
+                            <Archive className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                            <dt className="text-[var(--color-content-tertiary)]">Archived</dt>
+                            <dd className="ml-auto text-[var(--color-content-secondary)]">
+                              {new Date(lesson.archived_at).toLocaleString()}
+                            </dd>
+                          </div>
+                        )}
+
+                        {/* Location & provenance — the Repo the lesson APPLIES
+                            to (derived from the scope) plus where it was
+                            RECORDED FROM (the PR / branch / commit the agent was
+                            working in, migration 00048). The scope is passed to
+                            `MemoryOrigin`/`originLinks` so these rows COMPLEMENT
+                            the Repo row instead of repeating it: an origin the
+                            Repo row already links (same repo, or a `branch::`
+                            scope's own branch) is dropped. Timeline always
+                            precedes it, so the first row starts a new cluster.
+                            `MemoryOrigin` returns bare `div > dt/dd` rows, which
+                            land as direct `dl` children here. */}
+                        {(repoUrl || hasOrigin) && (
+                          <>
+                            {repoUrl && (
+                              <div className={`flex items-center gap-2 text-xs ${clusterStart}`}>
+                                <Github className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                                <dt className="text-[var(--color-content-tertiary)]">Repo</dt>
+                                <dd className="ml-auto">
+                                  <a
+                                    href={repoUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="font-mono text-[var(--color-content-secondary)] hover:text-[var(--color-accent)] hover:underline transition-colors duration-150"
+                                  >
+                                    {repoDisplay}
+                                  </a>
+                                </dd>
+                              </div>
+                            )}
+                            {/* `MemoryOrigin` returns a Fragment of bare
+                                `div > dt/dd` rows, so it renders straight into
+                                the `<dl>` as direct children — no wrapper, which
+                                would push its pairs two levels below the `<dl>`
+                                and break the `dl` content model. When there is a
+                                Repo row it already carries the cluster's top
+                                margin; when there isn't, the intra-cluster
+                                `gap-2` still visually separates these rows from
+                                the timeline above. */}
+                            <MemoryOrigin origin={lesson} scope={lesson.scope} />
+                          </>
+                        )}
+                      </dl>
+                    );
+                  })()}
                 </section>
               </div>
 

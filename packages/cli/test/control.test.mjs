@@ -367,3 +367,28 @@ test('scope.defaults: ttl_days rides alongside tags on the same entry', () => {
   });
   assert.deepEqual(r.scopeDefaults['branch::'], { tags: ['ephemeral'], ttl_days: 14 });
 });
+
+test('hooks.stop: defaults to friction when unset', () => {
+  const r = resolveControl({ connection: NO_CONN });
+  assert.equal(r.hooksStop, 'friction');
+});
+
+test('hooks.stop: repo wins over user, friendly spellings normalized', () => {
+  const r = resolveControl({
+    repoConfig: { 'hooks.stop': 'always' },
+    userConfig: { 'hooks.stop': 'off' },
+    connection: NO_CONN,
+  });
+  assert.equal(r.hooksStop, 'always');
+});
+
+test('hooks.stop: user fallback when repo is unset; invalid falls through to default', () => {
+  assert.equal(
+    resolveControl({ userConfig: { 'hooks.stop': 'never' }, connection: NO_CONN }).hooksStop,
+    'off',
+  );
+  assert.equal(
+    resolveControl({ repoConfig: { 'hooks.stop': 'nonsense' }, connection: NO_CONN }).hooksStop,
+    'friction',
+  );
+});

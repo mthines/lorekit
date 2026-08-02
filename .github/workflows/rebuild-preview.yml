@@ -1,0 +1,164 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Rebuild the SHARED, disposable preview Supabase project from scratch.
+#
+# `preview` is a shared project. `/preview` runs (preview.yml) push UN-MERGED
+# migrations to it from open PR head SHAs, so over time it accumulates drifted
+# history rows and orphan schema objects from PRs that were edited or abandoned.
+# The deploy-time drift classifier (scripts/check-remote-migration-drift.mjs)
+# keeps `main`'s deploy GREEN through that drift; THIS workflow is the flush that
+# clears it — `supabase db reset --linked` drops and re-provisions the remote DB
+# from the migration files on this ref, so grants and RLS defaults are restored
+# natively (never a hand-rolled DROP SCHEMA).
+#
+# Destructive by design, and the project is SHARED: a reset WILL wipe any
+# in-flight `/preview` state — re-run `/preview` on a PR afterwards. It runs
+# on-demand (Actions ▸ Run workflow, or a maintainer `/reset-preview` comment)
+# and on a low-traffic weekly cron; never silently mid-deploy.
+#
+# Security: scoped to the `preview` GitHub Environment so only preview secrets
+# are ever in scope, plus an explicit production-ref guard below. The comment
+# path is gated to OWNER/MEMBER/COLLABORATOR exactly like preview.yml's
+# `/preview`, and issue_comment runs from the DEFAULT branch's workflow file.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Rebuild preview DB
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 4 * * 0" # Sundays 04:00 UTC — low traffic
+  issue_comment:
+    types: [created]
+
+# Share deploy.yml's main-deploy concurrency group so a reset can never run
+# concurrently with the `main` deploy pipeline's `supabase db push` against this
+# same shared project. deploy.yml runs only on `main` (its group resolves to
+# `deploy-refs/heads/main`) and this workflow's ref is the default branch on
+# schedule / dispatch / comment, so the two evaluate to the same group and
+# serialize. NOTE: preview.yml's `/preview` uses a PER-PR group and is therefore
+# NOT serialized here — a global static lock would wrongly serialize previews
+# against each other; the low-traffic weekly cron keeps that window negligible
+# and a manual/comment reset is a deliberate act.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: Check trigger conditions
+    runs-on: ubuntu-latest
+    # Only the comment path needs gating; dispatch/schedule authorize themselves.
+    if: >
+      github.event_name != 'issue_comment' ||
+      (github.event.issue.pull_request != null &&
+       contains(github.event.comment.body, '/reset-preview'))
+    permissions:
+      pull-requests: write
+    outputs:
+      authorized: ${{ steps.check.outputs.authorized }}
+    steps:
+      - name: Authorize (dispatch/schedule always; comment only from a maintainer)
+        id: check
+        env:
+          EVENT: ${{ github.event_name }}
+          ASSOCIATION: ${{ github.event.comment.author_association }}
+        run: |
+          if [ "$EVENT" != "issue_comment" ]; then
+            echo "authorized=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          case "$ASSOCIATION" in
+            OWNER|MEMBER|COLLABORATOR) echo "authorized=true"  >> "$GITHUB_OUTPUT" ;;
+            *)                         echo "authorized=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Add 👀 reaction
+        if: github.event_name == 'issue_comment' && steps.check.outputs.authorized == 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes',
+            });
+
+  rebuild:
+    name: Rebuild → preview
+    runs-on: ubuntu-latest
+    needs: guard
+    if: needs.guard.outputs.authorized == 'true'
+    environment: preview
+    permissions:
+      contents: read
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v3
+        with:
+          version: latest
+
+      - name: Verify preview environment secrets are set
+        run: |
+          missing=""
+          [ -z "$PROJECT_REF" ] && missing="$missing SUPABASE_PROJECT_REF"
+          [ -z "$SUPABASE_DB_PASSWORD" ] && missing="$missing SUPABASE_DB_PASSWORD"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing secrets for the 'preview' environment:$missing. Add them under Settings ▸ Environments ▸ preview."
+            exit 1
+          fi
+
+      # Belt-and-suspenders for a destructive job: the `preview` Environment
+      # scoping already means only the preview project's ref is in scope, but a
+      # misconfigured secret must fail loud, never wipe production.
+      - name: Refuse to reset production
+        run: |
+          if [ "$PROJECT_REF" = "pqokxlhvnosogizsjztg" ]; then
+            echo "::error::PROJECT_REF is the production project — refusing to reset."
+            exit 1
+          fi
+
+      - name: Link the Supabase project
+        run: supabase link --project-ref "$PROJECT_REF"
+
+      # The ONE step that clears drifted history rows AND orphan schema objects:
+      # re-provision the remote DB from the migration files on this ref.
+      # NOTE: depending on the pinned CLI version, `db reset --linked` may prompt
+      # for confirmation. Verify on the FIRST manual `workflow_dispatch` run
+      # (before the cron ever fires); if it hangs on a prompt, drive it
+      # non-interactively with whatever confirmation flag the installed CLI
+      # exposes (or pipe `y`).
+      - name: Reset preview database from migrations
+        run: supabase db reset --linked
+
+      # `db reset` wipes the seeded orgs-smoke user along with everything else,
+      # so the orgs REST smoke self-skips (announced, non-fatal) until it is
+      # re-seeded. Re-seeding needs the service-role key (the Auth admin API) and
+      # is DELIBERATELY not done in CI — the recurring smoke path never carries
+      # that key (see docs/deployment.md → "Seed the orgs-smoke user"). Surface a
+      # reminder rather than smuggling the key into a recurring workflow.
+      - name: Remind to re-seed the orgs-smoke user
+        run: |
+          echo "::notice::Preview DB was reset — re-seed the orgs-smoke user out-of-band with scripts/seed-smoke-user.mjs (needs the service-role key; not run in CI). Until then the orgs REST smoke self-skips."
+
+      - name: Deploy edge functions (mcp + health)
+        # Retry up to 3 times with 10 s back-off to tolerate transient OOM
+        # crashes (exit 135 / SIGBUS) from the edge-runtime bundler container.
+        run: |
+          for attempt in 1 2 3; do
+            supabase functions deploy --no-verify-jwt --project-ref "$PROJECT_REF" && break
+            rc=$?
+            if [ $attempt -eq 3 ]; then
+              echo "::error::Edge function deploy failed after $attempt attempts (exit $rc)"
+              exit $rc
+            fi
+            echo "::warning::Edge function deploy failed (exit $rc), retrying in 10 s (attempt $attempt/3)..."
+            sleep 10
+          done
