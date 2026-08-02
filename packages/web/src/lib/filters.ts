@@ -218,6 +218,41 @@ export function filtersFromLegacyTags(tags: unknown): Filter[] {
   return values.length === 0 ? [] : [{ field: 'label', operator: 'all', values }];
 }
 
+/**
+ * The bar's filters, given both URL params.
+ *
+ * `rawFilters` is `null` when `?filters=` is ABSENT from the URL and an array
+ * (possibly empty) when it is present. That distinction is the whole point:
+ * "absent" means the user has never touched the bar, so a legacy `?tags=` link
+ * may still speak for it; "present but empty" means the user emptied the bar,
+ * and the legacy shorthand must NOT speak over that. Collapsing the two — the
+ * bar's first shape — made the last pill on a `?tags=` link unremovable: the
+ * write dropped the param, the fallback re-derived the label filter, and the ×
+ * the user had just clicked did nothing.
+ */
+export function resolveFilters(rawFilters: unknown, legacyTags: unknown): Filter[] {
+  if (rawFilters === null || rawFilters === undefined) return filtersFromLegacyTags(legacyTags);
+  return normalizeFilters(rawFilters);
+}
+
+/**
+ * What to persist to `?filters=` for a new selection — `null` meaning "drop the
+ * param".
+ *
+ * An empty bar is normally worth nothing in the URL, and dropping the param is
+ * what keeps a shared link clean. The one exception is a legacy `?tags=` link:
+ * there, an empty bar is a STATEMENT ("I removed that filter") that has to
+ * survive the reload, so it is written explicitly rather than inferred from an
+ * absent param.
+ */
+export function filtersParamValue(
+  next: readonly Filter[],
+  legacyTags: unknown,
+): Filter[] | null {
+  if (next.length > 0) return [...next];
+  return filtersFromLegacyTags(legacyTags).length > 0 ? [] : null;
+}
+
 // ── Reading ──────────────────────────────────────────────────────────────────
 
 export function findFilter(filters: readonly Filter[], field: FilterField): Filter | undefined {

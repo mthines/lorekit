@@ -22,7 +22,9 @@ import {
   isValueSelected,
   normalizeFilters,
   operatorLabel,
+  filtersParamValue,
   removeFilter,
+  resolveFilters,
   rootSuggestions,
   searchOptions,
   selectedValues,
@@ -104,6 +106,47 @@ describe('filtersFromLegacyTags', () => {
     expect(filtersFromLegacyTags(undefined)).toEqual([]);
     expect(filtersFromLegacyTags([])).toEqual([]);
     expect(filtersFromLegacyTags('perf')).toEqual([]);
+  });
+});
+
+// The pair below is what makes a legacy `?tags=` link's pill REMOVABLE. The
+// bar's first shape read an empty `?filters=` as "untouched" and fell back to
+// the legacy shorthand, so clicking the last pill's × re-derived the filter it
+// had just removed and nothing in the UI could clear it.
+describe('resolveFilters', () => {
+  it('honours the legacy ?tags= shorthand while ?filters= is absent', () => {
+    expect(resolveFilters(null, ['perf'])).toEqual([
+      { field: 'label', operator: 'all', values: ['perf'] },
+    ]);
+  });
+
+  it('lets an EXPLICITLY EMPTY ?filters= beat the legacy shorthand', () => {
+    expect(resolveFilters([], ['perf'])).toEqual([]);
+  });
+
+  it('lets an explicit ?filters= beat the legacy shorthand', () => {
+    expect(resolveFilters([{ field: 'agent', operator: 'in', values: ['aw'] }], ['perf'])).toEqual([
+      { field: 'agent', operator: 'in', values: ['aw'] },
+    ]);
+  });
+
+  it('normalises the explicit param rather than trusting it', () => {
+    expect(resolveFilters([{ field: 'nope', operator: 'in', values: ['x'] }], ['perf'])).toEqual([]);
+  });
+});
+
+describe('filtersParamValue', () => {
+  it('keeps an explicit empty marker when a legacy ?tags= link is in play', () => {
+    expect(filtersParamValue([], ['perf'])).toEqual([]);
+  });
+
+  it('drops the param entirely when there is no legacy link to override', () => {
+    expect(filtersParamValue([], [])).toBeNull();
+  });
+
+  it('persists a non-empty bar as itself', () => {
+    const filters: Filter[] = [{ field: 'label', operator: 'all', values: ['perf'] }];
+    expect(filtersParamValue(filters, ['perf'])).toEqual(filters);
   });
 });
 

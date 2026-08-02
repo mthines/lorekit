@@ -35,7 +35,7 @@
  * Uses `useSearchParams()` via `useUrlState`. Must be wrapped in <Suspense>.
  */
 
-import { useMemo, useTransition, useState } from 'react';
+import { useCallback, useMemo, useTransition, useState } from 'react';
 import { Search, BookOpen, ChevronDown, ChevronUp, Loader2, List, LayoutGrid, Archive, User, Building2, Users } from 'lucide-react';
 import { ScopeTree, type ScopeNode } from './ScopeTree';
 import { LessonCard } from './LessonCard';
@@ -47,11 +47,11 @@ import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
 import { useFacetCatalog, useMemories } from '@/lib/queries/lore';
 import {
-  normalizeFilters,
+  filtersParamValue,
   removeFilter,
+  resolveFilters,
   setFilterOperator,
   toggleFilterValue,
-  filtersFromLegacyTags,
   type FacetValue,
   type Filter,
   type FilterField,
@@ -284,7 +284,12 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // across dimensions), so it belongs in the query, not in a client-side
   // narrowing like `owner`. Shareable: "every perf regression we learned on the
   // release branch" is a link you can paste to a teammate.
-  const [rawFilters, setFilters] = useUrlState<Filter[]>('filters', NO_FILTERS, {
+  // `null` — not `[]` — is the default, so "the param is absent" and "the bar
+  // is explicitly empty" stay distinguishable. `useUrlState` drops a param whose
+  // value equals its default, so an `[]` default made emptying the bar
+  // indistinguishable from never having touched it, and the legacy fallback
+  // below resurrected the pill the user had just removed.
+  const [rawFilters, setRawFilters] = useUrlState<Filter[] | null>('filters', null, {
     cleanOnPathname: '/lore',
   });
 
@@ -298,12 +303,16 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // Both params are user-editable text, so they can arrive as anything JSON can
   // express. Normalizing once here means every consumer below (the query, the
   // pills, the empty-state copy) reads a real `Filter[]`. An explicit
-  // `?filters=` wins over the legacy shorthand — see `mergedFilters`.
-  const filters = useMemo(() => {
-    const explicit = normalizeFilters(rawFilters);
-    if (explicit.length > 0) return explicit;
-    return filtersFromLegacyTags(legacyTags);
-  }, [rawFilters, legacyTags]);
+  // `?filters=` wins over the legacy shorthand — including when it is empty,
+  // which is what makes removing the last pill on a `?tags=` link stick.
+  const filters = useMemo(() => resolveFilters(rawFilters, legacyTags), [rawFilters, legacyTags]);
+
+  // Every write goes through here so the "explicitly empty" marker is applied
+  // in one place rather than at each of the four call sites below.
+  const setFilters = useCallback(
+    (next: Filter[]) => setRawFilters(filtersParamValue(next, legacyTags)),
+    [setRawFilters, legacyTags],
+  );
 
   // Which dimension the menu should open at, set by a pill's value segment.
   // Ephemeral — a request, not state worth sharing, so never in the URL.
