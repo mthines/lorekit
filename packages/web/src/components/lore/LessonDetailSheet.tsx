@@ -448,13 +448,22 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
                     // gap so the list is scannable. Each group renders only
                     // when it has at least one row, so an empty group never
                     // leaves a stray gap.
+                    // The `<dl>` gap gives the intra-cluster rhythm; the first
+                    // row of every cluster after the first adds a top margin
+                    // (`mt-2`) so clusters read as grouped WITHOUT a second
+                    // `<div>` nesting layer — every `<dt>`/`<dd>` pair stays a
+                    // direct `dl > div` child, which the HTML `dl` content model
+                    // requires (a `<div>` that wraps more `<div>`s drops the
+                    // term/definition semantics for assistive tech).
+                    const clusterStart = 'mt-2';
                     return (
-                      <dl className="flex flex-col gap-4">
+                      <dl className="flex flex-col gap-2">
                         {/* Ownership (org-owned lore only) — Owner,
                             last-updated-by author, and "Visible to N members",
-                            resolved from the Phase 4 identity RPC above. */}
+                            resolved from the Phase 4 identity RPC above.
+                            First cluster: no top margin. */}
                         {lesson.org && (
-                          <div className="flex flex-col gap-2">
+                          <>
                             <div className="flex items-center gap-2 text-xs">
                               <Users className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                               <dt className="text-[var(--color-content-tertiary)]">Owner</dt>
@@ -478,14 +487,14 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
                                 </dd>
                               </div>
                             )}
-                          </div>
+                          </>
                         )}
 
                         {/* Source — which agent recorded this and what triggered it. */}
                         {(lesson.source_agent || lesson.trigger) && (
-                          <div className="flex flex-col gap-2">
+                          <>
                             {lesson.source_agent && (
-                              <div className="flex items-center gap-2 text-xs">
+                              <div className={`flex items-center gap-2 text-xs ${lesson.org ? clusterStart : ''}`}>
                                 <Bot className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                                 <dt className="text-[var(--color-content-tertiary)]">Source agent</dt>
                                 <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
@@ -494,7 +503,7 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
                               </div>
                             )}
                             {lesson.trigger && (
-                              <div className="flex items-center gap-2 text-xs">
+                              <div className={`flex items-center gap-2 text-xs ${lesson.org && !lesson.source_agent ? clusterStart : ''}`}>
                                 <Zap className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                                 <dt className="text-[var(--color-content-tertiary)]">Trigger</dt>
                                 <dd className="ml-auto font-mono text-[var(--color-content-secondary)]">
@@ -502,60 +511,60 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
                                 </dd>
                               </div>
                             )}
-                          </div>
+                          </>
                         )}
 
-                        {/* Timeline — created / updated / expiry / archived. */}
-                        <div className="flex flex-col gap-2">
-                          <div className="flex items-center gap-2 text-xs">
-                            <CalendarClock className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                            <dt className="text-[var(--color-content-tertiary)]">Created</dt>
-                            <dd className="ml-auto text-[var(--color-content-secondary)]">
-                              {new Date(lesson.created_at).toLocaleString()}
-                            </dd>
-                          </div>
-                          <div className="flex items-center gap-2 text-xs">
-                            <Clock className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                            <dt className="text-[var(--color-content-tertiary)]">Last updated</dt>
-                            <dd className="ml-auto text-[var(--color-content-secondary)]">
-                              {new Date(lesson.updated_at).toLocaleString()}
-                            </dd>
-                          </div>
-                          {/* Expiry — editable TTL control */}
-                          {!isArchived && (
-                            <div className="flex items-start gap-2 text-xs">
-                              <Timer className="size-3.5 shrink-0 mt-0.5 text-[var(--color-content-tertiary)]" aria-hidden />
-                              <dt className="text-[var(--color-content-tertiary)] pt-0.5">Expires</dt>
-                              <dd className="ml-auto">
-                                <ExpiryControl
-                                  currentExpiresAt={lesson.expires_at}
-                                  form={form}
-                                  disabled={isSaving}
-                                />
-                              </dd>
-                            </div>
-                          )}
-                          {isArchived && lesson.expires_at && (
-                            <div className="flex items-center gap-2 text-xs">
-                              <Timer className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                              <dt className="text-[var(--color-content-tertiary)]">Expires</dt>
-                              <dd className="ml-auto text-[var(--color-content-secondary)]">
-                                {new Date(lesson.expires_at) < new Date()
-                                  ? <span className="text-amber-400">Expired</span>
-                                  : new Date(lesson.expires_at).toLocaleString()}
-                              </dd>
-                            </div>
-                          )}
-                          {lesson.archived_at && (
-                            <div className="flex items-center gap-2 text-xs">
-                              <Archive className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-                              <dt className="text-[var(--color-content-tertiary)]">Archived</dt>
-                              <dd className="ml-auto text-[var(--color-content-secondary)]">
-                                {new Date(lesson.archived_at).toLocaleString()}
-                              </dd>
-                            </div>
-                          )}
+                        {/* Timeline — created / updated / expiry / archived.
+                            Preceded by ownership and/or source, so the first row
+                            always starts a new cluster. */}
+                        <div className={`flex items-center gap-2 text-xs ${lesson.org || lesson.source_agent || lesson.trigger ? clusterStart : ''}`}>
+                          <CalendarClock className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                          <dt className="text-[var(--color-content-tertiary)]">Created</dt>
+                          <dd className="ml-auto text-[var(--color-content-secondary)]">
+                            {new Date(lesson.created_at).toLocaleString()}
+                          </dd>
                         </div>
+                        <div className="flex items-center gap-2 text-xs">
+                          <Clock className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                          <dt className="text-[var(--color-content-tertiary)]">Last updated</dt>
+                          <dd className="ml-auto text-[var(--color-content-secondary)]">
+                            {new Date(lesson.updated_at).toLocaleString()}
+                          </dd>
+                        </div>
+                        {/* Expiry — editable TTL control */}
+                        {!isArchived && (
+                          <div className="flex items-start gap-2 text-xs">
+                            <Timer className="size-3.5 shrink-0 mt-0.5 text-[var(--color-content-tertiary)]" aria-hidden />
+                            <dt className="text-[var(--color-content-tertiary)] pt-0.5">Expires</dt>
+                            <dd className="ml-auto">
+                              <ExpiryControl
+                                currentExpiresAt={lesson.expires_at}
+                                form={form}
+                                disabled={isSaving}
+                              />
+                            </dd>
+                          </div>
+                        )}
+                        {isArchived && lesson.expires_at && (
+                          <div className="flex items-center gap-2 text-xs">
+                            <Timer className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                            <dt className="text-[var(--color-content-tertiary)]">Expires</dt>
+                            <dd className="ml-auto text-[var(--color-content-secondary)]">
+                              {new Date(lesson.expires_at) < new Date()
+                                ? <span className="text-amber-400">Expired</span>
+                                : new Date(lesson.expires_at).toLocaleString()}
+                            </dd>
+                          </div>
+                        )}
+                        {lesson.archived_at && (
+                          <div className="flex items-center gap-2 text-xs">
+                            <Archive className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+                            <dt className="text-[var(--color-content-tertiary)]">Archived</dt>
+                            <dd className="ml-auto text-[var(--color-content-secondary)]">
+                              {new Date(lesson.archived_at).toLocaleString()}
+                            </dd>
+                          </div>
+                        )}
 
                         {/* Location & provenance — the Repo the lesson APPLIES
                             to (derived from the scope) plus where it was
@@ -564,11 +573,14 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
                             `MemoryOrigin`/`originLinks` so these rows COMPLEMENT
                             the Repo row instead of repeating it: an origin the
                             Repo row already links (same repo, or a `branch::`
-                            scope's own branch) is dropped. */}
+                            scope's own branch) is dropped. Timeline always
+                            precedes it, so the first row starts a new cluster.
+                            `MemoryOrigin` returns bare `div > dt/dd` rows, which
+                            land as direct `dl` children here. */}
                         {(repoUrl || hasOrigin) && (
-                          <div className="flex flex-col gap-2">
+                          <>
                             {repoUrl && (
-                              <div className="flex items-center gap-2 text-xs">
+                              <div className={`flex items-center gap-2 text-xs ${clusterStart}`}>
                                 <Github className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
                                 <dt className="text-[var(--color-content-tertiary)]">Repo</dt>
                                 <dd className="ml-auto">
@@ -583,8 +595,17 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
                                 </dd>
                               </div>
                             )}
+                            {/* `MemoryOrigin` returns a Fragment of bare
+                                `div > dt/dd` rows, so it renders straight into
+                                the `<dl>` as direct children — no wrapper, which
+                                would push its pairs two levels below the `<dl>`
+                                and break the `dl` content model. When there is a
+                                Repo row it already carries the cluster's top
+                                margin; when there isn't, the intra-cluster
+                                `gap-2` still visually separates these rows from
+                                the timeline above. */}
                             <MemoryOrigin origin={lesson} scope={lesson.scope} />
-                          </div>
+                          </>
                         )}
                       </dl>
                     );
