@@ -32,6 +32,7 @@ const {
   buildVcsSignalAttributes,
   initDash0Rum,
   identifyDash0User,
+  setDash0PagePath,
 } = await import('./dash0-rum');
 
 const { __signalAttributes: signalAttributes } = (await import('@dash0/sdk-web')) as unknown as {
@@ -169,5 +170,12 @@ describe('signal identity and route attributes', () => {
   it('REPLACES the anonymous id on login instead of leaving a second user.id behind', () => {
     identifyDash0User('user-abc');
     expect(valuesOf('user.id')).toEqual(['user-abc']);
+  });
+
+  it('keeps a single page.url.path across repeated navigations', () => {
+    setDash0PagePath('/lore');
+    setDash0PagePath('/settings');
+    setDash0PagePath('/settings'); // the second Dash0Provider mount
+    expect(valuesOf('page.url.path')).toEqual(['/settings']);
   });
 });
