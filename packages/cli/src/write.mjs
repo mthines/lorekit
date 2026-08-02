@@ -157,6 +157,19 @@ export async function write(args) {
     }
   }
 
+  // What gets REPORTED is the outcome, not the input. `--clear-ttl` beats
+  // `--ttl-days` inside resolveExpiresAt (and in memory_write, migrations
+  // 00030/00031), so `--ttl-days 7 --clear-ttl` persists a permanent row —
+  // yet ttlDays/ttlSource still described the flag the user typed, so the
+  // human output claimed "expires in 7 days" and --json reported
+  // ttl_days 7 / ttl_source "flag" for a row whose expires_at is null.
+  // Kept separate from ttlDays on purpose: writeArgs below spreads
+  // `...(ttlDays ? { ttl_days } : {})`, and nulling ttlDays itself would
+  // silently stop sending ttl_days to the remote RPC — a wire change nobody
+  // asked for. The precedence lives in one place; this only mirrors it.
+  const reportedTtlDays = clearTtl ? null : (ttlDays ?? null);
+  const reportedTtlSource = clearTtl ? 'none' : ttlSource;
+
   const orgSlug = typeof args.org === 'string' ? args.org : undefined;
 
   // ── Provenance ────────────────────────────────────────────────────────────
@@ -279,8 +292,8 @@ export async function write(args) {
       tags,
       source_agent: sourceAgent || null,
       trigger: trigger || null,
-      ttl_days: ttlDays ?? null,
-      ttl_source: ttlSource,
+      ttl_days: reportedTtlDays,
+      ttl_source: reportedTtlSource,
       origin,
     }, null, 2));
   } else {
@@ -293,9 +306,9 @@ export async function write(args) {
     // Name the source. A TTL the caller typed needs no explanation; one that came
     // from a config file two directories up does, or the first surprise is a
     // memory that quietly vanished.
-    if (ttlDays) {
-      const suffix = ttlSource === 'config' ? c.dim(' (from config)') : '';
-      log(`  ${c.dim('expires')} in ${ttlDays} day${ttlDays === 1 ? '' : 's'}${suffix}`);
+    if (reportedTtlDays) {
+      const suffix = reportedTtlSource === 'config' ? c.dim(' (from config)') : '';
+      log(`  ${c.dim('expires')} in ${reportedTtlDays} day${reportedTtlDays === 1 ? '' : 's'}${suffix}`);
     }
     status('pass', verb, `${scope}::${key}`);
     log('');
@@ -306,8 +319,8 @@ export async function write(args) {
     'lorekit.cli.write.store': storeName,
     'lorekit.cli.write.inserted': inserted,
     'lorekit.cli.write.has_tags': tags.length > 0,
-    'lorekit.cli.write.has_ttl': Boolean(ttlDays),
-    'lorekit.cli.write.ttl_source': ttlSource,
+    'lorekit.cli.write.has_ttl': Boolean(reportedTtlDays),
+    'lorekit.cli.write.ttl_source': reportedTtlSource,
     'lorekit.cli.write.clear_ttl': clearTtl,
   };
 }

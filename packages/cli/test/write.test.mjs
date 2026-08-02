@@ -241,6 +241,42 @@ test('write --local --clear-ttl removes an existing expiry', () => {
   assert.match(onDisk, /expires_at: null/);
 });
 
+// `--clear-ttl` beats `--ttl-days` inside resolveExpiresAt (the memory_write
+// tri-state, migrations 00030/00031), so the row that lands is permanent. The
+// REPORT has to follow the same precedence: it previously described the flag
+// the user typed, so this combination printed "expires in 7 days" and reported
+// ttl_days 7 for a row whose expires_at is null — the one thing --clear-ttl is
+// supposed to guarantee.
+test('write --local --ttl-days with --clear-ttl reports permanent, not the flag', () => {
+  const { root, home } = seedProject();
+  const res = runWrite(root, home, ['global', 'k', 'v', '--local', '--ttl-days', '7', '--clear-ttl', '--json']);
+  assert.equal(res.status, 0);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.ttl_days, null);
+  assert.equal(out.ttl_source, 'none');
+  const files = fs.readdirSync(path.join(home, 'global'));
+  const onDisk = fs.readFileSync(path.join(home, 'global', files[0]), 'utf8');
+  assert.match(onDisk, /expires_at: null/);
+});
+
+test('write --local --ttl-days with --clear-ttl prints no expiry line', () => {
+  const { root, home } = seedProject();
+  const res = runWrite(root, home, ['global', 'k', 'v', '--local', '--ttl-days', '7', '--clear-ttl']);
+  assert.equal(res.status, 0);
+  assert.doesNotMatch(res.stdout, /expires in/);
+});
+
+// Guard the other half of the precedence: a bare --ttl-days must keep reporting
+// the flag, or the fix above would have traded one wrong report for another.
+test('write --local --ttl-days alone still reports the flag as the source', () => {
+  const { root, home } = seedProject();
+  const res = runWrite(root, home, ['global', 'k', 'v', '--local', '--ttl-days', '7', '--json']);
+  assert.equal(res.status, 0);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.ttl_days, 7);
+  assert.equal(out.ttl_source, 'flag');
+});
+
 test('write --local --ttl-days rejects an out-of-range value', () => {
   const { root, home } = seedProject();
   const res = runWrite(root, home, ['global', 'k', 'v', '--local', '--ttl-days', '999']);
