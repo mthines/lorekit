@@ -1,0 +1,132 @@
+---
+title: "Deep links"
+description: "Every view in the LoreKit dashboard is a shareable URL. Link straight to a scope in the Explorer, open one memory's detail sheet, or share a filtered search — from the terminal, a PR, or a chat message. Generate them by hand or with the CLI's link command and --link flag."
+order: 9
+keywords: ["deep link", "deeplink", "share link", "shareable url", "explorer", "scope link", "memory link", "lesson link", "lorekit link", "--link flag", "url command", "LOREKIT_APP_URL", "--base", "self-hosting", "useUrlState", "query params", "tags filter"]
+---
+
+The LoreKit dashboard keeps its entire view state in the URL. Every scope filter, search query, label selection, date range, and open memory is a query parameter — so any view you are looking at is a link you can copy, paste, and share, and it opens on exactly that view.
+
+**Where deep links go**
+
+| Destination | Path |
+| --- | --- |
+| The memory Explorer | `/lore` |
+| One memory's detail sheet | `/lore?lesson=…` |
+| A scope-filtered Explorer | `/lore?scope=…` |
+
+## How dashboard URLs are encoded
+
+The Explorer reads each parameter with `useUrlState`, which does `JSON.parse(searchParams.get(key))` and falls back to the parameter's **default** when the value is absent or fails to parse. Two rules follow from that, and every LoreKit-generated link obeys both:
+
+1. **Each value is JSON-encoded, then URL-encoded** — `encodeURIComponent(JSON.stringify(value))`. A string scope is therefore double-quoted: `?scope=%22global%22`, not `?scope=global`. A raw `?scope=global` fails `JSON.parse` and silently means "all scopes".
+2. **A value equal to its default is omitted.** A present-but-default parameter is noise, so clean links carry only the parameters that actually change the view.
+
+**The Explorer parameters**
+
+| Param | Default | Meaning |
+| --- | --- | --- |
+| `scope` | `null` | Filter to one scope. `null` means all scopes. |
+| `q` | `""` | Search query (pre-fills the search box). |
+| `range` | `null` | Date range `{ "from": "YYYY-MM-DD", "to": "YYYY-MM-DD" }`. |
+| `owner` | `"all"` | Ownership filter: `"all"`, `"personal"`, or `{ "orgId": "…" }`. |
+| `tags` | `[]` | Label filter, AND across labels (e.g. `["perf","ci"]`). |
+| `view` | `"scope"` | Explorer view: `"scope"` or `"time"`. |
+| `archived` | `false` | Include archived memories. |
+| `lesson` | `null` | `{ "scope", "key" }` — opens that memory's detail sheet. |
+
+> The CLI mirrors this exact table in `deeplink-pure.mjs` (`LORE_PARAM_DEFAULTS`), and a cross-package test reads the real `useUrlState` parameters from the web source so the two can never drift.
+
+## Link to a scope
+
+Filter the Explorer to a single scope. `global` is a real scope — only the actual default (`null`, no filter) is omitted.
+
+```text
+# global scope
+https://lorekit.io/lore?scope=%22global%22
+
+# a repo scope (repo::acme/widget)
+https://lorekit.io/lore?scope=%22repo%3A%3Aacme%2Fwidget%22
+```
+
+## Link to a specific memory
+
+Open a memory's detail sheet directly. The link sets `lesson` (which opens the sheet) plus `scope`, so the list behind the sheet is filtered to the memory's own scope:
+
+```text
+# opens the "prefer-guard-clauses" memory in the global scope
+https://lorekit.io/lore?scope=%22global%22&lesson=%7B%22scope%22%3A%22global%22%2C%22key%22%3A%22prefer-guard-clauses%22%7D
+```
+
+The detail sheet reads from a recent, unfiltered set, so a memory older than that window or an archived one can still open blank — a dashboard limitation the link itself cannot fix.
+
+## Link to a search or a filtered view
+
+Combine any of the Explorer parameters. Each is JSON-encoded and default-omitted:
+
+```text
+# search "flaky test", personal memories only
+https://lorekit.io/lore?q=%22flaky%20test%22&owner=%22personal%22
+
+# global scope, filtered to the "perf" and "ci" labels
+https://lorekit.io/lore?scope=%22global%22&tags=%5B%22perf%22%2C%22ci%22%5D
+
+# global scope, time view, including archived
+https://lorekit.io/lore?scope=%22global%22&view=%22time%22&archived=true
+```
+
+## Generate links from the CLI
+
+You rarely need to hand-encode these. The CLI builds them for you and prints the URL alone to stdout, so it pipes straight to your clipboard or a message.
+
+**The `link` command** (alias `url`):
+
+```bash
+lorekit link                              # the current repo/branch context
+lorekit link | pbcopy                     # copy it straight to the clipboard
+lorekit link global                       # the Explorer filtered to global scope
+lorekit link repo::acme/widget prefer-guards   # open one memory's detail sheet
+lorekit link global --tags "perf,ci"      # a label-filtered Explorer link
+lorekit url --q "flaky test" --owner personal  # search + ownership filter
+lorekit link global::prefer-guards --json      # { url, surface, base, params }
+```
+
+With no arguments it links to the current directory's most-specific scope — "share what I'm looking at". A single argument is treated as a scope (a valid `repo::…` / `branch::…::…` scope is a scope, not a memory key); a scope **and** a key (or the `scope::key` shorthand) links to that memory's detail sheet. The filter flags mirror the Explorer: `--q`, `--owner`, `--tags`, `--range` (or `--from` / `--to`), `--view`, `--archived`.
+
+**The `--link` flag** short-circuits a read command to the deep link for the view you just ran — same builder, no query:
+
+```bash
+lorekit show global prefer-guard-clauses --link   # link to that memory
+lorekit search "flaky test" --scope global --link # link to that search
+lorekit list --scope global --link                # link to that scope's Explorer
+lorekit tree --scope global --link                # same, from the scope tree
+```
+
+`show` and `search` map exactly; `list` and `tree` map their multi-scope view to the most-specific applicable scope, because the dashboard filters one scope at a time.
+
+## Self-hosting
+
+Deep links default to the hosted dashboard at `https://lorekit.io`. Point them at your own deployment with the `--base` flag or the `LOREKIT_APP_URL` environment variable (the flag wins):
+
+```bash
+lorekit link global --base https://lore.acme.dev
+# → https://lore.acme.dev/lore?scope=%22global%22
+
+export LOREKIT_APP_URL=https://lore.acme.dev
+lorekit link global   # picks up the env var
+```
+
+## Other useful links
+
+These dashboard pages are plain routes — no encoding needed:
+
+| Page | Path |
+| --- | --- |
+| Memory Explorer | `/lore` |
+| Dashboard overview | `/dashboard` |
+| API keys & tokens | `/settings/api-keys` |
+| Audit log | `/settings/audit` |
+| Organization | `/settings/organization` |
+| Integrations | `/settings/integrations` |
+| Documentation | `/docs` |
+| REST API reference | `/api-docs` |
