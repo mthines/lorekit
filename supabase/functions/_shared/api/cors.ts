@@ -1,6 +1,29 @@
 const RAW = Deno.env.get('ALLOWED_ORIGINS') ?? '';
 const IS_PROD = Deno.env.get('VERCEL_ENV') === 'production';
-const ALLOWED: string[] = RAW ? RAW.split(',').map((o) => o.trim()).filter(Boolean) : IS_PROD ? ['https://lorekit.io'] : ['*'];
+const CONFIGURED: string[] = RAW ? RAW.split(',').map((o) => o.trim()).filter(Boolean) : IS_PROD ? ['https://lorekit.io'] : ['*'];
+
+// Expand every configured origin to BOTH its apex and its `www.` host. The
+// dashboard's canonical Vercel domain is https://www.lorekit.io (the apex
+// https://lorekit.io 308-redirects to it), but the allowlist is commonly set to
+// the apex alone — so a browser preflight from the www host was blocked, with no
+// Access-Control-Allow-Origin on the 204. The PostgREST gateway the dashboard
+// used before the REST-client migration applied permissive CORS, which masked
+// this mismatch until the dashboard started calling the edge functions directly.
+// Accepting the sibling host makes the allowlist robust to which of the two is
+// configured. `*` is passed through unchanged.
+function expandOriginSiblings(origin: string): string[] {
+  if (origin === '*') return ['*'];
+  try {
+    const url = new URL(origin);
+    const apexHost = url.host.startsWith('www.') ? url.host.slice(4) : url.host;
+    return [`${url.protocol}//${apexHost}`, `${url.protocol}//www.${apexHost}`];
+  } catch {
+    // Not a parseable origin (e.g. a bare wildcard variant) — keep it verbatim.
+    return [origin];
+  }
+}
+
+const ALLOWED: string[] = Array.from(new Set(CONFIGURED.flatMap(expandOriginSiblings)));
 
 export function corsHeaders(req: Request): Record<string, string> {
   const origin = req.headers.get('Origin') ?? '';
