@@ -14,7 +14,26 @@ import { parseMigrationList, classifyDrift, annotate } from './check-remote-migr
 // an open PR has pushed 00049–00051 to the shared preview project and `main`
 // (00001–00048, abbreviated here) has nothing pending. This is the exact state
 // that wedged the Deploy workflow.
+// The REAL `supabase migration list --linked` output that wedged the deploy:
+// versions are BACKTICK-wrapped and there are THREE columns (Local | Remote |
+// Time). This is a verbatim capture from the failing run's log — the original
+// fixture used bare digits in two columns, which is why the buggy parser passed
+// its tests yet saw an empty table in production.
 const PREVIEW_AHEAD = `
+Connecting to remote database...
+
+    Local   | Remote  | Time (UTC)
+   ---------|---------|--------------------
+    \`00046\` | \`00046\` | \`00046\`
+    \`00047\` | \`00047\` | \`00047\`
+    \`00048\` | \`00048\` | \`00048\`
+    \` \`     | \`00049\` | \`00049\`
+    \` \`     | \`00050\` | \`00050\`
+    \` \`     | \`00051\` | \`00051\`
+`;
+
+// Older CLI builds printed bare digits in two columns — still supported.
+const PREVIEW_AHEAD_BARE = `
 Connecting to remote database...
 
         Local      | Remote     | Time (UTC)
@@ -27,8 +46,14 @@ Connecting to remote database...
                    | 00051      |
 `;
 
-test('parseMigrationList — reads both columns and ignores chatter, header, separator', () => {
+test('parseMigrationList — reads the real backticked 3-column table, ignores chatter/header/separator/3rd column', () => {
   const { local, remote } = parseMigrationList(PREVIEW_AHEAD);
+  assert.deepEqual(local, ['00046', '00047', '00048']);
+  assert.deepEqual(remote, ['00046', '00047', '00048', '00049', '00050', '00051']);
+});
+
+test('parseMigrationList — still reads the older bare-digit two-column format', () => {
+  const { local, remote } = parseMigrationList(PREVIEW_AHEAD_BARE);
   assert.deepEqual(local, ['00046', '00047', '00048']);
   assert.deepEqual(remote, ['00046', '00047', '00048', '00049', '00050', '00051']);
 });

@@ -46,17 +46,26 @@
 const ANSI = /\u001B\[[0-9;]*m/g;
 
 /**
- * Parse the two-column version table `supabase migration list` prints:
+ * Parse the version table `supabase migration list --linked` prints. The CLI
+ * wraps each version in BACKTICKS and prints THREE columns (Local | Remote |
+ * Time), e.g.
  *
- *         Local      | Remote     | Time (UTC)
- *     ---------------|------------|---------------------
- *      00048         | 00048      |
- *                    | 00049      |
+ *      Local   | Remote  | Time (UTC)
+ *      --------|---------|--------------------
+ *      `00048` | `00048` | `00048`
+ *      ` `     | `00049` | `00049`
  *
- * Only cells that are entirely digits count as versions, so the header row, the
- * dashed separator, and the CLI's chatter ("Connecting to remote database...")
- * are all ignored without needing to be recognised. Returns
- * `{ local: string[], remote: string[] }` preserving on-screen order.
+ * (older CLI builds printed bare digits in two columns — both are handled). Each
+ * cell is stripped of backticks and whitespace, then only cells that are
+ * ENTIRELY digits count as versions, so the header row, the separator, the third
+ * column, and the CLI's chatter ("Connecting to remote database...") are all
+ * ignored without needing to be recognised. Only cells[0] (Local) and cells[1]
+ * (Remote) are read. Returns `{ local: string[], remote: string[] }` preserving
+ * on-screen order.
+ *
+ * NOTE: this backtick handling is why the deploy that first shipped the
+ * classifier still failed — the real listing is backticked, the original parser
+ * matched only bare digits, so it saw an EMPTY table and mis-chose `push`.
  */
 export function parseMigrationList(stdout) {
   const local = [];
@@ -64,7 +73,7 @@ export function parseMigrationList(stdout) {
   for (const rawLine of String(stdout ?? '').split('\n')) {
     const line = rawLine.replace(ANSI, '');
     if (!line.includes('|')) continue;
-    const cells = line.split('|').map((c) => c.trim());
+    const cells = line.split('|').map((c) => c.replace(/`/g, '').trim());
     if (/^\d+$/.test(cells[0])) local.push(cells[0]);
     if (cells.length > 1 && /^\d+$/.test(cells[1])) remote.push(cells[1]);
   }
