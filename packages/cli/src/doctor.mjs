@@ -268,11 +268,11 @@ async function checkRemote(control, root, args, record) {
     if (res.networkError) {
       record('fail', 'connectivity', res.networkError);
     } else if (res.ok) {
-      const tools = res.result && Array.isArray(res.result.tools) ? res.result.tools.length : null;
-      // Say what the probe actually proved. `/health` is public, so "reachable"
-      // is a statement about the network path only — the token is judged by the
-      // `authentication` check below.
-      record('pass', 'connectivity', tools !== null ? `reachable, ${tools} tools` : 'reachable (public health probe — token not checked)');
+      // Say what the probe actually proved. `ping()` hits the PUBLIC `/health`
+      // function and returns only `{ ok, httpStatus }` — never a tool list — so
+      // "reachable" is a statement about the network path alone. The token itself
+      // is judged by the `authentication` check below.
+      record('pass', 'connectivity', 'reachable (public health probe — token not checked)');
     } else if (res.error && AUTH_CODES.has(res.error.code)) {
       record('fail', 'connectivity', `auth rejected (${res.error.code}) — check your token`);
     } else if (res.error) {
