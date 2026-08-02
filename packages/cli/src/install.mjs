@@ -109,9 +109,21 @@ export function defaultHookMode({ freshInstall, wiredEvents }) {
 // explicit selector; `--no-hooks` is the pre-existing boolean and keeps its
 // documented SKIP semantics — it never removes hooks that are already wired,
 // which is why it maps to `none` here but is tracked separately below.
+//
+// A VALUELESS `--hooks` is a usage error, not an absent flag. `hooks` is not in
+// `parseArgs`' `booleans` list, so `--hooks --yes` and a trailing `--hooks`
+// both yield `true` and `--hooks=` yields `''`. Returning null for those would
+// resolve to the DETECTED mode — the exact silent fallback the validation below
+// exists to prevent — so they are surfaced as the sentinel `INVALID_HOOK_MODE`
+// and rejected alongside `--hooks bogus`. Mirrors `write.mjs`'s bare
+// `--ttl-days`, which feeds NaN to its validator for the same reason: an
+// explicitly supplied flag is a caller assertion, so a malformed one must fail.
+export const INVALID_HOOK_MODE = '(missing value)';
+
 function requestedHookMode(args) {
   const raw = args.hooks;
   if (typeof raw === 'string' && raw.trim()) return raw.trim().toLowerCase();
+  if (raw !== undefined && raw !== false) return INVALID_HOOK_MODE;
   if (args['no-hooks']) return 'none';
   return null;
 }
@@ -124,6 +136,10 @@ export async function install(args) {
   // Validate `--hooks` before touching anything on disk: a mistyped mode must
   // fail loudly, never silently fall back to a different wiring than asked for.
   const requestedMode = requestedHookMode(args);
+  if (requestedMode === INVALID_HOOK_MODE) {
+    err(`\n  --hooks needs a mode. Valid modes: ${HOOK_MODES.join(' | ')}.`);
+    return 1;
+  }
   if (requestedMode !== null && !HOOK_MODES.includes(requestedMode)) {
     err(`\n  Unknown --hooks mode "${requestedMode}". Valid modes: ${HOOK_MODES.join(' | ')}.`);
     return 1;

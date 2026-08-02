@@ -290,6 +290,21 @@ test('install --hooks with an invalid mode exits non-zero and names the valid mo
   assert.ok(!fs.existsSync(path.join(root, '.mcp.json')), 'no partial install on a bad flag');
 });
 
+test('install --hooks with no value exits non-zero instead of falling back to the detected mode', async () => {
+  // `hooks` is not a boolean flag in the parser, so `--hooks --yes` and a
+  // trailing `--hooks` both arrive here as `true`, and `--hooks=` as ''. Each is
+  // a usage error: silently resolving to the detected mode is exactly the
+  // "different wiring than asked for" the validation exists to prevent.
+  for (const value of [true, '', '   ']) {
+    const root = tmp('lk-hooks-novalue-');
+    const result = await install({
+      dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true, hooks: value,
+    });
+    assert.equal(exitOf(result), 1, `--hooks ${JSON.stringify(value)} must exit 1`);
+    assert.ok(!fs.existsSync(path.join(root, '.mcp.json')), 'no partial install on a valueless flag');
+  }
+});
+
 test('install reports the resolved hooks_mode as a bounded telemetry attribute', async () => {
   const root = tmp('lk-hooks-attr-');
   const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
