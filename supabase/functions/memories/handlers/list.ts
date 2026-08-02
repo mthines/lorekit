@@ -28,10 +28,14 @@ type MemoryRow = Tables<'memories'>;
  * value with the same `quoteFilterValue` the `q` substring filter and the
  * `POST /memories/search` filter tree already use, and `.or()` appends the
  * expression verbatim through `URLSearchParams`. These columns are free text
- * written by agents, so a value containing a comma or a parenthesis is
- * reachable, and postgrest-js's own `.in()` quoting does not escape an embedded
- * double quote. Repeated `or=` params are ANDed by PostgREST, so each call is
- * its own conjunct — which is exactly the "AND across dimensions" rule.
+ * written by agents, so a value containing a `.`, a `()` or a double quote is
+ * reachable — each would otherwise terminate the `in.()` operand or break the
+ * quoting — and postgrest-js's own `.in()` quoting does not escape an embedded
+ * double quote. A COMMA is the one reserved character that cannot arrive here:
+ * every caller below splits the param with `parseTagsParam` first, so a
+ * comma-bearing value is delivered as two values, never one. Repeated `or=`
+ * params are ANDed by PostgREST, so each call is its own conjunct — which is
+ * exactly the "AND across dimensions" rule.
  */
 function applyScalarFilter(
   q: TracedQuery<MemoryRow>,

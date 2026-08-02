@@ -136,8 +136,12 @@ its own `<column>_mode` of `in` (default) or `nin`.
 - **One encoding, shared with `?q=`.** Both directions go through `.or()` with a single
   clause whose operand is built by `inListLiteral`, which quotes each value with the same
   `quoteFilterValue` the substring filter and the `filter` tree use. These columns are free
-  text written by agents, so a value containing a comma or a parenthesis is reachable, and
-  postgrest-js's own `.in()` quoting does not escape an embedded double quote.
+  text written by agents, so a value containing a `.`, a `()` or a double quote is reachable —
+  each of which would otherwise terminate the `in.()` operand or break the quoting, and
+  postgrest-js's own `.in()` quoting does not escape an embedded double quote. A COMMA is the
+  one reserved character these params cannot carry: `parseTagsParam` splits on it first, so a
+  comma-bearing value arrives as two values. `POST /search`'s `filter` tree is the way to
+  express one.
 - `origin_pr` is an `integer` column, so its values are filtered to digits (a non-numeric
   entry is DROPPED, not 400'd — the list arrives from a hand-editable URL and one bad entry
   should narrow the filter, not break the page) and emitted unquoted.

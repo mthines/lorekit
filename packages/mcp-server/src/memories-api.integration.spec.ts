@@ -692,7 +692,11 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
     const AGENT_A = `${KEY_PREFIX}-agent-a`;
     const AGENT_B = `${KEY_PREFIX}-agent-b`;
     const TRIGGER = `${KEY_PREFIX}-trigger`;
-    const BRANCH_RESERVED = `${KEY_PREFIX}/br,anch(1)`;
+    // A `.` and a `()` — the PostgREST-reserved characters that are actually
+    // REACHABLE over `?origin_branch=`. A comma is not: the param is split on
+    // commas by `parseTagsParam` before it ever reaches the quoting, so a
+    // comma-bearing value arrives as two values and matches nothing.
+    const BRANCH_RESERVED = `${KEY_PREFIX}/br.anch(1)`;
     const KEY_A = NS.name('dim-a');
     const KEY_B = NS.name('dim-b');
     const KEY_RESERVED_BRANCH = NS.name('dim-reserved-branch');
@@ -756,9 +760,11 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
     });
 
     it('?origin_branch= matches a branch containing PostgREST-reserved characters', async () => {
-      // `origin_branch` is free text and deliberately NOT lowercased, so a
-      // comma / parenthesis is reachable. Unquoted, the `in.()` operand splits
-      // and the row stops matching its own filter.
+      // `origin_branch` is free text and deliberately NOT lowercased, so a `.`
+      // or a `()` is reachable. Unquoted, the `in.()` operand terminates early
+      // and the row stops matching its own filter. A comma is NOT reachable
+      // here — `parseTagsParam` splits the param on it first — so it is the
+      // `q` filter, not this one, that has to carry a literal comma.
       const keys = await listWith(`origin_branch=${encodeURIComponent(BRANCH_RESERVED)}`);
       expect(keys, `expected ${KEY_RESERVED_BRANCH} for branch ${BRANCH_RESERVED}`).toContain(
         KEY_RESERVED_BRANCH,
