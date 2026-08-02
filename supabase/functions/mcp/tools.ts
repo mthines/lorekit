@@ -468,10 +468,12 @@ export async function toolArchive(
   userId: string | null,
   span: Span,
   /**
-   * OAuth-issued tokens carry the org allow-list the user approved on the
-   * consent screen (api_tokens.org_ids). `null` = unrestricted, the behaviour
-   * of every personal dashboard token. Narrowing only — see
-   * intersectTokenOrgIds in tenant-scope.ts.
+   * Accepted for signature parity only — every tool is dispatched through the
+   * one uniform call in mcp-handler.ts, so the parameter is present across the
+   * whole family. This handler does NOT consult it: the query is scoped by
+   * `user_id` alone, which is already narrower than any org allow-list, so
+   * nothing here can widen access. Contrast the read handlers, which do pass it
+   * to intersectTokenOrgIds in tenant-scope.ts.
    */
   tokenOrgIds: string[] | null = null,
 ) {
@@ -546,10 +548,12 @@ export async function toolRestore(
   userId: string | null,
   span: Span,
   /**
-   * OAuth-issued tokens carry the org allow-list the user approved on the
-   * consent screen (api_tokens.org_ids). `null` = unrestricted, the behaviour
-   * of every personal dashboard token. Narrowing only — see
-   * intersectTokenOrgIds in tenant-scope.ts.
+   * Accepted for signature parity only — every tool is dispatched through the
+   * one uniform call in mcp-handler.ts, so the parameter is present across the
+   * whole family. This handler does NOT consult it: the query is scoped by
+   * `user_id` alone, which is already narrower than any org allow-list, so
+   * nothing here can widen access. Contrast the read handlers, which do pass it
+   * to intersectTokenOrgIds in tenant-scope.ts.
    */
   tokenOrgIds: string[] | null = null,
 ) {
@@ -591,10 +595,12 @@ export async function toolPurge(
   userId: string | null,
   span: Span,
   /**
-   * OAuth-issued tokens carry the org allow-list the user approved on the
-   * consent screen (api_tokens.org_ids). `null` = unrestricted, the behaviour
-   * of every personal dashboard token. Narrowing only — see
-   * intersectTokenOrgIds in tenant-scope.ts.
+   * Accepted for signature parity only — every tool is dispatched through the
+   * one uniform call in mcp-handler.ts, so the parameter is present across the
+   * whole family. This handler does NOT consult it: the query is scoped by
+   * `user_id` alone, which is already narrower than any org allow-list, so
+   * nothing here can widen access. Contrast the read handlers, which do pass it
+   * to intersectTokenOrgIds in tenant-scope.ts.
    */
   tokenOrgIds: string[] | null = null,
 ) {
@@ -794,10 +800,12 @@ export async function toolPurgeExpired(
   userId: string | null,
   span: Span,
   /**
-   * OAuth-issued tokens carry the org allow-list the user approved on the
-   * consent screen (api_tokens.org_ids). `null` = unrestricted, the behaviour
-   * of every personal dashboard token. Narrowing only — see
-   * intersectTokenOrgIds in tenant-scope.ts.
+   * Accepted for signature parity only — every tool is dispatched through the
+   * one uniform call in mcp-handler.ts, so the parameter is present across the
+   * whole family. This handler does NOT consult it: the query is scoped by
+   * `user_id` alone, which is already narrower than any org allow-list, so
+   * nothing here can widen access. Contrast the read handlers, which do pass it
+   * to intersectTokenOrgIds in tenant-scope.ts.
    */
   tokenOrgIds: string[] | null = null,
 ) {
