@@ -3626,6 +3626,144 @@ begin
 end;
 $$;
 
+-- ── 69. lorekit_memory_facets — the multi-dimension value catalog (00052) ───
+-- AC-1: every dimension is enumerated with its per-value count, including the
+--       text[] `tags` unnest and the integer `origin_pr` cast to text.
+-- AC-2: NULL and blank column values yield no row at all — an option that
+--       matches by absence needs an operator the list route does not have.
+-- AC-3: the archived / expired partition rule is lorekit_memory_tags' verbatim.
+-- AC-4: another user's values are never counted.
+-- AC-5: an org co-member sees values on org-owned rows.
+-- AC-6: ordering is facet asc, count desc, value asc.
+-- AC-7: the `tag` rows agree exactly with lorekit_memory_tags — the two
+--       endpoints overlap deliberately, so the agreement is executed, not
+--       asserted in a comment.
+insert into memories (user_id, scope, key, value, tags, source_agent, trigger, origin_repo, origin_branch, origin_pr) values
+  ('00000000-0000-0000-0000-0000000000a1', 'project::facet-a', 'facet-1', 'v', array['perf'], 'aw',     'stuck-loop', 'mthines/lorekit', 'main', 311),
+  ('00000000-0000-0000-0000-0000000000a1', 'project::facet-a', 'facet-2', 'v', array['perf'], 'aw',     'stuck-loop', 'mthines/lorekit', 'feat/x', 311),
+  -- Every provenance column NULL, and a deliberately blank agent: neither may
+  -- produce a facet row.
+  ('00000000-0000-0000-0000-0000000000a1', 'project::facet-a', 'facet-3', 'v', array['perf'], '   ',    null,         null,              null,    null);
+insert into memories (user_id, scope, key, value, source_agent, archived_at) values
+  ('00000000-0000-0000-0000-0000000000a1', 'project::facet-a', 'facet-archived', 'v', 'retired-agent', now());
+insert into memories (user_id, scope, key, value, source_agent) values
+  ('00000000-0000-0000-0000-0000000000b2', 'project::facet-b', 'facet-b-1', 'v', 'bee-agent');
+
+do $$
+declare
+  v_count    bigint;
+  v_rows     int;
+  v_pairs    text[];
+  v_sorted   text[];
+  v_facet_ct bigint;
+  v_tag_ct   bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- AC-1: one row per (dimension, value), counted over the visible active set.
+  select count into v_count
+    from lorekit_memory_facets('00000000-0000-0000-0000-0000000000a1', false)
+   where facet = 'source_agent' and value = 'aw';
+  assert v_count = 2, format('memory facets AC-1: source_agent aw must count 2, got %s', v_count);
+
+  select count into v_count
+    from lorekit_memory_facets('00000000-0000-0000-0000-0000000000a1', false)
+   where facet = 'origin_branch' and value = 'main';
+  assert v_count = 1, format('memory facets AC-1b: origin_branch main must count 1, got %s', v_count);
+
+  -- The integer column is rendered as text ONCE, here, so no consumer has to.
+  select count into v_count
+    from lorekit_memory_facets('00000000-0000-0000-0000-0000000000a1', false)
+   where facet = 'origin_pr' and value = '311';
+  assert v_count = 2, format('memory facets AC-1c: origin_pr 311 must count 2 as TEXT, got %s', v_count);
+
+  -- AC-2: the all-NULL row contributes no provenance value, and the blank
+  -- agent contributes no agent value.
+  select count(*) into v_rows
+    from lorekit_memory_facets('00000000-0000-0000-0000-0000000000a1', false)
+   where value is null or btrim(value) = '';
+  assert v_rows = 0, 'memory facets AC-2: a null or blank column value must yield no facet row';
+
+  -- AC-3: the archived row's agent is absent from the active partition and
+  -- present in the archived one.
+  select count(*) into v_rows
+    from lorekit_memory_facets('00000000-0000-0000-0000-0000000000a1', false)
+   where facet = 'source_agent' and value = 'retired-agent';
+  assert v_rows = 0, 'memory facets AC-3: an archived row must not contribute to the active catalog';
+  select count into v_count
+    from lorekit_memory_facets('00000000-0000-0000-0000-0000000000a1', true)
+   where facet = 'source_agent' and value = 'retired-agent';
+  assert v_count = 1, format('memory facets AC-3b: the archived partition must hold it, got %s', v_count);
+
+  -- AC-4: B's values are invisible to A.
+  select count(*) into v_rows
+    from lorekit_memory_facets('00000000-0000-0000-0000-0000000000a1', false)
+   where value = 'bee-agent';
+  assert v_rows = 0, 'memory facets AC-4: a caller must never see another user''s values';
+
+  -- AC-5: an org-owned row (user_id IS NULL) reaches every co-member, so only
+  -- the lorekit_member_org_ids branch of the predicate can admit it.
+  insert into memories (user_id, org_id, scope, key, value, source_agent) values
+    (null, '00000000-0000-0000-0000-0000000000fa', 'repo::acme/facets-org', 'facet-org-1', 'v', 'org-agent');
+  select count into v_count
+    from lorekit_memory_facets('00000000-0000-0000-0000-0000000000b2', false)
+   where facet = 'source_agent' and value = 'org-agent';
+  assert v_count = 1, format('memory facets AC-5: an org co-member must see the org row''s value, got %s', v_count);
+
+  -- AC-6: facet asc, count desc, value asc — a picker that reshuffles for equal
+  -- counts moves options out from under the cursor.
+  select array_agg(facet || '/' || value) into v_pairs
+    from lorekit_memory_facets('00000000-0000-0000-0000-0000000000a1', false);
+  select array_agg(f.facet || '/' || f.value order by f.facet asc, f.count desc, f.value asc) into v_sorted
+    from lorekit_memory_facets('00000000-0000-0000-0000-0000000000a1', false) f;
+  assert v_pairs = v_sorted,
+    format('memory facets AC-6: results must be ordered facet asc, count desc, value asc, got %s', v_pairs);
+
+  -- AC-7: the tag rows are lorekit_memory_tags' rows. GET /memories/tags and
+  -- GET /memories/facets both answer "what labels exist"; if these two ever
+  -- disagree, one of the two endpoints is lying to its callers.
+  -- A symmetric EXCEPT rather than an outer join: a join predicate would need
+  -- its own NULL handling, and "the two sets differ" is exactly what EXCEPT
+  -- answers, in both directions.
+  select count(*) into v_rows from (
+    (select f.value, f.count
+       from lorekit_memory_facets('00000000-0000-0000-0000-0000000000a1', false) f
+      where f.facet = 'tag'
+     except
+     select t.tag, t.count
+       from lorekit_memory_tags('00000000-0000-0000-0000-0000000000a1', false) t)
+    union all
+    (select t.tag, t.count
+       from lorekit_memory_tags('00000000-0000-0000-0000-0000000000a1', false) t
+     except
+     select f.value, f.count
+       from lorekit_memory_facets('00000000-0000-0000-0000-0000000000a1', false) f
+      where f.facet = 'tag')
+  ) d;
+  assert v_rows = 0, 'memory facets AC-7: the tag facet must equal the lorekit_memory_tags catalog';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 70. lorekit_memory_facets grant surface — PII-adjacent, so no anon ──────
+-- Branch names, repo names and agent names are at least as sensitive as the
+-- scope names 00039 withholds, so the grant set is that function's verbatim.
+do $$
+declare
+  v_sig text := 'lorekit_memory_facets(uuid, boolean)';
+begin
+  assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
+    'memory facets: anon must NOT have EXECUTE';
+  assert has_function_privilege('authenticated', v_sig, 'EXECUTE'),
+    'memory facets: authenticated must have EXECUTE';
+  assert has_function_privilege('service_role', v_sig, 'EXECUTE'),
+    'memory facets: service_role must have EXECUTE';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

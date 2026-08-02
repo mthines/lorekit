@@ -662,6 +662,14 @@ export type Database = {
           scope: string
         }[]
       }
+      lorekit_memory_facets: {
+        Args: { p_archived?: boolean; p_user_id: string }
+        Returns: {
+          count: number
+          facet: string
+          value: string
+        }[]
+      }
       lorekit_memory_scopes: {
         Args: { p_user_id: string }
         Returns: {

@@ -59,7 +59,7 @@ const SAMPLE_LABELS = [
   { tag: 'infra', count: 5 },
 ];
 
-/** A label-picker body, mirroring how LabelFilter fills the sheet. */
+/** A label-picker body, mirroring how `FilterMenu` fills the sheet. */
 function LabelBody({ selected = ['auth'] }: { selected?: string[] }) {
   return (
     <>

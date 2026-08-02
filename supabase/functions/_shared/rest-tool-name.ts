@@ -51,6 +51,7 @@ export const REST_TOOL_NAMES: Readonly<Record<string, string>> = {
   'memories GET /scopes': 'memory.scopes',
   'memories GET /usage': 'memory.usage',
   'memories GET /tags': 'memory.tags',
+  'memories GET /facets': 'memory.facets',
   'memories GET /activity': 'memory.activity',
   'memories GET /:id': 'memory.read',
   'memories PATCH /:id': 'memory.write',

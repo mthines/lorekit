@@ -79,6 +79,7 @@ function row(
   hAgo: number,
   source_agent: string | null,
   origin: OriginFixture = {},
+  trigger: string | null = null,
 ): MemoryRow {
   const created = hoursAgo(hAgo);
   return {
@@ -92,7 +93,7 @@ function row(
     archived_at: null,
     expires_at: null,
     source_agent,
-    trigger: null,
+    trigger,
     org_id: null,
     created_by: null,
     updated_by: null,
@@ -110,18 +111,18 @@ function row(
  * lesson list all read as a lived-in workspace.
  */
 export const MEMORY_ROWS: MemoryRow[] = [
-  row('m01', 'global', 'aw-lessons::worktree-isolation', 'Always branch a worktree from the stacked PR head, never from main, or the diff double-counts the parent branch.', ['loop::aw-lessons', 'source::stuck-loop'], 3, 'aw', { origin_repo: 'mthines/lorekit', origin_branch: 'feat/Origin-Provenance', origin_commit: 'a1b2c3d4e5f60718', origin_pr: 482 }),
-  row('m02', 'global', 'aw-lessons::npx-over-pnpm-exec', 'Run browser-mode Vitest via npx — pnpm exec keeps the Playwright child stdio open and the run never returns.', ['loop::aw-lessons'], 30, 'aw'),
-  row('m03', 'repo::mthines/lorekit', 'edge-parity::mirror-pattern', 'Pure logic that both mcp-core and the Deno edge need lives once in mcp-core and is mirrored self-contained; a spec guards drift.', ['architecture'], 26, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'main' }),
+  row('m01', 'global', 'aw-lessons::worktree-isolation', 'Always branch a worktree from the stacked PR head, never from main, or the diff double-counts the parent branch.', ['loop::aw-lessons', 'source::stuck-loop'], 3, 'aw', { origin_repo: 'mthines/lorekit', origin_branch: 'feat/Origin-Provenance', origin_commit: 'a1b2c3d4e5f60718', origin_pr: 482 }, 'stuck-loop'),
+  row('m02', 'global', 'aw-lessons::npx-over-pnpm-exec', 'Run browser-mode Vitest via npx — pnpm exec keeps the Playwright child stdio open and the run never returns.', ['loop::aw-lessons'], 30, 'aw', {}, 'tool-failure'),
+  row('m03', 'repo::mthines/lorekit', 'edge-parity::mirror-pattern', 'Pure logic that both mcp-core and the Deno edge need lives once in mcp-core and is mirrored self-contained; a spec guards drift.', ['architecture'], 26, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'main' }, 'retrospective'),
   row('m04', 'repo::mthines/lorekit', 'scope-format::double-colon', 'The canonical scope separator is :: — a single colon is a 400. All segments lowercased.', ['scope', 'validation'], 50, 'claude'),
-  row('m05', 'repo::mthines/lorekit', 'audit::one-vocabulary', 'AUDIT_ACTIONS is the single list; the SQL CHECK, the web copy, and the edge mirror are all asserted equal by a drift spec.', ['audit'], 74, 'claude'),
-  row('m06', 'repo::mthines/lorekit', 'rls::service-role-user-filter', 'api_key auth uses the service-role client — every query MUST .eq(user_id, userId) or it leaks across tenants.', ['security', 'rls'], 98, 'claude'),
-  row('m07', 'branch::mthines/lorekit::feat/storybook', 'msw::wildcard-origin', 'Match the edge function with a */functions/v1 wildcard so the handler survives an unset NEXT_PUBLIC_SUPABASE_URL.', ['storybook', 'msw'], 5 * 24, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'feat/storybook', origin_pr: 311 }),
-  row('m08', 'branch::mthines/lorekit::feat/storybook', 'snapshot::freeze-the-clock', 'Freeze Date before rendering any time-relative UI, or "3d ago" and trend chips flake the baseline overnight.', ['storybook', 'flake'], 5 * 24 + 6, 'claude'),
-  row('m09', 'project::agent-skills', 'routing::tier-detection', 'When in doubt, route Full — an over-planned Micro wastes compute, but an under-planned architectural task ships wrong code.', ['aw', 'routing'], 10 * 24, 'aw'),
-  row('m10', 'project::agent-skills', 'confidence::plan-gate', 'A failed deterministic rule caps the confidence gate at 89% regardless of the LLM score.', ['aw', 'confidence'], 12 * 24, 'aw'),
+  row('m05', 'repo::mthines/lorekit', 'audit::one-vocabulary', 'AUDIT_ACTIONS is the single list; the SQL CHECK, the web copy, and the edge mirror are all asserted equal by a drift spec.', ['audit'], 74, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'main', origin_pr: 311 }, 'review-comment'),
+  row('m06', 'repo::mthines/lorekit', 'rls::service-role-user-filter', 'api_key auth uses the service-role client — every query MUST .eq(user_id, userId) or it leaks across tenants.', ['security', 'rls'], 98, 'claude', {}, 'review-comment'),
+  row('m07', 'branch::mthines/lorekit::feat/storybook', 'msw::wildcard-origin', 'Match the edge function with a */functions/v1 wildcard so the handler survives an unset NEXT_PUBLIC_SUPABASE_URL.', ['storybook', 'msw'], 5 * 24, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'feat/storybook', origin_pr: 311 }, 'tool-failure'),
+  row('m08', 'branch::mthines/lorekit::feat/storybook', 'snapshot::freeze-the-clock', 'Freeze Date before rendering any time-relative UI, or "3d ago" and trend chips flake the baseline overnight.', ['storybook', 'flake'], 5 * 24 + 6, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'feat/storybook' }, 'tool-failure'),
+  row('m09', 'project::agent-skills', 'routing::tier-detection', 'When in doubt, route Full — an over-planned Micro wastes compute, but an under-planned architectural task ships wrong code.', ['aw', 'routing'], 10 * 24, 'aw', { origin_repo: 'mthines/agent-skills', origin_branch: 'main' }, 'retrospective'),
+  row('m10', 'project::agent-skills', 'confidence::plan-gate', 'A failed deterministic rule caps the confidence gate at 89% regardless of the LLM score.', ['aw', 'confidence'], 12 * 24, 'aw', { origin_repo: 'mthines/agent-skills', origin_branch: 'main' }, 'retrospective'),
   row('m11', 'repo::mthines/lorekit', 'otel::one-service-name', 'All five edge functions are one service "api"; tell them apart with faas.name, never a per-function SERVICE_NAME secret.', ['otel'], 15 * 24, 'claude'),
-  row('m12', 'global', 'aw-lessons::no-ai-coauthor', 'Never add Co-Authored-By AI tags to commits or PRs in this workflow.', ['loop::aw-lessons'], 20 * 24, 'aw'),
+  row('m12', 'global', 'aw-lessons::no-ai-coauthor', 'Never add Co-Authored-By AI tags to commits or PRs in this workflow.', ['loop::aw-lessons'], 20 * 24, 'aw', {}, 'retrospective'),
 ];
 
 /**
@@ -170,6 +171,43 @@ function tagsFrom(rows: MemoryRow[], archived: boolean) {
     .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
 }
 
+/**
+ * `GET /memories/facets` — one row per `(dimension, value)`, count desc then
+ * value asc, exactly as `lorekit_memory_facets` orders it.
+ *
+ * Derived from the same `MEMORY_ROWS` as every other handler, so a fixture
+ * added above appears in the filter menu without a second place to update.
+ */
+function facetsFrom(rows: MemoryRow[], archived: boolean) {
+  const counts = new Map<string, number>();
+  const bump = (facet: string, value: string | number | null) => {
+    if (value === null || value === undefined) return;
+    const v = String(value).trim();
+    if (!v) return;
+    const cellKey = `${facet}\u0000${v}`;
+    counts.set(cellKey, (counts.get(cellKey) ?? 0) + 1);
+  };
+
+  for (const r of activeRows(rows, archived)) {
+    for (const tag of r.tags) bump('tag', tag);
+    bump('source_agent', r.source_agent);
+    bump('trigger', r.trigger);
+    bump('origin_repo', r.origin_repo);
+    bump('origin_branch', r.origin_branch);
+    bump('origin_pr', r.origin_pr);
+  }
+
+  return Array.from(counts.entries())
+    .map(([cellKey, count]) => {
+      const [facet, value] = cellKey.split('\u0000') as [string, string];
+      return { facet, value, count };
+    })
+    .sort(
+      (a, b) =>
+        a.facet.localeCompare(b.facet) || b.count - a.count || a.value.localeCompare(b.value),
+    );
+}
+
 /** `GET /memories/activity` — `(bucket, scope)` cells, UTC-anchored. */
 function activityFrom(rows: MemoryRow[], unit: 'hour' | 'day') {
   const cells = new Map<string, { bucket: string; scope: string; count: number }>();
@@ -211,6 +249,18 @@ function listFrom(rows: MemoryRow[], url: URL) {
   const tagsMode = url.searchParams.get('tags_mode') ?? 'any';
   const limit = Number(url.searchParams.get('limit') ?? 50);
 
+  /** One scalar dimension: `in` (default) or `nin`, both over the raw column. */
+  const scalar = (param: string, read: (r: MemoryRow) => string | number | null) => {
+    const values = url.searchParams.get(param)?.split(',').filter(Boolean) ?? [];
+    if (values.length === 0) return () => true;
+    const nin = url.searchParams.get(`${param}_mode`) === 'nin';
+    return (r: MemoryRow) => {
+      const raw = read(r);
+      const hit = raw !== null && raw !== undefined && values.includes(String(raw));
+      return nin ? !hit : hit;
+    };
+  };
+
   const matched = activeRows(rows, url.searchParams.get('archived') === 'true')
     .filter((r) => (scope ? r.scope === scope : true))
     .filter((r) => (key ? r.key === key : true))
@@ -219,7 +269,14 @@ function listFrom(rows: MemoryRow[], url: URL) {
       ? true
       : tagsMode === 'all'
         ? tags.every((t) => r.tags.includes(t))
-        : tags.some((t) => r.tags.includes(t))))
+        : tagsMode === 'none'
+          ? !tags.some((t) => r.tags.includes(t))
+          : tags.some((t) => r.tags.includes(t))))
+    .filter(scalar('source_agent', (r) => r.source_agent))
+    .filter(scalar('trigger', (r) => r.trigger))
+    .filter(scalar('origin_repo', (r) => r.origin_repo))
+    .filter(scalar('origin_branch', (r) => r.origin_branch))
+    .filter(scalar('origin_pr', (r) => r.origin_pr))
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
 
   // No cursor emulation: every story fits in one page, and a fake cursor would
@@ -242,6 +299,14 @@ export function memoryHandlers(rows: MemoryRow[] = MEMORY_ROWS) {
       HttpResponse.json({
         tags: tagsFrom(rows, new URL(request.url).searchParams.get('archived') === 'true'),
       })),
+    http.get('*/functions/v1/memories/facets', ({ request }) => {
+      const url = new URL(request.url);
+      const only = url.searchParams.get('facets')?.split(',').filter(Boolean) ?? [];
+      const all = facetsFrom(rows, url.searchParams.get('archived') === 'true');
+      return HttpResponse.json({
+        facets: only.length ? all.filter((f) => only.includes(f.facet)) : all,
+      });
+    }),
     http.get('*/functions/v1/memories/activity', ({ request }) => {
       const url = new URL(request.url);
       const bucket = url.searchParams.get('bucket') === 'hour' ? 'hour' : 'day';

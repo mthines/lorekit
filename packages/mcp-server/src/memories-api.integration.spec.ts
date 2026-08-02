@@ -672,6 +672,140 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
       );
       expect(keys).toEqual([KEY_TAGGED_ONE]);
     });
+
+    it('?tags_mode=none excludes every named label (the negation of `any`)', async () => {
+      const keys = await listWith(
+        `tags=${encodeURIComponent(LABEL_X)}&tags_mode=none&q=${encodeURIComponent(KEY_PREFIX)}`,
+      );
+      expect(keys, 'a row carrying the label must be excluded').not.toContain(KEY_TAGGED_BOTH);
+      expect(keys).not.toContain(KEY_TAGGED_ONE);
+      expect(keys, 'a row carrying no label at all must survive').toContain(KEY_PERCENT);
+    });
+  });
+
+  // ── Dimension filters + the facet catalog ────────────────────────────────────
+  // The Explorer's filter bar and the CLI both address these; the Storybook MSW
+  // handler REIMPLEMENTS them, so a green story says nothing about the handler.
+  // This is the only place the real `in` / `not.in` composition, the value
+  // quoting, and the AND-across-dimensions rule are executed.
+  describe('dimension filters and /facets', () => {
+    const AGENT_A = `${KEY_PREFIX}-agent-a`;
+    const AGENT_B = `${KEY_PREFIX}-agent-b`;
+    const TRIGGER = `${KEY_PREFIX}-trigger`;
+    const BRANCH_RESERVED = `${KEY_PREFIX}/br,anch(1)`;
+    const KEY_A = NS.name('dim-a');
+    const KEY_B = NS.name('dim-b');
+    const KEY_RESERVED_BRANCH = NS.name('dim-reserved-branch');
+
+    async function createWith(key: string, body: JsonObj): Promise<void> {
+      const { status, data } = await api('POST', '/', { scope: SCOPE, key, value: 'v', ...body });
+      expect(status, `create ${key}: expected 201; got ${status}: ${JSON.stringify(data)}`).toBe(201);
+    }
+
+    async function listWith(query: string): Promise<string[]> {
+      const { status, data } = await api('GET', `/?scope=${SCOPE}&limit=100&${query}`);
+      expect(status, `GET /?${query} → ${status}: ${JSON.stringify(data)}`).toBe(200);
+      return ((data as JsonObj).entries as JsonObj[]).map((e) => String(e.key));
+    }
+
+    beforeAll(async () => {
+      if (SKIP) return;
+      await createWith(KEY_A, {
+        source_agent: AGENT_A,
+        trigger: TRIGGER,
+        origin_repo: 'mthines/lorekit',
+        origin_branch: 'main',
+        origin_pr: 311,
+      });
+      await createWith(KEY_B, { source_agent: AGENT_B, trigger: TRIGGER });
+      await createWith(KEY_RESERVED_BRANCH, {
+        source_agent: AGENT_A,
+        origin_repo: 'mthines/lorekit',
+        origin_branch: BRANCH_RESERVED,
+      });
+    }, REMOTE_TEST_TIMEOUT);
+
+    it('?source_agent= matches one value', async () => {
+      const keys = await listWith(`source_agent=${encodeURIComponent(AGENT_B)}`);
+      expect(keys).toEqual([KEY_B]);
+    });
+
+    it('?source_agent= with several values is a disjunction', async () => {
+      const keys = await listWith(`source_agent=${encodeURIComponent(`${AGENT_A},${AGENT_B}`)}`);
+      expect(keys).toContain(KEY_A);
+      expect(keys).toContain(KEY_B);
+    });
+
+    it('?source_agent_mode=nin negates the whole set', async () => {
+      const keys = await listWith(
+        `source_agent=${encodeURIComponent(AGENT_A)}&source_agent_mode=nin&trigger=${encodeURIComponent(TRIGGER)}`,
+      );
+      expect(keys, 'the excluded agent must be gone').not.toContain(KEY_A);
+      expect(keys, 'the other agent under the same trigger must survive').toContain(KEY_B);
+    });
+
+    it('two dimensions AND together', async () => {
+      const both = await listWith(
+        `source_agent=${encodeURIComponent(AGENT_A)}&origin_branch=main`,
+      );
+      expect(both).toEqual([KEY_A]);
+      const contradiction = await listWith(
+        `source_agent=${encodeURIComponent(AGENT_B)}&origin_branch=main`,
+      );
+      expect(contradiction, 'AND, not OR — nothing satisfies both').toEqual([]);
+    });
+
+    it('?origin_branch= matches a branch containing PostgREST-reserved characters', async () => {
+      // `origin_branch` is free text and deliberately NOT lowercased, so a
+      // comma / parenthesis is reachable. Unquoted, the `in.()` operand splits
+      // and the row stops matching its own filter.
+      const keys = await listWith(`origin_branch=${encodeURIComponent(BRANCH_RESERVED)}`);
+      expect(keys, `expected ${KEY_RESERVED_BRANCH} for branch ${BRANCH_RESERVED}`).toContain(
+        KEY_RESERVED_BRANCH,
+      );
+      expect(keys).not.toContain(KEY_A);
+    });
+
+    it('?origin_pr= filters the integer column', async () => {
+      const keys = await listWith('origin_pr=311');
+      expect(keys).toContain(KEY_A);
+      expect(keys).not.toContain(KEY_B);
+    });
+
+    it('?origin_pr= with a non-numeric entry narrows rather than 400ing', async () => {
+      const { status } = await api('GET', `/?scope=${SCOPE}&limit=100&origin_pr=${encodeURIComponent('311,oops')}`);
+      expect(status, 'a hand-edited URL must not break the page').toBe(200);
+    });
+
+    it('GET /facets enumerates every dimension with counts', async () => {
+      const { status, data } = await api('GET', '/facets');
+      expect(status, `GET /facets → ${status}: ${JSON.stringify(data)}`).toBe(200);
+      const facets = (data as JsonObj).facets as JsonObj[];
+      expect(Array.isArray(facets)).toBe(true);
+
+      const find = (facet: string, value: string) =>
+        facets.find((f) => f.facet === facet && f.value === value);
+
+      expect(find('source_agent', AGENT_A), JSON.stringify(facets.slice(0, 20))).toBeTruthy();
+      expect(Number(find('source_agent', AGENT_A)?.count)).toBeGreaterThanOrEqual(2);
+      expect(find('trigger', TRIGGER)).toBeTruthy();
+      expect(find('origin_branch', BRANCH_RESERVED), 'a reserved-character value must survive the trip').toBeTruthy();
+      // The integer column arrives as a string, so a client never has to guess.
+      expect(find('origin_pr', '311')?.value).toBe('311');
+    });
+
+    it('GET /facets?facets= narrows to the named dimensions', async () => {
+      const { status, data } = await api('GET', '/facets?facets=trigger');
+      expect(status).toBe(200);
+      const facets = (data as JsonObj).facets as JsonObj[];
+      expect(facets.every((f) => f.facet === 'trigger'), JSON.stringify(facets)).toBe(true);
+    });
+
+    it('GET /facets with an unknown dimension name narrows to nothing, it does not 400', async () => {
+      const { status, data } = await api('GET', '/facets?facets=nope');
+      expect(status, 'the param is re-read on every keystroke in the menu').toBe(200);
+      expect((data as JsonObj).facets).toEqual([]);
+    });
   });
 
   // ── Usage statistics ─────────────────────────────────────────────────────────

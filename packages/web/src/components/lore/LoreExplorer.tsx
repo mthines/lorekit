@@ -44,9 +44,19 @@ import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDebouncedUrlState } from '@/lib/hooks/useDebouncedUrlState';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
-import { useMemories, useTagCatalog } from '@/lib/queries/lore';
-import { normalizeTags, toggleTag, type TagCount } from '@/lib/tag-filter';
-import { LabelFilter } from './LabelFilter';
+import { useFacetCatalog, useMemories } from '@/lib/queries/lore';
+import {
+  normalizeFilters,
+  removeFilter,
+  setFilterOperator,
+  toggleFilterValue,
+  filtersFromLegacyTags,
+  type FacetValue,
+  type Filter,
+  type FilterField,
+  type FilterOperator,
+} from '@/lib/filters';
+import { FilterMenuTrigger, FilterPillRow } from './FilterBar';
 import { useReducedMotion } from 'motion/react';
 import type { LessonEntry } from './LessonCard';
 import { ContributionHeatmap } from '@/components/activity/ContributionHeatmap';
@@ -58,6 +68,7 @@ type ViewMode = 'scope' | 'time';
 // Module-scoped so the reference is stable across renders — `useUrlState`
 // documents that mutable defaults must be memoized at the call site.
 const NO_TAGS: string[] = [];
+const NO_FILTERS: Filter[] = [];
 
 // ── Ownership filter bar ──────────────────────────────────────────────────────
 // "Owner: All · Personal · {org}" per ux-design §4 — only rendered when at least
@@ -143,18 +154,21 @@ function OwnershipFilterBar({
 // label picker, the date picker, the toggle behaviour — is identical, so it
 // lives here once instead of near-verbatim in each breakpoint branch.
 //
-// The label picker is a popover rather than an expanded chip row: labels are
-// the one dimension here that grows without bound, so an inline bar would push
-// the results it filters below the fold. See `LabelFilter`.
+// The filter menu is one trigger for every dimension rather than one trigger
+// per dimension: the values of each dimension grow without bound, and so does
+// the number of dimensions. Its committed conditions render as pills on their
+// own line below (`FilterPillRow`), because a control row is fixed-width and a
+// filter set is not. See `FilterMenu`.
 
-function FilterBar({
+function ControlRow({
   variant,
   search,
   onSearchChange,
-  tagCatalog,
-  selectedTags,
-  onToggleTag,
-  onClearTags,
+  facets,
+  filters,
+  onToggleFilterValue,
+  editingField,
+  onEditField,
   range,
   onRangeChange,
   showArchived,
@@ -163,10 +177,11 @@ function FilterBar({
   variant: 'desktop' | 'mobile';
   search: string;
   onSearchChange: (value: string) => void;
-  tagCatalog: TagCount[];
-  selectedTags: string[];
-  onToggleTag: (tag: string) => void;
-  onClearTags: () => void;
+  facets: FacetValue[];
+  filters: Filter[];
+  onToggleFilterValue: (field: FilterField, value: string) => void;
+  editingField: FilterField | null;
+  onEditField: (field: FilterField | null) => void;
   range: DateRange | null;
   onRangeChange: (range: DateRange | null) => void;
   showArchived: boolean;
@@ -190,13 +205,13 @@ function FilterBar({
           ].join(' ')}
         />
       </div>
-      <LabelFilter
-        catalog={tagCatalog}
-        selected={selectedTags}
-        onToggle={onToggleTag}
-        onClear={onClearTags}
+      <FilterMenuTrigger
+        facets={facets}
+        filters={filters}
+        onToggleValue={onToggleFilterValue}
+        editingField={editingField}
+        onEditField={onEditField}
         variant={variant}
-        className="shrink-0"
       />
       <DateRangePicker value={range} onChange={onRangeChange} className="shrink-0" />
       <button
@@ -264,16 +279,34 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     cleanOnPathname: '/lore',
   });
 
-  // URL-backed label selection — server-side filtered (AND across labels), so
-  // it belongs in the query, not in a client-side narrowing like `owner`.
-  const [rawSelectedTags, setSelectedTags] = useUrlState<string[]>('tags', NO_TAGS, {
+  // URL-backed filter bar — server-side filtered (OR within a dimension, AND
+  // across dimensions), so it belongs in the query, not in a client-side
+  // narrowing like `owner`. Shareable: "every perf regression we learned on the
+  // release branch" is a link you can paste to a teammate.
+  const [rawFilters, setFilters] = useUrlState<Filter[]>('filters', NO_FILTERS, {
     cleanOnPathname: '/lore',
   });
 
-  // The `tags` param is user-editable text, so it can arrive as anything JSON
-  // can express. Normalizing once here means every consumer below (the query,
-  // the chips, the empty-state copy) reads a real `string[]`.
-  const selectedTags = useMemo(() => normalizeTags(rawSelectedTags), [rawSelectedTags]);
+  // The pre-filter-bar `?tags=` param. Still read (never written) so links
+  // shared before this shipped — in PRs, Slack, and `lorekit link` output —
+  // still land on the filter they name.
+  const [legacyTags] = useUrlState<string[]>('tags', NO_TAGS, {
+    cleanOnPathname: '/lore',
+  });
+
+  // Both params are user-editable text, so they can arrive as anything JSON can
+  // express. Normalizing once here means every consumer below (the query, the
+  // pills, the empty-state copy) reads a real `Filter[]`. An explicit
+  // `?filters=` wins over the legacy shorthand — see `mergedFilters`.
+  const filters = useMemo(() => {
+    const explicit = normalizeFilters(rawFilters);
+    if (explicit.length > 0) return explicit;
+    return filtersFromLegacyTags(legacyTags);
+  }, [rawFilters, legacyTags]);
+
+  // Which dimension the menu should open at, set by a pill's value segment.
+  // Ephemeral — a request, not state worth sharing, so never in the URL.
+  const [editingField, setEditingField] = useState<FilterField | null>(null);
 
   // URL-backed view mode so a shared link lands on the right tab.
   const [view, setView] = useUrlState<ViewMode>('view', 'scope');
@@ -302,13 +335,13 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     hasNextPage,
     isFetchingNextPage,
     fetchNextPage,
-  } = useMemories({ scope: selectedScope, search: committedSearch, range, tags: selectedTags, showArchived });
+  } = useMemories({ scope: selectedScope, search: committedSearch, range, filters, showArchived });
 
-  // Filter-independent label catalog (see `useTagCatalog`) — the chips must not
-  // shrink to whatever the current filter happens to have loaded.
-  // Archived-aware: the archived view is a different population, so it gets
-  // its own counts rather than the active view's.
-  const { data: tagCatalog } = useTagCatalog(showArchived);
+  // Filter-independent facet catalog (see `useFacetCatalog`) — the menu's
+  // options must not shrink to whatever the current filter happens to have
+  // loaded, or you could narrow but never widen or switch. Archived-aware: the
+  // archived view is a different population, so it gets its own counts.
+  const { data: facets } = useFacetCatalog(showArchived);
 
   const lessons = useMemo(
     () => data?.pages.flatMap((page) => page.rows) ?? [],
@@ -339,16 +372,29 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     range !== null ||
     showArchived ||
     ownerFilter !== 'all' ||
-    selectedTags.length > 0;
+    filters.length > 0;
 
-  function handleToggleTag(tag: string) {
-    setSelectedTags((prev) => toggleTag(prev, tag));
-    // Close the sidebar — the open lesson may not carry the new label set.
+  // Every filter mutation closes the lesson sidebar for one reason: the open
+  // lesson may not survive the new predicate, and a detail panel describing a
+  // memory that is no longer in the list behind it is a lie about what you are
+  // looking at.
+  function handleToggleFilterValue(field: FilterField, value: string) {
+    setFilters(toggleFilterValue(filters, field, value));
     closeLesson();
   }
 
-  function handleClearTags() {
-    setSelectedTags(NO_TAGS);
+  function handleOperatorChange(field: FilterField, operator: FilterOperator) {
+    setFilters(setFilterOperator(filters, field, operator));
+    closeLesson();
+  }
+
+  function handleRemoveFilter(field: FilterField) {
+    setFilters(removeFilter(filters, field));
+    closeLesson();
+  }
+
+  function handleClearFilters() {
+    setFilters(NO_FILTERS);
     closeLesson();
   }
 
@@ -475,9 +521,12 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             showArchived
               ? 'Archive a memory from its detail panel to see it here.'
               : isFiltered
-                ? selectedTags.length > 1
-                  ? 'No memory carries all of the selected labels — try removing one.'
-                  : 'Try a different search term, label, or date range.'
+                ? // Filters AND together, so the most likely cause of an empty
+                  // list is one condition too many — name that before search
+                  // terms and dates, which the user can already see.
+                  filters.length > 1
+                  ? 'No memory satisfies every filter — try removing one.'
+                  : 'Try a different search term, filter, or date range.'
                 : 'Memories will appear here once your agents start writing.'
           }
         />
@@ -612,18 +661,27 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
         </div>
 
         <div className="flex flex-1 flex-col overflow-hidden">
-          <FilterBar
+          <ControlRow
             variant="desktop"
             search={search}
             onSearchChange={setSearch}
-            tagCatalog={tagCatalog ?? []}
-            selectedTags={selectedTags}
-            onToggleTag={handleToggleTag}
-            onClearTags={handleClearTags}
+            facets={facets ?? []}
+            filters={filters}
+            onToggleFilterValue={handleToggleFilterValue}
+            editingField={editingField}
+            onEditField={setEditingField}
             range={range}
             onRangeChange={setRange}
             showArchived={showArchived}
             onToggleArchived={handleToggleArchived}
+          />
+
+          <FilterPillRow
+            filters={filters}
+            onOperatorChange={handleOperatorChange}
+            onRemove={handleRemoveFilter}
+            onClearAll={handleClearFilters}
+            onEditField={setEditingField}
           />
 
           <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
@@ -664,19 +722,30 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           )}
         </div>
 
-        <FilterBar
+        <ControlRow
           variant="mobile"
           search={search}
           onSearchChange={setSearch}
-          tagCatalog={tagCatalog ?? []}
-          selectedTags={selectedTags}
-          onToggleTag={handleToggleTag}
-          onClearTags={handleClearTags}
+          facets={facets ?? []}
+          filters={filters}
+          onToggleFilterValue={handleToggleFilterValue}
+          editingField={editingField}
+          onEditField={setEditingField}
           range={range}
           onRangeChange={setRange}
           showArchived={showArchived}
           onToggleArchived={handleToggleArchived}
         />
+
+        <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] empty:hidden">
+          <FilterPillRow
+            filters={filters}
+            onOperatorChange={handleOperatorChange}
+            onRemove={handleRemoveFilter}
+            onClearAll={handleClearFilters}
+            onEditField={setEditingField}
+          />
+        </div>
 
         <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
 

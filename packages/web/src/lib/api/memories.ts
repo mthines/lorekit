@@ -13,6 +13,7 @@
 import type {
   ActivityQuery,
   ActivityResponse,
+  FacetsResponse,
   ListMemoriesQuery,
   MemoryEntry,
   MemoryPageResponse,
@@ -51,6 +52,26 @@ export function listTagsRequest(
   signal?: AbortSignal,
 ): Promise<TagsResponse> {
   return restFetch<TagsResponse>('/memories/tags', {
+    accessToken,
+    query: { archived: archived ? 'true' : 'false' },
+    ...(signal ? { signal } : {}),
+  });
+}
+
+/**
+ * `GET /memories/facets` — every filterable value, per dimension, with counts.
+ *
+ * One call for all six dimensions rather than one per dimension: the filter
+ * menu's cross-dimension type-ahead has to rank values it has not been told to
+ * look for yet, and six in-flight requests is six chances to rank a half-loaded
+ * catalog.
+ */
+export function listFacetsRequest(
+  accessToken: string,
+  archived: boolean,
+  signal?: AbortSignal,
+): Promise<FacetsResponse> {
+  return restFetch<FacetsResponse>('/memories/facets', {
     accessToken,
     query: { archived: archived ? 'true' : 'false' },
     ...(signal ? { signal } : {}),

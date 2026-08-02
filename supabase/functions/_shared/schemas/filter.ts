@@ -210,3 +210,22 @@ export function serializeFilterGroup(filter: FilterGroup | undefined): string[] 
   const s = groupToOrString(filter);
   return s === null ? [] : [s];
 }
+
+/**
+ * Build the operand of a PostgREST `in` / `not.in` filter: `("a","b,c")`.
+ *
+ * postgrest-js's `.in(column, string[])` joins with a bare `,` and quotes
+ * nothing, so a value containing a comma, parenthesis, or double quote is
+ * silently split into several values — and every column this is used against
+ * (`source_agent`, `trigger`, `origin_repo`, `origin_branch`) is free text
+ * written by an agent, so such a value is reachable. This is
+ * {@link pgArrayLiteral}'s reasoning for `text[]` columns, applied to the
+ * scalar `in` list: the caller passes the finished STRING and this function
+ * owns the quoting.
+ *
+ * Each element is wrapped by {@link quoteFilterValue} — always, never
+ * conditionally, for the reason stated there.
+ */
+export function inListLiteral(values: readonly string[]): string {
+  return `(${values.map((v) => quoteFilterValue(v)).join(',')})`;
+}

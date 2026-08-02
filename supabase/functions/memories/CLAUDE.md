@@ -15,6 +15,7 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 | POST | /purge-expired | purge.ts | write |
 | GET | /scopes | scopes.ts | read |
 | GET | /tags | tags.ts | read |
+| GET | /facets | facets.ts | read |
 | GET | /activity | activity.ts | read |
 | GET | /usage | usage.ts | read |
 | GET | /:id | get.ts | read |
@@ -24,7 +25,7 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 
 **Route order is load-bearing.** `matchPath` (`_shared/api/router.ts`) matches on segment
 count and returns *every* path match, then picks the first whose method matches — so
-`/search`, `/restore`, `/purge`, `/purge-expired`, `/scopes`, `/tags` and `/activity` all
+`/search`, `/restore`, `/purge`, `/purge-expired`, `/scopes`, `/tags`, `/facets` and `/activity` all
 collide with `/:id`.
 The literal routes are registered before the `/:id` routes in `index.ts` so a future
 `POST /:id` cannot silently swallow them.
@@ -118,6 +119,50 @@ Both filters are covered end-to-end in
 stack. That is deliberate: the Storybook MSW handler reimplements both, so it can only ever
 confirm itself — `handleList` threw on every `?tags=` request for a whole commit while that
 suite was green.
+
+## Filtering `GET /` — the provenance and authorship dimensions
+
+Five more columns are filterable by value: `source_agent`, `trigger`, `origin_repo`,
+`origin_branch`, `origin_pr`. Each takes a comma-separated list (split by the SAME
+`parseTagsParam` as `tags`, so there is one splitting rule for every list-valued param) plus
+its own `<column>_mode` of `in` (default) or `nin`.
+
+- **The dimensions AND together, the values within one OR together.** Each is its own
+  conjunct, which is what a flat filter bar can render; cross-dimension OR and nested groups
+  belong in `POST /search`'s `filter` tree, which already expresses them.
+- **The negation is `not.in`, never a chain of `neq`s.** They agree only while the column is
+  NOT NULL and all five are nullable, so keeping the negation inside one operator is what
+  stops the SQL disagreeing with the filter pill the user is reading.
+- **One encoding, shared with `?q=`.** Both directions go through `.or()` with a single
+  clause whose operand is built by `inListLiteral`, which quotes each value with the same
+  `quoteFilterValue` the substring filter and the `filter` tree use. These columns are free
+  text written by agents, so a value containing a comma or a parenthesis is reachable, and
+  postgrest-js's own `.in()` quoting does not escape an embedded double quote.
+- `origin_pr` is an `integer` column, so its values are filtered to digits (a non-numeric
+  entry is DROPPED, not 400'd — the list arrives from a hand-editable URL and one bad entry
+  should narrow the filter, not break the page) and emitted unquoted.
+- `tags_mode` gained `none` — the negation of `any`, so `not.ov` and deliberately not
+  `not.cs`: "carries none of these" is NOT(carries any), while NOT(carries all) would also
+  admit a row carrying all but one.
+
+## `GET /facets`
+
+`lorekit_memory_facets` (00052) returns `{ facets: [{ facet, value, count }] }` for all six
+dimensions — `tag`, `source_agent`, `trigger`, `origin_repo`, `origin_branch`, `origin_pr` —
+ordered facet asc, count desc, value asc. `?archived=` partitions exactly as it does on
+`GET /` and on `/tags`: a catalog must describe the population it will be used to filter.
+`?facets=` narrows the response to named dimensions; an unknown name narrows to nothing
+rather than 400ing, because the param is re-read on every keystroke in the dashboard's menu.
+
+This is `/tags` generalised, and it overlaps it on purpose: `/tags` is the single-dimension
+label catalog the CLI and older clients already call. Both read the same rows under the same
+predicate, and `migrations.test.sql` §69 AC-7 executes the agreement rather than asserting it
+in prose. Tenant scoping lives in the RPC, as it does for `/scopes` and `/tags` — there is no
+query to scope here, and a second predicate would be somewhere for the two to drift.
+
+A null column value yields NO facet row. An option that matches by absence would need an
+`is not set` operator, which `GET /` does not have yet; offering the option without the
+operator would be a row you can click and nothing happens.
 
 ## `created_at` on `POST /`
 

@@ -6,12 +6,48 @@ import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import { ListMemoriesQuerySchema, MEMORY_SELECT, shapeMemoryRow } from '../../_shared/schemas/memory.ts';
 import { parseTagsParam, pgArrayLiteral } from '../../_shared/schemas/tags.ts';
-import { likeNeedle, ilikeClause } from '../../_shared/schemas/filter.ts';
+import { likeNeedle, ilikeClause, inListLiteral } from '../../_shared/schemas/filter.ts';
+import type { ScalarFilterMode } from '../../_shared/schemas/memory.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
 import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';
 
 type MemoryRow = Tables<'memories'>;
+
+/**
+ * Apply one scalar multi-value filter (`source_agent`, `trigger`, `origin_*`).
+ *
+ * `in` is the disjunction, `nin` its negation. The negation is expressed as
+ * PostgREST's `not.in` rather than a chain of `neq`s because the two agree only
+ * while the column is NOT NULL and every column here is nullable — keeping the
+ * negation inside one operator means the SQL cannot drift from what the filter
+ * pill claims.
+ *
+ * Both directions go through `.or()` with a single clause rather than
+ * `.in()` / `.not()`, so ONE encoding covers them: `inListLiteral` quotes each
+ * value with the same `quoteFilterValue` the `q` substring filter and the
+ * `POST /memories/search` filter tree already use, and `.or()` appends the
+ * expression verbatim through `URLSearchParams`. These columns are free text
+ * written by agents, so a value containing a comma or a parenthesis is
+ * reachable, and postgrest-js's own `.in()` quoting does not escape an embedded
+ * double quote. Repeated `or=` params are ANDed by PostgREST, so each call is
+ * its own conjunct — which is exactly the "AND across dimensions" rule.
+ */
+function applyScalarFilter(
+  q: TracedQuery<MemoryRow>,
+  column: string,
+  values: readonly string[],
+  mode: ScalarFilterMode,
+  // `origin_pr` is an `integer` column and its values are digits-only by the
+  // time they reach here, so they are emitted bare — PostgREST parses a quoted
+  // operand as text and the cast to integer is a needless place to be wrong.
+  { quote = true }: { quote?: boolean } = {},
+): TracedQuery<MemoryRow> {
+  if (values.length === 0) return q;
+  const operator = mode === 'nin' ? 'not.in' : 'in';
+  const operand = quote ? inListLiteral(values) : `(${values.join(',')})`;
+  return q.or(`${column}.${operator}.${operand}`);
+}
 
 export async function handleList(
   req: Request, auth: AuthContext, db: DbClient, span: Span,
@@ -55,8 +91,34 @@ export async function handleList(
     const literal = pgArrayLiteral(tags);
     // `all` is containment (@>) — every named label must be present. `any` is
     // overlap (&&) and stays the default, so existing callers are unchanged.
-    q = params.tags_mode === 'all' ? q.contains('tags', literal) : q.overlaps('tags', literal);
+    // `none` is the negation of `any`, so it MUST be `not.ov` and not
+    // `not.cs`: "carries none of these" is NOT(carries any), while NOT(carries
+    // all) would also admit a row carrying all but one of them.
+    if (params.tags_mode === 'all') q = q.contains('tags', literal);
+    else if (params.tags_mode === 'none') q = q.not('tags', 'ov', literal);
+    else q = q.overlaps('tags', literal);
   }
+
+  // Provenance / authorship dimensions. Each is its own conjunct (AND across
+  // dimensions) holding a disjunction of values (OR within a dimension) — the
+  // only combination a flat filter bar can render without a precedence
+  // grammar. `parseTagsParam` is reused so every list-valued query param splits
+  // by one rule.
+  q = applyScalarFilter(q, 'source_agent', parseTagsParam(params.source_agent), params.source_agent_mode);
+  q = applyScalarFilter(q, 'trigger', parseTagsParam(params.trigger), params.trigger_mode);
+  q = applyScalarFilter(q, 'origin_repo', parseTagsParam(params.origin_repo), params.origin_repo_mode);
+  q = applyScalarFilter(q, 'origin_branch', parseTagsParam(params.origin_branch), params.origin_branch_mode);
+  // `origin_pr` is an integer column. A non-numeric entry is dropped rather
+  // than 400ing the request: the list arrives from a hand-editable URL, and one
+  // bad entry should narrow the filter, not break the page. An entry list that
+  // reduces to empty applies no filter at all, matching every other dimension.
+  q = applyScalarFilter(
+    q,
+    'origin_pr',
+    parseTagsParam(params.origin_pr).filter((v) => /^\d+$/.test(v)),
+    params.origin_pr_mode,
+    { quote: false },
+  );
 
   // Substring filter over key OR value. `likeNeedle` escapes the LIKE
   // metacharacters (so a `%` the user typed is data, not a wildcard) and
