@@ -104,10 +104,15 @@ export interface ProtectedResourceMetadata {
 /**
  * RFC 9728 — describes the MCP endpoint and names its authorization server.
  *
- * `resource` is the CANONICAL MCP URL, not this app's origin: the document
- * describes the resource, wherever it is served from. A client compares this
- * value against the server it is talking to, so it must be the concrete
- * production URL — never a `<ref>` placeholder.
+ * `resource` is the MCP URL, not this app's origin: the document describes the
+ * resource, wherever it is served from. A client compares this value against
+ * the server it is talking to, so it must be THIS deployment's endpoint — the
+ * route passes `resolveMcpUrl()` (`lib/mcp-url.ts`), which derives it from
+ * `NEXT_PUBLIC_SUPABASE_URL`, so a preview stack advertises its own. The
+ * `MCP_RESOURCE_URL` default above is what that derivation falls back to.
+ *
+ * Concrete either way: the derivation yields a real origin, never a `<ref>`
+ * placeholder.
  */
 export function protectedResourceMetadata(
   resource: string = MCP_RESOURCE_URL,
