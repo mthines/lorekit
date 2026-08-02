@@ -201,6 +201,13 @@ repair`), and it's where you confirm whether the pinned Supabase CLI prompts on
 drive it non-interactively with whatever confirmation flag the installed CLI
 exposes.
 
+A reset wipes **everything**, including the seeded orgs-smoke user (see "Seed the
+orgs-smoke user" below), so the orgs REST smoke self-skips until you re-seed it.
+Re-seeding needs the service-role key and is deliberately **not** wired into the
+workflow (the recurring smoke path never carries that key) — the workflow only
+emits a reminder. After a rebuild, run `scripts/seed-smoke-user.mjs` from a
+trusted admin shell against the preview project.
+
 ### Failure notifications (Discord)
 
 A `notify-failure` job runs whenever **any** pipeline job reports `failure` — a

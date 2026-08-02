@@ -30,8 +30,17 @@ on:
   issue_comment:
     types: [created]
 
+# Share deploy.yml's main-deploy concurrency group so a reset can never run
+# concurrently with the `main` deploy pipeline's `supabase db push` against this
+# same shared project. deploy.yml runs only on `main` (its group resolves to
+# `deploy-refs/heads/main`) and this workflow's ref is the default branch on
+# schedule / dispatch / comment, so the two evaluate to the same group and
+# serialize. NOTE: preview.yml's `/preview` uses a PER-PR group and is therefore
+# NOT serialized here — a global static lock would wrongly serialize previews
+# against each other; the low-traffic weekly cron keeps that window negligible
+# and a manual/comment reset is a deliberate act.
 concurrency:
-  group: rebuild-preview
+  group: deploy-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -128,6 +137,16 @@ jobs:
       # exposes (or pipe `y`).
       - name: Reset preview database from migrations
         run: supabase db reset --linked
+
+      # `db reset` wipes the seeded orgs-smoke user along with everything else,
+      # so the orgs REST smoke self-skips (announced, non-fatal) until it is
+      # re-seeded. Re-seeding needs the service-role key (the Auth admin API) and
+      # is DELIBERATELY not done in CI — the recurring smoke path never carries
+      # that key (see docs/deployment.md → "Seed the orgs-smoke user"). Surface a
+      # reminder rather than smuggling the key into a recurring workflow.
+      - name: Remind to re-seed the orgs-smoke user
+        run: |
+          echo "::notice::Preview DB was reset — re-seed the orgs-smoke user out-of-band with scripts/seed-smoke-user.mjs (needs the service-role key; not run in CI). Until then the orgs REST smoke self-skips."
 
       - name: Deploy edge functions (mcp + health)
         # Retry up to 3 times with 10 s back-off to tolerate transient OOM
