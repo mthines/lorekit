@@ -1,0 +1,141 @@
+# LoreKit
+
+> Shared, persistent memory for AI coding agents. Lessons survive session ends, machine reboots, and CI runs — stored in Supabase Postgres and served over MCP. Agents read relevant lessons at task start and write new ones when they learn something worth keeping.
+
+## Quickstart (hosted — fastest path)
+
+1. Sign in at https://lorekit.io with GitHub
+2. Go to Overview → Connect your agent → Generate new token (choose Read + Write)
+3. Copy the token (shown once)
+4. Connect your agent:
+
+```bash
+npx @lorekit/cli install \
+  --endpoint https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp \
+  --token    lk_rw_<your-token>
+```
+
+5. Verify: `npx @lorekit/cli doctor`
+
+Full self-hosting guide (your own Supabase + Vercel): https://github.com/mthines/lorekit/blob/main/docs/install.md
+
+## Local mode (offline, no account)
+
+Run the MCP server against plain markdown files on disk — no endpoint, no token:
+
+```jsonc
+{
+  "mcpServers": {
+    "lorekit": { "command": "npx", "args": ["-y", "@lorekit/cli", "mcp"] }
+  }
+}
+```
+
+Set `LOREKIT_MODE=local` or add `{ "mode": "local" }` to `.lorekit.json` at the repo root.
+Lessons are stored in `~/.lorekit/` (global tier) and `<repo>/.lorekit/` (repo tier, commit or gitignore).
+
+## MCP endpoint
+
+```
+https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp
+```
+
+Auth: `Authorization: Bearer <token>` — token prefix encodes permissions (see Tokens below).
+
+## Tokens
+
+```
+lk_rw_<32 chars>   # read + write
+lk_ro_<32 chars>   # read only
+lk_wo_<32 chars>   # write only
+```
+
+Tokens never expire unless revoked. Stored as SHA-256 hashes — shown once on creation.
+Maximum 20 tokens per account. Generate and revoke at lorekit.io.
+
+### Permission matrix
+
+{{PERMISSION_MATRIX}}
+
+## Scope format
+
+`::` is the only valid separator. Segments are lowercased on ingest.
+
+| Type | Format | Example |
+|------|--------|---------|
+| Global | `global` | `global` |
+| Project (monorepo) | `project::{name}` | `project::agent-skills` |
+| Repository | `repo::{owner}/{repo}` | `repo::mthines/gw-tools` |
+| Branch | `branch::{owner}/{repo}::{branch}` | `branch::mthines/gw-tools::feat/x` |
+
+Validation: single `:` → 400; `repo::` without `/` → 400; `branch::` without two `::` → 400; unknown prefix → 400.
+
+### Scope resolution (read order)
+
+Query narrow → broad and merge. More-specific scope wins when the same key exists at multiple levels:
+
+```
+branch::{owner}/{repo}::{branch}   # most specific
+repo::{owner}/{repo}
+project::{name}                    # monorepo
+global                             # least specific
+```
+
+### Wildcard search
+
+`memory.search` accepts `"scopes": ["repo::mthines/*"]` (owner-level wildcard). Wildcards only work in `memory.search`.
+
+## MCP tools
+
+{{MCP_TOOLS}}
+
+## Organizations & shared lore
+
+- Every memory is personal by default. Add `org` to `memory.write` to write org-owned lore.
+- All org members with read access see org-owned lore in their reads.
+- Roles: `viewer` (read only), `member` (read + write/archive/restore), `admin` (+ hard-delete + invite management), `owner` (+ rename/delete org).
+- Scope→org binding: an admin can bind a scope to the org — subsequent writes under that scope auto-route to the org for write-capable members. Non-members fall back to personal (never rejected) with a `notice`.
+- Manage orgs and members at lorekit.io → Settings → Organization.
+
+## Limits
+
+| Limit | Default |
+|-------|---------|
+| Active memories per user | 5,000 |
+| Requests per minute per user | 120 |
+
+Archiving a lesson frees cap headroom immediately. Service-role / CI tokens are exempt.
+When the cap is hit, `memory.write` returns a `memory_cap` error with instructions.
+Rate-limited requests receive HTTP 429 with a `Retry-After` header.
+
+## Error codes
+
+| JSON-RPC code | Meaning |
+|---------------|---------|
+| `-32001` | Unauthorized — missing, invalid, expired, or wrong-permission-tier token (e.g. read-only token on a write, write-only token on a read) |
+| `-32003` | Forbidden — authenticated, but not permitted for this tool (e.g. an `lk_*` token calling an `org.*` tool) |
+| `-32603` | Execution error — DB error, scope validation failure, org permission denied (`LK002`), or memory cap exceeded (`LK001` / `memory_cap`) |
+| `-32700` | Parse error — malformed JSON body |
+| `-32601` | Unknown tool name |
+
+## Architecture
+
+- **MCP server** — Supabase Edge Function (Deno), endpoint `/functions/v1/mcp`
+- **Web dashboard** — Next.js 15 on Vercel at `lorekit.io`
+- **Database** — Supabase Postgres with row-level security and full-text search
+- **CLI** — `@lorekit/cli` (Node, zero-dependency ESM, works offline)
+
+## Guides
+
+{{DOCS_INDEX}}
+
+## Key documentation
+
+- MCP tools reference: https://github.com/mthines/lorekit/blob/main/docs/mcp-tools.md
+- Scope format: https://github.com/mthines/lorekit/blob/main/docs/scope-format.md
+- API tokens: https://github.com/mthines/lorekit/blob/main/docs/api-tokens.md
+- Limits: https://github.com/mthines/lorekit/blob/main/docs/limits.md
+- Organizations & sharing: https://github.com/mthines/lorekit/blob/main/docs/org-sharing.md
+- Deployment / self-hosting: https://github.com/mthines/lorekit/blob/main/docs/install.md
+- CLI reference: https://github.com/mthines/lorekit/blob/main/packages/cli/README.md
+- Plugins (Claude / Cursor / Codex): https://github.com/mthines/lorekit/blob/main/plugins/README.md

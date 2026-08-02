@@ -1,9 +1,13 @@
 import { z } from 'zod';
 import { ScopeSchema, RawScopeSchema } from './scope.ts';
 import { FilterGroupSchema } from './common.ts';
+import { PURGE_RETENTION_DAYS_DEFAULT } from './tool-catalog.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
-export const PURGE_RETENTION_DAYS_DEFAULT = 30;
+
+// Declared in the zero-dependency tool catalog (the MCP tool docs need it and
+// cannot import zod); re-exported here so existing importers are unaffected.
+export { PURGE_RETENTION_DAYS_DEFAULT };
 
 export const MemoryWriteSchema = z.object({
   scope: ScopeSchema, key: z.string().min(1).max(512),

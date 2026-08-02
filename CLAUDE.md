@@ -153,7 +153,7 @@ observable effect.
 
 | Surface | Path | Update when |
 |---------|------|-------------|
-| **`llms.txt`** | `packages/web/public/llms.txt` (served at `https://lorekit.io/llms.txt`) | **Always** — it is the agent-readable mirror of the whole product surface: quickstart, endpoint, tokens, permission matrix, tools, scopes, limits. Hand-maintained, **no generator and no drift guard**, so nothing fails when it goes stale. |
+| **`llms.txt`** | **GENERATED** — never edit `packages/web/public/llms.txt`. Edit `packages/schemas/src/llms/template.md` (editorial prose) or `packages/schemas/src/tool-catalog.ts` (tool reference), then `pnpm nx generate:llms schemas`. | **Always.** The MCP tool reference, permission matrix and docs index derive from the catalog and the MDX frontmatter; the quickstart and scope explanation are editorial. `render.spec.ts` fails when the committed file is not what the generator produces. |
 | Public docs | `packages/web/src/content/docs/*.mdx` | The change affects setup, config, offline/remote mode, orgs, labels, or a use case. Adding a page = drop the `.mdx` **and** add its `lib/docs/sections.ts` entry (`sections.spec.ts` fails on drift). |
 | Dashboard copy | `packages/web/src/**` | The change alters an in-product flow the copy describes. |
 | Contributor docs | `docs/*.md` + the index table in `docs/README.md` | The change affects architecture, deployment, limits, tokens, OTel, or a runbook. |
@@ -262,7 +262,7 @@ check. Skip if CI is already fully green.
 | Step | Action | Who triggers |
 |------|--------|--------------|
 | 0 | Clone agent-skills + run sync-symlinks.sh (once per sandbox) | Agent |
-| 0.5 | Update user-facing docs + `packages/web/public/llms.txt` (or state why none applied) | Agent |
+| 0.5 | Update user-facing docs + regenerate `llms.txt` (or state why none applied) | Agent |
 | 1 | Run `/polish` — review + simplify, auto-fix all findings, commit each pass | Agent |
 | 2 | Open / push the PR (draft or ready) | Agent |
 | 3 | Wait for `dash0-dev` bot review comment | Automatic (Dash0 bot) |
