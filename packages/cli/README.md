@@ -110,6 +110,14 @@ command is still refreshed. Pass `--hooks <mode>` to choose explicitly.
 wiring new ones. `lorekit doctor` reports which events are wired, and in which
 scope.
 
+**Replacing a token.** A plain re-run reuses the token already in your config.
+An interactive `lorekit install --force` instead asks what to do with it —
+**keep**, **replace** (paste a new one), or **remove** — so a revoked token can
+be swapped without hand-editing `.mcp.json` / `~/.claude.json`. The stored token
+is only ever shown masked (`lk_rw_…ijkl`). Non-interactive runs (`--yes`, or no
+TTY) never prompt and keep reusing the stored token; pass `--token` to replace
+it in a script.
+
 > The hook command uses a global `lorekit` when one is on your `PATH` (fast),
 > otherwise `npx -y @lorekit/cli`. Installing the CLI globally
 > (`npm i -g @lorekit/cli`) is recommended so hooks fire without an npx
@@ -127,7 +135,9 @@ Verifies the setup and prints a status report:
   gitignored
 - for `remote`: `.mcp.json` has a `lorekit` server, the endpoint is real (not
   the `<project-ref>` placeholder), the token and its permission tier
-  (`lk_rw_*` / `lk_ro_*` / `lk_wo_*`), and that the endpoint is reachable
+  (`lk_rw_*` / `lk_ro_*` / `lk_wo_*`), that the endpoint is reachable, and —
+  the `authentication` check — that the token is **still accepted by the
+  server**
 - for `off`: a note that memory is disabled
 - the git-derived read/write scopes for the current directory
 
@@ -137,6 +147,22 @@ lorekit doctor --deep     # also does a write → read → delete round-trip (ne
 ```
 
 Exit code is non-zero if any check fails, so it fits CI gates.
+
+**`connectivity` and `authentication` are different questions.** `connectivity`
+probes the public `/health` function: it proves the network path and says
+nothing about your credential. `authentication` makes one authenticated,
+side-effect-free request and reports what the server said about the token
+itself:
+
+| Result | Meaning |
+| --- | --- |
+| `PASS — token accepted` | the token is live (read access confirmed) |
+| `PASS — no read permission` | accepted, but it is a write-only `lk_wo_*` token |
+| `FAIL — token REJECTED (HTTP 401)` | revoked, deleted, or never valid — every remote read and write is broken |
+| `WARN` | rate limited, unreachable, or an inconclusive answer — never reported as "revoked" |
+
+A revoked token is a **failure**, not a warning: fix it by creating a new token
+and running `lorekit install --force`, which offers to replace the stored one.
 
 ### `lorekit list` (alias `ls`)
 

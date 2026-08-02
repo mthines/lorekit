@@ -269,7 +269,10 @@ async function checkRemote(control, root, args, record) {
       record('fail', 'connectivity', res.networkError);
     } else if (res.ok) {
       const tools = res.result && Array.isArray(res.result.tools) ? res.result.tools.length : null;
-      record('pass', 'connectivity', tools !== null ? `reachable, ${tools} tools` : 'reachable');
+      // Say what the probe actually proved. `/health` is public, so "reachable"
+      // is a statement about the network path only — the token is judged by the
+      // `authentication` check below.
+      record('pass', 'connectivity', tools !== null ? `reachable, ${tools} tools` : 'reachable (public health probe — token not checked)');
     } else if (res.error && AUTH_CODES.has(res.error.code)) {
       record('fail', 'connectivity', `auth rejected (${res.error.code}) — check your token`);
     } else if (res.error) {
@@ -278,10 +281,64 @@ async function checkRemote(control, root, args, record) {
       record('warn', 'connectivity', `unexpected response (HTTP ${res.httpStatus})`);
     }
 
+    await checkRemoteAuth(store, record);
+
     if (args.deep) await deepCheckRemote(store, root, record);
   } else {
     record('warn', 'connectivity', 'skipped — need a valid endpoint and token');
+    record('warn', 'authentication', 'skipped — need a valid endpoint and token');
   }
+}
+
+/**
+ * Does the configured token STILL work?
+ *
+ * The `token` check above only reads the PREFIX (`lk_rw_`/`lk_ro_`/`lk_wo_`)
+ * and `connectivity` probes the PUBLIC `/health` function, so both stay green
+ * for a token that has been revoked in the dashboard — which is precisely the
+ * state a user runs doctor in. This check makes one authenticated,
+ * side-effect-free request and reports what the server said about the
+ * credential itself.
+ *
+ * A revoked token is a FAIL (doctor exits non-zero): every remote read and
+ * write is broken, which is not a warning-level condition. A token that is
+ * accepted but lacks read permission is a PASS — that is the healthy state of a
+ * write-only token, and the `token` check already describes the tradeoff.
+ */
+async function checkRemoteAuth(store, record) {
+  const res = await store.verifyAuth();
+
+  if (res.networkError) {
+    record('warn', 'authentication', `could not verify — ${res.networkError}`);
+    return;
+  }
+  if (res.unusable) {
+    record('warn', 'authentication', 'skipped — need a valid endpoint and token');
+    return;
+  }
+  if (res.authenticated === false) {
+    record(
+      'fail',
+      'authentication',
+      'token REJECTED by the server (HTTP 401) — it has been revoked, deleted, or was never valid. ' +
+        'Create a new one at https://lorekit.io/settings, then run `lorekit install --force` to replace it.',
+    );
+    return;
+  }
+  if (res.rateLimited) {
+    record('warn', 'authentication', 'could not verify — the request was rate limited (HTTP 429) before it reached the route; retry shortly');
+    return;
+  }
+  if (res.authenticated === true) {
+    record(
+      'pass',
+      'authentication',
+      res.permitted ? 'token accepted — read access confirmed' : 'token accepted — no read permission (write-only token)',
+    );
+    return;
+  }
+  const detail = res.error ? res.error.message || res.error.code : `HTTP ${res.httpStatus}`;
+  record('warn', 'authentication', `inconclusive — server said: ${detail}`);
 }
 
 async function deepCheckRemote(store, root, record) {

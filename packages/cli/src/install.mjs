@@ -33,6 +33,46 @@ function ask(question) {
   return new Promise((resolve) => rl.question(question, (a) => { rl.close(); resolve(a.trim()); }));
 }
 
+// Show enough of a token to recognise it, never enough to use it: the
+// permission prefix plus the last four characters.
+export function maskToken(token) {
+  if (!token) return 'none';
+  const s = String(token);
+  const m = /^(lk_(?:rw|ro|wo)_)/.exec(s);
+  const prefix = m ? m[1] : '';
+  const tail = s.slice(-4);
+  return s.length <= prefix.length + 4 ? `${prefix}…` : `${prefix}…${tail}`;
+}
+
+/**
+ * How `install` should arrive at the token it writes — the pure decision, so
+ * the rule is testable without a pseudo-TTY.
+ *
+ *   'flag'   → an explicit --token / LOREKIT_TOKEN wins outright.
+ *   'choose' → a token is already configured AND this is an interactive
+ *              `--force`: ask whether to keep / replace / remove it.
+ *   'reuse'  → a token is already configured: reuse it silently.
+ *   'prompt' → nothing configured and someone is there to ask.
+ *   'none'   → nothing configured and nobody to ask.
+ *
+ * WHY 'choose' exists: `--force` is what a user runs precisely BECAUSE the
+ * current setup is wrong, and the most common way for it to be wrong is a
+ * revoked token — which doctor's `authentication` check now names, telling them
+ * to come here. Reusing the stored token silently made `--force` incapable of
+ * fixing the one thing it was reached for, and no other command could either.
+ * It stays interactive-only: a non-interactive run has nobody to answer, so it
+ * keeps the old reuse behaviour and `--token` remains the way to replace a
+ * token in a script.
+ */
+export function tokenPlan({ flagToken, existingToken, force, nonInteractive } = {}) {
+  if (flagToken) return { action: 'flag', token: flagToken };
+  if (existingToken) {
+    if (force && !nonInteractive) return { action: 'choose', token: existingToken };
+    return { action: 'reuse', token: existingToken };
+  }
+  return nonInteractive ? { action: 'none', token: null } : { action: 'prompt', token: null };
+}
+
 // Detect whether lorekit is already installed for a given scope. Returns an
 // object describing what is present so the caller can give precise feedback.
 function detectInstalled(root, scope) {
@@ -256,16 +296,44 @@ export async function install(args) {
   const endpoint = fromArgs.endpoint || LOREKIT_MCP_ENDPOINT;
 
   // Token resolution order: --token flag → env → existing config → prompt.
-  let token = fromArgs.token;
-  if (!token && currentState.existingToken) {
-    // Reuse the token that's already in the config — don't make the user repeat
-    // it just because they're running install again.
-    token = currentState.existingToken;
+  const plan = tokenPlan({
+    flagToken: fromArgs.token,
+    existingToken: currentState.existingToken,
+    force,
+    nonInteractive,
+  });
+
+  let token = null;
+  if (plan.action === 'flag') {
+    token = plan.token;
+  } else if (plan.action === 'reuse') {
+    token = plan.token;
     log(`  ${c.dim('Token: reusing existing token from config.')}`);
-  }
-  if (!token && !nonInteractive) {
-    token = await ask('  LoreKit token (lk_rw_… to allow writes, blank to skip): ');
-    token = token || null;
+  } else if (plan.action === 'choose') {
+    const choice = await select(
+      `A token is already configured (${maskToken(currentState.existingToken)}). What should this reinstall do?`,
+      [
+        { label: 'Keep the existing token', value: 'keep', hint: 'reuse what is in the config' },
+        { label: 'Replace it with a new token', value: 'replace', hint: 'paste a fresh lk_… token (e.g. after revoking one)' },
+        { label: 'Remove the token', value: 'remove', hint: 'leave the server unauthenticated' },
+      ],
+    );
+    if (choice === 'replace') {
+      const entered = await ask('  New LoreKit token (lk_rw_… to allow writes, blank to keep the existing one): ');
+      token = entered || currentState.existingToken;
+      log(`  ${c.dim(entered ? 'Token: replaced with the token you entered.' : 'Token: nothing entered — keeping the existing token.')}`);
+    } else if (choice === 'remove') {
+      // Deliberately NOT followed by the fresh-install prompt below: someone who
+      // just chose "remove" must not be immediately asked for a token again.
+      token = null;
+      log(`  ${c.yellow('Token: removed — reads/writes will fail until a token is set.')}`);
+    } else {
+      token = currentState.existingToken;
+      log(`  ${c.dim('Token: reusing existing token from config.')}`);
+    }
+  } else if (plan.action === 'prompt') {
+    const entered = await ask('  LoreKit token (lk_rw_… to allow writes, blank to skip): ');
+    token = entered || null;
   }
 
   // 4. Install the skill files — every skill the CLI ships.

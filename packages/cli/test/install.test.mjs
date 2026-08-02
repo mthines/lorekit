@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { install, defaultHookMode, HOOK_PROMPT_OPTIONS } from '../src/install.mjs';
+import { install, defaultHookMode, HOOK_PROMPT_OPTIONS, tokenPlan, maskToken } from '../src/install.mjs';
 import { skillInstallDir, mcpConfigPath, homeDir, installedHookEvents, HOOK_MODES } from '../src/config.mjs';
 
 function tmp(prefix) {
@@ -180,6 +180,56 @@ test('install reuses existing token from config when no token is passed', async 
   await install({ dir: root, yes: true, project: true, force: true });
   const mcp = JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'));
   assert.ok(mcp.mcpServers.lorekit.args.some((a) => a.includes(TOKEN)), 'token reused from existing config');
+});
+
+// ── `--force` offers to REPLACE the stored token ─────────────────────────────
+//
+// Regression guard: `--force` is what a user reaches for when the setup is
+// broken, and the commonest breakage is a revoked token — but install reused
+// the stored one unconditionally, so `--force` could not fix the one thing it
+// was run for. The prompt itself needs a TTY; the RULE behind it is pure and is
+// pinned here.
+
+test('tokenPlan: an explicit --token always wins, even over a stored one', () => {
+  assert.deepEqual(
+    tokenPlan({ flagToken: 'lk_rw_new', existingToken: 'lk_rw_old', force: true, nonInteractive: false }),
+    { action: 'flag', token: 'lk_rw_new' },
+  );
+});
+
+test('tokenPlan: interactive --force with a stored token ASKS instead of reusing', () => {
+  const plan = tokenPlan({ existingToken: 'lk_rw_old', force: true, nonInteractive: false });
+  assert.equal(plan.action, 'choose');
+  assert.equal(plan.token, 'lk_rw_old');
+});
+
+test('tokenPlan: a plain re-run (no --force) still reuses silently', () => {
+  assert.deepEqual(
+    tokenPlan({ existingToken: 'lk_rw_old', force: false, nonInteractive: false }),
+    { action: 'reuse', token: 'lk_rw_old' },
+  );
+});
+
+test('tokenPlan: non-interactive --force reuses — there is nobody to ask', () => {
+  assert.deepEqual(
+    tokenPlan({ existingToken: 'lk_rw_old', force: true, nonInteractive: true }),
+    { action: 'reuse', token: 'lk_rw_old' },
+  );
+});
+
+test('tokenPlan: nothing stored → prompt when interactive, none when not', () => {
+  assert.equal(tokenPlan({ nonInteractive: false }).action, 'prompt');
+  assert.equal(tokenPlan({ nonInteractive: true }).action, 'none');
+});
+
+test('maskToken shows the permission prefix and the last four characters only', () => {
+  assert.equal(maskToken('lk_rw_abcdefghijkl'), 'lk_rw_…ijkl');
+  assert.equal(maskToken('lk_ro_abcdefghijkl'), 'lk_ro_…ijkl');
+  // No recognisable prefix — still masked, never echoed whole.
+  assert.equal(maskToken('some-other-token'), '…oken');
+  assert.equal(maskToken(null), 'none');
+  // Short enough that prefix + tail would reveal everything: elide the tail.
+  assert.equal(maskToken('lk_rw_ab'), 'lk_rw_…');
 });
 
 test('install rejects on a corrupt settings.json instead of clobbering it', async () => {

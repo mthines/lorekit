@@ -338,6 +338,7 @@ export function useArchiveLesson() {
       void queryClient.invalidateQueries({ queryKey: ['lore-scopes'] });
       void queryClient.invalidateQueries({ queryKey: ['lore-tags'] });
       void queryClient.invalidateQueries({ queryKey: ['lore'] });
+      void queryClient.invalidateQueries({ queryKey: ['memory-total'] });
       // Invalidate archived list so it picks up the newly archived row.
       void queryClient.invalidateQueries({
         predicate: (q) => q.queryKey[0] === 'memories' && q.queryKey[4] === true,
@@ -375,6 +376,7 @@ export function useRestoreLesson() {
       void queryClient.invalidateQueries({ queryKey: ['lore-scopes'] });
       void queryClient.invalidateQueries({ queryKey: ['lore-tags'] });
       void queryClient.invalidateQueries({ queryKey: ['lore'] });
+      void queryClient.invalidateQueries({ queryKey: ['memory-total'] });
       // Invalidate active list so the restored memory reappears.
       void queryClient.invalidateQueries({
         predicate: (q) => q.queryKey[0] === 'memories' && q.queryKey[4] === false,
