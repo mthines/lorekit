@@ -28,6 +28,26 @@ npx @lorekit/cli install \
 
 5. Verify: `npx @lorekit/cli doctor`
 
+`install` asks whether to wire the Claude Code lifecycle hooks. They inject
+context into the agent — none of them writes memory (the write is still the
+model calling `memory.write`). Three modes, selectable non-interactively with
+`--hooks <mode>`:
+
+- `all` — `SessionStart` (inject lessons) + `PostToolUseFailure` and `Stop`
+  (nudge to record one). Preselected on a fresh install.
+- `read-only` — `SessionStart` only: lessons are injected, nothing ever nudges.
+- `none` — skills + MCP only; memory stays model-invoked.
+
+An interactive re-run preselects whatever is already wired, so it never
+resurrects hooks you declined. `--yes` / a non-TTY run takes that same
+preselected value without asking — `all` on a fresh install, otherwise whatever
+is already wired, and a hand-wired set matching no preset keeps exactly that set
+(no event is added or removed; a stale hook command is still refreshed) — so
+pass `--hooks <mode>` when you need a specific wiring.
+`--hooks none` removes hooks that are already there; the older `--no-hooks` flag
+only skips wiring new ones. `npx @lorekit/cli doctor` reports which events are
+wired and in which scope.
+
 Full self-hosting guide (your own Supabase + Vercel): https://github.com/mthines/lorekit/blob/main/docs/install.md
 
 ## Local mode (offline, no account)
@@ -63,6 +83,13 @@ lk_wo_<32 chars>   # write only
 
 Tokens never expire unless revoked. Stored as SHA-256 hashes — shown once on creation.
 Maximum 20 tokens per account. Generate and revoke at lorekit.io.
+
+A revoked token is rejected with HTTP 401 (`{"error":"Authentication required","code":"unauthorized"}`)
+on REST and `-32001` on MCP. `npx @lorekit/cli doctor` verifies this directly: its
+`connectivity` check probes the public `/health` function (network path only) and its
+`authentication` check makes one authenticated request — `PASS` when the token is accepted
+(including a `lk_wo_*` token answered 403 on a read), `FAIL` on 401. Replace a revoked token
+with `npx @lorekit/cli install --force`, which offers to keep, replace, or remove the stored one.
 
 ### Permission matrix
 
