@@ -188,7 +188,8 @@ ${c.bold('Options')}
       --hooks <mode>      Wire the lifecycle hooks: all | read-only | none
       --no-hooks          Skip wiring the lifecycle hooks (leaves existing ones alone)
       --force             Overwrite existing skill files
-  -y, --yes               Non-interactive; never prompt (defaults to --project, --hooks all)
+  -y, --yes               Non-interactive; never prompt (defaults to --project, and to the
+                          already-wired hooks — all on a fresh install)
 
 ${c.bold('Examples')}
   npx @lorekit/cli install --endpoint https://ref.supabase.co/functions/v1/mcp --token lk_rw_xxx

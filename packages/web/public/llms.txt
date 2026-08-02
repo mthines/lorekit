@@ -23,14 +23,16 @@ model calling `memory.write`). Three modes, selectable non-interactively with
 `--hooks <mode>`:
 
 - `all` — `SessionStart` (inject lessons) + `PostToolUseFailure` and `Stop`
-  (nudge to record one). Preselected on a fresh install; the default for
-  `--yes` / non-TTY runs.
+  (nudge to record one). Preselected on a fresh install.
 - `read-only` — `SessionStart` only: lessons are injected, nothing ever nudges.
 - `none` — skills + MCP only; memory stays model-invoked.
 
 An interactive re-run preselects whatever is already wired, so it never
-resurrects hooks you declined. `--hooks none` removes hooks that are already
-there; the older `--no-hooks` flag only skips wiring new ones. `npx
+resurrects hooks you declined. `--yes` / a non-TTY run takes that same
+preselected value without asking — `all` on a fresh install, otherwise whatever
+is already wired — so pass `--hooks <mode>` when you need a specific wiring.
+`--hooks none` removes hooks that are already there; the older `--no-hooks` flag
+only skips wiring new ones. `npx
 @lorekit/cli doctor` reports which events are wired and in which scope.
 
 Full self-hosting guide (your own Supabase + Vercel): https://github.com/mthines/lorekit/blob/main/docs/install.md
