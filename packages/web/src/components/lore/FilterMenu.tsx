@@ -82,6 +82,7 @@ import { BottomSheet } from '@/components/ui/BottomSheet';
 import {
   FILTER_FIELDS,
   facetOptions,
+  filterCount,
   requireField,
   rootSuggestions,
   searchOptions,
@@ -349,7 +350,10 @@ export function FilterMenu({
   // ── Rendering ──────────────────────────────────────────────────────────────
 
   const descriptor = field ? requireField(field) : null;
-  const activeCount = filters.length;
+  // `filterCount`, not `filters.length`: it normalises first, so the badge
+  // counts committed conditions rather than array entries — the same
+  // defensiveness `filtersPhrase` already gives this prop in `FilterBar`.
+  const activeCount = filterCount(filters);
   const triggerDescription =
     activeCount > 0
       ? `Filters: ${activeCount} applied. Add or edit a filter`

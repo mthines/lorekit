@@ -13,6 +13,7 @@ import {
   FILTER_FIELDS,
   facetOptions,
   fieldDescriptor,
+  filterCount,
   filterPhrase,
   filtersFromLegacyTags,
   filtersPhrase,
@@ -172,6 +173,30 @@ describe('reading helpers', () => {
   it('matches a selected value after trimming', () => {
     expect(isValueSelected(bar, 'label', ' perf ')).toBe(true);
     expect(isValueSelected(bar, 'label', 'other')).toBe(false);
+  });
+
+  it('counts committed conditions, not array entries', () => {
+    expect(filterCount([])).toBe(0);
+    expect(filterCount(bar)).toBe(1);
+    expect(
+      filterCount([
+        { field: 'label', operator: 'all', values: ['perf'] },
+        { field: 'agent', operator: 'in', values: ['claude'] },
+      ]),
+    ).toBe(2);
+  });
+
+  it('normalises before counting, so the badge cannot over-report', () => {
+    // Two pills of one dimension merge into one condition, and a valueless
+    // pill is not a condition at all — both are `normalizeFilters` invariants
+    // the trigger badge must inherit rather than restate.
+    expect(
+      filterCount([
+        { field: 'label', operator: 'all', values: ['perf'] },
+        { field: 'label', operator: 'all', values: ['ci'] },
+        { field: 'agent', operator: 'in', values: [] },
+      ]),
+    ).toBe(1);
   });
 });
 
