@@ -34,8 +34,13 @@ const SERVICE_NAME_SITES: ReadonlyArray<readonly [string, string, RegExp, string
   ['cli', 'packages/cli/src/telemetry.mjs', /service\.name',\s*value:\s*\{\s*stringValue:\s*'([^']+)'/, 'cli'],
   ['api (edge)', 'supabase/functions/_shared/otel.ts', /SERVICE_NAME'\)\s*\?\?\s*'([^']+)'/, 'api'],
   ['mcp (Node MCP server)', 'packages/mcp-server/src/instrumentation.ts', /OTEL_SERVICE_NAME'\]\s*\?\?\s*'([^']+)'/, 'mcp'],
-  ['web', 'packages/web/src/instrumentation.ts', /serviceName:\s*'([^']+)'/, 'web'],
+  ['web', 'packages/web/src/instrumentation.ts', /SERVICE_NAME = '([^']+)'/, 'web'],
 ];
+
+// The browser half of `web`. Deliberately NOT in SERVICE_NAME_SITES: server and
+// browser are ONE service told apart by `telemetry.sdk.language`, so it must
+// MATCH the server's name rather than be distinct from it.
+const WEB_BROWSER_SERVICE_NAME_SITE = ['packages/web/src/lib/dash0-rum.ts', /SERVICE_NAME = '([^']+)'/] as const;
 
 // Every place a `service.namespace` is declared — must be `lorekit` everywhere
 // so all components aggregate under one namespace.
@@ -44,8 +49,11 @@ const NAMESPACE_SITES = [
   'supabase/functions/_shared/otel.ts',
   'packages/mcp-server/src/instrumentation.ts',
   'packages/web/src/instrumentation.ts',
-  'packages/web/src/instrumentation-client.ts',
-  'packages/web/src/components/providers/Dash0Provider.tsx',
+  // The browser bundle's single init path. `instrumentation-client.ts` and
+  // `Dash0Provider.tsx` used to each declare their own copy of the attributes
+  // (and their own `init()`); both now delegate here, so this is the only
+  // browser-side declaration left to pin.
+  'packages/web/src/lib/dash0-rum.ts',
 ];
 
 describe('service.name inventory', () => {
@@ -59,6 +67,29 @@ describe('service.name inventory', () => {
     const names = SERVICE_NAME_SITES.map(([, file, pattern]) => read(file).match(pattern)?.[1]);
     expect(names).toEqual(['cli', 'api', 'mcp', 'web']);
     expect(new Set(names).size).toBe(SERVICE_NAME_SITES.length);
+  });
+
+  it('the web browser bundle reports the SAME service.name as the web server runtime', () => {
+    // Server and browser are one service. When they disagree the app shows up
+    // as two unrelated service-map nodes and no query spans both halves — which
+    // is exactly what a stray OTEL_SERVICE_NAME produced in production
+    // (server reported `lorekit`, browser reported `web`).
+    const [file, pattern] = WEB_BROWSER_SERVICE_NAME_SITE;
+    const browser = read(file).match(pattern);
+    expect(browser, `no service.name declaration found in ${file}`).not.toBeNull();
+
+    const [, serverFile, serverPattern] = SERVICE_NAME_SITES[3]!;
+    expect(browser![1]).toBe(read(serverFile).match(serverPattern)![1]);
+  });
+
+  it('the web server runtime forces OTEL_SERVICE_NAME instead of losing to it', () => {
+    // `@vercel/otel` resolves `OTEL_SERVICE_NAME || serviceName || 'app'`, so
+    // passing the option alone is NOT enough — a deployment env var silently
+    // wins and renames the service. `register()` must overwrite the variable
+    // with the code-declared name. See packages/web/src/lib/otel-service-name.ts.
+    const src = read('packages/web/src/instrumentation.ts');
+    expect(src).toMatch(/resolveServiceName\(SERVICE_NAME,\s*process\.env\['OTEL_SERVICE_NAME'\]\)/);
+    expect(src).toMatch(/process\.env\['OTEL_SERVICE_NAME'\]\s*=/);
   });
 });
 

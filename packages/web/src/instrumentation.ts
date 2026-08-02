@@ -23,6 +23,14 @@
 import { registerOTel } from '@vercel/otel';
 
 import { supabaseOriginPattern } from './lib/otel-origins';
+import { resolveServiceName, serviceNameConflictMessage } from './lib/otel-service-name';
+
+/**
+ * This component's OTel `service.name`, per the service inventory in CLAUDE.md.
+ * Must match the browser bundle's (`lib/dash0-rum.ts`) — server and browser are
+ * one service, told apart by `telemetry.sdk.language`, not by name.
+ */
+const SERVICE_NAME = 'web';
 
 function resolveDeploymentEnv(): string {
   const vercelEnv = process.env['VERCEL_ENV'];
@@ -77,8 +85,18 @@ export async function register() {
   // in the Deno/Edge runtime, throws silently, and nothing is emitted.
   if (process.env['NEXT_RUNTIME'] !== 'nodejs') return;
 
+  // `@vercel/otel` resolves `OTEL_SERVICE_NAME || serviceName || 'app'`, so a
+  // stray env var silently outranks the option below — and did, reporting this
+  // runtime as `lorekit` and splitting the app into two service-map nodes.
+  // Overwriting the variable (rather than only passing `serviceName`) is what
+  // makes the code-declared name authoritative, because the OTel env resource
+  // detector reads the same variable independently. See lib/otel-service-name.ts.
+  const serviceName = resolveServiceName(SERVICE_NAME, process.env['OTEL_SERVICE_NAME']);
+  if (serviceName.overridden) console.warn(serviceNameConflictMessage(serviceName));
+  process.env['OTEL_SERVICE_NAME'] = serviceName.name;
+
   registerOTel({
-    serviceName: 'web',
+    serviceName: serviceName.name,
     attributes: {
       'service.namespace': 'lorekit',
       'service.version':
