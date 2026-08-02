@@ -52,3 +52,12 @@ wired up once and shared, so you get it for free:
   single-source registry (`lib/{docs,blog}/sections.ts`) guarded against drift
   by a `sections.spec.ts`. Adding a page = drop the `.mdx` + add its registry
   entry.
+- **`public/llms.txt` is the agent-readable mirror of the product** (served at
+  `/llms.txt`) — quickstart, MCP endpoint, tokens + permission matrix, tools,
+  scopes, limits. This package OWNS it, and **every change to a user-visible
+  capability updates it in the same PR** (the repo-wide rule is in the root
+  [CLAUDE.md](../../CLAUDE.md#user-facing-docs-mandatory-on-every-change)).
+  Unlike the MDX registries it has **no generator and no drift guard**, so
+  nothing goes red when it rots — treat it as hand-maintained prose that must
+  stay consistent with `src/content/docs/*.mdx`. Keep it terse and skimmable:
+  it is read by agents under a token budget, not browsed.
