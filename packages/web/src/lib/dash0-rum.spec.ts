@@ -87,7 +87,7 @@ describe('isValidOtlpEndpoint', () => {
   });
 
   it('accepts a same-host endpoint on a different port (a different origin)', () => {
-    expect(isValidOtlpEndpoint('http://localhost:4318', 'http://localhost:3000')).toBe(true);
+    expect(isValidOtlpEndpoint('https://lorekit.io:4318', 'https://lorekit.io')).toBe(true);
   });
 });
 
