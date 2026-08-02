@@ -446,12 +446,20 @@ test('link --tags prints the label-filtered Explorer link', () => {
 // instead of silently producing a link the dashboard ignores. This is the guard
 // that would have caught the missing `tags` param.
 
+const WEB_PACKAGE_DIR = fileURLToPath(new URL('../../web', import.meta.url));
+
 const WEB_SOURCES = [
   '../../web/src/components/lore/LoreExplorer.tsx',
   '../../web/src/components/providers/MemorySidebarProvider.tsx',
 ].map((rel) => fileURLToPath(new URL(rel, import.meta.url)));
 
-const WEB_SOURCES_PRESENT = WEB_SOURCES.every((p) => fs.existsSync(p));
+// The skip is gated on the PACKAGE, not on the individual files. A CLI-only
+// checkout legitimately has no `packages/web` and must skip; but if the package
+// IS present and a listed source is missing, it was moved or renamed — that must
+// FAIL loudly. Keying the skip on the files themselves turned exactly that case
+// into a silent pass, disabling the guard without any signal.
+const WEB_PACKAGE_PRESENT = fs.existsSync(WEB_PACKAGE_DIR);
+const MISSING_WEB_SOURCES = WEB_PACKAGE_PRESENT ? WEB_SOURCES.filter((p) => !fs.existsSync(p)) : [];
 
 // Extract every URL-backed param from `use[Debounced]UrlState<…>('key', <default>, …)`
 // calls into a Map of key → raw default token (as written in source).
@@ -483,6 +491,13 @@ function parseDefaultToken(tok) {
 }
 
 function readWebParams() {
+  assert.deepEqual(
+    MISSING_WEB_SOURCES,
+    [],
+    `packages/web is present but these Explorer sources are missing — they were moved or ` +
+      `renamed. Update WEB_SOURCES so this drift guard keeps running:\n  ` +
+      `${MISSING_WEB_SOURCES.join('\n  ')}`,
+  );
   const params = new Map();
   for (const p of WEB_SOURCES) {
     for (const [k, v] of extractUrlStateParams(fs.readFileSync(p, 'utf8'))) {
@@ -494,7 +509,7 @@ function readWebParams() {
 
 test(
   'web ↔ CLI: LORE_PARAM_DEFAULTS covers exactly the Explorer useUrlState params',
-  { skip: WEB_SOURCES_PRESENT ? false : 'packages/web sources not present in this checkout' },
+  { skip: WEB_PACKAGE_PRESENT ? false : 'packages/web not present in this checkout' },
   () => {
     const webKeys = [...readWebParams().keys()].sort();
     const cliKeys = Object.keys(LORE_PARAM_DEFAULTS).sort();
@@ -509,7 +524,7 @@ test(
 
 test(
   'web ↔ CLI: scalar param defaults agree with the Explorer',
-  { skip: WEB_SOURCES_PRESENT ? false : 'packages/web sources not present in this checkout' },
+  { skip: WEB_PACKAGE_PRESENT ? false : 'packages/web not present in this checkout' },
   () => {
     for (const [key, token] of readWebParams()) {
       const parsed = parseDefaultToken(token);
