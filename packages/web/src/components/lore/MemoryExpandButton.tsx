@@ -37,7 +37,7 @@ export function MemoryExpandButton({
   className = '',
 }: MemoryExpandButtonProps) {
   const { data, isLoading } = useLoreData();
-  const { data: memoryTotal = 0 } = useMemoryTotal();
+  const { data: memoryTotal = 0, isLoading: isTotalLoading } = useMemoryTotal();
   const { openLesson, openLessonById, closeLesson } = useMemorySidebar();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -83,7 +83,9 @@ export function MemoryExpandButton({
     return memoryTotal;
   }, [data, scope, memoryTotal]);
 
-  if (isLoading) {
+  // `total` above reads `memoryTotal` only on the unscoped branch, so a scoped
+  // instance must not block its skeleton on the account-wide count query.
+  if (isLoading || (!scope && isTotalLoading)) {
     return (
       <div
         className={`flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-1.5 ${className}`}
