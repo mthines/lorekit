@@ -34,8 +34,22 @@ export function injectToken(source, token) {
 
 function main() {
   const token = (process.env.LOREKIT_TELEMETRY_TOKEN ?? '').trim();
+  // `--require` turns the silent no-op below into a hard failure. The release
+  // job passes it: publishing a tarball with telemetry off is exactly the
+  // failure mode that goes unnoticed for days — the CLI keeps working, it just
+  // stops phoning home, and nothing anywhere goes red. Local runs (no flag)
+  // keep the forgiving behaviour.
+  const require_ = process.argv.includes('--require');
 
   if (!token) {
+    if (require_) {
+      console.error(
+        'inject-telemetry-token: LOREKIT_TELEMETRY_TOKEN is not set, but --require was passed. ' +
+          'Publishing now would ship a CLI that silently emits no telemetry. ' +
+          'Set the LOREKIT_TELEMETRY_TOKEN repository secret to a Dash0 ingesting-only token.',
+      );
+      return 1;
+    }
     console.log(
       'inject-telemetry-token: LOREKIT_TELEMETRY_TOKEN not set — leaving token empty (telemetry off).',
     );

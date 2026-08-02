@@ -315,8 +315,13 @@ change. The endpoint (`DEFAULT_ENDPOINT`) and dataset (`DEFAULT_DATASET`, now
 
 The `publish-cli` job in `.github/workflows/release.yml` runs
 `scripts/inject-telemetry-token.mjs`, which rewrites the committed-empty
-`src/telemetry-token.mjs` with the secret just before `npm publish`. If the
-secret is unset the script no-ops and the CLI ships with default telemetry off.
+`src/telemetry-token.mjs` with the secret just before `npm publish`. Run bare, a
+missing secret is a **silent no-op** and the CLI publishes emitting nothing — the
+exact failure that goes unnoticed for days. Pass `--require` to make that a failed
+release instead; the local, flagless invocation keeps the forgiving behaviour on
+purpose. Wiring `--require` (and a post-injection `doctor --telemetry` probe) into
+the job is step 1 of **Wiring the export gate into CI** below — it is not committed,
+because the GitHub App that opens automated PRs cannot write to `.github/workflows/**`.
 
 **Auth-header priority at runtime** (highest first): `OTEL_EXPORTER_OTLP_HEADERS`
 → `LOREKIT_TELEMETRY_TOKEN` (bare bearer via env — handy for local testing) →
@@ -332,7 +337,146 @@ the baked-in token. End users can opt out entirely with `LOREKIT_TELEMETRY=0` or
 After a `memory.write` call, check Dash0 → Explore → filter `service.name = mcp` and `service.namespace = lorekit`.
 
 ### CLI
+
+`lorekit doctor --telemetry` is the direct answer to "is the export still
+working?". It resolves the same credential a real command would, POSTs one probe
+span named `lorekit.cli.doctor.telemetry_probe` to the OTLP endpoint, and **exits
+non-zero unless the collector accepted it** — a revoked token, a moved endpoint,
+or a build with no credential at all are each a hard failure with its own
+message. It is a *focused* run: it skips the skill, backend and scope checks, so
+its exit code answers exactly one question and nothing else.
+
+```bash
+LOREKIT_TELEMETRY_TOKEN=<ingesting-only token> npx @lorekit/cli doctor --telemetry
+```
+
+Probe spans carry `lorekit.telemetry.probe=true` — exclude that attribute when
+measuring CLI adoption, or these synthetic runs inflate the numbers.
+
+A plain `lorekit doctor` reports the export as an **info** line only (endpoint,
+plus where the credential came from) and never fails on it: an end user who opted
+out, or who simply has no phone-home configured, does not have a broken install.
+
+This gate exists because `exportInvocation` swallows transport errors by design —
+without an explicit probe, a dead export path has no failure signal anywhere. The
+scheduled workflow that runs it is in **Wiring the export gate into CI** below;
+it is not committed, because the GitHub App that opens automated PRs cannot write
+to `.github/workflows/**`.
+
 After running `lorekit doctor` (with `DEFAULT_TOKEN` set, or `OTEL_EXPORTER_OTLP_*` exported), check Dash0 → Explore → filter `service.name = cli` and `service.namespace = lorekit`. Group by `lorekit.cli.command` to count across `install`, `doctor`, `list`, `scopes`, `diff`, and the other human-facing commands.
+
+### Wiring the export gate into CI (one-time, must be committed by a human)
+
+The GitHub App that opens automated PRs cannot modify `.github/workflows/**` (no
+`workflows` permission), so the two changes below are **not** applied by the PR
+that added `doctor --telemetry` — add them by hand. The flag, the probe and the
+`--require` guard all work without them; these are what make the gate run on its
+own instead of only when someone remembers.
+
+**1. `release.yml` → `publish-cli` job.** Replace the existing *Inject telemetry
+token* step with the two steps below. `--require` turns a missing secret into a
+failed release; the probe then proves the injected token is actually accepted,
+so a revoked credential is caught before publish rather than by someone noticing
+a flat dashboard days later.
+
+```yaml
+      - name: Inject telemetry token
+        env:
+          LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+        run: node scripts/inject-telemetry-token.mjs --require
+
+      - name: Verify the injected token can ingest (doctor --telemetry)
+        run: node packages/cli/bin/lorekit.mjs doctor --telemetry --dir "$RUNNER_TEMP"
+```
+
+**2. A new `.github/workflows/telemetry-smoke.yml`.** A release-time check only
+covers release days; a token revoked on a quiet Tuesday goes unnoticed until the
+next publish. This runs the same gate on a schedule and notifies through the
+composite actions `release.yml` and `deploy.yml` already use. No new secret —
+`LOREKIT_TELEMETRY_TOKEN` is the one the release job and `emit-trace.yml` share.
+
+```yaml
+name: Telemetry smoke
+
+on:
+  schedule:
+    # Off the hour on purpose — GitHub's scheduler queues :00 runs by many minutes.
+    - cron: '15 6 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/cli/src/telemetry.mjs'
+      - 'packages/cli/src/telemetry-token.mjs'
+      - 'packages/cli/src/doctor.mjs'
+      - 'scripts/inject-telemetry-token.mjs'
+      - '.github/workflows/telemetry-smoke.yml'
+
+permissions: {}
+
+concurrency:
+  group: telemetry-smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Probe the OTLP export path
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      # Distinguish "the secret is gone" from "the token is rejected" up front.
+      - name: Verify the telemetry secret is configured
+        env:
+          LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+        run: |
+          if [ -z "${LOREKIT_TELEMETRY_TOKEN}" ]; then
+            echo "::error::LOREKIT_TELEMETRY_TOKEN is not set. Every CLI released without it emits no telemetry." >&2
+            exit 1
+          fi
+
+      # No `pnpm install`: the CLI is zero-dependency and runs from source.
+      # `--dir "$RUNNER_TEMP"` keeps the run out of the checkout so a committed
+      # .lorekit.json can never opt the gate out of its own check.
+      - name: lorekit doctor --telemetry
+        env:
+          LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+          DEPLOYMENT_ENVIRONMENT: ci
+        run: node packages/cli/bin/lorekit.mjs doctor --telemetry --dir "$RUNNER_TEMP"
+
+  notify-failure:
+    name: Notify on failure (Discord + Dash0)
+    runs-on: ubuntu-latest
+    needs: [probe]
+    if: always() && contains(needs.*.result, 'failure')
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository (for the composite actions)
+        uses: actions/checkout@v7.0.1
+
+      - name: Post failure notification to Discord
+        uses: ./.github/actions/discord-notify
+        with:
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          username: LoreKit Telemetry
+          title: '🔴 CLI telemetry export is down'
+          failed-stage: 'lorekit doctor --telemetry (Dash0 OTLP ingest probe)'
+
+      - name: Post failure event to Dash0
+        uses: ./.github/actions/dash0-notify
+        with:
+          webhook-url: ${{ secrets.DASH0_WEBHOOK_URL }}
+          failed-stage: 'lorekit doctor --telemetry (Dash0 OTLP ingest probe)'
+```
 
 ### Browser
 Open Chrome DevTools → Network → filter by `v1/traces`. You should see POST requests to the Dash0 OTLP endpoint after page load and on each navigation.

@@ -17,6 +17,11 @@ import {
   readLorekitJson,
 } from './config.mjs';
 import { splitEndpoint } from './mcp.mjs';
+import {
+  resolveTelemetryConfig,
+  resolveTelemetryTokenSource,
+  probeTelemetryExport,
+} from './telemetry.mjs';
 import { deriveScope } from './scope.mjs';
 import { loadControl } from './control.mjs';
 import { createStore } from './store/index.mjs';
@@ -37,6 +42,19 @@ export async function doctor(args) {
 
   heading('LoreKit doctor');
   log(`  project: ${c.dim(root)}\n`);
+
+  // 0. `--telemetry` is a FOCUSED run, not a modifier on the full sweep.
+  //
+  // It exists to be a CI gate on one specific credential — the Dash0
+  // ingesting-only OTLP token — and a bare runner has no skills installed, no
+  // .mcp.json and no LoreKit API token, so a full sweep there fails for four
+  // unrelated reasons and tells you nothing about the one thing being gated.
+  // Returning early keeps the exit code a clean answer to a single question:
+  // "can this build still emit telemetry?"
+  if (args.telemetry) {
+    await checkTelemetryExport(args, record);
+    return summarize(failures, warnings, failedChecks, 'Telemetry export is working.');
+  }
 
   // 1. Runtime.
   const major = Number(process.versions.node.split('.')[0]);
@@ -123,6 +141,9 @@ export async function doctor(args) {
   // 4b. BYOD storage connectivity check.
   await checkBYODStorage(record);
 
+  // 4c. Dash0 telemetry export — is the CLI's own phone-home still working?
+  await checkTelemetryExport(args, record);
+
   // 5. Scope.
   const scope = deriveScope(root);
   if (scope.hasRemote) {
@@ -165,10 +186,18 @@ export async function doctor(args) {
     }
   }
 
-  // Summary.
+  return summarize(failures, warnings, failedChecks);
+}
+
+/**
+ * Print the Summary block and build doctor's `{ exitCode, ...extra }` return.
+ * Extracted so the focused `--telemetry` run and the full sweep end the same
+ * way — same summary line, same exit-code rule, same bounded telemetry extra.
+ */
+function summarize(failures, warnings, failedChecks, ready = 'LoreKit memory is ready.') {
   heading('Summary');
   if (failures === 0 && warnings === 0) {
-    log(`  ${c.green('All checks passed.')} LoreKit memory is ready.`);
+    log(`  ${c.green('All checks passed.')} ${ready}`);
   } else {
     log(
       `  ${failures ? c.red(failures + ' failed') : c.green('0 failed')}, ${
@@ -436,6 +465,78 @@ function detectDuplicateHooks(root) {
   const inProject = new Set(installedHookEvents(root, 'project'));
   const inGlobal = new Set(installedHookEvents(root, 'global'));
   return CLAUDE_HOOK_EVENTS.filter((event) => inProject.has(event) && inGlobal.has(event));
+}
+
+/**
+ * Is the CLI's own OpenTelemetry export still working?
+ *
+ * This is a DIFFERENT credential from the `token` / `authentication` checks
+ * above: those verify the LoreKit API token (`lk_rw_*`) that reads and writes
+ * memories. This one verifies the Dash0 ingesting-only OTLP token, which is
+ * baked into the published tarball at release time and is otherwise invisible —
+ * `exportInvocation` swallows every transport error by design, so a revoked
+ * token, a moved endpoint, or a release that published with the
+ * `LOREKIT_TELEMETRY_TOKEN` secret unset all look identical from the outside:
+ * silence. Nothing in CI noticed, because nothing was looking.
+ *
+ * Two tiers, so the default `doctor` run stays offline and side-effect-free:
+ *   • always — report whether export is ON and where the credential came from,
+ *     as `info`. Never a failure: end users legitimately opt out, and a user's
+ *     machine having no phone-home is not a broken install.
+ *   • `--telemetry` — actually POST a probe span and assert the endpoint
+ *     accepted it. Here a dead export IS a failure; that flag is what CI passes.
+ */
+async function checkTelemetryExport(args, record) {
+  const required = Boolean(args.telemetry);
+
+  let config;
+  try {
+    config = resolveTelemetryConfig();
+  } catch {
+    config = { enabled: false };
+  }
+  const source = resolveTelemetryTokenSource();
+
+  if (!config.enabled) {
+    const detail =
+      source === 'none'
+        ? 'export off — no OTLP credential resolved. Published tarballs get one injected at release; ' +
+          'set LOREKIT_TELEMETRY_TOKEN (or OTEL_EXPORTER_OTLP_HEADERS) to override.'
+        : 'export off — opted out via LOREKIT_TELEMETRY / DO_NOT_TRACK / `telemetry.disabled` in .lorekit.json';
+    record(required ? 'fail' : 'info', 'telemetry', detail);
+    return;
+  }
+
+  record('info', 'telemetry', `export on → ${config.endpoint} ${c.dim(`(credential from ${source})`)}`);
+
+  // The probe writes a real span to a real backend — only on explicit request.
+  if (!required) return;
+
+  const probe = await probeTelemetryExport(config, { version: cliVersion(), timeoutMs: 5000 });
+
+  if (probe.networkError) {
+    record('fail', 'telemetry export', `could not reach ${config.endpoint} — ${probe.networkError}`);
+  } else if (probe.unauthorized) {
+    record(
+      'fail',
+      'telemetry export',
+      `probe span REJECTED (HTTP ${probe.httpStatus}) — the OTLP token is revoked, expired, or was never valid. ` +
+        'Mint a new Dash0 ingesting-only token and update the LOREKIT_TELEMETRY_TOKEN secret.',
+    );
+  } else if (probe.ok) {
+    record('pass', 'telemetry export', `probe span accepted (HTTP ${probe.httpStatus}) — the token can ingest`);
+  } else {
+    record('fail', 'telemetry export', `probe span rejected (HTTP ${probe.httpStatus})`);
+  }
+}
+
+/** The running CLI version, for stamping the telemetry probe span. */
+function cliVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+  } catch {
+    return '0.0.0';
+  }
 }
 
 async function checkBYODStorage(record) {

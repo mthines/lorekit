@@ -135,6 +135,19 @@ The core mode, store, and connection settings have env-var equivalents that outr
 | `LOREKIT_TOKEN` | Token fallback for remote mode |
 | `LOREKIT_TELEMETRY` | Set to 0 / off / false to disable usage telemetry |
 | `DO_NOT_TRACK` | Set to 1 to disable usage telemetry (cross-vendor standard) |
+| `LOREKIT_TELEMETRY_TOKEN` | Send usage telemetry with your own OTLP bearer token instead of the built-in one |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` / `_HEADERS` | Point usage telemetry at your own OpenTelemetry collector |
+
+`npx @lorekit/cli doctor` always reports whether telemetry export is on and where
+its credential came from — as information, never as a failed check, since having
+no phone-home configured is a perfectly healthy install. Add `--telemetry` to turn
+that into an assertion: it sends one probe span to the collector and exits
+non-zero unless the collector accepted it, which is what makes it usable as a CI
+gate when you route LoreKit telemetry to your own backend.
+
+```bash
+npx @lorekit/cli doctor --telemetry
+```
 
 <TutorialCallout variant="tip">
 

@@ -125,6 +125,7 @@ ${c.bold('Options')}
       --no-hooks          Skip wiring the lifecycle hooks (install)
       --force             Overwrite existing skill files (install)
       --deep              Do a write→read→delete round-trip (doctor)
+      --telemetry         Verify the OTLP export credential works (doctor)
       --adapter <name>    Host framework for hook: claude | cursor | codex
       --event <name>      Host hook event (else read from stdin payload)
   -h, --help              Show this help
@@ -230,10 +231,14 @@ ${c.bold('Options')}
   -t, --token <token>     Token override (else .mcp.json / LOREKIT_TOKEN)
       --store <path>      Local project-tier store directory (default: .lorekit)
       --deep              Do a write→read→delete round-trip
+      --telemetry         Also POST a probe span to the OTLP endpoint and FAIL
+                          if the Dash0 ingesting token is missing or rejected.
+                          Without it, telemetry is reported as info only.
 
 ${c.bold('Examples')}
   npx @lorekit/cli doctor
   npx @lorekit/cli doctor --deep
+  npx @lorekit/cli doctor --telemetry
   npx @lorekit/cli doctor --mode local
 `,
   list: `${c.bold('lorekit list')} — list the memories that apply to the current directory ${c.dim('(alias: ls)')}
@@ -593,7 +598,7 @@ ${c.bold('Options')}
 const KNOWN_FLAGS = [
   'dir', 'project', 'global', 'endpoint', 'token', 'mode', 'store',
   'from', 'to', 'apply', 'yes', 'hooks', 'no-hooks', 'force', 'deep', 'adapter',
-  'event', 'json', 'scope', 'threshold', 'help', 'version',
+  'event', 'json', 'scope', 'threshold', 'help', 'version', 'telemetry',
   'value', 'tags', 'source-agent', 'trigger', 'ttl-days', 'clear-ttl', 'org', 'remote', 'local',
   'link', 'base', 'q', 'owner', 'range', 'view', 'archived',
   'origin-repo', 'origin-branch', 'origin-commit', 'origin-pr', 'no-origin',
@@ -621,7 +626,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry'],
     known: KNOWN_FLAGS,
   });
 

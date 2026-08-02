@@ -142,6 +142,21 @@ export function resolveTelemetryConfig(env = process.env, repoConfig) {
   return { enabled: true, endpoint, headers };
 }
 
+/**
+ * Which source supplied the OTLP credential, for `doctor` to report. Mirrors
+ * the priority order in `resolveTelemetryConfig` above — keep the two in step.
+ * Returns a human-readable label, or `'none'` when nothing resolved.
+ * @param {object} [env]  defaults to process.env
+ */
+export function resolveTelemetryTokenSource(env = process.env) {
+  if (env.OTEL_EXPORTER_OTLP_HEADERS) return 'OTEL_EXPORTER_OTLP_HEADERS';
+  if (env.LOREKIT_TELEMETRY_TOKEN && String(env.LOREKIT_TELEMETRY_TOKEN).trim()) {
+    return 'LOREKIT_TELEMETRY_TOKEN';
+  }
+  if (DEFAULT_TOKEN) return 'the token baked in at publish time';
+  return 'none';
+}
+
 // ── ID + value helpers (mirror _shared/otel.ts) ───────────────────────────────
 
 export function randHex(bytes) {
@@ -331,6 +346,64 @@ export async function exportInvocation(config, { version, name, attributes, star
     post(`${config.endpoint}/v1/traces`, config.headers, trace, timeoutMs),
     post(`${config.endpoint}/v1/metrics`, config.headers, metric, timeoutMs),
   ]);
+}
+
+/**
+ * Send ONE synthetic span to the configured OTLP endpoint and report what the
+ * collector said about it.
+ *
+ * Deliberately not routed through `post()`: command telemetry swallows every
+ * error on purpose (it must never disturb the CLI), which is exactly the
+ * behaviour that let export die silently. `doctor --telemetry` needs the
+ * opposite — the HTTP status, so it can tell "accepted" from "token rejected"
+ * from "endpoint unreachable".
+ *
+ * The probe span is tagged `lorekit.telemetry.probe=true` so it is trivially
+ * filtered out of usage dashboards, and carries the same bounded, non-PII
+ * attribute set as a real command span.
+ *
+ * @returns {Promise<{skipped?: boolean, ok?: boolean, unauthorized?: boolean, httpStatus?: number, networkError?: string}>}
+ */
+export async function probeTelemetryExport(config, { version = '0.0.0', timeoutMs = 5000 } = {}) {
+  if (!config || !config.enabled) return { skipped: true };
+
+  const now = Date.now();
+  const payload = buildTracePayload({
+    version,
+    name: 'lorekit.cli.doctor.telemetry_probe',
+    attributes: {
+      'lorekit.cli.command': 'doctor',
+      'lorekit.cli.outcome': 'ok',
+      'lorekit.telemetry.probe': true,
+    },
+    startMs: now,
+    endMs: now,
+    status: 'ok',
+  });
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${config.endpoint}/v1/traces`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...config.headers },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    return {
+      httpStatus: res.status,
+      ok: res.status >= 200 && res.status < 300,
+      unauthorized: res.status === 401 || res.status === 403,
+    };
+  } catch (e) {
+    const networkError =
+      e && e.name === 'AbortError'
+        ? `no response within ${timeoutMs}ms`
+        : (e && e.message) || String(e);
+    return { networkError };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ── Command wrapper ───────────────────────────────────────────────────────────

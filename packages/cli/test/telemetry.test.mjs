@@ -2,6 +2,7 @@
 // pure OTLP payload builders (no PII, correct shape), and the traceCommand
 // wrapper (records outcome, swallows telemetry failures, never blocks the CLI).
 import { test } from 'node:test';
+import http from 'node:http';
 import assert from 'node:assert/strict';
 import {
   resolveTelemetryConfig,
@@ -14,6 +15,8 @@ import {
   normalizeOsType,
   normalizeHostArch,
   resolveDeploymentEnvironment,
+  resolveTelemetryTokenSource,
+  probeTelemetryExport,
 } from '../src/telemetry.mjs';
 import { TELEMETRY_TOKEN } from '../src/telemetry-token.mjs';
 import { injectToken } from '../../../scripts/inject-telemetry-token.mjs';
@@ -639,4 +642,148 @@ test('env LOREKIT_TELEMETRY=0 still wins over telemetry.disabled: false', () => 
     { 'telemetry.disabled': false },
   );
   assert.equal(cfg.enabled, false);
+});
+
+// ── The export probe (`doctor --telemetry`'s engine) ─────────────────────────
+//
+// `exportInvocation` swallows every transport error so command telemetry can
+// never disturb the CLI. `probeTelemetryExport` is the deliberate counterpart:
+// the one place that reports what the collector actually said, so a revoked
+// token or a moved endpoint has a failure signal instead of just going quiet.
+
+// A stand-in OTLP collector that records what it received and answers `status`.
+function otlpServer(status = 200) {
+  const received = [];
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      received.push({
+        path: req.url,
+        authorization: req.headers['authorization'],
+        dataset: req.headers['dash0-dataset'],
+        body: Buffer.concat(chunks).toString('utf8'),
+      });
+      res.statusCode = status;
+      res.setHeader('content-type', 'application/json');
+      res.end('{}');
+    });
+  });
+  const listen = () =>
+    new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
+  return { server, received, listen };
+}
+
+test('probeTelemetryExport POSTs one tagged span and reports acceptance', async () => {
+  const { server, received, listen } = otlpServer(200);
+  const port = await listen();
+  try {
+    const res = await probeTelemetryExport({
+      enabled: true,
+      endpoint: `http://127.0.0.1:${port}`,
+      headers: { Authorization: 'Bearer probe_tok', 'Dash0-Dataset': 'default' },
+    });
+
+    assert.equal(res.ok, true);
+    assert.equal(res.httpStatus, 200);
+
+    assert.equal(received.length, 1, 'exactly one probe request');
+    assert.equal(received[0].path, '/v1/traces');
+    assert.equal(received[0].authorization, 'Bearer probe_tok');
+    assert.equal(received[0].dataset, 'default', 'dataset routing is honoured');
+
+    // Tagged so these synthetic spans are trivially excluded from adoption
+    // dashboards, and carrying no PII beyond the bounded command attributes.
+    const payload = JSON.parse(received[0].body);
+    const span = payload.resourceSpans[0].scopeSpans[0].spans[0];
+    assert.equal(span.name, 'lorekit.cli.doctor.telemetry_probe');
+    const attrs = Object.fromEntries(span.attributes.map((a) => [a.key, a.value]));
+    assert.deepEqual(attrs['lorekit.telemetry.probe'], { boolValue: true });
+  } finally {
+    server.close();
+  }
+});
+
+test('probeTelemetryExport reports a 401 as unauthorized, not as a generic failure', async () => {
+  const { server, listen } = otlpServer(401);
+  const port = await listen();
+  try {
+    const res = await probeTelemetryExport({
+      enabled: true,
+      endpoint: `http://127.0.0.1:${port}`,
+      headers: {},
+    });
+    assert.equal(res.unauthorized, true, 'a revoked token must be distinguishable');
+    assert.equal(res.ok, false);
+    assert.equal(res.httpStatus, 401);
+  } finally {
+    server.close();
+  }
+});
+
+test('probeTelemetryExport reports a 500 as a plain rejection, never as a bad token', async () => {
+  const { server, listen } = otlpServer(500);
+  const port = await listen();
+  try {
+    const res = await probeTelemetryExport({
+      enabled: true,
+      endpoint: `http://127.0.0.1:${port}`,
+      headers: {},
+    });
+    assert.equal(res.ok, false);
+    assert.equal(res.unauthorized, false, 'a collector outage is not a credential problem');
+    assert.equal(res.httpStatus, 500);
+  } finally {
+    server.close();
+  }
+});
+
+test('probeTelemetryExport surfaces an unreachable endpoint instead of swallowing it', async () => {
+  // Port 1 on loopback: nothing listens, so connect() is refused at once.
+  const res = await probeTelemetryExport(
+    { enabled: true, endpoint: 'http://127.0.0.1:1', headers: {} },
+    { timeoutMs: 2000 },
+  );
+  assert.ok(res.networkError, 'the caller must see the transport error');
+  assert.equal(res.ok, undefined);
+});
+
+test('probeTelemetryExport is a no-op when export is disabled', async () => {
+  assert.deepEqual(await probeTelemetryExport({ enabled: false }), { skipped: true });
+  assert.deepEqual(await probeTelemetryExport(null), { skipped: true });
+});
+
+test('resolveTelemetryTokenSource names the credential source in priority order', () => {
+  assert.equal(
+    resolveTelemetryTokenSource({
+      OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer a',
+      LOREKIT_TELEMETRY_TOKEN: 'b',
+    }),
+    'OTEL_EXPORTER_OTLP_HEADERS',
+    'explicit headers outrank the bare token, matching resolveTelemetryConfig',
+  );
+  assert.equal(resolveTelemetryTokenSource({ LOREKIT_TELEMETRY_TOKEN: 'b' }), 'LOREKIT_TELEMETRY_TOKEN');
+  assert.equal(resolveTelemetryTokenSource({ LOREKIT_TELEMETRY_TOKEN: '   ' }), 'none', 'blank is not a credential');
+  // The committed token is empty (no secret in git), so a bare env resolves none.
+  assert.equal(resolveTelemetryTokenSource({}), 'none');
+});
+
+test('inject-telemetry-token --require refuses to publish a telemetry-blind CLI', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const script = fileURLToPath(new URL('../../../scripts/inject-telemetry-token.mjs', import.meta.url));
+
+  const withoutSecret = spawnSync(process.execPath, [script, '--require'], {
+    encoding: 'utf8',
+    env: { ...process.env, LOREKIT_TELEMETRY_TOKEN: '' },
+  });
+  assert.equal(withoutSecret.status, 1, 'a missing secret must fail the release, not no-op');
+  assert.match(withoutSecret.stderr, /LOREKIT_TELEMETRY_TOKEN/);
+
+  // Without the flag the old forgiving behaviour is preserved for local runs.
+  const lenient = spawnSync(process.execPath, [script], {
+    encoding: 'utf8',
+    env: { ...process.env, LOREKIT_TELEMETRY_TOKEN: '' },
+  });
+  assert.equal(lenient.status, 0);
 });
