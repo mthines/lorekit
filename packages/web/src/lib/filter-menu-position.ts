@@ -51,6 +51,27 @@ export interface AnchoredPosition {
 }
 
 /**
+ * The measurements of the surface being placed.
+ *
+ * Every field defaults to the filter popover's own geometry, so the original
+ * two-argument call is unchanged. They exist because the popover is no longer
+ * the only portaled surface anchored to a trigger in this subtree: the filter
+ * pill's operator listbox is a 144px, chrome-less, two-or-three-row list, and
+ * placing it with a 288px width and a 96px chrome allowance would clamp it
+ * away from its own trigger and flip it for room it does not need.
+ */
+export interface AnchoredSize {
+  /** Width of the surface in px. Drives the horizontal clamp. */
+  width?: number;
+  /** Non-list chrome (search box, footer, padding) in px. */
+  chromeHeight?: number;
+  /** The list never shrinks below this. */
+  minListHeight?: number;
+  /** …nor grows past it. */
+  maxListHeight?: number;
+}
+
+/**
  * Place the popover against its trigger.
  *
  * Three rules, each fixing something an `absolute left-0 top-full` popover
@@ -66,22 +87,31 @@ export interface AnchoredPosition {
  * 3. **Cap the list to the space that exists.** The popover no longer lives
  *    inside a scroll container that would bound it, so nothing else will.
  */
-export function anchoredPosition(rect: AnchorRect, viewport: Viewport): AnchoredPosition {
+export function anchoredPosition(
+  rect: AnchorRect,
+  viewport: Viewport,
+  size: AnchoredSize = {},
+): AnchoredPosition {
+  const width = size.width ?? POPOVER_WIDTH;
+  const chromeHeight = size.chromeHeight ?? CHROME_HEIGHT;
+  const minListHeight = size.minListHeight ?? MIN_LIST_HEIGHT;
+  const maxListHeight = size.maxListHeight ?? MAX_LIST_HEIGHT;
+
   const left = Math.max(
     VIEWPORT_MARGIN,
     // `Math.min` can go negative on a viewport narrower than the popover; the
     // outer `Math.max` is what keeps the left edge on-screen in that case.
-    Math.min(rect.left, viewport.width - POPOVER_WIDTH - VIEWPORT_MARGIN),
+    Math.min(rect.left, viewport.width - width - VIEWPORT_MARGIN),
   );
 
   const below = viewport.height - rect.bottom - GAP - VIEWPORT_MARGIN;
   const above = rect.top - GAP - VIEWPORT_MARGIN;
-  const flip = below < MIN_LIST_HEIGHT + CHROME_HEIGHT && above > below;
+  const flip = below < minListHeight + chromeHeight && above > below;
   const space = flip ? above : below;
 
   const listMaxHeight = Math.min(
-    MAX_LIST_HEIGHT,
-    Math.max(MIN_LIST_HEIGHT, space - CHROME_HEIGHT),
+    maxListHeight,
+    Math.max(minListHeight, space - chromeHeight),
   );
 
   return flip

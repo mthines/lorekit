@@ -28,9 +28,24 @@
  * conditional render — it is a five-row list opened dozens of times a session,
  * and animating it would only add latency to a decision the user has already
  * made.
+ *
+ * ## Why the operator listbox is portaled
+ * The pill's own root is `overflow-hidden` (it clips the segment backgrounds to
+ * the rounded corners), and the pill row itself sits inside the Explorer's
+ * `overflow-hidden` panels and its scrolling results column. An in-flow
+ * `absolute top-full` listbox is therefore clipped the moment it opens — by
+ * three separate ancestors, so removing any one of them does not help. It is
+ * portaled to `document.body` and positioned `fixed` against the trigger's
+ * rect, exactly as {@link FilterMenu}'s popover is, and shares the same pure
+ * placement module. The same two consequences apply: click-outside must treat
+ * the portaled list as inside (or the first option click reads as "outside",
+ * unmounts the list, and the `onClick` never fires), and a `fixed` element does
+ * not follow an anchor that moves, so position is recomputed on scroll with
+ * `capture: true` and on resize.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, useReducedMotion } from 'motion/react';
 import { Check, X } from 'lucide-react';
 import {
@@ -41,7 +56,20 @@ import {
   type Filter,
   type FilterOperator,
 } from '@/lib/filters';
+import { anchoredPosition, type AnchoredPosition } from '@/lib/filter-menu-position';
 import { FIELD_ICONS } from './FilterMenu';
+
+/**
+ * The operator listbox's own geometry: `min-w-36` wide, `p-1` of chrome, three
+ * `min-h-8` rows. Passed to the shared placement math so a 288px popover's
+ * measurements never decide where a 144px list goes.
+ */
+const LISTBOX_SIZE = {
+  width: 144,
+  chromeHeight: 8,
+  minListHeight: 104,
+  maxListHeight: 240,
+} as const;
 
 interface FilterPillProps {
   filter: Filter;
@@ -68,10 +96,57 @@ export function FilterPill({
   const currentOperator = operatorLabel(filter.field, filter.operator, filter.values.length);
   const phrase = filterPhrase(filter);
 
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setPortalTarget(document.body);
+  }, []);
+
+  const [position, setPosition] = useState<AnchoredPosition | null>(null);
+
+  const measure = useCallback(() => {
+    const trigger = operatorTriggerRef.current;
+    if (!trigger) return;
+    setPosition(
+      anchoredPosition(
+        trigger.getBoundingClientRect(),
+        { width: window.innerWidth, height: window.innerHeight },
+        LISTBOX_SIZE,
+      ),
+    );
+  }, []);
+
+  // A safety net; the real measurement happens in the trigger's own click
+  // handler, before `operatorOpen` flips, so the list never paints one frame at
+  // the wrong coordinates.
+  useLayoutEffect(() => {
+    if (!operatorOpen || position) return;
+    measure();
+  }, [operatorOpen, position, measure]);
+
+  // A `fixed` element does not follow an anchor that moves. `capture: true` is
+  // load-bearing for the same reason it is in `FilterMenu`: scroll does not
+  // bubble, and the pill row's nearest scrolling ancestor is the Explorer's
+  // results column, not the window.
+  useEffect(() => {
+    if (!operatorOpen) return;
+    window.addEventListener('scroll', measure, true);
+    window.addEventListener('resize', measure);
+    return () => {
+      window.removeEventListener('scroll', measure, true);
+      window.removeEventListener('resize', measure);
+    };
+  }, [operatorOpen, measure]);
+
   useEffect(() => {
     if (!operatorOpen) return;
     function onDown(e: MouseEvent) {
-      if (operatorRef.current && !operatorRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      // The list is portaled out of `operatorRef`, so it has to be checked
+      // separately — otherwise a click on one of its own options reads as
+      // "outside", unmounts the list before `onClick` fires, and the operator
+      // silently never changes.
+      if (operatorListRef.current?.contains(target)) return;
+      if (operatorRef.current && !operatorRef.current.contains(target)) {
         setOperatorOpen(false);
       }
     }
@@ -82,7 +157,20 @@ export function FilterPill({
   /** Close the operator list and put focus back where it was opened from. */
   function dismissOperator() {
     setOperatorOpen(false);
+    setPosition(null);
     operatorTriggerRef.current?.focus();
+  }
+
+  /** Toggle the list, measuring BEFORE it opens so it never paints unplaced. */
+  function toggleOperator() {
+    setOperatorOpen((open) => {
+      if (open) {
+        setPosition(null);
+        return false;
+      }
+      measure();
+      return true;
+    });
   }
 
   /**
@@ -159,7 +247,7 @@ export function FilterPill({
         <button
           ref={operatorTriggerRef}
           type="button"
-          onClick={() => setOperatorOpen((v) => !v)}
+          onClick={toggleOperator}
           aria-expanded={operatorOpen}
           aria-haspopup="listbox"
           aria-label={`${descriptor.label} ${currentOperator} — change operator`}
@@ -168,12 +256,28 @@ export function FilterPill({
           {currentOperator}
         </button>
 
-        {operatorOpen && (
+        {/* Portaled to `document.body`, so no ancestor's `overflow` can clip
+            it. Still rendered inside this component's JSX tree, so React events
+            keep bubbling to the wrapper's `onKeyDown` and the Escape guard is
+            unchanged. */}
+        {operatorOpen &&
+          portalTarget &&
+          createPortal(
           <div
             ref={operatorListRef}
             role="listbox"
             aria-label={`${descriptor.label} operator`}
-            className="absolute left-0 top-full z-40 mt-1 min-w-36 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-1 shadow-lg"
+            style={{
+              left: position?.left ?? 0,
+              ...(position?.bottom != null
+                ? { bottom: position.bottom }
+                : { top: position?.top ?? 0 }),
+              maxHeight: position?.listMaxHeight ?? LISTBOX_SIZE.maxListHeight,
+              // Hidden until measured: one frame at the wrong coordinates reads
+              // as the list jumping into place.
+              visibility: position ? 'visible' : 'hidden',
+            }}
+            className="fixed z-50 min-w-36 overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-1 shadow-lg"
           >
             {descriptor.operators.map((op) => {
               const selected = op === filter.operator;
@@ -199,7 +303,8 @@ export function FilterPill({
                 </button>
               );
             })}
-          </div>
+          </div>,
+          portalTarget,
         )}
       </div>
 

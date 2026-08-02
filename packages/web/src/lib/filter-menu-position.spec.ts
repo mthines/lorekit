@@ -106,6 +106,15 @@ describe('anchoredPosition — list height', () => {
     expect(p.listMaxHeight).toBe(MIN_LIST_HEIGHT);
   });
 
+  it('caps at the caller’s own maximum when one is given', () => {
+    const p = anchoredPosition(trigger(100, 60), VIEWPORT, {
+      chromeHeight: 8,
+      minListHeight: 104,
+      maxListHeight: 240,
+    });
+    expect(p.listMaxHeight).toBe(240);
+  });
+
   it('always returns exactly one of top / bottom', () => {
     for (const top of [0, 120, 400, 700, 780]) {
       const p = anchoredPosition(trigger(100, top), VIEWPORT);
@@ -114,5 +123,39 @@ describe('anchoredPosition — list height', () => {
         `top=${p.top} bottom=${p.bottom} for trigger at ${top}`,
       ).toBe(true);
     }
+  });
+});
+
+/**
+ * The pill's operator listbox is anchored by the same function but is a
+ * different shape — 144px wide, no search box or footer, two or three rows.
+ * Placing it with the popover's geometry would clamp it 144px away from its own
+ * trigger and flip it above for room it never needed.
+ */
+describe('anchoredPosition — a second, smaller surface', () => {
+  /** `min-w-36` + `p-1`, three `min-h-8` rows. */
+  const LISTBOX = { width: 144, chromeHeight: 8, minListHeight: 104, maxListHeight: 240 };
+
+  it('clamps against the caller’s width, not the popover’s', () => {
+    const p = anchoredPosition(trigger(1200, 120), VIEWPORT, LISTBOX);
+    expect(p.left).toBe(VIEWPORT.width - LISTBOX.width - VIEWPORT_MARGIN);
+    expect(p.left, 'the popover’s 288px would pull it needlessly left').toBeGreaterThan(
+      VIEWPORT.width - POPOVER_WIDTH - VIEWPORT_MARGIN,
+    );
+  });
+
+  it('stays below in room the popover would have flipped for', () => {
+    // 150px below: too little for the popover's 132 + 96, ample for a
+    // chrome-less 104-tall list.
+    const p = anchoredPosition({ left: 100, top: 600, bottom: 636 }, VIEWPORT, LISTBOX);
+    expect(anchoredPosition({ left: 100, top: 600, bottom: 636 }, VIEWPORT).bottom).toBeDefined();
+    expect(p.top, 'the small surface fits below').toBeDefined();
+    expect(p.bottom).toBeUndefined();
+  });
+
+  it('leaves the default geometry untouched when no size is passed', () => {
+    // A guard, not a discriminator: it pins that the options bag is additive.
+    const rect = trigger(100, 460);
+    expect(anchoredPosition(rect, VIEWPORT, {})).toEqual(anchoredPosition(rect, VIEWPORT));
   });
 });

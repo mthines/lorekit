@@ -329,7 +329,10 @@ export const PillOperatorEscapeDismissesWithoutLeaking: Story = {
     initialFilters: [{ field: 'label', operator: 'all', values: ['performance'] }],
   },
   play: async ({ canvasElement, step }) => {
-    const canvas = within(canvasElement);
+    // The listbox is PORTALED to `document.body` (the pill root and the
+    // Explorer's panels are all `overflow-hidden`), so it is not a descendant
+    // of the canvas — same document scope `PillOperatorAndValueEditing` uses.
+    const canvas = within(document.body);
 
     const trigger = await canvas.findByRole('button', {
       name: /label includes all — change operator/i,
