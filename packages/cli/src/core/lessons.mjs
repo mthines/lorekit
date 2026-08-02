@@ -13,6 +13,12 @@ import { resolvePrecedence, matchesQuery } from '../lessons-pure.mjs';
 // correctly (a raw `?scope=global` silently means "all scopes") and can't drift
 // from the command-line links.
 import { loreScopeUrl, buildLessonUrl } from '../deeplink-pure.mjs';
+// The SAME resolver `lorekit write` applies, so the TTL the nudge advises an
+// agent to send is byte-for-byte the one the CLI would have applied itself. A
+// hook cannot set a TTL — it only reads and emits text; the write happens later,
+// over MCP, in the agent's context. Advising the number is the only lever the
+// hook has, which is exactly why it must not be a second, hand-kept copy.
+import { resolveDefaultTtlDays, matchesScopePrefix } from '../store/ttl.mjs';
 
 const MAX_LESSONS = 15;
 // Cap on lessons injected on a failure — a small, focused "you've seen this
@@ -165,10 +171,10 @@ function tagsHint(writeScope, { tagsDefault = [], scopeDefaults = null } = {}) {
   const tags = [...tagsDefault];
   if (scopeDefaults) {
     for (const [prefix, cfg] of Object.entries(scopeDefaults)) {
-      if (
-        writeScope === prefix ||
-        writeScope.startsWith(prefix.endsWith('::') ? prefix : prefix + '::')
-      ) {
+      // Tags UNION across every matching prefix — they accumulate, so a broad
+      // and a narrow entry both contribute. The TTL hint below deliberately does
+      // NOT: a memory has one expiry, so the most specific prefix wins outright.
+      if (matchesScopePrefix(writeScope, prefix)) {
         for (const t of Array.isArray(cfg.tags) ? cfg.tags : []) {
           if (typeof t === 'string' && t.length > 0 && !tags.includes(t)) tags.push(t);
         }
@@ -177,6 +183,19 @@ function tagsHint(writeScope, { tagsDefault = [], scopeDefaults = null } = {}) {
   }
   if (tags.length === 0) return '';
   return ` Include tags: [${tags.map((t) => JSON.stringify(t)).join(', ')}].`;
+}
+
+// Build the TTL hint appended to a nudge. Empty string when the scope has no
+// configured default, so an unconfigured repo's nudge is unchanged.
+//
+// Phrased as an instruction to pass `ttl_days` rather than as a statement about
+// what will happen, because nothing enforces it: the agent is about to call
+// `memory.write` over MCP, where omitting `ttl_days` still means permanent. The
+// hint is advice with a number attached — the same posture as the tags hint.
+function ttlHint(writeScope, control) {
+  const days = resolveDefaultTtlDays(writeScope, control || {});
+  if (days == null) return '';
+  return ` Set ttl_days: ${days} (this scope's configured default) unless the lesson is durable enough to keep forever.`;
 }
 
 // The LoreKit web app URL for the Lore Explorer, pre-filtered to the given scope.
@@ -193,7 +212,7 @@ export function loreUrl(writeScope) {
 // scopeDefaults when the repo/user config defines them.
 export function retrospectiveNudge(scope, control) {
   const writeScope = scope.repoScope || 'global';
-  const hint = tagsHint(writeScope, control);
+  const hint = `${tagsHint(writeScope, control)}${ttlHint(writeScope, control)}`;
   const instruction = control && control.hooksInstructions && control.hooksInstructions.Stop
     ? `\n\nProject instruction: ${control.hooksInstructions.Stop}` : '';
   const url = loreUrl(writeScope);
@@ -227,7 +246,7 @@ export function writeConfirmation(scope, key, writtenScope) {
 // scopeDefaults when the repo/user config defines them.
 export function failureNudge(toolName, scope, control) {
   const writeScope = scope.repoScope || 'global';
-  const hint = tagsHint(writeScope, control);
+  const hint = `${tagsHint(writeScope, control)}${ttlHint(writeScope, control)}`;
   const instruction = control && control.hooksInstructions && control.hooksInstructions.PostToolUseFailure
     ? `\n\nProject instruction: ${control.hooksInstructions.PostToolUseFailure}` : '';
   return (

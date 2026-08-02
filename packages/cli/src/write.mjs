@@ -13,7 +13,8 @@
 //   --tags <a,b,c>         Comma-separated tag list (default: no tags)
 //   --source-agent <name>  Which agent recorded this lesson (default: none)
 //   --trigger <slug>       What prompted the write (default: none)
-//   --ttl-days <n>         Days until the memory auto-expires (1–365)
+//   --ttl-days <n>         Days until the memory auto-expires (1–365). When
+//                          omitted, a configured default may apply — see below.
 //   --clear-ttl            Remove any existing expiry (make the memory permanent)
 //   --org <slug>           Write to this org (remote only)
 //
@@ -27,6 +28,15 @@
 //   --origin-pr <n>             The pull request this lesson came out of
 //   --no-origin                 Record no provenance at all
 //
+// Default TTL. A write that passes neither --ttl-days nor --clear-ttl picks up
+// whatever the config layers configured for its scope (`ttl.default` and
+// `scope.defaults.<prefix>.ttl_days`; see control.mjs). Precedence is explicit
+// flag > config > permanent, so a flag is always the last word and --clear-ttl
+// is how you say "permanent" against a repo that defaults to expiring. The
+// resolved source is reported in the confirmation line and on the telemetry
+// span, because a TTL nobody typed is exactly the kind of thing that should
+// never be silent.
+//
 // Store targeting (default: remote if configured, else local):
 //   --remote               Force write to the remote store
 //   --local                Force write to the local offline store
@@ -39,12 +49,12 @@
 // false = updated) when the remote reports it.
 import process from 'node:process';
 import { resolveProjectRoot } from './config.mjs';
-import { resolveDenies } from './control.mjs';
+import { loadControl, resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
 import { log, err, heading, status, c } from './util.mjs';
 import { parseScopeKey } from './lessons-view.mjs';
 import { deriveOrigin, mergeOrigin } from './origin.mjs';
-import { parseTtlDays } from './store/ttl.mjs';
+import { parseTtlDays, resolveDefaultTtlDays } from './store/ttl.mjs';
 
 // Read all of stdin to a string. Resolves to '' when stdin IS a TTY (no pipe).
 function readStdin() {
@@ -132,6 +142,21 @@ export async function write(args) {
     }
   }
   const clearTtl = Boolean(args['clear-ttl']);
+
+  // Neither flag given → fall back to the scope's configured default, if any.
+  // `--clear-ttl` deliberately suppresses it: "make this permanent" has to mean
+  // permanent, not "permanent unless the repo config disagrees". Config is read
+  // through the same loadControl the hooks use, so the default the nudge advises
+  // and the default this command applies can never diverge.
+  let ttlSource = ttlDays ? 'flag' : 'none';
+  if (ttlDays === undefined && !clearTtl) {
+    const configured = resolveDefaultTtlDays(scope, loadControl(root, { env }));
+    if (configured != null) {
+      ttlDays = configured;
+      ttlSource = 'config';
+    }
+  }
+
   const orgSlug = typeof args.org === 'string' ? args.org : undefined;
 
   // ── Provenance ────────────────────────────────────────────────────────────
@@ -254,6 +279,8 @@ export async function write(args) {
       tags,
       source_agent: sourceAgent || null,
       trigger: trigger || null,
+      ttl_days: ttlDays ?? null,
+      ttl_source: ttlSource,
       origin,
     }, null, 2));
   } else {
@@ -263,6 +290,13 @@ export async function write(args) {
     log(`  ${c.dim('scope')}  ${scope}`);
     log(`  ${c.dim('key')}    ${key}`);
     if (tags.length) log(`  ${c.dim('tags')}   ${tags.join(', ')}`);
+    // Name the source. A TTL the caller typed needs no explanation; one that came
+    // from a config file two directories up does, or the first surprise is a
+    // memory that quietly vanished.
+    if (ttlDays) {
+      const suffix = ttlSource === 'config' ? c.dim(' (from config)') : '';
+      log(`  ${c.dim('expires')} in ${ttlDays} day${ttlDays === 1 ? '' : 's'}${suffix}`);
+    }
     status('pass', verb, `${scope}::${key}`);
     log('');
   }
@@ -273,6 +307,7 @@ export async function write(args) {
     'lorekit.cli.write.inserted': inserted,
     'lorekit.cli.write.has_tags': tags.length > 0,
     'lorekit.cli.write.has_ttl': Boolean(ttlDays),
+    'lorekit.cli.write.ttl_source': ttlSource,
     'lorekit.cli.write.clear_ttl': clearTtl,
   };
 }

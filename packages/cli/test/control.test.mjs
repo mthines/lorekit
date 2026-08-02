@@ -277,3 +277,53 @@ test('hooks.adapter: null when neither layer sets it', () => {
   const r = resolveControl({ connection: NO_CONN });
   assert.equal(r.hooksAdapter, null);
 });
+
+// ── ttl.default ───────────────────────────────────────────────────────────────
+
+test('ttl.default: repo layer wins over user (scalar policy, not a merge)', () => {
+  const r = resolveControl({
+    repoConfig: { 'ttl.default': 90 },
+    userConfig: { 'ttl.default': 7 },
+    connection: NO_CONN,
+  });
+  assert.equal(r.ttlDefault, 90);
+});
+
+test('ttl.default: user layer applies when the repo sets none', () => {
+  const r = resolveControl({ userConfig: { 'ttl.default': 7 }, connection: NO_CONN });
+  assert.equal(r.ttlDefault, 7);
+});
+
+test('ttl.default: null when neither layer sets it', () => {
+  const r = resolveControl({ connection: NO_CONN });
+  assert.equal(r.ttlDefault, null);
+});
+
+test('ttl.default: numeric string form accepted (hand-edited JSON)', () => {
+  const r = resolveControl({ repoConfig: { 'ttl.default': '30' }, connection: NO_CONN });
+  assert.equal(r.ttlDefault, 30);
+});
+
+test('ttl.default: a non-numeric value resolves to null instead of throwing', () => {
+  // resolveControl is on the path of every command, including read-only ones —
+  // a typo in a config file must never break `lorekit list`. Range checking
+  // happens later, at the point of use.
+  for (const bad of ['soon', true, {}, [], null]) {
+    const r = resolveControl({ repoConfig: { 'ttl.default': bad }, connection: NO_CONN });
+    assert.equal(r.ttlDefault, null, `ttl.default=${JSON.stringify(bad)}`);
+  }
+});
+
+test('ttl.default: out-of-range values survive resolveControl untouched', () => {
+  // Bounds are NOT this function's job; resolveDefaultTtlDays drops them.
+  const r = resolveControl({ repoConfig: { 'ttl.default': 900 }, connection: NO_CONN });
+  assert.equal(r.ttlDefault, 900);
+});
+
+test('scope.defaults: ttl_days rides alongside tags on the same entry', () => {
+  const r = resolveControl({
+    repoConfig: { 'scope.defaults': { 'branch::': { tags: ['ephemeral'], ttl_days: 14 } } },
+    connection: NO_CONN,
+  });
+  assert.deepEqual(r.scopeDefaults['branch::'], { tags: ['ephemeral'], ttl_days: 14 });
+});

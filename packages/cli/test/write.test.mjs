@@ -314,3 +314,120 @@ test('show with invalid scope::key (empty key part) is a usage error', () => {
   assert.equal(res.status, 1);
   assert.match(res.stderr, /Usage:/);
 });
+
+// ── Configured default TTL (ttl.default / scope.defaults) ─────────────────────
+// End-to-end through the binary, asserted on the frontmatter the local store
+// actually persisted — a resolver that is correct but never called would still
+// fail these.
+
+// Days until `expires_at`, or null when the row is permanent. Walks the home
+// tier rather than joining `home` with the scope: the local store slugifies a
+// scope into a directory name, so a `branch::owner/repo::feat-x` scope is not
+// literally that path. Each of these tests writes exactly one memory.
+function expiryDays(home) {
+  const found = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.md')) found.push(full);
+    }
+  };
+  walk(home);
+  assert.equal(found.length, 1, `expected exactly one memory on disk, got ${found.length}`);
+  const m = /expires_at: "([^"]+)"/.exec(fs.readFileSync(found[0], 'utf8'));
+  if (!m) return null;
+  return (Date.parse(m[1]) - Date.now()) / (24 * 60 * 60 * 1000);
+}
+
+function writeRepoConfig(root, config) {
+  fs.writeFileSync(path.join(root, '.lorekit.json'), JSON.stringify(config, null, 2));
+}
+
+test('write applies ttl.default from the repo config when no flag is given', () => {
+  const { root, home } = seedProject();
+  writeRepoConfig(root, { 'ttl.default': 30 });
+  const res = runWrite(root, home, ['global', 'k', 'v', '--local', '--json']);
+  assert.equal(res.status, 0);
+  const days = expiryDays(home);
+  assert.ok(days > 29 && days < 31, `expiry ≈ 30 days out (got ${days})`);
+  assert.equal(JSON.parse(res.stdout).ttl_source, 'config');
+});
+
+test('write leaves a memory permanent when no default is configured', () => {
+  const { root, home } = seedProject();
+  const res = runWrite(root, home, ['global', 'k', 'v', '--local', '--json']);
+  assert.equal(res.status, 0);
+  assert.equal(expiryDays(home), null);
+  assert.equal(JSON.parse(res.stdout).ttl_source, 'none');
+});
+
+test('write: an explicit --ttl-days outranks the configured default', () => {
+  const { root, home } = seedProject();
+  writeRepoConfig(root, { 'ttl.default': 30 });
+  const res = runWrite(root, home, ['global', 'k', 'v', '--local', '--ttl-days', '7', '--json']);
+  assert.equal(res.status, 0);
+  const days = expiryDays(home);
+  assert.ok(days > 6 && days < 8, `expiry ≈ 7 days out (got ${days})`);
+  assert.equal(JSON.parse(res.stdout).ttl_source, 'flag');
+});
+
+test('write: --clear-ttl suppresses the configured default entirely', () => {
+  // "Make this permanent" has to mean permanent, not "permanent unless the repo
+  // config disagrees" — otherwise there is no way to opt one memory out.
+  const { root, home } = seedProject();
+  writeRepoConfig(root, { 'ttl.default': 30 });
+  const res = runWrite(root, home, ['global', 'k', 'v', '--local', '--clear-ttl', '--json']);
+  assert.equal(res.status, 0);
+  assert.equal(expiryDays(home), null);
+});
+
+test('write: a scope.defaults ttl_days beats ttl.default for a matching scope', () => {
+  const { root, home } = seedProject();
+  writeRepoConfig(root, {
+    'ttl.default': 90,
+    'scope.defaults': { global: { ttl_days: 14 } },
+  });
+  const res = runWrite(root, home, ['global', 'k', 'v', '--local', '--json']);
+  assert.equal(res.status, 0);
+  const days = expiryDays(home);
+  assert.ok(days > 13 && days < 15, `expiry ≈ 14 days out (got ${days})`);
+});
+
+test('write: scope.defaults ttl_days null keeps that scope permanent under ttl.default', () => {
+  const { root, home } = seedProject();
+  writeRepoConfig(root, {
+    'ttl.default': 30,
+    'scope.defaults': { global: { ttl_days: null } },
+  });
+  const res = runWrite(root, home, ['global', 'k', 'v', '--local', '--json']);
+  assert.equal(res.status, 0);
+  assert.equal(expiryDays(home), null);
+});
+
+test('write: an out-of-range ttl.default is ignored, and the write still succeeds', () => {
+  // A config file is ambient state, not a caller assertion — unlike --ttl-days
+  // 999, which is a usage error. It must never break an unrelated write.
+  const { root, home } = seedProject();
+  writeRepoConfig(root, { 'ttl.default': 999 });
+  const res = runWrite(root, home, ['global', 'k', 'v', '--local', '--json']);
+  assert.equal(res.status, 0);
+  assert.equal(expiryDays(home), null);
+  assert.equal(JSON.parse(res.stdout).ttl_source, 'none');
+});
+
+test('write: a malformed .lorekit.json does not break the write', () => {
+  const { root, home } = seedProject();
+  fs.writeFileSync(path.join(root, '.lorekit.json'), '{ this is not json');
+  const res = runWrite(root, home, ['global', 'k', 'v', '--local', '--json']);
+  assert.equal(res.status, 0);
+  assert.equal(expiryDays(home), null);
+});
+
+test('write: the human output names the config as the source of an unrequested TTL', () => {
+  const { root, home } = seedProject();
+  writeRepoConfig(root, { 'ttl.default': 30 });
+  const res = runWrite(root, home, ['global', 'k', 'v', '--local']);
+  assert.equal(res.status, 0);
+  assert.match(res.stdout, /expires\s+in 30 days \(from config\)/);
+});

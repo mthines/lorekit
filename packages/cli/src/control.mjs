@@ -2,8 +2,10 @@
 // target, who decided, and which deny constraints are active. Also resolves
 // write-behaviour properties from the config layers:
 //
-//   scope.defaults  — map of scope-prefix → { tags } applied to every matching write
+//   scope.defaults  — map of scope-prefix → { tags, ttl_days } applied to every
+//                     matching write
 //   tags.default    — array of tags appended to every write (both layers merged)
+//   ttl.default     — days until a write with no explicit TTL expires
 //   hooks.disabled  — array of hook event names to suppress (e.g. ["Stop"])
 //   hooks.adapter   — explicit adapter override ("claude" | "cursor" | "codex")
 //
@@ -36,6 +38,18 @@ export function normalizeMode(v) {
   if (['off', 'disabled', 'none', 'false'].includes(s)) return 'off';
   if (['local', 'markdown', 'file', 'files'].includes(s)) return 'local';
   if (['remote', 'lorekit', 'mcp', 'hosted'].includes(s)) return 'remote';
+  return null;
+}
+
+// A config value that is meant to be a number, or null when it is absent or is
+// something else entirely. Numeric strings are accepted because JSON configs get
+// hand-edited; the RANGE check happens later, at the point of use.
+function firstNumber(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v === 'string' && v.trim() !== '') {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
   return null;
 }
 
@@ -117,9 +131,25 @@ export function resolveControl({
     ...asList(userConfig['tags.default']),
   ].filter((t) => typeof t === 'string' && t.length > 0);
 
+  // `ttl.default` — days until a write that named no TTL expires. A SCALAR
+  //    policy, so it cannot merge the way `tags.default` does: repo wins over
+  //    user, matching `hooks.adapter`. Read as "the project decided how long its
+  //    lore stays fresh"; a user who disagrees can still pass --ttl-days or
+  //    --clear-ttl per write, which always outranks config.
+  //
+  //    Deliberately NOT validated here. `resolveControl` is the pure resolver
+  //    every command calls, including read-only ones — a `"ttl.default": 900`
+  //    typo must not make `lorekit list` throw. The value is bounds-checked at
+  //    the point of use (resolveDefaultTtlDays), where an invalid one degrades
+  //    to "no default".
+  const ttlDefault =
+    firstNumber(repoConfig['ttl.default']) ?? firstNumber(userConfig['ttl.default']) ?? null;
+
   // `scope.defaults` — repo layer only (team-scoped write policy).
-  //    Schema: { "<scope-prefix>": { "tags": [...] } }
+  //    Schema: { "<scope-prefix>": { "tags": [...], "ttl_days": <n> | null } }
   //    Matched against a write's resolved scope using startsWith — no glob dep.
+  //    `ttl_days: null` is meaningful (permanent), so a per-scope entry can opt
+  //    out of `ttl.default` — see resolveDefaultTtlDays.
   const scopeDefaults =
     repoConfig['scope.defaults'] && typeof repoConfig['scope.defaults'] === 'object'
       ? repoConfig['scope.defaults']
@@ -165,6 +195,7 @@ export function resolveControl({
     denies,
     connection,
     tagsDefault,
+    ttlDefault,
     scopeDefaults,
     hooksDisabled,
     hooksAdapter,

@@ -467,3 +467,52 @@ test('claude.parse defaults toolInput to null when absent', () => {
   assert.equal(parsed.toolInput, null);
 });
 
+
+// ── ttl.default / scope.defaults ttl_days in nudge text ───────────────────────
+// A hook never writes a memory — it emits text and the agent writes later, over
+// MCP. Advising the number is the only lever it has, so these assert the advice
+// is present, correct, and silent when unconfigured.
+
+test('retrospectiveNudge advises the configured ttl_days', () => {
+  const control = { tagsDefault: [], scopeDefaults: null, ttlDefault: 90 };
+  const text = retrospectiveNudge(fakeScope(), control);
+  assert.match(text, /Set ttl_days: 90/);
+});
+
+test('failureNudge advises the scope-specific ttl_days over ttl.default', () => {
+  const control = {
+    tagsDefault: [],
+    ttlDefault: 90,
+    scopeDefaults: { 'repo::owner/repo': { ttl_days: 14 } },
+  };
+  const text = failureNudge('Bash', fakeScope(), control);
+  assert.match(text, /Set ttl_days: 14/);
+  assert.doesNotMatch(text, /Set ttl_days: 90/);
+});
+
+test('nudges advise no ttl_days when the scope is configured permanent', () => {
+  const control = {
+    tagsDefault: [],
+    ttlDefault: 90,
+    scopeDefaults: { 'repo::owner/repo': { ttl_days: null } },
+  };
+  assert.doesNotMatch(failureNudge('Bash', fakeScope(), control), /ttl_days/);
+});
+
+test('nudges mention no ttl_days when nothing is configured', () => {
+  const control = { tagsDefault: [], scopeDefaults: null };
+  assert.doesNotMatch(retrospectiveNudge(fakeScope(), control), /ttl_days/);
+  assert.doesNotMatch(failureNudge('Bash', fakeScope(), control), /ttl_days/);
+});
+
+test('nudges combine the tags hint and the ttl hint', () => {
+  const control = { tagsDefault: ['team'], scopeDefaults: null, ttlDefault: 30 };
+  const text = retrospectiveNudge(fakeScope(), control);
+  assert.match(text, /Include tags/);
+  assert.match(text, /Set ttl_days: 30/);
+});
+
+test('an invalid configured ttl produces no hint rather than a broken one', () => {
+  const control = { tagsDefault: [], scopeDefaults: null, ttlDefault: 900 };
+  assert.doesNotMatch(retrospectiveNudge(fakeScope(), control), /ttl_days/);
+});

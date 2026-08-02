@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   parseTtlDays, expiresAtFrom, isExpired, isLive, resolveExpiresAt, TTL_MAX_DAYS,
+  resolveDefaultTtlDays, matchesScopePrefix,
 } from '../src/store/ttl.mjs';
 import { createLocalStore } from '../src/store/local.mjs';
 import { parseEntry } from '../src/store/format.mjs';
@@ -181,4 +182,120 @@ test('listScopes excludes expired entries from its counts', async () => {
   const scopes = await store.listScopes();
   const global = scopes.find((s) => s.scope === 'global');
   assert.equal(global.count, 1, 'only the unexpired entry is counted');
+});
+
+// ── Configured default TTL (resolveDefaultTtlDays) ────────────────────────────
+// The client-side policy layer: which TTL applies to a write that named none.
+// No server counterpart by design — omitting `ttl_*` on `memory.write` still
+// means permanent, so these tests are the whole contract.
+
+test('resolveDefaultTtlDays: null when nothing is configured', () => {
+  assert.equal(resolveDefaultTtlDays('repo::owner/name', {}), null);
+  assert.equal(resolveDefaultTtlDays('repo::owner/name'), null);
+});
+
+test('resolveDefaultTtlDays: falls back to ttl.default when no scope entry matches', () => {
+  const control = {
+    ttlDefault: 90,
+    scopeDefaults: { 'branch::': { ttl_days: 14 } },
+  };
+  assert.equal(resolveDefaultTtlDays('repo::owner/name', control), 90);
+});
+
+test('resolveDefaultTtlDays: a matching scope entry beats ttl.default', () => {
+  const control = {
+    ttlDefault: 90,
+    scopeDefaults: { 'branch::': { ttl_days: 14 } },
+  };
+  assert.equal(resolveDefaultTtlDays('branch::owner/name::feat-x', control), 14);
+});
+
+test('resolveDefaultTtlDays: longest matching prefix wins, not declaration order', () => {
+  // Declared broad-first and narrow-first — both must resolve to the narrow one,
+  // or the answer depends on whatever order the config author happened to type.
+  const broadFirst = {
+    scopeDefaults: {
+      'repo::': { ttl_days: 30 },
+      'repo::owner/name': { ttl_days: 7 },
+    },
+  };
+  const narrowFirst = {
+    scopeDefaults: {
+      'repo::owner/name': { ttl_days: 7 },
+      'repo::': { ttl_days: 30 },
+    },
+  };
+  assert.equal(resolveDefaultTtlDays('repo::owner/name', broadFirst), 7);
+  assert.equal(resolveDefaultTtlDays('repo::owner/name', narrowFirst), 7);
+});
+
+test('resolveDefaultTtlDays: explicit null means permanent and beats ttl.default', () => {
+  const control = {
+    ttlDefault: 90,
+    scopeDefaults: { global: { ttl_days: null } },
+  };
+  assert.equal(resolveDefaultTtlDays('global', control), null);
+});
+
+test('resolveDefaultTtlDays: an entry without ttl_days does not shadow ttl.default', () => {
+  // A tags-only entry is the common case — it must not be read as "permanent".
+  const control = {
+    ttlDefault: 90,
+    scopeDefaults: { 'repo::owner/name': { tags: ['team'] } },
+  };
+  assert.equal(resolveDefaultTtlDays('repo::owner/name', control), 90);
+});
+
+test('resolveDefaultTtlDays: prefix matching is ::-delimited, never a bare substring', () => {
+  const control = { scopeDefaults: { 'repo::': { ttl_days: 30 } } };
+  assert.equal(resolveDefaultTtlDays('repo::owner/name', control), 30, 'descendant matches');
+  assert.equal(resolveDefaultTtlDays('repo::', control), 30, 'exact match');
+  assert.equal(
+    resolveDefaultTtlDays('repository::owner/name', control),
+    null,
+    'a scope sharing a text prefix must not inherit',
+  );
+});
+
+test('resolveDefaultTtlDays: `repo::owner` does not capture `repo::owner/name`', () => {
+  // Pins the delimiter semantics inherited from the tags hint: `owner/name` is
+  // ONE `::` segment, so an owner-wide entry is not a thing you can express this
+  // way. Surprising enough that it deserves a failing test if it ever changes.
+  const control = { scopeDefaults: { 'repo::owner': { ttl_days: 30 } } };
+  assert.equal(resolveDefaultTtlDays('repo::owner/name', control), null);
+  assert.equal(resolveDefaultTtlDays('repo::owner', control), 30, 'exact match still works');
+});
+
+test('resolveDefaultTtlDays: an invalid config value degrades to no default, never throws', () => {
+  // Ambient state must not be able to break an unrelated write — unlike
+  // --ttl-days, which is a caller assertion and errors loudly.
+  for (const bad of [0, -1, 1.5, 999, 'soon', true, {}, NaN]) {
+    assert.equal(resolveDefaultTtlDays('global', { ttlDefault: bad }), null, `ttl.default=${String(bad)}`);
+    assert.equal(
+      resolveDefaultTtlDays('global', { scopeDefaults: { global: { ttl_days: bad } } }),
+      null,
+      `scope ttl_days=${String(bad)}`,
+    );
+  }
+});
+
+test('resolveDefaultTtlDays: numeric strings are accepted (hand-edited JSON)', () => {
+  assert.equal(resolveDefaultTtlDays('global', { ttlDefault: '30' }), 30);
+});
+
+test('resolveDefaultTtlDays: bounds match the write contract', () => {
+  assert.equal(resolveDefaultTtlDays('global', { ttlDefault: 1 }), 1);
+  assert.equal(resolveDefaultTtlDays('global', { ttlDefault: TTL_MAX_DAYS }), TTL_MAX_DAYS);
+  assert.equal(resolveDefaultTtlDays('global', { ttlDefault: TTL_MAX_DAYS + 1 }), null);
+});
+
+test('resolveDefaultTtlDays: a non-object scopeDefaults is ignored', () => {
+  assert.equal(resolveDefaultTtlDays('global', { ttlDefault: 30, scopeDefaults: 'nope' }), 30);
+  assert.equal(resolveDefaultTtlDays('global', { ttlDefault: 30, scopeDefaults: { global: null } }), 30);
+});
+
+test('matchesScopePrefix: total on non-string input', () => {
+  assert.equal(matchesScopePrefix(null, 'global'), false);
+  assert.equal(matchesScopePrefix('global', ''), false);
+  assert.equal(matchesScopePrefix('global', null), false);
 });
