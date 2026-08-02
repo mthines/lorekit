@@ -30,7 +30,8 @@ model calling `memory.write`). Three modes, selectable non-interactively with
 An interactive re-run preselects whatever is already wired, so it never
 resurrects hooks you declined. `--yes` / a non-TTY run takes that same
 preselected value without asking — `all` on a fresh install, otherwise whatever
-is already wired — so pass `--hooks <mode>` when you need a specific wiring.
+is already wired, and a hand-wired set matching no preset is left untouched — so
+pass `--hooks <mode>` when you need a specific wiring.
 `--hooks none` removes hooks that are already there; the older `--no-hooks` flag
 only skips wiring new ones. `npx
 @lorekit/cli doctor` reports which events are wired and in which scope.

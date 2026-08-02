@@ -98,6 +98,11 @@ export const HOOK_PROMPT_OPTIONS = [
 // is the "opt in by default" the prompt is there to promote. A hand-wired subset
 // that matches no preset (`custom`) preselects `all` too — there is no preset to
 // re-offer, and the user still sees and chooses from the three options.
+//
+// That last clause is load-bearing and INTERACTIVE-ONLY: it is safe precisely
+// because the user is then shown the list and picks. A `--yes` / non-TTY run has
+// no such moment, so it must NOT take this value for a `custom` set — see
+// `install`, which leaves a hand-wired wiring untouched instead.
 export function defaultHookMode({ freshInstall, wiredEvents }) {
   if (freshInstall) return 'all';
   const detected = hookModeFromEvents(wiredEvents);
@@ -285,13 +290,23 @@ export async function install(args) {
   //     "automatic memory writing" would be declining something that never
   //     happens and losing lesson injection, which is the product.
   let hookMode = requestedMode;
+  // A hand-wired set matching no preset (`custom`) is the one state the three
+  // options cannot express. Interactively that is fine — `defaultHookMode`
+  // preselects `all` and the user still chooses. A `--yes` / non-TTY run never
+  // gets that moment, so taking the preselection there would WIRE `all` and
+  // silently re-add the events the user hand-removed — exactly what
+  // `hookModeFromEvents` tells callers not to do, and the opposite of the
+  // documented "otherwise whatever is already wired". So leave it exactly as
+  // found; `--hooks <mode>` remains the way to change it on purpose.
+  let preserveCustomHooks = false;
   if (hookMode === null) {
     const preselect = defaultHookMode({
       freshInstall: !currentState.hasSkills && !currentState.hasMcp && wiredEvents.length === 0,
       wiredEvents,
     });
     if (nonInteractive) {
-      hookMode = preselect;
+      preserveCustomHooks = hookModeFromEvents(wiredEvents) === 'custom';
+      hookMode = preserveCustomHooks ? 'custom' : preselect;
     } else {
       log('');
       hookMode = await select('Install the LoreKit lifecycle hooks?', HOOK_PROMPT_OPTIONS, {
@@ -300,7 +315,9 @@ export async function install(args) {
     }
   }
 
-  const hookEvents = hookEventsForMode(hookMode);
+  // `hookEventsForMode` maps any unknown mode to the full set, so `custom` must
+  // never reach it — the preserved wiring IS the event list here.
+  const hookEvents = preserveCustomHooks ? [...wiredEvents] : hookEventsForMode(hookMode);
   // `--no-hooks` is skip-only by contract: it has always meant "don't wire
   // them", never "take away the ones already there". An interactive `No hooks`
   // (or an explicit `--hooks none`) is an unambiguous request to remove.
@@ -311,7 +328,8 @@ export async function install(args) {
   // parse that file either, so no lorekit hook is firing from it. Any mode that
   // WIRES still goes through `upsertClaudeHooks`, whose throwing read surfaces
   // the parse error rather than clobbering the file.
-  const touchHooks = !skipHooksOnly && (hookEvents.length > 0 || wiredEvents.length > 0);
+  const touchHooks =
+    !preserveCustomHooks && !skipHooksOnly && (hookEvents.length > 0 || wiredEvents.length > 0);
   let hooks = null;
   if (touchHooks) {
     hooks = upsertClaudeHooks(root, scope, resolveHookRunner(), hookEvents);
@@ -339,9 +357,11 @@ export async function install(args) {
     status(
       'info',
       'hooks',
-      skipHooksOnly
-        ? 'skipped (--no-hooks) — the skills still work, but memory stays model-invoked'
-        : 'none — the skills still work, but memory stays model-invoked',
+      preserveCustomHooks
+        ? `left as-is — a hand-wired set (${wiredEvents.join(', ')}) matching no preset; pass --hooks ${HOOK_MODES.join('|')} to change it`
+        : skipHooksOnly
+          ? 'skipped (--no-hooks) — the skills still work, but memory stays model-invoked'
+          : 'none — the skills still work, but memory stays model-invoked',
     );
   } else {
     const n = hooks.added + hooks.updated + hooks.removed;

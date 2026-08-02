@@ -245,6 +245,39 @@ test('install --hooks read-only downgrades an existing all-hooks install', async
   assert.equal(settings.hooks.Stop, undefined, 'Stop pruned, not left firing');
 });
 
+test('a non-interactive re-install leaves a hand-wired custom hook set alone', async () => {
+  // `defaultHookMode` maps `custom` -> `all` for the PROMPT, where the user then
+  // picks. A --yes / non-TTY run has no such moment, so taking that value would
+  // silently re-add the events the user hand-removed. Covers both paths that
+  // reach the hook step without an explicit --hooks: --force and a partial
+  // install (the fully-installed short-circuit returns before it).
+  for (const [label, extra, mutate] of [
+    ['--force', { force: true }, () => {}],
+    ['partial install', {}, (root) => fs.rmSync(path.join(root, '.mcp.json'))],
+  ]) {
+    const root = tmp('lk-hooks-custom-');
+    const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
+    await install(base);
+
+    // Hand-wire a subset no preset matches: keep Stop, drop the other two.
+    const file = path.join(root, '.claude', 'settings.json');
+    const seeded = JSON.parse(fs.readFileSync(file, 'utf8'));
+    delete seeded.hooks.SessionStart;
+    delete seeded.hooks.PostToolUseFailure;
+    fs.writeFileSync(file, JSON.stringify(seeded));
+    assert.deepEqual(installedHookEvents(root, 'project'), ['Stop'], `${label}: custom set seeded`);
+    mutate(root);
+
+    const result = await install({ ...base, ...extra });
+    assert.deepEqual(
+      installedHookEvents(root, 'project'),
+      ['Stop'],
+      `${label}: the hand-wired set survives`,
+    );
+    assert.equal(result['lorekit.cli.hooks_mode'], 'custom', `${label}: reported as custom`);
+  }
+});
+
 test('install --hooks none removes hooks that are already wired', async () => {
   const root = tmp('lk-hooks-none-');
   const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
