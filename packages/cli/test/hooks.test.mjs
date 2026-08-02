@@ -10,7 +10,6 @@ import {
   relevantLessons,
   formatRelevantLessons,
   writeConfirmation,
-  loreUrl,
 } from '../src/core/lessons.mjs';
 import { resolvePrecedence, matchesQuery } from '../src/lessons-pure.mjs';
 import { claude } from '../src/adapters/claude.mjs';
@@ -341,28 +340,10 @@ test('nudges emit no instruction when hooksInstructions is missing or null for t
   assert.doesNotMatch(retrospectiveNudge(scope, { tagsDefault: [], scopeDefaults: null }), /Project instruction/);
 });
 
-// ── loreUrl ────────────────────────────────────────────────────────────────────
-
-test('loreUrl returns the bare base URL only for the null/empty (all-scopes) default', () => {
-  assert.equal(loreUrl(null), 'https://lorekit.io/lore');
-  assert.equal(loreUrl(''), 'https://lorekit.io/lore');
-});
-
-test('loreUrl JSON-encodes global as a real scope filter (not the all-scopes default)', () => {
-  // Regression: a raw `?scope=global` fails the app's JSON.parse and silently
-  // means "all scopes"; the param must be the JSON string "global", URL-encoded.
-  assert.equal(loreUrl('global'), 'https://lorekit.io/lore?scope=%22global%22');
-});
-
-test('loreUrl JSON-encodes a repo scope into the query string', () => {
-  // Was `scope=repo%3A%3Aowner%2Frepo` (raw) — broken: the app's JSON.parse
-  // rejected it and fell back to all-scopes. Now the JSON string is encoded, so
-  // the deep link actually filters to the repo scope.
-  assert.equal(
-    loreUrl('repo::owner/repo'),
-    'https://lorekit.io/lore?scope=%22repo%3A%3Aowner%2Frepo%22',
-  );
-});
+// The scope-encoding contract these three cases used to assert through the
+// `loreUrl` pass-through is covered directly on `loreScopeUrl` in
+// `test/deeplink.test.mjs` (the bare URL for null/empty, and the JSON-encoded
+// `global` / `repo::owner/repo` filters).
 
 // ── writeConfirmation ─────────────────────────────────────────────────────────
 

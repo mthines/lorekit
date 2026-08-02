@@ -181,15 +181,6 @@ function tagsHint(writeScope, control) {
   return ` Include tags: [${tags.map((t) => JSON.stringify(t)).join(', ')}].`;
 }
 
-// The LoreKit web app URL for the Lore Explorer, pre-filtered to the given scope.
-// Exported so tests can assert the URL shape without re-deriving the encoding.
-// Delegates to the shared `loreScopeUrl` so the scope param is JSON-encoded the
-// way the dashboard reads it — the previous raw `?scope=${scope}` fell through
-// `useUrlState`'s `JSON.parse` and silently filtered to ALL scopes.
-export function loreUrl(writeScope) {
-  return loreScopeUrl(writeScope);
-}
-
 // One-line phrases for the detected friction reason codes (see core/friction.mjs),
 // so the nudge names what happened instead of a generic prompt.
 const REASON_PHRASES = {
