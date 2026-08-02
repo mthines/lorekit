@@ -52,7 +52,7 @@ export async function doctor(args) {
   // Returning early keeps the exit code a clean answer to a single question:
   // "can this build still emit telemetry?"
   if (args.telemetry) {
-    await checkTelemetryExport(args, record);
+    await checkTelemetryExport(args, root, record);
     return summarize(failures, warnings, failedChecks, 'Telemetry export is working.');
   }
 
@@ -142,7 +142,7 @@ export async function doctor(args) {
   await checkBYODStorage(record);
 
   // 4c. Dash0 telemetry export — is the CLI's own phone-home still working?
-  await checkTelemetryExport(args, record);
+  await checkTelemetryExport(args, root, record);
 
   // 5. Scope.
   const scope = deriveScope(root);
@@ -486,12 +486,16 @@ function detectDuplicateHooks(root) {
  *   • `--telemetry` — actually POST a probe span and assert the endpoint
  *     accepted it. Here a dead export IS a failure; that flag is what CI passes.
  */
-async function checkTelemetryExport(args, record) {
+async function checkTelemetryExport(args, root, record) {
   const required = Boolean(args.telemetry);
 
   let config;
   try {
-    config = resolveTelemetryConfig();
+    // Read `.lorekit.json` from the SAME root every other check uses. Left to
+    // its default, `resolveTelemetryConfig` reads it from `process.cwd()`, so a
+    // `telemetry.disabled` in the shell's directory would decide the verdict for
+    // an unrelated `--dir`.
+    config = resolveTelemetryConfig(process.env, readLorekitJson(root));
   } catch {
     config = { enabled: false };
   }

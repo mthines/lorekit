@@ -305,10 +305,10 @@ test('doctor reports read-only hook wiring distinctly from all', async () => {
 // A port nothing listens on, so connect() is refused immediately.
 const DEAD_ENDPOINT = 'http://127.0.0.1:1';
 
-function runTelemetryDoctor(extraEnv = {}) {
-  const dir = tmp('lk-doc-otlp-');
+function runTelemetryDoctor(extraEnv = {}, { cwd, dir = tmp('lk-doc-otlp-') } = {}) {
   return spawnSync(process.execPath, [BIN, 'doctor', '--telemetry', '--dir', dir], {
     encoding: 'utf8',
+    cwd,
     env: {
       ...process.env,
       NO_COLOR: '1',
@@ -322,6 +322,27 @@ function runTelemetryDoctor(extraEnv = {}) {
     },
   });
 }
+
+// The telemetry check reads `.lorekit.json` from the `--dir` root, like every
+// other check — NOT from the shell's working directory. Without this, a
+// developer with `telemetry.disabled` in the directory they happen to stand in
+// fails the CI gate for a completely unrelated project.
+test('doctor --telemetry reads .lorekit.json from --dir, not from the cwd', () => {
+  const elsewhere = tmp('lk-doc-otlp-cwd-');
+  fs.writeFileSync(path.join(elsewhere, '.lorekit.json'), JSON.stringify({ 'telemetry.disabled': true }));
+
+  const fromElsewhere = runTelemetryDoctor({}, { cwd: elsewhere });
+  assert.doesNotMatch(
+    fromElsewhere.stdout,
+    /opted out/,
+    'a disabled .lorekit.json in the cwd must not decide the verdict for another --dir',
+  );
+
+  const target = tmp('lk-doc-otlp-dir-');
+  fs.writeFileSync(path.join(target, '.lorekit.json'), JSON.stringify({ 'telemetry.disabled': true }));
+  const fromDir = runTelemetryDoctor({}, { dir: target });
+  assert.match(fromDir.stdout, /opted out/, 'the --dir root\u2019s own opt-out must still be honoured');
+});
 
 test('doctor --telemetry FAILS when the OTLP endpoint is unreachable', () => {
   const run = runTelemetryDoctor();
