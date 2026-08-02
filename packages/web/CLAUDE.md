@@ -39,6 +39,33 @@ wired up once and shared, so you get it for free:
 
 ---
 
+## Data fetching goes through LoreKit's REST API, never PostgREST
+
+The dashboard is a **client of its own API**. Memory reads and writes call the
+`memories` edge function (`src/lib/api/`), typed end-to-end with
+`@lorekit/schemas`; they do NOT query the `memories` table through supabase-js.
+
+- Why: querying the table directly means re-implementing predicates the REST
+  handlers already own — tenant scope, the active/archived partition, the expiry
+  filter, the keyset cursor, label containment quoting. Two implementations of
+  one contract drift, and they did: the row-cap bug `GET /memories/scopes` was
+  built to fix stayed live in the dashboard's scope tree, label catalog and
+  Overview charts for months after the endpoint shipped.
+- **A capability the dashboard needs becomes part of the public contract.** If a
+  view needs a filter or an aggregate the API does not expose, extend the
+  endpoint (schema in `@lorekit/schemas`, handler, OpenAPI, SQL assertions) —
+  do not reach past it with a private query.
+- Reads that must aggregate over the whole account (counts, catalogs, activity)
+  belong in Postgres behind an endpoint, never in a `select … limit N` plus a
+  browser-side reduce: PostgREST truncates at its row cap with no error, so the
+  rollup is quietly wrong for exactly the accounts that have the most data.
+- The credential is the user's own Supabase session token
+  (`lib/api/session-browser.ts` / `session-server.ts`), so RLS applies exactly as
+  it did before. No service key, no API token.
+- **Supabase-js stays** for what it is actually for: auth (sign-in, session,
+  password) and the server actions covering surfaces the REST API does not
+  expose yet (orgs, invites, tokens, audit log).
+
 ## Conventions specific to this package
 
 - **Theme:** dark-only, driven by CSS custom properties in

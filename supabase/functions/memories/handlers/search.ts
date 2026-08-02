@@ -4,7 +4,8 @@ import { validateBody } from '../../_shared/api/validate.ts';
 import { buildPage, decodeCursor } from '../../_shared/api/paginate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
-import { SearchMemoriesBodySchema } from '../../_shared/schemas/memory.ts';
+import { SearchMemoriesBodySchema, MEMORY_SELECT, shapeMemoryRow } from '../../_shared/schemas/memory.ts';
+import { normalizeTagList, pgArrayLiteral } from '../../_shared/schemas/tags.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
 import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';
@@ -26,7 +27,7 @@ export async function handleSearch(
 
   let q: TracedQuery<MemoryRow> = tracedDb
     .from<MemoryRow>('memories')
-    .select('id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,origin_repo,origin_branch,origin_commit,origin_pr')
+    .select(MEMORY_SELECT)
     .is('archived_at', null)
     .or('expires_at.is.null,expires_at.gt.now()')
     .order('updated_at', { ascending: false })
@@ -41,17 +42,23 @@ export async function handleSearch(
   }
   if (body.q) q = q.textSearch('fts', body.q, { type: 'websearch', config: 'english' });
   if (body.scopes?.length) q = q.in('scope', body.scopes);
-  if (body.tags?.length) q = q.overlaps('tags', body.tags);
+  // A STRING array literal, never a string[] — postgrest-js joins an array with
+  // a bare `,`, which mis-parses a label containing a comma/brace/quote into
+  // several labels (`@lorekit/schemas/tags`), and `memories.tags` has no CHECK.
+  // Reachable HERE in a way `GET /memories?tags=` is not: that wire format
+  // splits on commas, while this JSON body carries such a label verbatim.
+  const tags = normalizeTagList(body.tags);
+  if (tags.length) q = q.overlaps('tags', pgArrayLiteral(tags));
   // OR+AND structured filter tree — whitelisted fields only (see _shared/api/filter.ts)
   if (body.filter) q = applyFilter(q, body.filter);
-  if (body.cursor) { const c = decodeCursor(body.cursor); if (c) q = q.or(`updated_at.lt.${c.updated_at},and(updated_at.eq.${c.updated_at},id.lt.${c.id})`); }
+  if (body.cursor) { const c = decodeCursor(body.cursor); if (c && c.sort === 'updated_at') q = q.or(`updated_at.lt.${c.ts},and(updated_at.eq.${c.ts},id.lt.${c.id})`); }
 
   const { data, error } = await q;
   if (error) { span.error(`DB: ${error.message}`); throw error; }
   const page = buildPage(data ?? [], body.limit);
   span.setAttributes({ 'lorekit.result_count': page.entries.length });
   // Record count for the router's usage event — see RESULT_COUNT_HEADER.
-  const res = ok(page, cors);
+  const res = ok({ ...page, entries: page.entries.map(shapeMemoryRow) }, cors);
   res.headers.set('X-LoreKit-Result-Count', String(page.entries.length));
   return res;
 }
