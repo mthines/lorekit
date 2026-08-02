@@ -34,8 +34,12 @@ interface Props {
  *   2. WHAT it may do — read, or read and write.
  *   3. WHICH orgs it may reach. Personal lore is always included (it is the
  *      caller's own data); each org is opt-in and unticked by default. Nothing
- *      here is a dark pattern: the default is the least access that is still
- *      useful, and "Cancel" is as prominent as "Authorize".
+ *      here is a dark pattern: no org is granted unless the user ticks it,
+ *      every grant is shown before it is made, and "Cancel" is as prominent as
+ *      "Authorize". The PERMISSION default is read + write — the widest of the
+ *      three tiers, chosen because an MCP client that cannot write memories
+ *      cannot do the thing it was installed for; it is a visible, one-click
+ *      change on this screen, not a hidden default.
  *
  * The checkboxes are a UI affordance only — `approveAuthorization` re-derives
  * the caller's real memberships server-side and intersects, so a tampered form
