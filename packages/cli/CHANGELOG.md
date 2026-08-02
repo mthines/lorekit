@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.28.0](https://github.com/mthines/lorekit/compare/cli-v1.27.0...cli-v1.28.0) (2026-08-02)
+
+
+### Features
+
+* **cli:** deep-links docs page + `tags` param + web↔CLI drift guard ([#321](https://github.com/mthines/lorekit/issues/321)) ([7b80f90](https://github.com/mthines/lorekit/commit/7b80f904f753f6078bde4d60c38d138812de8b11))
+
 ## [1.27.0](https://github.com/mthines/lorekit/compare/cli-v1.26.1...cli-v1.27.0) (2026-08-02)
 
 
