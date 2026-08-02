@@ -17,10 +17,6 @@
  * next.config.ts (NEXT_PUBLIC_VCS_* env vars), resolved from Vercel's system
  * env vars which are available to the build process.
  */
-import { addSignalAttribute } from '@dash0/sdk-web';
-
 import { initDash0Rum } from './lib/dash0-rum';
 
 initDash0Rum();
-
-export { addSignalAttribute };
