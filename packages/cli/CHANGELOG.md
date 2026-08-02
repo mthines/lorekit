@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.29.2](https://github.com/mthines/lorekit/compare/cli-v1.29.1...cli-v1.29.2) (2026-08-02)
+
+
+### Bug Fixes
+
+* address [#337](https://github.com/mthines/lorekit/issues/337) review — restore llms docs, dead doctor branch, CORS Vary ([2ea06e6](https://github.com/mthines/lorekit/commit/2ea06e6025bc26412b415001d0583995a02a33f5))
+* **cli:** drop the dead tool-count branch in doctor connectivity ([2b4fd31](https://github.com/mthines/lorekit/commit/2b4fd318407abd3d0a84d0624c8b57894bb35bcc))
+
 ## [1.29.1](https://github.com/mthines/lorekit/compare/cli-v1.29.0...cli-v1.29.1) (2026-08-02)
 
 
