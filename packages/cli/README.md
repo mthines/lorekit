@@ -538,13 +538,20 @@ Both files share this schema — all fields optional:
                            // tags appended to every memory.write from this repo/user
                            // both layers merged: repo tags first, then user tags
 
+  "ttl.default": 90,
+                           // days until a write that named no TTL expires
+                           // repo wins over user (a scalar policy cannot merge)
+                           // omit for the historical behaviour: memories are permanent
+
   "scope.defaults": {
     "repo::owner/name":     { "tags": ["team"] },
-    "branch::owner/name::": { "tags": ["ephemeral"] }
+    "branch::owner/name::": { "tags": ["ephemeral"], "ttl_days": 14 },
+    "global":               { "ttl_days": null }
   },
-                           // per-scope tag defaults applied to writes whose scope
+                           // per-scope tag and TTL defaults applied to writes whose scope
                            // starts with the key; matched by prefix (no wildcards needed)
                            // repo config only — this is a team-level write policy
+                           // ttl_days: null means "permanent", overriding ttl.default
 
   // ── Hook behaviour ─────────────────────────────────────────────────────────
   "hooks.disabled": ["Stop"],
@@ -607,6 +614,58 @@ cannot override**:
 `off` is never deniable, so it is always the terminal fallback. Run
 `lorekit doctor` to see the resolved mode, **which source decided it**, and any
 active deny constraints.
+
+### Default TTL
+
+A memory with no TTL never expires. That is still the out-of-the-box behaviour,
+and it is the right default for a lesson someone deliberately curated — but it is
+the wrong one for the steady drip of observations a hook nudges an agent into
+writing at the end of every run. `ttl.default` and
+`scope.defaults.<prefix>.ttl_days` let a repo say how long its lore stays fresh.
+
+**Precedence, most specific first:**
+
+| # | Source | Wins because |
+| - | ------ | ------------ |
+| 1 | `--ttl-days` / `--clear-ttl` | An explicit flag is the caller's assertion about this one memory. `--clear-ttl` is how you keep something forever in a repo that defaults to expiring. |
+| 2 | The longest matching `scope.defaults` prefix with a `ttl_days` key | The most specific scope is the one the config author meant. `null` there means permanent. |
+| 3 | `ttl.default` | The repo-wide (or user-wide) fallback. |
+| 4 | No expiry | Nothing configured. |
+
+Prefix matching is `::`-delimited, so `branch::` covers every branch scope while
+`repo::owner` does **not** cover `repo::owner/name` — `owner/name` is a single
+segment. Tags from `scope.defaults` union across every matching prefix; a TTL
+cannot, so exactly one entry wins.
+
+A configured TTL that is out of range (or not a number) is **ignored** — the
+write succeeds with no expiry rather than failing. Config is ambient state that
+must never break an unrelated write; `--ttl-days 999`, by contrast, is a usage
+error, because you typed it. `lorekit write` names the source in its output:
+
+```
+  expires in 90 days (from config)
+```
+
+**Two limits worth knowing.** First, this is a **client-side** default: the
+hosted `memory.write` contract is unchanged, so omitting `ttl_*` there still
+means permanent. An agent talking straight to the MCP endpoint never sees your
+config file. Second, a **hook cannot apply it** — hooks only read lore and emit
+text; the write happens afterwards, in the agent's context. So the nudges instead
+*advise* the resolved number:
+
+```
+LoreKit: hit any friction worth remembering … Set ttl_days: 90 (this scope's
+configured default) unless the lesson is durable enough to keep forever.
+```
+
+That is advice, not enforcement. An agent that ignores it writes a permanent
+memory, exactly as before.
+
+**Refresh on update is free.** `memory_write` refreshes `expires_at` only when a
+`ttl_*` is supplied, so re-writing the same `scope`+`key` with the default
+applied slides the window forward — a lesson that keeps recurring keeps living,
+and one nobody has seen in 90 days decays. Expired rows are swept nightly, which
+also returns their headroom against the plan's memory cap.
 
 ## Options
 

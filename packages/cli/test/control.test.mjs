@@ -278,6 +278,96 @@ test('hooks.adapter: null when neither layer sets it', () => {
   assert.equal(r.hooksAdapter, null);
 });
 
+// ── ttl.default ───────────────────────────────────────────────────────────────
+
+test('ttl.default: repo layer wins over user (scalar policy, not a merge)', () => {
+  const r = resolveControl({
+    repoConfig: { 'ttl.default': 90 },
+    userConfig: { 'ttl.default': 7 },
+    connection: NO_CONN,
+  });
+  assert.equal(r.ttlDefault, 90);
+});
+
+test('ttl.default: user layer applies when the repo sets none', () => {
+  const r = resolveControl({ userConfig: { 'ttl.default': 7 }, connection: NO_CONN });
+  assert.equal(r.ttlDefault, 7);
+});
+
+test('ttl.default: null when neither layer sets it', () => {
+  const r = resolveControl({ connection: NO_CONN });
+  assert.equal(r.ttlDefault, null);
+});
+
+test('ttl.default: numeric string form accepted (hand-edited JSON)', () => {
+  const r = resolveControl({ repoConfig: { 'ttl.default': '30' }, connection: NO_CONN });
+  assert.equal(r.ttlDefault, 30);
+});
+
+test('ttl.default: a non-numeric value resolves to null instead of throwing', () => {
+  // resolveControl is on the path of every command, including read-only ones —
+  // a typo in a config file must never break `lorekit list`. Range checking
+  // happens later, at the point of use.
+  for (const bad of ['soon', true, {}, [], null]) {
+    const r = resolveControl({ repoConfig: { 'ttl.default': bad }, connection: NO_CONN });
+    assert.equal(r.ttlDefault, null, `ttl.default=${JSON.stringify(bad)}`);
+  }
+});
+
+test('ttl.default: an unusable repo value does NOT promote the user layer', () => {
+  // The repo declared a policy and got it wrong. "Repo wins" has to hold for the
+  // wrong value too, or a typo in a committed .lorekit.json silently hands the
+  // project's retention policy to whatever each developer has in ~/.lorekit —
+  // and `lorekit write` would print "(from config)" for a number the repo never
+  // asked for. The bad value degrades to "no default", as documented.
+  const r = resolveControl({
+    repoConfig: { 'ttl.default': '90 days' },
+    userConfig: { 'ttl.default': 7 },
+    connection: NO_CONN,
+  });
+  assert.equal(r.ttlDefault, null);
+});
+
+test('ttl.default: layer selection matches hooks.adapter on the same input', () => {
+  // Both keys are scalar policies that cannot merge, so a garbage repo value
+  // must beat the user layer in both — the comment in control.mjs cites
+  // hooks.adapter as the precedent, and this pins the two together.
+  const r = resolveControl({
+    repoConfig: { 'ttl.default': '90 days', 'hooks.adapter': 'bogus' },
+    userConfig: { 'ttl.default': 7, 'hooks.adapter': 'cursor' },
+    connection: NO_CONN,
+  });
+  assert.equal(r.hooksAdapter, 'bogus');
+  assert.equal(r.ttlDefault, null);
+});
+
+test('ttl.default: an explicit repo null still falls through to the user layer', () => {
+  // `null` is "I did not set one", not a declaration — unlike scope.defaults,
+  // where an explicit `ttl_days: null` is the spelling of "permanent".
+  for (const absent of [null, undefined, true, {}, []]) {
+    const r = resolveControl({
+      repoConfig: { 'ttl.default': absent },
+      userConfig: { 'ttl.default': 7 },
+      connection: NO_CONN,
+    });
+    assert.equal(r.ttlDefault, 7, `ttl.default=${JSON.stringify(absent)}`);
+  }
+});
+
+test('ttl.default: out-of-range values survive resolveControl untouched', () => {
+  // Bounds are NOT this function's job; resolveDefaultTtlDays drops them.
+  const r = resolveControl({ repoConfig: { 'ttl.default': 900 }, connection: NO_CONN });
+  assert.equal(r.ttlDefault, 900);
+});
+
+test('scope.defaults: ttl_days rides alongside tags on the same entry', () => {
+  const r = resolveControl({
+    repoConfig: { 'scope.defaults': { 'branch::': { tags: ['ephemeral'], ttl_days: 14 } } },
+    connection: NO_CONN,
+  });
+  assert.deepEqual(r.scopeDefaults['branch::'], { tags: ['ephemeral'], ttl_days: 14 });
+});
+
 test('hooks.stop: defaults to friction when unset', () => {
   const r = resolveControl({ connection: NO_CONN });
   assert.equal(r.hooksStop, 'friction');
