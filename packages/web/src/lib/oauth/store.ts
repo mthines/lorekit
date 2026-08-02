@@ -220,6 +220,26 @@ export interface IssuedToken {
 }
 
 /**
+ * Random alphanumeric string of exactly `length` characters.
+ *
+ * Mirrors the private helper in `lib/tokens.ts`, which mints the dashboard's
+ * tokens, so both paths produce the identical `lk_{rw|ro|wo}_<32>` shape. It is
+ * copied rather than imported because `lib/tokens.ts` is a `'use server'`
+ * module — exporting the helper there would turn it into a callable server
+ * action endpoint.
+ *
+ * Base64url is deliberately NOT used here: `randomToken(24)` encodes to exactly
+ * 32 characters, so stripping the two non-alphanumeric base64url symbols before
+ * slicing yielded a suffix of variable length rather than a fixed 32.
+ */
+function randomAlphanumeric(length: number): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => chars[b % chars.length]).join('');
+}
+
+/**
  * Mint the access token for a redeemed grant.
  *
  * The token is an ordinary `api_tokens` row in the same `lk_{rw|ro|wo}_` format
@@ -245,7 +265,7 @@ export async function issueAccessToken(
     .eq('kind', 'oauth');
 
   const suffix = permissionSuffix(grant.permissions);
-  const accessToken = `lk_${suffix}_${randomToken(24).replace(/[-_]/g, '').slice(0, 32)}`;
+  const accessToken = `lk_${suffix}_${randomAlphanumeric(32)}`;
   const tokenHash = await sha256Hex(accessToken);
   const expiresAt = new Date(Date.now() + ACCESS_TOKEN_TTL_SECONDS * 1000).toISOString();
 
