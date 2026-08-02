@@ -54,6 +54,17 @@
     "check:llms": {
       "executor": "nx:run-commands",
       "cache": true,
+      "inputs": [
+        {
+          "input": "default",
+          "projects": [
+            "schemas"
+          ]
+        },
+        "{workspaceRoot}/packages/web/src/content/docs/**/*.mdx",
+        "{workspaceRoot}/packages/web/public/llms.txt"
+      ],
+      "outputs": [],
       "options": {
         "command": "node --experimental-transform-types packages/schemas/src/llms/generate.ts --check",
         "cwd": "{workspaceRoot}"
