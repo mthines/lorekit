@@ -13,7 +13,7 @@
  * (or any other runtime) import.
  */
 
-import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join, dirname, basename, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderLlmsTxt, type DocsIndexEntry } from './render.ts';
@@ -106,9 +106,35 @@ function main(): void {
   console.log('llms.txt written to', OUTPUT_PATH);
 }
 
-// Compare decoded paths, not a URL against a raw path: `import.meta.url`
-// percent-encodes (a checkout under `/My Repos/` becomes `/My%20Repos/`) while
-// `process.argv[1]` does not, so the string form silently skips `main()` and
-// makes `--check` exit 0 without ever running the generator.
-const entry = process.argv[1];
-if (entry !== undefined && fileURLToPath(import.meta.url) === resolve(entry)) main();
+/**
+ * Is this module the process entry point?
+ *
+ * Two traps, both of which make `--check` exit 0 without ever running the
+ * generator — a silent pass is the worst possible failure for a drift guard:
+ *
+ *   1. `import.meta.url` percent-encodes (a checkout under `/My Repos/`
+ *      becomes `/My%20Repos/`) while `process.argv[1]` does not, so a raw
+ *      string comparison against the URL never matches. Hence `fileURLToPath`.
+ *   2. Node resolves `import.meta.url` to the REALPATH, while `process.argv[1]`
+ *      keeps whatever symlinked path the caller typed — so a checkout reached
+ *      through a symlink (worktree helpers, `~/.claude` style link farms)
+ *      compares realpath against symlink and never matches. Hence the
+ *      `realpathSync` arm.
+ *
+ * Both forms are compared: the plain one still covers `--preserve-symlinks`,
+ * where `import.meta.url` is itself the symlinked path. `realpathSync` throws
+ * when the path does not exist, which is not an entry-point match either.
+ */
+function isEntryPoint(entry: string | undefined): boolean {
+  if (entry === undefined) return false;
+  const self = fileURLToPath(import.meta.url);
+  const entryPath = resolve(entry);
+  if (self === entryPath) return true;
+  try {
+    return self === realpathSync(entryPath);
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryPoint(process.argv[1])) main();
