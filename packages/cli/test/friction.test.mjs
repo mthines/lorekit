@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import {
   detectFriction,
   readSessionFriction,
@@ -88,6 +90,54 @@ test('shouldRetrospect: friction fires only when friction is not positively abse
   assert.equal(shouldRetrospect('friction', false), false);
   // null = undetectable (e.g. no transcript on Cursor/Codex) → fire, don't lose lessons.
   assert.equal(shouldRetrospect('friction', null), true);
+});
+
+// ── end-to-end: hook.mjs Stop with a transcript_path payload ─────────────────
+// The pure pieces above are covered in isolation; this drives the real `hook`
+// binary the way Claude Code does (Stop JSON on stdin, `transcript_path` set)
+// so the headline behaviour — friction mode staying SILENT on a clean session
+// and firing on a session that hit friction — is exercised end to end.
+
+const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
+
+// Run `lorekit hook --adapter claude --event Stop` with a Stop payload, fully
+// isolated from the developer's real config/store/state so the assertions are
+// deterministic. Returns the hook's stdout.
+function runStopHook(transcriptText) {
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lk-hook-proj-'));
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lk-hook-home-'));
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lk-hook-state-'));
+  const transcript = path.join(projectDir, 'transcript.jsonl');
+  fs.writeFileSync(transcript, transcriptText);
+  const payload = JSON.stringify({
+    hook_event_name: 'Stop',
+    session_id: `sess-${Math.random().toString(36).slice(2)}`,
+    transcript_path: transcript,
+    cwd: projectDir,
+  });
+  return execFileSync(process.execPath, [BIN, 'hook', '--adapter', 'claude', '--event', 'Stop'], {
+    input: payload,
+    encoding: 'utf8',
+    cwd: projectDir,
+    env: {
+      ...process.env,
+      HOME: homeDir,
+      LOREKIT_HOME: homeDir,
+      CLAUDE_PROJECT_DIR: projectDir,
+      CLAUDE_PLUGIN_DATA: stateDir, // isolate the once-per-session throttle
+    },
+  });
+}
+
+test('hook (Stop, friction default): stays silent on a clean session', () => {
+  const clean = transcript([toolUse('Read', { a: 1 })], [toolOk()]);
+  assert.equal(runStopHook(clean).trim(), '');
+});
+
+test('hook (Stop, friction default): nudges when the session hit friction', () => {
+  const withFriction = transcript([toolUse('Bash', { cmd: 'x' })], [toolErr()]);
+  const out = runStopHook(withFriction);
+  assert.match(out, /memory\.write/);
 });
 
 // ── normalizeStopMode ────────────────────────────────────────────────────────

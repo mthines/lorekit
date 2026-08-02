@@ -528,8 +528,9 @@ Both files share this schema — all fields optional:
                            //   "always"             — nudge once per session regardless
                            //   "off"                — never (same effect as disabling Stop)
                            // repo wins over user
-                           // (friction is detectable on Claude/Codex, which expose a
-                           //  transcript; where it isn't, "friction" falls back to firing)
+                           // (friction is detectable only on Claude Code, which exposes a
+                           //  transcript; on Cursor/Codex there is none, so "friction"
+                           //  falls back to firing so no lesson is silently lost)
 
   "hooks.adapter": "claude",
                            // explicit adapter when auto-detection is ambiguous
