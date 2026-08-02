@@ -69,11 +69,19 @@ function isLoopbackOrigin(origin: string): boolean {
 // is what lets a browser read the server span's `traceparent` off the response
 // (traceRequest sets it) so client-side RUM can link to the server trace, plus the
 // dry-run acknowledgement so a client can confirm no-op execution.
+//
+// `Vary: Origin` is mandatory here BECAUSE `Access-Control-Allow-Origin` is
+// origin-dependent (echoed for an allowed origin, absent otherwise). Without it a
+// shared/CDN cache keyed only on the URL could serve one origin's CORS response —
+// including its `Access-Control-Allow-Origin` — to a different origin. It is emitted
+// unconditionally, since the presence/absence of the ACAO header is itself a function
+// of the request Origin even when the origin is disallowed.
 const STATIC_CORS_HEADERS: Readonly<Record<string, string>> = {
   'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Authorization, Content-Type, traceparent, tracestate, X-LoreKit-Dry-Run',
   'Access-Control-Expose-Headers': 'traceparent, X-LoreKit-Dry-Run',
   'Access-Control-Max-Age': '86400',
+  'Vary': 'Origin',
 };
 
 // Build the CORS response headers for one request Origin against an

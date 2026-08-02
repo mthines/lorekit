@@ -135,6 +135,10 @@ describe('corsResponseHeaders', () => {
       // is what links client-side RUM to the server trace.
       expect(headers['Access-Control-Expose-Headers']).toBe('traceparent, X-LoreKit-Dry-Run');
       expect(headers['Access-Control-Max-Age']).toBe('86400');
+      // Access-Control-Allow-Origin is origin-dependent, so the response MUST
+      // declare it varies by Origin — otherwise a shared cache can serve one
+      // origin's response to another. Present even for a disallowed origin.
+      expect(headers['Vary']).toBe('Origin');
     }
   });
 
