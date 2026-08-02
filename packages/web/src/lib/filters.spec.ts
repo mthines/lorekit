@@ -25,6 +25,7 @@ import {
   filtersParamValue,
   removeFilter,
   resolveFilters,
+  ROOT_VALUE_LIMIT,
   rootSuggestions,
   searchOptions,
   selectedValues,
@@ -353,6 +354,37 @@ describe('rootSuggestions', () => {
     }));
     const hits = rootSuggestions(many, 'feat', 5);
     expect(hits.filter((h) => h.kind === 'value')).toHaveLength(5);
+  });
+
+  // `GET /memories/facets` returns rows `facet asc, count desc, value asc`
+  // (migration 00052), so `origin_branch` — alphabetically first — arrives
+  // before `tag`. Draining the catalog in arrival order spent the whole cap on
+  // branches and starved every other dimension, which is the opposite of what
+  // a CROSS-dimension type-ahead is for.
+  const STARVING_CATALOG: FacetValue[] = [
+    ...Array.from({ length: 8 }, (_, i) => ({
+      facet: 'origin_branch' as const,
+      value: `feat/main-${i}`,
+      count: 50 - i,
+    })),
+    { facet: 'tag', value: 'main', count: 3 },
+    { facet: 'trigger', value: 'main-push', count: 2 },
+  ];
+
+  it('surfaces a low-count label even when eight branches match the same query', () => {
+    expect(rootSuggestions(STARVING_CATALOG, 'main')).toContainEqual({
+      kind: 'value',
+      field: 'label',
+      value: 'main',
+      count: 3,
+    });
+  });
+
+  it('gives every matching dimension a slot before any takes a second one', () => {
+    const values = rootSuggestions(STARVING_CATALOG, 'main').filter((h) => h.kind === 'value');
+    // Menu order (FILTER_FIELDS), one per dimension per pass, then the rest.
+    expect(values.slice(0, 3).map((h) => h.field)).toEqual(['label', 'trigger', 'branch']);
+    expect(values).toHaveLength(ROOT_VALUE_LIMIT);
   });
 
   it('returns nothing at all when neither a dimension nor a value matches', () => {

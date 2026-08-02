@@ -489,8 +489,18 @@ export const ROOT_VALUE_LIMIT = 8;
  * uncapped list turns the menu into a scrollbar.
  *
  * Ranking, most to least specific: exact dimension-name match, dimension-name
- * prefix, dimension-name substring, then values in catalog order (which is
- * already count desc — the popular value is the likely one).
+ * prefix, dimension-name substring, then values — **one dimension at a time,
+ * round-robin, each dimension's values in catalog order** (which is count desc
+ * within that dimension, so the popular value is the likely one).
+ *
+ * The round-robin is what makes the cap survivable. `GET /memories/facets`
+ * returns its rows `facet asc, count desc, value asc` (migration 00052), so
+ * draining the catalog in arrival order spends the whole cap on
+ * `origin_branch` — alphabetically first of the six — and a label named `main`
+ * never reaches the root once eight branches match it. Taking one value per
+ * dimension per pass means every matching dimension is represented before any
+ * dimension takes a second slot, which is the property the cross-dimension
+ * type-ahead exists for.
  */
 export function rootSuggestions(
   facets: readonly FacetValue[],
@@ -515,14 +525,36 @@ export function rootSuggestions(
     .sort((a, b) => a.rank - b.rank)
     .map(({ d }) => ({ kind: 'field' as const, field: d.field }));
 
+  // Bucket the matches per dimension first, preserving catalog order within a
+  // dimension, so the round-robin below can interleave them.
   const facetToField = new Map(FILTER_FIELDS.map((d) => [d.facet, d.field]));
-  const valueHits: RootSuggestion[] = [];
+  const byField = new Map<FilterField, RootSuggestion[]>();
   for (const f of facets) {
-    if (valueHits.length >= limit) break;
     if (!f.value.toLowerCase().includes(needle)) continue;
     const field = facetToField.get(f.facet);
     if (!field) continue;
-    valueHits.push({ kind: 'value', field, value: f.value, count: f.count });
+    const bucket = byField.get(field);
+    const hit: RootSuggestion = { kind: 'value', field, value: f.value, count: f.count };
+    if (bucket) bucket.push(hit);
+    else byField.set(field, [hit]);
+  }
+
+  // One value per dimension per pass, dimensions in menu order, until the cap
+  // is reached or every bucket is drained.
+  const valueHits: RootSuggestion[] = [];
+  const buckets = FILTER_FIELDS.map((d) => byField.get(d.field)).filter(
+    (b): b is RootSuggestion[] => b !== undefined,
+  );
+  for (let round = 0; valueHits.length < limit; round++) {
+    let emitted = false;
+    for (const bucket of buckets) {
+      if (valueHits.length >= limit) break;
+      const hit = bucket[round];
+      if (!hit) continue;
+      valueHits.push(hit);
+      emitted = true;
+    }
+    if (!emitted) break;
   }
 
   return [...fieldHits, ...valueHits];
