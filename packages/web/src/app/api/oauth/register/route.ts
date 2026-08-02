@@ -23,6 +23,17 @@ import { registerClient } from '@/lib/oauth/store';
  * Returns 201 with the issued `client_id`. There is no `client_secret`:
  * LoreKit registers public clients only.
  */
+/**
+ * Every response this route emits is readable cross-origin.
+ *
+ * Registration is open and returns no secret (public clients only, no
+ * `client_secret`), so `*` grants a browser nothing it could not already get
+ * by POSTing from anywhere. Declared once so the success, error and preflight
+ * paths cannot drift — a 201 the browser cannot read is a dead end the
+ * preflight below exists precisely to avoid.
+ */
+const CORS_HEADERS = { 'Access-Control-Allow-Origin': '*' } as const;
+
 export async function POST(request: NextRequest) {
   let body: unknown;
   try {
@@ -51,7 +62,7 @@ export async function POST(request: NextRequest) {
         // optional, and a LoreKit registration does not expire.
         client_id_issued_at: Math.floor(Date.now() / 1000),
       },
-      { status: 201, headers: { 'Cache-Control': 'no-store' } },
+      { status: 201, headers: { 'Cache-Control': 'no-store', ...CORS_HEADERS } },
     );
   } catch (error) {
     if (error instanceof SupabaseAdminConfigError) {
@@ -72,7 +83,7 @@ export async function OPTIONS() {
   return new NextResponse(null, {
     status: 204,
     headers: {
-      'Access-Control-Allow-Origin': '*',
+      ...CORS_HEADERS,
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
       'Access-Control-Max-Age': '86400',
@@ -83,6 +94,6 @@ export async function OPTIONS() {
 function oauthError(error: string, description: string, status: number) {
   return NextResponse.json(
     { error, error_description: description },
-    { status, headers: { 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' } },
+    { status, headers: { 'Cache-Control': 'no-store', ...CORS_HEADERS } },
   );
 }
