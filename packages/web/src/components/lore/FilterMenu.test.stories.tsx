@@ -311,3 +311,57 @@ export const RemovingAndClearingFilters: Story = {
     });
   },
 };
+
+/**
+ * The pill's operator listbox owns the SAME two guarantees `FilterMenu`'s
+ * container does — an Escape that does not leak to a sibling document listener,
+ * and focus put back where the list was opened from. `BackspaceAndStagedEscape`
+ * covers them for the menu; this covers them for the listbox, which until now
+ * was only ever driven by mouse.
+ */
+export const PillOperatorEscapeDismissesWithoutLeaking: Story = {
+  args: {
+    initialFilters: [{ field: 'label', operator: 'all', values: ['performance'] }],
+  },
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+
+    const trigger = await canvas.findByRole('button', {
+      name: /label includes all — change operator/i,
+    });
+
+    await step('the operator segment opens its listbox', async () => {
+      await userEvent.click(trigger);
+      await expect(
+        await canvas.findByRole('listbox', { name: /label operator/i }),
+      ).toBeInTheDocument();
+    });
+
+    await step('Escape closes it without reaching a document listener', async () => {
+      // LessonDetailSheet listens for Escape on `document`. One Escape must not
+      // both dismiss this listbox and close an open lesson behind the bar.
+      const docEscape = fn();
+      const onDocKey = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') docEscape();
+      };
+      document.addEventListener('keydown', onDocKey);
+      try {
+        await userEvent.keyboard('{Escape}');
+        await waitFor(() =>
+          expect(canvas.queryByRole('listbox', { name: /label operator/i })).not.toBeInTheDocument(),
+        );
+        await expect(docEscape).not.toHaveBeenCalled();
+      } finally {
+        document.removeEventListener('keydown', onDocKey);
+      }
+    });
+
+    await step('focus goes back to the trigger, never to <body>', async () => {
+      await expect(trigger).toHaveFocus();
+    });
+
+    await step('the condition itself is untouched by the dismissal', async () => {
+      await expect(canvas.getByLabelText('Label includes all performance')).toBeInTheDocument();
+    });
+  },
+};
