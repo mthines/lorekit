@@ -6,8 +6,10 @@
  * The SDK itself is initialised by `lib/dash0-rum.ts`, which
  * `instrumentation-client.ts` calls before React mounts. This component calls
  * the same idempotent initialiser (so the SDK is up even if the Next.js hook
- * did not run) and then owns the one thing that needs the React tree: upgrading
- * the anonymous visitor id to the authenticated user id.
+ * did not run) and then owns the one thing that needs the React tree: keeping
+ * `user.id` in step with the session — upgrading the anonymous visitor id to
+ * the authenticated user id, and dropping back to the anonymous id when the
+ * authenticated tree goes away.
  *
  * The route needs no handling here: the SDK derives `page.url.path` from
  * `window.location.href` on every signal it emits.
@@ -23,7 +25,7 @@
 
 import { useEffect } from 'react';
 
-import { initDash0Rum, identifyDash0User } from '@/lib/dash0-rum';
+import { initDash0Rum, identifyDash0User, resetDash0Identity } from '@/lib/dash0-rum';
 
 interface Dash0ProviderProps {
   /**
@@ -43,9 +45,20 @@ export function Dash0Provider({ userId }: Dash0ProviderProps) {
 
   // Attach the authenticated user ID to all subsequent telemetry, replacing the
   // anonymous id. Runs after the init effect above, so the SDK is always ready.
+  //
+  // The cleanup is what un-identifies on sign-out: signing out is a client-side
+  // `router.push('/login')`, which unmounts the authenticated layout — and this
+  // mount with it — without a page load, so nothing else would ever put the
+  // visitor back on the anonymous id.
+  //
+  // It hangs off THIS effect deliberately, after the `!userId` guard: the root
+  // layout mounts a second, userId-less instance that stays mounted for the
+  // whole session, and it must never register a reset that would clobber the
+  // authenticated identity this one just set.
   useEffect(() => {
     if (!userId) return;
     identifyDash0User(userId);
+    return () => resetDash0Identity();
   }, [userId]);
 
   return null;

@@ -34,6 +34,7 @@ const {
   buildVcsSignalAttributes,
   initDash0Rum,
   identifyDash0User,
+  resetDash0Identity,
 } = await import('./dash0-rum');
 
 const { __signalAttributes: signalAttributes } = (await import('@dash0/sdk-web')) as unknown as {
@@ -171,6 +172,21 @@ describe('signal identity attributes', () => {
   it('REPLACES the anonymous id on login instead of leaving a second user.id behind', () => {
     identifyDash0User('user-abc');
     expect(valuesOf('user.id')).toEqual(['user-abc']);
+  });
+
+  // That the anonymous id is the SAME one across calls is `resolveAnonymousId`'s
+  // property and is proven in `anonymous-id.spec.ts` ("is stable across calls").
+  // This env has no `localStorage`, so what is asserted here is the part that
+  // belongs to this module: the signed-out `user.id` is gone, replaced by an
+  // anonymous one, and there is still exactly one of them.
+  it('drops the authenticated user.id for an anonymous one on sign-out', () => {
+    identifyDash0User('user-abc');
+    expect(valuesOf('user.id')).toEqual(['user-abc']);
+
+    resetDash0Identity();
+
+    expect(valuesOf('user.id')).toHaveLength(1);
+    expect(String(valuesOf('user.id')[0])).toMatch(/^anon:/);
   });
 
   it('never writes its own page.url.path — the SDK derives one per signal', () => {

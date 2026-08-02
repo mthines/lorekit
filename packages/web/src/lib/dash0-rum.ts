@@ -176,9 +176,10 @@ export function initDash0Rum(): boolean {
 /**
  * Upgrade the current identity to an authenticated Supabase user id.
  *
- * The anonymous id set at init stays in `localStorage` untouched, so a sign-out
- * returns the visitor to the same anonymous identity rather than minting a new
- * one and inflating the visitor count.
+ * The anonymous id set at init stays in `localStorage` untouched, so
+ * {@link resetDash0Identity} can return the visitor to the same anonymous
+ * identity on sign-out rather than minting a new one and inflating the visitor
+ * count.
  *
  * No-op before initialisation, so a caller never has to order its effects
  * against the SDK's readiness.
@@ -190,6 +191,23 @@ export function initDash0Rum(): boolean {
 export function identifyDash0User(userId: string): void {
   if (!initialized || !userId) return;
   identify(userId);
+}
+
+/**
+ * Return the visitor to the anonymous identity `initDash0Rum` assigned.
+ *
+ * Sign-out is a client-side `router.push` (`SignOutButton.tsx`), so there is no
+ * page load to re-run initialisation: without this, every signal after sign-out
+ * would keep carrying the signed-out `user.id` until the tab is reloaded.
+ *
+ * The anonymous id is read back from `localStorage`, so the visitor returns to
+ * the SAME anonymous identity rather than being minted a new one.
+ *
+ * No-op before initialisation.
+ */
+export function resetDash0Identity(): void {
+  if (!initialized) return;
+  identify(resolveAnonymousId());
 }
 
 /**
