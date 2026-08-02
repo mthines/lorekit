@@ -62,6 +62,8 @@ export function FilterPill({
   const Icon = FIELD_ICONS[filter.field];
   const [operatorOpen, setOperatorOpen] = useState(false);
   const operatorRef = useRef<HTMLDivElement>(null);
+  const operatorTriggerRef = useRef<HTMLButtonElement>(null);
+  const operatorListRef = useRef<HTMLDivElement>(null);
 
   const currentOperator = operatorLabel(filter.field, filter.operator, filter.values.length);
   const phrase = filterPhrase(filter);
@@ -76,6 +78,55 @@ export function FilterPill({
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [operatorOpen]);
+
+  /** Close the operator list and put focus back where it was opened from. */
+  function dismissOperator() {
+    setOperatorOpen(false);
+    operatorTriggerRef.current?.focus();
+  }
+
+  /**
+   * Move focus by `delta` through the option buttons, wrapping. Roving DOM
+   * focus rather than `FilterMenu`'s virtual `aria-activedescendant`: there is
+   * no text input to hold focus here, and the list is two or three rows.
+   */
+  function moveOperatorFocus(delta: number) {
+    const options = Array.from(
+      operatorListRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? [],
+    );
+    if (options.length === 0) return;
+    const current = options.indexOf(document.activeElement as HTMLButtonElement);
+    const next =
+      current === -1
+        ? delta > 0
+          ? 0
+          : options.length - 1
+        : (current + delta + options.length) % options.length;
+    options[next]?.focus();
+  }
+
+  /**
+   * Keyboard for the operator list, handled on its wrapper so it covers both
+   * the trigger (focus stays there after a click or Enter) and the options.
+   *
+   * Escape `stopPropagation`s for the same reason `FilterMenu` does: without
+   * it the SAME Escape reaches `LessonDetailSheet`'s document listener and
+   * closes an open lesson behind the filter bar. It also restores focus to the
+   * trigger — dismissing a menu must not drop the user on `<body>`.
+   */
+  function handleOperatorKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (!operatorOpen) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      dismissOperator();
+      return;
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      moveOperatorFocus(e.key === 'ArrowDown' ? 1 : -1);
+    }
+  }
 
   const segment =
     'flex min-h-7 items-center px-2 text-[11px] transition-colors duration-100';
@@ -104,8 +155,9 @@ export function FilterPill({
       </span>
 
       {/* Operator */}
-      <div ref={operatorRef} className="relative flex">
+      <div ref={operatorRef} onKeyDown={handleOperatorKeyDown} className="relative flex">
         <button
+          ref={operatorTriggerRef}
           type="button"
           onClick={() => setOperatorOpen((v) => !v)}
           aria-expanded={operatorOpen}
@@ -118,6 +170,7 @@ export function FilterPill({
 
         {operatorOpen && (
           <div
+            ref={operatorListRef}
             role="listbox"
             aria-label={`${descriptor.label} operator`}
             className="absolute left-0 top-full z-40 mt-1 min-w-36 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-1 shadow-lg"
@@ -132,7 +185,7 @@ export function FilterPill({
                   aria-selected={selected}
                   onClick={() => {
                     onOperatorChange(op);
-                    setOperatorOpen(false);
+                    dismissOperator();
                   }}
                   className={[
                     'flex w-full min-h-8 items-center gap-2 rounded-md px-2 text-left text-xs hover:bg-[var(--color-bg-elevated)]',
