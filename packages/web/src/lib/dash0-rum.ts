@@ -47,11 +47,6 @@ const PAGE_PATH_ATTRIBUTE = 'page.url.path';
  */
 let initialized = false;
 
-/** Whether {@link initDash0Rum} has successfully initialised the SDK. */
-export function isDash0RumInitialized(): boolean {
-  return initialized;
-}
-
 /**
  * Resolve `deployment.environment.name` from Vercel's env, defaulting to
  * `local` for a plain `next dev`.
