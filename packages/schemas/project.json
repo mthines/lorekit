@@ -40,7 +40,8 @@
           "projects": [
             "schemas"
           ]
-        }
+        },
+        "{workspaceRoot}/packages/web/src/content/docs/**/*.mdx"
       ],
       "outputs": [
         "{workspaceRoot}/packages/web/public/llms.txt"
