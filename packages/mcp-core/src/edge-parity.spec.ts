@@ -87,6 +87,9 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   // Pure aggregation/window logic for GET /memories/usage — mirrored into the
   // _shared tree because the usage handler cannot cross-import mcp-core.
   ['usage-stats.ts', '_shared/usage-stats.ts'],
+  // CORS origin allowlist matching (www/apex sibling expansion) — mirrored into
+  // the _shared/api tree because cors.ts (Deno) cannot cross-import mcp-core.
+  ['cors-origins.ts', '_shared/api/cors-origins.ts'],
 ];
 
 describe('edge-function mirror parity', () => {
