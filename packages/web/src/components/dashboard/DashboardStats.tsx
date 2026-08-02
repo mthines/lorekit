@@ -158,7 +158,14 @@ export function DashboardStats() {
     );
   }
 
-  const { scopes, totalLessons } = data;
+  const { scopes } = data;
+
+  // Memories written within the selected range — the sum of the charted
+  // (recent-window) buckets. This makes the "Memories written" card's number
+  // follow its range picker, so the number, the sparkbar and the trend chip all
+  // describe the same period. The all-time total lives in the header badge
+  // (`useMemoryTotal`), which is where a range-independent count belongs.
+  const writtenInRange = totalTrends.lessons.points.reduce((sum, p) => sum + p.value, 0);
 
   const cards: {
     id: CardId;
@@ -175,11 +182,11 @@ export function DashboardStats() {
     {
       id: 'total',
       icon: BookOpen,
-      label: 'Total memories',
+      label: 'Memories written',
       tooltip:
-        'Total number of memories stored across all scopes, based on the most recent 1,000 rows fetched. Use the range selector to view memories written over the last 24 hours, 7 days, or 30 days — the sparkbar and the trend chip always cover the same period.',
-      value: totalLessons,
-      description: 'across all scopes',
+        'New memories written across all scopes in the selected range. The number, the sparkbar and the trend chip all cover the same period, and the trend compares it against the preceding period. Your all-time total across every scope is shown in the memory badge at the top right.',
+      value: writtenInRange,
+      description: `in the last ${RANGE_NOUN[ranges.total]}`,
       trend: totalTrends.lessons,
       showTrend: true,
       unit: 'memories',
