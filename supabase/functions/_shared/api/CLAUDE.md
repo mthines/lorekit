@@ -104,7 +104,11 @@ Rules:
   split stays in the router — the decision itself is not inline here any more.
 
 ### cors.ts
-- `corsHeaders(req)` — returns CORS headers; respects `ALLOWED_ORIGINS` env var.
+- `corsHeaders(req)` — returns CORS headers; respects `ALLOWED_ORIGINS` env var. Every
+  configured origin is expanded to BOTH its apex and its `www.` host (`expandOriginSiblings`),
+  so an allowlist naming only `https://lorekit.io` still admits the canonical
+  `https://www.lorekit.io` the dashboard is served from (the apex 308-redirects to www). `*`
+  passes through unchanged.
 - `handlePreflight(req)` — returns 204 with CORS headers for OPTIONS requests.
 - Emits `Access-Control-Expose-Headers: traceparent`. Every response produced under
   `traceRequest` (`_shared/otel.ts`) carries a `traceparent` header built from the root
