@@ -42,6 +42,7 @@ import { LessonCard } from './LessonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDebouncedUrlState } from '@/lib/hooks/useDebouncedUrlState';
+import { useIsMobile } from '@/lib/hooks/useMediaQuery';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
 import { useFacetCatalog, useMemories } from '@/lib/queries/lore';
@@ -307,6 +308,18 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // Which dimension the menu should open at, set by a pill's value segment.
   // Ephemeral — a request, not state worth sharing, so never in the URL.
   const [editingField, setEditingField] = useState<FilterField | null>(null);
+
+  // The desktop and mobile layouts are BOTH mounted — the breakpoint split
+  // below is CSS (`hidden md:flex` / `flex md:hidden`), not a conditional
+  // render — so both `ControlRow`s hold a live `FilterMenu`. An `editingField`
+  // handed to both opens both: each menu's effect runs in the same commit, so
+  // the first one's `onOpenAtFieldHandled` has not cleared the request by the
+  // time the second reads it, and the mobile `BottomSheet` portals to
+  // `document.body`, which escapes its `md:hidden` ancestor and appears on
+  // desktop. The request therefore goes to the variant that is actually
+  // visible, and only that one; `useIsMobile` is JS for the reason
+  // `useMediaQuery` documents — a `md:` class cannot gate a prop.
+  const isMobile = useIsMobile();
 
   // URL-backed view mode so a shared link lands on the right tab.
   const [view, setView] = useUrlState<ViewMode>('view', 'scope');
@@ -668,7 +681,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             facets={facets ?? []}
             filters={filters}
             onToggleFilterValue={handleToggleFilterValue}
-            editingField={editingField}
+            editingField={isMobile ? null : editingField}
             onEditField={setEditingField}
             range={range}
             onRangeChange={setRange}
@@ -729,7 +742,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           facets={facets ?? []}
           filters={filters}
           onToggleFilterValue={handleToggleFilterValue}
-          editingField={editingField}
+          editingField={isMobile ? editingField : null}
           onEditField={setEditingField}
           range={range}
           onRangeChange={setRange}
