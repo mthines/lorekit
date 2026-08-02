@@ -18,6 +18,7 @@ import {
   writeConfirmation,
 } from './core/lessons.mjs';
 import { isFailure } from './core/failure.mjs';
+import { readSessionFriction, shouldRetrospect } from './core/friction.mjs';
 import { firstTimeThisSession } from './core/state.mjs';
 import { recordFixture } from './core/record.mjs';
 import { claude } from './adapters/claude.mjs';
@@ -160,8 +161,21 @@ async function run(args) {
   }
 
   if (intent === 'retrospective') {
+    // `hooks.stop` gates the retrospective: `friction` (default) reads the
+    // session transcript and only nudges when it hit real friction; `always`
+    // keeps the once-per-session nudge; `off` is silent. The friction read is
+    // side-effect-free and happens BEFORE the once-per-session throttle is
+    // consumed, so a clean early turn stays silent without burning the marker —
+    // a later turn that does hit friction can still fire (once).
+    const stopMode = control.hooksStop || 'friction';
+    let reasons = [];
+    let friction = null;
+    if (stopMode === 'friction') {
+      ({ friction, reasons } = readSessionFriction(parsed.transcriptPath));
+    }
+    if (!shouldRetrospect(stopMode, friction)) return 0;
     if (!firstTimeThisSession(parsed.sessionId, 'retro')) return 0;
-    emit(retrospectiveNudge(scope, control));
+    emit(retrospectiveNudge(scope, control, { reasons }));
     return 0;
   }
 

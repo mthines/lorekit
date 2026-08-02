@@ -53,7 +53,8 @@ without needing a marketplace:
 3. **Hooks** — the *deterministic* layer: lessons injected on every
    `SessionStart`, and on a tool failure (`PostToolUseFailure`) any lessons that
    look **relevant to that failure** ("you've hit this before") plus a nudge to
-   record the fix, and a retrospective nudge on `Stop`. These fire the shared
+   record the fix, and a retrospective nudge on `Stop` — by default only when the
+   session actually hit friction (`hooks.stop`). These fire the shared
    `lorekit hook` engine and are merged into `settings.json` (existing hooks
    preserved).
 
@@ -518,6 +519,17 @@ Both files share this schema — all fields optional:
   "hooks.disabled": ["Stop"],
                            // suppress specific hook events; union across layers
                            // values: "SessionStart" | "PostToolUseFailure" | "Stop"
+
+  "hooks.stop": "friction",
+                           // gate the end-of-turn retrospective nudge:
+                           //   "friction" (default) — only nudge once/session when the
+                           //     session hit friction (a failed tool call or a stuck
+                           //     retry loop, read from the transcript); silent otherwise
+                           //   "always"             — nudge once per session regardless
+                           //   "off"                — never (same effect as disabling Stop)
+                           // repo wins over user
+                           // (friction is detectable on Claude/Codex, which expose a
+                           //  transcript; where it isn't, "friction" falls back to firing)
 
   "hooks.adapter": "claude",
                            // explicit adapter when auto-detection is ambiguous

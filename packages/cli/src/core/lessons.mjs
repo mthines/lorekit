@@ -161,7 +161,8 @@ export function formatRelevantLessons(lessons) {
 
 // Build a tags hint string from config-resolved tags and scope defaults. Returns
 // "" when there are no configured tags (no hint appended to the nudge).
-function tagsHint(writeScope, { tagsDefault = [], scopeDefaults = null } = {}) {
+function tagsHint(writeScope, control) {
+  const { tagsDefault = [], scopeDefaults = null } = control || {};
   const tags = [...tagsDefault];
   if (scopeDefaults) {
     for (const [prefix, cfg] of Object.entries(scopeDefaults)) {
@@ -188,21 +189,41 @@ export function loreUrl(writeScope) {
   return loreScopeUrl(writeScope);
 }
 
+// One-line phrases for the detected friction reason codes (see core/friction.mjs),
+// so the nudge names what happened instead of a generic prompt.
+const REASON_PHRASES = {
+  failure: 'a failed tool call',
+  'stuck-loop': 'a repeated retry',
+};
+
+// Join detected reason codes into a readable clause ("a failed tool call and a
+// repeated retry"). Empty/unknown reasons → "" (caller uses the generic prompt).
+function describeReasons(reasons) {
+  const phrases = (Array.isArray(reasons) ? reasons : [])
+    .map((r) => REASON_PHRASES[r])
+    .filter(Boolean);
+  if (phrases.length === 0) return '';
+  if (phrases.length === 1) return phrases[0];
+  return `${phrases.slice(0, -1).join(', ')} and ${phrases[phrases.length - 1]}`;
+}
+
 // The retrospective nudge emitted at end-of-turn (one-shot per session).
 // `control` is the resolved control object (optional) — carries tagsDefault and
-// scopeDefaults when the repo/user config defines them.
-export function retrospectiveNudge(scope, control) {
+// scopeDefaults when the repo/user config defines them. `opts.reasons` is the
+// detected friction reason codes (from core/friction.mjs) when `hooks.stop` is
+// `friction`; when present the nudge names them so the reflection is grounded.
+// Kept to a single line — the lore deep-link lives on the write CONFIRMATION,
+// which is where a link is actually actionable.
+export function retrospectiveNudge(scope, control, { reasons = [] } = {}) {
   const writeScope = scope.repoScope || 'global';
   const hint = tagsHint(writeScope, control);
   const instruction = control && control.hooksInstructions && control.hooksInstructions.Stop
     ? `\n\nProject instruction: ${control.hooksInstructions.Stop}` : '';
-  const url = loreUrl(writeScope);
-  return (
-    `LoreKit: hit any friction worth remembering — a stuck loop, a repeated ` +
-    `failure, a gotcha, a wrong assumption? If so, memory.write to ${writeScope} ` +
-    `as an observation; else skip.${hint}${instruction}\n` +
-    `View lore: ${url}`
-  );
+  const detected = describeReasons(reasons);
+  const lead = detected
+    ? `LoreKit: this session hit ${detected} — a lesson worth saving?`
+    : `LoreKit: any friction worth remembering (stuck loop, repeat failure, gotcha, wrong assumption)?`;
+  return `${lead} memory.write to ${writeScope}; else skip.${hint}${instruction}`;
 }
 
 // Terse confirmation emitted via PostToolUse when a memory.write succeeded.
