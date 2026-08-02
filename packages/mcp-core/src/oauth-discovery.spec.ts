@@ -109,12 +109,27 @@ describe('the challenge points at a document that is actually served', () => {
   });
 
   it('the two independently-built URLs are the same string', () => {
-    // Belt and braces: reconstruct both sides from the scanned literals so a
-    // future edit to either template is caught even if the greps above still
-    // match.
-    const edgeBuilt = `${ISSUER}/.well-known/oauth-protected-resource`;
+    // Belt and braces: reconstruct each side from literals EXTRACTED FROM THAT
+    // SIDE'S SOURCE, never from the local ISSUER const — two strings built
+    // from one const are equal by construction and no source edit can break
+    // them, so that form would assert nothing.
+    const edgeIssuer = /export const AUTHORIZATION_SERVER_ISSUER = '([^']+)';/.exec(edgeMetadata);
+    const edgePath = /return authorizationServerIssuer\(\) \+ '([^']+)';/.exec(edgeMetadata);
+    const webIssuer = /export const DEFAULT_ISSUER = '([^']+)';/.exec(webMetadata);
+    const webPath = /return `\$\{issuer\.replace\(\/\\\/\+\$\/, ''\)\}([^`]+)`;/.exec(webMetadata);
+
+    // A regex that stops matching must fail loudly here; without these the
+    // comparison below would collapse to undefined === undefined and pass.
+    expect(edgeIssuer, 'edge issuer literal not found').not.toBeNull();
+    expect(edgePath, 'edge metadata path literal not found').not.toBeNull();
+    expect(webIssuer, 'web issuer literal not found').not.toBeNull();
+    expect(webPath, 'web metadata path template not found').not.toBeNull();
+
+    const edgeBuilt = `${edgeIssuer?.[1]}${edgePath?.[1]}`;
+    const webBuilt = `${webIssuer?.[1]}${webPath?.[1]}`;
+
+    expect(edgeBuilt).toBe(webBuilt);
     expect(edgeBuilt).toBe(METADATA_URL);
-    expect(webMetadata).toContain(`export const DEFAULT_ISSUER = '${ISSUER}';`);
   });
 });
 
