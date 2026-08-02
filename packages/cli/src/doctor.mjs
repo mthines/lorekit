@@ -497,16 +497,25 @@ async function checkTelemetryExport(args, root, record) {
     // an unrelated `--dir`.
     config = resolveTelemetryConfig(process.env, readLorekitJson(root));
   } catch {
-    config = { enabled: false };
+    config = { enabled: false, reason: 'error' };
   }
   const source = resolveTelemetryTokenSource();
 
   if (!config.enabled) {
+    // Report the reason `resolveTelemetryConfig` actually returned. Deriving it
+    // from the token source instead misreports every case where a credential
+    // variable is set but unusable — e.g. an OTEL_EXPORTER_OTLP_HEADERS that
+    // parses to zero headers, which is a broken credential, not an opt-out.
     const detail =
-      source === 'none'
-        ? 'export off — no OTLP credential resolved. Published tarballs get one injected at release; ' +
-          'set LOREKIT_TELEMETRY_TOKEN (or OTEL_EXPORTER_OTLP_HEADERS) to override.'
-        : 'export off — opted out via LOREKIT_TELEMETRY / DO_NOT_TRACK / `telemetry.disabled` in .lorekit.json';
+      config.reason === 'opted-out'
+        ? 'export off — opted out via LOREKIT_TELEMETRY / DO_NOT_TRACK / `telemetry.disabled` in .lorekit.json'
+        : config.reason === 'no-endpoint'
+          ? 'export off — no OTLP endpoint resolved. Published tarballs get one baked in at release; ' +
+            'set OTEL_EXPORTER_OTLP_ENDPOINT to override.'
+          : config.reason === 'error'
+            ? 'export off — the telemetry config could not be resolved'
+            : 'export off — no OTLP credential resolved. Published tarballs get one injected at release; ' +
+              'set LOREKIT_TELEMETRY_TOKEN (or OTEL_EXPORTER_OTLP_HEADERS) to override.';
     record(required ? 'fail' : 'info', 'telemetry', detail);
     return;
   }

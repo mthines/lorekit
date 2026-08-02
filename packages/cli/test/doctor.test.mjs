@@ -356,6 +356,15 @@ test('doctor --telemetry FAILS when export is opted out — a silent CI gate is 
   assert.match(run.stdout, /export off/);
 });
 
+test('doctor --telemetry reports an unusable OTLP header as a credential problem, not an opt-out', () => {
+  // `OTEL_EXPORTER_OTLP_HEADERS` is set but parses to zero headers, so nothing
+  // authenticates. Reporting that as "opted out via LOREKIT_TELEMETRY /
+  // DO_NOT_TRACK" sends the operator looking for an opt-out that isn't there.
+  const run = runTelemetryDoctor({ OTEL_EXPORTER_OTLP_ENDPOINT: '', OTEL_EXPORTER_OTLP_HEADERS: 'garbage' });
+  assert.match(run.stdout, /no OTLP credential resolved/);
+  assert.doesNotMatch(run.stdout, /opted out/);
+});
+
 test('doctor --telemetry is focused — it does not run the skill or backend checks', () => {
   // A bare temp dir has no skills and no .mcp.json. If the focused run swept
   // those too, its exit code would say nothing about telemetry specifically.

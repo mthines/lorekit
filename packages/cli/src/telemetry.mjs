@@ -73,33 +73,42 @@ export function getActiveTraceparent() {
 
 /**
  * Resolve telemetry config from env + baked-in defaults + .lorekit.json.
- * Returns { enabled: false } when disabled or unconfigured, else the endpoint
- * and headers to export with.
+ * Returns { enabled: false, reason } when disabled or unconfigured, else the
+ * endpoint and headers to export with.
+ *
+ * `reason` names WHY export is off, because the three causes are not
+ * interchangeable to a user and cannot be re-derived from the outside:
+ *   • `opted-out`     — LOREKIT_TELEMETRY / DO_NOT_TRACK / `telemetry.disabled`.
+ *   • `no-endpoint`   — nothing to export to.
+ *   • `no-credential` — an endpoint, but no usable auth header. Note that an
+ *     OTEL_EXPORTER_OTLP_HEADERS that parses to zero headers lands here, which
+ *     is exactly why a caller must not infer the cause from the token source:
+ *     the variable is set, yet no credential resolved.
  * @param {object} [env]  defaults to process.env
  * @param {object} [repoConfig]  pre-loaded .lorekit.json (optional; read from cwd if absent)
  */
 export function resolveTelemetryConfig(env = process.env, repoConfig) {
   const optOut = env.LOREKIT_TELEMETRY;
   if (optOut !== undefined && OFF_VALUES.has(String(optOut).trim().toLowerCase())) {
-    return { enabled: false };
+    return { enabled: false, reason: 'opted-out' };
   }
   // DNT spec designates exactly `1` as the opt-out signal (consoledonottrack.com).
   // Match it precisely — a stray `DO_NOT_TRACK=false` should NOT disable export
   // (use LOREKIT_TELEMETRY for the loose app-specific opt-out values).
   if (env.DO_NOT_TRACK && String(env.DO_NOT_TRACK).trim() === '1') {
-    return { enabled: false };
+    return { enabled: false, reason: 'opted-out' };
   }
   // `telemetry.disabled: true` in .lorekit.json — team-level opt-out committed
   // to the repo. Checked after env overrides (env always wins).
   const cfg = repoConfig !== undefined ? repoConfig : readLorekitJson(process.cwd());
   if (cfg['telemetry.disabled'] === true) {
-    return { enabled: false };
+    return { enabled: false, reason: 'opted-out' };
   }
 
   const endpoint = (env.OTEL_EXPORTER_OTLP_ENDPOINT || DEFAULT_ENDPOINT || '')
     .trim()
     .replace(/\/+$/, '');
-  if (!endpoint) return { enabled: false };
+  if (!endpoint) return { enabled: false, reason: 'no-endpoint' };
 
   const headers = {};
   // Auth header priority (highest first):
@@ -124,7 +133,7 @@ export function resolveTelemetryConfig(env = process.env, repoConfig) {
   // headers) to authenticate — no point exporting an unauthenticated request.
   const usingDefaultEndpoint = !env.OTEL_EXPORTER_OTLP_ENDPOINT;
   if (usingDefaultEndpoint && Object.keys(headers).length === 0) {
-    return { enabled: false };
+    return { enabled: false, reason: 'no-credential' };
   }
 
   // Dataset routing, highest precedence first: an explicit `Dash0-Dataset`

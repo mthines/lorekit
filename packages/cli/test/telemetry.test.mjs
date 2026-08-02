@@ -636,6 +636,26 @@ test('telemetry.disabled not set — no effect on telemetry', () => {
   assert.equal(cfg.enabled, true);
 });
 
+// A disabled config says WHY. `doctor` renders a different message per cause,
+// and the causes are not distinguishable from the outside — in particular a
+// set-but-unparsable OTEL_EXPORTER_OTLP_HEADERS leaves the token source
+// reporting that variable while no credential actually resolved, so a caller
+// inferring the cause from the token source calls it an opt-out.
+test('a disabled config names its cause, and a set-but-unusable header is not an opt-out', () => {
+  assert.equal(resolveTelemetryConfig({ ...ENABLED_ENV, LOREKIT_TELEMETRY: '0' }).reason, 'opted-out');
+  assert.equal(resolveTelemetryConfig({ ...ENABLED_ENV, DO_NOT_TRACK: '1' }).reason, 'opted-out');
+  assert.equal(resolveTelemetryConfig(ENABLED_ENV, { 'telemetry.disabled': true }).reason, 'opted-out');
+
+  const garbage = resolveTelemetryConfig({ OTEL_EXPORTER_OTLP_HEADERS: 'garbage' });
+  assert.equal(garbage.enabled, false);
+  assert.equal(garbage.reason, 'no-credential', 'a header that parses to nothing is a credential problem');
+  assert.equal(
+    resolveTelemetryTokenSource({ OTEL_EXPORTER_OTLP_HEADERS: 'garbage' }),
+    'OTEL_EXPORTER_OTLP_HEADERS',
+    'the token source still names the variable — which is exactly why it cannot stand in for the reason',
+  );
+});
+
 test('env LOREKIT_TELEMETRY=0 still wins over telemetry.disabled: false', () => {
   const cfg = resolveTelemetryConfig(
     { ...ENABLED_ENV, LOREKIT_TELEMETRY: '0' },
