@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   DEFAULT_APP_BASE,
+  LORE_PARAM_DEFAULTS,
   resolveAppBase,
   encodeParam,
   buildLoreQuery,
@@ -28,6 +29,7 @@ import {
   parseOwnerArg,
   parseViewArg,
   parseRangeArg,
+  parseTagsArg,
   resolveScopeArg,
   mostSpecificScope,
   surfaceFor,
@@ -398,3 +400,148 @@ test('--link honours --json and --base on a read command', () => {
   assert.equal(out.surface, 'scope');
   assert.equal(out.url, 'https://acme.dev/lore?scope=%22global%22');
 });
+
+// ── unit: the `tags` label filter ─────────────────────────────────────────────
+
+test('parseTagsArg: comma form, JSON-array form, normalization, and empties', () => {
+  // Comma-separated is trimmed, de-duplicated, order-preserving.
+  assert.deepEqual(parseTagsArg('perf, ci, perf, '), ['perf', 'ci']);
+  // A JSON array string is accepted and normalized the same way.
+  assert.deepEqual(parseTagsArg('["perf"," ci ","perf"]'), ['perf', 'ci']);
+  // An already-array input is normalized too (drops non-strings/empties).
+  assert.deepEqual(parseTagsArg(['a', '', 'a', 2, 'b']), ['a', 'b']);
+  // A malformed JSON array falls back to comma-splitting rather than throwing.
+  assert.deepEqual(parseTagsArg('[perf'), ['[perf']);
+  // Absent / blank → [] (the default, so it is omitted from the URL).
+  assert.deepEqual(parseTagsArg(undefined), []);
+  assert.deepEqual(parseTagsArg('   '), []);
+});
+
+test('buildLoreUrl encodes tags as a JSON array and omits the empty default', () => {
+  assert.equal(
+    buildLoreUrl({ scope: 'global', tags: ['perf', 'ci'] }),
+    'https://lorekit.io/lore?scope=%22global%22&tags=%5B%22perf%22%2C%22ci%22%5D',
+  );
+  // An empty tags array equals the default → omitted, same as no tags at all.
+  assert.equal(buildLoreUrl({ scope: 'global', tags: [] }), 'https://lorekit.io/lore?scope=%22global%22');
+  // Round-trip: the app reads it back via JSON.parse.
+  const url = new URL(buildLoreUrl({ tags: ['perf', 'ci'] }));
+  assert.deepEqual(JSON.parse(url.searchParams.get('tags')), ['perf', 'ci']);
+});
+
+test('link --tags prints the label-filtered Explorer link', () => {
+  const root = tmp('lk-link-proj-');
+  const res = run(['link', 'global', '--tags', 'perf,ci'], { dir: root });
+  assert.equal(res.status, 0, res.stderr);
+  assert.equal(
+    res.stdout.trim(),
+    'https://lorekit.io/lore?scope=%22global%22&tags=%5B%22perf%22%2C%22ci%22%5D',
+  );
+});
+
+// ── web ↔ CLI drift guard ─────────────────────────────────────────────────────
+// `LORE_PARAM_DEFAULTS` mirrors the /lore Explorer's `useUrlState` params
+// (packages/web). This reads the ACTUAL param set from the web source — it never
+// hardcodes it — so a new Explorer filter (or a changed default) fails HERE
+// instead of silently producing a link the dashboard ignores. This is the guard
+// that would have caught the missing `tags` param.
+
+const WEB_SOURCES = [
+  '../../web/src/components/lore/LoreExplorer.tsx',
+  '../../web/src/components/providers/MemorySidebarProvider.tsx',
+].map((rel) => fileURLToPath(new URL(rel, import.meta.url)));
+
+const WEB_SOURCES_PRESENT = WEB_SOURCES.every((p) => fs.existsSync(p));
+
+// Extract every URL-backed param from `use[Debounced]UrlState<…>('key', <default>, …)`
+// calls into a Map of key → raw default token (as written in source).
+function extractUrlStateParams(src) {
+  const re = /use(?:Debounced)?UrlState<[^>]*>\(\s*'([^']+)'\s*,\s*([^,)]+?)\s*[,)]/g;
+  const found = new Map();
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    if (!found.has(m[1])) found.set(m[1], m[2].trim());
+  }
+  return found;
+}
+
+// Parse a simple literal default token to a value. `NO_TAGS` is the web
+// module-scoped `[]` alias. Complex tokens report `ok: false` so the value check
+// is skipped for them (the key-set check still covers presence).
+function parseDefaultToken(tok) {
+  if (tok === 'null') return { ok: true, value: null };
+  if (tok === 'true') return { ok: true, value: true };
+  if (tok === 'false') return { ok: true, value: false };
+  if (tok === 'NO_TAGS') return { ok: true, value: [] };
+  const str = /^'([^']*)'$/.exec(tok) || /^"([^"]*)"$/.exec(tok);
+  if (str) return { ok: true, value: str[1] };
+  return { ok: false };
+}
+
+function readWebParams() {
+  const params = new Map();
+  for (const p of WEB_SOURCES) {
+    for (const [k, v] of extractUrlStateParams(fs.readFileSync(p, 'utf8'))) {
+      if (!params.has(k)) params.set(k, v);
+    }
+  }
+  return params;
+}
+
+test(
+  'web ↔ CLI: LORE_PARAM_DEFAULTS covers exactly the Explorer useUrlState params',
+  { skip: WEB_SOURCES_PRESENT ? false : 'packages/web sources not present in this checkout' },
+  () => {
+    const webKeys = [...readWebParams().keys()].sort();
+    const cliKeys = Object.keys(LORE_PARAM_DEFAULTS).sort();
+    assert.deepEqual(
+      webKeys,
+      cliKeys,
+      `deeplink-pure.mjs LORE_PARAM_DEFAULTS must match the /lore Explorer useUrlState params.\n` +
+        `  web: ${webKeys.join(', ')}\n  cli: ${cliKeys.join(', ')}`,
+    );
+  },
+);
+
+test(
+  'web ↔ CLI: scalar param defaults agree with the Explorer',
+  { skip: WEB_SOURCES_PRESENT ? false : 'packages/web sources not present in this checkout' },
+  () => {
+    for (const [key, token] of readWebParams()) {
+      const parsed = parseDefaultToken(token);
+      if (!parsed.ok) continue; // complex default — presence is covered by the key test
+      assert.equal(
+        JSON.stringify(parsed.value),
+        JSON.stringify(LORE_PARAM_DEFAULTS[key]),
+        `default for '${key}' drifted: web ${JSON.stringify(parsed.value)} vs cli ${JSON.stringify(LORE_PARAM_DEFAULTS[key])}`,
+      );
+    }
+  },
+);
+
+// ── docs accuracy ─────────────────────────────────────────────────────────────
+// The example URLs printed in the deep-links docs page must be byte-for-byte
+// reproducible by the builder, so the docs can never drift from the encoding.
+
+const DOCS_PAGE = fileURLToPath(new URL('../../web/src/content/docs/deep-links.mdx', import.meta.url));
+const DOCS_PAGE_PRESENT = fs.existsSync(DOCS_PAGE);
+
+test(
+  'docs: every example URL in deep-links.mdx is reproducible by the builder',
+  { skip: DOCS_PAGE_PRESENT ? false : 'deep-links.mdx not present in this checkout' },
+  () => {
+    const page = fs.readFileSync(DOCS_PAGE, 'utf8');
+    const expected = [
+      loreScopeUrl('global'),
+      loreScopeUrl('repo::acme/widget'),
+      buildLessonUrl('global', 'prefer-guard-clauses'),
+      buildLoreUrl({ q: 'flaky test', owner: 'personal' }),
+      buildLoreUrl({ scope: 'global', tags: ['perf', 'ci'] }),
+      buildLoreUrl({ scope: 'global', view: 'time', archived: true }),
+      buildLoreUrl({ scope: 'global' }, { base: 'https://lore.acme.dev' }),
+    ];
+    for (const url of expected) {
+      assert.ok(page.includes(url), `deep-links.mdx is missing (or misencodes) the documented URL: ${url}`);
+    }
+  },
+);

@@ -85,8 +85,8 @@ ${c.bold('Commands')}
   link (url)  Print a shareable dashboard deep-link URL for the current context,
               a scope, or a specific lesson (opens its detail sheet). No args
               links to the cwd's most-specific scope. Filter flags mirror the
-              Explorer (--q / --owner / --range / --archived / --view); --base or
-              LOREKIT_APP_URL override the dashboard host. --json. Pipe it:
+              Explorer (--q / --owner / --tags / --range / --archived / --view);
+              --base or LOREKIT_APP_URL override the dashboard host. --json. Pipe it:
               lorekit link | pbcopy.
   bootstrap   Apply the BYOD schema to a user-supplied Supabase database.
               Only needed when using LOREKIT_STORAGE_URL / LOREKIT_STORAGE_ANON_KEY.
@@ -506,6 +506,7 @@ ${c.bold('Options')}
       --scope <scope>     Scope to link to (when no positional scope is given)
       --q <text>          Pre-fill the Explorer search box
       --owner <o>         Ownership filter: all | personal | <orgId>
+      --tags <a,b,c>      Label filter (AND across labels); comma-separated or a JSON array
       --range <json>      Date range as {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}
       --from <date>       Range start (shorthand for --range)
       --to <date>         Range end (shorthand for --range)
@@ -521,6 +522,7 @@ ${c.bold('Examples')}
   npx @lorekit/cli link repo::owner/repo prefer-guards   # open one lesson's detail sheet
   npx @lorekit/cli link global::prefer-guards --json     # { url, surface, base, params }
   npx @lorekit/cli url --q "flaky test" --owner personal # search + ownership filter
+  npx @lorekit/cli link global --tags "perf,ci"          # Explorer filtered to labels
 `,
   migrate: `${c.bold('lorekit migrate')} — relocate a LoreKit-format local store into the current layout
 
