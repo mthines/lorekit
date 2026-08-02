@@ -23,8 +23,10 @@ import {
  * `LabelFilter` had to grow the hard way — staged Escape, and an Escape that
  * does not leak to a sibling document listener.
  *
- * The desktop popover renders in-flow (not portaled), so it is queried against
- * the story canvas.
+ * The desktop popover is PORTALED to `document.body` (it has to be — in flow it
+ * was clipped by the Explorer's `overflow-hidden` panels), so menu queries run
+ * against the document, not the story canvas. `openMenu` returns that scope;
+ * pills are inside the canvas but resolve from the document too.
  */
 
 /** Controlled wrapper: the bar is real state, so a toggle is visible in the UI. */
@@ -67,11 +69,12 @@ export default meta;
 type Story = StoryObj<typeof Harness>;
 
 async function openMenu(canvasElement: HTMLElement) {
-  const canvas = within(canvasElement);
-  const trigger = await canvas.findByRole('button', { name: /add filter/i });
+  const trigger = await within(canvasElement).findByRole('button', { name: /add filter/i });
   await userEvent.click(trigger);
-  await canvas.findByRole('dialog', { name: /^filter$/i });
-  return canvas;
+  // The popover lives outside `canvasElement` now — scope to the document.
+  const screen = within(document.body);
+  await screen.findByRole('dialog', { name: /^filter$/i });
+  return screen;
 }
 
 export const ListsEveryDimensionFirst: Story = {
@@ -238,7 +241,9 @@ export const PillOperatorAndValueEditing: Story = {
     initialFilters: [{ field: 'label', operator: 'all', values: ['performance', 'auth'] }],
   },
   play: async ({ canvasElement, step }) => {
-    const canvas = within(canvasElement);
+    // The value segment reopens the PORTALED menu, so this story needs the
+    // document scope; the pills themselves resolve from it too.
+    const canvas = within(document.body);
 
     await step('a set-valued dimension gets its own operator vocabulary', async () => {
       const operator = await canvas.findByRole('button', {
@@ -362,6 +367,139 @@ export const PillOperatorEscapeDismissesWithoutLeaking: Story = {
 
     await step('the condition itself is untouched by the dismissal', async () => {
       await expect(canvas.getByLabelText('Label includes all performance')).toBeInTheDocument();
+    });
+  },
+};
+
+/**
+ * Regression: the popover must escape its ancestors' overflow.
+ *
+ * In the Explorer the trigger sits inside `overflow-hidden` panels and a
+ * scrolling results column, so an in-flow `absolute` popover was clipped by the
+ * first of them — the menu opened and was simply cut off. The harness here
+ * reproduces exactly that shape: a short, clipping, scrolling box around the
+ * control.
+ */
+function ClippedHarness() {
+  const [filters, setFilters] = useState<Filter[]>([]);
+  return (
+    <div
+      data-testid="clipping-ancestor"
+      // The two properties that did the clipping, at a height that guarantees
+      // a 288px-wide, ~300px-tall menu cannot fit inside.
+      style={{ width: 420, height: 90, overflow: 'hidden auto', border: '1px solid #333' }}
+    >
+      <FilterMenu
+        facets={FACETS}
+        filters={filters}
+        onToggleValue={(field, value) => setFilters((f) => toggleFilterValue(f, field, value))}
+        variant="desktop"
+      />
+    </div>
+  );
+}
+
+export const PopoverEscapesAClippingAncestor: StoryObj<typeof ClippedHarness> = {
+  render: () => <ClippedHarness />,
+  play: async ({ canvasElement, step }) => {
+    const clip = within(canvasElement).getByTestId('clipping-ancestor');
+    await userEvent.click(within(canvasElement).getByRole('button', { name: /add filter/i }));
+
+    const popover = await within(document.body).findByTestId('filter-menu-popover');
+
+    await step('the popover is not a descendant of the clipping box', async () => {
+      // The assertion the bug would fail: in-flow, the popover was inside this
+      // 90px-tall `overflow: hidden` box and therefore invisible below ~54px.
+      await expect(clip.contains(popover)).toBe(false);
+    });
+
+    await step('nor of ANY element that would clip it', async () => {
+      let el: HTMLElement | null = popover.parentElement;
+      const clippers: string[] = [];
+      while (el && el !== document.body) {
+        const overflow = getComputedStyle(el).overflow;
+        if (overflow !== 'visible') clippers.push(`${el.tagName}[overflow:${overflow}]`);
+        el = el.parentElement;
+      }
+      await expect(clippers, clippers.join(', ')).toEqual([]);
+    });
+
+    await step('it is fully inside the viewport, not spilling off an edge', async () => {
+      const box = popover.getBoundingClientRect();
+      await expect(box.width).toBeGreaterThan(0);
+      await expect(box.height).toBeGreaterThan(0);
+      await expect(box.left).toBeGreaterThanOrEqual(0);
+      await expect(box.right).toBeLessThanOrEqual(window.innerWidth);
+      await expect(box.bottom).toBeLessThanOrEqual(window.innerHeight);
+    });
+
+    await step('a click on one of its own rows still toggles rather than closing', async () => {
+      // The portal is outside the trigger's container, so a naive
+      // click-outside check would read this as "outside" and close on the
+      // first pick.
+      const screen = within(document.body);
+      await userEvent.click(await screen.findByRole('option', { name: /^agent/i }));
+      await expect(screen.getByRole('dialog', { name: /^filter$/i })).toBeInTheDocument();
+      await expect(
+        await screen.findByRole('listbox', { name: /agent values/i }),
+      ).toBeInTheDocument();
+    });
+  },
+};
+
+/**
+ * Regression: the mobile sheet must not resize as you navigate it.
+ *
+ * A bottom sheet is anchored to the bottom edge, so every row the body gains or
+ * loses moves the header, the search box and every row under the user's thumb.
+ * Walking from the six-row dimension list into a two-value dimension resized
+ * the whole surface mid-gesture. The list is now bounded to a narrow 45–55vh
+ * band, so both levels render at the same height.
+ */
+function MobileHarness() {
+  const [filters, setFilters] = useState<Filter[]>([]);
+  return (
+    <FilterMenu
+      facets={FACETS}
+      filters={filters}
+      onToggleValue={(field, value) => setFilters((f) => toggleFilterValue(f, field, value))}
+      variant="mobile"
+    />
+  );
+}
+
+export const MobileSheetKeepsItsHeightAcrossLevels: StoryObj<typeof MobileHarness> = {
+  render: () => <MobileHarness />,
+  play: async ({ canvasElement, step }) => {
+    const screen = within(document.body);
+    await userEvent.click(within(canvasElement).getByRole('button', { name: /add filter/i }));
+
+    const sheet = await screen.findByRole('dialog');
+    const rootHeight = (await screen.findByRole('listbox', { name: /filter by/i })).clientHeight;
+    const sheetHeight = sheet.getBoundingClientRect().height;
+
+    await step('the dimension list is already at the floor, not six rows tall', async () => {
+      // Six rows is ~200px; the floor is 45vh. Without it the sheet would open
+      // short and then grow or shrink on every level change.
+      await expect(rootHeight).toBeGreaterThan(0.4 * window.innerHeight);
+    });
+
+    await step('drilling into a two-value dimension does not resize the list', async () => {
+      await userEvent.click(await screen.findByRole('option', { name: /^agent/i }));
+      const valuesList = await screen.findByRole('listbox', { name: /agent values/i });
+      await expect(valuesList.clientHeight).toBe(rootHeight);
+    });
+
+    await step('…nor the sheet around it', async () => {
+      await waitFor(() =>
+        expect(sheet.getBoundingClientRect().height).toBeCloseTo(sheetHeight, 0),
+      );
+    });
+
+    await step('going back is just as still', async () => {
+      await userEvent.click(await screen.findByRole('button', { name: /back to filter types/i }));
+      const rootAgain = await screen.findByRole('listbox', { name: /filter by/i });
+      await expect(rootAgain.clientHeight).toBe(rootHeight);
     });
   },
 };

@@ -47,6 +47,21 @@
  * behind the menu updates as you go, which is what makes "toggle three, then
  * Enter" a decision rather than a leap.
  *
+ * ## Why the popover is portaled
+ * It is NOT `absolute` inside the trigger's container. The trigger sits in the
+ * Explorer's control row, which lives inside `overflow-hidden` panels and a
+ * scrolling results column, so an in-flow popover is clipped by the first of
+ * those ancestors and cannot be scrolled to — the menu is simply cut off. A
+ * portal to `document.body` takes it out of every ancestor's overflow and
+ * stacking context; the cost is that position must be computed rather than
+ * inherited, which {@link useAnchoredPosition} does from the trigger's rect.
+ *
+ * That position is recomputed on scroll (capture phase, so it sees ANY
+ * ancestor scrolling, not just the window) and on resize, because a fixed
+ * element does not follow an anchor that moves. It also picks the side with
+ * more room and caps the list to the space actually available, so the menu is
+ * never taller than the viewport it now escapes.
+ *
  * ## Motion (see /animations "popover")
  * The popover fades + scales from its anchor exactly as `DateRangePicker` and
  * the old `LabelFilter` do, so the row's three controls feel like one set. The
@@ -62,7 +77,8 @@
  * surfaces.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   Bot,
@@ -79,6 +95,11 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { BottomSheet } from '@/components/ui/BottomSheet';
+import {
+  MAX_LIST_HEIGHT,
+  anchoredPosition,
+  type AnchoredPosition,
+} from '@/lib/filter-menu-position';
 import {
   FILTER_FIELDS,
   facetOptions,
@@ -154,19 +175,68 @@ export function FilterMenu({
   const [activeIndex, setActiveIndex] = useState(0);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+
+  // ── Portal target + anchored position (popover only) ──────────────────────
+  // Resolved after mount so SSR renders nothing — `document` is client-only.
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setPortalTarget(document.body);
+  }, []);
+
+  const [position, setPosition] = useState<AnchoredPosition | null>(null);
+
+  const measure = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    setPosition(
+      anchoredPosition(trigger.getBoundingClientRect(), {
+        width: window.innerWidth,
+        height: window.innerHeight,
+      }),
+    );
+  }, []);
+
+  // A safety net only. The real measurement happens synchronously in
+  // `openMenu` / the `openAtField` effect, BEFORE `open` flips — and that
+  // ordering is load-bearing, not an optimisation: an unmeasured popover
+  // renders `visibility: hidden`, and a hidden element cannot take focus, so
+  // the "focus the search box on open" effect would silently no-op and every
+  // key the user pressed would go to the document instead of the combobox.
+  useLayoutEffect(() => {
+    if (!open || useSheet || position) return;
+    measure();
+  }, [open, useSheet, position, measure]);
+
+  // A fixed element does not follow an anchor that moves. `capture: true` is
+  // load-bearing: scroll does not bubble, and the trigger's nearest scrolling
+  // ancestor is the Explorer's results column, not the window — without it the
+  // menu detaches from its trigger the moment the page behind it scrolls.
+  useEffect(() => {
+    if (!open || useSheet) return;
+    window.addEventListener('scroll', measure, true);
+    window.addEventListener('resize', measure);
+    return () => {
+      window.removeEventListener('scroll', measure, true);
+      window.removeEventListener('resize', measure);
+    };
+  }, [open, useSheet, measure]);
 
   // A pill's value segment asks for the menu at level 2 of one dimension.
   useEffect(() => {
     if (!openAtField) return;
+    // Measure before opening — see the layout effect below for why.
+    if (!useSheet) measure();
     setField(openAtField);
     setEntryDepth(1);
     setQuery('');
     setActiveIndex(0);
     setOpen(true);
     onOpenAtFieldHandled?.();
-  }, [openAtField, onOpenAtFieldHandled]);
+  }, [openAtField, onOpenAtFieldHandled, useSheet, measure]);
 
   // ── Rows for the current level ─────────────────────────────────────────────
 
@@ -204,12 +274,17 @@ export function FilterMenu({
     }
   }, [open, useSheet]);
 
-  // Close on click-outside — popover only. The sheet owns its own dismissal and
-  // portals outside `containerRef`, so a tap inside it would read as "outside".
+  // Close on click-outside — popover only. The sheet owns its own dismissal.
+  //
+  // BOTH refs are checked, and that is the whole point: the popover is portaled
+  // to `document.body`, so it is NOT inside `containerRef` and a click on one of
+  // its own rows would otherwise read as "outside" and close it on the first
+  // pick. (The sheet has the same property, which is why it is excluded below.)
   const handleClickOutside = useCallback((e: MouseEvent) => {
-    if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-      setOpen(false);
-    }
+    const target = e.target as Node;
+    if (containerRef.current?.contains(target)) return;
+    if (popoverRef.current?.contains(target)) return;
+    setOpen(false);
   }, []);
   useEffect(() => {
     if (!open || useSheet) return;
@@ -220,6 +295,11 @@ export function FilterMenu({
   // ── Navigation ─────────────────────────────────────────────────────────────
 
   function openMenu() {
+    // Measure first: the popover must have a position on its very FIRST render,
+    // because an unmeasured one is `visibility: hidden` and a hidden element
+    // silently refuses focus — which would leave the search box unfocused and
+    // every keystroke going to the document.
+    if (!useSheet) measure();
     setField(null);
     setEntryDepth(0);
     setQuery('');
@@ -359,7 +439,28 @@ export function FilterMenu({
       ? `Filters: ${activeCount} applied. Add or edit a filter`
       : 'Add filter';
 
-  const listMaxH = useSheet ? 'max-h-[55vh]' : 'max-h-64';
+  // List sizing.
+  //
+  // The sheet gets a MIN height as well as a max, and the two are close
+  // together on purpose: a sheet is anchored to the bottom edge, so every row
+  // the content gains or loses moves the header, the search box and every row
+  // under the user's thumb. Walking from the six-row dimension list into a
+  // two-value dimension resized the whole surface mid-gesture and the next tap
+  // landed on a different row than the one aimed at. Bounding the body to a
+  // narrow 45–55vh band makes navigating between levels a content change rather
+  // than a layout change; only a dimension with very few values still moves at
+  // all, and then by at most the slack in that band.
+  //
+  // The popover keeps a content-driven height instead: it is anchored to a
+  // trigger near the top of the page, so growth pushes DOWNWARD into empty
+  // space and nothing the pointer is aiming at moves. A min height there would
+  // buy nothing and would paint a tall empty box under a one-row result.
+  const listStyle = useSheet
+    ? { minHeight: '45vh', maxHeight: '55vh' }
+    // Before the first measurement (the frame the popover mounts in) fall back
+    // to the resting maximum rather than 0 — an unmeasured list must not be an
+    // invisible one.
+    : { maxHeight: position?.listMaxHeight ?? MAX_LIST_HEIGHT };
 
   const emptyCopy = field
     ? query.trim()
@@ -374,8 +475,8 @@ export function FilterMenu({
       role="listbox"
       {...(field ? { 'aria-multiselectable': true } : {})}
       aria-label={field ? `${descriptor?.label} values` : 'Filter by'}
-      className={`${listMaxH} overflow-y-auto p-1`}
-      style={{ scrollPaddingBlock: '0.5rem' }}
+      className="overflow-y-auto p-1"
+      style={{ ...listStyle, scrollPaddingBlock: '0.5rem' }}
     >
       {rowCount === 0 ? (
         <p className="px-2 py-3 text-center text-[11px] text-[var(--color-content-tertiary)]">
@@ -475,19 +576,36 @@ export function FilterMenu({
 
   const panel = (
     <>
-      {/* Breadcrumb — only at level 2. It is also the pointer user's "back":
-          the keyboard has ← and Backspace, a mouse has nothing without it. */}
-      {field && (
+      {/* Header. It carries the pointer user's "back" — the keyboard has ← and
+          Backspace, a mouse has nothing without it.
+
+          In the SHEET it is always present, and that is the second half of the
+          don't-resize-on-navigate fix: bounding the list alone still let the
+          surface grow by exactly this row's height when a level-two breadcrumb
+          appeared. A row that is always there cannot cause a jump, and at level
+          one it earns its space by naming the surface — which is also why the
+          sheet is given no `title` of its own: two headers saying the same
+          thing is what a conditional breadcrumb would otherwise produce.
+
+          In the POPOVER it stays level-two-only: growth there is downward into
+          empty space, so a placeholder row would cost a row and buy nothing. */}
+      {(field || useSheet) && (
         <div className="flex items-center gap-1 border-b border-[var(--color-border)] px-1.5 py-1.5">
-          <button
-            type="button"
-            onClick={popLevel}
-            aria-label="Back to filter types"
-            className="flex min-h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium text-[var(--color-content-secondary)] transition-colors hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]"
-          >
-            <ChevronLeft className="size-3" aria-hidden />
-            {descriptor?.label}
-          </button>
+          {field ? (
+            <button
+              type="button"
+              onClick={popLevel}
+              aria-label="Back to filter types"
+              className="flex min-h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-medium text-[var(--color-content-secondary)] transition-colors hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]"
+            >
+              <ChevronLeft className="size-3" aria-hidden />
+              {descriptor?.label}
+            </button>
+          ) : (
+            <span className="flex min-h-6 items-center px-1.5 text-[11px] font-medium text-[var(--color-content-tertiary)]">
+              Filter by
+            </span>
+          )}
         </div>
       )}
 
@@ -560,6 +678,7 @@ export function FilterMenu({
   return (
     <div ref={containerRef} onKeyDown={handleContainerKeyDown} className={`relative ${className}`}>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => (open ? closeMenu() : openMenu())}
         aria-expanded={open}
@@ -587,25 +706,51 @@ export function FilterMenu({
       </button>
 
       {useSheet ? (
-        <BottomSheet open={open} onClose={closeMenu} title={descriptor?.label ?? 'Filter by'}>
+        // No `title`: the panel renders its own always-present header row (see
+        // there), and a sheet title that appeared and changed alongside it
+        // would both duplicate the label and re-introduce the height jump this
+        // is fixing.
+        <BottomSheet open={open} onClose={closeMenu} ariaLabel="Filter">
           {panel}
         </BottomSheet>
       ) : (
-        <AnimatePresence>
-          {open && (
-            <motion.div
-              role="dialog"
-              aria-label="Filter"
-              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.97 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.97 }}
-              transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
-              className="absolute left-0 top-full z-40 mt-1.5 w-72 origin-top-left overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] shadow-lg"
-            >
-              {panel}
-            </motion.div>
-          )}
-        </AnimatePresence>
+        // Portaled to `document.body`, so no ancestor's `overflow` can clip it
+        // and no ancestor's stacking context can bury it. Rendered inside this
+        // component's JSX tree, so React events still bubble to the container's
+        // `onKeyDown` — the staged-Escape handler keeps working unchanged.
+        portalTarget &&
+        createPortal(
+          <AnimatePresence>
+            {open && (
+              <motion.div
+                ref={popoverRef}
+                data-testid="filter-menu-popover"
+                role="dialog"
+                aria-label="Filter"
+                initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.97 }}
+                transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
+                style={{
+                  left: position?.left ?? 0,
+                  ...(position?.bottom != null
+                    ? { bottom: position.bottom }
+                    : { top: position?.top ?? 0 }),
+                  // Hidden until measured: one frame at the wrong coordinates
+                  // reads as the menu jumping into place.
+                  visibility: position ? 'visible' : 'hidden',
+                }}
+                className={[
+                  'fixed z-50 w-72 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] shadow-lg',
+                  position?.bottom != null ? 'origin-bottom-left' : 'origin-top-left',
+                ].join(' ')}
+              >
+                {panel}
+              </motion.div>
+            )}
+          </AnimatePresence>,
+          portalTarget,
+        )
       )}
     </div>
   );
