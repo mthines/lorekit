@@ -212,8 +212,13 @@ class RemoteStore {
   //   403 → the token was ACCEPTED, but lacks read permission — the normal,
   //         healthy answer for a write-only `lk_wo_*` token, so it must never
   //         be reported as an auth failure.
-  //   429 → rate limited. The request never reached the route, but it DID get
-  //         past auth, so the token is live.
+  //   429 → rate limited, and it says NOTHING about the credential. The only
+  //         `tooManyRequests()` call sites on the whole REST surface are
+  //         `memories/handlers/create.ts` and `purge.ts` — both write paths.
+  //         `GET /memories` (`handleList`) has no rate-limit check at all, so a
+  //         429 here is emitted by the platform edge AHEAD of the function,
+  //         before `resolveRestAuth` ever runs. `rateLimited` is still reported
+  //         so the caller can say "retry shortly" instead of "inconclusive".
   //
   // Returns { ok, authenticated, permitted, rateLimited, httpStatus, error,
   // networkError, unusable }. `authenticated` is null when the answer does not
@@ -236,7 +241,7 @@ class RemoteStore {
       return { ok: true, authenticated: true, permitted: false, httpStatus, error: res.error };
     }
     if (httpStatus === 429) {
-      return { ok: true, authenticated: true, permitted: null, rateLimited: true, httpStatus, error: res.error };
+      return { ok: true, authenticated: null, permitted: null, rateLimited: true, httpStatus, error: res.error };
     }
     return { ok: false, authenticated: null, httpStatus, error: res.error };
   }

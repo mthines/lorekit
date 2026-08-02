@@ -478,13 +478,17 @@ test('verifyAuth() reports a 403 as authenticated but unpermitted (a healthy lk_
   assert.equal(result.permitted, false);
 });
 
-test('verifyAuth() treats a 429 as authenticated — the request got PAST auth', async () => {
+// `GET /memories` has no rate-limit check (the only `tooManyRequests()` call
+// sites are the create/purge write paths), so a 429 on this probe comes from the
+// platform edge BEFORE `resolveRestAuth` — it cannot vouch for the token.
+test('verifyAuth() leaves the verdict UNKNOWN on a 429 — it never reached auth', async () => {
   const { result } = await captureRestCalls((store) => store.verifyAuth(), {
     status: 429,
     body: '{"error":"Too many requests","code":"rate_limited"}',
   });
-  assert.equal(result.authenticated, true);
-  assert.equal(result.rateLimited, true);
+  assert.equal(result.authenticated, null, 'a 429 says nothing about the credential');
+  assert.equal(result.rateLimited, true, 'still flagged so doctor can say "retry shortly"');
+  assert.equal(result.ok, true, 'the probe itself completed; doctor branches on rateLimited first');
 });
 
 test('verifyAuth() leaves the verdict UNKNOWN on a server error, never "revoked"', async () => {

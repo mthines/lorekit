@@ -326,7 +326,7 @@ async function checkRemoteAuth(store, record) {
     return;
   }
   if (res.rateLimited) {
-    record('warn', 'authentication', 'token accepted, but the request was rate limited (HTTP 429) — retry shortly');
+    record('warn', 'authentication', 'could not verify — the request was rate limited (HTTP 429) before it reached the route; retry shortly');
     return;
   }
   if (res.authenticated === true) {
