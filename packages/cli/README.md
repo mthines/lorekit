@@ -103,8 +103,9 @@ In a TTY the prompt preselects whatever is **already wired**, so re-running
 install never resurrects hooks you declined; a genuinely fresh install
 preselects `all`. `--yes` / a non-TTY takes that same preselected value without
 asking — `all` on a fresh install, otherwise whatever is already wired (`none`
-if you previously removed them), and a hand-wired set that matches no preset is
-left exactly as it is. Pass `--hooks <mode>` to choose explicitly.
+if you previously removed them), and a hand-wired set that matches no preset
+keeps exactly that set — no event is added or removed, though a stale hook
+command is still refreshed. Pass `--hooks <mode>` to choose explicitly.
 `--hooks none` removes hooks that are already there; `--no-hooks` only skips
 wiring new ones. `lorekit doctor` reports which events are wired, and in which
 scope.

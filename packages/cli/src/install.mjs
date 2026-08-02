@@ -296,8 +296,9 @@ export async function install(args) {
   // gets that moment, so taking the preselection there would WIRE `all` and
   // silently re-add the events the user hand-removed — exactly what
   // `hookModeFromEvents` tells callers not to do, and the opposite of the
-  // documented "otherwise whatever is already wired". So leave it exactly as
-  // found; `--hooks <mode>` remains the way to change it on purpose.
+  // documented "otherwise whatever is already wired". So keep exactly that set
+  // — no event added or removed, though the command string is still refreshed
+  // below; `--hooks <mode>` remains the way to change it on purpose.
   let preserveCustomHooks = false;
   if (hookMode === null) {
     const preselect = defaultHookMode({
