@@ -90,7 +90,30 @@ jobs:
       - name: Link the Supabase project
         run: supabase link --project-ref "$PROJECT_REF"
 
+      - name: Set up Node.js (for the migration-drift classifier)
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      # `preview` is a SHARED Supabase project, and preview.yml ALSO pushes
+      # migrations to it — from an OPEN PR's head SHA, on a `/preview` comment.
+      # So its migration history can legitimately carry versions that do not
+      # exist on this ref yet, and `supabase db push` treats a remote that is
+      # merely AHEAD as fatal even when this ref has nothing left to apply.
+      # Classify the drift first and react proportionally; this step never
+      # repairs or mutates the remote's migration history.
+      - name: Classify migration drift against preview
+        id: drift
+        run: |
+          # Tolerate a non-zero exit here: the classifier decides, not the CLI.
+          # A listing it cannot parse yields `push` — the previous behaviour,
+          # error message included.
+          supabase migration list --linked > /tmp/migration-list.txt 2>&1 || true
+          cat /tmp/migration-list.txt
+          node scripts/check-remote-migration-drift.mjs < /tmp/migration-list.txt
+
       - name: Push database migrations
+        if: steps.drift.outputs.action == 'push'
         # --include-all applies a migration even when a LOWER-numbered file was
         # merged after a higher-numbered one already reached this remote — which
         # happens when parallel PRs pick colliding sequential prefixes (e.g.

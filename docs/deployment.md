@@ -120,78 +120,26 @@ supabase migration repair --status reverted 00049 00050 00051
 `deploy.yml` ever pushes to production, so a remote ahead of `main` there is a
 real anomaly and must stop the pipeline.
 
-#### Wiring the classifier into the workflows
+#### How the classifier is wired in
 
-Like the "Wiring the sweep into CI" section below, **the workflow steps are
-documented, not committed** — the GitHub App that opens automated PRs has no
-`workflows` permission, so a human applies these three edits once.
+The classifier is live in the workflows (no manual step — unlike the older
+"Wiring the sweep into CI" section below, this one was committed directly):
 
-**1.** In `.github/workflows/deploy.yml`, in the **`deploy-preview`** job only,
-replace the `Push database migrations` step with the following (the
-`deploy-production` job is left exactly as it is):
+- **`.github/workflows/deploy.yml`**, `deploy-preview` job only: a
+  `Classify migration drift against preview` step (`id: drift`) runs
+  `supabase migration list --linked` through the classifier after `Link`, and
+  the `Push database migrations` step is gated on `steps.drift.outputs.action ==
+  'push'`. A `fail` verdict exits non-zero and stops the deploy; `skip` continues
+  to the function deploy without pushing. `deploy-production` is left strict.
+- **`.github/workflows/ci.yml`**: the `changes` job's migration path filter also
+  matches `scripts/check-remote-migration-drift`, and the `migration-order` job
+  unit-tests the classifier (`node --test scripts/check-remote-migration-drift.test.mjs`)
+  alongside the ordering guard.
 
-```yaml
-      - name: Set up Node.js (for the migration-drift classifier)
-        uses: actions/setup-node@v7
-        with:
-          node-version: 20
-
-      # `preview` is a SHARED Supabase project, and preview.yml ALSO pushes
-      # migrations to it — from an OPEN PR's head SHA, on a `/preview` comment.
-      # So its migration history can legitimately carry versions that do not
-      # exist on this ref yet, and `supabase db push` treats a remote that is
-      # merely AHEAD as fatal even when this ref has nothing left to apply.
-      # Classify the drift first and react proportionally; this step never
-      # repairs or mutates the remote's migration history.
-      - name: Classify migration drift against preview
-        id: drift
-        run: |
-          # Tolerate a non-zero exit here: the classifier decides, not the CLI.
-          # A listing it cannot parse yields `push` — the previous behaviour,
-          # error message included.
-          supabase migration list --linked > /tmp/migration-list.txt 2>&1 || true
-          cat /tmp/migration-list.txt
-          node scripts/check-remote-migration-drift.mjs < /tmp/migration-list.txt
-
-      - name: Push database migrations
-        if: steps.drift.outputs.action == 'push'
-        # --include-all applies a migration even when a LOWER-numbered file was
-        # merged after a higher-numbered one already reached this remote — which
-        # happens when parallel PRs pick colliding sequential prefixes (e.g.
-        # #260 shipped 00042, then #266 shipped 00041). Without it `db push`
-        # aborts with "migration files to be inserted before the last migration
-        # on remote". Migrations are still applied in on-disk numeric order; the
-        # PR-time guard (scripts/check-migration-order.mjs, the `migration-order`
-        # CI job) is what stops an out-of-order file from landing in the first
-        # place, so this flag only ever applies already-reviewed, CI-tested ones.
-        run: supabase db push --include-all
-```
-
-**2.** In `.github/workflows/ci.yml`, widen the `migrations` path filter in the
-`changes` job so a change to the classifier or its test triggers the gate:
-
-```yaml
-          if printf '%s\n' "$CHANGED" | grep -qE '^(supabase/migrations/|scripts/check-migration-order|scripts/check-remote-migration-drift|\.github/workflows/ci\.yml)'; then
-```
-
-**3.** In the same file, add a second self-test to the `migration-order` job,
-right after `Unit-test the guard`:
-
-```yaml
-      # The deploy-time counterpart: the PR-time guard above stops an
-      # out-of-order file from landing, while the drift classifier decides what
-      # deploy.yml does when the SHARED preview project's migration history is
-      # ahead of the ref being deployed. Its verdict gates a `supabase db push`,
-      # so it is unit-tested here too.
-      - name: Unit-test the remote-migration-drift classifier
-        run: node --test scripts/check-remote-migration-drift.test.mjs
-```
-
-Until step 1 is applied, the classifier ships but is not wired in, and a
-`/preview` run on an open PR that adds migrations will keep wedging `main`'s
-deploy. The interim manual unblock is to run the classifier's own advice:
-confirm nothing is pending locally, then let the next deploy through by
-repairing the drifted rows on the preview project.
+If the classifier ever returns `fail`, the interim manual unblock is its own
+advice: confirm nothing is pending locally, then let the next deploy through by
+repairing the drifted rows on the preview project — or just run the rebuild
+workflow below, which clears the drift wholesale.
 
 ### Rebuilding the shared preview project
 
@@ -228,167 +176,37 @@ The rebuild **is destructive and the project is shared** — it wipes any
 in-flight `/preview` state, so re-run `/preview` on a PR afterwards. It runs
 on-demand and on a low-traffic weekly cron, never silently mid-deploy.
 
-#### Wiring the rebuild into the workflows (one-time, must be committed by a human)
+#### The rebuild workflow
 
-Same constraint as the sections above — the GitHub App that opens automated PRs
-has no `workflows` permission, so a human commits this new workflow file once.
+The rebuild is committed as
+[`.github/workflows/rebuild-preview.yml`](../.github/workflows/rebuild-preview.yml).
+It runs `supabase db reset --linked` against the `preview` project (Environment-
+scoped secrets + an explicit production-ref guard), then redeploys the edge
+functions. Three ways to trigger it:
 
-Create `.github/workflows/rebuild-preview.yml`:
+- **Actions ▸ Run workflow** (`workflow_dispatch`) — the manual path.
+- **A `/reset-preview` comment on any PR** — gated to OWNER/MEMBER/COLLABORATOR
+  by a guard job modeled on `preview.yml`'s `/preview`. Unlike `/preview` it does
+  **not** check out the PR head; it rebuilds to `main`'s migration baseline. It's
+  the ergonomic surface — you notice drift on a PR, so you clear it from that
+  thread — but the reset is shared and destructive, so it still wipes every other
+  in-flight preview. That's acceptable for a disposable project; it's why the
+  comment path is maintainer-gated.
+- **A weekly `cron`** (Sundays 04:00 UTC) — the unattended flush.
 
-```yaml
-# Rebuild the SHARED, disposable preview Supabase project from scratch.
-# `db reset --linked` re-provisions the remote DB from the migration files on
-# this ref, clearing the drifted history rows + orphan schema objects that the
-# drift classifier only tolerates. Destructive; wipes in-flight /preview state.
-name: Rebuild preview DB
+The **first** manual `workflow_dispatch` run is worth doing deliberately: it
+clears any current drift wholesale (so a live wedge needs no manual `migration
+repair`), and it's where you confirm whether the pinned Supabase CLI prompts on
+`db reset --linked` in CI — before the cron ever fires. If it hangs on a prompt,
+drive it non-interactively with whatever confirmation flag the installed CLI
+exposes.
 
-on:
-  workflow_dispatch: {}
-  schedule:
-    - cron: "0 4 * * 0" # Sundays 04:00 UTC — low traffic
-
-concurrency:
-  group: preview-db-write # keep off deploy-preview / preview.yml if you group those too
-  cancel-in-progress: false
-
-jobs:
-  rebuild:
-    name: Rebuild → preview
-    runs-on: ubuntu-latest
-    environment: preview
-    permissions:
-      contents: read
-    env:
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-      PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7.0.1
-
-      - name: Install Supabase CLI
-        uses: supabase/setup-cli@v3
-        with:
-          version: latest
-
-      - name: Verify preview environment secrets are set
-        run: |
-          missing=""
-          [ -z "$PROJECT_REF" ] && missing="$missing SUPABASE_PROJECT_REF"
-          [ -z "$SUPABASE_DB_PASSWORD" ] && missing="$missing SUPABASE_DB_PASSWORD"
-          if [ -n "$missing" ]; then
-            echo "::error::Missing secrets for the 'preview' environment:$missing."
-            exit 1
-          fi
-
-      # Belt-and-suspenders for a destructive job: the `preview` Environment
-      # scoping already means only the preview project's ref is in scope, but a
-      # misconfigured secret must fail loud, never wipe production.
-      - name: Refuse to reset production
-        run: |
-          if [ "$PROJECT_REF" = "pqokxlhvnosogizsjztg" ]; then
-            echo "::error::PROJECT_REF is the production project — refusing to reset."
-            exit 1
-          fi
-
-      - name: Link the Supabase project
-        run: supabase link --project-ref "$PROJECT_REF"
-
-      # The ONE step that clears drifted history rows AND orphan schema objects.
-      # NOTE: depending on the pinned CLI version, `db reset --linked` may prompt
-      # for confirmation. Verify on the FIRST manual `workflow_dispatch` run
-      # (before the cron ever fires); if it hangs on a prompt, drive it
-      # non-interactively with whatever confirmation flag the installed CLI
-      # exposes (or pipe `y`).
-      - name: Reset preview database from migrations
-        run: supabase db reset --linked
-
-      - name: Deploy edge functions (mcp + health)
-        run: |
-          for attempt in 1 2 3; do
-            supabase functions deploy --no-verify-jwt --project-ref "$PROJECT_REF" && break
-            rc=$?
-            if [ $attempt -eq 3 ]; then
-              echo "::error::Edge function deploy failed after $attempt attempts (exit $rc)"
-              exit $rc
-            fi
-            echo "::warning::Edge function deploy failed (exit $rc), retrying in 10 s (attempt $attempt/3)..."
-            sleep 10
-          done
-```
-
-The **first** manual `workflow_dispatch` run doubles as the immediate unblock
-for the current `00049`–`00051` wedge — the reset clears that drift as a side
-effect, so the manual `migration repair` above becomes unnecessary once this
-workflow exists.
-
-#### Optional: a `/reset-preview` comment trigger
-
-**Recommended.** You notice drift *on a PR*, so being able to type
-`/reset-preview` in that thread is a better ergonomic surface than navigating to
-Actions ▸ Run workflow — and it reuses the exact authorization pattern
-`preview.yml`'s `/preview` already established. The trade-off is unchanged: the
-reset is shared and destructive, so a `/reset-preview` on one PR still wipes
-every other in-flight preview. That is acceptable for a disposable project but
-means the comment path must be **gated to maintainers**, exactly like `/preview`.
-
-Unlike `/preview`, a reset does **not** check out the PR head — it rebuilds to
-this ref's (i.e. `main`'s) migration baseline. Add an `issue_comment` trigger
-and a guard job modeled on `preview.yml`'s (OWNER/MEMBER/COLLABORATOR only),
-gating the `rebuild` job on it:
-
-```yaml
-on:
-  workflow_dispatch: {}
-  schedule:
-    - cron: "0 4 * * 0"
-  issue_comment:
-    types: [created]
-
-jobs:
-  guard:
-    name: Check trigger conditions
-    runs-on: ubuntu-latest
-    # Only the comment path needs a guard; dispatch/schedule authorize themselves.
-    if: >
-      github.event_name != 'issue_comment' ||
-      (github.event.issue.pull_request != null &&
-       contains(github.event.comment.body, '/reset-preview'))
-    permissions:
-      pull-requests: write
-    outputs:
-      authorized: ${{ steps.check.outputs.authorized }}
-    steps:
-      - name: Authorize (dispatch/schedule always; comment only from a maintainer)
-        id: check
-        env:
-          EVENT: ${{ github.event_name }}
-          ASSOCIATION: ${{ github.event.comment.author_association }}
-        run: |
-          if [ "$EVENT" != "issue_comment" ]; then
-            echo "authorized=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          case "$ASSOCIATION" in
-            OWNER|MEMBER|COLLABORATOR) echo "authorized=true"  >> "$GITHUB_OUTPUT" ;;
-            *)                         echo "authorized=false" >> "$GITHUB_OUTPUT" ;;
-          esac
-
-      - name: Add 👀 reaction
-        if: github.event_name == 'issue_comment' && steps.check.outputs.authorized == 'true'
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            await github.rest.reactions.createForIssueComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: context.payload.comment.id,
-              content: 'eyes',
-            });
-```
-
-Then add `needs: guard` and `if: needs.guard.outputs.authorized == 'true'` to the
-`rebuild` job. Everything else — the production-ref guard, `db reset --linked`,
-the function redeploy — is identical.
+A reset wipes **everything**, including the seeded orgs-smoke user (see "Seed the
+orgs-smoke user" below), so the orgs REST smoke self-skips until you re-seed it.
+Re-seeding needs the service-role key and is deliberately **not** wired into the
+workflow (the recurring smoke path never carries that key) — the workflow only
+emits a reminder. After a rebuild, run `scripts/seed-smoke-user.mjs` from a
+trusted admin shell against the preview project.
 
 ### Failure notifications (Discord)
 
