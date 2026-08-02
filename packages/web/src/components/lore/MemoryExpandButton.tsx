@@ -83,7 +83,9 @@ export function MemoryExpandButton({
     return memoryTotal;
   }, [data, scope, memoryTotal]);
 
-  if (isLoading || isTotalLoading) {
+  // `total` above reads `memoryTotal` only on the unscoped branch, so a scoped
+  // instance must not block its skeleton on the account-wide count query.
+  if (isLoading || (!scope && isTotalLoading)) {
     return (
       <div
         className={`flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-1.5 ${className}`}
