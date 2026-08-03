@@ -44,16 +44,22 @@ export async function handleFacets(
   // An unknown name in `?facets=` narrows to nothing rather than 400ing: the
   // param arrives from a hand-editable URL, and the same list is re-read on
   // every keystroke in the menu, so a typo must not take the page down.
+  //
+  // "Named nothing" and "named only unknown dimensions" are DIFFERENT requests
+  // and must not collapse into the same empty set: the first means every
+  // dimension, the second means none. Keep the caller's intent (`named`)
+  // separate from the recognised subset (`requested`), or `?facets=nope`
+  // silently WIDENS to the whole catalog — the opposite of narrowing.
+  const named = parseTagsParam(validated.data.facets);
   const requested = new Set(
-    parseTagsParam(validated.data.facets).filter(
-      (f) => MemoryFacetSchema.safeParse(f).success,
-    ),
+    named.filter((f) => MemoryFacetSchema.safeParse(f).success),
   );
+  const narrowed = named.length > 0;
 
   span.setAttributes({
     'lorekit.operation': 'memories.facets',
     'lorekit.archived': validated.data.archived,
-    ...(requested.size ? { 'lorekit.facets': Array.from(requested).join(',') } : {}),
+    ...(narrowed ? { 'lorekit.facets': Array.from(requested).join(',') } : {}),
   });
 
   const tracedDb = createTracedClient(db, span);
@@ -66,7 +72,7 @@ export async function handleFacets(
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
   const facets = ((data ?? []) as FacetRow[])
-    .filter((r) => requested.size === 0 || requested.has(r.facet))
+    .filter((r) => !narrowed || requested.has(r.facet))
     .map((r) => ({ facet: r.facet, value: r.value, count: Number(r.count) }));
 
   span.setAttributes({ 'lorekit.result_count': facets.length });
