@@ -3845,8 +3845,27 @@ begin
   assert v_count = 10,
     format('read activity AC-2: 2026-04-02 must sum memory.read + memory.list_archived = 10, got %s', v_count);
 
-  -- AC-5: service-role with a NULL p_user_id sees every user's reads (CI path),
-  -- so B's 50 records join A's 10 on 2026-04-01.
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- AC-5: the CI escape hatch — service-role with a NULL p_user_id sees every
+-- user's reads, so B's 50 records join A's 10 on 2026-04-01.
+--
+-- This runs in its OWN block, under claims carrying NO `sub`, because that is
+-- the only shape in which the hatch exists: the actor rule resolves
+-- `coalesce(p_user_id, auth.uid())` for a service-role caller, so a claim set
+-- that names a sub pins the actor to that user and a NULL p_user_id then means
+-- "me", not "everyone". A no-sub service_role claim is precisely what the CI
+-- connection presents, and it is the shape lorekit_memory_activity's own
+-- assertions use.
+do $$
+declare v_count bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
   select count into v_count
     from lorekit_read_activity(
       null, 'day',
