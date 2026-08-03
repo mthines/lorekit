@@ -134,6 +134,38 @@ export function createRouter(routes: Route[], functionName: string) {
       // write the hosted database, so the BYOD branch is not merely absent but
       // unrepresentable, and the flag would be a constant `true`.
       const usageUserId = analyticsUserId(resolved.auth);
+
+      // ── caller identity on the ROOT request span ───────────────────────────
+      //
+      // `resolveRestAuth` already records `auth.type` / `auth.user_id`, but on
+      // the `lorekit.rest.auth` CHILD span — so the REST root spans
+      // (`lorekit.memories`, `lorekit.orgs`) carried no identity at all and
+      // could not be grouped or filtered by user without joining to the child.
+      // The MCP surface has always set both on its ROOT span
+      // (`mcp/index.ts` — `auth.type`, `auth.user_id`), so this is not a new
+      // convention, it is the REST side catching up to the existing one.
+      //
+      // Why this matters beyond tidiness: the browser, the CLI and the MCP
+      // server all authenticate as the SAME LoreKit user and all land here.
+      // With the identity on the root span, a web session, a `lorekit` CLI run
+      // and an agent's MCP call are joinable on one attribute — no device
+      // fingerprinting, no IP heuristics, nothing that could correlate two
+      // different people who happen to share a NAT.
+      //
+      // `usageAuthType` (not `resolved.auth.type`) is deliberate: it normalises
+      // REST's `user` to `jwt`, matching what MCP reports and what
+      // `usage_events.auth_type` stores, so the surfaces aggregate as ONE
+      // series rather than fragmenting on a vocabulary difference. Same
+      // rationale as `restToolName`. The child auth span keeps its raw value —
+      // changing it would break any existing query filtering on `user`.
+      //
+      // Service-role has no human actor, so `analyticsUserId` returns null and
+      // no `auth.user_id` is written — the attribute is absent, never empty.
+      span.setAttributes({
+        'auth.type': usageAuthType(resolved.auth),
+        ...(usageUserId !== null ? { 'auth.user_id': usageUserId } : {}),
+      });
+
       // Only from the query string: the router must not consume the request
       // body to peek at a scope, so body-carried scopes report null. Same
       // bounded values as the MCP side (`global`/`project`/`repo`/`branch`).

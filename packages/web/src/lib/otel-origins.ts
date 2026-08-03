@@ -2,10 +2,10 @@
  * Single source of truth for the Supabase origin pattern used to decide where
  * W3C trace context (`traceparent`) may be propagated.
  *
- * Three call sites share this pattern and MUST NOT drift:
- *   - `packages/web/src/instrumentation.ts`                    (Node runtime, server actions / RSC)
- *   - `packages/web/src/instrumentation-client.ts`             (browser)
- *   - `packages/web/src/components/providers/Dash0Provider.tsx` (browser)
+ * Two call sites share this pattern and MUST NOT drift:
+ *   - `packages/web/src/instrumentation.ts` (Node runtime, server actions / RSC)
+ *   - `packages/web/src/lib/dash0-rum.ts`   (browser — the single RUM init path,
+ *     reached from both `instrumentation-client.ts` and `Dash0Provider.tsx`)
  *
  * This module is intentionally **dependency-free** (no React, no `next/*`, no
  * node builtins) so it can be evaluated in both the Node runtime and the
