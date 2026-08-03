@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.30.2](https://github.com/mthines/lorekit/compare/cli-v1.30.1...cli-v1.30.2) (2026-08-03)
+
+
+### Bug Fixes
+
+* **cli:** collapse duplicate lorekit hook entries on install ([8a11000](https://github.com/mthines/lorekit/commit/8a110005eaa1da189a0983064390026a44c6433e))
+* **cli:** register the Explorer's `filters` param in the deep-link builder ([d1c029a](https://github.com/mthines/lorekit/commit/d1c029a56ea7dda83a1a9ca662cd4c4318a6122e))
+
 ## [1.30.1](https://github.com/mthines/lorekit/compare/cli-v1.30.0...cli-v1.30.1) (2026-08-03)
 
 
