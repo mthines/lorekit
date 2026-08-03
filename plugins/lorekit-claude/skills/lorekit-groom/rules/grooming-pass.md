@@ -11,19 +11,21 @@ confirmation small enough to actually read.
 
 ## Phase 1 — Survey (read-only)
 
-Size the problem before touching it, so you groom where the mass and the rot
-actually are rather than wherever you happened to look first.
+Size the problem before touching it, so you groom where the mass actually is
+rather than wherever you happened to look first.
 
 ```bash
 lorekit stats            # counts per scope and per store — where the mass is
-lorekit scopes           # every scope in the store + its last-activity date
+lorekit scopes           # every scope in the store + its lesson count
 ```
 
 `scopes` is the one command that is store-wide rather than cwd-scoped, so it is
-how you notice a `branch::…` scope that has not been touched in six months, or a
-scope with hundreds of lessons that dwarfs the rest. Read both, then pick the
-noisiest or stalest scope as the target for this pass and narrow to it with
-`--scope <scope>` from here on.
+how you notice a `branch::…` scope you had forgotten about, or a scope with
+hundreds of lessons that dwarfs the rest. Neither command reports a
+last-activity date — the inventory is counts only — so judge staleness from the
+lessons themselves once you narrow in (`lorekit list --scope <scope>` tags each
+one with its `updated` date). Read both, then pick the noisiest scope as the
+target for this pass and narrow to it with `--scope <scope>` from here on.
 
 ## Phase 2 — Lint (read-only)
 

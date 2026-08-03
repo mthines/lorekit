@@ -86,8 +86,8 @@ Follow [rules/grooming-pass.md](./rules/grooming-pass.md) for the full playbook.
 The short version is six phases; the first four are pure analysis.
 
 1. **Survey** — size the problem. `lorekit stats` (counts per scope + store) and
-   `lorekit scopes` (store-wide inventory, with the last-activity date) show
-   where the mass and the staleness are. Pick the noisiest scope to start.
+   `lorekit scopes` (store-wide inventory: every scope with its lesson count)
+   show where the mass is. Pick the noisiest scope to start.
 2. **Lint** — `lorekit lint --json` flags structurally bad lessons (empty /
    whitespace / suspiciously short / untrimmed values, empty keys, malformed
    scopes). These are the cheapest wins: fix or drop them first.
