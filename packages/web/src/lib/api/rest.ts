@@ -101,6 +101,54 @@ async function toRestError(res: Response): Promise<RestApiError> {
 }
 
 /**
+ * How long a single REST call may run before it is abandoned.
+ *
+ * A `fetch` has no deadline of its own: a connection that is accepted and then
+ * goes quiet leaves a promise that never settles, and everything waiting on it
+ * waits for the lifetime of the page. That is not a hypothetical here — it is
+ * the shape of the "the header keeps claiming the app is loading" bug, where a
+ * React Query query stays `fetching` because its request never came back.
+ *
+ * Generous on purpose. Every route behind this client is a keyset page or a
+ * pre-aggregated rollup, so a request that has not answered in 30s is not slow,
+ * it is gone — and a timeout is a real error the caller can retry or show,
+ * which is strictly more than an unresolved promise offers.
+ */
+export const REST_TIMEOUT_MS = 30_000;
+
+/**
+ * A signal that aborts when the caller's own signal does, or when
+ * {@link REST_TIMEOUT_MS} elapses — whichever comes first.
+ *
+ * Composed by hand rather than with `AbortSignal.any`, which Safari only
+ * shipped in 17.4; this client runs in whatever browser the dashboard is open
+ * in. `release` must be called once the request settles, or the timer keeps the
+ * timeout alive and the listener keeps the caller's signal referencing a
+ * controller nobody is waiting on any more.
+ */
+function withTimeout(signal: AbortSignal | undefined, ms: number) {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new DOMException(`Request timed out after ${ms}ms`, 'TimeoutError')),
+    ms,
+  );
+  const abort = () => controller.abort(signal?.reason);
+
+  if (signal) {
+    if (signal.aborted) abort();
+    else signal.addEventListener('abort', abort, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    release() {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+    },
+  };
+}
+
+/**
  * Call a REST route and parse its JSON body.
  *
  * `path` is function-relative and starts with the function name, e.g.
@@ -112,17 +160,25 @@ export async function restFetch<T>(path: string, req: RestRequest): Promise<T> {
   const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}` };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 
-  const res = await fetch(`${restBaseUrl()}${path}${buildQuery(query)}`, {
-    method,
-    headers,
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    ...(signal ? { signal } : {}),
-    // Never cache a per-user read: Next's fetch would otherwise serve one
-    // user's memories to the next request that happens to match the URL.
-    cache: 'no-store',
-  });
+  const deadline = withTimeout(signal, REST_TIMEOUT_MS);
 
-  if (!res.ok) throw await toRestError(res);
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  try {
+    const res = await fetch(`${restBaseUrl()}${path}${buildQuery(query)}`, {
+      method,
+      headers,
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      signal: deadline.signal,
+      // Never cache a per-user read: Next's fetch would otherwise serve one
+      // user's memories to the next request that happens to match the URL.
+      cache: 'no-store',
+    });
+
+    if (!res.ok) throw await toRestError(res);
+    if (res.status === 204) return undefined as T;
+    return (await res.json()) as T;
+  } finally {
+    // In the `finally` so it also runs for a thrown `RestApiError` — the timer
+    // must not outlive the request under any exit.
+    deadline.release();
+  }
 }

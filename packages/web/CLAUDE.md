@@ -66,6 +66,39 @@ The dashboard is a **client of its own API**. Memory reads and writes call the
   password) and the server actions covering surfaces the REST API does not
   expose yet (orgs, invites, tokens, audit log).
 
+## Every query hook consumes `signal`, and every request has a deadline
+
+A React Query hook in `lib/queries/*` MUST take `signal` from the query-function
+context and a request MUST be able to time out. Both are load-bearing, and each
+one on its own is not enough.
+
+- **`queryFn: ({ signal }) => …` — destructured, so it is CONSUMED.** React Query
+  cancels a query when its last observer goes away *only* if the function
+  touched the signal; otherwise an abandoned fetch keeps `fetchStatus:
+  'fetching'` until it settles, or forever if it never does. This is not
+  hypothetical bookkeeping — a hook whose key encodes filter state mints a new
+  query per interaction and abandons the previous one mid-flight, which is how
+  the Lore Explorer's filter bar wedged the header's activity indicator.
+- **A server action is no excuse.** `listMemories` and friends cannot take an
+  `AbortSignal` (it is not serialisable), but consuming the signal still works:
+  React Query reverts the query's state on cancel regardless of what the promise
+  goes on to do. `await` the action, then `if (signal.aborted) throw new
+  DOMException('Aborted', 'AbortError')` to discard a reply that raced the
+  cancel. Do not skip the signal because "the action ignores it anyway".
+- **`restFetch` bounds every request at `REST_TIMEOUT_MS` (30s)** and composes
+  the caller's signal with that deadline by hand — NOT with `AbortSignal.any`,
+  which Safari shipped only in 17.4. A `fetch` has no deadline of its own, so a
+  connection that is accepted and then goes quiet leaves a promise nothing ever
+  settles. Never add a call path that bypasses it.
+- **Match the file's existing options.** Every hook in `lib/queries/lore.ts`
+  passes `retry: retryUnlessSignedOut` — being signed out is not transient, and
+  an abandoned page retrying in the background is work nobody asked for against
+  an answer nobody will read. A hook whose key space is large and mostly
+  transitional (one entry per intermediate filter combination) should shorten
+  `gcTime` from the 5-minute client default, and a list that is REFINED rather
+  than replaced wants `placeholderData: keepPreviousData` so the user is not
+  dropped back to skeletons on every click.
+
 ## Conventions specific to this package
 
 - **Theme:** dark-only, driven by CSS custom properties in
