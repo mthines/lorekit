@@ -319,9 +319,8 @@ The `publish-cli` job in `.github/workflows/release.yml` runs
 missing secret is a **silent no-op** and the CLI publishes emitting nothing — the
 exact failure that goes unnoticed for days. Pass `--require` to make that a failed
 release instead; the local, flagless invocation keeps the forgiving behaviour on
-purpose. Wiring `--require` (and a post-injection `doctor --telemetry` probe) into
-the job is step 1 of **Wiring the export gate into CI** below — it is not committed,
-because the GitHub App that opens automated PRs cannot write to `.github/workflows/**`.
+purpose. `--require` (and a post-injection `doctor --telemetry` probe) is wired
+into the job — see **Wiring the export gate into CI** below for the exact steps.
 
 **Auth-header priority at runtime** (highest first): `OTEL_EXPORTER_OTLP_HEADERS`
 → `LOREKIT_TELEMETRY_TOKEN` (bare bearer via env — handy for local testing) →
@@ -359,25 +358,24 @@ out, or who simply has no phone-home configured, does not have a broken install.
 
 This gate exists because `exportInvocation` swallows transport errors by design —
 without an explicit probe, a dead export path has no failure signal anywhere. The
-scheduled workflow that runs it is in **Wiring the export gate into CI** below;
-it is not committed, because the GitHub App that opens automated PRs cannot write
-to `.github/workflows/**`.
+scheduled workflow that runs it is `.github/workflows/telemetry-smoke.yml` — see
+**Wiring the export gate into CI** below.
 
 After running `lorekit doctor` (with `DEFAULT_TOKEN` set, or `OTEL_EXPORTER_OTLP_*` exported), check Dash0 → Explore → filter `service.name = cli` and `service.namespace = lorekit`. Group by `lorekit.cli.command` to count across `install`, `doctor`, `list`, `scopes`, `diff`, and the other human-facing commands.
 
-### Wiring the export gate into CI (one-time, must be committed by a human)
+### Wiring the export gate into CI
 
-The GitHub App that opens automated PRs cannot modify `.github/workflows/**` (no
-`workflows` permission), so the two changes below are **not** applied by the PR
-that added `doctor --telemetry` — add them by hand. The flag, the probe and the
-`--require` guard all work without them; these are what make the gate run on its
-own instead of only when someone remembers.
+The flag, the probe and the `--require` guard all work on their own; the two CI
+touch-points below are what make the gate run automatically instead of only when
+someone remembers. Both are now committed (the GitHub App that opens automated
+PRs has no `workflows` permission, so they were applied by a human after the PR
+that added `doctor --telemetry`).
 
-**1. `release.yml` → `publish-cli` job.** Replace the existing *Inject telemetry
-token* step with the two steps below. `--require` turns a missing secret into a
-failed release; the probe then proves the injected token is actually accepted,
-so a revoked credential is caught before publish rather than by someone noticing
-a flat dashboard days later.
+**1. `release.yml` → `publish-cli` job.** The *Inject telemetry token* step now
+runs with `--require`, followed by a `doctor --telemetry` probe. `--require`
+turns a missing secret into a failed release; the probe then proves the injected
+token is actually accepted, so a revoked credential is caught before publish
+rather than by someone noticing a flat dashboard days later.
 
 ```yaml
       - name: Inject telemetry token
@@ -389,7 +387,7 @@ a flat dashboard days later.
         run: node packages/cli/bin/lorekit.mjs doctor --telemetry --dir "$RUNNER_TEMP"
 ```
 
-**2. A new `.github/workflows/telemetry-smoke.yml`.** A release-time check only
+**2. `.github/workflows/telemetry-smoke.yml`.** A release-time check only
 covers release days; a token revoked on a quiet Tuesday goes unnoticed until the
 next publish. This runs the same gate on a schedule and notifies through the
 composite actions `release.yml` and `deploy.yml` already use. No new secret —
