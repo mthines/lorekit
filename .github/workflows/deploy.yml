@@ -669,6 +669,11 @@ jobs:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
       STAGED_URL: ${{ needs.stage-web-production.outputs.deployment_url }}
+      # The team slug `vercel promote` must run under. See the promote step for
+      # why this is REQUIRED (Vercel bug #11712). Defaults to the project's team;
+      # matches the hardcoded VERCEL_SCOPE in packages/mcp-core/src/cors-origins.ts.
+      # Override with a repo variable if the project moves Vercel accounts.
+      VERCEL_SCOPE: ${{ vars.VERCEL_SCOPE || 'mads-thines-projects' }}
     steps:
       # Checkout is required BEFORE pnpm/action-setup — it reads `packageManager`
       # from the repo's package.json (no `version:` is pinned on the action).
@@ -686,14 +691,6 @@ jobs:
       - name: Install Vercel CLI
         run: pnpm add -g vercel@58
 
-      # Link the project so the CLI operates under the project's TEAM. Without
-      # this, `vercel promote` falls back to the token's DEFAULT team (e.g.
-      # "dash0") and 403s, because the staged deployment lives under the project's
-      # team (VERCEL_ORG_ID). `vercel pull` writes .vercel/project.json, exactly
-      # as the stage/deploy jobs do before their own Vercel calls.
-      - name: Link the Vercel project (production scope)
-        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
-
       - name: Promote staged build to production
         run: |
           if [ -z "$STAGED_URL" ]; then
@@ -702,9 +699,17 @@ jobs:
           fi
           # Assign the production domain to the already-built, already-uploaded
           # deployment — the instant alias swap that flips the FE to production.
-          vercel promote "$STAGED_URL" --token="$VERCEL_TOKEN" --yes
+          #
+          # `--scope` is REQUIRED, not optional: `vercel promote` ignores both a
+          # team-scoped token AND a linked .vercel/project.json (Vercel bug
+          # https://github.com/vercel/vercel/issues/11712), so without it the CLI
+          # falls back to the token's DEFAULT team and 403s with "Trying to access
+          # resource under scope '<default-team>'". `vercel deploy` (in the stage
+          # job) does NOT have this bug, which is why staging worked and only the
+          # flip failed. Passing the team slug forces the correct scope.
+          vercel promote "$STAGED_URL" --scope="$VERCEL_SCOPE" --token="$VERCEL_TOKEN" --yes
           echo "### Web production promoted" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Promoted \`$STAGED_URL\` to the production domain." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Promoted \`$STAGED_URL\` to the production domain (scope \`$VERCEL_SCOPE\`)." >> "$GITHUB_STEP_SUMMARY"
 
   # ── 4. Post-deploy verification against PRODUCTION ───────────────────────────
   smoke-production:
@@ -912,6 +917,8 @@ jobs:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      # Same team-scope requirement as promote-web-production (Vercel bug #11712).
+      VERCEL_SCOPE: ${{ vars.VERCEL_SCOPE || 'mads-thines-projects' }}
     steps:
       # Checkout is required BEFORE pnpm/action-setup — it reads `packageManager`
       # from the repo's package.json (no `version:` is pinned on the action).
@@ -929,20 +936,16 @@ jobs:
       - name: Install Vercel CLI
         run: pnpm add -g vercel@58
 
-      # Link the project so `vercel rollback` operates under the project's TEAM
-      # (VERCEL_ORG_ID) rather than the token's default team, which would 403.
-      # Same reason as promote-web-production's link step.
-      - name: Link the Vercel project (production scope)
-        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
-
       - name: Roll back production web to the previous deployment
         run: |
           # `vercel rollback` with no target reverts to the deployment immediately
           # prior to the current production deployment — i.e. the one live before
-          # this run's (now-promoted) deployment. Best-effort: rollback-production
+          # this run's (now-promoted) deployment. `--scope` is REQUIRED for the
+          # same reason as promote (Vercel bug #11712 — rollback ignores the
+          # token's team and the linked project). Best-effort: rollback-production
           # already fails the run loudly, so a rollback hiccup here is a warning,
           # not a second hard fail.
-          if vercel rollback --token="$VERCEL_TOKEN" --yes; then
+          if vercel rollback --scope="$VERCEL_SCOPE" --token="$VERCEL_TOKEN" --yes; then
             echo "### ⚠️ Production web rolled back" >> "$GITHUB_STEP_SUMMARY"
             echo "The production domain was reverted to the previous Vercel deployment." >> "$GITHUB_STEP_SUMMARY"
           else
