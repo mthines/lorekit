@@ -82,7 +82,7 @@ Your token is shown once — copy it now.
 
 ### 2. Connect your agent
 
-The fastest path is the CLI. It scaffolds two companion skills that make your
+The fastest path is the CLI. It scaffolds three companion skills that make your
 agent use LoreKit on its own:
 
 - **`lorekit-memory`** — the runtime loop: reading relevant lessons when it
@@ -92,6 +92,10 @@ agent use LoreKit on its own:
   loop** into one of *your own* skills or workflows — a fast episodic tier that
   promotes proven lessons into permanent rules, with the entrenchment guards
   that keep a learning loop from reinforcing its own mistakes.
+- **`lorekit-groom`** — the maintenance counterpart: running a **grooming pass**
+  over a store that has grown noisy — finding and merging near-duplicate
+  lessons, linting out low-quality ones, and setting expiry on time-bound ones —
+  always analysing read-only and proposing a plan before it changes anything.
 
 ```bash
 npx @lorekit/cli install \

@@ -12,8 +12,10 @@ export const SKILL_SOURCE = path.join(PKG_ROOT, 'skill', SKILL_NAME);
 // Every skill the CLI ships. `lorekit-memory` is the operational read/write
 // loop (kept first as the primary — `SKILL_NAME`/`SKILL_SOURCE` above alias it
 // for back-compat); `lorekit-setup` is the authoring skill that wires a
-// self-improvement loop into a host. install/uninstall/doctor iterate this list.
-export const SKILLS = ['lorekit-memory', 'lorekit-setup'].map((name) => ({
+// self-improvement loop into a host; `lorekit-groom` is the maintenance skill
+// that dedupes/lints/merges/expires an accumulated store. install/uninstall/
+// doctor iterate this list.
+export const SKILLS = ['lorekit-memory', 'lorekit-setup', 'lorekit-groom'].map((name) => ({
   name,
   source: path.join(PKG_ROOT, 'skill', name),
 }));

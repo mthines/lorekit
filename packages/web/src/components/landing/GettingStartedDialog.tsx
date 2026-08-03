@@ -150,9 +150,9 @@ function OfflineContent() {
       <div className="flex flex-col">
         <TutorialStep number={1} title="Install the CLI">
           <pre><code>npx @lorekit/cli install</code></pre>
-          <p>Scaffolds the <code>lorekit-memory</code> and <code>lorekit-setup</code> skills, the local
-          MCP server, and lifecycle hooks into your <code>.claude/</code> or <code>~/.claude/</code>{' '}
-          directory. To skip hook injection:</p>
+          <p>Scaffolds the <code>lorekit-memory</code>, <code>lorekit-setup</code>, and{' '}
+          <code>lorekit-groom</code> skills, the local MCP server, and lifecycle hooks into your{' '}
+          <code>.claude/</code> or <code>~/.claude/</code> directory. To skip hook injection:</p>
           <pre><code>npx @lorekit/cli install --no-hooks</code></pre>
         </TutorialStep>
         <TutorialStep number={2} title="Verify the local store">
