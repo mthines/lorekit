@@ -73,33 +73,42 @@ export function getActiveTraceparent() {
 
 /**
  * Resolve telemetry config from env + baked-in defaults + .lorekit.json.
- * Returns { enabled: false } when disabled or unconfigured, else the endpoint
- * and headers to export with.
+ * Returns { enabled: false, reason } when disabled or unconfigured, else the
+ * endpoint and headers to export with.
+ *
+ * `reason` names WHY export is off, because the three causes are not
+ * interchangeable to a user and cannot be re-derived from the outside:
+ *   • `opted-out`     — LOREKIT_TELEMETRY / DO_NOT_TRACK / `telemetry.disabled`.
+ *   • `no-endpoint`   — nothing to export to.
+ *   • `no-credential` — an endpoint, but no usable auth header. Note that an
+ *     OTEL_EXPORTER_OTLP_HEADERS that parses to zero headers lands here, which
+ *     is exactly why a caller must not infer the cause from the token source:
+ *     the variable is set, yet no credential resolved.
  * @param {object} [env]  defaults to process.env
  * @param {object} [repoConfig]  pre-loaded .lorekit.json (optional; read from cwd if absent)
  */
 export function resolveTelemetryConfig(env = process.env, repoConfig) {
   const optOut = env.LOREKIT_TELEMETRY;
   if (optOut !== undefined && OFF_VALUES.has(String(optOut).trim().toLowerCase())) {
-    return { enabled: false };
+    return { enabled: false, reason: 'opted-out' };
   }
   // DNT spec designates exactly `1` as the opt-out signal (consoledonottrack.com).
   // Match it precisely — a stray `DO_NOT_TRACK=false` should NOT disable export
   // (use LOREKIT_TELEMETRY for the loose app-specific opt-out values).
   if (env.DO_NOT_TRACK && String(env.DO_NOT_TRACK).trim() === '1') {
-    return { enabled: false };
+    return { enabled: false, reason: 'opted-out' };
   }
   // `telemetry.disabled: true` in .lorekit.json — team-level opt-out committed
   // to the repo. Checked after env overrides (env always wins).
   const cfg = repoConfig !== undefined ? repoConfig : readLorekitJson(process.cwd());
   if (cfg['telemetry.disabled'] === true) {
-    return { enabled: false };
+    return { enabled: false, reason: 'opted-out' };
   }
 
   const endpoint = (env.OTEL_EXPORTER_OTLP_ENDPOINT || DEFAULT_ENDPOINT || '')
     .trim()
     .replace(/\/+$/, '');
-  if (!endpoint) return { enabled: false };
+  if (!endpoint) return { enabled: false, reason: 'no-endpoint' };
 
   const headers = {};
   // Auth header priority (highest first):
@@ -124,7 +133,7 @@ export function resolveTelemetryConfig(env = process.env, repoConfig) {
   // headers) to authenticate — no point exporting an unauthenticated request.
   const usingDefaultEndpoint = !env.OTEL_EXPORTER_OTLP_ENDPOINT;
   if (usingDefaultEndpoint && Object.keys(headers).length === 0) {
-    return { enabled: false };
+    return { enabled: false, reason: 'no-credential' };
   }
 
   // Dataset routing, highest precedence first: an explicit `Dash0-Dataset`
@@ -140,6 +149,21 @@ export function resolveTelemetryConfig(env = process.env, repoConfig) {
   }
 
   return { enabled: true, endpoint, headers };
+}
+
+/**
+ * Which source supplied the OTLP credential, for `doctor` to report. Mirrors
+ * the priority order in `resolveTelemetryConfig` above — keep the two in step.
+ * Returns a human-readable label, or `'none'` when nothing resolved.
+ * @param {object} [env]  defaults to process.env
+ */
+export function resolveTelemetryTokenSource(env = process.env) {
+  if (env.OTEL_EXPORTER_OTLP_HEADERS) return 'OTEL_EXPORTER_OTLP_HEADERS';
+  if (env.LOREKIT_TELEMETRY_TOKEN && String(env.LOREKIT_TELEMETRY_TOKEN).trim()) {
+    return 'LOREKIT_TELEMETRY_TOKEN';
+  }
+  if (DEFAULT_TOKEN) return 'the token baked in at publish time';
+  return 'none';
 }
 
 // ── ID + value helpers (mirror _shared/otel.ts) ───────────────────────────────
@@ -331,6 +355,101 @@ export async function exportInvocation(config, { version, name, attributes, star
     post(`${config.endpoint}/v1/traces`, config.headers, trace, timeoutMs),
     post(`${config.endpoint}/v1/metrics`, config.headers, metric, timeoutMs),
   ]);
+}
+
+/**
+ * Send ONE synthetic span to the configured OTLP endpoint and report what the
+ * collector said about it.
+ *
+ * Deliberately not routed through `post()`: command telemetry swallows every
+ * error on purpose (it must never disturb the CLI), which is exactly the
+ * behaviour that let export die silently. `doctor --telemetry` needs the
+ * opposite — the HTTP status, so it can tell "accepted" from "token rejected"
+ * from "endpoint unreachable".
+ *
+ * The probe span is tagged `lorekit.telemetry.probe=true` so it is trivially
+ * filtered out of usage dashboards, and carries the same bounded, non-PII
+ * attribute set as a real command span.
+ *
+ * `ok` means the span was INGESTED, not merely that the POST returned 2xx —
+ * OTLP/HTTP reports a dropped span as a 2xx carrying
+ * `partialSuccess.rejectedSpans`, so a status-only verdict would report a
+ * rejected probe as accepted. That false green is the exact failure this probe
+ * exists to catch, and the probe sends exactly one span, so any non-zero
+ * `rejectedSpans` means the thing we sent was dropped.
+ *
+ * @returns {Promise<{skipped?: boolean, ok?: boolean, unauthorized?: boolean, httpStatus?: number, rejectedSpans?: number, rejectionMessage?: string, networkError?: string}>}
+ */
+export async function probeTelemetryExport(config, { version = '0.0.0', timeoutMs = 5000 } = {}) {
+  if (!config || !config.enabled) return { skipped: true };
+
+  const now = Date.now();
+  const payload = buildTracePayload({
+    version,
+    name: 'lorekit.cli.doctor.telemetry_probe',
+    attributes: {
+      'lorekit.cli.command': 'doctor',
+      'lorekit.cli.outcome': 'ok',
+      'lorekit.telemetry.probe': true,
+    },
+    startMs: now,
+    endMs: now,
+    status: 'ok',
+  });
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${config.endpoint}/v1/traces`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...config.headers },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    const httpStatus = res.status;
+    const accepted = httpStatus >= 200 && httpStatus < 300;
+
+    // A 2xx only means the collector took the REQUEST. Read the OTLP
+    // partial-success envelope to find out whether it took the SPAN.
+    // Deliberately one-directional: only a positively parsed, non-zero
+    // `rejectedSpans` downgrades the verdict. An empty, non-JSON, or
+    // unreadable body leaves the status-based answer alone, so a terse but
+    // healthy collector can never be turned into a false red — and the read is
+    // wrapped in its own try so a failure here cannot erase an HTTP status we
+    // already have by falling into the transport `catch` below.
+    let rejectedSpans = 0;
+    let rejectionMessage;
+    if (accepted) {
+      try {
+        const partial = JSON.parse(await res.text())?.['partialSuccess'];
+        const count = Number(partial?.['rejectedSpans'] ?? 0);
+        if (Number.isFinite(count) && count > 0) {
+          rejectedSpans = count;
+          const message = partial?.['errorMessage'];
+          // Collector-controlled free text — bounded before it reaches output.
+          if (typeof message === 'string' && message) rejectionMessage = message.slice(0, 200);
+        }
+      } catch {
+        // Unreadable or non-OTLP body — fall back to the status alone.
+      }
+    }
+
+    return {
+      httpStatus,
+      ok: accepted && rejectedSpans === 0,
+      unauthorized: httpStatus === 401 || httpStatus === 403,
+      ...(rejectedSpans > 0 ? { rejectedSpans } : {}),
+      ...(rejectionMessage ? { rejectionMessage } : {}),
+    };
+  } catch (e) {
+    const networkError =
+      e && e.name === 'AbortError'
+        ? `no response within ${timeoutMs}ms`
+        : (e && e.message) || String(e);
+    return { networkError };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ── Command wrapper ───────────────────────────────────────────────────────────

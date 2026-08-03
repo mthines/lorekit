@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.30.0](https://github.com/mthines/lorekit/compare/cli-v1.29.3...cli-v1.30.0) (2026-08-03)
+
+
+### Features
+
+* **cli:** gate the OTLP export with `doctor --telemetry` ([7e8eea3](https://github.com/mthines/lorekit/commit/7e8eea335d629861be842ac887f0163cbd9e9eb1))
+
+## [1.29.3](https://github.com/mthines/lorekit/compare/cli-v1.29.2...cli-v1.29.3) (2026-08-03)
+
+
+### Performance
+
+* **cli:** short-circuit the Stop friction read once the retro has fired ([52633b7](https://github.com/mthines/lorekit/commit/52633b7881ef9f16cef04939922d60c6552b91b6))
+
 ## [1.29.2](https://github.com/mthines/lorekit/compare/cli-v1.29.1...cli-v1.29.2) (2026-08-02)
 
 
