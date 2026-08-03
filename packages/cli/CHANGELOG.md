@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.3](https://github.com/mthines/lorekit/compare/cli-v1.30.2...cli-v1.30.3) (2026-08-03)
+
+
+### Bug Fixes
+
+* **usage:** stop the dashboard's own reads inflating "Memories read" ([4d65bbb](https://github.com/mthines/lorekit/commit/4d65bbb705fce9289fbc716f574115aa138ea331))
+
 ## [1.30.2](https://github.com/mthines/lorekit/compare/cli-v1.30.1...cli-v1.30.2) (2026-08-03)
 
 
