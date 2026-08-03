@@ -78,7 +78,11 @@ In a TTY it prompts for the scope (and for `--endpoint` / `--token` if missing).
 Flags: `--project` / `--global` pick the scope non-interactively; `--yes` runs
 non-interactively (endpoint required via flag/env; scope defaults to project);
 `--force` overwrites an existing skill copy. Re-running is idempotent — the hook
-entries are updated in place, never duplicated.
+entries are updated in place, never duplicated, and an event that somehow ended
+up with **several** lorekit entries (the marketplace plugin wired on top of a CLI
+install, a merged `settings.json`, a hand edit) is collapsed back to exactly one,
+reported as `N duplicate(s) removed`. If your hooks were firing twice, a plain
+`lorekit install` repairs it.
 
 #### Choosing the hooks
 
