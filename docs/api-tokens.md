@@ -97,8 +97,17 @@ In the dashboard → Overview → Step 2 → your token list → click the trash
 
 ## Limits
 
-- Maximum 20 tokens per user account.
-- No expiry — tokens are valid until revoked.
+These describe tokens you mint from the dashboard. An OAuth-issued token
+([below](#authorizing-an-mcp-client-oauth)) is also an `api_tokens` row, but it
+differs on the first two points.
+
+- **Maximum 20 tokens per user account.** The cap is enforced when the dashboard
+  mints a token, not when an OAuth authorization issues one — so authorizing
+  enough distinct MCP clients can take you past 20. OAuth-issued tokens still
+  count towards the cap in the other direction: once you are over the line, the
+  dashboard will not mint another one.
+- **No expiry for dashboard tokens** — they are valid until revoked.
+  OAuth-issued tokens expire after 30 days.
 - `last_used_at` is updated on every successful authentication.
 
 ## Authorizing an MCP client (OAuth)
