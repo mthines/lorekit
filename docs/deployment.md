@@ -7,14 +7,24 @@ LoreKit has three deployable pieces. Each has its own deployment path.
 | Piece | Platform | Deploy command |
 |-------|----------|----------------|
 | MCP server + health check | Supabase Edge Functions | `pnpm nx fn:deploy supabase` |
-| Web dashboard | Vercel | Auto-deploy on `git push main` |
+| Web dashboard | Vercel (via `deploy.yml`, CLI) | Promoted by the pipeline on `git push main` |
 | Database migrations | Supabase | `pnpm nx db:push supabase` |
 
 **In normal operation you do not run these by hand.** Merging to `main` triggers
 the [automated CI/CD pipeline](#automated-deployment-cicd), which promotes
-migrations + Edge Functions **preview → production** with smoke gates and
-automatic function rollback. The manual commands below are for first-time
-project setup and local operations.
+migrations, Edge Functions **and the Vercel web dashboard** **preview →
+production** with smoke gates and automatic rollback of both the functions and
+the web deployment. The manual commands below are for first-time project setup
+and local operations.
+
+> **The web dashboard is deployed by `deploy.yml`, not by Vercel's Git
+> integration.** Vercel's native auto-deploy on `main` is turned off
+> (`packages/web/vercel.json` → `git.deploymentEnabled.main = false`), so the FE
+> and API flip to production together instead of skewing apart — Vercel used to
+> deploy the frontend the instant `main` was pushed, while the API crawled
+> through the preview→smoke→prod pipeline. If you fork this, mirror the flag (or
+> disable Git deployments for `main` in the Vercel dashboard) or you will
+> double-deploy.
 
 ---
 
@@ -24,8 +34,8 @@ Two GitHub Actions workflows own the lifecycle:
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `.github/workflows/ci.yml` | PRs to `main` | **Verify before merge.** `check` (affected typecheck/test/lint — unit tests, all mocked) and `integration` (boots a local Supabase → migrations apply → serves the real Edge Functions → asserts an authenticated MCP `tools/list` returns 200, plus schema lint). `integration` only runs when API/backend paths change (see [below](#only-runs-when-relevant)); the web build is verified by Vercel's own PR check. |
-| `.github/workflows/deploy.yml` | push to `main`, `workflow_dispatch` | **Deploy the already-verified commit.** No test re-run — preview-first promotion only. |
+| `.github/workflows/ci.yml` | PRs to `main` | **Verify before merge.** `check` (affected typecheck/test/lint — unit tests, all mocked) and `integration` (boots a local Supabase → migrations apply → serves the real Edge Functions → asserts an authenticated MCP `tools/list` returns 200, plus schema lint). `integration` only runs when API/backend paths change (see [below](#only-runs-when-relevant)); the web build is verified by Vercel's own PR check (preview deploys on a PR are unaffected — the `deploymentEnabled` flag only turns off the `main` production auto-deploy). |
+| `.github/workflows/deploy.yml` | push to `main`, `workflow_dispatch` | **Deploy the already-verified commit** — Supabase (migrations + Edge Functions) **and** the Vercel web dashboard, in lockstep. No test re-run — preview-first promotion only. |
 
 ### Tests run once, on the PR
 
@@ -64,15 +74,55 @@ downstream runs:
 
 ```
 deploy-preview          db push + functions deploy → PREVIEW project
-  └─▶ smoke-preview      smoke.integration spec against PREVIEW
-        └─▶ deploy-production     db push + functions deploy → PRODUCTION project
-              └─▶ smoke-production   health + MCP tools/list against PRODUCTION
-                    └─▶ rollback-production   (only on failure)
+deploy-web-preview      Vercel build (preview Supabase) + preview deploy
+stage-web-production    Vercel build --prod, upload prebuilt, --skip-domain (no flip yet)
+  └─▶ smoke-preview     smoke.integration spec against PREVIEW
+        └─▶ deploy-production      db push + functions deploy → PRODUCTION project
+              └─▶ promote-web-production   Vercel alias swap → PRODUCTION domain
+                    └─▶ smoke-production    health + MCP tools/list + web dashboard 200
+                          ├─▶ rollback-production       functions → previous commit (on failure)
+                          └─▶ rollback-web-production   Vercel → previous deployment (on failure)
 
 any job fails ─▶ notify-failure   Discord webhook (see below)
 ```
 
 Production is never touched until preview has been deployed and smoke-tested.
+
+### FE ↔ API deploy in lockstep (no availability skew)
+
+The whole point of moving the web deploy into `deploy.yml` is that the frontend
+and backend flip to production **together**. Previously Vercel's Git integration
+deployed the dashboard the moment `main` was pushed, while the API went through
+the preview→smoke→prod pipeline (minutes) — so there was always a window where
+the FE and API were on different versions.
+
+Now:
+
+- **The production web bundle is pre-built during the preview phase**
+  (`stage-web-production`): `vercel build --prod` then `vercel deploy --prebuilt
+  --prod --skip-domain`, which uploads a production-target deployment **without**
+  assigning the production domain. The slow `next build` happens before the flip.
+- **The flip is an alias swap** (`promote-web-production` → `vercel promote`),
+  which is near-instant. It `needs: deploy-production`, so the API is live in
+  production **before** the new FE is served — a client should never front an
+  older backend. The two go live within seconds of each other.
+- **The FE build points at the right Supabase per phase.** `deploy-web-preview`
+  overrides `NEXT_PUBLIC_SUPABASE_*` to the **preview** project (set
+  `SUPABASE_ANON_KEY` in the `preview` environment for this to take effect), so
+  smoke exercises the FE against the same API bundle preview just shipped;
+  `stage-web-production` uses Vercel's **production** env untouched.
+- **Rollback reverts both.** Any production-phase failure (the API deploy, the
+  web promote, or the shared production smoke — which now also curls the
+  dashboard) trips **both** `rollback-production` (functions → previous commit)
+  and `rollback-web-production` (`vercel rollback` → previous deployment), so the
+  FE and API never end up on mismatched versions. The one exception is a failure
+  in `deploy-production` itself before the web is promoted: the web was never
+  touched, so only the functions revert.
+
+The web jobs authenticate to Vercel with the same three repo-level secrets
+`preview.yml` already uses — `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`
+— and the production smoke curls `${{ vars.WEB_PROD_URL }}` (an optional
+repo-level variable, defaulting to `https://lorekit.io`).
 
 ### Migration drift on the shared preview project
 
@@ -232,10 +282,14 @@ run — the underlying failure is still reported loudly by the job that broke.
 ### Rollback behaviour
 
 On any post-deploy failure, `rollback-production` redeploys the **previous
-commit's** Edge Functions and fails the run loudly with a step summary.
-Database migrations are **forward-only** and intentionally *not* reverted —
-keep migrations backward-compatible (expand/contract) and enable **PITR**
-(Point-in-Time Recovery) in the Supabase dashboard as the database safety net.
+commit's** Edge Functions and `rollback-web-production` reverts the Vercel
+production deployment (`vercel rollback`), so the FE and API roll back together;
+the run fails loudly with a step summary. Database migrations are **forward-only**
+and intentionally *not* reverted — keep migrations backward-compatible
+(expand/contract) and enable **PITR** (Point-in-Time Recovery) in the Supabase
+dashboard as the database safety net. The web rollback stays out only when the
+API deploy failed before the web was ever promoted — in that case the web was
+never touched, so reverting it would regress a healthy deployment.
 
 ### Smoke-test data hygiene
 
@@ -397,10 +451,18 @@ seed it once with [`scripts/seed-smoke-user.mjs`](#seed-the-orgs-smoke-user)
 below.
 
 Repo-level secrets (not environment-scoped): `SUPABASE_ACCESS_TOKEN` (a Supabase
-personal access token) and — optionally — `DISCORD_WEBHOOK_URL` for
+personal access token); the three **Vercel** secrets the web jobs use —
+`VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` (the same set `preview.yml`
+already relies on); and — optionally — `DISCORD_WEBHOOK_URL` for
 [failure notifications](#failure-notifications-discord). Add a **required
 reviewer** on the `production` environment for a manual approval gate before prod
-is touched.
+is touched — it now gates the web promote (`promote-web-production`) as well as
+the API deploy.
+
+Repo-level **variables** (Settings ▸ Secrets and variables ▸ Actions ▸
+Variables): `WEB_PROD_URL` — optional, the production dashboard origin the
+production smoke curls. Defaults to `https://lorekit.io`; set it for a
+self-hosted fork on a different domain.
 
 #### Seed the orgs-smoke user
 
@@ -561,6 +623,15 @@ In your Vercel project → Settings → General:
 | Build Command | `cd ../.. && pnpm nx build web --configuration=production` |
 | Output Directory | `.next` |
 | Install Command | `cd ../.. && pnpm install` |
+
+> **Production auto-deploy is off.** `packages/web/vercel.json` sets
+> `git.deploymentEnabled.main = false`, so Vercel no longer deploys the
+> production dashboard when `main` is pushed — `deploy.yml` promotes it instead
+> (see [FE ↔ API deploy in lockstep](#fe--api-deploy-in-lockstep-no-availability-skew)).
+> PR/branch preview deploys are unaffected. Create a **Vercel access token**
+> (Account Settings → Tokens) and store it as the repo secret `VERCEL_TOKEN`,
+> alongside `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` (found in `.vercel/project.json`
+> after `vercel link`, or in the project's Settings).
 
 Environment variables to add:
 

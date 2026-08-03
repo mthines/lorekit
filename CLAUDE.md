@@ -219,6 +219,18 @@ After the PR is opened or marked ready-for-review, **wait for the `dash0-dev` bo
 The bot runs `PR Ready for Review — Polish + Review` automatically; a comment from `dash0-dev` with
 the review results will appear on the PR. Do not proceed until that comment is present.
 
+**The bot re-reviews automatically on every new commit (a `synchronize` push) — you do NOT need a
+human `@dash0 review` to re-trigger it.** After you push fixes, it re-runs against the new SHA and
+posts fresh inline comments, marking addressed findings **"Superseded / Resolving."** So the loop is:
+push fix → the bot re-reviews the new commit → it resolves what you fixed. Two consequences worth
+remembering: (1) a review verdict is pinned to a specific `commit_id` — the gate summary (e.g. a ❌
+"Code review") can be **stale on an older SHA** while the findings are already resolved on `HEAD`, so
+always check which commit a verdict/comment targets before treating it as open; and (2) there is a
+**race window** — if you push while an in-flight review is mid-run, its next comments can be anchored
+to your new SHA but still describe the *pre-fix* content. Re-verify against `HEAD` (`git show
+HEAD:<file>`) rather than trusting a just-arrived comment. The `@dash0 resolve`-doesn't-fire caveat in
+Step 4 is about **comments**, not pushes — a push is what re-triggers the review.
+
 ```bash
 # Poll until the dash0-dev review appears (count should reach ≥ 1)
 while [ "$(gh pr view <pr-number> --repo mthines/lorekit --json reviews \
