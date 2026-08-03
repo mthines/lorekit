@@ -686,6 +686,14 @@ jobs:
       - name: Install Vercel CLI
         run: pnpm add -g vercel@58
 
+      # Link the project so the CLI operates under the project's TEAM. Without
+      # this, `vercel promote` falls back to the token's DEFAULT team (e.g.
+      # "dash0") and 403s, because the staged deployment lives under the project's
+      # team (VERCEL_ORG_ID). `vercel pull` writes .vercel/project.json, exactly
+      # as the stage/deploy jobs do before their own Vercel calls.
+      - name: Link the Vercel project (production scope)
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+
       - name: Promote staged build to production
         run: |
           if [ -z "$STAGED_URL" ]; then
@@ -920,6 +928,12 @@ jobs:
 
       - name: Install Vercel CLI
         run: pnpm add -g vercel@58
+
+      # Link the project so `vercel rollback` operates under the project's TEAM
+      # (VERCEL_ORG_ID) rather than the token's default team, which would 403.
+      # Same reason as promote-web-production's link step.
+      - name: Link the Vercel project (production scope)
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
 
       - name: Roll back production web to the previous deployment
         run: |
