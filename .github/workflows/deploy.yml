@@ -263,8 +263,9 @@ jobs:
           echo "url=$URL" >> "$GITHUB_OUTPUT"
 
       - name: Verify preview deployment responds
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
         run: |
-          URL="${{ steps.deploy.outputs.url }}"
           CODE=$(curl -s -o /dev/null -w '%{http_code}' -L "$URL")
           echo "### Web preview" >> "$GITHUB_STEP_SUMMARY"
           echo "- URL: $URL (HTTP $CODE)" >> "$GITHUB_STEP_SUMMARY"
@@ -650,8 +651,9 @@ jobs:
       # WEB_PROD_URL overrides the origin for a self-hosted fork; defaults to the
       # canonical dashboard domain.
       - name: Verify web dashboard responds (production)
+        env:
+          URL: ${{ vars.WEB_PROD_URL || 'https://lorekit.io' }}
         run: |
-          URL="${{ vars.WEB_PROD_URL || 'https://lorekit.io' }}"
           CODE=$(curl -s -o /dev/null -w '%{http_code}' -L "$URL")
           echo "- Web dashboard: $URL (HTTP $CODE)" >> "$GITHUB_STEP_SUMMARY"
           if [ "$CODE" -ge 400 ]; then
