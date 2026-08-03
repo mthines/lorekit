@@ -6,11 +6,12 @@ import { memoryHandlers, FROZEN_NOW } from '@/mocks/memories';
 import { withQueryClient, withFrozenClock } from '@/mocks/decorators';
 
 /**
- * Interaction tests for {@link DashboardStats} — asserts the stats resolve
- * against the MSW-mocked PostgREST data and the per-card range selector is a
- * working single-select radiogroup. `/Tests` namespace, `test`-tagged, and
- * `chromatic.disableSnapshot` so the visual `afterEach` skips these while the
- * `play` functions still run in the browser.
+ * Interaction tests for {@link DashboardStats} — asserts the three cards
+ * resolve against the MSW-mocked REST data and that the ONE shared range
+ * selector is a working single-select radiogroup driving all of them.
+ * `/Tests` namespace, `test`-tagged, and `chromatic.disableSnapshot` so the
+ * visual `afterEach` skips these while the `play` functions still run in the
+ * browser.
  */
 const meta: Meta<typeof DashboardStats> = {
   title: 'Pages/Dashboard Stats/Tests',
@@ -31,10 +32,17 @@ export const LoadsMockedStats: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
 
-    await step('Scope-health data resolves from the MSW-mocked query', async () => {
+    await step('All three metric cards resolve from the MSW-mocked queries', async () => {
       // The card label appears only after the query settles — findBy waits for it.
       await expect(await canvas.findByText('Memories written')).toBeInTheDocument();
       await expect(canvas.getByText('Scopes')).toBeInTheDocument();
+      await expect(canvas.getByText('Memories read')).toBeInTheDocument();
+    });
+
+    await step('Each card declares the unit it counts in', async () => {
+      await expect(canvas.getByText('writes')).toBeInTheDocument();
+      await expect(canvas.getByText('scopes')).toBeInTheDocument();
+      await expect(canvas.getByText('reads')).toBeInTheDocument();
     });
   },
 };
@@ -44,19 +52,29 @@ export const RangeSelectorSwitches: Story = {
     const canvas = within(canvasElement);
     await canvas.findByText('Memories written');
 
-    const totalRange = await canvas.findByRole('radiogroup', {
-      name: /time range for memories written/i,
-    });
-    const group = within(totalRange);
+    const groups = await canvas.findAllByRole('radiogroup', { name: /time range/i });
+    const group = within(groups[0]);
 
-    await step('7d is the default range for Memories written', async () => {
-      await expect(group.getByRole('radio', { name: '7d' })).toBeChecked();
+    await step('There is exactly one shared range picker, not one per card', async () => {
+      await expect(groups).toHaveLength(1);
+    });
+
+    await step('24h is the default range', async () => {
+      await expect(group.getByRole('radio', { name: '24h' })).toBeChecked();
     });
 
     await step('Selecting 30d moves the checked state', async () => {
       await userEvent.click(group.getByRole('radio', { name: '30d' }));
       await expect(group.getByRole('radio', { name: '30d' })).toBeChecked();
-      await expect(group.getByRole('radio', { name: '7d' })).not.toBeChecked();
+      await expect(group.getByRole('radio', { name: '24h' })).not.toBeChecked();
+    });
+
+    await step('The shared range re-labels every card', async () => {
+      const descriptions = await canvas.findAllByText(/in the last 30 days/i);
+      await expect(descriptions.length).toBeGreaterThanOrEqual(2);
+      await expect(
+        canvas.getByText(/distinct scopes active in the last 30 days/i),
+      ).toBeInTheDocument();
     });
   },
 };

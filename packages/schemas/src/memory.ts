@@ -349,6 +349,47 @@ export const ActivityResponseSchema = z.object({
 });
 export type ActivityResponse = z.infer<typeof ActivityResponseSchema>;
 
+// ── GET /memories/read-activity ──────────────────────────────────────────────
+
+/**
+ * Query params for `GET /memories/read-activity`.
+ *
+ * Deliberately identical in shape to {@link ActivityQuerySchema} — the two
+ * endpoints answer the same question about opposite verbs (written vs read),
+ * so a caller charting both uses one set of parameters. The bucket enum is
+ * REUSED rather than redeclared: a granularity admitted by one and not the
+ * other would be a trap for exactly the caller rendering them side by side.
+ */
+export const ReadActivityQuerySchema = z.object({
+  bucket: ActivityBucketUnitSchema.optional().default('day'),
+  since: TimestampFilterSchema.optional(),
+  until: TimestampFilterSchema.optional(),
+});
+export type ReadActivityQuery = z.infer<typeof ReadActivityQuerySchema>;
+
+/**
+ * One bucket of read volume: how many memory RECORDS were read in that UTC
+ * hour/day.
+ *
+ * Records, not calls — one `memory.list` returning 600 rows is one call and
+ * 600 records, the same distinction `GET /memories/usage` draws between
+ * `event_count` and `record_count`. Records is the additive figure a chart can
+ * sum: the bars of a read sparkbar add up to "you read N memories".
+ */
+export const ReadActivityBucketSchema = z.object({
+  bucket: z.string(),
+  count: z.number().int().nonnegative(),
+});
+export type ReadActivityBucket = z.infer<typeof ReadActivityBucketSchema>;
+
+export const ReadActivityResponseSchema = z.object({
+  bucket: ActivityBucketUnitSchema,
+  since: z.string(),
+  until: z.string(),
+  buckets: z.array(ReadActivityBucketSchema),
+});
+export type ReadActivityResponse = z.infer<typeof ReadActivityResponseSchema>;
+
 /**
  * PATCH /memories/:id body.
  *

@@ -17,6 +17,7 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 | GET | /tags | tags.ts | read |
 | GET | /facets | facets.ts | read |
 | GET | /activity | activity.ts | read |
+| GET | /read-activity | read-activity.ts | read |
 | GET | /usage | usage.ts | read |
 | GET | /:id | get.ts | read |
 | PATCH | /:id | update.ts | write |
@@ -25,8 +26,8 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 
 **Route order is load-bearing.** `matchPath` (`_shared/api/router.ts`) matches on segment
 count and returns *every* path match, then picks the first whose method matches — so
-`/search`, `/restore`, `/purge`, `/purge-expired`, `/scopes`, `/tags`, `/facets` and `/activity` all
-collide with `/:id`.
+`/search`, `/restore`, `/purge`, `/purge-expired`, `/scopes`, `/tags`, `/facets`, `/activity`
+and `/read-activity` all collide with `/:id`.
 The literal routes are registered before the `/:id` routes in `index.ts` so a future
 `POST /:id` cannot silently swallow them.
 
@@ -253,6 +254,52 @@ size is bounded by distinct active (hour, scope) pairs rather than by memory cou
 
 The window is bounded by default deliberately: an unbounded aggregate over `memories` grows
 with account age and no caller wants "all time".
+
+## `GET /read-activity`
+
+Memory **records read** per UTC hour or day, over a half-open `[since, until)` window — the
+read counterpart to `/activity`:
+
+```json
+{
+  "bucket": "day",
+  "since": "2026-01-01T00:00:00.000Z",
+  "until": "2026-07-19T00:00:00.000Z",
+  "buckets": [{ "bucket": "2026-07-18T00:00:00.000Z", "count": 214 }]
+}
+```
+
+| Param | Default | Meaning |
+|-------|---------|---------|
+| `bucket` | `day` | `hour` or `day` granularity — the same enum `/activity` takes. |
+| `since` | `until` − 200 days | Inclusive lower bound. |
+| `until` | now | **Exclusive** upper bound. |
+
+**Records, not calls.** `count` is `sum(usage_events.result_count)` over the read tools
+(`memory.read`, `memory.list`, `memory.search`), so one list call returning 20 memories
+contributes 20 — the same call-vs-record distinction `GET /usage` draws between
+`event_count` and `record_count`. That is what makes the series **additive**: the
+dashboard's read sparkbar sums to its headline number, which a per-bucket distinct or
+per-call count could not.
+
+**Visibility is self-only.** Usage is a per-user ledger — `usage_events` has no `org_id`
+and a co-member's reads are not the caller's activity — so `lorekit_read_activity`
+(migration 00053) filters `user_id = caller` with the same `service_role` + NULL escape
+hatch `lorekit_usage_stats` uses, and deliberately does **not** compose
+`lorekit_member_org_ids` (that is the tenant predicate for `memories`, not for usage).
+There is no `applyRestTenantScope` call for the `handleUsage` reason: there is no query to
+scope.
+
+Bucketing runs in Postgres for the `GET /scopes` reason, and `usage_events` is the
+highest-volume table in the schema, so a client-side reduce over raw rows is the worst
+case of the row-cap trap. `date_trunc` anchors buckets exactly where `/activity`'s do, so
+a client can chart written and read volume on one aggregate grid. The response is sparse:
+a bucket that read nothing is omitted.
+
+Like `/scopes` and `/activity` there is **no MCP tool** — an aggregate read has no
+scope-keyed MCP equivalent. Its `usage_events.tool_name` is `memory.read-activity`
+(`rest-tool-name.ts`), which is itself NOT one of the read tools it aggregates, so
+charting reads never inflates the read count.
 
 ## `GET /usage`
 

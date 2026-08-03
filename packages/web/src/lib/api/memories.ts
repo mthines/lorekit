@@ -18,6 +18,8 @@ import type {
   MemoryEntry,
   MemoryPageResponse,
   PurgeResponse,
+  ReadActivityQuery,
+  ReadActivityResponse,
   ScopesResponse,
   UpdateMemoryBody,
 } from '@lorekit/schemas/memory';
@@ -71,6 +73,24 @@ export function activityRequest(
   signal?: AbortSignal,
 ): Promise<ActivityResponse> {
   return restFetch<ActivityResponse>('/memories/activity', {
+    accessToken,
+    query: { ...params },
+    ...(signal ? { signal } : {}),
+  });
+}
+
+/**
+ * `GET /memories/read-activity` — memory RECORDS read per UTC hour/day.
+ *
+ * The read counterpart to {@link activityRequest}; same window parameters, so
+ * the Overview can chart written and read volume over one selected range.
+ */
+export function readActivityRequest(
+  accessToken: string,
+  params: Partial<ReadActivityQuery>,
+  signal?: AbortSignal,
+): Promise<ReadActivityResponse> {
+  return restFetch<ReadActivityResponse>('/memories/read-activity', {
     accessToken,
     query: { ...params },
     ...(signal ? { signal } : {}),
