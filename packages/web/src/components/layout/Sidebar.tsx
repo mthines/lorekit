@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import { BookOpen, LayoutDashboard, Settings, GraduationCap } from 'lucide-react';
 import { useOnboarding } from '@/components/providers/OnboardingProvider';
+import { SETTINGS_LANDING_HREF, isSettingsPath } from '@/lib/settings-routes';
 
 // Primary content nav — 3 destinations keeps the sidebar scannable and the
 // mobile tab bar comfortably within the 3–5 item guideline.
@@ -17,7 +18,16 @@ const NAV = [
 
 // Settings is a persistent utility destination kept in the sidebar footer —
 // separate from the primary content nav so it does not compete for attention.
-const SETTINGS = { href: '/settings', label: 'Settings', icon: Settings } as const;
+// `href` points straight at the first section rather than at `/settings`: the
+// root only exists as a redirect, and taking that hop client-side crashed React
+// inside Next's app-router (see `@/lib/settings-routes`). `isActive` therefore
+// can't be derived from `href` — it matches the whole Settings area instead.
+const SETTINGS = {
+  href: SETTINGS_LANDING_HREF,
+  label: 'Settings',
+  icon: Settings,
+  isActive: isSettingsPath,
+} as const;
 
 interface SidebarProps {
   user: User;
@@ -26,8 +36,7 @@ interface SidebarProps {
 export function Sidebar({ user }: SidebarProps) {
   const pathname = usePathname();
   const { allDone, hydrated } = useOnboarding();
-  const isSettingsActive =
-    pathname === SETTINGS.href || pathname.startsWith(SETTINGS.href + '/');
+  const isSettingsActive = SETTINGS.isActive(pathname);
   const showProgress = hydrated && !allDone;
   const isUserActive = pathname === '/settings/user';
 
@@ -132,7 +141,10 @@ export function Sidebar({ user }: SidebarProps) {
         {[...NAV, SETTINGS].map((item) => {
           const { href, icon: Icon } = item;
           const label = 'mobileLabel' in item ? item.mobileLabel : item.label;
-          const active = pathname === href || pathname.startsWith(href + '/');
+          const active =
+            'isActive' in item
+              ? item.isActive(pathname)
+              : pathname === href || pathname.startsWith(href + '/');
           const isDocs = href === '/docs';
           const withProgressDot = isDocs && showProgress;
           return (
