@@ -20,6 +20,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import {
   createSmokeNamespace,
   describeSweepFailures,
+  runBestEffortCleanup,
   sweepSmokeArtefacts,
 } from './smoke-cleanup.js';
 
@@ -117,11 +118,16 @@ describe.skipIf(SKIP)('LoreKit MCP smoke tests (integration)', () => {
   // must be visible in the log without turning a passing suite red. Anything
   // this misses is picked up by `node scripts/smoke-cleanup.mjs`.
   afterAll(async () => {
-    const report = await sweepSmokeArtefacts(NS.minted(), async (key) => {
-      await mcpCall('memory.delete', { scope: SCOPE, key, force: true });
-    });
-    const warning = describeSweepFailures(report, `MCP smoke, scope=${SCOPE}`);
-    if (warning) console.warn(warning);
+    await runBestEffortCleanup(
+      async () => {
+        const report = await sweepSmokeArtefacts(NS.minted(), async (key) => {
+          await mcpCall('memory.delete', { scope: SCOPE, key, force: true });
+        });
+        const warning = describeSweepFailures(report, `MCP smoke, scope=${SCOPE}`);
+        if (warning) console.warn(warning);
+      },
+      { softTimeoutMs: 20_000, context: `MCP smoke, scope=${SCOPE}` },
+    );
   }, 30_000);
 
   // 1. write — create ─────────────────────────────────────────────────────────

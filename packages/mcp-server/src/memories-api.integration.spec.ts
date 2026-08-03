@@ -19,6 +19,7 @@ import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 import {
   createSmokeNamespace,
   describeSweepFailures,
+  runBestEffortCleanup,
   sweepSmokeArtefacts,
   type SmokeNamespace,
 } from './smoke-cleanup.js';
@@ -115,6 +116,10 @@ async function listKeys(archived: boolean): Promise<unknown[]> {
 // succeeds; locally each round-trip is sub-ms so this never bites. 30s is the
 // ceiling per test, not an expected duration.
 const REMOTE_TEST_TIMEOUT = 30_000;
+// Best-effort teardown self-bounds below the hook ceiling above, so a slow
+// sweep against a laggy live endpoint warns and yields instead of timing out
+// the hook and failing a green run. Kept under REMOTE_TEST_TIMEOUT with margin.
+const CLEANUP_SOFT_TIMEOUT = 20_000;
 
 /**
  * Hard-delete one key by its NATURAL key.
@@ -155,10 +160,15 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
     // key whose test threw before the assignment; those rows accumulated in the
     // live project on every deploy.
     //
-    // Hooks use hookTimeout (10s default), NOT the suite `timeout` above — and
-    // this chains one DELETE per key at hosted latency, so give it the same 30s
-    // ceiling as the tests.
-    await sweepMintedKeys(NS, 'memories REST smoke');
+    // The sweep runs with bounded concurrency (see sweepSmokeArtefacts), and
+    // runBestEffortCleanup soft-bounds it below the hook ceiling — so a laggy
+    // live endpoint can never make cleanup time out the hook and fail a run
+    // whose assertions all passed. Anything left is caught by the always-on
+    // scripts/smoke-cleanup.mjs sweep.
+    await runBestEffortCleanup(() => sweepMintedKeys(NS, 'memories REST smoke'), {
+      softTimeoutMs: CLEANUP_SOFT_TIMEOUT,
+      context: 'memories REST smoke',
+    });
   }, REMOTE_TEST_TIMEOUT);
 
   // 1. list — baseline ────────────────────────────────────────────────────────
@@ -995,7 +1005,10 @@ describe.skipIf(SKIP)('LoreKit memories API — audit trail read-back (integrati
     // By key, not by `auditId`: the id is only set once the create test has
     // asserted its way to the end, so a failure anywhere before that left the
     // row behind. The key exists from the moment it was minted.
-    await sweepMintedKeys(AUDIT_NS, 'memories REST audit read-back');
+    await runBestEffortCleanup(() => sweepMintedKeys(AUDIT_NS, 'memories REST audit read-back'), {
+      softTimeoutMs: CLEANUP_SOFT_TIMEOUT,
+      context: 'memories REST audit read-back',
+    });
   }, REMOTE_TEST_TIMEOUT);
 
   it('the audit_log capability probe ran and reported a definite result', () => {

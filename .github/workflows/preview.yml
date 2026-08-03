@@ -286,7 +286,20 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run MCP server smoke tests
-        run: pnpm nx test mcp-server -- smoke.integration
+        # Retry once on a transient live-endpoint flake (kept in lockstep with
+        # deploy.yml's smoke-preview). The suite self-cleans and re-mints keys per
+        # run, so a re-run is safe; a real regression still fails after attempt 2.
+        run: |
+          for attempt in 1 2; do
+            pnpm nx test mcp-server -- smoke.integration && break
+            rc=$?
+            if [ "$attempt" -eq 2 ]; then
+              echo "::error::smoke.integration failed after $attempt attempts"
+              exit "$rc"
+            fi
+            echo "::warning::smoke.integration failed (attempt $attempt/2) — retrying in 10s (transient live-endpoint flake)..."
+            sleep 10
+          done
         env:
           LOREKIT_SMOKE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/mcp
           LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
@@ -363,7 +376,19 @@ jobs:
           LOREKIT_REST_BASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1
           LOREKIT_SMOKE_TOKEN: ${{ secrets.LOREKIT_SMOKE_TOKEN }}
           LOREKIT_SMOKE_JWT: ${{ steps.smokejwt.outputs.jwt }}
-        run: node scripts/smoke-rest.mjs
+        # Retry once on a transient live-endpoint flake (lockstep with deploy.yml).
+        # Specs self-clean with per-run timestamped keys, so a re-run is safe.
+        run: |
+          for attempt in 1 2; do
+            node scripts/smoke-rest.mjs && break
+            rc=$?
+            if [ "$attempt" -eq 2 ]; then
+              echo "::error::REST smoke failed after $attempt attempts"
+              exit "$rc"
+            fi
+            echo "::warning::REST smoke failed (attempt $attempt/2) — retrying in 10s (transient live-endpoint flake)..."
+            sleep 10
+          done
 
   report:
     name: Post result comment

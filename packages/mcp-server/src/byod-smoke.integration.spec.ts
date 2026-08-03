@@ -20,7 +20,12 @@
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
-import { createSmokeNamespace, describeSweepFailures, sweepSmokeArtefacts } from './smoke-cleanup.js';
+import {
+  createSmokeNamespace,
+  describeSweepFailures,
+  runBestEffortCleanup,
+  sweepSmokeArtefacts,
+} from './smoke-cleanup.js';
 
 const BASE_URL = (process.env['LOREKIT_BYOD_URL'] ?? '').replace(/\/$/, '');
 const TOKEN    = process.env['LOREKIT_BYOD_TOKEN'];
@@ -114,23 +119,28 @@ describe.skipIf(SKIP)('LoreKit BYOD smoke tests (integration)', () => {
   // Best-effort cleanup — run regardless of pass/fail so the BYOD project
   // stays tidy across repeated CI runs.
   afterAll(async () => {
-    // `Promise.allSettled` used to swallow every rejection here, so a BYOD
-    // project could accumulate rows run after run with nothing in the log to
-    // say so. The sweep is sequential (a live endpoint with a per-user rate
-    // limit) and names whatever it could not remove.
     // Keyed by the memory key (what a leak is actually named), with the scope
     // recovered from it, so a reported leftover can be pasted straight into a
     // manual delete.
     const scopeOfKey = new Map<string, string>(
       (Object.keys(SCOPES) as ScopeName[]).map((s) => [keys[s], SCOPES[s]]),
     );
-    const report = await sweepSmokeArtefacts([...scopeOfKey.keys()], async (key) => {
-      await mcpCall('memory.delete', { scope: scopeOfKey.get(key), key, force: true });
-    });
-    // `sweeperCovers: false` — the orphan sweeper targets LOREKIT_REST_BASE_URL,
-    // and this suite writes to its own project (LOREKIT_BYOD_URL) over MCP.
-    const warning = describeSweepFailures(report, 'BYOD smoke', { sweeperCovers: false });
-    if (warning) console.warn(warning);
+    // The sweep runs with bounded concurrency (see sweepSmokeArtefacts), wrapped
+    // in runBestEffortCleanup so a slow teardown against the BYOD endpoint warns
+    // and yields instead of failing a green run. `sweeperCovers: false` — the
+    // orphan sweeper targets LOREKIT_REST_BASE_URL, and this suite writes to its
+    // own project (LOREKIT_BYOD_URL) over MCP, so a leftover must be deleted by
+    // hand (named in the warning).
+    await runBestEffortCleanup(
+      async () => {
+        const report = await sweepSmokeArtefacts([...scopeOfKey.keys()], async (key) => {
+          await mcpCall('memory.delete', { scope: scopeOfKey.get(key), key, force: true });
+        });
+        const warning = describeSweepFailures(report, 'BYOD smoke', { sweeperCovers: false });
+        if (warning) console.warn(warning);
+      },
+      { softTimeoutMs: 20_000, context: 'BYOD smoke' },
+    );
   }, 30_000);
 
   // ── 1. Write — all four scope types in parallel ──────────────────────────────
