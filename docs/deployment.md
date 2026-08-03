@@ -460,9 +460,17 @@ is touched — it now gates the web promote (`promote-web-production`) as well a
 the API deploy.
 
 Repo-level **variables** (Settings ▸ Secrets and variables ▸ Actions ▸
-Variables): `WEB_PROD_URL` — optional, the production dashboard origin the
-production smoke curls. Defaults to `https://lorekit.io`; set it for a
-self-hosted fork on a different domain.
+Variables), both optional:
+
+- `WEB_PROD_URL` — the production dashboard origin the production smoke curls.
+  Defaults to `https://lorekit.io`; set it for a self-hosted fork on a different
+  domain.
+- `VERCEL_SCOPE` — the Vercel **team slug** that `vercel promote` / `vercel
+  rollback` run under. Defaults to `mads-thines-projects` (this project's team,
+  matching the hardcoded `VERCEL_SCOPE` in `packages/mcp-core/src/cors-origins.ts`).
+  **A fork MUST set this to its own team slug** — `promote`/`rollback` ignore the
+  token's team and the linked project ([Vercel bug #11712](https://github.com/vercel/vercel/issues/11712)),
+  so an unset value would try to promote into `mads-thines-projects` and 403.
 
 #### Seed the orgs-smoke user
 
