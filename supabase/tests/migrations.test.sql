@@ -4014,6 +4014,9 @@ $$;
 -- AC-4: an invalid slug shape is rejected (no junk rows under arbitrary keys).
 -- AC-5: `anon` — the unauthenticated blog visitor — can execute the RPC and can
 --       SELECT the totals under the public read policy.
+-- AC-6: the migration header's claim that a direct PostgREST write "cannot be
+--       bypassed" is EXECUTED, not just asserted in prose: an `anon` INSERT is
+--       denied outright, and an `anon` UPDATE cannot move an existing total.
 
 do $$
 declare
@@ -4073,6 +4076,58 @@ begin
   assert v_read = 3, format('blog likes AC-5: anon read under the public policy must see 3, got %s', v_read);
 
   reset role;
+end;
+$$;
+
+-- AC-6: writes really do go ONLY through lorekit_blog_like. The migration
+-- header rests its whole security argument on there being no insert/update RLS
+-- policy, so that has to be executable, not prose.
+--
+-- Deliberately mechanism-agnostic. A missing table grant and a missing RLS
+-- policy BOTH surface as insufficient_privilege (42501) on the INSERT, and an
+-- UPDATE that is granted but unpolicied matches zero rows with no error at all
+-- — so the UPDATE leg tolerates the exception and asserts the INVARIANT (the
+-- total did not move) instead of pinning one of the two outcomes. Note also
+-- that a plpgsql exception block is a subtransaction: an aborted one rolls back
+-- its own `set local role`, which is why each leg re-establishes the role.
+do $$
+declare
+  v_denied boolean := false;
+  v_total  bigint;
+begin
+  -- Seed a row for the UPDATE leg through the sanctioned path.
+  set local role service_role;
+  perform lorekit_blog_like('direct-write-probe', 5);
+  reset role;
+
+  -- A direct INSERT as the anonymous blog visitor must be refused.
+  begin
+    set local role anon;
+    insert into blog_post_likes (slug, likes) values ('bypass-attempt', 999);
+  exception when insufficient_privilege then
+    v_denied := true;
+  end;
+  reset role;
+  assert v_denied,
+    'blog likes AC-6: a direct anon INSERT must be denied — writes go only through lorekit_blog_like';
+
+  -- A direct UPDATE as anon must not be able to move a total.
+  begin
+    set local role anon;
+    update blog_post_likes set likes = 100000 where slug = 'direct-write-probe';
+  exception when insufficient_privilege then
+    null;
+  end;
+  reset role;
+
+  select likes into v_total from blog_post_likes where slug = 'direct-write-probe';
+  assert v_total = 5,
+    format('blog likes AC-6: a direct anon UPDATE must not change the total, got %s', v_total);
+
+  -- And the refused INSERT left no junk row behind.
+  select count(*) into v_total from blog_post_likes where slug = 'bypass-attempt';
+  assert v_total = 0,
+    format('blog likes AC-6: the refused INSERT must leave no row, got %s', v_total);
 end;
 $$;
 
