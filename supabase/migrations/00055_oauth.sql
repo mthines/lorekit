@@ -26,9 +26,9 @@
 -- DESIGN NOTES
 -- ------------
 --   * An OAuth access token IS an `api_tokens` row. It keeps the same
---     `lk_{rw|ro|wo}_` format and the same SHA-256 lookup, so the three
---     independent `resolveAuth` implementations (mcp/auth.ts,
---     _shared/api/auth.ts, web/lib/tokens.ts) need one new expiry check
+--     `lk_{rw|ro|wo}_` format and the same SHA-256 lookup, so the two
+--     independent token-verification sites (mcp/auth.ts's `resolveAuth` and
+--     _shared/api/auth.ts's `resolveRestAuth`) need one new expiry check
 --     rather than a whole second credential type. Revocation, the 20-token
 --     cap, the audit trail and the dashboard list all keep working unchanged.
 --   * `api_tokens.org_ids` is the org allow-list the consent screen produced.
