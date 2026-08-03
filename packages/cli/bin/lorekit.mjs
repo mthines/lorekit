@@ -40,8 +40,10 @@ ${c.bold('Commands')}
               LoreKit MCP server, and install the deterministic hooks (memories
               on SessionStart, a nudge on tool failure + at Stop). Prompts to
               install for this project (.claude) or globally for every project
-              (~/.claude); --project / --global choose non-interactively,
-              --no-hooks skips the hooks (skills stay model-invoked only).
+              (~/.claude); --project / --global choose non-interactively.
+              Also prompts whether to wire the hooks (all / read-only /
+              none); --hooks <mode> chooses non-interactively and --no-hooks
+              skips them (skills stay model-invoked only).
   uninstall   Reverse install: remove the lorekit-memory + lorekit-setup skills,
               the MCP server entry, and the lifecycle hooks for the chosen scope. Surgical —
               other servers, hooks, and settings are left untouched. Prompts
@@ -85,8 +87,8 @@ ${c.bold('Commands')}
   link (url)  Print a shareable dashboard deep-link URL for the current context,
               a scope, or a specific lesson (opens its detail sheet). No args
               links to the cwd's most-specific scope. Filter flags mirror the
-              Explorer (--q / --owner / --range / --archived / --view); --base or
-              LOREKIT_APP_URL override the dashboard host. --json. Pipe it:
+              Explorer (--q / --owner / --tags / --range / --archived / --view);
+              --base or LOREKIT_APP_URL override the dashboard host. --json. Pipe it:
               lorekit link | pbcopy.
   bootstrap   Apply the BYOD schema to a user-supplied Supabase database.
               Only needed when using LOREKIT_STORAGE_URL / LOREKIT_STORAGE_ANON_KEY.
@@ -119,9 +121,11 @@ ${c.bold('Options')}
                           default routes each entry by scope)
       --apply             Apply the migration (alias of --yes) (migrate)
   -y, --yes               Non-interactive / apply; never prompt
+      --hooks <mode>      Lifecycle hooks to wire: all | read-only | none (install)
       --no-hooks          Skip wiring the lifecycle hooks (install)
       --force             Overwrite existing skill files (install)
       --deep              Do a write→read→delete round-trip (doctor)
+      --telemetry         Verify the OTLP export credential works (doctor)
       --adapter <name>    Host framework for hook: claude | cursor | codex
       --event <name>      Host hook event (else read from stdin payload)
   -h, --help              Show this help
@@ -162,8 +166,19 @@ ${c.bold('Usage')}
   npx @lorekit/cli install [options]
 
 Scaffolds the lorekit-memory (runtime read/write) and lorekit-setup (loop
-authoring) skills, adds the LoreKit MCP server, and wires the deterministic
-hooks (memories on SessionStart, a nudge on tool failure + at Stop).
+authoring) skills, adds the LoreKit MCP server, and asks whether to wire the
+deterministic hooks. The hooks inject context — they never write memory
+themselves; the write is still the model calling memory.write.
+
+${c.bold('Hook modes')}
+  all         SessionStart (inject lessons) + PostToolUseFailure and Stop
+              (nudge you to record one). Preselected on a fresh install.
+  read-only   SessionStart only — lessons are injected, nothing ever nudges.
+  none        No hooks; the skills stay model-invoked only.
+
+An interactive run preselects whatever is already wired, so re-running install
+never resurrects hooks you declined. Answering "No hooks" (or --hooks none)
+REMOVES hooks that are already there; --no-hooks only skips wiring new ones.
 
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
@@ -171,13 +186,16 @@ ${c.bold('Options')}
       --global            Install for every project: ~/.claude/skills + ~/.claude.json
   -e, --endpoint <url>    LoreKit MCP endpoint (else LOREKIT_MCP_URL)
   -t, --token <token>     LoreKit token: lk_rw_* read+write, lk_ro_* read-only, lk_wo_* write-only
-      --no-hooks          Skip wiring the lifecycle hooks (skill stays model-invoked only)
+      --hooks <mode>      Wire the lifecycle hooks: all | read-only | none
+      --no-hooks          Skip wiring the lifecycle hooks (leaves existing ones alone)
       --force             Overwrite existing skill files
-  -y, --yes               Non-interactive; never prompt (defaults to --project)
+  -y, --yes               Non-interactive; never prompt (defaults to --project, and to the
+                          already-wired hooks — all on a fresh install)
 
 ${c.bold('Examples')}
   npx @lorekit/cli install --endpoint https://ref.supabase.co/functions/v1/mcp --token lk_rw_xxx
   npx @lorekit/cli install --global
+  npx @lorekit/cli install --hooks read-only --yes
   npx @lorekit/cli install --no-hooks --yes
 `,
   uninstall: `${c.bold('lorekit uninstall')} — reverse install for the chosen scope
@@ -213,10 +231,15 @@ ${c.bold('Options')}
   -t, --token <token>     Token override (else .mcp.json / LOREKIT_TOKEN)
       --store <path>      Local project-tier store directory (default: .lorekit)
       --deep              Do a write→read→delete round-trip
+      --telemetry         Focused run: skip the other checks, POST a probe
+                          span to the OTLP endpoint, and FAIL if the Dash0
+                          ingesting token is missing or rejected. Without it,
+                          telemetry is reported as info only.
 
 ${c.bold('Examples')}
   npx @lorekit/cli doctor
   npx @lorekit/cli doctor --deep
+  npx @lorekit/cli doctor --telemetry
   npx @lorekit/cli doctor --mode local
 `,
   list: `${c.bold('lorekit list')} — list the memories that apply to the current directory ${c.dim('(alias: ls)')}
@@ -506,6 +529,7 @@ ${c.bold('Options')}
       --scope <scope>     Scope to link to (when no positional scope is given)
       --q <text>          Pre-fill the Explorer search box
       --owner <o>         Ownership filter: all | personal | <orgId>
+      --tags <a,b,c>      Label filter (AND across labels); comma-separated or a JSON array
       --range <json>      Date range as {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}
       --from <date>       Range start (shorthand for --range)
       --to <date>         Range end (shorthand for --range)
@@ -521,6 +545,7 @@ ${c.bold('Examples')}
   npx @lorekit/cli link repo::owner/repo prefer-guards   # open one lesson's detail sheet
   npx @lorekit/cli link global::prefer-guards --json     # { url, surface, base, params }
   npx @lorekit/cli url --q "flaky test" --owner personal # search + ownership filter
+  npx @lorekit/cli link global --tags "perf,ci"          # Explorer filtered to labels
 `,
   migrate: `${c.bold('lorekit migrate')} — relocate a LoreKit-format local store into the current layout
 
@@ -573,8 +598,8 @@ ${c.bold('Options')}
 // typo like `--gloabl` should fail loudly, not quietly fall back to --project.
 const KNOWN_FLAGS = [
   'dir', 'project', 'global', 'endpoint', 'token', 'mode', 'store',
-  'from', 'to', 'apply', 'yes', 'no-hooks', 'force', 'deep', 'adapter',
-  'event', 'json', 'scope', 'threshold', 'help', 'version',
+  'from', 'to', 'apply', 'yes', 'hooks', 'no-hooks', 'force', 'deep', 'adapter',
+  'event', 'json', 'scope', 'threshold', 'help', 'version', 'telemetry',
   'value', 'tags', 'source-agent', 'trigger', 'ttl-days', 'clear-ttl', 'org', 'remote', 'local',
   'link', 'base', 'q', 'owner', 'range', 'view', 'archived',
   'origin-repo', 'origin-branch', 'origin-commit', 'origin-pr', 'no-origin',
@@ -602,7 +627,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry'],
     known: KNOWN_FLAGS,
   });
 

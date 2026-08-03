@@ -22,11 +22,14 @@ describe('generateSpec', () => {
   it('documents every REST route the edge functions serve', () => {
     expect(Object.keys(spec.paths).sort()).toEqual([
       '/memories',
+      '/memories/activity',
+      '/memories/facets',
       '/memories/purge',
       '/memories/purge-expired',
       '/memories/restore',
       '/memories/scopes',
       '/memories/search',
+      '/memories/tags',
       '/memories/usage',
       '/memories/{id}',
       '/memories/{id}/restore',

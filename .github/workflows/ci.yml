@@ -96,7 +96,10 @@ jobs:
           # the guard/CI itself changes (so the guard is exercised on its own PR).
           # `scripts/check-migration-order` (no extension) matches BOTH the guard
           # and its `.test.mjs` — so a test-only edit still triggers this job.
-          if printf '%s\n' "$CHANGED" | grep -qE '^(supabase/migrations/|scripts/check-migration-order|\.github/workflows/ci\.yml)'; then
+          # `scripts/check-remote-migration-drift` (no extension) likewise matches
+          # the deploy-time drift classifier and its `.test.mjs`, unit-tested by
+          # this same job.
+          if printf '%s\n' "$CHANGED" | grep -qE '^(supabase/migrations/|scripts/check-migration-order|scripts/check-remote-migration-drift|\.github/workflows/ci\.yml)'; then
             echo "migrations=true" >> "$GITHUB_OUTPUT"
           else
             echo "migrations=false" >> "$GITHUB_OUTPUT"
@@ -277,6 +280,14 @@ jobs:
       # migration through or blocking a good PR.
       - name: Unit-test the guard
         run: node --test scripts/check-migration-order.test.mjs
+
+      # The deploy-time counterpart: the PR-time guard above stops an
+      # out-of-order file from landing, while the drift classifier decides what
+      # deploy.yml does when the SHARED preview project's migration history is
+      # ahead of the ref being deployed. Its verdict gates a `supabase db push`,
+      # so it is unit-tested here too.
+      - name: Unit-test the remote-migration-drift classifier
+        run: node --test scripts/check-remote-migration-drift.test.mjs
 
       - name: Check migration ordering against the base branch
         env:

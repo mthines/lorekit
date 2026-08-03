@@ -10,7 +10,6 @@ import {
   relevantLessons,
   formatRelevantLessons,
   writeConfirmation,
-  loreUrl,
 } from '../src/core/lessons.mjs';
 import { resolvePrecedence, matchesQuery } from '../src/lessons-pure.mjs';
 import { claude } from '../src/adapters/claude.mjs';
@@ -341,28 +340,10 @@ test('nudges emit no instruction when hooksInstructions is missing or null for t
   assert.doesNotMatch(retrospectiveNudge(scope, { tagsDefault: [], scopeDefaults: null }), /Project instruction/);
 });
 
-// ── loreUrl ────────────────────────────────────────────────────────────────────
-
-test('loreUrl returns the bare base URL only for the null/empty (all-scopes) default', () => {
-  assert.equal(loreUrl(null), 'https://lorekit.io/lore');
-  assert.equal(loreUrl(''), 'https://lorekit.io/lore');
-});
-
-test('loreUrl JSON-encodes global as a real scope filter (not the all-scopes default)', () => {
-  // Regression: a raw `?scope=global` fails the app's JSON.parse and silently
-  // means "all scopes"; the param must be the JSON string "global", URL-encoded.
-  assert.equal(loreUrl('global'), 'https://lorekit.io/lore?scope=%22global%22');
-});
-
-test('loreUrl JSON-encodes a repo scope into the query string', () => {
-  // Was `scope=repo%3A%3Aowner%2Frepo` (raw) — broken: the app's JSON.parse
-  // rejected it and fell back to all-scopes. Now the JSON string is encoded, so
-  // the deep link actually filters to the repo scope.
-  assert.equal(
-    loreUrl('repo::owner/repo'),
-    'https://lorekit.io/lore?scope=%22repo%3A%3Aowner%2Frepo%22',
-  );
-});
+// The scope-encoding contract these three cases used to assert through the
+// `loreUrl` pass-through is covered directly on `loreScopeUrl` in
+// `test/deeplink.test.mjs` (the bare URL for null/empty, and the JSON-encoded
+// `global` / `repo::owner/repo` filters).
 
 // ── writeConfirmation ─────────────────────────────────────────────────────────
 
@@ -407,22 +388,37 @@ test('writeConfirmation links to the ACTUAL write scope, not the cwd repo scope'
   assert.match(text, /lesson=%7B%22scope%22%3A%22global%22/);
 });
 
-// ── retrospectiveNudge includes lore URL ─────────────────────────────────────
+// ── retrospectiveNudge is a terse one-liner (no lore URL) ─────────────────────
 
-test('retrospectiveNudge includes a JSON-encoded lore deep link for the write scope', () => {
+test('retrospectiveNudge is a single line and targets the write scope', () => {
   const scope = fakeScope({ repoScope: 'repo::owner/repo' });
   const text = retrospectiveNudge(scope);
-  assert.match(text, /lorekit\.io\/lore/);
-  // JSON-encoded (quoted) scope — not the old raw `scope=repo%3A%3A…` that the
-  // dashboard's JSON.parse rejected into an all-scopes fallback.
-  assert.match(text, /scope=%22repo%3A%3Aowner%2Frepo%22/);
+  assert.match(text, /memory\.write to repo::owner\/repo/);
+  // The deep-link lives on the write CONFIRMATION now, not the nudge — the
+  // retrospective stays terse.
+  assert.doesNotMatch(text, /lorekit\.io\/lore/);
+  assert.doesNotMatch(text, /View lore/);
+  assert.equal(text.split('\n').length, 1, 'nudge should be one line');
 });
 
-test('retrospectiveNudge filters to the global scope when there is no repo', () => {
+test('retrospectiveNudge falls back to the global scope when there is no repo', () => {
   const text = retrospectiveNudge({ repoScope: null });
-  // `global` is a real scope the Explorer can filter to, so the write-scope link
-  // targets it explicitly (JSON-encoded) rather than falling back to all scopes.
-  assert.match(text, /scope=%22global%22/);
+  assert.match(text, /memory\.write to global/);
+});
+
+test('retrospectiveNudge names detected friction reasons when provided', () => {
+  const scope = fakeScope({ repoScope: 'repo::owner/repo' });
+  const both = retrospectiveNudge(scope, null, { reasons: ['failure', 'stuck-loop'] });
+  assert.match(both, /this session hit/);
+  assert.match(both, /a failed tool call and a repeated retry/);
+
+  const one = retrospectiveNudge(scope, null, { reasons: ['failure'] });
+  assert.match(one, /this session hit a failed tool call/);
+  assert.doesNotMatch(one, / and /);
+
+  // No reasons → the generic prompt (the `always`/undetectable path).
+  const generic = retrospectiveNudge(scope, null, { reasons: [] });
+  assert.match(generic, /any friction worth remembering/);
 });
 
 // ── claude.isLoreWrite ────────────────────────────────────────────────────────
@@ -467,3 +463,52 @@ test('claude.parse defaults toolInput to null when absent', () => {
   assert.equal(parsed.toolInput, null);
 });
 
+
+// ── ttl.default / scope.defaults ttl_days in nudge text ───────────────────────
+// A hook never writes a memory — it emits text and the agent writes later, over
+// MCP. Advising the number is the only lever it has, so these assert the advice
+// is present, correct, and silent when unconfigured.
+
+test('retrospectiveNudge advises the configured ttl_days', () => {
+  const control = { tagsDefault: [], scopeDefaults: null, ttlDefault: 90 };
+  const text = retrospectiveNudge(fakeScope(), control);
+  assert.match(text, /Set ttl_days: 90/);
+});
+
+test('failureNudge advises the scope-specific ttl_days over ttl.default', () => {
+  const control = {
+    tagsDefault: [],
+    ttlDefault: 90,
+    scopeDefaults: { 'repo::owner/repo': { ttl_days: 14 } },
+  };
+  const text = failureNudge('Bash', fakeScope(), control);
+  assert.match(text, /Set ttl_days: 14/);
+  assert.doesNotMatch(text, /Set ttl_days: 90/);
+});
+
+test('nudges advise no ttl_days when the scope is configured permanent', () => {
+  const control = {
+    tagsDefault: [],
+    ttlDefault: 90,
+    scopeDefaults: { 'repo::owner/repo': { ttl_days: null } },
+  };
+  assert.doesNotMatch(failureNudge('Bash', fakeScope(), control), /ttl_days/);
+});
+
+test('nudges mention no ttl_days when nothing is configured', () => {
+  const control = { tagsDefault: [], scopeDefaults: null };
+  assert.doesNotMatch(retrospectiveNudge(fakeScope(), control), /ttl_days/);
+  assert.doesNotMatch(failureNudge('Bash', fakeScope(), control), /ttl_days/);
+});
+
+test('nudges combine the tags hint and the ttl hint', () => {
+  const control = { tagsDefault: ['team'], scopeDefaults: null, ttlDefault: 30 };
+  const text = retrospectiveNudge(fakeScope(), control);
+  assert.match(text, /Include tags/);
+  assert.match(text, /Set ttl_days: 30/);
+});
+
+test('an invalid configured ttl produces no hint rather than a broken one', () => {
+  const control = { tagsDefault: [], scopeDefaults: null, ttlDefault: 900 };
+  assert.doesNotMatch(retrospectiveNudge(fakeScope(), control), /ttl_days/);
+});

@@ -22,12 +22,12 @@ import {
   toolOrgList,
   toolOrgRename,
   toolOrgDelete,
-  PURGE_RETENTION_DAYS_DEFAULT,
   type Params,
 } from './tools.ts';
 import { type Span } from '../_shared/otel.ts';
 import { LimitError, recordUsageEvent, getUserPlanName } from './limits.ts';
 import { toolRequires } from './permissions.ts';
+import { wireTools } from '../_shared/schemas/tool-catalog.ts';
 import { countRecords, parseCorrelationId, usageToolKind } from '../_shared/usage-stats.ts';
 
 /**
@@ -141,165 +141,11 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
   }
 
   if (method === 'tools/list') {
-    return jsonrpc(id, {
-      tools: [
-        // ── memory.* ───────────────────────────────────────────────────────
-        {
-          name: 'memory.write',
-          description: 'Store or update a lesson',
-          inputSchema: {
-            type: 'object',
-            required: ['scope', 'key', 'value'],
-            properties: {
-              scope: { type: 'string' },
-              key: { type: 'string' },
-              value: { type: 'string' },
-              tags: { type: 'array', items: { type: 'string' } },
-              source_agent: { type: 'string' },
-              trigger: { type: 'string' },
-              created_at: {
-                type: 'string',
-                format: 'date-time',
-                description:
-                  'Optional ISO 8601 creation date. Use when migrating a pre-existing memory so it is dated by its original time instead of now. Rejected if invalid or in the future. Applies only when the memory is first created.',
-              },
-              org: {
-                type: 'string',
-                description:
-                  'Org slug to write under (org-owned write). Omit for a personal memory. You must be a write-capable member (member/admin/owner, not viewer) of the org, verified server-side — supplying an org slug you are not authorized for is rejected.',
-              },
-              ttl_days: {
-                type: 'integer',
-                minimum: 1,
-                maximum: 365,
-                description:
-                  'Number of days until the memory auto-expires. Omit for a permanent memory. On an update, supplying ttl_days refreshes the expiry; omitting it leaves the existing expiry unchanged.',
-              },
-              clear_ttl: {
-                type: 'boolean',
-                description:
-                  'When true, removes the existing expiry and makes the memory permanent again. Takes precedence over ttl_days when both are supplied.',
-              },
-              origin_repo: { type: 'string', description: "Provenance: the owner/name of the repository this memory was recorded from. Distinct from `scope`, which says where the lesson APPLIES." },
-              origin_branch: { type: 'string', description: "Provenance: the git branch this memory was recorded from. Stored verbatim (case-sensitive) so its GitHub link resolves." },
-              origin_commit: { type: 'string', description: "Provenance: the commit SHA (7-40 hex characters) checked out when this memory was recorded." },
-              origin_pr: { type: 'integer', minimum: 1, description: "Provenance: the pull request number this memory was recorded from. Combined with origin_repo it renders as a link to the PR." },
-            },
-          },
-        },
-        {
-          name: 'memory.read',
-          description: 'Read a lesson by scope and key',
-          inputSchema: { type: 'object', required: ['scope', 'key'] },
-        },
-        {
-          name: 'memory.list',
-          description: 'List lessons for a scope',
-          inputSchema: { type: 'object', required: ['scope'] },
-        },
-        {
-          name: 'memory.delete',
-          description: 'Soft-archive a lesson (default) or hard-delete it (force: true). Archived lessons are hidden from reads but can be restored.',
-          inputSchema: {
-            type: 'object',
-            required: ['scope', 'key'],
-            properties: {
-              scope: { type: 'string' },
-              key: { type: 'string' },
-              force: { type: 'boolean', description: 'Hard-delete immediately (unrecoverable). Defaults to false (soft-archive).' },
-              org: {
-                type: 'string',
-                description:
-                  'Org slug to delete under (org-owned delete). Omit for a personal memory. Soft-archive requires a member/admin/owner role; hard-delete (force: true) requires admin/owner — verified server-side.',
-              },
-            },
-          },
-        },
-        {
-          name: 'memory.search',
-          description: 'Full-text search across lessons',
-          inputSchema: { type: 'object', required: ['q'] },
-        },
-        {
-          name: 'memory.archive',
-          description: 'Soft-archive a lesson. Archived lessons are hidden from reads but can be restored via memory.restore.',
-          inputSchema: { type: 'object', required: ['scope', 'key'] },
-        },
-        {
-          name: 'memory.list_archived',
-          description: 'List archived (soft-deleted) lessons for a scope',
-          inputSchema: { type: 'object', required: ['scope'] },
-        },
-        {
-          name: 'memory.restore',
-          description: 'Restore an archived lesson back to active',
-          inputSchema: { type: 'object', required: ['scope', 'key'] },
-        },
-        {
-          name: 'memory.purge',
-          description: `Permanently delete archived lessons older than retention_days (default ${PURGE_RETENTION_DAYS_DEFAULT}). Unrecoverable.`,
-          inputSchema: {
-            type: 'object',
-            properties: {
-              retention_days: { type: 'integer', minimum: 1, maximum: 365, default: PURGE_RETENTION_DAYS_DEFAULT },
-            },
-          },
-        },
-        {
-          name: 'memory.purge_expired',
-          description: 'Permanently delete all TTL-expired memories for the current user. Unrecoverable.',
-          inputSchema: { type: 'object', properties: {} },
-        },
-        // ── org.* ──────────────────────────────────────────────────────────
-        // Require a Supabase user JWT (auth.uid() resolved inside SECURITY
-        // DEFINER RPCs). api_key callers are rejected at dispatch with
-        // JSONRPC_FORBIDDEN (-32003, HTTP 200) — see the tools/call branch.
-        {
-          name: 'org.create',
-          description:
-            'Create a new organization. You become its owner automatically. ' +
-            'The slug must be globally unique and lowercase.',
-          inputSchema: {
-            type: 'object',
-            required: ['slug', 'name'],
-            properties: {
-              slug: { type: 'string', description: 'Unique lowercase org identifier, e.g. "my-team"' },
-              name: { type: 'string', description: 'Human-readable display name' },
-            },
-          },
-        },
-        {
-          name: 'org.list',
-          description: 'List all organizations you are a member of, with your role in each.',
-          inputSchema: { type: 'object', properties: {} },
-        },
-        {
-          name: 'org.rename',
-          description: 'Rename an organization\'s display name. Requires admin or owner role.',
-          inputSchema: {
-            type: 'object',
-            required: ['slug', 'name'],
-            properties: {
-              slug: { type: 'string', description: 'The org slug to update' },
-              name: { type: 'string', description: 'New display name' },
-            },
-          },
-        },
-        {
-          name: 'org.delete',
-          description:
-            'Delete an organization. Requires owner role. ' +
-            'Soft-deletes the org — all org lore is immediately hidden from reads. Unrecoverable via MCP.',
-          inputSchema: {
-            type: 'object',
-            required: ['slug'],
-            properties: {
-              slug: { type: 'string', description: 'The org slug to delete' },
-            },
-          },
-        },
-      ],
-    });
+    // Rendered from the canonical catalog in packages/schemas/src/tool-catalog.ts
+    // (mirrored here by scripts/sync-edge-schemas.mjs). The same catalog renders
+    // the MCP tools section of llms.txt, so the wire contract and the published
+    // docs cannot drift. Add a tool there AND to the dispatch maps above.
+    return jsonrpc(id, { tools: wireTools() });
   }
 
   if (method === 'tools/call') {

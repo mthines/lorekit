@@ -7,6 +7,7 @@ import {
   Tag,
   FileCog,
   Zap,
+  Link2,
   FileCode,
   type LucideIcon,
 } from 'lucide-react';
@@ -40,6 +41,7 @@ export const DOCS_SECTIONS: readonly DocsSection[] = [
   { id: 'tags', label: 'Tags & scopes', icon: Tag, summary: 'Organise lessons by scope and tag' },
   { id: 'config', label: 'Configuration', icon: FileCog, summary: 'All .lorekit.json / config.json options' },
   { id: 'use-cases', label: 'Use cases', icon: Zap, summary: 'Common patterns and workflows' },
+  { id: 'deep-links', label: 'Deep links', icon: Link2, summary: 'Shareable dashboard URLs for scopes, memories, and filters' },
 ];
 
 /** URL slugs / MDX filename stems, in reading order. */

@@ -7,7 +7,7 @@
  * that slides up from the bottom edge over a blurred backdrop, with a grab
  * handle you can drag down to close. Isolated and reusable — it owns none of
  * its content, only the surface, the dismissal gestures, and the a11y wiring —
- * so any mobile picker (the Lore Explorer's `LabelFilter`, a future action
+ * so any mobile picker (the Lore Explorer's `FilterMenu`, a future action
  * menu, a confirm flow) can drop its body inside.
  *
  * ## Why a sheet and not the desktop popover on mobile

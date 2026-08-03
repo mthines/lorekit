@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import {
   normalizeTags,
   toggleTag,
-  tallyTags,
   pgArrayLiteral,
   tagOptions,
   searchTags,
@@ -48,34 +47,6 @@ describe('toggleTag', () => {
 
   it('normalizes a dirty incoming selection', () => {
     expect(toggleTag([' perf ', 'perf', ''], 'ci')).toEqual(['perf', 'ci']);
-  });
-});
-
-describe('tallyTags', () => {
-  it('counts labels across rows', () => {
-    expect(
-      tallyTags([{ tags: ['perf', 'ci'] }, { tags: ['perf'] }, { tags: ['perf', 'ci'] }]),
-    ).toEqual([
-      { tag: 'perf', count: 3 },
-      { tag: 'ci', count: 2 },
-    ]);
-  });
-
-  it('sorts equal counts alphabetically so the bar does not reshuffle', () => {
-    expect(tallyTags([{ tags: ['zebra'] }, { tags: ['alpha'] }])).toEqual([
-      { tag: 'alpha', count: 1 },
-      { tag: 'zebra', count: 1 },
-    ]);
-  });
-
-  it('tolerates rows with missing or null tags', () => {
-    expect(tallyTags([{}, { tags: null }, { tags: ['perf'] }])).toEqual([
-      { tag: 'perf', count: 1 },
-    ]);
-  });
-
-  it('counts a duplicated label on one row once', () => {
-    expect(tallyTags([{ tags: ['perf', 'perf'] }])).toEqual([{ tag: 'perf', count: 1 }]);
   });
 });
 

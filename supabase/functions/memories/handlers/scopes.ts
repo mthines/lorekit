@@ -42,7 +42,14 @@ export async function handleScopes(
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
-  const scopes = ((data ?? []) as ScopeRow[]).map((r) => ({ scope: r.scope, count: Number(r.count) }));
+  const scopes = ((data ?? []) as ScopeRow[]).map((r) => ({
+    scope: r.scope,
+    count: Number(r.count),
+    // max(created_at) over the counted rows (migration 00049) — lets a client
+    // render per-scope 'last activity' without listing rows to reduce them,
+    // which is the row-cap trap this endpoint exists to avoid.
+    last_activity: r.last_activity ? new Date(r.last_activity).toISOString() : null,
+  }));
   span.setAttributes({ 'lorekit.result_count': scopes.length });
   return ok({ scopes }, cors);
 }

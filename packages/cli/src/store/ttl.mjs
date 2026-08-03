@@ -11,6 +11,14 @@
 //     `ttl_days` when both are supplied (the RPC's tri-state precedence).
 //   - a read filters an expired row out lazily (there is no purge daemon
 //     offline), exactly as the remote read paths do.
+//
+// `resolveDefaultTtlDays` is the one piece here with NO server counterpart, by
+// design. It answers "what TTL did the user configure for a write that named
+// none?" — a client-side policy question. The server contract is untouched:
+// omitting `ttl_*` on `memory.write` still means the row is permanent, so an
+// agent talking straight to the MCP endpoint is unaffected by a config file it
+// cannot see. That asymmetry is deliberate; moving the default server-side would
+// silently change what "omitted" means for every existing caller.
 
 export const TTL_MIN_DAYS = 1;
 export const TTL_MAX_DAYS = 365;
@@ -53,6 +61,76 @@ export function isExpired(expiresAt, now = new Date()) {
 // delete / archive) deliberately bypass this so they can still act on hidden rows.
 export function isLive(entry, now = new Date()) {
   return !entry.archived_at && !isExpired(entry.expires_at, now);
+}
+
+// The DEFAULT TTL for a write that named none, resolved from the config layers
+// (`ttl.default` and `scope.defaults.<prefix>.ttl_days` — see control.mjs).
+//
+// Returns the number of days, or null for "no default; the memory is permanent".
+//
+// Two rules that matter more than they look:
+//
+//   1. LONGEST MATCHING PREFIX WINS, not first-declared. `scope.defaults` is a
+//      plain object, so declaration order is whatever the author's editor left
+//      behind; a `branch::` entry and a `branch::owner/repo::` entry must resolve
+//      deterministically, and the more specific one is the one the author meant.
+//      (`tagsHint` UNIONS every match instead — correct there, because tags
+//      accumulate and a TTL cannot.)
+//   2. AN EXPLICIT `null` MEANS PERMANENT and outranks `ttl.default`. Without it
+//      a repo-wide default could not be switched off for the one scope that
+//      holds durable lore, and `"ttl_days": null` is the only honest spelling of
+//      "keep this forever" — omitting the key has to keep meaning "inherit".
+//
+// Total by contract: a malformed config (fractional days, a string, out of
+// range, a non-object entry) yields null rather than throwing. A config file is
+// not a caller assertion the way `--ttl-days` is — it is ambient state that must
+// never be able to break an unrelated write, the same posture the hook engine
+// takes toward the host agent.
+export function resolveDefaultTtlDays(scope, { ttlDefault = null, scopeDefaults = null } = {}) {
+  if (typeof scope === 'string' && scope && scopeDefaults && typeof scopeDefaults === 'object') {
+    let bestPrefix = null;
+    let bestValue;
+    for (const [prefix, cfg] of Object.entries(scopeDefaults)) {
+      if (!cfg || typeof cfg !== 'object' || !('ttl_days' in cfg)) continue;
+      if (!matchesScopePrefix(scope, prefix)) continue;
+      if (bestPrefix !== null && prefix.length <= bestPrefix.length) continue;
+      bestPrefix = prefix;
+      bestValue = cfg.ttl_days;
+    }
+    if (bestPrefix !== null) {
+      if (bestValue === null) return null; // explicit "permanent" for this scope
+      return safeTtlDays(bestValue);
+    }
+  }
+  return safeTtlDays(ttlDefault);
+}
+
+// Whether a write's resolved scope falls under a `scope.defaults` key. An exact
+// match, or a `::`-delimited descendant — so `repo::owner` never captures
+// `repo::owner-other/x`. Shared with the nudge's tags hint so the two cannot
+// disagree about what "this scope is configured" means.
+export function matchesScopePrefix(scope, prefix) {
+  if (typeof scope !== 'string' || typeof prefix !== 'string' || !prefix) return false;
+  if (scope === prefix) return true;
+  return scope.startsWith(prefix.endsWith('::') ? prefix : prefix + '::');
+}
+
+// parseTtlDays, but a rejected value degrades to null instead of throwing.
+//
+// The type guard is not redundant with parseTtlDays: that one coerces with
+// Number(), which maps `true` to 1 and `[]` to 0 — fine for a flag the user
+// typed (a CLI flag is always a string), a footgun for a JSON value where `true`
+// is a plausible typo for "yes, expire these" and would silently mean ONE DAY.
+// Only a number or a numeric string is a TTL here.
+function safeTtlDays(value) {
+  if (typeof value !== 'number' && !(typeof value === 'string' && value.trim() !== '')) {
+    return null;
+  }
+  try {
+    return parseTtlDays(value);
+  } catch {
+    return null;
+  }
 }
 
 // Resolve a write's `expires_at` from the tri-state TTL inputs, mirroring

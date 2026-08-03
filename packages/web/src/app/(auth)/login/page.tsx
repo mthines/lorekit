@@ -195,7 +195,7 @@ export default function LoginPage() {
               </div>
             </li>
           </ol>
-          {/* View full docs — client component owns dialog state; page stays server-rendered */}
+          {/* Explore docs & guides — links to the public /docs index */}
           <GetStartedButton />
         </div>
       </div>

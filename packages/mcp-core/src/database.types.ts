@@ -649,11 +649,40 @@ export type Database = {
       }
       lorekit_member_org_ids: { Args: { p_user_id: string }; Returns: string[] }
       lorekit_memory_count: { Args: { p_user_id: string }; Returns: Json }
+      lorekit_memory_activity: {
+        Args: {
+          p_bucket?: string
+          p_since?: string
+          p_until?: string
+          p_user_id: string
+        }
+        Returns: {
+          bucket: string
+          count: number
+          scope: string
+        }[]
+      }
+      lorekit_memory_facets: {
+        Args: { p_archived?: boolean; p_user_id: string }
+        Returns: {
+          count: number
+          facet: string
+          value: string
+        }[]
+      }
       lorekit_memory_scopes: {
         Args: { p_user_id: string }
         Returns: {
           count: number
+          last_activity: string | null
           scope: string
+        }[]
+      }
+      lorekit_memory_tags: {
+        Args: { p_archived?: boolean; p_user_id: string }
+        Returns: {
+          count: number
+          tag: string
         }[]
       }
       lorekit_org_can: {

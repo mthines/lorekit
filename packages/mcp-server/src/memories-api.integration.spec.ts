@@ -542,6 +542,278 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
     expect(scopes.map((s) => s.scope)).toEqual([...scopes.map((s) => s.scope)].sort());
   });
 
+  // ── List filters: ?tags= and ?q= ────────────────────────────────────────────
+  //
+  // These two filters had NO executing coverage on any surface until now, and
+  // the gap was not theoretical: `?tags=` threw a TypeError on every request at
+  // `5c9799f` while the whole mocked suite stayed green, because the Storybook
+  // MSW handler reimplements both filters instead of calling `handleList`. A
+  // mock that reimplements a filter can only ever confirm itself, so the check
+  // belongs here, against a live PostgREST.
+  //
+  // Each case pins the property that a plausible-but-wrong implementation would
+  // break, not merely that a row comes back:
+  //
+  //   * `tags_mode=all` is containment (@>), `any` is overlap (&&) — swapping
+  //     them still returns rows, just the wrong ones;
+  //   * a label carrying a double quote survives the Postgres array literal —
+  //     the quoting `pgArrayLiteral` exists for;
+  //   * `%` in `q` is DATA, so it must not widen the pattern;
+  //   * a comma / parenthesis in `q` must match literally — that is the
+  //     PostgREST-reserved-character path, which percent-encoding got wrong
+  //     (`%2C` arrives as literal text after `URLSearchParams` re-encodes it)
+  //     and unquoted interpolation gets wrong in the other direction (the value
+  //     terminates its own clause).
+  describe('list filters', () => {
+    const KEY_TAGGED_BOTH = NS.name('filters-both');
+    const KEY_TAGGED_ONE = NS.name('filters-one');
+    const KEY_QUOTED_LABEL = NS.name('filters-quoted-label');
+    const KEY_PERCENT = NS.name('filters-percent');
+    const KEY_PLAIN_HUNDRED = NS.name('filters-hundred');
+    const KEY_RESERVED = NS.name('filters-reserved');
+
+    // Namespaced so a concurrent run (or leftovers from an earlier one) cannot
+    // satisfy an assertion that this run's write was supposed to satisfy.
+    const LABEL_X = `${KEY_PREFIX}-x`;
+    const LABEL_Y = `${KEY_PREFIX}-y`;
+    const LABEL_QUOTED = `${KEY_PREFIX}-needs "quoting"`;
+    const RESERVED_PHRASE = `${KEY_PREFIX} a,b(c).d`;
+
+    /** Create with labels, returning nothing — the sweep owns the cleanup. */
+    async function createTagged(key: string, value: string, tags: string[]): Promise<void> {
+      const { status, data } = await api('POST', '/', { scope: SCOPE, key, value, tags });
+      expect(status, `create ${key}: expected 201; got ${status}: ${JSON.stringify(data)}`).toBe(201);
+    }
+
+    /** Keys returned by `GET /memories` with an arbitrary query string. */
+    async function listWith(query: string): Promise<string[]> {
+      const { status, data } = await api('GET', `/?scope=${SCOPE}&limit=100&${query}`);
+      expect(status, `GET /?${query} → ${status}: ${JSON.stringify(data)}`).toBe(200);
+      return ((data as JsonObj).entries as JsonObj[]).map((e) => String(e.key));
+    }
+
+    beforeAll(async () => {
+      if (SKIP) return;
+      await createTagged(KEY_TAGGED_BOTH, 'carries both labels', [LABEL_X, LABEL_Y]);
+      await createTagged(KEY_TAGGED_ONE, 'carries one label', [LABEL_X]);
+      await createTagged(KEY_QUOTED_LABEL, 'label with a double quote', [LABEL_QUOTED]);
+      await createTagged(KEY_PERCENT, `${KEY_PREFIX} 100% coverage`, []);
+      await createTagged(KEY_PLAIN_HUNDRED, `${KEY_PREFIX} 1000 coverage`, []);
+      await createTagged(KEY_RESERVED, RESERVED_PHRASE, []);
+    }, REMOTE_TEST_TIMEOUT);
+
+    it('?tags= with tags_mode=all requires EVERY label (containment)', async () => {
+      const keys = await listWith(
+        `tags=${encodeURIComponent(`${LABEL_X},${LABEL_Y}`)}&tags_mode=all`,
+      );
+      expect(keys, 'the row carrying both labels must match').toContain(KEY_TAGGED_BOTH);
+      expect(keys, 'a row carrying only one of them must not').not.toContain(KEY_TAGGED_ONE);
+    });
+
+    it('?tags= with tags_mode=any (the default) matches EITHER label (overlap)', async () => {
+      const keys = await listWith(`tags=${encodeURIComponent(`${LABEL_X},${LABEL_Y}`)}`);
+      expect(keys).toContain(KEY_TAGGED_BOTH);
+      expect(keys, 'overlap must also return the single-label row').toContain(KEY_TAGGED_ONE);
+    });
+
+    it('?tags= matches a label containing a double quote', async () => {
+      // `memories.tags` is free text with no CHECK, so this label is reachable.
+      // A bare `join(',')` array serialisation mangles it into other labels and
+      // the row silently stops matching its own filter.
+      const keys = await listWith(`tags=${encodeURIComponent(LABEL_QUOTED)}&tags_mode=all`);
+      expect(keys, `expected ${KEY_QUOTED_LABEL} for label ${LABEL_QUOTED}`).toContain(KEY_QUOTED_LABEL);
+      expect(keys).not.toContain(KEY_TAGGED_BOTH);
+    });
+
+    it('?tags= naming a label nothing carries returns an empty page, not everything', async () => {
+      const keys = await listWith(`tags=${encodeURIComponent(`${KEY_PREFIX}-absent`)}&tags_mode=all`);
+      expect(keys).toEqual([]);
+    });
+
+    it('?q= matches a substring of the value', async () => {
+      const keys = await listWith(`q=${encodeURIComponent('carries both labels')}`);
+      expect(keys).toContain(KEY_TAGGED_BOTH);
+      expect(keys).not.toContain(KEY_QUOTED_LABEL);
+    });
+
+    it('?q= matches a substring of the key', async () => {
+      const keys = await listWith(`q=${encodeURIComponent(KEY_QUOTED_LABEL)}`);
+      expect(keys, 'the OR arm over `key` must apply too').toContain(KEY_QUOTED_LABEL);
+    });
+
+    it('?q= treats % as data, not a LIKE wildcard', async () => {
+      const keys = await listWith(`q=${encodeURIComponent(`${KEY_PREFIX} 100%`)}`);
+      expect(keys, 'the row whose value literally contains "100%"').toContain(KEY_PERCENT);
+      // The discriminator: unescaped, `…100%%` would also match "1000 coverage".
+      expect(keys, 'an unescaped % would widen the pattern to this row too').not.toContain(
+        KEY_PLAIN_HUNDRED,
+      );
+    });
+
+    it('?q= matches PostgREST-reserved characters literally', async () => {
+      const keys = await listWith(`q=${encodeURIComponent('a,b(c).d')}`);
+      expect(
+        keys,
+        'a comma, parentheses and a dot must reach ILIKE as data — this is the case both prior encodings got wrong',
+      ).toContain(KEY_RESERVED);
+      expect(keys).not.toContain(KEY_TAGGED_BOTH);
+    });
+
+    it('?q= with a value that tries to close the clause and add a predicate matches nothing', async () => {
+      // If the value escaped its quoting, this would parse as a second
+      // disjunct rather than as text nobody wrote.
+      const keys = await listWith(`q=${encodeURIComponent('",or(key.eq.' + KEY_TAGGED_BOTH + ')')}`);
+      expect(keys, `injection attempt must not return rows: ${JSON.stringify(keys)}`).toEqual([]);
+    });
+
+    it('?q= combines with ?tags= as AND, not OR', async () => {
+      const keys = await listWith(
+        `tags=${encodeURIComponent(LABEL_X)}&tags_mode=all&q=${encodeURIComponent('carries one label')}`,
+      );
+      expect(keys).toEqual([KEY_TAGGED_ONE]);
+    });
+
+    it('?tags_mode=none excludes every named label (the negation of `any`)', async () => {
+      const keys = await listWith(
+        `tags=${encodeURIComponent(LABEL_X)}&tags_mode=none&q=${encodeURIComponent(KEY_PREFIX)}`,
+      );
+      expect(keys, 'a row carrying the label must be excluded').not.toContain(KEY_TAGGED_BOTH);
+      expect(keys).not.toContain(KEY_TAGGED_ONE);
+      expect(keys, 'a row carrying no label at all must survive').toContain(KEY_PERCENT);
+    });
+  });
+
+  // ── Dimension filters + the facet catalog ────────────────────────────────────
+  // The Explorer's filter bar and the CLI both address these; the Storybook MSW
+  // handler REIMPLEMENTS them, so a green story says nothing about the handler.
+  // This is the only place the real `in` / `not.in` composition, the value
+  // quoting, and the AND-across-dimensions rule are executed.
+  describe('dimension filters and /facets', () => {
+    const AGENT_A = `${KEY_PREFIX}-agent-a`;
+    const AGENT_B = `${KEY_PREFIX}-agent-b`;
+    const TRIGGER = `${KEY_PREFIX}-trigger`;
+    // A `.` and a `()` — the PostgREST-reserved characters that are actually
+    // REACHABLE over `?origin_branch=`. A comma is not: the param is split on
+    // commas by `parseTagsParam` before it ever reaches the quoting, so a
+    // comma-bearing value arrives as two values and matches nothing.
+    const BRANCH_RESERVED = `${KEY_PREFIX}/br.anch(1)`;
+    const KEY_A = NS.name('dim-a');
+    const KEY_B = NS.name('dim-b');
+    const KEY_RESERVED_BRANCH = NS.name('dim-reserved-branch');
+
+    async function createWith(key: string, body: JsonObj): Promise<void> {
+      const { status, data } = await api('POST', '/', { scope: SCOPE, key, value: 'v', ...body });
+      expect(status, `create ${key}: expected 201; got ${status}: ${JSON.stringify(data)}`).toBe(201);
+    }
+
+    async function listWith(query: string): Promise<string[]> {
+      const { status, data } = await api('GET', `/?scope=${SCOPE}&limit=100&${query}`);
+      expect(status, `GET /?${query} → ${status}: ${JSON.stringify(data)}`).toBe(200);
+      return ((data as JsonObj).entries as JsonObj[]).map((e) => String(e.key));
+    }
+
+    beforeAll(async () => {
+      if (SKIP) return;
+      await createWith(KEY_A, {
+        source_agent: AGENT_A,
+        trigger: TRIGGER,
+        origin_repo: 'mthines/lorekit',
+        origin_branch: 'main',
+        origin_pr: 311,
+      });
+      await createWith(KEY_B, { source_agent: AGENT_B, trigger: TRIGGER });
+      await createWith(KEY_RESERVED_BRANCH, {
+        source_agent: AGENT_A,
+        origin_repo: 'mthines/lorekit',
+        origin_branch: BRANCH_RESERVED,
+      });
+    }, REMOTE_TEST_TIMEOUT);
+
+    it('?source_agent= matches one value', async () => {
+      const keys = await listWith(`source_agent=${encodeURIComponent(AGENT_B)}`);
+      expect(keys).toEqual([KEY_B]);
+    });
+
+    it('?source_agent= with several values is a disjunction', async () => {
+      const keys = await listWith(`source_agent=${encodeURIComponent(`${AGENT_A},${AGENT_B}`)}`);
+      expect(keys).toContain(KEY_A);
+      expect(keys).toContain(KEY_B);
+    });
+
+    it('?source_agent_mode=nin negates the whole set', async () => {
+      const keys = await listWith(
+        `source_agent=${encodeURIComponent(AGENT_A)}&source_agent_mode=nin&trigger=${encodeURIComponent(TRIGGER)}`,
+      );
+      expect(keys, 'the excluded agent must be gone').not.toContain(KEY_A);
+      expect(keys, 'the other agent under the same trigger must survive').toContain(KEY_B);
+    });
+
+    it('two dimensions AND together', async () => {
+      const both = await listWith(
+        `source_agent=${encodeURIComponent(AGENT_A)}&origin_branch=main`,
+      );
+      expect(both).toEqual([KEY_A]);
+      const contradiction = await listWith(
+        `source_agent=${encodeURIComponent(AGENT_B)}&origin_branch=main`,
+      );
+      expect(contradiction, 'AND, not OR — nothing satisfies both').toEqual([]);
+    });
+
+    it('?origin_branch= matches a branch containing PostgREST-reserved characters', async () => {
+      // `origin_branch` is free text and deliberately NOT lowercased, so a `.`
+      // or a `()` is reachable. Unquoted, the `in.()` operand terminates early
+      // and the row stops matching its own filter. A comma is NOT reachable
+      // here — `parseTagsParam` splits the param on it first — so it is the
+      // `q` filter, not this one, that has to carry a literal comma.
+      const keys = await listWith(`origin_branch=${encodeURIComponent(BRANCH_RESERVED)}`);
+      expect(keys, `expected ${KEY_RESERVED_BRANCH} for branch ${BRANCH_RESERVED}`).toContain(
+        KEY_RESERVED_BRANCH,
+      );
+      expect(keys).not.toContain(KEY_A);
+    });
+
+    it('?origin_pr= filters the integer column', async () => {
+      const keys = await listWith('origin_pr=311');
+      expect(keys).toContain(KEY_A);
+      expect(keys).not.toContain(KEY_B);
+    });
+
+    it('?origin_pr= with a non-numeric entry narrows rather than 400ing', async () => {
+      const { status } = await api('GET', `/?scope=${SCOPE}&limit=100&origin_pr=${encodeURIComponent('311,oops')}`);
+      expect(status, 'a hand-edited URL must not break the page').toBe(200);
+    });
+
+    it('GET /facets enumerates every dimension with counts', async () => {
+      const { status, data } = await api('GET', '/facets');
+      expect(status, `GET /facets → ${status}: ${JSON.stringify(data)}`).toBe(200);
+      const facets = (data as JsonObj).facets as JsonObj[];
+      expect(Array.isArray(facets)).toBe(true);
+
+      const find = (facet: string, value: string) =>
+        facets.find((f) => f.facet === facet && f.value === value);
+
+      expect(find('source_agent', AGENT_A), JSON.stringify(facets.slice(0, 20))).toBeTruthy();
+      expect(Number(find('source_agent', AGENT_A)?.count)).toBeGreaterThanOrEqual(2);
+      expect(find('trigger', TRIGGER)).toBeTruthy();
+      expect(find('origin_branch', BRANCH_RESERVED), 'a reserved-character value must survive the trip').toBeTruthy();
+      // The integer column arrives as a string, so a client never has to guess.
+      expect(find('origin_pr', '311')?.value).toBe('311');
+    });
+
+    it('GET /facets?facets= narrows to the named dimensions', async () => {
+      const { status, data } = await api('GET', '/facets?facets=trigger');
+      expect(status).toBe(200);
+      const facets = (data as JsonObj).facets as JsonObj[];
+      expect(facets.every((f) => f.facet === 'trigger'), JSON.stringify(facets)).toBe(true);
+    });
+
+    it('GET /facets with an unknown dimension name narrows to nothing, it does not 400', async () => {
+      const { status, data } = await api('GET', '/facets?facets=nope');
+      expect(status, 'the param is re-read on every keystroke in the menu').toBe(200);
+      expect((data as JsonObj).facets).toEqual([]);
+    });
+  });
+
   // ── Usage statistics ─────────────────────────────────────────────────────────
   // GET /memories/usage aggregates usage_events through lorekit_usage_stats. Like
   // /scopes the concrete numbers depend on the credential (a service-role smoke

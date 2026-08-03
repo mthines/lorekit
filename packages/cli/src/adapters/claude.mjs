@@ -42,6 +42,9 @@ export const claude = {
       toolInput: input.tool_input || null,
       toolResponse: input.tool_response || null,
       event: input.hook_event_name || null,
+      // Path to the session JSONL (present on Stop/SubagentStop) — read by the
+      // friction-gated retrospective to decide whether the session is worth a nudge.
+      transcriptPath: input.transcript_path || null,
     };
   },
 

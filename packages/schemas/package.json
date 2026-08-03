@@ -9,12 +9,15 @@
     "./scope": "./src/scope.ts",
     "./common": "./src/common.ts",
     "./filter": "./src/filter.ts",
+    "./tags": "./src/tags.ts",
     "./memory": "./src/memory.ts",
     "./org": "./src/org.ts",
     "./member": "./src/member.ts",
     "./invite": "./src/invite.ts",
     "./usage": "./src/usage.ts",
-    "./openapi/spec": "./src/openapi/spec.ts"
+    "./openapi/spec": "./src/openapi/spec.ts",
+    "./tool-catalog": "./src/tool-catalog.ts",
+    "./llms/render": "./src/llms/render.ts"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^7.0.0",

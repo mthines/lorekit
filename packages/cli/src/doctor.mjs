@@ -8,15 +8,20 @@ import {
   SKILLS,
   resolveProjectRoot,
   skillInstallDir,
-  settingsPath,
   CLAUDE_HOOK_EVENTS,
-  LOREKIT_HOOK_RE,
+  installedHookEvents,
+  hookModeFromEvents,
   readLorekitServer,
   readMcpConfig,
   tokenKind,
   readLorekitJson,
 } from './config.mjs';
 import { splitEndpoint } from './mcp.mjs';
+import {
+  resolveTelemetryConfig,
+  resolveTelemetryTokenSource,
+  probeTelemetryExport,
+} from './telemetry.mjs';
 import { deriveScope } from './scope.mjs';
 import { loadControl } from './control.mjs';
 import { createStore } from './store/index.mjs';
@@ -37,6 +42,19 @@ export async function doctor(args) {
 
   heading('LoreKit doctor');
   log(`  project: ${c.dim(root)}\n`);
+
+  // 0. `--telemetry` is a FOCUSED run, not a modifier on the full sweep.
+  //
+  // It exists to be a CI gate on one specific credential — the Dash0
+  // ingesting-only OTLP token — and a bare runner has no skills installed, no
+  // .mcp.json and no LoreKit API token, so a full sweep there fails for four
+  // unrelated reasons and tells you nothing about the one thing being gated.
+  // Returning early keeps the exit code a clean answer to a single question:
+  // "can this build still emit telemetry?"
+  if (args.telemetry) {
+    await checkTelemetryExport(args, root, record);
+    return summarize(failures, warnings, failedChecks, 'Telemetry export is working.');
+  }
 
   // 1. Runtime.
   const major = Number(process.versions.node.split('.')[0]);
@@ -63,6 +81,28 @@ export async function doctor(args) {
       record('pass', `skill ${skill.name}`, rel && !rel.startsWith('..') ? rel : prettyPath(skillMd));
     } else {
       record('fail', `skill ${skill.name}`, 'not found — run `lorekit install`');
+    }
+  }
+
+  // 2.4. Which hooks are actually wired, and where. Hooks are an install-time
+  // CHOICE (`--hooks all|read-only|none`, or the prompt), so "why does nothing
+  // get remembered?" is answered HERE — without a positive report the only way
+  // to tell a deliberate `none` from a broken install is to read settings.json.
+  {
+    const perScope = ['project', 'global']
+      .map((s) => ({ scope: s, events: installedHookEvents(root, s) }))
+      .filter((entry) => entry.events.length > 0);
+    if (perScope.length === 0) {
+      record(
+        'info',
+        'hooks',
+        'none wired — the skills work, but memory is model-invoked only. ' +
+          'Run `lorekit install --hooks all` to wire them.',
+      );
+    } else {
+      for (const { scope, events } of perScope) {
+        record('pass', `hooks ${scope}`, `${hookModeFromEvents(events)} — ${events.join(', ')}`);
+      }
     }
   }
 
@@ -100,6 +140,9 @@ export async function doctor(args) {
 
   // 4b. BYOD storage connectivity check.
   await checkBYODStorage(record);
+
+  // 4c. Dash0 telemetry export — is the CLI's own phone-home still working?
+  await checkTelemetryExport(args, root, record);
 
   // 5. Scope.
   const scope = deriveScope(root);
@@ -143,10 +186,18 @@ export async function doctor(args) {
     }
   }
 
-  // Summary.
+  return summarize(failures, warnings, failedChecks);
+}
+
+/**
+ * Print the Summary block and build doctor's `{ exitCode, ...extra }` return.
+ * Extracted so the focused `--telemetry` run and the full sweep end the same
+ * way — same summary line, same exit-code rule, same bounded telemetry extra.
+ */
+function summarize(failures, warnings, failedChecks, ready = 'LoreKit memory is ready.') {
   heading('Summary');
   if (failures === 0 && warnings === 0) {
-    log(`  ${c.green('All checks passed.')} LoreKit memory is ready.`);
+    log(`  ${c.green('All checks passed.')} ${ready}`);
   } else {
     log(
       `  ${failures ? c.red(failures + ' failed') : c.green('0 failed')}, ${
@@ -246,8 +297,11 @@ async function checkRemote(control, root, args, record) {
     if (res.networkError) {
       record('fail', 'connectivity', res.networkError);
     } else if (res.ok) {
-      const tools = res.result && Array.isArray(res.result.tools) ? res.result.tools.length : null;
-      record('pass', 'connectivity', tools !== null ? `reachable, ${tools} tools` : 'reachable');
+      // Say what the probe actually proved. `ping()` hits the PUBLIC `/health`
+      // function and returns only `{ ok, httpStatus }` — never a tool list — so
+      // "reachable" is a statement about the network path alone. The token itself
+      // is judged by the `authentication` check below.
+      record('pass', 'connectivity', 'reachable (public health probe — token not checked)');
     } else if (res.error && AUTH_CODES.has(res.error.code)) {
       record('fail', 'connectivity', `auth rejected (${res.error.code}) — check your token`);
     } else if (res.error) {
@@ -256,10 +310,64 @@ async function checkRemote(control, root, args, record) {
       record('warn', 'connectivity', `unexpected response (HTTP ${res.httpStatus})`);
     }
 
+    await checkRemoteAuth(store, record);
+
     if (args.deep) await deepCheckRemote(store, root, record);
   } else {
     record('warn', 'connectivity', 'skipped — need a valid endpoint and token');
+    record('warn', 'authentication', 'skipped — need a valid endpoint and token');
   }
+}
+
+/**
+ * Does the configured token STILL work?
+ *
+ * The `token` check above only reads the PREFIX (`lk_rw_`/`lk_ro_`/`lk_wo_`)
+ * and `connectivity` probes the PUBLIC `/health` function, so both stay green
+ * for a token that has been revoked in the dashboard — which is precisely the
+ * state a user runs doctor in. This check makes one authenticated,
+ * side-effect-free request and reports what the server said about the
+ * credential itself.
+ *
+ * A revoked token is a FAIL (doctor exits non-zero): every remote read and
+ * write is broken, which is not a warning-level condition. A token that is
+ * accepted but lacks read permission is a PASS — that is the healthy state of a
+ * write-only token, and the `token` check already describes the tradeoff.
+ */
+async function checkRemoteAuth(store, record) {
+  const res = await store.verifyAuth();
+
+  if (res.networkError) {
+    record('warn', 'authentication', `could not verify — ${res.networkError}`);
+    return;
+  }
+  if (res.unusable) {
+    record('warn', 'authentication', 'skipped — need a valid endpoint and token');
+    return;
+  }
+  if (res.authenticated === false) {
+    record(
+      'fail',
+      'authentication',
+      'token REJECTED by the server (HTTP 401) — it has been revoked, deleted, or was never valid. ' +
+        'Create a new one at https://lorekit.io/settings, then run `lorekit install --force` to replace it.',
+    );
+    return;
+  }
+  if (res.rateLimited) {
+    record('warn', 'authentication', 'could not verify — the request was rate limited (HTTP 429) before it reached the route; retry shortly');
+    return;
+  }
+  if (res.authenticated === true) {
+    record(
+      'pass',
+      'authentication',
+      res.permitted ? 'token accepted — read access confirmed' : 'token accepted — no read permission (write-only token)',
+    );
+    return;
+  }
+  const detail = res.error ? res.error.message || res.error.code : `HTTP ${res.httpStatus}`;
+  record('warn', 'authentication', `inconclusive — server said: ${detail}`);
 }
 
 async function deepCheckRemote(store, root, record) {
@@ -349,43 +457,110 @@ async function deepCheckLocal(store, scope, record) {
 // Returns the list of CLAUDE_HOOK_EVENTS whose lorekit hook command appears in
 // BOTH the project settings file (.claude/settings.json) and the global one
 // (~/.claude/settings.json). An empty array means no duplicates — healthy.
+//
+// Both sides read through `installedHookEvents`, the SAME detection `install`
+// uses to preselect its hook prompt, so the two surfaces can never disagree
+// about what is wired.
 function detectDuplicateHooks(root) {
-  const dupes = [];
-  const projectFile = settingsPath(root, 'project');
-  const globalFile = settingsPath(root, 'global');
-
-  let projectHooks = {};
-  let globalHooks = {};
-  try {
-    const cfg = JSON.parse(fs.readFileSync(projectFile, 'utf8'));
-    if (cfg && typeof cfg.hooks === 'object') projectHooks = cfg.hooks;
-  } catch { /* absent or unparseable — treat as empty */ }
-  try {
-    const cfg = JSON.parse(fs.readFileSync(globalFile, 'utf8'));
-    if (cfg && typeof cfg.hooks === 'object') globalHooks = cfg.hooks;
-  } catch { /* absent or unparseable — treat as empty */ }
-
-  for (const event of CLAUDE_HOOK_EVENTS) {
-    const hasInProject = hooksForEvent(projectHooks, event).some((cmd) => LOREKIT_HOOK_RE.test(cmd));
-    const hasInGlobal = hooksForEvent(globalHooks, event).some((cmd) => LOREKIT_HOOK_RE.test(cmd));
-    if (hasInProject && hasInGlobal) dupes.push(event);
-  }
-  return dupes;
+  const inProject = new Set(installedHookEvents(root, 'project'));
+  const inGlobal = new Set(installedHookEvents(root, 'global'));
+  return CLAUDE_HOOK_EVENTS.filter((event) => inProject.has(event) && inGlobal.has(event));
 }
 
-// Extract the flat list of hook command strings for one event from a hooks
-// object. Handles the nested-group shape Claude Code uses:
-// { [event]: [ { hooks: [ { type, command } ] } ] }
-function hooksForEvent(hooksObj, event) {
-  const groups = Array.isArray(hooksObj[event]) ? hooksObj[event] : [];
-  const commands = [];
-  for (const group of groups) {
-    const inner = group && Array.isArray(group.hooks) ? group.hooks : [];
-    for (const h of inner) {
-      if (h && typeof h.command === 'string') commands.push(h.command);
-    }
+/**
+ * Is the CLI's own OpenTelemetry export still working?
+ *
+ * This is a DIFFERENT credential from the `token` / `authentication` checks
+ * above: those verify the LoreKit API token (`lk_rw_*`) that reads and writes
+ * memories. This one verifies the Dash0 ingesting-only OTLP token, which is
+ * baked into the published tarball at release time and is otherwise invisible —
+ * `exportInvocation` swallows every transport error by design, so a revoked
+ * token, a moved endpoint, or a release that published with the
+ * `LOREKIT_TELEMETRY_TOKEN` secret unset all look identical from the outside:
+ * silence. Nothing in CI noticed, because nothing was looking.
+ *
+ * Two tiers, so the default `doctor` run stays offline and side-effect-free:
+ *   • always — report whether export is ON and where the credential came from,
+ *     as `info`. Never a failure: end users legitimately opt out, and a user's
+ *     machine having no phone-home is not a broken install.
+ *   • `--telemetry` — actually POST a probe span and assert the endpoint
+ *     accepted it. Here a dead export IS a failure; that flag is what CI passes.
+ */
+async function checkTelemetryExport(args, root, record) {
+  const required = Boolean(args.telemetry);
+
+  let config;
+  try {
+    // Read `.lorekit.json` from the SAME root every other check uses. Left to
+    // its default, `resolveTelemetryConfig` reads it from `process.cwd()`, so a
+    // `telemetry.disabled` in the shell's directory would decide the verdict for
+    // an unrelated `--dir`.
+    config = resolveTelemetryConfig(process.env, readLorekitJson(root));
+  } catch {
+    config = { enabled: false, reason: 'error' };
   }
-  return commands;
+  const source = resolveTelemetryTokenSource();
+
+  if (!config.enabled) {
+    // Report the reason `resolveTelemetryConfig` actually returned. Deriving it
+    // from the token source instead misreports every case where a credential
+    // variable is set but unusable — e.g. an OTEL_EXPORTER_OTLP_HEADERS that
+    // parses to zero headers, which is a broken credential, not an opt-out.
+    const detail =
+      config.reason === 'opted-out'
+        ? 'export off — opted out via LOREKIT_TELEMETRY / DO_NOT_TRACK / `telemetry.disabled` in .lorekit.json'
+        : config.reason === 'no-endpoint'
+          ? 'export off — no OTLP endpoint resolved. Published tarballs get one baked in at release; ' +
+            'set OTEL_EXPORTER_OTLP_ENDPOINT to override.'
+          : config.reason === 'error'
+            ? 'export off — the telemetry config could not be resolved'
+            : 'export off — no OTLP credential resolved. Published tarballs get one injected at release; ' +
+              'set LOREKIT_TELEMETRY_TOKEN (or OTEL_EXPORTER_OTLP_HEADERS) to override.';
+    record(required ? 'fail' : 'info', 'telemetry', detail);
+    return;
+  }
+
+  record('info', 'telemetry', `export on → ${config.endpoint} ${c.dim(`(credential from ${source})`)}`);
+
+  // The probe writes a real span to a real backend — only on explicit request.
+  if (!required) return;
+
+  const probe = await probeTelemetryExport(config, { version: cliVersion(), timeoutMs: 5000 });
+
+  if (probe.networkError) {
+    record('fail', 'telemetry export', `could not reach ${config.endpoint} — ${probe.networkError}`);
+  } else if (probe.unauthorized) {
+    record(
+      'fail',
+      'telemetry export',
+      `probe span REJECTED (HTTP ${probe.httpStatus}) — the OTLP token is revoked, expired, or was never valid. ` +
+        'Mint a new Dash0 ingesting-only token and update the LOREKIT_TELEMETRY_TOKEN secret.',
+    );
+  } else if (probe.rejectedSpans) {
+    // A 2xx that dropped the span. Reporting the bare status here would read as
+    // a contradiction ("rejected (HTTP 200)"), so name the partial-success
+    // envelope the collector actually answered with.
+    record(
+      'fail',
+      'telemetry export',
+      `probe span REJECTED by the collector (HTTP ${probe.httpStatus}, partialSuccess.rejectedSpans=${probe.rejectedSpans}) — ` +
+        'the endpoint answered success but did not ingest the span' +
+        (probe.rejectionMessage ? `: ${probe.rejectionMessage}` : '.'),
+    );
+  } else if (probe.ok) {
+    record('pass', 'telemetry export', `probe span accepted (HTTP ${probe.httpStatus}) — the token can ingest`);
+  } else {
+    record('fail', 'telemetry export', `probe span rejected (HTTP ${probe.httpStatus})`);
+  }
+}
+
+/** The running CLI version, for stamping the telemetry probe span. */
+function cliVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+  } catch {
+    return '0.0.0';
+  }
 }
 
 async function checkBYODStorage(record) {

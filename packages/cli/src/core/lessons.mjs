@@ -13,6 +13,13 @@ import { resolvePrecedence, matchesQuery } from '../lessons-pure.mjs';
 // correctly (a raw `?scope=global` silently means "all scopes") and can't drift
 // from the command-line links.
 import { loreScopeUrl, buildLessonUrl } from '../deeplink-pure.mjs';
+// The SAME resolver `lorekit write` applies, so the TTL the nudge advises an
+// agent to send is byte-for-byte the one the CLI would have applied itself. A
+// hook cannot set a TTL — it only reads and emits text; the write happens later,
+// over MCP, in the agent's context. Advising the number is the only lever the
+// hook has, which is exactly why it must not be a second, hand-kept copy.
+import { resolveDefaultTtlDays, matchesScopePrefix } from '../store/ttl.mjs';
+import { FRICTION_FAILURE, FRICTION_STUCK_LOOP } from './friction.mjs';
 
 const MAX_LESSONS = 15;
 // Cap on lessons injected on a failure — a small, focused "you've seen this
@@ -161,14 +168,15 @@ export function formatRelevantLessons(lessons) {
 
 // Build a tags hint string from config-resolved tags and scope defaults. Returns
 // "" when there are no configured tags (no hint appended to the nudge).
-function tagsHint(writeScope, { tagsDefault = [], scopeDefaults = null } = {}) {
+function tagsHint(writeScope, control) {
+  const { tagsDefault = [], scopeDefaults = null } = control || {};
   const tags = [...tagsDefault];
   if (scopeDefaults) {
     for (const [prefix, cfg] of Object.entries(scopeDefaults)) {
-      if (
-        writeScope === prefix ||
-        writeScope.startsWith(prefix.endsWith('::') ? prefix : prefix + '::')
-      ) {
+      // Tags UNION across every matching prefix — they accumulate, so a broad
+      // and a narrow entry both contribute. The TTL hint below deliberately does
+      // NOT: a memory has one expiry, so the most specific prefix wins outright.
+      if (matchesScopePrefix(writeScope, prefix)) {
         for (const t of Array.isArray(cfg.tags) ? cfg.tags : []) {
           if (typeof t === 'string' && t.length > 0 && !tags.includes(t)) tags.push(t);
         }
@@ -179,30 +187,54 @@ function tagsHint(writeScope, { tagsDefault = [], scopeDefaults = null } = {}) {
   return ` Include tags: [${tags.map((t) => JSON.stringify(t)).join(', ')}].`;
 }
 
-// The LoreKit web app URL for the Lore Explorer, pre-filtered to the given scope.
-// Exported so tests can assert the URL shape without re-deriving the encoding.
-// Delegates to the shared `loreScopeUrl` so the scope param is JSON-encoded the
-// way the dashboard reads it — the previous raw `?scope=${scope}` fell through
-// `useUrlState`'s `JSON.parse` and silently filtered to ALL scopes.
-export function loreUrl(writeScope) {
-  return loreScopeUrl(writeScope);
+// Build the TTL hint appended to a nudge. Empty string when the scope has no
+// configured default, so an unconfigured repo's nudge is unchanged.
+//
+// Phrased as an instruction to pass `ttl_days` rather than as a statement about
+// what will happen, because nothing enforces it: the agent is about to call
+// `memory.write` over MCP, where omitting `ttl_days` still means permanent. The
+// hint is advice with a number attached — the same posture as the tags hint.
+function ttlHint(writeScope, control) {
+  const days = resolveDefaultTtlDays(writeScope, control || {});
+  if (days == null) return '';
+  return ` Set ttl_days: ${days} (this scope's configured default) unless the lesson is durable enough to keep forever.`;
+}
+
+// One-line phrases for the detected friction reason codes (see core/friction.mjs),
+// so the nudge names what happened instead of a generic prompt.
+const REASON_PHRASES = {
+  [FRICTION_FAILURE]: 'a failed tool call',
+  [FRICTION_STUCK_LOOP]: 'a repeated retry',
+};
+
+// Join detected reason codes into a readable clause ("a failed tool call and a
+// repeated retry"). Empty/unknown reasons → "" (caller uses the generic prompt).
+function describeReasons(reasons) {
+  const phrases = (Array.isArray(reasons) ? reasons : [])
+    .map((r) => REASON_PHRASES[r])
+    .filter(Boolean);
+  if (phrases.length === 0) return '';
+  if (phrases.length === 1) return phrases[0];
+  return `${phrases.slice(0, -1).join(', ')} and ${phrases[phrases.length - 1]}`;
 }
 
 // The retrospective nudge emitted at end-of-turn (one-shot per session).
 // `control` is the resolved control object (optional) — carries tagsDefault and
-// scopeDefaults when the repo/user config defines them.
-export function retrospectiveNudge(scope, control) {
+// scopeDefaults when the repo/user config defines them. `opts.reasons` is the
+// detected friction reason codes (from core/friction.mjs) when `hooks.stop` is
+// `friction`; when present the nudge names them so the reflection is grounded.
+// Kept to a single line — the lore deep-link lives on the write CONFIRMATION,
+// which is where a link is actually actionable.
+export function retrospectiveNudge(scope, control, { reasons = [] } = {}) {
   const writeScope = scope.repoScope || 'global';
-  const hint = tagsHint(writeScope, control);
+  const hint = `${tagsHint(writeScope, control)}${ttlHint(writeScope, control)}`;
   const instruction = control && control.hooksInstructions && control.hooksInstructions.Stop
     ? `\n\nProject instruction: ${control.hooksInstructions.Stop}` : '';
-  const url = loreUrl(writeScope);
-  return (
-    `LoreKit: hit any friction worth remembering — a stuck loop, a repeated ` +
-    `failure, a gotcha, a wrong assumption? If so, memory.write to ${writeScope} ` +
-    `as an observation; else skip.${hint}${instruction}\n` +
-    `View lore: ${url}`
-  );
+  const detected = describeReasons(reasons);
+  const lead = detected
+    ? `LoreKit: this session hit ${detected} — a lesson worth saving?`
+    : `LoreKit: any friction worth remembering (stuck loop, repeat failure, gotcha, wrong assumption)?`;
+  return `${lead} memory.write to ${writeScope}; else skip.${hint}${instruction}`;
 }
 
 // Terse confirmation emitted via PostToolUse when a memory.write succeeded.
@@ -227,7 +259,7 @@ export function writeConfirmation(scope, key, writtenScope) {
 // scopeDefaults when the repo/user config defines them.
 export function failureNudge(toolName, scope, control) {
   const writeScope = scope.repoScope || 'global';
-  const hint = tagsHint(writeScope, control);
+  const hint = `${tagsHint(writeScope, control)}${ttlHint(writeScope, control)}`;
   const instruction = control && control.hooksInstructions && control.hooksInstructions.PostToolUseFailure
     ? `\n\nProject instruction: ${control.hooksInstructions.PostToolUseFailure}` : '';
   return (

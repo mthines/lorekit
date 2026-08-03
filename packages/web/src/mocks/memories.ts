@@ -1,14 +1,20 @@
 /**
- * MSW fixtures + handlers for the Supabase REST (PostgREST) endpoints the
- * dashboard's React Query hooks call.
+ * MSW fixtures + handlers for the LoreKit REST endpoints the dashboard's React
+ * Query hooks call.
  *
- * These back the full-page / full-view visual-regression stories: the hooks
- * (`useScopeTree`, `useLoreData`, `useDashboardData`, and the `listMemories`
- * server action, which — with `next/headers` auto-mocked by
- * `@storybook/nextjs-vite` — executes in the browser and issues the same
- * PostgREST fetch) all read `GET /rest/v1/memories`. One rich fixture set
- * therefore drives every consumer: each reads only the columns it needs off the
- * returned rows.
+ * These back the full-page / full-view visual-regression stories. The hooks
+ * (`useScopeTree`, `useFacetCatalog`, `useLoreData`, `useDashboardData`, and the
+ * `listMemories` server action, which — with `next/headers` auto-mocked by
+ * `@storybook/nextjs-vite` — executes in the browser) all talk to the
+ * `memories` edge function now rather than to PostgREST directly, so the
+ * handlers below mock `…/functions/v1/memories*`.
+ *
+ * ONE fixture set drives every consumer: `MEMORY_ROWS` is the "database", and
+ * each handler derives its own response from it exactly as the real endpoint
+ * derives it from Postgres (the list pages, `/scopes` counts per scope,
+ * `/tags` counts per label, `/activity` buckets per UTC hour or day). A fixture
+ * added to the list therefore shows up in the tree, the label bar and the
+ * heatmap without any second place to update.
  *
  * ## Determinism
  * `created_at` values are fixed offsets *before* {@link FROZEN_NOW}. Combined
@@ -34,7 +40,7 @@ function hoursAgo(h: number): string {
   return new Date(FROZEN_MS - h * HOUR).toISOString();
 }
 
-/** A single fully-shaped `memories` row as PostgREST returns it. */
+/** A single fully-shaped memory as `GET /memories` returns it. */
 export interface MemoryRow {
   id: string;
   scope: string;
@@ -50,8 +56,8 @@ export interface MemoryRow {
   org_id: string | null;
   created_by: string | null;
   updated_by: string | null;
-  /** Embedded `orgs(name,slug)` join — null for personal lore. */
-  orgs: { name: string; slug: string } | null;
+  /** Resolved owner — null for personal lore (`shapeMemoryRow`). */
+  org: { id: string; name: string; slug: string } | null;
   /** Provenance (migration 00048) — where the memory was recorded FROM. */
   origin_repo: string | null;
   origin_branch: string | null;
@@ -73,6 +79,7 @@ function row(
   hAgo: number,
   source_agent: string | null,
   origin: OriginFixture = {},
+  trigger: string | null = null,
 ): MemoryRow {
   const created = hoursAgo(hAgo);
   return {
@@ -86,11 +93,11 @@ function row(
     archived_at: null,
     expires_at: null,
     source_agent,
-    trigger: null,
+    trigger,
     org_id: null,
     created_by: null,
     updated_by: null,
-    orgs: null,
+    org: null,
     origin_repo: origin.origin_repo ?? null,
     origin_branch: origin.origin_branch ?? null,
     origin_commit: origin.origin_commit ?? null,
@@ -104,18 +111,18 @@ function row(
  * lesson list all read as a lived-in workspace.
  */
 export const MEMORY_ROWS: MemoryRow[] = [
-  row('m01', 'global', 'aw-lessons::worktree-isolation', 'Always branch a worktree from the stacked PR head, never from main, or the diff double-counts the parent branch.', ['loop::aw-lessons', 'source::stuck-loop'], 3, 'aw', { origin_repo: 'mthines/lorekit', origin_branch: 'feat/Origin-Provenance', origin_commit: 'a1b2c3d4e5f60718', origin_pr: 482 }),
-  row('m02', 'global', 'aw-lessons::npx-over-pnpm-exec', 'Run browser-mode Vitest via npx — pnpm exec keeps the Playwright child stdio open and the run never returns.', ['loop::aw-lessons'], 30, 'aw'),
-  row('m03', 'repo::mthines/lorekit', 'edge-parity::mirror-pattern', 'Pure logic that both mcp-core and the Deno edge need lives once in mcp-core and is mirrored self-contained; a spec guards drift.', ['architecture'], 26, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'main' }),
+  row('m01', 'global', 'aw-lessons::worktree-isolation', 'Always branch a worktree from the stacked PR head, never from main, or the diff double-counts the parent branch.', ['loop::aw-lessons', 'source::stuck-loop'], 3, 'aw', { origin_repo: 'mthines/lorekit', origin_branch: 'feat/Origin-Provenance', origin_commit: 'a1b2c3d4e5f60718', origin_pr: 482 }, 'stuck-loop'),
+  row('m02', 'global', 'aw-lessons::npx-over-pnpm-exec', 'Run browser-mode Vitest via npx — pnpm exec keeps the Playwright child stdio open and the run never returns.', ['loop::aw-lessons'], 30, 'aw', {}, 'tool-failure'),
+  row('m03', 'repo::mthines/lorekit', 'edge-parity::mirror-pattern', 'Pure logic that both mcp-core and the Deno edge need lives once in mcp-core and is mirrored self-contained; a spec guards drift.', ['architecture'], 26, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'main' }, 'retrospective'),
   row('m04', 'repo::mthines/lorekit', 'scope-format::double-colon', 'The canonical scope separator is :: — a single colon is a 400. All segments lowercased.', ['scope', 'validation'], 50, 'claude'),
-  row('m05', 'repo::mthines/lorekit', 'audit::one-vocabulary', 'AUDIT_ACTIONS is the single list; the SQL CHECK, the web copy, and the edge mirror are all asserted equal by a drift spec.', ['audit'], 74, 'claude'),
-  row('m06', 'repo::mthines/lorekit', 'rls::service-role-user-filter', 'api_key auth uses the service-role client — every query MUST .eq(user_id, userId) or it leaks across tenants.', ['security', 'rls'], 98, 'claude'),
-  row('m07', 'branch::mthines/lorekit::feat/storybook', 'msw::wildcard-origin', 'Match PostgREST with a */rest/v1 wildcard so the handler survives an unset NEXT_PUBLIC_SUPABASE_URL.', ['storybook', 'msw'], 5 * 24, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'feat/storybook', origin_pr: 311 }),
-  row('m08', 'branch::mthines/lorekit::feat/storybook', 'snapshot::freeze-the-clock', 'Freeze Date before rendering any time-relative UI, or "3d ago" and trend chips flake the baseline overnight.', ['storybook', 'flake'], 5 * 24 + 6, 'claude'),
-  row('m09', 'project::agent-skills', 'routing::tier-detection', 'When in doubt, route Full — an over-planned Micro wastes compute, but an under-planned architectural task ships wrong code.', ['aw', 'routing'], 10 * 24, 'aw'),
-  row('m10', 'project::agent-skills', 'confidence::plan-gate', 'A failed deterministic rule caps the confidence gate at 89% regardless of the LLM score.', ['aw', 'confidence'], 12 * 24, 'aw'),
+  row('m05', 'repo::mthines/lorekit', 'audit::one-vocabulary', 'AUDIT_ACTIONS is the single list; the SQL CHECK, the web copy, and the edge mirror are all asserted equal by a drift spec.', ['audit'], 74, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'main', origin_pr: 311 }, 'review-comment'),
+  row('m06', 'repo::mthines/lorekit', 'rls::service-role-user-filter', 'api_key auth uses the service-role client — every query MUST .eq(user_id, userId) or it leaks across tenants.', ['security', 'rls'], 98, 'claude', {}, 'review-comment'),
+  row('m07', 'branch::mthines/lorekit::feat/storybook', 'msw::wildcard-origin', 'Match the edge function with a */functions/v1 wildcard so the handler survives an unset NEXT_PUBLIC_SUPABASE_URL.', ['storybook', 'msw'], 5 * 24, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'feat/storybook', origin_pr: 311 }, 'tool-failure'),
+  row('m08', 'branch::mthines/lorekit::feat/storybook', 'snapshot::freeze-the-clock', 'Freeze Date before rendering any time-relative UI, or "3d ago" and trend chips flake the baseline overnight.', ['storybook', 'flake'], 5 * 24 + 6, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'feat/storybook' }, 'tool-failure'),
+  row('m09', 'project::agent-skills', 'routing::tier-detection', 'When in doubt, route Full — an over-planned Micro wastes compute, but an under-planned architectural task ships wrong code.', ['aw', 'routing'], 10 * 24, 'aw', { origin_repo: 'mthines/agent-skills', origin_branch: 'main' }, 'retrospective'),
+  row('m10', 'project::agent-skills', 'confidence::plan-gate', 'A failed deterministic rule caps the confidence gate at 89% regardless of the LLM score.', ['aw', 'confidence'], 12 * 24, 'aw', { origin_repo: 'mthines/agent-skills', origin_branch: 'main' }, 'retrospective'),
   row('m11', 'repo::mthines/lorekit', 'otel::one-service-name', 'All five edge functions are one service "api"; tell them apart with faas.name, never a per-function SERVICE_NAME secret.', ['otel'], 15 * 24, 'claude'),
-  row('m12', 'global', 'aw-lessons::no-ai-coauthor', 'Never add Co-Authored-By AI tags to commits or PRs in this workflow.', ['loop::aw-lessons'], 20 * 24, 'aw'),
+  row('m12', 'global', 'aw-lessons::no-ai-coauthor', 'Never add Co-Authored-By AI tags to commits or PRs in this workflow.', ['loop::aw-lessons'], 20 * 24, 'aw', {}, 'retrospective'),
 ];
 
 /**
@@ -134,16 +141,184 @@ export const AUTH_USER = {
   created_at: FROZEN_NOW,
 };
 
+// ── Response derivation — mirrors what each endpoint does in Postgres ─────────
+
+function activeRows(rows: MemoryRow[], archived: boolean): MemoryRow[] {
+  return rows.filter((r) => (archived ? r.archived_at !== null : r.archived_at === null));
+}
+
+/** `GET /memories/scopes` — one row per scope, sorted by scope. */
+function scopesFrom(rows: MemoryRow[]) {
+  const byScope = new Map<string, { count: number; last: string }>();
+  for (const r of activeRows(rows, false)) {
+    const prev = byScope.get(r.scope);
+    if (!prev) byScope.set(r.scope, { count: 1, last: r.created_at });
+    else byScope.set(r.scope, { count: prev.count + 1, last: r.created_at > prev.last ? r.created_at : prev.last });
+  }
+  return Array.from(byScope.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([scope, { count, last }]) => ({ scope, count, last_activity: last }));
+}
+
+/** `GET /memories/tags` — one row per label, count desc then label asc. */
+function tagsFrom(rows: MemoryRow[], archived: boolean) {
+  const counts = new Map<string, number>();
+  for (const r of activeRows(rows, archived)) {
+    for (const tag of r.tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+}
+
 /**
- * Handlers that mock every Supabase endpoint the lore/dashboard hooks touch.
- * Origin is wild-carded so a story renders identically whether or not
- * `NEXT_PUBLIC_SUPABASE_URL` was injected into the build.
+ * `GET /memories/facets` — one row per `(dimension, value)`, count desc then
+ * value asc, exactly as `lorekit_memory_facets` orders it.
+ *
+ * Derived from the same `MEMORY_ROWS` as every other handler, so a fixture
+ * added above appears in the filter menu without a second place to update.
+ */
+function facetsFrom(rows: MemoryRow[], archived: boolean) {
+  const counts = new Map<string, number>();
+  const bump = (facet: string, value: string | number | null) => {
+    if (value === null || value === undefined) return;
+    const v = String(value).trim();
+    if (!v) return;
+    const cellKey = `${facet}\u0000${v}`;
+    counts.set(cellKey, (counts.get(cellKey) ?? 0) + 1);
+  };
+
+  for (const r of activeRows(rows, archived)) {
+    for (const tag of r.tags) bump('tag', tag);
+    bump('source_agent', r.source_agent);
+    bump('trigger', r.trigger);
+    bump('origin_repo', r.origin_repo);
+    bump('origin_branch', r.origin_branch);
+    bump('origin_pr', r.origin_pr);
+  }
+
+  return Array.from(counts.entries())
+    .map(([cellKey, count]) => {
+      const [facet, value] = cellKey.split('\u0000') as [string, string];
+      return { facet, value, count };
+    })
+    .sort(
+      (a, b) =>
+        a.facet.localeCompare(b.facet) || b.count - a.count || a.value.localeCompare(b.value),
+    );
+}
+
+/** `GET /memories/activity` — `(bucket, scope)` cells, UTC-anchored. */
+function activityFrom(rows: MemoryRow[], unit: 'hour' | 'day') {
+  const cells = new Map<string, { bucket: string; scope: string; count: number }>();
+  for (const r of activeRows(rows, false)) {
+    const bucket = unit === 'hour'
+      ? `${r.created_at.slice(0, 13)}:00:00.000Z`
+      : `${r.created_at.slice(0, 10)}T00:00:00.000Z`;
+    const cellKey = `${bucket}|${r.scope}`;
+    const prev = cells.get(cellKey);
+    if (prev) prev.count += 1;
+    else cells.set(cellKey, { bucket, scope: r.scope, count: 1 });
+  }
+  return Array.from(cells.values()).sort(
+    (a, b) => a.bucket.localeCompare(b.bucket) || a.scope.localeCompare(b.scope),
+  );
+}
+
+/**
+ * `GET /memories` — the filters the dashboard actually sends.
+ *
+ * This is a REIMPLEMENTATION, and it proves nothing about the handler: `q` here
+ * is a lowercased substring over `key + value`, where the real path is
+ * `likeNeedle` → `ilikeClause` → PostgREST, and `tags` here is
+ * `Array.includes`, where the real path is `parseTagsParam` → `pgArrayLiteral`
+ * → `contains`/`overlaps`. A green story therefore says the COMPONENTS behave,
+ * never that the filter does — `handleList` threw on every `?tags=` request for
+ * a whole commit with this suite passing.
+ *
+ * The filters themselves are covered against a live stack in
+ * `packages/mcp-server/src/memories-api.integration.spec.ts` → "list filters".
+ * Keep the semantics here roughly faithful so stories stay realistic, but never
+ * treat this as the check.
+ */
+function listFrom(rows: MemoryRow[], url: URL) {
+  const scope = url.searchParams.get('scope');
+  const key = url.searchParams.get('key');
+  const q = url.searchParams.get('q')?.toLowerCase();
+  const tags = url.searchParams.get('tags')?.split(',').filter(Boolean) ?? [];
+  const tagsMode = url.searchParams.get('tags_mode') ?? 'any';
+  const limit = Number(url.searchParams.get('limit') ?? 50);
+
+  /** One scalar dimension: `in` (default) or `nin`, both over the raw column. */
+  const scalar = (param: string, read: (r: MemoryRow) => string | number | null) => {
+    const values = url.searchParams.get(param)?.split(',').filter(Boolean) ?? [];
+    if (values.length === 0) return () => true;
+    const nin = url.searchParams.get(`${param}_mode`) === 'nin';
+    return (r: MemoryRow) => {
+      const raw = read(r);
+      const hit = raw !== null && raw !== undefined && values.includes(String(raw));
+      return nin ? !hit : hit;
+    };
+  };
+
+  const matched = activeRows(rows, url.searchParams.get('archived') === 'true')
+    .filter((r) => (scope ? r.scope === scope : true))
+    .filter((r) => (key ? r.key === key : true))
+    .filter((r) => (q ? `${r.key} ${r.value}`.toLowerCase().includes(q) : true))
+    .filter((r) => (tags.length === 0
+      ? true
+      : tagsMode === 'all'
+        ? tags.every((t) => r.tags.includes(t))
+        : tagsMode === 'none'
+          ? !tags.some((t) => r.tags.includes(t))
+          : tags.some((t) => r.tags.includes(t))))
+    .filter(scalar('source_agent', (r) => r.source_agent))
+    .filter(scalar('trigger', (r) => r.trigger))
+    .filter(scalar('origin_repo', (r) => r.origin_repo))
+    .filter(scalar('origin_branch', (r) => r.origin_branch))
+    .filter(scalar('origin_pr', (r) => r.origin_pr))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+
+  // No cursor emulation: every story fits in one page, and a fake cursor would
+  // encode a pagination contract the fixtures do not actually implement.
+  return { entries: matched.slice(0, limit), hasMore: false, nextCursor: null };
+}
+
+/**
+ * Handlers that mock every LoreKit REST endpoint the lore/dashboard hooks touch,
+ * plus the Supabase auth user read. Origin is wild-carded so a story renders
+ * identically whether or not `NEXT_PUBLIC_SUPABASE_URL` was injected into the
+ * build.
  *
  * @param rows override the default fixture set (e.g. to story an empty state).
  */
 export function memoryHandlers(rows: MemoryRow[] = MEMORY_ROWS) {
   return [
-    http.get('*/rest/v1/memories', () => HttpResponse.json(rows)),
+    http.get('*/functions/v1/memories/scopes', () => HttpResponse.json({ scopes: scopesFrom(rows) })),
+    http.get('*/functions/v1/memories/tags', ({ request }) =>
+      HttpResponse.json({
+        tags: tagsFrom(rows, new URL(request.url).searchParams.get('archived') === 'true'),
+      })),
+    http.get('*/functions/v1/memories/facets', ({ request }) => {
+      const url = new URL(request.url);
+      const only = url.searchParams.get('facets')?.split(',').filter(Boolean) ?? [];
+      const all = facetsFrom(rows, url.searchParams.get('archived') === 'true');
+      return HttpResponse.json({
+        facets: only.length ? all.filter((f) => only.includes(f.facet)) : all,
+      });
+    }),
+    http.get('*/functions/v1/memories/activity', ({ request }) => {
+      const url = new URL(request.url);
+      const bucket = url.searchParams.get('bucket') === 'hour' ? 'hour' : 'day';
+      return HttpResponse.json({
+        bucket,
+        since: url.searchParams.get('since') ?? FROZEN_NOW,
+        until: url.searchParams.get('until') ?? FROZEN_NOW,
+        buckets: activityFrom(rows, bucket),
+      });
+    }),
+    http.get('*/functions/v1/memories', ({ request }) =>
+      HttpResponse.json(listFrom(rows, new URL(request.url)))),
     http.get('*/auth/v1/user', () => HttpResponse.json(AUTH_USER)),
     http.post('*/auth/v1/user', () => HttpResponse.json(AUTH_USER)),
   ];

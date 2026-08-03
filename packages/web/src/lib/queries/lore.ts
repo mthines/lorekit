@@ -1,192 +1,197 @@
 'use client';
 
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient, type InfiniteData } from '@tanstack/react-query';
-import { createClient } from '@/lib/supabase/client';
 import { scopeType } from '@/lib/scope';
-import { ownerFromMemoryRow } from '@/lib/ownership';
-import { aggregateByDay } from '@/lib/aggregations';
+import { dayCountsFromActivity } from '@/lib/aggregations';
 import type { ScopeNode } from '@/components/lore/ScopeTree';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { listMemories, archiveLesson, restoreLesson, type MemoryFilters, type MemoryPage } from '@/lib/lore';
 import type { DateRange } from '@/components/ui/DateRangePicker';
-import { normalizeTags, tallyTags, type TagCount } from '@/lib/tag-filter';
+import { normalizeTags } from '@/lib/tag-filter';
+import { lessonFromMemoryEntry } from '@/lib/lesson-entry';
+import { browserAccessToken } from '@/lib/api/session-browser';
+import { activityRequest, listFacetsRequest, listMemoriesRequest, listScopesRequest } from '@/lib/api/memories';
+import { normalizeFilters, type FacetValue, type Filter } from '@/lib/filters';
 
 export interface LoreData {
   scopes: ScopeNode[];
   lessons: LessonEntry[];
-  /** Heatmap series derived from the same lesson rows — no extra fetch. */
+  /** Per-UTC-day counts for the contribution heatmap. */
   heatmapData: { date: string; count: number }[];
+}
+
+/** Page size for the legacy one-shot fetch — the API's per-request maximum. */
+const LEGACY_PAGE_SIZE = 100;
+
+/**
+ * Every read below goes through LoreKit's REST API rather than PostgREST.
+ *
+ * The scope tree, the label catalog and the (legacy) whole-dataset fetch were
+ * the last three `select … then reduce in the browser` queries in the
+ * dashboard, and all three carried the bug `GET /memories/scopes` was created
+ * to fix: PostgREST caps the rows it returns, so past that cap a scope or a
+ * label silently disappears from its own filter and every count is understated
+ * — no error, no truncation signal. The aggregates are computed in Postgres now
+ * (`lorekit_memory_scopes` / `lorekit_memory_tags`), which is exact at any size
+ * and ships one row per group instead of one per memory.
+ *
+ * The token is the browser session's own access token; the API re-verifies it
+ * and RLS applies exactly as it did to the direct queries. With no session the
+ * read REJECTS with {@link NotAuthenticatedError} instead of resolving empty —
+ * see that class for why, and `isNotAuthenticated` for how a consumer tells it
+ * apart from a real failure.
+ */
+
+/**
+ * No session (signed out, or the refresh failed mid-session) — the read below
+ * could not be attempted at all.
+ *
+ * These hooks FAIL rather than resolving to an empty result, deliberately: an
+ * empty Explorer and a signed-out Explorer look identical, and a user whose
+ * session lapsed while the tab was open would be told they have no lore. The
+ * cost of that choice is that every consumer must be able to tell this error
+ * apart from a real failure, which is what {@link isNotAuthenticated} is for —
+ * exported alongside the class because `instanceof` across a bundle boundary is
+ * a trap the check should not leave to each call site.
+ */
+export class NotAuthenticatedError extends Error {
+  constructor() {
+    super('Not authenticated');
+    this.name = 'NotAuthenticatedError';
+  }
+}
+
+/** True when a query rejected because there was no session to read with. */
+export function isNotAuthenticated(error: unknown): boolean {
+  return error instanceof NotAuthenticatedError;
+}
+
+/**
+ * TanStack retries a failed query three times by default. Being signed out is
+ * not transient — retrying it costs three round trips and three renders to
+ * reach the same answer — so it is the one error that fails immediately.
+ * Everything else (a dropped connection, a 5xx) keeps the default budget.
+ */
+export function retryUnlessSignedOut(failureCount: number, error: unknown): boolean {
+  return !isNotAuthenticated(error) && failureCount < 3;
+}
+
+async function requireBrowserToken(): Promise<string> {
+  const token = await browserAccessToken();
+  if (!token) throw new NotAuthenticatedError();
+  return token;
 }
 
 // ---------------------------------------------------------------------------
 // Scope-tree-only fetch (used by the Lore Explorer sidebar).
-// Fetches the minimal data needed to render the scope tree: unique scopes and
-// their memory counts. This remains a lightweight client query so the tree
-// renders immediately while the paginated lesson list streams in separately.
+// One row per scope from `GET /memories/scopes`, already counted and sorted by
+// the database — this stays its own lightweight query so the tree renders
+// immediately while the paginated lesson list streams in separately.
 // ---------------------------------------------------------------------------
 
-async function fetchScopes(): Promise<ScopeNode[]> {
-  const supabase = createClient();
+async function fetchScopes(signal?: AbortSignal): Promise<ScopeNode[]> {
+  const token = await requireBrowserToken();
+  const { scopes } = await listScopesRequest(token, signal);
 
-  const { data, error } = await supabase
-    .from('memories')
-    .select('scope')
-    .is('archived_at', null)
-    .order('scope', { ascending: true });
-
-  if (error || !data) return [];
-
-  const scopeCounts = new Map<string, number>();
-  for (const row of data as { scope: string }[]) {
-    scopeCounts.set(row.scope, (scopeCounts.get(row.scope) ?? 0) + 1);
-  }
-
-  return Array.from(scopeCounts.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([scope, count]) => {
-      const parts = scope.split('::');
-      return {
-        scope,
-        type: scopeType(scope),
-        label: parts[parts.length - 1] ?? scope,
-        count,
-      };
-    });
+  return scopes.map(({ scope, count }) => {
+    const parts = scope.split('::');
+    return {
+      scope,
+      type: scopeType(scope),
+      label: parts[parts.length - 1] ?? scope,
+      count,
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
-// Label (tag) catalog — powers the Explorer's label filter bar.
-// Deliberately a SEPARATE query from the lesson list: the list is server-side
-// filtered, so deriving the catalog from the loaded pages would make the
-// available labels shrink as soon as one is picked — you could narrow but never
-// widen or switch. The catalog is filter-independent, exactly like the scope
-// tree, and shares its `select('…')`-plus-client-side-tally shape (and its
-// documented PostgREST row-cap caveat, see `lorekit_memory_scopes`).
+// Facet catalog — every filterable value, per dimension, for the filter menu.
 //
-// It IS however archived-aware: the bar renders in both the active and the
-// archived view, and `listMemories` partitions on `archived_at`, so a catalog
-// pinned to active rows would describe the wrong population in archived mode —
-// wrong counts, and archive-only labels missing from their own filter.
+// A SEPARATE query from the lesson list — the reason the single-dimension label
+// catalog it replaced was one too, and it only gets stronger with six
+// dimensions: derived from the loaded pages, the menu's options would shrink to
+// whatever the current filter happened to
+// return, so you could narrow but never widen or switch — and cross-dimension
+// type-ahead ("type `main`, get Branch → main") would only ever surface values
+// already visible in the list, which is precisely the case where you did not
+// need the menu.
+//
+// Archived-aware for the same reason too: active and archived are different
+// populations, so a catalog pinned to one shows the wrong counts and hides the
+// other's values from their own filter.
 // ---------------------------------------------------------------------------
 
-async function fetchTagCatalog(showArchived: boolean): Promise<TagCount[]> {
-  const supabase = createClient();
-
-  const base = supabase.from('memories').select('tags');
-  const { data, error } = await (showArchived
-    ? base.not('archived_at', 'is', null)
-    : base.is('archived_at', null));
-
-  if (error || !data) return [];
-
-  return tallyTags(data as { tags: string[] | null }[]);
+async function fetchFacets(showArchived: boolean, signal?: AbortSignal): Promise<FacetValue[]> {
+  const token = await requireBrowserToken();
+  const { facets } = await listFacetsRequest(token, showArchived, signal);
+  return facets;
 }
 
-export function useTagCatalog(showArchived = false) {
-  return useQuery<TagCount[]>({
-    // Keyed on the partition it describes — flipping "Archived" swaps the
-    // catalog instead of reusing the other view's counts.
-    queryKey: ['lore-tags', showArchived],
-    queryFn: () => fetchTagCatalog(showArchived),
-    // Matches the scope tree: read-heavy, changes only when an agent writes.
+export function useFacetCatalog(showArchived = false) {
+  return useQuery<FacetValue[]>({
+    queryKey: ['lore-facets', showArchived],
+    queryFn: ({ signal }) => fetchFacets(showArchived, signal),
+    // Matches the scope tree and the label catalog: read-heavy, changes only
+    // when an agent writes.
     staleTime: 90_000,
+    retry: retryUnlessSignedOut,
   });
 }
 
 export function useScopeTree() {
   return useQuery<ScopeNode[]>({
     queryKey: ['lore-scopes'],
-    queryFn: fetchScopes,
+    queryFn: ({ signal }) => fetchScopes(signal),
     // Scope tree is read-heavy — keep data for 90 s before refetching.
     staleTime: 90_000,
+    retry: retryUnlessSignedOut,
   });
 }
 
 // ---------------------------------------------------------------------------
-// Legacy: full data fetch (scopes + lessons in one shot, no pagination).
+// Legacy: scopes + a first page of lessons + a heatmap series in one hook.
 // Kept for back-compat with any remaining call sites; prefer `useScopeTree` +
 // `useMemories` for new code.
+//
+// The heatmap series no longer comes from the returned lessons: a heatmap
+// derived from the first page describes the first page, not the account, and
+// the previous 500-row fetch it was derived from was itself capped. It comes
+// from `GET /memories/activity`, which buckets per UTC day in Postgres.
 // ---------------------------------------------------------------------------
 
-async function fetchLoreData(): Promise<LoreData> {
-  const supabase = createClient();
+async function fetchLoreData(signal?: AbortSignal): Promise<LoreData> {
+  const token = await requireBrowserToken();
 
-  // org_id/created_by/updated_by (00015) plus the embedded org name/slug
-  // (memories_org_id_fkey, 00013) surface a memory's ownership — org?: null
-  // for personal lore, the resolved name/slug for org-owned lore.
-  const { data, error } = await supabase
-    .from('memories')
-    .select('id,scope,key,value,tags,created_at,updated_at,archived_at,expires_at,source_agent,trigger,origin_repo,origin_branch,origin_commit,origin_pr,org_id,created_by,updated_by,orgs(name,slug)')
-    .is('archived_at', null)
-    // Order by creation date so memories migrated with a backdated created_at
-    // appear at their correct original position, not the migration time.
-    .order('created_at', { ascending: false })
-    .limit(500);
+  const [scopesRes, page, activity] = await Promise.all([
+    listScopesRequest(token, signal),
+    listMemoriesRequest(token, { limit: LEGACY_PAGE_SIZE, sort: 'created_at' }, signal),
+    activityRequest(token, { bucket: 'day' }, signal),
+  ]);
 
-  if (error || !data) return { scopes: [], lessons: [], heatmapData: [] };
-
-  const lessons: LessonEntry[] = data.map((row: Record<string, unknown>) => {
-    const orgId = (row.org_id as string | null) ?? null;
-    const orgEmbed = row.orgs as { name: string; slug: string } | null;
+  const scopes: ScopeNode[] = scopesRes.scopes.map(({ scope, count }) => {
+    const parts = scope.split('::');
     return {
-      scope: row.scope as string,
-      scope_type: scopeType(row.scope as string),
-      key: row.key as string,
-      value: row.value as string,
-      tags: (row.tags as string[]) ?? [],
-      created_at: row.created_at as string,
-      updated_at: row.updated_at as string,
-      archived_at: (row.archived_at as string | null) ?? null,
-      expires_at: (row.expires_at as string | null) ?? null,
-      source_agent: row.source_agent as string | null,
-      trigger: row.trigger as string | null,
-      origin_repo: (row.origin_repo as string | null) ?? null,
-      origin_branch: (row.origin_branch as string | null) ?? null,
-      origin_commit: (row.origin_commit as string | null) ?? null,
-      origin_pr: (row.origin_pr as number | null) ?? null,
-      org_id: orgId,
-      created_by: (row.created_by as string | null) ?? null,
-      updated_by: (row.updated_by as string | null) ?? null,
-      org: ownerFromMemoryRow({
-        org_id: orgId,
-        org: orgEmbed && orgId ? { id: orgId, name: orgEmbed.name } : null,
-      }),
+      scope,
+      type: scopeType(scope),
+      label: parts[parts.length - 1] ?? scope,
+      count,
     };
   });
 
-  // Build scope tree from unique scopes.
-  const scopeCounts = new Map<string, number>();
-  for (const l of lessons) {
-    scopeCounts.set(l.scope, (scopeCounts.get(l.scope) ?? 0) + 1);
-  }
-
-  const scopes: ScopeNode[] = Array.from(scopeCounts.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([scope, count]) => {
-      const parts = scope.split('::');
-      return {
-        scope,
-        type: scopeType(scope),
-        label: parts[parts.length - 1] ?? scope,
-        count,
-      };
-    });
-
-  // Derive heatmap data from the same rows — normalise to UTC ISO date so
-  // timestamps with timezone offsets don't produce mismatched heatmap keys.
-  const heatmapData = aggregateByDay(
-    lessons.map((l) => ({ created_at: new Date(l.created_at).toISOString() })),
-  );
-
-  return { scopes, lessons, heatmapData };
+  return {
+    scopes,
+    lessons: page.entries.map(lessonFromMemoryEntry),
+    heatmapData: dayCountsFromActivity(activity.buckets),
+  };
 }
 
 export function useLoreData() {
   return useQuery<LoreData>({
     queryKey: ['lore'],
-    queryFn: fetchLoreData,
+    queryFn: ({ signal }) => fetchLoreData(signal),
     // Lore explorer is read-heavy — keep data for 90 s before refetching.
     staleTime: 90_000,
+    retry: retryUnlessSignedOut,
   });
 }
 
@@ -201,10 +206,37 @@ export interface UseMemoriesFilters {
   search: string;
   /** Date range filter on created_at. */
   range: DateRange | null;
-  /** Labels a memory must ALL carry. Empty means no label filter. */
+  /**
+   * Labels a memory must ALL carry. Empty means no label filter.
+   *
+   * @deprecated Superseded by {@link UseMemoriesFilters.filters}, which
+   * expresses the same constraint as a `label` filter with the `all` operator
+   * plus five more dimensions. Kept so a caller that has not migrated still
+   * works; it is folded into `filters` below rather than sent separately, so
+   * there is one path to the wire.
+   */
   tags?: string[];
+  /**
+   * The Explorer's filter bar — OR within a dimension, AND across dimensions.
+   * Empty means no dimension filter.
+   */
+  filters?: Filter[];
   /** When true, fetches archived memories instead of active ones. */
   showArchived?: boolean;
+}
+
+/**
+ * Fold the deprecated `tags` shorthand into the filter list.
+ *
+ * A `label` filter already present wins: an explicit bar beats a leftover
+ * shorthand, and merging the two would silently union two selections the user
+ * sees as one.
+ */
+function mergedFilters(filters: UseMemoriesFilters): Filter[] {
+  const explicit = normalizeFilters(filters.filters ?? []);
+  const legacy = normalizeTags(filters.tags);
+  if (legacy.length === 0 || explicit.some((f) => f.field === 'label')) return explicit;
+  return normalizeFilters([...explicit, { field: 'label', operator: 'all', values: legacy }]);
 }
 
 /**
@@ -215,24 +247,28 @@ export interface UseMemoriesFilters {
  * `fetchNextPage` drives the "Load more" control in `LoreExplorer`.
  */
 export function useMemories(filters: UseMemoriesFilters) {
+  const bar = mergedFilters(filters);
   return useInfiniteQuery<MemoryPage>({
-    // `tags` is APPENDED, never inserted: the archive mutations select archived
-    // vs active pages by `queryKey[4]`, so the first five segments are a fixed
-    // contract. Extend this key at the end only.
+    // The filter bar is APPENDED, never inserted: the archive mutations select
+    // archived vs active pages by `queryKey[4]`, so the first five segments are
+    // a fixed contract. Extend this key at the end only. It REPLACES the old
+    // `tags` segment (index 5) rather than sitting beside it — the deprecated
+    // `tags` input is folded into the bar by `mergedFilters`, so two segments
+    // would encode one constraint twice and split the cache for no reason.
     queryKey: [
       'memories',
       filters.scope,
       filters.search,
       filters.range,
       filters.showArchived ?? false,
-      normalizeTags(filters.tags),
+      bar,
     ],
     queryFn: ({ pageParam }) => {
       const args: MemoryFilters = {
         scope: filters.scope ?? undefined,
         search: filters.search || undefined,
         range: filters.range,
-        tags: normalizeTags(filters.tags),
+        filters: bar,
         cursor: pageParam as string | null,
         showArchived: filters.showArchived,
       };
@@ -329,11 +365,12 @@ export function useArchiveLesson() {
       }
     },
     onSettled: () => {
-      // Whether success or failure, sync the scope tree, the label catalog,
+      // Whether success or failure, sync the scope tree, the facet catalog,
       // and the legacy lore cache.
       void queryClient.invalidateQueries({ queryKey: ['lore-scopes'] });
-      void queryClient.invalidateQueries({ queryKey: ['lore-tags'] });
+      void queryClient.invalidateQueries({ queryKey: ['lore-facets'] });
       void queryClient.invalidateQueries({ queryKey: ['lore'] });
+      void queryClient.invalidateQueries({ queryKey: ['memory-total'] });
       // Invalidate archived list so it picks up the newly archived row.
       void queryClient.invalidateQueries({
         predicate: (q) => q.queryKey[0] === 'memories' && q.queryKey[4] === true,
@@ -369,8 +406,9 @@ export function useRestoreLesson() {
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ['lore-scopes'] });
-      void queryClient.invalidateQueries({ queryKey: ['lore-tags'] });
+      void queryClient.invalidateQueries({ queryKey: ['lore-facets'] });
       void queryClient.invalidateQueries({ queryKey: ['lore'] });
+      void queryClient.invalidateQueries({ queryKey: ['memory-total'] });
       // Invalidate active list so the restored memory reappears.
       void queryClient.invalidateQueries({
         predicate: (q) => q.queryKey[0] === 'memories' && q.queryKey[4] === false,

@@ -11,7 +11,10 @@ import {
   upsertMcpServer,
   upsertClaudeHooks,
   resolveHookRunner,
-  CLAUDE_HOOK_EVENTS,
+  HOOK_MODES,
+  hookEventsForMode,
+  hookModeFromEvents,
+  installedHookEvents,
   resolveConnection,
   tokenKind,
   homeDir,
@@ -20,7 +23,7 @@ import {
 } from './config.mjs';
 import { buildRemoteUrl, splitEndpoint } from './mcp.mjs';
 import { deriveScope } from './scope.mjs';
-import { log, heading, status, select, c } from './util.mjs';
+import { log, heading, status, select, err, c } from './util.mjs';
 
 // The MCP server URL is fixed — there is only one hosted LoreKit endpoint.
 const LOREKIT_MCP_ENDPOINT = 'https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp';
@@ -28,6 +31,46 @@ const LOREKIT_MCP_ENDPOINT = 'https://pqokxlhvnosogizsjztg.supabase.co/functions
 function ask(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => rl.question(question, (a) => { rl.close(); resolve(a.trim()); }));
+}
+
+// Show enough of a token to recognise it, never enough to use it: the
+// permission prefix plus the last four characters.
+export function maskToken(token) {
+  if (!token) return 'none';
+  const s = String(token);
+  const m = /^(lk_(?:rw|ro|wo)_)/.exec(s);
+  const prefix = m ? m[1] : '';
+  const tail = s.slice(-4);
+  return s.length <= prefix.length + 4 ? `${prefix}…` : `${prefix}…${tail}`;
+}
+
+/**
+ * How `install` should arrive at the token it writes — the pure decision, so
+ * the rule is testable without a pseudo-TTY.
+ *
+ *   'flag'   → an explicit --token / LOREKIT_TOKEN wins outright.
+ *   'choose' → a token is already configured AND this is an interactive
+ *              `--force`: ask whether to keep / replace / remove it.
+ *   'reuse'  → a token is already configured: reuse it silently.
+ *   'prompt' → nothing configured and someone is there to ask.
+ *   'none'   → nothing configured and nobody to ask.
+ *
+ * WHY 'choose' exists: `--force` is what a user runs precisely BECAUSE the
+ * current setup is wrong, and the most common way for it to be wrong is a
+ * revoked token — which doctor's `authentication` check now names, telling them
+ * to come here. Reusing the stored token silently made `--force` incapable of
+ * fixing the one thing it was reached for, and no other command could either.
+ * It stays interactive-only: a non-interactive run has nobody to answer, so it
+ * keeps the old reuse behaviour and `--token` remains the way to replace a
+ * token in a script.
+ */
+export function tokenPlan({ flagToken, existingToken, force, nonInteractive } = {}) {
+  if (flagToken) return { action: 'flag', token: flagToken };
+  if (existingToken) {
+    if (force && !nonInteractive) return { action: 'choose', token: existingToken };
+    return { action: 'reuse', token: existingToken };
+  }
+  return nonInteractive ? { action: 'none', token: null } : { action: 'prompt', token: null };
 }
 
 // Detect whether lorekit is already installed for a given scope. Returns an
@@ -60,10 +103,96 @@ function detectInstalled(root, scope) {
   };
 }
 
+// The interactive hook choice, as data so it can be asserted on without a pty.
+//
+// Deliberately THREE options, not a yes/no: `SessionStart` is a pure read that
+// injects existing lessons, while the other two only nudge. A single yes/no
+// bundles them, so a user who declines because they don't want to be nudged
+// also loses lesson injection — the thing LoreKit is for. Each hint says what
+// the hooks DO (inject context, nudge); none of them writes memory, and copy
+// that implied otherwise would ask for consent to something that never happens.
+export const HOOK_PROMPT_OPTIONS = [
+  {
+    label: 'Yes, all of them',
+    value: 'all',
+    hint: 'inject lessons at session start; nudge on a tool failure and at end of turn',
+  },
+  {
+    label: 'Read-only',
+    value: 'read-only',
+    hint: 'inject lessons at session start; never nudge',
+  },
+  {
+    label: 'No hooks',
+    value: 'none',
+    hint: 'skills + MCP only; memory stays model-invoked',
+  },
+];
+
+// Pure: which hook mode should the interactive prompt preselect?
+//
+// The default is the DETECTED state, not a constant — `install` is explicitly
+// re-runnable (token refresh, `--force`, completing a partial install), so a
+// constant "all" would silently resurrect hooks a user previously declined.
+// A genuinely fresh install has nothing to detect, so it preselects `all`: that
+// is the "opt in by default" the prompt is there to promote. A hand-wired subset
+// that matches no preset (`custom`) preselects `all` too — there is no preset to
+// re-offer, and the user still sees and chooses from the three options.
+//
+// That last clause is load-bearing and INTERACTIVE-ONLY: it is safe precisely
+// because the user is then shown the list and picks. A `--yes` / non-TTY run has
+// no such moment, so it must NOT take this value for a `custom` set — see
+// `install`, which leaves a hand-wired wiring untouched instead.
+export function defaultHookMode({ freshInstall, wiredEvents }) {
+  if (freshInstall) return 'all';
+  const detected = hookModeFromEvents(wiredEvents);
+  return detected === 'custom' ? 'all' : detected;
+}
+
+// Resolve the requested hook mode from the flags, or null when nothing was
+// specified (the caller then prompts / falls back). `--hooks <mode>` is the
+// explicit selector; `--no-hooks` is the pre-existing boolean and keeps its
+// documented SKIP semantics — it never removes hooks that are already wired,
+// which is why it maps to `none` here but is tracked separately below.
+//
+// A VALUELESS `--hooks` is a usage error, not an absent flag. `hooks` is not in
+// `parseArgs`' `booleans` list, so `--hooks --yes` and a trailing `--hooks`
+// both yield `true` and `--hooks=` yields `''`. Returning null for those would
+// resolve to the DETECTED mode — the exact silent fallback the validation below
+// exists to prevent — so they are surfaced as the sentinel `INVALID_HOOK_MODE`
+// and rejected alongside `--hooks bogus`. Mirrors `write.mjs`'s bare
+// `--ttl-days`, which feeds NaN to its validator for the same reason: an
+// explicitly supplied flag is a caller assertion, so a malformed one must fail.
+export const INVALID_HOOK_MODE = '(missing value)';
+
+function requestedHookMode(args) {
+  const raw = args.hooks;
+  if (typeof raw === 'string' && raw.trim()) return raw.trim().toLowerCase();
+  if (raw !== undefined && raw !== false) return INVALID_HOOK_MODE;
+  if (args['no-hooks']) return 'none';
+  return null;
+}
+
 export async function install(args) {
   const root = resolveProjectRoot(args.dir);
   const nonInteractive = Boolean(args.yes) || !process.stdin.isTTY;
   const force = Boolean(args.force);
+
+  // Validate `--hooks` before touching anything on disk: a mistyped mode must
+  // fail loudly, never silently fall back to a different wiring than asked for.
+  const requestedMode = requestedHookMode(args);
+  if (requestedMode === INVALID_HOOK_MODE) {
+    err(`\n  --hooks needs a mode. Valid modes: ${HOOK_MODES.join(' | ')}.`);
+    return 1;
+  }
+  if (requestedMode !== null && !HOOK_MODES.includes(requestedMode)) {
+    err(`\n  Unknown --hooks mode "${requestedMode}". Valid modes: ${HOOK_MODES.join(' | ')}.`);
+    return 1;
+  }
+  // An explicit `--hooks` IS the intent to change the wiring, so it must reach
+  // the hook step even on an otherwise complete install (which normally short-
+  // circuits). `--no-hooks` is skip-only and never justifies that bypass.
+  const hooksFlagExplicit = typeof args.hooks === 'string' && args.hooks.trim() !== '';
 
   heading('LoreKit install');
   log(`  project: ${c.dim(root)}`);
@@ -88,7 +217,9 @@ export async function install(args) {
   const globalState = detectInstalled(root, 'global');
   const currentState = scope === 'global' ? globalState : projectState;
 
-  if (currentState.isFullyInstalled && !force) {
+  const wiredEvents = installedHookEvents(root, scope);
+
+  if (currentState.isFullyInstalled && !force && !hooksFlagExplicit) {
     // Surface a clear, useful already-installed summary.
     log('');
     log(
@@ -124,10 +255,20 @@ export async function install(args) {
       log(`  ${c.yellow('Token: none configured — reads/writes will fail until a token is set')}`);
     }
 
+    // Hooks are a user choice now, so an already-installed run must SAY which
+    // one is in effect — otherwise "why does nothing get remembered?" has no
+    // answer here and the user has to go read settings.json.
+    log(
+      wiredEvents.length > 0
+        ? `  ${c.dim(`Hooks: ${wiredEvents.join(', ')}`)}`
+        : `  ${c.dim('Hooks: none wired — the skills work, but only when the model invokes them')}`,
+    );
+
     log('');
     log(`  Run ${c.cyan('npx @lorekit/cli doctor')} to verify the connection.`);
+    log(`  Change the hooks with ${c.cyan(`--hooks ${HOOK_MODES.join('|')}`)}.`);
     log(`  Pass ${c.cyan('--force')} to reinstall and overwrite existing files.`);
-    return 0;
+    return { exitCode: 0, 'lorekit.cli.hooks_mode': hookModeFromEvents(wiredEvents) };
   }
 
   // Partial install — note what's already there vs what will be added.
@@ -155,16 +296,44 @@ export async function install(args) {
   const endpoint = fromArgs.endpoint || LOREKIT_MCP_ENDPOINT;
 
   // Token resolution order: --token flag → env → existing config → prompt.
-  let token = fromArgs.token;
-  if (!token && currentState.existingToken) {
-    // Reuse the token that's already in the config — don't make the user repeat
-    // it just because they're running install again.
-    token = currentState.existingToken;
+  const plan = tokenPlan({
+    flagToken: fromArgs.token,
+    existingToken: currentState.existingToken,
+    force,
+    nonInteractive,
+  });
+
+  let token = null;
+  if (plan.action === 'flag') {
+    token = plan.token;
+  } else if (plan.action === 'reuse') {
+    token = plan.token;
     log(`  ${c.dim('Token: reusing existing token from config.')}`);
-  }
-  if (!token && !nonInteractive) {
-    token = await ask('  LoreKit token (lk_rw_… to allow writes, blank to skip): ');
-    token = token || null;
+  } else if (plan.action === 'choose') {
+    const choice = await select(
+      `A token is already configured (${maskToken(currentState.existingToken)}). What should this reinstall do?`,
+      [
+        { label: 'Keep the existing token', value: 'keep', hint: 'reuse what is in the config' },
+        { label: 'Replace it with a new token', value: 'replace', hint: 'paste a fresh lk_… token (e.g. after revoking one)' },
+        { label: 'Remove the token', value: 'remove', hint: 'leave the server unauthenticated' },
+      ],
+    );
+    if (choice === 'replace') {
+      const entered = await ask('  New LoreKit token (lk_rw_… to allow writes, blank to keep the existing one): ');
+      token = entered || currentState.existingToken;
+      log(`  ${c.dim(entered ? 'Token: replaced with the token you entered.' : 'Token: nothing entered — keeping the existing token.')}`);
+    } else if (choice === 'remove') {
+      // Deliberately NOT followed by the fresh-install prompt below: someone who
+      // just chose "remove" must not be immediately asked for a token again.
+      token = null;
+      log(`  ${c.yellow('Token: removed — reads/writes will fail until a token is set.')}`);
+    } else {
+      token = currentState.existingToken;
+      log(`  ${c.dim('Token: reusing existing token from config.')}`);
+    }
+  } else if (plan.action === 'prompt') {
+    const entered = await ask('  LoreKit token (lk_rw_… to allow writes, blank to skip): ');
+    token = entered || null;
   }
 
   // 4. Install the skill files — every skill the CLI ships.
@@ -179,14 +348,67 @@ export async function install(args) {
   const remoteUrl = buildRemoteUrl(endpoint, token);
   const { file, existed } = upsertMcpServer(root, remoteUrl, scope);
 
-  // 5b. Wire the deterministic hooks (unless --no-hooks). This is the layer the
-  //     Claude plugin adds on top of the skill: lessons injected on every
-  //     SessionStart, a nudge on tool failure, a retrospective nudge on Stop —
-  //     firing the shared `lorekit hook` engine, which reads the same config.
-  const wireHooks = !args['no-hooks'];
+  // 5b. Hooks — the deterministic layer the Claude plugin adds on top of the
+  //     skill, firing the shared `lorekit hook` engine (which reads the same
+  //     config). NONE of them write memory: SessionStart injects existing
+  //     lessons, PostToolUseFailure surfaces relevant ones plus a write nudge,
+  //     Stop fires the friction-gated retrospective nudge. All three only emit
+  //     context — the write is still the model calling `memory.write`. The
+  //     prompt copy below says exactly that, because a user who declines
+  //     "automatic memory writing" would be declining something that never
+  //     happens and losing lesson injection, which is the product.
+  let hookMode = requestedMode;
+  // A hand-wired set matching no preset (`custom`) is the one state the three
+  // options cannot express. Interactively that is fine — `defaultHookMode`
+  // preselects `all` and the user still chooses. A `--yes` / non-TTY run never
+  // gets that moment, so taking the preselection there would WIRE `all` and
+  // silently re-add the events the user hand-removed — exactly what
+  // `hookModeFromEvents` tells callers not to do, and the opposite of the
+  // documented "otherwise whatever is already wired". So keep exactly that set
+  // — no event added or removed, though the command string is still refreshed
+  // below; `--hooks <mode>` remains the way to change it on purpose.
+  let preserveCustomHooks = false;
+  if (hookMode === null) {
+    const preselect = defaultHookMode({
+      freshInstall: !currentState.hasSkills && !currentState.hasMcp && wiredEvents.length === 0,
+      wiredEvents,
+    });
+    if (nonInteractive) {
+      preserveCustomHooks = hookModeFromEvents(wiredEvents) === 'custom';
+      hookMode = preserveCustomHooks ? 'custom' : preselect;
+    } else {
+      log('');
+      hookMode = await select('Install the LoreKit lifecycle hooks?', HOOK_PROMPT_OPTIONS, {
+        defaultIndex: Math.max(0, HOOK_PROMPT_OPTIONS.findIndex((o) => o.value === preselect)),
+      });
+    }
+  }
+
+  // `hookEventsForMode` maps any unknown mode to the full set, so `custom` must
+  // never reach it — the preserved wiring IS the event list here.
+  const hookEvents = preserveCustomHooks ? [...wiredEvents] : hookEventsForMode(hookMode);
+  // `--no-hooks` is skip-only by contract: it has always meant "don't wire
+  // them", never "take away the ones already there". An interactive `No hooks`
+  // (or an explicit `--hooks none`) is an unambiguous request to remove.
+  const skipHooksOnly = hookMode === 'none' && Boolean(args['no-hooks']) && !hooksFlagExplicit;
+  // Nothing to wire and nothing to remove ⇒ don't create a settings.json at all.
+  // `wiredEvents` reads as empty for an unparseable settings.json, so a `none`
+  // run against one is a silent no-op — correct, not a gap: Claude Code cannot
+  // parse that file either, so no lorekit hook is firing from it. Any mode that
+  // WIRES still goes through `upsertClaudeHooks`, whose throwing read surfaces
+  // the parse error rather than clobbering the file.
+  //
+  // Preserving a `custom` set does NOT mean skipping the write. Passing
+  // `hookEvents` (== `wiredEvents` here) keeps exactly that set — nothing is
+  // added, and the prune loop finds no lorekit entry on the events outside it,
+  // so `removed` is always 0 — while still REFRESHING a stale command string.
+  // Skipping the call instead left a `--force` re-install unable to repair a
+  // hook command pointing at an old runner, which is the one thing a re-install
+  // is for.
+  const touchHooks = !skipHooksOnly && (hookEvents.length > 0 || wiredEvents.length > 0);
   let hooks = null;
-  if (wireHooks) {
-    hooks = upsertClaudeHooks(root, scope, resolveHookRunner());
+  if (touchHooks) {
+    hooks = upsertClaudeHooks(root, scope, resolveHookRunner(), hookEvents);
   }
 
   // Show global paths relative to ~ (a repo-relative path would be a mess of
@@ -207,16 +429,34 @@ export async function install(args) {
   }
   status('pass', mcpLabel, `${existed ? 'updated' : 'created'} lorekit server → ${display(file)}`);
 
-  if (!wireHooks) {
-    status('info', 'hooks', 'skipped (--no-hooks) — the skill still works, but memories are model-invoked only');
+  if (!touchHooks) {
+    status(
+      'info',
+      'hooks',
+      skipHooksOnly
+        ? 'skipped (--no-hooks) — the skills still work, but memory stays model-invoked'
+        : 'none — the skills still work, but memory stays model-invoked',
+    );
   } else {
-    const n = hooks.added + hooks.updated;
+    const n = hooks.added + hooks.updated + hooks.removed;
     const hookParts = [
       hooks.added ? `${hooks.added} added` : '',
       hooks.updated ? `${hooks.updated} updated` : '',
+      hooks.removed ? `${hooks.removed} removed` : '',
     ].filter(Boolean);
     const hookState = n === 0 ? 'already wired' : hookParts.join(', ');
-    status(n === 0 ? 'info' : 'pass', 'hooks', `${hookState} → ${display(hooks.file)} (${CLAUDE_HOOK_EVENTS.join(', ')})`);
+    const wired = hookEvents.length > 0 ? ` (${hookEvents.join(', ')})` : '';
+    // The preserved-`custom` run DOES write, so it lands here rather than in the
+    // "left as-is" branch — but it is still the one state the three modes cannot
+    // express, so it keeps its own explanation of how to leave it.
+    const kept = preserveCustomHooks
+      ? `; a hand-wired set matching no preset, pass --hooks ${HOOK_MODES.join('|')} to change it`
+      : '';
+    status(
+      n === 0 ? 'info' : 'pass',
+      `hooks ${hookMode}`,
+      `${hookState} → ${display(hooks.file)}${wired}${kept}`,
+    );
   }
 
   const kind = tokenKind(token);
@@ -249,5 +489,8 @@ export async function install(args) {
       )}`,
     );
   }
-  return 0;
+  // Bounded, non-PII: which of the three presets this run landed on. Counting
+  // the `--no-hooks` FLAG (as telemetry already did) says nothing about what a
+  // user picks when actually asked, which is the whole point of the prompt.
+  return { exitCode: 0, 'lorekit.cli.hooks_mode': hookMode };
 }

@@ -9,19 +9,27 @@
  *      actions carry durable signal; edits, deletes, dismissals are skipped.
  *   2. isSignalWorthy — rejects short bodies, bot noise, and code-only blocks.
  *
- * All webhook-sourced memories are stored with ttl_days: 30 — they are
- * candidates, not promoted lessons, and should decay unless re-surfaced.
+ * All webhook-sourced memories are stored with a TTL — they are candidates, not
+ * promoted lessons, and should decay unless re-surfaced. The number of days is
+ * graded by the delivery's signal tier (webhookTtlDays, ttl-defaults.ts) rather
+ * than flat, because gate 1 already knows a resolved thread outranks a fresh
+ * comment.
  *
  * Per otel-instrumentation skills: spans on all operations.
  */
 import { SpanStatusCode } from '@opentelemetry/api';
-import { createServiceClient, getTracer, sanitizeOrigin, write, validateScope } from '@lorekit/core';
+import {
+  createServiceClient,
+  getTracer,
+  sanitizeOrigin,
+  webhookSignalTier,
+  webhookTtlDays,
+  write,
+  validateScope,
+} from '@lorekit/core';
 import { logger } from '../logger.js';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { classifyWebhookAction, isSignalWorthy } from './signal-filter.js';
-
-/** TTL for all webhook-sourced memory candidates (days). */
-const WEBHOOK_TTL_DAYS = 30;
 
 // Read lazily (not as module-level consts) so tests that set process.env in
 // beforeEach — after this module has already been imported — see the value
@@ -143,12 +151,19 @@ export async function handleGitHubWebhook(req: Request): Promise<Response> {
       const db = createServiceClient(getSupabaseUrl(), getSupabaseServiceRoleKey());
       const key = `pr-webhook::${repo}::${Date.now()}`;
 
+      // Layer 3 — TTL: webhook memories are candidates, not promoted lessons, so
+      // they decay. How fast depends on the signal tier gate 1 already assigned;
+      // the second argument of webhookTtlDays is where a per-repo override will
+      // be threaded once it is configurable.
+      const ttlDays = webhookTtlDays(event, action);
+      span.setAttribute('lorekit.webhook.signal_tier', webhookSignalTier(event, action));
+      span.setAttribute('lorekit.webhook.ttl_days', ttlDays);
+
       await write(db, {
         scope,
         key,
         value: commentBody.trim(),
-        // Layer 3 — TTL: webhook memories are candidates, not promoted lessons.
-        ttl_days: WEBHOOK_TTL_DAYS,
+        ttl_days: ttlDays,
         tags: [
           'source::pr-webhook',
           `event::${event}`,

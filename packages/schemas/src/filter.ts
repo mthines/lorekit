@@ -32,26 +32,121 @@ export const ALLOWED_FILTER_FIELDS: ReadonlySet<string> = new Set([
   'trigger',
 ]);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Value encoding — ONE mechanism, the one PostgREST documents.
+//
+// There are two independent escaping problems here and they are solved in two
+// separate steps, in this order:
+//
+//   1. LIKE metacharacters (`%`, `_`, and the `\` escape itself) — so a user
+//      typing `100%` searches for the text `100%` instead of matching
+//      everything. Postgres' default LIKE escape character is a backslash.
+//   2. PostgREST's URL grammar — so a value containing one of its reserved
+//      characters (`,` `.` `:` `(` `)`) cannot terminate the clause it sits in
+//      and inject a sibling predicate. The documented remedy is to wrap the
+//      value in DOUBLE QUOTES, escaping `\` and `"` inside them with a
+//      backslash. See "Reserved characters" in the PostgREST URL grammar.
+//
+// This replaces an earlier percent-encoding attempt (`encodeForPostgrest`,
+// `,`/`(`/`)` → `%2C`/`%28`/`%29`), which could not work: every one of these
+// expressions is handed to postgrest-js `.or()`, which does
+// `url.searchParams.append('or', '(…)')` — a `URLSearchParams` serialisation
+// re-encodes the `%` as `%25`, so `%2C` arrives at PostgREST as the literal
+// four-character text `%2C`. It neither separated a clause nor matched a
+// comma. The two call sites also disagreed: `likeNeedle` backslash-escaped the
+// same three characters instead, which the URL grammar gives no meaning to.
+//
+// Grounding for the quoted form (this repo cannot run a PostgREST to check):
+// the logic-tree value parser is
+// `pLogicSingleVal = try (pQuotedValue <* notFollowedBy (noneOf ",)")) <|> …`
+// with `pQuotedValue = char '"' *> many (noneOf "\\\"" <|> char '\\' *> anyChar) <* char '"'`
+// (`src/PostgREST/ApiRequest/QueryParams.hs`, unchanged across v12 and v13) —
+// quotes are stripped, a backslash escapes the character after it, and the
+// closing quote must be followed by `,`, `)`, or the end of the tree.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Postgres LIKE metacharacters, plus the backslash that escapes them. */
+const LIKE_ESCAPE_RE = /[%_\\]/g;
+
 /**
- * Percent-encode the characters that are structural in a PostgREST filter
- * expression. Without this a value containing `,` or `)` could terminate the
- * current clause and inject a sibling predicate.
+ * Trim a raw substring query and escape the LIKE metacharacters in it.
+ *
+ * Returns `null` for absent/whitespace-only input, meaning "apply no filter" —
+ * so a caller can pass raw user input straight through. Unicode content is
+ * preserved as-is; only `%`, `_` and `\` are escaped.
+ *
+ * The result is a LIKE *pattern fragment*, NOT a finished clause: wrap it in
+ * `%…%` for a contains match and pass the whole pattern through
+ * {@link quoteFilterValue} before putting it in a logic tree. {@link ilikeClause}
+ * does both, and is what every caller should use.
+ *
+ * Shared rather than re-derived per surface because BOTH the dashboard's search
+ * and the `GET /memories` `q` filter must escape identically — an unescaped `%`
+ * silently turns an as-you-type filter into a match-everything wildcard.
+ *
+ * `*` is deliberately NOT escaped: PostgREST translates `*` to `%` only for the
+ * quantified `like(any)` / `like(all)` forms (`T.map star val` in
+ * `SqlFragment.hs`), never for the plain `ilike` this module emits, so a
+ * literal asterisk stays literal.
  */
-function encodeForPostgrest(val: string): string {
-  return val.replace(/[(),]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+export function likeNeedle(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(LIKE_ESCAPE_RE, (ch) => `\\${ch}`);
+}
+
+/**
+ * Wrap a value for use INSIDE a PostgREST logic tree (`or=(…)` / `and=(…)`).
+ *
+ * Always quotes, rather than quoting only when a reserved character is present:
+ * a value is either safe in every case or safe in no case, and a conditional
+ * would make the dangerous branch the rarely-exercised one.
+ *
+ * Only valid inside a logic tree. A top-level filter (`?key=ilike.…`) is parsed
+ * by `pSingleVal = many anyChar`, which strips nothing — quotes there would be
+ * matched as literal characters.
+ */
+export function quoteFilterValue(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * One `ilike` clause for a logic tree: `<field>.ilike."<pattern>"`.
+ *
+ * `needle` must already be LIKE-escaped ({@link likeNeedle}); the `%` wildcards
+ * this adds are the only ones that stay active. Exported so the `q` filter and
+ * the `contains` operator of a `FilterGroup` compose the clause the same way —
+ * that they did not is what let the two encodings drift apart.
+ */
+export function ilikeClause(
+  field: string,
+  needle: string,
+  {
+    prefix = true,
+    suffix = true,
+    negate = false,
+  }: { prefix?: boolean; suffix?: boolean; negate?: boolean } = {},
+): string {
+  const pattern = `${prefix ? '%' : ''}${needle}${suffix ? '%' : ''}`;
+  return `${field}.${negate ? 'not.ilike' : 'ilike'}.${quoteFilterValue(pattern)}`;
 }
 
 /** Serialise a single leaf condition, or `null` if its field is not allowed. */
 function conditionToString(c: FilterCondition): string | null {
   if (!ALLOWED_FILTER_FIELDS.has(c.field)) return null;
-  const v = encodeForPostgrest(c.value ?? '');
+  const raw = c.value ?? '';
+  // Equality compares the value verbatim, so it is quoted but NOT LIKE-escaped.
+  const exact = quoteFilterValue(raw);
+  // The pattern operators do both: a `%` the user typed is data, not a wildcard.
+  const needle = raw.replace(LIKE_ESCAPE_RE, (ch) => `\\${ch}`);
   switch (c.op) {
-    case 'is':               return `${c.field}.eq.${v}`;
-    case 'is_not':           return `${c.field}.neq.${v}`;
-    case 'contains':         return `${c.field}.ilike.%${v}%`;
-    case 'does_not_contain': return `${c.field}.not.ilike.%${v}%`;
-    case 'starts_with':      return `${c.field}.ilike.${v}%`;
-    case 'ends_with':        return `${c.field}.ilike.%${v}`;
+    case 'is':               return `${c.field}.eq.${exact}`;
+    case 'is_not':           return `${c.field}.neq.${exact}`;
+    case 'contains':         return ilikeClause(c.field, needle);
+    case 'does_not_contain': return ilikeClause(c.field, needle, { negate: true });
+    case 'starts_with':      return ilikeClause(c.field, needle, { prefix: false });
+    case 'ends_with':        return ilikeClause(c.field, needle, { suffix: false });
     case 'is_set':           return `${c.field}.not.is.null`;
     case 'is_not_set':       return `${c.field}.is.null`;
     default:                 return null;
@@ -92,7 +187,11 @@ function groupToOrString(g: FilterGroup): string | null {
  *   { field: 'scope', op: 'is', value: 'global' },
  *   { or: [ { field: 'key', op: 'contains', value: 'auth' } ] },
  * ]});
- * // → ['scope.eq.global', 'key.ilike.%auth%']
+ * // → ['scope.eq."global"', 'key.ilike."%auth%"']
+ *
+ * Every value is double-quoted by {@link quoteFilterValue} — that is how the
+ * logic-tree grammar carries a reserved character, so the quotes are part of
+ * the contract, not decoration.
  */
 export function serializeFilterGroup(filter: FilterGroup | undefined): string[] {
   if (!filter) return [];
@@ -105,4 +204,23 @@ export function serializeFilterGroup(filter: FilterGroup | undefined): string[] 
   // OR node or leaf: a single conjunct (possibly a comma-joined disjunction).
   const s = groupToOrString(filter);
   return s === null ? [] : [s];
+}
+
+/**
+ * Build the operand of a PostgREST `in` / `not.in` filter: `("a","b,c")`.
+ *
+ * postgrest-js's `.in(column, string[])` joins with a bare `,` and quotes
+ * nothing, so a value containing a comma, parenthesis, or double quote is
+ * silently split into several values — and every column this is used against
+ * (`source_agent`, `trigger`, `origin_repo`, `origin_branch`) is free text
+ * written by an agent, so such a value is reachable. This is
+ * {@link pgArrayLiteral}'s reasoning for `text[]` columns, applied to the
+ * scalar `in` list: the caller passes the finished STRING and this function
+ * owns the quoting.
+ *
+ * Each element is wrapped by {@link quoteFilterValue} — always, never
+ * conditionally, for the reason stated there.
+ */
+export function inListLiteral(values: readonly string[]): string {
+  return `(${values.map((v) => quoteFilterValue(v)).join(',')})`;
 }

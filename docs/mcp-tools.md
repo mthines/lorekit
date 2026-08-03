@@ -84,6 +84,23 @@ records the PR, head branch, and head SHA of the delivery it ingested.
 
 **Returns:** `{ "id": "<uuid>", "created_at": "<iso>" }` — plus an optional `"expires_at": "<iso>"` when any `ttl_*` field was supplied, and an optional `"notice": "<string>"` when a write fell back to personal because the scope is bound to an org you can't write to.
 
+**Default TTL — there isn't one, server-side.** Omitting every `ttl_*` field
+means the memory never expires, and that is unchanged. Two things nonetheless
+apply a default *before* the call reaches this endpoint, and neither is visible
+here:
+
+- The `lorekit` CLI resolves `ttl.default` / `scope.defaults.<prefix>.ttl_days`
+  from the config layers and sends the result as `ttl_days` when `--ttl-days`
+  and `--clear-ttl` were both absent. See
+  [the CLI README](../packages/cli/README.md#default-ttl).
+- The GitHub webhook receiver sets a TTL graded by the delivery's signal tier —
+  90 days for a resolved review thread, 30 for a submitted review, 14 for a
+  fresh comment (`packages/mcp-core/src/ttl-defaults.ts`).
+
+An agent calling this tool directly gets neither: it cannot read a config file
+on someone's laptop, so if a lesson should decay it has to say so with
+`ttl_days`.
+
 ---
 
 ## memory.read

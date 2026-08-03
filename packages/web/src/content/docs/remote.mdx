@@ -63,6 +63,17 @@ npx @lorekit/cli doctor
 
 The doctor command checks connectivity, token permissions, and scope health. Look for the **Remote** section in the output — it should show a green `ok` status.
 
+Two of those checks answer different questions, and both must be green:
+
+- **`connectivity`** probes the public `/health` function. It proves the network path only — it stays green for a token that no longer works.
+- **`authentication`** makes one authenticated request and reports what the server said about the token. A revoked or deleted token fails here with HTTP 401, and doctor exits non-zero. A write-only `lk_wo_*` token passes with a note that it has no read permission.
+
+<TutorialCallout variant="tip">
+
+Seeing `authentication — token REJECTED`? The token was revoked or deleted. Generate a new one at [lorekit.io](https://lorekit.io), then run `npx @lorekit/cli install --force` — it asks whether to keep, replace, or remove the token already in your config.
+
+</TutorialCallout>
+
 </TutorialStep>
 
 <TutorialStep number={4} title="Write and read a memory">

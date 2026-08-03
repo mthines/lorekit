@@ -1,5 +1,70 @@
 # Changelog
 
+## [1.30.0](https://github.com/mthines/lorekit/compare/cli-v1.29.3...cli-v1.30.0) (2026-08-03)
+
+
+### Features
+
+* **cli:** gate the OTLP export with `doctor --telemetry` ([7e8eea3](https://github.com/mthines/lorekit/commit/7e8eea335d629861be842ac887f0163cbd9e9eb1))
+
+## [1.29.3](https://github.com/mthines/lorekit/compare/cli-v1.29.2...cli-v1.29.3) (2026-08-03)
+
+
+### Performance
+
+* **cli:** short-circuit the Stop friction read once the retro has fired ([52633b7](https://github.com/mthines/lorekit/commit/52633b7881ef9f16cef04939922d60c6552b91b6))
+
+## [1.29.2](https://github.com/mthines/lorekit/compare/cli-v1.29.1...cli-v1.29.2) (2026-08-02)
+
+
+### Bug Fixes
+
+* address [#337](https://github.com/mthines/lorekit/issues/337) review — restore llms docs, dead doctor branch, CORS Vary ([2ea06e6](https://github.com/mthines/lorekit/commit/2ea06e6025bc26412b415001d0583995a02a33f5))
+* **cli:** drop the dead tool-count branch in doctor connectivity ([2b4fd31](https://github.com/mthines/lorekit/commit/2b4fd318407abd3d0a84d0624c8b57894bb35bcc))
+
+## [1.29.1](https://github.com/mthines/lorekit/compare/cli-v1.29.0...cli-v1.29.1) (2026-08-02)
+
+
+### Bug Fixes
+
+* **cli:** a 429 on the verifyAuth probe cannot vouch for the token ([f155c8e](https://github.com/mthines/lorekit/commit/f155c8e5c13327a10dfbb64f05d9dc730c972f3c))
+* **cli:** verify the token in doctor and offer to replace it on install --force ([0f15def](https://github.com/mthines/lorekit/commit/0f15defd785d2fb3a14b346b4529d222baf0ad1a))
+
+## [1.29.0](https://github.com/mthines/lorekit/compare/cli-v1.28.0...cli-v1.29.0) (2026-08-02)
+
+
+### Features
+
+* **cli:** make hook wiring an explicit choice during install ([8af37d9](https://github.com/mthines/lorekit/commit/8af37d9115a7a65d479108fad388786dcc778020))
+
+
+### Bug Fixes
+
+* **cli:** keep a hand-wired hook set on a non-interactive install ([2c0747f](https://github.com/mthines/lorekit/commit/2c0747fffbbb75c1833cac2ed33323267bad91b9))
+* **cli:** refresh a stale hook command when preserving a custom set ([e3d238d](https://github.com/mthines/lorekit/commit/e3d238d16e1c48a6d53236e233b17c3628247a9a))
+* **cli:** reject a valueless --hooks instead of falling back silently ([2965e1d](https://github.com/mthines/lorekit/commit/2965e1d93aed126032f5124df994e76bd3ee030b))
+* **cli:** report the TTL that landed, not the flag, when --clear-ttl wins ([7590b87](https://github.com/mthines/lorekit/commit/7590b872fb2d486e488ea34840745df9e1b033e6))
+
+
+### Documentation
+
+* **cli:** align the preserved hook-set copy with the refresh behaviour ([9aac586](https://github.com/mthines/lorekit/commit/9aac58615f561fd61044fbad9df619afcb31611a))
+* **cli:** correct the --yes / non-TTY hook default in the three doc surfaces ([45bf80d](https://github.com/mthines/lorekit/commit/45bf80d1934e1a600e6b86e83f8a72442633f4b8))
+
+## [1.28.0](https://github.com/mthines/lorekit/compare/cli-v1.27.0...cli-v1.28.0) (2026-08-02)
+
+
+### Features
+
+* **cli:** deep-links docs page + `tags` param + web↔CLI drift guard ([#321](https://github.com/mthines/lorekit/issues/321)) ([7b80f90](https://github.com/mthines/lorekit/commit/7b80f904f753f6078bde4d60c38d138812de8b11))
+
+## [1.27.0](https://github.com/mthines/lorekit/compare/cli-v1.26.1...cli-v1.27.0) (2026-08-02)
+
+
+### Features
+
+* **cli:** friction-gate the Stop retrospective nudge (hooks.stop) ([#315](https://github.com/mthines/lorekit/issues/315)) ([f2d7ebf](https://github.com/mthines/lorekit/commit/f2d7ebf4f7d1649f3297b21a1f272fc14d6f4e76))
+
 ## [1.26.1](https://github.com/mthines/lorekit/compare/cli-v1.26.0...cli-v1.26.1) (2026-08-01)
 
 
