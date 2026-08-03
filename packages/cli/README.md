@@ -47,7 +47,7 @@ Linux, and Windows (npm creates the `lorekit` shim on every platform).
 Sets up the full memory loop — the same three parts as the Claude plugin,
 without needing a marketplace:
 
-1. **Skills** (`lorekit-memory` + `lorekit-setup`) — the model-invoked authoring judgment and the self-improvement loop authoring counterpart.
+1. **Skills** (`lorekit-memory` + `lorekit-setup` + `lorekit-groom`) — the model-invoked runtime read/write loop, the self-improvement loop authoring counterpart, and the store-grooming maintenance counterpart.
 2. **MCP server** (`lorekit`) — the connection to your lessons, merged into the
    MCP config (preserving any other servers).
 3. **Hooks** — the *deterministic* layer: lessons injected on every
@@ -751,7 +751,7 @@ also returns their headroom against the plan's memory cap.
 
 ## What the skills do
 
-`install` scaffolds two skills:
+`install` scaffolds three skills:
 
 The **`lorekit-memory`** skill teaches an agent to:
 
@@ -769,6 +769,14 @@ The **`lorekit-setup`** skill is the authoring counterpart: it teaches an agent
 to wire a self-improvement loop into one of *your own* skills or workflows — the
 two-tier model, the lesson bucket convention, and the entrenchment guards. See
 its `SKILL.md` and `rules/self-improvement-loops.md`.
+
+The **`lorekit-groom`** skill is the maintenance counterpart: it teaches an agent
+to run a grooming pass over an accumulated store — survey (`stats` / `scopes`),
+lint, dedupe & merge near-duplicates, set expiry (TTL) on time-bound lessons, and
+prune or archive obsolete ones. It always analyses read-only and proposes a plan
+before mutating (archive is preferred over hard-delete), because the store is
+shared and a merge or delete is permanent for every agent. See its `SKILL.md`,
+`rules/grooming-pass.md`, and `references/merge-and-expiry.md`.
 
 The **skills** are model-invoked (the agent chooses to use them). For a
 **deterministic** guarantee — lessons injected on every session start, a nudge

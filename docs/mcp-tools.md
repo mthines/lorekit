@@ -341,7 +341,7 @@ No arguments required.
 
 ## Connecting your agent
 
-The fastest path is `npx @lorekit/cli install` — it scaffolds the `lorekit-memory` and `lorekit-setup` skills, wires the MCP server, and installs the lifecycle hooks in one command. See the [CLI README](../packages/cli/README.md) for flags.
+The fastest path is `npx @lorekit/cli install` — it scaffolds the `lorekit-memory`, `lorekit-setup`, and `lorekit-groom` skills, wires the MCP server, and installs the lifecycle hooks in one command. See the [CLI README](../packages/cli/README.md) for flags.
 
 For a manual `.mcp.json` entry (any MCP-compatible agent):
 
