@@ -1,6 +1,7 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { resolveMcpUrl } from '@/lib/mcp-url';
-import { DEFAULT_ISSUER, protectedResourceMetadata } from '@/lib/oauth/metadata';
+import { protectedResourceMetadata } from '@/lib/oauth/metadata';
+import { issuerCacheControl, resolveIssuer } from '@/lib/oauth/issuer';
 
 /**
  * GET /.well-known/oauth-protected-resource  (RFC 9728)
@@ -19,18 +20,27 @@ import { DEFAULT_ISSUER, protectedResourceMetadata } from '@/lib/oauth/metadata'
  * client that derives the URL from the resource identifier instead of reading
  * the header.
  *
+ * Both values are per-deployment facts — a preview or local stack has its own
+ * MCP endpoint and its own origin — so neither is a baked-in production
+ * constant. Caching follows how the issuer was decided: a request-derived
+ * origin is never cacheable.
+ *
  * Public, unauthenticated, and CORS-open: browser-based clients fetch it
  * cross-origin.
  */
-export async function GET() {
-  // Both are per-deployment facts: a preview or local stack has its own MCP
-  // endpoint and its own origin. Resolving them here (rather than baking
-  // production constants into the document) is what lets a non-production
-  // stack be authorized against at all.
-  const issuer = process.env['NEXT_PUBLIC_APP_URL'] || DEFAULT_ISSUER;
-  return NextResponse.json(protectedResourceMetadata(resolveMcpUrl(), issuer), {
+export async function GET(request: NextRequest) {
+  const resolved = resolveIssuer(
+    {
+      vercelEnv: process.env['NEXT_PUBLIC_VERCEL_ENV'],
+      appUrl: process.env['NEXT_PUBLIC_APP_URL'],
+      vercelUrl: process.env['NEXT_PUBLIC_VERCEL_URL'],
+    },
+    request.nextUrl.origin,
+  );
+
+  return NextResponse.json(protectedResourceMetadata(resolveMcpUrl(), resolved.issuer), {
     headers: {
-      'Cache-Control': 'public, max-age=300, s-maxage=3600',
+      'Cache-Control': issuerCacheControl(resolved),
       'Access-Control-Allow-Origin': '*',
     },
   });

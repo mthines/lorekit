@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server';
-import { authorizationServerMetadata, DEFAULT_ISSUER } from '@/lib/oauth/metadata';
+import { NextResponse, type NextRequest } from 'next/server';
+import { authorizationServerMetadata } from '@/lib/oauth/metadata';
+import { issuerCacheControl, resolveIssuer } from '@/lib/oauth/issuer';
 
 /**
  * GET /.well-known/oauth-authorization-server  (RFC 8414)
@@ -11,13 +12,24 @@ import { authorizationServerMetadata, DEFAULT_ISSUER } from '@/lib/oauth/metadat
  *
  * Public and unauthenticated by definition, and CORS-open because the fetch
  * frequently happens from a browser-based client on a different origin.
- * Cached at the edge — the contents change only when this code does.
+ *
+ * The issuer is resolved per deployment (see lib/oauth/issuer.ts) — a preview
+ * must advertise itself, not production. Caching follows that decision: a
+ * request-derived origin is never cacheable.
  */
-export async function GET() {
-  const issuer = process.env['NEXT_PUBLIC_APP_URL'] || DEFAULT_ISSUER;
-  return NextResponse.json(authorizationServerMetadata(issuer), {
+export async function GET(request: NextRequest) {
+  const resolved = resolveIssuer(
+    {
+      vercelEnv: process.env['NEXT_PUBLIC_VERCEL_ENV'],
+      appUrl: process.env['NEXT_PUBLIC_APP_URL'],
+      vercelUrl: process.env['NEXT_PUBLIC_VERCEL_URL'],
+    },
+    request.nextUrl.origin,
+  );
+
+  return NextResponse.json(authorizationServerMetadata(resolved.issuer), {
     headers: {
-      'Cache-Control': 'public, max-age=300, s-maxage=3600',
+      'Cache-Control': issuerCacheControl(resolved),
       'Access-Control-Allow-Origin': '*',
     },
   });

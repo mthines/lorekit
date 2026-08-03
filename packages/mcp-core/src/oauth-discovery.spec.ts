@@ -80,8 +80,8 @@ describe('both sides are per-deployment, not pinned to production', () => {
 
   it('the web resource document resolves the MCP URL per deployment', () => {
     expect(webResourceRoute).toContain("import { resolveMcpUrl } from '@/lib/mcp-url';");
-    expect(webResourceRoute).toContain('protectedResourceMetadata(resolveMcpUrl(), issuer)');
-    expect(webResourceRoute).toContain("process.env['NEXT_PUBLIC_APP_URL']");
+    expect(webResourceRoute).toContain('protectedResourceMetadata(resolveMcpUrl(), resolved.issuer)');
+    expect(webResourceRoute).toContain('resolveIssuer(');
   });
 });
 
