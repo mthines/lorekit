@@ -24,9 +24,16 @@
 --
 -- The read-tool list is an inline literal, mirroring how 00045 filters
 -- `memory.expired` inline. `packages/mcp-core/src/permissions.ts`'s READ_TOOLS
--- carries the same three strings, but it is the MCP permission gate, not a SQL
+-- carries the same four strings, but it is the MCP permission gate, not a SQL
 -- artefact, and there is no mechanism to share a TS constant with a migration.
 -- Keep the two in step by hand if a read tool is ever added.
+--
+-- It mirrors READ_TOOLS — the memory read-FAMILY — and deliberately NOT
+-- `usage-stats.ts`'s broader READ_TOOL_NAMES, which additionally classifies
+-- `memory.scopes`, `memory.usage`, `org.list`, `org.get`, `member.list` and
+-- `member.invite_list` as reads. Those are analytics and org listings, not
+-- memory records, so `GET /usage`'s `records_read` is legitimately LARGER than
+-- the sum here; a card headlined "Memories read" must not count `org.list`.
 --
 -- `having sum(...) > 0` keeps the payload sparse: only buckets that actually
 -- read something come back, exactly as 00051's aggregate is sparse.
@@ -64,7 +71,8 @@ begin
              (v_actor is null and auth.role() = 'service_role')
              or ue.user_id = v_actor
            )
-       and ue.tool_name in ('memory.read', 'memory.list', 'memory.search')
+       and ue.tool_name in ('memory.read', 'memory.list', 'memory.search',
+                            'memory.list_archived')
        and (p_since is null or ue.created_at >= p_since)
        and (p_until is null or ue.created_at <  p_until)
      group by 1
@@ -78,7 +86,8 @@ grant  execute on function lorekit_read_activity(uuid, text, timestamptz, timest
 
 comment on function lorekit_read_activity(uuid, text, timestamptz, timestamptz) is
   'Memory RECORDS read (sum of usage_events.result_count over memory.read /
-   memory.list / memory.search) per UTC hour/day over the half-open
+   memory.list / memory.search / memory.list_archived — permissions.ts''s
+   READ_TOOLS) per UTC hour/day over the half-open
    [p_since, p_until) window. Visibility is SELF-ONLY with the same
    service-role + NULL escape hatch as lorekit_usage_stats — usage is a
    per-user ledger and is never org-shared. p_bucket is validated against

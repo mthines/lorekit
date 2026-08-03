@@ -3768,7 +3768,9 @@ $$;
 -- ── 69. lorekit_read_activity — per-bucket read volume (00052) ──────────────
 -- Backs GET /memories/read-activity, the Overview's "Memories read" card.
 -- AC-1: result_count is SUMMED per bucket — the card's bars add up to its number.
--- AC-2: only the read tools count; a write event in the same bucket is excluded.
+-- AC-2: only the read tools count; a write event in the same bucket is excluded,
+--       and EVERY name in permissions.ts's READ_TOOLS counts — including
+--       memory.list_archived, which usage-stats.ts also classifies as a read.
 -- AC-3: the [since, until) window is half-open, and day buckets are UTC-anchored.
 -- AC-4: SELF-ONLY — another user's read events are never visible (usage is a
 --       per-user ledger; there is no org sharing of read events).
@@ -3783,6 +3785,9 @@ insert into usage_events (user_id, plan_name, tool_name, scope_type, auth_type, 
   ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.search', 'repo',   'api_key', 'ok', 10,  3, timestamptz '2026-04-01 01:50:00+00'),
   ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.write',  'repo',   'api_key', 'ok', 10, 99, timestamptz '2026-04-01 02:00:00+00'),
   ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.read',   'global', 'api_key', 'ok', 10,  4, timestamptz '2026-04-02 09:00:00+00'),
+  -- The fourth READ_TOOLS name. Deliberately on the 2nd, so every 2026-04-01
+  -- assertion above is untouched and this row's only effect is the AC-2 total.
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list_archived', 'global', 'api_key', 'ok', 10, 6, timestamptz '2026-04-02 09:30:00+00'),
   ('00000000-0000-0000-0000-0000000000b2', 'free', 'memory.list',   'global', 'jwt',     'ok', 10, 50, timestamptz '2026-04-01 01:20:00+00');
 
 do $$
@@ -3830,6 +3835,16 @@ begin
   assert v_rows = 1,
     format('read activity AC-3: the window must be half-open, got %s buckets', v_rows);
 
+  -- AC-2: EVERY READ_TOOLS name counts. The 2nd holds memory.read (4) and
+  -- memory.list_archived (6). This is the discriminating assertion for the
+  -- omitted fourth tool: with a three-name filter it reads 4, not 10.
+  select count into v_count
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day',
+      timestamptz '2026-04-02 00:00:00+00', timestamptz '2026-04-03 00:00:00+00');
+  assert v_count = 10,
+    format('read activity AC-2: 2026-04-02 must sum memory.read + memory.list_archived = 10, got %s', v_count);
+
   -- AC-5: service-role with a NULL p_user_id sees every user's reads (CI path),
   -- so B's 50 records join A's 10 on 2026-04-01.
   select count into v_count
@@ -3855,7 +3870,7 @@ begin
     '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}', true);
 
   -- B passes A's id, but the actor is auth.uid() for a non-service caller, so B
-  -- can only ever see its own 50 records — never A's 14.
+  -- can only ever see its own 50 records — never A's 20.
   select coalesce(sum(count), 0) into v_count
     from lorekit_read_activity(
       '00000000-0000-0000-0000-0000000000a1', 'day',

@@ -276,9 +276,13 @@ read counterpart to `/activity`:
 | `until` | now | **Exclusive** upper bound. |
 
 **Records, not calls.** `count` is `sum(usage_events.result_count)` over the read tools
-(`memory.read`, `memory.list`, `memory.search`), so one list call returning 20 memories
+(`memory.read`, `memory.list`, `memory.search`, `memory.list_archived` — `permissions.ts`'s
+`READ_TOOLS`), so one list call returning 20 memories
 contributes 20 — the same call-vs-record distinction `GET /usage` draws between
-`event_count` and `record_count`. That is what makes the series **additive**: the
+`event_count` and `record_count`. It mirrors the memory read-FAMILY and deliberately not
+`usage-stats.ts`'s broader `READ_TOOL_NAMES`, which also counts `memory.scopes`,
+`memory.usage`, `org.list` and `member.list` — so `GET /usage`'s `records_read` is
+legitimately larger than the sum of these buckets. That is what makes the series **additive**: the
 dashboard's read sparkbar sums to its headline number, which a per-bucket distinct or
 per-call count could not.
 
