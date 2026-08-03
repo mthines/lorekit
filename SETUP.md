@@ -106,6 +106,11 @@ pnpm nx test mcp-core                            # needs supabase start
 | Output Directory | `.next` |
 | Install Command | `cd ../.. && pnpm install` |
 
+> Production auto-deploy on `main` is **off** (`packages/web/vercel.json` →
+> `git.deploymentEnabled.main = false`) — the `deploy.yml` pipeline promotes the
+> dashboard in lockstep with the API. PR preview deploys still work. See
+> [docs/deployment.md](./docs/deployment.md).
+
 ---
 
 ## GitHub Actions CI secrets
@@ -114,6 +119,9 @@ pnpm nx test mcp-core                            # needs supabase start
 |--------|-------------|
 | `SUPABASE_PROJECT_REF` | Your project ref |
 | `SUPABASE_ACCESS_TOKEN` | From [supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens) |
+| `VERCEL_TOKEN` | Vercel access token (Account Settings → Tokens) — lets `deploy.yml` build + promote the web dashboard |
+| `VERCEL_ORG_ID` | From `.vercel/project.json` after `vercel link` (or Vercel project settings) |
+| `VERCEL_PROJECT_ID` | From `.vercel/project.json` after `vercel link` |
 
 ---
 

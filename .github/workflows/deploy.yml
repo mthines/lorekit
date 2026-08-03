@@ -1,12 +1,28 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Deploy — preview-first promotion pipeline, runs on merge to main.
 #
-#   deploy-preview ─▶ smoke-preview ─▶ deploy-production ─▶ smoke-production
-#                                              └─▶ rollback-production (on failure)
-#   any job fails ─▶ notify-failure (Discord webhook)
+# Both the API (Supabase edge functions + migrations) AND the web dashboard
+# (Next.js on Vercel) are deployed here, in lockstep, so the frontend and backend
+# flip to production together instead of skewing apart. Vercel's native Git
+# auto-deploy is disabled (packages/web/vercel.json → git.deploymentEnabled.main
+# = false); this workflow is now the ONLY path the dashboard reaches production.
+#
+#   deploy-preview (API) ────────┐
+#   deploy-web-preview (FE) ──────┤
+#   stage-web-production (FE build)┘
+#            └─▶ smoke-preview ─▶ deploy-production (API) ─▶ promote-web-production (FE)
+#                                          └────────────────────────┴─▶ smoke-production
+#                                                                            ├─▶ rollback-production (functions)
+#                                                                            └─▶ rollback-web-production (Vercel)
+#   any job fails ─▶ notify-failure (Discord + Dash0)
 #
 # "preview" is the pre-production environment (a dedicated Supabase project);
-# production is only touched after preview is deployed and smoke-tested.
+# production is only touched after preview is deployed and smoke-tested. The web
+# production build is PRE-BUILT and uploaded during the preview phase
+# (stage-web-production, `--skip-domain`) so the final flip (promote-web-production)
+# is a near-instant alias swap that runs right after the API's deploy-production —
+# the production DOMAIN is never assigned until preview is green and the production
+# environment gate is cleared.
 #
 # Tests are NOT re-run here — the merged commit already passed the required PR
 # checks in ci.yml (unit + integration). Each job `needs:` the previous one, so a
@@ -16,10 +32,16 @@
 #   preview     → SUPABASE_PROJECT_REF, SUPABASE_DB_PASSWORD, LOREKIT_SMOKE_TOKEN
 #   production  → SUPABASE_PROJECT_REF, SUPABASE_DB_PASSWORD, LOREKIT_SMOKE_TOKEN
 # Repo-level secret shared by both: SUPABASE_ACCESS_TOKEN (personal access token).
+# Repo-level Vercel secrets (used by every web job): VERCEL_TOKEN, VERCEL_ORG_ID,
+# VERCEL_PROJECT_ID — the same three preview.yml already uses.
+# Optional repo-level variable: WEB_PROD_URL (the production dashboard origin the
+# production smoke curls; defaults to https://lorekit.io).
 # Optional (preview only) — enables the orgs REST smoke suite in smoke-preview
 # (see its "Mint a user JWT" step); unset → that suite is announced-skipped and
-# the memories suite still runs. The write-heavy REST smoke runs against preview
-# only, never production (see the note in smoke-production for why):
+# the memories suite still runs. SUPABASE_ANON_KEY additionally points the
+# preview web build at the preview Supabase project (deploy-web-preview). The
+# write-heavy REST smoke runs against preview only, never production (see the
+# note in smoke-production for why):
 #   SUPABASE_ANON_KEY, LOREKIT_SMOKE_EMAIL, LOREKIT_SMOKE_PASSWORD.
 # The fixed smoke user those secrets name must already exist on the project — seed it
 # once with `node scripts/seed-smoke-user.mjs` (see docs/deployment.md → "Seed
@@ -140,11 +162,201 @@ jobs:
             sleep 10
           done
 
+  # ── 1b. Deploy WEB to PREVIEW (Vercel) ────────────────────────────────────────
+  #    Builds the dashboard against the PREVIEW Supabase project and deploys a
+  #    Vercel preview, so the FE that smoke-preview exercises is the same bundle
+  #    the API preview just shipped. Runs in parallel with deploy-preview — a
+  #    Vercel build does not need the freshly-deployed functions to compile.
+  deploy-web-preview:
+    name: Deploy web → preview (Vercel)
+    runs-on: ubuntu-latest
+    environment: preview
+    permissions:
+      contents: read
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Verify Vercel secrets are set
+        run: |
+          missing=""
+          [ -z "$VERCEL_TOKEN" ] && missing="$missing VERCEL_TOKEN"
+          [ -z "$VERCEL_ORG_ID" ] && missing="$missing VERCEL_ORG_ID"
+          [ -z "$VERCEL_PROJECT_ID" ] && missing="$missing VERCEL_PROJECT_ID"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repo-level Vercel secrets:$missing. Add them under Settings ▸ Secrets and variables ▸ Actions."
+            exit 1
+          fi
+
+      - name: Install Vercel CLI
+        run: pnpm add -g vercel
+
+      - name: Pull Vercel environment (preview)
+        run: vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+
+      # Point the preview FE at the PREVIEW Supabase project so smoke exercises the
+      # same API bundle deploy-preview just shipped. Mirrors preview.yml: rewrite
+      # the env file `vercel build` actually reads (.vercel/.env.preview.local), the
+      # only file whose values win over a .env.local entry. Skipped when
+      # SUPABASE_ANON_KEY is unset — the pulled Vercel preview env values remain
+      # (which may target production); set it in the preview environment to
+      # guarantee the FE talks to the preview API.
+      - name: Override Supabase config with preview-project values
+        env:
+          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          ENV_FILE=".vercel/.env.preview.local"
+          if [ -z "$ANON_KEY" ]; then
+            echo "::warning::SUPABASE_ANON_KEY unset for the preview environment — the preview web build uses Vercel's pulled Supabase env, which may point at production. Set it to pin the FE at the preview API."
+            exit 0
+          fi
+          if [ ! -f "$ENV_FILE" ]; then
+            echo "::error::$ENV_FILE not found — did 'vercel pull' run?"
+            exit 1
+          fi
+          grep -vE '^(NEXT_PUBLIC_SUPABASE_URL|NEXT_PUBLIC_SUPABASE_ANON_KEY|NEXT_PUBLIC_SUPABASE_PROJECT_REF)=' \
+            "$ENV_FILE" > "$ENV_FILE.tmp" || true
+          mv "$ENV_FILE.tmp" "$ENV_FILE"
+          {
+            echo "NEXT_PUBLIC_SUPABASE_URL=https://${PROJECT_REF}.supabase.co"
+            echo "NEXT_PUBLIC_SUPABASE_PROJECT_REF=${PROJECT_REF}"
+            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${ANON_KEY}"
+          } >> "$ENV_FILE"
+
+      # A CLI build gets none of Vercel's auto-injected VERCEL_GIT_* system env
+      # vars, so set them by hand — instrumentation-client.ts bakes them into
+      # NEXT_PUBLIC_VCS_* (OTel VCS resource attributes) and service.version.
+      - name: Build (preview)
+        env:
+          VERCEL_GIT_REPO_OWNER: ${{ github.repository_owner }}
+          VERCEL_GIT_REPO_SLUG: ${{ github.event.repository.name }}
+          VERCEL_GIT_COMMIT_REF: ${{ github.ref_name }}
+          VERCEL_GIT_COMMIT_SHA: ${{ github.sha }}
+        run: vercel build --token="$VERCEL_TOKEN"
+
+      - name: Deploy to Vercel (preview)
+        id: deploy
+        run: |
+          # Vercel prints the deployment URL to stdout and progress to stderr;
+          # grep the URL so a trailing stderr line is never mistaken for it.
+          out="$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")"
+          echo "$out"
+          URL="$(printf '%s\n' "$out" | grep -Eo 'https://[^[:space:]]+' | tail -1)"
+          if [ -z "$URL" ]; then
+            echo "::error::Could not parse Vercel preview deployment URL"
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Verify preview deployment responds
+        run: |
+          URL="${{ steps.deploy.outputs.url }}"
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' -L "$URL")
+          echo "### Web preview" >> "$GITHUB_STEP_SUMMARY"
+          echo "- URL: $URL (HTTP $CODE)" >> "$GITHUB_STEP_SUMMARY"
+          # Vercel deployment protection can return 401 for a raw preview URL;
+          # accept any non-5xx as "the build served".
+          if [ "$CODE" -ge 500 ]; then
+            echo "::error::Web preview returned HTTP $CODE"
+            exit 1
+          fi
+
+  # ── 1c. STAGE web production build (Vercel, pre-built, no domain) ──────────────
+  #    Builds the production dashboard bundle (against Vercel's PRODUCTION env, so
+  #    it targets the production Supabase project) and uploads it as a
+  #    production-target deployment WITHOUT applying the production domain
+  #    (--skip-domain). Doing the slow `next build` here, during the preview phase,
+  #    makes the later flip (promote-web-production) a near-instant alias swap that
+  #    lands together with the API's deploy-production. No `environment:` — this
+  #    only STAGES (nothing serves on the domain yet), so it must not sit behind the
+  #    production approval gate; it authenticates to Vercel with the repo token.
+  stage-web-production:
+    name: Stage web → production (Vercel, pre-built)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    outputs:
+      deployment_url: ${{ steps.stage.outputs.url }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Verify Vercel secrets are set
+        run: |
+          missing=""
+          [ -z "$VERCEL_TOKEN" ] && missing="$missing VERCEL_TOKEN"
+          [ -z "$VERCEL_ORG_ID" ] && missing="$missing VERCEL_ORG_ID"
+          [ -z "$VERCEL_PROJECT_ID" ] && missing="$missing VERCEL_PROJECT_ID"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repo-level Vercel secrets:$missing. Add them under Settings ▸ Secrets and variables ▸ Actions."
+            exit 1
+          fi
+
+      - name: Install Vercel CLI
+        run: pnpm add -g vercel
+
+      - name: Pull Vercel environment (production)
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      - name: Build (production)
+        env:
+          VERCEL_GIT_REPO_OWNER: ${{ github.repository_owner }}
+          VERCEL_GIT_REPO_SLUG: ${{ github.event.repository.name }}
+          VERCEL_GIT_COMMIT_REF: ${{ github.ref_name }}
+          VERCEL_GIT_COMMIT_SHA: ${{ github.sha }}
+        run: vercel build --prod --token="$VERCEL_TOKEN"
+
+      - name: Upload prebuilt production output (staged, no domain)
+        id: stage
+        run: |
+          # Create a PRODUCTION-target deployment but do NOT assign the production
+          # domain yet (--skip-domain). Uploads + builds here, in the preview phase;
+          # the domain is applied only by promote-web-production, which is gated
+          # behind deploy-production (API) + the production environment approval —
+          # so the production domain is never touched until preview is green.
+          out="$(vercel deploy --prebuilt --prod --skip-domain --token="$VERCEL_TOKEN")"
+          echo "$out"
+          URL="$(printf '%s\n' "$out" | grep -Eo 'https://[^[:space:]]+' | tail -1)"
+          if [ -z "$URL" ]; then
+            echo "::error::Could not parse staged Vercel production deployment URL"
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "### Web production (staged)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Built and uploaded: $URL (domain not yet applied)" >> "$GITHUB_STEP_SUMMARY"
+
   # ── 2. Integration test against PREVIEW (the gate before prod) ────────────────
   smoke-preview:
     name: Smoke tests → preview
     runs-on: ubuntu-latest
-    needs: deploy-preview
+    needs: [deploy-preview, deploy-web-preview]
     environment: preview
     permissions:
       contents: read
@@ -339,11 +551,54 @@ jobs:
             sleep 10
           done
 
+  # ── 3b. Promote WEB to PRODUCTION (Vercel alias swap) ─────────────────────────
+  #    The FE half of the production flip. Runs right after deploy-production (API),
+  #    so the frontend goes live in lockstep with the backend it depends on. Because
+  #    stage-web-production already built + uploaded the bundle, this is just an alias
+  #    swap — near-instant. `needs` deploy-production so the API is in production
+  #    BEFORE the new FE is served (a client should never front an older backend);
+  #    shares the `production` environment gate.
+  promote-web-production:
+    name: Promote web → production (Vercel)
+    runs-on: ubuntu-latest
+    needs: [deploy-production, stage-web-production]
+    environment: production
+    permissions:
+      contents: read
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      STAGED_URL: ${{ needs.stage-web-production.outputs.deployment_url }}
+    steps:
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install Vercel CLI
+        run: pnpm add -g vercel
+
+      - name: Promote staged build to production
+        run: |
+          if [ -z "$STAGED_URL" ]; then
+            echo "::error::No staged production deployment URL from stage-web-production"
+            exit 1
+          fi
+          # Assign the production domain to the already-built, already-uploaded
+          # deployment — the instant alias swap that flips the FE to production.
+          vercel promote "$STAGED_URL" --token="$VERCEL_TOKEN" --yes
+          echo "### Web production promoted" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Promoted \`$STAGED_URL\` to the production domain." >> "$GITHUB_STEP_SUMMARY"
+
   # ── 4. Post-deploy verification against PRODUCTION ───────────────────────────
   smoke-production:
     name: Smoke test → production
     runs-on: ubuntu-latest
-    needs: deploy-production
+    needs: [deploy-production, promote-web-production]
     environment: production
     permissions:
       contents: read
@@ -386,6 +641,21 @@ jobs:
           echo "- MCP tools/list HTTP: **${CODE}**" >> "$GITHUB_STEP_SUMMARY"
           if [ "$CODE" != "200" ]; then
             echo "::error::Production MCP endpoint returned HTTP ${CODE} for tools/list"
+            exit 1
+          fi
+
+      # The FE half of the production gate: the promoted dashboard must serve. A
+      # failure here trips BOTH rollback-production (functions) and
+      # rollback-web-production (Vercel), so the FE and API revert together.
+      # WEB_PROD_URL overrides the origin for a self-hosted fork; defaults to the
+      # canonical dashboard domain.
+      - name: Verify web dashboard responds (production)
+        run: |
+          URL="${{ vars.WEB_PROD_URL || 'https://lorekit.io' }}"
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' -L "$URL")
+          echo "- Web dashboard: $URL (HTTP $CODE)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$CODE" -ge 400 ]; then
+            echo "::error::Production web dashboard returned HTTP $CODE"
             exit 1
           fi
 
@@ -450,15 +720,17 @@ jobs:
   # ── 5. Rollback PRODUCTION functions on a production failure ──────────────────
   #    Redeploys the previous commit's edge functions. Migrations are forward-only
   #    (expand/contract + PITR is the DB safety net) so they are intentionally not
-  #    reverted here. Gated strictly on a PRODUCTION-job failure: a failure earlier
-  #    in the pipeline (preview) skips deploy-production, so neither prod job
-  #    reports 'failure' and this rollback does NOT run — prod is never touched
+  #    reverted here. Gated on ANY production-phase failure — the API deploy, the
+  #    web promote, or the shared smoke gate — so the API is reverted whenever the
+  #    frontend is (rollback-web-production), keeping FE and API in lockstep. A
+  #    failure earlier in the pipeline (preview) skips deploy-production, so none of
+  #    these report 'failure' and this rollback does NOT run — prod is never touched
   #    unless a prod deploy was actually attempted.
   rollback-production:
     name: Rollback → production functions
     runs-on: ubuntu-latest
-    needs: [deploy-production, smoke-production]
-    if: always() && (needs.deploy-production.result == 'failure' || needs.smoke-production.result == 'failure')
+    needs: [deploy-production, promote-web-production, smoke-production]
+    if: always() && (needs.deploy-production.result == 'failure' || needs.promote-web-production.result == 'failure' || needs.smoke-production.result == 'failure')
     environment: production
     permissions:
       contents: read
@@ -491,9 +763,53 @@ jobs:
           echo "::error::Production deploy failed — functions rolled back to the previous commit."
           exit 1
 
+  # ── 5b. Rollback PRODUCTION web on a production failure (Vercel) ──────────────
+  #    Reverts the production domain to the deployment that was live before this
+  #    pipeline promoted the new one, so the FE reverts in lockstep with the edge
+  #    functions. Runs ONLY when the web was actually promoted this run: the
+  #    promote failed, or the promote succeeded but the shared production smoke
+  #    then failed. If deploy-production (API) failed first, promote is skipped and
+  #    the web was never touched — so this stays out and only the functions revert.
+  rollback-web-production:
+    name: Rollback → production web (Vercel)
+    runs-on: ubuntu-latest
+    needs: [promote-web-production, smoke-production]
+    if: always() && (needs.promote-web-production.result == 'failure' || (needs.promote-web-production.result == 'success' && needs.smoke-production.result == 'failure'))
+    environment: production
+    permissions:
+      contents: read
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Install Vercel CLI
+        run: pnpm add -g vercel
+
+      - name: Roll back production web to the previous deployment
+        run: |
+          # `vercel rollback` with no target reverts to the deployment immediately
+          # prior to the current production deployment — the one live before this
+          # run's promote. Best-effort: rollback-production already fails the run
+          # loudly, so a rollback hiccup here is a warning, not a second hard fail.
+          if vercel rollback --token="$VERCEL_TOKEN" --yes; then
+            echo "### ⚠️ Production web rolled back" >> "$GITHUB_STEP_SUMMARY"
+            echo "The production domain was reverted to the previous Vercel deployment." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::vercel rollback failed — roll the production web back manually from the Vercel dashboard."
+          fi
+
   # ── 6. Notify Discord on ANY deploy-pipeline failure ─────────────────────────
   #    Fires when any job above reports 'failure' — a deploy step, a smoke gate, or
-  #    the rollback. Posts a single embed to the DISCORD_WEBHOOK_URL webhook so a
+  #    a rollback. Posts a single embed to the DISCORD_WEBHOOK_URL webhook so a
   #    red production deploy reaches you outside the Actions UI (the failure the
   #    smoke tests would otherwise report only there). If the webhook secret is
   #    unset the job no-ops with a warning and never fails the run itself — the
@@ -505,7 +821,7 @@ jobs:
   notify-failure:
     name: Notify on failure (Discord + Dash0)
     runs-on: ubuntu-latest
-    needs: [deploy-preview, smoke-preview, deploy-production, smoke-production, rollback-production]
+    needs: [deploy-preview, deploy-web-preview, stage-web-production, smoke-preview, deploy-production, promote-web-production, smoke-production, rollback-production, rollback-web-production]
     if: always() && contains(needs.*.result, 'failure')
     permissions:
       contents: read # checkout, so the local composite action is available
@@ -517,19 +833,27 @@ jobs:
         id: stage
         env:
           RESULT_DEPLOY_PREVIEW: ${{ needs.deploy-preview.result }}
+          RESULT_DEPLOY_WEB_PREVIEW: ${{ needs.deploy-web-preview.result }}
+          RESULT_STAGE_WEB_PRODUCTION: ${{ needs.stage-web-production.result }}
           RESULT_SMOKE_PREVIEW: ${{ needs.smoke-preview.result }}
           RESULT_DEPLOY_PRODUCTION: ${{ needs.deploy-production.result }}
+          RESULT_PROMOTE_WEB_PRODUCTION: ${{ needs.promote-web-production.result }}
           RESULT_SMOKE_PRODUCTION: ${{ needs.smoke-production.result }}
           RESULT_ROLLBACK: ${{ needs.rollback-production.result }}
+          RESULT_ROLLBACK_WEB: ${{ needs.rollback-web-production.result }}
         run: |
           # Name the first pipeline stage that failed (top-to-bottom = root cause;
           # rollback failing is a symptom of a prod-job failure listed before it).
           failed="an unknown stage"
-          if   [ "$RESULT_DEPLOY_PREVIEW"    = "failure" ]; then failed="deploy → preview"
-          elif [ "$RESULT_SMOKE_PREVIEW"     = "failure" ]; then failed="smoke tests → preview"
-          elif [ "$RESULT_DEPLOY_PRODUCTION" = "failure" ]; then failed="deploy → production"
-          elif [ "$RESULT_SMOKE_PRODUCTION"  = "failure" ]; then failed="smoke test → production"
-          elif [ "$RESULT_ROLLBACK"          = "failure" ]; then failed="production (rolled back to previous commit)"
+          if   [ "$RESULT_DEPLOY_PREVIEW"         = "failure" ]; then failed="deploy → preview"
+          elif [ "$RESULT_DEPLOY_WEB_PREVIEW"     = "failure" ]; then failed="web deploy → preview"
+          elif [ "$RESULT_STAGE_WEB_PRODUCTION"   = "failure" ]; then failed="web build (production staging)"
+          elif [ "$RESULT_SMOKE_PREVIEW"          = "failure" ]; then failed="smoke tests → preview"
+          elif [ "$RESULT_DEPLOY_PRODUCTION"      = "failure" ]; then failed="deploy → production"
+          elif [ "$RESULT_PROMOTE_WEB_PRODUCTION" = "failure" ]; then failed="web promote → production"
+          elif [ "$RESULT_SMOKE_PRODUCTION"       = "failure" ]; then failed="smoke test → production"
+          elif [ "$RESULT_ROLLBACK"               = "failure" ]; then failed="production (functions rolled back to previous commit)"
+          elif [ "$RESULT_ROLLBACK_WEB"           = "failure" ]; then failed="production web rollback"
           fi
           echo "failed=$failed" >> "$GITHUB_OUTPUT"
 

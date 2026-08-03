@@ -3,5 +3,10 @@
   "buildCommand": "cd ../.. && pnpm nx build web --configuration=production",
   "outputDirectory": ".next",
   "installCommand": "cd ../.. && pnpm install",
-  "framework": "nextjs"
+  "framework": "nextjs",
+  "git": {
+    "deploymentEnabled": {
+      "main": false
+    }
+  }
 }
