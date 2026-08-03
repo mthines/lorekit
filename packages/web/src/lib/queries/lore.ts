@@ -1,6 +1,13 @@
 'use client';
 
-import { useQuery, useInfiniteQuery, useMutation, useQueryClient, type InfiniteData } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useQuery,
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+  type InfiniteData,
+} from '@tanstack/react-query';
 import { scopeType } from '@/lib/scope';
 import { dayCountsFromActivity } from '@/lib/aggregations';
 import type { ScopeNode } from '@/components/lore/ScopeTree';
@@ -263,7 +270,17 @@ export function useMemories(filters: UseMemoriesFilters) {
       filters.showArchived ?? false,
       bar,
     ],
-    queryFn: ({ pageParam }) => {
+    // `signal` is destructured — and therefore CONSUMED — before the await, and
+    // that is the whole point of reading it: `listMemories` is a server action,
+    // so it cannot take an AbortSignal, but React Query only treats a query as
+    // cancellable when its function touches the signal. Without that, changing
+    // a filter abandons this fetch WITHOUT cancelling it, and the abandoned
+    // page keeps `fetchStatus: 'fetching'` until it settles — or forever, if it
+    // never does. Consuming the signal reverts the query state on cancel
+    // instead, so an abandoned page stops being in flight the moment nobody is
+    // waiting for it. The `aborted` check afterwards discards a late reply that
+    // raced the cancel, rather than resolving a filter the user has moved off.
+    queryFn: async ({ pageParam, signal }) => {
       const args: MemoryFilters = {
         scope: filters.scope ?? undefined,
         search: filters.search || undefined,
@@ -272,12 +289,27 @@ export function useMemories(filters: UseMemoriesFilters) {
         cursor: pageParam as string | null,
         showArchived: filters.showArchived,
       };
-      return listMemories(args);
+      const page = await listMemories(args);
+      if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      return page;
     },
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.nextCursor : undefined),
     // Lore explorer is read-heavy — 90 s matches the scope-tree stale time.
     staleTime: 90_000,
+    // Matches every other hook in this file. Being signed out is not transient,
+    // and an abandoned filter page retrying in the background is work nobody
+    // asked for against an answer nobody will read.
+    retry: retryUnlessSignedOut,
+    // Shorter than the client default of 5 min: with six filter dimensions the
+    // key space is large and mostly transitional — every intermediate filter
+    // combination the user clicks through becomes its own cache entry, and
+    // almost none of them are ever returned to.
+    gcTime: 60_000,
+    // Keep the previous page on screen while the new predicate loads, instead
+    // of dropping the whole list back to the five-skeleton state on every pill
+    // click. The filter bar is a refinement of what you are already reading.
+    placeholderData: keepPreviousData,
   });
 }
 

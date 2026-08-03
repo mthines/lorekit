@@ -12,6 +12,9 @@
  * - `MIN_VISIBLE_MS` — once the bar IS on screen it stays for at least this
  *   long, so a request that finishes just past the delay does not flash.
  *
+ * A third threshold, `MAX_VISIBLE_MS`, is neither: it is the point at which the
+ * rule stops believing the request it is reporting. See its docblock.
+ *
  * The rule is a state machine rather than two booleans because "waiting to
  * appear" and "waiting to disappear" are distinct states with distinct exits,
  * and the interesting case is the one that crosses them: activity restarting
@@ -28,6 +31,25 @@ export const SHOW_DELAY_MS = 150;
 
 /** How long the indicator stays once shown, even if the work already finished. */
 export const MIN_VISIBLE_MS = 450;
+
+/**
+ * The longest the indicator will claim work is in flight before giving up on it.
+ *
+ * The other two thresholds assume every request eventually reports back; this
+ * one covers the case where none ever does. A fetch with no deadline, a request
+ * abandoned mid-flight that cannot be cancelled, a server action superseded by
+ * a navigation — each leaves a query that is *still fetching* as far as the
+ * count is concerned, and with only `activity-end` to leave `visible` by, the
+ * bar sweeps forever over an app that finished loading long ago.
+ *
+ * Chrome that lies indefinitely is worse than chrome that gives up: a user who
+ * has seen the list render reads a permanent bar as "this app is broken", and
+ * the screen reader's live region says "Refreshing data" for the rest of the
+ * session. So the bar stops reporting, loudly enough to be a bug when it
+ * happens and quiet enough not to be one when it does not — 15s is far past any
+ * request this dashboard makes, so a healthy one is never cut short.
+ */
+export const MAX_VISIBLE_MS = 15_000;
 
 export type IndicatorState =
   /** Nothing in flight, nothing on screen. */
@@ -47,7 +69,9 @@ export type IndicatorEvent =
   /** `SHOW_DELAY_MS` elapsed while still in `pending`. */
   | 'delay-elapsed'
   /** `MIN_VISIBLE_MS` elapsed while still in `lingering`. */
-  | 'linger-elapsed';
+  | 'linger-elapsed'
+  /** `MAX_VISIBLE_MS` elapsed while still in `visible` — the work never reported back. */
+  | 'max-visible-elapsed';
 
 /**
  * The next state for an event, or the current state when the event does not
@@ -64,7 +88,12 @@ export function nextIndicatorState(state: IndicatorState, event: IndicatorEvent)
       if (event === 'activity-end') return 'idle';
       return 'pending';
     case 'visible':
-      return event === 'activity-end' ? 'lingering' : 'visible';
+      if (event === 'activity-end') return 'lingering';
+      // Straight to `idle`, not through `lingering`: the linger exists to keep a
+      // bar that appeared too briefly on screen, and this one has been up for
+      // `MAX_VISIBLE_MS`. Nothing is owed to a request that never came back.
+      if (event === 'max-visible-elapsed') return 'idle';
+      return 'visible';
     case 'lingering':
       // Work restarting while the bar is still up keeps the same bar — the user
       // sees continuous progress, not a flicker between two cycles.
