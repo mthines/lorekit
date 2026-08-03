@@ -39,10 +39,22 @@ export const LoadsMockedStats: Story = {
       await expect(canvas.getByText('Memories read')).toBeInTheDocument();
     });
 
-    await step('Each card declares the unit it counts in', async () => {
-      await expect(canvas.getByText('writes')).toBeInTheDocument();
-      await expect(canvas.getByText('scopes')).toBeInTheDocument();
-      await expect(canvas.getByText('reads')).toBeInTheDocument();
+    await step('Each card declares the unit AND the verb it counts', async () => {
+      // "writes" alone would not say writes of WHAT — and the Scopes card
+      // counts scopes written to, not memories.
+      await expect(canvas.getByText('Memory writes')).toBeInTheDocument();
+      await expect(canvas.getByText('Memory reads')).toBeInTheDocument();
+      await expect(canvas.getByText('Scopes writes')).toBeInTheDocument();
+    });
+
+    await step('The two memory cards are adjacent, scopes last', async () => {
+      // Read the order off the unit tags: the card LABEL shares its element
+      // with the tooltip copy, so its textContent is the label plus a
+      // paragraph of prose.
+      const order = canvas
+        .getAllByText(/^(Memory writes|Memory reads|Scopes writes)$/)
+        .map((el) => el.textContent?.trim());
+      await expect(order).toEqual(['Memory writes', 'Memory reads', 'Scopes writes']);
     });
   },
 };

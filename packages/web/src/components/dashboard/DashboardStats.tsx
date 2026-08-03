@@ -78,13 +78,15 @@ function StatRangeSelect({
 }
 
 /**
- * The unit a card's number and bars are counted in — "writes", "scopes",
- * "reads".
+ * The unit a card's number and bars are counted in — "Memory writes",
+ * "Memory reads", "Scopes writes".
  *
  * Two of the three cards count memories and one counts scopes, and the
  * difference used to be invisible: the old "Active" card showed a scope count
  * over a chart of memories. A muted pill next to the icon makes the unit
- * unmissable without competing with the metric.
+ * unmissable without competing with the metric. Each tag names BOTH the thing
+ * counted and the verb, because "writes" alone does not say writes of what —
+ * and the Scopes card counts scopes written to, not memories.
  */
 function UnitTag({ label }: { label: string }) {
   return (
@@ -193,6 +195,9 @@ export function DashboardStats() {
   const { scopes } = data;
   const rangeNoun = RANGE_NOUN[range];
 
+  // Order: the two memory-count cards sit together (written, then read) so the
+  // reader compares like with like, and the scope-breadth card — the only one
+  // counting something other than memories — comes last.
   const cards: {
     id: string;
     icon: typeof BookOpen;
@@ -208,7 +213,7 @@ export function DashboardStats() {
       id: 'written',
       icon: BookOpen,
       label: 'Memories written',
-      tag: 'writes',
+      tag: 'Memory writes',
       tooltip:
         'New memories written across all scopes in the selected range. The bars sum to the number: each bar is the memories written in that hour or day. The trend chip compares this window against the preceding one. Your all-time total across every scope is shown in the memory badge at the top right.',
       value: sumPoints(memoryTrends.lessons.points),
@@ -217,28 +222,28 @@ export function DashboardStats() {
       unit: 'memories',
     },
     {
-      id: 'scopes',
-      icon: Layers,
-      label: 'Scopes',
-      tag: 'scopes',
-      tooltip:
-        'Distinct memory scopes (namespaces) with at least one memory written in the selected range. Each bar is the scopes seen for the FIRST time in that hour or day, so the bars sum to the distinct total rather than counting a long-running scope once per bucket. The trend chip compares the distinct scopes of this window against the preceding one.',
-      value: memoryTrends.activeScopes,
-      description: `distinct scopes active in the last ${rangeNoun}`,
-      trend: memoryTrends.newScopes,
-      unit: 'scopes',
-    },
-    {
       id: 'read',
       icon: BookOpenCheck,
       label: 'Memories read',
-      tag: 'reads',
+      tag: 'Memory reads',
       tooltip:
         'Memory records read in the selected range, across the MCP tools and the REST API — one list call returning 20 memories counts as 20 records, not one read. Unlike the two cards beside it, this counts only YOUR reads: usage is a per-user ledger, so reads by other members of your organization are never included. The bars sum to the number, and the trend chip compares this window against the preceding one.',
       value: sumPoints(readTrend.points),
       description: `in the last ${rangeNoun}`,
       trend: readTrend,
       unit: 'memories',
+    },
+    {
+      id: 'scopes',
+      icon: Layers,
+      label: 'Scopes',
+      tag: 'Scopes writes',
+      tooltip:
+        'Distinct memory scopes (namespaces) with at least one memory written in the selected range. Each bar is the scopes seen for the FIRST time in that hour or day, so the bars sum to the distinct total rather than counting a long-running scope once per bucket. The trend chip compares the distinct scopes of this window against the preceding one.',
+      value: memoryTrends.activeScopes,
+      description: `distinct scopes active in the last ${rangeNoun}`,
+      trend: memoryTrends.newScopes,
+      unit: 'scopes',
     },
   ];
 
