@@ -29,7 +29,7 @@
  */
 
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';
-import { createSmokeNamespace } from './smoke-cleanup.js';
+import { createSmokeNamespace, runBestEffortCleanup } from './smoke-cleanup.js';
 
 const BASE = (process.env['LOREKIT_REST_BASE_URL'] ?? 'http://localhost:54321/functions/v1').replace(/\/$/, '');
 const JWT = process.env['LOREKIT_SMOKE_JWT'];
@@ -97,6 +97,10 @@ async function restFetch(
 // vitest's 5s default at hosted latency though each call succeeds. Ceiling per
 // test, not an expected duration; sub-ms locally so it never bites there.
 const REMOTE_TEST_TIMEOUT = 30_000;
+// Best-effort teardown self-bounds below the hook ceiling: a purge against a
+// laggy live endpoint warns and yields instead of timing out the hook and
+// failing a run whose assertions passed. See runBestEffortCleanup.
+const CLEANUP_SOFT_TIMEOUT = 20_000;
 
 /**
  * ── Org cleanup: PURGE, never DELETE ─────────────────────────────────────────
@@ -176,9 +180,12 @@ describe.skipIf(SKIP)('LoreKit orgs API — smoke tests (integration)', { timeou
   afterAll(async () => {
     // Purge, not delete — see purgeOrg. The old `DELETE` left a soft-deleted org
     // in the live project on every single run, unreachable by any later read.
-    // Hooks use hookTimeout (10s default), not the suite `timeout`; give this
-    // live-endpoint cleanup the same 30s ceiling.
-    await purgeOrg(TEST_SLUG);
+    // runBestEffortCleanup soft-bounds the purge below the hook ceiling so a
+    // laggy live endpoint can't fail a green run on teardown alone.
+    await runBestEffortCleanup(() => purgeOrg(TEST_SLUG), {
+      softTimeoutMs: CLEANUP_SOFT_TIMEOUT,
+      context: 'orgs REST smoke',
+    });
   }, REMOTE_TEST_TIMEOUT);
 
   // 1. auth: no token → 401/403 ───────────────────────────────────────────────
@@ -375,7 +382,10 @@ describe.skipIf(SKIP)('LoreKit orgs API — audit trail read-back (integration)'
   });
 
   afterAll(async () => {
-    await purgeOrg(AUDIT_SLUG);
+    await runBestEffortCleanup(() => purgeOrg(AUDIT_SLUG), {
+      softTimeoutMs: CLEANUP_SOFT_TIMEOUT,
+      context: 'orgs REST audit read-back',
+    });
   }, REMOTE_TEST_TIMEOUT);
 
   it('the audit_log capability probe ran and reported a definite result', () => {
@@ -519,7 +529,10 @@ describe.skipIf(SKIP)('LoreKit orgs API — audit trail read-back (integration)'
  */
 describe.skipIf(SKIP || !isLkToken)('LoreKit orgs API — api_key tier (integration)', () => {
   afterAll(async () => {
-    await purgeOrg(TOKEN_SLUG, API_TOKEN);
+    await runBestEffortCleanup(() => purgeOrg(TOKEN_SLUG, API_TOKEN), {
+      softTimeoutMs: CLEANUP_SOFT_TIMEOUT,
+      context: 'orgs REST api_key tier',
+    });
   }, REMOTE_TEST_TIMEOUT);
 
   // ── permission gating ─────────────────────────────────────────────────────

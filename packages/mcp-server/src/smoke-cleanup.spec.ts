@@ -19,6 +19,8 @@ import {
   SMOKE_ARTEFACT_PATTERN,
   createSmokeNamespace,
   describeSweepFailures,
+  runBestEffortCleanup,
+  SWEEP_CONCURRENCY,
   smokeArtefactAgeMs,
   smokeArtefactTimestamp,
   sweepSmokeArtefacts,
@@ -140,15 +142,17 @@ describe('createSmokeNamespace', () => {
 });
 
 describe('sweepSmokeArtefacts', () => {
-  it('deletes every name and reports them as removed', async () => {
+  it('deletes every name and reports them, in input order', async () => {
     const seen: string[] = [];
     const report = await sweepSmokeArtefacts(['a', 'b', 'c'], async (n) => { seen.push(n); });
-    expect(seen).toEqual(['a', 'b', 'c']);
+    // Every name is deleted; the report preserves INPUT order regardless of the
+    // (now concurrent) completion order.
+    expect(seen.sort()).toEqual(['a', 'b', 'c']);
     expect(report.removed).toEqual(['a', 'b', 'c']);
     expect(report.failed).toEqual([]);
   });
 
-  it('keeps going after a failure and never throws', async () => {
+  it('keeps going after a failure and never throws, preserving order', async () => {
     // A cleanup hook that throws turns "one row leaked" into "the suite failed",
     // masking the real result — and stops the remaining artefacts being removed.
     const report = await sweepSmokeArtefacts(['a', 'b', 'c'], async (n) => {
@@ -158,15 +162,49 @@ describe('sweepSmokeArtefacts', () => {
     expect(report.failed).toEqual([{ name: 'b', reason: 'HTTP 500' }]);
   });
 
-  it('deletes sequentially, so a cleanup burst cannot trip the rate limit', async () => {
+  it('deletes with bounded concurrency, so a burst cannot trip the rate limit', async () => {
+    // Parallel enough to beat the hook timeout at hosted latency, capped at
+    // SWEEP_CONCURRENCY so a cleanup burst never approaches 120 req/min. With
+    // more names than the cap, in-flight peaks AT the cap and never above it.
+    const names = Array.from({ length: SWEEP_CONCURRENCY * 2 }, (_, i) => `k${i}`);
     let inFlight = 0;
     let maxInFlight = 0;
-    await sweepSmokeArtefacts(['a', 'b', 'c'], async () => {
+    await sweepSmokeArtefacts(names, async () => {
       maxInFlight = Math.max(maxInFlight, ++inFlight);
       await new Promise((r) => setTimeout(r, 1));
       inFlight--;
     });
-    expect(maxInFlight).toBe(1);
+    expect(maxInFlight).toBeGreaterThan(1); // genuinely concurrent
+    expect(maxInFlight).toBeLessThanOrEqual(SWEEP_CONCURRENCY); // never a burst
+  });
+});
+
+describe('runBestEffortCleanup', () => {
+  it('resolves normally when cleanup finishes in time', async () => {
+    let ran = false;
+    await expect(
+      runBestEffortCleanup(async () => { ran = true; }, { softTimeoutMs: 1000, context: 'ctx' }),
+    ).resolves.toBeUndefined();
+    expect(ran).toBe(true);
+  });
+
+  it('resolves (never rejects) when cleanup throws', async () => {
+    await expect(
+      runBestEffortCleanup(async () => { throw new Error('boom'); }, { softTimeoutMs: 1000, context: 'ctx' }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('resolves via the soft timeout when cleanup overruns, without waiting for it', async () => {
+    // A teardown is not a test: a slow sweep must warn and yield, not time out
+    // the hook. The race resolves at the soft bound even though the cleanup
+    // promise is still pending.
+    let settled = false;
+    const slow = runBestEffortCleanup(
+      () => new Promise<void>((r) => setTimeout(r, 10_000)),
+      { softTimeoutMs: 5, context: 'ctx' },
+    ).then(() => { settled = true; });
+    await slow;
+    expect(settled).toBe(true);
   });
 });
 

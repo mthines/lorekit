@@ -160,6 +160,16 @@ export interface SweepReport {
 }
 
 /**
+ * The most deletes a sweep runs at once. Bounded on purpose: parallel enough
+ * that a namespace of a dozen-plus keys sweeps in a couple of round-trips
+ * instead of one-DELETE-per-key at hosted latency (which pushed the `afterAll`
+ * hook past its timeout and failed a deploy on cleanup alone), yet small enough
+ * that a burst can never approach the per-user rate limit (120 req/min). The
+ * spec asserts the cap, so raising it is a deliberate edit.
+ */
+export const SWEEP_CONCURRENCY = 5;
+
+/**
  * Hard-delete every minted name, never throwing.
  *
  * Cleanup runs in `afterAll`, where a throw would turn "the suite passed but a
@@ -167,24 +177,80 @@ export interface SweepReport {
  * COLLECTED and returned for the caller to log loudly — a leak must be visible,
  * but it must not be reported as a test failure it is not.
  *
- * Deletions are sequential on purpose: these run against a live endpoint with a
- * per-user rate limit (120 req/min), and a burst of parallel deletes from a
- * cleanup hook is the last thing that should trip it.
+ * Deletions run with BOUNDED concurrency ({@link SWEEP_CONCURRENCY}) — fast
+ * enough that the teardown never approaches the hook timeout, capped so it never
+ * bursts past the live endpoint's rate limit. The report preserves INPUT order
+ * regardless of completion order, so callers and tests stay stable.
  */
 export async function sweepSmokeArtefacts(
   names: readonly string[],
   hardDelete: HardDelete,
 ): Promise<SweepReport> {
-  const report: SweepReport = { removed: [], failed: [] };
-  for (const name of names) {
-    try {
-      await hardDelete(name);
-      report.removed.push(name);
-    } catch (err) {
-      report.failed.push({ name, reason: err instanceof Error ? err.message : String(err) });
+  // Slot i holds name i's outcome, so the report is assembled in input order
+  // no matter which worker finishes first. `cursor++` hands each worker the
+  // next index — safe without a lock because there is no await between the read
+  // and the increment (JS runs this synchronously).
+  const results = new Array<{ name: string; ok: boolean; reason?: string }>(names.length);
+  let cursor = 0;
+  async function worker(): Promise<void> {
+    for (let i = cursor++; i < names.length; i = cursor++) {
+      const name = names[i];
+      try {
+        await hardDelete(name);
+        results[i] = { name, ok: true };
+      } catch (err) {
+        results[i] = { name, ok: false, reason: err instanceof Error ? err.message : String(err) };
+      }
     }
   }
+  const workers = Math.min(SWEEP_CONCURRENCY, names.length);
+  await Promise.all(Array.from({ length: workers }, () => worker()));
+
+  const report: SweepReport = { removed: [], failed: [] };
+  for (const r of results) {
+    if (r.ok) report.removed.push(r.name);
+    else report.failed.push({ name: r.name, reason: r.reason ?? 'unknown' });
+  }
   return report;
+}
+
+/**
+ * Run a best-effort cleanup step that can NEVER fail the suite.
+ *
+ * A teardown sweep is not a test: if it is slow or errors, the run must still
+ * report the truth about what was under test. This races the cleanup against a
+ * soft timeout set well under vitest's hook ceiling — if cleanup overruns, it
+ * warns and returns (the always-on `scripts/smoke-cleanup.mjs` sweep removes
+ * whatever was left); if it throws, that is swallowed with a warning too. Either
+ * way the returned promise resolves, so the enclosing `afterAll` can neither
+ * time out nor reject on cleanup alone.
+ */
+export async function runBestEffortCleanup(
+  fn: () => Promise<void>,
+  opts: { softTimeoutMs: number; context: string },
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const guard = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      console.warn(
+        `\n  ⚠ SMOKE CLEANUP TIMED OUT (${opts.context}) after ${opts.softTimeoutMs}ms — ` +
+          'leaving the rest to `scripts/smoke-cleanup.mjs`.',
+      );
+      resolve();
+    }, opts.softTimeoutMs);
+    // Don't let a pending guard timer keep the process alive after teardown.
+    if (typeof timer.unref === 'function') timer.unref();
+  });
+  const attempt = fn().catch((err) => {
+    console.warn(
+      `\n  ⚠ SMOKE CLEANUP ERRORED (${opts.context}) — ${err instanceof Error ? err.message : String(err)}`,
+    );
+  });
+  try {
+    await Promise.race([attempt, guard]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
