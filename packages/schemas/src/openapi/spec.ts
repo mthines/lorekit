@@ -29,6 +29,8 @@ import {
   FacetsResponseSchema,
   ActivityQuerySchema,
   ActivityResponseSchema,
+  ReadActivityQuerySchema,
+  ReadActivityResponseSchema,
 } from '../memory.ts';
 import {
   OrgResponseSchema,
@@ -214,6 +216,15 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     security, request: { query: ActivityQuerySchema },
     responses: {
       200: { description: 'Activity buckets', content: { 'application/json': { schema: ActivityResponseSchema } } },
+      400: errorResponse, 401: errorResponse, 403: errorResponse,
+    },
+  });
+  registry.registerPath({
+    method: 'get', path: '/memories/read-activity',
+    summary: 'Memory records read per UTC hour/day over a window', tags: ['Memories'],
+    security, request: { query: ReadActivityQuerySchema },
+    responses: {
+      200: { description: 'Read-activity buckets', content: { 'application/json': { schema: ReadActivityResponseSchema } } },
       400: errorResponse, 401: errorResponse, 403: errorResponse,
     },
   });

@@ -6,6 +6,7 @@ import {
   pctChange,
   windowChange,
   scopeWindowChange,
+  computeCountTrend,
 } from './aggregations';
 
 // ── dayCountsFromActivity ─────────────────────────────────────────────────────
@@ -298,5 +299,126 @@ describe('computeRangeTrends', () => {
     const rows = [{ scope: 'project::x', created_at: '2026-07-14T10:00:00Z' }]; // 10 days back
     expect(computeRangeTrends(rows, NOW, '7d').activeScopes).toBe(0);
     expect(computeRangeTrends(rows, NOW, '30d').activeScopes).toBe(1);
+  });
+});
+
+// ── computeRangeTrends → newScopes (the additive Scopes series) ───────────────
+
+describe('computeRangeTrends → newScopes', () => {
+  const NOW = '2026-07-24T12:00:00Z';
+  const sum = (points: { value: number }[]) => points.reduce((a, p) => a + p.value, 0);
+
+  it('is all-zero for empty input', () => {
+    const t = computeRangeTrends([], NOW, '7d');
+    expect(t.newScopes.points).toHaveLength(7);
+    expect(sum(t.newScopes.points)).toBe(0);
+  });
+
+  it('counts a scope once, in the bucket it first appears in', () => {
+    const rows = [
+      { scope: 'project::a', created_at: '2026-07-19T10:00:00Z' },
+      { scope: 'project::a', created_at: '2026-07-21T10:00:00Z' },
+      { scope: 'project::a', created_at: '2026-07-23T10:00:00Z' },
+    ];
+    const t = computeRangeTrends(rows, NOW, '7d');
+    // Charted window is Jul 18–24; the scope debuts on the 19th (index 1).
+    expect(t.newScopes.points.map((p) => p.value)).toEqual([0, 1, 0, 0, 0, 0, 0]);
+    expect(sum(t.newScopes.points)).toBe(t.activeScopes);
+  });
+
+  it('sums to activeScopes when every scope is distinct', () => {
+    const rows = [
+      { scope: 'project::a', created_at: '2026-07-19T10:00:00Z' },
+      { scope: 'project::b', created_at: '2026-07-20T10:00:00Z' },
+      { scope: 'project::c', created_at: '2026-07-21T10:00:00Z' },
+    ];
+    const t = computeRangeTrends(rows, NOW, '7d');
+    expect(sum(t.newScopes.points)).toBe(3);
+    expect(t.activeScopes).toBe(3);
+  });
+
+  it('sums to activeScopes for a mixed set — the card invariant, every range', () => {
+    const rows = [
+      { scope: 'global', created_at: '2026-07-18T01:00:00Z' },
+      { scope: 'global', created_at: '2026-07-24T09:00:00Z' },
+      { scope: 'project::a', created_at: '2026-07-20T10:00:00Z' },
+      { scope: 'project::a', created_at: '2026-07-20T11:00:00Z' },
+      { scope: 'project::b', created_at: '2026-07-23T10:00:00Z' },
+      { scope: 'project::old', created_at: '2026-06-30T10:00:00Z' }, // outside 7d, inside 30d
+      { scope: 'project::x', created_at: '2026-07-24T11:30:00Z' },
+    ];
+    for (const range of ['24h', '7d', '30d'] as const) {
+      const t = computeRangeTrends(rows, NOW, range);
+      expect(sum(t.newScopes.points)).toBe(t.activeScopes);
+    }
+  });
+
+  it('keeps the breadth changePct of the distinct-scope series', () => {
+    const rows = [
+      { scope: 'global', created_at: '2026-07-11T10:00:00Z' },
+      { scope: 'project::a', created_at: '2026-07-18T10:00:00Z' },
+      { scope: 'project::b', created_at: '2026-07-19T10:00:00Z' },
+    ];
+    const t = computeRangeTrends(rows, NOW, '7d');
+    expect(t.newScopes.changePct).toBe(t.scopes.changePct);
+  });
+});
+
+// ── computeCountTrend ─────────────────────────────────────────────────────────
+
+describe('computeCountTrend', () => {
+  const NOW = '2026-07-24T12:00:00Z';
+  const sum = (points: { value: number }[]) => points.reduce((a, p) => a + p.value, 0);
+
+  it('charts the recent window per range', () => {
+    expect(computeCountTrend([], NOW, '7d').points).toHaveLength(7);
+    expect(computeCountTrend([], NOW, '30d').points).toHaveLength(30);
+    expect(computeCountTrend([], NOW, '24h').points).toHaveLength(24);
+  });
+
+  it('is all-zero and flat for an empty series', () => {
+    const t = computeCountTrend([], NOW, '7d');
+    expect(sum(t.points)).toBe(0);
+    expect(t.changePct).toBe(0);
+  });
+
+  it('sums the in-window buckets — the bars add up to the headline', () => {
+    const rows = [
+      { bucket: '2026-07-18T00:00:00.000Z', count: 5 },
+      { bucket: '2026-07-20T00:00:00.000Z', count: 7 },
+      { bucket: '2026-07-24T00:00:00.000Z', count: 2 },
+      { bucket: '2026-07-10T00:00:00.000Z', count: 99 }, // prior window, not charted
+    ];
+    const t = computeCountTrend(rows, NOW, '7d');
+    expect(sum(t.points)).toBe(14);
+    expect(t.points.map((p) => p.value)).toEqual([5, 0, 7, 0, 0, 0, 2]);
+  });
+
+  it('aligns hour buckets with the day the 24h grid ends on', () => {
+    const rows = [
+      { bucket: '2026-07-24T12:00:00.000Z', count: 3 }, // the current hour — last bar
+      { bucket: '2026-07-24T11:00:00.000Z', count: 1 },
+    ];
+    const t = computeCountTrend(rows, NOW, '24h');
+    expect(t.points[t.points.length - 1]).toEqual({ label: '12:00', value: 3 });
+    expect(t.points[t.points.length - 2]).toEqual({ label: '11:00', value: 1 });
+  });
+
+  it('compares the charted window against the immediately preceding one', () => {
+    const rows = [
+      { bucket: '2026-07-13T00:00:00.000Z', count: 10 }, // prior 7d
+      { bucket: '2026-07-20T00:00:00.000Z', count: 20 }, // recent 7d
+    ];
+    expect(computeCountTrend(rows, NOW, '7d').changePct).toBe(100);
+  });
+
+  it('ignores buckets outside the 2× window and unparseable timestamps', () => {
+    const rows = [
+      { bucket: '2025-01-01T00:00:00.000Z', count: 500 },
+      { bucket: 'not-a-date', count: 500 },
+      { bucket: '2026-07-22T00:00:00.000Z', count: 4 },
+    ];
+    const t = computeCountTrend(rows, NOW, '7d');
+    expect(sum(t.points)).toBe(4);
   });
 });
