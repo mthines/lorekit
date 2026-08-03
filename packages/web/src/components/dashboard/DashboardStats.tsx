@@ -234,7 +234,7 @@ export function DashboardStats() {
       label: 'Memories read',
       tag: 'reads',
       tooltip:
-        'Memory records read in the selected range, across the MCP tools and the REST API — one list call returning 20 memories counts as 20 records, not one read. The bars sum to the number, and the trend chip compares this window against the preceding one.',
+        'Memory records read in the selected range, across the MCP tools and the REST API — one list call returning 20 memories counts as 20 records, not one read. Unlike the two cards beside it, this counts only YOUR reads: usage is a per-user ledger, so reads by other members of your organization are never included. The bars sum to the number, and the trend chip compares this window against the preceding one.',
       value: sumPoints(readTrend.points),
       description: `in the last ${rangeNoun}`,
       trend: readTrend,
