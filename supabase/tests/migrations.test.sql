@@ -3765,7 +3765,7 @@ end;
 $$;
 
 
--- ── 69. lorekit_read_activity — per-bucket read volume (00052) ──────────────
+-- ── 71. lorekit_read_activity — per-bucket read volume (00053) ──────────────
 -- Backs GET /memories/read-activity, the Overview's "Memories read" card.
 -- AC-1: result_count is SUMMED per bucket — the card's bars add up to its number.
 -- AC-2: only the read tools count; a write event in the same bucket is excluded,
