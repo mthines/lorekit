@@ -222,6 +222,12 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   registry.registerPath({
     method: 'get', path: '/memories/read-activity',
     summary: 'Memory records read per UTC hour/day over a window', tags: ['Memories'],
+    description:
+      'Records read (not read *calls*) per bucket, summed over `memory.read` / `memory.list` / ' +
+      '`memory.search` / `memory.list_archived`. Calls that identified themselves as the LoreKit ' +
+      'dashboard (`X-LoreKit-Client: dashboard`) are EXCLUDED: browsing your own lore in the web UI ' +
+      'is visualisation, not consumption, and would otherwise make this series grow every time you ' +
+      'looked at it. `GET /memories/usage` still counts them — use it for the complete ledger.',
     security, request: { query: ReadActivityQuerySchema },
     responses: {
       200: { description: 'Read-activity buckets', content: { 'application/json': { schema: ReadActivityResponseSchema } } },
@@ -377,9 +383,26 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
       'authorized but makes NO changes. Set it to `false` to execute for real.',
     schema: { type: 'boolean', default: true },
   };
+  // Attach the client-attribution header to EVERY operation (not just mutating
+  // ones — it exists mainly to label reads). Optional and fail-safe: an absent
+  // or unrecognised value is recorded as "unattributed" and never affects the
+  // response. It matters because `GET /memories/read-activity` excludes the
+  // `dashboard` surface, so a client that wants its reads counted should either
+  // send its own name or send nothing.
+  const clientParam = {
+    name: 'X-LoreKit-Client',
+    in: 'header',
+    required: false,
+    description:
+      'Which surface is calling. One of `dashboard`, `cli`, `mcp`, `api`; anything else is ' +
+      'recorded as unattributed. Purely for usage analytics — it never changes the response. ' +
+      'Reads attributed to `dashboard` are excluded from `GET /memories/read-activity`.',
+    schema: { type: 'string', enum: ['dashboard', 'cli', 'mcp', 'api'] },
+  };
   const paths = (doc['paths'] ?? {}) as Record<string, Record<string, { parameters?: unknown[] }>>;
   for (const operations of Object.values(paths)) {
     for (const [method, operation] of Object.entries(operations)) {
+      operation.parameters = [...(operation.parameters ?? []), clientParam];
       if (!MUTATING_METHODS.has(method)) continue;
       operation.parameters = [...(operation.parameters ?? []), dryRunParam];
     }

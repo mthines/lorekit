@@ -29,6 +29,17 @@ export interface UsageEventParams {
   resultCount?: number | null;
   /** Client-supplied grouping key (PR / session / job). Bounded, nullable. */
   correlationId?: string | null;
+  /**
+   * Which SURFACE made the call (`dashboard` / `cli` / `mcp` / `api`), from the
+   * client-supplied `X-LoreKit-Client` header and validated against the closed
+   * vocabulary by `parseUsageClient`. Null means unattributed.
+   *
+   * Distinct from `authType` (HOW the caller authenticated) and `toolName`
+   * (WHAT they asked for): a dashboard read and an agent read over a Supabase
+   * JWT are both `jwt` + `memory.list`. Migration 00054 uses it to keep the
+   * dashboard's own reads out of the "Memories read" metric.
+   */
+  client?: string | null;
 }
 
 /**
@@ -52,6 +63,7 @@ export function recordUsageEvent(
     p_memory_count: params.memoryCount ?? null,
     p_result_count: params.resultCount ?? null,
     p_correlation_id: params.correlationId ?? null,
+    p_client:      params.client ?? null,
   }).then(() => { /* fire-and-forget */ }).catch(() => { /* swallow */ });
 
   const edgeRuntime = (globalThis as {

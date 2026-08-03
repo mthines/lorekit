@@ -6,7 +6,7 @@ import { recordUsageEvent, getUserPlanName } from '../usage.ts';
 import type { UsageEventParams } from '../usage.ts';
 import { restToolName } from '../rest-tool-name.ts';
 import { classifyResponseOutcome } from '../rest-response-outcome.ts';
-import { parseCorrelationId, parseResultCountHeader } from '../usage-stats.ts';
+import { parseCorrelationId, parseResultCountHeader, parseUsageClient } from '../usage-stats.ts';
 import type { Span } from '../otel.ts';
 
 /**
@@ -24,6 +24,20 @@ export const CORRELATION_HEADER = 'x-lorekit-correlation-id';
  * count of read calls. Fail-safe: an absent/garbage value records no count.
  */
 export const RESULT_COUNT_HEADER = 'x-lorekit-result-count';
+
+/**
+ * Request header naming the SURFACE the call came from (`dashboard` / `cli` /
+ * `mcp` / `api`). Read once here, validated against the closed vocabulary by
+ * the pure `parseUsageClient`, and attached to every usage event this request
+ * records. Optional — absent means "unattributed".
+ *
+ * It exists because `auth_type` and `tool_name` cannot tell a human browsing
+ * the dashboard apart from an agent listing lore, and the "Memories read"
+ * metric has to: the dashboard is a client of this very API, so drawing the
+ * card issued a `GET /memories` that the card then counted. Migration 00054
+ * excludes `dashboard`-attributed reads from `lorekit_read_activity`.
+ */
+export const CLIENT_HEADER = 'x-lorekit-client';
 
 export type Permission = 'read' | 'write' | 'jwt';
 
@@ -188,6 +202,10 @@ export function createRouter(routes: Route[], functionName: string) {
       // Client-supplied grouping key (PR / session / job). Read once, bounded by
       // the pure validator; a malformed header degrades to null, never a 4xx.
       const correlationId = parseCorrelationId(req.headers.get(CORRELATION_HEADER));
+      // Calling surface (dashboard / cli / mcp / api). Same fail-safe posture:
+      // an absent or unrecognised value records no attribution rather than
+      // rejecting the request or admitting an unbounded value.
+      const client = parseUsageClient(req.headers.get(CLIENT_HEADER));
       hs.setAttributes({ 'lorekit.tool.name': toolName, ...(scopeType ? { 'lorekit.scope.type': scopeType } : {}) });
       const startedMs = Date.now();
 
@@ -210,6 +228,7 @@ export function createRouter(routes: Route[], functionName: string) {
             durationMs,
             resultCount,
             correlationId,
+            client,
           });
         }
         return res;
@@ -229,6 +248,7 @@ export function createRouter(routes: Route[], functionName: string) {
             outcome: translateDbError(e)?.code === 'memory_cap' ? 'cap_exceeded' : 'error',
             durationMs,
             correlationId,
+            client,
           });
         }
         throw e;
