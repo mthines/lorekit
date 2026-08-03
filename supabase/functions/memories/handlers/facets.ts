@@ -56,10 +56,14 @@ export async function handleFacets(
   );
   const narrowed = named.length > 0;
 
+  // The attribute reports what the CALLER asked for (`named`), not the
+  // recognised subset (`requested`): with every named dimension unknown the
+  // subset is empty, so a `?facets=nope` trace would be indistinguishable from
+  // a recognised narrowing that matched no rows. Do not "tighten" this back.
   span.setAttributes({
     'lorekit.operation': 'memories.facets',
     'lorekit.archived': validated.data.archived,
-    ...(narrowed ? { 'lorekit.facets': Array.from(requested).join(',') } : {}),
+    ...(narrowed ? { 'lorekit.facets': named.join(',') } : {}),
   });
 
   const tracedDb = createTracedClient(db, span);
