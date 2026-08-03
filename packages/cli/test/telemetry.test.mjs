@@ -523,7 +523,9 @@ test('traceCommand records a non-zero exit code as a failure verdict, not a span
     assert.equal(code, 1);
     const trace = calls.find((c) => c.url.endsWith('/v1/traces'));
     const span = trace.body.resourceSpans[0].scopeSpans[0].spans[0];
-    assert.notEqual(span.status.code, 2);
+    // Exactly STATUS_CODE_OK (1) — `notEqual(…, 2)` would also pass for UNSET
+    // (0), so it would not pin the documented behaviour.
+    assert.equal(span.status.code, 1);
     assert.equal(span.status.message, undefined);
     const attrs = Object.fromEntries(span.attributes.map((a) => [a.key, a.value]));
     assert.equal(attrs['lorekit.cli.outcome'].stringValue, 'failure');
