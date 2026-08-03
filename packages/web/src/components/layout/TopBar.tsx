@@ -6,6 +6,7 @@ import type { User } from '@supabase/supabase-js';
 import { SignOutButton } from '@/components/auth/SignOutButton';
 import { MemoryExpandButton } from '@/components/lore/MemoryExpandButton';
 import { CommandPaletteButton } from '@/components/command/CommandPaletteButton';
+import { ActivityIndicator } from '@/components/layout/ActivityIndicator';
 
 interface TopBarProps {
   user: User;
@@ -13,7 +14,9 @@ interface TopBarProps {
 
 export function TopBar({ user: _ }: TopBarProps) {
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg-raised)] px-6">
+    // `relative` so the ActivityIndicator can sit on the bottom border without
+    // taking a row of its own — nothing below the header moves when it appears.
+    <header className="relative flex h-14 shrink-0 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-bg-raised)] px-6">
       {/* Left — logo on mobile (desktop shows brand in sidebar) */}
       <div
         className="flex items-center gap-2 md:opacity-0"
@@ -44,6 +47,9 @@ export function TopBar({ user: _ }: TopBarProps) {
         <MemoryExpandButton />
         <SignOutButton />
       </div>
+
+      {/* Background fetches and mutations — a sweep along the bottom border. */}
+      <ActivityIndicator />
     </header>
   );
 }
