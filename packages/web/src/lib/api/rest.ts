@@ -155,3 +155,38 @@ export async function restFetch<T>(path: string, req: RestRequest): Promise<T> {
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
+
+/** A request to a PUBLIC (unauthenticated) REST route. */
+export interface PublicRestRequest {
+  method?: 'GET' | 'POST';
+  query?: Record<string, RestQueryValue>;
+  body?: unknown;
+  signal?: AbortSignal;
+}
+
+/**
+ * Call a PUBLIC REST route — no `Authorization`, no `X-LoreKit-Client`.
+ *
+ * The blog like counter (`/blog/likes`) is the one unauthenticated surface: the
+ * blog is a public page and its likes accumulate anonymously, so there is no
+ * session token to send. Everything else — the base URL, query building, the
+ * `{ error, code }` envelope parsing — is shared with the authed `restFetch`, so
+ * the two cannot drift on how they talk to the edge functions.
+ */
+export async function publicRestFetch<T>(path: string, req: PublicRestRequest = {}): Promise<T> {
+  const { method = 'GET', query, body, signal } = req;
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+
+  const res = await fetch(`${restBaseUrl()}${path}${buildQuery(query)}`, {
+    method,
+    headers,
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    ...(signal ? { signal } : {}),
+    cache: 'no-store',
+  });
+
+  if (!res.ok) throw await toRestError(res);
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}

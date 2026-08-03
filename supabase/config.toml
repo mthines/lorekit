@@ -100,6 +100,10 @@ verify_jwt = false
 [functions.openapi]
 verify_jwt = false
 
+# Public blog like counter — unauthenticated by design (see functions/blog).
+[functions.blog]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327
