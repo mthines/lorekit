@@ -231,9 +231,10 @@ ${c.bold('Options')}
   -t, --token <token>     Token override (else .mcp.json / LOREKIT_TOKEN)
       --store <path>      Local project-tier store directory (default: .lorekit)
       --deep              Do a write→read→delete round-trip
-      --telemetry         Also POST a probe span to the OTLP endpoint and FAIL
-                          if the Dash0 ingesting token is missing or rejected.
-                          Without it, telemetry is reported as info only.
+      --telemetry         Focused run: skip the other checks, POST a probe
+                          span to the OTLP endpoint, and FAIL if the Dash0
+                          ingesting token is missing or rejected. Without it,
+                          telemetry is reported as info only.
 
 ${c.bold('Examples')}
   npx @lorekit/cli doctor
