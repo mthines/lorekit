@@ -7,9 +7,20 @@ const nextConfig: NextConfig = {
   // `/settings/webhooks` was renamed to `/settings/integrations`. The old path
   // is in bookmarks, docs, and any link shared before the rename, so it
   // redirects rather than 404s.
+  //
+  // `/settings` has no content of its own — it lands on the first section.
+  // That used to be a Server Component calling `redirect()`, which turned every
+  // Settings click into a client-side redirect hop and crashed React inside
+  // Next's app-router ("Minified React error #310"). Resolving it here means the
+  // browser is redirected at the routing layer, before React renders anything.
+  // Internal navigation targets `/settings/api-keys` directly (see
+  // `src/lib/settings-routes.ts`), so this only catches bookmarks and external
+  // links. Not permanent: `/settings` may grow a real landing page later, and a
+  // 308 would be cached by browsers indefinitely.
   async redirects() {
     return [
       { source: '/settings/webhooks', destination: '/settings/integrations', permanent: true },
+      { source: '/settings', destination: '/settings/api-keys', permanent: false },
     ];
   },
 
