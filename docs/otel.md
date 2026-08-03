@@ -144,11 +144,12 @@ endpoint, repo, or scope string):
 | `lorekit.cli.flag.<name>` | `true` | Only when set; allow-list: `global`, `project`, `deep`, `yes`, `force`, `no-hooks`, `json`, `link` |
 | `lorekit.cli.hooks_mode` | `all` | `install` only. Bounded: `all` \| `read-only` \| `none` \| `custom` — which hook wiring the run resolved to (from the flag, the prompt, or the detected state). Counts the CHOICE, not the `--no-hooks` flag |
 
-**Span status is reserved for a CRASH.** A command that ran to completion and
-exited non-zero — `doctor` finding a failing check, `lint` finding what it was
-asked to look for — leaves the span status unset and reports
-`lorekit.cli.outcome=failure`. Only an unhandled throw sets `STATUS_CODE_ERROR`
-(with a bounded, non-PII `errorLabel` message). This keeps the `cli` service's
+**`STATUS_CODE_ERROR` is reserved for a CRASH.** A command that ran to completion
+and exited non-zero — `doctor` finding a failing check, `lint` finding what it
+was asked to look for — keeps the same `STATUS_CODE_OK` span status a successful
+run gets, and reports `lorekit.cli.outcome=failure`. Only an unhandled throw sets
+`STATUS_CODE_ERROR` (with a bounded, non-PII `errorLabel` message). This keeps
+the `cli` service's
 error rate a measure of the CLI being broken rather than of an unhealthy user
 environment: query failing runs on `lorekit.cli.outcome` / `lorekit.cli.exit_code`,
 never on the span status.

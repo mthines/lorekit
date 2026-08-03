@@ -485,8 +485,8 @@ function normalizeExitCode(result) {
  *
  * The span carries an ERROR status only when the command CRASHED. A command
  * that ran to completion and exited non-zero (a failing `doctor` check, a
- * `lint` finding) reports `lorekit.cli.outcome=failure` on an unset-status
- * span.
+ * `lint` finding) reports `lorekit.cli.outcome=failure` on a span the exporter
+ * emits as STATUS_CODE_OK — never ERROR.
  *
  * @param {string} command  bounded: install | uninstall | doctor | list | search | show | stats | scopes | diff | tree | lint | dedupe | link | migrate
  * @param {object} args     parsed CLI args (read for allow-listed flags only)
@@ -555,8 +555,10 @@ export async function traceCommand(command, args, version, run) {
       // A non-zero exit is a REPORTED VERDICT, not a fault: `doctor` exits 1
       // because a check it ran came back failing, and `lint` exits 1 because it
       // found what it was asked to look for. Both commands did their job. Only
-      // a crash (the catch below) is an error, so the span status stays unset
-      // here and the verdict is carried by `lorekit.cli.outcome=failure` +
+      // a crash (the catch below) is an error, so `status` stays `'ok'` here —
+      // which `buildTracePayload` emits as STATUS_CODE_OK (1), the same status
+      // a zero-exit run gets — and the verdict is carried by
+      // `lorekit.cli.outcome=failure` +
       // `lorekit.cli.exit_code` — which keeps the CLI's error rate a measure of
       // the CLI being broken rather than of the user's environment being
       // unhealthy. Query the failure verdicts on those attributes, never on the
