@@ -10,6 +10,12 @@
 // is commonly configured with the apex host alone. Admitting both the apex and
 // the `www.` host makes the allowlist robust to whichever of the two is named.
 // `*` passes through unchanged; a non-sibling origin is still rejected.
+//
+// Two classes of origin are ALWAYS admitted regardless of ALLOWED_ORIGINS, for the
+// same reason (Bearer auth, not CORS, is the access control): loopback dev hosts,
+// and the project's own Vercel deployments — including preview/branch hosts like
+// `lorekit-git-<branch>-<scope>.vercel.app`, whose hostname is per-deployment and
+// cannot be enumerated into a static allowlist. See isVercelPreviewOrigin.
 
 // Expand a single configured origin to both its apex and its `www.` host.
 export function expandOriginSiblings(origin: string): string[] {
@@ -30,12 +36,18 @@ export function expandAllowedOrigins(configured: string[]): string[] {
 
 // Whether a request Origin is permitted by an already-expanded allowlist.
 //
-// Loopback dev origins (localhost / 127.0.0.1 / [::1], any port or scheme) are
-// ALWAYS admitted so a locally-running dashboard can talk to the deployed edge
-// functions without the loopback host being in ALLOWED_ORIGINS. Safe: every
-// request is authenticated with a Bearer token a cross-origin page cannot obtain.
+// Loopback dev origins (localhost / 127.0.0.1 / [::1], any port or scheme) AND
+// the project's own Vercel PREVIEW deployments are ALWAYS admitted, even when the
+// origin is not in ALLOWED_ORIGINS. Safe: every request is authenticated with a
+// Bearer token a cross-origin page cannot obtain, so CORS is not the access
+// control here. See isLoopbackOrigin / isVercelPreviewOrigin for the host rules.
 export function isOriginAllowed(allowed: string[], origin: string): boolean {
-  return allowed.includes('*') || allowed.includes(origin) || isLoopbackOrigin(origin);
+  return (
+    allowed.includes('*') ||
+    allowed.includes(origin) ||
+    isLoopbackOrigin(origin) ||
+    isVercelPreviewOrigin(origin)
+  );
 }
 
 // True for a loopback dev origin. Matched on the EXACT host, so a lookalike such
@@ -45,6 +57,40 @@ function isLoopbackOrigin(origin: string): boolean {
   try {
     const { hostname } = new URL(origin);
     return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+  } catch {
+    return false;
+  }
+}
+
+// The Vercel project the dashboard deploys as, and the suffix Vercel serves every
+// deployment of it under. Preview deployments get a per-branch / per-commit
+// hostname — `lorekit-git-<branch>-<scope>.vercel.app`,
+// `lorekit-<hash>-<scope>.vercel.app` — that can never be enumerated into a static
+// allowlist, so they were CORS-blocked the moment the dashboard moved off the
+// permissively-CORS'd PostgREST gateway onto these edge functions.
+const VERCEL_APP_SUFFIX = '.vercel.app';
+const VERCEL_PROJECT = 'lorekit';
+
+// True for one of the LoreKit project's own Vercel deployment origins — the apex
+// (`lorekit.vercel.app`) or any preview/branch host (`lorekit-<anything>.vercel.app`).
+//
+// The match is deliberately narrow: HTTPS only; the host must be a SINGLE DNS
+// label followed by exactly `.vercel.app` (a label containing a dot — e.g.
+// `lorekit-x.attacker.vercel.app` — is rejected, so this can never admit some
+// other tenant's project nested under a subdomain); and that label must be the
+// project name or the project name followed by `-`. `notlorekit-x.vercel.app`,
+// `lorekit.io` and `lorekit.evil.com` are all rejected. Admitting the whole
+// project's preview fleet is safe for the same reason loopback is (Bearer auth).
+function isVercelPreviewOrigin(origin: string): boolean {
+  if (!origin) return false;
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== 'https:') return false;
+    const host = url.hostname;
+    if (!host.endsWith(VERCEL_APP_SUFFIX)) return false;
+    const label = host.slice(0, -VERCEL_APP_SUFFIX.length);
+    if (!label || label.includes('.')) return false;
+    return label === VERCEL_PROJECT || label.startsWith(`${VERCEL_PROJECT}-`);
   } catch {
     return false;
   }
