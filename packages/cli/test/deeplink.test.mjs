@@ -429,6 +429,22 @@ test('buildLoreUrl encodes tags as a JSON array and omits the empty default', ()
   assert.deepEqual(JSON.parse(url.searchParams.get('tags')), ['perf', 'ci']);
 });
 
+test('buildLoreUrl encodes the filter bar and keeps an explicitly empty bar distinguishable', () => {
+  const filters = [{ field: 'branch', operator: 'is', values: ['main'] }];
+  const url = new URL(buildLoreUrl({ scope: 'global', filters }));
+  assert.deepEqual(JSON.parse(url.searchParams.get('filters')), filters);
+  // `null` is the default (param absent → the app falls back to legacy `?tags=`),
+  // so it is omitted…
+  assert.equal(buildLoreUrl({ scope: 'global', filters: null }), 'https://lorekit.io/lore?scope=%22global%22');
+  // …but `[]` means "the bar is explicitly empty", which is NOT the default and
+  // must survive into the URL — that is what stops the legacy fallback from
+  // resurrecting a pill the user removed.
+  assert.equal(
+    buildLoreUrl({ scope: 'global', filters: [] }),
+    'https://lorekit.io/lore?scope=%22global%22&filters=%5B%5D',
+  );
+});
+
 test('link --tags prints the label-filtered Explorer link', () => {
   const root = tmp('lk-link-proj-');
   const res = run(['link', 'global', '--tags', 'perf,ci'], { dir: root });
