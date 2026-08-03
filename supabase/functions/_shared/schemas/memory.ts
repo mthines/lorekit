@@ -68,9 +68,37 @@ export type MemorySort = z.infer<typeof MemorySortSchema>;
  * `any` (the default, and the historical behaviour) is Postgres' `&&` overlap —
  * a row matching at least one label. `all` is `@>` containment — a row must
  * carry EVERY named label, which is what the dashboard's label filter means.
+ * `none` is the negation of `any` (`not.ov`) — a row carrying none of the named
+ * labels, which is what the Explorer's "includes none" operator means. There is
+ * deliberately no `not_all`: "does not carry every one of these" is a shape no
+ * user has asked for and reads as a double negative in a filter pill.
  */
-export const TagsModeSchema = z.enum(['any', 'all']);
+export const TagsModeSchema = z.enum(['any', 'all', 'none']);
 export type TagsMode = z.infer<typeof TagsModeSchema>;
+
+/**
+ * How a scalar multi-value filter (`source_agent`, `trigger`, `origin_*`)
+ * combines.
+ *
+ * `in` is disjunctive — the row's value is one of the named values, which is
+ * the Explorer's `is` / `is either of`. `nin` is its negation (`not.in`), the
+ * Explorer's `is not`. Stating the negation as `not.in` rather than expanding
+ * it into a conjunction of `neq`s matters: NOT(a OR b) and (NOT a AND NOT b)
+ * agree only while the column is NOT NULL, and every column here is nullable —
+ * `not.in` keeps the two readings identical by never leaving PostgREST.
+ */
+export const ScalarFilterModeSchema = z.enum(['in', 'nin']);
+export type ScalarFilterMode = z.infer<typeof ScalarFilterModeSchema>;
+
+/**
+ * A comma-separated list of values for a scalar multi-value filter.
+ *
+ * Same wire shape (and the same "a value containing a comma is unreachable
+ * over this parameter" caveat) as `tags`, parsed by the same
+ * `parseTagsParam` — one splitting rule for every list-valued query param,
+ * rather than a second one that could round-trip differently.
+ */
+const ValueListSchema = z.string().min(1).max(2048);
 
 export const ListMemoriesQuerySchema = z.object({
   scope: RawScopeSchema.optional(),
@@ -91,6 +119,33 @@ export const ListMemoriesQuerySchema = z.object({
   created_since: TimestampFilterSchema.optional(),
   /** EXCLUSIVE upper bound on `created_at` — the window is `[since, until)`. */
   created_until: TimestampFilterSchema.optional(),
+  /**
+   * Provenance and authorship filters — the dimensions the Explorer's filter
+   * menu exposes beside labels (`GET /memories/facets` enumerates their values
+   * with counts).
+   *
+   * Each is a comma-separated value list combined by its own `*_mode`
+   * (`in` — the default — or `nin`), and the dimensions AND together: the
+   * Linear model of "OR within a filter type, AND across filter types", which
+   * is the only combination a flat filter bar can render unambiguously.
+   * Anything richer (cross-type OR, nested groups) belongs in
+   * `POST /memories/search`'s `filter` tree, which already expresses it.
+   */
+  source_agent: ValueListSchema.optional(),
+  source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
+  trigger: ValueListSchema.optional(),
+  trigger_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_repo: ValueListSchema.optional(),
+  origin_repo_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_branch: ValueListSchema.optional(),
+  origin_branch_mode: ScalarFilterModeSchema.optional().default('in'),
+  /**
+   * Pull-request numbers. Non-numeric entries are dropped by the handler
+   * rather than 400ing the whole request: the list arrives from a hand-editable
+   * URL, and one bad entry should narrow the filter, not break the page.
+   */
+  origin_pr: ValueListSchema.optional(),
+  origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
   sort: MemorySortSchema.optional().default('updated_at'),
   archived: z.enum(['true','false']).optional().default('false'),
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
@@ -198,6 +253,62 @@ export type TagCount = z.infer<typeof TagCountSchema>;
 
 export const TagsResponseSchema = z.object({ tags: z.array(TagCountSchema) });
 export type TagsResponse = z.infer<typeof TagsResponseSchema>;
+
+// ── GET /memories/facets ─────────────────────────────────────────────────────
+
+/**
+ * The dimensions `GET /memories/facets` enumerates.
+ *
+ * These are exactly the columns `GET /memories` can filter on by value, so the
+ * catalog can never offer a value the list route will not accept — the failure
+ * mode a hand-maintained picker list eventually reaches.
+ *
+ * `tag` overlaps `GET /memories/tags` deliberately. That endpoint is the
+ * single-dimension label catalog the CLI and older clients call, and removing
+ * it would be a breaking change; this one answers "every filterable dimension
+ * in one round trip", which is what a multi-dimension filter menu needs to
+ * offer cross-type type-ahead before the user has picked a dimension. Both
+ * read the same rows under the same predicate (migrations 00050 / 00052), so
+ * the `tag` rows of the two responses agree by construction.
+ */
+export const MemoryFacetSchema = z.enum([
+  'tag',
+  'source_agent',
+  'trigger',
+  'origin_repo',
+  'origin_branch',
+  'origin_pr',
+]);
+export type MemoryFacet = z.infer<typeof MemoryFacetSchema>;
+
+/**
+ * Query params for `GET /memories/facets`.
+ *
+ * `archived` partitions for `GET /memories/tags`' reason verbatim: a catalog
+ * must describe the population it will be used to filter, and active and
+ * archived are different populations.
+ */
+export const ListFacetsQuerySchema = z.object({
+  archived: z.enum(['true', 'false']).optional().default('false'),
+  /**
+   * Restrict the response to these dimensions (comma-separated). Absent means
+   * every dimension. A menu that has already drilled into one dimension can
+   * refresh just that one instead of re-reading the whole catalog.
+   */
+  facets: z.string().optional(),
+});
+export type ListFacetsQuery = z.infer<typeof ListFacetsQuerySchema>;
+
+/** One `(facet, value)` cell: how many visible memories carry that value. */
+export const FacetValueSchema = z.object({
+  facet: MemoryFacetSchema,
+  value: z.string(),
+  count: z.number().int().nonnegative(),
+});
+export type FacetValue = z.infer<typeof FacetValueSchema>;
+
+export const FacetsResponseSchema = z.object({ facets: z.array(FacetValueSchema) });
+export type FacetsResponse = z.infer<typeof FacetsResponseSchema>;
 
 // ── GET /memories/activity ───────────────────────────────────────────────────
 

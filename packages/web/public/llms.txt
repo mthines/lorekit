@@ -369,6 +369,39 @@ Returns: `{ "deleted": true, "slug": "<slug>" }`
 - Scope→org binding: an admin can bind a scope to the org — subsequent writes under that scope auto-route to the org for write-capable members. Non-members fall back to personal (never rejected) with a `notice`.
 - Manage orgs and members at lorekit.io → Settings → Organization.
 
+## Filtering lore (dashboard Explorer + REST)
+
+The Explorer at lorekit.io/lore filters on six dimensions. Values combine with **OR inside one
+dimension** and **AND across dimensions**, and the whole filter set is in the URL, so a filtered
+view is a shareable link.
+
+| Dimension | Memory field | Operators |
+|-----------|--------------|-----------|
+| Label | `tags` | includes all (default), includes any, includes none |
+| Agent | `source_agent` | is / is either of, is not |
+| Trigger | `trigger` | is / is either of, is not |
+| Repository | `origin_repo` | is / is either of, is not |
+| Branch | `origin_branch` | is / is either of, is not |
+| Pull request | `origin_pr` | is / is either of, is not |
+
+The same filters are on the REST list route, so an agent or the CLI can ask the same questions:
+
+```bash
+# Everything the `aw` agent learned on a branch, excluding one label
+curl -H "Authorization: Bearer lk_ro_…" \
+  "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/memories?\
+source_agent=aw&origin_branch=main&tags=flaky&tags_mode=none"
+```
+
+Each dimension takes a comma-separated value list plus an optional `<dimension>_mode` of `in`
+(default) or `nin` (negate); labels use `tags_mode` of `any` (default), `all`, or `none`.
+
+`GET /memories/facets` returns every filterable value with its memory count
+(`{ "facets": [{ "facet": "origin_branch", "value": "main", "count": 27 }] }`), partitioned by
+`?archived=true|false` and narrowable with `?facets=tag,trigger`. Use it to discover what can be
+filtered on instead of listing memories and tallying them client-side — the tally is silently
+truncated past the row cap.
+
 ## Limits
 
 | Limit | Default |

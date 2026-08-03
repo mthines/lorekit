@@ -15,6 +15,7 @@ import { handlePurge, handlePurgeExpired } from './handlers/purge.ts';
 import { handleScopes } from './handlers/scopes.ts';
 import { handleUsage } from './handlers/usage.ts';
 import { handleTags } from './handlers/tags.ts';
+import { handleFacets } from './handlers/facets.ts';
 import { handleActivity } from './handlers/activity.ts';
 
 // ROUTE ORDER MATTERS. `matchPath` (../_shared/api/router.ts) matches purely on
@@ -46,6 +47,7 @@ const router = createRouter([
   { method: 'GET',    path: '/scopes',         handler: handleScopes,       requires: 'read'  },
   { method: 'GET',    path: '/usage',          handler: handleUsage,        requires: 'read'  },
   { method: 'GET',    path: '/tags',           handler: handleTags,         requires: 'read'  },
+  { method: 'GET',    path: '/facets',         handler: handleFacets,       requires: 'read'  },
   { method: 'GET',    path: '/activity',       handler: handleActivity,     requires: 'read'  },
   // ── parameterised routes ───────────────────────────────────────────────────
   { method: 'GET',    path: '/:id',            handler: handleGet,          requires: 'read'  },

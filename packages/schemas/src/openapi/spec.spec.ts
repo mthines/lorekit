@@ -23,6 +23,7 @@ describe('generateSpec', () => {
     expect(Object.keys(spec.paths).sort()).toEqual([
       '/memories',
       '/memories/activity',
+      '/memories/facets',
       '/memories/purge',
       '/memories/purge-expired',
       '/memories/restore',

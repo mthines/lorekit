@@ -7,10 +7,11 @@ import type { ScopeNode } from '@/components/lore/ScopeTree';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { listMemories, archiveLesson, restoreLesson, type MemoryFilters, type MemoryPage } from '@/lib/lore';
 import type { DateRange } from '@/components/ui/DateRangePicker';
-import { normalizeTags, type TagCount } from '@/lib/tag-filter';
+import { normalizeTags } from '@/lib/tag-filter';
 import { lessonFromMemoryEntry } from '@/lib/lesson-entry';
 import { browserAccessToken } from '@/lib/api/session-browser';
-import { activityRequest, listMemoriesRequest, listScopesRequest, listTagsRequest } from '@/lib/api/memories';
+import { activityRequest, listFacetsRequest, listMemoriesRequest, listScopesRequest } from '@/lib/api/memories';
+import { normalizeFilters, type FacetValue, type Filter } from '@/lib/filters';
 
 export interface LoreData {
   scopes: ScopeNode[];
@@ -104,34 +105,34 @@ async function fetchScopes(signal?: AbortSignal): Promise<ScopeNode[]> {
 }
 
 // ---------------------------------------------------------------------------
-// Label (tag) catalog — powers the Explorer's label filter bar.
+// Facet catalog — every filterable value, per dimension, for the filter menu.
 //
-// Deliberately a SEPARATE query from the lesson list: the list is server-side
-// filtered, so deriving the catalog from the loaded pages would make the
-// available labels shrink as soon as one is picked — you could narrow but never
-// widen or switch. The catalog is filter-independent, exactly like the scope
-// tree.
+// A SEPARATE query from the lesson list — the reason the single-dimension label
+// catalog it replaced was one too, and it only gets stronger with six
+// dimensions: derived from the loaded pages, the menu's options would shrink to
+// whatever the current filter happened to
+// return, so you could narrow but never widen or switch — and cross-dimension
+// type-ahead ("type `main`, get Branch → main") would only ever surface values
+// already visible in the list, which is precisely the case where you did not
+// need the menu.
 //
-// It IS however archived-aware: the bar renders in both the active and the
-// archived view, and the list partitions on `archived_at`, so a catalog pinned
-// to active rows would describe the wrong population in archived mode — wrong
-// counts, and archive-only labels missing from their own filter. `?archived=`
-// selects the partition on the server, where the counting happens.
+// Archived-aware for the same reason too: active and archived are different
+// populations, so a catalog pinned to one shows the wrong counts and hides the
+// other's values from their own filter.
 // ---------------------------------------------------------------------------
 
-async function fetchTagCatalog(showArchived: boolean, signal?: AbortSignal): Promise<TagCount[]> {
+async function fetchFacets(showArchived: boolean, signal?: AbortSignal): Promise<FacetValue[]> {
   const token = await requireBrowserToken();
-  const { tags } = await listTagsRequest(token, showArchived, signal);
-  return tags;
+  const { facets } = await listFacetsRequest(token, showArchived, signal);
+  return facets;
 }
 
-export function useTagCatalog(showArchived = false) {
-  return useQuery<TagCount[]>({
-    // Keyed on the partition it describes — flipping "Archived" swaps the
-    // catalog instead of reusing the other view's counts.
-    queryKey: ['lore-tags', showArchived],
-    queryFn: ({ signal }) => fetchTagCatalog(showArchived, signal),
-    // Matches the scope tree: read-heavy, changes only when an agent writes.
+export function useFacetCatalog(showArchived = false) {
+  return useQuery<FacetValue[]>({
+    queryKey: ['lore-facets', showArchived],
+    queryFn: ({ signal }) => fetchFacets(showArchived, signal),
+    // Matches the scope tree and the label catalog: read-heavy, changes only
+    // when an agent writes.
     staleTime: 90_000,
     retry: retryUnlessSignedOut,
   });
@@ -205,10 +206,37 @@ export interface UseMemoriesFilters {
   search: string;
   /** Date range filter on created_at. */
   range: DateRange | null;
-  /** Labels a memory must ALL carry. Empty means no label filter. */
+  /**
+   * Labels a memory must ALL carry. Empty means no label filter.
+   *
+   * @deprecated Superseded by {@link UseMemoriesFilters.filters}, which
+   * expresses the same constraint as a `label` filter with the `all` operator
+   * plus five more dimensions. Kept so a caller that has not migrated still
+   * works; it is folded into `filters` below rather than sent separately, so
+   * there is one path to the wire.
+   */
   tags?: string[];
+  /**
+   * The Explorer's filter bar — OR within a dimension, AND across dimensions.
+   * Empty means no dimension filter.
+   */
+  filters?: Filter[];
   /** When true, fetches archived memories instead of active ones. */
   showArchived?: boolean;
+}
+
+/**
+ * Fold the deprecated `tags` shorthand into the filter list.
+ *
+ * A `label` filter already present wins: an explicit bar beats a leftover
+ * shorthand, and merging the two would silently union two selections the user
+ * sees as one.
+ */
+function mergedFilters(filters: UseMemoriesFilters): Filter[] {
+  const explicit = normalizeFilters(filters.filters ?? []);
+  const legacy = normalizeTags(filters.tags);
+  if (legacy.length === 0 || explicit.some((f) => f.field === 'label')) return explicit;
+  return normalizeFilters([...explicit, { field: 'label', operator: 'all', values: legacy }]);
 }
 
 /**
@@ -219,24 +247,28 @@ export interface UseMemoriesFilters {
  * `fetchNextPage` drives the "Load more" control in `LoreExplorer`.
  */
 export function useMemories(filters: UseMemoriesFilters) {
+  const bar = mergedFilters(filters);
   return useInfiniteQuery<MemoryPage>({
-    // `tags` is APPENDED, never inserted: the archive mutations select archived
-    // vs active pages by `queryKey[4]`, so the first five segments are a fixed
-    // contract. Extend this key at the end only.
+    // The filter bar is APPENDED, never inserted: the archive mutations select
+    // archived vs active pages by `queryKey[4]`, so the first five segments are
+    // a fixed contract. Extend this key at the end only. It REPLACES the old
+    // `tags` segment (index 5) rather than sitting beside it — the deprecated
+    // `tags` input is folded into the bar by `mergedFilters`, so two segments
+    // would encode one constraint twice and split the cache for no reason.
     queryKey: [
       'memories',
       filters.scope,
       filters.search,
       filters.range,
       filters.showArchived ?? false,
-      normalizeTags(filters.tags),
+      bar,
     ],
     queryFn: ({ pageParam }) => {
       const args: MemoryFilters = {
         scope: filters.scope ?? undefined,
         search: filters.search || undefined,
         range: filters.range,
-        tags: normalizeTags(filters.tags),
+        filters: bar,
         cursor: pageParam as string | null,
         showArchived: filters.showArchived,
       };
@@ -333,10 +365,10 @@ export function useArchiveLesson() {
       }
     },
     onSettled: () => {
-      // Whether success or failure, sync the scope tree, the label catalog,
+      // Whether success or failure, sync the scope tree, the facet catalog,
       // and the legacy lore cache.
       void queryClient.invalidateQueries({ queryKey: ['lore-scopes'] });
-      void queryClient.invalidateQueries({ queryKey: ['lore-tags'] });
+      void queryClient.invalidateQueries({ queryKey: ['lore-facets'] });
       void queryClient.invalidateQueries({ queryKey: ['lore'] });
       void queryClient.invalidateQueries({ queryKey: ['memory-total'] });
       // Invalidate archived list so it picks up the newly archived row.
@@ -374,7 +406,7 @@ export function useRestoreLesson() {
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ['lore-scopes'] });
-      void queryClient.invalidateQueries({ queryKey: ['lore-tags'] });
+      void queryClient.invalidateQueries({ queryKey: ['lore-facets'] });
       void queryClient.invalidateQueries({ queryKey: ['lore'] });
       void queryClient.invalidateQueries({ queryKey: ['memory-total'] });
       // Invalidate active list so the restored memory reappears.

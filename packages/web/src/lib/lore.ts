@@ -24,6 +24,7 @@ import { clampPageSize } from '@/lib/pagination/keyset';
 import { dateRangeBounds, type DateRangeInput } from '@/lib/pagination/filters';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { normalizeTags } from '@/lib/tag-filter';
+import { filtersToQueryParams, normalizeFilters, type Filter } from '@/lib/filters';
 import { lessonFromMemoryEntry } from '@/lib/lesson-entry';
 import { serverAccessToken } from '@/lib/api/session-server';
 import { RestApiError } from '@/lib/api/rest';
@@ -168,8 +169,19 @@ export interface MemoryFilters {
   /**
    * Labels (`memories.tags`) a row must carry — ALL of them, not any.
    * Absent or empty means "no label filter".
+   *
+   * @deprecated Superseded by {@link MemoryFilters.filters}. Folded into it
+   * below (as a `label` filter with the `all` operator) so there is one
+   * translation to the wire.
    */
   tags?: string[];
+  /**
+   * The Explorer's filter bar: one condition per dimension (label / agent /
+   * trigger / repo / branch / pull request), OR within a dimension and AND
+   * across them. Translated by the pure `filtersToQueryParams`, which is the
+   * single place the UI vocabulary meets the query-param vocabulary.
+   */
+  filters?: Filter[];
   /** Page size, default 50, hard max 100. */
   pageSize?: number;
   /** Opaque keyset cursor from a previous page's `nextCursor`. */
@@ -205,7 +217,16 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
 
   const pageSize = clampPageSize(filters.pageSize, { def: DEFAULT_PAGE_SIZE, max: MAX_PAGE_SIZE });
   const bounds = dateRangeBounds(filters.range);
-  const tags = normalizeTags(filters.tags);
+
+  // The deprecated `tags` shorthand becomes a `label` filter with the `all`
+  // operator — exactly what it has always meant — unless the caller already
+  // supplied one, in which case the explicit bar wins.
+  const legacyTags = normalizeTags(filters.tags);
+  const explicit = normalizeFilters(filters.filters ?? []);
+  const bar =
+    legacyTags.length === 0 || explicit.some((f) => f.field === 'label')
+      ? explicit
+      : normalizeFilters([...explicit, { field: 'label', operator: 'all', values: legacyTags }]);
 
   try {
     const page = await listMemoriesRequest(token, {
@@ -216,8 +237,8 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
       ...(filters.search ? { q: filters.search } : {}),
       ...(bounds.gte ? { created_since: bounds.gte } : {}),
       ...(bounds.lt ? { created_until: bounds.lt } : {}),
-      // Conjunctive: a memory must carry EVERY selected label.
-      ...(tags.length ? { tags: tags.join(','), tags_mode: 'all' as const } : {}),
+      // OR within a dimension, AND across dimensions — see `filtersToQueryParams`.
+      ...filtersToQueryParams(bar),
       ...(filters.cursor ? { cursor: filters.cursor } : {}),
     });
 
