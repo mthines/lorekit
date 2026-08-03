@@ -15,7 +15,10 @@ import { clampLikeDelta } from './likes';
  * Both fail SOFT: a like is a vanity metric, never worth surfacing an error over
  * a signed-out or offline visitor. `getPostLikes` degrades to 0 and `addPostLikes`
  * degrades to the last known total, so the optimistic UI reconciles on the next
- * successful flush instead of showing an error state.
+ * successful flush instead of showing an error state. Soft is not SILENT,
+ * though: `addPostLikes` reports whether the increment actually landed, because
+ * the caller has already charged those likes against the per-session cap and
+ * must keep them pending rather than drop them.
  */
 
 /** Coerce a bigint-or-number-or-string PostgREST value into a safe count. */
@@ -37,11 +40,19 @@ export async function getPostLikes(slug: string): Promise<number> {
 }
 
 /**
- * Add `delta` likes to a post and return the new global total. The delta is
- * clamped to a single valid session's worth [1, 100] before it reaches the RPC,
- * which clamps again authoritatively.
+ * Add `delta` likes to a post. The delta is clamped to a single valid session's
+ * worth [1, 100] before it reaches the RPC, which clamps again authoritatively.
+ *
+ * Returns the new global `total` and whether the increment landed (`ok`). The
+ * two are independent: a failed call still reports the best total it can read,
+ * but `ok: false` tells the caller it still OWNS `delta` — the likes were never
+ * recorded, so dropping them would lose likes the session cap has already been
+ * charged for.
  */
-export async function addPostLikes(slug: string, delta: number): Promise<number> {
+export async function addPostLikes(
+  slug: string,
+  delta: number,
+): Promise<{ total: number; ok: boolean }> {
   const supabase = await createServerClient();
   const { data, error } = await supabase.rpc('lorekit_blog_like', {
     p_slug: slug,
@@ -49,6 +60,6 @@ export async function addPostLikes(slug: string, delta: number): Promise<number>
   });
   // On failure, read back the current total so the optimistic client corrects
   // itself rather than trusting its local guess.
-  if (error) return getPostLikes(slug);
-  return toCount(data);
+  if (error) return { total: await getPostLikes(slug), ok: false };
+  return { total: toCount(data), ok: true };
 }

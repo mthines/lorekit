@@ -45,7 +45,11 @@ export function PostLikes({ slug }: { slug: string }) {
     if (delta <= 0) return;
     pendingDelta.current = 0;
 
-    const total = await addPostLikes(slug, delta);
+    const { total, ok } = await addPostLikes(slug, delta);
+    // The write fails SOFT and returns the unchanged total, so hand the delta
+    // back rather than dropping it: the session cap has already been charged
+    // for these likes, and the next tap, tab-hide, or unmount re-sends them.
+    if (!ok) pendingDelta.current += delta;
     // Fold in any taps that arrived while the write was in flight, so the
     // authoritative total never clobbers an unsent optimistic increment.
     setCount(total + pendingDelta.current);
