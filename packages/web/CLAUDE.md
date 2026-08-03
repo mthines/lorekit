@@ -39,32 +39,50 @@ wired up once and shared, so you get it for free:
 
 ---
 
-## Data fetching goes through LoreKit's REST API, never PostgREST
+## Data access goes through a REST endpoint, never a direct supabase-js query (REQUIRED)
 
-The dashboard is a **client of its own API**. Memory reads and writes call the
-`memories` edge function (`src/lib/api/`), typed end-to-end with
-`@lorekit/schemas`; they do NOT query the `memories` table through supabase-js.
+**This is a hard requirement, not a preference.** Any data this dashboard reads
+or writes to Postgres MUST go through a LoreKit REST **edge function**
+(`src/lib/api/*`), typed end-to-end with `@lorekit/schemas`. Do NOT call an RPC
+or `.from(<table>)` through supabase-js from a component, hook, or server action
+to move product data. If you find yourself reaching for `createClient().from(…)`
+or `.rpc(…)` for anything other than **auth**, stop and add an endpoint instead.
 
-- Why: querying the table directly means re-implementing predicates the REST
-  handlers already own — tenant scope, the active/archived partition, the expiry
-  filter, the keyset cursor, label containment quoting. Two implementations of
-  one contract drift, and they did: the row-cap bug `GET /memories/scopes` was
-  built to fix stayed live in the dashboard's scope tree, label catalog and
-  Overview charts for months after the endpoint shipped.
-- **A capability the dashboard needs becomes part of the public contract.** If a
-  view needs a filter or an aggregate the API does not expose, extend the
-  endpoint (schema in `@lorekit/schemas`, handler, OpenAPI, SQL assertions) —
-  do not reach past it with a private query.
+- **Why it is a rule.** Querying the table directly means re-implementing every
+  predicate the REST handler already owns — tenant scope, the active/archived
+  partition, the expiry filter, the keyset cursor, label containment quoting.
+  Two implementations of one contract drift, and they did: the row-cap bug
+  `GET /memories/scopes` was built to fix stayed live in the dashboard's scope
+  tree, label catalog and Overview charts for months after the endpoint shipped.
+- **A capability the dashboard needs becomes part of the PUBLIC contract.** When
+  a view needs a filter, an aggregate, or a brand-new operation the API does not
+  expose, you extend the surface — **all of**: a schema in `@lorekit/schemas`
+  (+ its `./<name>` package export and `MIRRORED_SCHEMA_FILES` entry so the edge
+  copy exists), a handler in a `supabase/functions/<fn>/`, an OpenAPI
+  registration in `packages/schemas/src/openapi/spec.ts`, and SQL assertions in
+  `supabase/tests/migrations.test.sql` — and only then call it from `src/lib/api`.
+  You do not reach past the API with a private query.
+- **The blog like counter is the worked example (and the one PUBLIC endpoint).**
+  It could have been a two-line supabase-js RPC call; it is instead the `blog`
+  edge function (`GET`/`POST /blog/likes`), consumed via `src/lib/api/blog-likes.ts`.
+  It differs from every other route in one way only — it is unauthenticated (the
+  blog is public and likes are anonymous), so it uses `publicRestFetch` (no token)
+  instead of `restFetch`. Everything else is the same pattern: schema in
+  `@lorekit/schemas/blog`, handler in `supabase/functions/blog/`, OpenAPI path,
+  and `migrations.test.sql` §73. **Do not "simplify" it back to a direct RPC.**
 - Reads that must aggregate over the whole account (counts, catalogs, activity)
   belong in Postgres behind an endpoint, never in a `select … limit N` plus a
   browser-side reduce: PostgREST truncates at its row cap with no error, so the
   rollup is quietly wrong for exactly the accounts that have the most data.
 - The credential is the user's own Supabase session token
   (`lib/api/session-browser.ts` / `session-server.ts`), so RLS applies exactly as
-  it did before. No service key, no API token.
-- **Supabase-js stays** for what it is actually for: auth (sign-in, session,
-  password) and the server actions covering surfaces the REST API does not
-  expose yet (orgs, invites, tokens, audit log).
+  it did before. No service key, no API token. (The public `blog` endpoint sends
+  no credential at all.)
+- **Supabase-js stays** for exactly one thing plus a shrinking list: **auth**
+  (sign-in, session, password), and the server actions covering surfaces the REST
+  API does not expose yet (orgs, invites, tokens, audit log). Those server actions
+  are the migration backlog, not a licence to add a new direct `.from(…)`/`.rpc(…)`
+  read for product data — new surfaces get an endpoint.
 
 ## Conventions specific to this package
 

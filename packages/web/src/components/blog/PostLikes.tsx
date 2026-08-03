@@ -7,7 +7,7 @@ import {
   parseSessionLikes,
   sessionLikesKey,
 } from '@/lib/blog/likes';
-import { addPostLikes, getPostLikes } from '@/lib/blog/likes-actions';
+import { addBlogLikesRequest, getBlogLikesRequest } from '@/lib/api/blog-likes';
 import { LikeButton } from './LikeButton';
 
 /**
@@ -56,20 +56,16 @@ export function PostLikes({ slug }: { slug: string }) {
       pendingDelta.current = 0;
 
       try {
-        const { total, ok } = await addPostLikes(slug, delta);
-        // The write fails SOFT and returns the unchanged total, so hand the
-        // delta back rather than dropping it: the session cap has already been
-        // charged for these likes, and the next tap, tab-hide, or unmount
-        // re-sends them.
-        if (!ok) pendingDelta.current += delta;
+        const { likes } = await addBlogLikesRequest(slug, delta);
         // Fold in any taps that arrived while the write was in flight, so the
         // authoritative total never clobbers an unsent optimistic increment.
-        setCount(total + pendingDelta.current);
+        setCount(likes + pendingDelta.current);
       } catch {
-        // The action itself threw (offline, aborted navigation). Same contract
-        // as a soft failure: keep the delta, leave the optimistic count alone.
-        // Swallowed so the queue never becomes a rejected promise every later
-        // flush would inherit.
+        // The REST call threw (offline, cold function, 4xx). A like is a vanity
+        // metric — never surface an error; hand the delta back so the next tap,
+        // tab-hide, or unmount re-sends it (the session cap already charged for
+        // it, and the optimistic count already shows it). Swallowed so the queue
+        // never becomes a rejected promise every later flush would inherit.
         pendingDelta.current += delta;
       }
     });
@@ -81,12 +77,17 @@ export function PostLikes({ slug }: { slug: string }) {
   useEffect(() => {
     let active = true;
     setSessionLikes(parseSessionLikes(readStored(slug)));
-    getPostLikes(slug).then((total) => {
-      if (active) {
-        setCount(total);
-        setLoading(false);
-      }
-    });
+    getBlogLikesRequest(slug)
+      .then(({ likes }) => {
+        if (active) setCount(likes);
+      })
+      .catch(() => {
+        // Offline / cold function — show 0 rather than an error; a like still
+        // works and reconciles on the next successful flush.
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
     return () => {
       active = false;
     };

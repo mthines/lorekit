@@ -21,6 +21,7 @@ describe('generateSpec', () => {
 
   it('documents every REST route the edge functions serve', () => {
     expect(Object.keys(spec.paths).sort()).toEqual([
+      '/blog/likes',
       '/memories',
       '/memories/activity',
       '/memories/facets',
@@ -66,6 +67,7 @@ describe('generateSpec', () => {
       'OrgInviteList',
       'CreateInviteBody',
       'UsageStatsResponse',
+      'BlogLikes',
       'Error',
     ]) {
       expect(spec.components.schemas[name], `missing component: ${name}`).toBeDefined();

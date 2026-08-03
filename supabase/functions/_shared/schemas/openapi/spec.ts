@@ -64,6 +64,11 @@ import {
   UsageStatsQuerySchema,
   UsageStatsResponseSchema,
 } from '../usage.ts';
+import {
+  GetBlogLikesQuerySchema,
+  LikeBlogBodySchema,
+  BlogLikesResponseSchema,
+} from '../blog.ts';
 
 let _cachedSpec: Record<string, unknown> | null = null;
 
@@ -118,6 +123,7 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   registry.register('OrgInvite', OrgInviteSchema);
   registry.register('OrgInviteList', OrgInviteListResponseSchema);
   registry.register('CreateInviteBody', CreateInviteBodySchema);
+  registry.register('BlogLikes', BlogLikesResponseSchema);
   registry.register('Error', ErrorResponseSchema);
 
   const bearerAuth = registry.registerComponent('securitySchemes', 'BearerAuth', {
@@ -342,6 +348,25 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     responses: { 204: { description: 'Revoked' }, 401: errorResponse, 403: errorResponse },
   });
 
+  // ── Blog (PUBLIC — no auth) ─────────────────────────────────────────────────
+  // The blog like counter is the one unauthenticated REST surface: the blog is a
+  // public page and a like accumulates across all anonymous visitors. `security:
+  // []` overrides the document-level default so the docs show these as open.
+  const blogLikesResponse = {
+    description: "The post's global like total",
+    content: { 'application/json': { schema: BlogLikesResponseSchema } },
+  };
+  registry.registerPath({
+    method: 'get', path: '/blog/likes', summary: 'Get a blog post\'s like total (public)', tags: ['Blog'],
+    security: [], request: { query: GetBlogLikesQuerySchema },
+    responses: { 200: blogLikesResponse, 400: errorResponse },
+  });
+  registry.registerPath({
+    method: 'post', path: '/blog/likes', summary: 'Add a like to a blog post (public)', tags: ['Blog'],
+    security: [], request: { body: { content: { 'application/json': { schema: LikeBlogBodySchema } } } },
+    responses: { 200: blogLikesResponse, 400: errorResponse },
+  });
+
   const description = [
     'Persistent memory for AI coding agents.',
     '',
@@ -405,7 +430,11 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     schema: { type: 'string', enum: ['dashboard', 'cli', 'mcp', 'api'] },
   };
   const paths = (doc['paths'] ?? {}) as Record<string, Record<string, { parameters?: unknown[] }>>;
-  for (const operations of Object.values(paths)) {
+  for (const [path, operations] of Object.entries(paths)) {
+    // The public blog surface implements neither usage attribution nor dry-run,
+    // so it must not advertise their headers. Every other (Bearer-authed) route
+    // gets the client header, and every mutating one the dry-run header.
+    if (path.startsWith('/blog')) continue;
     for (const [method, operation] of Object.entries(operations)) {
       operation.parameters = [...(operation.parameters ?? []), clientParam];
       if (!MUTATING_METHODS.has(method)) continue;
