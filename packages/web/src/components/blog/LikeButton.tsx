@@ -21,10 +21,16 @@ import {
  * component is trivially storyable with mock handlers and has no Supabase or
  * `localStorage` knowledge of its own.
  *
- * Motion is composite-only (`transform`/`opacity`) and gated on
- * `prefers-reduced-motion`: reduced readers keep the colour, count, and haptic
- * feedback but lose the pop and the burst. See `/animations` intensity ladder —
- * this is a rung-1/2 confirmation, not a hero moment.
+ * The PER-PRESS motion — the heart and count pop, the particle burst, the glow
+ * that fades up toward the cap — is composite-only (`transform`/`opacity`) and
+ * gated on `prefers-reduced-motion`: reduced readers keep the colour, count,
+ * and haptic feedback but lose the pop and the burst. The WARMTH is paint, not
+ * composite: the hover `border-color`, the heart's `fill`/`color`, and the
+ * inline `backgroundColor` mixed per warmth step all repaint. That is a
+ * deliberate trade — each fires once per discrete state change (hover, an
+ * accepted press, the session tally), never per animation frame, so the cost is
+ * one repaint of a small pill rather than a sustained one. See `/animations`
+ * intensity ladder — this is a rung-1/2 confirmation, not a hero moment.
  */
 
 interface LikeButtonProps {
