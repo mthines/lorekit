@@ -1,6 +1,6 @@
 # _shared/api — REST utility modules
 
-Nine modules shared by every REST edge function (`memories`, `orgs`, `openapi`).
+Ten modules shared by every REST edge function (`memories`, `orgs`, `openapi`).
 
 ## Import paths (from a function like `memories/`)
 
@@ -103,11 +103,40 @@ Rules:
   `packages/mcp-core/src/rest-response-outcome.ts`). Only the body read for the 429 cap-vs-rate
   split stays in the router — the decision itself is not inline here any more.
 
+### cors-origins.ts
+- The pure origin-matching half of CORS, mirrored from
+  `packages/mcp-core/src/cors-origins.ts` (the Deno edge function cannot cross-import the Node
+  package). `edge-parity.spec.ts` compares the two copies' executable source with comments
+  stripped, so they may document themselves differently but never behave differently, and
+  `packages/mcp-core/src/cors-origins.spec.ts` is their shared test home — `cors.ts` itself has
+  none, which is why the decision lives here and not there.
+- `expandOriginSiblings(origin)` — expands one configured origin to BOTH its apex and its `www.`
+  host, so an allowlist naming only `https://lorekit.io` still admits the canonical
+  `https://www.lorekit.io` the dashboard is served from (the apex 308-redirects to www). `*`
+  passes through unchanged; an unparseable value is returned as-is.
+- `expandAllowedOrigins(configured)` — the effective allowlist: `expandOriginSiblings` over every
+  configured origin, deduplicated.
+- `isOriginAllowed(allowed, origin)` — true when the expanded allowlist contains `*` or the exact
+  origin, OR the origin is a **loopback** dev host (`localhost` / `127.0.0.1` / `[::1]`, any port or
+  scheme, exact host match). Loopback is always admitted so a locally-run dashboard can reach the
+  deployed edge functions without the loopback host being in `ALLOWED_ORIGINS`; safe because every
+  request is Bearer-authenticated, so CORS is not the access control here.
+- `corsResponseHeaders(allowed, origin)` — the static CORS headers plus
+  `Access-Control-Allow-Origin` **only when the origin is allowed**. A disallowed origin gets no
+  such header rather than an empty one: the empty string is not a valid header value and a browser
+  reports it as a malformed response instead of a clean CORS rejection. A request with no `Origin`
+  at all (server-to-server, curl) falls back to `*`, reachable only when the allowlist is itself a
+  wildcard.
+
 ### cors.ts
-- `corsHeaders(req)` — returns CORS headers; respects `ALLOWED_ORIGINS` env var.
+- The env-reading shell over `cors-origins.ts`. It parses `ALLOWED_ORIGINS` (defaulting to
+  `https://lorekit.io` when `VERCEL_ENV=production`, otherwise `*`), expands it once at module
+  load with `expandAllowedOrigins`, and delegates every header decision. Do not reintroduce
+  matching logic here — it would have no test home.
+- `corsHeaders(req)` — `corsResponseHeaders(ALLOWED, req.headers.get('Origin') ?? '')`.
 - `handlePreflight(req)` — returns 204 with CORS headers for OPTIONS requests.
-- Emits `Access-Control-Expose-Headers: traceparent`. Every response produced under
-  `traceRequest` (`_shared/otel.ts`) carries a `traceparent` header built from the root
+- Emits `Access-Control-Expose-Headers: traceparent, X-LoreKit-Dry-Run`. Every response produced
+  under `traceRequest` (`_shared/otel.ts`) carries a `traceparent` header built from the root
   SERVER span's `traceId`/`spanId` + sampled flag; without the expose header a browser
   cannot read it. `traceRequest` never mutates the handler's Response in place — it copies
   the headers and rebuilds the Response (status, statusText, body preserved), so an

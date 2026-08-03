@@ -1,3 +1,14 @@
+<!--
+  GENERATED FILE — do not edit by hand.
+
+  Editorial prose:  packages/schemas/src/llms/template.md
+  Tool reference:   packages/schemas/src/tool-catalog.ts
+  Docs index:       packages/web/src/content/docs/*.mdx (frontmatter)
+
+  Regenerate:  pnpm nx generate:llms schemas
+  Guarded by:  packages/schemas/src/llms/render.spec.ts
+-->
+
 # LoreKit
 
 > Shared, persistent memory for AI coding agents. Lessons survive session ends, machine reboots, and CI runs — stored in Supabase Postgres and served over MCP. Agents read relevant lessons at task start and write new ones when they learn something worth keeping.
@@ -16,6 +27,26 @@ npx @lorekit/cli install \
 ```
 
 5. Verify: `npx @lorekit/cli doctor`
+
+`install` asks whether to wire the Claude Code lifecycle hooks. They inject
+context into the agent — none of them writes memory (the write is still the
+model calling `memory.write`). Three modes, selectable non-interactively with
+`--hooks <mode>`:
+
+- `all` — `SessionStart` (inject lessons) + `PostToolUseFailure` and `Stop`
+  (nudge to record one). Preselected on a fresh install.
+- `read-only` — `SessionStart` only: lessons are injected, nothing ever nudges.
+- `none` — skills + MCP only; memory stays model-invoked.
+
+An interactive re-run preselects whatever is already wired, so it never
+resurrects hooks you declined. `--yes` / a non-TTY run takes that same
+preselected value without asking — `all` on a fresh install, otherwise whatever
+is already wired, and a hand-wired set matching no preset keeps exactly that set
+(no event is added or removed; a stale hook command is still refreshed) — so
+pass `--hooks <mode>` when you need a specific wiring.
+`--hooks none` removes hooks that are already there; the older `--no-hooks` flag
+only skips wiring new ones. `npx @lorekit/cli doctor` reports which events are
+wired and in which scope.
 
 Full self-hosting guide (your own Supabase + Vercel): https://github.com/mthines/lorekit/blob/main/docs/install.md
 
@@ -53,6 +84,13 @@ lk_wo_<32 chars>   # write only
 Tokens never expire unless revoked. Stored as SHA-256 hashes — shown once on creation.
 Maximum 20 tokens per account. Generate and revoke at lorekit.io.
 
+A revoked token is rejected with HTTP 401 (`{"error":"Authentication required","code":"unauthorized"}`)
+on REST and `-32001` on MCP. `npx @lorekit/cli doctor` verifies this directly: its
+`connectivity` check probes the public `/health` function (network path only) and its
+`authentication` check makes one authenticated request — `PASS` when the token is accepted
+(including a `lk_wo_*` token answered 403 on a read), `FAIL` on 401. Replace a revoked token
+with `npx @lorekit/cli install --force`, which offers to keep, replace, or remove the stored one.
+
 ### Permission matrix
 
 | Tool | lk_rw_ | lk_ro_ | lk_wo_ |
@@ -63,8 +101,8 @@ Maximum 20 tokens per account. Generate and revoke at lorekit.io.
 | `memory.delete` | ✓ | ✗ | ✓ |
 | `memory.search` | ✓ | ✓ | ✗ |
 | `memory.archive` | ✓ | ✗ | ✓ |
-| `memory.restore` | ✓ | ✗ | ✓ |
 | `memory.list_archived` | ✓ | ✓ | ✗ |
+| `memory.restore` | ✓ | ✗ | ✓ |
 | `memory.purge` | ✓ | ✗ | ✓ |
 | `memory.purge_expired` | ✓ | ✗ | ✓ |
 
@@ -102,40 +140,45 @@ global                             # least specific
 
 ### memory.write
 
-Store or update a lesson. Upserts on (scope, key). Requires write permission.
+Store or update a lesson.
 
-Arguments:
+| Argument | Required | Type | Description |
+|----------|----------|------|-------------|
+| `scope` | ✓ | string | Canonical scope string, e.g. `repo::mthines/lorekit`. |
+| `key` | ✓ | string | Lesson identifier, unique within the scope. Max 512 characters. |
+| `value` | ✓ | string | Lesson body in markdown. Max 64 KB. |
+| `tags` |  | array | Free-form labels, e.g. `["skill::aw", "source::stuck-loop"]`. _(array of string)_ |
+| `source_agent` |  | string | Name of the agent writing this lesson. |
+| `trigger` |  | string | What triggered the write: `stuck-loop`, `pr-webhook`, `manual`. |
+| `created_at` |  | string | Optional ISO 8601 creation date. Use when migrating a pre-existing memory so it is dated by its original time instead of now. Rejected if invalid or in the future. Applies only when the memory is first created. _(date-time)_ |
+| `org` |  | string | Org slug to write under (org-owned write). Omit for a personal memory. You must be a write-capable member (member/admin/owner, not viewer) of the org, verified server-side — supplying an org slug you are not authorized for is rejected. |
+| `ttl_days` |  | integer | Number of days until the memory auto-expires. Omit for a permanent memory. On an update, supplying ttl_days refreshes the expiry; omitting it leaves the existing expiry unchanged. _(1–365)_ |
+| `clear_ttl` |  | boolean | When true, removes the existing expiry and makes the memory permanent again. Takes precedence over ttl_days when both are supplied. |
+| `origin_repo` |  | string | Provenance: the owner/name of the repository this memory was recorded from. Distinct from `scope`, which says where the lesson APPLIES. |
+| `origin_branch` |  | string | Provenance: the git branch this memory was recorded from. Stored verbatim (case-sensitive) so its GitHub link resolves. |
+| `origin_commit` |  | string | Provenance: the commit SHA (7-40 hex characters) checked out when this memory was recorded. |
+| `origin_pr` |  | integer | Provenance: the pull request number this memory was recorded from. Combined with origin_repo it renders as a link to the PR. _(min 1)_ |
 
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `scope` | ✓ | Canonical scope string |
-| `key` | ✓ | Lesson identifier (max 512 chars) |
-| `value` | ✓ | Lesson body in markdown (max 64 KB) |
-| `tags` | | Array of strings e.g. `["skill::aw", "source::stuck-loop"]` |
-| `source_agent` | | Agent name writing this lesson |
-| `trigger` | | What triggered the write: `stuck-loop`, `pr-webhook`, `manual` |
-| `org` | | Org slug — writes lesson as org-owned. You must be a write-capable member. Omit for personal. |
-| `ttl_days` | | Integer 1–365. Auto-expires the lesson. On update, refreshes expiry. |
-| `clear_ttl` | | Boolean. When true, removes expiry (makes permanent again). Overrides `ttl_days`. |
-| `created_at` | | ISO 8601 timestamp. Use when migrating a pre-existing lesson. Rejected if in the future. |
-| `origin_repo` | | Provenance: `owner/name` of the repository the lesson was recorded from. Lowercased. |
-| `origin_branch` | | Provenance: the git branch it was recorded from. Stored verbatim (case-sensitive). |
-| `origin_commit` | | Provenance: the commit SHA (7–40 hex characters) that was checked out. |
-| `origin_pr` | | Provenance: the pull request number the lesson came out of. |
-
-**Provenance (`origin_*`):** `scope` says where a lesson *applies*; the four `origin_*` fields say where it was *recorded from*. Each is independently optional and the last KNOWN value wins — on an update, a field you omit keeps whatever a previous write recorded rather than being erased. A malformed value is rejected, never silently dropped.
+Requires **write** permission.
 
 Returns: `{ "id": "<uuid>", "created_at": "<iso>" }` — plus optional `"expires_at"` and `"notice"` (when a write fell back to personal because the scope is bound to an org the caller cannot write to).
 
-**Scope→org binding:** An org admin can bind a scope (e.g. a repo) to an org. A write under a bound scope with no explicit `org` auto-routes to that org for write-capable members. A non-member's write falls back to personal (never rejected) with a `notice`.
+**Provenance (`origin_*`):** `scope` says where a lesson *applies*; the four `origin_*` fields say where it was *recorded from*. Each is independently optional and the last KNOWN value wins — on an update, a field you omit keeps whatever a previous write recorded rather than being erased. A malformed value is rejected, never silently dropped.
+
+**Scope→org binding:** An org admin can bind a scope (e.g. a repo) to an org. A write under a bound scope with no explicit `org` auto-routes to that org for write-capable members. A non-member’s write falls back to personal (never rejected) with a `notice`.
 
 ---
 
 ### memory.read
 
-Read one lesson by scope + key.
+Read a lesson by scope and key.
 
-Arguments: `scope` (required), `key` (required).
+| Argument | Required | Type | Description |
+|----------|----------|------|-------------|
+| `scope` | ✓ | string | Canonical scope string, e.g. `repo::mthines/lorekit`. |
+| `key` | ✓ | string | Lesson identifier, unique within the scope. Max 512 characters. |
+
+Requires **read** permission.
 
 Returns: `{ "value": "<markdown>", "updated_at": "<iso>" }` or `null` if not found.
 
@@ -143,31 +186,49 @@ Returns: `{ "value": "<markdown>", "updated_at": "<iso>" }` or `null` if not fou
 
 ### memory.list
 
-List all active lessons for a scope, newest first.
+List lessons for a scope.
 
-Arguments: `scope` (required), `tags` (optional array — OR filter), `limit` (default 50, max 100).
+| Argument | Required | Type | Description |
+|----------|----------|------|-------------|
+| `scope` | ✓ | string | Canonical scope string, e.g. `repo::mthines/lorekit`. |
+| `tags` |  | array | Filter to entries carrying ANY of these labels (OR). _(array of string)_ |
+| `limit` |  | integer | Maximum entries to return. _(1–100, default `50`)_ |
 
-Returns: `{ "entries": [{ "key", "value", "tags", "updated_at" }] }`
+Requires **read** permission.
+
+Returns: `{ "entries": [{ "key", "value", "tags", "updated_at" }] }` — newest first.
 
 ---
 
 ### memory.delete
 
-Soft-archive a lesson by default (hidden from reads, recoverable via `memory.restore`). Use `force: true` to permanently hard-delete (unrecoverable). Requires write permission.
+Soft-archive a lesson (default) or hard-delete it (force: true). Archived lessons are hidden from reads but can be restored.
 
-Arguments: `scope` (required), `key` (required), `force` (boolean, default `false`), `org` (org slug for org-owned lessons; requires `member`/`admin`/`owner` for soft-archive, `admin`/`owner` for hard-delete).
+| Argument | Required | Type | Description |
+|----------|----------|------|-------------|
+| `scope` | ✓ | string | Canonical scope string, e.g. `repo::mthines/lorekit`. |
+| `key` | ✓ | string | Lesson identifier, unique within the scope. Max 512 characters. |
+| `force` |  | boolean | Hard-delete immediately (unrecoverable). Defaults to false (soft-archive). _(default `false`)_ |
+| `org` |  | string | Org slug to delete under (org-owned delete). Omit for a personal memory. Soft-archive requires a member/admin/owner role; hard-delete (force: true) requires admin/owner — verified server-side. |
 
-Returns: `{ "deleted": boolean, "archived": boolean }`
-- Soft-archive (default): `{ "deleted": false, "archived": true }` if found.
-- Hard-delete (`force: true`): `{ "deleted": true, "archived": false }` if found.
+Requires **write** permission.
+
+Returns: `{ "deleted": boolean, "archived": boolean }` — soft-archive returns `{ deleted: false, archived: true }`, hard-delete returns `{ deleted: true, archived: false }`, both `false` when the lesson was not found.
 
 ---
 
 ### memory.search
 
-Full-text search across lessons. Supports owner-level scope wildcards.
+Full-text search across lessons.
 
-Arguments: `q` (required, full-text), `scopes` (optional array, supports `repo::owner/*` wildcard), `tags` (optional AND-filter), `limit` (default 20, max 100).
+| Argument | Required | Type | Description |
+|----------|----------|------|-------------|
+| `q` | ✓ | string | Full-text query. |
+| `scopes` |  | array | Scopes to search. Accepts an owner-level wildcard, e.g. `repo::mthines/*` — the only tool that does. _(array of string)_ |
+| `tags` |  | array | Filter to entries carrying ALL of these labels (AND). _(array of string)_ |
+| `limit` |  | integer | Maximum entries to return. _(1–100, default `20`)_ |
+
+Requires **read** permission.
 
 Returns: `{ "entries": [{ "key", "value", "scope", "tags", "rank" }] }`
 
@@ -175,39 +236,58 @@ Returns: `{ "entries": [{ "key", "value", "scope", "tags", "rank" }] }`
 
 ### memory.archive
 
-Soft-archive a lesson. Archived entries are hidden from `memory.read` and `memory.list` but can be listed via `memory.list_archived` and restored via `memory.restore`. Requires write permission.
+Soft-archive a lesson. Archived lessons are hidden from reads but can be restored via memory.restore.
 
-Arguments: `scope` (required), `key` (required).
+| Argument | Required | Type | Description |
+|----------|----------|------|-------------|
+| `scope` | ✓ | string | Canonical scope string, e.g. `repo::mthines/lorekit`. |
+| `key` | ✓ | string | Lesson identifier, unique within the scope. Max 512 characters. |
+
+Requires **write** permission.
 
 Returns: `{ "archived": true }` if found and archived, `{ "archived": false }` if already archived or not found.
 
 ---
 
-### memory.restore
-
-Restore a soft-archived lesson to active. Requires write permission.
-
-Arguments: `scope` (required), `key` (required).
-
-Returns: `{ "restored": true }` if restored, `{ "restored": false }` if already active or not found.
-
----
-
 ### memory.list_archived
 
-List soft-archived lessons for a scope. Requires read permission.
+List archived (soft-deleted) lessons for a scope.
 
-Arguments: `scope` (required), `limit` (default 50, max 100).
+| Argument | Required | Type | Description |
+|----------|----------|------|-------------|
+| `scope` | ✓ | string | Canonical scope string, e.g. `repo::mthines/lorekit`. |
+| `limit` |  | integer | Maximum entries to return. _(1–100, default `50`)_ |
+
+Requires **read** permission.
 
 Returns: `{ "entries": [{ "key", "value", "tags", "updated_at", "archived_at" }] }`
 
 ---
 
+### memory.restore
+
+Restore an archived lesson back to active.
+
+| Argument | Required | Type | Description |
+|----------|----------|------|-------------|
+| `scope` | ✓ | string | Canonical scope string, e.g. `repo::mthines/lorekit`. |
+| `key` | ✓ | string | Lesson identifier, unique within the scope. Max 512 characters. |
+
+Requires **write** permission.
+
+Returns: `{ "restored": true }` if restored, `{ "restored": false }` if already active or not found.
+
+---
+
 ### memory.purge
 
-Permanently delete archived lessons older than `retention_days`. Unrecoverable. Requires write permission.
+Permanently delete archived lessons older than retention_days (default 30). Unrecoverable.
 
-Arguments: `retention_days` (default 30, min 1, max 365).
+| Argument | Required | Type | Description |
+|----------|----------|------|-------------|
+| `retention_days` |  | integer | Only purge archived lessons older than this many days. _(1–365, default `30`)_ |
+
+Requires **write** permission.
 
 Returns: `{ "purged": <count> }`
 
@@ -215,9 +295,11 @@ Returns: `{ "purged": <count> }`
 
 ### memory.purge_expired
 
-Permanently hard-delete all TTL-expired lessons for the current user. Requires write permission.
+Permanently delete all TTL-expired memories for the current user. Unrecoverable.
 
-No arguments required.
+No arguments.
+
+Requires **write** permission.
 
 Returns: `{ "purged": <count> }`
 
@@ -225,9 +307,14 @@ Returns: `{ "purged": <count> }`
 
 ### org.create
 
-Create a new organization. You become its owner. Requires dashboard session JWT (not available via `lk_*` tokens).
+Create a new organization. You become its owner automatically. The slug must be globally unique and lowercase.
 
-Arguments: `slug` (required, globally unique lowercase), `name` (required, display name).
+| Argument | Required | Type | Description |
+|----------|----------|------|-------------|
+| `slug` | ✓ | string | Unique lowercase org identifier, e.g. "my-team" |
+| `name` | ✓ | string | Human-readable display name |
+
+Requires a dashboard session JWT — not available via `lk_*` tokens.
 
 Returns: `{ "id", "slug", "name" }`
 
@@ -235,7 +322,11 @@ Returns: `{ "id", "slug", "name" }`
 
 ### org.list
 
-List all organizations you are a member of. Requires dashboard session JWT.
+List all organizations you are a member of, with your role in each.
+
+No arguments.
+
+Requires a dashboard session JWT — not available via `lk_*` tokens.
 
 Returns: `{ "entries": [{ "id", "slug", "name", "role", "created_at" }] }` — roles: `owner`, `admin`, `member`, `viewer`.
 
@@ -243,17 +334,28 @@ Returns: `{ "entries": [{ "id", "slug", "name", "role", "created_at" }] }` — r
 
 ### org.rename
 
-Rename an organization's display name. Requires `admin` or `owner` role. Requires dashboard session JWT.
+Rename an organization's display name. Requires admin or owner role.
 
-Arguments: `slug` (required), `name` (required, new display name).
+| Argument | Required | Type | Description |
+|----------|----------|------|-------------|
+| `slug` | ✓ | string | The org slug to update |
+| `name` | ✓ | string | New display name |
+
+Requires a dashboard session JWT — not available via `lk_*` tokens.
+
+Returns: `{ "id", "slug", "name" }`
 
 ---
 
 ### org.delete
 
-Soft-delete an organization. Requires `owner` role. All org-owned lore is immediately hidden. Requires dashboard session JWT.
+Delete an organization. Requires owner role. Soft-deletes the org — all org lore is immediately hidden from reads. Unrecoverable via MCP.
 
-Arguments: `slug` (required).
+| Argument | Required | Type | Description |
+|----------|----------|------|-------------|
+| `slug` | ✓ | string | The org slug to delete |
+
+Requires a dashboard session JWT — not available via `lk_*` tokens.
 
 Returns: `{ "deleted": true, "slug": "<slug>" }`
 
@@ -283,6 +385,7 @@ Rate-limited requests receive HTTP 429 with a `Retry-After` header.
 | JSON-RPC code | Meaning |
 |---------------|---------|
 | `-32001` | Unauthorized — missing, invalid, expired, or wrong-permission-tier token (e.g. read-only token on a write, write-only token on a read) |
+| `-32003` | Forbidden — authenticated, but not permitted for this tool (e.g. an `lk_*` token calling an `org.*` tool) |
 | `-32603` | Execution error — DB error, scope validation failure, org permission denied (`LK002`), or memory cap exceeded (`LK001` / `memory_cap`) |
 | `-32700` | Parse error — malformed JSON body |
 | `-32601` | Unknown tool name |
@@ -293,6 +396,18 @@ Rate-limited requests receive HTTP 429 with a `Retry-After` header.
 - **Web dashboard** — Next.js 15 on Vercel at `lorekit.io`
 - **Database** — Supabase Postgres with row-level security and full-text search
 - **CLI** — `@lorekit/cli` (Node, zero-dependency ESM, works offline)
+
+## Guides
+
+- [Getting started](https://lorekit.io/docs/setup) — Connect LoreKit to your AI coding agent in three steps — read and write memories so knowledge accumulates across sessions.
+- [Offline storage](https://lorekit.io/docs/offline) — Store lore locally on your machine using the LoreKit CLI — no account, no network, full privacy. Memories live in a plain directory you own and control.
+- [Remote storage](https://lorekit.io/docs/remote) — Sync lore to the hosted LoreKit MCP server so your memories are available on every machine, from every agent, without any extra setup on each device.
+- [Team sharing](https://lorekit.io/docs/organization) — Create an organization, invite teammates, and share one authoritative set of lore across the whole team. Updates are instant — no syncing, no copy-fan-out.
+- [Private lore](https://lorekit.io/docs/private) — Every memory is personal by default — visible only to the user or token that wrote it. This tutorial explains how personal and org-owned lore coexist, and how to keep sensitive memories private even in a shared team environment.
+- [Tags & scopes](https://lorekit.io/docs/tags) — Scopes partition lore by location (global, repo, branch). Tags are free-form labels that cut across scopes — use them to identify memory type, source agent, workflow, or any dimension you care about.
+- [Configuration](https://lorekit.io/docs/config) — LoreKit reads two optional JSON config files that decide the memory mode, the store location, and write & hook behaviour. Both files share the same schema and every field is optional — start with an empty file and add only what you need.
+- [Use cases](https://lorekit.io/docs/use-cases) — End-to-end examples showing how scopes, tags, and org sharing come together for real development workflows.
+- [Deep links](https://lorekit.io/docs/deep-links) — Every view in the LoreKit dashboard is a shareable URL. Link straight to a scope in the Explorer, open one memory's detail sheet, or share a filtered search — from the terminal, a PR, or a chat message. Generate them by hand or with the CLI's link command and --link flag.
 
 ## Key documentation
 

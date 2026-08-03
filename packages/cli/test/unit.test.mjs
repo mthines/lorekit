@@ -434,6 +434,90 @@ test('org ops on an unusable store never call fetch', async () => {
   }
 });
 
+// ── verifyAuth(): the probe that actually judges the TOKEN ───────────────────
+//
+// `ping()` hits the PUBLIC /health function, so it is green for a revoked token
+// — which is exactly how doctor came to report "connectivity — reachable" while
+// every remote read answered "Authentication required". verifyAuth is the
+// authenticated half; these tests pin its classification, because each status
+// means something different to a user and collapsing them is the original bug
+// in a new shape.
+
+test('verifyAuth() makes ONE authenticated, side-effect-free GET', async () => {
+  const { result, calls } = await captureRestCalls((store) => store.verifyAuth(), {
+    status: 200,
+    body: '{"entries":[]}',
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'GET');
+  assert.equal(calls[0].url, `${REMOTE_REST_BASE}/memories?limit=1`);
+  assert.equal(calls[0].body, undefined, 'the probe must not send a body');
+  assertNoMcp(calls);
+  assert.equal(result.ok, true);
+  assert.equal(result.authenticated, true);
+  assert.equal(result.permitted, true);
+});
+
+test('verifyAuth() reports a 401 as NOT authenticated (the revoked-token case)', async () => {
+  const { result } = await captureRestCalls((store) => store.verifyAuth(), {
+    status: 401,
+    body: '{"error":"Authentication required","code":"unauthorized"}',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.authenticated, false);
+  assert.equal(result.httpStatus, 401);
+});
+
+test('verifyAuth() reports a 403 as authenticated but unpermitted (a healthy lk_wo_ token)', async () => {
+  const { result } = await captureRestCalls((store) => store.verifyAuth(), {
+    status: 403,
+    body: '{"error":"Read permission required","code":"forbidden"}',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.authenticated, true);
+  assert.equal(result.permitted, false);
+});
+
+// `GET /memories` has no rate-limit check (the only `tooManyRequests()` call
+// sites are the create/purge write paths), so a 429 on this probe comes from the
+// platform edge BEFORE `resolveRestAuth` — it cannot vouch for the token.
+test('verifyAuth() leaves the verdict UNKNOWN on a 429 — it never reached auth', async () => {
+  const { result } = await captureRestCalls((store) => store.verifyAuth(), {
+    status: 429,
+    body: '{"error":"Too many requests","code":"rate_limited"}',
+  });
+  assert.equal(result.authenticated, null, 'a 429 says nothing about the credential');
+  assert.equal(result.rateLimited, true, 'still flagged so doctor can say "retry shortly"');
+  assert.equal(result.ok, true, 'the probe itself completed; doctor branches on rateLimited first');
+});
+
+test('verifyAuth() leaves the verdict UNKNOWN on a server error, never "revoked"', async () => {
+  const { result } = await captureRestCalls((store) => store.verifyAuth(), { status: 500, body: 'boom' });
+  assert.equal(result.ok, false);
+  assert.equal(result.authenticated, null, 'a 500 says nothing about the credential');
+});
+
+test('verifyAuth() leaves the verdict UNKNOWN on a network error', async () => {
+  const { result } = await captureRestCalls((store) => store.verifyAuth(), { throws: 'ECONNREFUSED' });
+  assert.equal(result.authenticated, null);
+  assert.match(String(result.networkError), /ECONNREFUSED/);
+});
+
+test('verifyAuth() on an unusable store never calls fetch', async () => {
+  const original = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async () => { called = true; throw new Error('should not be reached'); };
+  try {
+    const res = await createRemoteStore({ endpoint: null, token: null }).verifyAuth();
+    assert.equal(res.ok, false);
+    assert.equal(res.unusable, true);
+    assert.equal(res.authenticated, null);
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 // ── ping() no longer falls back to the MCP endpoint ───────────────────────────
 
 test('ping() probes /health and never the MCP endpoint', async () => {

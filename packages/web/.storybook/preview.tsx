@@ -30,6 +30,54 @@ try {
   // Ignore — a story that needs the URL will surface it via the MSW wildcard.
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// A stubbed Supabase session for the MSW-mocked stories.
+//
+// The dashboard's reads go through LoreKit's REST API, authenticated with the
+// signed-in user's access token (`lib/api/session-browser.ts`). In a story there
+// is no sign-in, so without a session every hook would short-circuit to its
+// empty state and the full-page stories would snapshot an empty dashboard.
+//
+// `@supabase/ssr`'s browser client reads its session from a cookie named
+// `sb-<project-ref>-auth-token`, base64-encoded with a `base64-` marker. Writing
+// one here gives `getSession()` something to return WITHOUT any network call —
+// the token is a placeholder string, and every request carrying it is
+// intercepted by MSW, so it is never presented to a real server.
+//
+// `expires_at` is far in the future so the client never tries to refresh it
+// (a refresh would be an unmocked `/auth/v1/token` round trip).
+// ─────────────────────────────────────────────────────────────────────────────
+function seedStorybookSession(): void {
+  if (typeof document === 'undefined') return;
+  const ref = process.env['NEXT_PUBLIC_SUPABASE_PROJECT_REF'] ?? 'pqokxlhvnosogizsjztg';
+  const session = {
+    access_token: 'storybook-access-token',
+    refresh_token: 'storybook-refresh-token',
+    token_type: 'bearer',
+    expires_in: 3600,
+    expires_at: Math.floor(Date.UTC(2099, 0, 1) / 1000),
+    user: {
+      id: '00000000-0000-4000-8000-000000000001',
+      aud: 'authenticated',
+      role: 'authenticated',
+      email: 'storybook@lorekit.io',
+      app_metadata: { provider: 'email' },
+      user_metadata: { user_name: 'storybook' },
+      created_at: '2026-01-01T00:00:00.000Z',
+    },
+  };
+  // base64URL, not plain base64: `@supabase/ssr` decodes the `base64-` payload
+  // with `stringFromBase64URL`, and a JSON session routinely contains bytes
+  // that encode to `+` or `/`.
+  const encoded = `base64-${btoa(JSON.stringify(session))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')}`;
+  document.cookie = `sb-${ref}-auth-token=${encoded}; path=/; SameSite=Lax`;
+}
+
+seedStorybookSession();
+
 // Register the MSW service worker once. `onUnhandledRequest: 'bypass'` lets story
 // assets (fonts, chunks) through untouched; only the Supabase endpoints declared
 // in each story's `parameters.msw.handlers` are intercepted. The worker file is

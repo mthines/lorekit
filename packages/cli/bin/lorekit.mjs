@@ -40,8 +40,10 @@ ${c.bold('Commands')}
               LoreKit MCP server, and install the deterministic hooks (memories
               on SessionStart, a nudge on tool failure + at Stop). Prompts to
               install for this project (.claude) or globally for every project
-              (~/.claude); --project / --global choose non-interactively,
-              --no-hooks skips the hooks (skills stay model-invoked only).
+              (~/.claude); --project / --global choose non-interactively.
+              Also prompts whether to wire the hooks (all / read-only /
+              none); --hooks <mode> chooses non-interactively and --no-hooks
+              skips them (skills stay model-invoked only).
   uninstall   Reverse install: remove the lorekit-memory + lorekit-setup skills,
               the MCP server entry, and the lifecycle hooks for the chosen scope. Surgical —
               other servers, hooks, and settings are left untouched. Prompts
@@ -119,6 +121,7 @@ ${c.bold('Options')}
                           default routes each entry by scope)
       --apply             Apply the migration (alias of --yes) (migrate)
   -y, --yes               Non-interactive / apply; never prompt
+      --hooks <mode>      Lifecycle hooks to wire: all | read-only | none (install)
       --no-hooks          Skip wiring the lifecycle hooks (install)
       --force             Overwrite existing skill files (install)
       --deep              Do a write→read→delete round-trip (doctor)
@@ -162,8 +165,19 @@ ${c.bold('Usage')}
   npx @lorekit/cli install [options]
 
 Scaffolds the lorekit-memory (runtime read/write) and lorekit-setup (loop
-authoring) skills, adds the LoreKit MCP server, and wires the deterministic
-hooks (memories on SessionStart, a nudge on tool failure + at Stop).
+authoring) skills, adds the LoreKit MCP server, and asks whether to wire the
+deterministic hooks. The hooks inject context — they never write memory
+themselves; the write is still the model calling memory.write.
+
+${c.bold('Hook modes')}
+  all         SessionStart (inject lessons) + PostToolUseFailure and Stop
+              (nudge you to record one). Preselected on a fresh install.
+  read-only   SessionStart only — lessons are injected, nothing ever nudges.
+  none        No hooks; the skills stay model-invoked only.
+
+An interactive run preselects whatever is already wired, so re-running install
+never resurrects hooks you declined. Answering "No hooks" (or --hooks none)
+REMOVES hooks that are already there; --no-hooks only skips wiring new ones.
 
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
@@ -171,13 +185,16 @@ ${c.bold('Options')}
       --global            Install for every project: ~/.claude/skills + ~/.claude.json
   -e, --endpoint <url>    LoreKit MCP endpoint (else LOREKIT_MCP_URL)
   -t, --token <token>     LoreKit token: lk_rw_* read+write, lk_ro_* read-only, lk_wo_* write-only
-      --no-hooks          Skip wiring the lifecycle hooks (skill stays model-invoked only)
+      --hooks <mode>      Wire the lifecycle hooks: all | read-only | none
+      --no-hooks          Skip wiring the lifecycle hooks (leaves existing ones alone)
       --force             Overwrite existing skill files
-  -y, --yes               Non-interactive; never prompt (defaults to --project)
+  -y, --yes               Non-interactive; never prompt (defaults to --project, and to the
+                          already-wired hooks — all on a fresh install)
 
 ${c.bold('Examples')}
   npx @lorekit/cli install --endpoint https://ref.supabase.co/functions/v1/mcp --token lk_rw_xxx
   npx @lorekit/cli install --global
+  npx @lorekit/cli install --hooks read-only --yes
   npx @lorekit/cli install --no-hooks --yes
 `,
   uninstall: `${c.bold('lorekit uninstall')} — reverse install for the chosen scope
@@ -575,7 +592,7 @@ ${c.bold('Options')}
 // typo like `--gloabl` should fail loudly, not quietly fall back to --project.
 const KNOWN_FLAGS = [
   'dir', 'project', 'global', 'endpoint', 'token', 'mode', 'store',
-  'from', 'to', 'apply', 'yes', 'no-hooks', 'force', 'deep', 'adapter',
+  'from', 'to', 'apply', 'yes', 'hooks', 'no-hooks', 'force', 'deep', 'adapter',
   'event', 'json', 'scope', 'threshold', 'help', 'version',
   'value', 'tags', 'source-agent', 'trigger', 'ttl-days', 'clear-ttl', 'org', 'remote', 'local',
   'link', 'base', 'q', 'owner', 'range', 'view', 'archived',

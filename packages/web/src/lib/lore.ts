@@ -2,19 +2,44 @@
 
 /**
  * Server actions for memory (lore) management.
- * Archive, restore, purge, and paginated list — all user-scoped.
+ * Update, archive, restore, purge, and paginated list — all user-scoped.
+ *
+ * Every one of these goes through LoreKit's own REST API (the `memories` edge
+ * function) rather than querying PostgREST directly. They used to do the
+ * latter: a second, hand-written copy of predicates the REST handlers already
+ * own — the tenant scope, the active-vs-archived partition, the expiry filter,
+ * the keyset cursor, the label containment quoting. Two implementations of one
+ * contract drift, and these had. The dashboard is now a client of the same
+ * documented surface the CLI and every agent use.
+ *
+ * They stay SERVER actions (rather than moving into the client hooks) so the
+ * Explorer's data path is unchanged from the components' point of view, and so
+ * the access token is read from the cookie session rather than handed to the
+ * browser bundle.
  */
 
-import { createServerClient } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
-import { decodeCursor } from '@/lib/pagination/cursor';
-import { clampPageSize, assemblePage, type Page } from '@/lib/pagination/keyset';
-import { substringNeedle, dateRangeBounds, type DateRangeInput } from '@/lib/pagination/filters';
-import { applyKeyset, runPaginatedQuery, type FilterBuilderLike } from '@/lib/pagination/apply';
+import type { Page } from '@/lib/pagination/keyset';
+import { clampPageSize } from '@/lib/pagination/keyset';
+import { dateRangeBounds, type DateRangeInput } from '@/lib/pagination/filters';
 import type { LessonEntry } from '@/components/lore/LessonCard';
-import { scopeType } from '@/lib/scope';
-import { ownerFromMemoryRow } from '@/lib/ownership';
-import { normalizeTags, pgArrayLiteral } from '@/lib/tag-filter';
+import { normalizeTags } from '@/lib/tag-filter';
+import { lessonFromMemoryEntry } from '@/lib/lesson-entry';
+import { serverAccessToken } from '@/lib/api/session-server';
+import { RestApiError } from '@/lib/api/rest';
+import {
+  archiveMemoryRequest,
+  listMemoriesRequest,
+  purgeMemoriesRequest,
+  restoreMemoryRequest,
+  updateMemoryRequest,
+} from '@/lib/api/memories';
+
+/** Turn any thrown value into the `{ error }` string these actions return. */
+function messageFor(err: unknown): string {
+  if (err instanceof RestApiError) return err.message;
+  return err instanceof Error ? err.message : 'Request failed';
+}
 
 // ── Edit / update ─────────────────────────────────────────────────────────────
 
@@ -29,12 +54,15 @@ export interface UpdateLessonInput {
 }
 
 /**
- * Update an existing active memory's value and tags.
+ * Update an existing active memory's value, labels and TTL.
  *
- * Delegates to the existing `memory_write` RPC, which performs a
- * conflict-on-upsert. This preserves the `source_agent` / `trigger` /
- * `created_at` fields (they are passed through unchanged) and records a
- * `memory.update` audit event (because `xmax !== 0` on the conflict path).
+ * Two calls, because the memory is addressed by its natural key here and
+ * `PATCH /memories/:id` is addressed by row id: resolve the row, then patch it.
+ * A PATCH is deliberately preferred over the `POST /memories` upsert — it
+ * touches only the named columns, so `source_agent` / `trigger` / `created_at`
+ * are preserved by construction instead of being read back and forwarded by
+ * hand (which is what the previous direct-RPC version had to do, and what would
+ * silently blank them the day someone forgot a field).
  *
  * Returns `{ id }` on success, or `{ error }` on failure.
  */
@@ -43,90 +71,68 @@ export async function updateLesson(
   key: string,
   input: UpdateLessonInput,
 ): Promise<{ id: string | null; error?: string }> {
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { id: null, error: 'Not authenticated' };
+  const token = await serverAccessToken();
+  if (!token) return { id: null, error: 'Not authenticated' };
 
-  // Fetch the current row so we can forward source_agent / trigger unchanged.
-  const { data: current, error: fetchError } = await supabase
-    .from('memories')
-    .select('source_agent, trigger')
-    .eq('user_id', user.id)
-    .eq('scope', scope)
-    .eq('key', key)
-    .is('archived_at', null)
-    .single();
+  try {
+    const found = await listMemoriesRequest(token, { scope, key, limit: 1 });
+    const target = found.entries[0];
+    if (!target) return { id: null, error: 'Memory not found' };
 
-  if (fetchError || !current) {
-    return { id: null, error: fetchError?.message ?? 'Memory not found' };
+    const updated = await updateMemoryRequest(token, target.id, {
+      value: input.value,
+      tags: input.tags,
+      ...(input.ttl_days != null ? { ttl_days: input.ttl_days } : {}),
+      ...(input.clear_ttl ? { clear_ttl: true } : {}),
+    });
+
+    revalidatePath('/lore');
+    return { id: updated.id };
+  } catch (err) {
+    return { id: null, error: messageFor(err) };
   }
-
-  const { data, error } = await supabase
-    .rpc('memory_write', {
-      p_user_id: user.id,
-      p_scope: scope,
-      p_key: key,
-      p_value: input.value,
-      p_tags: input.tags,
-      p_source_agent: (current as { source_agent: string | null }).source_agent ?? null,
-      p_trigger: (current as { trigger: string | null }).trigger ?? null,
-      p_created_at: null,
-      // Migration 00038 renamed p_ttl_days to p_ttl_seconds. PostgREST resolves
-      // an RPC by argument NAME, so the old name matched no function at all
-      // (PGRST202) and every edit made through this action failed — the stale
-      // `p_ttl_days` key in the hand-edited generated types was what let it
-      // typecheck. `ttl_days` stays the input field name; the days→seconds
-      // conversion happens here, exactly as memories/handlers/create.ts does it.
-      p_ttl_seconds: input.ttl_days != null ? input.ttl_days * 86_400 : null,
-      p_clear_ttl: input.clear_ttl ?? false,
-    })
-    .single();
-
-  if (error) return { id: null, error: error.message };
-  revalidatePath('/lore');
-  return { id: (data as { id: string }).id };
 }
 
-/** Soft-archive a memory. Returns the archived row id, or null if not found. */
-export async function archiveLesson(
-  scope: string,
-  key: string,
-): Promise<{ id: string | null; error?: string }> {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { id: null, error: 'Not authenticated' };
+/**
+ * The result of a lifecycle mutation.
+ *
+ * `ok` rather than the row id these actions used to return: the REST archive is
+ * a 204 and the restore a `{ restored: true }`, neither of which carries an id,
+ * and no caller ever read one — the optimistic cache updates key on
+ * `(scope, key)`, which is what the user acted on. Resolving an id purely to
+ * satisfy the old signature would cost a round trip nobody spends.
+ */
+export interface LessonMutationResult {
+  ok: boolean;
+  error?: string;
+}
 
-  const { data, error } = await supabase.rpc('archive_memory', {
-    p_user_id: user.id,
-    p_scope: scope,
-    p_key: key,
-  });
+/** Soft-archive a memory (never a hard delete — no `force`). */
+export async function archiveLesson(scope: string, key: string): Promise<LessonMutationResult> {
+  const token = await serverAccessToken();
+  if (!token) return { ok: false, error: 'Not authenticated' };
 
-  if (error) return { id: null, error: error.message };
-  revalidatePath('/lore');
-  return { id: (data as string | null) ?? null };
+  try {
+    await archiveMemoryRequest(token, scope, key);
+    revalidatePath('/lore');
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: messageFor(err) };
+  }
 }
 
 /** Restore an archived memory back to active. */
-export async function restoreLesson(
-  scope: string,
-  key: string,
-): Promise<{ id: string | null; error?: string }> {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { id: null, error: 'Not authenticated' };
+export async function restoreLesson(scope: string, key: string): Promise<LessonMutationResult> {
+  const token = await serverAccessToken();
+  if (!token) return { ok: false, error: 'Not authenticated' };
 
-  const { data, error } = await supabase.rpc('restore_memory', {
-    p_user_id: user.id,
-    p_scope: scope,
-    p_key: key,
-  });
-
-  if (error) return { id: null, error: error.message };
-  revalidatePath('/lore');
-  return { id: (data as string | null) ?? null };
+  try {
+    const { restored } = await restoreMemoryRequest(token, scope, key);
+    revalidatePath('/lore');
+    return { ok: restored };
+  } catch (err) {
+    return { ok: false, error: messageFor(err) };
+  }
 }
 
 /**
@@ -136,18 +142,16 @@ export async function restoreLesson(
 export async function purgeArchivedLessons(
   retentionDays = 30,
 ): Promise<{ purged: number; error?: string }> {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { purged: 0, error: 'Not authenticated' };
+  const token = await serverAccessToken();
+  if (!token) return { purged: 0, error: 'Not authenticated' };
 
-  const { data, error } = await supabase.rpc('purge_archived_memories', {
-    p_user_id: user.id,
-    p_retention_days: retentionDays,
-  });
-
-  if (error) return { purged: 0, error: error.message };
-  revalidatePath('/lore');
-  return { purged: (data as number) ?? 0 };
+  try {
+    const { purged } = await purgeMemoriesRequest(token, retentionDays);
+    revalidatePath('/lore');
+    return { purged };
+  } catch (err) {
+    return { purged: 0, error: messageFor(err) };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -157,12 +161,9 @@ export async function purgeArchivedLessons(
 export interface MemoryFilters {
   /** Filter to a single scope. Omit or pass null to return all scopes. */
   scope?: string | null;
-  /**
-   * Case-insensitive substring match against `key` or `value`.
-   * Backed by trigram GIN indexes (00013_memory_keyset_index.sql).
-   */
+  /** Case-insensitive substring match against `key` or `value`. */
   search?: string;
-  /** Inclusive `from`/`to` interval on `created_at`. */
+  /** Inclusive `from` / exclusive-day-end `to` interval on `created_at`. */
   range?: DateRangeInput | null;
   /**
    * Labels (`memories.tags`) a row must carry — ALL of them, not any.
@@ -187,110 +188,46 @@ const MAX_PAGE_SIZE = 100;
 const EMPTY_PAGE: MemoryPage = { rows: [], nextCursor: null, hasMore: false };
 
 /**
- * List a keyset page of the current user's active memories, newest first,
- * with optional combinable filters (scope / search substring / date interval).
+ * List a keyset page of the memories the caller can see, newest first, with
+ * optional combinable filters (scope / substring / date interval / labels).
  *
- * Mirrors the `listAuditLog` pattern exactly:
- *   decode cursor → normalize filters → build query → assemble page.
- * Fails closed to an empty page on auth failure or DB error — read-only,
- * so failing closed is safe.
+ * Ordering is `created_at desc` — `?sort=created_at` — not the route's
+ * `updated_at` default: a memory migrated with a backdated `created_at` belongs
+ * at its original position in the Explorer, which is the order the list has
+ * always been in.
+ *
+ * Fails closed to an empty page on auth failure or API error — read-only, so
+ * failing closed is safe.
  */
 export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryPage> {
-  const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return EMPTY_PAGE;
+  const token = await serverAccessToken();
+  if (!token) return EMPTY_PAGE;
 
   const pageSize = clampPageSize(filters.pageSize, { def: DEFAULT_PAGE_SIZE, max: MAX_PAGE_SIZE });
-  const cursor = decodeCursor(filters.cursor);
-  const needle = substringNeedle(filters.search);
   const bounds = dateRangeBounds(filters.range);
-
-  // No explicit `.eq('user_id', …)` here: the `memories` read RLS (00015) is
-  // widened to `lorekit_member_org_ids(auth.uid())`, so this session already
-  // sees exactly its own personal rows plus every org it belongs to. Filtering
-  // to `user_id = self` would re-hide org-owned lore (org rows have
-  // `user_id IS NULL`) and defeat the Explorer's `Personal · {org}` ownership
-  // filter. RLS — not this predicate — is the tenant boundary; a forged keyset
-  // cursor still can't widen past it.
-  let base = supabase
-    .from('memories')
-    .select('id, scope, key, value, tags, created_at, updated_at, archived_at, expires_at, source_agent, trigger, origin_repo, origin_branch, origin_commit, origin_pr, org_id, created_by, updated_by, orgs(name, slug)');
-
-  // archived_at filter: active (IS NULL) vs archived (IS NOT NULL).
-  if (filters.showArchived) {
-    base = base.not('archived_at', 'is', null);
-  } else {
-    base = base.is('archived_at', null);
-  }
-
-  // Scope filter — absent / null means "all scopes".
-  if (filters.scope) {
-    base = base.eq('scope', filters.scope);
-  }
-
-  // Substring search: apply ilike on key OR value. PostgREST's `.or()` takes a
-  // filter string; build it only when a non-empty needle exists. The needle is
-  // already escaped for LIKE metacharacters by `substringNeedle`.
-  if (needle) {
-    base = base.or(`key.ilike.%${needle}%,value.ilike.%${needle}%`);
-  }
-
-  // Label filter — `contains` is Postgres' array `@>` operator, so a row must
-  // carry EVERY selected label. Normalized first, so a hand-edited URL param
-  // carrying whitespace or duplicates can't produce an unsatisfiable filter.
-  //
-  // The literal is built by `pgArrayLiteral`, NOT handed to `.contains` as a
-  // `string[]`: postgrest-js serialises an array with a bare `join(',')`
-  // (`cs.{a,b}`), and `memories.tags` is unconstrained free text, so a label
-  // containing a comma — or a brace, quote, or backslash — would silently
-  // filter as different labels. Passing a string makes postgrest-js emit
-  // `cs.<literal>` verbatim, so the quoting is ours to get right.
   const tags = normalizeTags(filters.tags);
-  if (tags.length > 0) {
-    base = base.contains('tags', pgArrayLiteral(tags));
-  }
 
-  // Date range bounds on created_at.
-  if (bounds.gte) base = base.gte('created_at', bounds.gte);
-  if (bounds.lt) base = base.lt('created_at', bounds.lt);
+  try {
+    const page = await listMemoriesRequest(token, {
+      limit: pageSize,
+      sort: 'created_at',
+      archived: filters.showArchived ? 'true' : 'false',
+      ...(filters.scope ? { scope: filters.scope } : {}),
+      ...(filters.search ? { q: filters.search } : {}),
+      ...(bounds.gte ? { created_since: bounds.gte } : {}),
+      ...(bounds.lt ? { created_until: bounds.lt } : {}),
+      // Conjunctive: a memory must carry EVERY selected label.
+      ...(tags.length ? { tags: tags.join(','), tags_mode: 'all' as const } : {}),
+      ...(filters.cursor ? { cursor: filters.cursor } : {}),
+    });
 
-  const query = applyKeyset(base as unknown as FilterBuilderLike, { cursor, pageSize });
-
-  const { data, error } = await runPaginatedQuery<Record<string, unknown>>(query);
-  if (error) {
-    console.error('[listMemories] DB error:', error.message);
+    return {
+      rows: page.entries.map(lessonFromMemoryEntry),
+      nextCursor: page.nextCursor,
+      hasMore: page.hasMore,
+    };
+  } catch (err) {
+    console.error('[listMemories] REST error:', messageFor(err));
     return EMPTY_PAGE;
   }
-
-  const rows: (LessonEntry & { id: string })[] = (data ?? []).map((row) => {
-    const orgId = (row.org_id as string | null) ?? null;
-    const orgEmbed = row.orgs as { name: string; slug: string } | null;
-    return {
-      id: row.id as string,
-      scope: row.scope as string,
-      scope_type: scopeType(row.scope as string),
-      key: row.key as string,
-      value: row.value as string,
-      tags: (row.tags as string[]) ?? [],
-      created_at: row.created_at as string,
-      updated_at: row.updated_at as string,
-      archived_at: (row.archived_at as string | null) ?? null,
-      expires_at: (row.expires_at as string | null) ?? null,
-      source_agent: (row.source_agent as string | null) ?? null,
-      trigger: (row.trigger as string | null) ?? null,
-      origin_repo: (row.origin_repo as string | null) ?? null,
-      origin_branch: (row.origin_branch as string | null) ?? null,
-      origin_commit: (row.origin_commit as string | null) ?? null,
-      origin_pr: (row.origin_pr as number | null) ?? null,
-      org_id: orgId,
-      created_by: (row.created_by as string | null) ?? null,
-      updated_by: (row.updated_by as string | null) ?? null,
-      org: ownerFromMemoryRow({
-        org_id: orgId,
-        org: orgEmbed && orgId ? { id: orgId, name: orgEmbed.name } : null,
-      }),
-    };
-  });
-
-  return assemblePage(rows, pageSize, (row) => ({ c: row.created_at, id: row.id }));
 }

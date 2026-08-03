@@ -2,19 +2,25 @@
 
 import { LoreExplorer } from '@/components/lore/LoreExplorer';
 import { LoreExplorerSkeleton } from '@/components/lore/LoreExplorerSkeleton';
-import { useScopeTree, useLoreData } from '@/lib/queries/lore';
+import { useScopeTree, useLoreData, isNotAuthenticated } from '@/lib/queries/lore';
 
 export default function LorePage() {
   // useScopeTree: lightweight scope-only fetch — tree renders immediately while
   // the lesson list streams in separately via useMemories inside LoreExplorer.
-  const { data: scopes, isLoading: scopesLoading, isError: scopesError } = useScopeTree();
-  // useLoreData: full 500-row fetch used only for heatmapData (the 26-week
-  // contribution graph). Runs in parallel — the heatmap can load after the
-  // scope tree; the lesson list + feed stream in via useMemories separately.
+  const { data: scopes, isLoading: scopesLoading, isError: scopesError, error: scopesErr } = useScopeTree();
+  // useLoreData: the legacy combined fetch, kept only for heatmapData (the
+  // 26-week contribution graph), which now comes from `GET /memories/activity`
+  // — bucketed in Postgres, so it is not bounded by the page it ships with
+  // (`LEGACY_PAGE_SIZE` in queries/lore.ts owns that size). Runs in parallel —
+  // the heatmap can load after the scope tree; the lesson list + feed stream in
+  // via useMemories separately.
   const { data: loreData } = useLoreData();
 
   const isLoading = scopesLoading;
   const isError = scopesError;
+  // A lapsed or absent session is not a failure to retry — "refresh the page"
+  // is advice that cannot work, so it gets its own copy and a way out.
+  const signedOut = isNotAuthenticated(scopesErr);
 
   return (
     <div className="flex flex-col gap-4">
@@ -35,6 +41,17 @@ export default function LorePage() {
       <div className="flex-1 overflow-y-auto md:overflow-hidden">
         {isLoading ? (
           <LoreExplorerSkeleton />
+        ) : signedOut ? (
+          <p className="text-sm text-[var(--color-content-secondary)]">
+            Your session has expired.{' '}
+            <a
+              href="/login?next=/lore"
+              className="inline-flex min-h-11 items-center text-[var(--color-accent)] underline underline-offset-2"
+            >
+              Sign in again
+            </a>{' '}
+            to see your lore.
+          </p>
         ) : isError || !scopes ? (
           <p className="text-sm text-[var(--color-content-secondary)]">
             Failed to load lore data. Please refresh the page.

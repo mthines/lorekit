@@ -14,6 +14,8 @@ import { handleRestore } from './handlers/restore.ts';
 import { handlePurge, handlePurgeExpired } from './handlers/purge.ts';
 import { handleScopes } from './handlers/scopes.ts';
 import { handleUsage } from './handlers/usage.ts';
+import { handleTags } from './handlers/tags.ts';
+import { handleActivity } from './handlers/activity.ts';
 
 // ROUTE ORDER MATTERS. `matchPath` (../_shared/api/router.ts) matches purely on
 // segment COUNT plus literal equality, collects EVERY path match, then picks the
@@ -43,6 +45,8 @@ const router = createRouter([
   { method: 'POST',   path: '/purge-expired',  handler: handlePurgeExpired, requires: 'write' },
   { method: 'GET',    path: '/scopes',         handler: handleScopes,       requires: 'read'  },
   { method: 'GET',    path: '/usage',          handler: handleUsage,        requires: 'read'  },
+  { method: 'GET',    path: '/tags',           handler: handleTags,         requires: 'read'  },
+  { method: 'GET',    path: '/activity',       handler: handleActivity,     requires: 'read'  },
   // ── parameterised routes ───────────────────────────────────────────────────
   { method: 'GET',    path: '/:id',            handler: handleGet,          requires: 'read'  },
   { method: 'PATCH',  path: '/:id',            handler: handleUpdate,       requires: 'write' },

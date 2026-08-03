@@ -1,14 +1,26 @@
 /**
- * Contract tests for the OR+AND filter serialiser.
+ * Contract tests for the OR+AND filter serialiser and the value encoding it
+ * shares with the `GET /memories?q=` substring filter.
  *
- * These pin the exact PostgREST expressions `POST /memories/search`'s `filter`
- * parameter produces, including the field whitelist and the value encoding
- * that stops a value breaking out of its clause.
+ * These pin the exact PostgREST expressions that reach the wire, including the
+ * field whitelist and the double-quoting that stops a value breaking out of its
+ * clause. The expected strings are not a guess: they are the input form
+ * PostgREST's own logic-tree parser accepts —
+ * `pLogicSingleVal` / `pQuotedValue` in `src/PostgREST/ApiRequest/QueryParams.hs`,
+ * identical in v12 and v13 — reached through postgrest-js `.or()`, which appends
+ * the expression with `URLSearchParams.append` and therefore delivers these
+ * characters verbatim.
  */
 
 import { describe, it, expect } from 'vitest';
 import type { FilterGroup } from './common.ts';
-import { serializeFilterGroup, ALLOWED_FILTER_FIELDS } from './filter.ts';
+import {
+  serializeFilterGroup,
+  ALLOWED_FILTER_FIELDS,
+  likeNeedle,
+  quoteFilterValue,
+  ilikeClause,
+} from './filter.ts';
 
 describe('serializeFilterGroup', () => {
   it('returns no constraint when no filter is supplied', () => {
@@ -17,17 +29,17 @@ describe('serializeFilterGroup', () => {
 
   it('serialises a single leaf condition', () => {
     expect(serializeFilterGroup({ field: 'scope', op: 'is', value: 'global' })).toEqual([
-      'scope.eq.global',
+      'scope.eq."global"',
     ]);
   });
 
   it.each([
-    ['is', 'scope.eq.global'],
-    ['is_not', 'scope.neq.global'],
-    ['contains', 'scope.ilike.%global%'],
-    ['does_not_contain', 'scope.not.ilike.%global%'],
-    ['starts_with', 'scope.ilike.global%'],
-    ['ends_with', 'scope.ilike.%global'],
+    ['is', 'scope.eq."global"'],
+    ['is_not', 'scope.neq."global"'],
+    ['contains', 'scope.ilike."%global%"'],
+    ['does_not_contain', 'scope.not.ilike."%global%"'],
+    ['starts_with', 'scope.ilike."global%"'],
+    ['ends_with', 'scope.ilike."%global"'],
   ] as const)('maps the %s operator', (op, expected) => {
     expect(serializeFilterGroup({ field: 'scope', op, value: 'global' })).toEqual([expected]);
   });
@@ -49,7 +61,7 @@ describe('serializeFilterGroup', () => {
           { field: 'key', op: 'contains', value: 'auth' },
         ],
       }),
-    ).toEqual(['scope.eq.global', 'key.ilike.%auth%']);
+    ).toEqual(['scope.eq."global"', 'key.ilike."%auth%"']);
   });
 
   it('collapses a top-level OR into one comma-joined conjunct', () => {
@@ -60,7 +72,7 @@ describe('serializeFilterGroup', () => {
           { field: 'tags', op: 'contains', value: 'pr-webhook' },
         ],
       }),
-    ).toEqual(['key.ilike.%auth%,tags.ilike.%pr-webhook%']);
+    ).toEqual(['key.ilike."%auth%",tags.ilike."%pr-webhook%"']);
   });
 
   it('expresses an AND nested inside an OR with PostgREST and() syntax', () => {
@@ -76,7 +88,7 @@ describe('serializeFilterGroup', () => {
           },
         ],
       }),
-    ).toEqual(['scope.eq.global,and(scope.ilike.repo::%,source_agent.eq.claude)']);
+    ).toEqual(['scope.eq."global",and(scope.ilike."repo::%",source_agent.eq."claude")']);
   });
 
   it('handles the OR-inside-AND shape the API documents', () => {
@@ -92,7 +104,7 @@ describe('serializeFilterGroup', () => {
           },
         ],
       }),
-    ).toEqual(['scope.eq.global', 'key.ilike.%auth%,tags.ilike.%pr-webhook%']);
+    ).toEqual(['scope.eq."global"', 'key.ilike."%auth%",tags.ilike."%pr-webhook%"']);
   });
 
   it('flattens nested ANDs into sibling conjuncts', () => {
@@ -108,7 +120,7 @@ describe('serializeFilterGroup', () => {
           },
         ],
       }),
-    ).toEqual(['scope.eq.global', 'key.ilike.a%', 'key.ilike.%z']);
+    ).toEqual(['scope.eq."global"', 'key.ilike."a%"', 'key.ilike."%z"']);
   });
 
   describe('field whitelist', () => {
@@ -138,7 +150,7 @@ describe('serializeFilterGroup', () => {
             { field: 'key', op: 'is', value: 'a' },
           ],
         }),
-      ).toEqual(['key.eq.a']);
+      ).toEqual(['key.eq."a"']);
     });
 
     it('drops only the disallowed branch of an AND, keeping the rest', () => {
@@ -149,7 +161,7 @@ describe('serializeFilterGroup', () => {
             { field: 'key', op: 'is', value: 'a' },
           ],
         }),
-      ).toEqual(['key.eq.a']);
+      ).toEqual(['key.eq."a"']);
     });
 
     it('emits no constraint when every branch is disallowed', () => {
@@ -164,24 +176,53 @@ describe('serializeFilterGroup', () => {
   });
 
   describe('value encoding', () => {
-    it('percent-encodes commas so a value cannot add a disjunct', () => {
-      expect(serializeFilterGroup({ field: 'key', op: 'is', value: 'a,b' })).toEqual(['key.eq.a%2Cb']);
+    it('quotes a comma so a value cannot add a disjunct', () => {
+      expect(serializeFilterGroup({ field: 'key', op: 'is', value: 'a,b' })).toEqual([
+        'key.eq."a,b"',
+      ]);
     });
 
-    it('percent-encodes parentheses so a value cannot close a group', () => {
+    it('quotes parentheses so a value cannot close a group', () => {
       expect(serializeFilterGroup({ field: 'key', op: 'is', value: 'f(x)' })).toEqual([
-        'key.eq.f%28x%29',
+        'key.eq."f(x)"',
       ]);
     });
 
     it('neutralises an attempted predicate injection', () => {
       expect(
         serializeFilterGroup({ field: 'value', op: 'contains', value: 'or(user_id.eq.1)' }),
-      ).toEqual(['value.ilike.%or%28user_id.eq.1%29%']);
+        // `_` is a LIKE single-character wildcard, so it is escaped too.
+      ).toEqual([String.raw`value.ilike."%or(user\\_id.eq.1)%"`]);
+    });
+
+    it('escapes a double quote so a value cannot close its own quoting', () => {
+      // `"` terminates a quoted value unless the parser sees `\"` first, so the
+      // injection attempt has to survive as data.
+      expect(
+        serializeFilterGroup({ field: 'key', op: 'is', value: 'a",user_id.eq."1' }),
+      ).toEqual([String.raw`key.eq."a\",user_id.eq.\"1"`]);
+    });
+
+    it('doubles a backslash, which is the quoted-value escape character', () => {
+      expect(serializeFilterGroup({ field: 'key', op: 'is', value: 'a\\b' })).toEqual([
+        String.raw`key.eq."a\\b"`,
+      ]);
+    });
+
+    it('LIKE-escapes wildcards in a pattern operator but not in an equality', () => {
+      // `%` is data in both cases, but only the pattern operators interpret it,
+      // so only they escape it — a needless `\%` in an `eq` would be matched
+      // literally and find nothing.
+      expect(serializeFilterGroup({ field: 'key', op: 'contains', value: '100%' })).toEqual([
+        String.raw`key.ilike."%100\\%%"`,
+      ]);
+      expect(serializeFilterGroup({ field: 'key', op: 'is', value: '100%' })).toEqual([
+        'key.eq."100%"',
+      ]);
     });
 
     it('treats a missing value as an empty string rather than throwing', () => {
-      expect(serializeFilterGroup({ field: 'key', op: 'is' })).toEqual(['key.eq.']);
+      expect(serializeFilterGroup({ field: 'key', op: 'is' })).toEqual(['key.eq.""']);
     });
   });
 
@@ -192,6 +233,77 @@ describe('serializeFilterGroup', () => {
         { field: 'scope', op: 'is', value: 'global' },
       ],
     };
-    expect(serializeFilterGroup(deep)).toEqual(['and(key.eq.x)', 'scope.eq.global']);
+    expect(serializeFilterGroup(deep)).toEqual(['and(key.eq."x")', 'scope.eq."global"']);
+  });
+});
+
+describe('likeNeedle', () => {
+  it('returns null for absent or whitespace-only input, meaning "no filter"', () => {
+    expect(likeNeedle(undefined)).toBeNull();
+    expect(likeNeedle(null)).toBeNull();
+    expect(likeNeedle('')).toBeNull();
+    expect(likeNeedle('   ')).toBeNull();
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(likeNeedle('  auth  ')).toBe('auth');
+  });
+
+  it('escapes the LIKE metacharacters so they match literally', () => {
+    expect(likeNeedle('100%')).toBe(String.raw`100\%`);
+    expect(likeNeedle('a_b')).toBe(String.raw`a\_b`);
+    expect(likeNeedle('a\\b')).toBe(String.raw`a\\b`);
+  });
+
+  it('leaves PostgREST reserved characters alone — quoting, not escaping, carries those', () => {
+    expect(likeNeedle('a,b(c).d')).toBe('a,b(c).d');
+  });
+
+  it('leaves an asterisk literal', () => {
+    // PostgREST maps `*` to `%` only for the quantified `like(any)`/`like(all)`
+    // forms, which this module never emits.
+    expect(likeNeedle('a*b')).toBe('a*b');
+  });
+
+  it('preserves unicode', () => {
+    expect(likeNeedle('café — 日本語')).toBe('café — 日本語');
+  });
+});
+
+describe('quoteFilterValue', () => {
+  it('always quotes, so the safe path is the only path', () => {
+    expect(quoteFilterValue('plain')).toBe('"plain"');
+  });
+
+  it('escapes the two characters the quoted-value parser treats as syntax', () => {
+    expect(quoteFilterValue('a"b')).toBe(String.raw`"a\"b"`);
+    expect(quoteFilterValue('a\\b')).toBe(String.raw`"a\\b"`);
+    // A trailing backslash must not escape the closing quote.
+    expect(quoteFilterValue('a\\')).toBe(String.raw`"a\\"`);
+  });
+});
+
+describe('ilikeClause', () => {
+  it('builds a contains clause by default', () => {
+    expect(ilikeClause('key', 'auth')).toBe('key.ilike."%auth%"');
+  });
+
+  it('drops the leading or trailing wildcard for anchored matches', () => {
+    expect(ilikeClause('key', 'auth', { prefix: false })).toBe('key.ilike."auth%"');
+    expect(ilikeClause('key', 'auth', { suffix: false })).toBe('key.ilike."%auth"');
+  });
+
+  it('negates with PostgREST not.ilike, keeping the field first', () => {
+    expect(ilikeClause('key', 'auth', { negate: true })).toBe('key.not.ilike."%auth%"');
+  });
+
+  it('is the composition both search paths use', () => {
+    // The `GET /memories?q=` clause and a `contains` FilterGroup condition must
+    // produce byte-identical encodings — that they did not is the drift this
+    // helper removes.
+    const needle = likeNeedle('a,b%c') as string;
+    expect(ilikeClause('key', needle)).toBe(
+      serializeFilterGroup({ field: 'key', op: 'contains', value: 'a,b%c' })[0],
+    );
   });
 });
