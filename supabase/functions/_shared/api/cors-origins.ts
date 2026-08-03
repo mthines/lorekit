@@ -70,17 +70,22 @@ function isLoopbackOrigin(origin: string): boolean {
 // permissively-CORS'd PostgREST gateway onto these edge functions.
 const VERCEL_APP_SUFFIX = '.vercel.app';
 const VERCEL_PROJECT = 'lorekit';
+const VERCEL_SCOPE = 'mads-thines-projects';
 
-// True for one of the LoreKit project's own Vercel deployment origins — the apex
-// (`lorekit.vercel.app`) or any preview/branch host (`lorekit-<anything>.vercel.app`).
+// True for one of the LoreKit project's own Vercel deployment origins — every
+// generated preview/branch/production host Vercel serves the project under
+// (`lorekit-git-<branch>-mads-thines-projects.vercel.app`,
+// `lorekit-<hash>-mads-thines-projects.vercel.app`,
+// `lorekit-mads-thines-projects.vercel.app`).
 //
-// The match is deliberately narrow: HTTPS only; the host must be a SINGLE DNS
-// label followed by exactly `.vercel.app` (a label containing a dot — e.g.
-// `lorekit-x.attacker.vercel.app` — is rejected, so this can never admit some
-// other tenant's project nested under a subdomain); and that label must be the
-// project name or the project name followed by `-`. `notlorekit-x.vercel.app`,
-// `lorekit.io` and `lorekit.evil.com` are all rejected. Admitting the whole
-// project's preview fleet is safe for the same reason loopback is (Bearer auth).
+// The match is tied to BOTH halves of the deployment's identity: HTTPS only; the
+// host must be a SINGLE DNS label before exactly `.vercel.app` (a label with a dot
+// is rejected); and that label must start with the project name AND end with the
+// Vercel ACCOUNT SCOPE slug. The scope suffix is what a third party cannot forge:
+// anyone can create a project named `lorekit-x`, but its host ends with THEIR
+// account scope, not `-mads-thines-projects`. `lorekit.io` and `lorekit.evil.com`
+// are also rejected. Safe for the same reason loopback is (Bearer auth is the gate).
+// If the project moves to a different Vercel account/team, update VERCEL_SCOPE.
 function isVercelPreviewOrigin(origin: string): boolean {
   if (!origin) return false;
   try {
@@ -89,8 +94,8 @@ function isVercelPreviewOrigin(origin: string): boolean {
     const host = url.hostname;
     if (!host.endsWith(VERCEL_APP_SUFFIX)) return false;
     const label = host.slice(0, -VERCEL_APP_SUFFIX.length);
-    if (!label || label.includes('.')) return false;
-    return label === VERCEL_PROJECT || label.startsWith(`${VERCEL_PROJECT}-`);
+    if (label.includes('.')) return false;
+    return label.startsWith(`${VERCEL_PROJECT}-`) && label.endsWith(`-${VERCEL_SCOPE}`);
   } catch {
     return false;
   }

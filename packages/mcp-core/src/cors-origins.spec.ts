@@ -125,11 +125,10 @@ describe('isOriginAllowed', () => {
         'https://lorekit-git-feat-header-activity-indicator-mads-thines-projects.vercel.app',
       ),
     ).toBe(true);
-    // Per-commit deployment host and the project apex.
+    // Per-commit deployment host and the `<project>-<scope>` production alias.
     expect(isOriginAllowed(allowed, 'https://lorekit-abc123-mads-thines-projects.vercel.app')).toBe(
       true,
     );
-    expect(isOriginAllowed(allowed, 'https://lorekit.vercel.app')).toBe(true);
     expect(isOriginAllowed(allowed, 'https://lorekit-mads-thines-projects.vercel.app')).toBe(true);
   });
 
@@ -145,6 +144,15 @@ describe('isOriginAllowed', () => {
     expect(isOriginAllowed(allowed, 'https://lorekit.vercel.app.evil.com')).toBe(false);
     // Only HTTPS Vercel origins qualify.
     expect(isOriginAllowed(allowed, 'http://lorekit-preview.vercel.app')).toBe(false);
+    // The reviewer's case: any tenant CAN name a project `lorekit-x`, but its
+    // generated host ends with THEIR account scope, not ours, so it is rejected —
+    // the scope suffix is the half a third party cannot forge.
+    expect(isOriginAllowed(allowed, 'https://lorekit-x-someone-else-projects.vercel.app')).toBe(
+      false,
+    );
+    expect(isOriginAllowed(allowed, 'https://lorekit-evil-attacker.vercel.app')).toBe(false);
+    // The bare `<project>.vercel.app` alias (no account scope) is not admitted.
+    expect(isOriginAllowed(allowed, 'https://lorekit.vercel.app')).toBe(false);
   });
 });
 
