@@ -188,9 +188,21 @@ describe('runBestEffortCleanup', () => {
     expect(ran).toBe(true);
   });
 
-  it('resolves (never rejects) when cleanup throws', async () => {
+  it('resolves (never rejects) when cleanup throws asynchronously', async () => {
     await expect(
       runBestEffortCleanup(async () => { throw new Error('boom'); }, { softTimeoutMs: 1000, context: 'ctx' }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('resolves (never rejects) when cleanup throws SYNCHRONOUSLY', async () => {
+    // A non-async fn that throws before returning a promise must still be caught:
+    // `fn()` was called before `.catch` was attached, which rejected this helper
+    // and leaked the timer. `Promise.resolve().then(fn)` closes it.
+    const syncThrow = (() => {
+      throw new Error('sync boom');
+    }) as () => Promise<void>;
+    await expect(
+      runBestEffortCleanup(syncThrow, { softTimeoutMs: 1000, context: 'ctx' }),
     ).resolves.toBeUndefined();
   });
 

@@ -241,11 +241,17 @@ export async function runBestEffortCleanup(
     // Don't let a pending guard timer keep the process alive after teardown.
     if (typeof timer.unref === 'function') timer.unref();
   });
-  const attempt = fn().catch((err) => {
-    console.warn(
-      `\n  ⚠ SMOKE CLEANUP ERRORED (${opts.context}) — ${err instanceof Error ? err.message : String(err)}`,
-    );
-  });
+  // `Promise.resolve().then(fn)` — NOT `fn().catch(...)` — so a SYNCHRONOUS throw
+  // inside fn becomes a rejection this `.catch` handles, instead of propagating
+  // out before the handler is attached (which would reject this function and skip
+  // the `finally`, leaking the timer — the exact thing the docblock rules out).
+  const attempt = Promise.resolve()
+    .then(fn)
+    .catch((err) => {
+      console.warn(
+        `\n  ⚠ SMOKE CLEANUP ERRORED (${opts.context}) — ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
   try {
     await Promise.race([attempt, guard]);
   } finally {
