@@ -194,6 +194,47 @@ export function parseResultCountHeader(raw: string | null | undefined): number |
   return n;
 }
 
+/**
+ * The SURFACE a usage event came from, as opposed to `auth_type` (how the
+ * caller authenticated) or `tool_name` (what they asked for). Deliberately a
+ * tiny CLOSED vocabulary rather than free text: this dimension is grouped and
+ * filtered on, so an unbounded value would blow up analytics cardinality the
+ * way `correlation_id` would without its length bound.
+ *
+ *   * `dashboard` — the LoreKit web dashboard rendering lore for a human.
+ *   * `cli`       — the `lorekit` CLI.
+ *   * `mcp`       — an agent over the MCP transport.
+ *   * `api`       — a direct REST caller that named itself nothing else.
+ *
+ * `dashboard` is the one that changes a NUMBER rather than only labelling it:
+ * `lorekit_read_activity` (migration 00054) excludes it, so opening or
+ * reloading the dashboard no longer inflates the "Memories read" card. Browsing
+ * your own lore is visualisation, not consumption — the card measures what your
+ * agents read. The events are still recorded in full; only the metric excludes
+ * them, so the ledger stays complete and the choice stays reversible.
+ */
+export const USAGE_CLIENTS = ['dashboard', 'cli', 'mcp', 'api'] as const;
+export type UsageClient = (typeof USAGE_CLIENTS)[number];
+
+/** The one client whose reads are excluded from the read-activity metric. */
+export const DASHBOARD_CLIENT: UsageClient = 'dashboard';
+
+/**
+ * Validate the client-supplied `X-LoreKit-Client` header against the closed
+ * vocabulary above. Total and fail-safe: an absent, empty, or unrecognised
+ * value is `null` ("unattributed"), never an error — a header can never fail
+ * the request it is describing, and an unknown client must not be able to
+ * smuggle a new value into the ledger. Case- and whitespace-insensitive so a
+ * caller sending `Dashboard` is attributed rather than silently dropped.
+ */
+export function parseUsageClient(raw: string | null | undefined): UsageClient | null {
+  if (raw === null || raw === undefined) return null;
+  const normalized = raw.trim().toLowerCase();
+  return (USAGE_CLIENTS as readonly string[]).includes(normalized)
+    ? (normalized as UsageClient)
+    : null;
+}
+
 /** Max length of a correlation id — bounds cardinality and storage. */
 export const CORRELATION_ID_MAX = 200;
 

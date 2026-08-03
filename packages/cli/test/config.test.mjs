@@ -217,3 +217,112 @@ test('upsertClaudeHooks prunes lorekit entries for events outside the selected s
   assert.equal(result.removed, 2);
   assert.deepEqual(installedHookEvents(root, 'project'), ['SessionStart']);
 });
+
+// ── Duplicate lorekit hook entries: reconcile, never accumulate ──────────────
+//
+// `install` (and `install --force`) is the ONE command a user runs to repair a
+// broken wiring, so it must converge on exactly one lorekit entry per event.
+// Two ways a settings.json grows a second one in the field: the marketplace
+// plugin wiring `npx -y @lorekit/cli hook …` on top of a CLI install that wired
+// bare `lorekit hook …`, and a runner form the matcher failed to recognise as
+// ours (a pinned `@lorekit/cli@1.2.3`, a Windows `lorekit.cmd`) — which used to
+// be APPENDED alongside instead of updated in place.
+
+// Every lorekit-looking hook command wired for one event, flattened.
+function lorekitCommandsFor(root, event) {
+  const settings = JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8'));
+  const groups = (settings.hooks && settings.hooks[event]) || [];
+  return groups
+    .flatMap((g) => (g && Array.isArray(g.hooks) ? g.hooks : []))
+    .map((h) => h && h.command)
+    .filter((cmd) => typeof cmd === 'string' && /lorekit/.test(cmd));
+}
+
+function seedSettings(root, hooks) {
+  fs.mkdirSync(path.join(root, '.claude'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude', 'settings.json'), JSON.stringify({ hooks }, null, 2));
+  return root;
+}
+
+test('upsertClaudeHooks collapses pre-existing duplicate lorekit entries (separate groups)', () => {
+  const root = seedSettings(tmpRoot(), {
+    SessionStart: [
+      { hooks: [{ type: 'command', command: 'npx -y @lorekit/cli hook --adapter claude --event SessionStart --dir "${CLAUDE_PROJECT_DIR}"' }] },
+      { hooks: [{ type: 'command', command: 'lorekit hook --adapter claude --event SessionStart' }] },
+    ],
+  });
+
+  const result = upsertClaudeHooks(root, 'project', 'lorekit');
+  assert.equal(result.deduped, 1, 'the second lorekit entry is reported as de-duplicated');
+  assert.deepEqual(lorekitCommandsFor(root, 'SessionStart'), [
+    'lorekit hook --adapter claude --event SessionStart --dir "${CLAUDE_PROJECT_DIR}"',
+  ]);
+});
+
+test('upsertClaudeHooks collapses duplicates inside one group and keeps co-located third-party hooks', () => {
+  const root = seedSettings(tmpRoot(), {
+    Stop: [
+      {
+        hooks: [
+          { type: 'command', command: 'lorekit hook --adapter claude --event Stop --dir "${CLAUDE_PROJECT_DIR}"' },
+          { type: 'command', command: 'npx -y @lorekit/cli hook --adapter claude --event Stop --dir "${CLAUDE_PROJECT_DIR}"' },
+          { type: 'command', command: 'echo not-ours' },
+        ],
+      },
+    ],
+  });
+
+  const result = upsertClaudeHooks(root, 'project', 'lorekit');
+  assert.equal(result.deduped, 1);
+  assert.deepEqual(lorekitCommandsFor(root, 'Stop'), [
+    'lorekit hook --adapter claude --event Stop --dir "${CLAUDE_PROJECT_DIR}"',
+  ]);
+  const settings = JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8'));
+  const stopCommands = settings.hooks.Stop.flatMap((g) => g.hooks).map((h) => h.command);
+  assert.ok(stopCommands.includes('echo not-ours'), 'a third-party hook on the same event survives');
+});
+
+test('upsertClaudeHooks is idempotent over a duplicated settings file', () => {
+  const root = seedSettings(tmpRoot(), {
+    SessionStart: [
+      { hooks: [{ type: 'command', command: 'lorekit hook --adapter claude --event SessionStart' }] },
+      { hooks: [{ type: 'command', command: 'lorekit hook --adapter claude --event SessionStart' }] },
+    ],
+  });
+
+  upsertClaudeHooks(root, 'project', 'lorekit');
+  const second = upsertClaudeHooks(root, 'project', 'lorekit');
+  assert.equal(second.deduped, 0, 'nothing left to de-duplicate on the second run');
+  assert.equal(second.added, 0);
+  assert.equal(lorekitCommandsFor(root, 'SessionStart').length, 1);
+});
+
+test('a version-pinned or extension-suffixed runner is recognised as ours, not appended alongside', () => {
+  const root = seedSettings(tmpRoot(), {
+    SessionStart: [
+      { hooks: [{ type: 'command', command: 'npx -y @lorekit/cli@1.2.3 hook --adapter claude --event SessionStart' }] },
+    ],
+    Stop: [
+      { hooks: [{ type: 'command', command: 'C:\\Users\\me\\bin\\lorekit.cmd hook --adapter claude --event Stop' }] },
+    ],
+  });
+
+  const result = upsertClaudeHooks(root, 'project', 'lorekit');
+  assert.equal(result.added, 1, 'only PostToolUseFailure is genuinely new');
+  assert.equal(lorekitCommandsFor(root, 'SessionStart').length, 1, 'pinned runner updated in place');
+  assert.equal(lorekitCommandsFor(root, 'Stop').length, 1, 'windows runner updated in place');
+});
+
+test('the lorekit hook matcher does not claim an unrelated command that merely ends in "lorekit"', () => {
+  const root = seedSettings(tmpRoot(), {
+    Stop: [{ hooks: [{ type: 'command', command: 'mylorekit hook --event Stop' }] }],
+  });
+
+  upsertClaudeHooks(root, 'project', 'lorekit');
+  const commands = lorekitCommandsFor(root, 'Stop');
+  assert.ok(commands.includes('mylorekit hook --event Stop'), 'the third-party command is left alone');
+  assert.ok(
+    commands.includes('lorekit hook --adapter claude --event Stop --dir "${CLAUDE_PROJECT_DIR}"'),
+    'our own entry is still wired',
+  );
+});

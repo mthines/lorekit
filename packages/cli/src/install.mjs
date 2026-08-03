@@ -438,11 +438,16 @@ export async function install(args) {
         : 'none — the skills still work, but memory stays model-invoked',
     );
   } else {
-    const n = hooks.added + hooks.updated + hooks.removed;
+    const n = hooks.added + hooks.updated + hooks.removed + hooks.deduped;
+    // `deduped` is reported separately from `removed`: removed is a wiring the
+    // user asked for (a downgrade), deduped is a repair of a settings file that
+    // was firing the same hook twice — silently fixing that would leave the
+    // doubled output they came here about unexplained.
     const hookParts = [
       hooks.added ? `${hooks.added} added` : '',
       hooks.updated ? `${hooks.updated} updated` : '',
       hooks.removed ? `${hooks.removed} removed` : '',
+      hooks.deduped ? `${hooks.deduped} duplicate(s) removed` : '',
     ].filter(Boolean);
     const hookState = n === 0 ? 'already wired' : hookParts.join(', ');
     const wired = hookEvents.length > 0 ? ` (${hookEvents.join(', ')})` : '';

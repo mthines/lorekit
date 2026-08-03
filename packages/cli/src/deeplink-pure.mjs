@@ -29,7 +29,15 @@ export const LORE_PARAM_DEFAULTS = {
   q: '', // string search query
   range: null, // { from, to } | null (DateRange, "YYYY-MM-DD")
   owner: 'all', // 'all' | 'personal' | { orgId }
-  tags: [], // string[] — label filter (AND across labels); [] means "no filter"
+  // Filter[] | null — the Explorer's multi-dimension filter bar (label / agent /
+  // trigger / repo / branch / pr). `null`, NOT `[]`, is the default on purpose:
+  // the app has to tell "the param is absent" from "the bar is explicitly
+  // empty", because an absent `filters` falls back to the legacy `tags`
+  // shorthand while an empty one deliberately does not. Encoding `[]` here
+  // would emit the param (it is not the default) and mean the opposite of
+  // "unfiltered".
+  filters: null,
+  tags: [], // string[] — legacy label filter (AND across labels); [] means "no filter". Still READ by the app, superseded by `filters`
   view: 'scope', // 'scope' | 'time'
   archived: false, // boolean
   lesson: null, // { scope, key } | null — opens the detail sheet
@@ -37,9 +45,9 @@ export const LORE_PARAM_DEFAULTS = {
 
 // A stable, readable param order (also makes URLs deterministic for tests).
 // Mirrors the `useUrlState` call order in `LoreExplorer.tsx` (+ the `lesson`
-// param last), so `tags` sits between `owner` and `view`. `scope` precedes
-// `lesson` so a lesson link reads `?scope=…&lesson=…`.
-const PARAM_ORDER = ['scope', 'q', 'range', 'owner', 'tags', 'view', 'archived', 'lesson'];
+// param last), so `filters` and `tags` sit between `owner` and `view`. `scope`
+// precedes `lesson` so a lesson link reads `?scope=…&lesson=…`.
+const PARAM_ORDER = ['scope', 'q', 'range', 'owner', 'filters', 'tags', 'view', 'archived', 'lesson'];
 
 // Strip trailing slashes from a base URL, falling back to the default when the
 // input is empty/absent. Pure.

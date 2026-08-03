@@ -226,6 +226,30 @@ function activityFrom(rows: MemoryRow[], unit: 'hour' | 'day') {
 }
 
 /**
+ * `GET /memories/read-activity` — records read per UTC hour/day.
+ *
+ * Reads live in `usage_events`, which the fixtures do not model, so this is the
+ * one handler that cannot derive its response from `MEMORY_ROWS`. It instead
+ * synthesises a plausible read ledger FROM those rows: a memory that exists is
+ * a memory that gets read back, so each fixture contributes a small, fixed
+ * number of records in its own bucket. Fixed, not random — the same
+ * determinism rule the timestamps follow (see the module docblock).
+ */
+function readActivityFrom(rows: MemoryRow[], unit: 'hour' | 'day') {
+  const buckets = new Map<string, number>();
+  for (const [i, r] of activeRows(rows, false).entries()) {
+    const bucket = unit === 'hour'
+      ? `${r.created_at.slice(0, 13)}:00:00.000Z`
+      : `${r.created_at.slice(0, 10)}T00:00:00.000Z`;
+    // 3, 5, 7, 3, … records — a stable spread, never a clock or a PRNG.
+    buckets.set(bucket, (buckets.get(bucket) ?? 0) + 3 + ((i * 2) % 6));
+  }
+  return Array.from(buckets.entries())
+    .map(([bucket, count]) => ({ bucket, count }))
+    .sort((a, b) => a.bucket.localeCompare(b.bucket));
+}
+
+/**
  * `GET /memories` — the filters the dashboard actually sends.
  *
  * This is a REIMPLEMENTATION, and it proves nothing about the handler: `q` here
@@ -315,6 +339,16 @@ export function memoryHandlers(rows: MemoryRow[] = MEMORY_ROWS) {
         since: url.searchParams.get('since') ?? FROZEN_NOW,
         until: url.searchParams.get('until') ?? FROZEN_NOW,
         buckets: activityFrom(rows, bucket),
+      });
+    }),
+    http.get('*/functions/v1/memories/read-activity', ({ request }) => {
+      const url = new URL(request.url);
+      const bucket = url.searchParams.get('bucket') === 'hour' ? 'hour' : 'day';
+      return HttpResponse.json({
+        bucket,
+        since: url.searchParams.get('since') ?? FROZEN_NOW,
+        until: url.searchParams.get('until') ?? FROZEN_NOW,
+        buckets: readActivityFrom(rows, bucket),
       });
     }),
     http.get('*/functions/v1/memories', ({ request }) =>

@@ -3764,6 +3764,244 @@ begin
 end;
 $$;
 
+
+-- ── 71. lorekit_read_activity — per-bucket read volume (00053) ──────────────
+-- Backs GET /memories/read-activity, the Overview's "Memories read" card.
+-- AC-1: result_count is SUMMED per bucket — the card's bars add up to its number.
+-- AC-2: only the read tools count; a write event in the same bucket is excluded,
+--       and EVERY name in permissions.ts's READ_TOOLS counts — including
+--       memory.list_archived, which usage-stats.ts also classifies as a read.
+-- AC-3: the [since, until) window is half-open, and day buckets are UTC-anchored.
+-- AC-4: SELF-ONLY — another user's read events are never visible (usage is a
+--       per-user ledger; there is no org sharing of read events).
+-- AC-5: service-role + NULL p_user_id is the CI escape hatch and sees everything.
+-- AC-6: an invalid bucket unit raises rather than reaching date_trunc.
+
+-- This section's fixture is dated in 2026-04 so it cannot collide with the
+-- usage-statistics section above, which asserts exact all-time totals for a1
+-- over rows it seeds itself.
+insert into usage_events (user_id, plan_name, tool_name, scope_type, auth_type, outcome, duration_ms, result_count, created_at) values
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',   'repo',   'api_key', 'ok', 10,  7, timestamptz '2026-04-01 01:10:00+00'),
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.search', 'repo',   'api_key', 'ok', 10,  3, timestamptz '2026-04-01 01:50:00+00'),
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.write',  'repo',   'api_key', 'ok', 10, 99, timestamptz '2026-04-01 02:00:00+00'),
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.read',   'global', 'api_key', 'ok', 10,  4, timestamptz '2026-04-02 09:00:00+00'),
+  -- The fourth READ_TOOLS name. Deliberately on the 2nd, so every 2026-04-01
+  -- assertion above is untouched and this row's only effect is the AC-2 total.
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list_archived', 'global', 'api_key', 'ok', 10, 6, timestamptz '2026-04-02 09:30:00+00'),
+  ('00000000-0000-0000-0000-0000000000b2', 'free', 'memory.list',   'global', 'jwt',     'ok', 10, 50, timestamptz '2026-04-01 01:20:00+00');
+
+do $$
+declare
+  v_count  bigint;
+  v_rows   int;
+  v_bucket timestamptz;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- AC-1 + AC-2: the 1st sums 7 + 3 = 10 records; the write event's 99 is excluded.
+  select bucket, count into v_bucket, v_count
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day',
+      timestamptz '2026-04-01 00:00:00+00', timestamptz '2026-04-03 00:00:00+00')
+   order by bucket asc
+   limit 1;
+  assert v_bucket = timestamptz '2026-04-01 00:00:00+00',
+    format('read activity AC-1: first day bucket must be UTC midnight, got %s', v_bucket);
+  assert v_count = 10,
+    format('read activity AC-1/AC-2: 2026-04-01 must sum to 10 read records (write excluded), got %s', v_count);
+
+  -- AC-1: hour granularity keeps both reads in the SAME 01:00 bucket.
+  select count(*) into v_rows
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-04-01 00:00:00+00', timestamptz '2026-04-02 00:00:00+00');
+  assert v_rows = 1,
+    format('read activity AC-1: 2026-04-01 must yield exactly one hour bucket, got %s', v_rows);
+  select bucket, count into v_bucket, v_count
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-04-01 00:00:00+00', timestamptz '2026-04-02 00:00:00+00');
+  assert v_bucket = timestamptz '2026-04-01 01:00:00+00' and v_count = 10,
+    format('read activity AC-1: expected the 01:00 bucket with 10 records, got %s / %s', v_bucket, v_count);
+
+  -- AC-3: `until` is EXCLUSIVE — a window ending at the 2nd's midnight must not
+  -- pick up the 2026-04-02 read; `since` is inclusive.
+  select count(*) into v_rows
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day',
+      timestamptz '2026-04-01 00:00:00+00', timestamptz '2026-04-02 00:00:00+00');
+  assert v_rows = 1,
+    format('read activity AC-3: the window must be half-open, got %s buckets', v_rows);
+
+  -- AC-2: EVERY READ_TOOLS name counts. The 2nd holds memory.read (4) and
+  -- memory.list_archived (6). This is the discriminating assertion for the
+  -- omitted fourth tool: with a three-name filter it reads 4, not 10.
+  select count into v_count
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day',
+      timestamptz '2026-04-02 00:00:00+00', timestamptz '2026-04-03 00:00:00+00');
+  assert v_count = 10,
+    format('read activity AC-2: 2026-04-02 must sum memory.read + memory.list_archived = 10, got %s', v_count);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- AC-5: the CI escape hatch — service-role with a NULL p_user_id sees every
+-- user's reads, so B's 50 records join A's 10 on 2026-04-01.
+--
+-- This runs in its OWN block, under claims carrying NO `sub`, because that is
+-- the only shape in which the hatch exists: the actor rule resolves
+-- `coalesce(p_user_id, auth.uid())` for a service-role caller, so a claim set
+-- that names a sub pins the actor to that user and a NULL p_user_id then means
+-- "me", not "everyone". A no-sub service_role claim is precisely what the CI
+-- connection presents, and it is the shape lorekit_memory_activity's own
+-- assertions use.
+do $$
+declare v_count bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  select count into v_count
+    from lorekit_read_activity(
+      null, 'day',
+      timestamptz '2026-04-01 00:00:00+00', timestamptz '2026-04-02 00:00:00+00');
+  assert v_count = 60,
+    format('read activity AC-5: service-role NULL must total 60 records, got %s', v_count);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- AC-4: self-only. As an AUTHENTICATED user B, A's reads must be invisible —
+-- the negative assertion that separates this from the org-shared visibility of
+-- lorekit_memory_activity.
+do $$
+declare v_count bigint;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}', true);
+
+  -- B passes A's id, but the actor is auth.uid() for a non-service caller, so B
+  -- can only ever see its own 50 records — never A's 20.
+  select coalesce(sum(count), 0) into v_count
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day',
+      timestamptz '2026-04-01 00:00:00+00', timestamptz '2026-04-03 00:00:00+00');
+  assert v_count = 50,
+    format('read activity AC-4: B must see only its own 50 records, got %s', v_count);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- AC-6: p_bucket is a bounded categorical, validated before date_trunc sees it.
+do $$
+declare v_raised boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+  begin
+    perform * from lorekit_read_activity('00000000-0000-0000-0000-0000000000a1', 'week', null, null);
+  exception when others then
+    v_raised := true;
+  end;
+  assert v_raised, 'read activity AC-6: an unsupported bucket unit must raise';
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 72. usage_events.client — the dashboard stops counting itself (00054) ───
+-- The dashboard is a client of LoreKit's own REST API, so drawing the Overview
+-- issued real reads that the Overview then counted: the "Memories read" card
+-- went up on every page reload. 00054 adds the `client` dimension and excludes
+-- the dashboard from lorekit_read_activity.
+-- AC-1: a read attributed to `dashboard` is EXCLUDED from the read series.
+-- AC-2: a read with a NULL client is still COUNTED — every row written before
+--       the column existed is unattributed, and `<>` would have dropped them all.
+-- AC-3: a read attributed to any other surface (cli / mcp / api) is COUNTED.
+-- AC-4: only the METRIC excludes it — the ledger behind GET /memories/usage
+--       still sees the dashboard's records, so the exclusion is reversible.
+-- AC-5: the writer RPC persists p_client, and the length CHECK is a real
+--       backstop against an unbounded value inflating analytics cardinality.
+
+-- Dated 2026-05 so it cannot collide with §71's 2026-04 fixture or the
+-- usage-statistics section's all-time totals.
+insert into usage_events (user_id, plan_name, tool_name, scope_type, auth_type, outcome, duration_ms, result_count, client, created_at) values
+  -- The bug, reproduced: the dashboard listing lore in order to render it.
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list', 'repo', 'jwt',     'ok', 10, 25, 'dashboard', timestamptz '2026-05-01 01:00:00+00'),
+  -- An agent actually consuming lore, in the same bucket.
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list', 'repo', 'api_key', 'ok', 10,  4, 'mcp',       timestamptz '2026-05-01 01:05:00+00'),
+  -- A pre-00054 row: no attribution at all.
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.read', 'repo', 'api_key', 'ok', 10,  1, null,        timestamptz '2026-05-01 01:10:00+00');
+
+do $$
+declare
+  v_count   bigint;
+  v_records bigint;
+  v_client  text;
+  v_id      uuid;
+  v_raised  boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- AC-1 + AC-2 + AC-3: 4 (mcp) + 1 (unattributed) = 5. The dashboard's 25 is
+  -- gone. This single number is the discriminating assertion for all three:
+  -- 30 means nothing was excluded, 4 means the NULL row was wrongly dropped
+  -- (the `<>` bug), 25 means the filter is inverted.
+  select count into v_count
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day',
+      timestamptz '2026-05-01 00:00:00+00', timestamptz '2026-05-02 00:00:00+00');
+  assert v_count = 5,
+    format('usage client AC-1/2/3: 2026-05-01 must read 5 records (dashboard excluded, null + mcp kept), got %s', v_count);
+
+  -- AC-4: the LEDGER is untouched — GET /memories/usage still totals all 30
+  -- records read, so nothing was dropped on the way in and the exclusion can be
+  -- reversed by one more migration rather than by re-collecting lost data.
+  select coalesce(sum(record_count), 0) into v_records
+    from lorekit_usage_stats(
+      '00000000-0000-0000-0000-0000000000a1',
+      timestamptz '2026-05-01 00:00:00+00', timestamptz '2026-05-02 00:00:00+00')
+   where tool_name in ('memory.read', 'memory.list', 'memory.search', 'memory.list_archived');
+  assert v_records = 30,
+    format('usage client AC-4: the ledger must still hold all 30 read records, got %s', v_records);
+
+  -- AC-5: the writer persists the new trailing parameter.
+  select lorekit_record_usage_event(
+    '00000000-0000-0000-0000-0000000000a1', null, 'free',
+    'memory.list', 'repo', 'jwt', 'ok', 5, null, 3, null, 'dashboard') into v_id;
+  assert v_id is not null, 'usage client AC-5: the writer must return the inserted id';
+  select client into v_client from usage_events where id = v_id;
+  assert v_client = 'dashboard',
+    format('usage client AC-5: p_client must be persisted, got %s', v_client);
+
+  -- AC-5: the length CHECK is a real backstop, not decoration. The app-side
+  -- `parseUsageClient` is the primary gate, but a direct insert must not be
+  -- able to put an unbounded value into a column that gets grouped on.
+  begin
+    insert into usage_events (user_id, tool_name, auth_type, outcome, client)
+      values ('00000000-0000-0000-0000-0000000000a1', 'memory.list', 'jwt', 'ok', repeat('x', 33));
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, 'usage client AC-5: an over-long client value must violate the CHECK';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

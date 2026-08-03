@@ -133,7 +133,7 @@ function isVercelPreviewOrigin(origin: string): boolean {
 // of the request Origin even when the origin is disallowed.
 const STATIC_CORS_HEADERS: Readonly<Record<string, string>> = {
   'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Authorization, Content-Type, traceparent, tracestate, X-LoreKit-Dry-Run',
+  'Access-Control-Allow-Headers': 'Authorization, Content-Type, traceparent, tracestate, X-LoreKit-Dry-Run, X-LoreKit-Client, X-LoreKit-Correlation-Id',
   'Access-Control-Expose-Headers': 'traceparent, X-LoreKit-Dry-Run',
   'Access-Control-Max-Age': '86400',
   'Vary': 'Origin',

@@ -170,8 +170,15 @@ describe('corsResponseHeaders', () => {
       corsResponseHeaders(ALLOWLIST, 'https://evil.com'),
     ]) {
       expect(headers['Access-Control-Allow-Methods']).toBe('GET, POST, PATCH, DELETE, OPTIONS');
+      // X-LoreKit-Client and X-LoreKit-Correlation-Id are load-bearing for the
+      // BROWSER specifically: both are custom request headers, so a
+      // cross-origin fetch that sets them is preflighted and fails outright
+      // unless they are listed here. The dashboard sets X-LoreKit-Client on
+      // every call (that is what keeps its own reads out of the "Memories
+      // read" metric), so dropping it from this list does not merely lose a
+      // telemetry dimension — it breaks every dashboard request.
       expect(headers['Access-Control-Allow-Headers']).toBe(
-        'Authorization, Content-Type, traceparent, tracestate, X-LoreKit-Dry-Run',
+        'Authorization, Content-Type, traceparent, tracestate, X-LoreKit-Dry-Run, X-LoreKit-Client, X-LoreKit-Correlation-Id',
       );
       // Without this a browser cannot read the server span's traceparent, which
       // is what links client-side RUM to the server trace.

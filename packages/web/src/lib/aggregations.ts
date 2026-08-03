@@ -114,6 +114,22 @@ export interface RangeTrends {
   lessons: StatTrend;
   /** Distinct scopes active per bucket across the selected range. */
   scopes: StatTrend;
+  /**
+   * NEW (first-seen) scopes per bucket across the selected range.
+   *
+   * The additive counterpart to {@link RangeTrends.scopes}: a scope is counted
+   * in the bucket where it FIRST appears within the charted window, so the
+   * series sums to exactly {@link RangeTrends.activeScopes} — the distinct
+   * union. That is what makes the Scopes card's sparkbar reconcile with its
+   * headline number; `scopes` (distinct-per-bucket) cannot, because a scope
+   * active on three days contributes three bars and one unit of the total.
+   *
+   * `changePct` is deliberately the BREADTH change (`scopes.changePct`): union
+   * this window vs. union the previous one. "Was I working across more areas?"
+   * is the question the chip answers, and a first-seen series has no meaningful
+   * period-over-period sum of its own.
+   */
+  newScopes: StatTrend;
   /** Distinct scopes active anywhere within the selected range window. */
   activeScopes: number;
 }
@@ -226,6 +242,20 @@ export function computeRangeTrends(
     scopeSetsAll.push(seen);
   }
 
+  // New (first-seen) scopes per bucket, over the CHARTED window only. Summing
+  // these equals the distinct union — see `RangeTrends.newScopes`.
+  const seenInWindow = new Set<string>();
+  const newScopesPoints: BucketPoint[] = scopeSetsAll.slice(count).map((set, i) => {
+    let fresh = 0;
+    for (const scope of set) {
+      if (!seenInWindow.has(scope)) {
+        seenInWindow.add(scope);
+        fresh++;
+      }
+    }
+    return { label: scopesAll[count + i].label, value: fresh };
+  });
+
   return {
     lessons: {
       points: lessonsAll.slice(count),
@@ -237,6 +267,65 @@ export function computeRangeTrends(
       points: scopesAll.slice(count),
       changePct: scopeWindowChange(scopeSetsAll, count),
     },
+    newScopes: {
+      points: newScopesPoints,
+      changePct: scopeWindowChange(scopeSetsAll, count),
+    },
     activeScopes: unionSets(scopeSetsAll.slice(count)).size,
   };
+}
+
+// ── GET /memories/read-activity → the "Memories read" card ───────────────────
+
+/** One `(bucket, count)` cell from `GET /memories/read-activity`. */
+export interface CountBucketRow {
+  /** UTC start of the interval, ISO. */
+  bucket: string;
+  count: number;
+}
+
+/**
+ * Bucket a scope-less `{ bucket, count }` series onto the selected range's grid.
+ *
+ * Reads have no scope dimension, so `computeRangeTrends` — which is built
+ * around per-bucket scope SETS — has nothing to offer them. Expanding the
+ * response into fake `TrendRow`s to reuse it would also allocate one object per
+ * record read, and a busy account reads tens of thousands of records a week.
+ *
+ * The result is additive by construction: `points` are the raw per-bucket sums
+ * over the charted window, so summing the bars gives the window total the card
+ * shows. `changePct` compares that total against the immediately preceding
+ * equal-length window, exactly as `computeRangeTrends` does, so the chart and
+ * the chip always describe the same period. Buckets the server omitted (it
+ * returns a sparse series) render as zeros rather than gaps.
+ *
+ * Grid alignment is shared with `computeRangeTrends` (`bucketAnchor` /
+ * `bucketLabel`), so a read bar and a write bar at the same index cover exactly
+ * the same hour or day.
+ */
+export function computeCountTrend(
+  rows: readonly CountBucketRow[],
+  nowIso: string,
+  range: MetricRange,
+): StatTrend {
+  const { unit, count } = RANGE_BUCKETS[range];
+  const unitMs = unit === 'hour' ? HOUR_MS : DAY_MS;
+  const anchor = bucketAnchor(Date.parse(nowIso), unit);
+  const total = count * 2;
+  const oldest = anchor - (total - 1) * unitMs;
+
+  // Grid oldest→newest; a row lands in the slot whose [start, start + unit) it
+  // falls in, which is where the server's `date_trunc` already placed it.
+  const values = new Array<number>(total).fill(0);
+  for (const row of rows) {
+    const t = Date.parse(row.bucket);
+    if (Number.isNaN(t) || t < oldest || t >= anchor + unitMs) continue;
+    values[Math.floor((t - oldest) / unitMs)] += row.count;
+  }
+
+  const points: BucketPoint[] = values
+    .slice(count)
+    .map((value, i) => ({ label: bucketLabel(oldest + (count + i) * unitMs, unit), value }));
+
+  return { points, changePct: windowChange(values, count) };
 }

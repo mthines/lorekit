@@ -154,6 +154,12 @@ export async function restFetch(baseUrl, token, path, { method = 'GET', body, ti
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(traceparent ? { traceparent } : {}),
       ...(correlationId ? { 'x-lorekit-correlation-id': correlationId } : {}),
+      // Name the calling surface so usage analytics can tell a CLI read from a
+      // dashboard one. Not cosmetic: `GET /memories/read-activity` EXCLUDES the
+      // `dashboard` client (a human browsing lore is not consuming it), so a
+      // caller that wants its reads counted has to be attributable. Constant,
+      // never env-driven — this binary is always the CLI.
+      'x-lorekit-client': 'cli',
     };
     const res = await fetch(url, {
       method,
