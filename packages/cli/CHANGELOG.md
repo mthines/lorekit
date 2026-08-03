@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.30.1](https://github.com/mthines/lorekit/compare/cli-v1.30.0...cli-v1.30.1) (2026-08-03)
+
+
+### Bug Fixes
+
+* **cli:** only mark a span as error when the command crashes ([82b909e](https://github.com/mthines/lorekit/commit/82b909e150f2494ed76d90614726cbb6a02bf1cd))
+* **cli:** only mark a span as error when the command crashes ([d66f2a4](https://github.com/mthines/lorekit/commit/d66f2a4899a98492cd005b4dbf03763bb0954070))
+* **cli:** register the Explorer filters param in the deep-link builder ([2a63797](https://github.com/mthines/lorekit/commit/2a63797ddf42c14b8cefbd63ec5651ca916a630c))
+
+
+### Documentation
+
+* **cli:** name STATUS_CODE_OK instead of claiming the span status is unset ([0cb37cc](https://github.com/mthines/lorekit/commit/0cb37ccb510994bb6364037d3b45e17bf3a0220e))
+
 ## [1.30.0](https://github.com/mthines/lorekit/compare/cli-v1.29.3...cli-v1.30.0) (2026-08-03)
 
 
