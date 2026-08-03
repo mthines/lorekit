@@ -45,11 +45,24 @@ export const MIN_VISIBLE_MS = 450;
  * Chrome that lies indefinitely is worse than chrome that gives up: a user who
  * has seen the list render reads a permanent bar as "this app is broken", and
  * the screen reader's live region says "Refreshing data" for the rest of the
- * session. So the bar stops reporting, loudly enough to be a bug when it
- * happens and quiet enough not to be one when it does not — 15s is far past any
- * request this dashboard makes, so a healthy one is never cut short.
+ * session. So the bar stops reporting — but only past the point where the app
+ * itself has stopped waiting.
+ *
+ * That point is `REST_TIMEOUT_MS` (30s, `lib/api/rest.ts`), the longest a single
+ * request is allowed to run before it is abandoned with an error. A watchdog
+ * shorter than that gives up on work the app still expects an answer from: the
+ * bar would vanish mid-flight and, per the no-resurrect consequence documented
+ * in `useBackgroundActivity`, would not come back when the answer arrived. So
+ * this must OUTLAST one deadline — the extra 5s covers the abort propagating
+ * and the query settling. `activity-indicator.spec.ts` asserts the ordering, so
+ * moving either number without the other fails the suite.
+ *
+ * It does NOT outlast every case, and should not pretend to: a query with
+ * `retry` configured stays in flight across several deadlines plus backoff, and
+ * a watchdog set past that envelope would be a bar that lies for minutes. The
+ * bound is one request's worth of patience, not every retry's.
  */
-export const MAX_VISIBLE_MS = 15_000;
+export const MAX_VISIBLE_MS = 35_000;
 
 export type IndicatorState =
   /** Nothing in flight, nothing on screen. */

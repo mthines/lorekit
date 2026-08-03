@@ -8,6 +8,7 @@ import {
   type IndicatorEvent,
   type IndicatorState,
 } from './activity-indicator';
+import { REST_TIMEOUT_MS } from './api/rest';
 
 const STATES: IndicatorState[] = ['idle', 'pending', 'visible', 'lingering'];
 const EVENTS: IndicatorEvent[] = [
@@ -60,7 +61,8 @@ describe('activity indicator state machine', () => {
 
   it('drops the bar immediately when the watchdog fires — the linger is not owed', () => {
     // Straight to `idle`, never via `lingering`: the linger keeps a bar that
-    // appeared too briefly on screen, and this one has been up for 15 seconds.
+    // appeared too briefly on screen, and this one has been up for the whole
+    // watchdog window.
     expect(nextIndicatorState('visible', 'max-visible-elapsed')).toBe('idle');
   });
 
@@ -97,5 +99,13 @@ describe('activity indicator state machine', () => {
 
   it('sets the watchdog far past any real request, so a healthy one is never cut short', () => {
     expect(MAX_VISIBLE_MS).toBeGreaterThan(MIN_VISIBLE_MS + SHOW_DELAY_MS);
+  });
+
+  it('outlasts the deadline the app itself gives a request, so a live one keeps the bar', () => {
+    // The two numbers are set in different modules and neither imports the
+    // other, so nothing but this assertion keeps them ordered. Below the
+    // deadline the watchdog gives up on work the app is still waiting for, and
+    // the no-resurrect rule means the bar never returns when the answer does.
+    expect(MAX_VISIBLE_MS).toBeGreaterThan(REST_TIMEOUT_MS);
   });
 });
