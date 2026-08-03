@@ -10,6 +10,7 @@ import { BlogProse } from '@/components/blog/BlogProse';
 import { TableOfContents } from '@/components/blog/TableOfContents';
 import { MobileTableOfContents } from '@/components/blog/MobileTableOfContents';
 import { ReadingProgress } from '@/components/blog/ReadingProgress';
+import { PostLikes } from '@/components/blog/PostLikes';
 import { formatPostDate, readingLabel } from '@/lib/blog/format';
 
 // Statically generate one page per known post slug; reject anything else (404).
@@ -86,6 +87,8 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
           <BlogProse>
             <MDXRemote source={post.body} components={blogMdxComponents} options={blogMdxOptions} />
           </BlogProse>
+
+          <PostLikes slug={post.slug} />
         </article>
 
         {post.toc.length > 0 && (

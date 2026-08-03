@@ -4002,6 +4002,77 @@ begin
 end;
 $$;
 
+-- ── 73. blog_post_likes — public anonymous cumulative like counter (00055) ──
+-- The blog is a public, unauthenticated surface and a like accumulates across
+-- ALL visitors, so — uniquely in this schema — the increment RPC is granted to
+-- `anon`. The per-session cap is client-side; the server only accumulates the
+-- global total and refuses an abusive single call.
+-- AC-1: lorekit_blog_like inserts a row on first like and returns the total.
+-- AC-2: a second like on the same slug accumulates atomically.
+-- AC-3: p_delta is clamped to [1,100] — an over-large delta adds at most 100,
+--       and a 0/negative delta is floored to +1 (never a decrement).
+-- AC-4: an invalid slug shape is rejected (no junk rows under arbitrary keys).
+-- AC-5: `anon` — the unauthenticated blog visitor — can execute the RPC and can
+--       SELECT the totals under the public read policy.
+
+do $$
+declare
+  v_total bigint;
+  v_raised boolean := false;
+begin
+  set local role service_role;
+
+  -- AC-1: first like creates the row.
+  select lorekit_blog_like('hello-world', 1) into v_total;
+  assert v_total = 1, format('blog likes AC-1: first like must total 1, got %s', v_total);
+
+  -- AC-2: accumulates.
+  select lorekit_blog_like('hello-world', 1) into v_total;
+  assert v_total = 2, format('blog likes AC-2: second like must total 2, got %s', v_total);
+
+  -- AC-3: an over-large delta is clamped to 100 (2 + 100 = 102).
+  select lorekit_blog_like('hello-world', 1000) into v_total;
+  assert v_total = 102,
+    format('blog likes AC-3: delta 1000 must clamp to +100 (total 102), got %s', v_total);
+
+  -- AC-3: a 0/negative delta is floored to +1, never a decrement.
+  select lorekit_blog_like('hello-world', 0) into v_total;
+  assert v_total = 103,
+    format('blog likes AC-3: delta 0 must floor to +1 (total 103), got %s', v_total);
+  select lorekit_blog_like('hello-world', -5) into v_total;
+  assert v_total = 104,
+    format('blog likes AC-3: negative delta must floor to +1 (total 104), got %s', v_total);
+
+  -- AC-4: an invalid slug is rejected.
+  begin
+    perform lorekit_blog_like('Not A Slug!', 1);
+  exception when others then
+    v_raised := true;
+  end;
+  assert v_raised, 'blog likes AC-4: an invalid slug shape must raise';
+
+  reset role;
+end;
+$$;
+
+-- AC-5: the anonymous role can both write and read.
+do $$
+declare
+  v_total bigint;
+  v_read  bigint;
+begin
+  set local role anon;
+
+  select lorekit_blog_like('anon-post', 3) into v_total;
+  assert v_total = 3, format('blog likes AC-5: anon write must total 3, got %s', v_total);
+
+  select likes into v_read from blog_post_likes where slug = 'anon-post';
+  assert v_read = 3, format('blog likes AC-5: anon read under the public policy must see 3, got %s', v_read);
+
+  reset role;
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
