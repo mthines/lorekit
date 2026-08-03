@@ -35,24 +35,46 @@ export function PostLikes({ slug }: { slug: string }) {
 
   const pendingDelta = useRef(0);
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** The write currently in flight — a second flush queues behind it. */
+  const inFlight = useRef<Promise<void> | null>(null);
 
-  const flush = useCallback(async () => {
+  const flush = useCallback(() => {
     if (flushTimer.current) {
       clearTimeout(flushTimer.current);
       flushTimer.current = null;
     }
-    const delta = pendingDelta.current;
-    if (delta <= 0) return;
-    pendingDelta.current = 0;
 
-    const { total, ok } = await addPostLikes(slug, delta);
-    // The write fails SOFT and returns the unchanged total, so hand the delta
-    // back rather than dropping it: the session cap has already been charged
-    // for these likes, and the next tap, tab-hide, or unmount re-sends them.
-    if (!ok) pendingDelta.current += delta;
-    // Fold in any taps that arrived while the write was in flight, so the
-    // authoritative total never clobbers an unsent optimistic increment.
-    setCount(total + pendingDelta.current);
+    // Writes are SERIALISED. A tap 600ms into a slow write must not start a
+    // second one: the two totals resolve in arbitrary order, and the later
+    // `setCount` can be the one carrying the smaller total, so the visible
+    // count regresses. Queueing (rather than dropping the second flush) also
+    // means nothing is stranded — whatever is pending when the in-flight write
+    // lands is picked up by this call, with no timer left to arm.
+    const queued = (inFlight.current ?? Promise.resolve()).then(async () => {
+      const delta = pendingDelta.current;
+      if (delta <= 0) return;
+      pendingDelta.current = 0;
+
+      try {
+        const { total, ok } = await addPostLikes(slug, delta);
+        // The write fails SOFT and returns the unchanged total, so hand the
+        // delta back rather than dropping it: the session cap has already been
+        // charged for these likes, and the next tap, tab-hide, or unmount
+        // re-sends them.
+        if (!ok) pendingDelta.current += delta;
+        // Fold in any taps that arrived while the write was in flight, so the
+        // authoritative total never clobbers an unsent optimistic increment.
+        setCount(total + pendingDelta.current);
+      } catch {
+        // The action itself threw (offline, aborted navigation). Same contract
+        // as a soft failure: keep the delta, leave the optimistic count alone.
+        // Swallowed so the queue never becomes a rejected promise every later
+        // flush would inherit.
+        pendingDelta.current += delta;
+      }
+    });
+    inFlight.current = queued;
+    return queued;
   }, [slug]);
 
   // Load the global total and this session's prior contribution on mount.
