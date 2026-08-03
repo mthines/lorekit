@@ -142,13 +142,18 @@ jobs:
 
       # Bake the Dash0 ingesting-only telemetry token into the tarball. The token
       # lives only in the LOREKIT_TELEMETRY_TOKEN secret, never in git — this
-      # rewrites src/telemetry-token.mjs in the checkout just before publish. If
-      # the secret is unset the script no-ops and the CLI publishes with default
-      # telemetry off.
+      # rewrites src/telemetry-token.mjs in the checkout just before publish.
+      # `--require` turns a missing secret into a failed release (a
+      # telemetry-blind tarball must never ship silently); the probe then proves
+      # the injected token is actually accepted, so a revoked credential is
+      # caught here rather than by someone noticing a flat dashboard days later.
       - name: Inject telemetry token
         env:
           LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
-        run: node scripts/inject-telemetry-token.mjs
+        run: node scripts/inject-telemetry-token.mjs --require
+
+      - name: Verify the injected token can ingest (doctor --telemetry)
+        run: node packages/cli/bin/lorekit.mjs doctor --telemetry --dir "$RUNNER_TEMP"
 
       # No NODE_AUTH_TOKEN: npm authenticates via the Actions OIDC trusted
       # publisher. release-please guarantees the version is new, so no guard.

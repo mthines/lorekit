@@ -112,6 +112,48 @@ describe('isOriginAllowed', () => {
     expect(isOriginAllowed(allowed, 'https://notlocalhost')).toBe(false);
     expect(isOriginAllowed(allowed, 'https://127.0.0.1.evil.com')).toBe(false);
   });
+
+  // The dashboard's Vercel preview deployments get a per-branch/per-commit hostname
+  // that can never be listed in ALLOWED_ORIGINS, so they were CORS-blocked once the
+  // app moved off PostgREST onto the REST edge functions. They are always admitted.
+  it('always admits the project’s own Vercel preview deployments', () => {
+    const allowed = expandAllowedOrigins(['https://lorekit.io']);
+    // The exact origin from the reported failure.
+    expect(
+      isOriginAllowed(
+        allowed,
+        'https://lorekit-git-feat-header-activity-indicator-mads-thines-projects.vercel.app',
+      ),
+    ).toBe(true);
+    // Per-commit deployment host and the `<project>-<scope>` production alias.
+    expect(isOriginAllowed(allowed, 'https://lorekit-abc123-mads-thines-projects.vercel.app')).toBe(
+      true,
+    );
+    expect(isOriginAllowed(allowed, 'https://lorekit-mads-thines-projects.vercel.app')).toBe(true);
+  });
+
+  it('does not admit another project or a spoofed Vercel host', () => {
+    const allowed = expandAllowedOrigins(['https://lorekit.io']);
+    // A different project on vercel.app.
+    expect(isOriginAllowed(allowed, 'https://someone-else-projects.vercel.app')).toBe(false);
+    // A `lorekit`-prefixed name that is a DIFFERENT word, not the project.
+    expect(isOriginAllowed(allowed, 'https://lorekitten.vercel.app')).toBe(false);
+    expect(isOriginAllowed(allowed, 'https://notlorekit.vercel.app')).toBe(false);
+    // A lookalike nesting the project name under an attacker subdomain.
+    expect(isOriginAllowed(allowed, 'https://lorekit-x.attacker.vercel.app')).toBe(false);
+    expect(isOriginAllowed(allowed, 'https://lorekit.vercel.app.evil.com')).toBe(false);
+    // Only HTTPS Vercel origins qualify.
+    expect(isOriginAllowed(allowed, 'http://lorekit-preview.vercel.app')).toBe(false);
+    // The reviewer's case: any tenant CAN name a project `lorekit-x`, but its
+    // generated host ends with THEIR account scope, not ours, so it is rejected —
+    // the scope suffix is the half a third party cannot forge.
+    expect(isOriginAllowed(allowed, 'https://lorekit-x-someone-else-projects.vercel.app')).toBe(
+      false,
+    );
+    expect(isOriginAllowed(allowed, 'https://lorekit-evil-attacker.vercel.app')).toBe(false);
+    // The bare `<project>.vercel.app` alias (no account scope) is not admitted.
+    expect(isOriginAllowed(allowed, 'https://lorekit.vercel.app')).toBe(false);
+  });
 });
 
 // `corsHeaders(req)` in the Deno-only `_shared/api/cors.ts` is now nothing but
@@ -150,6 +192,15 @@ describe('corsResponseHeaders', () => {
     expect(
       corsResponseHeaders(ALLOWLIST, 'https://www.lorekit.io')['Access-Control-Allow-Origin'],
     ).toBe('https://www.lorekit.io');
+  });
+
+  it('echoes a Vercel preview origin back verbatim so the browser accepts it', () => {
+    // The behaviour the failing preview deployment actually consumes: the header
+    // is present and equals the request Origin, not `*`, even though the host is
+    // not in the allowlist.
+    const preview =
+      'https://lorekit-git-feat-header-activity-indicator-mads-thines-projects.vercel.app';
+    expect(corsResponseHeaders(ALLOWLIST, preview)['Access-Control-Allow-Origin']).toBe(preview);
   });
 
   it('omits Access-Control-Allow-Origin entirely for a disallowed origin', () => {

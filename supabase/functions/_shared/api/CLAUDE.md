@@ -117,10 +117,17 @@ Rules:
 - `expandAllowedOrigins(configured)` — the effective allowlist: `expandOriginSiblings` over every
   configured origin, deduplicated.
 - `isOriginAllowed(allowed, origin)` — true when the expanded allowlist contains `*` or the exact
-  origin, OR the origin is a **loopback** dev host (`localhost` / `127.0.0.1` / `[::1]`, any port or
-  scheme, exact host match). Loopback is always admitted so a locally-run dashboard can reach the
-  deployed edge functions without the loopback host being in `ALLOWED_ORIGINS`; safe because every
-  request is Bearer-authenticated, so CORS is not the access control here.
+  origin, OR the origin is one of two always-admitted classes: a **loopback** dev host (`localhost` /
+  `127.0.0.1` / `[::1]`, any port or scheme, exact host match), or one of the project's own **Vercel
+  deployments** (`isVercelPreviewOrigin`: HTTPS, a single DNS label before exactly `.vercel.app`
+  that BOTH starts with `lorekit-` AND ends with the Vercel account scope `-mads-thines-projects`
+  — so every preview host `lorekit-git-<branch>-mads-thines-projects.vercel.app` and the
+  `lorekit-mads-thines-projects.vercel.app` alias match, while `lorekit-x.attacker.vercel.app`,
+  `lorekitten.vercel.app`, `lorekit.io` and a third-party `lorekit-x-<their-scope>.vercel.app`
+  do not — the scope suffix is the half a third party cannot forge). Both are admitted independently of
+  `ALLOWED_ORIGINS` because Vercel preview hostnames are per-deployment and cannot be enumerated
+  into a static allowlist; safe because every request is Bearer-authenticated, so CORS is not the
+  access control here — it only decides which browser origin may read the response.
 - `corsResponseHeaders(allowed, origin)` — the static CORS headers plus
   `Access-Control-Allow-Origin` **only when the origin is allowed**. A disallowed origin gets no
   such header rather than an empty one: the empty string is not a valid header value and a browser

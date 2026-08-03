@@ -11,6 +11,12 @@
 // every configured origin, so the allowlist is robust to whichever of the two is
 // named. `*` passes through unchanged; a non-sibling origin is still rejected.
 //
+// Two classes of origin are ALWAYS admitted regardless of ALLOWED_ORIGINS, for the
+// same reason (Bearer auth, not CORS, is the access control): loopback dev hosts,
+// and the project's own Vercel deployments — including preview/branch hosts like
+// `lorekit-git-<branch>-<scope>.vercel.app`, whose hostname is per-deployment and
+// cannot be enumerated into a static allowlist. See isVercelPreviewOrigin.
+//
 // `corsResponseHeaders` is the whole response-header decision that used to sit
 // inline in the Deno-only `_shared/api/cors.ts`, lifted here for the same reason
 // `rest-audit-actor.ts` and `rest-response-outcome.ts` were: the edge tree has no
@@ -42,14 +48,20 @@ export function expandAllowedOrigins(configured: string[]): string[] {
 
 // Whether a request Origin is permitted by an already-expanded allowlist.
 //
-// Loopback dev origins (localhost / 127.0.0.1 / [::1], any port or scheme) are
-// ALWAYS admitted so a dashboard running on a developer's machine can talk to the
-// deployed edge functions without the loopback host being in ALLOWED_ORIGINS.
-// This is safe: every request is authenticated with a Bearer token a cross-origin
-// page cannot obtain, so CORS is not the access control here — it only decides
-// which browser origin may read the response.
+// Loopback dev origins (localhost / 127.0.0.1 / [::1], any port or scheme) AND
+// the project's own Vercel PREVIEW deployments are ALWAYS admitted, even when the
+// origin is not in ALLOWED_ORIGINS. This is safe: every request is authenticated
+// with a Bearer token a cross-origin page cannot obtain, so CORS is not the access
+// control here — it only decides which browser origin may READ the response. A
+// page that lacks the user's token learns nothing by being allowed to make the
+// request. See isLoopbackOrigin / isVercelPreviewOrigin for the exact-host rules.
 export function isOriginAllowed(allowed: string[], origin: string): boolean {
-  return allowed.includes('*') || allowed.includes(origin) || isLoopbackOrigin(origin);
+  return (
+    allowed.includes('*') ||
+    allowed.includes(origin) ||
+    isLoopbackOrigin(origin) ||
+    isVercelPreviewOrigin(origin)
+  );
 }
 
 // True for a loopback dev origin. Matched on the EXACT host, so a lookalike such
@@ -60,6 +72,49 @@ function isLoopbackOrigin(origin: string): boolean {
   try {
     const { hostname } = new URL(origin);
     return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+  } catch {
+    return false;
+  }
+}
+
+// The Vercel project the dashboard deploys as, and the suffix Vercel serves every
+// deployment of it under. Preview deployments get a per-branch / per-commit
+// hostname — `lorekit-git-<branch>-<scope>.vercel.app`,
+// `lorekit-<hash>-<scope>.vercel.app` — that can never be enumerated into a static
+// allowlist, so they were CORS-blocked the moment the dashboard moved off the
+// permissively-CORS'd PostgREST gateway onto these edge functions.
+const VERCEL_APP_SUFFIX = '.vercel.app';
+const VERCEL_PROJECT = 'lorekit';
+const VERCEL_SCOPE = 'mads-thines-projects';
+
+// True for one of the LoreKit project's own Vercel deployment origins — every
+// generated preview/branch/production host Vercel serves the project under:
+//   lorekit-git-<branch>-mads-thines-projects.vercel.app
+//   lorekit-<hash>-mads-thines-projects.vercel.app
+//   lorekit-mads-thines-projects.vercel.app   (the <project>-<scope> alias)
+//
+// The match is tied to BOTH halves of the deployment's identity: HTTPS only; the
+// host must be a SINGLE DNS label before exactly `.vercel.app` (a label with a dot
+// — `lorekit-x.attacker.vercel.app` — is rejected); and that label must start with
+// the project name AND end with the Vercel ACCOUNT SCOPE slug. The scope suffix is
+// what a third party cannot forge: anyone can create a project named `lorekit-x`,
+// but its generated host ends with THEIR account scope, not `-mads-thines-projects`
+// — so `lorekit-x-someone-else.vercel.app`, `notlorekit-…`, `lorekit.io` and
+// `lorekit.evil.com` are all rejected. Admitting the project's own preview fleet is
+// safe for the same reason loopback is (Bearer auth, not CORS, is the gate).
+//
+// NOTE: if the project is moved to a different Vercel account/team, update
+// VERCEL_SCOPE — a one-line change, same class as VERCEL_PROJECT.
+function isVercelPreviewOrigin(origin: string): boolean {
+  if (!origin) return false;
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== 'https:') return false;
+    const host = url.hostname;
+    if (!host.endsWith(VERCEL_APP_SUFFIX)) return false;
+    const label = host.slice(0, -VERCEL_APP_SUFFIX.length);
+    if (label.includes('.')) return false;
+    return label.startsWith(`${VERCEL_PROJECT}-`) && label.endsWith(`-${VERCEL_SCOPE}`);
   } catch {
     return false;
   }

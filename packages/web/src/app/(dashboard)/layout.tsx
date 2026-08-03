@@ -6,6 +6,7 @@ import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
 import { SiteFooter } from '@/components/layout/SiteFooter';
 import { Dash0Provider } from '@/components/providers/Dash0Provider';
+import { FocusRefetcher } from '@/components/providers/FocusRefetcher';
 import { MemorySidebarProvider } from '@/components/providers/MemorySidebarProvider';
 import { ToastProvider } from '@/components/providers/ToastProvider';
 import { OnboardingProvider } from '@/components/providers/OnboardingProvider';
@@ -53,6 +54,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
           {/* Pass userId so Dash0Provider can call identify() and attach
               the opaque user ID to all subsequent RUM telemetry */}
           <Dash0Provider userId={user.id} />
+          {/* Coming back to the window (tab switch, app switch, reopening the
+              PWA) refreshes the active queries — the TopBar's ActivityIndicator
+              is what makes that visible. */}
+          <FocusRefetcher />
           <Sidebar user={user} />
           {/*
             MemorySidebarProvider wraps both the TopBar and the page content so the
