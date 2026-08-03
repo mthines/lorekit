@@ -29,7 +29,8 @@ export const LORE_PARAM_DEFAULTS = {
   q: '', // string search query
   range: null, // { from, to } | null (DateRange, "YYYY-MM-DD")
   owner: 'all', // 'all' | 'personal' | { orgId }
-  tags: [], // string[] — label filter (AND across labels); [] means "no filter"
+  filters: null, // Filter[] | null — the multi-dimension filter bar; null (not []) means "absent" so an explicitly-empty bar stays distinguishable
+  tags: [], // string[] — legacy label filter (AND across labels); [] means "no filter". Superseded by `filters`, still read for old links
   view: 'scope', // 'scope' | 'time'
   archived: false, // boolean
   lesson: null, // { scope, key } | null — opens the detail sheet
@@ -37,9 +38,9 @@ export const LORE_PARAM_DEFAULTS = {
 
 // A stable, readable param order (also makes URLs deterministic for tests).
 // Mirrors the `useUrlState` call order in `LoreExplorer.tsx` (+ the `lesson`
-// param last), so `tags` sits between `owner` and `view`. `scope` precedes
-// `lesson` so a lesson link reads `?scope=…&lesson=…`.
-const PARAM_ORDER = ['scope', 'q', 'range', 'owner', 'tags', 'view', 'archived', 'lesson'];
+// param last), so `filters`/`tags` sit between `owner` and `view`. `scope`
+// precedes `lesson` so a lesson link reads `?scope=…&lesson=…`.
+const PARAM_ORDER = ['scope', 'q', 'range', 'owner', 'filters', 'tags', 'view', 'archived', 'lesson'];
 
 // Strip trailing slashes from a base URL, falling back to the default when the
 // input is empty/absent. Pure.
