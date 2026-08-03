@@ -28,6 +28,7 @@ import { useRouter } from 'next/navigation';
 import { BookOpen, LayoutDashboard, Settings } from 'lucide-react';
 import { useCommand } from '@/components/command/useCommand';
 import { createClient } from '@/lib/supabase/client';
+import { SETTINGS_LANDING_HREF } from '@/lib/settings-routes';
 
 function GoToDashboardCommand() {
   const router = useRouter();
@@ -63,7 +64,7 @@ function GoToSettingsCommand() {
     icon: <Settings className="size-4" />,
     group: 'Navigate',
     shortcut: { keys: ['g', 's'] },
-    onSelect: () => router.push('/settings'),
+    onSelect: () => router.push(SETTINGS_LANDING_HREF),
   });
   return null;
 }

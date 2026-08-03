@@ -49,6 +49,7 @@ import { useCommand } from './useCommand';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { useLoreData } from '@/lib/queries/lore';
 import { DOCS_SECTIONS, type DocsSection } from '@/lib/docs/sections';
+import { SETTINGS_LANDING_HREF } from '@/lib/settings-routes';
 
 // ── Lore sub-commands helper ──────────────────────────────────────────────────
 //
@@ -157,7 +158,7 @@ export function NavigationCommands() {
     icon: <Settings className="size-4" />,
     group: 'Navigate',
     shortcut: { keys: ['g', 's'] },
-    onSelect: () => router.push('/settings'),
+    onSelect: () => router.push(SETTINGS_LANDING_HREF),
   });
 
   useCommand({

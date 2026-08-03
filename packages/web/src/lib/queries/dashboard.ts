@@ -1,18 +1,26 @@
 import { useQuery } from '@tanstack/react-query';
 import { scopeType } from '@/lib/scope';
-import { trendRowsFromActivity, type TrendRow } from '@/lib/aggregations';
+import { trendRowsFromActivity, type CountBucketRow, type TrendRow } from '@/lib/aggregations';
 import type { ScopeHealth } from '@/components/dashboard/ScopeHealthCard';
 import { browserAccessToken } from '@/lib/api/session-browser';
-import { activityRequest, listScopesRequest } from '@/lib/api/memories';
+import { activityRequest, listScopesRequest, readActivityRequest } from '@/lib/api/memories';
 
 export interface DashboardData {
   scopes: ScopeHealth[];
   /**
    * Raw trend rows (scope + created_at), one per memory in the trend window.
-   * The stat cards compute their per-card range trends from these client-side,
-   * so switching a card's range (24h / 7d / 30d) never triggers a refetch.
+   * The stat cards compute their range trends from these client-side, so
+   * switching the range (24h / 7d / 30d) never triggers a refetch.
    */
   rows: TrendRow[];
+  /**
+   * Records read per UTC hour over the trend window, from
+   * `GET /memories/read-activity` — the "Memories read" card's series.
+   *
+   * Kept as buckets rather than expanded into rows: read counts run to tens of
+   * thousands of records, and the card only ever sums them (`computeCountTrend`).
+   */
+  readBuckets: CountBucketRow[];
 }
 
 /**
@@ -39,15 +47,23 @@ const DAY_MS = 86_400_000;
  *   scope over the trend window. Hour granularity because the 24h card buckets
  *   hourly; the payload is sparse (only buckets with activity come back), so it
  *   is bounded by distinct active hours rather than by memory count.
+ * - `GET /memories/read-activity` answers the "Memories read" card: records
+ *   read per UTC HOUR over the same window, aggregated over `usage_events` in
+ *   Postgres for the same reason and with the same sparseness.
+ *
+ * All three are fetched once, over the widest window any range needs, so
+ * switching the shared range picker re-buckets in the browser instead of
+ * refetching.
  */
 async function fetchDashboardData(signal?: AbortSignal): Promise<DashboardData> {
   const token = await browserAccessToken();
-  if (!token) return { scopes: [], rows: [] };
+  if (!token) return { scopes: [], rows: [], readBuckets: [] };
 
   const since = new Date(Date.now() - TREND_WINDOW_DAYS * DAY_MS).toISOString();
-  const [scopesRes, activity] = await Promise.all([
+  const [scopesRes, activity, readActivity] = await Promise.all([
     listScopesRequest(token, signal),
     activityRequest(token, { bucket: 'hour', since }, signal),
+    readActivityRequest(token, { bucket: 'hour', since }, signal),
   ]);
 
   const scopes: ScopeHealth[] = scopesRes.scopes
@@ -65,6 +81,7 @@ async function fetchDashboardData(signal?: AbortSignal): Promise<DashboardData> 
   return {
     scopes,
     rows: trendRowsFromActivity(activity.buckets),
+    readBuckets: readActivity.buckets,
   };
 }
 

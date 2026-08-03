@@ -429,6 +429,22 @@ test('buildLoreUrl encodes tags as a JSON array and omits the empty default', ()
   assert.deepEqual(JSON.parse(url.searchParams.get('tags')), ['perf', 'ci']);
 });
 
+test('buildLoreUrl encodes the filter bar and keeps an explicitly empty bar distinguishable', () => {
+  const filters = [{ field: 'branch', operator: 'is', values: ['main'] }];
+  const url = new URL(buildLoreUrl({ scope: 'global', filters }));
+  assert.deepEqual(JSON.parse(url.searchParams.get('filters')), filters);
+  // `null` is the default (param absent → the app falls back to legacy `?tags=`),
+  // so it is omitted…
+  assert.equal(buildLoreUrl({ scope: 'global', filters: null }), 'https://lorekit.io/lore?scope=%22global%22');
+  // …but `[]` means "the bar is explicitly empty", which is NOT the default and
+  // must survive into the URL — that is what stops the legacy fallback from
+  // resurrecting a pill the user removed.
+  assert.equal(
+    buildLoreUrl({ scope: 'global', filters: [] }),
+    'https://lorekit.io/lore?scope=%22global%22&filters=%5B%5D',
+  );
+});
+
 test('link --tags prints the label-filtered Explorer link', () => {
   const root = tmp('lk-link-proj-');
   const res = run(['link', 'global', '--tags', 'perf,ci'], { dir: root });
@@ -564,28 +580,3 @@ test(
     }
   },
 );
-
-// ── the Explorer's `filters` param ────────────────────────────────────────────
-// Added when the Explorer's label-only picker became a six-dimension filter bar.
-// The drift guard above catches its ABSENCE; these pin the two behaviours a
-// default table alone cannot express.
-
-test('buildLoreQuery encodes filter-bar conditions and keeps them before tags', () => {
-  const filters = [{ field: 'branch', operator: 'is', values: ['main'] }];
-  assert.equal(
-    buildLoreQuery({ filters }),
-    `filters=${encodeURIComponent(JSON.stringify(filters))}`,
-  );
-  // PARAM_ORDER mirrors the useUrlState call order: filters precedes tags.
-  const both = buildLoreQuery({ filters, tags: ['perf'] });
-  assert.ok(both.indexOf('filters=') < both.indexOf('tags='), `filters must precede tags: ${both}`);
-});
-
-test('an EMPTY filter bar is a real value, not the default', () => {
-  // `null` means "no ?filters= param at all", which is what leaves the legacy
-  // `tags` shorthand in charge. `[]` is an explicitly cleared bar and WINS over
-  // `tags`, so collapsing it into the default would silently reinstate the
-  // labels the user just removed.
-  assert.equal(buildLoreQuery({ filters: null }), '');
-  assert.equal(buildLoreQuery({ filters: [] }), 'filters=%5B%5D');
-});

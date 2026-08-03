@@ -30,8 +30,8 @@ The Explorer reads each parameter with `useUrlState`, which does `JSON.parse(sea
 | `q` | `""` | Search query (pre-fills the search box). |
 | `range` | `null` | Date range `{ "from": "YYYY-MM-DD", "to": "YYYY-MM-DD" }`. |
 | `owner` | `"all"` | Ownership filter: `"all"`, `"personal"`, or `{ "orgId": "…" }`. |
-| `filters` | `null` | Filter bar conditions across six dimensions — label, agent, trigger, repo, branch, pull request (e.g. `[{"field":"branch","operator":"is","values":["main"]}]`). Wins over `tags`, including when empty. |
-| `tags` | `[]` | Legacy label shorthand, AND across labels (e.g. `["perf","ci"]`). |
+| `filters` | `null` | The Explorer filter bar: an array of `{ "field", "operator", "values" }` conditions over `label`, `agent`, `trigger`, `repo`, `branch` and `pr` (OR within a field, AND across fields). `null` means the param is absent and the legacy `tags` shorthand still applies; `[]` means the bar was explicitly emptied. |
+| `tags` | `[]` | Legacy label filter, AND across labels (e.g. `["perf","ci"]`). Superseded by `filters`, still read so older links keep working. |
 | `view` | `"scope"` | Explorer view: `"scope"` or `"time"`. |
 | `archived` | `false` | Include archived memories. |
 | `lesson` | `null` | `{ "scope", "key" }` — opens that memory's detail sheet. |
