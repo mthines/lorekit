@@ -128,7 +128,7 @@ all of which already exist in `packages/web`.
 `api_tokens.org_ids` is **narrowing only**: it is intersected with
 `lorekit_member_org_ids` (via `intersectTokenOrgIds` / `tokenAllowsOrgId` in
 `tenant-scope.ts`), never substituted for it, so a token can never reach an org
-its holder has left. Tables and columns: `supabase/migrations/00049_oauth.sql`.
+its holder has left. Tables and columns: `supabase/migrations/00053_oauth.sql`.
 
 ---
 

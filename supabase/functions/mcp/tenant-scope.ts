@@ -38,7 +38,7 @@ export function applyTenantScope<Q extends {
  * Narrow a caller's real org memberships by a credential's org allow-list.
  *
  * An OAuth-issued token carries the org selection the user made on the consent
- * screen (api_tokens.org_ids, 00049_oauth.sql). That selection may only ever
+ * screen (api_tokens.org_ids, 00053_oauth.sql). That selection may only ever
  * SUBTRACT: `memberOrgIds` stays the authority on what the human can reach, so
  * leaving an org revokes access immediately even though the token still names
  * it, and a token can never be edited into access its holder does not have.
