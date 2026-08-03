@@ -564,3 +564,28 @@ test(
     }
   },
 );
+
+// ── the Explorer's `filters` param ────────────────────────────────────────────
+// Added when the Explorer's label-only picker became a six-dimension filter bar.
+// The drift guard above catches its ABSENCE; these pin the two behaviours a
+// default table alone cannot express.
+
+test('buildLoreQuery encodes filter-bar conditions and keeps them before tags', () => {
+  const filters = [{ field: 'branch', operator: 'is', values: ['main'] }];
+  assert.equal(
+    buildLoreQuery({ filters }),
+    `filters=${encodeURIComponent(JSON.stringify(filters))}`,
+  );
+  // PARAM_ORDER mirrors the useUrlState call order: filters precedes tags.
+  const both = buildLoreQuery({ filters, tags: ['perf'] });
+  assert.ok(both.indexOf('filters=') < both.indexOf('tags='), `filters must precede tags: ${both}`);
+});
+
+test('an EMPTY filter bar is a real value, not the default', () => {
+  // `null` means "no ?filters= param at all", which is what leaves the legacy
+  // `tags` shorthand in charge. `[]` is an explicitly cleared bar and WINS over
+  // `tags`, so collapsing it into the default would silently reinstate the
+  // labels the user just removed.
+  assert.equal(buildLoreQuery({ filters: null }), '');
+  assert.equal(buildLoreQuery({ filters: [] }), 'filters=%5B%5D');
+});

@@ -30,7 +30,8 @@ The Explorer reads each parameter with `useUrlState`, which does `JSON.parse(sea
 | `q` | `""` | Search query (pre-fills the search box). |
 | `range` | `null` | Date range `{ "from": "YYYY-MM-DD", "to": "YYYY-MM-DD" }`. |
 | `owner` | `"all"` | Ownership filter: `"all"`, `"personal"`, or `{ "orgId": "…" }`. |
-| `tags` | `[]` | Label filter, AND across labels (e.g. `["perf","ci"]`). |
+| `filters` | `null` | Filter bar conditions across six dimensions — label, agent, trigger, repo, branch, pull request (e.g. `[{"field":"branch","operator":"is","values":["main"]}]`). Wins over `tags`, including when empty. |
+| `tags` | `[]` | Legacy label shorthand, AND across labels (e.g. `["perf","ci"]`). |
 | `view` | `"scope"` | Explorer view: `"scope"` or `"time"`. |
 | `archived` | `false` | Include archived memories. |
 | `lesson` | `null` | `{ "scope", "key" }` — opens that memory's detail sheet. |
