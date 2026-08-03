@@ -66,14 +66,71 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ── 0. Detect what changed — gate the API and web halves independently ────────
+  #    A merge that touches only the web (or only the API, or only docs) should not
+  #    redeploy the unchanged half. Same path-filter approach as ci.yml's `changes`
+  #    job. `packages/schemas/` maps to BOTH (the edge functions mirror it and the
+  #    web transpiles it); the workspace files and deploy.yml itself force BOTH, so
+  #    a change to this pipeline exercises the whole thing. Skipping the unchanged
+  #    half is safe for the FE↔API lockstep — lockstep only matters when both
+  #    change, and then both halves run and flip together.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Compare changed paths against the deploy globs
+        id: filter
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          BASE="$BEFORE"
+          # Fall back to the parent commit for a first push, a missing base SHA,
+          # or workflow_dispatch (no event.before) → compare against HEAD~1.
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            BASE="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+          fi
+          echo "Comparing ${BASE}...HEAD"
+          CHANGED="$(git diff --name-only "${BASE}" HEAD)"
+          echo "$CHANGED"
+          API=false; WEB=false
+          # API = Supabase edge functions + migrations + the packages that compile
+          # into them (schemas mirror into the functions). Workspace files + this
+          # workflow force a deploy.
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/mcp-core/|packages/mcp-server/|packages/schemas/|supabase/functions/|supabase/migrations/|supabase/tests/|supabase/config\.toml|package\.json|pnpm-lock\.yaml|nx\.json|\.github/workflows/deploy\.yml)'; then
+            API=true
+          fi
+          # Web = the Next.js dashboard + the schemas it transpiles + the workspace
+          # files that change how it installs, plus this workflow.
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|packages/schemas/|package\.json|pnpm-lock\.yaml|nx\.json|\.github/workflows/deploy\.yml)'; then
+            WEB=true
+          fi
+          echo "api=$API" >> "$GITHUB_OUTPUT"
+          echo "web=$WEB" >> "$GITHUB_OUTPUT"
+          echo "### Deploy scope" >> "$GITHUB_STEP_SUMMARY"
+          echo "- API (Supabase): $API" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Web (Vercel): $WEB" >> "$GITHUB_STEP_SUMMARY"
+
   # ── 1. Deploy to PREVIEW (migrations, then functions) ─────────────────────────
   #    No test job here: the commit on main already passed the required PR checks
   #    in ci.yml (unit + integration). Re-running them would just duplicate that
   #    work. Protect main with those required checks so only verified commits ever
-  #    reach this pipeline.
+  #    reach this pipeline. Gated on `changes.api` — a web-only or docs-only merge
+  #    skips the whole API preview→smoke→prod cycle.
   deploy-preview:
     name: Deploy → preview
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
     environment: preview
     permissions:
       contents: read
@@ -170,6 +227,8 @@ jobs:
   deploy-web-preview:
     name: Deploy web → preview (Vercel)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     environment: preview
     permissions:
       contents: read
@@ -202,7 +261,7 @@ jobs:
           fi
 
       - name: Install Vercel CLI
-        run: pnpm add -g vercel
+        run: pnpm add -g vercel@58
 
       - name: Pull Vercel environment (preview)
         run: vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
@@ -288,6 +347,8 @@ jobs:
   stage-web-production:
     name: Stage web → production (Vercel, pre-built)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     permissions:
       contents: read
     env:
@@ -321,7 +382,7 @@ jobs:
           fi
 
       - name: Install Vercel CLI
-        run: pnpm add -g vercel
+        run: pnpm add -g vercel@58
 
       - name: Pull Vercel environment (production)
         run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
@@ -358,6 +419,10 @@ jobs:
     name: Smoke tests → preview
     runs-on: ubuntu-latest
     needs: [deploy-preview, deploy-web-preview]
+    # Runs when the API was deployed to preview (it smoke-tests the API). A skipped
+    # web job (web unchanged) is fine; a FAILED web-preview build halts the whole
+    # prod deploy — don't half-ship a merge that changed both.
+    if: always() && needs.deploy-preview.result == 'success' && needs.deploy-web-preview.result != 'failure'
     environment: preview
     permissions:
       contents: read
@@ -562,7 +627,13 @@ jobs:
   promote-web-production:
     name: Promote web → production (Vercel)
     runs-on: ubuntu-latest
-    needs: [deploy-production, stage-web-production]
+    needs: [changes, deploy-production, stage-web-production]
+    # Flip the web when it changed (stage-web-production ran) AND either the API
+    # did not change (nothing to wait for) or the API's prod deploy succeeded (so
+    # the API is live before the FE fronts it). `changes.outputs.api` disambiguates
+    # deploy-production's 'skipped' (API unchanged, fine) from a real upstream stop
+    # (API changed but its deploy failed / smoke-preview failed → not 'success').
+    if: always() && needs.stage-web-production.result == 'success' && (needs.changes.outputs.api == 'false' || needs.deploy-production.result == 'success')
     environment: production
     permissions:
       contents: read
@@ -572,6 +643,11 @@ jobs:
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
       STAGED_URL: ${{ needs.stage-web-production.outputs.deployment_url }}
     steps:
+      # Checkout is required BEFORE pnpm/action-setup — it reads `packageManager`
+      # from the repo's package.json (no `version:` is pinned on the action).
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
 
@@ -581,7 +657,7 @@ jobs:
           node-version: 20
 
       - name: Install Vercel CLI
-        run: pnpm add -g vercel
+        run: pnpm add -g vercel@58
 
       - name: Promote staged build to production
         run: |
@@ -600,6 +676,10 @@ jobs:
     name: Smoke test → production
     runs-on: ubuntu-latest
     needs: [deploy-production, promote-web-production]
+    # Run when EITHER half reached production. The health/MCP curls hit the API
+    # (live either way) and the dashboard curl hits the web, so it validates
+    # whichever side just flipped and passes against the unchanged side.
+    if: always() && (needs.deploy-production.result == 'success' || needs.promote-web-production.result == 'success')
     environment: production
     permissions:
       contents: read
@@ -732,7 +812,13 @@ jobs:
     name: Rollback → production functions
     runs-on: ubuntu-latest
     needs: [deploy-production, promote-web-production, smoke-production]
-    if: always() && (needs.deploy-production.result == 'failure' || needs.promote-web-production.result == 'failure' || needs.smoke-production.result == 'failure')
+    # Revert functions ONLY when the API was actually deployed this run
+    # (deploy-production ran) and a production-phase failure occurred — its own
+    # deploy failed, or (having succeeded) the web promote or the shared smoke
+    # then failed, so the API reverts in lockstep with the web. If the API was
+    # unchanged (deploy-production skipped), the functions were never touched and
+    # are left alone even if the web half failed.
+    if: always() && (needs.deploy-production.result == 'failure' || (needs.deploy-production.result == 'success' && (needs.promote-web-production.result == 'failure' || needs.smoke-production.result == 'failure')))
     environment: production
     permissions:
       contents: read
@@ -776,7 +862,14 @@ jobs:
     name: Rollback → production web (Vercel)
     runs-on: ubuntu-latest
     needs: [promote-web-production, smoke-production]
-    if: always() && (needs.promote-web-production.result == 'failure' || (needs.promote-web-production.result == 'success' && needs.smoke-production.result == 'failure'))
+    # Roll back the web ONLY when the promote SUCCEEDED (the alias was actually
+    # swapped to this run's deployment) and the shared production smoke then failed.
+    # A FAILED promote never swapped the alias — production is still on the previous
+    # healthy deployment — so `vercel rollback` there would revert a good deployment
+    # to an even-older one. On a failed promote the functions revert instead
+    # (rollback-production), which is what restores FE↔API lockstep (old web that
+    # never moved + reverted functions).
+    if: always() && needs.promote-web-production.result == 'success' && needs.smoke-production.result == 'failure'
     environment: production
     permissions:
       contents: read
@@ -785,6 +878,11 @@ jobs:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     steps:
+      # Checkout is required BEFORE pnpm/action-setup — it reads `packageManager`
+      # from the repo's package.json (no `version:` is pinned on the action).
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
       - name: Set up pnpm
         uses: pnpm/action-setup@v6
 
@@ -794,14 +892,15 @@ jobs:
           node-version: 20
 
       - name: Install Vercel CLI
-        run: pnpm add -g vercel
+        run: pnpm add -g vercel@58
 
       - name: Roll back production web to the previous deployment
         run: |
           # `vercel rollback` with no target reverts to the deployment immediately
-          # prior to the current production deployment — the one live before this
-          # run's promote. Best-effort: rollback-production already fails the run
-          # loudly, so a rollback hiccup here is a warning, not a second hard fail.
+          # prior to the current production deployment — i.e. the one live before
+          # this run's (now-promoted) deployment. Best-effort: rollback-production
+          # already fails the run loudly, so a rollback hiccup here is a warning,
+          # not a second hard fail.
           if vercel rollback --token="$VERCEL_TOKEN" --yes; then
             echo "### ⚠️ Production web rolled back" >> "$GITHUB_STEP_SUMMARY"
             echo "The production domain was reverted to the previous Vercel deployment." >> "$GITHUB_STEP_SUMMARY"
@@ -823,7 +922,7 @@ jobs:
   notify-failure:
     name: Notify on failure (Discord + Dash0)
     runs-on: ubuntu-latest
-    needs: [deploy-preview, deploy-web-preview, stage-web-production, smoke-preview, deploy-production, promote-web-production, smoke-production, rollback-production, rollback-web-production]
+    needs: [changes, deploy-preview, deploy-web-preview, stage-web-production, smoke-preview, deploy-production, promote-web-production, smoke-production, rollback-production, rollback-web-production]
     if: always() && contains(needs.*.result, 'failure')
     permissions:
       contents: read # checkout, so the local composite action is available
@@ -834,6 +933,7 @@ jobs:
       - name: Identify the failed stage
         id: stage
         env:
+          RESULT_CHANGES: ${{ needs.changes.result }}
           RESULT_DEPLOY_PREVIEW: ${{ needs.deploy-preview.result }}
           RESULT_DEPLOY_WEB_PREVIEW: ${{ needs.deploy-web-preview.result }}
           RESULT_STAGE_WEB_PRODUCTION: ${{ needs.stage-web-production.result }}
@@ -847,7 +947,8 @@ jobs:
           # Name the first pipeline stage that failed (top-to-bottom = root cause;
           # rollback failing is a symptom of a prod-job failure listed before it).
           failed="an unknown stage"
-          if   [ "$RESULT_DEPLOY_PREVIEW"         = "failure" ]; then failed="deploy → preview"
+          if   [ "$RESULT_CHANGES"                = "failure" ]; then failed="detect changes"
+          elif [ "$RESULT_DEPLOY_PREVIEW"         = "failure" ]; then failed="deploy → preview"
           elif [ "$RESULT_DEPLOY_WEB_PREVIEW"     = "failure" ]; then failed="web deploy → preview"
           elif [ "$RESULT_STAGE_WEB_PRODUCTION"   = "failure" ]; then failed="web build (production staging)"
           elif [ "$RESULT_SMOKE_PREVIEW"          = "failure" ]; then failed="smoke tests → preview"
