@@ -483,6 +483,11 @@ function normalizeExitCode(result) {
  * counter point. Returns the command's exit code unchanged. Telemetry failures
  * are swallowed — the command result is never affected.
  *
+ * The span carries an ERROR status only when the command CRASHED. A command
+ * that ran to completion and exited non-zero (a failing `doctor` check, a
+ * `lint` finding) reports `lorekit.cli.outcome=failure` on an unset-status
+ * span.
+ *
  * @param {string} command  bounded: install | uninstall | doctor | list | search | show | stats | scopes | diff | tree | lint | dedupe | link | migrate
  * @param {object} args     parsed CLI args (read for allow-listed flags only)
  * @param {string} version  CLI version (from package.json)
@@ -525,6 +530,10 @@ export async function traceCommand(command, args, version, run) {
 
   const startMs = Date.now();
   let exitCode = 0;
+  // `outcome` is the command's VERDICT (ok | failure | error); `status` is the
+  // SPAN status, and only a crash sets it to error. See the note above the
+  // non-zero-exit branch below.
+  let outcome = 'ok';
   let status = 'ok';
   let statusMessage;
   let extraAttrs = {};
@@ -543,11 +552,20 @@ export async function traceCommand(command, args, version, run) {
       }
     }
     if (typeof exitCode === 'number' && exitCode !== 0) {
-      status = 'error';
-      statusMessage = `exit ${exitCode}`;
+      // A non-zero exit is a REPORTED VERDICT, not a fault: `doctor` exits 1
+      // because a check it ran came back failing, and `lint` exits 1 because it
+      // found what it was asked to look for. Both commands did their job. Only
+      // a crash (the catch below) is an error, so the span status stays unset
+      // here and the verdict is carried by `lorekit.cli.outcome=failure` +
+      // `lorekit.cli.exit_code` — which keeps the CLI's error rate a measure of
+      // the CLI being broken rather than of the user's environment being
+      // unhealthy. Query the failure verdicts on those attributes, never on the
+      // span status.
+      outcome = 'failure';
     }
     return exitCode;
   } catch (e) {
+    outcome = 'error';
     status = 'error';
     // Record only a bounded, non-PII identifier — NEVER e.message. Node fs /
     // network error messages embed absolute paths (e.g. "ENOENT: ... open
@@ -566,7 +584,7 @@ export async function traceCommand(command, args, version, run) {
       const attributes = commandAttributes({
         command,
         args,
-        outcome: status === 'error' ? 'error' : 'ok',
+        outcome,
         exitCode: typeof exitCode === 'number' ? exitCode : undefined,
         extraAttrs,
       });

@@ -510,7 +510,11 @@ test('the traceparent trace id is a real 32-hex id and stays stable for the whol
   assert.notEqual(seen.disabled, seen.enabled);
 });
 
-test('traceCommand records a non-zero exit code as an error outcome', async () => {
+test('traceCommand records a non-zero exit code as a failure verdict, not a span error', async () => {
+  // `doctor` exits 1 because a check it ran came back failing — the command
+  // itself worked. The span must NOT be an error (that would make the CLI's
+  // error rate track unhealthy user environments); the verdict rides on the
+  // outcome + exit_code attributes instead.
   const prevHeaders = process.env.OTEL_EXPORTER_OTLP_HEADERS;
   process.env.OTEL_EXPORTER_OTLP_HEADERS = 'Authorization=Bearer test';
   const { calls, restore } = stubFetch();
@@ -519,7 +523,34 @@ test('traceCommand records a non-zero exit code as an error outcome', async () =
     assert.equal(code, 1);
     const trace = calls.find((c) => c.url.endsWith('/v1/traces'));
     const span = trace.body.resourceSpans[0].scopeSpans[0].spans[0];
+    assert.notEqual(span.status.code, 2);
+    assert.equal(span.status.message, undefined);
+    const attrs = Object.fromEntries(span.attributes.map((a) => [a.key, a.value]));
+    assert.equal(attrs['lorekit.cli.outcome'].stringValue, 'failure');
+    assert.equal(attrs['lorekit.cli.exit_code'].intValue, '1');
+  } finally {
+    restore();
+    if (prevHeaders === undefined) delete process.env.OTEL_EXPORTER_OTLP_HEADERS;
+    else process.env.OTEL_EXPORTER_OTLP_HEADERS = prevHeaders;
+  }
+});
+
+test('traceCommand records a thrown command as a span error', async () => {
+  // The other half of the rule above: only a crash is an error.
+  const prevHeaders = process.env.OTEL_EXPORTER_OTLP_HEADERS;
+  process.env.OTEL_EXPORTER_OTLP_HEADERS = 'Authorization=Bearer test';
+  const { calls, restore } = stubFetch();
+  try {
+    await assert.rejects(
+      traceCommand('doctor', {}, '1.0.0', async () => {
+        throw new TypeError('boom');
+      }),
+    );
+    const trace = calls.find((c) => c.url.endsWith('/v1/traces'));
+    const span = trace.body.resourceSpans[0].scopeSpans[0].spans[0];
     assert.equal(span.status.code, 2);
+    const attrs = Object.fromEntries(span.attributes.map((a) => [a.key, a.value]));
+    assert.equal(attrs['lorekit.cli.outcome'].stringValue, 'error');
   } finally {
     restore();
     if (prevHeaders === undefined) delete process.env.OTEL_EXPORTER_OTLP_HEADERS;

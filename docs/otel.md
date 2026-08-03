@@ -139,10 +139,19 @@ endpoint, repo, or scope string):
 | Attribute | Example | Notes |
 |-----------|---------|-------|
 | `lorekit.cli.command` | `install` | Bounded: `install` \| `uninstall` \| `doctor` \| `list` \| `search` \| `show` \| `stats` \| `scopes` \| `diff` \| `tree` \| `lint` \| `dedupe` \| `link` \| `migrate` |
-| `lorekit.cli.outcome` | `ok` | `ok` \| `error` |
+| `lorekit.cli.outcome` | `ok` | `ok` \| `failure` \| `error` — `failure` is a command that RAN and reported a negative verdict (a failing `doctor` check, a `lint` finding); `error` is a crash |
 | `lorekit.cli.exit_code` | `0` | Command exit code |
 | `lorekit.cli.flag.<name>` | `true` | Only when set; allow-list: `global`, `project`, `deep`, `yes`, `force`, `no-hooks`, `json`, `link` |
 | `lorekit.cli.hooks_mode` | `all` | `install` only. Bounded: `all` \| `read-only` \| `none` \| `custom` — which hook wiring the run resolved to (from the flag, the prompt, or the detected state). Counts the CHOICE, not the `--no-hooks` flag |
+
+**Span status is reserved for a CRASH.** A command that ran to completion and
+exited non-zero — `doctor` finding a failing check, `lint` finding what it was
+asked to look for — leaves the span status unset and reports
+`lorekit.cli.outcome=failure`. Only an unhandled throw sets `STATUS_CODE_ERROR`
+(with a bounded, non-PII `errorLabel` message). This keeps the `cli` service's
+error rate a measure of the CLI being broken rather than of an unhealthy user
+environment: query failing runs on `lorekit.cli.outcome` / `lorekit.cli.exit_code`,
+never on the span status.
 
 **Opt-out / config:**
 
