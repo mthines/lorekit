@@ -16,13 +16,12 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { validateScope } from '../_shared/scope.ts';
 import { createTracedClient, type Span } from '../_shared/otel.ts';
 import { translateCapError } from './limits.ts';
-import { translateOrgPermissionError } from './org-permissions.ts';
+import { OrgPermissionError, translateOrgPermissionError } from './org-permissions.ts';
 import { parseCreatedAt } from '../_shared/created-at.ts';
 import { parseTtl } from './ttl.ts';
 import { parseOrigin } from '../_shared/origin.ts';
 import { recordAudit } from '../_shared/audit.ts';
 import { applyTenantScope, intersectTokenOrgIds, tokenAllowsOrgId } from './tenant-scope.ts';
-import { OrgPermissionError } from './org-permissions.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
