@@ -116,7 +116,7 @@ archiving and deleting always go through `memory.delete` / `memory.archive`.
 | Job | How | Surface |
 |-----|-----|---------|
 | Count lessons per scope/store | `lorekit stats [--scope <s>]` | CLI (read) |
-| Inventory every scope + freshness | `lorekit scopes` | CLI (read) |
+| Inventory every scope + lesson count | `lorekit scopes` | CLI (read) |
 | Find low-quality lessons | `lorekit lint --json` | CLI (read) |
 | Find near-duplicate clusters | `lorekit dedupe --json [--threshold <n>]` | CLI (read) |
 | Read one lesson in full | `lorekit show <scope::key> [--json]` | CLI (read) |
