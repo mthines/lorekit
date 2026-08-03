@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.31.0](https://github.com/mthines/lorekit/compare/cli-v1.30.3...cli-v1.31.0) (2026-08-03)
+
+
+### Features
+
+* **cli:** add lorekit-groom skill for memory-store grooming ([52f5d56](https://github.com/mthines/lorekit/commit/52f5d5670dd9c5efe4ae5e3396e5e0678003d294))
+* **cli:** add lorekit-groom skill for memory-store grooming ([f281c34](https://github.com/mthines/lorekit/commit/f281c34cb0fdad28806b9da1fece0aad8d6fb39b))
+
+
+### Documentation
+
+* **groom:** drop the unsupported freshness claim from the scopes row ([51ca263](https://github.com/mthines/lorekit/commit/51ca263648d4733c005c71c2c697db698d62aeda))
+* **groom:** drop unsupported `lorekit scopes` last-activity claim ([c69f667](https://github.com/mthines/lorekit/commit/c69f66762343b0e154123034bf6bfc915732ee0e))
+* **groom:** use bare `lorekit tree` for the precedence check ([07c1327](https://github.com/mthines/lorekit/commit/07c13270606ebaf19c898b3605b009a92af7e56e))
+
 ## [1.30.3](https://github.com/mthines/lorekit/compare/cli-v1.30.2...cli-v1.30.3) (2026-08-03)
 
 
