@@ -78,7 +78,7 @@ export async function resolveAuth(
       span?.setAttributes({ 'auth.outcome': 'api_key_invalid', 'auth.type': 'api_key' });
       return null;
     }
-    // OAuth-issued tokens expire (00053_oauth.sql). Checked here rather than
+    // OAuth-issued tokens expire (00055_oauth.sql). Checked here rather than
     // left to the nightly sweeper so an expired credential stops working at
     // the instant it expires, not whenever housekeeping next runs. Personal
     // dashboard tokens have a NULL expires_at and are unaffected.

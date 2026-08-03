@@ -19,7 +19,7 @@ import path from 'node:path';
  *   -32001            unauthenticated (invalid / rotated / expired token)
  *   JSONRPC_FORBIDDEN authenticated but not permitted (org.* JWT, token scope)
  *
- * THE ONE EXCEPTION, added with OAuth support (00053_oauth.sql): a request that
+ * THE ONE EXCEPTION, added with OAuth support (00055_oauth.sql): a request that
  * presented NO credential at all gets 401 + `WWW-Authenticate` (RFC 9728). That
  * header is the entire OAuth discovery trigger — without it an MCP host's
  * "Authorize" button cannot find our authorization server. The exception cannot
