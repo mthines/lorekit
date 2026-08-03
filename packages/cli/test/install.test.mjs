@@ -464,7 +464,7 @@ function seedDuplicateHook(root, event = 'SessionStart') {
   const file = path.join(root, '.claude', 'settings.json');
   const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
   settings.hooks[event].push({
-    hooks: [{ type: 'command', command: 'npx -y @lorekit/cli hook --adapter claude --event SessionStart' }],
+    hooks: [{ type: 'command', command: `npx -y @lorekit/cli hook --adapter claude --event ${event}` }],
   });
   fs.writeFileSync(file, JSON.stringify(settings, null, 2) + '\n');
   return file;
