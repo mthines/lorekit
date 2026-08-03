@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import Script from 'next/script';
 import { ReactQueryProvider } from '@/components/providers/ReactQueryProvider';
+import { Dash0Provider } from '@/components/providers/Dash0Provider';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -37,12 +38,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="min-h-screen antialiased">
         {/*
-         * Dash0Provider is intentionally NOT mounted here.
-         * The dashboard layout mounts it with the authenticated userId so RUM
-         * telemetry is correctly attributed. The login page has no user to
-         * identify, so mounting an unauthenticated instance here would create
-         * a duplicate initialisation on every dashboard page load.
+         * Mounted at the ROOT so public pages — marketing, /docs, /login — are
+         * instrumented too. They previously emitted RUM with no identity at
+         * all, which is why 29 of 36 sessions were indistinguishable anonymous
+         * traffic.
+         *
+         * No userId here: an unauthenticated visitor keeps the anonymous id
+         * assigned at init. The dashboard layout mounts a second instance WITH
+         * the authenticated userId, which upgrades the identity. Mounting twice
+         * is safe — initialisation is guarded in lib/dash0-rum.ts (a single
+         * module-level flag, unlike the two per-module copies this replaced).
          */}
+        <Dash0Provider />
         <ReactQueryProvider>{children}</ReactQueryProvider>
 
         {/* Register the service worker for PWA offline-shell support */}
