@@ -123,6 +123,14 @@ pnpm nx test mcp-core                            # needs supabase start
 | `VERCEL_ORG_ID` | From `.vercel/project.json` after `vercel link` (or Vercel project settings) |
 | `VERCEL_PROJECT_ID` | From `.vercel/project.json` after `vercel link` |
 
+Optional repo **variables** (Settings → Secrets and variables → Actions →
+Variables):
+
+| Variable | Description |
+|----------|-------------|
+| `VERCEL_SCOPE` | Your Vercel **team slug** for `vercel promote`/`rollback`. Defaults to `mads-thines-projects` — **a fork must set its own**, or the production promote 403s ([Vercel bug #11712](https://github.com/vercel/vercel/issues/11712)). |
+| `WEB_PROD_URL` | Production dashboard origin the prod smoke curls. Defaults to `https://lorekit.io`. |
+
 ---
 
 ## Supabase Auth configuration
