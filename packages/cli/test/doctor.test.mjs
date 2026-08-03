@@ -290,3 +290,151 @@ test('doctor reports read-only hook wiring distinctly from all', async () => {
   assert.match(line, /read-only/, `expected read-only, got: ${line}`);
   assert.doesNotMatch(line, /Stop/, 'the retrospective nudge is not wired');
 });
+
+// ── `doctor --telemetry` — the OTLP export gate ──────────────────────────────
+//
+// The check these cover is the one that would have caught a silently-dead
+// telemetry export: `exportInvocation` swallows transport errors by design, so
+// nothing else in the codebase can tell an accepted span from a rejected one.
+//
+// These drive the real binary and therefore cover WIRING — the flag reaches the
+// check, the check drives the exit code, and the run stays focused. The
+// accepted / rejected / probe-payload behaviour is covered in-process in
+// telemetry.test.mjs, where a fake collector can be asserted on directly.
+
+// A port nothing listens on, so connect() is refused immediately.
+const DEAD_ENDPOINT = 'http://127.0.0.1:1';
+
+function runTelemetryDoctor(extraEnv = {}, { cwd, dir = tmp('lk-doc-otlp-') } = {}) {
+  return spawnSync(process.execPath, [BIN, 'doctor', '--telemetry', '--dir', dir], {
+    encoding: 'utf8',
+    cwd,
+    env: {
+      ...process.env,
+      NO_COLOR: '1',
+      HOME: dir,
+      USERPROFILE: dir,
+      OTEL_EXPORTER_OTLP_ENDPOINT: DEAD_ENDPOINT,
+      OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer probe_tok',
+      LOREKIT_TELEMETRY: '',
+      DO_NOT_TRACK: '',
+      ...extraEnv,
+    },
+  });
+}
+
+// The telemetry check reads `.lorekit.json` from the `--dir` root, like every
+// other check — NOT from the shell's working directory. Without this, a
+// developer with `telemetry.disabled` in the directory they happen to stand in
+// fails the CI gate for a completely unrelated project.
+test('doctor --telemetry reads .lorekit.json from --dir, not from the cwd', () => {
+  const elsewhere = tmp('lk-doc-otlp-cwd-');
+  fs.writeFileSync(path.join(elsewhere, '.lorekit.json'), JSON.stringify({ 'telemetry.disabled': true }));
+
+  const fromElsewhere = runTelemetryDoctor({}, { cwd: elsewhere });
+  assert.doesNotMatch(
+    fromElsewhere.stdout,
+    /opted out/,
+    'a disabled .lorekit.json in the cwd must not decide the verdict for another --dir',
+  );
+
+  const target = tmp('lk-doc-otlp-dir-');
+  fs.writeFileSync(path.join(target, '.lorekit.json'), JSON.stringify({ 'telemetry.disabled': true }));
+  const fromDir = runTelemetryDoctor({}, { dir: target });
+  assert.match(fromDir.stdout, /opted out/, 'the --dir root\u2019s own opt-out must still be honoured');
+});
+
+test('doctor --telemetry FAILS when the OTLP endpoint is unreachable', () => {
+  const run = runTelemetryDoctor();
+  assert.equal(run.status, 1, 'a dead export path must be a hard failure — that is the whole point');
+  assert.match(run.stdout, /could not reach/i);
+});
+
+test('doctor --telemetry FAILS when export is opted out — a silent CI gate is no gate', () => {
+  const run = runTelemetryDoctor({ DO_NOT_TRACK: '1' });
+  assert.equal(run.status, 1, 'opting out must not turn the gate green');
+  assert.match(run.stdout, /export off/);
+});
+
+test('doctor --telemetry reports an unusable OTLP header as a credential problem, not an opt-out', () => {
+  // `OTEL_EXPORTER_OTLP_HEADERS` is set but parses to zero headers, so nothing
+  // authenticates. Reporting that as "opted out via LOREKIT_TELEMETRY /
+  // DO_NOT_TRACK" sends the operator looking for an opt-out that isn't there.
+  const run = runTelemetryDoctor({ OTEL_EXPORTER_OTLP_ENDPOINT: '', OTEL_EXPORTER_OTLP_HEADERS: 'garbage' });
+  assert.match(run.stdout, /no OTLP credential resolved/);
+  assert.doesNotMatch(run.stdout, /opted out/);
+});
+
+// Wiring counterpart to the in-process partial-success tests: prove the new
+// verdict reaches the EXIT CODE. A collector that answers 200 while dropping
+// the span used to produce a green gate, which is the precise CI outcome this
+// flag exists to prevent.
+test('doctor --telemetry FAILS on a 200 that rejected the probe span', async () => {
+  const collector = http.createServer((req, res) => {
+    req.resume();
+    res.statusCode = 200;
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ partialSuccess: { rejectedSpans: '1', errorMessage: 'dataset not found' } }));
+  });
+  const port = await listen(collector);
+  try {
+    // Async `spawn` for the same reason `runRemoteDoctor` uses it: the
+    // collector lives in THIS process, so a synchronous child would block the
+    // event loop that has to answer the probe.
+    const dir = tmp('lk-doc-otlp-partial-');
+    const res = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [BIN, 'doctor', '--telemetry', '--dir', dir], {
+        env: {
+          ...process.env,
+          NO_COLOR: '1',
+          HOME: dir,
+          USERPROFILE: dir,
+          OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${port}`,
+          OTEL_EXPORTER_OTLP_HEADERS: 'Authorization=Bearer probe_tok',
+          LOREKIT_TELEMETRY: '',
+          DO_NOT_TRACK: '',
+        },
+      });
+      let stdout = '';
+      child.stdout.on('data', (d) => (stdout += d));
+      child.on('close', (status) => resolve({ status, stdout }));
+    });
+
+    assert.equal(res.status, 1, 'a dropped span must not pass the gate just because the POST returned 200');
+    assert.match(res.stdout, /rejectedSpans=1/);
+    assert.match(res.stdout, /dataset not found/);
+  } finally {
+    collector.close();
+  }
+});
+
+test('doctor --telemetry is focused — it does not run the skill or backend checks', () => {
+  // A bare temp dir has no skills and no .mcp.json. If the focused run swept
+  // those too, its exit code would say nothing about telemetry specifically.
+  const run = runTelemetryDoctor();
+  assert.doesNotMatch(run.stdout, /skill lorekit-memory/);
+  assert.doesNotMatch(run.stdout, /\.mcp\.json/);
+  assert.doesNotMatch(run.stdout, /memory mode/);
+});
+
+test('a default doctor run reports telemetry as info and never fails on it', () => {
+  const dir = tmp('lk-doc-otlp-info-');
+  const run = spawnSync(process.execPath, [BIN, 'doctor', '--mode', 'off', '--dir', dir], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      NO_COLOR: '1',
+      HOME: dir,
+      USERPROFILE: dir,
+      // No OTLP credential resolves here (the committed token is empty), so the
+      // line must read as information, not as a failed check — an end user with
+      // no phone-home is not a broken install.
+      OTEL_EXPORTER_OTLP_ENDPOINT: '',
+      OTEL_EXPORTER_OTLP_HEADERS: '',
+      LOREKIT_TELEMETRY_TOKEN: '',
+    },
+  });
+  const line = run.stdout.split('\n').find((l) => l.includes('telemetry')) ?? '';
+  assert.match(line, /export off/, `expected a telemetry line, got: ${line}`);
+  assert.doesNotMatch(line, /FAIL/, 'a user with no phone-home is not broken');
+});

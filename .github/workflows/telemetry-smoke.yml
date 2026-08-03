@@ -1,0 +1,80 @@
+name: Telemetry smoke
+
+on:
+  schedule:
+    # Off the hour on purpose — GitHub's scheduler queues :00 runs by many minutes.
+    - cron: '15 6 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/cli/src/telemetry.mjs'
+      - 'packages/cli/src/telemetry-token.mjs'
+      - 'packages/cli/src/doctor.mjs'
+      - 'scripts/inject-telemetry-token.mjs'
+      - '.github/workflows/telemetry-smoke.yml'
+
+permissions: {}
+
+concurrency:
+  group: telemetry-smoke-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Probe the OTLP export path
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      # Distinguish "the secret is gone" from "the token is rejected" up front.
+      - name: Verify the telemetry secret is configured
+        env:
+          LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+        run: |
+          if [ -z "${LOREKIT_TELEMETRY_TOKEN}" ]; then
+            echo "::error::LOREKIT_TELEMETRY_TOKEN is not set. Every CLI released without it emits no telemetry." >&2
+            exit 1
+          fi
+
+      # No `pnpm install`: the CLI is zero-dependency and runs from source.
+      # `--dir "$RUNNER_TEMP"` keeps the run out of the checkout so a committed
+      # .lorekit.json can never opt the gate out of its own check.
+      - name: lorekit doctor --telemetry
+        env:
+          LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+          DEPLOYMENT_ENVIRONMENT: ci
+        run: node packages/cli/bin/lorekit.mjs doctor --telemetry --dir "$RUNNER_TEMP"
+
+  notify-failure:
+    name: Notify on failure (Discord + Dash0)
+    runs-on: ubuntu-latest
+    needs: [probe]
+    if: always() && contains(needs.*.result, 'failure')
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository (for the composite actions)
+        uses: actions/checkout@v7.0.1
+
+      - name: Post failure notification to Discord
+        uses: ./.github/actions/discord-notify
+        with:
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          username: LoreKit Telemetry
+          title: '🔴 CLI telemetry export is down'
+          failed-stage: 'lorekit doctor --telemetry (Dash0 OTLP ingest probe)'
+
+      - name: Post failure event to Dash0
+        uses: ./.github/actions/dash0-notify
+        with:
+          webhook-url: ${{ secrets.DASH0_WEBHOOK_URL }}
+          failed-stage: 'lorekit doctor --telemetry (Dash0 OTLP ingest probe)'
