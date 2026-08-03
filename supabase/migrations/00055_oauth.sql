@@ -29,8 +29,12 @@
 --     `lk_{rw|ro|wo}_` format and the same SHA-256 lookup, so the two
 --     independent token-verification sites (mcp/auth.ts's `resolveAuth` and
 --     _shared/api/auth.ts's `resolveRestAuth`) need one new expiry check
---     rather than a whole second credential type. Revocation, the 20-token
---     cap, the audit trail and the dashboard list all keep working unchanged.
+--     rather than a whole second credential type. Revocation, the audit trail
+--     and the dashboard list all keep working unchanged. The 20-token cap is
+--     the one thing that does NOT carry over: `MAX_TOKENS_PER_USER` is checked
+--     only in `generateToken`, and `issueAccessToken` never counts rows, so
+--     authorizing enough distinct clients takes a user past 20. Tracked as an
+--     open item on the PR, not claimed as done here.
 --   * `api_tokens.org_ids` is the org allow-list the consent screen produced.
 --     NULL means "every org the user is a member of, resolved per request" —
 --     the pre-existing behaviour, so every existing row keeps its semantics
