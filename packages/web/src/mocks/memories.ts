@@ -3,7 +3,7 @@
  * Query hooks call.
  *
  * These back the full-page / full-view visual-regression stories. The hooks
- * (`useScopeTree`, `useTagCatalog`, `useLoreData`, `useDashboardData`, and the
+ * (`useScopeTree`, `useFacetCatalog`, `useLoreData`, `useDashboardData`, and the
  * `listMemories` server action, which — with `next/headers` auto-mocked by
  * `@storybook/nextjs-vite` — executes in the browser) all talk to the
  * `memories` edge function now rather than to PostgREST directly, so the

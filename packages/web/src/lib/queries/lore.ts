@@ -7,10 +7,10 @@ import type { ScopeNode } from '@/components/lore/ScopeTree';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { listMemories, archiveLesson, restoreLesson, type MemoryFilters, type MemoryPage } from '@/lib/lore';
 import type { DateRange } from '@/components/ui/DateRangePicker';
-import { normalizeTags, type TagCount } from '@/lib/tag-filter';
+import { normalizeTags } from '@/lib/tag-filter';
 import { lessonFromMemoryEntry } from '@/lib/lesson-entry';
 import { browserAccessToken } from '@/lib/api/session-browser';
-import { activityRequest, listFacetsRequest, listMemoriesRequest, listScopesRequest, listTagsRequest } from '@/lib/api/memories';
+import { activityRequest, listFacetsRequest, listMemoriesRequest, listScopesRequest } from '@/lib/api/memories';
 import { normalizeFilters, type FacetValue, type Filter } from '@/lib/filters';
 
 export interface LoreData {
@@ -105,45 +105,12 @@ async function fetchScopes(signal?: AbortSignal): Promise<ScopeNode[]> {
 }
 
 // ---------------------------------------------------------------------------
-// Label (tag) catalog — powers the Explorer's label filter bar.
-//
-// Deliberately a SEPARATE query from the lesson list: the list is server-side
-// filtered, so deriving the catalog from the loaded pages would make the
-// available labels shrink as soon as one is picked — you could narrow but never
-// widen or switch. The catalog is filter-independent, exactly like the scope
-// tree.
-//
-// It IS however archived-aware: the bar renders in both the active and the
-// archived view, and the list partitions on `archived_at`, so a catalog pinned
-// to active rows would describe the wrong population in archived mode — wrong
-// counts, and archive-only labels missing from their own filter. `?archived=`
-// selects the partition on the server, where the counting happens.
-// ---------------------------------------------------------------------------
-
-async function fetchTagCatalog(showArchived: boolean, signal?: AbortSignal): Promise<TagCount[]> {
-  const token = await requireBrowserToken();
-  const { tags } = await listTagsRequest(token, showArchived, signal);
-  return tags;
-}
-
-export function useTagCatalog(showArchived = false) {
-  return useQuery<TagCount[]>({
-    // Keyed on the partition it describes — flipping "Archived" swaps the
-    // catalog instead of reusing the other view's counts.
-    queryKey: ['lore-tags', showArchived],
-    queryFn: ({ signal }) => fetchTagCatalog(showArchived, signal),
-    // Matches the scope tree: read-heavy, changes only when an agent writes.
-    staleTime: 90_000,
-    retry: retryUnlessSignedOut,
-  });
-}
-
-// ---------------------------------------------------------------------------
 // Facet catalog — every filterable value, per dimension, for the filter menu.
 //
-// A SEPARATE query from the lesson list for `useTagCatalog`'s reason, which
-// only gets stronger with six dimensions: derived from the loaded pages, the
-// menu's options would shrink to whatever the current filter happened to
+// A SEPARATE query from the lesson list — the reason the single-dimension label
+// catalog it replaced was one too, and it only gets stronger with six
+// dimensions: derived from the loaded pages, the menu's options would shrink to
+// whatever the current filter happened to
 // return, so you could narrow but never widen or switch — and cross-dimension
 // type-ahead ("type `main`, get Branch → main") would only ever surface values
 // already visible in the list, which is precisely the case where you did not
@@ -398,10 +365,9 @@ export function useArchiveLesson() {
       }
     },
     onSettled: () => {
-      // Whether success or failure, sync the scope tree, the label catalog,
+      // Whether success or failure, sync the scope tree, the facet catalog,
       // and the legacy lore cache.
       void queryClient.invalidateQueries({ queryKey: ['lore-scopes'] });
-      void queryClient.invalidateQueries({ queryKey: ['lore-tags'] });
       void queryClient.invalidateQueries({ queryKey: ['lore-facets'] });
       void queryClient.invalidateQueries({ queryKey: ['lore'] });
       void queryClient.invalidateQueries({ queryKey: ['memory-total'] });
@@ -440,7 +406,6 @@ export function useRestoreLesson() {
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ['lore-scopes'] });
-      void queryClient.invalidateQueries({ queryKey: ['lore-tags'] });
       void queryClient.invalidateQueries({ queryKey: ['lore-facets'] });
       void queryClient.invalidateQueries({ queryKey: ['lore'] });
       void queryClient.invalidateQueries({ queryKey: ['memory-total'] });

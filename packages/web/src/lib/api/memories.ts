@@ -19,7 +19,6 @@ import type {
   MemoryPageResponse,
   PurgeResponse,
   ScopesResponse,
-  TagsResponse,
   UpdateMemoryBody,
 } from '@lorekit/schemas/memory';
 import { restFetch } from './rest';
@@ -42,18 +41,6 @@ export function listMemoriesRequest(
 export function listScopesRequest(accessToken: string, signal?: AbortSignal): Promise<ScopesResponse> {
   return restFetch<ScopesResponse>('/memories/scopes', {
     accessToken,
-    ...(signal ? { signal } : {}),
-  });
-}
-
-export function listTagsRequest(
-  accessToken: string,
-  archived: boolean,
-  signal?: AbortSignal,
-): Promise<TagsResponse> {
-  return restFetch<TagsResponse>('/memories/tags', {
-    accessToken,
-    query: { archived: archived ? 'true' : 'false' },
     ...(signal ? { signal } : {}),
   });
 }
