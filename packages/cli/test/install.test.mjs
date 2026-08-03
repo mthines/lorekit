@@ -442,3 +442,85 @@ test('an explicit --hooks reaches the hook step even on a complete install', asy
   await install({ ...base, hooks: 'all' });
   assert.equal(installedHookEvents(root, 'project').length, 3);
 });
+
+// ── Duplicate repair is a HOOK-STEP repair, so it inherits the short-circuit ──
+//
+// `upsertClaudeHooks` collapses duplicate lorekit entries, but `install` only
+// reaches it when the run has an intent to change the wiring. On an
+// already-complete install a plain re-run returns at the already-installed
+// short-circuit (`install.mjs`, `isFullyInstalled && !force && !hooksFlagExplicit`)
+// — `detectInstalled` derives that flag from the skill files and the MCP server
+// entry and never inspects `settings.json`, so a duplicated file still reads as
+// "fully installed" and the duplicates survive.
+//
+// The unit tests in `config.test.mjs` call `upsertClaudeHooks` directly and
+// therefore cannot see this: they enter below the short-circuit. These three
+// assert the command-level contract the README documents.
+
+// Give one event a second lorekit entry, in a runner form LOREKIT_HOOK_RE
+// recognises but that is not byte-identical to the wired command — exactly how
+// the marketplace plugin lands on top of a CLI install.
+function seedDuplicateHook(root, event = 'SessionStart') {
+  const file = path.join(root, '.claude', 'settings.json');
+  const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
+  settings.hooks[event].push({
+    hooks: [{ type: 'command', command: `npx -y @lorekit/cli hook --adapter claude --event ${event}` }],
+  });
+  fs.writeFileSync(file, JSON.stringify(settings, null, 2) + '\n');
+  return file;
+}
+
+function lorekitHookCount(root, event = 'SessionStart') {
+  const file = path.join(root, '.claude', 'settings.json');
+  const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
+  return (settings.hooks?.[event] ?? [])
+    .flatMap((g) => (Array.isArray(g.hooks) ? g.hooks : []))
+    // Deliberately NOT LOREKIT_HOOK_RE: counting with the matcher under test
+    // would make this assertion agree with a broken matcher. A plain
+    // "a lorekit runner invoking the hook subcommand" reading is enough here.
+    .filter((h) => typeof h?.command === 'string' && /(?:@lorekit\/cli|lorekit)\S* hook\b/.test(h.command))
+    .length;
+}
+
+test('a plain install does NOT repair duplicated hook entries on a complete install', async () => {
+  const root = tmp('lk-dupe-shortcircuit-');
+  const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
+  assert.equal(exitOf(await install(base)), 0, 'first install succeeds');
+
+  seedDuplicateHook(root);
+  assert.equal(lorekitHookCount(root), 2, 'seeded a second lorekit entry');
+
+  assert.equal(exitOf(await install(base)), 0, 'the re-run still exits 0');
+
+  // The short-circuit fired: the hook step never ran, so the duplicate is still
+  // there. This is the behaviour the README must describe — a user whose hooks
+  // fire twice needs --force or --hooks, not a bare re-run.
+  assert.equal(lorekitHookCount(root), 2, 'plain re-run leaves the duplicate in place');
+});
+
+test('install --force repairs duplicated hook entries on a complete install', async () => {
+  const root = tmp('lk-dupe-force-');
+  const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
+  await install(base);
+
+  seedDuplicateHook(root);
+  assert.equal(lorekitHookCount(root), 2, 'seeded a second lorekit entry');
+
+  assert.equal(exitOf(await install({ ...base, force: true })), 0);
+  assert.equal(lorekitHookCount(root), 1, '--force collapses the duplicate');
+  assert.equal(installedHookEvents(root, 'project').length, 3, 'the other events survive');
+});
+
+test('install --hooks all repairs duplicated hook entries on a complete install', async () => {
+  const root = tmp('lk-dupe-hooksflag-');
+  const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
+  await install(base);
+
+  seedDuplicateHook(root);
+  assert.equal(lorekitHookCount(root), 2, 'seeded a second lorekit entry');
+
+  // The --hooks bypass is the second documented repair path, and it does not
+  // require overwriting the skill files the way --force does.
+  assert.equal(exitOf(await install({ ...base, hooks: 'all' })), 0);
+  assert.equal(lorekitHookCount(root), 1, '--hooks all collapses the duplicate');
+});

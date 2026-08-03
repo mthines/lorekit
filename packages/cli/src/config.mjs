@@ -92,8 +92,19 @@ export const CLAUDE_HOOK_EVENTS = ['SessionStart', 'PostToolUseFailure', 'Stop']
 // Matches a hook command that fires the lorekit engine, whether wired as a
 // global `lorekit hook …` or `npx -y @lorekit/cli hook …`. Shared by the
 // upsert (find-or-update) and remove (uninstall) paths so they agree on what
-// counts as "ours".
-export const LOREKIT_HOOK_RE = /(?:@lorekit\/cli|lorekit) hook\b/;
+// counts as "ours" — a form this misses is not merely un-updated, it is
+// APPENDED alongside on the next install, which is how a settings.json ends up
+// firing the same hook twice.
+//
+// The three deliberate tolerances, each a real wiring seen in the wild:
+//   • a leading path or quote — `/usr/local/bin/lorekit hook`, `"…/lorekit" hook`
+//   • a pinned version        — `npx -y @lorekit/cli@1.2.3 hook`
+//   • a platform extension    — `lorekit.cmd hook` on Windows
+// The leading boundary is REQUIRED (start of string, whitespace, a path
+// separator or a quote) so an unrelated `mylorekit hook …` is somebody else's
+// command and stays untouched — the previous pattern claimed it.
+export const LOREKIT_HOOK_RE =
+  /(?:^|[\s"'`(=/\\])(?:@lorekit\/cli|lorekit)(?:@[^\s"']+)?(?:\.(?:cmd|exe|bat|ps1|mjs|js))?\s+hook\b/;
 
 // npx stages the package's own bin into an ephemeral cache dir
 // (…/_npx/<hash>/node_modules/.bin) and prepends it to PATH for the lifetime of
@@ -211,6 +222,16 @@ export function installedHookEvents(root, scope = 'project') {
 // existing lorekit hook entry per event is updated in place, never duplicated.
 // `runner` is the command prefix (e.g. 'lorekit' or 'npx -y @lorekit/cli').
 //
+// CONVERGENT, not merely additive: an event carrying SEVERAL lorekit entries
+// keeps exactly ONE — the first is updated in place and every further one is
+// deleted (counted as `deduped`). Reconciling only the first left the extras
+// firing forever, and `install --force` — the one command a user reaches for
+// precisely because the wiring is wrong — could not repair the very state it is
+// most often run against. Duplicates arrive from outside this function (the
+// marketplace plugin wiring `npx -y @lorekit/cli hook …` over a CLI-wired bare
+// `lorekit hook …`, a merged settings.json, a hand edit), so recognising them
+// on write is the only place the invariant can hold.
+//
 // `events` selects WHICH of CLAUDE_HOOK_EVENTS to wire (default: all of them).
 // Any lorekit entry for a CLAUDE_HOOK_EVENT *not* in the list is REMOVED — that
 // pruning is what makes a downgrade (all → read-only) an actual downgrade rather
@@ -226,6 +247,7 @@ export function upsertClaudeHooks(root, scope, runner, events = CLAUDE_HOOK_EVEN
   let updated = 0;
   let unchanged = 0;
   let removed = 0;
+  let deduped = 0;
 
   for (const event of CLAUDE_HOOK_EVENTS) {
     if (!wanted.has(event)) {
@@ -236,31 +258,48 @@ export function upsertClaudeHooks(root, scope, runner, events = CLAUDE_HOOK_EVEN
     if (!Array.isArray(config.hooks[event])) config.hooks[event] = [];
     const groups = config.hooks[event];
 
-    let existing = null;
+    // EVERY lorekit entry for this event, in document order — not just the
+    // first, which is what made a duplicated file un-repairable.
+    const matches = [];
     for (const group of groups) {
-      const inner = group && Array.isArray(group.hooks) ? group.hooks : [];
-      existing = inner.find(
-        (h) => h && typeof h.command === 'string' && LOREKIT_HOOK_RE.test(h.command),
-      );
-      if (existing) break;
+      if (!group || !Array.isArray(group.hooks)) continue;
+      for (const hook of group.hooks) {
+        if (hook && typeof hook.command === 'string' && LOREKIT_HOOK_RE.test(hook.command)) {
+          matches.push({ group, hook });
+        }
+      }
     }
 
-    if (existing) {
-      if (existing.command === command) unchanged++;
+    const [canonical, ...extras] = matches;
+    if (canonical) {
+      if (canonical.hook.command === command) unchanged++;
       else {
-        existing.command = command;
+        canonical.hook.command = command;
         updated++;
       }
     } else {
       groups.push({ hooks: [{ type: 'command', command }] });
       added++;
     }
+
+    // Drop the surplus copies, then tidy only the groups this emptied — a group
+    // that arrived empty is somebody else's business, and a group still holding
+    // a third-party hook must survive.
+    const emptied = new Set();
+    for (const extra of extras) {
+      extra.group.hooks = extra.group.hooks.filter((h) => h !== extra.hook);
+      deduped++;
+      if (extra.group.hooks.length === 0) emptied.add(extra.group);
+    }
+    if (emptied.size > 0) {
+      config.hooks[event] = groups.filter((g) => !emptied.has(g));
+    }
   }
 
   if (Object.keys(config.hooks).length === 0) delete config.hooks;
 
   writeFileAtomic(file, JSON.stringify(config, null, 2) + '\n');
-  return { file, added, updated, unchanged, removed };
+  return { file, added, updated, unchanged, removed, deduped };
 }
 
 // Drop every lorekit hook entry for one event from a hooks object, tidying up

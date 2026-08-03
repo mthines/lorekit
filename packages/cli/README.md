@@ -78,7 +78,18 @@ In a TTY it prompts for the scope (and for `--endpoint` / `--token` if missing).
 Flags: `--project` / `--global` pick the scope non-interactively; `--yes` runs
 non-interactively (endpoint required via flag/env; scope defaults to project);
 `--force` overwrites an existing skill copy. Re-running is idempotent — the hook
-entries are updated in place, never duplicated.
+entries are updated in place, never duplicated, and an event that somehow ended
+up with **several** lorekit entries (the marketplace plugin wired on top of a CLI
+install, a merged `settings.json`, a hand edit) is collapsed back to exactly one,
+reported as `N duplicate(s) removed`.
+
+That repair runs on the hook-wiring step, which a plain `lorekit install` **skips**
+on an already-complete install — it short-circuits to the "already installed"
+summary instead. So if your hooks are firing twice, run `lorekit install --force`,
+or re-state the wiring you want with `lorekit install --hooks all` (or
+`--hooks read-only`); both reach the hook step and collapse the duplicates for the
+events they wire. `--hooks none` also reaches the hook step, but it is a teardown,
+not a repair — it removes every lorekit hook instead of collapsing the copies.
 
 #### Choosing the hooks
 
