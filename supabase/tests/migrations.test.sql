@@ -4043,13 +4043,16 @@ begin
   assert v_total = 104,
     format('blog likes AC-3: negative delta must floor to +1 (total 104), got %s', v_total);
 
-  -- AC-4: an invalid slug is rejected.
+  -- AC-4: an invalid slug is rejected. Pinned to the errcode the RPC itself
+  -- raises (22023, 00055) rather than `when others`, which would be satisfied
+  -- by ANY failure — a renamed function, a revoked grant, a typo in this call —
+  -- and so would prove nothing about slug validation.
   begin
     perform lorekit_blog_like('Not A Slug!', 1);
-  exception when others then
+  exception when sqlstate '22023' then
     v_raised := true;
   end;
-  assert v_raised, 'blog likes AC-4: an invalid slug shape must raise';
+  assert v_raised, 'blog likes AC-4: an invalid slug shape must raise 22023';
 
   reset role;
 end;
