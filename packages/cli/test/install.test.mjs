@@ -454,7 +454,7 @@ test('an explicit --hooks reaches the hook step even on a complete install', asy
 // "fully installed" and the duplicates survive.
 //
 // The unit tests in `config.test.mjs` call `upsertClaudeHooks` directly and
-// therefore cannot see this: they enter below the short-circuit. These two
+// therefore cannot see this: they enter below the short-circuit. These three
 // assert the command-level contract the README documents.
 
 // Give one event a second lorekit entry, in a runner form LOREKIT_HOOK_RE
