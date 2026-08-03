@@ -10,10 +10,10 @@
 // the file as-is (telemetry stays off) and exits 0 — a local run must not break
 // on a secret it was never meant to have. Pass `--require` to turn that no-op
 // into exit 1 instead: publishing a tarball with telemetry silently off is the
-// failure mode that goes unnoticed for days. Wiring `--require` into the
-// release job is documented, not committed (docs/otel.md → "Wiring the export
-// gate into CI"), so the job runs bare today. Either way, a token that is set
-// but cannot be substituted into the target file always exits 1.
+// failure mode that goes unnoticed for days. The release job passes `--require`
+// — see the "Inject telemetry token" step in .github/workflows/release.yml,
+// which owns that decision. Either way, a token that is set but cannot be
+// substituted into the target file always exits 1.
 //
 // The token is public once published (anyone can unpack the tarball), so it MUST
 // be a Dash0 *ingesting-only* token.
@@ -39,12 +39,11 @@ export function injectToken(source, token) {
 
 function main() {
   const token = (process.env.LOREKIT_TELEMETRY_TOKEN ?? '').trim();
-  // `--require` turns the silent no-op below into a hard failure. It is meant
-  // for the release job (that wiring is documented in docs/otel.md, not
-  // committed): publishing a tarball with telemetry off is exactly the failure
-  // mode that goes unnoticed for days — the CLI keeps working, it just stops
-  // phoning home, and nothing anywhere goes red. Local runs (no flag) keep the
-  // forgiving behaviour.
+  // `--require` turns the silent no-op below into a hard failure. The release
+  // job passes it (.github/workflows/release.yml): publishing a tarball with
+  // telemetry off is exactly the failure mode that goes unnoticed for days —
+  // the CLI keeps working, it just stops phoning home, and nothing anywhere
+  // goes red. Local runs (no flag) keep the forgiving behaviour.
   const require_ = process.argv.includes('--require');
 
   if (!token) {
