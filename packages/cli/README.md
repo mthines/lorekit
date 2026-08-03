@@ -81,8 +81,13 @@ non-interactively (endpoint required via flag/env; scope defaults to project);
 entries are updated in place, never duplicated, and an event that somehow ended
 up with **several** lorekit entries (the marketplace plugin wired on top of a CLI
 install, a merged `settings.json`, a hand edit) is collapsed back to exactly one,
-reported as `N duplicate(s) removed`. If your hooks were firing twice, a plain
-`lorekit install` repairs it.
+reported as `N duplicate(s) removed`.
+
+That repair runs on the hook-wiring step, which a plain `lorekit install` **skips**
+on an already-complete install — it short-circuits to the "already installed"
+summary instead. So if your hooks are firing twice, run `lorekit install --force`
+or `lorekit install --hooks <all|read-only|none>`; both reach the hook step and
+collapse the duplicates.
 
 #### Choosing the hooks
 
