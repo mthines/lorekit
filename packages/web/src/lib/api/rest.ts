@@ -22,6 +22,21 @@
  * session). Nothing here imports `next/*` or a Supabase client.
  */
 
+/**
+ * The `X-LoreKit-Client` request header and this dashboard's value for it.
+ *
+ * Re-declared here rather than imported: `packages/web` deliberately has no
+ * `@lorekit/schemas` / `@lorekit/core` dependency (the same reason
+ * `lib/audit-actions.ts` re-declares the audit vocabulary). The authoritative
+ * vocabulary is `USAGE_CLIENTS` / `DASHBOARD_CLIENT` in
+ * `packages/mcp-core/src/usage-stats.ts`, and `usage-client-parity.spec.ts`
+ * fails if these two strings drift from it — which matters, because a
+ * mismatched value is silently ignored by `parseUsageClient` and the dashboard
+ * would quietly start counting its own reads again.
+ */
+export const USAGE_CLIENT_HEADER = 'X-LoreKit-Client';
+export const DASHBOARD_USAGE_CLIENT = 'dashboard';
+
 export type RestQueryValue = string | number | boolean | null | undefined;
 
 export interface RestRequest {
@@ -109,7 +124,21 @@ async function toRestError(res: Response): Promise<RestApiError> {
 export async function restFetch<T>(path: string, req: RestRequest): Promise<T> {
   const { accessToken, method = 'GET', query, body, signal } = req;
 
-  const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}` };
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${accessToken}`,
+    // Attribute every dashboard call to the `dashboard` surface. Set here, on
+    // the single seam every browser hook and server action goes through, so a
+    // new call site cannot forget it.
+    //
+    // This is not decoration. The dashboard being a client of LoreKit's own
+    // REST API means rendering the Lore Explorer issues a real `GET /memories`,
+    // which the router records as a real read — so the Overview's "Memories
+    // read" card counted the reads it performed in order to draw itself, and
+    // went up on every page reload. `usage_events.client` is what lets
+    // `lorekit_read_activity` (migration 00054) leave those out while the
+    // ledger behind `GET /memories/usage` stays complete.
+    [USAGE_CLIENT_HEADER]: DASHBOARD_USAGE_CLIENT,
+  };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 
   const res = await fetch(`${restBaseUrl()}${path}${buildQuery(query)}`, {

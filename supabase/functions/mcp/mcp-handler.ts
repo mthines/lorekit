@@ -28,7 +28,7 @@ import { type Span } from '../_shared/otel.ts';
 import { LimitError, recordUsageEvent, getUserPlanName } from './limits.ts';
 import { toolRequires } from './permissions.ts';
 import { wireTools } from '../_shared/schemas/tool-catalog.ts';
-import { countRecords, parseCorrelationId, usageToolKind } from '../_shared/usage-stats.ts';
+import { countRecords, parseCorrelationId, parseUsageClient, usageToolKind } from '../_shared/usage-stats.ts';
 
 /**
  * Request header carrying a client-supplied grouping key (PR / session / job),
@@ -36,6 +36,15 @@ import { countRecords, parseCorrelationId, usageToolKind } from '../_shared/usag
  * from either surface can be grouped by "this PR". Optional and bounded.
  */
 const CORRELATION_HEADER = 'x-lorekit-correlation-id';
+
+/**
+ * Request header naming the SURFACE the call came from — the same seam the REST
+ * router reads (`CLIENT_HEADER`), so both surfaces attribute an event the same
+ * way. An MCP caller that names nothing is left unattributed rather than
+ * defaulted to `mcp`: a default would be an assumption written into the ledger,
+ * and the header is cheap for a real client to send.
+ */
+const CLIENT_HEADER = 'x-lorekit-client';
 
 // memory.* tools — dispatched with (db, args, userId, span)
 const MEMORY_TOOLS = {
@@ -250,6 +259,8 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // Client-supplied grouping key (same header as the REST surface). Bounded by
     // the pure validator; a malformed value degrades to null, never an error.
     const correlationId = parseCorrelationId(req.headers.get(CORRELATION_HEADER));
+    // Calling surface (same header and same fail-safe posture as the REST side).
+    const client = parseUsageClient(req.headers.get(CLIENT_HEADER));
 
     const toolStartMs = Date.now();
 
@@ -288,6 +299,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           durationMs,
           resultCount,
           correlationId,
+          client,
         });
       }
 
@@ -325,6 +337,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           outcome,
           durationMs,
           correlationId,
+          client,
         });
       }
 

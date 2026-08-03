@@ -3919,6 +3919,89 @@ begin
 end;
 $$;
 
+-- ── 72. usage_events.client — the dashboard stops counting itself (00054) ───
+-- The dashboard is a client of LoreKit's own REST API, so drawing the Overview
+-- issued real reads that the Overview then counted: the "Memories read" card
+-- went up on every page reload. 00054 adds the `client` dimension and excludes
+-- the dashboard from lorekit_read_activity.
+-- AC-1: a read attributed to `dashboard` is EXCLUDED from the read series.
+-- AC-2: a read with a NULL client is still COUNTED — every row written before
+--       the column existed is unattributed, and `<>` would have dropped them all.
+-- AC-3: a read attributed to any other surface (cli / mcp / api) is COUNTED.
+-- AC-4: only the METRIC excludes it — the ledger behind GET /memories/usage
+--       still sees the dashboard's records, so the exclusion is reversible.
+-- AC-5: the writer RPC persists p_client, and the length CHECK is a real
+--       backstop against an unbounded value inflating analytics cardinality.
+
+-- Dated 2026-05 so it cannot collide with §71's 2026-04 fixture or the
+-- usage-statistics section's all-time totals.
+insert into usage_events (user_id, plan_name, tool_name, scope_type, auth_type, outcome, duration_ms, result_count, client, created_at) values
+  -- The bug, reproduced: the dashboard listing lore in order to render it.
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list', 'repo', 'jwt',     'ok', 10, 25, 'dashboard', timestamptz '2026-05-01 01:00:00+00'),
+  -- An agent actually consuming lore, in the same bucket.
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list', 'repo', 'api_key', 'ok', 10,  4, 'mcp',       timestamptz '2026-05-01 01:05:00+00'),
+  -- A pre-00054 row: no attribution at all.
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.read', 'repo', 'api_key', 'ok', 10,  1, null,        timestamptz '2026-05-01 01:10:00+00');
+
+do $$
+declare
+  v_count   bigint;
+  v_records bigint;
+  v_client  text;
+  v_id      uuid;
+  v_raised  boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- AC-1 + AC-2 + AC-3: 4 (mcp) + 1 (unattributed) = 5. The dashboard's 25 is
+  -- gone. This single number is the discriminating assertion for all three:
+  -- 30 means nothing was excluded, 4 means the NULL row was wrongly dropped
+  -- (the `<>` bug), 25 means the filter is inverted.
+  select count into v_count
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day',
+      timestamptz '2026-05-01 00:00:00+00', timestamptz '2026-05-02 00:00:00+00');
+  assert v_count = 5,
+    format('usage client AC-1/2/3: 2026-05-01 must read 5 records (dashboard excluded, null + mcp kept), got %s', v_count);
+
+  -- AC-4: the LEDGER is untouched — GET /memories/usage still totals all 30
+  -- records read, so nothing was dropped on the way in and the exclusion can be
+  -- reversed by one more migration rather than by re-collecting lost data.
+  select coalesce(sum(record_count), 0) into v_records
+    from lorekit_usage_stats(
+      '00000000-0000-0000-0000-0000000000a1',
+      timestamptz '2026-05-01 00:00:00+00', timestamptz '2026-05-02 00:00:00+00')
+   where tool_name in ('memory.read', 'memory.list', 'memory.search', 'memory.list_archived');
+  assert v_records = 30,
+    format('usage client AC-4: the ledger must still hold all 30 read records, got %s', v_records);
+
+  -- AC-5: the writer persists the new trailing parameter.
+  select lorekit_record_usage_event(
+    '00000000-0000-0000-0000-0000000000a1', null, 'free',
+    'memory.list', 'repo', 'jwt', 'ok', 5, null, 3, null, 'dashboard') into v_id;
+  assert v_id is not null, 'usage client AC-5: the writer must return the inserted id';
+  select client into v_client from usage_events where id = v_id;
+  assert v_client = 'dashboard',
+    format('usage client AC-5: p_client must be persisted, got %s', v_client);
+
+  -- AC-5: the length CHECK is a real backstop, not decoration. The app-side
+  -- `parseUsageClient` is the primary gate, but a direct insert must not be
+  -- able to put an unbounded value into a column that gets grouped on.
+  begin
+    insert into usage_events (user_id, tool_name, auth_type, outcome, client)
+      values ('00000000-0000-0000-0000-0000000000a1', 'memory.list', 'jwt', 'ok', repeat('x', 33));
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, 'usage client AC-5: an over-long client value must violate the CHECK';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
