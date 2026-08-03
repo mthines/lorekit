@@ -2,11 +2,11 @@
  * Pure logic for the blog post like counter (see `components/blog/PostLikes`).
  *
  * Dependency-free and total by construction: it runs in the browser (the like
- * button), on the server (the like server action clamps the delta with the same
- * rule), and in tests, so it must not reach for `window`, storage, or any
- * effect. Every function tolerates the messy inputs the persisted `localStorage`
- * value can take (missing, non-numeric, negative, fractional, absurd) and lands
- * on a value inside the valid range rather than throwing on the render path.
+ * button and its `/blog/likes` client, `lib/api/blog-likes.ts`) and in tests, so
+ * it must not reach for `window`, storage, or any effect. Every function
+ * tolerates the messy inputs the persisted `localStorage` value can take
+ * (missing, non-numeric, negative, fractional, absurd) and lands on a value
+ * inside the valid range rather than throwing on the render path.
  *
  * The per-session cap is enforced HERE, client-side, because a blog visitor is
  * anonymous and has no server identity to key a per-session tally on. The
