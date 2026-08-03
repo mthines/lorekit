@@ -85,9 +85,11 @@ reported as `N duplicate(s) removed`.
 
 That repair runs on the hook-wiring step, which a plain `lorekit install` **skips**
 on an already-complete install — it short-circuits to the "already installed"
-summary instead. So if your hooks are firing twice, run `lorekit install --force`
-or `lorekit install --hooks <all|read-only|none>`; both reach the hook step and
-collapse the duplicates.
+summary instead. So if your hooks are firing twice, run `lorekit install --force`,
+or re-state the wiring you want with `lorekit install --hooks all` (or
+`--hooks read-only`); both reach the hook step and collapse the duplicates for the
+events they wire. `--hooks none` also reaches the hook step, but it is a teardown,
+not a repair — it removes every lorekit hook instead of collapsing the copies.
 
 #### Choosing the hooks
 
