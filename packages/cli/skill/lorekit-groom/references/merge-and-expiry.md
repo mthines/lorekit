@@ -68,9 +68,10 @@ Merge into the **narrowest scope that still correctly covers every member**.
 - Never merge *down* into a scope narrower than some members — that hides the
   lesson from contexts where it applies.
 
-Precedence check: `lorekit tree --scope <scope>` shows which scope's lesson wins
-when keys collide across scopes. Use it to confirm a merged lesson will actually
-surface where you intend.
+Precedence check: bare `lorekit tree` shows which scope's lesson wins when keys
+collide across scopes. Run it without `--scope` — that flag narrows the
+resolution to a single scope, which by construction cannot show a collision.
+Use it to confirm a merged lesson will actually surface where you intend.
 
 ## 3. Choosing the key
 
