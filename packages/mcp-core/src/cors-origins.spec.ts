@@ -186,6 +186,15 @@ describe('corsResponseHeaders', () => {
     ).toBe('https://www.lorekit.io');
   });
 
+  it('echoes a Vercel preview origin back verbatim so the browser accepts it', () => {
+    // The behaviour the failing preview deployment actually consumes: the header
+    // is present and equals the request Origin, not `*`, even though the host is
+    // not in the allowlist.
+    const preview =
+      'https://lorekit-git-feat-header-activity-indicator-mads-thines-projects.vercel.app';
+    expect(corsResponseHeaders(ALLOWLIST, preview)['Access-Control-Allow-Origin']).toBe(preview);
+  });
+
   it('omits Access-Control-Allow-Origin entirely for a disallowed origin', () => {
     const headers = corsResponseHeaders(ALLOWLIST, 'https://evil.com');
     // Absent, not empty: an empty header value is invalid and surfaces to the
