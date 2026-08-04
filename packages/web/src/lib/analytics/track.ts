@@ -13,7 +13,10 @@
  * routing them through `track` as it stands would silently drop both. It
  * guards its own `sendEvent` call exactly as this module does. **Do not add a
  * third caller** — extend this catalog, or extend `track`'s signature to carry
- * `title`/`severity` and fold auth back in.
+ * `title`/`severity` and fold auth back in. That is not just an ask:
+ * `sdk-event-callers.spec.ts` scans the source tree and fails on any module
+ * outside those two importing `sendEvent`, so adding one costs a visible edit
+ * to the allowlist there.
  *
  * ## Event catalog (source of truth — keep dashboards in sync)
  * - `command_palette.opened`           — the palette overlay was shown.
