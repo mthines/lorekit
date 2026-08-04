@@ -48,6 +48,8 @@ export interface JsonSchemaProperty {
   readonly minimum?: number;
   readonly maximum?: number;
   readonly default?: string | number | boolean;
+  /** Closed value vocabulary, e.g. `kind: ['lesson','bus','signal']`. */
+  readonly enum?: readonly string[];
 }
 
 export interface JsonSchemaObject {
@@ -100,6 +102,17 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
         tags: { type: 'array', items: { type: 'string' }, description: 'Free-form labels, e.g. `["skill::aw", "source::stuck-loop"]`.' },
         source_agent: { type: 'string', description: 'Name of the agent writing this lesson.' },
         trigger: { type: 'string', description: 'What triggered the write: `stuck-loop`, `pr-webhook`, `manual`.' },
+        kind: {
+          type: 'string',
+          enum: ['lesson', 'bus', 'signal'],
+          description:
+            'The bucket kind: `lesson` (procedural, read every run), `bus` (transient outcome event, read at promotion time), or `signal` (durable per-repo filter, read every run). Omit to have it inferred from a `loop::<host>-lessons` tag.',
+        },
+        host: {
+          type: 'string',
+          description:
+            'The owning skill or agent (e.g. `reviewer`, `aw`, `ci-auto-fix`). Omit to have it inferred from a `loop::<host>-lessons` tag.',
+        },
         created_at: {
           type: 'string',
           format: 'date-time',

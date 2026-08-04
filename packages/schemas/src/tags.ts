@@ -43,6 +43,64 @@ export function parseTagsParam(raw: string | undefined | null): string[] {
 }
 
 /**
+ * Derive `{ kind, host }` from a memory's loop tags — the back-compat bridge
+ * for the taxonomy columns (migration 00056).
+ *
+ * A loop bucket has always encoded its kind and host in a `loop::…` tag. When a
+ * write does not carry explicit `kind`/`host`, the write path calls this to
+ * recover them from the tags so a memory written by an older client is still
+ * attributable. Pure and total: an absent, unrecognised, or malformed tag set
+ * yields `{}` rather than throwing — the two columns simply stay NULL.
+ *
+ * The mapping (authoritative reference: agent-skills'
+ * `agents/shared/rules/memory-buckets.md`):
+ *   `loop::<host>-lessons`             → { kind: 'lesson', host: '<host>' }
+ *   `loop::review-outcomes`            → { kind: 'bus',    host: 'review' }
+ *   `loop::reviewer-comment-relevance` → { kind: 'signal', host: 'reviewer' }
+ *
+ * First recognised tag wins, so a stray extra `loop::` tag cannot flip the
+ * classification of a bucket that already matched.
+ */
+export function inferKindHost(
+  tags: readonly unknown[] | undefined | null,
+): { kind?: 'lesson' | 'bus' | 'signal'; host?: string } {
+  for (const tag of normalizeTagList(tags as readonly unknown[] | undefined | null)) {
+    if (tag === 'loop::review-outcomes') return { kind: 'bus', host: 'review' };
+    if (tag === 'loop::reviewer-comment-relevance') return { kind: 'signal', host: 'reviewer' };
+    const m = /^loop::(.+)-lessons$/.exec(tag);
+    if (m && m[1]) return { kind: 'lesson', host: m[1] };
+  }
+  return {};
+}
+
+/**
+ * Resolve the effective `{ kind, host }` for a write: an explicit, valid value
+ * wins; otherwise fall back to what {@link inferKindHost} recovers from the
+ * loop tags; otherwise `null`.
+ *
+ * Shared by every write surface (Node server, edge MCP, and the usage-tracking
+ * recorder) so the family/owner STORED on the memory and the family/owner
+ * TRACKED in usage_events are classified identically — a write that omits
+ * `kind` but carries `loop::reviewer-lessons` is a `lesson`/`reviewer` in both
+ * the row and the analytics event. An explicit `kind` outside the closed
+ * vocabulary is ignored (falls through to inference) rather than stored.
+ */
+export function resolveKindHost(params: {
+  kind?: unknown;
+  host?: unknown;
+  tags?: readonly unknown[] | null;
+}): { kind: 'lesson' | 'bus' | 'signal' | null; host: string | null } {
+  const inferred = inferKindHost(params.tags ?? null);
+  const kind =
+    params.kind === 'lesson' || params.kind === 'bus' || params.kind === 'signal'
+      ? params.kind
+      : (inferred.kind ?? null);
+  const host =
+    typeof params.host === 'string' && params.host ? params.host : (inferred.host ?? null);
+  return { kind, host };
+}
+
+/**
  * Build a PostgreSQL array literal (`{"a","b,c"}`) from a label list.
  *
  * postgrest-js's `.contains(column, string[])` / `.overlaps(column, string[])`

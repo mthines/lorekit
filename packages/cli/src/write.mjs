@@ -120,6 +120,10 @@ export async function write(args) {
   const tags = args.tags ? String(args.tags).split(',').map((t) => t.trim()).filter(Boolean) : [];
   const sourceAgent = typeof args['source-agent'] === 'string' ? args['source-agent'] : undefined;
   const trigger = typeof args.trigger === 'string' ? args.trigger : undefined;
+  // Taxonomy overrides. Omitted → the server infers kind/host from a
+  // `loop::<host>-lessons` tag, so a tagged write needs neither flag.
+  const kind = typeof args.kind === 'string' ? args.kind : undefined;
+  const host = typeof args.host === 'string' ? args.host : undefined;
   // `--ttl-days` is validated HERE, at the flag seam, rather than being left to the
   // store: a truthiness test silently swallowed `--ttl-days 0` (falsy) and
   // `--ttl-days abc` (NaN, dropped again by the `ttl_days` spread further down), so
@@ -258,6 +262,8 @@ export async function write(args) {
     ...(tags.length ? { tags } : {}),
     ...(sourceAgent ? { source_agent: sourceAgent } : {}),
     ...(trigger ? { trigger } : {}),
+    ...(kind ? { kind } : {}),
+    ...(host ? { host } : {}),
     ...(ttlDays ? { ttl_days: ttlDays } : {}),
     ...(clearTtl ? { clear_ttl: true } : {}),
     ...(orgSlug ? { org: orgSlug } : {}),

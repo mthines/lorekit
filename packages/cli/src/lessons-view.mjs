@@ -47,6 +47,8 @@ export function normalizeEntry(e = {}) {
     value: e.value == null ? '' : String(e.value),
     updated: e.updated ?? e.updated_at ?? null,
     tags: Array.isArray(e.tags) ? e.tags : [],
+    kind: e.kind ?? null,
+    host: e.host ?? null,
   };
 }
 
@@ -407,13 +409,13 @@ export function clusterDuplicates(entries = [], threshold = 0.8) {
 // `store.list({scope})` contract. Returns ordered per-scope groups plus a total
 // — a per-scope read failure is captured on the group, never thrown, so one bad
 // scope can't abort the listing. `store` may be a local or remote store.
-export async function gather(store, scopes) {
+export async function gather(store, scopes, filters = {}) {
   const groups = [];
   let total = 0;
   for (const scope of scopes) {
     let res;
     try {
-      res = await store.list({ scope });
+      res = await store.list({ scope, ...filters });
     } catch (e) {
       res = { ok: false, networkError: (e && e.message) || 'error' };
     }
@@ -456,7 +458,11 @@ export function renderSection(header, section) {
     }
     for (const e of g.entries) {
       const when = e.updated ? `  ${c.dim(`(updated ${shortDate(e.updated)})`)}` : '';
-      log(`    ${c.cyan('•')} ${g.scope}::${e.key}${when}`);
+      // Taxonomy badge — the kind (and host, when known) so the three families
+      // are visible at a glance in the list. Omitted for rows written before the
+      // taxonomy existed (NULL kind).
+      const badge = e.kind ? ` ${c.dim(`[${e.kind}${e.host ? `·${e.host}` : ''}]`)}` : '';
+      log(`    ${c.cyan('•')} ${g.scope}::${e.key}${badge}${when}`);
       if (e.value) log(`      ${c.dim(preview(e.value))}`);
     }
   }

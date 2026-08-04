@@ -110,6 +110,10 @@ export async function handleList(
   // by one rule.
   q = applyScalarFilter(q, 'source_agent', parseTagsParam(params.source_agent), params.source_agent_mode);
   q = applyScalarFilter(q, 'trigger', parseTagsParam(params.trigger), params.trigger_mode);
+  // Taxonomy dimensions — `?kind=lesson&host=reviewer` reads "reviewer's
+  // lessons". Same conjunct-of-disjunction shape as the provenance filters.
+  q = applyScalarFilter(q, 'kind', parseTagsParam(params.kind), params.kind_mode);
+  q = applyScalarFilter(q, 'host', parseTagsParam(params.host), params.host_mode);
   q = applyScalarFilter(q, 'origin_repo', parseTagsParam(params.origin_repo), params.origin_repo_mode);
   q = applyScalarFilter(q, 'origin_branch', parseTagsParam(params.origin_branch), params.origin_branch_mode);
   // `origin_pr` is an integer column. A non-numeric entry is dropped rather

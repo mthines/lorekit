@@ -41,6 +41,11 @@ export async function list(args) {
   // Default to every applicable scope; `--scope <s>` narrows to one (an explicit
   // scope outside the applicable set is honoured — the user asked for it).
   const scopes = args.scope && typeof args.scope === 'string' ? [args.scope] : scopeList(scopeInfo);
+  // Optional taxonomy filters — `--kind lesson --host reviewer` narrows to one
+  // family/owner. Comma lists are honoured by the remote store's query builder.
+  const filters = {};
+  if (typeof args.kind === 'string') filters.kind = args.kind;
+  if (typeof args.host === 'string') filters.host = args.host;
 
   // `--link` short-circuits: print the Explorer deep link for the current
   // context (the most-specific applicable scope, or `--scope`), no store reads.
@@ -64,9 +69,9 @@ export async function list(args) {
   // agent-facing control model enforces, honored here in the human read view.
   const { localDenied, remoteDenied } = resolveDenies(root, { env });
 
-  const offline = localDenied ? { groups: [], total: 0 } : await gather(local, scopes);
+  const offline = localDenied ? { groups: [], total: 0 } : await gather(local, scopes, filters);
   const remoteAvailable = !remoteDenied && remote.usable();
-  const remoteResult = remoteAvailable ? await gather(remote, scopes) : { groups: [], total: 0 };
+  const remoteResult = remoteAvailable ? await gather(remote, scopes, filters) : { groups: [], total: 0 };
 
   const offlineSection = localDenied
     ? { available: false, reason: `disabled by deny constraint (${localDenied.source})` }

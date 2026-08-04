@@ -9,6 +9,7 @@ import { CreateMemoryBodySchema } from '../../_shared/schemas/memory.ts';
 import { translateDbError } from '../../_shared/api/errors.ts';
 import { parseCreatedAt, CreatedAtError } from '../../_shared/created-at.ts';
 import { parseOrigin, OriginError } from '../../_shared/origin.ts';
+import { resolveKindHost } from '../../_shared/schemas/tags.ts';
 import { recordAudit } from '../../_shared/audit.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Database } from '../../_shared/database.types.ts';
@@ -39,6 +40,13 @@ export async function handleCreate(
     throw err;
   }
   if (createdAtOverride) span.setAttributes({ 'lorekit.created_at': createdAtOverride });
+
+  // Taxonomy: explicit kind/host from the body, else inferred from the loop
+  // tag — the same resolution the MCP surface applies, so REST and MCP writes
+  // classify a bucket identically.
+  const { kind, host } = resolveKindHost(body);
+  if (kind) span.setAttributes({ 'lorekit.kind': kind });
+  if (host) span.setAttributes({ 'lorekit.host': host });
 
   // Optional provenance (repo / branch / commit / PR the write came from).
   // Same posture as created_at: the schema only types the fields, the SEMANTIC
@@ -94,6 +102,8 @@ export async function handleCreate(
     p_origin_branch: origin.branch,
     p_origin_commit: origin.commit,
     p_origin_pr: origin.pr,
+    p_kind: kind,
+    p_host: host,
     // `.single()` because memory_write RETURNS TABLE — without it the traced
     // client resolves an array and the `row?.id` guard below always throws.
   }).single();
@@ -115,7 +125,7 @@ export async function handleCreate(
   }
   const { data: entry, error: fetchErr } = await createTracedClient(db, span)
     .from('memories')
-    .select('id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,origin_repo,origin_branch,origin_commit,origin_pr')
+    .select('id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,origin_repo,origin_branch,origin_commit,origin_pr,kind,host')
     .eq('id', row.id)
     .single();
 
