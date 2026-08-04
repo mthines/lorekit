@@ -600,7 +600,7 @@ const KNOWN_FLAGS = [
   'dir', 'project', 'global', 'endpoint', 'token', 'mode', 'store',
   'from', 'to', 'apply', 'yes', 'hooks', 'no-hooks', 'force', 'deep', 'adapter',
   'event', 'json', 'scope', 'threshold', 'help', 'version', 'telemetry',
-  'value', 'tags', 'source-agent', 'trigger', 'ttl-days', 'clear-ttl', 'org', 'remote', 'local',
+  'value', 'tags', 'source-agent', 'trigger', 'kind', 'host', 'ttl-days', 'clear-ttl', 'org', 'remote', 'local',
   'link', 'base', 'q', 'owner', 'range', 'view', 'archived',
   'origin-repo', 'origin-branch', 'origin-commit', 'origin-pr', 'no-origin',
 ];

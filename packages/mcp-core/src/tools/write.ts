@@ -9,7 +9,7 @@ import { parseCreatedAt } from '../created-at.js';
 import { parseTtl } from '../ttl.js';
 import { parseOrigin } from '../origin.js';
 import { recordAudit } from '../audit.js';
-import { MemoryKindSchema, inferKindHost } from '@lorekit/schemas';
+import { MemoryKindSchema, resolveKindHost } from '@lorekit/schemas';
 
 const MAX_VALUE_BYTES = 65_536;
 
@@ -74,11 +74,10 @@ export async function write(
     ttl_seconds: input.ttl_seconds,
   });
   const origin = parseOrigin(input);
-  // Explicit kind/host win; otherwise recover them from the loop tag. Null when
-  // neither is available, leaving the columns NULL (a non-loop write).
-  const inferred = inferKindHost(input.tags);
-  const kind = input.kind ?? inferred.kind ?? null;
-  const host = input.host ?? inferred.host ?? null;
+  // Explicit kind/host win; otherwise recover them from the loop tag (the shared
+  // resolver owns the vocabulary check + host-length clamp). Null when neither is
+  // available, leaving the columns NULL (a non-loop write).
+  const { kind, host } = resolveKindHost({ kind: input.kind, host: input.host, tags: input.tags });
   const tracer = getTracer();
   const hist = getToolDurationHistogram();
   const startTime = Date.now();

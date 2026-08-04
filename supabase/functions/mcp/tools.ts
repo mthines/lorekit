@@ -22,7 +22,7 @@ import { parseTtl } from './ttl.ts';
 import { parseOrigin } from '../_shared/origin.ts';
 import { recordAudit } from '../_shared/audit.ts';
 import { applyTenantScope } from './tenant-scope.ts';
-import { inferKindHost } from '../_shared/schemas/tags.ts';
+import { resolveKindHost } from '../_shared/schemas/tags.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
@@ -82,12 +82,9 @@ export async function toolWrite(
   // per field, so omitting one never erases what an earlier write recorded.
   const origin = parseOrigin({ origin_repo, origin_branch, origin_commit, origin_pr });
   // Taxonomy: explicit kind/host win; otherwise recover them from the loop tag.
-  // An unknown explicit kind falls through to inference rather than being stored.
-  const inferred = inferKindHost(tags);
-  const resolvedKind =
-    (kind === 'lesson' || kind === 'bus' || kind === 'signal' ? kind : undefined) ??
-    inferred.kind ?? null;
-  const resolvedHost = (typeof host === 'string' && host ? host : undefined) ?? inferred.host ?? null;
+  // The shared resolver is the one place the closed-vocabulary check and the
+  // host-length clamp live, so storage and usage tracking classify identically.
+  const { kind: resolvedKind, host: resolvedHost } = resolveKindHost({ kind, host, tags });
 
   span.setAttributes({
     'lorekit.scope': scope,

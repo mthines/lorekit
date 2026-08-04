@@ -263,8 +263,10 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     // Calling surface (same header and same fail-safe posture as the REST side).
     const client = parseUsageClient(req.headers.get(CLIENT_HEADER));
     // Memory taxonomy for analytics — resolved the SAME way the write stores it
-    // (explicit kind/host, else inferred from the loop tag). Null for non-write
-    // tools, which carry neither. Groups usage by family + owner.
+    // (explicit kind/host, else inferred from the loop tag). A read that carries
+    // a loop tag (memory.list / memory.search filtered by it) is attributed too;
+    // it is null only when the args carry neither an explicit value nor a
+    // loop tag. Groups usage by family + owner.
     const { kind: usageKind, host: usageHost } = resolveKindHost(toolArgs);
 
     const toolStartMs = Date.now();

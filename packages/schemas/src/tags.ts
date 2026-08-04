@@ -60,6 +60,11 @@ export function parseTagsParam(raw: string | undefined | null): string[] {
  *
  * First recognised tag wins, so a stray extra `loop::` tag cannot flip the
  * classification of a bucket that already matched.
+ *
+ * A host longer than the `memories.host` column bound (64) is skipped, not
+ * returned: inferring an over-long host would turn a write that previously
+ * succeeded into a CHECK-constraint error, and inference must stay
+ * non-destructive. Such a tag simply leaves the columns NULL.
  */
 export function inferKindHost(
   tags: readonly unknown[] | undefined | null,
@@ -68,7 +73,7 @@ export function inferKindHost(
     if (tag === 'loop::review-outcomes') return { kind: 'bus', host: 'review' };
     if (tag === 'loop::reviewer-comment-relevance') return { kind: 'signal', host: 'reviewer' };
     const m = /^loop::(.+)-lessons$/.exec(tag);
-    if (m && m[1]) return { kind: 'lesson', host: m[1] };
+    if (m && m[1] && m[1].length <= 64) return { kind: 'lesson', host: m[1] };
   }
   return {};
 }

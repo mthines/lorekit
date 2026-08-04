@@ -37,18 +37,39 @@ export function scopeList({ projectScope, branchScope, repoScope } = {}) {
   return [...new Set([projectScope, branchScope, repoScope, 'global'].filter(Boolean))];
 }
 
+// Infer { kind, host } from a memory's loop tags — the CLI-local mirror of
+// `@lorekit/schemas` `inferKindHost` (the CLI has no schemas dependency). Kept
+// deliberately small and in lockstep with that source, including the 64-char
+// host clamp. Lets the offline store, whose rows carry no kind/host column,
+// still be filtered and badged by taxonomy from the tags it does store.
+function inferKindHostFromTags(tags) {
+  if (!Array.isArray(tags)) return {};
+  for (const tag of tags) {
+    if (tag === 'loop::review-outcomes') return { kind: 'bus', host: 'review' };
+    if (tag === 'loop::reviewer-comment-relevance') return { kind: 'signal', host: 'reviewer' };
+    const m = typeof tag === 'string' ? /^loop::(.+)-lessons$/.exec(tag) : null;
+    if (m && m[1] && m[1].length <= 64) return { kind: 'lesson', host: m[1] };
+  }
+  return {};
+}
+
 // Normalize an entry from either store (local markdown row or hosted DB row)
 // into one stable shape the view + `--json` output can rely on. Remote rows may
-// spell the timestamp `updated_at`; local rows use `updated`.
+// spell the timestamp `updated_at`; local rows use `updated`. When a row carries
+// no explicit kind/host (every offline row, and any remote row written before
+// migration 00056), fall back to the taxonomy inferred from its tags so the
+// badge and the `--kind`/`--host` filter behave the same in both sections.
 export function normalizeEntry(e = {}) {
+  const tags = Array.isArray(e.tags) ? e.tags : [];
+  const inferred = inferKindHostFromTags(tags);
   return {
     scope: e.scope ?? null,
     key: e.key ?? null,
     value: e.value == null ? '' : String(e.value),
     updated: e.updated ?? e.updated_at ?? null,
-    tags: Array.isArray(e.tags) ? e.tags : [],
-    kind: e.kind ?? null,
-    host: e.host ?? null,
+    tags,
+    kind: e.kind ?? inferred.kind ?? null,
+    host: e.host ?? inferred.host ?? null,
   };
 }
 
@@ -410,6 +431,20 @@ export function clusterDuplicates(entries = [], threshold = 0.8) {
 // — a per-scope read failure is captured on the group, never thrown, so one bad
 // scope can't abort the listing. `store` may be a local or remote store.
 export async function gather(store, scopes, filters = {}) {
+  // Parse the taxonomy filters into value sets. `filters` is passed to the store
+  // too (the remote narrows server-side); we ALSO post-filter the normalized
+  // entries here so the offline store — which ignores kind/host in its own
+  // `list()` — stays consistent with remote. Post-filtering the remote rows is
+  // idempotent (they were already narrowed) and matches on the same inferred
+  // taxonomy a row without explicit columns gets in normalizeEntry.
+  const wanted = (v) =>
+    v == null ? null : new Set(String(v).split(',').map((s) => s.trim()).filter(Boolean));
+  const kindSet = wanted(filters.kind);
+  const hostSet = wanted(filters.host);
+  const keep = (e) =>
+    (!kindSet || (e.kind != null && kindSet.has(e.kind))) &&
+    (!hostSet || (e.host != null && hostSet.has(e.host)));
+
   const groups = [];
   let total = 0;
   for (const scope of scopes) {
@@ -423,7 +458,7 @@ export async function gather(store, scopes, filters = {}) {
       groups.push({ scope, entries: [], error: describeError(res) });
       continue;
     }
-    const entries = (res.entries || []).map(normalizeEntry);
+    const entries = (res.entries || []).map(normalizeEntry).filter(keep);
     total += entries.length;
     groups.push({ scope, entries, error: null });
   }
