@@ -1,6 +1,6 @@
 # Technical Reference
 
-> **New here?** The in-product onboarding at [lorekit.io/dashboard](https://lorekit.io/dashboard) walks you through connecting your first agent step by step. This file is a technical reference for CLI operations and environment variables.
+> **New here?** The in-product onboarding at [lorekit.io/overview](https://lorekit.io/overview) walks you through connecting your first agent step by step. This file is a technical reference for CLI operations and environment variables.
 
 ---
 

@@ -1,6 +1,6 @@
 // Route-level loading fallback — shown on first navigation before the server
 // component resolves. Title renders as real text so it's immediately readable.
-export default function DashboardLoading() {
+export default function OverviewLoading() {
   return (
     <div className="flex flex-col gap-6">
       <div>

@@ -75,7 +75,7 @@ describe('classifyAuthCallback', () => {
   // Regression: the GitHub App Setup-URL return carries GitHub's own OAuth
   // `code`. Classifying it as PKCE sent it to `exchangeCodeForSession`, which
   // failed with `pkce_code_verifier_not_found` and redirected the user to
-  // `/dashboard?error=…` instead of associating their installation.
+  // `/overview?error=…` instead of associating their installation.
   it('does not classify a GitHub App Setup-URL code as a Supabase PKCE code', () => {
     expect(
       classifyAuthCallback(
