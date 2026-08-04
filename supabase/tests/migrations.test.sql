@@ -3761,6 +3761,13 @@ $$;
 -- AC-6: `origin_pr` is compared NUMERICALLY, so `007` matches PR 7 exactly as
 --       it does on `GET /memories`, and an all-non-numeric list filters nothing.
 -- Fresh user id `…dd` so only these three rows are visible — counts are exact.
+-- It owns no other row anywhere in this file, which is what makes every count
+-- below exact; it therefore needs its own `auth.users` seed to satisfy
+-- `memories.user_id`'s FK (00001), like the other late-introduced identities.
+insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
+values
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000dd', 'authenticated', 'authenticated', 'lk-mig-dd@test.local', now(), now());
+
 insert into memories (user_id, scope, key, value, source_agent, kind, host, tags, origin_pr) values
   ('00000000-0000-0000-0000-0000000000dd', 'project::facet-dd', 'dd-1', 'v', 'aw',  'lesson', 'reviewer', array['dd-alpha','dd-shared'], 7),
   ('00000000-0000-0000-0000-0000000000dd', 'project::facet-dd', 'dd-2', 'v', 'aw',  'lesson', 'aw',       array['dd-shared'],            7),
