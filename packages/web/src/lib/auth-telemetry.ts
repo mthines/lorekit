@@ -65,6 +65,9 @@ export const AUTH_ATTEMPT_EVENT = 'auth.attempt';
 export const AUTH_SUCCESS_EVENT = 'auth.success';
 export const AUTH_FAILURE_EVENT = 'auth.failure';
 
+/** The SDK's own event options, derived from `sendEvent` so the two cannot drift. */
+type AuthEventOptions = NonNullable<Parameters<typeof sendEvent>[1]>;
+
 /**
  * Every emission goes through here, so this module's promise — telemetry is
  * never the reason an auth handler throws — holds by construction rather than
@@ -78,8 +81,6 @@ export const AUTH_FAILURE_EVENT = 'auth.failure';
  * same reason — so the guard is consistency and defence-in-depth, not a fix for
  * a reachable crash.
  */
-type AuthEventOptions = NonNullable<Parameters<typeof sendEvent>[1]>;
-
 function emit(name: string, options: AuthEventOptions): void {
   try {
     sendEvent(name, options);
