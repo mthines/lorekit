@@ -139,7 +139,7 @@ from `200` to `404` after a `main` push, with the browser reporting
 `service.version` from one commit and the server span reporting another.
 
 The mitigation is Vercel **Skew Protection**. The wiring is in place; **it is
-not active**, and two prerequisites are still open.
+not active**, and two prerequisites remain — one to confirm, one to decide.
 
 1. **Code (in place, inert).** `next.config.ts` sets `deploymentId` from
    `VERCEL_DEPLOYMENT_ID` (`src/lib/deployment-id.ts`) — the value Next.js stamps
@@ -149,8 +149,11 @@ not active**, and two prerequisites are still open.
    rather than load-bearing; on the prebuilt path the ID Vercel wants is a
    *custom* one, not `VERCEL_DEPLOYMENT_ID`. What the line buys is the seam —
    `resolveDeploymentId` is the single place either ID would be read from.
-2. **Project settings (manual, not done).** In the Vercel project, enable
-   **Skew Protection** (Settings → Advanced). Leave **Maximum Age** alone unless
+2. **Project settings (manual, confirm first — it may already be on).** Vercel
+   enables **Skew Protection** by default for projects created after
+   2024-11-19 on a supported framework, so check Settings → Advanced before
+   treating this as open; only older projects have to flip the switch
+   themselves. Leave **Maximum Age** alone unless
    there is a reason to change it: Vercel's default is already one day, which
    covers a tab idled overnight — lowering it would *shorten* the protection
    window. Raise it only for tabs that stay open longer than that, up to the
