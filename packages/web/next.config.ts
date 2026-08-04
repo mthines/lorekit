@@ -16,12 +16,16 @@ const nextConfig: NextConfig = {
   // action ID to the NEW deployment, which 404s it — the Overview's Accept /
   // Decline / onboarding buttons go silently dead until a hard reload.
   //
-  // NOT active yet, and not active on today's production path: a deployment ID
-  // is assigned at upload time, so `vercel build --prod` running inside GitHub
-  // Actions (stage-web-production, then `vercel deploy --prebuilt`) never sees
-  // VERCEL_DEPLOYMENT_ID. Activating this needs Skew Protection + system env
-  // vars enabled on the project AND the production build moved onto Vercel's
-  // builders. Until then this is `undefined` and nothing changes.
+  // Inert today, on both of the two possible build paths:
+  //   - Built by Vercel: Next.js >= 14.1.4 gets Skew Protection with no
+  //     `next.config.ts` change at all, so this line is redundant there.
+  //   - Built with `vercel build` + `vercel deploy --prebuilt` (today's
+  //     stage-web-production): the ID is assigned at upload time, so
+  //     VERCEL_DEPLOYMENT_ID does not exist during the build. Vercel's route
+  //     for prebuilt is a *custom* deployment ID — not VERCEL_DEPLOYMENT_ID —
+  //     so this resolves to `undefined` and nothing is stamped.
+  // Kept as the single seam a custom deployment ID would be read through once
+  // the build-path decision is made; a no-op until then.
   // See src/lib/deployment-id.ts and docs/deployment.md for the full rationale.
   deploymentId: resolveDeploymentId(process.env),
 
