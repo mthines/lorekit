@@ -3755,11 +3755,16 @@ $$;
 --       the OTHER dimensions, so a value's count is what selecting it yields.
 -- AC-3: SELF-EXCLUSION — a dimension's own filter does NOT collapse its own
 --       other values, so multi-select stays discoverable.
+-- AC-4: the `tag` dimension's `cross join lateral unnest` branch drills down
+--       like the scalar ones — it is the only structurally different cell.
+-- AC-5: `nin` mode is a distinct `case` arm and must self-exclude too.
+-- AC-6: `origin_pr` is compared NUMERICALLY, so `007` matches PR 7 exactly as
+--       it does on `GET /memories`, and an all-non-numeric list filters nothing.
 -- Fresh user id `…dd` so only these three rows are visible — counts are exact.
-insert into memories (user_id, scope, key, value, source_agent, kind, host) values
-  ('00000000-0000-0000-0000-0000000000dd', 'project::facet-dd', 'dd-1', 'v', 'aw',  'lesson', 'reviewer'),
-  ('00000000-0000-0000-0000-0000000000dd', 'project::facet-dd', 'dd-2', 'v', 'aw',  'lesson', 'aw'),
-  ('00000000-0000-0000-0000-0000000000dd', 'project::facet-dd', 'dd-3', 'v', 'bee', 'signal', 'reviewer');
+insert into memories (user_id, scope, key, value, source_agent, kind, host, tags, origin_pr) values
+  ('00000000-0000-0000-0000-0000000000dd', 'project::facet-dd', 'dd-1', 'v', 'aw',  'lesson', 'reviewer', array['dd-alpha','dd-shared'], 7),
+  ('00000000-0000-0000-0000-0000000000dd', 'project::facet-dd', 'dd-2', 'v', 'aw',  'lesson', 'aw',       array['dd-shared'],            7),
+  ('00000000-0000-0000-0000-0000000000dd', 'project::facet-dd', 'dd-3', 'v', 'bee', 'signal', 'reviewer', array['dd-beta','dd-shared'],  42);
 
 do $$
 declare
@@ -3791,6 +3796,62 @@ begin
       p_kind => array['lesson'], p_kind_mode => 'in')
    where facet = 'kind' and value = 'signal';
   assert v_count = 1, format('facets drill-down AC-3: self-exclusion must keep kind signal=1 under kind=lesson, got %s', v_count);
+
+  -- AC-4: the tag dimension is the ONE cell built with `cross join lateral
+  -- unnest`, so its drill-down is structurally different from the scalar ones
+  -- and is asserted on its own. `dd-shared` is on all three rows, so kind=lesson
+  -- narrows it 3 → 2; `dd-beta` lives only on the signal row, so it disappears.
+  -- `coalesce(sum(...))` because an absent value emits NO row at all.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_kind => array['lesson'], p_kind_mode => 'in') f
+   where f.facet = 'tag' and f.value = 'dd-shared';
+  assert v_count = 2, format('facets drill-down AC-4: tag dd-shared under kind=lesson must be 2, got %s', v_count);
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_kind => array['lesson'], p_kind_mode => 'in') f
+   where f.facet = 'tag' and f.value = 'dd-beta';
+  assert v_count = 0, format('facets drill-down AC-4b: tag dd-beta must not survive kind=lesson, got %s', v_count);
+
+  -- AC-4c: the tag dimension SELF-EXCLUDES too — filtering on `dd-alpha` must
+  -- not collapse the tag dimension to that one value, or the user could never
+  -- switch labels from a drilled-down menu.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_tags => array['dd-alpha'], p_tags_mode => 'any') f
+   where f.facet = 'tag' and f.value = 'dd-beta';
+  assert v_count = 1, format('facets drill-down AC-4c: tag self-exclusion must keep dd-beta=1 under tags=dd-alpha, got %s', v_count);
+
+  -- AC-5: `nin` is its own `case` arm. Under kind NOT IN (lesson) the host
+  -- dimension narrows to the signal row only (1), while the kind dimension
+  -- self-excludes and still reports its own excluded value (lesson = 2).
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_kind => array['lesson'], p_kind_mode => 'nin') f
+   where f.facet = 'host' and f.value = 'reviewer';
+  assert v_count = 1, format('facets drill-down AC-5: host reviewer under kind nin lesson must be 1, got %s', v_count);
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_kind => array['lesson'], p_kind_mode => 'nin') f
+   where f.facet = 'kind' and f.value = 'lesson';
+  assert v_count = 2, format('facets drill-down AC-5b: nin self-exclusion must keep kind lesson=2, got %s', v_count);
+
+  -- AC-6: `origin_pr` is an integer column, so the filter is compared
+  -- numerically — `007` must match PR 7 exactly as it does on `GET /memories`,
+  -- which sends the digits-only value bare to the integer column.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_origin_pr => array['007'], p_origin_pr_mode => 'in') f
+   where f.facet = 'kind' and f.value = 'lesson';
+  assert v_count = 2, format('facets drill-down AC-6: zero-padded origin_pr 007 must match PR 7 (kind lesson = 2), got %s', v_count);
+
+  -- AC-6b: a list with no numeric entry left applies NO filter, rather than
+  -- matching nothing — again the list route's documented behaviour.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_origin_pr => array['not-a-number'], p_origin_pr_mode => 'in') f
+   where f.facet = 'kind' and f.value = 'lesson';
+  assert v_count = 2, format('facets drill-down AC-6b: a non-numeric origin_pr list must not filter (kind lesson = 2), got %s', v_count);
 
   reset role;
   perform set_config('request.jwt.claims', '', true);
