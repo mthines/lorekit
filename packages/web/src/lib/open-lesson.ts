@@ -6,22 +6,6 @@ export interface LessonRef {
 }
 
 /**
- * Resolve which memory the detail sheet shows from the two independent
- * deep-link params the sidebar reads: the `lesson` scope+key ref and the plain
- * `memoryId`.
- *
- * `lesson` **strictly wins**: when a `lessonRef` is set the sheet shows that
- * memory or nothing — it never falls through to `memoryId`. Without that rule,
- * a `?lesson=` that misses the active-cache (and carries no prefetch) would fall
- * through and silently display whatever `?memoryId=` happened to still be in the
- * URL — the wrong memory. `memoryId` resolves only when no `lesson` is set,
- * which is the deep-link case it exists for.
- *
- * Pure and dependency-free (type-only import), so it is unit-testable in the
- * node vitest project — the reason the resolution lives here rather than inline
- * in the client provider.
- */
-/**
  * The `memoryId` that is still open: the URL's param, unless the user has
  * dismissed that exact id.
  *
@@ -42,6 +26,22 @@ export function activeMemoryId(
   return memoryId;
 }
 
+/**
+ * Resolve which memory the detail sheet shows from the two independent
+ * deep-link params the sidebar reads: the `lesson` scope+key ref and the plain
+ * `memoryId`.
+ *
+ * `lesson` **strictly wins**: when a `lessonRef` is set the sheet shows that
+ * memory or nothing — it never falls through to `memoryId`. Without that rule,
+ * a `?lesson=` that misses the active-cache (and carries no prefetch) would fall
+ * through and silently display whatever `?memoryId=` happened to still be in the
+ * URL — the wrong memory. `memoryId` resolves only when no `lesson` is set,
+ * which is the deep-link case it exists for.
+ *
+ * Pure and dependency-free (type-only import), so it is unit-testable in the
+ * node vitest project — the reason the resolution lives here rather than inline
+ * in the client provider.
+ */
 export function resolveOpenLesson(args: {
   lessonRef: LessonRef | null;
   cacheLessons: LessonEntry[] | undefined;
