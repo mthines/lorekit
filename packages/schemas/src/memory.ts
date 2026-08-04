@@ -324,11 +324,15 @@ export const ListFacetsQuerySchema = z.object({
   facets: z.string().optional(),
   /**
    * The caller's CURRENTLY-APPLIED filters — the DIMENSION filters of
-   * `GET /memories`, so the menu passes its filter state verbatim. When any are
-   * present the counts become drill-down: each dimension is counted with every
-   * OTHER active filter applied but not its own (self-exclusion, migration
-   * 00057), so a value's count is what selecting it would actually yield.
-   * Absent → the global catalog, unchanged.
+   * `GET /memories`, named identically so a menu CAN pass its filter state
+   * verbatim. When any are present the counts become drill-down: each dimension
+   * is counted with every OTHER active filter applied but not its own
+   * (self-exclusion, migration 00057), so a value's count is what selecting it
+   * would actually yield. Absent → the global catalog, unchanged.
+   *
+   * No caller passes them yet: `packages/web`'s `listFacetsRequest` still sends
+   * only `archived`, and `FILTER_FIELDS` has no `kind`/`host` row. Every
+   * response the dashboard renders today is therefore the global catalog.
    *
    * `ListMemoriesQuerySchema`'s NON-dimension filters — `q`, `key`,
    * `created_since` and `created_until` — are deliberately NOT mirrored, so
