@@ -150,11 +150,15 @@ not active**, and two prerequisites are still open.
    *custom* one, not `VERCEL_DEPLOYMENT_ID`. What the line buys is the seam —
    `resolveDeploymentId` is the single place either ID would be read from.
 2. **Project settings (manual, not done).** In the Vercel project, enable
-   **Skew Protection** (Settings → Advanced) and pick a window at least as long
-   as a plausible idle tab — 12 h is a reasonable default. Also enable
-   **"Enable access to System Environment Variables"** (Settings → Environment
-   Variables); without it Vercel never injects `VERCEL_*` system variables into
-   the build, so `VERCEL_DEPLOYMENT_ID` stays absent even with Skew Protection on.
+   **Skew Protection** (Settings → Advanced). Leave **Maximum Age** alone unless
+   there is a reason to change it: Vercel's default is already one day, which
+   covers a tab idled overnight — lowering it would *shorten* the protection
+   window. Raise it only for tabs that stay open longer than that, up to the
+   project's Deployment Retention limit, which is the ceiling Vercel enforces.
+   Also enable **"Enable access to System Environment Variables"** (Settings →
+   Environment Variables); without it Vercel never injects `VERCEL_*` system
+   variables into the build, so `VERCEL_DEPLOYMENT_ID` stays absent even with
+   Skew Protection on.
 3. **Build path (open decision, blocks the whole thing).** A deployment ID is
    assigned when a deployment is **uploaded**, not when it is built. Today
    `stage-web-production` runs `vercel build --prod` inside GitHub Actions and
