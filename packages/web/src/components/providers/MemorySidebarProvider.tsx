@@ -35,14 +35,10 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { LessonDetailSheet } from '@/components/lore/LessonDetailSheet';
 import { useLoreData, useMemoryById } from '@/lib/queries/lore';
+import { resolveOpenLesson, type LessonRef } from '@/lib/open-lesson';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-interface LessonRef {
-  scope: string;
-  key: string;
-}
 
 interface MemorySidebarContextValue {
   /** The fully-resolved open lesson, or null while loading or when closed. */
@@ -112,29 +108,20 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
   const memoryId = searchParams.get('memoryId');
   const { data: memoryByIdLesson } = useMemoryById(memoryId);
 
-  const openLesson = useMemo<LessonEntry | null>(() => {
-    // 1. The `lesson` (scope+key) param — resolved from the active cache or a
-    //    caller-supplied prefetch (e.g. an archived memory).
-    if (lessonRef) {
-      if (data?.lessons) {
-        const found = data.lessons.find(
-          (l) => l.scope === lessonRef.scope && l.key === lessonRef.key,
-        );
-        if (found) return found;
-      }
-      if (
-        prefetched &&
-        prefetched.scope === lessonRef.scope &&
-        prefetched.key === lessonRef.key
-      ) {
-        return prefetched;
-      }
-    }
-    // 2. The `memoryId` param — fetched by id directly, so it resolves regardless
-    //    of the recent/active window.
-    if (memoryId && memoryByIdLesson) return memoryByIdLesson;
-    return null;
-  }, [lessonRef, data, prefetched, memoryId, memoryByIdLesson]);
+  // Resolution precedence lives in the pure `resolveOpenLesson` (unit-tested):
+  // `lesson` strictly wins, so a cache-missing `lesson` shows nothing rather
+  // than falling through to whatever `memoryId` is still in the URL.
+  const openLesson = useMemo<LessonEntry | null>(
+    () =>
+      resolveOpenLesson({
+        lessonRef,
+        cacheLessons: data?.lessons,
+        prefetched,
+        memoryId,
+        memoryByIdLesson,
+      }),
+    [lessonRef, data, prefetched, memoryId, memoryByIdLesson],
+  );
 
   const openLessonById = useCallback(
     (ref: LessonRef, lesson?: LessonEntry) => {
@@ -159,8 +146,10 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
       setLessonRef(null);
     }
     // The `memoryId` deep-link param is a plain search param (not useUrlState),
-    // so strip it directly. Only one of `lesson` / `memoryId` is ever set at a
-    // time, so this never races the setLessonRef navigation above.
+    // so strip it directly. In the common flows only one of `lesson` / `memoryId`
+    // is set, so this is a single navigation; and the pure `resolveOpenLesson`
+    // gives `lesson` strict precedence, so even if both ever linger the sheet
+    // still never shows the wrong memory.
     if (memoryId !== null) {
       const params = new URLSearchParams(searchParams.toString());
       params.delete('memoryId');

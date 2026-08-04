@@ -56,10 +56,10 @@ https://lorekit.io/lore?scope=%22repo%3A%3Aacme%2Fwidget%22
 The robust way to open one memory is by its **id** — a plain, un-encoded query parameter:
 
 ```text
-https://lorekit.io/lore?memoryId=mem_7f3a92
+https://lorekit.io/lore?memoryId=9b2c1d34-5e6f-4a7b-8c9d-0e1f2a3b4c5d
 ```
 
-Unlike every other Explorer parameter, `memoryId` is **not** JSON-encoded — it is the raw row id, so there is nothing to double-encode and nothing to get wrong when a tool builds the link by hand (`{base}/lore?memoryId=<id>`). The dashboard fetches that memory **by id directly**, so the detail sheet opens even when the memory is outside the Explorer's recent/active window — the case where the scope + key form below opens blank. Archived memories are the one exception: they are addressed by scope + key and open from the archived list, so `memoryId` returns nothing for them.
+The id is the memory's UUID (the `id` column) — `GET /memories/:id` validates it, so a non-UUID value 400s. Unlike every other Explorer parameter, `memoryId` is **not** JSON-encoded — it is the raw UUID, so there is nothing to double-encode and nothing to get wrong when a tool builds the link by hand (`{base}/lore?memoryId=<uuid>`). The dashboard fetches that memory **by id directly**, so the detail sheet opens even when the memory is outside the Explorer's recent/active window — the case where the scope + key form below opens blank. Archived memories are the one exception: they are addressed by scope + key and open from the archived list, so `memoryId` returns nothing for them.
 
 ## Link to a specific memory by scope + key
 
