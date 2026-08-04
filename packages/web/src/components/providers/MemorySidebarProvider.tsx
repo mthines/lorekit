@@ -56,9 +56,18 @@ interface MemorySidebarContextValue {
   openLessonRef: LessonRef | null;
   /**
    * Open the sidebar for a specific lesson. Reacts immediately (optimistic).
+   *
    * Pass the full `lesson` object when the caller already has it (e.g. from
    * the archived list) so the sidebar can render without a separate lookup.
-   * Active-list callers omit it; the provider resolves it from useLoreData.
+   * Active-list callers omit it; the provider resolves it from `useLoreData`.
+   *
+   * Omitting it is only free for a caller that renders its OWN list from
+   * `useLoreData` — `NavigationCommands` and `MemoryExpandButton` both do, so
+   * the memory is in the provider's `cacheLessons` by construction and
+   * `lessonResolvedLocally` keeps the click off the network. A caller that
+   * sources the ref from anywhere else (a URL, a search result, a webhook
+   * payload) and omits the prefetch triggers a `useLessonByRef` fetch — which
+   * is correct, and is the deep-link path, but it is a network round-trip.
    */
   openLessonById: (ref: LessonRef, lesson?: LessonEntry) => void;
   /** Close the sidebar. Reacts immediately (optimistic). */
