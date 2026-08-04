@@ -142,9 +142,13 @@ The mitigation is Vercel **Skew Protection**. The wiring is in place; **it is
 not active**, and two prerequisites are still open.
 
 1. **Code (in place, inert).** `next.config.ts` sets `deploymentId` from
-   `VERCEL_DEPLOYMENT_ID` (`src/lib/deployment-id.ts`), so Next.js stamps asset
-   URLs and Server Action requests with the deployment that built them — as soon
-   as that variable exists.
+   `VERCEL_DEPLOYMENT_ID` (`src/lib/deployment-id.ts`) — the value Next.js stamps
+   onto asset URLs and Server Action requests. Neither route in step 3 actually
+   activates it today: when Vercel runs the build the variable is there, but
+   Next.js >= 14.1.4 stamps with no config at all, so the line is redundant
+   rather than load-bearing; on the prebuilt path the ID Vercel wants is a
+   *custom* one, not `VERCEL_DEPLOYMENT_ID`. What the line buys is the seam —
+   `resolveDeploymentId` is the single place either ID would be read from.
 2. **Project settings (manual, not done).** In the Vercel project, enable
    **Skew Protection** (Settings → Advanced) and pick a window at least as long
    as a plausible idle tab — 12 h is a reasonable default. Also enable
