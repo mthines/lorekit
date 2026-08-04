@@ -155,13 +155,18 @@ export function expiryStatus(iso: string | null | undefined): { label: string; u
   return null;
 }
 
-function ExpiryBadge({ expiresAt }: { expiresAt?: string | null }) {
+// `pointer-events-auto` is load-bearing: the card layout renders the badge inside
+// a `pointer-events-none` body, which would also suppress the native `title`
+// tooltip below. Re-enabling pointer events makes the badge its own hit target,
+// so it forwards `onClick` to keep the whole-card "open" action intact.
+function ExpiryBadge({ expiresAt, onClick }: { expiresAt?: string | null; onClick?: () => void }) {
   const status = expiryStatus(expiresAt);
   if (!status) return null;
   return (
     <span
+      onClick={onClick}
       className={[
-        'flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-px text-xs',
+        'pointer-events-auto flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-px text-xs',
         status.urgent
           ? 'border-amber-400/30 bg-amber-400/10 text-amber-400'
           : 'border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] text-[var(--color-content-tertiary)]',
@@ -385,8 +390,10 @@ export const MemoryCard = memo(function MemoryCard({
   // The card root is a <div>, not a <button>, so the PR chip can be a real <a>
   // inside it — an anchor nested in a button is invalid HTML. The whole-card
   // "open" action is a stretched <button> overlay behind the content; the content
-  // is pointer-events-none so clicks fall through to that button, except the PR
-  // chip, which re-enables pointer events and sits on top.
+  // is pointer-events-none so clicks fall through to that button, except the two
+  // elements that re-enable pointer events and sit on top: the PR chip (its own
+  // link target) and the expiry badge (so its native tooltip still shows on
+  // hover — it forwards the click back to the open action).
   const withPath = showScopePath ?? false;
   const hasMeta = showMeta && Boolean(sourceAgent || trigger);
   return (
@@ -412,7 +419,7 @@ export const MemoryCard = memo(function MemoryCard({
           {showScope && <ScopeBadge scope={scope} type={type} label />}
           <OwnershipBadge org={org} />
           {keyCode}
-          <ExpiryBadge expiresAt={expiresAt} />
+          <ExpiryBadge expiresAt={expiresAt} onClick={onClick} />
           {(prChip || timeEl) && (
             <span className="ml-auto flex items-center gap-1.5">
               {prChip}
