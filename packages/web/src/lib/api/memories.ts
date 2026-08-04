@@ -98,6 +98,25 @@ export function readActivityRequest(
 }
 
 /**
+ * `GET /memories/:id` — a single memory addressed by DB row id.
+ *
+ * Unlike the scope+key list reads, this resolves one row directly, so a
+ * deep-linked memory (`/lore?memoryId=…`) opens even when it is outside the
+ * Explorer's recent/active window. Archived rows 404 — they are addressed by
+ * scope+key and open from the archived list.
+ */
+export function getMemoryByIdRequest(
+  accessToken: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<MemoryEntry> {
+  return restFetch<MemoryEntry>(`/memories/${encodeURIComponent(id)}`, {
+    accessToken,
+    ...(signal ? { signal } : {}),
+  });
+}
+
+/**
  * `PATCH /memories/:id` — a partial column update.
  *
  * Preferred over the `POST /memories` upsert for edits: it touches only the
