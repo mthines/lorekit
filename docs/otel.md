@@ -254,13 +254,70 @@ Every authentication surface in the dashboard emits a discrete RUM event through
 
 | Event | Emitted when | Attributes |
 |-------|--------------|------------|
-| `auth.attempt` | The visitor commits to a path — before the network call, and **before** an OAuth redirect navigates the page away | `auth.method` |
-| `auth.success` | A session exists (or the step completed: reset email sent, password changed) | `auth.method` |
-| `auth.failure` | The provider rejected the attempt. Severity `WARN`, not `ERROR` — a mistyped password is the system working | `auth.method`, `auth.error_code` |
+| `auth.option_selected` | The visitor picked a route — pressed a provider button, or toggled between "Create an account" and "I already have an account" | `auth.method`, `auth.intent` |
+| `auth.attempt` | The visitor commits to a path — before the network call, and **before** an OAuth redirect navigates the page away | `auth.method`, `auth.intent` |
+| `auth.success` | A session exists (or the step completed: reset email sent, password changed) | `auth.method`, `auth.intent` |
+| `auth.failure` | The provider rejected the attempt. Severity `WARN`, not `ERROR` — a mistyped password is the system working | `auth.method`, `auth.intent`, `auth.error_code` |
 
 `auth.method` is one of `github_oauth`, `email_password`, `email_password_signup`,
 `email_otp`, `email_confirmation`, `password_reset_request`,
 `password_reset_complete`, `password_change_settings`.
+
+### Signing up vs signing in
+
+`auth.method` alone does not answer "are people registering or returning?" — it
+takes a reader who already knows that `email_password_signup` is registration and
+`password_reset_complete` is not. `auth.intent` encodes that once:
+
+| `auth.intent` | Methods |
+|---------------|---------|
+| `signup` | `email_password_signup`, `email_confirmation` |
+| `login` | `email_password` |
+| `login_or_signup` | `github_oauth`, `email_otp` |
+| `recovery` | `password_reset_request`, `password_reset_complete` |
+| `account_management` | `password_change_settings` |
+
+`login_or_signup` is not a hedge. Both of those paths create an account when
+there is none and sign the visitor in when there is, and **the browser cannot
+know which will happen before it happens**. Collapsing them into either bucket
+would be a guess presented as a fact, in the one place the distinction matters
+most — GitHub OAuth is the primary CTA.
+
+The answer comes from the server instead. `/api/auth/callback` holds the Supabase
+user record, so it sets `auth.outcome` on its `lorekit.auth.callback` span (and
+in the `auth.callback.success` log record):
+
+| `auth.outcome` | Meaning |
+|----------------|---------|
+| `account_created` | `last_sign_in_at` is within 10s of `created_at` — this callback registered the account |
+| `returning_sign_in` | The account predates this sign-in |
+| `unknown` | A timestamp was missing, unparseable, or ordered nonsensically |
+
+The rule is the pure `classifyAuthOutcome` in `packages/web/src/lib/auth-outcome.ts`.
+It covers OAuth, magic link and email confirmation uniformly, because all three
+land on that route. `unknown` is a real bucket and must stay countable — folding
+it into `returning_sign_in` would understate signups by exactly the cases the
+data is least sure about.
+
+**So: count acquisition with `auth.outcome = account_created` on the server, and
+intent with `auth.intent` in the browser. Never infer a signup from
+`auth.method = github_oauth`.**
+
+### Selection vs attempt
+
+`auth.option_selected` and `auth.attempt` are different steps and both are needed:
+selecting is "showed interest in this route", attempting is "handed over
+credentials". The gap between them is the form-abandonment rate.
+
+They exist because two of the three options on the login page were pure local
+state changes — they swap a panel, make no network call, and emitted nothing. So
+"how many people even tried the email route?" was unanswerable: a visitor who
+opened the form, read it and left was indistinguishable from one who never
+touched it. Only submissions were visible, which measures the bottom of the
+funnel and calls it the top.
+
+On the GitHub path the two coincide (there is no form in between to abandon), and
+both are emitted anyway so every option is comparable at the selection step.
 
 `auth.error_code` is Supabase's `code` (`invalid_credentials`,
 `email_not_confirmed`, …), falling back to the error `name`, then `unknown`. The

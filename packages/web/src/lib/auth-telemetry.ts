@@ -60,10 +60,48 @@ export type AuthMethod =
   | 'password_reset_complete'
   | 'password_change_settings';
 
+/**
+ * What the visitor is trying to do, as opposed to which mechanism they picked.
+ *
+ * `auth.method` alone cannot answer "are people signing up or signing in?" —
+ * it takes a reader who knows that `email_password_signup` is registration and
+ * `password_reset_complete` is not. This is that knowledge, encoded once.
+ *
+ * `login_or_signup` is not a hedge, it is the truth for the OAuth and magic-link
+ * paths: both create an account when there is none and sign the visitor in when
+ * there is, and the browser genuinely cannot tell which will happen before it
+ * happens. Collapsing them into either bucket would be a guess presented as
+ * fact. Which one it turned out to be is settled server-side by `auth.outcome`
+ * (`lib/auth-outcome.ts`), on the one signal that can actually see the account.
+ */
+export type AuthIntent = 'login' | 'signup' | 'login_or_signup' | 'recovery' | 'account_management';
+
+/** The intent each method serves. Total over `AuthMethod`, so a new method must choose. */
+const INTENT_BY_METHOD: Record<AuthMethod, AuthIntent> = {
+  // Both create-on-first-use. See `AuthIntent`.
+  github_oauth: 'login_or_signup',
+  email_otp: 'login_or_signup',
+
+  email_password: 'login',
+  email_password_signup: 'signup',
+  // The last step of a signup that began with `email_password_signup`.
+  email_confirmation: 'signup',
+
+  password_reset_request: 'recovery',
+  password_reset_complete: 'recovery',
+  password_change_settings: 'account_management',
+};
+
+/** The intent a method serves. */
+export function authIntent(method: AuthMethod): AuthIntent {
+  return INTENT_BY_METHOD[method];
+}
+
 /** Event names. Namespaced under `auth.` so they cannot collide with the SDK's own `browser.*`. */
 export const AUTH_ATTEMPT_EVENT = 'auth.attempt';
 export const AUTH_SUCCESS_EVENT = 'auth.success';
 export const AUTH_FAILURE_EVENT = 'auth.failure';
+export const AUTH_OPTION_SELECTED_EVENT = 'auth.option_selected';
 
 /** The SDK's own event options, derived from `sendEvent` so the two cannot drift. */
 type AuthEventOptions = NonNullable<Parameters<typeof sendEvent>[1]>;
@@ -125,7 +163,7 @@ export function authErrorCode(error: AuthErrorLike | null | undefined): string {
 export function reportAuthAttempt(method: AuthMethod): void {
   emit(AUTH_ATTEMPT_EVENT, {
     title: `Auth attempt: ${method}`,
-    attributes: { 'auth.method': method },
+    attributes: { 'auth.method': method, 'auth.intent': authIntent(method) },
   });
 }
 
@@ -138,7 +176,7 @@ export function reportAuthAttempt(method: AuthMethod): void {
 export function reportAuthSuccess(method: AuthMethod): void {
   emit(AUTH_SUCCESS_EVENT, {
     title: `Auth success: ${method}`,
-    attributes: { 'auth.method': method },
+    attributes: { 'auth.method': method, 'auth.intent': authIntent(method) },
   });
 }
 
@@ -153,6 +191,32 @@ export function reportAuthFailure(method: AuthMethod, error: AuthErrorLike | nul
   emit(AUTH_FAILURE_EVENT, {
     title: `Auth failure: ${method} (${code})`,
     severity: 'WARN',
-    attributes: { 'auth.method': method, 'auth.error_code': code },
+    attributes: {
+      'auth.method': method,
+      'auth.intent': authIntent(method),
+      'auth.error_code': code,
+    },
+  });
+}
+
+/**
+ * Record that a visitor chose an authentication option — pressed "Continue with
+ * GitHub", opened the email form, or asked for a magic link.
+ *
+ * This is the step the funnel was missing. Two of the three options on the login
+ * page are pure local state changes: they swap a panel, make no network call,
+ * and emitted nothing, so "how many people even tried the email route?" was not
+ * a question the data could answer — a visitor who opened the form, read it and
+ * left was indistinguishable from one who never touched it. Only submissions
+ * were visible, which measures the bottom of the funnel and calls it the top.
+ *
+ * Distinct from {@link reportAuthAttempt}, and both are needed: selecting is
+ * "showed interest in this route", attempting is "handed over credentials". The
+ * gap between them is the form-abandonment rate.
+ */
+export function reportAuthOptionSelected(method: AuthMethod): void {
+  emit(AUTH_OPTION_SELECTED_EVENT, {
+    title: `Auth option selected: ${method}`,
+    attributes: { 'auth.method': method, 'auth.intent': authIntent(method) },
   });
 }

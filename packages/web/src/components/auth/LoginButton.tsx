@@ -5,7 +5,12 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { friendlyAuthError } from '@/lib/auth-errors';
-import { reportAuthAttempt, reportAuthFailure, reportAuthSuccess } from '@/lib/auth-telemetry';
+import {
+  reportAuthAttempt,
+  reportAuthFailure,
+  reportAuthOptionSelected,
+  reportAuthSuccess,
+} from '@/lib/auth-telemetry';
 import { validatePassword } from '@/lib/password-policy';
 import { authCallbackOrigin, buildAuthCallbackUrl } from '@/lib/auth-callback-url';
 import { safeNextPath } from '@/lib/auth-redirect';
@@ -124,7 +129,11 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     setError('');
     setLoading(true);
     // Recorded BEFORE the redirect: this document is about to be replaced,
-    // so this is the only moment the intent can be captured at all.
+    // so this is the only moment the intent can be captured at all. Selecting
+    // and attempting coincide on this path — there is no form in between to
+    // abandon — but both are emitted so every option is comparable at the
+    // selection step.
+    reportAuthOptionSelected('github_oauth');
     reportAuthAttempt('github_oauth');
     const supabase = createClient();
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
@@ -401,7 +410,15 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           <button
             type="button"
             onClick={() => {
-              setPasswordMode(isSignup ? 'signin' : 'signup');
+              const next = isSignup ? 'signin' : 'signup';
+              // The one place a visitor states, unambiguously, which of the two
+              // they are here for. Pressing "Create an account" is the clearest
+              // signup signal the page can produce — clearer than the eventual
+              // submit, because most people who press it never get that far.
+              reportAuthOptionSelected(
+                next === 'signup' ? 'email_password_signup' : 'email_password',
+              );
+              setPasswordMode(next);
               setError('');
             }}
             className={LINK_CLASS}
@@ -497,6 +514,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           primary text) so it reads as a real alternative, not a muted afterthought. */}
       <button
         onClick={() => {
+          reportAuthOptionSelected('email_password');
           setPasswordMode('signin');
           resetTo('password');
         }}
@@ -507,7 +525,13 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
       </button>
 
       {/* Tertiary: passwordless — still one tap away for anyone who prefers it. */}
-      <button onClick={() => resetTo('magic')} className={LINK_CLASS}>
+      <button
+        onClick={() => {
+          reportAuthOptionSelected('email_otp');
+          resetTo('magic');
+        }}
+        className={LINK_CLASS}
+      >
         Or email me a magic link
       </button>
     </div>
