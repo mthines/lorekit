@@ -3749,12 +3749,61 @@ begin
 end;
 $$;
 
+-- ── 69b. lorekit_memory_facets drill-down + kind/host (00057) ────────────────
+-- AC-1: kind and host are enumerated as their own dimensions.
+-- AC-2: DRILL-DOWN — an active filter on one dimension narrows the counts of
+--       the OTHER dimensions, so a value's count is what selecting it yields.
+-- AC-3: SELF-EXCLUSION — a dimension's own filter does NOT collapse its own
+--       other values, so multi-select stays discoverable.
+-- Fresh user id `…dd` so only these three rows are visible — counts are exact.
+insert into memories (user_id, scope, key, value, source_agent, kind, host) values
+  ('00000000-0000-0000-0000-0000000000dd', 'project::facet-dd', 'dd-1', 'v', 'aw',  'lesson', 'reviewer'),
+  ('00000000-0000-0000-0000-0000000000dd', 'project::facet-dd', 'dd-2', 'v', 'aw',  'lesson', 'aw'),
+  ('00000000-0000-0000-0000-0000000000dd', 'project::facet-dd', 'dd-3', 'v', 'bee', 'signal', 'reviewer');
+
+do $$
+declare
+  v_count bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- AC-1: kind + host appear as dimensions with global counts.
+  select count into v_count from lorekit_memory_facets(p_user_id => '00000000-0000-0000-0000-0000000000dd')
+   where facet = 'kind' and value = 'lesson';
+  assert v_count = 2, format('facets drill-down AC-1: kind lesson must count 2, got %s', v_count);
+  select count into v_count from lorekit_memory_facets(p_user_id => '00000000-0000-0000-0000-0000000000dd')
+   where facet = 'host' and value = 'reviewer';
+  assert v_count = 2, format('facets drill-down AC-1b: host reviewer must count 2, got %s', v_count);
+
+  -- AC-2: filter kind=lesson → host `reviewer` narrows from 2 to 1 (only dd-1;
+  -- dd-3 is a signal). This is the whole point of drill-down.
+  select count into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_kind => array['lesson'], p_kind_mode => 'in')
+   where facet = 'host' and value = 'reviewer';
+  assert v_count = 1, format('facets drill-down AC-2: host reviewer under kind=lesson must be 1, got %s', v_count);
+
+  -- AC-3: the SAME kind filter must NOT collapse the kind dimension's own
+  -- values — self-exclusion keeps signal=1 visible so the user can switch.
+  select count into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_kind => array['lesson'], p_kind_mode => 'in')
+   where facet = 'kind' and value = 'signal';
+  assert v_count = 1, format('facets drill-down AC-3: self-exclusion must keep kind signal=1 under kind=lesson, got %s', v_count);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 -- ── 70. lorekit_memory_facets grant surface — PII-adjacent, so no anon ──────
 -- Branch names, repo names and agent names are at least as sensitive as the
 -- scope names 00039 withholds, so the grant set is that function's verbatim.
 do $$
 declare
-  v_sig text := 'lorekit_memory_facets(uuid, boolean)';
+  -- 00057 widened the signature with the drill-down filter params (19 args).
+  v_sig text := 'lorekit_memory_facets(uuid, boolean, text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text)';
 begin
   assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
     'memory facets: anon must NOT have EXECUTE';

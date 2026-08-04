@@ -66,12 +66,40 @@ export async function handleFacets(
     ...(narrowed ? { 'lorekit.facets': named.join(',') } : {}),
   });
 
+  // Parse the caller's active filters (same names/shapes as GET /memories) so
+  // the RPC can compute drill-down counts. Empty → null = "not filtered". A
+  // comma-list splits by the one shared rule (`parseTagsParam`); `origin_pr` is
+  // digits-only (a non-numeric entry narrows the filter, never 400s the page).
+  const q = validated.data;
+  const list = (v?: string) => { const a = parseTagsParam(v); return a.length ? a : null; };
+  const prList = (() => {
+    const a = parseTagsParam(q.origin_pr).filter((v) => /^\d+$/.test(v));
+    return a.length ? a : null;
+  })();
+
   const tracedDb = createTracedClient(db, span);
   // Service-role callers have no user id; the RPC recognises a null p_user_id
   // from a service_role JWT as "no tenant filter", matching GET /memories.
   const { data, error } = await tracedDb.rpc<FacetRow>('lorekit_memory_facets', {
     p_user_id: auth.userId ?? null,
     p_archived: archived,
+    p_scope: q.scope ?? null,
+    p_tags: list(q.tags),
+    p_tags_mode: q.tags_mode,
+    p_source_agent: list(q.source_agent),
+    p_source_agent_mode: q.source_agent_mode,
+    p_trigger: list(q.trigger),
+    p_trigger_mode: q.trigger_mode,
+    p_kind: list(q.kind),
+    p_kind_mode: q.kind_mode,
+    p_host: list(q.host),
+    p_host_mode: q.host_mode,
+    p_origin_repo: list(q.origin_repo),
+    p_origin_repo_mode: q.origin_repo_mode,
+    p_origin_branch: list(q.origin_branch),
+    p_origin_branch_mode: q.origin_branch_mode,
+    p_origin_pr: prList,
+    p_origin_pr_mode: q.origin_pr_mode,
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 

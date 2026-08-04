@@ -304,6 +304,8 @@ export const MemoryFacetSchema = z.enum([
   'tag',
   'source_agent',
   'trigger',
+  'kind',
+  'host',
   'origin_repo',
   'origin_branch',
   'origin_pr',
@@ -325,6 +327,31 @@ export const ListFacetsQuerySchema = z.object({
    * refresh just that one instead of re-reading the whole catalog.
    */
   facets: z.string().optional(),
+  /**
+   * The caller's CURRENTLY-APPLIED filters — the same names and shapes as
+   * `GET /memories`, so the menu passes its filter state verbatim. When any are
+   * present the counts become drill-down: each dimension is counted with every
+   * OTHER active filter applied but not its own (self-exclusion, migration
+   * 00057), so a value's count is what selecting it would actually yield.
+   * Absent → the global catalog, unchanged.
+   */
+  scope: RawScopeSchema.optional(),
+  tags: z.string().optional(),
+  tags_mode: TagsModeSchema.optional().default('any'),
+  source_agent: ValueListSchema.optional(),
+  source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
+  trigger: ValueListSchema.optional(),
+  trigger_mode: ScalarFilterModeSchema.optional().default('in'),
+  kind: ValueListSchema.optional(),
+  kind_mode: ScalarFilterModeSchema.optional().default('in'),
+  host: ValueListSchema.optional(),
+  host_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_repo: ValueListSchema.optional(),
+  origin_repo_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_branch: ValueListSchema.optional(),
+  origin_branch_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_pr: ValueListSchema.optional(),
+  origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
 });
 export type ListFacetsQuery = z.infer<typeof ListFacetsQuerySchema>;
 
