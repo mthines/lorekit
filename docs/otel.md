@@ -254,7 +254,7 @@ Every authentication surface in the dashboard emits a discrete RUM event through
 
 | Event | Emitted when | Attributes |
 |-------|--------------|------------|
-| `auth.option_selected` | The visitor picked a route — pressed a provider button, or toggled between "Create an account" and "I already have an account" | `auth.method`, `auth.intent` |
+| `auth.option_selected` | The visitor picked a route — any control that moves them onto one, counted at most once per document. The controls are enumerated under ["Selection vs attempt"](#selection-vs-attempt) rather than repeated here, so the two cannot drift | `auth.method`, `auth.intent` |
 | `auth.attempt` | The visitor commits to a path — before the network call, and **before** an OAuth redirect navigates the page away | `auth.method`, `auth.intent` |
 | `auth.success` | A session exists (or the step completed: reset email sent, password changed) | `auth.method`, `auth.intent` |
 | `auth.failure` | The provider rejected the attempt. Severity `WARN`, not `ERROR` — a mistyped password is the system working | `auth.method`, `auth.intent`, `auth.error_code` |
