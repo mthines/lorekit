@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
@@ -10,6 +10,7 @@ import {
   reportAuthFailure,
   reportAuthOptionSelected,
   reportAuthSuccess,
+  type AuthMethod,
 } from '@/lib/auth-telemetry';
 import { validatePassword } from '@/lib/password-policy';
 import { authCallbackOrigin, buildAuthCallbackUrl } from '@/lib/auth-callback-url';
@@ -123,6 +124,20 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     setPassword('');
   }
 
+  // `auth.option_selected` answers "how many visitors even tried this route?",
+  // so a route counts ONCE per document however many times it is picked. The
+  // panels below can be toggled back and forth all day, and each switch is the
+  // same visitor showing the same interest — counting every one of them would
+  // inflate the selection side of the selection-minus-attempt gap until it
+  // stopped being an abandonment rate at all. Held in a ref rather than state:
+  // nothing renders off it, and a re-render must not reset it.
+  const selectedOptions = useRef<Set<AuthMethod>>(new Set());
+  function selectOption(method: AuthMethod) {
+    if (selectedOptions.current.has(method)) return;
+    selectedOptions.current.add(method);
+    reportAuthOptionSelected(method);
+  }
+
   async function handleGitHubLogin() {
     // Same first move as the two form handlers: a retry after a failed
     // initiation must not keep the previous attempt's message on screen.
@@ -133,7 +148,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     // and attempting coincide on this path — there is no form in between to
     // abandon — but both are emitted so every option is comparable at the
     // selection step.
-    reportAuthOptionSelected('github_oauth');
+    selectOption('github_oauth');
     reportAuthAttempt('github_oauth');
     const supabase = createClient();
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
@@ -415,9 +430,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
               // they are here for. Pressing "Create an account" is the clearest
               // signup signal the page can produce — clearer than the eventual
               // submit, because most people who press it never get that far.
-              reportAuthOptionSelected(
-                next === 'signup' ? 'email_password_signup' : 'email_password',
-              );
+              selectOption(next === 'signup' ? 'email_password_signup' : 'email_password');
               setPasswordMode(next);
               setError('');
             }}
@@ -514,7 +527,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           primary text) so it reads as a real alternative, not a muted afterthought. */}
       <button
         onClick={() => {
-          reportAuthOptionSelected('email_password');
+          selectOption('email_password');
           setPasswordMode('signin');
           resetTo('password');
         }}
@@ -527,7 +540,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
       {/* Tertiary: passwordless — still one tap away for anyone who prefers it. */}
       <button
         onClick={() => {
-          reportAuthOptionSelected('email_otp');
+          selectOption('email_otp');
           resetTo('magic');
         }}
         className={LINK_CLASS}

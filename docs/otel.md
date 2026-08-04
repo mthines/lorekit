@@ -309,6 +309,13 @@ intent with `auth.intent` in the browser. Never infer a signup from
 selecting is "showed interest in this route", attempting is "handed over
 credentials". The gap between them is the form-abandonment rate.
 
+**A route is selected at most once per document.** The login page's panels can be
+toggled back and forth, and every switch is the same visitor showing the same
+interest, so `LoginButton` emits each `auth.method` only on its first selection
+in that document. Read `option_selected` as *visitors who tried this route* and
+`attempt` as *submissions*, which do repeat on a retry — so the gap is the share
+of interested visitors who never submitted, not a difference of two like counts.
+
 They exist because two of the three options on the login page were pure local
 state changes — they swap a panel, make no network call, and emitted nothing. So
 "how many people even tried the email route?" was unanswerable: a visitor who
