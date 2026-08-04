@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { friendlyAuthError } from '@/lib/auth-errors';
+import { markOptionSelected } from '@/lib/auth-option-selection';
 import {
   reportAuthAttempt,
   reportAuthFailure,
@@ -124,18 +125,15 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     setPassword('');
   }
 
-  // `auth.option_selected` answers "how many visitors even tried this route?",
-  // so a route counts ONCE per document however many times it is picked. The
-  // panels below can be toggled back and forth all day, and each switch is the
-  // same visitor showing the same interest — counting every one of them would
-  // inflate the selection side of the selection-minus-attempt gap until it
-  // stopped being an abandonment rate at all. Held in a ref rather than state:
-  // nothing renders off it, and a re-render must not reset it.
+  // The once-per-document selection set. Held in a ref rather than state:
+  // nothing renders off it, and a re-render must not reset it. The rule itself
+  // is the pure `markOptionSelected` (`lib/auth-option-selection.ts`) so it is
+  // reachable by the unit-test suite, which cannot render this component.
   const selectedOptions = useRef<Set<AuthMethod>>(new Set());
   function selectOption(method: AuthMethod) {
-    if (selectedOptions.current.has(method)) return;
-    selectedOptions.current.add(method);
-    reportAuthOptionSelected(method);
+    if (markOptionSelected(selectedOptions.current, method)) {
+      reportAuthOptionSelected(method);
+    }
   }
 
   async function handleGitHubLogin() {
