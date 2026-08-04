@@ -4,6 +4,8 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { Cloud, HardDrive } from 'lucide-react';
 
+import { useAmbientAnimation } from '@/lib/hooks/useAmbientAnimation';
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 /** Where a memory lives: the on-disk offline store or the hosted remote store. */
@@ -233,12 +235,30 @@ function TypewriterLine({
   };
   const colorClass = LINE_COLOR[type] ?? 'text-[var(--color-content-secondary)]';
 
+  // The line occupies its FINAL size from the very first frame.
+  //
+  // Rendering only `text.slice(0, visible)` re-measures the box on every one of
+  // the ~60 ticks a second this component runs at: a line long enough to wrap
+  // grows a row mid-type, which pushes every sibling below it down and books a
+  // layout shift. With the loop restarting forever, the login page accumulated
+  // thousands of CLS entries per visit (p75 0.21, worst 0.58) and the shifting
+  // text sat directly above the sign-in CTA.
+  //
+  // So: a full, invisible copy of the text reserves the space, and the typed
+  // prefix is painted over it. The overlay is out of flow, so the number of
+  // characters showing can no longer affect layout at all — the animation is
+  // unchanged, it just stops moving the page.
   return (
-    <div className={`font-mono text-xs leading-relaxed whitespace-pre-wrap ${colorClass}`}>
-      {text.slice(0, visible)}
-      {visible < text.length && !reducedMotion && (
-        <span className="inline-block w-[1ch] animate-pulse bg-current opacity-70">▋</span>
-      )}
+    <div className={`relative font-mono text-xs leading-relaxed whitespace-pre-wrap ${colorClass}`}>
+      <span aria-hidden className="invisible">
+        {text}
+      </span>
+      <span className="absolute inset-0">
+        {text.slice(0, visible)}
+        {visible < text.length && !reducedMotion && (
+          <span className="inline-block w-[1ch] animate-pulse bg-current opacity-70">▋</span>
+        )}
+      </span>
     </div>
   );
 }
@@ -460,11 +480,30 @@ export function TerminalTheater() {
     [reducedMotion],
   );
 
+  /**
+   * Only run while the theater is on screen in the foreground tab.
+   *
+   * The script loops forever, so an ungated instance keeps typing — one React
+   * re-render per character, ~60 a second — for the whole visit, including
+   * while it is scrolled past or the tab is in the background. That is pure
+   * main-thread contention with whatever the visitor does next, which is what
+   * an INP measurement is queued behind (worst observed on this page: 3.0s).
+   *
+   * Coming back on screen restarts the script from the top rather than resuming
+   * mid-sentence. That is deliberate: `play()` already hard-resets on a tab
+   * switch, and for a looping demo the first act is the part worth seeing.
+   */
+  const [theaterRef, animationActive] = useAmbientAnimation();
+
   useEffect(() => {
+    if (!animationActive) {
+      clearTimers();
+      return undefined;
+    }
     play(activeTab);
     return () => clearTimers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
+  }, [activeTab, animationActive]);
 
   // Keep the latest streamed line visible within the fixed-height output pane.
   useEffect(() => {
@@ -476,6 +515,7 @@ export function TerminalTheater() {
 
   return (
     <section
+      ref={theaterRef}
       aria-label="Terminal demo: how LoreKit persists agent memory"
       className="w-full max-w-2xl mx-auto"
     >
