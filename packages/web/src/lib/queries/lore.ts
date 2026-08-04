@@ -10,7 +10,13 @@ import type { DateRange } from '@/components/ui/DateRangePicker';
 import { normalizeTags } from '@/lib/tag-filter';
 import { lessonFromMemoryEntry } from '@/lib/lesson-entry';
 import { browserAccessToken } from '@/lib/api/session-browser';
-import { activityRequest, listFacetsRequest, listMemoriesRequest, listScopesRequest } from '@/lib/api/memories';
+import {
+  activityRequest,
+  getMemoryByIdRequest,
+  listFacetsRequest,
+  listMemoriesRequest,
+  listScopesRequest,
+} from '@/lib/api/memories';
 import { normalizeFilters, type FacetValue, type Filter } from '@/lib/filters';
 
 export interface LoreData {
@@ -190,6 +196,30 @@ export function useLoreData() {
     queryKey: ['lore'],
     queryFn: ({ signal }) => fetchLoreData(signal),
     // Lore explorer is read-heavy — keep data for 90 s before refetching.
+    staleTime: 90_000,
+    retry: retryUnlessSignedOut,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Single memory by DB row id.
+//
+// Resolves a `/lore?memoryId=…` deep link directly, so the detail sheet opens
+// regardless of whether the row is in the Explorer's recent/active window — the
+// limitation the `?lesson=` scope+key form has, since it only resolves against
+// the loaded page set. Disabled (no fetch) when `id` is null.
+// ---------------------------------------------------------------------------
+
+export function useMemoryById(id: string | null) {
+  return useQuery<LessonEntry | null>({
+    queryKey: ['memory-by-id', id],
+    enabled: id !== null,
+    queryFn: async ({ signal }) => {
+      if (!id) return null;
+      const token = await requireBrowserToken();
+      const entry = await getMemoryByIdRequest(token, id, signal);
+      return lessonFromMemoryEntry(entry);
+    },
     staleTime: 90_000,
     retry: retryUnlessSignedOut,
   });

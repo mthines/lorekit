@@ -8,8 +8,11 @@
  * sidebar survives page refreshes and is shareable via URL.
  *
  * URL params used:
- *   lesson  – JSON-encoded { scope, key } identifying the open lesson.
- *             Absent (not in URL) when no lesson is selected.
+ *   lesson    – JSON-encoded { scope, key } identifying the open lesson.
+ *               Absent (not in URL) when no lesson is selected.
+ *   memoryId  – Plain DB row id (NOT JSON-encoded). A robust deep-link form that
+ *               fetches the memory by id, so the sheet opens even when the row is
+ *               outside the Explorer's recent/active window. Absent when unused.
  *
  * ## SSR & hydration
  * `useUrlState` reads from `useSearchParams()`, which is empty on the server.
@@ -28,9 +31,10 @@
  */
 
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { LessonDetailSheet } from '@/components/lore/LessonDetailSheet';
-import { useLoreData } from '@/lib/queries/lore';
+import { useLoreData, useMemoryById } from '@/lib/queries/lore';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -97,25 +101,40 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
   // The same query is used by the Lore Explorer — zero extra network requests.
   const { data } = useLoreData();
 
+  // The robust deep-link form: a plain `?memoryId=<id>` (NOT JSON-encoded, so it
+  // never has to invert the dashboard's useUrlState encoding). Read directly from
+  // the search params rather than through useUrlState, then fetched by id — this
+  // resolves the memory even when it is outside the Explorer's recent/active
+  // window, the case where the `?lesson=` scope+key form opens blank.
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const memoryId = searchParams.get('memoryId');
+  const { data: memoryByIdLesson } = useMemoryById(memoryId);
+
   const openLesson = useMemo<LessonEntry | null>(() => {
-    if (!lessonRef) return null;
-    // 1. Try the active-memories cache (covers all non-archived lessons).
-    if (data?.lessons) {
-      const found = data.lessons.find(
-        (l) => l.scope === lessonRef.scope && l.key === lessonRef.key,
-      );
-      if (found) return found;
+    // 1. The `lesson` (scope+key) param — resolved from the active cache or a
+    //    caller-supplied prefetch (e.g. an archived memory).
+    if (lessonRef) {
+      if (data?.lessons) {
+        const found = data.lessons.find(
+          (l) => l.scope === lessonRef.scope && l.key === lessonRef.key,
+        );
+        if (found) return found;
+      }
+      if (
+        prefetched &&
+        prefetched.scope === lessonRef.scope &&
+        prefetched.key === lessonRef.key
+      ) {
+        return prefetched;
+      }
     }
-    // 2. Fall back to the caller-supplied prefetched lesson (e.g. archived).
-    if (
-      prefetched &&
-      prefetched.scope === lessonRef.scope &&
-      prefetched.key === lessonRef.key
-    ) {
-      return prefetched;
-    }
+    // 2. The `memoryId` param — fetched by id directly, so it resolves regardless
+    //    of the recent/active window.
+    if (memoryId && memoryByIdLesson) return memoryByIdLesson;
     return null;
-  }, [lessonRef, data, prefetched]);
+  }, [lessonRef, data, prefetched, memoryId, memoryByIdLesson]);
 
   const openLessonById = useCallback(
     (ref: LessonRef, lesson?: LessonEntry) => {
@@ -139,7 +158,16 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
       setPrefetched(null);
       setLessonRef(null);
     }
-  }, [lessonRef, setLessonRef]);
+    // The `memoryId` deep-link param is a plain search param (not useUrlState),
+    // so strip it directly. Only one of `lesson` / `memoryId` is ever set at a
+    // time, so this never races the setLessonRef navigation above.
+    if (memoryId !== null) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete('memoryId');
+      const qs = params.toString();
+      router.replace(`${pathname}${qs ? `?${qs}` : ''}`, { scroll: false });
+    }
+  }, [lessonRef, setLessonRef, memoryId, searchParams, router, pathname]);
 
   const contextValue = useMemo<MemorySidebarContextValue>(
     () => ({
@@ -147,11 +175,12 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
       openLessonRef: lessonRef,
       openLessonById,
       closeLesson,
-      // isOpen derives from the ref, not the resolved lesson, so it is truthy
-      // immediately after openLessonById() — even before the lore data loads.
-      isOpen: lessonRef !== null,
+      // isOpen derives from the ref (or the memoryId param), not the resolved
+      // lesson, so it is truthy immediately after openLessonById() or on a
+      // `?memoryId=` visit — even before the lore data / by-id fetch loads.
+      isOpen: lessonRef !== null || memoryId !== null,
     }),
-    [openLesson, lessonRef, openLessonById, closeLesson],
+    [openLesson, lessonRef, openLessonById, closeLesson, memoryId],
   );
 
   return (
