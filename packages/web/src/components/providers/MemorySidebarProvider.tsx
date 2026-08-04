@@ -39,7 +39,12 @@ import { useSearchParams } from 'next/navigation';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { LessonDetailSheet } from '@/components/lore/LessonDetailSheet';
 import { useLoreData, useMemoryById, useLessonByRef } from '@/lib/queries/lore';
-import { activeMemoryId, resolveOpenLesson, type LessonRef } from '@/lib/open-lesson';
+import {
+  activeMemoryId,
+  lessonResolvedLocally,
+  resolveOpenLesson,
+  type LessonRef,
+} from '@/lib/open-lesson';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -118,16 +123,17 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
   // A shared `?lesson={scope,key}` link opens blank when the memory is outside
   // the Explorer's recent/active window — the sheet only resolved the ref
   // against the loaded page set. Fetch it by scope+key as a fallback, but only
-  // when it isn't already resolvable locally: an in-app click always supplies a
-  // prefetch, so only a cold deep-link visit reaches the network.
-  const lessonResolvedLocally = Boolean(
-    lessonRef &&
-      (data?.lessons?.some((l) => l.scope === lessonRef.scope && l.key === lessonRef.key) ||
-        (prefetched &&
-          prefetched.scope === lessonRef.scope &&
-          prefetched.key === lessonRef.key)),
-  );
-  const { data: lessonByRef } = useLessonByRef(lessonResolvedLocally ? null : lessonRef);
+  // when it isn't already resolvable locally, so only a cold deep-link visit
+  // reaches the network. The predicate is the pure, unit-tested
+  // `lessonResolvedLocally` — see its docblock for why the active-memories
+  // cache, not the click-prefetch, is what covers the palette and the header
+  // dropdown (both call `openLessonById` with the ref alone).
+  const resolvedLocally = lessonResolvedLocally({
+    lessonRef,
+    cacheLessons: data?.lessons,
+    prefetched,
+  });
+  const { data: lessonByRef } = useLessonByRef(resolvedLocally ? null : lessonRef);
 
   // Resolution precedence lives in the pure `resolveOpenLesson` (unit-tested):
   // `lesson` strictly wins, so a cache-missing `lesson` shows nothing rather

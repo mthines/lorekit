@@ -12,7 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import type { MemoryEntry } from '@lorekit/schemas/memory';
 import { lessonFromMemoryEntry } from './lesson-entry';
-import { activeMemoryId, resolveOpenLesson } from './open-lesson';
+import { activeMemoryId, lessonResolvedLocally, resolveOpenLesson } from './open-lesson';
 
 function lesson(scope: string, key: string) {
   const entry: MemoryEntry = {
@@ -183,6 +183,92 @@ describe('resolveOpenLesson', () => {
         memoryByIdLesson: null,
       }),
     ).toBeNull();
+  });
+});
+
+describe('lessonResolvedLocally', () => {
+  // The gate on `useLessonByRef`. True suppresses the by-scope+key fetch, so
+  // every case here is really "does an in-app click stay off the network".
+
+  it('is false with no lesson ref — there is nothing to resolve, so nothing to fetch', () => {
+    expect(
+      lessonResolvedLocally({ lessonRef: null, cacheLessons: [A, B], prefetched: A }),
+    ).toBe(false);
+  });
+
+  it('is true from the active cache alone — the command palette / header-dropdown click', () => {
+    // `NavigationCommands` and `MemoryExpandButton` call `openLessonById(ref)`
+    // with NO prefetch; they render from the same `useLoreData()` query, so the
+    // cache arm is the only thing keeping those two clicks off the network.
+    expect(
+      lessonResolvedLocally({
+        lessonRef: { scope: 'global', key: 'a' },
+        cacheLessons: [A, B],
+        prefetched: null,
+      }),
+    ).toBe(true);
+  });
+
+  it('is true from a prefetch alone — the Lore Explorer click, which passes the lesson', () => {
+    expect(
+      lessonResolvedLocally({
+        lessonRef: { scope: 'global', key: 'a' },
+        cacheLessons: [],
+        prefetched: A,
+      }),
+    ).toBe(true);
+  });
+
+  it('is false when neither source holds it — the cold deep-link visit that must fetch', () => {
+    expect(
+      lessonResolvedLocally({
+        lessonRef: { scope: 'global', key: 'a' },
+        cacheLessons: [B],
+        prefetched: null,
+      }),
+    ).toBe(false);
+  });
+
+  it('ignores a prefetch for a different ref, so a stale one cannot suppress the fetch', () => {
+    expect(
+      lessonResolvedLocally({
+        lessonRef: { scope: 'global', key: 'a' },
+        cacheLessons: [],
+        prefetched: B,
+      }),
+    ).toBe(false);
+  });
+
+  it('is false while the cache is still loading', () => {
+    expect(
+      lessonResolvedLocally({
+        lessonRef: { scope: 'global', key: 'a' },
+        cacheLessons: undefined,
+        prefetched: null,
+      }),
+    ).toBe(false);
+  });
+
+  it('agrees with resolveOpenLesson: whenever it says true, the resolver resolves without the fetch', () => {
+    // The property that makes the gate safe — a "resolved locally" verdict the
+    // resolver disagreed with would suppress the fetch and then show nothing.
+    const ref = { scope: 'global', key: 'a' };
+    for (const local of [
+      { cacheLessons: [A, B], prefetched: null },
+      { cacheLessons: [], prefetched: A },
+      { cacheLessons: [A], prefetched: A },
+    ]) {
+      expect(lessonResolvedLocally({ lessonRef: ref, ...local })).toBe(true);
+      expect(
+        resolveOpenLesson({
+          lessonRef: ref,
+          ...local,
+          lessonByRef: null,
+          memoryId: null,
+          memoryByIdLesson: null,
+        }),
+      ).toBe(A);
+    }
   });
 });
 
