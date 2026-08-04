@@ -244,6 +244,33 @@ recipient email and org name are deliberately **not** attributed (PII). Group by
 `lorekit.invite.email.outcome` in Dash0 to watch send health; a rising `error`
 rate means the Resend key/domain needs attention.
 
+## Product events (`lib/analytics/track.ts`)
+
+Typed browser events for product surfaces, emitted through the one `track()`
+wrapper. Attributes use the `lorekit.*` namespace.
+
+| Event | Emitted when | Attributes |
+|-------|--------------|------------|
+| `command_palette.opened` | The palette overlay was shown | `lorekit.command_palette.trigger` |
+| `command_palette.command_selected` | A command was executed | `lorekit.command.id`, `lorekit.command.source`, `lorekit.command.group` (optional — omitted when the command has no group) |
+| `install_command.copied` | A visitor copied a shell command | `lorekit.install_command.id`, `lorekit.install_command.surface`, `lorekit.install_command.succeeded` |
+
+`install_command.copied` exists because copying `npx @lorekit/cli install` is the
+strongest intent signal a logged-out visitor can produce short of authenticating
+— and, since the CLI works offline with no account, it is a route to *using* the
+product that leaves no other trace on the website at all. Without it, a visitor
+who read the page, took the command and went to their terminal is
+indistinguishable from one who bounced.
+
+It records failures as well as successes (`succeeded=false`). A denied clipboard
+— insecure context, hardened browser, dismissed permission prompt — makes the
+button silently do nothing, and counting only successes would render that as a
+lack of interest rather than a broken affordance.
+
+Both the command and the surface are reported as **bounded ids**, never the
+command string: `CopyCommand` takes arbitrary text, which would become unbounded
+the moment a call site interpolates into it.
+
 ---
 
 ## Resource attributes

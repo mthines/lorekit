@@ -9,6 +9,7 @@
  * ## Event catalog (source of truth — keep dashboards in sync)
  * - `command_palette.opened`           — the palette overlay was shown.
  * - `command_palette.command_selected` — a command was executed (leaf onSelect).
+ * - `install_command.copied`           — a visitor copied a shell command to the clipboard.
  *
  * ## PII / cardinality
  * Command ids are a fixed enum EXCEPT the dynamic "Open Lesson…" children, whose
@@ -25,6 +26,17 @@ export type PaletteTrigger = 'shortcut' | 'button';
 /** How a command was executed. */
 export type CommandSource = 'palette' | 'shortcut';
 
+/**
+ * Which shell command was copied. A bounded id, never the command STRING:
+ * `CopyCommand` takes arbitrary text, and an attribute built from it would be
+ * unbounded the moment a second call site passes something interpolated.
+ * Add an id here when you add a copyable command.
+ */
+export type InstallCommandId = 'cli-install';
+
+/** Where the copy affordance was rendered. Bounded for the same reason. */
+export type CopySurface = 'login-get-started';
+
 /** Discriminated union of every tracked event. Add new events here. */
 export type AnalyticsEvent =
   | { name: 'command_palette.opened'; trigger: PaletteTrigger }
@@ -33,6 +45,19 @@ export type AnalyticsEvent =
       commandId: string;
       group?: string;
       source: CommandSource;
+    }
+  | {
+      name: 'install_command.copied';
+      commandId: InstallCommandId;
+      surface: CopySurface;
+      /**
+       * Whether the clipboard write actually succeeded. A denied clipboard —
+       * an insecure context, a hardened browser, a permissions prompt the
+       * visitor dismissed — currently fails SILENTLY in `CopyCommand`, leaving
+       * the visitor with a button that does nothing. Recording the outcome is
+       * what makes that visible; counting only successes would hide it.
+       */
+      succeeded: boolean;
     };
 
 /**
@@ -58,6 +83,12 @@ function toAttributes(event: AnalyticsEvent): Record<string, string> {
       if (event.group) attrs['lorekit.command.group'] = event.group;
       return attrs;
     }
+    case 'install_command.copied':
+      return {
+        'lorekit.install_command.id': event.commandId,
+        'lorekit.install_command.surface': event.surface,
+        'lorekit.install_command.succeeded': String(event.succeeded),
+      };
   }
 }
 
