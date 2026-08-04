@@ -236,9 +236,10 @@ Two guards keep this honest, both instances of the entrenchment guards below:
 Wire it as its own step at the host's re-run seam, gated on "a prior run's output
 exists at this target". It composes with the read/write steps: the Signal bucket
 it writes is read back at the next run's read step. The reference implementation
-is the `agent-skills` `pr-reviewer` agent, whose `thread-resolution.md` rule
-resolves its own addressed PR threads on each commit-triggered re-review and
-records the fixed/declined outcome to a `reviewer-comment-relevance` bucket.
+is the `agent-skills` `pr-reviewer` agent: it resolves its own addressed PR
+threads on each commit-triggered re-review and records the fixed/declined
+outcome to a `reviewer-comment-relevance` bucket, whose classification and
+record shape are specified in `agents/shared/rules/comment-relevance-memory.md`.
 
 ---
 
