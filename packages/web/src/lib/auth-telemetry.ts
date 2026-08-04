@@ -92,7 +92,6 @@ function emit(name: string, options: AuthEventOptions): void {
 interface AuthErrorLike {
   code?: string | undefined;
   name?: string | undefined;
-  status?: number | undefined;
 }
 
 /**
