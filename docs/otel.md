@@ -268,7 +268,16 @@ error **message** is deliberately never reported: it is prose, it is localised,
 and it can embed the address that was typed — unbounded and PII-bearing, the two
 things a grouping key must not be.
 
-The funnel is `auth.attempt` minus `auth.success`, grouped by `auth.method`.
+The funnel is `auth.attempt` minus `auth.success`, grouped by `auth.method` — for
+every method that emits both. Two do not, in opposite directions, so read those
+two rows differently:
+
+- `github_oauth` emits an attempt and never a success, so its subtraction is
+  always its full attempt count, not a drop-off.
+- `email_confirmation` emits a success and never an attempt (`WelcomeContent.tsx`
+  is the only call site), so its subtraction is *negative* — the matching intent
+  was recorded on the signup page one document earlier, as
+  `email_password_signup`.
 
 Two paths deliberately emit no `auth.success`:
 
