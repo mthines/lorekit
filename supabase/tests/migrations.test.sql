@@ -3397,11 +3397,12 @@ begin
 end;
 $$;
 
--- ── 65. origin: grant surface — the widened 15-arg memory_write signature is
--- granted to the same three roles the 11-arg form was (00038) ───────────────
+-- ── 65. origin: grant surface — the widened memory_write signature is granted
+-- to the same three roles the 11-arg form was (00038); 00056 further widened it
+-- with p_kind + p_host (17 args) ────────────────────────────────────────────
 do $$
 declare
-  v_sig text := 'memory_write(uuid, text, text, text, text[], text, text, timestamp with time zone, text, integer, boolean, text, text, text, integer)';
+  v_sig text := 'memory_write(uuid, text, text, text, text[], text, text, timestamp with time zone, text, integer, boolean, text, text, text, integer, text, text)';
 begin
   assert has_function_privilege('anon', v_sig, 'EXECUTE'),
     'origin: anon must have EXECUTE on the widened memory_write';
