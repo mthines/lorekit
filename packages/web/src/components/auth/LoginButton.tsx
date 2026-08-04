@@ -119,6 +119,9 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
   }
 
   async function handleGitHubLogin() {
+    // Same first move as the two form handlers: a retry after a failed
+    // initiation must not keep the previous attempt's message on screen.
+    setError('');
     setLoading(true);
     // Recorded BEFORE the redirect: this document is about to be replaced,
     // so this is the only moment the intent can be captured at all.
