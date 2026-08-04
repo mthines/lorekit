@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.32.0](https://github.com/mthines/lorekit/compare/cli-v1.31.0...cli-v1.32.0) (2026-08-04)
+
+
+### Features
+
+* **memory:** add kind + host as first-class taxonomy properties ([a62a63a](https://github.com/mthines/lorekit/commit/a62a63aa5c99b6e0d29d8b4929c85d87cc4dd679))
+* **memory:** add kind + host as first-class taxonomy properties ([fa5b1cf](https://github.com/mthines/lorekit/commit/fa5b1cfc3a44522bb798fd8e40ff99b72a27d9f1))
+
+
+### Bug Fixes
+
+* **memory:** address pr-reviewer findings on the kind/host PR ([ea4391e](https://github.com/mthines/lorekit/commit/ea4391e96e8235ca0f11597e18e935e405f180b3))
+
 ## [1.31.0](https://github.com/mthines/lorekit/compare/cli-v1.30.3...cli-v1.31.0) (2026-08-03)
 
 
