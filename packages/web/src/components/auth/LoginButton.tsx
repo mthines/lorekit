@@ -124,13 +124,22 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     // so this is the only moment the intent can be captured at all.
     reportAuthAttempt('github_oauth');
     const supabase = createClient();
-    await supabase.auth.signInWithOAuth({
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: 'github',
       options: {
         redirectTo: callbackUrl(),
       },
     });
-    // Loading stays true — page will redirect
+    // On success the page is already being replaced, so loading stays true.
+    // On failure it never redirects: without this branch the attempt above
+    // would have no terminal event — and OAuth emits no success by design, so
+    // a failed initiation would be indistinguishable from a completed one and
+    // would count as drop-off. The button would also stay disabled forever.
+    if (oauthError) {
+      reportAuthFailure('github_oauth', oauthError);
+      setError(friendlyAuthError(oauthError));
+      setLoading(false);
+    }
   }
 
   async function handleMagicLinkSubmit(e: React.FormEvent) {
@@ -453,6 +462,14 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
         <GitHubIcon className="size-4 shrink-0" />
         {loading ? 'Redirecting...' : 'Continue with GitHub'}
       </button>
+
+      {/* A failed OAuth initiation never navigates away, so this step has to be
+          able to say so — the password and magic-link steps already do. */}
+      {error && (
+        <p role="alert" className="text-xs text-red-400">
+          {error}
+        </p>
+      )}
 
       {/* Divider */}
       <div className="flex w-full max-w-[220px] items-center gap-2.5">
