@@ -265,9 +265,10 @@ export const MemoryCard = memo(function MemoryCard({
   );
 
   // A real link (not nested in the card's open-button), so a click jumps to the
-  // PR instead of opening the memory. `pointer-events-auto` lets it sit above
-  // the card layout's stretched open-button overlay; `stopPropagation` is belt
-  // and braces for the row layout where the whole card is still a button.
+  // PR instead of opening the memory. Rendered by the card layout only.
+  // `pointer-events-auto` lets it sit above that layout's stretched open-button
+  // overlay; `stopPropagation` keeps a chip click from reaching any clickable
+  // ancestor a caller may wrap the card in.
   const prChip = pr && (
     <a
       href={pr.url}
