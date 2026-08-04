@@ -13,6 +13,10 @@
  *   memoryId  – Plain DB row id (NOT JSON-encoded). A robust deep-link form that
  *               fetches the memory by id, so the sheet opens even when the row is
  *               outside the Explorer's recent/active window. Absent when unused.
+ *               It is a deep-link ENTRY point, not the open/closed flag: closing
+ *               the sheet records the dismissal locally and leaves the param in
+ *               the URL (see `activeMemoryId`), because stripping it would be a
+ *               second navigation racing the Explorer's own scope/filter write.
  *
  * ## SSR & hydration
  * `useUrlState` reads from `useSearchParams()`, which is empty on the server.
@@ -31,11 +35,11 @@
  */
 
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { LessonDetailSheet } from '@/components/lore/LessonDetailSheet';
 import { useLoreData, useMemoryById } from '@/lib/queries/lore';
-import { resolveOpenLesson, type LessonRef } from '@/lib/open-lesson';
+import { activeMemoryId, resolveOpenLesson, type LessonRef } from '@/lib/open-lesson';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -103,9 +107,12 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
   // resolves the memory even when it is outside the Explorer's recent/active
   // window, the case where the `?lesson=` scope+key form opens blank.
   const searchParams = useSearchParams();
-  const router = useRouter();
-  const pathname = usePathname();
-  const memoryId = searchParams.get('memoryId');
+  const urlMemoryId = searchParams.get('memoryId');
+  // Closing the sheet dismisses the id locally rather than rewriting the URL —
+  // the pure `activeMemoryId` docblock has the why (a second router.replace in
+  // the same tick clobbers the Explorer's scope/filter write).
+  const [dismissedMemoryId, setDismissedMemoryId] = useState<string | null>(null);
+  const memoryId = activeMemoryId(urlMemoryId, dismissedMemoryId);
   const { data: memoryByIdLesson } = useMemoryById(memoryId);
 
   // Resolution precedence lives in the pure `resolveOpenLesson` (unit-tested):
@@ -145,18 +152,12 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
       setPrefetched(null);
       setLessonRef(null);
     }
-    // The `memoryId` deep-link param is a plain search param (not useUrlState),
-    // so strip it directly. In the common flows only one of `lesson` / `memoryId`
-    // is set, so this is a single navigation; and the pure `resolveOpenLesson`
-    // gives `lesson` strict precedence, so even if both ever linger the sheet
-    // still never shows the wrong memory.
-    if (memoryId !== null) {
-      const params = new URLSearchParams(searchParams.toString());
-      params.delete('memoryId');
-      const qs = params.toString();
-      router.replace(`${pathname}${qs ? `?${qs}` : ''}`, { scroll: false });
-    }
-  }, [lessonRef, setLessonRef, memoryId, searchParams, router, pathname]);
+    // Dismiss the `memoryId` deep link in local state — no navigation, so this
+    // can never race the scope/filter write LoreExplorer makes in the same tick.
+    // A null id is a no-op; the pure `resolveOpenLesson` still gives `lesson`
+    // strict precedence, so a lingering param never shows the wrong memory.
+    setDismissedMemoryId(urlMemoryId);
+  }, [lessonRef, setLessonRef, urlMemoryId]);
 
   const contextValue = useMemo<MemorySidebarContextValue>(
     () => ({

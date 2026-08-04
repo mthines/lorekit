@@ -21,6 +21,27 @@ export interface LessonRef {
  * node vitest project — the reason the resolution lives here rather than inline
  * in the client provider.
  */
+/**
+ * The `memoryId` that is still open: the URL's param, unless the user has
+ * dismissed that exact id.
+ *
+ * Closing the sheet deliberately does NOT strip `?memoryId=` from the URL. That
+ * strip needed its own `router.replace`, built from the pre-mutation search
+ * params, and the Lore Explorer calls `closeLesson()` in the same tick as its
+ * own scope / filter writes — so the second navigation landed last and clobbered
+ * the scope or filter the user had just set. Dismissal is local state instead,
+ * keyed BY id so a later deep link to a different memory still opens the sheet.
+ * The cost is that the param survives in the URL, which only means a refresh
+ * re-opens the deep link it names.
+ */
+export function activeMemoryId(
+  memoryId: string | null,
+  dismissedMemoryId: string | null,
+): string | null {
+  if (memoryId === null || memoryId === dismissedMemoryId) return null;
+  return memoryId;
+}
+
 export function resolveOpenLesson(args: {
   lessonRef: LessonRef | null;
   cacheLessons: LessonEntry[] | undefined;

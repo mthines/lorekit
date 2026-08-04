@@ -12,7 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import type { MemoryEntry } from '@lorekit/schemas/memory';
 import { lessonFromMemoryEntry } from './lesson-entry';
-import { resolveOpenLesson } from './open-lesson';
+import { activeMemoryId, resolveOpenLesson } from './open-lesson';
 
 function lesson(scope: string, key: string) {
   const entry: MemoryEntry = {
@@ -119,5 +119,24 @@ describe('resolveOpenLesson', () => {
         memoryByIdLesson: undefined,
       }),
     ).toBeNull();
+  });
+});
+
+describe('activeMemoryId', () => {
+  it('is the URL param while nothing has been dismissed', () => {
+    expect(activeMemoryId('id-a', null)).toBe('id-a');
+  });
+
+  it('goes null once that exact id is dismissed — how the sheet closes without a navigation', () => {
+    expect(activeMemoryId('id-a', 'id-a')).toBeNull();
+  });
+
+  it('re-opens for a different id, so a later deep link still works after a close', () => {
+    expect(activeMemoryId('id-b', 'id-a')).toBe('id-b');
+  });
+
+  it('is null when the URL carries no memoryId at all', () => {
+    expect(activeMemoryId(null, null)).toBeNull();
+    expect(activeMemoryId(null, 'id-a')).toBeNull();
   });
 });
