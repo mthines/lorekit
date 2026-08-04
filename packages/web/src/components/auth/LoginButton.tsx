@@ -259,15 +259,27 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
   // -- Compact variant (top-right nav button on login page) --
   if (compact) {
     return (
-      <button
-        onClick={handleGitHubLogin}
-        disabled={loading}
-        className="flex h-9 items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50"
-        aria-busy={loading}
-      >
-        <GitHubIcon className="size-3.5 shrink-0" />
-        {loading ? 'Redirecting...' : 'Sign in'}
-      </button>
+      // This variant shares handleGitHubLogin with the full one, so it can fail
+      // the same way — and it sits in a header row, so the message goes BESIDE
+      // the button rather than below it: a block-level region would restructure
+      // that row. Without it the button just reverts to "Sign in" and the user
+      // has no signal that anything went wrong, let alone what.
+      <div className="flex items-center gap-2">
+        {error && (
+          <p role="alert" className="max-w-[16rem] text-right text-xs text-red-400">
+            {error}
+          </p>
+        )}
+        <button
+          onClick={handleGitHubLogin}
+          disabled={loading}
+          className="flex h-9 items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50"
+          aria-busy={loading}
+        >
+          <GitHubIcon className="size-3.5 shrink-0" />
+          {loading ? 'Redirecting...' : 'Sign in'}
+        </button>
+      </div>
     );
   }
 
