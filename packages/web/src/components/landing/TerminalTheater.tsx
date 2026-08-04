@@ -250,8 +250,13 @@ function TypewriterLine({
   // the ~60 ticks a second this component runs at: a line long enough to wrap
   // grows a row mid-type, which pushes every sibling below it down and books a
   // layout shift. With the loop restarting forever, the login page accumulated
-  // thousands of CLS entries per visit (p75 0.21, worst 0.58) and the shifting
-  // text sat directly above the sign-in CTA.
+  // thousands of CLS entries per visit (p75 0.21, worst 0.58).
+  //
+  // The theater does NOT sit above the sign-in CTA: `(auth)/login/page.tsx`
+  // renders the primary `LoginButton` at L155 and `<TerminalTheater />` at
+  // L165, so the shifting text is below it — only the header's compact sign-in
+  // button (L111) is above. The cost is the accrued shift entries themselves,
+  // which CLS sums for the whole session; it is not a CTA moving under a cursor.
   //
   // So: a full, invisible copy of the text reserves the space, and the typed
   // prefix is painted over it. The overlay is out of flow, so the number of
