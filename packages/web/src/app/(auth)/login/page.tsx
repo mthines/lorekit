@@ -184,7 +184,11 @@ export default function LoginPage() {
               <span className="flex size-6 shrink-0 items-center justify-center rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent-subtle)] font-mono text-xs font-semibold text-[var(--color-accent)]">2</span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-[var(--color-content-primary)] mb-1">Run one command</p>
-                <CopyCommand command="npx @lorekit/cli install" />
+                <CopyCommand
+                  command="npx @lorekit/cli install"
+                  commandId="cli-install"
+                  surface="login-get-started"
+                />
               </div>
             </li>
             <li className="flex gap-3">
