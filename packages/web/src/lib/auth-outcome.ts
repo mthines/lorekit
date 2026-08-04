@@ -12,8 +12,9 @@
  * place the question actually matters.
  *
  * `/api/auth/callback` can know, because it holds the Supabase user record. This
- * is the seam where intent becomes outcome, and it covers every path uniformly:
- * OAuth, magic link and email confirmation all land here.
+ * is the seam where intent becomes outcome. Every path lands here and is
+ * classified by the same rule — but see {@link AuthOutcome}: the rule can only
+ * separate a signup from a sign-in on the OAuth path.
  *
  * ## How
  *
@@ -39,7 +40,22 @@
  */
 export const NEW_ACCOUNT_TOLERANCE_MS = 10_000;
 
-/** What the callback turned out to be. */
+/**
+ * What the callback turned out to be.
+ *
+ * **`account_created` is only an acquisition signal on the OAuth path.** There,
+ * the insert and the sign-in happen in the same callback. The two email paths
+ * put a human round-trip in between — a magic link creates the account when it
+ * is REQUESTED, and a confirmation link is opened minutes or hours after
+ * `signUp` — so a first sign-in on either reports `returning_sign_in`. The
+ * tolerance below absorbs write skew, not inboxes, and widening it to cover an
+ * inbox would start swallowing genuine returning sign-ins.
+ *
+ * That is the limit of what two timestamps can prove, not a defect to work
+ * around here. Count acquisition on those paths from the browser instead — the
+ * `email_confirmation` success event, and `auth.intent` — as `docs/otel.md` §
+ * "Signing up vs signing in" sets out per path.
+ */
 export type AuthOutcome = 'account_created' | 'returning_sign_in' | 'unknown';
 
 /** The fields of the Supabase user record this reads. Both are optional there. */

@@ -294,14 +294,39 @@ in the `auth.callback.success` log record):
 | `unknown` | A timestamp was missing, unparseable, or ordered nonsensically |
 
 The rule is the pure `classifyAuthOutcome` in `packages/web/src/lib/auth-outcome.ts`.
-It covers OAuth, magic link and email confirmation uniformly, because all three
-land on that route. `unknown` is a real bucket and must stay countable — folding
-it into `returning_sign_in` would understate signups by exactly the cases the
-data is least sure about.
+All three paths land on that route and are classified by the same rule, but the
+rule can only separate them on **one** of the three, and reading the attribute
+as if it separated all three is the mistake this paragraph exists to prevent:
 
-**So: count acquisition with `auth.outcome = account_created` on the server, and
-intent with `auth.intent` in the browser. Never infer a signup from
+| Path | What `auth.outcome` says on a first sign-in | Why |
+|------|---------------------------------------------|-----|
+| `github_oauth` | `account_created` | The insert and the sign-in happen in the same callback, well inside the 10s tolerance |
+| `email_otp` (magic link to a new address) | `returning_sign_in` | The account is created when the link is **requested** (`shouldCreateUser: true`, `LoginButton.tsx`); the sign-in only happens when the visitor opens their inbox |
+| `email_confirmation` | `returning_sign_in` | `signUp` creates the account, and the confirmation link is opened minutes or hours later |
+
+The two email paths put a human round-trip between `created_at` and
+`last_sign_in_at`, so they fall outside a tolerance that exists to absorb write
+skew, not inboxes. That is not a bug in the rule — a callback holding only those
+two timestamps genuinely cannot tell a confirmation click from a sign-in a week
+later — it is the limit of what the rule is allowed to claim.
+
+`unknown` is a real bucket and must stay countable — folding it into
+`returning_sign_in` would understate signups by exactly the cases the data is
+least sure about.
+
+**So: count acquisition per path, and never infer a signup from
 `auth.method = github_oauth`.**
+
+- **OAuth** — `auth.outcome = account_created` on the server. This is the one
+  path where the attribute is the acquisition count.
+- **Email confirmation** — the `auth.success` event with
+  `auth.method = email_confirmation` (`auth.intent = signup`), emitted on
+  `/welcome`. Its server-side `auth.outcome` will say `returning_sign_in`; do
+  not add the two together.
+- **Magic link** — `auth.intent = login_or_signup` is as far as the data goes
+  today. A first-time magic-link visitor is not separable from a returning one
+  by either signal, so report that population as unresolved rather than
+  assigning it to a side.
 
 ### Selection vs attempt
 
