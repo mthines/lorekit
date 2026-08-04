@@ -24,14 +24,27 @@
  * Protection routes a stamped request back to the deployment that served the
  * bundle instead of to whatever the alias currently points at.
  *
- * ## Requires the Vercel project setting
+ * ## Not sufficient on its own — two prerequisites are still open
  *
- * The code half is necessary but not sufficient — **Skew Protection must also
- * be enabled for the Vercel project** (Settings → Advanced → Skew Protection).
- * Vercel then injects `VERCEL_DEPLOYMENT_ID` into the build and honours the
- * stamp at the edge. Without the setting the variable is absent, this resolves
- * to `undefined`, and the behaviour is exactly what it is today — so the change
- * is safe to land ahead of (or without) the setting.
+ * `VERCEL_DEPLOYMENT_ID` only exists in a build that Vercel itself runs, on a
+ * project with Skew Protection switched on. Two things must change before this
+ * helper can ever return a value in production:
+ *
+ * 1. **The project settings.** Skew Protection (Settings → Advanced) *and*
+ *    "Enable access to System Environment Variables" (Settings → Environment
+ *    Variables) both have to be on — the latter is what actually exposes
+ *    `VERCEL_*` system variables to the build.
+ * 2. **The production build has to move onto Vercel's builders.**
+ *    `stage-web-production` in `deploy.yml` runs `vercel build --prod` inside
+ *    GitHub Actions and then `vercel deploy --prebuilt`. A deployment ID is
+ *    assigned at *upload* time, so during that build it does not exist yet and
+ *    no amount of project configuration will inject it. Prebuilt deployments
+ *    therefore cannot participate in Skew Protection.
+ *
+ * Until both hold, this resolves to `undefined`, `deploymentId` is unset, and
+ * behaviour is exactly what it is today — so the wiring is safe to land ahead of
+ * the decision, but it does **not** fix the 404s by itself. See
+ * `docs/deployment.md` → "Skew Protection".
  *
  * Kept as a tiny pure module rather than an inline expression in
  * `next.config.ts` so the "blank means unset" rule is testable: a deployment UI

@@ -16,9 +16,13 @@ const nextConfig: NextConfig = {
   // action ID to the NEW deployment, which 404s it — the Overview's Accept /
   // Decline / onboarding buttons go silently dead until a hard reload.
   //
-  // Requires Skew Protection to be enabled on the Vercel project; until it is,
-  // VERCEL_DEPLOYMENT_ID is absent, this is `undefined`, and nothing changes.
-  // See src/lib/deployment-id.ts for the full rationale.
+  // NOT active yet, and not active on today's production path: a deployment ID
+  // is assigned at upload time, so `vercel build --prod` running inside GitHub
+  // Actions (stage-web-production, then `vercel deploy --prebuilt`) never sees
+  // VERCEL_DEPLOYMENT_ID. Activating this needs Skew Protection + system env
+  // vars enabled on the project AND the production build moved onto Vercel's
+  // builders. Until then this is `undefined` and nothing changes.
+  // See src/lib/deployment-id.ts and docs/deployment.md for the full rationale.
   deploymentId: resolveDeploymentId(process.env),
 
   // `/settings/webhooks` was renamed to `/settings/integrations`. The old path

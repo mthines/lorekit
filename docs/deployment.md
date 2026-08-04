@@ -138,20 +138,32 @@ This is exactly what happened on the Overview page: every `POST /dashboard` went
 from `200` to `404` after a `main` push, with the browser reporting
 `service.version` from one commit and the server span reporting another.
 
-The mitigation is Vercel **Skew Protection**, and it has two halves:
+The mitigation is Vercel **Skew Protection**. The wiring is in place; **it is
+not active**, and two prerequisites are still open.
 
-1. **Code (done).** `next.config.ts` sets `deploymentId` from
+1. **Code (in place, inert).** `next.config.ts` sets `deploymentId` from
    `VERCEL_DEPLOYMENT_ID` (`src/lib/deployment-id.ts`), so Next.js stamps asset
-   URLs and Server Action requests with the deployment that built them.
-2. **Project setting (manual, do this once).** Enable **Skew Protection** in the
-   Vercel project — Settings → Advanced → Skew Protection — and pick a window at
-   least as long as a plausible idle tab (12 h is a reasonable default). Vercel
-   then injects `VERCEL_DEPLOYMENT_ID` at build time and routes a stamped request
-   back to its originating deployment instead of to whatever the alias currently
-   points at.
+   URLs and Server Action requests with the deployment that built them — as soon
+   as that variable exists.
+2. **Project settings (manual, not done).** In the Vercel project, enable
+   **Skew Protection** (Settings → Advanced) and pick a window at least as long
+   as a plausible idle tab — 12 h is a reasonable default. Also enable
+   **"Enable access to System Environment Variables"** (Settings → Environment
+   Variables); without it Vercel never injects `VERCEL_*` system variables into
+   the build, so `VERCEL_DEPLOYMENT_ID` stays absent even with Skew Protection on.
+3. **Build path (open decision, blocks the whole thing).** A deployment ID is
+   assigned when a deployment is **uploaded**, not when it is built. Today
+   `stage-web-production` runs `vercel build --prod` inside GitHub Actions and
+   then `vercel deploy --prebuilt` (see the bullets above), so at build time the
+   ID does not exist yet — **prebuilt deployments cannot participate in Skew
+   Protection at all.** Activating it means letting Vercel build the production
+   deployment (drop `--prebuilt`, forwarding the `VERCEL_GIT_*` values with
+   `--build-env` so `NEXT_PUBLIC_OTEL_SERVICE_VERSION` and the `vcs.*` resource
+   attributes survive). That trades the "build already done before the flip"
+   property for skew safety, and is a deliberate call — not made here.
 
-Until step 2 is done, `VERCEL_DEPLOYMENT_ID` is absent, `deploymentId` resolves
-to `undefined`, and behaviour is unchanged — step 1 is inert on its own.
+Until 2 **and** 3 both hold, `VERCEL_DEPLOYMENT_ID` is absent, `deploymentId`
+resolves to `undefined`, and behaviour is unchanged. Step 1 is inert on its own.
 
 ### Migration drift on the shared preview project
 
