@@ -56,7 +56,7 @@ describe('sendInviteEmail', () => {
       expect(part).toContain('Acme Team');
       expect(part).toContain('member');
       expect(part).toContain('octocat');
-      expect(part).toContain('https://app.test/dashboard');
+      expect(part).toContain('https://app.test/overview');
     }
   });
 

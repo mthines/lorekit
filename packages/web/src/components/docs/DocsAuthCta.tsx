@@ -32,7 +32,7 @@ export function DocsAuthCta() {
     };
   }, []);
 
-  const href = signedIn ? '/dashboard' : '/login';
+  const href = signedIn ? '/overview' : '/login';
   const label = signedIn ? 'Dashboard' : 'Sign in';
 
   return (

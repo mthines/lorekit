@@ -127,7 +127,7 @@ in via `parameters.msw.handlers`. **Mixed rendering model:** `'use client'` page
 true full pages (`app/(dashboard)/lore/LorePage.stories.tsx` — needs
 `parameters.nextjs.appDirectory: true` for `useRouter`/`useSearchParams`); server-component
 pages can't render in the browser, so story their largest client subtree instead
-(`components/dashboard/DashboardStats.stories.tsx` for the RSC `/dashboard`), never refactor
+(`components/dashboard/DashboardStats.stories.tsx` for the RSC `/overview`), never refactor
 an RSC page to client just to story it. The `/lore` lesson list reads the `listMemories`
 **server action** (gated on `getUser()` → empty in the mocked context), so its results panel
 shows the empty state while the browser-fetched scope tree + heatmap populate.

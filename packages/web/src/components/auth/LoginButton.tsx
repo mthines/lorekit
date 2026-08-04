@@ -103,7 +103,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
 
   // Read the ?next= param set by the dashboard layout when redirecting unauthenticated
   // users to /login. After the OAuth/magic-link callback, /api/auth/callback will
-  // redirect there instead of /dashboard, preserving shared URLs (e.g. ?lesson=...).
+  // redirect there instead of /overview, preserving shared URLs (e.g. ?lesson=...).
   // The password path never leaves the SPA, so it navigates there itself.
   const searchParams = useSearchParams();
   const nextParam = searchParams.get('next');

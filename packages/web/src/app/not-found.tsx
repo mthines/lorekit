@@ -22,7 +22,7 @@ export default function NotFound() {
         </div>
       </div>
       <Link
-        href="/dashboard"
+        href="/overview"
         className="flex h-9 items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 text-sm text-[var(--color-content-secondary)] transition-all duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]"
       >
         <Home className="size-4" aria-hidden />

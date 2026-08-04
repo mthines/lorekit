@@ -18,7 +18,7 @@ interface ErrorProps {
 }
 
 const PAGE_LABELS: Record<string, string> = {
-  '/dashboard': 'the overview',
+  '/overview': 'the overview',
   '/lore': 'the Lore Explorer',
   '/activity': 'the Activity feed',
 };
@@ -63,7 +63,7 @@ export default function DashboardError({ error, reset }: ErrorProps) {
           Retry
         </button>
         <Link
-          href="/dashboard"
+          href="/overview"
           className="flex h-9 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 text-sm text-[var(--color-content-secondary)] transition-all duration-150 hover:bg-[var(--color-bg-elevated)]"
         >
           Overview

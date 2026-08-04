@@ -26,7 +26,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
     // The middleware forwards x-pathname and x-search from request.nextUrl so we
     // don't need to parse the raw request here.
     const headersList = await headers();
-    const pathname = headersList.get('x-pathname') ?? '/dashboard';
+    const pathname = headersList.get('x-pathname') ?? '/overview';
     const search = headersList.get('x-search') ?? '';
     const next = encodeURIComponent(`${pathname}${search}`);
     redirect(`/login?next=${next}`);
