@@ -41,6 +41,7 @@ describe('resolveOpenLesson', () => {
         lessonRef: { scope: 'global', key: 'a' },
         cacheLessons: [A, B],
         prefetched: null,
+        lessonByRef: null,
         memoryId: null,
         memoryByIdLesson: null,
       }),
@@ -53,6 +54,7 @@ describe('resolveOpenLesson', () => {
         lessonRef: { scope: 'global', key: 'a' },
         cacheLessons: [],
         prefetched: A,
+        lessonByRef: null,
         memoryId: null,
         memoryByIdLesson: null,
       }),
@@ -65,6 +67,7 @@ describe('resolveOpenLesson', () => {
         lessonRef: null,
         cacheLessons: [],
         prefetched: null,
+        lessonByRef: null,
         memoryId: 'id-global-a',
         memoryByIdLesson: A,
       }),
@@ -79,6 +82,7 @@ describe('resolveOpenLesson', () => {
         lessonRef: { scope: 'global', key: 'a' },
         cacheLessons: [],
         prefetched: null,
+        lessonByRef: null,
         memoryId: 'id-global-b',
         memoryByIdLesson: B,
       }),
@@ -91,6 +95,7 @@ describe('resolveOpenLesson', () => {
         lessonRef: { scope: 'global', key: 'a' },
         cacheLessons: [A],
         prefetched: null,
+        lessonByRef: null,
         memoryId: 'id-global-b',
         memoryByIdLesson: B,
       }),
@@ -103,6 +108,7 @@ describe('resolveOpenLesson', () => {
         lessonRef: null,
         cacheLessons: [],
         prefetched: null,
+        lessonByRef: null,
         memoryId: null,
         memoryByIdLesson: null,
       }),
@@ -115,8 +121,66 @@ describe('resolveOpenLesson', () => {
         lessonRef: null,
         cacheLessons: [],
         prefetched: null,
+        lessonByRef: null,
         memoryId: 'id-global-a',
         memoryByIdLesson: undefined,
+      }),
+    ).toBeNull();
+  });
+
+  it('resolves a lesson by its fetched scope+key when it is outside the cache — the "opens blank" fix', () => {
+    // A shared `?lesson=` link to a memory not in the recent window: the
+    // by-scope+key fetch resolves it instead of the sheet opening blank.
+    expect(
+      resolveOpenLesson({
+        lessonRef: { scope: 'global', key: 'a' },
+        cacheLessons: [],
+        prefetched: null,
+        lessonByRef: A,
+        memoryId: null,
+        memoryByIdLesson: null,
+      }),
+    ).toBe(A);
+  });
+
+  it('prefers the cache over the by-ref fetch when both resolve the lesson', () => {
+    const cached = lesson('global', 'a');
+    expect(
+      resolveOpenLesson({
+        lessonRef: { scope: 'global', key: 'a' },
+        cacheLessons: [cached],
+        prefetched: null,
+        lessonByRef: A,
+        memoryId: null,
+        memoryByIdLesson: null,
+      }),
+    ).toBe(cached);
+  });
+
+  it('ignores a by-ref result for a different ref', () => {
+    // The fetch is keyed by scope+key; a stale result for another ref must not
+    // resolve the current one.
+    expect(
+      resolveOpenLesson({
+        lessonRef: { scope: 'global', key: 'a' },
+        cacheLessons: [],
+        prefetched: null,
+        lessonByRef: B,
+        memoryId: null,
+        memoryByIdLesson: null,
+      }),
+    ).toBeNull();
+  });
+
+  it('returns null while the by-ref fetch is still loading', () => {
+    expect(
+      resolveOpenLesson({
+        lessonRef: { scope: 'global', key: 'a' },
+        cacheLessons: [],
+        prefetched: null,
+        lessonByRef: undefined,
+        memoryId: null,
+        memoryByIdLesson: null,
       }),
     ).toBeNull();
   });

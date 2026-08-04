@@ -46,10 +46,11 @@ export function resolveOpenLesson(args: {
   lessonRef: LessonRef | null;
   cacheLessons: LessonEntry[] | undefined;
   prefetched: LessonEntry | null;
+  lessonByRef: LessonEntry | null | undefined;
   memoryId: string | null;
   memoryByIdLesson: LessonEntry | null | undefined;
 }): LessonEntry | null {
-  const { lessonRef, cacheLessons, prefetched, memoryId, memoryByIdLesson } = args;
+  const { lessonRef, cacheLessons, prefetched, lessonByRef, memoryId, memoryByIdLesson } = args;
 
   if (lessonRef) {
     // 1. The active-memories cache (covers all non-archived lessons).
@@ -65,7 +66,17 @@ export function resolveOpenLesson(args: {
     ) {
       return prefetched;
     }
-    // Set but unresolved: show nothing — never fall through to `memoryId`.
+    // 3. Fetched by scope+key directly, so a `?lesson=` deep link resolves even
+    //    when the memory is outside the recent/active cache window — the
+    //    "opens blank" case for a shared link to any older memory.
+    if (
+      lessonByRef &&
+      lessonByRef.scope === lessonRef.scope &&
+      lessonByRef.key === lessonRef.key
+    ) {
+      return lessonByRef;
+    }
+    // Set but still unresolved: show nothing — never fall through to `memoryId`.
     return null;
   }
 

@@ -248,6 +248,36 @@ export function useMemoryById(id: string | null) {
 }
 
 // ---------------------------------------------------------------------------
+// Single memory by its natural key (scope + key).
+//
+// Resolves a `/lore?lesson={scope,key}` deep link directly via an exact
+// `GET /memories?scope=&key=&limit=1` (the same read `updateLesson` uses to find
+// a row), so the detail sheet opens even when the memory is outside the
+// Explorer's recent/active window — the "opens blank" case for a shared
+// `?lesson=` link to any older memory. Disabled (no fetch) when `ref` is null.
+// ---------------------------------------------------------------------------
+
+export function useLessonByRef(ref: { scope: string; key: string } | null) {
+  return useQuery<LessonEntry | null>({
+    queryKey: ['lesson-by-ref', ref?.scope, ref?.key],
+    enabled: ref !== null,
+    queryFn: async ({ signal }) => {
+      if (!ref) return null;
+      const token = await requireBrowserToken();
+      const page = await listMemoriesRequest(
+        token,
+        { scope: ref.scope, key: ref.key, limit: 1 },
+        signal,
+      );
+      const entry = page.entries[0];
+      return entry ? lessonFromMemoryEntry(entry) : null;
+    },
+    staleTime: 90_000,
+    retry: retryUnlessSignedOut,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Paginated lesson list — mirrors `useAuditLog` exactly.
 // ---------------------------------------------------------------------------
 
