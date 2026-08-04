@@ -1,11 +1,18 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { friendlyAuthError } from '@/lib/auth-errors';
-import { reportAuthAttempt, reportAuthFailure, reportAuthSuccess } from '@/lib/auth-telemetry';
+import { markOptionSelected } from '@/lib/auth-option-selection';
+import {
+  reportAuthAttempt,
+  reportAuthFailure,
+  reportAuthOptionSelected,
+  reportAuthSuccess,
+  type AuthMethod,
+} from '@/lib/auth-telemetry';
 import { validatePassword } from '@/lib/password-policy';
 import { authCallbackOrigin, buildAuthCallbackUrl } from '@/lib/auth-callback-url';
 import { safeNextPath } from '@/lib/auth-redirect';
@@ -118,13 +125,28 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     setPassword('');
   }
 
+  // The once-per-document selection set. Held in a ref rather than state:
+  // nothing renders off it, and a re-render must not reset it. The rule itself
+  // is the pure `markOptionSelected` (`lib/auth-option-selection.ts`) so it is
+  // reachable by the unit-test suite, which cannot render this component.
+  const selectedOptions = useRef<Set<AuthMethod>>(new Set());
+  function selectOption(method: AuthMethod) {
+    if (markOptionSelected(selectedOptions.current, method)) {
+      reportAuthOptionSelected(method);
+    }
+  }
+
   async function handleGitHubLogin() {
     // Same first move as the two form handlers: a retry after a failed
     // initiation must not keep the previous attempt's message on screen.
     setError('');
     setLoading(true);
     // Recorded BEFORE the redirect: this document is about to be replaced,
-    // so this is the only moment the intent can be captured at all.
+    // so this is the only moment the intent can be captured at all. Selecting
+    // and attempting coincide on this path — there is no form in between to
+    // abandon — but both are emitted so every option is comparable at the
+    // selection step.
+    selectOption('github_oauth');
     reportAuthAttempt('github_oauth');
     const supabase = createClient();
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
@@ -331,6 +353,9 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
         </p>
         <button
           onClick={() => {
+            // Leaving the "confirm your email" screen for the sign-in form is a
+            // route choice too — the same one the landing page's button makes.
+            selectOption('email_password');
             setPasswordMode('signin');
             resetTo('password');
           }}
@@ -401,7 +426,13 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           <button
             type="button"
             onClick={() => {
-              setPasswordMode(isSignup ? 'signin' : 'signup');
+              const next = isSignup ? 'signin' : 'signup';
+              // The one place a visitor states, unambiguously, which of the two
+              // they are here for. Pressing "Create an account" is the clearest
+              // signup signal the page can produce — clearer than the eventual
+              // submit, because most people who press it never get that far.
+              selectOption(next === 'signup' ? 'email_password_signup' : 'email_password');
+              setPasswordMode(next);
               setError('');
             }}
             className={LINK_CLASS}
@@ -415,7 +446,18 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           )}
         </div>
 
-        <button type="button" onClick={() => resetTo('magic')} className={LINK_CLASS}>
+        {/* A route switch from inside a panel is the same choice as picking the
+            route from the landing state, so it reports the same selection —
+            otherwise a route's count would depend on which door the visitor
+            came through. The once-per-document rule keeps a toggle harmless. */}
+        <button
+          type="button"
+          onClick={() => {
+            selectOption('email_otp');
+            resetTo('magic');
+          }}
+          className={LINK_CLASS}
+        >
           Email me a magic link instead
         </button>
         <button type="button" onClick={() => resetTo('idle')} className={LINK_CLASS}>
@@ -454,7 +496,14 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           <MailIcon className="size-4 shrink-0" />
           {busy ? 'Sending...' : 'Send magic link'}
         </button>
-        <button type="button" onClick={() => resetTo('password')} className={LINK_CLASS}>
+        <button
+          type="button"
+          onClick={() => {
+            selectOption('email_password');
+            resetTo('password');
+          }}
+          className={LINK_CLASS}
+        >
           Use a password instead
         </button>
         <button type="button" onClick={() => resetTo('idle')} className={LINK_CLASS}>
@@ -497,6 +546,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           primary text) so it reads as a real alternative, not a muted afterthought. */}
       <button
         onClick={() => {
+          selectOption('email_password');
           setPasswordMode('signin');
           resetTo('password');
         }}
@@ -507,7 +557,13 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
       </button>
 
       {/* Tertiary: passwordless — still one tap away for anyone who prefers it. */}
-      <button onClick={() => resetTo('magic')} className={LINK_CLASS}>
+      <button
+        onClick={() => {
+          selectOption('email_otp');
+          resetTo('magic');
+        }}
+        className={LINK_CLASS}
+      >
         Or email me a magic link
       </button>
     </div>
