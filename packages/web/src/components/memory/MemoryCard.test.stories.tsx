@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react';
-import { expect, within } from 'storybook/test';
+import { expect, fn, userEvent, within } from 'storybook/test';
 
 import { MemoryCard, memoryFromLesson } from './MemoryCard';
 
@@ -58,6 +58,58 @@ export const NoChipWithoutPr: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await expect(canvas.queryByRole('link', { name: /pull request/i })).toBeNull();
+  },
+};
+
+/**
+ * The chip forced the card root from a <button> to a <div> with a stretched
+ * open-button behind a `pointer-events-none` body (an anchor may not nest in a
+ * button). These two pin the halves of that restructure that the presence tests
+ * above cannot see: the card still opens, and the chip does not open it.
+ */
+export const CardStillOpens: Story = {
+  args: {
+    memory: memoryFromLesson({
+      ...BASE,
+      key: 'aw-lessons::card-opens',
+      origin_repo: 'mthines/lorekit',
+      origin_pr: 482,
+    }),
+    onClick: fn(),
+  },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    // The body is pointer-events-none; the whole-card action is the stretched
+    // button behind it, which is what a click anywhere on the card resolves to.
+    await userEvent.click(canvas.getByRole('button', { name: /open memory/i }));
+    await expect(args.onClick).toHaveBeenCalledTimes(1);
+  },
+};
+
+export const ChipClickDoesNotOpenMemory: Story = {
+  args: {
+    memory: memoryFromLesson({
+      ...BASE,
+      key: 'aw-lessons::chip-click',
+      origin_repo: 'mthines/lorekit',
+      origin_pr: 482,
+    }),
+    onClick: fn(),
+  },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    // The chip is a real link with target="_blank"; swallow the navigation so
+    // the assertion is about the card's onClick, not about a popped-open tab.
+    canvasElement.addEventListener(
+      'click',
+      (event) => {
+        if ((event.target as HTMLElement).closest('a')) event.preventDefault();
+      },
+      true,
+    );
+
+    await userEvent.click(canvas.getByRole('link', { name: /open pull request #482 on github/i }));
+    await expect(args.onClick).not.toHaveBeenCalled();
   },
 };
 
