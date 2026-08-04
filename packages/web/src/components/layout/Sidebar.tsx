@@ -11,7 +11,7 @@ import { SETTINGS_LANDING_HREF, isSettingsPath } from '@/lib/settings-routes';
 // Primary content nav — 3 destinations keeps the sidebar scannable and the
 // mobile tab bar comfortably within the 3–5 item guideline.
 const NAV = [
-  { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
+  { href: '/overview', label: 'Overview', icon: LayoutDashboard },
   { href: '/lore', label: 'Explorer', icon: BookOpen },
   { href: '/docs', label: 'Getting started', mobileLabel: 'Getting started', icon: GraduationCap },
 ] as const;

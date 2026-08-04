@@ -7,7 +7,7 @@ import { withQueryClient, withFrozenClock } from '@/mocks/decorators';
 /**
  * Full-view visual-regression stories for the Overview page's main content.
  *
- * `/dashboard` is a **server component** — it `await`s server actions and the
+ * `/overview` is a **server component** — it `await`s server actions and the
  * Supabase *server* client, so it cannot render in Storybook's browser. Its
  * largest client subtree, {@link DashboardStats}, can: it fetches scope health
  * over TanStack Query → the Supabase *browser* client → PostgREST, which MSW

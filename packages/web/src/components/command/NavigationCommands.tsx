@@ -135,12 +135,12 @@ export function NavigationCommands() {
   // ── Navigate ─────────────────────────────────────────────────────────────
 
   useCommand({
-    id: 'nav-dashboard',
-    label: 'Go to Dashboard',
+    id: 'nav-overview',
+    label: 'Go to Overview',
     icon: <LayoutDashboard className="size-4" />,
     group: 'Navigate',
     shortcut: { keys: ['g', 'o'] },
-    onSelect: () => router.push('/dashboard'),
+    onSelect: () => router.push('/overview'),
   });
 
   useCommand({
