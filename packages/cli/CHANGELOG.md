@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.1](https://github.com/mthines/lorekit/compare/cli-v1.32.0...cli-v1.32.1) (2026-08-04)
+
+
+### Documentation
+
+* **lorekit-setup:** add the reconcile-on-re-run flow (resolve + record) ([04c905b](https://github.com/mthines/lorekit/commit/04c905b239dc92c5025531739c9947f7e6c998d4))
+
 ## [1.32.0](https://github.com/mthines/lorekit/compare/cli-v1.31.0...cli-v1.32.0) (2026-08-04)
 
 
