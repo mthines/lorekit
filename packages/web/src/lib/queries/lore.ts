@@ -13,6 +13,7 @@ import { browserAccessToken } from '@/lib/api/session-browser';
 import {
   activityRequest,
   getMemoryByIdRequest,
+  getMemoryByRefRequest,
   listFacetsRequest,
   listMemoriesRequest,
   listScopesRequest,
@@ -250,11 +251,11 @@ export function useMemoryById(id: string | null) {
 // ---------------------------------------------------------------------------
 // Single memory by its natural key (scope + key).
 //
-// Resolves a `/lore?lesson={scope,key}` deep link directly via an exact
-// `GET /memories?scope=&key=&limit=1` (the same read `updateLesson` uses to find
-// a row), so the detail sheet opens even when the memory is outside the
-// Explorer's recent/active window — the "opens blank" case for a shared
-// `?lesson=` link to any older memory. Disabled (no fetch) when `ref` is null.
+// Resolves a `/lore?lesson={scope,key}` deep link directly via
+// `getMemoryByRefRequest` (a precise one-row read — see its doc), so the detail
+// sheet opens even when the memory is outside the Explorer's recent/active
+// window — the "opens blank" case for a shared `?lesson=` link to any older
+// memory. Disabled (no fetch) when `ref` is null.
 // ---------------------------------------------------------------------------
 
 export function useLessonByRef(ref: { scope: string; key: string } | null) {
@@ -264,12 +265,7 @@ export function useLessonByRef(ref: { scope: string; key: string } | null) {
     queryFn: async ({ signal }) => {
       if (!ref) return null;
       const token = await requireBrowserToken();
-      const page = await listMemoriesRequest(
-        token,
-        { scope: ref.scope, key: ref.key, limit: 1 },
-        signal,
-      );
-      const entry = page.entries[0];
+      const entry = await getMemoryByRefRequest(token, ref.scope, ref.key, signal);
       return entry ? lessonFromMemoryEntry(entry) : null;
     },
     staleTime: 90_000,
