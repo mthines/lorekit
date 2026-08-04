@@ -17,6 +17,7 @@ import {
   listMemoriesRequest,
   listScopesRequest,
 } from '@/lib/api/memories';
+import { RestApiError } from '@/lib/api/rest';
 import { normalizeFilters, type FacetValue, type Filter } from '@/lib/filters';
 
 export interface LoreData {
@@ -80,6 +81,27 @@ export function isNotAuthenticated(error: unknown): boolean {
  */
 export function retryUnlessSignedOut(failureCount: number, error: unknown): boolean {
   return !isNotAuthenticated(error) && failureCount < 3;
+}
+
+/**
+ * True when the API answered that the REQUEST cannot succeed, whoever asks and
+ * however often: the id is not a UUID (`400`, `GET /memories/:id` validates it)
+ * or it names no memory this account can see (`404` — an archived, purged or
+ * foreign row). Both are documented outcomes of a hand-built `?memoryId=` deep
+ * link, not transport failures.
+ */
+export function isUnretryableRequest(error: unknown): boolean {
+  return error instanceof RestApiError && (error.status === 400 || error.status === 404);
+}
+
+/**
+ * {@link useMemoryById}'s retry policy: {@link retryUnlessSignedOut} plus the two
+ * answers a by-id read gets when the id itself is the problem. The signed-out
+ * rule alone retries everything else, so a deep link to an archived or bad id
+ * spent four requests and four renders reaching the same 404.
+ */
+export function retryMemoryById(failureCount: number, error: unknown): boolean {
+  return !isUnretryableRequest(error) && retryUnlessSignedOut(failureCount, error);
 }
 
 async function requireBrowserToken(): Promise<string> {
@@ -221,7 +243,7 @@ export function useMemoryById(id: string | null) {
       return lessonFromMemoryEntry(entry);
     },
     staleTime: 90_000,
-    retry: retryUnlessSignedOut,
+    retry: retryMemoryById,
   });
 }
 
