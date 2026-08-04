@@ -221,13 +221,34 @@ test('LOREKIT_DENY=remote suppresses the remote counts, offline still counts', (
 
 // ── integration: a configured (mock) remote ───────────────────────────────────
 
-// A mock LoreKit REST endpoint answering GET /memories?scope=X from a fixture.
+// A mock LoreKit REST endpoint answering GET /memories?scope=X and
+// GET /memories/scopes from a fixture. `stats` now uses the /scopes aggregate
+// for remote counts (exact at any scale), so the mock must implement it.
+//
+// Note: when LOREKIT_MCP_URL=http://host:port/mcp, mcpToRestBase strips the
+// /mcp suffix, leaving a bare origin with a trailing slash. The REST client
+// then concatenates '/memories/scopes', producing a double-slash path
+// (//memories/scopes). We therefore match on req.url directly rather than
+// parsing it through `new URL`, which would mis-parse //memories/scopes as a
+// protocol-relative URL with host=memories and path=/scopes.
 function startMockRemote(byScope) {
   const server = http.createServer((req, res) => {
-    const url = new URL(req.url, `http://localhost`);
-    const scope = url.searchParams.get(`scope`);
-    const entries = (scope ? byScope[scope] : null) || [];
     res.setHeader(`content-type`, `application/json`);
+    // Strip any leading slashes for robust matching (handles single or double).
+    const rawPath = req.url.split(`?`)[0].replace(/^\/+/, `/`);
+    if (rawPath === `/memories/scopes`) {
+      // Aggregate: one {scope, count} row per scope in the fixture.
+      const scopes = Object.entries(byScope).map(([scope, entries]) => ({
+        scope,
+        count: (entries || []).length,
+      }));
+      res.end(JSON.stringify({ scopes }));
+      return;
+    }
+    const qs = req.url.includes(`?`) ? req.url.slice(req.url.indexOf(`?`) + 1) : ``;
+    const params = new URLSearchParams(qs);
+    const scope = params.get(`scope`);
+    const entries = (scope ? byScope[scope] : null) || [];
     res.end(JSON.stringify({ entries, hasMore: false, nextCursor: null }));
   });
   return server;
