@@ -215,6 +215,16 @@ target, the host **reconciles its own prior outputs** in three steps:
    start of a run to suppress the reliably-declined patterns and reinforce the
    reliably-resolved ones. `still-open` writes nothing: there is no outcome yet.
 
+   The Signal bucket is a second bucket alongside the lessons one, in the same
+   grammar as [Conventions](#conventions):
+
+   - **Tag:** `loop::<host>-<signal>` — e.g. `loop::reviewer-comment-relevance`.
+     Reads filter by it; writes always carry it.
+   - **Key:** `<host>-<signal>::<pattern-fingerprint>` — e.g.
+     `reviewer-comment-relevance::unsupported-cross-repo-claim`. The fingerprint
+     is the key segment, so the same `scope` + `key` overwrites in place and one
+     output pattern accumulates one record across runs.
+
 Two guards keep this honest, both instances of the entrenchment guards below:
 
 - **Absence of confirmation is not resolution.** If a re-run did not re-scan the
