@@ -154,16 +154,29 @@ not active**, and two prerequisites are still open.
 3. **Build path (open decision, blocks the whole thing).** A deployment ID is
    assigned when a deployment is **uploaded**, not when it is built. Today
    `stage-web-production` runs `vercel build --prod` inside GitHub Actions and
-   then `vercel deploy --prebuilt` (see the bullets above), so at build time the
-   ID does not exist yet — **prebuilt deployments cannot participate in Skew
-   Protection at all.** Activating it means letting Vercel build the production
-   deployment (drop `--prebuilt`, forwarding the `VERCEL_GIT_*` values with
-   `--build-env` so `NEXT_PUBLIC_OTEL_SERVICE_VERSION` and the `vcs.*` resource
-   attributes survive). That trades the "build already done before the flip"
-   property for skew safety, and is a deliberate call — not made here.
+   then `vercel deploy --prebuilt` (see the bullets above), so
+   `VERCEL_DEPLOYMENT_ID` does not exist during that build. Prebuilt deployments
+   are **not** excluded from Skew Protection — Vercel supports them via a
+   **custom deployment ID**, configured so the build-time ID matches the one
+   Vercel assigns at deploy time (a prebuilt deployment may not use Vercel's
+   reserved `dpl_` prefix for it). So there are two routes, and neither is taken
+   here:
+   - **Let Vercel build production.** Drop `--prebuilt`, forwarding the
+     `VERCEL_GIT_*` values with `--build-env` so
+     `NEXT_PUBLIC_OTEL_SERVICE_VERSION` and the `vcs.*` resource attributes
+     survive. Next.js >= 14.1.4 built on Vercel needs no `next.config.ts` change
+     at all. Costs the "build already done before the flip" property.
+   - **Keep `--prebuilt` and adopt a custom deployment ID.** Keeps the current
+     pipeline shape; the ID has to be minted by us and given to both the build
+     and the deploy. `resolveDeploymentId` is the seam it would be read through.
 
-Until 2 **and** 3 both hold, `VERCEL_DEPLOYMENT_ID` is absent, `deploymentId`
-resolves to `undefined`, and behaviour is unchanged. Step 1 is inert on its own.
+   Setup steps for the custom-ID route are Vercel's, not ours — see
+   [Skew Protection → Next.js](https://vercel.com/docs/skew-protection#skew-protection-with-next.js)
+   and [`vercel deploy` → "When not to use `--prebuilt`"](https://vercel.com/docs/cli/deploy#when-not-to-use---prebuilt).
+
+Until 2 **and** one of the two routes in 3 hold, no deployment ID reaches the
+build, `deploymentId` resolves to `undefined`, and behaviour is unchanged.
+Step 1 is inert on its own.
 
 ### Migration drift on the shared preview project
 

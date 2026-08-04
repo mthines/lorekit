@@ -34,12 +34,17 @@
  *    "Enable access to System Environment Variables" (Settings → Environment
  *    Variables) both have to be on — the latter is what actually exposes
  *    `VERCEL_*` system variables to the build.
- * 2. **The production build has to move onto Vercel's builders.**
+ * 2. **The production build has to be given a deployment ID.**
  *    `stage-web-production` in `deploy.yml` runs `vercel build --prod` inside
  *    GitHub Actions and then `vercel deploy --prebuilt`. A deployment ID is
- *    assigned at *upload* time, so during that build it does not exist yet and
- *    no amount of project configuration will inject it. Prebuilt deployments
- *    therefore cannot participate in Skew Protection.
+ *    assigned at *upload* time, so `VERCEL_DEPLOYMENT_ID` does not exist during
+ *    that build and no amount of project configuration will inject it. That
+ *    does **not** rule prebuilt out: Vercel supports Skew Protection on a
+ *    prebuilt deployment via a *custom* deployment ID, minted by us and matched
+ *    on both sides of build/deploy. The alternative is to build on Vercel
+ *    instead, where Next.js >= 14.1.4 needs no configuration at all. Which of
+ *    the two we take is an open decision — see `docs/deployment.md` →
+ *    "Skew Protection", step 3.
  *
  * Until both hold, this resolves to `undefined`, `deploymentId` is unset, and
  * behaviour is exactly what it is today — so the wiring is safe to land ahead of
@@ -53,6 +58,7 @@
  *
  * @see https://nextjs.org/docs/app/api-reference/config/next-config-js/deploymentId
  * @see https://vercel.com/docs/skew-protection
+ * @see https://vercel.com/docs/cli/deploy#when-not-to-use---prebuilt
  */
 
 /** The Vercel system env var carrying the current deployment's ID. */
