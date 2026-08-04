@@ -4,8 +4,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { addSignalAttribute } from '@dash0/sdk-web';
 import { friendlyAuthError } from '@/lib/auth-errors';
+import { reportAuthAttempt, reportAuthFailure, reportAuthSuccess } from '@/lib/auth-telemetry';
 import { validatePassword } from '@/lib/password-policy';
 import { authCallbackOrigin, buildAuthCallbackUrl } from '@/lib/auth-callback-url';
 import { safeNextPath } from '@/lib/auth-redirect';
@@ -120,7 +120,9 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
 
   async function handleGitHubLogin() {
     setLoading(true);
-    addSignalAttribute('auth.method', 'github_oauth');
+    // Recorded BEFORE the redirect: this document is about to be replaced,
+    // so this is the only moment the intent can be captured at all.
+    reportAuthAttempt('github_oauth');
     const supabase = createClient();
     await supabase.auth.signInWithOAuth({
       provider: 'github',
@@ -140,7 +142,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     }
 
     setBusy(true);
-    addSignalAttribute('auth.method', 'email_otp');
+    reportAuthAttempt('email_otp');
     const supabase = createClient();
     const { error: otpError } = await supabase.auth.signInWithOtp({
       // Pass the email exactly as the user typed it. Plus-subaddressed variants
@@ -156,9 +158,10 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     });
     setBusy(false);
     if (otpError) {
-      addSignalAttribute('auth.otp_error_code', otpError.code ?? otpError.name ?? 'unknown');
+      reportAuthFailure('email_otp', otpError);
       setError(friendlyAuthError(otpError));
     } else {
+      reportAuthSuccess('email_otp');
       setStep('sent');
     }
   }
@@ -188,10 +191,8 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     }
 
     setBusy(true);
-    addSignalAttribute(
-      'auth.method',
-      passwordMode === 'signup' ? 'email_password_signup' : 'email_password',
-    );
+    const method = passwordMode === 'signup' ? 'email_password_signup' : 'email_password';
+    reportAuthAttempt(method);
     const supabase = createClient();
 
     if (passwordMode === 'signin') {
@@ -201,15 +202,13 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
       });
       if (signInError) {
         setBusy(false);
-        addSignalAttribute(
-          'auth.password_error_code',
-          signInError.code ?? signInError.name ?? 'unknown',
-        );
+        reportAuthFailure(method, signInError);
         setError(friendlyAuthError(signInError));
         return;
       }
       // The browser client has written the session cookies; refresh so the
       // server components on the destination see the authenticated user.
+      reportAuthSuccess(method);
       router.push(safeNextPath(nextParam));
       router.refresh();
       return;
@@ -226,15 +225,13 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     });
     setBusy(false);
     if (signUpError) {
-      addSignalAttribute(
-        'auth.password_error_code',
-        signUpError.code ?? signUpError.name ?? 'unknown',
-      );
+      reportAuthFailure(method, signUpError);
       setError(friendlyAuthError(signUpError));
       return;
     }
     if (data.session) {
       // Email confirmation is disabled on this project — the account is live.
+      reportAuthSuccess(method);
       router.push(safeNextPath(nextParam));
       router.refresh();
       return;
@@ -242,6 +239,11 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     // Confirmation required. Supabase deliberately returns a user with no
     // identities (and no session) when the address is already registered, so
     // this same screen is shown either way — it must not reveal which.
+    //
+    // Deliberately NOT reported as a success: no session exists yet, and the
+    // branch is also what an already-registered address takes. Counting it
+    // would both overstate signups and leak the distinction the screen exists
+    // to hide. `email_confirmation` on /welcome is where that path completes.
     setStep('confirm');
   }
 

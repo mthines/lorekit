@@ -246,6 +246,58 @@ rate means the Resend key/domain needs attention.
 
 ---
 
+## Browser auth events (`auth.*`)
+
+Every authentication surface in the dashboard emits a discrete RUM event through
+`packages/web/src/lib/auth-telemetry.ts`. Three event names, one bounded
+`auth.method` on each:
+
+| Event | Emitted when | Attributes |
+|-------|--------------|------------|
+| `auth.attempt` | The visitor commits to a path — before the network call, and **before** an OAuth redirect navigates the page away | `auth.method` |
+| `auth.success` | A session exists (or the step completed: reset email sent, password changed) | `auth.method` |
+| `auth.failure` | The provider rejected the attempt. Severity `WARN`, not `ERROR` — a mistyped password is the system working | `auth.method`, `auth.error_code` |
+
+`auth.method` is one of `github_oauth`, `email_password`, `email_password_signup`,
+`email_otp`, `email_confirmation`, `password_reset_request`,
+`password_reset_complete`, `password_change_settings`.
+
+`auth.error_code` is Supabase's `code` (`invalid_credentials`,
+`email_not_confirmed`, …), falling back to the error `name`, then `unknown`. The
+error **message** is deliberately never reported: it is prose, it is localised,
+and it can embed the address that was typed — unbounded and PII-bearing, the two
+things a grouping key must not be.
+
+The funnel is `auth.attempt` minus `auth.success`, grouped by `auth.method`.
+
+Two paths deliberately emit no `auth.success`:
+
+- **GitHub OAuth** — success is a redirect to a new document, so the page that
+  would report it is already gone. Arrival at the destination is the evidence.
+- **The "confirm your email" screen** — no session exists yet, and Supabase
+  routes an already-registered address down the same branch. Counting it would
+  overstate signups *and* leak the distinction the screen exists to hide. That
+  path completes as `email_confirmation` on `/welcome`.
+
+> **These used to be signal attributes, and must never go back to being any.**
+> The surfaces previously called `addSignalAttribute('auth.method', …)`, which
+> attaches a value to *every signal for the rest of the page load*. One click on
+> "Continue with GitHub" therefore labelled 538 `browser.web_vital` events across
+> 38 sessions; a failed sign-in followed by a switch to "Create an account"
+> emitted `auth.method=email_password_signup` next to the previous attempt's
+> `auth.password_error_code=invalid_credentials`, a combination the backend
+> cannot produce and which read as a signup bug that did not exist; and because
+> the function appends rather than replaces (the property `dash0-rum.ts`
+> documents for `user.id`), a retry shipped several entries for one key. An
+> attribute describes the signal it rides on — use `sendEvent` for a thing that
+> happens at an instant.
+
+**Renamed:** `auth.password_error_code` / `auth.otp_error_code` are now one
+`auth.error_code`. The method is already on the event, so the per-surface prefix
+carried nothing.
+
+---
+
 ## Resource attributes
 
 All signals carry these resource attributes:

@@ -5,8 +5,8 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { CheckCircle2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { addSignalAttribute } from '@dash0/sdk-web';
 import { friendlyAuthError } from '@/lib/auth-errors';
+import { reportAuthSuccess } from '@/lib/auth-telemetry';
 import { DEFAULT_POST_LOGIN_PATH } from '@/lib/auth-redirect';
 import { fragmentCarriesAuthResult } from '@/lib/auth-callback-params';
 
@@ -51,7 +51,7 @@ export function WelcomeContent() {
       settled.current = true;
       setState(next);
       if (next === 'signed-in') {
-        addSignalAttribute('auth.method', 'email_confirmation');
+        reportAuthSuccess('email_confirmation');
         // Drop the implicit-flow fragment so a refresh (or a shared URL) does
         // not carry credentials around.
         if (typeof window !== 'undefined' && window.location.hash) {
