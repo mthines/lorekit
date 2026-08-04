@@ -309,6 +309,13 @@ intent with `auth.intent` in the browser. Never infer a signup from
 selecting is "showed interest in this route", attempting is "handed over
 credentials". The gap between them is the form-abandonment rate.
 
+Every control that moves the visitor onto a route reports it: the landing
+buttons, the "Create an account" / "I already have an account" toggle, the
+in-panel switches between the password and magic-link forms, and the return from
+the "confirm your email" screen. A route counted only when it was picked from the
+landing state would be counted differently depending on which door the visitor
+came through.
+
 **A route is selected at most once per document.** The login page's panels can be
 toggled back and forth, and every switch is the same visitor showing the same
 interest, so `LoginButton` emits each `auth.method` only on its first selection

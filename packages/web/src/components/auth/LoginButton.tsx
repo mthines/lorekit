@@ -355,6 +355,9 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
         </p>
         <button
           onClick={() => {
+            // Leaving the "confirm your email" screen for the sign-in form is a
+            // route choice too — the same one the landing page's button makes.
+            selectOption('email_password');
             setPasswordMode('signin');
             resetTo('password');
           }}
@@ -445,7 +448,18 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           )}
         </div>
 
-        <button type="button" onClick={() => resetTo('magic')} className={LINK_CLASS}>
+        {/* A route switch from inside a panel is the same choice as picking the
+            route from the landing state, so it reports the same selection —
+            otherwise a route's count would depend on which door the visitor
+            came through. The once-per-document rule keeps a toggle harmless. */}
+        <button
+          type="button"
+          onClick={() => {
+            selectOption('email_otp');
+            resetTo('magic');
+          }}
+          className={LINK_CLASS}
+        >
           Email me a magic link instead
         </button>
         <button type="button" onClick={() => resetTo('idle')} className={LINK_CLASS}>
@@ -484,7 +498,14 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           <MailIcon className="size-4 shrink-0" />
           {busy ? 'Sending...' : 'Send magic link'}
         </button>
-        <button type="button" onClick={() => resetTo('password')} className={LINK_CLASS}>
+        <button
+          type="button"
+          onClick={() => {
+            selectOption('email_password');
+            resetTo('password');
+          }}
+          className={LINK_CLASS}
+        >
           Use a password instead
         </button>
         <button type="button" onClick={() => resetTo('idle')} className={LINK_CLASS}>
