@@ -58,10 +58,12 @@ class RemoteStore {
 
   // ── Memory operations → REST ──────────────────────────────────────────────
 
-  async list({ scope, tags, limit } = {}) {
+  async list({ scope, tags, kind, host, limit } = {}) {
     const p = new URLSearchParams();
     if (scope) p.set('scope', scope);
     if (tags?.length) p.set('tags', Array.isArray(tags) ? tags.join(',') : tags);
+    if (kind) p.set('kind', Array.isArray(kind) ? kind.join(',') : kind);
+    if (host) p.set('host', Array.isArray(host) ? host.join(',') : host);
     if (limit) p.set('limit', String(limit));
     const res = await this._rest(`/memories?${p}`);
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
@@ -92,13 +94,15 @@ class RemoteStore {
 
   async write(args = {}) {
     const {
-      scope, key, value, tags, source_agent, trigger, org, ttl_days, clear_ttl, created_at,
+      scope, key, value, tags, source_agent, trigger, kind, host, org, ttl_days, clear_ttl, created_at,
       origin_repo, origin_branch, origin_commit, origin_pr,
     } = args;
     const body = { scope, key, value };
     if (tags !== undefined) body.tags = tags;
     if (source_agent !== undefined) body.source_agent = source_agent;
     if (trigger !== undefined) body.trigger = trigger;
+    if (kind !== undefined) body.kind = kind;
+    if (host !== undefined) body.host = host;
     if (org !== undefined) body.org = org;
     if (ttl_days !== undefined) body.ttl_days = ttl_days;
     if (clear_ttl !== undefined) body.clear_ttl = clear_ttl;
