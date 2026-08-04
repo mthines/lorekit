@@ -65,6 +65,29 @@ export const AUTH_ATTEMPT_EVENT = 'auth.attempt';
 export const AUTH_SUCCESS_EVENT = 'auth.success';
 export const AUTH_FAILURE_EVENT = 'auth.failure';
 
+/**
+ * Every emission goes through here, so this module's promise — telemetry is
+ * never the reason an auth handler throws — holds by construction rather than
+ * by whatever the SDK happens to do today.
+ *
+ * As of `@dash0/sdk-web` 0.23.0 there is no synchronous throw path to catch:
+ * `vars` is fully defaulted at module load, the attribute builders
+ * optional-chain every DOM read, and the transport is async with its own
+ * internal `.catch`. That is a property of the pinned version, not of the
+ * contract, and `analytics/track.ts` already pays the same three lines for the
+ * same reason — so the guard is consistency and defence-in-depth, not a fix for
+ * a reachable crash.
+ */
+type AuthEventOptions = NonNullable<Parameters<typeof sendEvent>[1]>;
+
+function emit(name: string, options: AuthEventOptions): void {
+  try {
+    sendEvent(name, options);
+  } catch {
+    // Telemetry is best-effort; never let it break an auth flow.
+  }
+}
+
 /** The shape of the Supabase auth errors this module is handed. */
 interface AuthErrorLike {
   code?: string | undefined;
@@ -100,7 +123,7 @@ export function authErrorCode(error: AuthErrorLike | null | undefined): string {
  * capture.
  */
 export function reportAuthAttempt(method: AuthMethod): void {
-  sendEvent(AUTH_ATTEMPT_EVENT, {
+  emit(AUTH_ATTEMPT_EVENT, {
     title: `Auth attempt: ${method}`,
     attributes: { 'auth.method': method },
   });
@@ -113,7 +136,7 @@ export function reportAuthAttempt(method: AuthMethod): void {
  * so this page has already gone. Landing on the destination is the evidence.
  */
 export function reportAuthSuccess(method: AuthMethod): void {
-  sendEvent(AUTH_SUCCESS_EVENT, {
+  emit(AUTH_SUCCESS_EVENT, {
     title: `Auth success: ${method}`,
     attributes: { 'auth.method': method },
   });
@@ -127,7 +150,7 @@ export function reportAuthSuccess(method: AuthMethod): void {
  */
 export function reportAuthFailure(method: AuthMethod, error: AuthErrorLike | null | undefined): void {
   const code = authErrorCode(error);
-  sendEvent(AUTH_FAILURE_EVENT, {
+  emit(AUTH_FAILURE_EVENT, {
     title: `Auth failure: ${method} (${code})`,
     severity: 'WARN',
     attributes: { 'auth.method': method, 'auth.error_code': code },

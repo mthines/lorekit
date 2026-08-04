@@ -1,10 +1,19 @@
 /**
  * Analytics — centralized RUM event wrapper.
  *
- * The ONLY module that calls the Dash0 Web SDK's event API (`sendEvent`).
+ * The ONLY module through which *product* events reach the Dash0 Web SDK.
  * Feature code emits *typed* events via `track(...)`, so swapping vendors or
- * renaming an attribute is a single-file change. Telemetry is best-effort — a
- * failure here must NEVER break the UI.
+ * renaming an attribute is a single-file change for everything in the catalog
+ * below. Telemetry is best-effort — a failure here must NEVER break the UI.
+ *
+ * There is exactly one other caller of `sendEvent` in the app:
+ * `lib/auth-telemetry.ts`. It stays separate because `AnalyticsEvent` models
+ * only event name → attributes, while the auth events additionally need a
+ * per-event `title` and a `severity` (`auth.failure` is deliberately `WARN`);
+ * routing them through `track` as it stands would silently drop both. It
+ * guards its own `sendEvent` call exactly as this module does. **Do not add a
+ * third caller** — extend this catalog, or extend `track`'s signature to carry
+ * `title`/`severity` and fold auth back in.
  *
  * ## Event catalog (source of truth — keep dashboards in sync)
  * - `command_palette.opened`           — the palette overlay was shown.
