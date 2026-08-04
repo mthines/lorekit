@@ -12,10 +12,13 @@ import type { AuthMethod } from './auth-telemetry';
  *
  * This lives here, apart from the component that owns the set, for one reason:
  * the rule is the thing the metric depends on, and a rule inlined in a `.tsx`
- * component is unreachable by this package's test suite — `vitest.config.ts`
- * includes only `.spec.ts` and `.test.ts` files under `src`, and there is no
- * jsdom or React test renderer in the dependency tree to reach it with. As a
- * pure function over a caller-owned `Set` it is covered by the harness that
+ * component is out of reach of this package's default unit target —
+ * `vitest.config.ts` includes only `.spec.ts` and `.test.ts` files under `src`,
+ * and there is no jsdom in the dependency tree to render a component under it.
+ * The one React harness this package does have is the separate browser-mode
+ * `test-storybook` target (`vitest.storybook.config.ts` runs `*.test.stories.tsx`
+ * in Chromium), a heavier place to pin a counting rule than a pure function. As
+ * a pure function over a caller-owned `Set` it is covered by the harness that
  * already runs, and `LoginButton` keeps the `useRef` that makes the set survive
  * a re-render.
  *
