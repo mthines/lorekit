@@ -14,8 +14,9 @@ type FacetRow = Database['public']['Functions']['lorekit_memory_facets']['Return
  * GET /memories/facets — every value the caller can filter by, per dimension,
  * with how many memories carry it.
  *
- * This is `GET /memories/tags` generalised to the five dimensions the Explorer's
- * filter menu grew: labels, agent, trigger, repo, branch, pull request. Each
+ * This is `GET /memories/tags` generalised to the eight dimensions the Explorer's
+ * filter menu grew: labels, agent, trigger, kind, host, repo, branch, pull
+ * request. Each
  * one is another unbounded free-text column, so each would otherwise repeat the
  * row-cap bug 00039 and 00050 exist to fix — one grouped row per distinct value
  * is exact at any volume, a `select … limit N` plus a browser-side tally is not.
@@ -27,11 +28,18 @@ type FacetRow = Database['public']['Functions']['lorekit_memory_facets']['Return
  * the response for the follow-up case (a menu already drilled into one
  * dimension refreshing just that one).
  *
- * Tenant scoping lives in the RPC (`lorekit_memory_facets`, migration 00052),
- * which composes `lorekit_member_org_ids` exactly as the memories RLS read
- * policies do — so, as with `handleTags` and `handleScopes`, there is
+ * Tenant scoping lives in the RPC (`lorekit_memory_facets`, migrations 00052 /
+ * 00057), which composes `lorekit_member_org_ids` exactly as the memories RLS
+ * read policies do — so, as with `handleTags` and `handleScopes`, there is
  * deliberately no `applyRestTenantScope` call: there is no query to scope, and
  * a second predicate would be a place for the two to drift.
+ *
+ * Counts are DRILL-DOWN (00057): the caller's active filters are forwarded and
+ * each dimension is counted with every OTHER one applied but not its own. Two
+ * limits worth knowing — a value counting zero under the other filters emits no
+ * row (as a null column value does), and `q` / `key` / `created_since` /
+ * `created_until` are not mirrored, so under a search or date window a count is
+ * an upper bound rather than the exact yield.
  */
 export async function handleFacets(
   req: Request, auth: AuthContext, db: DbClient, span: Span,

@@ -328,12 +328,23 @@ export const ListFacetsQuerySchema = z.object({
    */
   facets: z.string().optional(),
   /**
-   * The caller's CURRENTLY-APPLIED filters — the same names and shapes as
+   * The caller's CURRENTLY-APPLIED filters — the DIMENSION filters of
    * `GET /memories`, so the menu passes its filter state verbatim. When any are
    * present the counts become drill-down: each dimension is counted with every
    * OTHER active filter applied but not its own (self-exclusion, migration
    * 00057), so a value's count is what selecting it would actually yield.
    * Absent → the global catalog, unchanged.
+   *
+   * `ListMemoriesQuerySchema`'s NON-dimension filters — `q`, `key`,
+   * `created_since` and `created_until` — are deliberately NOT mirrored, so
+   * with a search or date window active a count is an upper bound on the yield
+   * rather than the exact figure. Mirroring `q` would mean a second
+   * implementation of `likeNeedle`'s LIKE escaping inside plpgsql, and a filter
+   * value is encoded exactly one way in this repo.
+   *
+   * A value whose count falls to zero under the other dimensions' filters emits
+   * no row at all — the same omission a null column value has — so it leaves
+   * the menu until the filter is cleared.
    */
   scope: RawScopeSchema.optional(),
   tags: z.string().optional(),
