@@ -252,7 +252,7 @@ wrapper. Attributes use the `lorekit.*` namespace.
 | Event | Emitted when | Attributes |
 |-------|--------------|------------|
 | `command_palette.opened` | The palette overlay was shown | `lorekit.command_palette.trigger` |
-| `command_palette.command_selected` | A command was executed | `lorekit.command.id`, `lorekit.command.source`, `lorekit.command.group` |
+| `command_palette.command_selected` | A command was executed | `lorekit.command.id`, `lorekit.command.source`, `lorekit.command.group` (optional — omitted when the command has no group) |
 | `install_command.copied` | A visitor copied a shell command | `lorekit.install_command.id`, `lorekit.install_command.surface`, `lorekit.install_command.succeeded` |
 
 `install_command.copied` exists because copying `npx @lorekit/cli install` is the
