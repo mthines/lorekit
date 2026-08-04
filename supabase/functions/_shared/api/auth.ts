@@ -48,8 +48,18 @@ export async function resolveRestAuth(req: Request, parentSpan: Span): Promise<R
     // Create one service-role client and reuse it for both the token lookup and
     // subsequent business queries — avoids a second client allocation per request.
     const db = svcClient();
-    const { data, error } = await db.from('api_tokens').select('user_id,permissions').eq('token_hash', hash).maybeSingle();
+    const { data, error } = await db.from('api_tokens').select('user_id,permissions,expires_at').eq('token_hash', hash).maybeSingle();
     if (error || !data) { span.clientError('invalid_api_key').end(); return null; }
+    // OAuth-issued tokens expire (00053_oauth.sql). `mcp/auth.ts` already rejects
+    // them at the instant they expire rather than leaving it to the nightly
+    // sweeper; this surface must not be the softer of the two, or an expired
+    // credential keeps working over REST after MCP has stopped accepting it.
+    // Personal dashboard tokens carry a NULL `expires_at` and are unaffected.
+    const expiresAt = data.expires_at as string | null;
+    if (expiresAt && new Date(expiresAt).getTime() <= Date.now()) {
+      span.clientError('expired_api_key').end();
+      return null;
+    }
     span.setAttributes({ 'auth.type': 'api_key', 'auth.outcome': 'ok', 'auth.user_id': data.user_id }).end();
     return { auth: { type: 'api_key', userId: data.user_id, permissions: data.permissions ?? [] }, db };
   }

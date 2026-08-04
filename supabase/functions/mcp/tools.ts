@@ -16,12 +16,12 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { validateScope } from '../_shared/scope.ts';
 import { createTracedClient, type Span } from '../_shared/otel.ts';
 import { translateCapError } from './limits.ts';
-import { translateOrgPermissionError } from './org-permissions.ts';
+import { OrgPermissionError, translateOrgPermissionError } from './org-permissions.ts';
 import { parseCreatedAt } from '../_shared/created-at.ts';
 import { parseTtl } from './ttl.ts';
 import { parseOrigin } from '../_shared/origin.ts';
 import { recordAudit } from '../_shared/audit.ts';
-import { applyTenantScope } from './tenant-scope.ts';
+import { applyTenantScope, intersectTokenOrgIds, tokenAllowsOrgId } from './tenant-scope.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
@@ -45,7 +45,11 @@ export type Params = Record<string, any>;
  */
 const memberOrgIdsCache = new WeakMap<object, Map<string, string[]>>();
 
-async function memberOrgIds(db: ReturnType<typeof createClient>, userId: string): Promise<string[]> {
+async function memberOrgIds(
+  db: ReturnType<typeof createClient>,
+  userId: string,
+  tokenOrgIds: string[] | null = null,
+): Promise<string[]> {
   // Retrieve or create the per-client cache map.
   let clientCache = memberOrgIdsCache.get(db as object);
   if (!clientCache) {
@@ -53,13 +57,48 @@ async function memberOrgIds(db: ReturnType<typeof createClient>, userId: string)
     memberOrgIdsCache.set(db as object, clientCache);
   }
 
+  // The CACHE holds the caller's real, unrestricted membership. The token's
+  // allow-list is applied AFTER the cache read, never before it: caching an
+  // already-narrowed list would leak one credential's restriction into another
+  // call on the same request.
   const cached = clientCache.get(userId);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) return intersectTokenOrgIds(tokenOrgIds, cached);
 
   const { data, error } = await db.rpc('lorekit_member_org_ids', { p_user_id: userId });
   const result = error ? [] : ((data ?? []) as string[]);
   clientCache.set(userId, result);
-  return result;
+  return intersectTokenOrgIds(tokenOrgIds, result);
+}
+
+/**
+ * Is this credential allowed to act on `orgSlug`?
+ *
+ * Only relevant for an OAuth-issued token that named a subset of orgs. Membership
+ * and role are still decided inside memory_write / memory_delete by
+ * `lorekit_org_can` — this is a NARROWING pre-check, not a second authorization
+ * source, so it can never grant anything the RPC would refuse. It exists
+ * because those RPCs know about users and roles but nothing about tokens.
+ *
+ * Fails closed: an org slug that cannot be resolved to an id is refused rather
+ * than passed through to the RPC.
+ */
+async function tokenAllowsOrg(
+  db: ReturnType<typeof createClient>,
+  userId: string | null,
+  tokenOrgIds: string[] | null,
+  orgSlug: string,
+): Promise<boolean> {
+  if (tokenOrgIds == null) return true; // unrestricted credential
+  if (!userId) return true; // JWT/service caller — no token allow-list applies
+
+  const { data, error } = await db
+    .from('orgs')
+    .select('id')
+    .eq('slug', orgSlug)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (error || !data) return false;
+  return tokenAllowsOrgId(tokenOrgIds, (data as { id: string }).id);
 }
 
 export async function toolWrite(
@@ -67,6 +106,13 @@ export async function toolWrite(
   params: Params,
   userId: string | null,
   span: Span,
+  /**
+   * OAuth-issued tokens carry the org allow-list the user approved on the
+   * consent screen (api_tokens.org_ids). `null` = unrestricted, the behaviour
+   * of every personal dashboard token. Narrowing only — see
+   * intersectTokenOrgIds in tenant-scope.ts.
+   */
+  tokenOrgIds: string[] | null = null,
 ) {
   const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr } = params;
   if (!rawScope || !key || !value) throw new Error('scope, key, and value are required');
@@ -97,6 +143,16 @@ export async function toolWrite(
     ...(origin.commit ? { 'lorekit.origin.commit': origin.commit } : {}),
     ...(origin.pr !== null ? { 'lorekit.origin.pr': origin.pr } : {}),
   });
+
+  // An OAuth token may have been granted a subset of the user's orgs. Refuse
+  // an explicitly-named org outside that subset BEFORE the RPC: memory_write
+  // authorizes by role (lorekit_org_can) and knows nothing about tokens, so
+  // this is the only layer that can see the credential's own limits.
+  if (org && !(await tokenAllowsOrg(db, userId, tokenOrgIds, org))) {
+    throw new OrgPermissionError(
+      `This connection was not authorized for the "${org}" organization. Re-authorize from your MCP client and include it.`,
+    );
+  }
 
   // 00003 replaced the plain unique constraint with PARTIAL indexes
   // (WHERE archived_at IS NULL), which `.upsert(onConflict)` cannot target.
@@ -170,6 +226,13 @@ export async function toolRead(
   params: Params,
   userId: string | null,
   span: Span,
+  /**
+   * OAuth-issued tokens carry the org allow-list the user approved on the
+   * consent screen (api_tokens.org_ids). `null` = unrestricted, the behaviour
+   * of every personal dashboard token. Narrowing only — see
+   * intersectTokenOrgIds in tenant-scope.ts.
+   */
+  tokenOrgIds: string[] | null = null,
 ) {
   const { scope: rawScope, key } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
@@ -180,7 +243,7 @@ export async function toolRead(
   const tracedDb = createTracedClient(db, span);
   let query = tracedDb.from('memories').select('value,updated_at').eq('scope', scope).eq('key', key).is('archived_at', null)
     .or('expires_at.is.null,expires_at.gt.now()');
-  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
+  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId, tokenOrgIds));
   const { data, error } = await query.maybeSingle();
   if (error) throw new Error(error.message);
   return data ?? null;
@@ -191,6 +254,13 @@ export async function toolList(
   params: Params,
   userId: string | null,
   span: Span,
+  /**
+   * OAuth-issued tokens carry the org allow-list the user approved on the
+   * consent screen (api_tokens.org_ids). `null` = unrestricted, the behaviour
+   * of every personal dashboard token. Narrowing only — see
+   * intersectTokenOrgIds in tenant-scope.ts.
+   */
+  tokenOrgIds: string[] | null = null,
 ) {
   const { scope: rawScope, tags, limit = 50 } = params;
   if (!rawScope) throw new Error('scope is required');
@@ -207,7 +277,7 @@ export async function toolList(
     .or('expires_at.is.null,expires_at.gt.now()')
     .order('updated_at', { ascending: false })
     .limit(Math.min(limit, 100));
-  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
+  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId, tokenOrgIds));
   if (tags?.length) query = query.overlaps('tags', tags);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
@@ -229,6 +299,13 @@ export async function toolDelete(
   params: Params,
   userId: string | null,
   span: Span,
+  /**
+   * OAuth-issued tokens carry the org allow-list the user approved on the
+   * consent screen (api_tokens.org_ids). `null` = unrestricted, the behaviour
+   * of every personal dashboard token. Narrowing only — see
+   * intersectTokenOrgIds in tenant-scope.ts.
+   */
+  tokenOrgIds: string[] | null = null,
 ) {
   const { scope: rawScope, key, force = false, org } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
@@ -244,6 +321,12 @@ export async function toolDelete(
   const tracedDb = createTracedClient(db, span);
 
   if (org) {
+    // Same credential-level narrowing as toolWrite — see the comment there.
+    if (!(await tokenAllowsOrg(db, userId, tokenOrgIds, org))) {
+      throw new OrgPermissionError(
+        `This connection was not authorized for the "${org}" organization. Re-authorize from your MCP client and include it.`,
+      );
+    }
     // Org-owned delete: role-gated inside the memory_delete RPC (SECURITY
     // DEFINER) — never a raw service-role .delete()/.update(), which would
     // bypass the role gate entirely since this client bypasses RLS.
@@ -320,6 +403,13 @@ export async function toolSearch(
   params: Params,
   userId: string | null,
   span: Span,
+  /**
+   * OAuth-issued tokens carry the org allow-list the user approved on the
+   * consent screen (api_tokens.org_ids). `null` = unrestricted, the behaviour
+   * of every personal dashboard token. Narrowing only — see
+   * intersectTokenOrgIds in tenant-scope.ts.
+   */
+  tokenOrgIds: string[] | null = null,
 ) {
   const { q, scopes, tags, limit = 20 } = params;
   if (!q) throw new Error('q is required');
@@ -337,7 +427,7 @@ export async function toolSearch(
   // Tenant .or() and the scope-glob .or() below are applied as two separate
   // .or() calls, which PostgREST ANDs together — never merged into one
   // filter (see tenant-scope.ts and the Edge Cases note in plan.md).
-  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
+  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId, tokenOrgIds));
   if (tags?.length) query = query.overlaps('tags', tags);
   if (scopes?.length) {
     const exactScopes: string[] = [];
@@ -376,6 +466,15 @@ export async function toolArchive(
   params: Params,
   userId: string | null,
   span: Span,
+  /**
+   * Accepted for signature parity only — every tool is dispatched through the
+   * one uniform call in mcp-handler.ts, so the parameter is present across the
+   * whole family. This handler does NOT consult it: the query is scoped by
+   * `user_id` alone, which is already narrower than any org allow-list, so
+   * nothing here can widen access. Contrast the read handlers, which do pass it
+   * to intersectTokenOrgIds in tenant-scope.ts.
+   */
+  tokenOrgIds: string[] | null = null,
 ) {
   const { scope: rawScope, key } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
@@ -411,6 +510,13 @@ export async function toolListArchived(
   params: Params,
   userId: string | null,
   span: Span,
+  /**
+   * OAuth-issued tokens carry the org allow-list the user approved on the
+   * consent screen (api_tokens.org_ids). `null` = unrestricted, the behaviour
+   * of every personal dashboard token. Narrowing only — see
+   * intersectTokenOrgIds in tenant-scope.ts.
+   */
+  tokenOrgIds: string[] | null = null,
 ) {
   const { scope: rawScope, limit = 50 } = params;
   if (!rawScope) throw new Error('scope is required');
@@ -426,7 +532,7 @@ export async function toolListArchived(
     .not('archived_at', 'is', null)
     .order('archived_at', { ascending: false })
     .limit(Math.min(limit, 100));
-  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
+  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId, tokenOrgIds));
   const { data, error } = await query;
   if (error) throw new Error(error.message);
   const entries = data ?? [];
@@ -440,6 +546,15 @@ export async function toolRestore(
   params: Params,
   userId: string | null,
   span: Span,
+  /**
+   * Accepted for signature parity only — every tool is dispatched through the
+   * one uniform call in mcp-handler.ts, so the parameter is present across the
+   * whole family. This handler does NOT consult it: the query is scoped by
+   * `user_id` alone, which is already narrower than any org allow-list, so
+   * nothing here can widen access. Contrast the read handlers, which do pass it
+   * to intersectTokenOrgIds in tenant-scope.ts.
+   */
+  tokenOrgIds: string[] | null = null,
 ) {
   const { scope: rawScope, key } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
@@ -478,6 +593,15 @@ export async function toolPurge(
   params: Params,
   userId: string | null,
   span: Span,
+  /**
+   * Accepted for signature parity only — every tool is dispatched through the
+   * one uniform call in mcp-handler.ts, so the parameter is present across the
+   * whole family. This handler does NOT consult it: the query is scoped by
+   * `user_id` alone, which is already narrower than any org allow-list, so
+   * nothing here can widen access. Contrast the read handlers, which do pass it
+   * to intersectTokenOrgIds in tenant-scope.ts.
+   */
+  tokenOrgIds: string[] | null = null,
 ) {
   const retentionDays = Math.min(Math.max(Number(params.retention_days ?? PURGE_RETENTION_DAYS_DEFAULT), 1), 365);
   if (!userId) throw new Error('memory.purge requires a user_id');
@@ -674,6 +798,15 @@ export async function toolPurgeExpired(
   _params: Params,
   userId: string | null,
   span: Span,
+  /**
+   * Accepted for signature parity only — every tool is dispatched through the
+   * one uniform call in mcp-handler.ts, so the parameter is present across the
+   * whole family. This handler does NOT consult it: the query is scoped by
+   * `user_id` alone, which is already narrower than any org allow-list, so
+   * nothing here can widen access. Contrast the read handlers, which do pass it
+   * to intersectTokenOrgIds in tenant-scope.ts.
+   */
+  tokenOrgIds: string[] | null = null,
 ) {
   if (!userId) {
     throw new Error('memory.purge_expired requires a user_id');

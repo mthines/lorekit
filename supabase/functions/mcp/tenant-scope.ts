@@ -33,3 +33,47 @@ export function applyTenantScope<Q extends {
   const quoted = orgIds.map((id) => `"${id}"`).join(',');
   return query.or(`user_id.eq.${userId},org_id.in.(${quoted})`);
 }
+
+/**
+ * Narrow a caller's real org memberships by a credential's org allow-list.
+ *
+ * An OAuth-issued token carries the org selection the user made on the consent
+ * screen (api_tokens.org_ids, 00055_oauth.sql). That selection may only ever
+ * SUBTRACT: `memberOrgIds` stays the authority on what the human can reach, so
+ * leaving an org revokes access immediately even though the token still names
+ * it, and a token can never be edited into access its holder does not have.
+ *
+ * `null` means "no restriction" — the pre-OAuth behaviour every personal
+ * dashboard token keeps, with no backfill. An empty array is meaningful and
+ * distinct: the user deliberately granted personal lore only.
+ */
+export function intersectTokenOrgIds(
+  tokenOrgIds: string[] | null | undefined,
+  memberOrgIds: string[],
+): string[] {
+  if (tokenOrgIds == null) return memberOrgIds;
+  const allowed = new Set(tokenOrgIds);
+  return memberOrgIds.filter((id) => allowed.has(id));
+}
+
+/**
+ * Is a single org id inside a credential's allow-list?
+ *
+ * The point-lookup counterpart to intersectTokenOrgIds, for the write and
+ * delete paths where the caller names ONE org by slug rather than reading
+ * across all of them. It lives here, beside the set version, so every place a
+ * token's org allow-list is consulted goes through this one module — the same
+ * reasoning that keeps the tenant predicate singular.
+ *
+ * NARROWING ONLY. A `true` here means "the credential does not forbid it", not
+ * "the caller may do it": role authorization still happens inside
+ * lorekit_org_can (memory_write / memory_delete), which this can never
+ * override.
+ */
+export function tokenAllowsOrgId(
+  tokenOrgIds: string[] | null | undefined,
+  orgId: string,
+): boolean {
+  if (tokenOrgIds == null) return true;
+  return tokenOrgIds.includes(orgId);
+}

@@ -11,6 +11,12 @@ You can use the hosted instance at `lorekit.io` or self-host your own. This tuto
 
 </TutorialCallout>
 
+<TutorialCallout variant="tip">
+
+**Using Claude Code, Cursor, ChatGPT or VS Code?** You can skip the token entirely. Add the server URL with no credential, press **Authorize** in your client's MCP list, and pick which organizations the connection may reach on the consent screen. See [Authorize instead of pasting a token](#authorize-instead-of-pasting-a-token) at the bottom of this page.
+
+</TutorialCallout>
+
 <TutorialStep number={1} title="Generate an API token">
 
 Go to [Settings → API keys](/settings/api-keys) and click **Generate new token**. Enter a name (e.g. `claude-local`, `ci-prod`) and choose a permission tier:
@@ -129,6 +135,49 @@ To have LoreKit automatically learn from PR review comments, go to [Settings →
 - **Tags each memory:** `source::pr-webhook`
 
 </TutorialStep>
+
+## Authorize instead of pasting a token
+
+Modern MCP hosts show an **Authorize** action next to a server that needs
+authentication. LoreKit supports it, so on a machine you use interactively you
+never have to generate or copy a token.
+
+Add the server with no credential at all:
+
+```json
+// .mcp.json
+{
+  "mcpServers": {
+    "lorekit": {
+      "url": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp"
+    }
+  }
+}
+```
+
+Then press **Authorize** in your client. Your browser opens the LoreKit consent
+screen, where you choose two things:
+
+- **Access level** — read + write, or read only.
+- **Which lore** — your personal lore is always included. Each organization you
+  belong to is a separate checkbox, unticked by default, so a connection only
+  reaches the teams you deliberately give it.
+
+<TutorialCallout variant="tip">
+
+Unticking an organization hides it from that connection. And you never depend on
+the checkbox alone: membership is re-checked on every request, so leaving an
+organization revokes its access immediately even while the token still names it.
+
+</TutorialCallout>
+
+The resulting token shows up in [Settings → API keys](/settings/api-keys) named
+after the client that asked for it, and is revoked there like any other. It
+expires after 30 days; re-authorizing is the same one click and replaces the old
+token rather than stacking up dead ones.
+
+Keep using a generated token for CI and headless jobs — there is no browser
+there to consent, and a CI credential should not expire mid-pipeline.
 
 <TutorialCallout>
 

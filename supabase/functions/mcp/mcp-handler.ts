@@ -272,10 +272,13 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
         // is resolved inside the SECURITY DEFINER RPCs from the JWT.
         result = await ORG_TOOLS[toolName as keyof typeof ORG_TOOLS](db, toolArgs, toolSpan);
       } else {
-        // memory.* tools: (db, args, toolUserId, span)
+        // memory.* tools: (db, args, toolUserId, span, tokenOrgIds)
         // toolUserId is null for JWT auth — RLS handles scoping on the DB side.
+        // tokenOrgIds is the OAuth consent screen's org allow-list, null for an
+        // unrestricted (personal dashboard) token. Narrowing only — it is
+        // intersected with lorekit_member_org_ids, never substituted for it.
         result = await MEMORY_TOOLS[toolName as keyof typeof MEMORY_TOOLS](
-          db, toolArgs, toolUserId, toolSpan,
+          db, toolArgs, toolUserId, toolSpan, auth.orgIds ?? null,
         );
       }
 
