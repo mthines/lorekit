@@ -273,6 +273,170 @@ the moment a call site interpolates into it.
 
 ---
 
+## Browser auth events (`auth.*`)
+
+Every authentication surface in the dashboard emits a discrete RUM event through
+`packages/web/src/lib/auth-telemetry.ts`. Three event names, one bounded
+`auth.method` on each:
+
+| Event | Emitted when | Attributes |
+|-------|--------------|------------|
+| `auth.option_selected` | The visitor picked a route — any control that moves them onto one, counted at most once per document. The controls are enumerated under ["Selection vs attempt"](#selection-vs-attempt) rather than repeated here, so the two cannot drift | `auth.method`, `auth.intent` |
+| `auth.attempt` | The visitor commits to a path — before the network call, and **before** an OAuth redirect navigates the page away | `auth.method`, `auth.intent` |
+| `auth.success` | A session exists (or the step completed: reset email sent, password changed) | `auth.method`, `auth.intent` |
+| `auth.failure` | The provider rejected the attempt. Severity `WARN`, not `ERROR` — a mistyped password is the system working | `auth.method`, `auth.intent`, `auth.error_code` |
+
+`auth.method` is one of `github_oauth`, `email_password`, `email_password_signup`,
+`email_otp`, `email_confirmation`, `password_reset_request`,
+`password_reset_complete`, `password_change_settings`.
+
+### Signing up vs signing in
+
+`auth.method` alone does not answer "are people registering or returning?" — it
+takes a reader who already knows that `email_password_signup` is registration and
+`password_reset_complete` is not. `auth.intent` encodes that once:
+
+| `auth.intent` | Methods |
+|---------------|---------|
+| `signup` | `email_password_signup`, `email_confirmation` |
+| `login` | `email_password` |
+| `login_or_signup` | `github_oauth`, `email_otp` |
+| `recovery` | `password_reset_request`, `password_reset_complete` |
+| `account_management` | `password_change_settings` |
+
+`login_or_signup` is not a hedge. Both of those paths create an account when
+there is none and sign the visitor in when there is, and **the browser cannot
+know which will happen before it happens**. Collapsing them into either bucket
+would be a guess presented as a fact, in the one place the distinction matters
+most — GitHub OAuth is the primary CTA.
+
+The answer comes from the server instead. `/api/auth/callback` holds the Supabase
+user record, so it sets `auth.outcome` on its `lorekit.auth.callback` span (and
+in the `auth.callback.success` log record):
+
+| `auth.outcome` | Meaning |
+|----------------|---------|
+| `account_created` | `last_sign_in_at` is within 10s of `created_at` — this callback registered the account |
+| `returning_sign_in` | The account predates this sign-in |
+| `unknown` | A timestamp was missing, unparseable, or ordered nonsensically |
+
+The rule is the pure `classifyAuthOutcome` in `packages/web/src/lib/auth-outcome.ts`.
+All three paths land on that route and are classified by the same rule, but the
+rule can only separate them on **one** of the three, and reading the attribute
+as if it separated all three is the mistake this paragraph exists to prevent:
+
+| Path | What `auth.outcome` says on a first sign-in | Why |
+|------|---------------------------------------------|-----|
+| `github_oauth` | `account_created` | The insert and the sign-in happen in the same callback, well inside the 10s tolerance |
+| `email_otp` (magic link to a new address) | `returning_sign_in` | The account is created when the link is **requested** (`shouldCreateUser: true`, `LoginButton.tsx`); the sign-in only happens when the visitor opens their inbox |
+| `email_confirmation` | `returning_sign_in` | `signUp` creates the account, and the confirmation link is opened minutes or hours later |
+
+The two email paths put a human round-trip between `created_at` and
+`last_sign_in_at`, so they fall outside a tolerance that exists to absorb write
+skew, not inboxes. That is not a bug in the rule — a callback holding only those
+two timestamps genuinely cannot tell a confirmation click from a sign-in a week
+later — it is the limit of what the rule is allowed to claim.
+
+`unknown` is a real bucket and must stay countable — folding it into
+`returning_sign_in` would understate signups by exactly the cases the data is
+least sure about.
+
+**So: count acquisition per path, and never infer a signup from
+`auth.method = github_oauth`.**
+
+- **OAuth** — `auth.outcome = account_created` on the server. This is the one
+  path where the attribute is the acquisition count.
+- **Email confirmation** — the `auth.success` event with
+  `auth.method = email_confirmation` (`auth.intent = signup`), emitted on
+  `/welcome`. Its server-side `auth.outcome` will say `returning_sign_in`; do
+  not add the two together.
+- **Magic link** — `auth.intent = login_or_signup` is as far as the data goes
+  today. A first-time magic-link visitor is not separable from a returning one
+  by either signal, so report that population as unresolved rather than
+  assigning it to a side.
+
+### Selection vs attempt
+
+`auth.option_selected` and `auth.attempt` are different steps and both are needed:
+selecting is "showed interest in this route", attempting is "handed over
+credentials". The gap between them is the form-abandonment rate.
+
+Every control that moves the visitor onto a route reports it: the landing
+buttons, the "Create an account" / "I already have an account" toggle, the
+in-panel switches between the password and magic-link forms, and the return from
+the "confirm your email" screen. A route counted only when it was picked from the
+landing state would be counted differently depending on which door the visitor
+came through.
+
+**A route is selected at most once per document.** The login page's panels can be
+toggled back and forth, and every switch is the same visitor showing the same
+interest, so `LoginButton` emits each `auth.method` only on its first selection
+in that document. Read `option_selected` as *visitors who tried this route* and
+`attempt` as *submissions*, which do repeat on a retry — so the gap is the share
+of interested visitors who never submitted, not a difference of two like counts.
+
+They exist because two of the three options on the login page were pure local
+state changes — they swap a panel, make no network call, and emitted nothing. So
+"how many people even tried the email route?" was unanswerable: a visitor who
+opened the form, read it and left was indistinguishable from one who never
+touched it. Only submissions were visible, which measures the bottom of the
+funnel and calls it the top.
+
+On the GitHub path the two coincide (there is no form in between to abandon), and
+both are emitted anyway so every option is comparable at the selection step.
+
+`auth.error_code` is Supabase's `code` (`invalid_credentials`,
+`email_not_confirmed`, …), falling back to the error `name`, then `unknown`. The
+error **message** is deliberately never reported: it is prose, it is localised,
+and it can embed the address that was typed — unbounded and PII-bearing, the two
+things a grouping key must not be.
+
+The funnel is `auth.attempt` minus `auth.success`, grouped by `auth.method` — for
+every method that emits both. Three do not, in different directions, so read
+those rows differently:
+
+- `github_oauth` emits an attempt and never a success, so its subtraction is
+  always its full attempt count, not a drop-off.
+- `email_confirmation` emits a success and never an attempt (`WelcomeContent.tsx`
+  is the only call site), so its subtraction is *negative* — the matching intent
+  was recorded on the signup page one document earlier, as
+  `email_password_signup`.
+- `email_password_signup` emits both — but only on the two branches that
+  terminate in this document (`data.session` → success, `signUpError` →
+  failure). When the project requires confirmation, the attempt ends on the
+  "check your inbox" screen having emitted *neither*, for the reason below, so
+  its subtraction counts every confirmation-pending signup as drop-off. Those
+  are the ones that reappear as `email_confirmation` successes on `/welcome`,
+  which is why the two rows have to be read as a pair.
+
+Two paths deliberately emit no `auth.success`:
+
+- **GitHub OAuth** — success is a redirect to a new document, so the page that
+  would report it is already gone. Arrival at the destination is the evidence.
+- **The "confirm your email" screen** — no session exists yet, and Supabase
+  routes an already-registered address down the same branch. Counting it would
+  overstate signups *and* leak the distinction the screen exists to hide. That
+  path completes as `email_confirmation` on `/welcome`.
+
+> **These used to be signal attributes, and must never go back to being any.**
+> The surfaces previously called `addSignalAttribute('auth.method', …)`, which
+> attaches a value to *every signal for the rest of the page load*. One click on
+> "Continue with GitHub" therefore labelled 538 `browser.web_vital` events across
+> 38 sessions; a failed sign-in followed by a switch to "Create an account"
+> emitted `auth.method=email_password_signup` next to the previous attempt's
+> `auth.password_error_code=invalid_credentials`, a combination the backend
+> cannot produce and which read as a signup bug that did not exist; and because
+> the function appends rather than replaces (the property `dash0-rum.ts`
+> documents for `user.id`), a retry shipped several entries for one key. An
+> attribute describes the signal it rides on — use `sendEvent` for a thing that
+> happens at an instant.
+
+**Renamed:** `auth.password_error_code` / `auth.otp_error_code` are now one
+`auth.error_code`. The method is already on the event, so the per-surface prefix
+carried nothing.
+
+---
+
 ## Resource attributes
 
 All signals carry these resource attributes:

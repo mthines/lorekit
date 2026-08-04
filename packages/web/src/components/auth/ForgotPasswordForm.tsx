@@ -3,8 +3,8 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
-import { addSignalAttribute } from '@dash0/sdk-web';
 import { friendlyAuthError } from '@/lib/auth-errors';
+import { reportAuthAttempt, reportAuthFailure, reportAuthSuccess } from '@/lib/auth-telemetry';
 import { authCallbackOrigin, buildAuthCallbackUrl } from '@/lib/auth-callback-url';
 import { FIELD_CLASS } from './field-styles';
 
@@ -35,20 +35,18 @@ export function ForgotPasswordForm() {
     }
 
     setBusy(true);
-    addSignalAttribute('auth.method', 'password_reset_request');
+    reportAuthAttempt('password_reset_request');
     const supabase = createClient();
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(trimmed, {
       redirectTo: buildAuthCallbackUrl(authCallbackOrigin(), '/update-password'),
     });
     setBusy(false);
     if (resetError) {
-      addSignalAttribute(
-        'auth.password_error_code',
-        resetError.code ?? resetError.name ?? 'unknown',
-      );
+      reportAuthFailure('password_reset_request', resetError);
       setError(friendlyAuthError(resetError));
       return;
     }
+    reportAuthSuccess('password_reset_request');
     setSent(true);
   }
 

@@ -5,8 +5,8 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { CheckCircle2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { addSignalAttribute } from '@dash0/sdk-web';
 import { friendlyAuthError } from '@/lib/auth-errors';
+import { reportAuthFailure, reportAuthSuccess } from '@/lib/auth-telemetry';
 import { DEFAULT_POST_LOGIN_PATH } from '@/lib/auth-redirect';
 import { fragmentCarriesAuthResult } from '@/lib/auth-callback-params';
 
@@ -43,6 +43,22 @@ export function WelcomeContent() {
   const settled = useRef(false);
 
   useEffect(() => {
+    // A provider error is terminal: the render below returns the error branch
+    // whatever the session state turns out to be, so resolving one is dead
+    // work. It is also the only place `email_confirmation` can report a
+    // failure — without this the method emits successes only and its failure
+    // rate is invisible in the funnel. The `settled` guard is shared with the
+    // success emit, so the two are mutually exclusive and a StrictMode
+    // double-invoke cannot double-count. The code is the provider's, the same
+    // value `api/auth/callback/route.ts` already records as `auth.error_code`.
+    if (errorCode) {
+      if (!settled.current) {
+        settled.current = true;
+        reportAuthFailure('email_confirmation', { code: errorCode });
+      }
+      return;
+    }
+
     const supabase = createClient();
     let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -51,7 +67,7 @@ export function WelcomeContent() {
       settled.current = true;
       setState(next);
       if (next === 'signed-in') {
-        addSignalAttribute('auth.method', 'email_confirmation');
+        reportAuthSuccess('email_confirmation');
         // Drop the implicit-flow fragment so a refresh (or a shared URL) does
         // not carry credentials around.
         if (typeof window !== 'undefined' && window.location.hash) {
@@ -84,7 +100,7 @@ export function WelcomeContent() {
       subscription.unsubscribe();
       if (timer) clearTimeout(timer);
     };
-  }, []);
+  }, [errorCode]);
 
   function handleContinue() {
     router.push(DEFAULT_POST_LOGIN_PATH);

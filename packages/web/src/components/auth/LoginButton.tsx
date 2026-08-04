@@ -1,11 +1,18 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { addSignalAttribute } from '@dash0/sdk-web';
 import { friendlyAuthError } from '@/lib/auth-errors';
+import { markOptionSelected } from '@/lib/auth-option-selection';
+import {
+  reportAuthAttempt,
+  reportAuthFailure,
+  reportAuthOptionSelected,
+  reportAuthSuccess,
+  type AuthMethod,
+} from '@/lib/auth-telemetry';
 import { validatePassword } from '@/lib/password-policy';
 import { authCallbackOrigin, buildAuthCallbackUrl } from '@/lib/auth-callback-url';
 import { safeNextPath } from '@/lib/auth-redirect';
@@ -118,17 +125,46 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     setPassword('');
   }
 
+  // The once-per-document selection set. Held in a ref rather than state:
+  // nothing renders off it, and a re-render must not reset it. The rule itself
+  // is the pure `markOptionSelected` (`lib/auth-option-selection.ts`) so it is
+  // reachable by the unit-test suite, which cannot render this component.
+  const selectedOptions = useRef<Set<AuthMethod>>(new Set());
+  function selectOption(method: AuthMethod) {
+    if (markOptionSelected(selectedOptions.current, method)) {
+      reportAuthOptionSelected(method);
+    }
+  }
+
   async function handleGitHubLogin() {
+    // Same first move as the two form handlers: a retry after a failed
+    // initiation must not keep the previous attempt's message on screen.
+    setError('');
     setLoading(true);
-    addSignalAttribute('auth.method', 'github_oauth');
+    // Recorded BEFORE the redirect: this document is about to be replaced,
+    // so this is the only moment the intent can be captured at all. Selecting
+    // and attempting coincide on this path — there is no form in between to
+    // abandon — but both are emitted so every option is comparable at the
+    // selection step.
+    selectOption('github_oauth');
+    reportAuthAttempt('github_oauth');
     const supabase = createClient();
-    await supabase.auth.signInWithOAuth({
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider: 'github',
       options: {
         redirectTo: callbackUrl(),
       },
     });
-    // Loading stays true — page will redirect
+    // On success the page is already being replaced, so loading stays true.
+    // On failure it never redirects: without this branch the attempt above
+    // would have no terminal event — and OAuth emits no success by design, so
+    // a failed initiation would be indistinguishable from a completed one and
+    // would count as drop-off. The button would also stay disabled forever.
+    if (oauthError) {
+      reportAuthFailure('github_oauth', oauthError);
+      setError(friendlyAuthError(oauthError));
+      setLoading(false);
+    }
   }
 
   async function handleMagicLinkSubmit(e: React.FormEvent) {
@@ -140,7 +176,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     }
 
     setBusy(true);
-    addSignalAttribute('auth.method', 'email_otp');
+    reportAuthAttempt('email_otp');
     const supabase = createClient();
     const { error: otpError } = await supabase.auth.signInWithOtp({
       // Pass the email exactly as the user typed it. Plus-subaddressed variants
@@ -156,9 +192,10 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     });
     setBusy(false);
     if (otpError) {
-      addSignalAttribute('auth.otp_error_code', otpError.code ?? otpError.name ?? 'unknown');
+      reportAuthFailure('email_otp', otpError);
       setError(friendlyAuthError(otpError));
     } else {
+      reportAuthSuccess('email_otp');
       setStep('sent');
     }
   }
@@ -188,10 +225,8 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     }
 
     setBusy(true);
-    addSignalAttribute(
-      'auth.method',
-      passwordMode === 'signup' ? 'email_password_signup' : 'email_password',
-    );
+    const method = passwordMode === 'signup' ? 'email_password_signup' : 'email_password';
+    reportAuthAttempt(method);
     const supabase = createClient();
 
     if (passwordMode === 'signin') {
@@ -201,15 +236,13 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
       });
       if (signInError) {
         setBusy(false);
-        addSignalAttribute(
-          'auth.password_error_code',
-          signInError.code ?? signInError.name ?? 'unknown',
-        );
+        reportAuthFailure(method, signInError);
         setError(friendlyAuthError(signInError));
         return;
       }
       // The browser client has written the session cookies; refresh so the
       // server components on the destination see the authenticated user.
+      reportAuthSuccess(method);
       router.push(safeNextPath(nextParam));
       router.refresh();
       return;
@@ -226,15 +259,13 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     });
     setBusy(false);
     if (signUpError) {
-      addSignalAttribute(
-        'auth.password_error_code',
-        signUpError.code ?? signUpError.name ?? 'unknown',
-      );
+      reportAuthFailure(method, signUpError);
       setError(friendlyAuthError(signUpError));
       return;
     }
     if (data.session) {
       // Email confirmation is disabled on this project — the account is live.
+      reportAuthSuccess(method);
       router.push(safeNextPath(nextParam));
       router.refresh();
       return;
@@ -242,21 +273,38 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
     // Confirmation required. Supabase deliberately returns a user with no
     // identities (and no session) when the address is already registered, so
     // this same screen is shown either way — it must not reveal which.
+    //
+    // Deliberately NOT reported as a success: no session exists yet, and the
+    // branch is also what an already-registered address takes. Counting it
+    // would both overstate signups and leak the distinction the screen exists
+    // to hide. `email_confirmation` on /welcome is where that path completes.
     setStep('confirm');
   }
 
   // -- Compact variant (top-right nav button on login page) --
   if (compact) {
     return (
-      <button
-        onClick={handleGitHubLogin}
-        disabled={loading}
-        className="flex h-9 items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50"
-        aria-busy={loading}
-      >
-        <GitHubIcon className="size-3.5 shrink-0" />
-        {loading ? 'Redirecting...' : 'Sign in'}
-      </button>
+      // This variant shares handleGitHubLogin with the full one, so it can fail
+      // the same way — and it sits in a header row, so the message goes BESIDE
+      // the button rather than below it: a block-level region would restructure
+      // that row. Without it the button just reverts to "Sign in" and the user
+      // has no signal that anything went wrong, let alone what.
+      <div className="flex items-center gap-2">
+        {error && (
+          <p role="alert" className="max-w-[16rem] text-right text-xs text-red-400">
+            {error}
+          </p>
+        )}
+        <button
+          onClick={handleGitHubLogin}
+          disabled={loading}
+          className="flex h-9 items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-3.5 text-sm font-medium text-[var(--color-content-primary)] transition-all duration-200 hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] hover:text-[var(--color-accent)] focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] disabled:cursor-not-allowed disabled:opacity-50"
+          aria-busy={loading}
+        >
+          <GitHubIcon className="size-3.5 shrink-0" />
+          {loading ? 'Redirecting...' : 'Sign in'}
+        </button>
+      </div>
     );
   }
 
@@ -305,6 +353,9 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
         </p>
         <button
           onClick={() => {
+            // Leaving the "confirm your email" screen for the sign-in form is a
+            // route choice too — the same one the landing page's button makes.
+            selectOption('email_password');
             setPasswordMode('signin');
             resetTo('password');
           }}
@@ -375,7 +426,13 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           <button
             type="button"
             onClick={() => {
-              setPasswordMode(isSignup ? 'signin' : 'signup');
+              const next = isSignup ? 'signin' : 'signup';
+              // The one place a visitor states, unambiguously, which of the two
+              // they are here for. Pressing "Create an account" is the clearest
+              // signup signal the page can produce — clearer than the eventual
+              // submit, because most people who press it never get that far.
+              selectOption(next === 'signup' ? 'email_password_signup' : 'email_password');
+              setPasswordMode(next);
               setError('');
             }}
             className={LINK_CLASS}
@@ -389,7 +446,18 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           )}
         </div>
 
-        <button type="button" onClick={() => resetTo('magic')} className={LINK_CLASS}>
+        {/* A route switch from inside a panel is the same choice as picking the
+            route from the landing state, so it reports the same selection —
+            otherwise a route's count would depend on which door the visitor
+            came through. The once-per-document rule keeps a toggle harmless. */}
+        <button
+          type="button"
+          onClick={() => {
+            selectOption('email_otp');
+            resetTo('magic');
+          }}
+          className={LINK_CLASS}
+        >
           Email me a magic link instead
         </button>
         <button type="button" onClick={() => resetTo('idle')} className={LINK_CLASS}>
@@ -428,7 +496,14 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           <MailIcon className="size-4 shrink-0" />
           {busy ? 'Sending...' : 'Send magic link'}
         </button>
-        <button type="button" onClick={() => resetTo('password')} className={LINK_CLASS}>
+        <button
+          type="button"
+          onClick={() => {
+            selectOption('email_password');
+            resetTo('password');
+          }}
+          className={LINK_CLASS}
+        >
           Use a password instead
         </button>
         <button type="button" onClick={() => resetTo('idle')} className={LINK_CLASS}>
@@ -452,6 +527,14 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
         {loading ? 'Redirecting...' : 'Continue with GitHub'}
       </button>
 
+      {/* A failed OAuth initiation never navigates away, so this step has to be
+          able to say so — the password and magic-link steps already do. */}
+      {error && (
+        <p role="alert" className="text-xs text-red-400">
+          {error}
+        </p>
+      )}
+
       {/* Divider */}
       <div className="flex w-full max-w-[220px] items-center gap-2.5">
         <span className="h-px flex-1 bg-[var(--color-border)]" aria-hidden />
@@ -463,6 +546,7 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
           primary text) so it reads as a real alternative, not a muted afterthought. */}
       <button
         onClick={() => {
+          selectOption('email_password');
           setPasswordMode('signin');
           resetTo('password');
         }}
@@ -473,7 +557,13 @@ export function LoginButton({ compact = false }: LoginButtonProps) {
       </button>
 
       {/* Tertiary: passwordless — still one tap away for anyone who prefers it. */}
-      <button onClick={() => resetTo('magic')} className={LINK_CLASS}>
+      <button
+        onClick={() => {
+          selectOption('email_otp');
+          resetTo('magic');
+        }}
+        className={LINK_CLASS}
+      >
         Or email me a magic link
       </button>
     </div>

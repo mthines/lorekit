@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
-import { addSignalAttribute } from '@dash0/sdk-web';
 import { friendlyAuthError } from '@/lib/auth-errors';
+import { reportAuthAttempt, reportAuthFailure, reportAuthSuccess } from '@/lib/auth-telemetry';
 import { validatePasswordConfirmation } from '@/lib/password-policy';
 import { DEFAULT_POST_LOGIN_PATH } from '@/lib/auth-redirect';
 import { FIELD_CLASS } from './field-styles';
@@ -53,18 +53,16 @@ export function UpdatePasswordForm() {
     }
 
     setBusy(true);
-    addSignalAttribute('auth.method', 'password_reset_complete');
+    reportAuthAttempt('password_reset_complete');
     const supabase = createClient();
     const { error: updateError } = await supabase.auth.updateUser({ password });
     setBusy(false);
     if (updateError) {
-      addSignalAttribute(
-        'auth.password_error_code',
-        updateError.code ?? updateError.name ?? 'unknown',
-      );
+      reportAuthFailure('password_reset_complete', updateError);
       setError(friendlyAuthError(updateError));
       return;
     }
+    reportAuthSuccess('password_reset_complete');
     setDone(true);
     router.push(DEFAULT_POST_LOGIN_PATH);
     router.refresh();

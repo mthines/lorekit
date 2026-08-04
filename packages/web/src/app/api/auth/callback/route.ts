@@ -5,6 +5,7 @@ import { withSpan, logger, SpanKind, SpanStatusCode } from '@/lib/telemetry';
 // `safeNextPath` is shared with the client-side password sign-in so both
 // redirect paths enforce the exact same same-origin rule.
 import { safeNextPath } from '@/lib/auth-redirect';
+import { classifyAuthOutcome } from '@/lib/auth-outcome';
 import { classifyAuthCallback, isGithubAppSetupReturn } from '@/lib/auth-callback-params';
 
 /**
@@ -94,11 +95,21 @@ export async function GET(request: NextRequest) {
 
         if (!error) {
           sessionEstablished = true;
+          // Signup or sign-in? The browser cannot tell — GitHub OAuth and magic
+          // links both create an account when there is none — so the funnel's
+          // client-side events report `login_or_signup` for those paths and
+          // leave the answer to here, the one place holding the user record.
+          const accountOutcome = classifyAuthOutcome({
+            createdAt: data.user?.created_at,
+            lastSignInAt: data.user?.last_sign_in_at,
+          });
           span.setAttribute('auth.callback.outcome', 'success');
+          span.setAttribute('auth.outcome', accountOutcome);
           span.setAttribute('auth.user_id', data.user?.id ?? 'unknown');
           span.setAttribute('auth.provider', data.user?.app_metadata?.['provider'] ?? 'unknown');
           logger.info('auth.callback.success', {
             'auth.callback.kind': callback.kind,
+            'auth.outcome': accountOutcome,
             'auth.provider': data.user?.app_metadata?.['provider'] ?? 'unknown',
           });
         } else {
