@@ -38,8 +38,13 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState } fro
 import { useSearchParams } from 'next/navigation';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { LessonDetailSheet } from '@/components/lore/LessonDetailSheet';
-import { useLoreData, useMemoryById } from '@/lib/queries/lore';
-import { activeMemoryId, resolveOpenLesson, type LessonRef } from '@/lib/open-lesson';
+import { useLoreData, useMemoryById, useLessonByRef } from '@/lib/queries/lore';
+import {
+  activeMemoryId,
+  lessonResolvedLocally,
+  resolveOpenLesson,
+  type LessonRef,
+} from '@/lib/open-lesson';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -51,9 +56,18 @@ interface MemorySidebarContextValue {
   openLessonRef: LessonRef | null;
   /**
    * Open the sidebar for a specific lesson. Reacts immediately (optimistic).
+   *
    * Pass the full `lesson` object when the caller already has it (e.g. from
    * the archived list) so the sidebar can render without a separate lookup.
-   * Active-list callers omit it; the provider resolves it from useLoreData.
+   * Active-list callers omit it; the provider resolves it from `useLoreData`.
+   *
+   * Omitting it is only free for a caller that renders its OWN list from
+   * `useLoreData` — `NavigationCommands` and `MemoryExpandButton` both do, so
+   * the memory is in the provider's `cacheLessons` by construction and
+   * `lessonResolvedLocally` keeps the click off the network. A caller that
+   * sources the ref from anywhere else (a URL, a search result, a webhook
+   * payload) and omits the prefetch triggers a `useLessonByRef` fetch — which
+   * is correct, and is the deep-link path, but it is a network round-trip.
    */
   openLessonById: (ref: LessonRef, lesson?: LessonEntry) => void;
   /** Close the sidebar. Reacts immediately (optimistic). */
@@ -115,6 +129,21 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
   const memoryId = activeMemoryId(urlMemoryId, dismissedMemoryId);
   const { data: memoryByIdLesson } = useMemoryById(memoryId);
 
+  // A shared `?lesson={scope,key}` link opens blank when the memory is outside
+  // the Explorer's recent/active window — the sheet only resolved the ref
+  // against the loaded page set. Fetch it by scope+key as a fallback, but only
+  // when it isn't already resolvable locally, so only a cold deep-link visit
+  // reaches the network. The predicate is the pure, unit-tested
+  // `lessonResolvedLocally` — see its docblock for why the active-memories
+  // cache, not the click-prefetch, is what covers the palette and the header
+  // dropdown (both call `openLessonById` with the ref alone).
+  const resolvedLocally = lessonResolvedLocally({
+    lessonRef,
+    cacheLessons: data?.lessons,
+    prefetched,
+  });
+  const { data: lessonByRef } = useLessonByRef(resolvedLocally ? null : lessonRef);
+
   // Resolution precedence lives in the pure `resolveOpenLesson` (unit-tested):
   // `lesson` strictly wins, so a cache-missing `lesson` shows nothing rather
   // than falling through to whatever `memoryId` is still in the URL.
@@ -124,10 +153,11 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
         lessonRef,
         cacheLessons: data?.lessons,
         prefetched,
+        lessonByRef,
         memoryId,
         memoryByIdLesson,
       }),
-    [lessonRef, data, prefetched, memoryId, memoryByIdLesson],
+    [lessonRef, data, prefetched, lessonByRef, memoryId, memoryByIdLesson],
   );
 
   const openLessonById = useCallback(

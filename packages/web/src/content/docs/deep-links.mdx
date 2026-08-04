@@ -59,7 +59,7 @@ The robust way to open one memory is by its **id** — a plain, un-encoded query
 https://lorekit.io/lore?memoryId=9b2c1d34-5e6f-4a7b-8c9d-0e1f2a3b4c5d
 ```
 
-The id is the memory's UUID (the `id` column) — `GET /memories/:id` validates it, so a non-UUID value 400s. Unlike every other Explorer parameter, `memoryId` is **not** JSON-encoded — it is the raw UUID, so there is nothing to double-encode and nothing to get wrong when a tool builds the link by hand (`{base}/lore?memoryId=<uuid>`). The dashboard fetches that memory **by id directly**, so the detail sheet opens even when the memory is outside the Explorer's recent/active window — the case where the scope + key form below opens blank. Archived memories are the one exception: they are addressed by scope + key and open from the archived list, so `memoryId` returns nothing for them.
+The id is the memory's UUID (the `id` column) — `GET /memories/:id` validates it, so a non-UUID value 400s. Unlike every other Explorer parameter, `memoryId` is **not** JSON-encoded — it is the raw UUID, so there is nothing to double-encode and nothing to get wrong when a tool builds the link by hand (`{base}/lore?memoryId=<uuid>`). The dashboard fetches that memory **by id directly**, so the detail sheet opens even when the memory is outside the Explorer's recent/active window. Archived memories are the one exception: `GET /memories/:id` skips archived rows, so `memoryId` returns nothing for them — open them from the archived list.
 
 ## Link to a specific memory by scope + key
 
@@ -70,7 +70,7 @@ The older form opens a memory's detail sheet via its `scope` + `key`. The link s
 https://lorekit.io/lore?scope=%22global%22&lesson=%7B%22scope%22%3A%22global%22%2C%22key%22%3A%22prefer-guard-clauses%22%7D
 ```
 
-The detail sheet resolves this form from a recent, unfiltered set, so a memory older than that window or an archived one can still open blank. When you have the memory's id, prefer `?memoryId=` above — it fetches by id and does not have this limitation.
+The detail sheet resolves this form from the active-memory cache, and when the memory is outside that recent window it fetches it by scope + key — so any **active** memory opens, however old. An **archived** memory is the exception: the by-key read returns only active rows, so an archived deep link opens blank; open it from the archived list instead. (`?memoryId=` above has the same archived limitation, since `GET /memories/:id` also skips archived rows.)
 
 ## Link to a search or a filtered view
 

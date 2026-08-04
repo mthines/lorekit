@@ -40,6 +40,26 @@ export function listMemoriesRequest(
   });
 }
 
+/**
+ * A single memory by its natural key (scope + key), or null when none matches.
+ *
+ * There is no scope+key GET route — `GET /memories/:id` is UUID-only — but the
+ * list route applies `key` as an exact match (`.eq`, not the substring `q`
+ * filter), so `?scope=&key=&limit=1` is a precise one-row read: the same query
+ * `updateLesson` uses to resolve a row. This wrapper hides the page envelope so
+ * callers read it as the get-by-ref it is.
+ */
+export function getMemoryByRefRequest(
+  accessToken: string,
+  scope: string,
+  key: string,
+  signal?: AbortSignal,
+): Promise<MemoryEntry | null> {
+  return listMemoriesRequest(accessToken, { scope, key, limit: 1 }, signal).then(
+    (page) => page.entries[0] ?? null,
+  );
+}
+
 export function listScopesRequest(accessToken: string, signal?: AbortSignal): Promise<ScopesResponse> {
   return restFetch<ScopesResponse>('/memories/scopes', {
     accessToken,
