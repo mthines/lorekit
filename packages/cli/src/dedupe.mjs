@@ -15,10 +15,14 @@ import { resolveProjectRoot, readLorekitJson } from './config.mjs';
 import { deriveScope } from './scope.mjs';
 import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { scopeList, gather, clusterDuplicates } from './lessons-view.mjs';
+import { scopeList, gather, gatherStream, clusterDuplicates, clusterDuplicatesBlocked, DEFAULT_MAX } from './lessons-view.mjs';
 import { log, heading, status, c } from './util.mjs';
 
 const DEFAULT_THRESHOLD = 0.8;
+// Maximum entries to accumulate before the token-blocking index becomes
+// memory-prohibitive. Beyond this the user must narrow via --key-prefix /
+// --since / --max.
+const DEDUPE_POP_CAP = 2000;
 
 // Parse `--threshold` into a number in [0, 1]; anything unparseable or out of
 // range falls back to the default (never a crash on bad input). Pure-ish helper.
@@ -78,19 +82,68 @@ export async function dedupe(args) {
   // Deny-wins section suppression, identical to the other read commands.
   const { localDenied, remoteDenied } = resolveDenies(root, { env });
 
-  const buildSection = (flat) => ({
-    available: true,
-    clusters: clusterDuplicates(flat.entries, threshold),
-    errored: flat.errored,
-  });
+  // `dedupe` defaults to full-scope survey. --max, --since, --key-prefix narrow
+  // the population. Population cap: 2000. Past it stop accumulating, warn, and
+  // surface a narrowing hint. Use token-blocking (`clusterDuplicatesBlocked`)
+  // for the one super-linear operation.
+  const surveyMax = args.max !== undefined ? Number(args.max) : DEFAULT_MAX;
+  const surveySince = args.since || undefined;
+  const surveyUntil = args.until || undefined;
+  const surveyKeyPrefix = args['key-prefix'] || undefined;
+
+  // Stream-accumulate entries up to DEDUPE_POP_CAP and note when capped.
+  async function streamAccumulate(store) {
+    const accumulated = [];
+    const errored = [];
+    let popCapped = false;
+
+    await gatherStream(store, scopes, {
+      max: surveyMax,
+      since: surveySince,
+      until: surveyUntil,
+      keyPrefix: surveyKeyPrefix,
+      onPage: ({ scope, entries }) => {
+        if (popCapped) return;
+        for (const e of entries) {
+          if (accumulated.length >= DEDUPE_POP_CAP) {
+            popCapped = true;
+            break;
+          }
+          accumulated.push({ ...e, scope: e.scope ?? scope });
+        }
+      },
+    });
+
+    return { entries: accumulated, errored, popCapped };
+  }
+
+  const buildSection = async (store, local) => {
+    if (local) {
+      // Local store is already exhaustive; use the existing gather path.
+      const flat = flatten(await gather(store, scopes));
+      return {
+        available: true,
+        clusters: clusterDuplicatesBlocked(flat.entries, threshold),
+        errored: flat.errored,
+        popCapped: false,
+      };
+    }
+    const { entries, errored, popCapped } = await streamAccumulate(store);
+    return {
+      available: true,
+      clusters: clusterDuplicatesBlocked(entries, threshold),
+      errored,
+      popCapped,
+    };
+  };
 
   const offlineSection = localDenied
     ? { available: false, reason: `disabled by deny constraint (${localDenied.source})` }
-    : buildSection(flatten(await gather(local, scopes)));
+    : await buildSection(local, true);
 
   const remoteAvailable = !remoteDenied && remote.usable();
   const remoteSection = remoteAvailable
-    ? buildSection(flatten(await gather(remote, scopes)))
+    ? await buildSection(remote, false)
     : {
         available: false,
         reason: remoteDenied
@@ -108,6 +161,13 @@ export async function dedupe(args) {
     log(`  project: ${c.dim(root)}`);
     log(`  scopes:  ${scopes.join('  →  ')}`);
     log(`  ${c.dim(`heuristic: Jaccard word-token overlap >= ${threshold} (not semantic)`)}`);
+
+    if (offlineSection.available && offlineSection.popCapped) {
+      log(`  ${c.yellow('!')} population cap (${DEDUPE_POP_CAP}) reached for Offline — results are partial. Narrow with --key-prefix, --since, or --max.`);
+    }
+    if (remoteSection.available && remoteSection.popCapped) {
+      log(`  ${c.yellow('!')} population cap (${DEDUPE_POP_CAP}) reached for Remote — results are partial. Narrow with --key-prefix, --since, or --max.`);
+    }
 
     renderDedupeSection({ title: 'Offline' }, offlineSection);
     renderDedupeSection(

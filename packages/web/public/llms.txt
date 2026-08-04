@@ -193,10 +193,11 @@ List lessons for a scope.
 | `scope` | ✓ | string | Canonical scope string, e.g. `repo::mthines/lorekit`. |
 | `tags` |  | array | Filter to entries carrying ANY of these labels (OR). _(array of string)_ |
 | `limit` |  | integer | Maximum entries to return. _(1–100, default `50`)_ |
+| `cursor` |  | string | Opaque cursor from a previous response's `nextCursor`. Omit to start from the first page. |
 
 Requires **read** permission.
 
-Returns: `{ "entries": [{ "key", "value", "tags", "updated_at" }] }` — newest first.
+Returns: `{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — newest first. Pass `nextCursor` back as `cursor` to retrieve the next page.
 
 ---
 
@@ -227,10 +228,11 @@ Full-text search across lessons.
 | `scopes` |  | array | Scopes to search. Accepts an owner-level wildcard, e.g. `repo::mthines/*` — the only tool that does. _(array of string)_ |
 | `tags` |  | array | Filter to entries carrying ALL of these labels (AND). _(array of string)_ |
 | `limit` |  | integer | Maximum entries to return. _(1–100, default `20`)_ |
+| `cursor` |  | string | Opaque cursor from a previous response's `nextCursor`. Omit to start from the first page. |
 
 Requires **read** permission.
 
-Returns: `{ "entries": [{ "key", "value", "scope", "tags", "rank" }] }`
+Returns: `{ "entries": [{ "key", "value", "scope", "tags", "rank" }], "hasMore": boolean, "nextCursor": string | null }`. Pass `nextCursor` back as `cursor` to retrieve the next page.
 
 ---
 

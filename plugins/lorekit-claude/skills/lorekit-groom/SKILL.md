@@ -117,14 +117,46 @@ archiving and deleting always go through `memory.delete` / `memory.archive`.
 |-----|-----|---------|
 | Count lessons per scope/store | `lorekit stats [--scope <s>]` | CLI (read) |
 | Inventory every scope + lesson count | `lorekit scopes` | CLI (read) |
-| Find low-quality lessons | `lorekit lint --json` | CLI (read) |
-| Find near-duplicate clusters | `lorekit dedupe --json [--threshold <n>]` | CLI (read) |
+| Find low-quality lessons | `lorekit lint --json [--since <date>] [--until <date>] [--max <n>]` | CLI (read) |
+| Find near-duplicate clusters | `lorekit dedupe --json [--threshold <n>] [--key-prefix <p>] [--since <date>] [--max <n>]` | CLI (read) |
+| List all lessons across large scopes | `lorekit list --all [--max <n>] [--since <date>] [--until <date>]` | CLI (read) |
 | Read one lesson in full | `lorekit show <scope::key> [--json]` | CLI (read) |
 | Compare offline vs remote | `lorekit diff` | CLI (read) |
 | Write the merged/consolidated lesson | `memory.write` (or `lorekit write`) | MCP / CLI |
 | Set / clear an expiry | `memory.write { ttl_days }` / `{ clear_ttl: true }` | MCP / CLI (`--ttl-days` / `--clear-ttl`) |
 | Archive a lesson (reversible) | `memory.archive` (or `memory.delete`) | **MCP only** |
 | Hard-delete a lesson (permanent) | `memory.delete { force: true }` | **MCP only** |
+
+### Survey flags for large scopes
+
+When a scope holds more lessons than a single page (> 50 for `list`, > 100 for
+`lint`/`dedupe`), use these flags to survey the full population or narrow it:
+
+| Flag | Commands | Effect |
+|------|----------|--------|
+| `--all` | `list` | Drain all pages (default for `lint`/`dedupe`) |
+| `--max <n>` | `list --all`, `lint`, `dedupe` | Hard cap on entries surveyed (default 5000) |
+| `--since <iso-date>` | `list --all`, `lint`, `dedupe` | Lower date bound (`created_since`) |
+| `--until <iso-date>` | `list --all`, `lint`, `dedupe` | Upper date bound (`created_until`) |
+| `--key-prefix <p>` | `dedupe` | Narrow deduplication to keys starting with prefix |
+
+`dedupe` applies an internal population cap of 2000 for memory safety. When the
+cap is reached, the output includes a warning with narrowing suggestions — use
+`--key-prefix` or `--since` to reduce the population.
+
+### MCP cursor paging
+
+`memory.list` and `memory.search` now support pagination. When more results
+exist than fit in one response, the response includes `hasMore: true` and a
+`nextCursor` string. Pass `nextCursor` as the `cursor` argument on the next
+call to retrieve the following page. Omit `cursor` to start from the first page.
+
+```json
+{ "scope": "global", "limit": 100, "cursor": "<nextCursor from previous response>" }
+```
+
+Use this to drain an arbitrarily large scope in an agent loop rather than
+relying on a truncated first page.
 
 > **`dedupe` is a heuristic, not a semantic judge.** It clusters on Jaccard
 > word-token overlap, so it can both miss reworded duplicates *and* group
