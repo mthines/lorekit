@@ -67,6 +67,19 @@ declare
     when auth.role() = 'service_role' then coalesce(p_user_id, auth.uid())
     else auth.uid()
   end;
+  -- `origin_pr` is an INTEGER column, so it must be compared numerically, not as
+  -- text: `GET /memories` sends the digits-only list bare to the integer column
+  -- (`applyScalarFilter(..., { quote: false })`), where Postgres reads `007` as
+  -- 7 and matches PR 7. A `m.origin_pr::text = any(...)` comparison here would
+  -- match nothing for the same input, so the two routes would disagree on the
+  -- same query string. Non-numeric entries are DROPPED rather than raising, and
+  -- a list that reduces to empty applies no filter at all (`array_agg` over no
+  -- rows is NULL) — the list route's documented behaviour, verbatim.
+  v_origin_pr integer[] := (
+    select array_agg(x::integer)
+      from unnest(coalesce(p_origin_pr, '{}'::text[])) as x
+     where x ~ '^[0-9]+$'
+  );
 begin
   return query
   with base as (
@@ -105,9 +118,9 @@ begin
          when 'nin' then (m.origin_branch is not null and m.origin_branch <> all(p_origin_branch))
          else m.origin_branch = any(p_origin_branch)
        end) as ok_origin_branch,
-      (p_origin_pr is null or case coalesce(p_origin_pr_mode, 'in')
-         when 'nin' then (m.origin_pr is not null and m.origin_pr::text <> all(p_origin_pr))
-         else m.origin_pr::text = any(p_origin_pr)
+      (v_origin_pr is null or case coalesce(p_origin_pr_mode, 'in')
+         when 'nin' then (m.origin_pr is not null and m.origin_pr <> all(v_origin_pr))
+         else m.origin_pr = any(v_origin_pr)
        end) as ok_origin_pr
       from memories m
      where (
