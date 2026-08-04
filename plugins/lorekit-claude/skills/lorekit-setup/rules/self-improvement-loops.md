@@ -20,6 +20,7 @@ The design has two tiers connected by a recurrence gate. Both run on LoreKit.
 - [Conventions](#conventions)
 - [Read step (start of every run)](#read-step-start-of-every-run)
 - [Write step (on failure / at the end of a run)](#write-step-on-failure--at-the-end-of-a-run)
+- [The reconcile-on-re-run flow (resolve + record)](#the-reconcile-on-re-run-flow-resolve--record)
 - [Promotion (fast → slow)](#promotion-fast--slow)
 - [Entrenchment guards (do not skip these)](#entrenchment-guards-do-not-skip-these)
 - [Wiring checklist](#wiring-checklist)
@@ -175,6 +176,59 @@ successful application is recurrence evidence.
 The privacy pre-flight is never skipped, autonomous or not: a candidate lesson
 containing a secret, token, credential, or PII is **dropped, not written**. The
 bar is stricter for `repo::` writes — a repo scope is team-visible.
+
+---
+
+## The reconcile-on-re-run flow (resolve + record)
+
+Some hosts do not just fail-and-learn — they **produce durable outputs at a
+shared target that they revisit on later runs**: a reviewer posts comment threads
+on a PR it re-reviews on every push, a triager files issues it re-scans, a linter
+opens tickets it re-opens. For these, a plain read/write loop is not enough:
+stale outputs pile up at the target, and the signal about which outputs were
+*useful* is thrown away.
+
+The reconcile-on-re-run flow closes both gaps. On each re-run over the same
+target, the host **reconciles its own prior outputs** in three steps:
+
+1. **Classify** each prior output the host itself produced against the current
+   state of the target. The three outcomes that carry signal:
+
+   | Outcome | Meaning | Evidence |
+   | --- | --- | --- |
+   | **resolved** | The output was acted on — the thing it flagged is now handled | the flagged region changed and the finding no longer reproduces, or the owner acknowledged it |
+   | **declined** | The owner explicitly rejected it | a "won't fix" / "by design" reply, a 👎 |
+   | **still-open** | The finding still reproduces this run | the host re-produces the same output |
+
+2. **Clean up at the target.** For `resolved` and `declined` outputs, close them
+   at the source — resolve the thread, close the ticket, check the box — so a
+   re-run leaves the target tidier than it found it instead of accumulating
+   cruft. **Never** close a `still-open` output; that would hide a live finding.
+   Only ever touch outputs the host itself authored.
+
+3. **Record the outcome** to a **Signal**-shaped bucket (a durable, per-target
+   relevance memory — distinct from the fast lessons bucket). Write `resolved` as
+   a positive signal for that output's *pattern* and `declined` as a negative
+   one, keyed by a stable pattern fingerprint (never by a line number or an id
+   that drifts). Over runs this bucket teaches the host which of its output
+   patterns get acted on in this target and which are noise — read it at the
+   start of a run to suppress the reliably-declined patterns and reinforce the
+   reliably-resolved ones. `still-open` writes nothing: there is no outcome yet.
+
+Two guards keep this honest, both instances of the entrenchment guards below:
+
+- **Absence of confirmation is not resolution.** If a re-run did not re-scan the
+  region a prior output covers (e.g. it only looked at the diff), the output is
+  `still-open`, not `resolved` — silence is not a fix.
+- **The cleanup is idempotent and non-fatal.** A target already closed is
+  skipped; a cleanup error is logged and never fails the run.
+
+Wire it as its own step at the host's re-run seam, gated on "a prior run's output
+exists at this target". It composes with the read/write steps: the Signal bucket
+it writes is read back at the next run's read step. The reference implementation
+is the `agent-skills` `pr-reviewer` agent, whose `thread-resolution.md` rule
+resolves its own addressed PR threads on each commit-triggered re-review and
+records the fixed/declined outcome to a `reviewer-comment-relevance` bucket.
 
 ---
 
