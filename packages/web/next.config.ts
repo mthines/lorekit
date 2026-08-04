@@ -1,8 +1,25 @@
 import type { NextConfig } from 'next';
+// Relative import, not the `@/` alias: next.config.ts is loaded outside the
+// app's module graph, so the tsconfig path mapping does not apply here.
+import { resolveDeploymentId } from './src/lib/deployment-id';
 
 const nextConfig: NextConfig = {
   // Disable Next.js's built-in ESLint step — NX runs it separately via nx lint
   eslint: { ignoreDuringBuilds: true },
+
+  // Pin every asset URL and Server Action request to the deployment that built
+  // the bundle making it (Vercel Skew Protection).
+  //
+  // Server Actions are a POST to the page route carrying a build-time action ID
+  // (see src/middleware.ts). `deploy.yml` flips production with an alias swap on
+  // every push to main, so a tab opened before the swap posts the OLD build's
+  // action ID to the NEW deployment, which 404s it — the Overview's Accept /
+  // Decline / onboarding buttons go silently dead until a hard reload.
+  //
+  // Requires Skew Protection to be enabled on the Vercel project; until it is,
+  // VERCEL_DEPLOYMENT_ID is absent, this is `undefined`, and nothing changes.
+  // See src/lib/deployment-id.ts for the full rationale.
+  deploymentId: resolveDeploymentId(process.env),
 
   // `/settings/webhooks` was renamed to `/settings/integrations`. The old path
   // is in bookmarks, docs, and any link shared before the rename, so it

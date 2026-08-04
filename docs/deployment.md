@@ -124,6 +124,35 @@ The web jobs authenticate to Vercel with the same three repo-level secrets
 — and the production smoke curls `${{ vars.WEB_PROD_URL }}` (an optional
 repo-level variable, defaulting to `https://lorekit.io`).
 
+### Skew Protection (already-open tabs and Server Actions)
+
+The lockstep flip above keeps the FE and API on the same version **for new page
+loads**. It does nothing for a tab that is already open: the alias swap is
+instant, and that tab keeps running the JavaScript of the deployment it loaded
+from.
+
+That matters because Next.js Server Actions are a `POST` to the page route
+carrying a **build-time action ID**. A tab on build A that posts build A's
+action ID to build B gets a bare **404** — no error surface, just a dead button.
+This is exactly what happened on the Overview page: every `POST /dashboard` went
+from `200` to `404` after a `main` push, with the browser reporting
+`service.version` from one commit and the server span reporting another.
+
+The mitigation is Vercel **Skew Protection**, and it has two halves:
+
+1. **Code (done).** `next.config.ts` sets `deploymentId` from
+   `VERCEL_DEPLOYMENT_ID` (`src/lib/deployment-id.ts`), so Next.js stamps asset
+   URLs and Server Action requests with the deployment that built them.
+2. **Project setting (manual, do this once).** Enable **Skew Protection** in the
+   Vercel project — Settings → Advanced → Skew Protection — and pick a window at
+   least as long as a plausible idle tab (12 h is a reasonable default). Vercel
+   then injects `VERCEL_DEPLOYMENT_ID` at build time and routes a stamped request
+   back to its originating deployment instead of to whatever the alias currently
+   points at.
+
+Until step 2 is done, `VERCEL_DEPLOYMENT_ID` is absent, `deploymentId` resolves
+to `undefined`, and behaviour is unchanged — step 1 is inert on its own.
+
 ### Migration drift on the shared preview project
 
 `preview` is a **shared** Supabase project, and two workflows push migrations to
