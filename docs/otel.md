@@ -269,8 +269,8 @@ and it can embed the address that was typed — unbounded and PII-bearing, the t
 things a grouping key must not be.
 
 The funnel is `auth.attempt` minus `auth.success`, grouped by `auth.method` — for
-every method that emits both. Two do not, in opposite directions, so read those
-two rows differently:
+every method that emits both. Three do not, in different directions, so read
+those rows differently:
 
 - `github_oauth` emits an attempt and never a success, so its subtraction is
   always its full attempt count, not a drop-off.
@@ -278,6 +278,13 @@ two rows differently:
   is the only call site), so its subtraction is *negative* — the matching intent
   was recorded on the signup page one document earlier, as
   `email_password_signup`.
+- `email_password_signup` emits both — but only on the two branches that
+  terminate in this document (`data.session` → success, `signUpError` →
+  failure). When the project requires confirmation, the attempt ends on the
+  "check your inbox" screen having emitted *neither*, for the reason below, so
+  its subtraction counts every confirmation-pending signup as drop-off. Those
+  are the ones that reappear as `email_confirmation` successes on `/welcome`,
+  which is why the two rows have to be read as a pair.
 
 Two paths deliberately emit no `auth.success`:
 
