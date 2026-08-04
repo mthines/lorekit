@@ -161,7 +161,11 @@ not active**, and two prerequisites remain — one to confirm, one to decide.
    Also enable **"Enable access to System Environment Variables"** (Settings →
    Environment Variables); without it Vercel never injects `VERCEL_*` system
    variables into the build, so `VERCEL_DEPLOYMENT_ID` stays absent even with
-   Skew Protection on.
+   Skew Protection on. Whatever you change here, Vercel's enable steps end by
+   **redeploying the latest production deployment** — until that redeploy the
+   toggles do not apply to what is currently live. On this project that
+   redeploy only helps once one of the routes in step 3 is taken; a redeploy of
+   today's prebuilt deployment still carries no deployment ID.
 3. **Build path (open decision, blocks the whole thing).** A deployment ID is
    assigned when a deployment is **uploaded**, not when it is built. Today
    `stage-web-production` runs `vercel build --prod` inside GitHub Actions and
