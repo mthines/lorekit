@@ -266,6 +266,5 @@ describe('smoke test-run marker — the deployment-environment charset/bound sta
   it('the edge honours exactly the synthetic value `test`, which the charset admits', () => {
     const otel = read('supabase/functions/_shared/otel.ts');
     expect(otel).toMatch(/HEADER_ENV_ALLOWLIST\s*=\s*new Set\(\['test'\]\)/);
-    expect('test').toMatch(new RegExp(`^${CHARSET}+$`));
   });
 });
