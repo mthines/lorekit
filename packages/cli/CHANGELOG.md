@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.33.1](https://github.com/mthines/lorekit/compare/cli-v1.33.0...cli-v1.33.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* **cli:** dedupeRelevant honours a cap of 0 ([74f2e1d](https://github.com/mthines/lorekit/commit/74f2e1d0384adce5267819bec09efc9c279d4a38))
+
+
+### Performance
+
+* **cli:** one-pass multi-term store search for the failure lookup ([b781be8](https://github.com/mthines/lorekit/commit/b781be8679b2d89254ac49f76ab1c4c677bc938b))
+
+
+### Documentation
+
+* **cli:** remote store orders by recency, not FTS relevance ([b7f7df7](https://github.com/mthines/lorekit/commit/b7f7df7740b0f0cd06418af28036e873397a7e56))
+* **cli:** scope precedence in the failure lookup holds per tier only ([146bde9](https://github.com/mthines/lorekit/commit/146bde9da1deb09e6112d9f82d97448dafea897e))
+
 ## [1.33.0](https://github.com/mthines/lorekit/compare/cli-v1.32.1...cli-v1.33.0) (2026-08-05)
 
 
