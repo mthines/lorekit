@@ -362,6 +362,11 @@ jobs:
       # file is only ever created on the runner, never committed. Fork PRs have
       # no secret → skip → the edge stays dark (unchanged behaviour), never a
       # broken start. Must run BEFORE `supabase start` so the runtime picks it up.
+      # The GITHUB_* lines give the edge its `service.version` + `vcs.*` resource
+      # attrs (`_shared/otel.ts` reads GITHUB_SHA/REPOSITORY/REF_NAME); the edge
+      # isolate does not inherit the runner env — that is the same reason the
+      # OTLP endpoint has to be written here — so without them these spans land
+      # unattributed (`service.version=unknown`, no `vcs.*`).
       - name: Configure local edge OTLP export (Dash0)
         env:
           LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
@@ -375,8 +380,11 @@ jobs:
             echo "OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer ${LOREKIT_TELEMETRY_TOKEN}"
             echo "DASH0_DATASET=default"
             echo "DEPLOYMENT_ENVIRONMENT=test"
+            echo "GITHUB_SHA=${GITHUB_SHA}"
+            echo "GITHUB_REPOSITORY=${GITHUB_REPOSITORY}"
+            echo "GITHUB_REF_NAME=${GITHUB_REF_NAME}"
           } > supabase/functions/.env
-          echo "Wrote supabase/functions/.env — local edge will export to Dash0 as deployment.environment.name=test."
+          echo "Wrote supabase/functions/.env — local edge will export to Dash0 as deployment.environment.name=test, attributed to ${GITHUB_REPOSITORY}@${GITHUB_SHA}."
 
       - name: Start local Supabase (applies migrations, serves functions)
         run: supabase start
