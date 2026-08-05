@@ -152,8 +152,9 @@ its own `<column>_mode` of `in` (default) or `nin`.
 
 ## `GET /facets`
 
-`lorekit_memory_facets` (00052) returns `{ facets: [{ facet, value, count }] }` for all six
-dimensions — `tag`, `source_agent`, `trigger`, `origin_repo`, `origin_branch`, `origin_pr` —
+`lorekit_memory_facets` (00052, widened by 00057) returns `{ facets: [{ facet, value, count }] }`
+for all eight dimensions — `tag`, `source_agent`, `trigger`, `kind`, `host`, `origin_repo`,
+`origin_branch`, `origin_pr` —
 ordered facet asc, count desc, value asc. `?archived=` partitions exactly as it does on
 `GET /` and on `/tags`: a catalog must describe the population it will be used to filter.
 `?facets=` narrows the response to named dimensions; an unknown name narrows to nothing
@@ -168,6 +169,22 @@ query to scope here, and a second predicate would be somewhere for the two to dr
 A null column value yields NO facet row. An option that matches by absence would need an
 `is not set` operator, which `GET /` does not have yet; offering the option without the
 operator would be a row you can click and nothing happens.
+
+**Counts are DRILL-DOWN as of 00057.** The route mirrors `GET /`'s filter params (`scope`,
+`tags`/`tags_mode`, and a `<dim>`/`<dim>_mode` pair for each scalar dimension) and passes them
+to the RPC, which counts each dimension with every OTHER active filter applied but NOT its own
+— self-exclusion, so the dimension you are standing in still lists everything you could switch
+to. With no filters supplied the response is the pre-00057 global catalog, unchanged. Two
+consequences to know before reading a number:
+
+- A value whose count falls to zero under the other dimensions' filters emits **no row**, the
+  same omission a null column value has — so it drops out of the menu until the filter is
+  cleared, rather than showing as a selectable `0`. Emitting the zeroes would mean returning the
+  tenant's entire distinct value set for `tag` / `origin_branch` on every call.
+- `q`, `key`, `created_since` and `created_until` are **NOT** mirrored, so with a search or date
+  window active a count is an upper bound on what selecting the value would return, not the
+  exact yield. Mirroring `q` would put a second implementation of `likeNeedle`'s LIKE escaping
+  in plpgsql, which the repo-wide "a filter value is encoded ONE way" rule forbids.
 
 ## `created_at` on `POST /`
 

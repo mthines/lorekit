@@ -48,11 +48,24 @@ export interface Filter {
   values: string[];
 }
 
-/** The `GET /memories/facets` dimension a field's values are catalogued under. */
+/**
+ * The `GET /memories/facets` dimension a field's values are catalogued under.
+ *
+ * This mirrors `MemoryFacetSchema` (`@lorekit/schemas/memory`) exactly — the
+ * endpoint's response is assigned to `FacetValue[]` in `queries/lore.ts`, so a
+ * dimension the server can emit and this union cannot name is a type error, not
+ * a silent narrowing. That is why it is WIDER than {@link FilterField}: `kind`
+ * and `host` (migration 00056) are catalogued but have no `FILTER_FIELDS` row
+ * yet, so their rows arrive and are ignored — `facetOptions` selects by
+ * `requireField(field).facet` and {@link rootSuggestions} skips a facet no
+ * descriptor maps. Giving them a filter pill is a separate change.
+ */
 export type FacetName =
   | 'tag'
   | 'source_agent'
   | 'trigger'
+  | 'kind'
+  | 'host'
   | 'origin_repo'
   | 'origin_branch'
   | 'origin_pr';

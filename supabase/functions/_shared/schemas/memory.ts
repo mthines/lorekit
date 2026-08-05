@@ -14,6 +14,22 @@ export const MAX_VALUE_BYTES = 65_536;
 // cannot import zod); re-exported here so existing importers are unaffected.
 export { PURGE_RETENTION_DAYS_DEFAULT };
 
+/**
+ * The three KINDS of memory a self-improvement loop writes — the bucket
+ * taxonomy promoted to a first-class property.
+ *
+ * `lesson` — a procedural "how to do better next time" rule, read every run.
+ * `bus`    — a transient per-item outcome event, read only at promotion time.
+ * `signal` — a durable, learned per-repo filter, read every run.
+ *
+ * A closed vocabulary: adding a kind is a schema change, deliberately, because
+ * the three families drive different read cadences and lifetimes. `host` (the
+ * owning skill/agent) is open free-text, like `source_agent`. The authoritative
+ * reference is agent-skills' `agents/shared/rules/memory-buckets.md`.
+ */
+export const MemoryKindSchema = z.enum(['lesson', 'bus', 'signal']);
+export type MemoryKind = z.infer<typeof MemoryKindSchema>;
+
 export const MemoryWriteSchema = z.object({
   scope: ScopeSchema, key: z.string().min(1).max(512),
   value: z.string().max(MAX_VALUE_BYTES, `value exceeds ${MAX_VALUE_BYTES} bytes`),
@@ -22,6 +38,10 @@ export const MemoryWriteSchema = z.object({
   created_at: z.string().optional(), org: z.string().optional(),
   ttl_days: z.number().int().min(1).max(365).optional(),
   clear_ttl: z.boolean().optional().default(false),
+  // Taxonomy — WHAT KIND of memory this is and WHICH HOST owns it. Both are
+  // optional: an older client omits them and the write path derives them from
+  // the `loop::<host>-lessons` tag via `inferKindHost` (tags.ts).
+  kind: MemoryKindSchema.optional(), host: z.string().max(64).optional(),
   // Provenance — where the memory was RECORDED FROM (vs `scope`, which says
   // where it applies). Every field is independently optional; the shared
   // `parseOrigin` validator (mcp-core / _shared/origin.ts) owns the shape rules.
@@ -135,6 +155,15 @@ export const ListMemoriesQuerySchema = z.object({
   source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
   trigger: ValueListSchema.optional(),
   trigger_mode: ScalarFilterModeSchema.optional().default('in'),
+  /**
+   * Taxonomy filters — the bucket KIND (`lesson`/`bus`/`signal`) and the owning
+   * HOST. Same comma-list + `*_mode` shape as the scalar filters above, so
+   * `?kind=lesson&host=reviewer` reads "reviewer's lessons".
+   */
+  kind: ValueListSchema.optional(),
+  kind_mode: ScalarFilterModeSchema.optional().default('in'),
+  host: ValueListSchema.optional(),
+  host_mode: ScalarFilterModeSchema.optional().default('in'),
   origin_repo: ValueListSchema.optional(),
   origin_repo_mode: ScalarFilterModeSchema.optional().default('in'),
   origin_branch: ValueListSchema.optional(),
@@ -275,6 +304,8 @@ export const MemoryFacetSchema = z.enum([
   'tag',
   'source_agent',
   'trigger',
+  'kind',
+  'host',
   'origin_repo',
   'origin_branch',
   'origin_pr',
@@ -296,6 +327,46 @@ export const ListFacetsQuerySchema = z.object({
    * refresh just that one instead of re-reading the whole catalog.
    */
   facets: z.string().optional(),
+  /**
+   * The caller's CURRENTLY-APPLIED filters — the DIMENSION filters of
+   * `GET /memories`, named identically so a menu CAN pass its filter state
+   * verbatim. When any are present the counts become drill-down: each dimension
+   * is counted with every OTHER active filter applied but not its own
+   * (self-exclusion, migration 00057), so a value's count is what selecting it
+   * would actually yield. Absent → the global catalog, unchanged.
+   *
+   * No caller passes them yet: `packages/web`'s `listFacetsRequest` still sends
+   * only `archived`, and `FILTER_FIELDS` has no `kind`/`host` row. Every
+   * response the dashboard renders today is therefore the global catalog.
+   *
+   * `ListMemoriesQuerySchema`'s NON-dimension filters — `q`, `key`,
+   * `created_since` and `created_until` — are deliberately NOT mirrored, so
+   * with a search or date window active a count is an upper bound on the yield
+   * rather than the exact figure. Mirroring `q` would mean a second
+   * implementation of `likeNeedle`'s LIKE escaping inside plpgsql, and a filter
+   * value is encoded exactly one way in this repo.
+   *
+   * A value whose count falls to zero under the other dimensions' filters emits
+   * no row at all — the same omission a null column value has — so it leaves
+   * the menu until the filter is cleared.
+   */
+  scope: RawScopeSchema.optional(),
+  tags: z.string().optional(),
+  tags_mode: TagsModeSchema.optional().default('any'),
+  source_agent: ValueListSchema.optional(),
+  source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
+  trigger: ValueListSchema.optional(),
+  trigger_mode: ScalarFilterModeSchema.optional().default('in'),
+  kind: ValueListSchema.optional(),
+  kind_mode: ScalarFilterModeSchema.optional().default('in'),
+  host: ValueListSchema.optional(),
+  host_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_repo: ValueListSchema.optional(),
+  origin_repo_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_branch: ValueListSchema.optional(),
+  origin_branch_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_pr: ValueListSchema.optional(),
+  origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
 });
 export type ListFacetsQuery = z.infer<typeof ListFacetsQuerySchema>;
 
@@ -448,6 +519,9 @@ export const MemoryEntrySchema = z.object({
   expires_at: z.string().datetime().nullable(), archived_at: z.string().datetime().nullable(),
   origin_repo: z.string().nullable().optional(), origin_branch: z.string().nullable().optional(),
   origin_commit: z.string().nullable().optional(), origin_pr: z.number().nullable().optional(),
+  // Taxonomy. Optional/nullable so a row written before 00056 (NULL kind/host)
+  // and an older client that reads neither are both unaffected.
+  kind: z.string().nullable().optional(), host: z.string().nullable().optional(),
   // Ownership / authorship. Optional so an older client (and the CLI's
   // RemoteStore, which reads none of them) is unaffected by the addition.
   org_id: z.string().uuid().nullable().optional(),
@@ -468,7 +542,7 @@ export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
  */
 export const MEMORY_SELECT =
   'id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,'
-  + 'origin_repo,origin_branch,origin_commit,origin_pr,org_id,created_by,updated_by,orgs(id,name,slug)';
+  + 'origin_repo,origin_branch,origin_commit,origin_pr,kind,host,org_id,created_by,updated_by,orgs(id,name,slug)';
 
 /**
  * Collapse a selected row's `orgs` embed into the flat `org` field.

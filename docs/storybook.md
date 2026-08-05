@@ -56,7 +56,7 @@ Shipped examples:
   MSW-mocked PostgREST reads. Needs `parameters.nextjs.appDirectory: true` (the page uses
   `useRouter`/`useSearchParams` via `useUrlState`).
 - **`src/components/dashboard/DashboardStats.stories.tsx`** — a full-view story of the
-  Overview page's main content. `/dashboard` is a **server component** (it `await`s the
+  Overview page's main content. `/overview` is a **server component** (it `await`s the
   Supabase *server* client, so it can't render in the browser), so the largest *client*
   subtree is storied instead — the guidance for any RSC page.
 

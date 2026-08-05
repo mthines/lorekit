@@ -40,6 +40,26 @@ export function listMemoriesRequest(
   });
 }
 
+/**
+ * A single memory by its natural key (scope + key), or null when none matches.
+ *
+ * There is no scope+key GET route — `GET /memories/:id` is UUID-only — but the
+ * list route applies `key` as an exact match (`.eq`, not the substring `q`
+ * filter), so `?scope=&key=&limit=1` is a precise one-row read: the same query
+ * `updateLesson` uses to resolve a row. This wrapper hides the page envelope so
+ * callers read it as the get-by-ref it is.
+ */
+export function getMemoryByRefRequest(
+  accessToken: string,
+  scope: string,
+  key: string,
+  signal?: AbortSignal,
+): Promise<MemoryEntry | null> {
+  return listMemoriesRequest(accessToken, { scope, key, limit: 1 }, signal).then(
+    (page) => page.entries[0] ?? null,
+  );
+}
+
 export function listScopesRequest(accessToken: string, signal?: AbortSignal): Promise<ScopesResponse> {
   return restFetch<ScopesResponse>('/memories/scopes', {
     accessToken,
@@ -50,10 +70,10 @@ export function listScopesRequest(accessToken: string, signal?: AbortSignal): Pr
 /**
  * `GET /memories/facets` — every filterable value, per dimension, with counts.
  *
- * One call for all six dimensions rather than one per dimension: the filter
+ * One call for all eight dimensions rather than one per dimension: the filter
  * menu's cross-dimension type-ahead has to rank values it has not been told to
- * look for yet, and six in-flight requests is six chances to rank a half-loaded
- * catalog.
+ * look for yet, and eight in-flight requests is eight chances to rank a
+ * half-loaded catalog.
  */
 export function listFacetsRequest(
   accessToken: string,
@@ -93,6 +113,25 @@ export function readActivityRequest(
   return restFetch<ReadActivityResponse>('/memories/read-activity', {
     accessToken,
     query: { ...params },
+    ...(signal ? { signal } : {}),
+  });
+}
+
+/**
+ * `GET /memories/:id` — a single memory addressed by DB row id.
+ *
+ * Unlike the scope+key list reads, this resolves one row directly, so a
+ * deep-linked memory (`/lore?memoryId=…`) opens even when it is outside the
+ * Explorer's recent/active window. Archived rows 404 — they are addressed by
+ * scope+key and open from the archived list.
+ */
+export function getMemoryByIdRequest(
+  accessToken: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<MemoryEntry> {
+  return restFetch<MemoryEntry>(`/memories/${encodeURIComponent(id)}`, {
+    accessToken,
     ...(signal ? { signal } : {}),
   });
 }

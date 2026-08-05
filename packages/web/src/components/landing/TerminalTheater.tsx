@@ -4,6 +4,9 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { Cloud, HardDrive } from 'lucide-react';
 
+import { useAmbientAnimation } from '@/lib/hooks/useAmbientAnimation';
+import { createPausableTimers, type PausableTimers } from '@/lib/pausable-timers';
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 /** Where a memory lives: the on-disk offline store or the hosted remote store. */
@@ -202,24 +205,32 @@ function TypewriterLine({
   text,
   type,
   reducedMotion,
+  paused,
 }: {
   text: string;
   type: ScriptLine['type'];
   reducedMotion: boolean;
+  /** Freeze mid-word, keeping the characters already typed. */
+  paused: boolean;
 }) {
   const [visible, setVisible] = useState(reducedMotion ? text.length : 0);
 
+  // Start over only when the LINE changes — never when playback pauses, which
+  // is the whole point: a line frozen halfway resumes from the character it
+  // stopped on rather than re-typing itself.
   useEffect(() => {
-    if (reducedMotion) { setVisible(text.length); return; }
-    setVisible(0);
-    let i = 0;
-    const id = setInterval(() => {
-      i++;
-      setVisible(i);
-      if (i >= text.length) clearInterval(id);
-    }, CHAR_DELAY);
-    return () => clearInterval(id);
+    setVisible(reducedMotion ? text.length : 0);
   }, [text, reducedMotion]);
+
+  const complete = visible >= text.length;
+
+  useEffect(() => {
+    if (reducedMotion || paused || complete) return undefined;
+    // `complete` (not `visible`) is the dependency, so the interval is created
+    // once per line and torn down once — not re-subscribed on every character.
+    const id = setInterval(() => setVisible((typed) => typed + 1), CHAR_DELAY);
+    return () => clearInterval(id);
+  }, [text, reducedMotion, paused, complete]);
 
   const LINE_COLOR: Record<ScriptLine['type'], string> = {
     command:       'text-[var(--color-content-primary)]',
@@ -233,12 +244,35 @@ function TypewriterLine({
   };
   const colorClass = LINE_COLOR[type] ?? 'text-[var(--color-content-secondary)]';
 
+  // The line occupies its FINAL size from the very first frame.
+  //
+  // Rendering only `text.slice(0, visible)` re-measures the box on every one of
+  // the ~60 ticks a second this component runs at: a line long enough to wrap
+  // grows a row mid-type, which pushes every sibling below it down and books a
+  // layout shift. With the loop restarting forever, the login page accumulated
+  // thousands of CLS entries per visit (p75 0.21, worst 0.58).
+  //
+  // The theater does NOT sit above the sign-in CTA: `(auth)/login/page.tsx`
+  // renders the primary `LoginButton` at L155 and `<TerminalTheater />` at
+  // L165, so the shifting text is below it — only the header's compact sign-in
+  // button (L111) is above. The cost is the accrued shift entries themselves,
+  // which CLS sums for the whole session; it is not a CTA moving under a cursor.
+  //
+  // So: a full, invisible copy of the text reserves the space, and the typed
+  // prefix is painted over it. The overlay is out of flow, so the number of
+  // characters showing can no longer affect layout at all — the animation is
+  // unchanged, it just stops moving the page.
   return (
-    <div className={`font-mono text-xs leading-relaxed whitespace-pre-wrap ${colorClass}`}>
-      {text.slice(0, visible)}
-      {visible < text.length && !reducedMotion && (
-        <span className="inline-block w-[1ch] animate-pulse bg-current opacity-70">▋</span>
-      )}
+    <div className={`relative font-mono text-xs leading-relaxed whitespace-pre-wrap ${colorClass}`}>
+      <span aria-hidden className="invisible">
+        {text}
+      </span>
+      <span className="absolute inset-0">
+        {text.slice(0, visible)}
+        {visible < text.length && !reducedMotion && (
+          <span className="inline-block w-[1ch] animate-pulse bg-current opacity-70">▋</span>
+        )}
+      </span>
     </div>
   );
 }
@@ -349,21 +383,43 @@ export function TerminalTheater() {
   /** 'a' = session A writing | 'b' = session B with memories active */
   const [act, setAct] = useState<'a' | 'b'>('a');
 
+  /**
+   * Only run while the theater is on screen in the foreground tab.
+   *
+   * The script loops forever, so an ungated instance keeps typing — one React
+   * re-render per character, ~60 a second — for the whole visit, including
+   * while it is scrolled past or the tab is in the background. That is pure
+   * main-thread contention with whatever the visitor does next, which is what
+   * an INP measurement is queued behind (worst observed on this page: 3.0s).
+   */
+  const [theaterRef, animationActive] = useAmbientAnimation();
+
   const cancelRef = useRef(false);
-  const timeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  /**
+   * Every wait in the script runs through one pausable group, so going off
+   * screen FREEZES the script rather than cancelling it: a 320ms beat that was
+   * 200ms from finishing resumes as a 200ms beat, and the visitor comes back to
+   * the sentence they left rather than to the top of the demo.
+   *
+   * Created lazily and kept in a ref so a re-render never swaps the group the
+   * in-flight `play()` loop is awaiting on.
+   */
+  const timersRef = useRef<PausableTimers | null>(null);
+  function timers(): PausableTimers {
+    timersRef.current ??= createPausableTimers();
+    return timersRef.current;
+  }
 
   function clearTimers() {
     cancelRef.current = true;
-    timeoutsRef.current.forEach(clearTimeout);
-    timeoutsRef.current = [];
+    timers().cancel();
   }
 
   function wait(ms: number): Promise<void> {
-    return new Promise((resolve) => {
-      // Always resolve so the promise settles; callers check cancelRef after each await
-      const id = setTimeout(resolve, ms);
-      timeoutsRef.current.push(id);
-    });
+    // Always settles — including on cancel — so the awaiting loop reaches its
+    // next `cancelRef` check and unwinds instead of hanging.
+    return timers().wait(ms);
   }
 
   const play = useCallback(
@@ -434,11 +490,12 @@ export function TerminalTheater() {
           const cardCount = useCase.act1.filter((l) => l.card).length;
           for (let i = 0; i < cardCount; i++) {
             const cardIndex = i;
-            const delay = cardIndex * LOAD_STAGGER;
-            const id = setTimeout(() => {
+            // Through the pausable group, like every other beat — a raw
+            // setTimeout here would keep firing while the theater is off
+            // screen and light the cards up out of step with the script.
+            void wait(cardIndex * LOAD_STAGGER).then(() => {
               if (!cancelRef.current) setCards((prev) => prev.map((card, j) => (j === cardIndex ? { ...card, loaded: true } : card)));
-            }, delay);
-            timeoutsRef.current.push(id);
+            });
           }
           // Wait for all stagger timeouts before next line
           await wait(cardCount * LOAD_STAGGER + 200);
@@ -460,11 +517,22 @@ export function TerminalTheater() {
     [reducedMotion],
   );
 
+  // Playback is started by the ACTIVE TAB alone. Visibility must not appear
+  // here: re-running this effect calls `play()`, which hard-resets the script,
+  // and scrolling past a demo is not a request to start it over.
   useEffect(() => {
     play(activeTab);
     return () => clearTimers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
+
+  // Visibility only suspends and resumes the clock the script is awaiting on,
+  // so the loop stays exactly where it was.
+  useEffect(() => {
+    if (animationActive) timers().resume();
+    else timers().pause();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [animationActive]);
 
   // Keep the latest streamed line visible within the fixed-height output pane.
   useEffect(() => {
@@ -476,6 +544,7 @@ export function TerminalTheater() {
 
   return (
     <section
+      ref={theaterRef}
       aria-label="Terminal demo: how LoreKit persists agent memory"
       className="w-full max-w-2xl mx-auto"
     >
@@ -570,6 +639,7 @@ export function TerminalTheater() {
                   text={line.text}
                   type={line.type}
                   reducedMotion={reducedMotion}
+                  paused={!animationActive}
                 />
               </motion.div>
             ))}

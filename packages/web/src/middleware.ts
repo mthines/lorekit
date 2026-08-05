@@ -92,7 +92,7 @@ export async function middleware(request: NextRequest) {
 
   // Redirect authenticated users away from /login. Honour the ?next= param so
   // a logged-in user landing on /login?next=/lore/xyz is sent to their intended
-  // destination rather than unconditionally to /dashboard.
+  // destination rather than unconditionally to /overview.
   // safeNextPath rejects scheme-relative URLs (//evil.com) and absolute URLs
   // that would otherwise bypass the same-origin constraint.
   if (user && request.nextUrl.pathname === '/login') {

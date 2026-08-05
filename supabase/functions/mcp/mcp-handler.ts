@@ -29,6 +29,7 @@ import { LimitError, recordUsageEvent, getUserPlanName } from './limits.ts';
 import { toolRequires } from './permissions.ts';
 import { wireTools } from '../_shared/schemas/tool-catalog.ts';
 import { countRecords, parseCorrelationId, parseUsageClient, usageToolKind } from '../_shared/usage-stats.ts';
+import { resolveKindHost } from '../_shared/schemas/tags.ts';
 
 /**
  * Request header carrying a client-supplied grouping key (PR / session / job),
@@ -261,6 +262,12 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     const correlationId = parseCorrelationId(req.headers.get(CORRELATION_HEADER));
     // Calling surface (same header and same fail-safe posture as the REST side).
     const client = parseUsageClient(req.headers.get(CLIENT_HEADER));
+    // Memory taxonomy for analytics — resolved the SAME way the write stores it
+    // (explicit kind/host, else inferred from the loop tag). A read that carries
+    // a loop tag (memory.list / memory.search filtered by it) is attributed too;
+    // it is null only when the args carry neither an explicit value nor a
+    // loop tag. Groups usage by family + owner.
+    const { kind: usageKind, host: usageHost } = resolveKindHost(toolArgs);
 
     const toolStartMs = Date.now();
 
@@ -300,6 +307,8 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           resultCount,
           correlationId,
           client,
+          kind: usageKind,
+          host: usageHost,
         });
       }
 
@@ -338,6 +347,8 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           durationMs,
           correlationId,
           client,
+          kind: usageKind,
+          host: usageHost,
         });
       }
 

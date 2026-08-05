@@ -13,11 +13,11 @@
  * ```tsx
  * useCommand({
  *   id: 'go-dashboard',
- *   label: 'Go to Dashboard',
+ *   label: 'Go to Overview',
  *   icon: <LayoutDashboard className="size-4" />,
  *   group: 'Navigate',
  *   shortcut: { keys: ['g', 'h'] },
- *   onSelect: () => router.push('/dashboard'),
+ *   onSelect: () => router.push('/overview'),
  * });
  * ```
  *

@@ -80,7 +80,7 @@ export async function sendInviteEmail(input: InviteEmailInput): Promise<void> {
       // dashboard origin is public), so the client/server distinction doesn't
       // matter for this value.
       const base = process.env['NEXT_PUBLIC_APP_URL'] ?? DEFAULT_APP_URL;
-      const link = `${base}/dashboard`;
+      const link = `${base}/overview`;
 
       const invitedBy = invitedByLabel ? `${invitedByLabel} invited you` : 'You have been invited';
       const subject = `You've been invited to ${orgName} on LoreKit`;

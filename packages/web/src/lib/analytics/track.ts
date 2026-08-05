@@ -1,14 +1,27 @@
 /**
  * Analytics — centralized RUM event wrapper.
  *
- * The ONLY module that calls the Dash0 Web SDK's event API (`sendEvent`).
+ * The ONLY module through which *product* events reach the Dash0 Web SDK.
  * Feature code emits *typed* events via `track(...)`, so swapping vendors or
- * renaming an attribute is a single-file change. Telemetry is best-effort — a
- * failure here must NEVER break the UI.
+ * renaming an attribute is a single-file change for everything in the catalog
+ * below. Telemetry is best-effort — a failure here must NEVER break the UI.
+ *
+ * There is exactly one other caller of `sendEvent` in the app:
+ * `lib/auth-telemetry.ts`. It stays separate because `AnalyticsEvent` models
+ * only event name → attributes, while the auth events additionally need a
+ * per-event `title` and a `severity` (`auth.failure` is deliberately `WARN`);
+ * routing them through `track` as it stands would silently drop both. It
+ * guards its own `sendEvent` call exactly as this module does. **Do not add a
+ * third caller** — extend this catalog, or extend `track`'s signature to carry
+ * `title`/`severity` and fold auth back in. That is not just an ask:
+ * `sdk-event-callers.spec.ts` scans the source tree and fails on any module
+ * outside those two importing `sendEvent`, so adding one costs a visible edit
+ * to the allowlist there.
  *
  * ## Event catalog (source of truth — keep dashboards in sync)
  * - `command_palette.opened`           — the palette overlay was shown.
  * - `command_palette.command_selected` — a command was executed (leaf onSelect).
+ * - `install_command.copied`           — a visitor copied a shell command to the clipboard.
  *
  * ## PII / cardinality
  * Command ids are a fixed enum EXCEPT the dynamic "Open Lesson…" children, whose
@@ -25,6 +38,17 @@ export type PaletteTrigger = 'shortcut' | 'button';
 /** How a command was executed. */
 export type CommandSource = 'palette' | 'shortcut';
 
+/**
+ * Which shell command was copied. A bounded id, never the command STRING:
+ * `CopyCommand` takes arbitrary text, and an attribute built from it would be
+ * unbounded the moment a second call site passes something interpolated.
+ * Add an id here when you add a copyable command.
+ */
+export type InstallCommandId = 'cli-install';
+
+/** Where the copy affordance was rendered. Bounded for the same reason. */
+export type CopySurface = 'login-get-started';
+
 /** Discriminated union of every tracked event. Add new events here. */
 export type AnalyticsEvent =
   | { name: 'command_palette.opened'; trigger: PaletteTrigger }
@@ -33,6 +57,19 @@ export type AnalyticsEvent =
       commandId: string;
       group?: string;
       source: CommandSource;
+    }
+  | {
+      name: 'install_command.copied';
+      commandId: InstallCommandId;
+      surface: CopySurface;
+      /**
+       * Whether the clipboard write actually succeeded. A denied clipboard —
+       * an insecure context, a hardened browser, a permissions prompt the
+       * visitor dismissed — currently fails SILENTLY in `CopyCommand`, leaving
+       * the visitor with a button that does nothing. Recording the outcome is
+       * what makes that visible; counting only successes would hide it.
+       */
+      succeeded: boolean;
     };
 
 /**
@@ -58,6 +95,12 @@ function toAttributes(event: AnalyticsEvent): Record<string, string> {
       if (event.group) attrs['lorekit.command.group'] = event.group;
       return attrs;
     }
+    case 'install_command.copied':
+      return {
+        'lorekit.install_command.id': event.commandId,
+        'lorekit.install_command.surface': event.surface,
+        'lorekit.install_command.succeeded': String(event.succeeded),
+      };
   }
 }
 

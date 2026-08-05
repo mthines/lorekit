@@ -40,6 +40,15 @@ export interface UsageEventParams {
    * dashboard's own reads out of the "Memories read" metric.
    */
   client?: string | null;
+  /**
+   * Memory TAXONOMY — the bucket kind (`lesson`/`bus`/`signal`) and owning host
+   * — so usage can be grouped by family and owner, not just tool name. Resolved
+   * by `resolveKindHost` (schemas/tags) so it matches what the write STORED.
+   * Null on non-write tools and on writes that carry neither an explicit value
+   * nor a `loop::…` tag to infer from.
+   */
+  kind?: string | null;
+  host?: string | null;
 }
 
 /**

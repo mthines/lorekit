@@ -4,7 +4,7 @@
  * DocsSessionCommands
  *
  * Makes the public `/docs` command palette feel connected to the app: when the
- * visitor is SIGNED IN, it registers the "Navigate" group (Go to Dashboard /
+ * visitor is SIGNED IN, it registers the "Navigate" group (Go to Overview /
  * Lore Explorer / Settings) so they can jump back into the app from the docs.
  * When signed out, it registers nothing and the palette shows only "Docs".
  *
@@ -33,12 +33,12 @@ import { SETTINGS_LANDING_HREF } from '@/lib/settings-routes';
 function GoToDashboardCommand() {
   const router = useRouter();
   useCommand({
-    id: 'docs-nav-dashboard',
-    label: 'Go to Dashboard',
+    id: 'docs-nav-overview',
+    label: 'Go to Overview',
     icon: <LayoutDashboard className="size-4" />,
     group: 'Navigate',
     shortcut: { keys: ['g', 'o'] },
-    onSelect: () => router.push('/dashboard'),
+    onSelect: () => router.push('/overview'),
   });
   return null;
 }

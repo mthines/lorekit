@@ -122,7 +122,7 @@ export async function generateToken(
         metadata: { name: record.name, token_prefix: record.token_prefix },
       });
 
-      revalidatePath('/dashboard');
+      revalidatePath('/overview');
       // 'layout' so nested /settings/* pages (where tokens actually render) revalidate,
       // not just the /settings redirect page.
       revalidatePath('/settings', 'layout');
@@ -200,7 +200,7 @@ export async function revokeToken(tokenId: string): Promise<{ error?: string }> 
         });
       }
 
-      revalidatePath('/dashboard');
+      revalidatePath('/overview');
       revalidatePath('/settings', 'layout');
       return {};
     },

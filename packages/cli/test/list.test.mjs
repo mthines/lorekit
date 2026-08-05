@@ -47,14 +47,21 @@ test('scopeList drops a null branch/repo scope (no git remote) but keeps global'
 });
 
 test('normalizeEntry maps updated_at → updated and coerces value/tags', () => {
-  const remoteRow = { scope: 'global', key: 'k', value: 42, updated_at: '2026-07-01T00:00:00Z' };
+  const remoteRow = { scope: 'global', key: 'k', value: 42, updated_at: '2026-07-01T00:00:00Z', kind: 'lesson', host: 'reviewer' };
   assert.deepEqual(normalizeEntry(remoteRow), {
     scope: 'global',
     key: 'k',
     value: '42',
     updated: '2026-07-01T00:00:00Z',
     tags: [],
+    kind: 'lesson',
+    host: 'reviewer',
   });
+  // A row without taxonomy columns normalizes them to null.
+  assert.deepEqual(
+    { kind: normalizeEntry({ scope: 'g', key: 'k' }).kind, host: normalizeEntry({ scope: 'g', key: 'k' }).host },
+    { kind: null, host: null },
+  );
   // A local row already uses `updated`; a nullish value becomes ''.
   const localRow = { scope: 'global', key: 'k2', value: null, updated: '2026-07-02', tags: ['a'] };
   assert.equal(normalizeEntry(localRow).value, '');

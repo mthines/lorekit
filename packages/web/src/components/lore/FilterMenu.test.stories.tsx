@@ -375,6 +375,76 @@ export const PillOperatorEscapeDismissesWithoutLeaking: Story = {
 };
 
 /**
+ * The dimension list has to say which groups are already doing the filtering.
+ *
+ * As you apply filters the results list shrinks — which is the point — but the
+ * dimension list itself gave no sign of WHERE that narrowing came from, so you
+ * could not tell a filtered-on group from an untouched one without opening each.
+ * A per-group count badge, folded into the row's accessible name, closes that.
+ */
+export const DimensionListShowsPerGroupSelectionCount: Story = {
+  args: {
+    initialFilters: [
+      { field: 'label', operator: 'all', values: ['performance', 'auth'] },
+      { field: 'agent', operator: 'in', values: ['claude'] },
+    ],
+  },
+  play: async ({ canvasElement, step }) => {
+    // The trigger's name changes once a filter is applied ("Add or edit a
+    // filter"), so `openMenu`'s /add filter/ query would miss it.
+    await userEvent.click(
+      await within(canvasElement).findByRole('button', { name: /add or edit a filter/i }),
+    );
+    const canvas = within(document.body);
+    await canvas.findByRole('dialog', { name: /^filter$/i });
+
+    await step('each filtered group announces its selection count', async () => {
+      await expect(
+        canvas.getByRole('option', { name: /label, 2 selected/i }),
+      ).toBeInTheDocument();
+      await expect(
+        canvas.getByRole('option', { name: /agent, 1 selected/i }),
+      ).toBeInTheDocument();
+    });
+
+    await step('an untouched group is still just its name — no phantom count', async () => {
+      await expect(canvas.getByRole('option', { name: /^trigger$/i })).toBeInTheDocument();
+      await expect(
+        canvas.queryByRole('option', { name: /trigger,.*selected/i }),
+      ).not.toBeInTheDocument();
+    });
+  },
+};
+
+/**
+ * Regression: the mobile sheet must not steal focus when you drill in.
+ *
+ * On a phone, focusing the search box raises the on-screen keyboard, which
+ * scrolls the sheet up and off the very values the user just opened. The sheet
+ * deliberately never auto-focuses — on open OR on drilling into a dimension —
+ * so the keyboard only appears when the user taps the field. (The popover keeps
+ * its focus, which is what its keyboard model needs.)
+ */
+export const MobileSheetDoesNotAutofocusOnDrillIn: StoryObj<typeof MobileHarness> = {
+  render: () => <MobileHarness />,
+  play: async ({ canvasElement, step }) => {
+    const screen = within(document.body);
+    await userEvent.click(within(canvasElement).getByRole('button', { name: /add filter/i }));
+
+    await step('opening the sheet does not focus the search box', async () => {
+      const input = await screen.findByRole('combobox', { name: /search filters/i });
+      await expect(input).not.toHaveFocus();
+    });
+
+    await step('drilling into a dimension still does not focus it', async () => {
+      await userEvent.click(await screen.findByRole('option', { name: /^agent/i }));
+      const input = await screen.findByRole('combobox', { name: /search agent values/i });
+      await expect(input).not.toHaveFocus();
+    });
+  },
+};
+
+/**
  * Regression: the popover must escape its ancestors' overflow.
  *
  * In the Explorer the trigger sits inside `overflow-hidden` panels and a
