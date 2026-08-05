@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.33.2](https://github.com/mthines/lorekit/compare/cli-v1.33.1...cli-v1.33.2) (2026-08-05)
+
+
+### Bug Fixes
+
+* **cli:** flush stdout before exit so a large mcp frame is not truncated ([37ba771](https://github.com/mthines/lorekit/commit/37ba7710a0a30ea6b79ebad9f9bcca11ba818186))
+* **cli:** flush stdout before exit so a large mcp frame is not truncated ([8399eb9](https://github.com/mthines/lorekit/commit/8399eb94df086be3ef61ad6949e30da4eeae49b0))
+
 ## [1.33.1](https://github.com/mthines/lorekit/compare/cli-v1.33.0...cli-v1.33.1) (2026-08-05)
 
 
