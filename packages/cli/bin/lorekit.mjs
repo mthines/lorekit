@@ -555,6 +555,8 @@ the intended view — a raw ${c.dim('?scope=global')} would silently mean "all s
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
       --scope <scope>     Scope to link to (when no positional scope is given)
+      --key <key>         Name the key explicitly — the way to link to a key
+                          that itself contains \`::\`
       --q <text>          Pre-fill the Explorer search box
       --owner <o>         Ownership filter: all | personal | <orgId>
       --tags <a,b,c>      Label filter (AND across labels); comma-separated or a JSON array
