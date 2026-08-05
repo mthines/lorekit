@@ -34,8 +34,11 @@ ordering) and injects any relevant prior lessons BEFORE the write-nudge — an u
 search, or no match silently falls back to the nudge alone, and any error is swallowed (exit 0). This
 deliberately QUERIES rather than post-filtering the SessionStart-injected set: post-filtering could only
 ever resurface an already-shown lesson, so a paraphrased match or one past the per-scope read cap was
-unreachable. Matching is the store's job — server-side FTS (with stemming, ranked by `ts_rank`) for
-remote, full-scope substring for local; `store.search`'s `q` accepts a term LIST for exactly this
+unreachable. Matching is the store's job — server-side FTS (with stemming) for
+remote, full-scope substring for local — but ORDERING is not relevance: the remote handler orders by
+`updated_at desc` (`supabase/functions/memories/handlers/search.ts`), and the local two-tier store puts
+project-tier hits ahead of home-tier ones, so scope precedence holds only within a tier;
+`store.search`'s `q` accepts a term LIST for exactly this
 one-pass multi-term query (the remote joins it into one `websearch` `OR` query, a single round-trip). The cross-scope precedence merge (the SessionStart read) still
 uses the SAME `resolvePrecedence` the read commands use, in the dependency-free
 `packages/cli/src/lessons-pure.mjs` (re-exported by `lessons-view.mjs`), so the hot path shares it without

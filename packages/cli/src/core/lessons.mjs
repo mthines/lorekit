@@ -137,10 +137,11 @@ export function failureQuery(toolName, toolResponse) {
 }
 
 // De-duplicate store-search hits by `scope::key` and cap them, PRESERVING the
-// store's order — server-side FTS relevance for the remote store, scope
-// precedence (most-specific first) for the local one, since the search walks the
-// scope hierarchy in `readOrder`. Pure and total — any non-array input degrades
-// to [] rather than throwing (this runs inside the best-effort failure hook).
+// store's order — which is NOT relevance ordering: the remote store filters by
+// FTS but orders by `updated_at desc` (recency), and the local one yields scope
+// precedence (most-specific first), since the search walks the scope hierarchy
+// in `readOrder`. Pure and total — any non-array input degrades to [] rather
+// than throwing (this runs inside the best-effort failure hook).
 export function dedupeRelevant(entries, cap = MAX_RELEVANT) {
   if (!Array.isArray(entries)) return [];
   const seen = new Set();
@@ -162,10 +163,12 @@ export function dedupeRelevant(entries, cap = MAX_RELEVANT) {
 // lesson in a sibling scope, or one past the per-scope read cap, was
 // unreachable). A SINGLE `store.search` carries ALL the distilled failure terms
 // (OR semantics), so the offline store is walked once rather than once per term.
-// Matching is DELEGATED to the store — substring over the full scope for local,
-// server-side FTS (with stemming, so `connect` matches `connection`) for remote —
-// then hits are de-duped and capped by the pure `dedupeRelevant`, keeping the
-// store's own ordering. Best-effort: an unusable/throwing store returns [] so the
+// MATCHING is DELEGATED to the store — substring over the full scope for local,
+// server-side FTS (with stemming, so `connect` matches `connection`) for remote.
+// ORDERING is not: the remote returns `updated_at desc`, so the top-`cap` slice
+// is the most RECENT matches, not the most relevant ones. Hits are de-duped and
+// capped by the pure `dedupeRelevant`, keeping the store's own ordering (see its
+// docblock). Best-effort: an unusable/throwing store returns [] so the
 // caller falls back to the write-nudge alone.
 export async function relevantLessonsFromStore(store, scope, terms, { cap = MAX_RELEVANT } = {}) {
   if (!store || typeof store.search !== 'function') return [];
