@@ -573,7 +573,10 @@ below.
 Repo-level secrets (not environment-scoped): `SUPABASE_ACCESS_TOKEN` (a Supabase
 personal access token); the three **Vercel** secrets the web jobs use —
 `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` (the same set `preview.yml`
-already relies on); and — optionally — `DISCORD_WEBHOOK_URL` for
+already relies on); `LOREKIT_TELEMETRY_TOKEN` (the Dash0 ingest-only token — the
+smoke jobs pass it so their telemetry exports; see [Smoke telemetry](#smoke-telemetry-observable-in-dash0-tagged-test),
+and it is also injected into the CLI tarball at publish by `release.yml`); and —
+optionally — `DISCORD_WEBHOOK_URL` for
 [failure notifications](#failure-notifications-discord). Add a **required
 reviewer** on the `production` environment for a manual approval gate before prod
 is touched — it now gates the web promote (`promote-web-production`) as well as

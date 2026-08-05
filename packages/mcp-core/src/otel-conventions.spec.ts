@@ -238,3 +238,29 @@ describe('lorekit.tool.duration histogram accessor', () => {
     ).not.toThrow();
   });
 });
+
+describe('smoke test-run marker — the deployment-environment charset/bound stay in step', () => {
+  // `X-LoreKit-Deployment-Environment` is normalised by three independent
+  // low-/zero-dep copies (the CLI cannot import mcp-core; the sweeper runs from
+  // a bare checkout), so the shared charset + bound is otherwise only
+  // prose-coupled ("keep them in step"). Pin it the way edge-bare-specifier.spec
+  // pins its own invariant, so a drift in one copy fails the build.
+  const CHARSET = '[A-Za-z0-9_.\\-:]';
+  const sites: Array<[string, string]> = [
+    ['CLI restFetch (normalizeRunEnvironment)', 'packages/cli/src/mcp.mjs'],
+    ['REST/MCP smoke specs (testRunHeaders)', 'packages/mcp-server/src/smoke-telemetry.ts'],
+    ['orphan sweeper (runEnvHeaders)', 'scripts/smoke-cleanup.mjs'],
+  ];
+
+  it.each(sites)('%s uses the shared charset and a 64-char bound', (_label, rel) => {
+    const src = read(rel);
+    expect(src, `${rel} must use the shared charset ${CHARSET}`).toContain(CHARSET);
+    expect(src, `${rel} must bound the value at 64 chars`).toMatch(/(?:<=|>)\s*64/);
+  });
+
+  it('the edge honours exactly the synthetic value `test`, which the charset admits', () => {
+    const otel = read('supabase/functions/_shared/otel.ts');
+    expect(otel).toMatch(/HEADER_ENV_ALLOWLIST\s*=\s*new Set\(\['test'\]\)/);
+    expect('test').toMatch(new RegExp(`^${CHARSET}+$`));
+  });
+});

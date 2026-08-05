@@ -476,7 +476,7 @@ All `lorekit.*` spans carry:
 - `lorekit.scope.type` — bounded: `global|project|repo|branch`
 - `lorekit.key` — lesson key
 - `service.namespace` — always `lorekit`
-- `deployment.environment.name` — `production|preview|development|local` (from `VERCEL_ENV`)
+- `deployment.environment.name` — `production|preview|development|local` (from `VERCEL_ENV`), plus the synthetic `test` stamped on smoke/CI runs (the pipelines set `DEPLOYMENT_ENVIRONMENT=test`; the edge also honours it per-request via the `X-LoreKit-Deployment-Environment` header, allowlisted to `test`) — see [docs/otel.md](./docs/otel.md) → "Smoke / test runs are tagged"
 
 Metric: `lorekit.tool.duration` histogram (unit `s`) with `lorekit.tool.name` + `lorekit.scope.type`.
 
