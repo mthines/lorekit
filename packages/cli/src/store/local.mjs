@@ -205,14 +205,22 @@ class LocalStore {
   }
 
   // search({ q, scopes, tags }) → { ok, entries } — keyword over key/tags/body.
+  // `q` is a single needle (string) OR a list of needles (string[]); a list
+  // matches an entry when ANY needle is a substring (OR semantics). Either way
+  // this walks each scope EXACTLY ONCE — the failure hook passes all its terms
+  // in one call rather than one call per term, so N terms no longer re-read the
+  // store N times. An empty query (or empty list) returns everything, unchanged.
   async search({ q, scopes, tags } = {}) {
-    const needle = String(q || '').toLowerCase();
+    const needles = (Array.isArray(q) ? q : [q])
+      .map((n) => String(n || '').toLowerCase())
+      .filter(Boolean);
+    const matchAll = needles.length === 0;
     const out = [];
     for (const scope of scopes || []) {
       const { entries } = await this.list({ scope, tags });
       for (const e of entries) {
         const hay = `${e.key}\n${(e.tags || []).join(' ')}\n${e.value || ''}`.toLowerCase();
-        if (!needle || hay.includes(needle)) out.push(e);
+        if (matchAll || needles.some((n) => hay.includes(n))) out.push(e);
       }
     }
     return { ok: true, entries: out };

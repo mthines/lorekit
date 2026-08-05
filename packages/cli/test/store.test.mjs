@@ -150,6 +150,33 @@ test('search matches key, tags, and body across scopes', async () => {
   assert.equal(empty.entries.length, 1); // empty query returns all in scope
 });
 
+test('search accepts a list of terms and OR-matches them in one pass', async () => {
+  const store = createLocalStore(tmpDir());
+  await store.write({ scope: 'global', key: 'auth-note', value: 'tokens expire' });
+  await store.write({ scope: 'global', key: 'db', value: 'use one batched query' });
+  await store.write({ scope: 'global', key: 'sky', value: 'the sky is blue' });
+
+  // ANY term matching includes the entry; the tool-failure lookup relies on this.
+  const anyOf = await store.search({ q: ['tokens', 'batched'], scopes: ['global'] });
+  assert.deepEqual(anyOf.entries.map((e) => e.key).sort(), ['auth-note', 'db']);
+
+  // A list of only empty strings drops to no needles → "return everything", like ''.
+  const blank = await store.search({ q: ['', ''], scopes: ['global'] });
+  assert.equal(blank.entries.length, 3);
+  const none = await store.search({ q: [], scopes: ['global'] });
+  assert.equal(none.entries.length, 3);
+});
+
+test('two-tier search accepts a term list and OR-matches across both tiers', async () => {
+  const { home, project } = { home: tmpDir(), project: tmpDir() };
+  await createLocalStore(home).write({ scope: 'global', key: 'g', value: 'econnrefused on connect' });
+  await createLocalStore(project).write({ scope: 'repo::o/r', key: 'r', value: 'flaky timeout retry' });
+  const store = createTwoTierStore({ home, project });
+
+  const hits = await store.search({ q: ['econnrefused', 'timeout'], scopes: ['repo::o/r', 'global'] });
+  assert.deepEqual(hits.entries.map((e) => e.key).sort(), ['g', 'r']);
+});
+
 test('the store writes into the canonical-scope directory layout', async () => {
   const base = tmpDir();
   const store = createLocalStore(base);
