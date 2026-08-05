@@ -57,6 +57,16 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: 'What to deploy (overrides the change-detection step for a manual run)'
+        type: choice
+        default: auto
+        options:
+          - auto        # Use the change-detection step (same as a push to main)
+          - all         # Force BOTH halves — API + web
+          - api         # API only (Supabase edge functions + migrations)
+          - web         # Web only (Next.js dashboard on Vercel)
 
 permissions: {}
 
@@ -74,6 +84,11 @@ jobs:
   #    a change to this pipeline exercises the whole thing. Skipping the unchanged
   #    half is safe for the FE↔API lockstep — lockstep only matters when both
   #    change, and then both halves run and flip together.
+  #
+  #    A MANUAL run (workflow_dispatch) can override the detection with the
+  #    `deploy_target` input: `all` forces both halves, `api`/`web` force exactly
+  #    one, and `auto` (the default) falls back to the path filter — so a maintainer
+  #    can redeploy an unchanged half from the Actions UI without a no-op commit.
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
@@ -92,7 +107,27 @@ jobs:
         id: filter
         env:
           BEFORE: ${{ github.event.before }}
+          DEPLOY_TARGET: ${{ inputs.deploy_target }}
         run: |
+          # Manual override: a workflow_dispatch run can force what deploys,
+          # bypassing the path filter entirely. `auto` (and any push, where the
+          # input is empty) falls through to the change detection below.
+          case "$DEPLOY_TARGET" in
+            all) API=true;  WEB=true  ;;
+            api) API=true;  WEB=false ;;
+            web) API=false; WEB=true  ;;
+            *)   API=skip;  WEB=skip  ;;  # auto / empty → detect below
+          esac
+          if [ "$API" != skip ]; then
+            echo "Manual deploy target '$DEPLOY_TARGET' → api=$API web=$WEB"
+            echo "api=$API" >> "$GITHUB_OUTPUT"
+            echo "web=$WEB" >> "$GITHUB_OUTPUT"
+            echo "### Deploy scope (manual override: \`$DEPLOY_TARGET\`)" >> "$GITHUB_STEP_SUMMARY"
+            echo "- API (Supabase): $API" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Web (Vercel): $WEB" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
           BASE="$BEFORE"
           # Fall back to the parent commit for a first push, a missing base SHA,
           # or workflow_dispatch (no event.before) → compare against HEAD~1.
