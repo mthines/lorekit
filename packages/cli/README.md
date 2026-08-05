@@ -231,8 +231,8 @@ Inspect **one** lesson in full — its complete, **untruncated** value plus scop
 key, updated date, tags, and which store(s) it lives in:
 
 ```bash
-lorekit show global prefer-guard-clauses
-lorekit show project::widget build-flags --json
+lorekit show global::prefer-guard-clauses
+lorekit show repo::acme/widget::build-flags --json
 ```
 
 If the same `scope::key` exists in **both** the offline and remote stores —
@@ -241,6 +241,36 @@ When it lives in only one store, that copy is shown and the other is noted as
 missing. It exits **non-zero** when the key is found in no readable store, so it
 fits scripts. `--json` emits the full normalized record(s) and which store each
 came from. Both a scope and a key are required (else a usage error).
+
+### Addressing a memory: `<scope::key>`
+
+`show`, `write` and `link` all take a memory the same way, and the single-token
+`<scope::key>` form is canonical — it is exactly what `list` and `search` print
+and what `write` echoes back, so a key copy-pasted out of any output resolves.
+The explicit two-positional form is also accepted, and `--scope` / `--key` name
+each half outright:
+
+```bash
+lorekit show repo::acme/widget::build-flags        # canonical
+lorekit show repo::acme/widget build-flags         # explicit positionals
+lorekit show --scope repo::acme/widget --key build-flags
+```
+
+The single-token form is split at the **last** `::`, and only when the left side
+is itself a **complete valid scope** — so a multi-segment scope stays whole
+(`repo::acme/widget::build-flags` is scope `repo::acme/widget`, key
+`build-flags`), and a bare `repo::acme/widget` is never mis-read as scope `repo`
+plus a bogus key. Because `::` is reserved as the scope separator, a key that
+itself contains `::` cannot be written as one token — use `--key` for those:
+
+```bash
+lorekit write --scope global --key "loop::aw-lessons" "body"
+```
+
+The scope is validated before any store is touched, so a typo is rejected by
+name (`invalid scope foo — unrecognized scope type`) instead of surfacing later
+as a missing value or, worse, a memory quietly filed under a scope that does not
+exist. See [scope format](../../docs/scope-format.md) for the grammar.
 
 ### `lorekit stats`
 
@@ -724,7 +754,8 @@ also returns their headroom against the plan's memory cap.
 | `--force` | Overwrite existing skill files (`install`) |
 | `--deep` | Write/read/delete round-trip (`doctor`) |
 | `--json` | Machine-readable output (`list` / `search` / `show` / `stats` / `scopes` / `diff` / `tree` / `lint` / `dedupe` / `link`) |
-| `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff` / `tree` / `lint` / `dedupe` / `link`; default: all applicable). For `scopes` it is a **substring filter** over the inventory |
+| `--scope <scope>` | Restrict to a single scope (`list` / `search` / `stats` / `diff` / `tree` / `lint` / `dedupe` / `link`; default: all applicable). For `scopes` it is a **substring filter** over the inventory. On `show` / `write` it **names** the scope, overriding the positional |
+| `--key <key>` | Name the key outright (`show` / `write` / `link`) — the way to address a key that itself contains `::` |
 | `--link` | Print the equivalent dashboard deep-link URL instead of running (`show` / `search` / `list` / `tree`) |
 | `--base <url>` | Dashboard base URL for deep links (`link` / `--link`; else `LOREKIT_APP_URL`, default `https://lorekit.io`) |
 | `--threshold <0..1>` | Duplicate-similarity cutoff (`dedupe`; default `0.8`) |

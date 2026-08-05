@@ -344,11 +344,16 @@ test('show scope::key shorthand --json reports correct scope and key', () => {
   assert.equal(out.offline.record.value, 'json value');
 });
 
-test('show with invalid scope::key (empty key part) is a usage error', () => {
+test('show with invalid scope::key (empty key part) is an error naming the scope', () => {
+  // Still exit 1, but the message improved: `global::` cannot split (no key on
+  // the right), so the whole token is the scope — and reporting THAT is more
+  // useful than a generic usage block, because the scope is the thing that is
+  // wrong. The valid-scope list is printed underneath.
   const { root, home } = seedProject();
   const res = runShow(root, home, ['global::']);
   assert.equal(res.status, 1);
-  assert.match(res.stderr, /Usage:/);
+  assert.match(res.stderr, /invalid scope global::/);
+  assert.match(res.stderr, /Valid scopes: global \| project::/);
 });
 
 // ── Configured default TTL (ttl.default / scope.defaults) ─────────────────────
@@ -466,4 +471,165 @@ test('write: the human output names the config as the source of an unrequested T
   const res = runWrite(root, home, ['global', 'k', 'v', '--local']);
   assert.equal(res.status, 0);
   assert.match(res.stdout, /expires\s+in 30 days \(from config\)/);
+});
+
+// ── multi-segment scopes, end-to-end (the regression this file was missing) ───
+//
+// Every test above this point uses `global` — the ONE scope for which a
+// first-`::` split and a last-`::` split agree. That is precisely why the
+// naive `parseScopeKey` split survived: for any other scope BOTH documented
+// positional forms were mis-parsed, and `write` silently stored the wrong
+// record with the value dropped:
+//
+//   write repo::owner/name my-key "body"
+//     → scope "repo", key "owner/name", value "my-key"   ← "body" discarded
+//   write project::widget build-flags "body"    (the README's own example)
+//     → scope "project", key "widget"
+//
+// These assert the whole round trip through the binary, so a correct parser
+// that is not actually wired into the command still fails them.
+
+// Read a memory back with `show --json`, addressed by explicit flags so the
+// assertion never depends on the parser it is meant to be testing.
+function showByFlags(root, home, scope, key) {
+  const res = runShow(root, home, ['--scope', scope, '--key', key, '--json']);
+  return { res, out: res.status === 0 ? JSON.parse(res.stdout) : null };
+}
+
+for (const scope of ['repo::acme/widget', 'branch::acme/widget::main', 'project::widget']) {
+  test(`write <${scope}> <key> <value> stores all three, dropping nothing`, () => {
+    const { root, home } = seedProject();
+    const res = runWrite(root, home, [scope, 'my-key', 'the real value', '--local']);
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, new RegExp(`${scope.replace('/', '\\/')}::my-key`));
+
+    const { out } = showByFlags(root, home, scope, 'my-key');
+    assert.equal(out.scope, scope);
+    assert.equal(out.key, 'my-key');
+    assert.equal(out.offline.record.value, 'the real value', 'the value must not be swallowed');
+  });
+
+  test(`write <${scope}::key> <value> splits at the LAST :: and keeps the scope whole`, () => {
+    const { root, home } = seedProject();
+    const res = runWrite(root, home, [`${scope}::my-key`, 'the real value', '--local']);
+    assert.equal(res.status, 0, res.stderr);
+
+    const { out } = showByFlags(root, home, scope, 'my-key');
+    assert.equal(out.scope, scope);
+    assert.equal(out.key, 'my-key');
+    assert.equal(out.offline.record.value, 'the real value');
+  });
+
+  test(`both positional forms of <${scope}> address the SAME record`, () => {
+    const { root, home } = seedProject();
+    runWrite(root, home, [scope, 'same-key', 'first', '--local']);
+    runWrite(root, home, [`${scope}::same-key`, 'second', '--local']);
+    // An upsert, not two rows: the two forms must resolve identically.
+    const { out } = showByFlags(root, home, scope, 'same-key');
+    assert.equal(out.offline.record.value, 'second');
+
+    const files = [];
+    const walk = (dir) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (e.name.endsWith('.md')) files.push(full);
+      }
+    };
+    walk(home);
+    assert.equal(files.length, 1, `expected one memory on disk, got ${files.length}`);
+  });
+
+  test(`show reads <${scope}> back through both positional forms`, () => {
+    const { root, home } = seedProject();
+    runWrite(root, home, ['--scope', scope, '--key', 'read-key', 'body text', '--local']);
+
+    const two = runShow(root, home, [scope, 'read-key', '--json']);
+    assert.equal(two.status, 0, two.stderr);
+    assert.equal(JSON.parse(two.stdout).offline.record.value, 'body text');
+
+    const one = runShow(root, home, [`${scope}::read-key`, '--json']);
+    assert.equal(one.status, 0, one.stderr);
+    assert.equal(JSON.parse(one.stdout).offline.record.value, 'body text');
+  });
+}
+
+test('write: the value survives a key that would collide with the scope grammar', () => {
+  // `repo::acme/widget::my-key` is NOT a valid scope (`::` is reserved), which
+  // is exactly what lets the shorthand split reach the right answer here.
+  const { root, home } = seedProject();
+  const res = runWrite(root, home, ['repo::acme/widget::my-key', 'v', '--local', '--json']);
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.scope, 'repo::acme/widget');
+  assert.equal(out.key, 'my-key');
+});
+
+// ── scope validation at the CLI boundary ──────────────────────────────────────
+
+test('write rejects an unrecognized scope by NAME, not with a downstream complaint', () => {
+  // The report that started this: `lorekit write foo "asd"` parsed as scope
+  // `foo` + key `asd` with no value left, and complained about the missing
+  // value — three steps removed from the actual mistake.
+  const { root, home } = seedProject();
+  const res = runWrite(root, home, ['foo', 'asd', '--local']);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /invalid scope foo/);
+  assert.match(res.stderr, /unrecognized scope type/);
+  assert.doesNotMatch(res.stderr, /non-empty value/);
+  assert.equal(fs.existsSync(path.join(home, 'foo')), false, 'nothing was written');
+});
+
+test('write rejects a single-`:` scope the hosted API would 400 on', () => {
+  // The offline store accepts any string, so the CLI is the only gate here.
+  const { root, home } = seedProject();
+  const res = runWrite(root, home, ['repo:acme/widget', 'k', 'v', '--local']);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /single `:` separator/);
+});
+
+test('write rejects a repo scope carrying an extra `::` segment as a scope', () => {
+  const { root, home } = seedProject();
+  const res = runWrite(root, home, ['--scope', 'repo::acme/widget::extra', '--key', 'k', 'v', '--local']);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /no further `::` segment/);
+});
+
+test('show rejects an invalid scope instead of reporting a missing memory', () => {
+  const { root, home } = seedProject();
+  const res = runShow(root, home, ['foo', 'bar']);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /invalid scope foo/);
+});
+
+// ── --scope / --key: the escape hatch for a key containing `::` ───────────────
+
+test('write --scope/--key stores a key containing `::` verbatim', () => {
+  const { root, home } = seedProject();
+  const res = runWrite(root, home, ['--scope', 'global', '--key', 'loop::aw-lessons', 'body', '--local', '--json']);
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.scope, 'global');
+  assert.equal(out.key, 'loop::aw-lessons', 'the key must not be split');
+
+  const { out: shown } = showByFlags(root, home, 'global', 'loop::aw-lessons');
+  assert.equal(shown.offline.record.value, 'body');
+});
+
+test('write --scope overrides the positional scope, which then reads as the key', () => {
+  const { root, home } = seedProject();
+  const res = runWrite(root, home, ['my-key', 'body', '--scope', 'global', '--local', '--json']);
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.scope, 'global');
+  assert.equal(out.key, 'my-key');
+});
+
+// ── unconsumed positionals are reported, never silently ignored ───────────────
+
+test('show errors on a trailing positional rather than reading a different key', () => {
+  const { root, home } = seedProject();
+  const res = runShow(root, home, ['global::my-key', 'stray']);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /unexpected argument stray/);
 });

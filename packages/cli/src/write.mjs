@@ -1,9 +1,21 @@
-// `lorekit write <scope> <key> [value]` — create or update a memory from the CLI.
+// `lorekit write <scope::key> [value]` — create or update a memory from the CLI.
 //
 // Two positional shapes are accepted:
-//   write <scope> <key> [value]       — classic two-positional form
-//   write <scope::key> [value]        — combined shorthand (the same format `list`
-//                                       prints, so you can copy-paste a key directly)
+//   write <scope::key> [value]        — canonical form: ONE token, exactly the
+//                                       format `list`/`search` print and this
+//                                       command echoes back, so a key can be
+//                                       copy-pasted straight from any output
+//   write <scope> <key> [value]       — the explicit two-positional form, kept
+//                                       because it is unambiguous by position
+//   write --scope <s> --key <k> [value]
+//                                     — flags win outright; the ONLY way to
+//                                       express a key that itself contains `::`
+//
+// Disambiguation is `resolveScopeKeyArgs`'s job (`lessons-pure.mjs`) and is
+// gated on scope VALIDITY, never on a naive `::` split: `write repo::o/n k v`
+// keeps `repo::o/n` whole because it is already a valid scope, while
+// `write global::k v` splits because `global::k` is not. The scope is then
+// validated with `scopeIssue` before any store is touched.
 //
 // When no value is supplied as a positional or via --value, the command reads
 // the full stdin (useful for piping). In all cases the value is required — an
@@ -52,7 +64,7 @@ import { resolveProjectRoot } from './config.mjs';
 import { loadControl, resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
 import { log, err, heading, status, c } from './util.mjs';
-import { parseScopeKey } from './lessons-view.mjs';
+import { resolveScopeKeyArgs, scopeIssue } from './lessons-view.mjs';
 import { deriveOrigin, mergeOrigin } from './origin.mjs';
 import { parseTtlDays, resolveDefaultTtlDays } from './store/ttl.mjs';
 
@@ -72,29 +84,40 @@ export async function write(args) {
   const env = { ...process.env };
   if (args.store) env.LOREKIT_STORE = args.store;
 
-  // ── Parse positionals: two forms ──────────────────────────────────────────
-  // Form A: `write scope key [value]`   → _[1]=scope, _[2]=key, _[3]=value?
-  // Form B: `write scope::key [value]`  → _[1]='scope::key', _[2]=value?
-  let scope, key, positionalValue;
+  // ── Parse positionals ─────────────────────────────────────────────────────
+  // The shared `resolveScopeKeyArgs` decides between the shorthand and the
+  // two-positional form (and honours --scope/--key), and reports how many
+  // positionals it took so the VALUE is read from the right index in both:
+  //   write <scope::key> <value>     → consumed 1, value at _[2]
+  //   write <scope> <key> <value>    → consumed 2, value at _[3]
+  // `args._[0]` is the command token, so the command's own positionals start
+  // at index 1.
+  const positionals = args._.slice(1);
+  const { scope, key, consumed } = resolveScopeKeyArgs(positionals, {
+    scope: args.scope,
+    key: args.key,
+  });
+  const positionalValue =
+    typeof positionals[consumed] === 'string' ? positionals[consumed] : undefined;
 
-  const first = typeof args._[1] === 'string' ? args._[1] : '';
-  const parsed = parseScopeKey(first);
-
-  if (parsed) {
-    // Form B: combined scope::key
-    scope = parsed.scope;
-    key = parsed.key;
-    positionalValue = typeof args._[2] === 'string' ? args._[2] : undefined;
-  } else {
-    // Form A: separate scope and key
-    scope = first;
-    key = typeof args._[2] === 'string' ? args._[2] : '';
-    positionalValue = typeof args._[3] === 'string' ? args._[3] : undefined;
+  // Validate the scope BEFORE the missing-key check, the value, or any store.
+  // Order matters: a bad scope is the ROOT cause and every other complaint is
+  // downstream noise. `write foo "asd"` parses as scope `foo` + key `asd` with
+  // no value left, and used to report "a non-empty value is required" — three
+  // steps removed from the actual mistake. The offline store accepts any
+  // string, so this is also the only thing stopping a local write from
+  // creating a scope the hosted API would reject with a 400.
+  const badScope = scope ? scopeIssue(scope) : null;
+  if (badScope) {
+    err(`${c.red('Error:')} invalid scope ${c.cyan(scope)} — ${badScope}`);
+    err(`Valid scopes: global | project::<name> | repo::<owner>/<name> | branch::<owner>/<name>::<branch>`);
+    err(`Run ${c.cyan('lorekit write --help')} for options.`);
+    return 1;
   }
 
   if (!scope || !key) {
-    err(`${c.red('Usage:')} lorekit write <scope> <key> [value] [options]`);
-    err(`       lorekit write <scope::key> [value] [options]`);
+    err(`${c.red('Usage:')} lorekit write <scope::key> <value> [options]`);
+    err(`       lorekit write <scope> <key> <value> [options]`);
     err(`Both a scope and a key are required. Run ${c.cyan('lorekit write --help')} for options.`);
     return 1;
   }
