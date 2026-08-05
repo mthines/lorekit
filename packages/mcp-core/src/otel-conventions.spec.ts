@@ -254,8 +254,13 @@ describe('smoke test-run marker — the deployment-environment charset/bound sta
 
   it.each(sites)('%s uses the shared charset and a 64-char bound', (_label, rel) => {
     const src = read(rel);
-    expect(src, `${rel} must use the shared charset ${CHARSET}`).toContain(CHARSET);
-    expect(src, `${rel} must bound the value at 64 chars`).toMatch(/(?:<=|>)\s*64/);
+    // Match the executable regex literal and the `.length` bound, not a bare
+    // charset mention a comment could satisfy — sibling smoke-cleanup.spec.ts
+    // pins the executable line for exactly this reason.
+    expect(src, `${rel} must test with the shared charset regex /^${CHARSET}+$/`).toMatch(
+      /\/\^\[A-Za-z0-9_\.\\-:\]\+\$\//,
+    );
+    expect(src, `${rel} must bound the value length at 64 chars`).toMatch(/\.length\s*(?:<=|>)\s*64/);
   });
 
   it('the edge honours exactly the synthetic value `test`, which the charset admits', () => {
