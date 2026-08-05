@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.3](https://github.com/mthines/lorekit/compare/cli-v1.33.2...cli-v1.33.3) (2026-08-05)
+
+
+### Documentation
+
+* docs/otel.md + docs/deployment.md. ([7c259c9](https://github.com/mthines/lorekit/commit/7c259c9937a6a20bda0d44668b807de161d4187a))
+
 ## [1.33.2](https://github.com/mthines/lorekit/compare/cli-v1.33.1...cli-v1.33.2) (2026-08-05)
 
 
