@@ -14,8 +14,9 @@ type FacetRow = Database['public']['Functions']['lorekit_memory_facets']['Return
  * GET /memories/facets — every value the caller can filter by, per dimension,
  * with how many memories carry it.
  *
- * This is `GET /memories/tags` generalised to the five dimensions the Explorer's
- * filter menu grew: labels, agent, trigger, repo, branch, pull request. Each
+ * This is `GET /memories/tags` generalised to the eight dimensions the Explorer's
+ * filter menu grew: labels, agent, trigger, kind, host, repo, branch, pull
+ * request. Each
  * one is another unbounded free-text column, so each would otherwise repeat the
  * row-cap bug 00039 and 00050 exist to fix — one grouped row per distinct value
  * is exact at any volume, a `select … limit N` plus a browser-side tally is not.
@@ -27,11 +28,18 @@ type FacetRow = Database['public']['Functions']['lorekit_memory_facets']['Return
  * the response for the follow-up case (a menu already drilled into one
  * dimension refreshing just that one).
  *
- * Tenant scoping lives in the RPC (`lorekit_memory_facets`, migration 00052),
- * which composes `lorekit_member_org_ids` exactly as the memories RLS read
- * policies do — so, as with `handleTags` and `handleScopes`, there is
+ * Tenant scoping lives in the RPC (`lorekit_memory_facets`, migrations 00052 /
+ * 00057), which composes `lorekit_member_org_ids` exactly as the memories RLS
+ * read policies do — so, as with `handleTags` and `handleScopes`, there is
  * deliberately no `applyRestTenantScope` call: there is no query to scope, and
  * a second predicate would be a place for the two to drift.
+ *
+ * Counts are DRILL-DOWN (00057): the caller's active filters are forwarded and
+ * each dimension is counted with every OTHER one applied but not its own. Two
+ * limits worth knowing — a value counting zero under the other filters emits no
+ * row (as a null column value does), and `q` / `key` / `created_since` /
+ * `created_until` are not mirrored, so under a search or date window a count is
+ * an upper bound rather than the exact yield.
  */
 export async function handleFacets(
   req: Request, auth: AuthContext, db: DbClient, span: Span,
@@ -66,12 +74,40 @@ export async function handleFacets(
     ...(narrowed ? { 'lorekit.facets': named.join(',') } : {}),
   });
 
+  // Parse the caller's active filters (same names/shapes as GET /memories) so
+  // the RPC can compute drill-down counts. Empty → null = "not filtered". A
+  // comma-list splits by the one shared rule (`parseTagsParam`); `origin_pr` is
+  // digits-only (a non-numeric entry narrows the filter, never 400s the page).
+  const q = validated.data;
+  const list = (v?: string) => { const a = parseTagsParam(v); return a.length ? a : null; };
+  const prList = (() => {
+    const a = parseTagsParam(q.origin_pr).filter((v) => /^\d+$/.test(v));
+    return a.length ? a : null;
+  })();
+
   const tracedDb = createTracedClient(db, span);
   // Service-role callers have no user id; the RPC recognises a null p_user_id
   // from a service_role JWT as "no tenant filter", matching GET /memories.
   const { data, error } = await tracedDb.rpc<FacetRow>('lorekit_memory_facets', {
     p_user_id: auth.userId ?? null,
     p_archived: archived,
+    p_scope: q.scope ?? null,
+    p_tags: list(q.tags),
+    p_tags_mode: q.tags_mode,
+    p_source_agent: list(q.source_agent),
+    p_source_agent_mode: q.source_agent_mode,
+    p_trigger: list(q.trigger),
+    p_trigger_mode: q.trigger_mode,
+    p_kind: list(q.kind),
+    p_kind_mode: q.kind_mode,
+    p_host: list(q.host),
+    p_host_mode: q.host_mode,
+    p_origin_repo: list(q.origin_repo),
+    p_origin_repo_mode: q.origin_repo_mode,
+    p_origin_branch: list(q.origin_branch),
+    p_origin_branch_mode: q.origin_branch_mode,
+    p_origin_pr: prList,
+    p_origin_pr_mode: q.origin_pr_mode,
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 

@@ -3749,12 +3749,129 @@ begin
 end;
 $$;
 
+-- ── 69b. lorekit_memory_facets drill-down + kind/host (00057) ────────────────
+-- AC-1: kind and host are enumerated as their own dimensions.
+-- AC-2: DRILL-DOWN — an active filter on one dimension narrows the counts of
+--       the OTHER dimensions, so a value's count is what selecting it yields.
+-- AC-3: SELF-EXCLUSION — a dimension's own filter does NOT collapse its own
+--       other values, so multi-select stays discoverable.
+-- AC-4: the `tag` dimension's `cross join lateral unnest` branch drills down
+--       like the scalar ones — it is the only structurally different cell.
+-- AC-5: `nin` mode is a distinct `case` arm and must self-exclude too.
+-- AC-6: `origin_pr` is compared NUMERICALLY, so `007` matches PR 7 exactly as
+--       it does on `GET /memories`, and an all-non-numeric list filters nothing.
+-- Fresh user id `…dd` so only these three rows are visible — counts are exact.
+-- It owns no other row anywhere in this file, which is what makes every count
+-- below exact; it therefore needs its own `auth.users` seed to satisfy
+-- `memories.user_id`'s FK (00001), like the other late-introduced identities.
+insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
+values
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000dd', 'authenticated', 'authenticated', 'lk-mig-dd@test.local', now(), now());
+
+insert into memories (user_id, scope, key, value, source_agent, kind, host, tags, origin_pr) values
+  ('00000000-0000-0000-0000-0000000000dd', 'project::facet-dd', 'dd-1', 'v', 'aw',  'lesson', 'reviewer', array['dd-alpha','dd-shared'], 7),
+  ('00000000-0000-0000-0000-0000000000dd', 'project::facet-dd', 'dd-2', 'v', 'aw',  'lesson', 'aw',       array['dd-shared'],            7),
+  ('00000000-0000-0000-0000-0000000000dd', 'project::facet-dd', 'dd-3', 'v', 'bee', 'signal', 'reviewer', array['dd-beta','dd-shared'],  42);
+
+do $$
+declare
+  v_count bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- AC-1: kind + host appear as dimensions with global counts.
+  select count into v_count from lorekit_memory_facets(p_user_id => '00000000-0000-0000-0000-0000000000dd')
+   where facet = 'kind' and value = 'lesson';
+  assert v_count = 2, format('facets drill-down AC-1: kind lesson must count 2, got %s', v_count);
+  select count into v_count from lorekit_memory_facets(p_user_id => '00000000-0000-0000-0000-0000000000dd')
+   where facet = 'host' and value = 'reviewer';
+  assert v_count = 2, format('facets drill-down AC-1b: host reviewer must count 2, got %s', v_count);
+
+  -- AC-2: filter kind=lesson → host `reviewer` narrows from 2 to 1 (only dd-1;
+  -- dd-3 is a signal). This is the whole point of drill-down.
+  select count into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_kind => array['lesson'], p_kind_mode => 'in')
+   where facet = 'host' and value = 'reviewer';
+  assert v_count = 1, format('facets drill-down AC-2: host reviewer under kind=lesson must be 1, got %s', v_count);
+
+  -- AC-3: the SAME kind filter must NOT collapse the kind dimension's own
+  -- values — self-exclusion keeps signal=1 visible so the user can switch.
+  select count into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_kind => array['lesson'], p_kind_mode => 'in')
+   where facet = 'kind' and value = 'signal';
+  assert v_count = 1, format('facets drill-down AC-3: self-exclusion must keep kind signal=1 under kind=lesson, got %s', v_count);
+
+  -- AC-4: the tag dimension is the ONE cell built with `cross join lateral
+  -- unnest`, so its drill-down is structurally different from the scalar ones
+  -- and is asserted on its own. `dd-shared` is on all three rows, so kind=lesson
+  -- narrows it 3 → 2; `dd-beta` lives only on the signal row, so it disappears.
+  -- `coalesce(sum(...))` because an absent value emits NO row at all.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_kind => array['lesson'], p_kind_mode => 'in') f
+   where f.facet = 'tag' and f.value = 'dd-shared';
+  assert v_count = 2, format('facets drill-down AC-4: tag dd-shared under kind=lesson must be 2, got %s', v_count);
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_kind => array['lesson'], p_kind_mode => 'in') f
+   where f.facet = 'tag' and f.value = 'dd-beta';
+  assert v_count = 0, format('facets drill-down AC-4b: tag dd-beta must not survive kind=lesson, got %s', v_count);
+
+  -- AC-4c: the tag dimension SELF-EXCLUDES too — filtering on `dd-alpha` must
+  -- not collapse the tag dimension to that one value, or the user could never
+  -- switch labels from a drilled-down menu.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_tags => array['dd-alpha'], p_tags_mode => 'any') f
+   where f.facet = 'tag' and f.value = 'dd-beta';
+  assert v_count = 1, format('facets drill-down AC-4c: tag self-exclusion must keep dd-beta=1 under tags=dd-alpha, got %s', v_count);
+
+  -- AC-5: `nin` is its own `case` arm. Under kind NOT IN (lesson) the host
+  -- dimension narrows to the signal row only (1), while the kind dimension
+  -- self-excludes and still reports its own excluded value (lesson = 2).
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_kind => array['lesson'], p_kind_mode => 'nin') f
+   where f.facet = 'host' and f.value = 'reviewer';
+  assert v_count = 1, format('facets drill-down AC-5: host reviewer under kind nin lesson must be 1, got %s', v_count);
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_kind => array['lesson'], p_kind_mode => 'nin') f
+   where f.facet = 'kind' and f.value = 'lesson';
+  assert v_count = 2, format('facets drill-down AC-5b: nin self-exclusion must keep kind lesson=2, got %s', v_count);
+
+  -- AC-6: `origin_pr` is an integer column, so the filter is compared
+  -- numerically — `007` must match PR 7 exactly as it does on `GET /memories`,
+  -- which sends the digits-only value bare to the integer column.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_origin_pr => array['007'], p_origin_pr_mode => 'in') f
+   where f.facet = 'kind' and f.value = 'lesson';
+  assert v_count = 2, format('facets drill-down AC-6: zero-padded origin_pr 007 must match PR 7 (kind lesson = 2), got %s', v_count);
+
+  -- AC-6b: a list with no numeric entry left applies NO filter, rather than
+  -- matching nothing — again the list route's documented behaviour.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000dd',
+      p_origin_pr => array['not-a-number'], p_origin_pr_mode => 'in') f
+   where f.facet = 'kind' and f.value = 'lesson';
+  assert v_count = 2, format('facets drill-down AC-6b: a non-numeric origin_pr list must not filter (kind lesson = 2), got %s', v_count);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 -- ── 70. lorekit_memory_facets grant surface — PII-adjacent, so no anon ──────
 -- Branch names, repo names and agent names are at least as sensitive as the
 -- scope names 00039 withholds, so the grant set is that function's verbatim.
 do $$
 declare
-  v_sig text := 'lorekit_memory_facets(uuid, boolean)';
+  -- 00057 widened the signature with the drill-down filter params (19 args).
+  v_sig text := 'lorekit_memory_facets(uuid, boolean, text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text)';
 begin
   assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
     'memory facets: anon must NOT have EXECUTE';

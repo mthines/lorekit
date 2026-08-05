@@ -299,6 +299,8 @@ export const MemoryFacetSchema = z.enum([
   'tag',
   'source_agent',
   'trigger',
+  'kind',
+  'host',
   'origin_repo',
   'origin_branch',
   'origin_pr',
@@ -320,6 +322,46 @@ export const ListFacetsQuerySchema = z.object({
    * refresh just that one instead of re-reading the whole catalog.
    */
   facets: z.string().optional(),
+  /**
+   * The caller's CURRENTLY-APPLIED filters — the DIMENSION filters of
+   * `GET /memories`, named identically so a menu CAN pass its filter state
+   * verbatim. When any are present the counts become drill-down: each dimension
+   * is counted with every OTHER active filter applied but not its own
+   * (self-exclusion, migration 00057), so a value's count is what selecting it
+   * would actually yield. Absent → the global catalog, unchanged.
+   *
+   * No caller passes them yet: `packages/web`'s `listFacetsRequest` still sends
+   * only `archived`, and `FILTER_FIELDS` has no `kind`/`host` row. Every
+   * response the dashboard renders today is therefore the global catalog.
+   *
+   * `ListMemoriesQuerySchema`'s NON-dimension filters — `q`, `key`,
+   * `created_since` and `created_until` — are deliberately NOT mirrored, so
+   * with a search or date window active a count is an upper bound on the yield
+   * rather than the exact figure. Mirroring `q` would mean a second
+   * implementation of `likeNeedle`'s LIKE escaping inside plpgsql, and a filter
+   * value is encoded exactly one way in this repo.
+   *
+   * A value whose count falls to zero under the other dimensions' filters emits
+   * no row at all — the same omission a null column value has — so it leaves
+   * the menu until the filter is cleared.
+   */
+  scope: RawScopeSchema.optional(),
+  tags: z.string().optional(),
+  tags_mode: TagsModeSchema.optional().default('any'),
+  source_agent: ValueListSchema.optional(),
+  source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
+  trigger: ValueListSchema.optional(),
+  trigger_mode: ScalarFilterModeSchema.optional().default('in'),
+  kind: ValueListSchema.optional(),
+  kind_mode: ScalarFilterModeSchema.optional().default('in'),
+  host: ValueListSchema.optional(),
+  host_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_repo: ValueListSchema.optional(),
+  origin_repo_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_branch: ValueListSchema.optional(),
+  origin_branch_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_pr: ValueListSchema.optional(),
+  origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
 });
 export type ListFacetsQuery = z.infer<typeof ListFacetsQuerySchema>;
 
