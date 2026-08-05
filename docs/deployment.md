@@ -384,6 +384,29 @@ dashboard as the database safety net. The web rollback stays out only when the
 API deploy failed before the web was ever promoted — in that case the web was
 never touched, so reverting it would regress a healthy deployment.
 
+### Smoke telemetry (observable in Dash0, tagged `test`)
+
+The smoke jobs are instrumented so a failure is diagnosable from telemetry, not
+only the CI log. Each smoke job (`deploy.yml` smoke-preview/smoke-production,
+`preview.yml` smoke, `ci.yml` integration) sets three job-wide env vars:
+
+- `LOREKIT_TELEMETRY_TOKEN` — turns on CLI OTLP export, which is off in a source
+  checkout (the token is injected only at npm publish), so `install` /
+  `doctor --deep` emit their `cli` spans.
+- `DEPLOYMENT_ENVIRONMENT=test` — stamps **all** of the run's smoke telemetry
+  (CLI, plus the edge `api` spans for every REST/MCP request the smokes make)
+  with `deployment.environment.name=test`, so synthetic smoke traffic filters
+  apart from real usage — including the production smoke, which runs against the
+  production deployment. The mechanism (a forwarded `X-LoreKit-Deployment-Environment`
+  header the edge honours only for the value `test`) is documented in
+  [docs/otel.md](./otel.md) → "Smoke / test runs are tagged".
+- `LOREKIT_CORRELATION_ID` — a per-run key on every REST call's
+  `usage_events.correlation_id`, so one run's calls are greppable.
+
+`ci.yml`'s integration job runs against a throwaway **local** Supabase with no
+OTLP endpoint, so nothing exports there — the vars only keep the tagging uniform
+and exercise the code path; real export happens in the preview/production jobs.
+
 ### Smoke-test data hygiene
 
 The smoke suites write to **real projects** — the preview/staging project in

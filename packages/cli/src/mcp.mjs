@@ -138,6 +138,26 @@ export function normalizeCorrelationId(raw) {
   return /^[A-Za-z0-9_\-./:#@]+$/.test(t) ? t : null;
 }
 
+/**
+ * Normalise a deployment-environment marker restFetch attaches as
+ * X-LoreKit-Deployment-Environment when DEPLOYMENT_ENVIRONMENT (or
+ * OTEL_DEPLOYMENT_ENVIRONMENT) is set. It lets a smoke/test run tell the edge to
+ * report `deployment.environment.name` for that request — the edge honours only
+ * the synthetic `test` value, so real traffic (no env set) is never tagged and a
+ * caller can never relabel itself as another real environment. This is the SAME
+ * value `resolveDeploymentEnvironment` (packages/cli/src/telemetry.mjs) puts on
+ * the CLI's own resource, so one `DEPLOYMENT_ENVIRONMENT=test` marks both the CLI
+ * span and its downstream edge spans. Bounded + charset-restricted (fail-safe: a
+ * bad value is not sent). Zero-dep, so the small regex is duplicated
+ * intentionally, like `normalizeCorrelationId`.
+ */
+export function normalizeRunEnvironment(raw) {
+  if (typeof raw !== 'string') return null;
+  const t = raw.trim();
+  if (!t || t.length > 64) return null;
+  return /^[A-Za-z0-9_.\-:]+$/.test(t) ? t : null;
+}
+
 export async function restFetch(baseUrl, token, path, { method = 'GET', body, timeoutMs = 10000, traceparent } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -148,12 +168,21 @@ export async function restFetch(baseUrl, token, path, { method = 'GET', body, ti
     // /memories/usage?correlation_id=… can report "usage for this PR". Absent env
     // ⇒ no header ⇒ existing behaviour unchanged.
     const correlationId = normalizeCorrelationId(process.env.LOREKIT_CORRELATION_ID);
+    // Opt-in test-run marker: when DEPLOYMENT_ENVIRONMENT is set (a deploy/CI
+    // smoke sets it to `test`), tell the edge to report that
+    // `deployment.environment.name` for this request so Dash0 can filter synthetic
+    // smoke traffic apart from real usage. Absent env ⇒ no header ⇒ existing
+    // behaviour unchanged. The edge honours only `test` (see otel.ts).
+    const runEnv = normalizeRunEnvironment(
+      process.env.DEPLOYMENT_ENVIRONMENT ?? process.env.OTEL_DEPLOYMENT_ENVIRONMENT,
+    );
     const headers = {
       accept: 'application/json',
       ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(traceparent ? { traceparent } : {}),
       ...(correlationId ? { 'x-lorekit-correlation-id': correlationId } : {}),
+      ...(runEnv ? { 'x-lorekit-deployment-environment': runEnv } : {}),
       // Name the calling surface so usage analytics can tell a CLI read from a
       // dashboard one. Not cosmetic: `GET /memories/read-activity` EXCLUDES the
       // `dashboard` client (a human browsing lore is not consuming it), so a

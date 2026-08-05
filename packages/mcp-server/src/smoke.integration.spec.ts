@@ -23,6 +23,7 @@ import {
   runBestEffortCleanup,
   sweepSmokeArtefacts,
 } from './smoke-cleanup.js';
+import { testRunHeaders } from './smoke-telemetry.js';
 
 const BASE_URL = (process.env['LOREKIT_SMOKE_URL'] ?? 'http://localhost:3000/mcp').replace(/\/$/, '');
 const TOKEN = process.env['LOREKIT_SMOKE_TOKEN'];
@@ -61,6 +62,7 @@ async function mcpCallInner<T = unknown>(tool: string, args: Record<string, unkn
       'Content-Type': 'application/json',
       Accept: 'application/json, text/event-stream',
       Authorization: `Bearer ${TOKEN}`,
+      ...testRunHeaders(),
     },
     body: JSON.stringify({
       jsonrpc: '2.0',

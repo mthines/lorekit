@@ -23,6 +23,7 @@ import {
   sweepSmokeArtefacts,
   type SmokeNamespace,
 } from './smoke-cleanup.js';
+import { testRunHeaders } from './smoke-telemetry.js';
 
 const BASE = (process.env['LOREKIT_REST_BASE_URL'] ?? 'http://localhost:54321/functions/v1').replace(/\/$/, '');
 const TOKEN = process.env['LOREKIT_SMOKE_TOKEN'];
@@ -63,6 +64,7 @@ async function api(method: string, path: string, body?: unknown): Promise<{ stat
     headers: {
       Authorization: `Bearer ${TOKEN}`,
       'Content-Type': 'application/json',
+      ...testRunHeaders(),
     },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
