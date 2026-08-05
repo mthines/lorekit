@@ -139,9 +139,12 @@ export function failureQuery(toolName, toolResponse) {
 // De-duplicate store-search hits by `scope::key` and cap them, PRESERVING the
 // store's order — which is NOT relevance ordering: the remote store filters by
 // FTS but orders by `updated_at desc` (recency), and the local one yields scope
-// precedence (most-specific first), since the search walks the scope hierarchy
-// in `readOrder`. Pure and total — any non-array input degrades to [] rather
-// than throwing (this runs inside the best-effort failure hook).
+// precedence (most-specific first) only WITHIN a tier — `LocalStore.search`
+// walks the scope hierarchy in `readOrder`, but `TwoTierStore.search` merges
+// project-tier hits ahead of home-tier ones, so a `global` lesson in the project
+// tier outranks a `repo::` one in home. Pure and total — any non-array input
+// degrades to [] rather than throwing (this runs inside the best-effort failure
+// hook).
 export function dedupeRelevant(entries, cap = MAX_RELEVANT) {
   if (!Array.isArray(entries)) return [];
   const seen = new Set();
