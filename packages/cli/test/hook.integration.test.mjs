@@ -195,35 +195,41 @@ test('the Stop friction gate does not consume the retro marker when it stays sil
   assert.match(JSON.parse(second.stdout).hookSpecificOutput.additionalContext, /a failed tool call/);
 });
 
-// A mock REST endpoint over a fixed lesson set. `GET /memories` (list) returns
-// the whole scope; `POST /memories/search` NARROWS by the query term — a loose
-// substring stand-in for the server's FTS. The failure path queries search, so
-// the mock must actually filter, otherwise every lesson would "match".
-// remote.mjs calls restFetch (REST API) for both list and search, not mcpCall.
-function mockLessonServer(entries) {
+// A mock REST endpoint. `GET /memories` (list) returns `listEntries` — what a
+// SessionStart injection sees; `POST /memories/search` NARROWS `searchEntries`
+// by the query (a loose substring stand-in for the server's FTS, splitting the
+// `a OR b` form the remote store now sends). The two sets are SEPARATE on
+// purpose: seeding a lesson only into `searchEntries` proves the failure path
+// QUERIES the store rather than post-filtering the injected/list set — that
+// lesson is unreachable to the old path. remote.mjs calls restFetch for both.
+function mockLessonServer(listEntries, searchEntries = listEntries) {
   return http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
       res.setHeader('content-type', 'application/json');
-      let out = entries;
+      let out = listEntries;
       if (req.url && req.url.includes('/memories/search')) {
         let q = '';
         try { q = String(JSON.parse(body || '{}').q || '').toLowerCase(); } catch { q = ''; }
-        out = q
-          ? entries.filter((e) => `${e.key} ${e.value}`.toLowerCase().includes(q))
-          : entries;
+        const needles = q.split(/\s+or\s+/).filter(Boolean);
+        out = needles.length
+          ? searchEntries.filter((e) => needles.some((n) => `${e.key} ${e.value}`.toLowerCase().includes(n)))
+          : searchEntries;
       }
       res.end(JSON.stringify({ entries: out, hasMore: false, nextCursor: null }));
     });
   });
 }
 
-test('PostToolUseFailure injects a RELEVANT lesson plus the write-nudge', async () => {
-  const server = mockLessonServer([
-    { key: 'eslint-flat-config', value: 'use eslint.config.js, the flat config; .eslintrc is ignored', tags: [] },
-    { key: 'unrelated', value: 'the sky is blue', tags: [] },
-  ]);
+test('PostToolUseFailure injects a RELEVANT lesson (found by querying, not post-filtering)', async () => {
+  // The eslint lesson is seeded ONLY into the search set — NOT the list set the
+  // SessionStart injection reads — so it is reachable only by querying the store.
+  // Under the old post-filter-the-injected-set path this assertion would fail.
+  const server = mockLessonServer(
+    [{ key: 'unrelated', value: 'the sky is blue', tags: [] }],
+    [{ key: 'eslint-flat-config', value: 'use eslint.config.js, the flat config; .eslintrc is ignored', tags: [] }],
+  );
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
   const tmpProject = freshStateDir();
@@ -243,8 +249,8 @@ test('PostToolUseFailure injects a RELEVANT lesson plus the write-nudge', async 
     assert.equal(code, 0);
     const ctx = JSON.parse(stdout).hookSpecificOutput.additionalContext;
     assert.match(ctx, /hit something like this before/); // the relevant-lesson block
-    assert.match(ctx, /eslint-flat-config/);
-    assert.doesNotMatch(ctx, /the sky is blue/); // the non-matching lesson is not injected
+    assert.match(ctx, /eslint-flat-config/); // reached only via the store query
+    assert.doesNotMatch(ctx, /the sky is blue/); // the list-only lesson is never searched
     assert.match(ctx, /the last Bash call failed/); // the write-nudge still follows
   } finally {
     server.close();
