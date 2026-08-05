@@ -218,60 +218,54 @@ are surfaced for awareness but do not block the workflow — they require a huma
 
 Skip this step only if the branch diff is non-code only (docs, lockfiles, generated artefacts).
 
-### Step 2 — Open the PR (as a draft)
+### Step 2 — Open the PR with `/create-pr --no-review` (as a draft)
 
-Open the PR **as a draft** (`gh pr create --draft`). The draft state is what lets `pr-reviewer`
-(Step 3) and the `dash0-dev` bot (Step 4) post inline comments while the branch converges — undrafting
-is the last, human step, after the flow below reaches ready-to-review. The `dash0-dev` bot picks up the
-event automatically and starts its review — **you do not trigger it manually**.
+Open the PR with `/create-pr` (it opens as a **draft** — the draft state is what lets the `dash0-dev`
+bot post inline comments while the branch converges).
 
-### Step 3 — Converge the PR locally with `/review-loop`
+**Always pass `--no-review`.** This repo has the `dash0-dev` bot, which runs the `pr-reviewer` agent on
+the PR automatically (Step 3), so `/create-pr`'s built-in `review-loop` would run a **second**
+`pr-reviewer` on the same PR — a duplicate review by the same agent, for no gain. `--no-review` drops
+that local reviewer pass while **keeping** `create-pr`'s `polish simplify` and, crucially, its
+external-bot feedback loop (which is Step 4). Do **not** pass `--no-feedback` (that skips Step 4) or
+`--no-quality`. Undrafting is the last, human step, after the flow reaches ready-to-review.
 
-After the draft PR is open, run the bounded review-apply-simplify convergence loop — the same
-orchestrator `/create-pr` (post-draft) and `autonomous-workflow` Phase 6/7 use:
+> **The one review agent on the PR is the `dash0-dev` bot — never run a second `pr-reviewer` locally.**
+> `/polish` (Step 1) runs the reviewer BEFORE the PR exists (a local pre-flight, no GitHub write), so
+> it does not double-post; `review-loop` runs it ON the open PR, which does, so it is excluded here.
 
-```
-Skill("review-loop", "<pr-url>")
-```
+### Step 3 — The `dash0-dev` bot reviews (the ONE review agent on the PR)
 
-`review-loop` owns no rules of its own; each iteration it sequences `pr-reviewer` (find — read-only,
-posts one `COMMENT` review) → `implement-suggestion` (apply — **single-shot, NOT `--watch`**) →
-`Skill("polish", "simplify")` (Class-M mechanical refactors), then pushes. It **drives its own
-re-review**, so it never waits on an external bot. `implement-suggestion` makes **one commit per
-comment**, each gated by `/critical` then `/confidence` — that is the per-comment behaviour. The loop
-**early-exits** the instant `pr-reviewer` returns PASS with no blocking findings, and is **bounded to 3
-iterations** (`--cap N` to change; `--critical` for an adversarial pre-mortem each round). It **never
-undrafts** the PR. If it reaches the cap still failing, it surfaces the remaining blockers — fix them
-or reply why not.
+The `dash0-dev` bot runs `pr-reviewer` server-side and posts a `COMMENT` review automatically — **and
+re-reviews on every new commit** (a `synchronize` push), marking addressed findings "Superseded /
+Resolving." You do NOT trigger it manually, and you do NOT run a second reviewer against the PR. Two
+facts to remember: a verdict is pinned to a `commit_id`, so a gate summary can be **stale on an older
+SHA** while already resolved on `HEAD` — check which commit a comment targets before treating it as
+open; and a push mid-review can anchor the next comments to your new SHA while still describing
+*pre-fix* content, so re-verify against `HEAD` (`git show HEAD:<file>`) rather than trusting a
+just-arrived comment.
 
-### Step 4 — Absorb EXTERNAL-bot feedback with `/implement-suggestion --watch`
+### Step 4 — Absorb the bot's feedback with `/implement-suggestion --watch`
 
-Separately from the local loop, the `dash0-dev` bot reviews **automatically on every commit** (a
-`synchronize` push) — it runs the same `pr-reviewer` agent server-side and posts a `COMMENT` review
-(marking addressed findings "Superseded / Resolving"); CodeRabbit and human reviewers may comment too.
-After `review-loop` has converged, dispatch a **background** sub-agent (`run_in_background: true`,
-subagent_type: general) to absorb that external feedback without blocking the CI work in Step 5 — the
-same thing `/create-pr` does after its review-loop:
+`/create-pr` dispatches this automatically after opening the PR (its external-bot feedback step) as a
+**background** sub-agent — so if you opened the PR with `/create-pr` (Step 2) it is already running. If
+you pushed a follow-up commit by hand, or need to drive it yourself, dispatch a background sub-agent
+(`run_in_background: true`, subagent_type: general):
 
 > Invoke: Skill('implement-suggestion', '<pr-url> --watch')
-> Absorb EXTERNAL review feedback to completion — only comments from external parties, NOT the
-> review-loop's own. It never opens a new PR and never undrafts this one. Return its watch report.
+> Absorb the `dash0-dev` (and any CodeRabbit / human) review feedback to completion. It never opens a
+> new PR and never undrafts this one. Return its per-iteration watch report.
 
-`--watch` waits for each external review, applies the actionable comments (one commit per comment,
-`/critical`+`/confidence` gated), pushes, and repeats — **scoped to comments posted after
-`review-loop`'s last push**, so it never re-applies the loop's own findings. It is **bounded to 5
-iterations** (`--max-iters` default; hard cap 10) and **never undrafts**. Two facts about the external
-bot: a verdict is pinned to a `commit_id`, so a gate summary can be **stale on an older SHA** while
-already resolved on `HEAD` — check which commit a comment targets before treating it as open; and a
-push mid-review can anchor the next comments to your new SHA while still describing *pre-fix* content,
-so re-verify against `HEAD` (`git show HEAD:<file>`). Do **not** post `@dash0 resolve` — agent-posted
+`--watch` waits for each `dash0-dev` review, applies the actionable comments (**one commit per
+comment**, each gated by `/critical` then `/confidence`), pushes, and repeats — **bounded to 5
+iterations** (`--max-iters` default; hard cap 10), processing only comments newer than the last round
+so it never re-applies one. It **never undrafts**. Do **not** post `@dash0 resolve` — agent-posted
 comments don't trigger the webhook; the skill resolves threads via the API directly.
 
-### Step 5 — Drive CI green (in parallel); ready-to-review = clean + green
+### Step 5 — Drive CI green; ready-to-review = bot PASS + green CI
 
-CI is a separate concern, run in the main thread in parallel with the Step 4 background watch (both
-push to the same branch; each skill pull-rebases internally, so no manual serialisation). Whenever
-checks are red, run:
+`/create-pr` watches CI and delegates mechanical failures to `/ci-auto-fix` for you. For any red check
+on a hand-pushed commit, run it yourself:
 
 ```
 /ci-auto-fix
@@ -281,12 +275,11 @@ This uses the `ci-auto-fix` skill (wired in during Prerequisites), diagnoses any
 Actions checks, applies a minimal targeted fix, and iterates until all checks are green. The skill
 is confidence-gated (>=90 auto-apply, 80-89 ask, <80 escalate) and will never disable or weaken a
 check. Skip only when CI is already fully green. A `/ci-auto-fix` push is itself a new commit, so it
-re-triggers the external bot review that Step 4 then absorbs — the loops converge.
+re-triggers the `dash0-dev` review that Step 4 then absorbs — the loops converge.
 
-**Definition of ready-to-review:** `review-loop` converged (PASS, no blockers) **and** external-bot
-feedback absorbed **and** every CI check green. That is the *content* state this flow drives to; per
-both skills' hard rule the agent does **not** flip the draft flag — undrafting stays a human/explicit
-decision.
+**Definition of ready-to-review:** the `dash0-dev` review is PASS with no open actionable findings
+**and** every CI check is green. That is the *content* state this flow drives to; the agent does
+**not** flip the draft flag — undrafting stays a human/explicit decision.
 
 ### Summary table
 
@@ -295,10 +288,10 @@ decision.
 | 0 | Clone agent-skills + run sync-symlinks.sh (once per sandbox) | Agent |
 | 0.5 | Update user-facing docs + regenerate `llms.txt` (or state why none applied) | Agent |
 | 1 | Run `/polish` — review + simplify, auto-fix all findings, commit each pass | Agent |
-| 2 | Open the PR **as a draft** (so `pr-reviewer` can post inline comments) | Agent |
-| 3 | `Skill("review-loop", "<pr>")` — local `pr-reviewer`→`implement-suggestion`→`polish simplify`, one commit per comment, ≤**3** iters, early-exit on PASS, never undrafts | Agent |
-| 4 | `/implement-suggestion --watch` as a **background** sub-agent — absorb EXTERNAL-bot (`dash0-dev`/CodeRabbit/human) feedback, one commit per comment, ≤**5** iters, never undrafts | Agent (background) |
-| 5 | In parallel, `/ci-auto-fix` until green. Ready-to-review = review-loop converged AND external feedback absorbed AND green CI (agent does not undraft) | Agent |
+| 2 | `/create-pr --no-review` — open draft PR; NO duplicate local reviewer (keeps `polish simplify` + the feedback loop) | Agent |
+| 3 | `dash0-dev` bot reviews automatically — the ONE review agent, re-reviews on every commit | Automatic (bot) |
+| 4 | `/implement-suggestion --watch` (background) — absorb the `dash0-dev`/CodeRabbit/human feedback, one commit per comment, ≤**5** iters, never undrafts | Agent (background) |
+| 5 | `/ci-auto-fix` until green. Ready-to-review = `dash0-dev` PASS AND green CI (agent does not undraft) | Agent |
 
 ## Scope format (canonical — `::` separator only)
 
