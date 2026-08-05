@@ -147,15 +147,16 @@ export function failureQuery(toolName, toolResponse) {
 // hook).
 export function dedupeRelevant(entries, cap = MAX_RELEVANT) {
   if (!Array.isArray(entries)) return [];
+  const limit = Math.max(0, cap);
   const seen = new Set();
   const out = [];
   for (const e of entries) {
+    if (out.length >= limit) break; // checked BEFORE the push, so cap 0 yields []
     if (!e || !e.key) continue;
     const id = `${e.scope ?? ''}::${e.key}`;
     if (seen.has(id)) continue;
     seen.add(id);
     out.push(e);
-    if (out.length >= Math.max(0, cap)) break;
   }
   return out;
 }

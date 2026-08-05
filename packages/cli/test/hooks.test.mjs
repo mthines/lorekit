@@ -118,6 +118,9 @@ test('dedupeRelevant is total on junk input and respects the cap', () => {
   assert.deepEqual(dedupeRelevant([{ value: 'no key' }]), []); // keyless entries skipped
   const many = Array.from({ length: 6 }, (_, i) => ({ scope: 'global', key: `k${i}`, value: 'v' }));
   assert.equal(dedupeRelevant(many, 3).length, 3);
+  // The cap is checked BEFORE the push, so the boundary value really is empty.
+  assert.deepEqual(dedupeRelevant(many, 0), []);
+  assert.deepEqual(dedupeRelevant(many, -1), []);
 });
 
 // ── relevantLessonsFromStore (QUERY the store, not post-filter the injected set) ─
