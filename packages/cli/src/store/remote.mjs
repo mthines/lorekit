@@ -71,8 +71,13 @@ class RemoteStore {
   }
 
   async search({ q, scopes, tags } = {}) {
+    // A list of terms collapses into ONE `websearch` query joined by `OR`, so a
+    // multi-term failure lookup is a single round-trip (the server FTS ORs them
+    // and stems each). `failureQuery` distils terms to `[a-z0-9]+` tokens, so no
+    // FTS metacharacter reaches the query string. A plain string passes through.
+    const query = Array.isArray(q) ? q.filter(Boolean).join(' OR ') : q;
     const body = {};
-    if (q) body.q = q;
+    if (query) body.q = query;
     if (scopes?.length) body.scopes = scopes;
     if (tags?.length) body.tags = tags;
     const res = await this._rest('/memories/search', { method: 'POST', body });
