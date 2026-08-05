@@ -105,8 +105,14 @@ export async function write(args) {
   // downstream noise. `write foo "asd"` parses as scope `foo` + key `asd` with
   // no value left, and used to report "a non-empty value is required" — three
   // steps removed from the actual mistake. The offline store accepts any
-  // string, so this is also the only thing stopping a local write from
-  // creating a scope the hosted API would reject with a 400.
+  // string, so this is also the only thing standing between a local write and
+  // a scope the hosted API would reject with a 400. It is a PARTIAL gate, not
+  // an equivalent one: `scopeIssue` checks the segment SHAPE (`[^/]+/[^/]+`)
+  // where `packages/mcp-core/src/scope.ts` additionally restricts the CHARSET
+  // (`[\w.-]+/[\w.-]+`), so `repo::a b/c,d` and `branch::o/r::a",x` pass here
+  // and still 400 remotely. Tightening the CLI to match would also change what
+  // `lint`'s malformed-scope rule flags in existing offline stores, so it is a
+  // deliberate follow-up rather than a silent widening of this check.
   const badScope = scope ? scopeIssue(scope) : null;
   if (badScope) {
     err(`${c.red('Error:')} invalid scope ${c.cyan(scope)} — ${badScope}`);
