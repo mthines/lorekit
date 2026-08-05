@@ -403,9 +403,13 @@ only the CI log. Each smoke job (`deploy.yml` smoke-preview/smoke-production,
 - `LOREKIT_CORRELATION_ID` — a per-run key on every REST call's
   `usage_events.correlation_id`, so one run's calls are greppable.
 
-`ci.yml`'s integration job runs against a throwaway **local** Supabase with no
-OTLP endpoint, so nothing exports there — the vars only keep the tagging uniform
-and exercise the code path; real export happens in the preview/production jobs.
+`ci.yml`'s integration job runs against a throwaway **local** Supabase. A plain
+`supabase start` gives the edge no OTLP endpoint, so it would be dark — the
+"Configure local edge OTLP export" step therefore writes `supabase/functions/.env`
+(the file the CLI loads into the local edge runtime) with the Dash0 ingress
+endpoint + ingest token, so the local `api` spans **do** export, tagged `test`.
+Fork PRs have no secret, so that step self-skips and the edge stays dark — a
+graceful no-export, never a broken start.
 
 ### Smoke-test data hygiene
 

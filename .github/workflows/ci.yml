@@ -318,17 +318,16 @@ jobs:
       contents: read
     env:
       # ── Smoke telemetry (job-wide) ────────────────────────────────────────────
-      # Same knobs as deploy.yml / preview.yml so the tagging is uniform: every
-      # smoke request carries `X-LoreKit-Deployment-Environment: test` (via the
-      # CLI's `restFetch`, the REST/MCP smoke specs, and the tools/list curl
-      # below) and the CLI reports `deployment.environment.name=test`.
-      #
-      # NOTE: this job runs against a THROWAWAY LOCAL Supabase, which has no OTLP
-      # endpoint, so the edge exports NOTHING here regardless — the value is
-      # uniform tagging + exercising the new edge/CLI code path on the same stack
-      # the merge gate uses; real export only happens in preview.yml/deploy.yml
-      # against a project that has OTLP configured. The token is set for symmetry
-      # (no traced CLI command runs in this job, so it is inert here).
+      # Same knobs as deploy.yml / preview.yml so the tagging is uniform, AND —
+      # unlike a plain `supabase start` — the local edge is given an OTLP endpoint
+      # (the "Configure local edge OTLP export" step below) so its smoke spans
+      # actually export to Dash0, tagged `deployment.environment.name=test`. Every
+      # smoke request also carries `X-LoreKit-Deployment-Environment: test` (via
+      # the CLI's `restFetch`, the REST/MCP smoke specs, and the tools/list curl).
+      # LOREKIT_TELEMETRY_TOKEN is the Dash0 ingest-only token, used both to write
+      # that edge .env and (were a traced CLI command to run here) for CLI export.
+      # Fork PRs get no secret → the edge .env step self-skips → graceful
+      # no-export, exactly as before.
       LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
       DEPLOYMENT_ENVIRONMENT: test
       LOREKIT_CORRELATION_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
@@ -352,6 +351,32 @@ jobs:
         uses: supabase/setup-cli@v3
         with:
           version: latest
+
+      # Give the LOCAL edge runtime an OTLP endpoint so its smoke spans actually
+      # export to Dash0 (tagged `deployment.environment.name=test`), instead of
+      # being dark as they are under a plain `supabase start`. The CLI loads
+      # `supabase/functions/.env` into the edge runtime at `supabase start`, so
+      # write it there from the ingest-only token secret. The endpoint is the
+      # same public Dash0 ingress the CLI bakes in as its default; the token is
+      # ingest-only (POST spans, no read/manage). `.env` is gitignored, and the
+      # file is only ever created on the runner, never committed. Fork PRs have
+      # no secret → skip → the edge stays dark (unchanged behaviour), never a
+      # broken start. Must run BEFORE `supabase start` so the runtime picks it up.
+      - name: Configure local edge OTLP export (Dash0)
+        env:
+          LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+        run: |
+          if [ -z "$LOREKIT_TELEMETRY_TOKEN" ]; then
+            echo "::warning::LOREKIT_TELEMETRY_TOKEN unavailable (fork PR?) — local edge telemetry export is disabled for this run."
+            exit 0
+          fi
+          {
+            echo "OTEL_EXPORTER_OTLP_ENDPOINT=https://ingress.europe-west4.gcp.dash0-dev.com"
+            echo "OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer ${LOREKIT_TELEMETRY_TOKEN}"
+            echo "DASH0_DATASET=default"
+            echo "DEPLOYMENT_ENVIRONMENT=test"
+          } > supabase/functions/.env
+          echo "Wrote supabase/functions/.env — local edge will export to Dash0 as deployment.environment.name=test."
 
       - name: Start local Supabase (applies migrations, serves functions)
         run: supabase start
