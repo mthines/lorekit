@@ -102,6 +102,42 @@ test('initialize → tools/list → write/read/list round-trip over stdio', asyn
   assert.ok(fs.existsSync(path.join(home, 'global')));
 });
 
+test('a large memory.list frame survives exit (big-scope stdout is not truncated)', async () => {
+  // Regression: `process.exit()` truncates stdout still buffered for a pipe, so
+  // the FINAL and largest frame — a `memory.list` over a big scope — was
+  // silently dropped and the client saw "no response". It reproduced
+  // deterministically once the response crossed ~½ MB; production's `global`
+  // scope had grown past that and rolled back two deploys before the exit path
+  // learned to flush first. Write enough large memories that the list response
+  // is several MB, then assert the frame comes back whole.
+  const store = tmpDir();
+  const BIG = 'x'.repeat(50 * 1024); // 50 KB per value
+  const COUNT = 50; // → ~2.5 MB list response, well past the truncation threshold
+  const writes = Array.from({ length: COUNT }, (_, i) => ({
+    jsonrpc: '2.0',
+    id: 100 + i,
+    method: 'tools/call',
+    params: { name: 'memory.write', arguments: { scope: 'global', key: `big-${i}`, value: BIG } },
+  }));
+
+  const { messages } = await serve(
+    [
+      { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+      ...writes,
+      { jsonrpc: '2.0', id: 999, method: 'tools/call', params: { name: 'memory.list', arguments: { scope: 'global' } } },
+    ],
+    { store },
+  );
+
+  const listMsg = byId(messages).get(999);
+  assert.ok(listMsg, 'memory.list produced no response — the final frame was truncated on exit');
+  const listed = JSON.parse(listMsg.result.content[0].text);
+  assert.equal(listed.ok, true);
+  assert.equal(listed.entries.length, COUNT);
+  // Every value came through whole, not clipped mid-frame.
+  assert.ok(listed.entries.every((e) => e.value.length === BIG.length));
+});
+
 test('unknown method returns a JSON-RPC method-not-found error', async () => {
   const store = tmpDir();
   const { messages } = await serve([{ jsonrpc: '2.0', id: 1, method: 'does/not/exist', params: {} }], { store });

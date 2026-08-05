@@ -718,8 +718,38 @@ async function main() {
 }
 
 main()
-  .then((code) => process.exit(code ?? 0))
+  .then((code) => flushThenExit(code ?? 0))
   .catch((e) => {
     err(`${c.red('Error:')} ${e && e.stack ? e.stack : e}`);
-    process.exit(1);
+    flushThenExit(1);
   });
+
+// Exit only after stdout/stderr have drained.
+//
+// `process.exit()` truncates any output still buffered for a PIPE (the shape a
+// spawned child's stdout has), because pipe writes are asynchronous. `lorekit
+// mcp` streams newline-delimited JSON-RPC frames to stdout, and a large frame —
+// e.g. a `memory.list` result for a big scope — overflows the pipe buffer, so
+// exiting the instant `main()` resolves drops the tail of that write and the
+// client sees a silent "no response" (this reproduced deterministically once a
+// scope's payload crossed ~½ MB). Flushing first makes the final frame whole.
+// The unref'd safety timer guarantees the process still exits if a stream never
+// drains, so this can never turn a finished command into a hang.
+function flushThenExit(code) {
+  let pending = 2;
+  const done = () => {
+    pending -= 1;
+    if (pending === 0) process.exit(code);
+  };
+  const safety = setTimeout(() => process.exit(code), 2000);
+  safety.unref?.();
+  for (const stream of [process.stdout, process.stderr]) {
+    try {
+      // An empty write's callback fires only after every previously-queued write
+      // has flushed to the fd, so it is a reliable drain barrier.
+      stream.write('', done);
+    } catch {
+      done();
+    }
+  }
+}
