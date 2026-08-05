@@ -140,6 +140,12 @@ export function failureQuery(toolName, toolResponse) {
 // `cap`. Pure and best-effort: no terms or no lessons → empty (the caller then
 // falls back to the write-nudge alone). Preserves `lessons` order, so the
 // most-specific scope's relevant lesson surfaces first.
+//
+// This is the LITERAL, client-side matcher — it can only ever narrow a list it
+// is handed. On the failure hot path it has been superseded by
+// `relevantLessonsFromStore`, which QUERIES the store instead of post-filtering
+// the already-injected set (see that function's note). Kept for its unit tests
+// and as the pure building block behind the store-delegated ranking.
 export function relevantLessons(lessons, terms, cap = MAX_RELEVANT) {
   if (!Array.isArray(lessons) || !lessons.length || !Array.isArray(terms) || !terms.length) {
     return [];
@@ -150,6 +156,79 @@ export function relevantLessons(lessons, terms, cap = MAX_RELEVANT) {
     if (out.length >= cap) break;
   }
   return out;
+}
+
+// Rank the store-search hits for a failure lookup. `resultsPerTerm` is one entry
+// list per failure term (a term that errored or matched nothing contributes an
+// empty list). A lesson that matched MORE terms is more relevant, so it ranks
+// higher; ties break toward the MORE-SPECIFIC scope (its position in
+// `readOrder`, which is most-specific-first) and then toward first-seen order
+// for a stable result. De-duplicates by `scope::key` across every term/scope,
+// keeping the first-seen entry. Pure and total — any non-array input degrades to
+// [] rather than throwing (this runs inside the best-effort failure hook).
+// Capped at `cap`.
+export function rankRelevant(resultsPerTerm, readOrder = [], cap = MAX_RELEVANT) {
+  if (!Array.isArray(resultsPerTerm)) return [];
+  const order = new Map(
+    (Array.isArray(readOrder) ? readOrder : []).map((s, i) => [s, i]),
+  );
+  const UNKNOWN = Number.MAX_SAFE_INTEGER; // a scope not in readOrder sorts last
+  const byId = new Map();
+  let seq = 0;
+  for (const entries of resultsPerTerm) {
+    if (!Array.isArray(entries)) continue;
+    const seenThisTerm = new Set(); // one term can't count a lesson twice
+    for (const e of entries) {
+      if (!e || !e.key) continue;
+      const id = `${e.scope ?? ''}::${e.key}`;
+      if (seenThisTerm.has(id)) continue;
+      seenThisTerm.add(id);
+      const cur = byId.get(id);
+      if (cur) {
+        cur.matches += 1;
+      } else {
+        byId.set(id, {
+          entry: e,
+          matches: 1,
+          rank: order.has(e.scope) ? order.get(e.scope) : UNKNOWN,
+          seq: seq++,
+        });
+      }
+    }
+  }
+  return [...byId.values()]
+    .sort((a, b) => b.matches - a.matches || a.rank - b.rank || a.seq - b.seq)
+    .slice(0, Math.max(0, cap))
+    .map((r) => r.entry);
+}
+
+// Retrieve lessons relevant to a tool failure by QUERYING the store across the
+// scope hierarchy — as opposed to `relevantLessons`, which post-filtered the
+// already-injected set and could therefore only ever resurface a lesson that was
+// going to be shown anyway (a lesson in a sibling scope, or one past the
+// per-scope read cap, was unreachable). Runs one search per distilled term
+// (bounded by `failureQuery`'s MAX_TERMS), concurrently and best-effort: a failed
+// or throwing search contributes nothing. Matching is DELEGATED to the store — a
+// literal substring over the full scope for the local store, server-side FTS
+// (with stemming, so `connect` matches `connection`) for the remote — then the
+// union is ranked by the pure `rankRelevant`. Returns [] on any failure so the
+// caller falls back to the write-nudge alone.
+export async function relevantLessonsFromStore(store, scope, terms, { cap = MAX_RELEVANT } = {}) {
+  if (!store || typeof store.search !== 'function') return [];
+  if (!scope || !Array.isArray(scope.readOrder) || scope.readOrder.length === 0) return [];
+  if (!Array.isArray(terms) || terms.length === 0) return [];
+  const scopes = scope.readOrder;
+  const resultsPerTerm = await Promise.all(
+    terms.map(async (t) => {
+      try {
+        const res = await store.search({ q: t, scopes });
+        return res && res.ok && Array.isArray(res.entries) ? res.entries : [];
+      } catch {
+        return []; // best-effort: one failed term never sinks the lookup
+      }
+    }),
+  );
+  return rankRelevant(resultsPerTerm, scopes, cap);
 }
 
 // Render the relevant-lessons block injected alongside the failure nudge, or
