@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.0](https://github.com/mthines/lorekit/compare/cli-v1.32.1...cli-v1.33.0) (2026-08-05)
+
+
+### Features
+
+* **cli:** failure hook queries the store for relevant lessons ([#378](https://github.com/mthines/lorekit/issues/378)) ([e9bc851](https://github.com/mthines/lorekit/commit/e9bc8519520d50bf43b527cdad30684b6d24b04a))
+
 ## [1.32.1](https://github.com/mthines/lorekit/compare/cli-v1.32.0...cli-v1.32.1) (2026-08-04)
 
 
