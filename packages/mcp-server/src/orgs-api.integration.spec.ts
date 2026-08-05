@@ -30,6 +30,7 @@
 
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 import { createSmokeNamespace, runBestEffortCleanup } from './smoke-cleanup.js';
+import { testRunHeaders } from './smoke-telemetry.js';
 
 const BASE = (process.env['LOREKIT_REST_BASE_URL'] ?? 'http://localhost:54321/functions/v1').replace(/\/$/, '');
 const JWT = process.env['LOREKIT_SMOKE_JWT'];
@@ -79,7 +80,7 @@ async function restFetch(
   body?: unknown,
   token: string | null | undefined = JWT,
 ): Promise<{ status: number; data: unknown }> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...testRunHeaders() };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${BASE}/orgs${path}`, {
     method,

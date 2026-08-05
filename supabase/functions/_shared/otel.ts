@@ -214,7 +214,10 @@ function resolveDeploymentEnv(): string {
   return 'local';
 }
 
-export function buildOtlpPayload(spans: SpanPayload[]): unknown {
+export function buildOtlpPayload(
+  spans: SpanPayload[],
+  opts: { environmentOverride?: string } = {},
+): unknown {
   // Build vcs.* resource attributes once per payload (they are constant for
   // the lifetime of the isolate — resolved from Supabase secrets at startup).
   const vcsAttrs = getVcsResourceAttributes();
@@ -240,7 +243,10 @@ export function buildOtlpPayload(spans: SpanPayload[]): unknown {
     { key: 'service.name', value: { stringValue: serviceName } },
     { key: 'service.namespace', value: { stringValue: 'lorekit' } },
     { key: 'service.version', value: { stringValue: serviceVersion } },
-    { key: 'deployment.environment.name', value: { stringValue: resolveDeploymentEnv() } },
+    // A caller-supplied override (a smoke run's `test`) wins over the isolate's
+    // ambient environment, so synthetic traffic against a production deployment
+    // still reports `test`. Validated to the allowlist before it reaches here.
+    { key: 'deployment.environment.name', value: { stringValue: opts.environmentOverride ?? resolveDeploymentEnv() } },
     ...Object.entries(vcsAttrs).map(([key, value]) => ({
       key,
       value: { stringValue: value },
@@ -277,6 +283,12 @@ export function buildOtlpPayload(spans: SpanPayload[]): unknown {
 
 export class ExportBatch {
   private spans: SpanPayload[] = [];
+  /**
+   * Optional per-request `deployment.environment.name` override (a smoke run's
+   * `test`). Set by `traceRequest` from a validated header; applied at flush so
+   * a request against a production deployment can still report synthetic env.
+   */
+  environmentOverride?: string;
 
   add(span: SpanPayload): void { this.spans.push(span); }
 
@@ -298,7 +310,7 @@ export class ExportBatch {
     const cfg = getOtlpConfig();
     if (!cfg) return;
 
-    const payload = buildOtlpPayload([...this.spans]);
+    const payload = buildOtlpPayload([...this.spans], { environmentOverride: this.environmentOverride });
     this.spans = [];
 
     const p = fetch(`${cfg.endpoint}/v1/traces`, {
@@ -413,6 +425,34 @@ function faasNameFrom(operationName: string): string {
 }
 
 /**
+ * Values the `X-LoreKit-Deployment-Environment` request header is allowed to set
+ * `deployment.environment.name` to. Restricted to the single SYNTHETIC value
+ * `test` on purpose: LoreKit's own smoke suites send it (the CLI forwards
+ * `DEPLOYMENT_ENVIRONMENT`, the REST/MCP smoke specs send it directly) so a
+ * deploy-pipeline run's server spans are tagged `test` and filter apart from
+ * real traffic in Dash0. A caller can therefore only mark its own traffic as
+ * synthetic — never relabel itself as `production`/`preview` — so the header can
+ * hide a caller's own spans from an env=production view but can never forge a
+ * different real environment. It changes only an observability tag: no auth,
+ * tenancy, limit, or behaviour depends on it.
+ */
+const HEADER_ENV_ALLOWLIST = new Set(['test']);
+
+/**
+ * Resolve a caller-supplied `deployment.environment.name` override from the
+ * `X-LoreKit-Deployment-Environment` header, or `undefined` when absent or not
+ * in the allowlist. Unlike a resource attribute the isolate fixes at boot, this
+ * is applied per request batch (each request flushes its own ExportBatch), which
+ * is what lets a smoke request against a production deployment report `test`.
+ */
+function resolveEnvironmentOverride(req: Request): string | undefined {
+  const raw = req.headers.get('x-lorekit-deployment-environment');
+  if (!raw) return undefined;
+  const t = raw.trim().toLowerCase();
+  return HEADER_ENV_ALLOWLIST.has(t) ? t : undefined;
+}
+
+/**
  * Return a Response carrying the server span's `traceparent`, so a browser or
  * CLI can correlate its request with the server-side trace.
  *
@@ -461,6 +501,10 @@ export async function traceRequest<T extends Response>(
   fn: (span: Span) => Promise<T>,
 ): Promise<T> {
   const batch = new ExportBatch();
+  // A smoke/test run may ask (via header) to report `deployment.environment.name
+  // = test` so its spans filter apart from real traffic; applied to this
+  // request's whole span batch at flush.
+  batch.environmentOverride = resolveEnvironmentOverride(req);
   const ctx = extractTraceContext(req);
   const span = new Span(operationName, ctx, batch, SPAN_KIND_SERVER);
 

@@ -446,7 +446,33 @@ All signals carry these resource attributes:
 | `service.namespace` | `lorekit` |
 | `service.name` | `api` (Edge Functions), `web` (Next.js), `mcp` (Node MCP server), or `cli` (CLI) |
 | `service.version` | Git SHA (`VERCEL_GIT_COMMIT_SHA`) or `unknown`; the package version for the CLI |
-| `deployment.environment.name` | `production` / `preview` / `development` / `local`; the CLI omits it unless overridden. An explicit `DEPLOYMENT_ENVIRONMENT` env var overrides the ambient value on every component (used by `scripts/emit-correlated-trace.mts` to stamp `test`). |
+| `deployment.environment.name` | `production` / `preview` / `development` / `local`; the CLI omits it unless overridden. An explicit `DEPLOYMENT_ENVIRONMENT` env var overrides the ambient value on every component (used by `scripts/emit-correlated-trace.mts` and the smoke jobs to stamp `test` — see below). |
+
+### Smoke / test runs are tagged `deployment.environment.name=test`
+
+Every smoke suite in the pipelines (`deploy.yml` smoke-preview/smoke-production,
+`preview.yml` smoke, `ci.yml` integration) sets `DEPLOYMENT_ENVIRONMENT=test`, so
+all synthetic smoke telemetry filters apart from real traffic in Dash0 — even the
+production smoke, which runs against the production deployment. It reaches all
+three emitters through one knob:
+
+- **CLI** (`install`, `doctor --deep`): `resolveDeploymentEnvironment` reads
+  `DEPLOYMENT_ENVIRONMENT` and stamps the CLI's own resource.
+- **Edge** (`api` — every REST/MCP request a smoke makes): the client forwards
+  the value as the `X-LoreKit-Deployment-Environment` request header — the CLI's
+  `restFetch` does it automatically from the same env var, and the REST/MCP smoke
+  specs send it via `testRunHeaders` (`packages/mcp-server/src/smoke-telemetry.ts`).
+  `traceRequest` applies it to that request's span batch as
+  `deployment.environment.name`. The edge's own `deployment.environment.name` is a
+  per-deployment resource attribute it cannot change per request, so the header is
+  the seam that lets a smoke request against a production isolate still report
+  `test`.
+
+The edge honours **only** the synthetic value `test` from the header (an
+allowlist in `resolveEnvironmentOverride`): a caller can mark its own traffic as
+synthetic but can never relabel itself `production`/`preview`, and no auth,
+tenancy, limit, or behaviour depends on the tag — it is observability only.
+`release.yml`'s `doctor --telemetry` ingest probe is tagged `test` the same way.
 
 ---
 

@@ -316,6 +316,22 @@ jobs:
     if: needs.changes.outputs.api == 'true'
     permissions:
       contents: read
+    env:
+      # ── Smoke telemetry (job-wide) ────────────────────────────────────────────
+      # Same knobs as deploy.yml / preview.yml so the tagging is uniform: every
+      # smoke request carries `X-LoreKit-Deployment-Environment: test` (via the
+      # CLI's `restFetch`, the REST/MCP smoke specs, and the tools/list curl
+      # below) and the CLI reports `deployment.environment.name=test`.
+      #
+      # NOTE: this job runs against a THROWAWAY LOCAL Supabase, which has no OTLP
+      # endpoint, so the edge exports NOTHING here regardless — the value is
+      # uniform tagging + exercising the new edge/CLI code path on the same stack
+      # the merge gate uses; real export only happens in preview.yml/deploy.yml
+      # against a project that has OTLP configured. The token is set for symmetry
+      # (no traced CLI command runs in this job, so it is inert here).
+      LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+      DEPLOYMENT_ENVIRONMENT: test
+      LOREKIT_CORRELATION_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
@@ -369,6 +385,7 @@ jobs:
               -H "Authorization: Bearer ${TOKEN}" \
               -H "Content-Type: application/json" \
               -H "Accept: application/json, text/event-stream" \
+              -H "x-lorekit-deployment-environment: ${DEPLOYMENT_ENVIRONMENT}" \
               -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' || echo 000)
             if [ "$CODE" = "200" ]; then
               echo "MCP stack healthy (migrations applied, functions serving, auth OK, tools/list → 200)"
