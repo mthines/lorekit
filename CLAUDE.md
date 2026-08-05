@@ -249,26 +249,34 @@ while [ "$(gh pr view <pr-number> --repo mthines/lorekit --json reviews \
 done
 ```
 
-### Step 4 — Implement review suggestions
+### Step 4 — Implement review suggestions on a WATCH LOOP (max 5 iterations)
 
-Once the Dash0 bot review is posted, dispatch a sub-agent (subagent_type: general):
+The `dash0-dev` bot re-reviews on **every** new commit (Step 3), so addressing findings is a LOOP, not
+a one-shot: each push of fixes triggers a fresh review that may surface new findings. **Start the watch
+immediately after the PR is created** (Step 2) — do not wait for the first review by hand; the watch
+handles the first review and every subsequent one. Dispatch a sub-agent (subagent_type: general):
 
-> Read /tmp/workspace/agent-skills/skills/workflow/implement-suggestion/SKILL.md and follow it exactly.
+> Read /tmp/workspace/agent-skills/skills/workflow/implement-suggestion/SKILL.md and follow it exactly,
+> in `--watch` mode.
 > TARGET_PR=<full PR URL>, OWNER=<owner>, REPO=<repo>, NUMBER=<pr number>
 
-The skill fetches all open review comments from human and AI reviewers, validates each through
-`/critical` then `/confidence`, applies approved changes as individual commits, pushes to
-the existing branch, and resolves addressed threads. Do NOT open a new PR. Do NOT skip the two-gate
-validation. Wait for the sub-agent to finish before proceeding to Step 5.
+`/implement-suggestion --watch` waits for each `dash0-dev` review, fetches all open review comments
+(human + AI), validates each through `/critical` then `/confidence`, applies approved changes as
+individual commits, pushes to the existing branch, and resolves addressed threads — then waits for the
+NEXT review that push triggers and repeats. Do NOT open a new PR. Do NOT skip the two-gate validation.
+
+**Bound the loop to 5 iterations maximum.** Stop early when a review round produces no actionable
+findings (all gates clean), or when the only comments left are ones you've validated as won't-fix
+(reply on the thread with the reason instead of looping). If findings still remain after 5 iterations,
+STOP and summarise what's outstanding for a human — never loop indefinitely.
 
 **Note:** Do NOT post `@dash0 resolve` as a PR comment — agent-posted comments do not trigger
 the webhook. Run the skill directly as described above.
 
-If the review report contained no actionable suggestions (all gates passed clean), skip this step.
+### Step 5 — Drive CI green, leave the PR ready-to-review
 
-### Step 5 — Fix CI with `/ci-auto-fix`
-
-After the implement-suggestion sub-agent finishes (or if there were no suggestions to implement), run:
+The PR is DONE only when the review loop has settled **and** every CI check is green. Whenever checks
+go red during or after the watch loop (a pushed fix can itself break CI), run:
 
 ```
 /ci-auto-fix
@@ -277,7 +285,10 @@ After the implement-suggestion sub-agent finishes (or if there were no suggestio
 This uses the `ci-auto-fix` skill (wired in during Prerequisites), diagnoses any failing GitHub
 Actions checks, applies a minimal targeted fix, and iterates until all checks are green. The skill
 is confidence-gated (>=90 auto-apply, 80-89 ask, <80 escalate) and will never disable or weaken a
-check. Skip if CI is already fully green.
+check. A `/ci-auto-fix` push re-triggers the bot review, so it folds back into the Step 4 loop — keep
+both settling together, within the same 5-iteration budget, until the end state holds: **no open
+actionable findings AND green CI**, i.e. the PR is genuinely ready for human review. Skip only when CI
+is already fully green.
 
 ### Summary table
 
@@ -287,9 +298,9 @@ check. Skip if CI is already fully green.
 | 0.5 | Update user-facing docs + regenerate `llms.txt` (or state why none applied) | Agent |
 | 1 | Run `/polish` — review + simplify, auto-fix all findings, commit each pass | Agent |
 | 2 | Open / push the PR (draft or ready) | Agent |
-| 3 | Wait for `dash0-dev` bot review comment | Automatic (Dash0 bot) |
-| 4 | Run implement-suggestion skill (or skip if review is clean) | Agent |
-| 5 | Run `/ci-auto-fix` until all checks pass (or skip if green) | Agent |
+| 3 | Bot reviews automatically — and RE-reviews on every commit | Automatic (Dash0 bot) |
+| 4 | Start `/implement-suggestion --watch` right after Step 2; fix findings each review round, **5 iterations max** | Agent |
+| 5 | Run `/ci-auto-fix` until green; end state = no open findings AND green CI (ready to review) | Agent |
 
 ## Scope format (canonical — `::` separator only)
 
