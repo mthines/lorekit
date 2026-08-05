@@ -633,3 +633,42 @@ test('show errors on a trailing positional rather than reading a different key',
   assert.equal(res.status, 1);
   assert.match(res.stderr, /unexpected argument stray/);
 });
+
+test('write errors on the leftover positional --scope shifts loose, instead of writing the wrong key', () => {
+  const { root, home } = seedProject();
+  const res = runWrite(root, home, ['global', 'my-key', 'the value', '--scope', 'global', '--local']);
+  assert.equal(res.status, 1, res.stdout);
+  assert.match(res.stderr, /unexpected argument the value/);
+
+  // Nothing was written under the mis-parsed key.
+  const shown = runShow(root, home, ['--scope', 'global', '--key', 'global']);
+  assert.equal(shown.status, 1);
+});
+
+test('write errors on a trailing positional past the value', () => {
+  const { root, home } = seedProject();
+  const res = runWrite(root, home, ['global', 'my-key', 'the value', 'stray', '--local']);
+  assert.equal(res.status, 1, res.stdout);
+  assert.match(res.stderr, /unexpected argument stray/);
+});
+
+test('write errors on a positional value that --value already supplied', () => {
+  const { root, home } = seedProject();
+  const res = runWrite(root, home, ['global', 'my-key', 'ignored', '--value', 'real', '--local']);
+  assert.equal(res.status, 1, res.stdout);
+  assert.match(res.stderr, /unexpected argument ignored/);
+});
+
+test('write still accepts the forms the guard must not reject', () => {
+  const { root, home } = seedProject();
+  // scope + key + value, shorthand + value, and --scope + key + value.
+  for (const args of [
+    ['global', 'k-one', 'v', '--local'],
+    ['global::k-two', 'v', '--local'],
+    ['k-three', 'v', '--scope', 'global', '--local'],
+    ['--scope', 'global', '--key', 'k-four', 'v', '--local'],
+  ]) {
+    const res = runWrite(root, home, args);
+    assert.equal(res.status, 0, `${args.join(' ')}: ${res.stderr}`);
+  }
+});

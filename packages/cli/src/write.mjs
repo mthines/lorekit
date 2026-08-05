@@ -122,6 +122,23 @@ export async function write(args) {
     return 1;
   }
 
+  // Leftover positionals are an error, exactly as in `show` — the difference is
+  // only in how many this command legitimately consumes: the parser's `consumed`
+  // plus ONE for the value, and zero for the value when `--value` already named
+  // it. Without this, `--scope` (which makes the parser take one fewer
+  // positional) silently shifted everything left: `write global my-key "v"
+  // --scope global` resolved scope `global`, key `global`, value `my-key` — it
+  // stored the wrong key, dropped the value, and exited 0. A wrong write that
+  // reports success is worse than any usage error, so the leftover is named.
+  const valueSlots = typeof args.value === 'string' ? 0 : 1;
+  if (positionals.length > consumed + valueSlots) {
+    const stray = positionals[consumed + valueSlots];
+    err(`${c.red('Error:')} unexpected argument ${c.cyan(stray)}`);
+    err(`Parsed scope ${c.cyan(scope)} and key ${c.cyan(key)} from the arguments before it.`);
+    err(`Run ${c.cyan('lorekit write --help')} for options.`);
+    return 1;
+  }
+
   // ── Resolve value: flag → positional → stdin ───────────────────────────────
   let value;
   if (typeof args.value === 'string') {
