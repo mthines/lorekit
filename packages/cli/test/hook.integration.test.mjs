@@ -195,14 +195,26 @@ test('the Stop friction gate does not consume the retro marker when it stays sil
   assert.match(JSON.parse(second.stdout).hookSpecificOutput.additionalContext, /a failed tool call/);
 });
 
-// A mock REST endpoint returning a fixed lesson set for any scope.
-// remote.mjs now calls restFetch (REST API) for memory.list, not mcpCall.
+// A mock REST endpoint over a fixed lesson set. `GET /memories` (list) returns
+// the whole scope; `POST /memories/search` NARROWS by the query term — a loose
+// substring stand-in for the server's FTS. The failure path queries search, so
+// the mock must actually filter, otherwise every lesson would "match".
+// remote.mjs calls restFetch (REST API) for both list and search, not mcpCall.
 function mockLessonServer(entries) {
   return http.createServer((req, res) => {
-    req.on('data', () => {}); // drain body
+    let body = '';
+    req.on('data', (c) => { body += c; });
     req.on('end', () => {
       res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ entries, hasMore: false, nextCursor: null }));
+      let out = entries;
+      if (req.url && req.url.includes('/memories/search')) {
+        let q = '';
+        try { q = String(JSON.parse(body || '{}').q || '').toLowerCase(); } catch { q = ''; }
+        out = q
+          ? entries.filter((e) => `${e.key} ${e.value}`.toLowerCase().includes(q))
+          : entries;
+      }
+      res.end(JSON.stringify({ entries: out, hasMore: false, nextCursor: null }));
     });
   });
 }

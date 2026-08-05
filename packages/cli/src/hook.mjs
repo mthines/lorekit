@@ -13,7 +13,7 @@ import {
   retrospectiveNudge,
   failureNudge,
   failureQuery,
-  relevantLessons,
+  relevantLessonsFromStore,
   formatRelevantLessons,
   writeConfirmation,
 } from './core/lessons.mjs';
@@ -148,9 +148,13 @@ async function run(args) {
     try {
       const store = createStore(control);
       if (store) {
-        const { lessons } = await fetchLessons(store, root);
+        // QUERY the store across the scope hierarchy for lessons matching this
+        // failure — not a post-filter of the SessionStart-injected set, which
+        // could only ever resurface an already-shown lesson. Matching is the
+        // store's job (server FTS with stemming for remote, full-scope substring
+        // for local), so a paraphrased prior lesson can still surface.
         const terms = failureQuery(parsed.toolName, parsed.toolResponse);
-        relevant = formatRelevantLessons(relevantLessons(lessons, terms));
+        relevant = formatRelevantLessons(await relevantLessonsFromStore(store, scope, terms));
       }
     } catch {
       relevant = null; // never let a lesson lookup break the failure nudge
