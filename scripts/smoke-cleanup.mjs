@@ -194,6 +194,18 @@ function isServiceRoleKey(token) {
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
+// Tag the sweeper's edge requests as a test run, so its /memories spans report
+// deployment.environment.name=test like the rest of the smoke suite (see
+// docs/otel.md → "Smoke / test runs are tagged"). Read from the env the smoke
+// jobs set; the edge honours only the synthetic `test`. Zero-dep + fail-safe:
+// unset/invalid ⇒ header omitted. Bounds mirror the CLI's normalizeRunEnvironment.
+function runEnvHeaders() {
+  const v = String(process.env.DEPLOYMENT_ENVIRONMENT ?? '').trim();
+  return v && v.length <= 64 && /^[A-Za-z0-9_.\-:]+$/.test(v)
+    ? { 'X-LoreKit-Deployment-Environment': v }
+    : {};
+}
+
 async function req(url, { method = 'GET', token, apikey, body, headers = {} } = {}) {
   const res = await fetch(url, {
     method,
@@ -202,6 +214,7 @@ async function req(url, { method = 'GET', token, apikey, body, headers = {} } = 
       ...(apikey ? { apikey } : {}),
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
       Accept: 'application/json',
+      ...runEnvHeaders(),
       ...headers,
     },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),

@@ -122,6 +122,7 @@ pnpm nx test mcp-core                            # needs supabase start
 | `VERCEL_TOKEN` | Vercel access token (Account Settings → Tokens) — lets `deploy.yml` build + promote the web dashboard |
 | `VERCEL_ORG_ID` | From `.vercel/project.json` after `vercel link` (or Vercel project settings) |
 | `VERCEL_PROJECT_ID` | From `.vercel/project.json` after `vercel link` |
+| `LOREKIT_TELEMETRY_TOKEN` | Dash0 ingest-only token — the smoke/CI jobs pass it so their edge telemetry exports (tagged `deployment.environment.name=test`); also injected into the CLI tarball at publish by `release.yml`. Fork PRs without it skip telemetry gracefully. |
 
 Optional repo **variables** (Settings → Secrets and variables → Actions →
 Variables):

@@ -261,6 +261,15 @@ describe('mirror parity with scripts/smoke-cleanup.mjs', () => {
     expect(m?.[1]).toBe(SMOKE_ARTEFACT_PATTERN.toString());
   });
 
+  it('forwards the run-environment header from req(), not just declaring it', () => {
+    // The executable spread inside req() and the charset regex `.test()`, not a
+    // charset mention a comment could satisfy — declaring runEnvHeaders() but
+    // never spreading it would leave every sweep request untagged.
+    expect(sweeperSource).toContain('...runEnvHeaders(),');
+    expect(sweeperSource).toMatch(/function runEnvHeaders\(\)/);
+    expect(sweeperSource).toMatch(/\/\^\[A-Za-z0-9_\.\\-:\]\+\$\/\.test\(/);
+  });
+
   /**
    * Both strings below also appear in the sweeper's PROSE, so a bare
    * `toContain` stays green even if the real call loses them — the guard would
