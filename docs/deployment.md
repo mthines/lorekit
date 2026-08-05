@@ -88,6 +88,30 @@ any job fails ─▶ notify-failure   Discord webhook (see below)
 
 Production is never touched until preview has been deployed and smoke-tested.
 
+#### Which halves run (change detection + manual override)
+
+A `changes` job diffs the merge and gates the two halves independently: the API
+chain (`deploy-preview` → `smoke-preview` → `deploy-production`) runs only when
+API paths changed, and the web chain (`deploy-web-preview` / `stage-web-production`
+→ `promote-web-production`) only when web paths changed. A docs-only merge deploys
+neither. `packages/schemas/`, the workspace files, and `deploy.yml` itself map to
+**both**.
+
+A **manual run** can override the detection. From **Actions ▸ Deploy ▸ Run
+workflow** (or `gh workflow run deploy.yml`), pick a `deploy_target`:
+
+| `deploy_target` | Deploys |
+|-----------------|---------|
+| `auto` (default) | Whatever the change-detection step finds — same as a push to `main`. |
+| `all` | Both halves — API **and** web — regardless of what changed. |
+| `api` | API only (Supabase migrations + edge functions). |
+| `web` | Web only (Next.js dashboard on Vercel). |
+
+This is the way to redeploy an unchanged half — e.g. re-ship the dashboard after a
+Vercel env-var change, or re-apply functions — without an empty no-op commit. The
+override only decides **which** halves run; each still goes through the full
+preview → smoke → production promotion with its own gates and rollback.
+
 ### FE ↔ API deploy in lockstep (no availability skew)
 
 The whole point of moving the web deploy into `deploy.yml` is that the frontend
