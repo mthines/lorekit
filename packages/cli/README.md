@@ -351,7 +351,10 @@ lorekit lint --json           # { total, offline, remote } structured findings
 
 Rules: **empty-value** (blank/whitespace-only body), **short-value** (a non-empty
 body below a small length threshold), **untrimmed-value** (real content with
-surrounding whitespace), **empty-key** (blank key), and **malformed-scope** (e.g.
+surrounding whitespace), **empty-key** (blank key), **volatile-key** (the key
+carries a per-sighting identifier — a run of 6+ digits such as a GitHub comment
+id, or a `pr<n>` / `issue<n>` segment — so it never collides, never dedups, and
+freezes `seen_count` at 1), and **malformed-scope** (e.g.
 a single `:` where `::` is expected). `lint` **exits non-zero (1) when any issue
 is found**, so it is usable as a CI gate (`lorekit lint || exit 1`); a clean run —
 or one where only a store is unavailable — exits 0. The pure rule predicates live

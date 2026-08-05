@@ -66,6 +66,69 @@ test('empty-key fires on blank keys only', () => {
   assert.equal(LINT_RULES['empty-key']({ key: 'a-real-key' }), null);
 });
 
+test('volatile-key fires on a per-sighting identifier in the key', () => {
+  // A GitHub comment id — the shape that froze `seen_count` at 1 in the
+  // reviewer-comment-relevance bucket.
+  assert.match(
+    LINT_RULES['volatile-key']({ key: 'reviewer-comment-relevance::lorekit-231-3681940611' }),
+    /3681940611/,
+  );
+  // A `pr<n>` segment.
+  assert.match(
+    LINT_RULES['volatile-key']({ key: 'reviewer-comment-relevance::suggestion:pr231-null-check' }),
+    /pr231/,
+  );
+  // An `issue<n>` segment.
+  assert.match(LINT_RULES['volatile-key']({ key: 'x::issue4821-thing' }), /issue4821/);
+  // A bare 6-digit run is the floor.
+  assert.ok(LINT_RULES['volatile-key']({ key: 'x::note:123456' }));
+});
+
+test('volatile-key does NOT fire on legitimate keys that merely contain digits', () => {
+  assert.equal(LINT_RULES['volatile-key']({ key: 'reviewer-comment-relevance::issue:oauth2-token-refresh' }), null);
+  assert.equal(LINT_RULES['volatile-key']({ key: 'x::nitpick:sha256-not-md5' }), null);
+  assert.equal(LINT_RULES['volatile-key']({ key: 'x::suggestion:wcag22-contrast' }), null);
+  assert.equal(LINT_RULES['volatile-key']({ key: 'x::note:upgrade-to-v2-3-1' }), null);
+  assert.equal(LINT_RULES['volatile-key']({ key: 'x::note:released-in-2026' }), null);
+  assert.equal(
+    LINT_RULES['volatile-key']({ key: 'reviewer-comment-relevance::suggestion:null-check-guaranteed-upstream' }),
+    null,
+  );
+  // A 5-digit run sits below the conservative floor.
+  assert.equal(LINT_RULES['volatile-key']({ key: 'x::note:12345' }), null);
+  // An empty key is `empty-key`'s finding, not this rule's.
+  assert.equal(LINT_RULES['volatile-key']({ key: '' }), null);
+});
+
+test('volatile-key honors the { volatileKeyAllow } opts hatch', () => {
+  const key = 'reviewer-comment-relevance::lorekit-231-3681940611';
+  assert.ok(LINT_RULES['volatile-key']({ key }));
+  assert.equal(LINT_RULES['volatile-key']({ key }, { volatileKeyAllow: ['3681940611'] }), null);
+  assert.equal(LINT_RULES['volatile-key']({ key }, { volatileKeyAllow: ['lorekit-231'] }), null);
+  // An unrelated allow entry does not suppress the finding.
+  assert.ok(LINT_RULES['volatile-key']({ key }, { volatileKeyAllow: ['something-else'] }));
+  // A bare string is tolerated as a one-element list, not iterated character by character.
+  assert.equal(LINT_RULES['volatile-key']({ key }, { volatileKeyAllow: 'lorekit-231' }), null);
+  assert.ok(LINT_RULES['volatile-key']({ key }, { volatileKeyAllow: 'nope' }));
+});
+
+test('lintEntry surfaces volatile-key alongside the other rules', () => {
+  const findings = lintEntry({
+    scope: 'global',
+    key: 'reviewer-comment-relevance::lorekit-231-3681940611',
+    value: 'a perfectly fine lesson body',
+  });
+  assert.deepEqual(findings.map((f) => f.rule), ['volatile-key']);
+  // The opts hatch flows through lintEntry too.
+  assert.deepEqual(
+    lintEntry(
+      { scope: 'global', key: 'reviewer-comment-relevance::lorekit-231-3681940611', value: 'a perfectly fine lesson body' },
+      { volatileKeyAllow: ['lorekit-231'] },
+    ),
+    [],
+  );
+});
+
 test('malformed-scope fires via scopeIssue', () => {
   assert.ok(LINT_RULES['malformed-scope']({ scope: 'project:widget' }));
   assert.equal(LINT_RULES['malformed-scope']({ scope: 'global' }), null);
