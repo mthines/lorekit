@@ -231,8 +231,10 @@ external-bot feedback loop (which is Step 4). Do **not** pass `--no-feedback` (t
 `--no-quality`. Undrafting is the last, human step, after the flow reaches ready-to-review.
 
 > **The one review agent on the PR is the `dash0-dev` bot — never run a second `pr-reviewer` locally.**
-> `/polish` (Step 1) runs the reviewer BEFORE the PR exists (a local pre-flight, no GitHub write), so
-> it does not double-post; `review-loop` runs it ON the open PR, which does, so it is excluded here.
+> `/polish` (Step 1) runs pre-PR, where its reviewer pass (Pass A) is **skipped** — `pr-reviewer` has no
+> PR-less mode — so Step 1 only runs the `simplify` pass and never posts to GitHub; `review-loop` runs
+> `pr-reviewer` ON the open PR, where it posts a `COMMENT` review, so it is excluded here to avoid
+> duplicating the `dash0-dev` review.
 
 ### Step 3 — The `dash0-dev` bot reviews (the ONE review agent on the PR)
 
