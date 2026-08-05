@@ -17,6 +17,7 @@ import {
   filterPhrase,
   filtersFromLegacyTags,
   filtersPhrase,
+  filtersToFacetParams,
   filtersToQueryParams,
   findFilter,
   isValueSelected,
@@ -438,6 +439,32 @@ describe('filtersToQueryParams', () => {
         { field: 'agent', operator: 'all', values: [' aw ', 'aw'] } as unknown as Filter,
       ]),
     ).toEqual({ source_agent: 'aw', source_agent_mode: 'in' });
+  });
+});
+
+describe('filtersToFacetParams', () => {
+  it('sends nothing for an empty bar — the endpoint returns the global catalog', () => {
+    expect(filtersToFacetParams([])).toEqual({});
+  });
+
+  it('carries the same dimension params as the list route, so a menu passes its state verbatim', () => {
+    const bar: Filter[] = [
+      { field: 'label', operator: 'all', values: ['auth', 'perf'] },
+      { field: 'agent', operator: 'in', values: ['claude'] },
+      { field: 'pr', operator: 'nin', values: ['311'] },
+    ];
+    // The facets route mirrors the list route's dimension params by name, so the
+    // two translations are byte-for-byte identical — the drill-down is entirely
+    // the endpoint's job (self-exclusion), not the client's.
+    expect(filtersToFacetParams(bar)).toEqual(filtersToQueryParams(bar));
+    expect(filtersToFacetParams(bar)).toEqual({
+      tags: 'auth,perf',
+      tags_mode: 'all',
+      source_agent: 'claude',
+      source_agent_mode: 'in',
+      origin_pr: '311',
+      origin_pr_mode: 'nin',
+    });
   });
 });
 
