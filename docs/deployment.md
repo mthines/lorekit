@@ -148,6 +148,75 @@ The web jobs authenticate to Vercel with the same three repo-level secrets
 — and the production smoke curls `${{ vars.WEB_PROD_URL }}` (an optional
 repo-level variable, defaulting to `https://lorekit.io`).
 
+### Skew Protection (already-open tabs and Server Actions)
+
+The lockstep flip above keeps the FE and API on the same version **for new page
+loads**. It does nothing for a tab that is already open: the alias swap is
+instant, and that tab keeps running the JavaScript of the deployment it loaded
+from.
+
+That matters because Next.js Server Actions are a `POST` to the page route
+carrying a **build-time action ID**. A tab on build A that posts build A's
+action ID to build B gets a bare **404** — no error surface, just a dead button.
+This is exactly what happened on the Overview page: every `POST /dashboard` went
+from `200` to `404` after a `main` push, with the browser reporting
+`service.version` from one commit and the server span reporting another.
+
+The mitigation is Vercel **Skew Protection**. The wiring is in place; **it is
+not active**, and two prerequisites remain — one to confirm, one to decide.
+
+1. **Code (in place, inert).** `next.config.ts` sets `deploymentId` from
+   `VERCEL_DEPLOYMENT_ID` (`src/lib/deployment-id.ts`) — the value Next.js stamps
+   onto asset URLs and Server Action requests. Neither route in step 3 actually
+   activates it today: when Vercel runs the build the variable is there, but
+   Next.js >= 14.1.4 stamps with no config at all, so the line is redundant
+   rather than load-bearing; on the prebuilt path the ID Vercel wants is a
+   *custom* one, not `VERCEL_DEPLOYMENT_ID`. What the line buys is the seam —
+   `resolveDeploymentId` is the single place either ID would be read from.
+2. **Project settings (manual, confirm first — it may already be on).** Vercel
+   enables **Skew Protection** by default for projects created after
+   2024-11-19 on a supported framework, so check Settings → Advanced before
+   treating this as open; only older projects have to flip the switch
+   themselves. Leave **Maximum Age** alone unless
+   there is a reason to change it: Vercel's default is already one day, which
+   covers a tab idled overnight — lowering it would *shorten* the protection
+   window. Raise it only for tabs that stay open longer than that, up to the
+   project's Deployment Retention limit, which is the ceiling Vercel enforces.
+   Also enable **"Enable access to System Environment Variables"** (Settings →
+   Environment Variables); without it Vercel never injects `VERCEL_*` system
+   variables into the build, so `VERCEL_DEPLOYMENT_ID` stays absent even with
+   Skew Protection on. Whatever you change here, Vercel's enable steps end by
+   **redeploying the latest production deployment** — until that redeploy the
+   toggles do not apply to what is currently live. On this project that
+   redeploy only helps once one of the routes in step 3 is taken; a redeploy of
+   today's prebuilt deployment still carries no deployment ID.
+3. **Build path (open decision, blocks the whole thing).** A deployment ID is
+   assigned when a deployment is **uploaded**, not when it is built. Today
+   `stage-web-production` runs `vercel build --prod` inside GitHub Actions and
+   then `vercel deploy --prebuilt` (see the bullets above), so
+   `VERCEL_DEPLOYMENT_ID` does not exist during that build. Prebuilt deployments
+   are **not** excluded from Skew Protection — Vercel supports them via a
+   **custom deployment ID**, configured so the build-time ID matches the one
+   Vercel assigns at deploy time (a prebuilt deployment may not use Vercel's
+   reserved `dpl_` prefix for it). So there are two routes, and neither is taken
+   here:
+   - **Let Vercel build production.** Drop `--prebuilt`, forwarding the
+     `VERCEL_GIT_*` values with `--build-env` so
+     `NEXT_PUBLIC_OTEL_SERVICE_VERSION` and the `vcs.*` resource attributes
+     survive. Next.js >= 14.1.4 built on Vercel needs no `next.config.ts` change
+     at all. Costs the "build already done before the flip" property.
+   - **Keep `--prebuilt` and adopt a custom deployment ID.** Keeps the current
+     pipeline shape; the ID has to be minted by us and given to both the build
+     and the deploy. `resolveDeploymentId` is the seam it would be read through.
+
+   Setup steps for the custom-ID route are Vercel's, not ours — see
+   [Skew Protection → Next.js](https://vercel.com/docs/skew-protection#skew-protection-with-next.js)
+   and [`vercel deploy` → "When not to use `--prebuilt`"](https://vercel.com/docs/cli/deploy#when-not-to-use---prebuilt).
+
+Until 2 **and** one of the two routes in 3 hold, no deployment ID reaches the
+build, `deploymentId` resolves to `undefined`, and behaviour is unchanged.
+Step 1 is inert on its own.
+
 ### Migration drift on the shared preview project
 
 `preview` is a **shared** Supabase project, and two workflows push migrations to
