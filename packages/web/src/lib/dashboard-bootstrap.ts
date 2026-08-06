@@ -62,7 +62,15 @@ export async function resolveDashboardBootstrap<TUser, TOnboarding>(
   deps: DashboardBootstrapDeps<TUser, TOnboarding>,
 ): Promise<DashboardBootstrap<TUser, TOnboarding> | null> {
   // Started first and deliberately not awaited yet — this is the overlap.
-  const onboarding = deps.getOnboardingState().catch(() => deps.onboardingFallback);
+  const onboarding = deps.getOnboardingState().catch((error: unknown) => {
+    // The rejection is swallowed so the layout still renders, and so the
+    // signed-out path — which returns below without ever awaiting this promise
+    // — cannot produce an unhandled rejection. It is LOGGED because swallowing
+    // it silently makes a real backend failure indistinguishable from a
+    // genuinely empty account: both render the "nothing done" badge.
+    console.error('[resolveDashboardBootstrap] onboarding read failed:', error);
+    return deps.onboardingFallback;
+  });
 
   const user = await deps.getUser();
   if (!user) return null;
