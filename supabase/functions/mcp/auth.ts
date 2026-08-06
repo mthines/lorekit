@@ -14,7 +14,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { extractToken } from './auth-token.ts';
-import type { Span } from '../_shared/otel.ts';
+import { SPAN_KIND_CLIENT, type Span } from '../_shared/otel.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
@@ -33,10 +33,53 @@ async function sha256hex(text: string): Promise<string> {
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/**
+ * Resolve the caller's auth context, TIMED.
+ *
+ * The outcome attributes still land on the caller's span exactly as before —
+ * `mcp/index.ts` passes the root request span on purpose so `auth.type` /
+ * `auth.outcome` / `auth.user_id` are queryable on the request itself. That
+ * decision is unchanged; what is added here is the missing DURATION.
+ *
+ * Auth resolution is a network round-trip on two of the three tiers (an
+ * `api_tokens` select for `lk_*`, a GoTrue call for a JWT) and it emitted no
+ * span at all, so its cost was unattributable wall clock inside the request
+ * span: `lorekit.mcp` spans reporting 0.885s with 0.084s accounted for by
+ * children. The REST surface has had this since it shipped (`lorekit.rest.auth`,
+ * `_shared/api/auth.ts`); this is the MCP counterpart.
+ *
+ * The `try`/`finally` is what makes it safe: the tier logic has six return
+ * paths and an `.end()` per path is one refactor away from being dropped on the
+ * one that matters.
+ */
 export async function resolveAuth(
   authHeader: string | null,
   queryToken: string | null = null,
   span?: Span,
+): Promise<AuthContext | null> {
+  const authSpan = span?.child('lorekit.mcp.auth');
+  try {
+    return await resolveAuthTiers(authHeader, queryToken, span, authSpan);
+  } catch (err) {
+    // Without this arm the span's status stays at its `ok` default, so a failed
+    // resolution renders as an OK `lorekit.mcp.auth` parent above an errored
+    // child — the one shape that makes the tree lie about which hop broke.
+    // `traceRequest` uses exactly this catch-record-rethrow-finally form.
+    // The error NAME only, for the reason the token lookup states: a fetch
+    // failure's message carries the request URL, and that URL carries the
+    // token hash.
+    authSpan?.error((err as Error).name);
+    throw err;
+  } finally {
+    authSpan?.end();
+  }
+}
+
+async function resolveAuthTiers(
+  authHeader: string | null,
+  queryToken: string | null,
+  span: Span | undefined,
+  authSpan: Span | undefined,
 ): Promise<AuthContext | null> {
   // Accept token from Authorization: Bearer header (preferred — keeps the token
   // out of server logs) or ?token= query param (legacy fallback for MCP clients
@@ -59,11 +102,63 @@ export async function resolveAuth(
     const serviceDb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
-    const { data } = await serviceDb
-      .from('api_tokens')
-      .select('user_id, permissions')
-      .eq('token_hash', hash)
-      .maybeSingle();
+    // The token lookup gets its own CLIENT span, like every other edge DB call,
+    // so a slow `api_tokens` read is distinguishable from a slow hash or a slow
+    // GoTrue call rather than being one undifferentiated auth cost.
+    //
+    // Deliberately NOT `createTracedClient`: it renders filter VALUES into the
+    // span name and `db.query.text` (`buildSql` interpolates `eq()` arguments),
+    // and the filter here is the token hash — the stored credential. The query
+    // therefore runs on the raw client and only the timing is spanned.
+    const lookupSpan = authSpan?.child('SELECT user_id,permissions FROM api_tokens', {
+      'db.system': 'postgresql',
+      'db.operation.name': 'SELECT',
+      'db.collection.name': 'api_tokens',
+    }, SPAN_KIND_CLIENT);
+    // `finally`, for the reason the outer `authSpan` uses one: `Span.end()` is
+    // the only thing that enqueues a span for export, so a lookup that REJECTS
+    // (transport failure, abort) would drop the child entirely and the failing
+    // case — the one this span exists to make visible — would vanish. This
+    // mirrors `TracedQuery`'s rejection handler in `_shared/otel.ts`. The
+    // rejection is rethrown untouched: an infra outage must not be reported as
+    // an invalid key.
+    //
+    // `db.success` (and the error status) is what keeps a FAILED read
+    // distinguishable from a genuine token miss: both leave `data` null and
+    // both end in `api_key_invalid`, so rows-0 alone reports an outage as a bad
+    // key. `TracedQuery` records the same pair for every other edge DB call.
+    // The bounded error CODE goes on the span, never the free-form message —
+    // the same rule the JWT tier below states explicitly, and the reason this
+    // query avoids `createTracedClient` in the first place.
+    let data: Record<string, unknown> | null = null;
+    let success = false;
+    try {
+      const result = await serviceDb
+        .from('api_tokens')
+        .select('user_id, permissions')
+        .eq('token_hash', hash)
+        .maybeSingle();
+      data = result.data;
+      success = !result.error;
+      if (result.error) {
+        lookupSpan?.error(`PostgrestError: ${result.error.code ?? 'unknown'}`);
+      }
+    } catch (err) {
+      // The error NAME only — same bounded-value rule as the PostgREST arm
+      // above, and for a sharper reason: a Deno fetch failure renders the
+      // request URL into its message, and this request's URL carries
+      // `token_hash=eq.<sha256>`. The free-form message would publish the
+      // stored credential to telemetry — the exact leak this query avoids
+      // `createTracedClient` to prevent. Name plus `db.success: false` plus the
+      // span's own duration already separate a transport failure from a miss.
+      lookupSpan?.error((err as Error).name);
+      throw err;
+    } finally {
+      lookupSpan?.setAttributes({
+        'db.response.rows': data ? 1 : 0,
+        'db.success': success,
+      }).end();
+    }
     if (!data) {
       span?.setAttributes({ 'auth.outcome': 'api_key_invalid', 'auth.type': 'api_key' });
       return null;
