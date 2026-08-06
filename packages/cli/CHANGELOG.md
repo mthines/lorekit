@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.34.0](https://github.com/mthines/lorekit/compare/cli-v1.33.4...cli-v1.34.0) (2026-08-06)
+
+
+### Features
+
+* **cli:** add a volatile-key lint rule so per-sighting keys fail CI ([939015c](https://github.com/mthines/lorekit/commit/939015cd7501550d8ae9fb447b9ef8417dfdb79c))
+
+
+### Bug Fixes
+
+* **cli:** match pr/issue references joined by - or _ in volatile-key ([bdb1abb](https://github.com/mthines/lorekit/commit/bdb1abb740d2f8b7df5b448bb0ebc30dfe60fc91))
+
+
+### Documentation
+
+* **cli:** list volatile-key in every lint rule enumeration ([46c961f](https://github.com/mthines/lorekit/commit/46c961faf63000f45b007c6ae556c2e9e444261d))
+
 ## [1.33.4](https://github.com/mthines/lorekit/compare/cli-v1.33.3...cli-v1.33.4) (2026-08-06)
 
 
