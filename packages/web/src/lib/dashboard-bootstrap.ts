@@ -36,7 +36,13 @@ export interface DashboardBootstrapDeps<TUser, TOnboarding> {
   getOnboardingState: () => Promise<TOnboarding>;
   /**
    * Used when `getOnboardingState` rejects. Onboarding state is progress
-   * decoration — a failed read must degrade the badge, never the page.
+   * decoration, so a failed read degrades the badge rather than the layout.
+   *
+   * The guarantee is scoped to THIS helper's caller, not to every consumer of
+   * the underlying read. A page that awaits `getOnboardingState()` itself
+   * still surfaces the rejection — `app/(dashboard)/overview/page.tsx` does
+   * exactly that, and because the read is React-`cache()`d it awaits the same
+   * memoised rejection this fallback absorbed for the layout.
    */
   onboardingFallback: TOnboarding;
 }
