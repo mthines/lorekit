@@ -335,9 +335,11 @@ export const ListFacetsQuerySchema = z.object({
    * (self-exclusion, migration 00057), so a value's count is what selecting it
    * would actually yield. Absent → the global catalog, unchanged.
    *
-   * No caller passes them yet: `packages/web`'s `listFacetsRequest` still sends
-   * only `archived`, and `FILTER_FIELDS` has no `kind`/`host` row. Every
-   * response the dashboard renders today is therefore the global catalog.
+   * The dashboard's Explorer passes its active filter bar AND the selected
+   * `scope` here (`listFacetsRequest` ← `filtersToFacetParams` plus
+   * `useFacetCatalog`'s `scope`), so its filter-menu counts drill down and match
+   * the scoped list. `kind`/`host` still have no `FILTER_FIELDS` row, so those
+   * two dimensions are enumerated but not yet filterable from the menu.
    *
    * `ListMemoriesQuerySchema`'s NON-dimension filters — `q`, `key`,
    * `created_since` and `created_until` — are deliberately NOT mirrored, so

@@ -58,3 +58,13 @@ Wildcards only work in `memory.search` — not in `memory.read`, `memory.list`, 
 3. `branch::` format must have exactly two `::` separators. `branch::mthines/gw-tools` → 400.
 4. Unknown prefixes → 400. Only `global`, `project`, `repo`, `branch` are valid.
 5. Segments are trimmed and lowercased on ingest.
+6. No segment may itself contain `::`. `::` is reserved as the separator, so
+   `project::widget::x` and `repo::owner/name::x` are both invalid (and
+   `branch::` takes exactly two segments, per rule 3).
+
+Rule 6 is what makes the CLI's `<scope::key>` shorthand decidable: `lorekit show`
+/ `write` / `link` split a single argument at the LAST `::` and only when the
+left side is itself a complete valid scope, so `repo::owner/name::my-key` resolves
+to scope `repo::owner/name` + key `my-key` while a bare `repo::owner/name` stays
+whole. Keys are free-form and MAY contain `::`; those are unrepresentable in one
+token, so the CLI exposes `--scope` / `--key` for them.

@@ -1,13 +1,16 @@
-// `lorekit show <scope> <key>` — inspect ONE lesson in full: its complete
+// `lorekit show <scope::key>` — inspect ONE lesson in full: its complete
 // (untruncated) value, scope, key, updated timestamp, tags, and which store(s)
 // it lives in. When the same scope::key exists in BOTH the offline and remote
 // stores — possibly with different values — both are shown and the divergence is
 // flagged.
 //
-// Two positional shapes are accepted:
-//   show <scope> <key>     — classic two-positional form
-//   show <scope::key>      — combined shorthand (the same format `list` prints,
-//                            so you can copy-paste a key directly from list output)
+// Positional shapes accepted (see `resolveScopeKeyArgs` in `lessons-pure.mjs`
+// for the one shared, scope-validity-gated disambiguation rule):
+//   show <scope::key>      — canonical form (the same format `list` prints, so
+//                            you can copy-paste a key directly from list output)
+//   show <scope> <key>     — the explicit two-positional form
+//   show --scope <s> --key <k>
+//                          — flags win; the only way to name a key containing `::`
 //
 // Uses each store's real `read({scope, key})` method (both stores expose it),
 // not a filtered `list` — a single-record lookup is what `read` is for, and it
@@ -18,7 +21,14 @@ import process from 'node:process';
 import { resolveProjectRoot } from './config.mjs';
 import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { normalizeEntry, shortDate, describeError, recordsDiverge, parseScopeKey } from './lessons-view.mjs';
+import {
+  normalizeEntry,
+  shortDate,
+  describeError,
+  recordsDiverge,
+  resolveScopeKeyArgs,
+  scopeIssue,
+} from './lessons-view.mjs';
 import { resolveAppBase } from './deeplink-pure.mjs';
 import { emitLink } from './link.mjs';
 import { log, err, heading, status, c } from './util.mjs';
@@ -47,25 +57,38 @@ export async function show(args) {
   const env = { ...process.env };
   if (args.store) env.LOREKIT_STORE = args.store;
 
-  // Two positional shapes are accepted:
-  //   show <scope> <key>    — classic two-positional form (backward-compatible)
-  //   show <scope::key>     — combined shorthand mirroring `list` output format
-  let scope, key;
-  const first = typeof args._[1] === 'string' ? args._[1] : '';
-  const parsed = parseScopeKey(first);
-  if (parsed) {
-    // Combined scope::key — e.g. `show global::claude-mcp-registration-can-hang`
-    scope = parsed.scope;
-    key = parsed.key;
-  } else {
-    // Classic two-positional form — e.g. `show global claude-mcp-registration-can-hang`
-    scope = first;
-    key = typeof args._[2] === 'string' ? args._[2] : '';
+  // Positional shapes (all resolved by the shared, validity-gated parser):
+  //   show <scope::key>            — canonical shorthand, mirrors `list` output
+  //   show <scope> <key>           — explicit two-positional form
+  //   show --scope <s> --key <k>   — flags win; the escape hatch for a key
+  //                                  containing `::`
+  const positionals = args._.slice(1);
+  const { scope, key, consumed } = resolveScopeKeyArgs(positionals, {
+    scope: args.scope,
+    key: args.key,
+  });
+  // Scope validity is checked FIRST, for the same reason as in `write`: a bad
+  // scope is the root cause, and "a key is required" is downstream noise.
+  const badScope = scope ? scopeIssue(scope) : null;
+  if (badScope) {
+    err(`${c.red('Error:')} invalid scope ${c.cyan(scope)} — ${badScope}`);
+    err(`Valid scopes: global | project::<name> | repo::<owner>/<name> | branch::<owner>/<name>::<branch>`);
+    err(`Run ${c.cyan('lorekit show --help')} for options.`);
+    return 1;
   }
   if (!scope || !key) {
-    err(`${c.red('Usage:')} lorekit show <scope> <key> [--json]`);
-    err(`       lorekit show <scope::key> [--json]`);
+    err(`${c.red('Usage:')} lorekit show <scope::key> [--json]`);
+    err(`       lorekit show <scope> <key> [--json]`);
     err(`Both a scope and a key are required. Run ${c.cyan('lorekit show --help')} for options.`);
+    return 1;
+  }
+  // `show` consumes every positional it is given — unlike `write`, it has no
+  // trailing value — so a leftover one means the caller's mental model differs
+  // from what was parsed. Say so instead of silently reading a different key.
+  if (positionals.length > consumed) {
+    err(`${c.red('Error:')} unexpected argument ${c.cyan(positionals[consumed])}`);
+    err(`Parsed scope ${c.cyan(scope)} and key ${c.cyan(key)} from the arguments before it.`);
+    err(`Run ${c.cyan('lorekit show --help')} for options.`);
     return 1;
   }
 

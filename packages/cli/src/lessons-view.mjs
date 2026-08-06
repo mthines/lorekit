@@ -13,21 +13,19 @@ import { log, heading, status, c } from './util.mjs';
 // hot path can share them without pulling in this file's `util`/render stack.
 // Re-exported here so `search`/`tree` (and their tests) keep one import site;
 // `matchesQuery` is also used internally by `filterGroups` below.
-import { resolvePrecedence, matchesQuery } from './lessons-pure.mjs';
-export { resolvePrecedence, matchesQuery };
-
-// Parse a combined `scope::key` string into { scope, key }, or return null when
-// the input contains no `::`. Uses the FIRST occurrence of `::` as the separator
-// so nested scopes like `branch::owner/repo::feat/x` are handled correctly.
-// Exported so `show`, `write`, and any future commands share one implementation.
-export function parseScopeKey(s) {
-  const idx = s.indexOf('::');
-  if (idx === -1) return null;
-  const scope = s.slice(0, idx).trim();
-  const key = s.slice(idx + 2).trim();
-  if (!scope || !key) return null;
-  return { scope, key };
-}
+// `scopeIssue` (the canonical scope validator) and the scope/key argument
+// parsers live there too — the `lint` rule below and the `write`/`show`/`link`
+// argument handling must agree on ONE scope grammar, and the parser is only
+// decidable because it can ask the validator.
+import {
+  resolvePrecedence,
+  matchesQuery,
+  scopeIssue,
+  isScopeString,
+  resolveScopeArg,
+  resolveScopeKeyArgs,
+} from './lessons-pure.mjs';
+export { resolvePrecedence, matchesQuery, scopeIssue, isScopeString, resolveScopeArg, resolveScopeKeyArgs };
 
 // The scopes that apply to the current directory, most-specific → broadest:
 // project, branch, repo, global. De-duplicated (a repo with no branch scope,
@@ -253,36 +251,6 @@ export function diffGroups(offline = {}, remote = {}) {
 // Below this trimmed length a non-empty value is "suspiciously short" — a lesson
 // too terse to carry a durable observation (e.g. "yes", "fixed", "todo").
 export const MIN_VALUE_LEN = 12;
-
-// Validate a scope string against the canonical `::`-separated format
-// (`global`, `project::name`, `repo::owner/name`, `branch::owner/name::branch`).
-// Returns null when valid, else a short human reason. The classic failure is a
-// single `:` where `::` is expected (a 400 on the server). Pure — the lint
-// `malformed-scope` rule and any future scope check share this one validator.
-export function scopeIssue(scope) {
-  const s = String(scope == null ? '' : scope);
-  if (!s) return 'empty scope';
-  if (s === 'global') return null;
-  const m = /^(project|repo|branch)::(.+)$/.exec(s);
-  if (!m) {
-    // A recognized type followed by a single ':' is the canonical malformed case.
-    if (/^(global|project|repo|branch):(?!:)/.test(s)) return 'single `:` separator (use `::`)';
-    return 'unrecognized scope type (expected global | project | repo | branch)';
-  }
-  const [, type, rest] = m;
-  if (type === 'project') {
-    return rest.includes('::') ? 'project scope takes no further `::` segment' : null;
-  }
-  if (type === 'repo') {
-    return /^[^/]+\/[^/]+$/.test(rest) ? null : 'repo scope must be `owner/name`';
-  }
-  // branch
-  const parts = rest.split('::');
-  if (parts.length !== 2 || !/^[^/]+\/[^/]+$/.test(parts[0]) || !parts[1]) {
-    return 'branch scope must be `owner/name::branch`';
-  }
-  return null;
-}
 
 // The lint rule set: each a pure predicate over a normalized entry returning a
 // short reason string when it FIRES, or null when the entry is clean. Kept as

@@ -17,7 +17,6 @@
 import process from 'node:process';
 import { resolveProjectRoot } from './config.mjs';
 import { deriveScope } from './scope.mjs';
-import { scopeIssue } from './lessons-view.mjs';
 import {
   resolveAppBase,
   buildLoreUrl,
@@ -26,7 +25,7 @@ import {
   parseViewArg,
   parseRangeArg,
   parseTagsArg,
-  resolveScopeArg,
+  resolveScopeKeyArgs,
   surfaceFor,
 } from './deeplink-pure.mjs';
 import { log, err } from './util.mjs';
@@ -38,26 +37,17 @@ export async function link(args) {
   const base = resolveAppBase({ base: args.base, env });
 
   // Positionals: link [scope] [key] OR link <scope::key>. args._[0] is the
-  // command token ('link' / 'url'), so the first argument is args._[1].
-  const first = typeof args._[1] === 'string' ? args._[1] : '';
-  const second = typeof args._[2] === 'string' ? args._[2] : '';
-  let scope = null;
-  let key = null;
-  if (first && second) {
-    // Two positionals — the first IS the scope (even one containing `::`, like
-    // `repo::owner/name`); the second is the key. The `scope::key` shorthand is
-    // only consulted for a single positional, below.
-    scope = first;
-    key = second;
-  } else if (first) {
-    // One positional: disambiguate a bare scope from the `<scope>::<key>`
-    // shorthand by scope validity, not by a naive first-`::` split — otherwise
-    // `link repo::owner/name` (a valid scope) is misread as scope="repo" + a
-    // bogus key. `scopeIssue(s) === null` is the canonical "is a valid scope".
-    const resolved = resolveScopeArg(first, (s) => scopeIssue(s) === null);
-    scope = resolved.scope;
-    key = resolved.key;
-  }
+  // command token ('link' / 'url'), so the command's positionals start at 1.
+  // The disambiguation rule this command pioneered — split only when the left
+  // side is itself a valid scope — is now the shared `resolveScopeKeyArgs`,
+  // which `show` and `write` use too, so the three can no longer drift.
+  // `--scope` is applied below (positional wins) rather than through the
+  // parser, because for `link` a scope is optional and the flag is a fallback.
+  const positionals = args._.slice(1);
+  const first = typeof positionals[0] === 'string' ? positionals[0] : '';
+  const resolved = resolveScopeKeyArgs(positionals, { key: args.key });
+  let scope = resolved.scope || null;
+  let key = resolved.key;
   // `--scope` sets the scope when no positional scope was given (consistency
   // with the other read commands); an explicit positional always wins.
   if (!scope && typeof args.scope === 'string' && args.scope) scope = args.scope;
