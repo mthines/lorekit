@@ -77,11 +77,13 @@ describe('MCP auth resolution telemetry (supabase/functions/mcp/auth.ts)', () =>
     expect(executable).toMatch(/success\s*=\s*!result\.error;/);
   });
 
-  it('puts the bounded error CODE on the lookup span, never the free-form message', () => {
+  it('puts a bounded value on the lookup span, never a free-form message — on EVERY arm', () => {
     // Same rule the JWT tier states explicitly, and the reason this query
     // avoids createTracedClient: nothing derived from this row reaches telemetry.
+    // The rejection arm matters most — a Deno fetch failure renders the request
+    // URL into its message, and that URL carries `token_hash=eq.<sha256>`.
     expect(executable).toMatch(/lookupSpan\?\.error\(`PostgrestError: \$\{result\.error\.code/);
-    expect(executable).not.toMatch(/lookupSpan\?\.error\([^)]*result\.error\.message/);
+    expect(executable).not.toMatch(/lookupSpan\?\.error\([^)]*\.message/);
   });
 
   it('never routes the token lookup through createTracedClient', () => {

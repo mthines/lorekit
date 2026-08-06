@@ -134,7 +134,14 @@ async function resolveAuthTiers(
         lookupSpan?.error(`PostgrestError: ${result.error.code ?? 'unknown'}`);
       }
     } catch (err) {
-      lookupSpan?.error(`${(err as Error).name}: ${(err as Error).message}`);
+      // The error NAME only — same bounded-value rule as the PostgREST arm
+      // above, and for a sharper reason: a Deno fetch failure renders the
+      // request URL into its message, and this request's URL carries
+      // `token_hash=eq.<sha256>`. The free-form message would publish the
+      // stored credential to telemetry — the exact leak this query avoids
+      // `createTracedClient` to prevent. Name plus `db.success: false` plus the
+      // span's own duration already separate a transport failure from a miss.
+      lookupSpan?.error((err as Error).name);
       throw err;
     } finally {
       lookupSpan?.setAttributes({
