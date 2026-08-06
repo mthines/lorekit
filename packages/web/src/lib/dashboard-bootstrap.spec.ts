@@ -73,7 +73,7 @@ describe('resolveDashboardBootstrap', () => {
     // empty account render the identical "nothing done" badge — so leaving it
     // unpinned would let a tidy-up drop it with nothing going red.
     const reason = new Error('postgrest unreachable');
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     try {
       const result = await resolveDashboardBootstrap<User, Onboarding>({
@@ -105,7 +105,7 @@ describe('resolveDashboardBootstrap', () => {
     // The handler logs before returning the fallback, so silence it here —
     // this case is about the absence of an unhandled rejection, and the log
     // itself is pinned by the rejection test above.
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     try {
       const result = await resolveDashboardBootstrap<User, Onboarding>({
