@@ -67,16 +67,31 @@ describe('resolveDashboardBootstrap', () => {
     expect(result).toBeNull();
   });
 
-  it('degrades to the fallback when the onboarding read rejects', async () => {
-    const result = await resolveDashboardBootstrap<User, Onboarding>({
-      getUser: async () => USER,
-      getOnboardingState: async () => {
-        throw new Error('postgrest unreachable');
-      },
-      onboardingFallback: FALLBACK,
-    });
+  it('degrades to the fallback when the onboarding read rejects, and logs the reason', async () => {
+    // The log is asserted, not just the fallback. It is the only trace a
+    // failed count leaves — without it a real PostgREST outage and a genuinely
+    // empty account render the identical "nothing done" badge — so leaving it
+    // unpinned would let a tidy-up drop it with nothing going red.
+    const reason = new Error('postgrest unreachable');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    expect(result).toEqual({ user: USER, onboardingState: FALLBACK });
+    try {
+      const result = await resolveDashboardBootstrap<User, Onboarding>({
+        getUser: async () => USER,
+        getOnboardingState: async () => {
+          throw reason;
+        },
+        onboardingFallback: FALLBACK,
+      });
+
+      expect(result).toEqual({ user: USER, onboardingState: FALLBACK });
+      expect(consoleError).toHaveBeenCalledWith(
+        '[resolveDashboardBootstrap] onboarding read failed:',
+        reason,
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it('does not leave an unhandled rejection when the caller is redirected away', async () => {
@@ -87,6 +102,10 @@ describe('resolveDashboardBootstrap', () => {
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown) => unhandled.push(reason);
     process.on('unhandledRejection', onUnhandled);
+    // The handler logs before returning the fallback, so silence it here —
+    // this case is about the absence of an unhandled rejection, and the log
+    // itself is pinned by the rejection test above.
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     try {
       const result = await resolveDashboardBootstrap<User, Onboarding>({
@@ -105,6 +124,7 @@ describe('resolveDashboardBootstrap', () => {
       expect(unhandled).toEqual([]);
     } finally {
       process.off('unhandledRejection', onUnhandled);
+      consoleError.mockRestore();
     }
   });
 });
