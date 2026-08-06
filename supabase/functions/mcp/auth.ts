@@ -14,7 +14,7 @@
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { extractToken } from './auth-token.ts';
-import type { Span } from '../_shared/otel.ts';
+import { SPAN_KIND_CLIENT, type Span } from '../_shared/otel.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
@@ -33,10 +33,43 @@ async function sha256hex(text: string): Promise<string> {
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/**
+ * Resolve the caller's auth context, TIMED.
+ *
+ * The outcome attributes still land on the caller's span exactly as before —
+ * `mcp/index.ts` passes the root request span on purpose so `auth.type` /
+ * `auth.outcome` / `auth.user_id` are queryable on the request itself. That
+ * decision is unchanged; what is added here is the missing DURATION.
+ *
+ * Auth resolution is a network round-trip on two of the three tiers (an
+ * `api_tokens` select for `lk_*`, a GoTrue call for a JWT) and it emitted no
+ * span at all, so its cost was unattributable wall clock inside the request
+ * span: `lorekit.mcp` spans reporting 0.885s with 0.084s accounted for by
+ * children. The REST surface has had this since it shipped (`lorekit.rest.auth`,
+ * `_shared/api/auth.ts`); this is the MCP counterpart.
+ *
+ * The `try`/`finally` is what makes it safe: the tier logic has six return
+ * paths and an `.end()` per path is one refactor away from being dropped on the
+ * one that matters.
+ */
 export async function resolveAuth(
   authHeader: string | null,
   queryToken: string | null = null,
   span?: Span,
+): Promise<AuthContext | null> {
+  const authSpan = span?.child('lorekit.mcp.auth');
+  try {
+    return await resolveAuthTiers(authHeader, queryToken, span, authSpan);
+  } finally {
+    authSpan?.end();
+  }
+}
+
+async function resolveAuthTiers(
+  authHeader: string | null,
+  queryToken: string | null,
+  span: Span | undefined,
+  authSpan: Span | undefined,
 ): Promise<AuthContext | null> {
   // Accept token from Authorization: Bearer header (preferred — keeps the token
   // out of server logs) or ?token= query param (legacy fallback for MCP clients
@@ -59,11 +92,25 @@ export async function resolveAuth(
     const serviceDb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
+    // The token lookup gets its own CLIENT span, like every other edge DB call,
+    // so a slow `api_tokens` read is distinguishable from a slow hash or a slow
+    // GoTrue call rather than being one undifferentiated auth cost.
+    //
+    // Deliberately NOT `createTracedClient`: it renders filter VALUES into the
+    // span name and `db.query.text` (`buildSql` interpolates `eq()` arguments),
+    // and the filter here is the token hash — the stored credential. The query
+    // therefore runs on the raw client and only the timing is spanned.
+    const lookupSpan = authSpan?.child('SELECT user_id,permissions FROM api_tokens', {
+      'db.system': 'postgresql',
+      'db.operation.name': 'SELECT',
+      'db.collection.name': 'api_tokens',
+    }, SPAN_KIND_CLIENT);
     const { data } = await serviceDb
       .from('api_tokens')
       .select('user_id, permissions')
       .eq('token_hash', hash)
       .maybeSingle();
+    lookupSpan?.setAttributes({ 'db.response.rows': data ? 1 : 0 }).end();
     if (!data) {
       span?.setAttributes({ 'auth.outcome': 'api_key_invalid', 'auth.type': 'api_key' });
       return null;
