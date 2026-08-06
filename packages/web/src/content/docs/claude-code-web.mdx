@@ -1,23 +1,21 @@
 ---
 title: "Claude Code on the web"
-description: "Set up LoreKit in Claude Code's cloud web environment. Each session runs in a fresh, ephemeral container, so use remote mode for persistence and keep your token in an environment variable. Two ways to wire it up: install the CLI per session, or commit a token-free config."
+description: "Set up LoreKit in Claude Code's cloud web environment. Each session runs in a fresh, ephemeral container, so a setup script installs the CLI and generates the MCP config on start — nothing is committed and your token lives in an environment variable."
 order: 4
-keywords: ["claude code on the web", "cloud", "remote environment", "ephemeral", "container", "environment variables", "LOREKIT_TOKEN", "network policy", "mcp", "install", "cli", "setup script", "session start hook", "doctor"]
+keywords: ["claude code on the web", "cloud", "remote environment", "ephemeral", "container", "setup script", "npm install -g", "cli", "environment variables", "LOREKIT_TOKEN", "network policy", "mcp", "install", "hooks", "doctor"]
 ---
 
 <TutorialCallout variant="info">
 
-Claude Code on the web runs every session in a **fresh, ephemeral cloud container**: the repository is re-cloned when the container starts, and nothing you write to disk survives once the session ends. Two things follow from that, and they hold no matter which setup path you pick — use **remote mode** so your lore persists across sessions, and keep your token in the **`LOREKIT_TOKEN` environment variable** so it never lands in a file you commit.
+Claude Code on the web runs every session in a **fresh, ephemeral cloud container**: the repository is re-cloned when the container starts, and nothing you write to disk survives once the container is reclaimed. So instead of committing config, you add a **setup script** that installs the CLI and generates the MCP config on start. The only thing you provide is the token, via the `LOREKIT_TOKEN` environment variable — nothing secret is ever committed.
 
 </TutorialCallout>
 
-**Why the local store is the wrong choice here**
+**Why remote mode, and why nothing to commit**
 
-The [offline store](/docs/offline) keeps memories as plain files under `.lorekit/`. In an ephemeral container those files are wiped when the session ends, so every session would start with an empty memory. Remote mode syncs to the hosted MCP server instead, so lore written in one session is available in the next — on any container, from any machine. This tutorial assumes [remote mode](/docs/remote).
+The [offline store](/docs/offline) keeps memories as plain files under `.lorekit/`. In an ephemeral container those files are wiped when the container is reclaimed, so every fresh container would start with an empty memory. Remote mode syncs to the hosted MCP server instead, so lore written in one session is available in the next — on any container, from any machine.
 
-## Shared setup
-
-These three steps are the same whichever wiring path you choose below.
+`remote` is already the built-in default mode, and the setup script bakes the hosted endpoint into the `.mcp.json` it generates — so you need **no `.lorekit.json`** and **no committed `.mcp.json`**. This tutorial assumes [remote mode](/docs/remote).
 
 <TutorialStep number={1} title="Generate a read-write API token">
 
@@ -29,13 +27,13 @@ The token is shown **once only** — copy it before closing the modal.
 
 <TutorialStep number={2} title="Store the token as an environment variable">
 
-In Claude Code on the web, each environment carries its own configuration — environment variables, secrets, and setup scripts (see the [environment docs](https://code.claude.com/docs/en/claude-code-on-the-web)). Add your token there rather than in the repo:
+In Claude Code on the web, each environment carries its own configuration — environment variables, secrets, and setup scripts (see the [environment docs](https://code.claude.com/docs/en/claude-code-on-the-web)). Add your token there:
 
 ```bash
 LOREKIT_TOKEN=lk_rw_<your-token>
 ```
 
-This is the one secret, and it stays out of version control by living in the environment configuration. Both paths below read it from here — neither writes it into a file you commit.
+This is the one secret, and it stays out of version control by living in the environment configuration. The setup script below reads it from here — it never writes it into a file you commit.
 
 </TutorialStep>
 
@@ -44,97 +42,51 @@ This is the one secret, and it stays out of version control by living in the env
 The web environment routes outbound HTTPS through a proxy governed by the environment's **network policy**. LoreKit needs two hosts reachable:
 
 - `pqokxlhvnosogizsjztg.supabase.co` — the hosted MCP endpoint
-- `registry.npmjs.org` — so `npx` can fetch `@lorekit/cli`
+- `registry.npmjs.org` — so npm can install `@lorekit/cli`
 
 If your environment uses a restricted network policy, add both hosts to its allowlist. A policy that already permits general HTTPS and npm needs no change.
 
 </TutorialStep>
 
-## Choose how to wire LoreKit in
+<TutorialStep number={4} title="Add a setup script that installs LoreKit">
 
-There are two good paths. They connect the same account to the same hosted store — they differ only in **where the wiring lives**.
-
-| | Install the CLI (Option A) | Commit a token-free config (Option B) |
-| --- | --- | --- |
-| Best for | Fastest setup, full experience | Reproducible config in version control |
-| Where the wiring lives | Regenerated each session by a setup script | Committed `.lorekit.json` + `.mcp.json` |
-| Lifecycle hooks (inject lore, nudge) | Yes, via `--hooks all` | Only if you also commit `.claude/` |
-| Skills scaffolded | Yes | Only if you also commit `.claude/` |
-| Needs setup-script access | Yes | No |
-| Token | `LOREKIT_TOKEN` env | `LOREKIT_TOKEN` env |
-
-If in doubt, use **Option A** — it is the same one-command install as on the desktop, and it wires the lifecycle hooks and skills that make lore surface automatically.
-
-### Option A — Install the CLI in a setup script
-
-Run the normal installer from the environment's **setup script** (or a `SessionStart` hook). Because the container is re-created each session, the install runs fresh each time; the container state is cached after the setup script, so the cost is paid once:
+Put this in the environment's **setup script** (or a `SessionStart` hook). It runs before the session starts, and the container state is cached afterwards — so the cost is paid once per container, not once per session:
 
 ```bash
 #!/bin/bash
 set -euo pipefail
 
-# One command: scaffolds the skills, wires the MCP server, and installs the
-# lifecycle hooks. Non-interactive, safe to re-run.
-npx -y @lorekit/cli install --hooks all --yes
+# Install the CLI globally so `lorekit` is a durable binary on PATH. This is
+# what makes the next command wire the hooks to call `lorekit hook …` directly
+# instead of `npx …` on every hook event — a real speedup on the hot path.
+npm install -g @lorekit/cli
+
+# Scaffold the skills, generate the MCP config, and wire the lifecycle hooks.
+# Non-interactive, safe to re-run.
+lorekit install --hooks all --yes
 ```
 
-What each part does, and why it is safe here:
+What each part does — and why nothing needs committing:
 
-- **No endpoint flag needed.** `install` defaults to the hosted MCP endpoint (`https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp`).
-- **The token comes from `LOREKIT_TOKEN`.** `install` reads it from the environment — you never type or commit it. It is written only into the container's generated `.mcp.json`, which is thrown away when the session ends.
-- **`--hooks all`** wires the SessionStart / failure / end-of-turn hooks so prior lore is injected and a retrospective nudge fires on failures. Hooks inject context; they never write memory themselves. Use `--hooks read-only` or `--hooks none` to change that — see [Offline storage](/docs/offline).
-- **`--yes`** keeps it non-interactive (a setup script has no TTY, so this is belt-and-suspenders).
+- **`npm install -g @lorekit/cli`** installs the CLI once into the cached container. Do this **before** `lorekit install`: the installer wires the hooks to the fast bare `lorekit` runner only when it finds `lorekit` on `PATH`, and otherwise falls back to `npx -y @lorekit/cli` on every hook event.
+- **`lorekit install`** generates the `.mcp.json` for you (defaulting to the hosted endpoint `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp`), scaffolds the skills, and wires the SessionStart / failure / end-of-turn hooks. It reads the token from `LOREKIT_TOKEN` and writes it only into the generated, uncommitted `.mcp.json`.
+- **`--hooks all`** injects prior lore at session start and nudges on failures. Hooks inject context; they never write memory themselves. Use `--hooks read-only` or `--hooks none` to change that — see [Offline storage](/docs/offline).
+- **`--yes`** keeps it non-interactive (a setup script has no TTY).
 
 <TutorialCallout variant="tip">
 
-`install` writes your token into the generated `.mcp.json`. That file must never be committed — add `.mcp.json` to `.gitignore`. In this flow it is regenerated from `LOREKIT_TOKEN` on every session, so there is nothing to keep in the repo.
+The generated `.mcp.json` contains your token, so add `.mcp.json` to your `.gitignore` to be safe. In this flow it is regenerated from `LOREKIT_TOKEN` on every fresh container, so there is nothing to keep in the repo.
 
 </TutorialCallout>
 
-### Option B — Commit a token-free config
+</TutorialStep>
 
-Prefer the connection to live in version control (identical for every teammate, no setup-script access required)? Commit two small files, neither of which holds a secret.
-
-First, a `.lorekit.json` at the repo root with the mode and endpoint:
-
-```json
-// .lorekit.json — repo root, safe to commit (no secrets)
-{
-  "mode": "remote",
-  "mcp.endpoint": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp"
-}
-```
-
-Then a `.mcp.json` that runs the CLI's own MCP server instead of embedding a token in a connection URL:
-
-```json
-// .mcp.json — repo root, safe to commit (no token)
-{
-  "mcpServers": {
-    "lorekit": {
-      "command": "npx",
-      "args": ["-y", "@lorekit/cli", "mcp"]
-    }
-  }
-}
-```
-
-`npx @lorekit/cli mcp` starts a local stdio MCP server that proxies `memory.*` (and `org.*`) tool calls to the hosted store. It reads the mode and endpoint from `.lorekit.json` and the token from the `LOREKIT_TOKEN` environment variable, so **the committed file carries no secret** — the key difference from `install`, which bakes the token into the connection URL.
-
-<TutorialCallout variant="tip">
-
-Option B connects the tools but does not scaffold the lifecycle hooks or skills. To get those too while keeping the config committed, run `npx @lorekit/cli install --hooks all` once locally, commit the generated `.claude/` directory, and **replace the generated `.mcp.json` with the token-free one above** (so no token ends up in the repo). See the [Configuration reference](/docs/config) for every field.
-
-</TutorialCallout>
-
-## Verify and confirm persistence
-
-<TutorialStep number={4} title="Verify the connection">
+<TutorialStep number={5} title="Verify the connection">
 
 From a session terminal:
 
 ```bash
-npx @lorekit/cli doctor
+lorekit doctor
 ```
 
 Look at the **Remote** section — both checks must be green:
@@ -146,7 +98,7 @@ If `authentication` reports the token is rejected, regenerate it at [Settings �
 
 </TutorialStep>
 
-<TutorialStep number={5} title="Confirm lore survives across sessions">
+<TutorialStep number={6} title="Confirm lore survives across sessions">
 
 Have your agent write a memory in one session:
 
