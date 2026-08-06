@@ -60,6 +60,16 @@ export async function resolveAuth(
   const authSpan = span?.child('lorekit.mcp.auth');
   try {
     return await resolveAuthTiers(authHeader, queryToken, span, authSpan);
+  } catch (err) {
+    // Without this arm the span's status stays at its `ok` default, so a failed
+    // resolution renders as an OK `lorekit.mcp.auth` parent above an errored
+    // child — the one shape that makes the tree lie about which hop broke.
+    // `traceRequest` uses exactly this catch-record-rethrow-finally form.
+    // The error NAME only, for the reason the token lookup states: a fetch
+    // failure's message carries the request URL, and that URL carries the
+    // token hash.
+    authSpan?.error((err as Error).name);
+    throw err;
   } finally {
     authSpan?.end();
   }

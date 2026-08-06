@@ -58,6 +58,14 @@ describe('MCP auth resolution telemetry (supabase/functions/mcp/auth.ts)', () =>
     expect(executable).toMatch(/finally\s*\{\s*authSpan\?\.end\(\);\s*\}/);
   });
 
+  it('marks the auth span errored when resolution throws, so the tree agrees with itself', () => {
+    // Span.status defaults to 'ok', so a bare try/finally renders a failed
+    // resolution as an OK parent above an errored child. traceRequest uses the
+    // same catch-record-rethrow-finally form.
+    expect(executable).toMatch(/catch\s*\(err\)\s*\{\s*authSpan\?\.error\([^;]*;\s*throw err;\s*\}/);
+    expect(executable).not.toMatch(/authSpan\?\.error\([^;]*\.message/);
+  });
+
   it('emits a CLIENT span for the api_tokens lookup', () => {
     expect(executable).toContain('SPAN_KIND_CLIENT');
     expect(executable).toMatch(/authSpan\?\.child\(\s*'SELECT[^']*api_tokens'/);
@@ -83,7 +91,9 @@ describe('MCP auth resolution telemetry (supabase/functions/mcp/auth.ts)', () =>
     // The rejection arm matters most — a Deno fetch failure renders the request
     // URL into its message, and that URL carries `token_hash=eq.<sha256>`.
     expect(executable).toMatch(/lookupSpan\?\.error\(`PostgrestError: \$\{result\.error\.code/);
-    expect(executable).not.toMatch(/lookupSpan\?\.error\([^)]*\.message/);
+    // `[^;]`, not `[^)]`: the leaking form is `error(\`${(err as Error).message}\`)`,
+    // whose own parens would terminate a `[^)]*` scan before it reached `.message`.
+    expect(executable).not.toMatch(/lookupSpan\?\.error\([^;]*\.message/);
   });
 
   it('never routes the token lookup through createTracedClient', () => {
