@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.33.4](https://github.com/mthines/lorekit/compare/cli-v1.33.3...cli-v1.33.4) (2026-08-06)
+
+
+### Bug Fixes
+
+* **cli:** parse scope::key by scope validity in write and show ([4855df8](https://github.com/mthines/lorekit/commit/4855df8f8f00405bf16f116563c028f1d6fe2a2e))
+* **cli:** parse scope::key by scope validity in write and show ([fafea77](https://github.com/mthines/lorekit/commit/fafea7779c2279dd88e288337fffe608fe910be7))
+* **cli:** reject leftover positionals in write instead of writing the wrong key ([0c1bc75](https://github.com/mthines/lorekit/commit/0c1bc75aeb773c1039dfc5922040b6f8b7bf35f4))
+
+
+### Documentation
+
+* **cli:** document link's --key flag in its own help and CLAUDE.md ([dc0f437](https://github.com/mthines/lorekit/commit/dc0f437e74f74b221a3c9d615620aa36421df488))
+* **cli:** stop overstating the CLI scope gate in write's docblock ([a0e7d37](https://github.com/mthines/lorekit/commit/a0e7d378ab53b4f62800be2215dd127833a201ff))
+
 ## [1.33.3](https://github.com/mthines/lorekit/compare/cli-v1.33.2...cli-v1.33.3) (2026-08-05)
 
 
