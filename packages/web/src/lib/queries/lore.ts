@@ -1,6 +1,13 @@
 'use client';
 
-import { useQuery, useInfiniteQuery, useMutation, useQueryClient, type InfiniteData } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useQuery,
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+  type InfiniteData,
+} from '@tanstack/react-query';
 import { scopeType } from '@/lib/scope';
 import { dayCountsFromActivity } from '@/lib/aggregations';
 import type { ScopeNode } from '@/components/lore/ScopeTree';
@@ -182,6 +189,13 @@ export function useFacetCatalog(showArchived = false, filters: readonly Filter[]
     queryKey: ['lore-facets', showArchived, bar],
     queryFn: ({ signal }) =>
       fetchFacets({ archived: showArchived ? 'true' : 'false', ...facetParams }, signal),
+    // Toggling a filter changes the key, which would otherwise blank `data` to
+    // `undefined` while the drilled-down counts load — so every other value in
+    // the group the user is standing in flickers out and back. Keep the previous
+    // catalog on screen until the new one arrives: the counts update in place
+    // rather than disappearing. (`isPlaceholderData` is available if a caller
+    // ever wants to dim them mid-refetch; the flicker fix needs only this.)
+    placeholderData: keepPreviousData,
     // Matches the scope tree and the label catalog: read-heavy, changes only
     // when an agent writes.
     staleTime: 90_000,
