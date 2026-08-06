@@ -82,6 +82,10 @@ test('volatile-key fires on a per-sighting identifier in the key', () => {
   assert.match(LINT_RULES['volatile-key']({ key: 'x::issue4821-thing' }), /issue4821/);
   // A bare 6-digit run is the floor.
   assert.ok(LINT_RULES['volatile-key']({ key: 'x::note:123456' }));
+  // Separator forms: the number may be joined by nothing, `-`, or `_`.
+  assert.match(LINT_RULES['volatile-key']({ key: 'x::pr-231' }), /pr-231/);
+  assert.match(LINT_RULES['volatile-key']({ key: 'x::pr_231' }), /pr_231/);
+  assert.match(LINT_RULES['volatile-key']({ key: 'x::issue-4821' }), /issue-4821/);
 });
 
 test('volatile-key does NOT fire on legitimate keys that merely contain digits', () => {
@@ -98,6 +102,9 @@ test('volatile-key does NOT fire on legitimate keys that merely contain digits',
   assert.equal(LINT_RULES['volatile-key']({ key: 'x::note:12345' }), null);
   // An empty key is `empty-key`'s finding, not this rule's.
   assert.equal(LINT_RULES['volatile-key']({ key: '' }), null);
+  assert.equal(LINT_RULES['volatile-key']({ key: 'x::note:sprint-2' }), null);
+  assert.equal(LINT_RULES['volatile-key']({ key: 'x::note:pr-review' }), null);
+  assert.equal(LINT_RULES['volatile-key']({ key: 'x::note:preview-231' }), null);
 });
 
 test('volatile-key honors the { volatileKeyAllow } opts hatch', () => {

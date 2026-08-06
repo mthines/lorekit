@@ -277,8 +277,9 @@ export const LINT_RULES = {
   // threshold — a write-only record. Detection is deliberately conservative:
   //   • a run of 6+ digits (a GitHub comment id is ~10; `sha256`, `oauth2`,
   //     `wcag22`, and semantic versions are all shorter runs);
-  //   • a `pr<n>` / `issue<n>` SEGMENT delimited by `:`, `-`, `/`, or a string
-  //     boundary, so mid-word digits (`oauth2`) never match.
+  //   • a `pr<n>` / `issue<n>` reference — the number joined by nothing, `-`, or
+  //     `_` — delimited by `:`, `-`, `_`, `/`, or a string boundary, so mid-word
+  //     digits (`oauth2`) never match.
   // `volatileKeyAllow` is an embedder/test knob mirroring `short-value`'s
   // `minValueLen` precedent — a list of substrings that exempt a key. There is
   // no config key and no per-entry marker.
@@ -295,9 +296,13 @@ export const LINT_RULES = {
     if (digitRun) {
       return `key contains a volatile per-sighting identifier: '${digitRun[0]}' (a run of ${digitRun[0].length} digits)`;
     }
-    const segment = key.split(/[:\-/]/).find((part) => /^(pr|issue)\d+$/i.test(part));
-    if (segment) {
-      return `key contains a volatile per-sighting identifier: '${segment}' (a pr/issue number segment)`;
+    // Boundary-anchored rather than split-then-match: splitting on `-` would
+    // separate `pr` from `231` and `pr-231` would slip through. The reference
+    // must start at a boundary (`:`, `-`, `_`, `/`, or the string start) and end
+    // at one, so `oauth2`/`sha256`/`wcag22` still never match.
+    const reference = key.match(/(?:^|[:\-_/])((?:pr|issue)[-_]?\d+)(?=$|[:\-_/])/i);
+    if (reference) {
+      return `key contains a volatile per-sighting identifier: '${reference[1]}' (a pr/issue number segment)`;
     }
     return null;
   },
