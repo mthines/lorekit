@@ -15,7 +15,7 @@ Claude Code on the web runs every session in a **fresh, ephemeral cloud containe
 
 The [offline store](/docs/offline) keeps memories as plain files under `.lorekit/`. In an ephemeral container those files are wiped when the container is reclaimed, so every fresh container would start with an empty memory. Remote mode syncs to the hosted MCP server instead, so lore written in one session is available in the next — on any container, from any machine.
 
-`remote` is already the built-in default mode, and the setup script bakes the hosted endpoint into the `.mcp.json` it generates — so you need **no `.lorekit.json`** and **no committed `.mcp.json`**. This tutorial assumes [remote mode](/docs/remote).
+`remote` is already the built-in default mode, and installing `--global` writes the MCP config, skills, and hooks into the container's home directory (`~/.claude`, `~/.claude.json`) rather than the repo — so the cloned working tree stays pristine and you need **no `.lorekit.json`** and **no committed `.mcp.json`**. This tutorial assumes [remote mode](/docs/remote).
 
 <TutorialStep number={1} title="Generate a read-write API token">
 
@@ -61,21 +61,23 @@ set -euo pipefail
 # instead of `npx …` on every hook event — a real speedup on the hot path.
 npm install -g @lorekit/cli
 
-# Scaffold the skills, generate the MCP config, and wire the lifecycle hooks.
+# Scaffold the skills, generate the MCP config, and wire the lifecycle hooks
+# into the container's home dir (~/.claude) so the cloned repo stays untouched.
 # Non-interactive, safe to re-run.
-lorekit install --hooks all --yes
+lorekit install --global --hooks all --yes
 ```
 
 What each part does — and why nothing needs committing:
 
 - **`npm install -g @lorekit/cli`** installs the CLI once into the cached container. Do this **before** `lorekit install`: the installer wires the hooks to the fast bare `lorekit` runner only when it finds `lorekit` on `PATH`, and otherwise falls back to `npx -y @lorekit/cli` on every hook event.
-- **`lorekit install`** generates the `.mcp.json` for you (defaulting to the hosted endpoint `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp`), scaffolds the skills, and wires the SessionStart / failure / end-of-turn hooks. It reads the token from `LOREKIT_TOKEN` and writes it only into the generated, uncommitted `.mcp.json`.
+- **`lorekit install --global`** generates the MCP config (defaulting to the hosted endpoint `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp`), scaffolds the skills, and wires the SessionStart / failure / end-of-turn hooks — all under the container's home (`~/.claude`, `~/.claude.json`), so the cloned repo is never touched and there is nothing to commit or `.gitignore`. It reads the token from `LOREKIT_TOKEN` and writes it only into the generated `~/.claude.json`.
+- **The skills are included** (`lorekit-memory`, `lorekit-setup`, `lorekit-groom`) — they teach the agent how to read and write lore. Because you install `--global` they live in `~/.claude/skills`, not the repo. There is no per-skill opt-out; if you want the MCP tools with no skills or hooks at all, skip `lorekit install` and have the script write a minimal `~/.claude.json` instead.
 - **`--hooks all`** injects prior lore at session start and nudges on failures. Hooks inject context; they never write memory themselves. Use `--hooks read-only` or `--hooks none` to change that — see [Offline storage](/docs/offline).
 - **`--yes`** keeps it non-interactive (a setup script has no TTY).
 
 <TutorialCallout variant="tip">
 
-The generated `.mcp.json` contains your token, so add `.mcp.json` to your `.gitignore` to be safe. In this flow it is regenerated from `LOREKIT_TOKEN` on every fresh container, so there is nothing to keep in the repo.
+Because everything installs into the container's home directory, the cloned repo is never modified — `git status` stays clean, with nothing to commit and nothing to add to `.gitignore`. The token-bearing `~/.claude.json` is regenerated from `LOREKIT_TOKEN` on every fresh container, so it never needs to persist in the repo.
 
 </TutorialCallout>
 
