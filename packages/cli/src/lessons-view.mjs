@@ -271,6 +271,41 @@ export const LINT_RULES = {
     return v.trim() && v !== v.trim() ? 'value has leading/trailing whitespace' : null;
   },
   'empty-key': (e) => (String(e.key ?? '').trim() ? null : 'key is empty or whitespace-only'),
+  // A key carrying a per-sighting identifier (a comment id, a PR/issue number) is
+  // unique forever, so it never collides, so the upsert never dedups it, so
+  // `seen_count` stays frozen at 1 and the memory can never reach a recurrence
+  // threshold — a write-only record. Detection is deliberately conservative:
+  //   • a run of 6+ digits (a GitHub comment id is ~10; `sha256`, `oauth2`,
+  //     `wcag22`, and semantic versions are all shorter runs);
+  //   • a `pr<n>` / `issue<n>` reference — the number joined by nothing, `-`, or
+  //     `_` — delimited by `:`, `-`, `_`, `/`, or a string boundary, so mid-word
+  //     digits (`oauth2`) never match.
+  // `volatileKeyAllow` is an embedder/test knob mirroring `short-value`'s
+  // `minValueLen` precedent — a list of substrings that exempt a key. There is
+  // no config key and no per-entry marker.
+  'volatile-key': (e, { volatileKeyAllow = [] } = {}) => {
+    const key = String(e.key ?? '');
+    if (!key.trim()) return null; // an empty key is `empty-key`'s to report.
+    // Tolerate a bare string as well as a list, so a caller passing
+    // `{ volatileKeyAllow: 'lorekit-231' }` does not silently iterate characters.
+    const allowList = Array.isArray(volatileKeyAllow) ? volatileKeyAllow : [volatileKeyAllow];
+    for (const allow of allowList) {
+      if (allow && key.includes(String(allow))) return null;
+    }
+    const digitRun = key.match(/\d{6,}/);
+    if (digitRun) {
+      return `key contains a volatile per-sighting identifier: '${digitRun[0]}' (a run of ${digitRun[0].length} digits)`;
+    }
+    // Boundary-anchored rather than split-then-match: splitting on `-` would
+    // separate `pr` from `231` and `pr-231` would slip through. The reference
+    // must start at a boundary (`:`, `-`, `_`, `/`, or the string start) and end
+    // at one, so `oauth2`/`sha256`/`wcag22` still never match.
+    const reference = key.match(/(?:^|[:\-_/])((?:pr|issue)[-_]?\d+)(?=$|[:\-_/])/i);
+    if (reference) {
+      return `key contains a volatile per-sighting identifier: '${reference[1]}' (a pr/issue number segment)`;
+    }
+    return null;
+  },
   'malformed-scope': (e) => {
     const reason = scopeIssue(e.scope);
     return reason ? `malformed scope: ${reason}` : null;

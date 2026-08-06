@@ -78,8 +78,9 @@ ${c.bold('Commands')}
     (resolve) hierarchy and mark, per key, which scope's memory WINS and which are
               shadowed — the real hook-resolution order. --json, --scope <s>.
   lint        Flag low-quality memories (empty/short/untrimmed value, empty key,
-              malformed scope) across the applicable scopes and both stores. Exits
-              non-zero when issues are found (CI gate). --json, --scope <s>.
+              volatile key, malformed scope) across the applicable scopes and
+              both stores. Exits non-zero when issues are found (CI gate).
+              --json, --scope <s>.
   dedupe      Find likely-duplicate memories via a zero-dep word-overlap HEURISTIC
               (Jaccard >= threshold, not semantic), grouped into clusters per
               store. --json, --scope <s>, --threshold <0..1>.
@@ -495,10 +496,12 @@ ${c.bold('Usage')}
 
 Checks every memory for the current directory's scopes (project/branch/repo/
 global), across both stores, against a small set of quality rules: empty or
-whitespace-only value, suspiciously short value, untrimmed value, empty key, and
-malformed scope (e.g. a single \`:\` where \`::\` is expected). Each finding names
-the rule it violated. Exits NON-ZERO when any issue is found, so it works as a CI
-gate; a clean run — or one where only a store is unavailable — exits 0.
+whitespace-only value, suspiciously short value, untrimmed value, empty key, a
+volatile per-sighting identifier in the key (a run of 6+ digits, or a \`pr<n>\` /
+\`issue<n>\` reference), and malformed scope (e.g. a single \`:\` where \`::\` is
+expected). Each finding names the rule it violated. Exits NON-ZERO when any issue
+is found, so it works as a CI gate; a clean run — or one where only a store is
+unavailable — exits 0.
 
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)

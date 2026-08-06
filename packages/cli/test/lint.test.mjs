@@ -66,6 +66,76 @@ test('empty-key fires on blank keys only', () => {
   assert.equal(LINT_RULES['empty-key']({ key: 'a-real-key' }), null);
 });
 
+test('volatile-key fires on a per-sighting identifier in the key', () => {
+  // A GitHub comment id — the shape that froze `seen_count` at 1 in the
+  // reviewer-comment-relevance bucket.
+  assert.match(
+    LINT_RULES['volatile-key']({ key: 'reviewer-comment-relevance::lorekit-231-3681940611' }),
+    /3681940611/,
+  );
+  // A `pr<n>` segment.
+  assert.match(
+    LINT_RULES['volatile-key']({ key: 'reviewer-comment-relevance::suggestion:pr231-null-check' }),
+    /pr231/,
+  );
+  // An `issue<n>` segment.
+  assert.match(LINT_RULES['volatile-key']({ key: 'x::issue4821-thing' }), /issue4821/);
+  // A bare 6-digit run is the floor.
+  assert.ok(LINT_RULES['volatile-key']({ key: 'x::note:123456' }));
+  // Separator forms: the number may be joined by nothing, `-`, or `_`.
+  assert.match(LINT_RULES['volatile-key']({ key: 'x::pr-231' }), /pr-231/);
+  assert.match(LINT_RULES['volatile-key']({ key: 'x::pr_231' }), /pr_231/);
+  assert.match(LINT_RULES['volatile-key']({ key: 'x::issue-4821' }), /issue-4821/);
+});
+
+test('volatile-key does NOT fire on legitimate keys that merely contain digits', () => {
+  assert.equal(LINT_RULES['volatile-key']({ key: 'reviewer-comment-relevance::issue:oauth2-token-refresh' }), null);
+  assert.equal(LINT_RULES['volatile-key']({ key: 'x::nitpick:sha256-not-md5' }), null);
+  assert.equal(LINT_RULES['volatile-key']({ key: 'x::suggestion:wcag22-contrast' }), null);
+  assert.equal(LINT_RULES['volatile-key']({ key: 'x::note:upgrade-to-v2-3-1' }), null);
+  assert.equal(LINT_RULES['volatile-key']({ key: 'x::note:released-in-2026' }), null);
+  assert.equal(
+    LINT_RULES['volatile-key']({ key: 'reviewer-comment-relevance::suggestion:null-check-guaranteed-upstream' }),
+    null,
+  );
+  // A 5-digit run sits below the conservative floor.
+  assert.equal(LINT_RULES['volatile-key']({ key: 'x::note:12345' }), null);
+  // An empty key is `empty-key`'s finding, not this rule's.
+  assert.equal(LINT_RULES['volatile-key']({ key: '' }), null);
+  assert.equal(LINT_RULES['volatile-key']({ key: 'x::note:sprint-2' }), null);
+  assert.equal(LINT_RULES['volatile-key']({ key: 'x::note:pr-review' }), null);
+  assert.equal(LINT_RULES['volatile-key']({ key: 'x::note:preview-231' }), null);
+});
+
+test('volatile-key honors the { volatileKeyAllow } opts hatch', () => {
+  const key = 'reviewer-comment-relevance::lorekit-231-3681940611';
+  assert.ok(LINT_RULES['volatile-key']({ key }));
+  assert.equal(LINT_RULES['volatile-key']({ key }, { volatileKeyAllow: ['3681940611'] }), null);
+  assert.equal(LINT_RULES['volatile-key']({ key }, { volatileKeyAllow: ['lorekit-231'] }), null);
+  // An unrelated allow entry does not suppress the finding.
+  assert.ok(LINT_RULES['volatile-key']({ key }, { volatileKeyAllow: ['something-else'] }));
+  // A bare string is tolerated as a one-element list, not iterated character by character.
+  assert.equal(LINT_RULES['volatile-key']({ key }, { volatileKeyAllow: 'lorekit-231' }), null);
+  assert.ok(LINT_RULES['volatile-key']({ key }, { volatileKeyAllow: 'nope' }));
+});
+
+test('lintEntry surfaces volatile-key alongside the other rules', () => {
+  const findings = lintEntry({
+    scope: 'global',
+    key: 'reviewer-comment-relevance::lorekit-231-3681940611',
+    value: 'a perfectly fine lesson body',
+  });
+  assert.deepEqual(findings.map((f) => f.rule), ['volatile-key']);
+  // The opts hatch flows through lintEntry too.
+  assert.deepEqual(
+    lintEntry(
+      { scope: 'global', key: 'reviewer-comment-relevance::lorekit-231-3681940611', value: 'a perfectly fine lesson body' },
+      { volatileKeyAllow: ['lorekit-231'] },
+    ),
+    [],
+  );
+});
+
 test('malformed-scope fires via scopeIssue', () => {
   assert.ok(LINT_RULES['malformed-scope']({ scope: 'project:widget' }));
   assert.equal(LINT_RULES['malformed-scope']({ scope: 'global' }), null);
@@ -111,7 +181,8 @@ function entry({ scope, key, value, tags = [] }) {
 }
 
 // A project (no git remote → project + global scopes) with one good global
-// lesson and two bad project lessons (short value; padded/untrimmed value).
+// lesson and three bad project lessons (short value; padded/untrimmed value;
+// volatile key).
 function seedProject() {
   const root = tmp('lk-lint-proj-');
   const home = tmp('lk-lint-home-');
@@ -126,6 +197,11 @@ function seedProject() {
     scope: `project::${projectName}`,
     key: 'padded',
     value: '   a body with surrounding whitespace here   ',
+  });
+  write(`project/${projectName}/d.md`, {
+    scope: `project::${projectName}`,
+    key: 'pr-231-null-check',
+    value: 'A durable observation keyed to a single pull request instead of the pattern.',
   });
   return { root, home, projectName };
 }
@@ -174,6 +250,7 @@ test('lint reports findings and exits NON-ZERO when issues exist', () => {
   assert.equal(res.status, 1, res.stdout);
   assert.match(res.stdout, /short-value/);
   assert.match(res.stdout, /untrimmed-value/);
+  assert.match(res.stdout, /volatile-key/);
   assert.match(res.stdout, /lint issue/);
   assert.doesNotMatch(res.stdout, /Error:/);
 });
@@ -188,6 +265,7 @@ test('lint --json carries the structured findings list', () => {
   const rules = proj.findings.map((f) => f.rule);
   assert.ok(rules.includes('short-value'));
   assert.ok(rules.includes('untrimmed-value'));
+  assert.ok(rules.includes('volatile-key'));
   // The clean global lesson contributes no findings.
   const glob = out.offline.scopes.find((s) => s.scope === 'global');
   assert.equal(glob.findings.length, 0);
