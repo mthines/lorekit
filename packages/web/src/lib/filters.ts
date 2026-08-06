@@ -24,7 +24,12 @@
  */
 
 import { normalizeTagList } from '@lorekit/schemas/tags';
-import type { ListMemoriesQuery, ScalarFilterMode, TagsMode } from '@lorekit/schemas/memory';
+import type {
+  ListFacetsQuery,
+  ListMemoriesQuery,
+  ScalarFilterMode,
+  TagsMode,
+} from '@lorekit/schemas/memory';
 
 // ── Model ────────────────────────────────────────────────────────────────────
 
@@ -643,4 +648,25 @@ export function filtersToQueryParams(
   }
 
   return params;
+}
+
+/**
+ * The active filters as `GET /memories/facets` drill-down params.
+ *
+ * The facets route mirrors `GET /memories`' DIMENSION filter params under the
+ * same names (`ListFacetsQuerySchema`, migration 00057), so this is exactly
+ * {@link filtersToQueryParams} — every key it sets is one the facets route also
+ * accepts. Passing them turns the catalog's counts into drill-down figures: the
+ * endpoint counts each dimension with every OTHER active filter applied but not
+ * its own (self-exclusion, done server-side), so a value's count is what
+ * selecting it would actually yield while the dimension you are standing in
+ * still shows its alternatives. Absent filters → the global catalog, unchanged.
+ *
+ * The cast is sound because `filtersToQueryParams` only ever sets dimension
+ * keys; the two query types differ only in the NON-dimension keys (`q`, `key`,
+ * `sort`, …) it never touches — which the facets route deliberately does not
+ * mirror.
+ */
+export function filtersToFacetParams(filters: readonly Filter[]): Partial<ListFacetsQuery> {
+  return filtersToQueryParams(filters) as Partial<ListFacetsQuery>;
 }

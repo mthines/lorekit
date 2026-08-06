@@ -1,6 +1,13 @@
 'use client';
 
-import { useQuery, useInfiniteQuery, useMutation, useQueryClient, type InfiniteData } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useQuery,
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+  type InfiniteData,
+} from '@tanstack/react-query';
 import { scopeType } from '@/lib/scope';
 import { dayCountsFromActivity } from '@/lib/aggregations';
 import type { ScopeNode } from '@/components/lore/ScopeTree';
@@ -19,7 +26,13 @@ import {
   listScopesRequest,
 } from '@/lib/api/memories';
 import { RestApiError } from '@/lib/api/rest';
-import { normalizeFilters, type FacetValue, type Filter } from '@/lib/filters';
+import {
+  filtersToFacetParams,
+  normalizeFilters,
+  type FacetValue,
+  type Filter,
+} from '@/lib/filters';
+import type { ListFacetsQuery } from '@lorekit/schemas/memory';
 
 export interface LoreData {
   scopes: ScopeNode[];
@@ -136,30 +149,68 @@ async function fetchScopes(signal?: AbortSignal): Promise<ScopeNode[]> {
 // ---------------------------------------------------------------------------
 // Facet catalog — every filterable value, per dimension, for the filter menu.
 //
-// A SEPARATE query from the lesson list — the reason the single-dimension label
-// catalog it replaced was one too, and it only gets stronger with six
-// dimensions: derived from the loaded pages, the menu's options would shrink to
-// whatever the current filter happened to
-// return, so you could narrow but never widen or switch — and cross-dimension
-// type-ahead ("type `main`, get Branch → main") would only ever surface values
-// already visible in the list, which is precisely the case where you did not
-// need the menu.
+// A SEPARATE query from the lesson list, NOT derived from the loaded pages —
+// the reason the single-dimension label catalog it replaced was one too, and it
+// only gets stronger with six dimensions: derived from the loaded pages, the
+// menu's options would shrink to whatever the current filter happened to return,
+// so you could narrow but never widen or switch — and cross-dimension type-ahead
+// ("type `main`, get Branch → main") would only ever surface values already
+// visible in the list, which is precisely the case where you did not need the
+// menu.
 //
-// Archived-aware for the same reason too: active and archived are different
+// But the catalog IS filter-aware: it passes the active filters to the endpoint
+// (`GET /memories/facets`, drill-down since migration 00057), so once you pick
+// `agent=claude` the counts shown for repo, branch, … narrow to "how many
+// claude memories also carry this value". The endpoint self-excludes each
+// dimension from its own filter, so a filtered dimension still lists its
+// alternatives to switch between — the one thing deriving from the loaded pages
+// could never do. Keyed on the filter bar so the counts refresh as it changes.
+//
+// Archived-aware for the same reason: active and archived are different
 // populations, so a catalog pinned to one shows the wrong counts and hides the
 // other's values from their own filter.
 // ---------------------------------------------------------------------------
 
-async function fetchFacets(showArchived: boolean, signal?: AbortSignal): Promise<FacetValue[]> {
+async function fetchFacets(
+  params: Partial<ListFacetsQuery>,
+  signal?: AbortSignal,
+): Promise<FacetValue[]> {
   const token = await requireBrowserToken();
-  const { facets } = await listFacetsRequest(token, showArchived, signal);
+  const { facets } = await listFacetsRequest(token, params, signal);
   return facets;
 }
 
-export function useFacetCatalog(showArchived = false) {
+export function useFacetCatalog(
+  showArchived = false,
+  filters: readonly Filter[] = [],
+  scope: string | null = null,
+) {
+  // Normalise so the query key is stable across the equivalent-but-differently-
+  // shaped filter arrays a render can produce, exactly as `useMemories` does.
+  const bar = normalizeFilters(filters as Filter[]);
+  const facetParams = filtersToFacetParams(bar);
   return useQuery<FacetValue[]>({
-    queryKey: ['lore-facets', showArchived],
-    queryFn: ({ signal }) => fetchFacets(showArchived, signal),
+    queryKey: ['lore-facets', showArchived, scope, bar],
+    queryFn: ({ signal }) =>
+      fetchFacets(
+        {
+          archived: showArchived ? 'true' : 'false',
+          // Scope the catalog to the selected scope, matching the list
+          // (`useMemories` sends the same `scope`). Without it the counts would
+          // reflect every scope while the list shows one, overstating the yield;
+          // a null scope omits the param, so the all-scopes view is unchanged.
+          ...(scope ? { scope } : {}),
+          ...facetParams,
+        },
+        signal,
+      ),
+    // Toggling a filter changes the key, which would otherwise blank `data` to
+    // `undefined` while the drilled-down counts load — so every other value in
+    // the group the user is standing in flickers out and back. Keep the previous
+    // catalog on screen until the new one arrives: the counts update in place
+    // rather than disappearing. (`isPlaceholderData` is available if a caller
+    // ever wants to dim them mid-refetch; the flicker fix needs only this.)
+    placeholderData: keepPreviousData,
     // Matches the scope tree and the label catalog: read-heavy, changes only
     // when an agent writes.
     staleTime: 90_000,

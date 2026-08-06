@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { ListFacetsQuerySchema } from '@lorekit/schemas/memory';
 import {
   FILTER_FIELDS,
   facetOptions,
@@ -17,6 +18,7 @@ import {
   filterPhrase,
   filtersFromLegacyTags,
   filtersPhrase,
+  filtersToFacetParams,
   filtersToQueryParams,
   findFilter,
   isValueSelected,
@@ -438,6 +440,53 @@ describe('filtersToQueryParams', () => {
         { field: 'agent', operator: 'all', values: [' aw ', 'aw'] } as unknown as Filter,
       ]),
     ).toEqual({ source_agent: 'aw', source_agent_mode: 'in' });
+  });
+});
+
+describe('filtersToFacetParams', () => {
+  it('sends nothing for an empty bar — the endpoint returns the global catalog', () => {
+    expect(filtersToFacetParams([])).toEqual({});
+  });
+
+  it('carries the same dimension params as the list route, so a menu passes its state verbatim', () => {
+    const bar: Filter[] = [
+      { field: 'label', operator: 'all', values: ['auth', 'perf'] },
+      { field: 'agent', operator: 'in', values: ['claude'] },
+      { field: 'pr', operator: 'nin', values: ['311'] },
+    ];
+    // The facets route mirrors the list route's dimension params by name, so the
+    // two translations are byte-for-byte identical — the drill-down is entirely
+    // the endpoint's job (self-exclusion), not the client's.
+    expect(filtersToFacetParams(bar)).toEqual(filtersToQueryParams(bar));
+    expect(filtersToFacetParams(bar)).toEqual({
+      tags: 'auth,perf',
+      tags_mode: 'all',
+      source_agent: 'claude',
+      source_agent_mode: 'in',
+      origin_pr: '311',
+      origin_pr_mode: 'nin',
+    });
+  });
+
+  it('emits only keys the facets route accepts, so the cast cannot silently drift', () => {
+    // The `Partial<ListFacetsQuery>` cast in `filtersToFacetParams` is only sound
+    // while every key it can emit is a real facets param. Exercise the whole
+    // union — one filter per dimension — and assert each key is in the schema, so
+    // a future field mapped to a param the route does not accept fails here
+    // instead of being silently dropped on the wire.
+    const oneEach: Filter[] = FILTER_FIELDS.map((d) => ({
+      field: d.field,
+      operator: d.operators[0],
+      values: d.field === 'pr' ? ['1'] : ['x'],
+    }));
+    const params = filtersToFacetParams(oneEach);
+    const allowed = new Set(Object.keys(ListFacetsQuerySchema.shape));
+
+    // Anti-vacuity: it actually produced params for every dimension.
+    expect(Object.keys(params).length).toBeGreaterThanOrEqual(FILTER_FIELDS.length);
+    for (const key of Object.keys(params)) {
+      expect(allowed, `"${key}" is not a ListFacetsQuery param`).toContain(key);
+    }
   });
 });
 

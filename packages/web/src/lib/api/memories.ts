@@ -14,6 +14,7 @@ import type {
   ActivityQuery,
   ActivityResponse,
   FacetsResponse,
+  ListFacetsQuery,
   ListMemoriesQuery,
   MemoryEntry,
   MemoryPageResponse,
@@ -74,15 +75,20 @@ export function listScopesRequest(accessToken: string, signal?: AbortSignal): Pr
  * menu's cross-dimension type-ahead has to rank values it has not been told to
  * look for yet, and eight in-flight requests is eight chances to rank a
  * half-loaded catalog.
+ *
+ * `params` carries `archived` plus the caller's active DIMENSION filters (see
+ * {@link filtersToFacetParams}). When filters are present the counts drill down
+ * — each dimension is counted with every OTHER filter applied but not its own —
+ * so a value's count is what selecting it would actually yield.
  */
 export function listFacetsRequest(
   accessToken: string,
-  archived: boolean,
+  params: Partial<ListFacetsQuery>,
   signal?: AbortSignal,
 ): Promise<FacetsResponse> {
   return restFetch<FacetsResponse>('/memories/facets', {
     accessToken,
-    query: { archived: archived ? 'true' : 'false' },
+    query: { ...params },
     ...(signal ? { signal } : {}),
   });
 }
