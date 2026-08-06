@@ -180,15 +180,30 @@ async function fetchFacets(
   return facets;
 }
 
-export function useFacetCatalog(showArchived = false, filters: readonly Filter[] = []) {
+export function useFacetCatalog(
+  showArchived = false,
+  filters: readonly Filter[] = [],
+  scope: string | null = null,
+) {
   // Normalise so the query key is stable across the equivalent-but-differently-
   // shaped filter arrays a render can produce, exactly as `useMemories` does.
   const bar = normalizeFilters(filters as Filter[]);
   const facetParams = filtersToFacetParams(bar);
   return useQuery<FacetValue[]>({
-    queryKey: ['lore-facets', showArchived, bar],
+    queryKey: ['lore-facets', showArchived, scope, bar],
     queryFn: ({ signal }) =>
-      fetchFacets({ archived: showArchived ? 'true' : 'false', ...facetParams }, signal),
+      fetchFacets(
+        {
+          archived: showArchived ? 'true' : 'false',
+          // Scope the catalog to the selected scope, matching the list
+          // (`useMemories` sends the same `scope`). Without it the counts would
+          // reflect every scope while the list shows one, overstating the yield;
+          // a null scope omits the param, so the all-scopes view is unchanged.
+          ...(scope ? { scope } : {}),
+          ...facetParams,
+        },
+        signal,
+      ),
     // Toggling a filter changes the key, which would otherwise blank `data` to
     // `undefined` while the drilled-down counts load — so every other value in
     // the group the user is standing in flickers out and back. Keep the previous

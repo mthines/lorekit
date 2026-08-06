@@ -364,9 +364,10 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // whatever happens to be loaded. Passing `filters` makes its counts drill down:
   // pick one filter and the other dimensions narrow to what selecting each would
   // yield, while the endpoint self-excludes each dimension so you can still widen
-  // or switch within it. Archived-aware — the archived view is a different
-  // population with its own counts.
-  const { data: facets } = useFacetCatalog(showArchived, filters);
+  // or switch within it. `selectedScope` scopes the counts to match the list —
+  // without it a scoped view would show global counts and overstate the yield.
+  // Archived-aware — the archived view is a different population with its own counts.
+  const { data: facets } = useFacetCatalog(showArchived, filters, selectedScope);
 
   const lessons = useMemo(
     () => data?.pages.flatMap((page) => page.rows) ?? [],
