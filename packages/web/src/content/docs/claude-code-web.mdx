@@ -1,0 +1,165 @@
+---
+title: "Claude Code on the web"
+description: "Set up LoreKit in Claude Code's cloud web environment. Each session runs in a fresh, ephemeral container, so use remote mode for persistence and keep your token in an environment variable — never in a committed file."
+order: 4
+keywords: ["claude code on the web", "cloud", "remote environment", "ephemeral", "container", "environment variables", "LOREKIT_TOKEN", "LOREKIT_MCP_URL", "network policy", "mcp", "install", "cli", "doctor", "session start hook"]
+---
+
+<TutorialCallout variant="info">
+
+Claude Code on the web runs every session in a **fresh, ephemeral cloud container**: the repository is re-cloned when the container starts, and nothing you write to disk survives once the session ends. Two consequences drive this whole setup — use **remote mode** so your lore persists across sessions, and put your token in an **environment variable**, never in a file you commit.
+
+</TutorialCallout>
+
+**Why the local store is the wrong choice here**
+
+The [offline store](/docs/offline) keeps memories as plain files under `.lorekit/`. In an ephemeral container those files are wiped when the session ends, so every session would start with an empty memory. Remote mode syncs to the hosted MCP server instead, so lore written in one session is available in the next — on any container, from any machine. This tutorial assumes [remote mode](/docs/remote).
+
+<TutorialStep number={1} title="Generate a read-write API token">
+
+Go to [Settings → API keys](/settings/api-keys) and click **Generate new token**. Give it a name (e.g. `claude-web`) and choose the read + write tier (`lk_rw_…`) so agents in the web session can both read and record lore.
+
+The token is shown **once only** — copy it before closing the modal.
+
+</TutorialStep>
+
+<TutorialStep number={2} title="Store the token as an environment variable">
+
+In Claude Code on the web, each environment carries its own configuration — environment variables, secrets, and setup scripts (see the [environment docs](https://code.claude.com/docs/en/claude-code-on-the-web)). Add your token there rather than in the repo:
+
+```bash
+LOREKIT_TOKEN=lk_rw_<your-token>
+```
+
+This is the one secret. Because it lives in the environment configuration and not in the repository, it is never committed and never appears in the working tree that Claude Code clones.
+
+<TutorialCallout variant="tip">
+
+Do **not** run `npx @lorekit/cli install` and commit the result. That command writes your token inline into `.mcp.json` (it warns you to keep that file out of version control). In a cloud environment the token belongs in `LOREKIT_TOKEN`, and the steps below keep every committed file token-free.
+
+</TutorialCallout>
+
+</TutorialStep>
+
+<TutorialStep number={3} title="Commit a token-free project config">
+
+Drop a `.lorekit.json` at the repo root. It holds the mode and the connection URL — no secret — so it is safe to commit and every session picks it up automatically after the clone:
+
+```json
+// .lorekit.json — repo root, safe to commit (no secrets)
+{
+  "mode": "remote",
+  "mcp.endpoint": "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp"
+}
+```
+
+`mode: "remote"` selects the hosted store; `mcp.endpoint` is the committable URL without a token (the token still comes from `LOREKIT_TOKEN`). See the [Configuration reference](/docs/config) for every field.
+
+</TutorialStep>
+
+<TutorialStep number={4} title="Point Claude Code at the MCP server">
+
+Commit a `.mcp.json` that runs the CLI's own MCP server instead of embedding a token in a `mcp-remote` URL:
+
+```json
+// .mcp.json — repo root, safe to commit (no token)
+{
+  "mcpServers": {
+    "lorekit": {
+      "command": "npx",
+      "args": ["-y", "@lorekit/cli", "mcp"]
+    }
+  }
+}
+```
+
+`npx @lorekit/cli mcp` starts a local stdio MCP server that proxies `memory.*` (and `org.*`) tool calls to the hosted store. It reads the mode and endpoint from `.lorekit.json` and the token from the `LOREKIT_TOKEN` environment variable, so **the committed file carries no secret**. This is the key difference from a normal desktop install, where the token is baked into the connection URL.
+
+<TutorialCallout variant="tip">
+
+Prefer to keep the endpoint out of `.lorekit.json` too? Set `LOREKIT_MCP_URL` in the environment alongside `LOREKIT_TOKEN` and the CLI resolves both from the environment.
+
+</TutorialCallout>
+
+</TutorialStep>
+
+<TutorialStep number={5} title="Allow outbound network access">
+
+The web environment routes outbound HTTPS through a proxy governed by the environment's **network policy**. LoreKit needs two hosts reachable:
+
+- `pqokxlhvnosogizsjztg.supabase.co` — the hosted MCP endpoint
+- `registry.npmjs.org` — so `npx` can fetch `@lorekit/cli`
+
+If your environment uses a restricted network policy, add both hosts to its allowlist. A policy that already permits general HTTPS and npm needs no change.
+
+</TutorialStep>
+
+<TutorialStep number={6} title="(Optional) Warm the container and wire hooks with a setup script">
+
+Two things make sessions faster and richer, both via the environment's setup script (or a `SessionStart` hook) — the container state is cached after the script runs, so the cost is paid once:
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+# Warm the npm cache so the MCP server and hooks start instantly.
+npx -y @lorekit/cli --version
+
+# Wire the LoreKit lifecycle hooks so prior lore is injected at session
+# start and a retrospective nudge fires on failures. Hooks inject context;
+# they never write memory themselves. Non-interactive, safe to re-run.
+npx -y @lorekit/cli install --hooks all
+```
+
+`install --hooks all` scaffolds the skills and lifecycle hooks into `.claude/`. Because it reads `LOREKIT_TOKEN` from the environment and the endpoint from `.lorekit.json`, it stays token-free. See [Offline storage](/docs/offline) for the full hook-mode options (`all` / `read-only` / `none`).
+
+</TutorialStep>
+
+<TutorialStep number={7} title="Verify the connection">
+
+From a session terminal:
+
+```bash
+npx @lorekit/cli doctor
+```
+
+Look at the **Remote** section — both checks must be green:
+
+- **`connectivity`** probes the public `/health` function (proves the network path).
+- **`authentication`** makes one authenticated request. A revoked or missing token fails here with HTTP 401 and `doctor` exits non-zero.
+
+If `authentication` reports the token is rejected, regenerate it at [Settings → API keys](/settings/api-keys) and update the `LOREKIT_TOKEN` environment variable.
+
+</TutorialStep>
+
+<TutorialStep number={8} title="Confirm lore survives across sessions">
+
+Have your agent write a memory in one session:
+
+```json
+memory.write {
+  scope: "global",
+  key:   "hello-cloud",
+  value: "LoreKit is wired up in Claude Code on the web."
+}
+```
+
+Start a **new** session and read it back:
+
+```json
+memory.read {
+  scope: "global",
+  key:   "hello-cloud"
+}
+// → { "value": "LoreKit is wired up in Claude Code on the web.", "updated_at": "…" }
+```
+
+Because the value comes from the hosted store, it survives the container being reclaimed — which is exactly what the local store could not do.
+
+</TutorialStep>
+
+<TutorialCallout>
+
+**Next steps:** share memories across your whole team by setting up an organization. See the [Team sharing tutorial](/docs/organization).
+
+</TutorialCallout>
