@@ -13,7 +13,7 @@
  * is fire-and-forget, `getUserPlanName` fails open to null.
  */
 
-import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { createClient } from 'npm:@supabase/supabase-js@2';
 import { createTracedClient, type Span } from './otel.ts';
 
 export interface UsageEventParams {
@@ -109,7 +109,7 @@ export async function getUserPlanName(
 ): Promise<string | null> {
   try {
     const query = parentSpan
-      ? createTracedClient(db as SupabaseClient, parentSpan).from('user_plans')
+      ? createTracedClient(db, parentSpan).from('user_plans')
       : db.from('user_plans');
     const { data } = await query
       .select('plan_name')
