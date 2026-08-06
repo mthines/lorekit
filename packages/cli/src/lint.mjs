@@ -1,8 +1,8 @@
 // `lorekit lint` — flag low-quality lessons across the applicable scopes and
 // both stores. Each finding names the rule it violated (empty/whitespace value,
-// suspiciously short value, untrimmed value, empty key, malformed scope). The
-// rules are pure predicates in `lessons-view.mjs` (`LINT_RULES` / `lintEntry`),
-// each independently unit-tested.
+// suspiciously short value, untrimmed value, empty key, volatile key, malformed
+// scope). The rules are pure predicates in `lessons-view.mjs` (`LINT_RULES` /
+// `lintEntry`), each independently unit-tested.
 //
 // Exit convention: `lint` exits NON-ZERO (1) when any finding exists, so it is
 // usable as a CI gate (`lorekit lint || fail`); a clean run — or a run where the

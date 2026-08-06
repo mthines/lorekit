@@ -89,8 +89,8 @@ The short version is six phases; the first four are pure analysis.
    `lorekit scopes` (store-wide inventory: every scope with its lesson count)
    show where the mass is. Pick the noisiest scope to start.
 2. **Lint** — `lorekit lint --json` flags structurally bad lessons (empty /
-   whitespace / suspiciously short / untrimmed values, empty keys, malformed
-   scopes). These are the cheapest wins: fix or drop them first.
+   whitespace / suspiciously short / untrimmed values, empty keys, volatile
+   keys, malformed scopes). These are the cheapest wins: fix or drop them first.
 3. **Dedupe** — `lorekit dedupe --json` clusters near-duplicate lessons. Start at
    a high `--threshold` (e.g. `0.85`) for confident duplicates, then lower it to
    surface looser paraphrases. Use `lorekit show <scope::key>` to read each
