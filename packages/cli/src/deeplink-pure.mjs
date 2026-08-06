@@ -1,8 +1,11 @@
 // Dependency-free deep-link builder for LoreKit dashboard URLs.
 //
-// Zero imports on purpose (the `lessons-pure.mjs` precedent): both the hook hot
-// path (`core/lessons.mjs`) and the `link` command / `--link` flag share this
-// without pulling in `util`/render/store code.
+// Dependency-free on purpose (the `lessons-pure.mjs` precedent): both the hook
+// hot path (`core/lessons.mjs`) and the `link` command / `--link` flag share
+// this without pulling in `util`/render/store code. The ONE import is the
+// re-export of `resolveScopeArg` & friends from `lessons-pure.mjs`, which is
+// itself zero-import — so the property that matters (no util/render/store on
+// the hot path) holds, while the scope grammar stays in a single module.
 //
 // THE governing constraint — every `/lore` Explorer param is read by the web
 // app's `useUrlState` (`packages/web/src/lib/hooks/useUrlState.ts`) via
@@ -123,31 +126,13 @@ export function buildLessonUrl(scope, key, opts = {}) {
   return buildLoreUrl(params, opts);
 }
 
-// Resolve a SINGLE positional `link` argument into a { scope, key } pair,
-// disambiguating a bare scope from the `<scope>::<key>` shorthand. `isScope` is
-// an injected validity predicate (the caller passes a `scopeIssue`-based check),
-// keeping this module zero-import.
-//
-// The rule: split at the LAST `::` and take it as `<scope>::<key>` ONLY when the
-// left side is itself a COMPLETE valid scope — otherwise the whole arg is the
-// scope. Splitting on the last `::` (not the first) keeps a multi-segment scope
-// whole (`repo::owner/name::key` → scope `repo::owner/name`, key `key`); gating
-// on a valid left side means a bare `repo::owner/name` is NOT mis-split, because
-// its left part `repo` is not a valid scope. This is the fix for the prior
-// first-`::` split, which turned `link repo::acme/widget` into scope="repo" plus
-// a bogus `acme/widget` key — breaking the shorthand for EVERY non-`global`
-// scope. A malformed arg falls through to the scope, never a fabricated key. Pure.
-export function resolveScopeArg(arg, isScope = () => false) {
-  const s = typeof arg === 'string' ? arg.trim() : '';
-  if (!s) return { scope: null, key: null };
-  const idx = s.lastIndexOf('::');
-  if (idx !== -1) {
-    const left = s.slice(0, idx).trim();
-    const right = s.slice(idx + 2).trim();
-    if (right && isScope(left)) return { scope: left, key: right };
-  }
-  return { scope: s, key: null };
-}
+// `resolveScopeArg` — the validity-gated `<scope>::<key>` split — now lives in
+// the dependency-free `lessons-pure.mjs` alongside `scopeIssue`, the validator it
+// has to consult, and `resolveScopeKeyArgs`, the full positional/flag parser that
+// `link`, `show` and `write` share. Re-exported here so this module stays the one
+// import site for the `link` command and its tests. `lessons-pure.mjs` is itself
+// zero-import, so this file remains free of the util/render/store stack.
+export { resolveScopeArg, resolveScopeKeyArgs, isScopeString, scopeIssue } from './lessons-pure.mjs';
 
 // ── Flag → param coercion (pure, shared by the `link` command) ────────────────
 
