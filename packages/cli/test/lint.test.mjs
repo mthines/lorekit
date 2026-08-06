@@ -181,7 +181,8 @@ function entry({ scope, key, value, tags = [] }) {
 }
 
 // A project (no git remote → project + global scopes) with one good global
-// lesson and two bad project lessons (short value; padded/untrimmed value).
+// lesson and three bad project lessons (short value; padded/untrimmed value;
+// volatile key).
 function seedProject() {
   const root = tmp('lk-lint-proj-');
   const home = tmp('lk-lint-home-');
@@ -196,6 +197,11 @@ function seedProject() {
     scope: `project::${projectName}`,
     key: 'padded',
     value: '   a body with surrounding whitespace here   ',
+  });
+  write(`project/${projectName}/d.md`, {
+    scope: `project::${projectName}`,
+    key: 'pr-231-null-check',
+    value: 'A durable observation keyed to a single pull request instead of the pattern.',
   });
   return { root, home, projectName };
 }
@@ -244,6 +250,7 @@ test('lint reports findings and exits NON-ZERO when issues exist', () => {
   assert.equal(res.status, 1, res.stdout);
   assert.match(res.stdout, /short-value/);
   assert.match(res.stdout, /untrimmed-value/);
+  assert.match(res.stdout, /volatile-key/);
   assert.match(res.stdout, /lint issue/);
   assert.doesNotMatch(res.stdout, /Error:/);
 });
@@ -258,6 +265,7 @@ test('lint --json carries the structured findings list', () => {
   const rules = proj.findings.map((f) => f.rule);
   assert.ok(rules.includes('short-value'));
   assert.ok(rules.includes('untrimmed-value'));
+  assert.ok(rules.includes('volatile-key'));
   // The clean global lesson contributes no findings.
   const glob = out.offline.scopes.find((s) => s.scope === 'global');
   assert.equal(glob.findings.length, 0);
