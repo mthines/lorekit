@@ -63,6 +63,13 @@ describe('MCP auth resolution telemetry (supabase/functions/mcp/auth.ts)', () =>
     expect(executable).toMatch(/authSpan\?\.child\(\s*'SELECT[^']*api_tokens'/);
   });
 
+  it('ends the api_tokens lookup span in a finally, so a rejected read still exports it', () => {
+    // Span.end() is the only enqueue point into the export batch, so an .end()
+    // sitting after the await is skipped when the read REJECTS — dropping the
+    // child on exactly the failing case the span exists to make visible.
+    expect(executable).toMatch(/finally\s*\{[^}]*lookupSpan\?\.setAttributes\([^)]*\)\.end\(\);\s*\}/);
+  });
+
   it('never routes the token lookup through createTracedClient', () => {
     // createTracedClient interpolates `eq()` values into the span name and
     // db.query.text. The value here is the token hash, so tracing this query

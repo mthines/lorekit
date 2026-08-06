@@ -105,12 +105,27 @@ async function resolveAuthTiers(
       'db.operation.name': 'SELECT',
       'db.collection.name': 'api_tokens',
     }, SPAN_KIND_CLIENT);
-    const { data } = await serviceDb
-      .from('api_tokens')
-      .select('user_id, permissions')
-      .eq('token_hash', hash)
-      .maybeSingle();
-    lookupSpan?.setAttributes({ 'db.response.rows': data ? 1 : 0 }).end();
+    // `finally`, for the reason the outer `authSpan` uses one: `Span.end()` is
+    // the only thing that enqueues a span for export, so a lookup that REJECTS
+    // (transport failure, abort) would drop the child entirely and the failing
+    // case — the one this span exists to make visible — would vanish. This
+    // mirrors `TracedQuery`'s rejection handler in `_shared/otel.ts`. The
+    // rejection is rethrown untouched: an infra outage must not be reported as
+    // an invalid key.
+    let data: Record<string, unknown> | null = null;
+    try {
+      const result = await serviceDb
+        .from('api_tokens')
+        .select('user_id, permissions')
+        .eq('token_hash', hash)
+        .maybeSingle();
+      data = result.data;
+    } catch (err) {
+      lookupSpan?.error(`${(err as Error).name}: ${(err as Error).message}`);
+      throw err;
+    } finally {
+      lookupSpan?.setAttributes({ 'db.response.rows': data ? 1 : 0 }).end();
+    }
     if (!data) {
       span?.setAttributes({ 'auth.outcome': 'api_key_invalid', 'auth.type': 'api_key' });
       return null;
