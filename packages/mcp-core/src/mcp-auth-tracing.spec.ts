@@ -70,6 +70,20 @@ describe('MCP auth resolution telemetry (supabase/functions/mcp/auth.ts)', () =>
     expect(executable).toMatch(/finally\s*\{[^}]*lookupSpan\?\.setAttributes\([^)]*\)\.end\(\);\s*\}/);
   });
 
+  it('records db.success so a failed lookup is distinguishable from a token miss', () => {
+    // A DB error and a genuine miss both leave `data` null and both end in
+    // `api_key_invalid`, so rows-0 on its own reports an outage as a bad key.
+    expect(executable).toContain("'db.success': success");
+    expect(executable).toMatch(/success\s*=\s*!result\.error;/);
+  });
+
+  it('puts the bounded error CODE on the lookup span, never the free-form message', () => {
+    // Same rule the JWT tier states explicitly, and the reason this query
+    // avoids createTracedClient: nothing derived from this row reaches telemetry.
+    expect(executable).toMatch(/lookupSpan\?\.error\(`PostgrestError: \$\{result\.error\.code/);
+    expect(executable).not.toMatch(/lookupSpan\?\.error\([^)]*result\.error\.message/);
+  });
+
   it('never routes the token lookup through createTracedClient', () => {
     // createTracedClient interpolates `eq()` values into the span name and
     // db.query.text. The value here is the token hash, so tracing this query

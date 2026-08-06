@@ -112,7 +112,16 @@ async function resolveAuthTiers(
     // mirrors `TracedQuery`'s rejection handler in `_shared/otel.ts`. The
     // rejection is rethrown untouched: an infra outage must not be reported as
     // an invalid key.
+    //
+    // `db.success` (and the error status) is what keeps a FAILED read
+    // distinguishable from a genuine token miss: both leave `data` null and
+    // both end in `api_key_invalid`, so rows-0 alone reports an outage as a bad
+    // key. `TracedQuery` records the same pair for every other edge DB call.
+    // The bounded error CODE goes on the span, never the free-form message —
+    // the same rule the JWT tier below states explicitly, and the reason this
+    // query avoids `createTracedClient` in the first place.
     let data: Record<string, unknown> | null = null;
+    let success = false;
     try {
       const result = await serviceDb
         .from('api_tokens')
@@ -120,11 +129,18 @@ async function resolveAuthTiers(
         .eq('token_hash', hash)
         .maybeSingle();
       data = result.data;
+      success = !result.error;
+      if (result.error) {
+        lookupSpan?.error(`PostgrestError: ${result.error.code ?? 'unknown'}`);
+      }
     } catch (err) {
       lookupSpan?.error(`${(err as Error).name}: ${(err as Error).message}`);
       throw err;
     } finally {
-      lookupSpan?.setAttributes({ 'db.response.rows': data ? 1 : 0 }).end();
+      lookupSpan?.setAttributes({
+        'db.response.rows': data ? 1 : 0,
+        'db.success': success,
+      }).end();
     }
     if (!data) {
       span?.setAttributes({ 'auth.outcome': 'api_key_invalid', 'auth.type': 'api_key' });
