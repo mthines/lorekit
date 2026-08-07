@@ -153,6 +153,30 @@ test('uninstall --global preserves other servers in the project .mcp.json', asyn
   });
 });
 
+test('uninstall --global leaves an unrelated embedded-token project .mcp.json intact', async () => {
+  // The global-uninstall cleanup must remove ONLY the committable web form, not
+  // an embedded-token `install --project` entry a user set up separately.
+  const home = tmp('lk-uninst-embed-home-');
+  const root = tmp('lk-uninst-embed-cwd-');
+  await withHome(home, async () => {
+    fs.writeFileSync(
+      path.join(root, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', `${ENDPOINT}?token=${TOKEN}`] } },
+      }),
+    );
+    await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, global: true });
+    await uninstall({ dir: root, yes: true, global: true });
+
+    const proj = JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'));
+    assert.ok(proj.mcpServers?.lorekit, 'embedded-token project entry preserved by a global uninstall');
+    assert.ok(
+      proj.mcpServers.lorekit.args.some((a) => a.includes(TOKEN)),
+      'it is still the embedded-token form, untouched',
+    );
+  });
+});
+
 test('uninstall leaves a corrupt config untouched, still removes what it can, and exits non-zero', async () => {
   const root = tmp('lk-uninst-corrupt-');
   await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true });

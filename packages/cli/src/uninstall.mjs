@@ -9,6 +9,7 @@ import {
   resolveProjectRoot,
   removeSkill,
   removeMcpServer,
+  removeWebMcpServer,
   removeClaudeHooks,
   homeDir,
 } from './config.mjs';
@@ -60,9 +61,11 @@ export async function uninstall(args) {
   // ADDITION to ~/.claude.json, so a GLOBAL uninstall must also clear that
   // entry or it orphans a lorekit server pointing at a now-removed setup. A
   // project uninstall already targets .mcp.json via `mcp` above, so this is
-  // global-only. Surgical and idempotent: no web file ⇒ a quiet "nothing to
-  // remove", other servers in the file are preserved.
-  const webMcp = scope === 'global' ? attempt(() => removeMcpServer(root, 'project')) : null;
+  // global-only. `removeWebMcpServer` removes ONLY the committable web form, so
+  // it never deletes an unrelated embedded-token `install --project` entry a
+  // user set up separately. Surgical and idempotent: no web file ⇒ a quiet
+  // "nothing to remove", other servers in the file are preserved.
+  const webMcp = scope === 'global' ? attempt(() => removeWebMcpServer(root)) : null;
   const hooks = attempt(() => removeClaudeHooks(root, scope));
 
   // Global paths shown relative to ~; project paths repo-relative.
