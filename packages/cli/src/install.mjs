@@ -517,11 +517,22 @@ export async function install(args) {
   }
 
   const kind = tokenKind(token);
-  if (kind === 'none') {
-    // With a committable web .mcp.json and no stored token (the common
-    // `--project --mcp-json` case), "none configured" reads as broken — but the
-    // file resolves ${LOREKIT_TOKEN} at runtime by design. Say that instead of
-    // implying reads/writes will fail.
+  if (scopeWriteOwnedByWeb) {
+    // `--project --mcp-json`: the committable web .mcp.json is the ONLY config
+    // written, and it references ${LOREKIT_TOKEN} rather than storing a token —
+    // so NOTHING persists a credential here. Reporting the token's tier would
+    // imply it was configured; instead say it is not stored (and that a passed
+    // --token was therefore not persisted), pointing at the environment secret.
+    status(
+      'warn',
+      'token',
+      `not stored — the committable .mcp.json resolves \${${WEB_TOKEN_ENV_VAR}} at runtime; set it as an environment secret${
+        token ? ' (any --token you passed is not persisted)' : ''
+      }`,
+    );
+  } else if (kind === 'none') {
+    // A global --mcp-json with no token still writes the web file; explain the
+    // runtime resolution rather than implying reads/writes will fail.
     status(
       'warn',
       'token',

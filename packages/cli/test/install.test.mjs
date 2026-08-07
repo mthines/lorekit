@@ -4,11 +4,40 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { install, defaultHookMode, HOOK_PROMPT_OPTIONS, tokenPlan, maskToken } from '../src/install.mjs';
 import { skillInstallDir, mcpConfigPath, homeDir, installedHookEvents, HOOK_MODES } from '../src/config.mjs';
 
 function tmp(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
+function gitAvailable() {
+  try {
+    execFileSync('git', ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Capture everything install writes to stdout (log/status go through
+// process.stdout.write) so a test can assert on a status line.
+async function captureStdout(fn) {
+  const original = process.stdout.write.bind(process.stdout);
+  let buf = '';
+  process.stdout.write = (chunk, ...rest) => {
+    buf += typeof chunk === 'string' ? chunk : chunk.toString();
+    // Swallow the output during capture; return true like the real write.
+    if (typeof rest[rest.length - 1] === 'function') rest[rest.length - 1]();
+    return true;
+  };
+  try {
+    await fn();
+  } finally {
+    process.stdout.write = original;
+  }
+  return buf;
 }
 
 // `install` returns the traceCommand result shape ({ exitCode, ...bounded attrs }),
@@ -171,6 +200,36 @@ test('install --mcp-json preserves other MCP servers already in .mcp.json', asyn
   const mcp = JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'));
   assert.ok(mcp.mcpServers.other, 'unrelated server preserved');
   assertWebMcpShape(mcp);
+});
+
+test('install --mcp-json warns when the .mcp.json it wrote is git-ignored', { skip: !gitAvailable() }, async () => {
+  // The committable web file is useless if the repo will never commit it, and
+  // .mcp.json is commonly git-ignored — so install must surface that at write
+  // time. Assert the warning reaches stdout (config.test.mjs covers the
+  // underlying isMcpJsonGitIgnored detector directly).
+  const root = tmp('lk-webmcp-ignored-');
+  execFileSync('git', ['-C', root, 'init'], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(root, '.gitignore'), '.mcp.json\n');
+
+  const out = await captureStdout(() =>
+    install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true, 'mcp-json': true }),
+  );
+  // Key on the warning status line's own label — the phrase "git-ignored" also
+  // appears in the always-present closing web note, so a looser match would
+  // pass even when the warning is absent.
+  assert.match(out, /\.mcp\.json \(git\).*git-ignored/, 'install emits the git-ignored warning line');
+  assert.match(out, /un-ignore it/, 'the warning tells the user how to fix it');
+});
+
+test('install --mcp-json does NOT warn when .mcp.json is tracked', { skip: !gitAvailable() }, async () => {
+  const root = tmp('lk-webmcp-tracked-');
+  execFileSync('git', ['-C', root, 'init'], { stdio: 'ignore' });
+  const out = await captureStdout(() =>
+    install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true, 'mcp-json': true }),
+  );
+  // Same reason: assert the WARNING line (its label) is absent, not the phrase
+  // "git-ignored", which the closing note always contains.
+  assert.doesNotMatch(out, /\.mcp\.json \(git\)/, 'no warning line when the file is not ignored');
 });
 
 test('install --mcp-json reaches the write step even on an already-complete install', async () => {
