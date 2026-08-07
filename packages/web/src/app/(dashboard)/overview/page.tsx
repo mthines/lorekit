@@ -9,7 +9,7 @@ import { PendingInvitesBanner } from '@/components/dashboard/PendingInvitesBanne
 
 export const metadata: Metadata = { title: 'Overview' };
 
-export default async function DashboardPage() {
+export default async function OverviewPage() {
   // Overview is the default landing route — the single place that mints a
   // first token so brand-new users get a ready-to-copy config immediately.
   // Pending org invites are fetched alongside so the banner can surface them.

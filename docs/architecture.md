@@ -239,4 +239,4 @@ See [otel.md](./otel.md) for the full setup. Every layer emits telemetry to Dash
 | Next.js server | HTTP server spans via `@vercel/otel` |
 | Browser (RUM) | Page loads, navigation, fetch traces, errors via `@dash0/sdk-web` |
 
-All signals carry `service.namespace=lorekit` and `deployment.environment.name` (`production` / `preview` / `local`).
+All signals carry `service.namespace=lorekit` and `deployment.environment.name` (`production` / `preview` / `development` / `local`, plus the synthetic `test` stamped on smoke/CI runs).

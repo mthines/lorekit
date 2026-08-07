@@ -119,7 +119,7 @@ with `npx @lorekit/cli install --force`, which offers to keep, replace, or remov
 | Repository | `repo::{owner}/{repo}` | `repo::mthines/gw-tools` |
 | Branch | `branch::{owner}/{repo}::{branch}` | `branch::mthines/gw-tools::feat/x` |
 
-Validation: single `:` → 400; `repo::` without `/` → 400; `branch::` without two `::` → 400; unknown prefix → 400.
+Validation: single `:` → 400; `repo::` without `/` → 400; `branch::` without two `::` → 400; unknown prefix → 400; a segment containing a further `::` → 400 (`::` is reserved as the separator).
 
 ### Scope resolution (read order)
 
@@ -150,6 +150,8 @@ Store or update a lesson.
 | `tags` |  | array | Free-form labels, e.g. `["skill::aw", "source::stuck-loop"]`. _(array of string)_ |
 | `source_agent` |  | string | Name of the agent writing this lesson. |
 | `trigger` |  | string | What triggered the write: `stuck-loop`, `pr-webhook`, `manual`. |
+| `kind` |  | string | The bucket kind: `lesson` (procedural, read every run), `bus` (transient outcome event, read at promotion time), or `signal` (durable per-repo filter, read every run). Omit to have it inferred from a `loop::<host>-lessons` tag. |
+| `host` |  | string | The owning skill or agent (e.g. `reviewer`, `aw`, `ci-auto-fix`). Omit to have it inferred from a `loop::<host>-lessons` tag. |
 | `created_at` |  | string | Optional ISO 8601 creation date. Use when migrating a pre-existing memory so it is dated by its original time instead of now. Rejected if invalid or in the future. Applies only when the memory is first created. _(date-time)_ |
 | `org` |  | string | Org slug to write under (org-owned write). Omit for a personal memory. You must be a write-capable member (member/admin/owner, not viewer) of the org, verified server-side — supplying an org slug you are not authorized for is rejected. |
 | `ttl_days` |  | integer | Number of days until the memory auto-expires. Omit for a permanent memory. On an update, supplying ttl_days refreshes the expiry; omitting it leaves the existing expiry unchanged. _(1–365)_ |
@@ -441,6 +443,7 @@ Rate-limited requests receive HTTP 429 with a `Retry-After` header.
 - [Private lore](https://lorekit.io/docs/private) — Every memory is personal by default — visible only to the user or token that wrote it. This tutorial explains how personal and org-owned lore coexist, and how to keep sensitive memories private even in a shared team environment.
 - [Tags & scopes](https://lorekit.io/docs/tags) — Scopes partition lore by location (global, repo, branch). Tags are free-form labels that cut across scopes — use them to identify memory type, source agent, workflow, or any dimension you care about.
 - [Configuration](https://lorekit.io/docs/config) — LoreKit reads two optional JSON config files that decide the memory mode, the store location, and write & hook behaviour. Both files share the same schema and every field is optional — start with an empty file and add only what you need.
+- [Claude Code on the web](https://lorekit.io/docs/claude-code-web) — Set up LoreKit in Claude Code's cloud web environment. Each session runs in a fresh, ephemeral container, so a setup script installs LoreKit globally and your token lives in the LOREKIT_TOKEN environment variable — nothing is committed to the repo.
 - [Use cases](https://lorekit.io/docs/use-cases) — End-to-end examples showing how scopes, tags, and org sharing come together for real development workflows.
 - [Deep links](https://lorekit.io/docs/deep-links) — Every view in the LoreKit dashboard is a shareable URL. Link straight to a scope in the Explorer, open one memory's detail sheet, or share a filtered search — from the terminal, a PR, or a chat message. Generate them by hand or with the CLI's link command and --link flag.
 

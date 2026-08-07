@@ -58,10 +58,12 @@ class RemoteStore {
 
   // ── Memory operations → REST ──────────────────────────────────────────────
 
-  async list({ scope, tags, limit, cursor, created_since, created_until, key_prefix } = {}) {
+  async list({ scope, tags, kind, host, limit, cursor, created_since, created_until, key_prefix } = {}) {
     const p = new URLSearchParams();
     if (scope) p.set('scope', scope);
     if (tags?.length) p.set('tags', Array.isArray(tags) ? tags.join(',') : tags);
+    if (kind) p.set('kind', Array.isArray(kind) ? kind.join(',') : kind);
+    if (host) p.set('host', Array.isArray(host) ? host.join(',') : host);
     if (limit) p.set('limit', String(limit));
     if (cursor) p.set('cursor', cursor);
     if (created_since) p.set('created_since', created_since);
@@ -79,8 +81,13 @@ class RemoteStore {
   }
 
   async search({ q, scopes, tags, limit, cursor } = {}) {
+    // A list of terms collapses into ONE `websearch` query joined by `OR`, so a
+    // multi-term failure lookup is a single round-trip (the server FTS ORs them
+    // and stems each). `failureQuery` distils terms to `[a-z0-9]+` tokens, so no
+    // FTS metacharacter reaches the query string. A plain string passes through.
+    const query = Array.isArray(q) ? q.filter(Boolean).join(' OR ') : q;
     const body = {};
-    if (q) body.q = q;
+    if (query) body.q = query;
     if (scopes?.length) body.scopes = scopes;
     if (tags?.length) body.tags = tags;
     if (limit) body.limit = limit;
@@ -110,13 +117,15 @@ class RemoteStore {
 
   async write(args = {}) {
     const {
-      scope, key, value, tags, source_agent, trigger, org, ttl_days, clear_ttl, created_at,
+      scope, key, value, tags, source_agent, trigger, kind, host, org, ttl_days, clear_ttl, created_at,
       origin_repo, origin_branch, origin_commit, origin_pr,
     } = args;
     const body = { scope, key, value };
     if (tags !== undefined) body.tags = tags;
     if (source_agent !== undefined) body.source_agent = source_agent;
     if (trigger !== undefined) body.trigger = trigger;
+    if (kind !== undefined) body.kind = kind;
+    if (host !== undefined) body.host = host;
     if (org !== undefined) body.org = org;
     if (ttl_days !== undefined) body.ttl_days = ttl_days;
     if (clear_ttl !== undefined) body.clear_ttl = clear_ttl;

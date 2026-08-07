@@ -1,0 +1,87 @@
+---
+title: "Claude Code on the web"
+description: "Set up LoreKit in Claude Code's cloud web environment. Each session runs in a fresh, ephemeral container, so a setup script installs LoreKit globally and your token lives in the LOREKIT_TOKEN environment variable — nothing is committed to the repo."
+order: 8
+keywords: ["claude code on the web", "cloud", "ephemeral", "container", "setup script", "npm install -g", "cli", "install", "global", "LOREKIT_TOKEN", "environment variables", "network policy", "doctor", "stats"]
+---
+
+<TutorialCallout variant="info">
+
+Claude Code on the web runs every session in a **fresh, ephemeral cloud container**: the repository is re-cloned on start and disk writes don't survive. So keep [remote mode](/docs/remote) (the default, so lore persists across sessions), install LoreKit from the environment's **setup script**, and keep your token in the **`LOREKIT_TOKEN`** environment variable. Nothing is committed to the repo.
+
+</TutorialCallout>
+
+<TutorialStep number={1} title="Generate a read-write API token">
+
+Go to [Settings → API keys](/settings/api-keys), click **Generate new token**, and choose the read + write tier (`lk_rw_…`). Copy it — the token is shown once only.
+
+</TutorialStep>
+
+<TutorialStep number={2} title="Add the token to your environment">
+
+In your environment's configuration, set the token as an environment variable (see the [environment docs](https://code.claude.com/docs/en/claude-code-on-the-web) for where these live):
+
+```bash
+LOREKIT_TOKEN=lk_rw_<your-token>
+```
+
+This is the only secret, and it stays out of version control by living in the environment configuration.
+
+</TutorialStep>
+
+<TutorialStep number={3} title="Install LoreKit from the setup script">
+
+Add these two lines to the environment's **setup script**. It runs before each session starts, and the container caches the result, so the cost is paid once:
+
+```bash
+npm install -g @lorekit/cli
+lorekit install --global --hooks all
+```
+
+- `npm install -g` puts `lorekit` on `PATH`, so the hooks it wires call the fast `lorekit` binary directly instead of `npx` on every hook event.
+- `lorekit install --global` writes the skills, the MCP server entry, and the hooks into the container's home directory (`~/.claude`, `~/.claude.json`) — resolving the endpoint (hosted by default) and the token (from `LOREKIT_TOKEN`) automatically — so the cloned repo is never touched.
+- `--hooks all` injects prior lore at session start and nudges on failures. Use `--hooks read-only` or `--hooks none` to change that — see [Offline storage](/docs/offline).
+
+<TutorialCallout variant="tip">
+
+If your environment uses a restricted **network policy**, allow `pqokxlhvnosogizsjztg.supabase.co` (the MCP endpoint) and `registry.npmjs.org` (npm). A policy that already permits general HTTPS and npm needs no change.
+
+</TutorialCallout>
+
+<TutorialCallout variant="info">
+
+The MCP tools and hooks take effect in **new sessions**. Because the setup script runs before the session opens, they are ready when it starts. If you instead run the install from a terminal in an already-running session, start a fresh session to pick up the `mcp__lorekit__*` tools — the `lorekit` CLI itself works immediately.
+
+</TutorialCallout>
+
+</TutorialStep>
+
+<TutorialStep number={4} title="Verify">
+
+From a session terminal, run doctor — it must end with **`0 failed`**, a resolved endpoint, and `authentication — token accepted`:
+
+```bash
+lorekit doctor
+```
+
+Then confirm real data flows, not just that the endpoint is reachable:
+
+```bash
+lorekit stats
+```
+
+The **Remote** section should show your memory counts (or an empty list for a new account) — not `unavailable`.
+
+<TutorialCallout variant="tip">
+
+A `WARN  .mcp.json — no lorekit server entry` after a **global** install is expected and harmless: the global install wires the server into `~/.claude.json`, so there is deliberately no project-level `.mcp.json`.
+
+</TutorialCallout>
+
+</TutorialStep>
+
+<TutorialCallout>
+
+**Next steps:** share memories across your whole team by setting up an organization. See the [Team sharing tutorial](/docs/organization).
+
+</TutorialCallout>

@@ -107,10 +107,24 @@ Deno.serve(async (req: Request) => {
 
       // Resolve the user's plan name once per request — used for rate-limit
       // messages and usage-event annotation. Fails open (null → 'free').
-      const planName = await getUserPlanName(db, auth.userId);
+      //
+      // Issued CONCURRENTLY with the rate-limit check, not before it. Both are
+      // keyed only on `auth.userId` and neither reads the other's result, so
+      // awaiting them in sequence bought nothing and put TWO serial Supabase
+      // round-trips in front of every MCP message — including the ones that go
+      // on to do no work at all (`notifications/initialized` answers 204). This
+      // is the same reasoning `_shared/api/router.ts` already applies to the
+      // REST surface, where the plan lookup is deliberately not awaited inline;
+      // the MCP transport was the surface that still paid for it serially.
+      // `getUserPlanName` fails open to null and `checkRateLimit` fails open to
+      // allowed, so neither promise rejects and `Promise.all` cannot reject.
+      const [planName, rateLimit] = await Promise.all([
+        getUserPlanName(db, auth.userId, span),
+        checkRateLimit(db, auth.userId, span),
+      ]);
       span.setAttributes({ 'lorekit.plan': planName ?? 'free' });
 
-      const { allowed, retryAfterSeconds, currentCount, limitValue } = await checkRateLimit(db, auth.userId, span);
+      const { allowed, retryAfterSeconds, currentCount, limitValue } = rateLimit;
       span.setAttributes({
         'rate_limit.allowed': allowed,
         ...(currentCount != null ? { 'rate_limit.current_count': currentCount } : {}),

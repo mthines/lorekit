@@ -1,5 +1,97 @@
 # Changelog
 
+## [1.34.0](https://github.com/mthines/lorekit/compare/cli-v1.33.4...cli-v1.34.0) (2026-08-06)
+
+
+### Features
+
+* **cli:** add a volatile-key lint rule so per-sighting keys fail CI ([939015c](https://github.com/mthines/lorekit/commit/939015cd7501550d8ae9fb447b9ef8417dfdb79c))
+
+
+### Bug Fixes
+
+* **cli:** match pr/issue references joined by - or _ in volatile-key ([bdb1abb](https://github.com/mthines/lorekit/commit/bdb1abb740d2f8b7df5b448bb0ebc30dfe60fc91))
+
+
+### Documentation
+
+* **cli:** list volatile-key in every lint rule enumeration ([46c961f](https://github.com/mthines/lorekit/commit/46c961faf63000f45b007c6ae556c2e9e444261d))
+
+## [1.33.4](https://github.com/mthines/lorekit/compare/cli-v1.33.3...cli-v1.33.4) (2026-08-06)
+
+
+### Bug Fixes
+
+* **cli:** parse scope::key by scope validity in write and show ([4855df8](https://github.com/mthines/lorekit/commit/4855df8f8f00405bf16f116563c028f1d6fe2a2e))
+* **cli:** parse scope::key by scope validity in write and show ([fafea77](https://github.com/mthines/lorekit/commit/fafea7779c2279dd88e288337fffe608fe910be7))
+* **cli:** reject leftover positionals in write instead of writing the wrong key ([0c1bc75](https://github.com/mthines/lorekit/commit/0c1bc75aeb773c1039dfc5922040b6f8b7bf35f4))
+
+
+### Documentation
+
+* **cli:** document link's --key flag in its own help and CLAUDE.md ([dc0f437](https://github.com/mthines/lorekit/commit/dc0f437e74f74b221a3c9d615620aa36421df488))
+* **cli:** stop overstating the CLI scope gate in write's docblock ([a0e7d37](https://github.com/mthines/lorekit/commit/a0e7d378ab53b4f62800be2215dd127833a201ff))
+
+## [1.33.3](https://github.com/mthines/lorekit/compare/cli-v1.33.2...cli-v1.33.3) (2026-08-05)
+
+
+### Documentation
+
+* docs/otel.md + docs/deployment.md. ([7c259c9](https://github.com/mthines/lorekit/commit/7c259c9937a6a20bda0d44668b807de161d4187a))
+
+## [1.33.2](https://github.com/mthines/lorekit/compare/cli-v1.33.1...cli-v1.33.2) (2026-08-05)
+
+
+### Bug Fixes
+
+* **cli:** flush stdout before exit so a large mcp frame is not truncated ([37ba771](https://github.com/mthines/lorekit/commit/37ba7710a0a30ea6b79ebad9f9bcca11ba818186))
+* **cli:** flush stdout before exit so a large mcp frame is not truncated ([8399eb9](https://github.com/mthines/lorekit/commit/8399eb94df086be3ef61ad6949e30da4eeae49b0))
+
+## [1.33.1](https://github.com/mthines/lorekit/compare/cli-v1.33.0...cli-v1.33.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* **cli:** dedupeRelevant honours a cap of 0 ([74f2e1d](https://github.com/mthines/lorekit/commit/74f2e1d0384adce5267819bec09efc9c279d4a38))
+
+
+### Performance
+
+* **cli:** one-pass multi-term store search for the failure lookup ([b781be8](https://github.com/mthines/lorekit/commit/b781be8679b2d89254ac49f76ab1c4c677bc938b))
+
+
+### Documentation
+
+* **cli:** remote store orders by recency, not FTS relevance ([b7f7df7](https://github.com/mthines/lorekit/commit/b7f7df7740b0f0cd06418af28036e873397a7e56))
+* **cli:** scope precedence in the failure lookup holds per tier only ([146bde9](https://github.com/mthines/lorekit/commit/146bde9da1deb09e6112d9f82d97448dafea897e))
+
+## [1.33.0](https://github.com/mthines/lorekit/compare/cli-v1.32.1...cli-v1.33.0) (2026-08-05)
+
+
+### Features
+
+* **cli:** failure hook queries the store for relevant lessons ([#378](https://github.com/mthines/lorekit/issues/378)) ([e9bc851](https://github.com/mthines/lorekit/commit/e9bc8519520d50bf43b527cdad30684b6d24b04a))
+
+## [1.32.1](https://github.com/mthines/lorekit/compare/cli-v1.32.0...cli-v1.32.1) (2026-08-04)
+
+
+### Documentation
+
+* **lorekit-setup:** add the reconcile-on-re-run flow (resolve + record) ([04c905b](https://github.com/mthines/lorekit/commit/04c905b239dc92c5025531739c9947f7e6c998d4))
+
+## [1.32.0](https://github.com/mthines/lorekit/compare/cli-v1.31.0...cli-v1.32.0) (2026-08-04)
+
+
+### Features
+
+* **memory:** add kind + host as first-class taxonomy properties ([a62a63a](https://github.com/mthines/lorekit/commit/a62a63aa5c99b6e0d29d8b4929c85d87cc4dd679))
+* **memory:** add kind + host as first-class taxonomy properties ([fa5b1cf](https://github.com/mthines/lorekit/commit/fa5b1cfc3a44522bb798fd8e40ff99b72a27d9f1))
+
+
+### Bug Fixes
+
+* **memory:** address pr-reviewer findings on the kind/host PR ([ea4391e](https://github.com/mthines/lorekit/commit/ea4391e96e8235ca0f11597e18e935e405f180b3))
+
 ## [1.31.0](https://github.com/mthines/lorekit/compare/cli-v1.30.3...cli-v1.31.0) (2026-08-03)
 
 

@@ -13,21 +13,19 @@ import { log, heading, status, c } from './util.mjs';
 // hot path can share them without pulling in this file's `util`/render stack.
 // Re-exported here so `search`/`tree` (and their tests) keep one import site;
 // `matchesQuery` is also used internally by `filterGroups` below.
-import { resolvePrecedence, matchesQuery } from './lessons-pure.mjs';
-export { resolvePrecedence, matchesQuery };
-
-// Parse a combined `scope::key` string into { scope, key }, or return null when
-// the input contains no `::`. Uses the FIRST occurrence of `::` as the separator
-// so nested scopes like `branch::owner/repo::feat/x` are handled correctly.
-// Exported so `show`, `write`, and any future commands share one implementation.
-export function parseScopeKey(s) {
-  const idx = s.indexOf('::');
-  if (idx === -1) return null;
-  const scope = s.slice(0, idx).trim();
-  const key = s.slice(idx + 2).trim();
-  if (!scope || !key) return null;
-  return { scope, key };
-}
+// `scopeIssue` (the canonical scope validator) and the scope/key argument
+// parsers live there too — the `lint` rule below and the `write`/`show`/`link`
+// argument handling must agree on ONE scope grammar, and the parser is only
+// decidable because it can ask the validator.
+import {
+  resolvePrecedence,
+  matchesQuery,
+  scopeIssue,
+  isScopeString,
+  resolveScopeArg,
+  resolveScopeKeyArgs,
+} from './lessons-pure.mjs';
+export { resolvePrecedence, matchesQuery, scopeIssue, isScopeString, resolveScopeArg, resolveScopeKeyArgs };
 
 // The scopes that apply to the current directory, most-specific → broadest:
 // project, branch, repo, global. De-duplicated (a repo with no branch scope,
@@ -37,16 +35,39 @@ export function scopeList({ projectScope, branchScope, repoScope } = {}) {
   return [...new Set([projectScope, branchScope, repoScope, 'global'].filter(Boolean))];
 }
 
+// Infer { kind, host } from a memory's loop tags — the CLI-local mirror of
+// `@lorekit/schemas` `inferKindHost` (the CLI has no schemas dependency). Kept
+// deliberately small and in lockstep with that source, including the 64-char
+// host clamp. Lets the offline store, whose rows carry no kind/host column,
+// still be filtered and badged by taxonomy from the tags it does store.
+function inferKindHostFromTags(tags) {
+  if (!Array.isArray(tags)) return {};
+  for (const tag of tags) {
+    if (tag === 'loop::review-outcomes') return { kind: 'bus', host: 'review' };
+    if (tag === 'loop::reviewer-comment-relevance') return { kind: 'signal', host: 'reviewer' };
+    const m = typeof tag === 'string' ? /^loop::(.+)-lessons$/.exec(tag) : null;
+    if (m && m[1] && m[1].length <= 64) return { kind: 'lesson', host: m[1] };
+  }
+  return {};
+}
+
 // Normalize an entry from either store (local markdown row or hosted DB row)
 // into one stable shape the view + `--json` output can rely on. Remote rows may
-// spell the timestamp `updated_at`; local rows use `updated`.
+// spell the timestamp `updated_at`; local rows use `updated`. When a row carries
+// no explicit kind/host (every offline row, and any remote row written before
+// migration 00056), fall back to the taxonomy inferred from its tags so the
+// badge and the `--kind`/`--host` filter behave the same in both sections.
 export function normalizeEntry(e = {}) {
+  const tags = Array.isArray(e.tags) ? e.tags : [];
+  const inferred = inferKindHostFromTags(tags);
   return {
     scope: e.scope ?? null,
     key: e.key ?? null,
     value: e.value == null ? '' : String(e.value),
     updated: e.updated ?? e.updated_at ?? null,
-    tags: Array.isArray(e.tags) ? e.tags : [],
+    tags,
+    kind: e.kind ?? inferred.kind ?? null,
+    host: e.host ?? inferred.host ?? null,
   };
 }
 
@@ -231,36 +252,6 @@ export function diffGroups(offline = {}, remote = {}) {
 // too terse to carry a durable observation (e.g. "yes", "fixed", "todo").
 export const MIN_VALUE_LEN = 12;
 
-// Validate a scope string against the canonical `::`-separated format
-// (`global`, `project::name`, `repo::owner/name`, `branch::owner/name::branch`).
-// Returns null when valid, else a short human reason. The classic failure is a
-// single `:` where `::` is expected (a 400 on the server). Pure — the lint
-// `malformed-scope` rule and any future scope check share this one validator.
-export function scopeIssue(scope) {
-  const s = String(scope == null ? '' : scope);
-  if (!s) return 'empty scope';
-  if (s === 'global') return null;
-  const m = /^(project|repo|branch)::(.+)$/.exec(s);
-  if (!m) {
-    // A recognized type followed by a single ':' is the canonical malformed case.
-    if (/^(global|project|repo|branch):(?!:)/.test(s)) return 'single `:` separator (use `::`)';
-    return 'unrecognized scope type (expected global | project | repo | branch)';
-  }
-  const [, type, rest] = m;
-  if (type === 'project') {
-    return rest.includes('::') ? 'project scope takes no further `::` segment' : null;
-  }
-  if (type === 'repo') {
-    return /^[^/]+\/[^/]+$/.test(rest) ? null : 'repo scope must be `owner/name`';
-  }
-  // branch
-  const parts = rest.split('::');
-  if (parts.length !== 2 || !/^[^/]+\/[^/]+$/.test(parts[0]) || !parts[1]) {
-    return 'branch scope must be `owner/name::branch`';
-  }
-  return null;
-}
-
 // The lint rule set: each a pure predicate over a normalized entry returning a
 // short reason string when it FIRES, or null when the entry is clean. Kept as
 // discrete named functions so each rule is independently unit-testable and the
@@ -280,6 +271,41 @@ export const LINT_RULES = {
     return v.trim() && v !== v.trim() ? 'value has leading/trailing whitespace' : null;
   },
   'empty-key': (e) => (String(e.key ?? '').trim() ? null : 'key is empty or whitespace-only'),
+  // A key carrying a per-sighting identifier (a comment id, a PR/issue number) is
+  // unique forever, so it never collides, so the upsert never dedups it, so
+  // `seen_count` stays frozen at 1 and the memory can never reach a recurrence
+  // threshold — a write-only record. Detection is deliberately conservative:
+  //   • a run of 6+ digits (a GitHub comment id is ~10; `sha256`, `oauth2`,
+  //     `wcag22`, and semantic versions are all shorter runs);
+  //   • a `pr<n>` / `issue<n>` reference — the number joined by nothing, `-`, or
+  //     `_` — delimited by `:`, `-`, `_`, `/`, or a string boundary, so mid-word
+  //     digits (`oauth2`) never match.
+  // `volatileKeyAllow` is an embedder/test knob mirroring `short-value`'s
+  // `minValueLen` precedent — a list of substrings that exempt a key. There is
+  // no config key and no per-entry marker.
+  'volatile-key': (e, { volatileKeyAllow = [] } = {}) => {
+    const key = String(e.key ?? '');
+    if (!key.trim()) return null; // an empty key is `empty-key`'s to report.
+    // Tolerate a bare string as well as a list, so a caller passing
+    // `{ volatileKeyAllow: 'lorekit-231' }` does not silently iterate characters.
+    const allowList = Array.isArray(volatileKeyAllow) ? volatileKeyAllow : [volatileKeyAllow];
+    for (const allow of allowList) {
+      if (allow && key.includes(String(allow))) return null;
+    }
+    const digitRun = key.match(/\d{6,}/);
+    if (digitRun) {
+      return `key contains a volatile per-sighting identifier: '${digitRun[0]}' (a run of ${digitRun[0].length} digits)`;
+    }
+    // Boundary-anchored rather than split-then-match: splitting on `-` would
+    // separate `pr` from `231` and `pr-231` would slip through. The reference
+    // must start at a boundary (`:`, `-`, `_`, `/`, or the string start) and end
+    // at one, so `oauth2`/`sha256`/`wcag22` still never match.
+    const reference = key.match(/(?:^|[:\-_/])((?:pr|issue)[-_]?\d+)(?=$|[:\-_/])/i);
+    if (reference) {
+      return `key contains a volatile per-sighting identifier: '${reference[1]}' (a pr/issue number segment)`;
+    }
+    return null;
+  },
   'malformed-scope': (e) => {
     const reason = scopeIssue(e.scope);
     return reason ? `malformed scope: ${reason}` : null;
@@ -409,13 +435,27 @@ export function clusterDuplicates(entries = [], threshold = 0.8) {
 // scope can't abort the listing. `store` may be a local or remote store.
 // Single-page only (the existing default behaviour). For full-scope traversal
 // use `gatherStream` below.
-export async function gather(store, scopes) {
+export async function gather(store, scopes, filters = {}) {
+  // Parse the taxonomy filters into value sets. `filters` is passed to the store
+  // too (the remote narrows server-side); we ALSO post-filter the normalized
+  // entries here so the offline store — which ignores kind/host in its own
+  // `list()` — stays consistent with remote. Post-filtering the remote rows is
+  // idempotent (they were already narrowed) and matches on the same inferred
+  // taxonomy a row without explicit columns gets in normalizeEntry.
+  const wanted = (v) =>
+    v == null ? null : new Set(String(v).split(',').map((s) => s.trim()).filter(Boolean));
+  const kindSet = wanted(filters.kind);
+  const hostSet = wanted(filters.host);
+  const keep = (e) =>
+    (!kindSet || (e.kind != null && kindSet.has(e.kind))) &&
+    (!hostSet || (e.host != null && hostSet.has(e.host)));
+
   const groups = [];
   let total = 0;
   for (const scope of scopes) {
     let res;
     try {
-      res = await store.list({ scope });
+      res = await store.list({ scope, ...filters });
     } catch (e) {
       res = { ok: false, networkError: (e && e.message) || 'error' };
     }
@@ -423,7 +463,7 @@ export async function gather(store, scopes) {
       groups.push({ scope, entries: [], error: describeError(res) });
       continue;
     }
-    const entries = (res.entries || []).map(normalizeEntry);
+    const entries = (res.entries || []).map(normalizeEntry).filter(keep);
     total += entries.length;
     groups.push({ scope, entries, error: null });
   }
@@ -660,7 +700,11 @@ export function renderSection(header, section) {
     }
     for (const e of g.entries) {
       const when = e.updated ? `  ${c.dim(`(updated ${shortDate(e.updated)})`)}` : '';
-      log(`    ${c.cyan('•')} ${g.scope}::${e.key}${when}`);
+      // Taxonomy badge — the kind (and host, when known) so the three families
+      // are visible at a glance in the list. Omitted for rows written before the
+      // taxonomy existed (NULL kind).
+      const badge = e.kind ? ` ${c.dim(`[${e.kind}${e.host ? `·${e.host}` : ''}]`)}` : '';
+      log(`    ${c.cyan('•')} ${g.scope}::${e.key}${badge}${when}`);
       if (e.value) log(`      ${c.dim(preview(e.value))}`);
     }
   }

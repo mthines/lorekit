@@ -267,6 +267,18 @@ jobs:
       # here so a step `if:` can read it — a step `if:` cannot reference secrets
       # via env of the same step. Unset → the suite self-skips (announced).
       HAVE_ORG_SMOKE_CREDS: ${{ secrets.LOREKIT_SMOKE_EMAIL != '' && secrets.LOREKIT_SMOKE_PASSWORD != '' && secrets.SUPABASE_ANON_KEY != '' }}
+      # ── Smoke telemetry (job-wide) ────────────────────────────────────────────
+      # Same as deploy.yml's smoke jobs: make the /preview smoke observable in
+      # Dash0, tagged apart from real traffic. LOREKIT_TELEMETRY_TOKEN turns ON
+      # CLI OTLP export (off by default in a source checkout); DEPLOYMENT_ENVIRONMENT=test
+      # stamps `deployment.environment.name=test` on the CLI's own spans AND —
+      # via the `X-LoreKit-Deployment-Environment` header the CLI/`restFetch` and
+      # the REST/MCP smoke specs forward — on the edge (`api`) spans for every
+      # smoke request; LOREKIT_CORRELATION_ID keys the run in `usage_events`. The
+      # preview project has OTLP configured, so cli + api + mcp telemetry all flow.
+      LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+      DEPLOYMENT_ENVIRONMENT: test
+      LOREKIT_CORRELATION_ID: preview-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

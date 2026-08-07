@@ -8,8 +8,15 @@
  * sidebar survives page refreshes and is shareable via URL.
  *
  * URL params used:
- *   lesson  – JSON-encoded { scope, key } identifying the open lesson.
- *             Absent (not in URL) when no lesson is selected.
+ *   lesson    – JSON-encoded { scope, key } identifying the open lesson.
+ *               Absent (not in URL) when no lesson is selected.
+ *   memoryId  – Plain DB row id (NOT JSON-encoded). A robust deep-link form that
+ *               fetches the memory by id, so the sheet opens even when the row is
+ *               outside the Explorer's recent/active window. Absent when unused.
+ *               It is a deep-link ENTRY point, not the open/closed flag: closing
+ *               the sheet records the dismissal locally and leaves the param in
+ *               the URL (see `activeMemoryId`), because stripping it would be a
+ *               second navigation racing the Explorer's own scope/filter write.
  *
  * ## SSR & hydration
  * `useUrlState` reads from `useSearchParams()`, which is empty on the server.
@@ -28,17 +35,19 @@
  */
 
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { LessonDetailSheet } from '@/components/lore/LessonDetailSheet';
-import { useLoreData } from '@/lib/queries/lore';
+import { useLoreData, useMemoryById, useLessonByRef } from '@/lib/queries/lore';
+import {
+  activeMemoryId,
+  lessonResolvedLocally,
+  resolveOpenLesson,
+  type LessonRef,
+} from '@/lib/open-lesson';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-interface LessonRef {
-  scope: string;
-  key: string;
-}
 
 interface MemorySidebarContextValue {
   /** The fully-resolved open lesson, or null while loading or when closed. */
@@ -47,9 +56,18 @@ interface MemorySidebarContextValue {
   openLessonRef: LessonRef | null;
   /**
    * Open the sidebar for a specific lesson. Reacts immediately (optimistic).
+   *
    * Pass the full `lesson` object when the caller already has it (e.g. from
    * the archived list) so the sidebar can render without a separate lookup.
-   * Active-list callers omit it; the provider resolves it from useLoreData.
+   * Active-list callers omit it; the provider resolves it from `useLoreData`.
+   *
+   * Omitting it is only free for a caller that renders its OWN list from
+   * `useLoreData` — `NavigationCommands` and `MemoryExpandButton` both do, so
+   * the memory is in the provider's `cacheLessons` by construction and
+   * `lessonResolvedLocally` keeps the click off the network. A caller that
+   * sources the ref from anywhere else (a URL, a search result, a webhook
+   * payload) and omits the prefetch triggers a `useLessonByRef` fetch — which
+   * is correct, and is the deep-link path, but it is a network round-trip.
    */
   openLessonById: (ref: LessonRef, lesson?: LessonEntry) => void;
   /** Close the sidebar. Reacts immediately (optimistic). */
@@ -97,25 +115,50 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
   // The same query is used by the Lore Explorer — zero extra network requests.
   const { data } = useLoreData();
 
-  const openLesson = useMemo<LessonEntry | null>(() => {
-    if (!lessonRef) return null;
-    // 1. Try the active-memories cache (covers all non-archived lessons).
-    if (data?.lessons) {
-      const found = data.lessons.find(
-        (l) => l.scope === lessonRef.scope && l.key === lessonRef.key,
-      );
-      if (found) return found;
-    }
-    // 2. Fall back to the caller-supplied prefetched lesson (e.g. archived).
-    if (
-      prefetched &&
-      prefetched.scope === lessonRef.scope &&
-      prefetched.key === lessonRef.key
-    ) {
-      return prefetched;
-    }
-    return null;
-  }, [lessonRef, data, prefetched]);
+  // The robust deep-link form: a plain `?memoryId=<id>` (NOT JSON-encoded, so it
+  // never has to invert the dashboard's useUrlState encoding). Read directly from
+  // the search params rather than through useUrlState, then fetched by id — this
+  // resolves the memory even when it is outside the Explorer's recent/active
+  // window, the case where the `?lesson=` scope+key form opens blank.
+  const searchParams = useSearchParams();
+  const urlMemoryId = searchParams.get('memoryId');
+  // Closing the sheet dismisses the id locally rather than rewriting the URL —
+  // the pure `activeMemoryId` docblock has the why (a second router.replace in
+  // the same tick clobbers the Explorer's scope/filter write).
+  const [dismissedMemoryId, setDismissedMemoryId] = useState<string | null>(null);
+  const memoryId = activeMemoryId(urlMemoryId, dismissedMemoryId);
+  const { data: memoryByIdLesson } = useMemoryById(memoryId);
+
+  // A shared `?lesson={scope,key}` link opens blank when the memory is outside
+  // the Explorer's recent/active window — the sheet only resolved the ref
+  // against the loaded page set. Fetch it by scope+key as a fallback, but only
+  // when it isn't already resolvable locally, so only a cold deep-link visit
+  // reaches the network. The predicate is the pure, unit-tested
+  // `lessonResolvedLocally` — see its docblock for why the active-memories
+  // cache, not the click-prefetch, is what covers the palette and the header
+  // dropdown (both call `openLessonById` with the ref alone).
+  const resolvedLocally = lessonResolvedLocally({
+    lessonRef,
+    cacheLessons: data?.lessons,
+    prefetched,
+  });
+  const { data: lessonByRef } = useLessonByRef(resolvedLocally ? null : lessonRef);
+
+  // Resolution precedence lives in the pure `resolveOpenLesson` (unit-tested):
+  // `lesson` strictly wins, so a cache-missing `lesson` shows nothing rather
+  // than falling through to whatever `memoryId` is still in the URL.
+  const openLesson = useMemo<LessonEntry | null>(
+    () =>
+      resolveOpenLesson({
+        lessonRef,
+        cacheLessons: data?.lessons,
+        prefetched,
+        lessonByRef,
+        memoryId,
+        memoryByIdLesson,
+      }),
+    [lessonRef, data, prefetched, lessonByRef, memoryId, memoryByIdLesson],
+  );
 
   const openLessonById = useCallback(
     (ref: LessonRef, lesson?: LessonEntry) => {
@@ -139,7 +182,12 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
       setPrefetched(null);
       setLessonRef(null);
     }
-  }, [lessonRef, setLessonRef]);
+    // Dismiss the `memoryId` deep link in local state — no navigation, so this
+    // can never race the scope/filter write LoreExplorer makes in the same tick.
+    // A null id is a no-op; the pure `resolveOpenLesson` still gives `lesson`
+    // strict precedence, so a lingering param never shows the wrong memory.
+    setDismissedMemoryId(urlMemoryId);
+  }, [lessonRef, setLessonRef, urlMemoryId]);
 
   const contextValue = useMemo<MemorySidebarContextValue>(
     () => ({
@@ -147,11 +195,12 @@ export function MemorySidebarProvider({ children }: MemorySidebarProviderProps) 
       openLessonRef: lessonRef,
       openLessonById,
       closeLesson,
-      // isOpen derives from the ref, not the resolved lesson, so it is truthy
-      // immediately after openLessonById() — even before the lore data loads.
-      isOpen: lessonRef !== null,
+      // isOpen derives from the ref (or the memoryId param), not the resolved
+      // lesson, so it is truthy immediately after openLessonById() or on a
+      // `?memoryId=` visit — even before the lore data / by-id fetch loads.
+      isOpen: lessonRef !== null || memoryId !== null,
     }),
-    [openLesson, lessonRef, openLessonById, closeLesson],
+    [openLesson, lessonRef, openLessonById, closeLesson, memoryId],
   );
 
   return (

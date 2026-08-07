@@ -50,6 +50,11 @@ Findings are structural, not semantic — each names its rule:
 - **empty-value / short-value / untrimmed-value** — the lesson carries little or
   no signal, or has stray leading/trailing whitespace.
 - **empty-key** — no key to address it by.
+- **volatile-key** — the key carries a per-sighting identifier (a run of 6+
+  digits such as a GitHub comment id, or a `pr<n>` / `issue<n>` segment), so it
+  never collides with a later write, never dedups, and leaves `seen_count`
+  frozen at 1. Re-key it onto the structural pattern and move the identifier
+  into the body.
 - **malformed-scope** — the scope string is invalid.
 
 These are the cheapest wins and the least controversial, so clear them first.

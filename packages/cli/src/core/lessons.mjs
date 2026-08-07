@@ -3,11 +3,12 @@
 // Storage is reached through the resolved store (local | remote), never a
 // backend directly, so the same read path serves every mode.
 import { deriveScope } from '../scope.mjs';
-// The precedence merge and the literal substring matcher come from the
-// dependency-free `lessons-pure.mjs` — the SAME primitives `tree` and `search`
-// use, so the hook can't drift from them, and the hot path never pulls in the
-// `lessons-view.mjs` render/`util` stack.
-import { resolvePrecedence, matchesQuery } from '../lessons-pure.mjs';
+// The cross-scope precedence merge comes from the dependency-free
+// `lessons-pure.mjs` — the SAME `resolvePrecedence` `tree` uses, so the hook
+// can't drift from it, and the hot path never pulls in the `lessons-view.mjs`
+// render/`util` stack. (Failure-relevance matching is the store's job now, so
+// the hook no longer needs `matchesQuery` — `search` still does.)
+import { resolvePrecedence } from '../lessons-pure.mjs';
 // The deep-link builder is the SAME pure module the `link` command and the
 // `--link` flag use, so the hook's confirmation/nudge links are JSON-encoded
 // correctly (a raw `?scope=global` silently means "all scopes") and can't drift
@@ -135,21 +136,55 @@ export function failureQuery(toolName, toolResponse) {
   return terms;
 }
 
-// Lessons whose key OR value literally contains ANY of the failure `terms`
-// (case-insensitive, via the shared `matchesQuery` — never a regex), capped at
-// `cap`. Pure and best-effort: no terms or no lessons → empty (the caller then
-// falls back to the write-nudge alone). Preserves `lessons` order, so the
-// most-specific scope's relevant lesson surfaces first.
-export function relevantLessons(lessons, terms, cap = MAX_RELEVANT) {
-  if (!Array.isArray(lessons) || !lessons.length || !Array.isArray(terms) || !terms.length) {
-    return [];
-  }
+// De-duplicate store-search hits by `scope::key` and cap them, PRESERVING the
+// store's order — which is NOT relevance ordering: the remote store filters by
+// FTS but orders by `updated_at desc` (recency), and the local one yields scope
+// precedence (most-specific first) only WITHIN a tier — `LocalStore.search`
+// walks the scope hierarchy in `readOrder`, but `TwoTierStore.search` merges
+// project-tier hits ahead of home-tier ones, so a `global` lesson in the project
+// tier outranks a `repo::` one in home. Pure and total — any non-array input
+// degrades to [] rather than throwing (this runs inside the best-effort failure
+// hook).
+export function dedupeRelevant(entries, cap = MAX_RELEVANT) {
+  if (!Array.isArray(entries)) return [];
+  const limit = Math.max(0, cap);
+  const seen = new Set();
   const out = [];
-  for (const l of lessons) {
-    if (terms.some((t) => matchesQuery(l, t))) out.push(l);
-    if (out.length >= cap) break;
+  for (const e of entries) {
+    if (out.length >= limit) break; // checked BEFORE the push, so cap 0 yields []
+    if (!e || !e.key) continue;
+    const id = `${e.scope ?? ''}::${e.key}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(e);
   }
   return out;
+}
+
+// Retrieve lessons relevant to a tool failure by QUERYING the store across the
+// scope hierarchy — as opposed to post-filtering the SessionStart-injected set,
+// which could only ever resurface a lesson that was going to be shown anyway (a
+// lesson in a sibling scope, or one past the per-scope read cap, was
+// unreachable). A SINGLE `store.search` carries ALL the distilled failure terms
+// (OR semantics), so the offline store is walked once rather than once per term.
+// MATCHING is DELEGATED to the store — substring over the full scope for local,
+// server-side FTS (with stemming, so `connect` matches `connection`) for remote.
+// ORDERING is not: the remote returns `updated_at desc`, so the top-`cap` slice
+// is the most RECENT matches, not the most relevant ones. Hits are de-duped and
+// capped by the pure `dedupeRelevant`, keeping the store's own ordering (see its
+// docblock). Best-effort: an unusable/throwing store returns [] so the
+// caller falls back to the write-nudge alone.
+export async function relevantLessonsFromStore(store, scope, terms, { cap = MAX_RELEVANT } = {}) {
+  if (!store || typeof store.search !== 'function') return [];
+  if (!scope || !Array.isArray(scope.readOrder) || scope.readOrder.length === 0) return [];
+  if (!Array.isArray(terms) || terms.length === 0) return [];
+  try {
+    const res = await store.search({ q: terms, scopes: scope.readOrder });
+    if (!res || !res.ok || !Array.isArray(res.entries)) return [];
+    return dedupeRelevant(res.entries, cap);
+  } catch {
+    return []; // best-effort: a failed search falls back to the nudge alone
+  }
 }
 
 // Render the relevant-lessons block injected alongside the failure nudge, or

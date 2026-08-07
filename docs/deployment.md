@@ -88,6 +88,30 @@ any job fails ─▶ notify-failure   Discord webhook (see below)
 
 Production is never touched until preview has been deployed and smoke-tested.
 
+#### Which halves run (change detection + manual override)
+
+A `changes` job diffs the merge and gates the two halves independently: the API
+chain (`deploy-preview` → `smoke-preview` → `deploy-production`) runs only when
+API paths changed, and the web chain (`deploy-web-preview` / `stage-web-production`
+→ `promote-web-production`) only when web paths changed. A docs-only merge deploys
+neither. `packages/schemas/`, the workspace files, and `deploy.yml` itself map to
+**both**.
+
+A **manual run** can override the detection. From **Actions ▸ Deploy ▸ Run
+workflow** (or `gh workflow run deploy.yml`), pick a `deploy_target`:
+
+| `deploy_target` | Deploys |
+|-----------------|---------|
+| `auto` (default) | Whatever the change-detection step finds — same as a push to `main`. |
+| `all` | Both halves — API **and** web — regardless of what changed. |
+| `api` | API only (Supabase migrations + edge functions). |
+| `web` | Web only (Next.js dashboard on Vercel). |
+
+This is the way to redeploy an unchanged half — e.g. re-ship the dashboard after a
+Vercel env-var change, or re-apply functions — without an empty no-op commit. The
+override only decides **which** halves run; each still goes through the full
+preview → smoke → production promotion with its own gates and rollback.
+
 ### FE ↔ API deploy in lockstep (no availability skew)
 
 The whole point of moving the web deploy into `deploy.yml` is that the frontend
@@ -123,6 +147,75 @@ The web jobs authenticate to Vercel with the same three repo-level secrets
 `preview.yml` already uses — `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`
 — and the production smoke curls `${{ vars.WEB_PROD_URL }}` (an optional
 repo-level variable, defaulting to `https://lorekit.io`).
+
+### Skew Protection (already-open tabs and Server Actions)
+
+The lockstep flip above keeps the FE and API on the same version **for new page
+loads**. It does nothing for a tab that is already open: the alias swap is
+instant, and that tab keeps running the JavaScript of the deployment it loaded
+from.
+
+That matters because Next.js Server Actions are a `POST` to the page route
+carrying a **build-time action ID**. A tab on build A that posts build A's
+action ID to build B gets a bare **404** — no error surface, just a dead button.
+This is exactly what happened on the Overview page: every `POST /dashboard` went
+from `200` to `404` after a `main` push, with the browser reporting
+`service.version` from one commit and the server span reporting another.
+
+The mitigation is Vercel **Skew Protection**. The wiring is in place; **it is
+not active**, and two prerequisites remain — one to confirm, one to decide.
+
+1. **Code (in place, inert).** `next.config.ts` sets `deploymentId` from
+   `VERCEL_DEPLOYMENT_ID` (`src/lib/deployment-id.ts`) — the value Next.js stamps
+   onto asset URLs and Server Action requests. Neither route in step 3 actually
+   activates it today: when Vercel runs the build the variable is there, but
+   Next.js >= 14.1.4 stamps with no config at all, so the line is redundant
+   rather than load-bearing; on the prebuilt path the ID Vercel wants is a
+   *custom* one, not `VERCEL_DEPLOYMENT_ID`. What the line buys is the seam —
+   `resolveDeploymentId` is the single place either ID would be read from.
+2. **Project settings (manual, confirm first — it may already be on).** Vercel
+   enables **Skew Protection** by default for projects created after
+   2024-11-19 on a supported framework, so check Settings → Advanced before
+   treating this as open; only older projects have to flip the switch
+   themselves. Leave **Maximum Age** alone unless
+   there is a reason to change it: Vercel's default is already one day, which
+   covers a tab idled overnight — lowering it would *shorten* the protection
+   window. Raise it only for tabs that stay open longer than that, up to the
+   project's Deployment Retention limit, which is the ceiling Vercel enforces.
+   Also enable **"Enable access to System Environment Variables"** (Settings →
+   Environment Variables); without it Vercel never injects `VERCEL_*` system
+   variables into the build, so `VERCEL_DEPLOYMENT_ID` stays absent even with
+   Skew Protection on. Whatever you change here, Vercel's enable steps end by
+   **redeploying the latest production deployment** — until that redeploy the
+   toggles do not apply to what is currently live. On this project that
+   redeploy only helps once one of the routes in step 3 is taken; a redeploy of
+   today's prebuilt deployment still carries no deployment ID.
+3. **Build path (open decision, blocks the whole thing).** A deployment ID is
+   assigned when a deployment is **uploaded**, not when it is built. Today
+   `stage-web-production` runs `vercel build --prod` inside GitHub Actions and
+   then `vercel deploy --prebuilt` (see the bullets above), so
+   `VERCEL_DEPLOYMENT_ID` does not exist during that build. Prebuilt deployments
+   are **not** excluded from Skew Protection — Vercel supports them via a
+   **custom deployment ID**, configured so the build-time ID matches the one
+   Vercel assigns at deploy time (a prebuilt deployment may not use Vercel's
+   reserved `dpl_` prefix for it). So there are two routes, and neither is taken
+   here:
+   - **Let Vercel build production.** Drop `--prebuilt`, forwarding the
+     `VERCEL_GIT_*` values with `--build-env` so
+     `NEXT_PUBLIC_OTEL_SERVICE_VERSION` and the `vcs.*` resource attributes
+     survive. Next.js >= 14.1.4 built on Vercel needs no `next.config.ts` change
+     at all. Costs the "build already done before the flip" property.
+   - **Keep `--prebuilt` and adopt a custom deployment ID.** Keeps the current
+     pipeline shape; the ID has to be minted by us and given to both the build
+     and the deploy. `resolveDeploymentId` is the seam it would be read through.
+
+   Setup steps for the custom-ID route are Vercel's, not ours — see
+   [Skew Protection → Next.js](https://vercel.com/docs/skew-protection#skew-protection-with-next.js)
+   and [`vercel deploy` → "When not to use `--prebuilt`"](https://vercel.com/docs/cli/deploy#when-not-to-use---prebuilt).
+
+Until 2 **and** one of the two routes in 3 hold, no deployment ID reaches the
+build, `deploymentId` resolves to `undefined`, and behaviour is unchanged.
+Step 1 is inert on its own.
 
 ### Migration drift on the shared preview project
 
@@ -291,6 +384,33 @@ dashboard as the database safety net. The web rollback stays out only when the
 API deploy failed before the web was ever promoted — in that case the web was
 never touched, so reverting it would regress a healthy deployment.
 
+### Smoke telemetry (observable in Dash0, tagged `test`)
+
+The smoke jobs are instrumented so a failure is diagnosable from telemetry, not
+only the CI log. Each smoke job (`deploy.yml` smoke-preview/smoke-production,
+`preview.yml` smoke, `ci.yml` integration) sets three job-wide env vars:
+
+- `LOREKIT_TELEMETRY_TOKEN` — turns on CLI OTLP export, which is off in a source
+  checkout (the token is injected only at npm publish), so `install` /
+  `doctor --deep` emit their `cli` spans.
+- `DEPLOYMENT_ENVIRONMENT=test` — stamps **all** of the run's smoke telemetry
+  (CLI, plus the edge `api` spans for every REST/MCP request the smokes make)
+  with `deployment.environment.name=test`, so synthetic smoke traffic filters
+  apart from real usage — including the production smoke, which runs against the
+  production deployment. The mechanism (a forwarded `X-LoreKit-Deployment-Environment`
+  header the edge honours only for the value `test`) is documented in
+  [docs/otel.md](./otel.md) → "Smoke / test runs are tagged".
+- `LOREKIT_CORRELATION_ID` — a per-run key on every REST call's
+  `usage_events.correlation_id`, so one run's calls are greppable.
+
+`ci.yml`'s integration job runs against a throwaway **local** Supabase. A plain
+`supabase start` gives the edge no OTLP endpoint, so it would be dark — the
+"Configure local edge OTLP export" step therefore writes `supabase/functions/.env`
+(the file the CLI loads into the local edge runtime) with the Dash0 ingress
+endpoint + ingest token, so the local `api` spans **do** export, tagged `test`.
+Fork PRs have no secret, so that step self-skips and the edge stays dark — a
+graceful no-export, never a broken start.
+
 ### Smoke-test data hygiene
 
 The smoke suites write to **real projects** — the preview/staging project in
@@ -453,7 +573,10 @@ below.
 Repo-level secrets (not environment-scoped): `SUPABASE_ACCESS_TOKEN` (a Supabase
 personal access token); the three **Vercel** secrets the web jobs use —
 `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` (the same set `preview.yml`
-already relies on); and — optionally — `DISCORD_WEBHOOK_URL` for
+already relies on); `LOREKIT_TELEMETRY_TOKEN` (the Dash0 ingest-only token — the
+smoke jobs pass it so their telemetry exports; see [Smoke telemetry](#smoke-telemetry-observable-in-dash0-tagged-test),
+and it is also injected into the CLI tarball at publish by `release.yml`); and —
+optionally — `DISCORD_WEBHOOK_URL` for
 [failure notifications](#failure-notifications-discord). Add a **required
 reviewer** on the `production` environment for a manual approval gate before prod
 is touched — it now gates the web promote (`promote-web-production`) as well as

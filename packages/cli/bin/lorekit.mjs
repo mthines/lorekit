@@ -58,10 +58,9 @@ ${c.bold('Commands')}
               rendered in the same Offline/Remote split. --json, --scope <s>.
   show        Inspect one memory in full: its complete value, scope, key, updated
               date, tags, and which store(s) it lives in (noting any divergence
-              when it is in both). Accepts show <scope> <key> or the combined
-              show <scope::key> shorthand (copy-paste directly from list output).
-              --json.
-  write       Create or update a memory. Accepts the same <scope::key> shorthand.
+              when it is in both). Takes show <scope::key> — the format list and
+              search print — or the explicit show <scope> <key>. --json.
+  write       Create or update a memory, addressed the same <scope::key> way.
               Value is a positional, --value flag, or piped stdin. Writes to the
               remote store when configured, falling back to local. --local /
               --remote to force.
@@ -79,8 +78,9 @@ ${c.bold('Commands')}
     (resolve) hierarchy and mark, per key, which scope's memory WINS and which are
               shadowed — the real hook-resolution order. --json, --scope <s>.
   lint        Flag low-quality memories (empty/short/untrimmed value, empty key,
-              malformed scope) across the applicable scopes and both stores. Exits
-              non-zero when issues are found (CI gate). --json, --scope <s>.
+              volatile key, malformed scope) across the applicable scopes and
+              both stores. Exits non-zero when issues are found (CI gate).
+              --json, --scope <s>.
   dedupe      Find likely-duplicate memories via a zero-dep word-overlap HEURISTIC
               (Jaccard >= threshold, not semantic), grouped into clusters per
               store. --json, --scope <s>, --threshold <0..1>.
@@ -113,6 +113,9 @@ ${c.bold('Options')}
       --store <path>      Local project-tier store directory (default: .lorekit)
       --json              Machine-readable output (list / search / show / stats / scopes / diff / tree / lint / dedupe / link)
       --scope <scope>     Restrict to a single scope; a substring filter for scopes (list / search / stats / scopes / diff / tree / lint / dedupe / link)
+                          On show / write it NAMES the scope, overriding the positional
+      --key <key>         Name the key explicitly (show / write / link) — the way to
+                          address a key that itself contains \`::\`
       --link              Print the equivalent dashboard deep-link URL instead of running (show / search / list / tree)
       --base <url>        Dashboard base URL for deep links (link / --link; else LOREKIT_APP_URL, default https://lorekit.io)
       --threshold <0..1>  Duplicate-similarity cutoff (dedupe; default 0.8)
@@ -297,16 +300,27 @@ ${c.bold('Examples')}
   write: `${c.bold('lorekit write')} — create or update a memory from the CLI
 
 ${c.bold('Usage')}
-  npx @lorekit/cli write <scope> <key> <value> [options]
   npx @lorekit/cli write <scope::key> <value> [options]
-  echo "value" | npx @lorekit/cli write <scope> <key> [options]
+  npx @lorekit/cli write <scope> <key> <value> [options]
+  npx @lorekit/cli write --scope <scope> --key <key> <value> [options]
+  echo "value" | npx @lorekit/cli write <scope::key> [options]
 
 Creates or updates a memory (upsert — overwrites if the key exists). Value can
 be a positional, --value, or piped stdin. Writes to the remote store when
 configured, falling back to local.
 
+The single-token <scope::key> form is canonical — it is the format this command
+echoes back and the one list/search print, so it round-trips. It is split at the
+LAST \`::\`, and only when the left side is itself a complete valid scope, so a
+multi-segment scope stays whole: write repo::acme/widget build-flags "..." keeps
+repo::acme/widget as the scope. The scope is validated before anything is
+written, so a typo is rejected rather than stored. Pass --scope/--key to address
+a key that itself contains \`::\`.
+
 ${c.bold('Options')}
   -d, --dir <path>         Target project root (default: current directory)
+      --scope <scope>      Name the scope explicitly (instead of the positional)
+      --key <key>          Name the key explicitly — use for a key containing \`::\`
       --value <text>       Memory value (alternative to positional / stdin)
       --tags <a,b,c>       Comma-separated tags (default: none)
       --source-agent <n>   Source agent name to record (default: none)
@@ -327,21 +341,32 @@ ${c.bold('Options')}
       --store <path>       Local project-tier store directory (default: .lorekit)
 
 ${c.bold('Examples')}
-  npx @lorekit/cli write global my-key "Always prefer guard clauses"
   npx @lorekit/cli write global::my-key "Always prefer guard clauses"
-  cat notes.md | npx @lorekit/cli write global my-key --tags "style,aw"
-  npx @lorekit/cli write global my-key "body" --local
-  npx @lorekit/cli write global my-key "body" --ttl-days 30 --remote
+  npx @lorekit/cli write repo::acme/widget::build-flags "Use --release in CI"
+  npx @lorekit/cli write global my-key "Always prefer guard clauses"
+  cat notes.md | npx @lorekit/cli write global::my-key --tags "style,aw"
+  npx @lorekit/cli write global::my-key "body" --local
+  npx @lorekit/cli write global::my-key "body" --ttl-days 30 --remote
+  npx @lorekit/cli write --scope global --key "loop::aw-lessons" "body"
 `,
   show: `${c.bold('lorekit show')} — inspect one memory in full
 
 ${c.bold('Usage')}
+  npx @lorekit/cli show <scope::key> [options]
   npx @lorekit/cli show <scope> <key> [options]
+  npx @lorekit/cli show --scope <scope> --key <key> [options]
 
 Prints one memory's complete (untruncated) value, scope, key, updated date, tags,
 and which store(s) it lives in. If the same scope::key exists in both the offline
 and remote stores, both are shown and any divergence in their values is flagged.
 Exits non-zero when the key is found in neither readable store.
+
+The single-token <scope::key> form is canonical — it is exactly what list and
+search print, so a key can be copy-pasted straight out of their output. It is
+split at the LAST \`::\`, and only when the left side is itself a complete valid
+scope, so a multi-segment scope stays whole: repo::acme/widget::build-flags is
+scope repo::acme/widget, key build-flags. Pass --scope/--key to address a key
+that itself contains \`::\`.
 
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
@@ -349,13 +374,17 @@ ${c.bold('Options')}
   -e, --endpoint <url>    Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
   -t, --token <token>     Remote token override (else .mcp.json / LOREKIT_TOKEN)
       --store <path>      Local project-tier store directory (default: .lorekit)
+      --scope <scope>     Name the scope explicitly (instead of the positional)
+      --key <key>         Name the key explicitly — use for a key containing \`::\`
       --link              Print this memory's dashboard deep-link URL instead of reading (with --base / --json)
 
 ${c.bold('Examples')}
-  npx @lorekit/cli show global prefer-guard-clauses
   npx @lorekit/cli show global::prefer-guard-clauses
+  npx @lorekit/cli show repo::acme/widget::build-flags --json
+  npx @lorekit/cli show global prefer-guard-clauses
   npx @lorekit/cli show project::widget build-flags --json
-  npx @lorekit/cli show global prefer-guard-clauses --link
+  npx @lorekit/cli show --scope global --key "loop::aw-lessons"
+  npx @lorekit/cli show global::prefer-guard-clauses --link
 `,
   stats: `${c.bold('lorekit stats')} — count the applicable memories per scope and per store
 
@@ -467,10 +496,12 @@ ${c.bold('Usage')}
 
 Checks every memory for the current directory's scopes (project/branch/repo/
 global), across both stores, against a small set of quality rules: empty or
-whitespace-only value, suspiciously short value, untrimmed value, empty key, and
-malformed scope (e.g. a single \`:\` where \`::\` is expected). Each finding names
-the rule it violated. Exits NON-ZERO when any issue is found, so it works as a CI
-gate; a clean run — or one where only a store is unavailable — exits 0.
+whitespace-only value, suspiciously short value, untrimmed value, empty key, a
+volatile per-sighting identifier in the key (a run of 6+ digits, or a \`pr<n>\` /
+\`issue<n>\` reference), and malformed scope (e.g. a single \`:\` where \`::\` is
+expected). Each finding names the rule it violated. Exits NON-ZERO when any issue
+is found, so it works as a CI gate; a clean run — or one where only a store is
+unavailable — exits 0.
 
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
@@ -527,6 +558,8 @@ the intended view — a raw ${c.dim('?scope=global')} would silently mean "all s
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
       --scope <scope>     Scope to link to (when no positional scope is given)
+      --key <key>         Name the key explicitly — the way to link to a key
+                          that itself contains \`::\`
       --q <text>          Pre-fill the Explorer search box
       --owner <o>         Ownership filter: all | personal | <orgId>
       --tags <a,b,c>      Label filter (AND across labels); comma-separated or a JSON array
@@ -599,8 +632,8 @@ ${c.bold('Options')}
 const KNOWN_FLAGS = [
   'dir', 'project', 'global', 'endpoint', 'token', 'mode', 'store',
   'from', 'to', 'apply', 'yes', 'hooks', 'no-hooks', 'force', 'deep', 'adapter',
-  'event', 'json', 'scope', 'threshold', 'help', 'version', 'telemetry',
-  'value', 'tags', 'source-agent', 'trigger', 'ttl-days', 'clear-ttl', 'org', 'remote', 'local',
+  'event', 'json', 'scope', 'key', 'threshold', 'help', 'version', 'telemetry',
+  'value', 'tags', 'source-agent', 'trigger', 'kind', 'host', 'ttl-days', 'clear-ttl', 'org', 'remote', 'local',
   'link', 'base', 'q', 'owner', 'range', 'view', 'archived',
   'origin-repo', 'origin-branch', 'origin-commit', 'origin-pr', 'no-origin',
   // Scale-aware survey flags
@@ -720,8 +753,38 @@ async function main() {
 }
 
 main()
-  .then((code) => process.exit(code ?? 0))
+  .then((code) => flushThenExit(code ?? 0))
   .catch((e) => {
     err(`${c.red('Error:')} ${e && e.stack ? e.stack : e}`);
-    process.exit(1);
+    flushThenExit(1);
   });
+
+// Exit only after stdout/stderr have drained.
+//
+// `process.exit()` truncates any output still buffered for a PIPE (the shape a
+// spawned child's stdout has), because pipe writes are asynchronous. `lorekit
+// mcp` streams newline-delimited JSON-RPC frames to stdout, and a large frame —
+// e.g. a `memory.list` result for a big scope — overflows the pipe buffer, so
+// exiting the instant `main()` resolves drops the tail of that write and the
+// client sees a silent "no response" (this reproduced deterministically once a
+// scope's payload crossed ~½ MB). Flushing first makes the final frame whole.
+// The unref'd safety timer guarantees the process still exits if a stream never
+// drains, so this can never turn a finished command into a hang.
+function flushThenExit(code) {
+  let pending = 2;
+  const done = () => {
+    pending -= 1;
+    if (pending === 0) process.exit(code);
+  };
+  const safety = setTimeout(() => process.exit(code), 2000);
+  safety.unref?.();
+  for (const stream of [process.stdout, process.stderr]) {
+    try {
+      // An empty write's callback fires only after every previously-queued write
+      // has flushed to the fd, so it is a reliable drain barrier.
+      stream.write('', done);
+    } catch {
+      done();
+    }
+  }
+}

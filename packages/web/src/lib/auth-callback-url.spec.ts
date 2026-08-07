@@ -22,7 +22,7 @@ describe('buildAuthCallbackUrl', () => {
 
   it('sanitises an unsafe next path instead of forwarding it', () => {
     expect(buildAuthCallbackUrl('https://lorekit.io', '//evil.com')).toBe(
-      'https://lorekit.io/api/auth/callback?next=%2Fdashboard',
+      'https://lorekit.io/api/auth/callback?next=%2Foverview',
     );
   });
 

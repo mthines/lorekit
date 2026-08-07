@@ -7,7 +7,8 @@ import {
   retrospectiveNudge,
   failureNudge,
   failureQuery,
-  relevantLessons,
+  dedupeRelevant,
+  relevantLessonsFromStore,
   formatRelevantLessons,
   writeConfirmation,
 } from '../src/core/lessons.mjs';
@@ -83,37 +84,13 @@ test('failureQuery bounds the scanned input so a huge error blob cannot spike', 
   assert.ok(!terms.includes('outboundmarker')); // beyond the bound — dropped
 });
 
-// ── relevantLessons (filter injected lessons to ones the failure matches) ─────
+// ── formatRelevantLessons (frame the failure-relevance block) ─────────────────
 
 const LESSONS = [
   { scope: 'repo::a/b', key: 'eslint-flat-config', value: 'use eslint.config.js not .eslintrc' },
   { scope: 'global', key: 'lockfile', value: 'run pnpm install to refresh the lockfile' },
   { scope: 'global', key: 'unrelated', value: 'the sky is blue' },
 ];
-
-test('relevantLessons injects lessons matching a failure term, capped', () => {
-  const hits = relevantLessons(LESSONS, ['eslint', 'lockfile']);
-  assert.equal(hits.length, 2);
-  assert.deepEqual(hits.map((l) => l.key), ['eslint-flat-config', 'lockfile']);
-});
-
-test('relevantLessons returns nothing when no term matches (nudge-only fallback)', () => {
-  assert.deepEqual(relevantLessons(LESSONS, ['kubernetes']), []);
-  assert.deepEqual(relevantLessons(LESSONS, []), []);
-  assert.deepEqual(relevantLessons([], ['eslint']), []);
-  assert.deepEqual(relevantLessons(null, ['eslint']), []);
-});
-
-test('relevantLessons respects the cap', () => {
-  const many = Array.from({ length: 10 }, (_, i) => ({ scope: 'global', key: `k${i}`, value: 'eslint' }));
-  assert.equal(relevantLessons(many, ['eslint'], 3).length, 3);
-});
-
-test('failureQuery + relevantLessons compose end to end', () => {
-  const terms = failureQuery('Bash', { exit_code: 1, stderr: 'eslint: no configuration found' });
-  const hits = relevantLessons(LESSONS, terms);
-  assert.deepEqual(hits.map((l) => l.key), ['eslint-flat-config']);
-});
 
 test('formatRelevantLessons frames prior lessons, or null when empty', () => {
   assert.equal(formatRelevantLessons([]), null);
@@ -122,6 +99,91 @@ test('formatRelevantLessons frames prior lessons, or null when empty', () => {
   assert.match(out, /eslint-flat-config/);
   assert.match(out, /repo::a\/b/);
   assert.match(out, /considerations, not rules/);
+});
+
+// ── dedupeRelevant (dedupe + cap store-search hits, preserving store order) ────
+
+test('dedupeRelevant preserves store order and de-duplicates by scope::key', () => {
+  const a = { scope: 'repo::a/b', key: 'k', value: 'r' };
+  const aDup = { scope: 'repo::a/b', key: 'k', value: 'r (from another tier)' };
+  const b = { scope: 'global', key: 'g', value: 'g' };
+  const out = dedupeRelevant([a, b, aDup]);
+  assert.deepEqual(out.map((l) => l.key), ['k', 'g']); // order kept, dup dropped
+  assert.equal(out[0].value, 'r'); // first-seen wins
+});
+
+test('dedupeRelevant is total on junk input and respects the cap', () => {
+  assert.deepEqual(dedupeRelevant(null), []);
+  assert.deepEqual(dedupeRelevant([null, undefined, 'nope']), []);
+  assert.deepEqual(dedupeRelevant([{ value: 'no key' }]), []); // keyless entries skipped
+  const many = Array.from({ length: 6 }, (_, i) => ({ scope: 'global', key: `k${i}`, value: 'v' }));
+  assert.equal(dedupeRelevant(many, 3).length, 3);
+  // The cap is checked BEFORE the push, so the boundary value really is empty.
+  assert.deepEqual(dedupeRelevant(many, 0), []);
+  assert.deepEqual(dedupeRelevant(many, -1), []);
+});
+
+// ── relevantLessonsFromStore (QUERY the store, not post-filter the injected set) ─
+
+// A fake store whose search() OR-matches key/value against the query — a single
+// string OR a list of terms — across ALL scopes it holds, standing in for a
+// store whose corpus is larger than any one SessionStart injection. It records
+// every call so a test can assert the seam queries ONCE, not once per term.
+function searchStore(corpus) {
+  const calls = [];
+  const store = {
+    calls,
+    async search({ q, scopes }) {
+      calls.push(q);
+      const needles = (Array.isArray(q) ? q : [q]).map((n) => String(n || '').toLowerCase()).filter(Boolean);
+      const entries = corpus.filter(
+        (e) => scopes.includes(e.scope)
+          && needles.some((n) => `${e.key} ${e.value}`.toLowerCase().includes(n)),
+      );
+      return { ok: true, entries };
+    },
+  };
+  return store;
+}
+
+const SCOPE = { readOrder: ['repo::a/b', 'global'] };
+
+test('relevantLessonsFromStore issues ONE search carrying all terms (not one per term)', async () => {
+  const store = searchStore([{ scope: 'global', key: 'k', value: 'econnrefused' }]);
+  await relevantLessonsFromStore(store, SCOPE, ['econnrefused', 'timeout', 'retry']);
+  assert.equal(store.calls.length, 1); // one pass, not three
+  assert.deepEqual(store.calls[0], ['econnrefused', 'timeout', 'retry']); // all terms in one query
+});
+
+test('relevantLessonsFromStore retrieves a matching lesson the injected set would miss', async () => {
+  // This lesson is in a scope in readOrder but is only discoverable by querying —
+  // the point of the change vs. post-filtering the pre-injected lessons.
+  const corpus = [
+    { scope: 'global', key: 'econnrefused', value: 'retry the connection with backoff' },
+    { scope: 'global', key: 'unrelated', value: 'the sky is blue' },
+  ];
+  const hits = await relevantLessonsFromStore(searchStore(corpus), SCOPE, ['connection', 'backoff']);
+  assert.deepEqual(hits.map((l) => l.key), ['econnrefused']);
+});
+
+test('relevantLessonsFromStore returns [] when nothing matches (nudge-only fallback)', async () => {
+  const corpus = [{ scope: 'global', key: 'unrelated', value: 'the sky is blue' }];
+  assert.deepEqual(await relevantLessonsFromStore(searchStore(corpus), SCOPE, ['kubernetes']), []);
+});
+
+test('relevantLessonsFromStore is best-effort: a throwing/absent store never rejects', async () => {
+  const throwing = { async search() { throw new Error('network down'); } };
+  assert.deepEqual(await relevantLessonsFromStore(throwing, SCOPE, ['x']), []);
+  assert.deepEqual(await relevantLessonsFromStore(null, SCOPE, ['x']), []);
+  assert.deepEqual(await relevantLessonsFromStore({}, SCOPE, ['x']), []); // no search()
+});
+
+test('relevantLessonsFromStore guards empty terms and scopes without querying', async () => {
+  let called = false;
+  const spy = { async search() { called = true; return { ok: true, entries: [] }; } };
+  assert.deepEqual(await relevantLessonsFromStore(spy, SCOPE, []), []);
+  assert.deepEqual(await relevantLessonsFromStore(spy, { readOrder: [] }, ['x']), []);
+  assert.equal(called, false);
 });
 
 // ── fetchLessons resolves precedence via the shared resolvePrecedence ─────────

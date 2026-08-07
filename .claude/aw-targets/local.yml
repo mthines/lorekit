@@ -18,11 +18,11 @@ auth:
     when: missing-or-expired
     # Interactive headful capture: opens a real browser, you log in via GitHub
     # or magic-link, and the session is saved to ./.auth/local.json. Auto-saves
-    # and closes once the URL reaches /dashboard (or on manual window close).
+    # and closes once the URL reaches /overview (or on manual window close).
     command: |
       AUTH_LOGIN_URL=http://localhost:3000/login \
         AUTH_STORAGE_STATE=./.auth/local.json \
-        AUTH_POST_LOGIN_URL_PATTERN='/dashboard' \
+        AUTH_POST_LOGIN_URL_PATTERN='/overview' \
         node scripts/auth-bootstrap-headful.mjs
     timeout_seconds: 600   # generous — user-driven login step
 

@@ -35,6 +35,6 @@ export default async function RootPage({
 
   const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (user) redirect('/dashboard');
+  if (user) redirect('/overview');
   redirect('/login');
 }

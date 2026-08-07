@@ -57,6 +57,16 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: 'What to deploy (overrides the change-detection step for a manual run)'
+        type: choice
+        default: auto
+        options:
+          - auto        # Use the change-detection step (same as a push to main)
+          - all         # Force BOTH halves — API + web
+          - api         # API only (Supabase edge functions + migrations)
+          - web         # Web only (Next.js dashboard on Vercel)
 
 permissions: {}
 
@@ -74,6 +84,11 @@ jobs:
   #    a change to this pipeline exercises the whole thing. Skipping the unchanged
   #    half is safe for the FE↔API lockstep — lockstep only matters when both
   #    change, and then both halves run and flip together.
+  #
+  #    A MANUAL run (workflow_dispatch) can override the detection with the
+  #    `deploy_target` input: `all` forces both halves, `api`/`web` force exactly
+  #    one, and `auto` (the default) falls back to the path filter — so a maintainer
+  #    can redeploy an unchanged half from the Actions UI without a no-op commit.
   changes:
     name: Detect changes
     runs-on: ubuntu-latest
@@ -92,7 +107,27 @@ jobs:
         id: filter
         env:
           BEFORE: ${{ github.event.before }}
+          DEPLOY_TARGET: ${{ inputs.deploy_target }}
         run: |
+          # Manual override: a workflow_dispatch run can force what deploys,
+          # bypassing the path filter entirely. `auto` (and any push, where the
+          # input is empty) falls through to the change detection below.
+          case "$DEPLOY_TARGET" in
+            all) API=true;  WEB=true  ;;
+            api) API=true;  WEB=false ;;
+            web) API=false; WEB=true  ;;
+            *)   API=skip;  WEB=skip  ;;  # auto / empty → detect below
+          esac
+          if [ "$API" != skip ]; then
+            echo "Manual deploy target '$DEPLOY_TARGET' → api=$API web=$WEB"
+            echo "api=$API" >> "$GITHUB_OUTPUT"
+            echo "web=$WEB" >> "$GITHUB_OUTPUT"
+            echo "### Deploy scope (manual override: \`$DEPLOY_TARGET\`)" >> "$GITHUB_STEP_SUMMARY"
+            echo "- API (Supabase): $API" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Web (Vercel): $WEB" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
           BASE="$BEFORE"
           # Fall back to the parent commit for a first push, a missing base SHA,
           # or workflow_dispatch (no event.before) → compare against HEAD~1.
@@ -433,6 +468,24 @@ jobs:
       # here so a step `if:` can read it — a step `if:` cannot reference secrets
       # via env of the same step. Unset → the suite self-skips (announced).
       HAVE_ORG_SMOKE_CREDS: ${{ secrets.LOREKIT_SMOKE_EMAIL != '' && secrets.LOREKIT_SMOKE_PASSWORD != '' && secrets.SUPABASE_ANON_KEY != '' }}
+      # ── Smoke telemetry (job-wide, inherited by every step) ───────────────────
+      # Make the smoke run OBSERVABLE in Dash0 so a failure is diagnosable from
+      # the telemetry, not just the CI log. Three knobs, all read by the code
+      # the smokes already run:
+      #   • LOREKIT_TELEMETRY_TOKEN — turns ON CLI OTLP export (off by default in
+      #     a source checkout: the baked-in token is injected only at npm publish),
+      #     so `install` / `doctor --deep` emit their `cli` spans + metrics.
+      #   • DEPLOYMENT_ENVIRONMENT=test — stamps `deployment.environment.name=test`
+      #     on the CLI's own spans AND, via the `X-LoreKit-Deployment-Environment`
+      #     header the CLI/`restFetch` + the REST/MCP smoke specs forward, on the
+      #     edge (`api`) spans for every smoke request — so ALL synthetic smoke
+      #     telemetry (cli + api + mcp) filters apart from real traffic. The edge
+      #     honours only `test` (supabase/functions/_shared/otel.ts).
+      #   • LOREKIT_CORRELATION_ID — a per-run key on every REST call's
+      #     `usage_events.correlation_id`, so one run's calls are greppable.
+      LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+      DEPLOYMENT_ENVIRONMENT: test
+      LOREKIT_CORRELATION_ID: smoke-preview-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
@@ -723,6 +776,15 @@ jobs:
     environment: production
     permissions:
       contents: read
+    env:
+      # Smoke telemetry — same three knobs as smoke-preview (see the comment
+      # there). DEPLOYMENT_ENVIRONMENT=test stamps ALL of this run's smoke spans
+      # (cli + api + mcp) with `deployment.environment.name=test` so they filter
+      # apart from real PRODUCTION traffic, even though they run against the
+      # production deployment; the edge honours only the synthetic `test` value.
+      LOREKIT_TELEMETRY_TOKEN: ${{ secrets.LOREKIT_TELEMETRY_TOKEN }}
+      DEPLOYMENT_ENVIRONMENT: test
+      LOREKIT_CORRELATION_ID: smoke-production-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
@@ -742,7 +804,9 @@ jobs:
       - name: Verify health endpoint
         run: |
           URL="https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co/functions/v1/health"
-          STATUS=$(curl -sf "$URL" | jq -r '.status // "unknown"')
+          # Tag this smoke request so its edge span reports env=test (job-wide
+          # DEPLOYMENT_ENVIRONMENT); the edge honours only the synthetic `test`.
+          STATUS=$(curl -sf -H "x-lorekit-deployment-environment: $DEPLOYMENT_ENVIRONMENT" "$URL" | jq -r '.status // "unknown"')
           echo "### Production deploy" >> "$GITHUB_STEP_SUMMARY"
           echo "- Commit: \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Health endpoint status: **${STATUS}**" >> "$GITHUB_STEP_SUMMARY"
@@ -758,6 +822,7 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.LOREKIT_SMOKE_TOKEN }}" \
             -H "Content-Type: application/json" \
             -H "Accept: application/json, text/event-stream" \
+            -H "x-lorekit-deployment-environment: $DEPLOYMENT_ENVIRONMENT" \
             -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
           echo "- MCP tools/list HTTP: **${CODE}**" >> "$GITHUB_STEP_SUMMARY"
           if [ "$CODE" != "200" ]; then

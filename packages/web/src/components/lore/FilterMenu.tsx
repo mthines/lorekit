@@ -318,7 +318,12 @@ export function FilterMenu({
     // dimension is meaningless against its values.
     setQuery('');
     setActiveIndex(0);
-    inputRef.current?.focus();
+    // Popover only, for the same reason the open effect does not auto-focus in
+    // the sheet: on a phone, focusing the search box raises the on-screen
+    // keyboard, which scrolls the sheet up and off the values the user just
+    // drilled into — the keyboard covers exactly the content they came to see.
+    // They tap the field when they actually want to type.
+    if (!useSheet) inputRef.current?.focus();
   }
 
   /** Back one level, or close when already at the level the menu opened on. */
@@ -330,7 +335,8 @@ export function FilterMenu({
     setField(null);
     setQuery('');
     setActiveIndex(0);
-    inputRef.current?.focus();
+    // Popover only — see `pushField` for why the sheet must not grab focus here.
+    if (!useSheet) inputRef.current?.focus();
   }
 
   function commitRootRow(index: number) {
@@ -529,6 +535,14 @@ export function FilterMenu({
           const rowField = requireField(row.field);
           const Icon = FIELD_ICONS[row.field];
           const isValueRow = row.kind === 'value';
+          // How many values this dimension already has committed. The count
+          // badge is what tells the user, WITHOUT drilling in, which groups the
+          // narrowed list is being filtered by — the list shrinks as filters
+          // apply, but nothing on the dimension list said where that came from.
+          // A value row is a whole condition, not a group, so it has no count.
+          const selectedCount = isValueRow
+            ? 0
+            : selectedValues(filters, row.field).length;
           return (
             <button
               key={isValueRow ? `${row.field}:${row.value}` : row.field}
@@ -536,6 +550,13 @@ export function FilterMenu({
               type="button"
               role="option"
               aria-selected={i === activeIndex}
+              // A count badge is aria-hidden decoration; fold it into the name so
+              // a screen-reader user hears "Label, 2 selected", not just "Label".
+              aria-label={
+                !isValueRow && selectedCount > 0
+                  ? `${rowField.label}, ${selectedCount} selected`
+                  : undefined
+              }
               onClick={() => commitRootRow(i)}
               onMouseEnter={() => setActiveIndex(i)}
               className={[
@@ -560,7 +581,24 @@ export function FilterMenu({
                 </>
               ) : (
                 <>
-                  <span className="flex-1 truncate">{rowField.label}</span>
+                  <span
+                    className={[
+                      'flex-1 truncate',
+                      selectedCount > 0
+                        ? 'font-medium text-[var(--color-content-primary)]'
+                        : '',
+                    ].join(' ')}
+                  >
+                    {rowField.label}
+                  </span>
+                  {selectedCount > 0 && (
+                    <span
+                      aria-hidden
+                      className="flex min-h-4 min-w-4 items-center justify-center rounded-full bg-[var(--color-accent-subtle)] px-1 text-[10px] font-semibold tabular-nums text-[var(--color-accent)]"
+                    >
+                      {selectedCount}
+                    </span>
+                  )}
                   <ChevronRight
                     className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]"
                     aria-hidden

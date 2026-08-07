@@ -359,11 +359,15 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     fetchNextPage,
   } = useMemories({ scope: selectedScope, search: committedSearch, range, filters, showArchived });
 
-  // Filter-independent facet catalog (see `useFacetCatalog`) — the menu's
-  // options must not shrink to whatever the current filter happens to have
-  // loaded, or you could narrow but never widen or switch. Archived-aware: the
-  // archived view is a different population, so it gets its own counts.
-  const { data: facets } = useFacetCatalog(showArchived);
+  // Facet catalog for the menu (see `useFacetCatalog`) — its own endpoint query,
+  // never derived from the loaded pages, so the menu's options can't shrink to
+  // whatever happens to be loaded. Passing `filters` makes its counts drill down:
+  // pick one filter and the other dimensions narrow to what selecting each would
+  // yield, while the endpoint self-excludes each dimension so you can still widen
+  // or switch within it. `selectedScope` scopes the counts to match the list —
+  // without it a scoped view would show global counts and overstate the yield.
+  // Archived-aware — the archived view is a different population with its own counts.
+  const { data: facets } = useFacetCatalog(showArchived, filters, selectedScope);
 
   const lessons = useMemo(
     () => data?.pages.flatMap((page) => page.rows) ?? [],

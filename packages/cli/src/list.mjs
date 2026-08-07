@@ -41,6 +41,11 @@ export async function list(args) {
   // Default to every applicable scope; `--scope <s>` narrows to one (an explicit
   // scope outside the applicable set is honoured — the user asked for it).
   const scopes = args.scope && typeof args.scope === 'string' ? [args.scope] : scopeList(scopeInfo);
+  // Optional taxonomy filters — `--kind lesson --host reviewer` narrows to one
+  // family/owner. Comma lists are honoured by the remote store's query builder.
+  const filters = {};
+  if (typeof args.kind === 'string') filters.kind = args.kind;
+  if (typeof args.host === 'string') filters.host = args.host;
 
   // `--link` short-circuits: print the Explorer deep link for the current
   // context (the most-specific applicable scope, or `--scope`), no store reads.
@@ -72,7 +77,18 @@ export async function list(args) {
   const surveySince = args.since || undefined;
   const surveyUntil = args.until || undefined;
 
-  const offline = localDenied ? { groups: [], total: 0 } : await gather(local, scopes);
+  // Taxonomy `keep` predicate mirroring `gather()`'s: `gatherStream` neither
+  // forwards `kind`/`host` to the store nor post-filters, so a `--all` drain
+  // must apply the same narrowing here or `list --all --kind X` would ignore X.
+  const wanted = (v) =>
+    v == null ? null : new Set(String(v).split(',').map((s) => s.trim()).filter(Boolean));
+  const kindSet = wanted(filters.kind);
+  const hostSet = wanted(filters.host);
+  const keep = (e) =>
+    (!kindSet || (e.kind != null && kindSet.has(e.kind))) &&
+    (!hostSet || (e.host != null && hostSet.has(e.host)));
+
+  const offline = localDenied ? { groups: [], total: 0 } : await gather(local, scopes, filters);
   const remoteAvailable = !remoteDenied && remote.usable();
   let remoteResult;
   if (!remoteAvailable) {
@@ -87,7 +103,7 @@ export async function list(args) {
       until: surveyUntil,
       onPage: ({ scope, entries }) => {
         const arr = accumulated.get(scope);
-        if (arr) for (const e of entries) arr.push(e);
+        if (arr) for (const e of entries) if (keep(e)) arr.push(e);
       },
     });
     const groups = [];
@@ -99,7 +115,7 @@ export async function list(args) {
     }
     remoteResult = { groups, total };
   } else {
-    remoteResult = await gather(remote, scopes);
+    remoteResult = await gather(remote, scopes, filters);
   }
 
   const offlineSection = localDenied

@@ -24,7 +24,12 @@
  */
 
 import { normalizeTagList } from '@lorekit/schemas/tags';
-import type { ListMemoriesQuery, ScalarFilterMode, TagsMode } from '@lorekit/schemas/memory';
+import type {
+  ListFacetsQuery,
+  ListMemoriesQuery,
+  ScalarFilterMode,
+  TagsMode,
+} from '@lorekit/schemas/memory';
 
 // ── Model ────────────────────────────────────────────────────────────────────
 
@@ -48,11 +53,24 @@ export interface Filter {
   values: string[];
 }
 
-/** The `GET /memories/facets` dimension a field's values are catalogued under. */
+/**
+ * The `GET /memories/facets` dimension a field's values are catalogued under.
+ *
+ * This mirrors `MemoryFacetSchema` (`@lorekit/schemas/memory`) exactly — the
+ * endpoint's response is assigned to `FacetValue[]` in `queries/lore.ts`, so a
+ * dimension the server can emit and this union cannot name is a type error, not
+ * a silent narrowing. That is why it is WIDER than {@link FilterField}: `kind`
+ * and `host` (migration 00056) are catalogued but have no `FILTER_FIELDS` row
+ * yet, so their rows arrive and are ignored — `facetOptions` selects by
+ * `requireField(field).facet` and {@link rootSuggestions} skips a facet no
+ * descriptor maps. Giving them a filter pill is a separate change.
+ */
 export type FacetName =
   | 'tag'
   | 'source_agent'
   | 'trigger'
+  | 'kind'
+  | 'host'
   | 'origin_repo'
   | 'origin_branch'
   | 'origin_pr';
@@ -630,4 +648,25 @@ export function filtersToQueryParams(
   }
 
   return params;
+}
+
+/**
+ * The active filters as `GET /memories/facets` drill-down params.
+ *
+ * The facets route mirrors `GET /memories`' DIMENSION filter params under the
+ * same names (`ListFacetsQuerySchema`, migration 00057), so this is exactly
+ * {@link filtersToQueryParams} — every key it sets is one the facets route also
+ * accepts. Passing them turns the catalog's counts into drill-down figures: the
+ * endpoint counts each dimension with every OTHER active filter applied but not
+ * its own (self-exclusion, done server-side), so a value's count is what
+ * selecting it would actually yield while the dimension you are standing in
+ * still shows its alternatives. Absent filters → the global catalog, unchanged.
+ *
+ * The cast is sound because `filtersToQueryParams` only ever sets dimension
+ * keys; the two query types differ only in the NON-dimension keys (`q`, `key`,
+ * `sort`, …) it never touches — which the facets route deliberately does not
+ * mirror.
+ */
+export function filtersToFacetParams(filters: readonly Filter[]): Partial<ListFacetsQuery> {
+  return filtersToQueryParams(filters) as Partial<ListFacetsQuery>;
 }

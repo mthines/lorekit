@@ -23,6 +23,7 @@ import { parseOrigin } from '../_shared/origin.ts';
 import { recordAudit } from '../_shared/audit.ts';
 import { applyTenantScope } from './tenant-scope.ts';
 import { decodeCursor, buildPage } from './cursor.ts';
+import { resolveKindHost } from '../_shared/schemas/tags.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
@@ -69,7 +70,7 @@ export async function toolWrite(
   userId: string | null,
   span: Span,
 ) {
-  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr } = params;
+  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr, kind, host } = params;
   if (!rawScope || !key || !value) throw new Error('scope, key, and value are required');
   if (value.length > MAX_VALUE_BYTES) throw new Error(`value exceeds ${MAX_VALUE_BYTES} bytes`);
   const scope = validateScope(rawScope);
@@ -81,6 +82,10 @@ export async function toolWrite(
   // Every field is independently optional; the RPC keeps the last KNOWN value
   // per field, so omitting one never erases what an earlier write recorded.
   const origin = parseOrigin({ origin_repo, origin_branch, origin_commit, origin_pr });
+  // Taxonomy: explicit kind/host win; otherwise recover them from the loop tag.
+  // The shared resolver is the one place the closed-vocabulary check and the
+  // host-length clamp live, so storage and usage tracking classify identically.
+  const { kind: resolvedKind, host: resolvedHost } = resolveKindHost({ kind, host, tags });
 
   span.setAttributes({
     'lorekit.scope': scope,
@@ -97,6 +102,8 @@ export async function toolWrite(
     ...(origin.branch ? { 'lorekit.origin.branch': origin.branch } : {}),
     ...(origin.commit ? { 'lorekit.origin.commit': origin.commit } : {}),
     ...(origin.pr !== null ? { 'lorekit.origin.pr': origin.pr } : {}),
+    ...(resolvedKind ? { 'lorekit.kind': resolvedKind } : {}),
+    ...(resolvedHost ? { 'lorekit.host': resolvedHost } : {}),
   });
 
   // 00003 replaced the plain unique constraint with PARTIAL indexes
@@ -121,6 +128,8 @@ export async function toolWrite(
       p_origin_branch: origin.branch,
       p_origin_commit: origin.commit,
       p_origin_pr: origin.pr,
+      p_kind: resolvedKind,
+      p_host: resolvedHost,
     })
     .single();
   if (error) {

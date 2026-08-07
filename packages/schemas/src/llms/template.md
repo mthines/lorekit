@@ -95,7 +95,7 @@ with `npx @lorekit/cli install --force`, which offers to keep, replace, or remov
 | Repository | `repo::{owner}/{repo}` | `repo::mthines/gw-tools` |
 | Branch | `branch::{owner}/{repo}::{branch}` | `branch::mthines/gw-tools::feat/x` |
 
-Validation: single `:` → 400; `repo::` without `/` → 400; `branch::` without two `::` → 400; unknown prefix → 400.
+Validation: single `:` → 400; `repo::` without `/` → 400; `branch::` without two `::` → 400; unknown prefix → 400; a segment containing a further `::` → 400 (`::` is reserved as the separator).
 
 ### Scope resolution (read order)
 

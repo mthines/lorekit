@@ -225,6 +225,26 @@ test('archive() is the soft-archive DELETE — no force=true', async () => {
   );
 });
 
+test('search() POSTs a string query straight through to /memories/search', async () => {
+  const { calls } = await captureRestCalls(
+    (store) => store.search({ q: 'eslint', scopes: ['global'] }),
+    { status: 200, body: JSON.stringify({ entries: [] }) },
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(calls[0].url, `${REMOTE_REST_BASE}/memories/search`);
+  assert.equal(calls[0].body.q, 'eslint');
+});
+
+test('search() collapses a term LIST into one OR-joined FTS query (single round-trip)', async () => {
+  const { calls } = await captureRestCalls(
+    (store) => store.search({ q: ['econnrefused', 'timeout', 'retry'], scopes: ['global'] }),
+    { status: 200, body: JSON.stringify({ entries: [] }) },
+  );
+  assert.equal(calls.length, 1); // one POST for all terms, not one per term
+  assert.equal(calls[0].body.q, 'econnrefused OR timeout OR retry');
+});
+
 test('listScopes() maps GET /memories/scopes into the inventory contract', async () => {
   const { result, calls } = await captureRestCalls((store) => store.listScopes(), {
     status: 200,

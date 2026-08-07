@@ -14,6 +14,7 @@
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { createTracedClient, type Span } from './otel.ts';
 
 export interface UsageEventParams {
   userId: string | null;
@@ -40,6 +41,15 @@ export interface UsageEventParams {
    * dashboard's own reads out of the "Memories read" metric.
    */
   client?: string | null;
+  /**
+   * Memory TAXONOMY — the bucket kind (`lesson`/`bus`/`signal`) and owning host
+   * — so usage can be grouped by family and owner, not just tool name. Resolved
+   * by `resolveKindHost` (schemas/tags) so it matches what the write STORED.
+   * Null on non-write tools and on writes that carry neither an explicit value
+   * nor a `loop::…` tag to infer from.
+   */
+  kind?: string | null;
+  host?: string | null;
 }
 
 /**
@@ -79,18 +89,36 @@ export function recordUsageEvent(
 /**
  * Look up the plan name for a user — used to annotate usage events and span
  * attributes. Fails open (returns null) on any error.
+ *
+ * Pass `parentSpan` to have the lookup emit its own CLIENT span, the way every
+ * other edge DB call does (`createTracedClient`, see `_shared/otel.ts`). It is
+ * optional rather than required because the two existing callers differ: the
+ * MCP transport resolves the plan inline on the request's critical path and
+ * wants it timed, while `_shared/api/router.ts` starts it un-awaited purely to
+ * annotate a usage event afterwards, so a child span there would routinely
+ * outlive the handler span it hangs from.
+ *
+ * Untimed, this query was invisible: an `lorekit.mcp` span could report 0.885s
+ * with only 0.084s accounted for by children, and none of the missing time had
+ * a name.
  */
 export async function getUserPlanName(
   db: ReturnType<typeof createClient>,
   userId: string,
+  parentSpan?: Span,
 ): Promise<string | null> {
   try {
-    const { data } = await db
-      .from('user_plans')
+    const query = parentSpan
+      ? createTracedClient(db, parentSpan).from('user_plans')
+      : db.from('user_plans');
+    const { data } = await query
       .select('plan_name')
       .eq('user_id', userId)
       .maybeSingle();
-    return (data as { plan_name: string } | null)?.plan_name ?? 'free';
+    // `maybeSingle()` resolves to the row itself (or null) on both clients; the
+    // traced wrapper's declared `PostgrestResponse<T[]>` describes the general
+    // case, not this one, which is why the cast goes through `unknown`.
+    return (data as unknown as { plan_name: string } | null)?.plan_name ?? 'free';
   } catch {
     return null;
   }

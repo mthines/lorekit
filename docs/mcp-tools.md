@@ -43,6 +43,8 @@ Store or update a lesson. Requires a token with write permission (`lk_rw_*` or `
 | `tags` | | Array of tag strings, e.g. `["skill::aw", "source::manual"]` |
 | `source_agent` | | Name of the agent writing this lesson |
 | `trigger` | | What triggered the write (`stuck-loop`, `pr-webhook`, `manual`) |
+| `kind` | | Bucket kind: `lesson`, `bus`, or `signal`. Omit to have it inferred from a `loop::<host>-lessons` tag. See **Taxonomy** below. |
+| `host` | | Owning skill/agent (e.g. `reviewer`, `aw`). Omit to have it inferred from a `loop::<host>-lessons` tag. |
 | `org` | | Org slug to write under (org-owned write). Omit for a personal memory. You must be a write-capable member (`member`/`admin`/`owner`, not `viewer`) of the org — verified server-side; supplying an org you're not authorized for is rejected. |
 | `ttl_days` | | Integer 1–365. The memory auto-expires after this many days. Mutually exclusive with `ttl_minutes` and `ttl_seconds`; supply at most one. On an update, refreshes the expiry; omitting all three leaves the existing expiry unchanged. |
 | `ttl_minutes` | | Integer 1–525600 (365 days in minutes). The memory auto-expires after this many minutes. Mutually exclusive with `ttl_days` and `ttl_seconds`. |
@@ -79,6 +81,18 @@ The `lorekit` CLI fills these in automatically from git and the CI environment
 friends to override. Over the hosted MCP server the client has to supply them —
 the server can only see what the call carries. The GitHub webhook receiver
 records the PR, head branch, and head SHA of the delivery it ingested.
+
+**Taxonomy (`kind` / `host`).** A self-improvement loop's bucket carries two
+facts: WHAT KIND of memory it is and WHICH HOST owns it. `kind` is a closed
+vocabulary — `lesson` (procedural, read every run), `bus` (a transient outcome
+event, read only at promotion time), or `signal` (a durable per-repo filter,
+read every run) — and `host` is the owning skill or agent. Both are first-class
+columns, so a caller can filter (`GET /memories?kind=lesson&host=reviewer`) and
+usage analytics can group by family and owner. You may set them explicitly; if
+you omit them the server infers them from a `loop::<host>-lessons` tag
+(`loop::review-outcomes` → `bus`/`review`, `loop::reviewer-comment-relevance` →
+`signal`/`reviewer`), so a tagged write records them without extra arguments. On
+an update the last KNOWN value wins, exactly like `origin_*`.
 
 **Scope→org binding.** If you omit `org` but the scope is **bound to an org** (an admin set that up — see [org-sharing.md](./org-sharing.md#scope--org-binding-auto-routing)), the write auto-routes to that org **when you're a write-capable member**. If you're *not* a member, it's saved to your personal lore instead (never rejected) and the response carries a `notice` explaining that. An explicit `org` always overrides the binding.
 
