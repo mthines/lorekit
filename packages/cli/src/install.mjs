@@ -10,6 +10,7 @@ import {
   copyDir,
   upsertMcpServer,
   upsertWebMcpServer,
+  isMcpJsonGitIgnored,
   WEB_TOKEN_ENV_VAR,
   upsertClaudeHooks,
   resolveHookRunner,
@@ -468,6 +469,16 @@ export async function install(args) {
       '.mcp.json (web)',
       `${webMcp.existed ? 'updated' : 'created'} committable lorekit server (auth via \${${WEB_TOKEN_ENV_VAR}}) → ${webPath}`,
     );
+    // The web file only works if it is actually committed, and .mcp.json is
+    // commonly git-ignored (the embedded-token form is a secret). Warn when it
+    // is, so a fresh web clone silently missing the config is not a mystery.
+    if (isMcpJsonGitIgnored(root) === true) {
+      status(
+        'warn',
+        '.mcp.json (git)',
+        'git-ignored — un-ignore it (add `!.mcp.json` to .gitignore, or `git add -f .mcp.json`) or a fresh web clone will not see it',
+      );
+    }
   }
 
   if (!touchHooks) {
@@ -533,7 +544,7 @@ export async function install(args) {
   if (webMcp) {
     log(
       `  ${c.dim(
-        `For Claude Code on the web: commit .mcp.json, then set ${WEB_TOKEN_ENV_VAR} as an environment secret — the file references it, so it never holds the token itself.`,
+        `For Claude Code on the web: commit .mcp.json (it is often git-ignored — un-ignore it first), then set ${WEB_TOKEN_ENV_VAR} as an environment secret. The file references the token, so it never holds the secret itself.`,
       )}`,
     );
   }

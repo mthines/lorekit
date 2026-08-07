@@ -175,7 +175,11 @@ npx @lorekit/cli install --global --mcp-json \
 ```
 
 Commit the generated `.mcp.json` and set `LOREKIT_TOKEN` as an environment
-secret in the web UI. See the [Claude Code on the web guide](https://lorekit.io/docs/claude-code-web).
+secret in the web UI. Note that `.mcp.json` is usually git-ignored (the default
+install embeds a token) — un-ignore it before committing, and keep using
+`--mcp-json` in that repo so a later plain install never writes a token into the
+now-tracked file. The command warns when the file it wrote is still git-ignored.
+See the [Claude Code on the web guide](https://lorekit.io/docs/claude-code-web).
 
 For any other MCP-compatible agent, add the endpoint and Bearer token to the agent's MCP config directly:
 

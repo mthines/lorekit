@@ -18,11 +18,43 @@ import {
   hookModeFromEvents,
   installedHookEvents,
   upsertClaudeHooks,
+  isMcpJsonGitIgnored,
 } from '../src/config.mjs';
+import { execFileSync } from 'node:child_process';
 
 function tmpRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'lk-cfg-'));
 }
+
+function gitAvailable() {
+  try {
+    execFileSync('git', ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// The committable web .mcp.json (`install --mcp-json`) only reaches a fresh
+// Claude-Code-on-the-web clone if it is committed, and .mcp.json is commonly
+// git-ignored. `isMcpJsonGitIgnored` is what lets install warn about that.
+test('isMcpJsonGitIgnored detects an ignored vs tracked .mcp.json', { skip: !gitAvailable() }, () => {
+  // Ignored: a repo whose .gitignore lists .mcp.json.
+  const ignored = tmpRoot();
+  execFileSync('git', ['-C', ignored, 'init'], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(ignored, '.gitignore'), '.mcp.json\n');
+  assert.equal(isMcpJsonGitIgnored(ignored), true, 'listed in .gitignore → ignored');
+
+  // Not ignored: a repo with no such rule.
+  const tracked = tmpRoot();
+  execFileSync('git', ['-C', tracked, 'init'], { stdio: 'ignore' });
+  assert.equal(isMcpJsonGitIgnored(tracked), false, 'no rule → not ignored');
+});
+
+test('isMcpJsonGitIgnored returns null when the dir is not a git repo', () => {
+  // Unknown, not a throw — the caller stays silent rather than warning wrongly.
+  assert.equal(isMcpJsonGitIgnored(tmpRoot()), null);
+});
 
 // Regression: `npx @lorekit/cli install` stages a `lorekit` symlink into an
 // ephemeral …/_npx/<hash>/node_modules/.bin dir and prepends it to PATH. That

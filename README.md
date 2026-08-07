@@ -123,7 +123,9 @@ running the same token, and are there the next time any agent picks up the work.
 > **Using Claude Code on the web?** Its sessions run in a fresh, ephemeral clone,
 > so add `--mcp-json` — `npx @lorekit/cli install --global --mcp-json` also writes
 > a committable, secret-free `.mcp.json` (auth via `${LOREKIT_TOKEN}`) the cloud
-> session reads directly. See the [Claude Code on the web guide](https://lorekit.io/docs/claude-code-web).
+> session reads directly. `.mcp.json` is usually git-ignored, so you'll need to
+> un-ignore and commit it — the command warns if it's still ignored. See the
+> [Claude Code on the web guide](https://lorekit.io/docs/claude-code-web).
 
 ## Remote or local — your choice
 

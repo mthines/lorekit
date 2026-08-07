@@ -88,13 +88,22 @@ lorekit install --mcp-json --yes            # web-ready project .mcp.json
 lorekit install --global --mcp-json --yes   # + the machine-wide CLI, skills, hooks
 ```
 
-Commit the resulting `.mcp.json` and set **`LOREKIT_TOKEN`** as an environment
-secret in the web UI; the value is expanded before `mcp-remote` is spawned.
-`--mcp-json` always writes the **project-root** file regardless of `--project` /
-`--global`, and it composes with either — pair it with `--global` to get the
-local CLI, skills, and hooks in `~/.claude` **and** the committable web config in
-one command. On a `--project` install it takes over `.mcp.json` with the
-committable form instead of the embedded-token one. See the
+Set **`LOREKIT_TOKEN`** as an environment secret in the web UI; the value is
+expanded before `mcp-remote` is spawned. `--mcp-json` always writes the
+**project-root** file regardless of `--project` / `--global`, and it composes
+with either — pair it with `--global` to get the local CLI, skills, and hooks in
+`~/.claude` **and** the committable web config in one command. On a `--project`
+install it takes over `.mcp.json` with the committable form instead of the
+embedded-token one.
+
+**You have to commit the file, and `.mcp.json` is usually git-ignored** (the
+default install embeds a token, so LoreKit's own `.gitignore` — and many
+projects — ignore it). Un-ignore it before committing (drop the `.mcp.json` line
+from `.gitignore`, negate it with `!.mcp.json`, or `git add -f .mcp.json` once);
+`install --mcp-json` **warns when the file it wrote is still git-ignored**, so a
+fresh web clone silently missing the config is not a mystery. Once `.mcp.json` is
+tracked, only run `install --mcp-json` in that repo — a plain `install --project`
+would embed a live token in the now-committed file. See the
 [Claude Code on the web guide](https://lorekit.io/docs/claude-code-web).
 
 In a TTY it prompts for the scope (and for `--endpoint` / `--token` if missing).
@@ -910,6 +919,8 @@ control (LoreKit's root `.gitignore` already ignores `.mcp.json`).
 The **one exception is `install --mcp-json`**: that file authenticates via a
 `${LOREKIT_TOKEN}` reference instead of an embedded token, so it holds no secret
 and **is** meant to be committed (that is how Claude Code on the web reads it
-after a fresh clone). The token itself comes from the `LOREKIT_TOKEN`
-environment variable at runtime — set it as an environment secret, never commit
-it.
+after a fresh clone). You'll need to un-ignore `.mcp.json` first, since it is
+normally git-ignored for the embedded-token reason above. The token itself comes
+from the `LOREKIT_TOKEN` environment variable at runtime — set it as an
+environment secret, never commit it — and once the file is tracked, keep using
+`--mcp-json` so a later plain install never writes a token into it.

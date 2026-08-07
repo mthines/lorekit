@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 // packages/cli/ — the installable package root (this file lives in src/).
@@ -397,6 +398,30 @@ export function upsertWebMcpServer(root, endpoint, envVar = WEB_TOKEN_ENV_VAR) {
   };
   writeFileAtomic(file, JSON.stringify(config, null, 2) + '\n');
   return { file, existed };
+}
+
+// Is the project .mcp.json git-ignored in this repo? Tri-state so callers can
+// distinguish "definitely ignored" from "can't tell" and stay quiet when unsure:
+//   true  → ignored (git check-ignore matched)  — the caller warns
+//   false → tracked / not ignored               — nothing to say
+//   null  → unknown (no git, not a repo, error)  — say nothing
+//
+// This exists because the committable web .mcp.json (upsertWebMcpServer) only
+// works if it is actually committed, and .mcp.json is COMMONLY git-ignored (the
+// default embedded-token form is a secret, so LoreKit's own root .gitignore and
+// many projects ignore it). Silently writing a file the repo will never commit
+// is the trap this lets `install --mcp-json` warn about. `git check-ignore -q`
+// exits 0 when ignored, 1 when not, 128 on error — anything but 0/1 is unknown.
+export function isMcpJsonGitIgnored(root) {
+  try {
+    const r = spawnSync('git', ['-C', root, 'check-ignore', '-q', '.mcp.json'], { stdio: 'ignore' });
+    if (r.error) return null; // git not found / spawn failed
+    if (r.status === 0) return true;
+    if (r.status === 1) return false;
+    return null; // 128 (not a repo) or anything unexpected
+  } catch {
+    return null;
+  }
 }
 
 // Pull the configured lorekit remote URL out of the project .mcp.json, if
