@@ -366,6 +366,39 @@ export function upsertMcpServer(root, remoteUrl, scope = 'project') {
   return { file, existed };
 }
 
+// The environment variable the committable (web) .mcp.json references for its
+// token, instead of embedding a live secret. Kept as a constant so the writer,
+// the install summary, and the docs can never name a different variable.
+export const WEB_TOKEN_ENV_VAR = 'LOREKIT_TOKEN';
+
+// Merge a lorekit server entry into the PROJECT-root .mcp.json in the
+// committable form Claude Code on the web needs: instead of embedding the token
+// in the URL (a live secret, which is why the embedded form is git-ignored), it
+// authenticates via an mcp-remote `--header` that references `${LOREKIT_TOKEN}`.
+//
+// WHY this exists as a distinct writer. Claude Code on the web clones the repo
+// fresh into an ephemeral container, so the only MCP config it can see is a
+// COMMITTED, repo-root `.mcp.json` — a global `~/.claude.json` never travels to
+// the clone. And it must be committable, which the embedded-token form is not.
+// So the web path needs exactly this: the project file (never the global one)
+// with the token supplied at runtime from an environment secret. Callers set
+// `LOREKIT_TOKEN` as an environment secret in the web UI; the value is expanded
+// by Claude Code before mcp-remote is spawned. Preserves any other servers.
+export function upsertWebMcpServer(root, endpoint, envVar = WEB_TOKEN_ENV_VAR) {
+  const file = mcpJsonPath(root); // always the project file — the web clone only sees this one
+  const config = readJsonIfExists(file) || {};
+  if (!config.mcpServers || typeof config.mcpServers !== 'object') {
+    config.mcpServers = {};
+  }
+  const existed = Boolean(config.mcpServers.lorekit);
+  config.mcpServers.lorekit = {
+    command: 'npx',
+    args: ['-y', 'mcp-remote', endpoint, '--header', `Authorization:Bearer \${${envVar}}`],
+  };
+  writeFileAtomic(file, JSON.stringify(config, null, 2) + '\n');
+  return { file, existed };
+}
+
 // Pull the configured lorekit remote URL out of the project .mcp.json, if
 // present. Non-throwing: returns null when the file is absent, invalid, or has
 // no lorekit server. Callers that need to distinguish those use readMcpConfig.

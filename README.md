@@ -120,6 +120,11 @@ running the same token, and are there the next time any agent picks up the work.
 > instead. Claude Code has a one-line marketplace install; Cursor and Codex have
 > their own bundles. See [plugins/](./plugins/README.md).
 
+> **Using Claude Code on the web?** Its sessions run in a fresh, ephemeral clone,
+> so add `--mcp-json` — `npx @lorekit/cli install --global --mcp-json` also writes
+> a committable, secret-free `.mcp.json` (auth via `${LOREKIT_TOKEN}`) the cloud
+> session reads directly. See the [Claude Code on the web guide](https://lorekit.io/docs/claude-code-web).
+
 ## Remote or local — your choice
 
 LoreKit needs neither an account nor a network. The same `memory.*` tools can
