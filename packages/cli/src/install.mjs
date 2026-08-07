@@ -518,7 +518,17 @@ export async function install(args) {
 
   const kind = tokenKind(token);
   if (kind === 'none') {
-    status('warn', 'token', 'none configured — reads/writes will fail until a token is set');
+    // With a committable web .mcp.json and no stored token (the common
+    // `--project --mcp-json` case), "none configured" reads as broken — but the
+    // file resolves ${LOREKIT_TOKEN} at runtime by design. Say that instead of
+    // implying reads/writes will fail.
+    status(
+      'warn',
+      'token',
+      webMcp
+        ? `none stored — the committable .mcp.json resolves \${${WEB_TOKEN_ENV_VAR}} at runtime; set it as an environment secret`
+        : 'none configured — reads/writes will fail until a token is set',
+    );
   } else if (kind === 'read-only') {
     status('warn', 'token', 'read-only (lk_ro_*) — the skill can read memories but not write them');
   } else if (kind === 'write-only') {
