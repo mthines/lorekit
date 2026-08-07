@@ -2,6 +2,7 @@ import {
   Rocket,
   HardDrive,
   Cloud,
+  Globe,
   Users,
   Lock,
   Tag,
@@ -40,6 +41,7 @@ export const DOCS_SECTIONS: readonly DocsSection[] = [
   { id: 'private', label: 'Private lore', icon: Lock, summary: 'Keep sensitive lessons private' },
   { id: 'tags', label: 'Tags & scopes', icon: Tag, summary: 'Organise lessons by scope and tag' },
   { id: 'config', label: 'Configuration', icon: FileCog, summary: 'All .lorekit.json / config.json options' },
+  { id: 'claude-code-web', label: 'Claude Code on the web', icon: Globe, summary: 'Set up LoreKit in the cloud web environment' },
   { id: 'use-cases', label: 'Use cases', icon: Zap, summary: 'Common patterns and workflows' },
   { id: 'deep-links', label: 'Deep links', icon: Link2, summary: 'Shareable dashboard URLs for scopes, memories, and filters' },
 ];
