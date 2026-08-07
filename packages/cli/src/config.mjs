@@ -372,6 +372,27 @@ export function upsertMcpServer(root, remoteUrl, scope = 'project') {
 // the install summary, and the docs can never name a different variable.
 export const WEB_TOKEN_ENV_VAR = 'LOREKIT_TOKEN';
 
+// Strip any credential from an endpoint URL before it goes into the committable
+// web .mcp.json. The whole point of that file is to carry NO secret, so an
+// `--endpoint` / LOREKIT_MCP_URL value that already embeds `?token=lk_…` (a
+// perfectly ordinary thing to paste) must not be written verbatim — that would
+// commit a live token in the file install tells you to commit. Mirrors
+// `splitEndpoint`'s token removal (mcp.mjs) inline rather than importing it, so
+// config.mjs keeps its no-mcp.mjs-import invariant (see resolveProjectConnection),
+// and also clears userinfo for defense in depth. A non-URL string is left as-is;
+// endpoint validity is the caller's concern, not this function's.
+function stripEndpointCredentials(endpoint) {
+  try {
+    const u = new URL(endpoint);
+    u.searchParams.delete('token');
+    u.username = '';
+    u.password = '';
+    return u.toString();
+  } catch {
+    return endpoint;
+  }
+}
+
 // Merge a lorekit server entry into the PROJECT-root .mcp.json in the
 // committable form Claude Code on the web needs: instead of embedding the token
 // in the URL (a live secret, which is why the embedded form is git-ignored), it
@@ -385,6 +406,10 @@ export const WEB_TOKEN_ENV_VAR = 'LOREKIT_TOKEN';
 // with the token supplied at runtime from an environment secret. Callers set
 // `LOREKIT_TOKEN` as an environment secret in the web UI; the value is expanded
 // by Claude Code before mcp-remote is spawned. Preserves any other servers.
+//
+// The endpoint is credential-stripped first: it is the one field that could
+// carry a `?token=` in from `--endpoint` / LOREKIT_MCP_URL, and writing that
+// into a file meant to be committed would leak a live token.
 export function upsertWebMcpServer(root, endpoint, envVar = WEB_TOKEN_ENV_VAR) {
   const file = mcpJsonPath(root); // always the project file — the web clone only sees this one
   const config = readJsonIfExists(file) || {};
@@ -394,7 +419,7 @@ export function upsertWebMcpServer(root, endpoint, envVar = WEB_TOKEN_ENV_VAR) {
   const existed = Boolean(config.mcpServers.lorekit);
   config.mcpServers.lorekit = {
     command: 'npx',
-    args: ['-y', 'mcp-remote', endpoint, '--header', `Authorization:Bearer \${${envVar}}`],
+    args: ['-y', 'mcp-remote', stripEndpointCredentials(endpoint), '--header', `Authorization:Bearer \${${envVar}}`],
   };
   writeFileAtomic(file, JSON.stringify(config, null, 2) + '\n');
   return { file, existed };

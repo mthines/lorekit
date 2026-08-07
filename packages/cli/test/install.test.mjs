@@ -144,6 +144,23 @@ test('install --project --mcp-json does not embed a token (the web form owns .mc
   assertWebMcpShape(JSON.parse(raw));
 });
 
+test('install --mcp-json strips an embedded ?token= from the endpoint (no secret in the committable file)', async () => {
+  // The committable web file must never carry a live token. An --endpoint /
+  // LOREKIT_MCP_URL value that already embeds ?token= is ordinary to paste, so
+  // it must be stripped before it lands in the file install tells you to commit.
+  const root = tmp('lk-webmcp-tokenurl-');
+  await install({
+    dir: root,
+    endpoint: `${ENDPOINT}?token=${TOKEN}`,
+    yes: true,
+    project: true,
+    'mcp-json': true,
+  });
+  const raw = fs.readFileSync(path.join(root, '.mcp.json'), 'utf8');
+  assert.ok(!raw.includes(TOKEN), 'the embedded token is stripped from the committable file');
+  assertWebMcpShape(JSON.parse(raw));
+});
+
 test('install --mcp-json preserves other MCP servers already in .mcp.json', async () => {
   const root = tmp('lk-webmcp-merge-');
   fs.writeFileSync(
