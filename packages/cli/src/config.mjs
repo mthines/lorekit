@@ -489,6 +489,37 @@ export function removeMcpServer(root, scope = 'project') {
   return { file, removed: true };
 }
 
+// Is a lorekit server entry the committable WEB form — auth via a `--header`
+// that references an `${ENV_VAR}` token, as written by `upsertWebMcpServer` —
+// rather than an embedded-token or plain URL entry? Used to gate the global
+// uninstall's project-file cleanup so it only removes what `--mcp-json` wrote.
+export function isWebMcpServerEntry(server) {
+  const args = server && Array.isArray(server.args) ? server.args : [];
+  const i = args.indexOf('--header');
+  if (i === -1 || typeof args[i + 1] !== 'string') return false;
+  return /^Authorization:Bearer \$\{[^}]+\}$/.test(args[i + 1].trim());
+}
+
+// Remove the lorekit entry from the PROJECT .mcp.json ONLY when it is the
+// committable web form. `uninstall --global` calls this to clean up the file
+// `install --global --mcp-json` wrote — WITHOUT touching an unrelated
+// embedded-token `install --project` entry a user set up separately (which a
+// blind removeMcpServer(root, 'project') would delete). No-op otherwise.
+export function removeWebMcpServer(root) {
+  const file = mcpJsonPath(root);
+  const config = readJsonIfExists(file);
+  const server =
+    config && config.mcpServers && typeof config.mcpServers === 'object'
+      ? config.mcpServers.lorekit
+      : null;
+  if (!server || !isWebMcpServerEntry(server)) return { file, removed: false };
+
+  delete config.mcpServers.lorekit;
+  if (Object.keys(config.mcpServers).length === 0) delete config.mcpServers;
+  writeFileAtomic(file, JSON.stringify(config, null, 2) + '\n');
+  return { file, removed: true };
+}
+
 // Strip lorekit hook entries from every event, preserving non-lorekit hooks in
 // the same groups. Prunes groups left with no hooks and events left with no
 // groups. Returns the count removed; only writes when something changed.
@@ -558,18 +589,29 @@ export function tokenKind(token) {
 // install), then the `mcp.endpoint` field in .lorekit.json (committable URL
 // without token — safe for VCS), then env. `splitEndpoint` is passed in to
 // avoid a circular import with mcp.mjs.
+//
+// A source that STORES a token wins outright (project beats global — closest
+// scope), but a TOKENLESS source must NOT shadow a later source that has one.
+// That shadowing is exactly what `install --global --mcp-json` created: it
+// writes a committable, token-free project .mcp.json (auth via ${LOREKIT_TOKEN})
+// AND the real token into ~/.claude.json. Returning early on the project entry
+// left the local CLI, doctor, and hooks resolving `token: null` unless
+// LOREKIT_TOKEN was exported — so a tokenless source is only remembered as an
+// endpoint fallback, and the loop keeps looking for a stored token.
 export function resolveProjectConnection(root, splitEndpoint) {
   const sources = [readLorekitServer(root), readServerFromFile(mcpConfigPath(root, 'global'))];
+  let endpointOnly = null; // closest usable endpoint that carried no token (e.g. the web .mcp.json)
   for (const configured of sources) {
-    if (configured && configured.url) {
-      const { endpoint, token } = splitEndpoint(configured.url);
-      if (endpoint && !endpoint.includes('<project-ref>')) {
-        return {
-          endpoint,
-          token: token || process.env.LOREKIT_TOKEN || null,
-        };
-      }
-    }
+    if (!configured || !configured.url) continue;
+    const { endpoint, token } = splitEndpoint(configured.url);
+    if (!endpoint || endpoint.includes('<project-ref>')) continue;
+    if (token) return { endpoint, token }; // a stored token wins; project (closest) beats global
+    if (!endpointOnly) endpointOnly = endpoint; // remember the closest tokenless source, keep looking
+  }
+  if (endpointOnly) {
+    // No source stored a token — the committable web .mcp.json is exactly this
+    // case. Fall back to the env token so the local CLI still authenticates.
+    return { endpoint: endpointOnly, token: process.env.LOREKIT_TOKEN || null };
   }
 
   // Fallback: `mcp.endpoint` in .lorekit.json — a committable URL without token.
