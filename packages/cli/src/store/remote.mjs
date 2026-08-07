@@ -68,7 +68,7 @@ class RemoteStore {
     if (cursor) p.set('cursor', cursor);
     if (created_since) p.set('created_since', created_since);
     if (created_until) p.set('created_until', created_until);
-    if (key_prefix) p.set('key', key_prefix);
+    if (key_prefix) p.set('key_prefix', key_prefix);
     const res = await this._rest(`/memories?${p}`);
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
     const data = res.data ?? {};

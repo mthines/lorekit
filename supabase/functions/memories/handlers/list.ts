@@ -87,6 +87,15 @@ export async function handleList(
   if (params.scope) q = q.eq('scope', params.scope);
   if (params.key) q = q.eq('key', params.key);
 
+  // `key_prefix` is a case-insensitive PREFIX match, distinct from the exact
+  // `key` above. `likeNeedle` escapes the LIKE metacharacters (so a `%`/`_` the
+  // user typed is data, not a wildcard); `ilikeClause` with `prefix:false`
+  // yields `key.ilike."<prefix>%"` — the trailing `%` is the only active
+  // wildcard — and quotes the value the one way the PostgREST logic-tree
+  // grammar carries a reserved character, exactly as the `q` filter below does.
+  const keyPrefixNeedle = likeNeedle(params.key_prefix);
+  if (keyPrefixNeedle) q = q.or(ilikeClause('key', keyPrefixNeedle, { prefix: false }));
+
   const tags = parseTagsParam(params.tags);
   if (tags.length) {
     // A STRING array literal, never a string[] — postgrest-js joins an array

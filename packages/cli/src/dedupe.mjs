@@ -24,13 +24,21 @@ const DEFAULT_THRESHOLD = 0.8;
 // --since / --max.
 const DEDUPE_POP_CAP = 2000;
 
-// Parse `--threshold` into a number in [0, 1]; anything unparseable or out of
+// Smallest threshold the blocked clusterer accepts. `clusterDuplicatesBlocked`
+// is provably equivalent to the oracle `clusterDuplicates` only for
+// threshold > 0 (at 0 the oracle clusters even zero-overlap pairs, which the
+// token-blocking sweep never generates). Any positive value below the smallest
+// possible Jaccard behaves identically to 0+ while preserving that invariant,
+// so we floor to a tiny epsilon rather than accept a literal 0.
+const MIN_THRESHOLD = Number.EPSILON;
+
+// Parse `--threshold` into a number in (0, 1]; anything unparseable or out of
 // range falls back to the default (never a crash on bad input). Pure-ish helper.
 export function parseThreshold(raw) {
   if (raw === undefined || raw === true) return DEFAULT_THRESHOLD;
   const n = Number(raw);
   if (!Number.isFinite(n)) return DEFAULT_THRESHOLD;
-  return Math.min(1, Math.max(0, n));
+  return Math.min(1, Math.max(MIN_THRESHOLD, n));
 }
 
 // Read `dedupe.threshold` from .lorekit.json (non-throwing). Returns the
@@ -119,13 +127,38 @@ export async function dedupe(args) {
 
   const buildSection = async (store, local) => {
     if (local) {
-      // Local store is already exhaustive; use the existing gather path.
+      // Local store is already exhaustive; gather everything, then apply the
+      // SAME narrowing the remote path gets server-side (the local store's
+      // `list()` honours only scope/tags, so it can't narrow itself). Filtering
+      // here — before the population cap — is what makes `--key-prefix`/
+      // `--since`/`--until`/`--max` real offline instead of silent no-ops.
       const flat = flatten(await gather(store, scopes));
+      let entries = flat.entries;
+      if (surveyKeyPrefix) {
+        entries = entries.filter(
+          (e) => typeof e.key === 'string' && e.key.startsWith(surveyKeyPrefix),
+        );
+      }
+      // `created_at` is compared as an ISO string; both bounds mirror the REST
+      // handler — inclusive `since`, exclusive `until` (the `[since, until)`
+      // window). An entry with no `created` timestamp is kept (never dropped by
+      // a bound it can't be judged against).
+      if (surveySince) entries = entries.filter((e) => !e.created || e.created >= surveySince);
+      if (surveyUntil) entries = entries.filter((e) => !e.created || e.created < surveyUntil);
+      // Silent `--max` cap first, then the memory-safety population cap that
+      // drives the "partial results" warning — mirroring the remote path where
+      // gatherStream's `max` and the DEDUPE_POP_CAP are distinct.
+      if (entries.length > surveyMax) entries = entries.slice(0, surveyMax);
+      let popCapped = false;
+      if (entries.length > DEDUPE_POP_CAP) {
+        entries = entries.slice(0, DEDUPE_POP_CAP);
+        popCapped = true;
+      }
       return {
         available: true,
-        clusters: clusterDuplicatesBlocked(flat.entries, threshold),
+        clusters: clusterDuplicatesBlocked(entries, threshold),
         errored: flat.errored,
-        popCapped: false,
+        popCapped,
       };
     }
     const { entries, errored, popCapped } = await streamAccumulate(store);

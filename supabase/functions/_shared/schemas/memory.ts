@@ -123,6 +123,14 @@ const ValueListSchema = z.string().min(1).max(2048);
 export const ListMemoriesQuerySchema = z.object({
   scope: RawScopeSchema.optional(),
   key: z.string().min(1).max(512).optional(),
+  /**
+   * Case-insensitive PREFIX match on `key` (`key ILIKE '<prefix>%'`), distinct
+   * from the exact `key` above. Backs the CLI's `--key-prefix` narrowing for
+   * `dedupe`/`list`: it must be applied SERVER-side so a large scope is narrowed
+   * before the page/cap is reached, not row-filtered after. LIKE metacharacters
+   * in the prefix are escaped by the handler, so a literal `%`/`_` stays data.
+   */
+  key_prefix: z.string().min(1).max(512).optional(),
   tags: z.string().optional(),
   tags_mode: TagsModeSchema.optional().default('any'),
   /**

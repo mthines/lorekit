@@ -65,6 +65,7 @@ export function normalizeEntry(e = {}) {
     key: e.key ?? null,
     value: e.value == null ? '' : String(e.value),
     updated: e.updated ?? e.updated_at ?? null,
+    created: e.created ?? e.created_at ?? null,
     tags,
     kind: e.kind ?? inferred.kind ?? null,
     host: e.host ?? inferred.host ?? null,

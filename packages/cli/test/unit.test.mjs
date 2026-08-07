@@ -925,6 +925,38 @@ describe('dedupe narrow key-prefix: gatherStream stops at configured max', () =>
   });
 });
 
+// ── AC-9b: --key-prefix is a SERVER-side prefix filter, not an exact-key match ─
+// `dedupe --key-prefix` must narrow the population server-side (before the page
+// cap), so the CLI maps it to the REST `key_prefix` query param — NOT the exact
+// `key` param, which would match a key equal to the prefix and return ~nothing.
+
+describe('key_prefix forwarded as a distinct REST prefix filter', () => {
+  test('list maps key_prefix to the key_prefix query param, never exact key', async () => {
+    const { calls } = await captureRestCalls(
+      (store) => store.list({ scope: 'global', key_prefix: 'debug-' }),
+      { status: 200, body: JSON.stringify({ entries: [] }) },
+    );
+    const u = new URL(calls[0].url);
+    assert.equal(u.searchParams.get('key_prefix'), 'debug-', 'key_prefix forwarded');
+    assert.equal(u.searchParams.get('key'), null, 'exact key param NOT set (would break prefix semantics)');
+  });
+
+  test('gatherStream forwards keyPrefix as key_prefix into list calls', async () => {
+    const listCalls = [];
+    const store = {
+      mode: 'remote',
+      usable: () => true,
+      list: async (args) => {
+        listCalls.push({ ...args });
+        return { ok: true, entries: [{ key: 'debug-1', value: 'v', scope: args.scope }], hasMore: false, nextCursor: null };
+      },
+    };
+    await gatherStream(store, ['global'], { keyPrefix: 'debug-' });
+    assert.equal(listCalls.length, 1);
+    assert.equal(listCalls[0].key_prefix, 'debug-', 'key_prefix forwarded by gatherStream');
+  });
+});
+
 // ── AC-10: --since/--until forwarded as created_since/created_until ───────────
 
 describe('since/until forwarded as created_since/created_until query params', () => {

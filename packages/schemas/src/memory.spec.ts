@@ -11,6 +11,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   DeleteMemoryQuerySchema,
+  MemoryWriteSchema,
+  ListMemoriesQuerySchema,
   PurgeMemoriesBodySchema,
   RestoreMemoryBodySchema,
   ScopesResponseSchema,
@@ -118,5 +120,26 @@ describe('ScopesResponseSchema', () => {
   it('rejects a fractional or negative count', () => {
     expect(ScopesResponseSchema.safeParse({ scopes: [{ scope: 'global', count: 1.5 }] }).success).toBe(false);
     expect(ScopesResponseSchema.safeParse({ scopes: [{ scope: 'global', count: -1 }] }).success).toBe(false);
+  });
+});
+
+describe('MemoryWriteSchema value', () => {
+  it('trims surrounding whitespace from the value on write', () => {
+    expect(MemoryWriteSchema.parse({ scope: 'global', key: 'k', value: '  hello  ' }).value).toBe('hello');
+  });
+
+  it('measures the byte limit against the pre-trim length (max runs before transform)', () => {
+    // The .max() guard is intentionally BEFORE .transform(trim), so padding a
+    // value past the limit is rejected rather than silently trimmed under it.
+    const overByPadding = ' '.repeat(65_537);
+    expect(MemoryWriteSchema.safeParse({ scope: 'global', key: 'k', value: overByPadding }).success).toBe(false);
+  });
+});
+
+describe('ListMemoriesQuerySchema key filters', () => {
+  it('accepts key_prefix as a filter distinct from exact key', () => {
+    const parsed = ListMemoriesQuerySchema.parse({ key_prefix: 'debug-' });
+    expect(parsed.key_prefix).toBe('debug-');
+    expect(parsed.key).toBeUndefined();
   });
 });
