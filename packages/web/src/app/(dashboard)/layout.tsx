@@ -11,6 +11,7 @@ import { MemorySidebarProvider } from '@/components/providers/MemorySidebarProvi
 import { ToastProvider } from '@/components/providers/ToastProvider';
 import { OnboardingProvider } from '@/components/providers/OnboardingProvider';
 import { getOnboardingState } from '@/lib/onboarding-server';
+import { resolveDashboardBootstrap } from '@/lib/dashboard-bootstrap';
 import { Toaster } from 'sonner';
 import { CommandPaletteProvider } from '@/components/command/CommandPaletteProvider';
 import { CommandPalette } from '@/components/command/CommandPalette';
@@ -18,9 +19,25 @@ import { NavigationCommands } from '@/components/command/NavigationCommands';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
 
-  if (!user) {
+  // The session check and the onboarding counts are independent reads, so they
+  // are OVERLAPPED rather than chained — see `lib/dashboard-bootstrap.ts` for
+  // the ordering contract and why it lives there. Serially they cost the sum of
+  // two Supabase round-trips on every dashboard render; a production trace of
+  // `RSC GET /lore` showed 0.504s of `auth/v1/user` followed by 0.389s of
+  // onboarding counts inside a 0.926s request, with nothing between them.
+  //
+  // Issuing the counts before the session is verified is safe because they run
+  // on the RLS-scoped server client built from this request's cookies: Postgres
+  // decides what they can see, an absent or expired session reads nothing, and
+  // the result is discarded on the redirect path below.
+  const bootstrap = await resolveDashboardBootstrap({
+    getUser: async () => (await supabase.auth.getUser()).data.user,
+    getOnboardingState,
+    onboardingFallback: { hasLessons: false, hasWebhook: false },
+  });
+
+  if (!bootstrap) {
     // Preserve the full requested URL (path + search params like ?lesson=…) so
     // that after login, /api/auth/callback redirects back to the exact shared URL.
     // The middleware forwards x-pathname and x-search from request.nextUrl so we
@@ -34,8 +51,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   // Onboarding completion feeds both the sidebar's "Getting started" progress
   // badge and the checklist itself, so it's resolved once here and shared via
-  // the provider.
-  const onboardingState = await getOnboardingState();
+  // the provider. `getOnboardingState` is React-`cache()`d, so the pages that
+  // build the checklist reuse this same request's result.
+  const { user, onboardingState } = bootstrap;
 
   return (
     // ToastProvider mounts once at the dashboard root — a thin sibling client
