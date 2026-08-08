@@ -214,10 +214,21 @@ semantics on that same path.
 exclude archived rows only, so an expired-but-unarchived row is still the row the conflict
 resolves to and its count keeps climbing. Expiry is a *visibility* state — `expires_at` filters
 the row out of every read (00030) but leaves it in the table until `purge_expired_memories`
-hard-deletes it — whereas archiving is a retirement. Same key, same row, one more sighting; the
-count restarts at `1` only once the purge has actually removed the row. Note the write does not
-by itself make the row readable again: with no `ttl_seconds` and no `clear_ttl` the update branch
-keeps the past `expires_at`, so the recurrence is counted on a row the reads still skip.
+hard-deletes it — whereas archiving is a retirement. Same key, same row, one more sighting; for a
+**personal** row the count restarts at `1` only once the purge has actually removed it. Note the
+write does not by itself make the row readable again: with no `ttl_seconds` and no `clear_ttl` the
+update branch keeps the past `expires_at`, so the recurrence is counted on a row the reads still
+skip.
+
+**For an org- or service-owned row the count never restarts, because the purge never reaches it.**
+`purge_expired_memories` deletes `where user_id = v_actor` (00046), and both the org branch and the
+service branch of `memory_write` insert `user_id null` — `null = <anything>` is never true, so no
+actor value can match and an expired org/service row is never hard-deleted. Its `seen_count`
+therefore keeps climbing on a row every read skips, indefinitely. That gap is in the purge's actor
+guard and predates 00059; this column only makes it observable. Widening the purge is deliberately
+**not** done here: `user_id = v_actor` is the actor guard 00046 added on purpose to a
+`security definer` RPC, so relaxing it is a tenancy change that needs its own migration and its own
+cross-tenant assertions.
 
 Rows written before 00059 read `1` (the column is `NOT NULL DEFAULT 1`, so the backfill is
 the default and no data migration ran). The field is optional in `MemoryEntrySchema` for the
