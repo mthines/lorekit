@@ -48,8 +48,9 @@ export function LoreExplorerSkeleton() {
           collapsed scope header, the control row, then the card list. `pb-6`
           matches the real layout so the last card clears the bottom edge. */}
       <div className="flex flex-col gap-3 pb-6 md:hidden">
-        {/* Collapsed scope accordion header */}
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 py-2.5">
+        {/* Collapsed scope accordion header — `min-h-11` matches the real
+            collapsed scope button (44px) so there is no residual height shift. */}
+        <div className="flex min-h-11 items-center rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-4 py-2.5">
           <div className="h-5 w-40 animate-pulse rounded bg-[var(--color-bg-elevated)]" />
         </div>
 
