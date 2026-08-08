@@ -186,6 +186,36 @@ consequences to know before reading a number:
   exact yield. Mirroring `q` would put a second implementation of `likeNeedle`'s LIKE escaping
   in plpgsql, which the repo-wide "a filter value is encoded ONE way" rule forbids.
 
+## `seen_count` — recurrence, counted by the writer
+
+Every read route returns `seen_count`: how many times the lesson has been written. It is
+part of `MEMORY_SELECT`, so `GET /`, `GET /:id` and `POST /search` all carry it.
+
+**It is derived, never supplied.** `memory_write` has no `p_seen_count` parameter and gained
+none in 00058 — the insert branches set `1` and each conflict-update branch sets
+`seen_count = memories.seen_count + 1`. A write whose `(tenant, scope, key)` already resolves
+to a live row *is* the second sighting, which is exactly the definition
+`lorekit-setup`'s self-improvement loop documents ("a recurrence resolves to an UPDATE that
+increments `seen_count` by 1"). Trusting a caller-supplied number would mean reading the row
+back first and would let two concurrent writers clobber each other's count.
+
+The increment reads `memories.seen_count`, not `excluded.seen_count`: `excluded` is the row
+the INSERT proposed, which always carries the literal `1`, so an `excluded`-based increment
+pins every recurrence at `2`.
+
+**Reviving an archived key is not a recurrence.** All three conflict predicates are partial
+on `archived_at is null` (00016), so writing an archived key inserts a fresh row starting at
+`1` — the lesson was retired and is being learned again. This matches the `created_at`
+semantics on that same path.
+
+Rows written before 00058 read `1` (the column is `NOT NULL DEFAULT 1`, so the backfill is
+the default and no data migration ran). The field is optional in `MemoryEntrySchema` for the
+`kind`/`host` reason: a client reading from a backend deployed before 00058 sees it absent
+rather than wrong.
+
+Nothing filters or orders on it yet, so it carries no index — the same call 00048 made for
+the `origin_*` columns.
+
 ## `created_at` on `POST /`
 
 `created_at` is an **optional creation-date override** for the `lorekit migrate` backdating

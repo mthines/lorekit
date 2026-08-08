@@ -4249,6 +4249,88 @@ begin
 end;
 $$;
 
+-- ── 74. memories.seen_count — recurrence counted by the writer (00058) ──────
+-- The counter LoreKit's own skill guidance has always gated promotion on
+-- (`seen_count >= 3`) never existed as a column; it lived as hand-written text
+-- in a lesson body's `meta:` comment, so nothing incremented it and nothing
+-- could read it. 00058 makes it real and puts the increment in the upsert,
+-- which is where a recurrence actually happens.
+-- AC-1: a first write inserts with seen_count = 1.
+-- AC-2: a second write to the same (tenant, scope, key) increments to 2 — the
+--       increment reads `memories.seen_count`, not `excluded.seen_count`, which
+--       always carries the literal 1 and would pin every recurrence at 2.
+-- AC-3: the count keeps climbing, and the row is still the SAME row.
+-- AC-4: the service-role branch (p_user_id null) increments too — all three
+--       conflict branches of the RPC were edited, not just the personal one.
+-- AC-5: reviving an ARCHIVED key is NOT a recurrence. The conflict predicates
+--       are partial on `archived_at is null`, so this inserts a fresh row that
+--       starts back at 1 — the lesson was retired and is being learned again.
+-- AC-6: the CHECK is a real backstop — a direct write of 0 is rejected, so a
+--       corrupt value fails loudly instead of silently sinking a lesson's
+--       salience in whatever ranks on this column later.
+do $$
+declare
+  v_uid constant uuid := '00000000-0000-0000-0000-0000000000a1';
+  v_id1    uuid;
+  v_id2    uuid;
+  v_seen   integer;
+  v_raised boolean := false;
+begin
+  -- AC-1 — first sighting.
+  select id into v_id1 from memory_write(v_uid, 'global', 'seen-count-key', 'v1');
+  select seen_count into v_seen from memories where id = v_id1;
+  assert v_seen = 1,
+    format('seen_count AC-1: a first write must insert seen_count = 1, got %s', v_seen);
+
+  -- AC-2 — the recurrence.
+  select id into v_id2 from memory_write(v_uid, 'global', 'seen-count-key', 'v2');
+  select seen_count into v_seen from memories where id = v_id2;
+  assert v_id2 = v_id1, 'seen_count AC-2: the recurrence must update the existing row';
+  assert v_seen = 2,
+    format('seen_count AC-2: the second write must increment to 2, got %s '
+           '(a value pinned at 2 across further writes means the increment reads excluded)', v_seen);
+
+  -- AC-3 — it keeps counting, on the same row.
+  perform memory_write(v_uid, 'global', 'seen-count-key', 'v3');
+  perform memory_write(v_uid, 'global', 'seen-count-key', 'v4');
+  select seen_count into v_seen from memories where id = v_id1;
+  assert v_seen = 4,
+    format('seen_count AC-3: four writes must leave seen_count = 4, got %s', v_seen);
+  assert (select count(*) from memories where scope = 'global' and key = 'seen-count-key') = 1,
+    'seen_count AC-3: four writes must leave exactly one row';
+
+  -- AC-4 — the service-role branch counts too (p_user_id null).
+  select id into v_id1 from memory_write(null, 'global', 'seen-count-service-key', 'v1');
+  perform memory_write(null, 'global', 'seen-count-service-key', 'v2');
+  select seen_count into v_seen from memories where id = v_id1;
+  assert v_seen = 2,
+    format('seen_count AC-4: the service branch must increment as well, got %s', v_seen);
+
+  -- AC-5 — reviving an archived key starts over.
+  select id into v_id1 from memory_write(v_uid, 'global', 'seen-count-archived-key', 'v1');
+  perform memory_write(v_uid, 'global', 'seen-count-archived-key', 'v2');
+  select seen_count into v_seen from memories where id = v_id1;
+  assert v_seen = 2, format('seen_count AC-5: precondition — expected 2, got %s', v_seen);
+
+  update memories set archived_at = now() where id = v_id1;
+  select id into v_id2 from memory_write(v_uid, 'global', 'seen-count-archived-key', 'v3');
+  select seen_count into v_seen from memories where id = v_id2;
+  assert v_id2 <> v_id1,
+    'seen_count AC-5: writing an archived key must insert a NEW row, not revive the archived one';
+  assert v_seen = 1,
+    format('seen_count AC-5: the revived lesson must start back at 1, got %s', v_seen);
+
+  -- AC-6 — the CHECK backstop.
+  begin
+    update memories set seen_count = 0 where id = v_id2;
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised,
+    'seen_count AC-6: memories_seen_count_positive must reject a non-positive count';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

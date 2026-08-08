@@ -527,6 +527,11 @@ export const MemoryEntrySchema = z.object({
   // Taxonomy. Optional/nullable so a row written before 00056 (NULL kind/host)
   // and an older client that reads neither are both unaffected.
   kind: z.string().nullable().optional(), host: z.string().nullable().optional(),
+  // Recurrence — how many times this lesson has been written (00058). The
+  // column is NOT NULL DEFAULT 1, so a live row always has >= 1; optional here
+  // for the same reason kind/host are, so a client reading a response from a
+  // backend deployed before 00058 is unaffected.
+  seen_count: z.number().int().nullable().optional(),
   // Ownership / authorship. Optional so an older client (and the CLI's
   // RemoteStore, which reads none of them) is unaffected by the addition.
   org_id: z.string().uuid().nullable().optional(),
@@ -547,7 +552,8 @@ export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
  */
 export const MEMORY_SELECT =
   'id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,'
-  + 'origin_repo,origin_branch,origin_commit,origin_pr,kind,host,org_id,created_by,updated_by,orgs(id,name,slug)';
+  + 'origin_repo,origin_branch,origin_commit,origin_pr,kind,host,seen_count,'
+  + 'org_id,created_by,updated_by,orgs(id,name,slug)';
 
 /**
  * Collapse a selected row's `orgs` embed into the flat `org` field.
