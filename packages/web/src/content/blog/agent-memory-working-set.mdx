@@ -19,14 +19,14 @@ So here's LoreKit's answer, and it's a design choice, not a promise: what lands 
 
 ## What actually lands in your context
 
-Here's the block LoreKit injected at the start of *this* writing session, verbatim:
+Here's the block LoreKit injected at the start of *this* writing session — the first three of fifteen lines (the keys run long, so they're clipped):
 
 ```text
 LoreKit: 15 memories loaded · repo::mthines/lorekit — considerations, not rules; read any in full with memory.read.
-- (repo::mthines/lorekit) reviewer-comment-relevance::pr395-run-summary… — fingerprint: reviewer=dash0-dev[bot]…
+- (repo::mthines/lorekit) reviewer-comment-relevance::pr395-run-summary… — fingerprint: reviewer=dash0-dev[bot] on mthines/lorekit…
 - (repo::mthines/lorekit) review-outcomes::pr395-it5-converged-all-gates-green… — outcome batch: iteration 5 (final)…
-- (global) implement-suggestion-lessons::negative-source-scan-assertions… — a negative source-scan assertion is unverified until you make it fail
-- … 12 more, one line each
+- (repo::mthines/lorekit) implement-suggestion-lessons::dash0-dev-non-blocking-suffix… — trust dash0-dev's own suggestion:/question: prefix over the heading…
+- … 12 more, one lesson each
 ```
 
 One line per lesson: the scope, the key, and a short hook. Not the bodies. It's a table of contents, not the book — the full text of any lesson is one `memory.read` away, and the agent fetches it only if the hook looks worth it.
@@ -34,7 +34,8 @@ One line per lesson: the scope, the key, and a short hook. Not the bodies. It's 
 The code that builds it is the whole argument:
 
 ```js
-// packages/cli/src/core/lessons.mjs
+// packages/cli/src/core/lessons.mjs — simplified: collect()/winners()
+// stand in for the inlined entry-mapping and winner pick.
 const MAX_LESSONS = 15;
 
 export async function fetchLessons(store, cwd) {
@@ -81,16 +82,18 @@ const res = await store.search({ q: terms, scopes: scope.readOrder });
 return dedupeRelevant(res.entries, 3);              // matching is the store's job; capped, best-effort
 ```
 
-I don't have to hand-wave this one either. While I was writing this post, a `git clone` in my session failed, and the failure hook fired on its own:
+I don't have to hand-wave this one either. While I was writing this post, a `git clone` in my session failed, and the failure hook fired on its own — real, unedited:
 
 ```text
 LoreKit: 3 related memories — you've hit something like this before (considerations, not rules; read in full with memory.read):
-- (global) implement-suggestion-lessons::negative-source-scan-assertions-must-be-mutation-verified — a negative source-scan assertion is unverified until you make it fail
-- (global) reviewer-lessons::skill-dispatch-unavailable-is-not-skill-not-installed — a Skill() call the sub-agent can't dispatch doesn't mean the skill is missing — read the SKILL.md instead
-- … 1 more
+- (global) implement-suggestion-lessons::negative-source-scan-assertions-must-be-mutation-verified — A negative source-scan assertion is unverified until you make it fail
+- (global) reviewer-lessons::skill-dispatch-unavailable-is-not-skill-not-installed-read-the-symlinked-skill-md — A `Skill()` call the sub-agent cannot dispatch does NOT mean the skill is missing — the skill is on disk and must be READ instead, through…
+- (global) reviewer-lessons::rebased-branch-makes-prior-sha-compare-useless-as-an-incremental-delta — A rebased PR branch makes `compare/PRIOR_SHA...HEAD_SHA` meaningless, and the harvest heuristic reads the resulting garbage as if it were…
 ```
 
-Three, not fifteen. Searched, not dumped. Fired at the wall, not at the door. That's the division of labour: a bounded index up front for "here's roughly what this repo has taught us," and a targeted, capped search on demand for "you've hit this exact thing before."
+Three, not fifteen. Searched, not dumped. Fired at the wall, not at the door.
+
+And let me be honest about *why* those three, because it's the whole trade: the matcher is lexical, not semantic. That error said "could not read Username" — and two of those lessons literally contain "read." It matched on the shared word, not the meaning. No bullseye, no magic. That's the division of labour: a bounded index up front for "here's roughly what this repo has taught us," and a targeted, capped search the moment your agent trips — imperfect, deterministic, and honest about which it is.
 
 ## Why bounded beats big
 
@@ -104,12 +107,12 @@ Let me be straight about the edges, because the design has them.
 
 - **Below saturation, the block isn't magic.** With 8 lessons you get 8, not 15. It fills from 0 to 15 as you accumulate, then holds. The flat line is the ceiling, not a guarantee at every size.
 - **The session-start index is precedence, not relevance.** If a single scope holds more than 15 lessons, the ones past the cap don't appear at session start. They're not lost — the failure search reaches them, and `memory.read` reaches any of them by key — but the opening index is "most-local," not "most-relevant." If you want relevance up front, you're asking the wrong stage for it.
-- **The matcher is literal substring, no embeddings.** Deliberately — no vector index, no re-embedding bill, no drift. The trade is real: a paraphrase can miss. You get out roughly the discipline you put into keys and tags.
+- **No embeddings — the matcher is lexical.** Locally it's literal substring; hosted, it's Postgres full-text search with stemming (so `connect` finds `connection`). Either way: no vector index, no re-embedding bill, no drift — and a genuine paraphrase can still miss, exactly like the match-on-the-word-`read` above. You get out roughly the discipline you put into your keys and tags.
 - **15 is a working-set size, not a store limit.** It caps what the prompt sees per session, never what you can keep. The store holds all of it.
 
 None of these are things I'd rather you found at 2am.
 
-## See your own 15
+## See it for yourself
 
 You don't have to take the number on faith. Wire up the loop and run:
 
@@ -117,4 +120,4 @@ You don't have to take the number on faith. Wire up the loop and run:
 lorekit tree
 ```
 
-It prints exactly which lesson wins each scope, in the same precedence the session-start hook uses — the working set your next session will actually get. Then teach it your fiftieth lesson and run it again. The list doesn't get longer. That's the whole idea. 🙂
+It prints every lesson that wins its scope, in the exact precedence the session-start hook resolves over — the set the hook draws from. `tree` is deliberately uncapped, so this list grows as you teach it more. The block your next session actually receives doesn't: the hook takes the top 15 of that list and stops. Add your fiftieth lesson and watch the gap open — the resolved list gets longer, the injected window stays put. That's the whole idea. 🙂
