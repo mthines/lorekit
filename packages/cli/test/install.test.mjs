@@ -7,6 +7,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { install, defaultHookMode, HOOK_PROMPT_OPTIONS, tokenPlan, maskToken } from '../src/install.mjs';
 import { skillInstallDir, mcpConfigPath, homeDir, installedHookEvents, HOOK_MODES } from '../src/config.mjs';
+import { withHome } from './helpers.mjs';
 
 function tmp(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -84,11 +85,7 @@ test('install --global writes into ~/.claude and preserves existing user config'
     JSON.stringify({ theme: 'dark', mcpServers: { other: { command: 'x' } } }),
   );
 
-  const prevHome = process.env.HOME;
-  const prevProfile = process.env.USERPROFILE;
-  process.env.HOME = home;
-  process.env.USERPROFILE = home;
-  try {
+  await withHome(home, async () => {
     const code = await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, global: true });
     assert.equal(exitOf(code), 0);
 
@@ -100,12 +97,7 @@ test('install --global writes into ~/.claude and preserves existing user config'
     assert.equal(cfg.theme, 'dark', 'unrelated user settings preserved');
     assert.ok(cfg.mcpServers.other, 'other MCP server preserved');
     assert.ok(cfg.mcpServers.lorekit, 'lorekit server added to ~/.claude.json');
-  } finally {
-    if (prevHome === undefined) delete process.env.HOME;
-    else process.env.HOME = prevHome;
-    if (prevProfile === undefined) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = prevProfile;
-  }
+  });
 });
 
 // ── `--mcp-json`: committable, web-ready project .mcp.json ───────────────────
@@ -140,11 +132,7 @@ test('install --mcp-json writes a committable project .mcp.json referencing ${LO
 test('install --global --mcp-json writes BOTH ~/.claude.json and a committable project .mcp.json', async () => {
   const home = tmp('lk-webmcp-home-');
   const root = tmp('lk-webmcp-cwd-');
-  const prevHome = process.env.HOME;
-  const prevProfile = process.env.USERPROFILE;
-  process.env.HOME = home;
-  process.env.USERPROFILE = home;
-  try {
+  await withHome(home, async () => {
     const code = await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, global: true, 'mcp-json': true });
     assert.equal(exitOf(code), 0);
 
@@ -155,12 +143,7 @@ test('install --global --mcp-json writes BOTH ~/.claude.json and a committable p
     // AND the committable web file is written to the project root.
     const web = JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'));
     assertWebMcpShape(web);
-  } finally {
-    if (prevHome === undefined) delete process.env.HOME;
-    else process.env.HOME = prevHome;
-    if (prevProfile === undefined) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = prevProfile;
-  }
+  });
 });
 
 test('install --project --mcp-json does not embed a token (the web form owns .mcp.json)', async () => {
@@ -243,11 +226,7 @@ test('install --mcp-json reaches the write step even on an already-complete inst
   // process (they all read ~/.claude.json), breaking unrelated tests.
   const home = tmp('lk-webmcp-complete-home-');
   const root = tmp('lk-webmcp-complete-');
-  const prevHome = process.env.HOME;
-  const prevProfile = process.env.USERPROFILE;
-  process.env.HOME = home;
-  process.env.USERPROFILE = home;
-  try {
+  await withHome(home, async () => {
     const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, global: true };
     await install(base); // global install, no project .mcp.json yet
     assert.ok(!fs.existsSync(path.join(root, '.mcp.json')), 'no project .mcp.json after a plain global install');
@@ -255,12 +234,7 @@ test('install --mcp-json reaches the write step even on an already-complete inst
     const code = await install({ ...base, 'mcp-json': true });
     assert.equal(exitOf(code), 0);
     assert.ok(fs.existsSync(path.join(root, '.mcp.json')), 'the web .mcp.json is written despite the complete install');
-  } finally {
-    if (prevHome === undefined) delete process.env.HOME;
-    else process.env.HOME = prevHome;
-    if (prevProfile === undefined) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = prevProfile;
-  }
+  });
 });
 
 test('install wires the three lifecycle hooks into project settings.json', async () => {
@@ -320,21 +294,12 @@ test('install preserves existing settings.json content and non-lorekit hooks', a
 test('global install writes hooks into ~/.claude/settings.json', async () => {
   const home = tmp('lk-hooks-home-');
   const root = tmp('lk-hooks-cwd-');
-  const prevHome = process.env.HOME;
-  const prevProfile = process.env.USERPROFILE;
-  process.env.HOME = home;
-  process.env.USERPROFILE = home;
-  try {
+  await withHome(home, async () => {
     await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, global: true });
     const settings = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
     assert.ok(settings.hooks.SessionStart[0].hooks[0].command.includes('hook --adapter claude'));
     assert.ok(!fs.existsSync(path.join(root, '.claude', 'settings.json')), 'project settings untouched for global install');
-  } finally {
-    if (prevHome === undefined) delete process.env.HOME;
-    else process.env.HOME = prevHome;
-    if (prevProfile === undefined) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = prevProfile;
-  }
+  });
 });
 
 test('install reports already-installed and exits 0 without --force on a complete install', async () => {
