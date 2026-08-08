@@ -22,6 +22,7 @@ import { parseTtl } from './ttl.ts';
 import { parseOrigin } from '../_shared/origin.ts';
 import { recordAudit } from '../_shared/audit.ts';
 import { applyTenantScope } from './tenant-scope.ts';
+import { decodeCursor, buildPage } from './cursor.ts';
 import { resolveKindHost } from '../_shared/schemas/tags.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
@@ -201,28 +202,36 @@ export async function toolList(
   userId: string | null,
   span: Span,
 ) {
-  const { scope: rawScope, tags, limit = 50 } = params;
+  const { scope: rawScope, tags, limit = 50, cursor: cursorParam } = params;
   if (!rawScope) throw new Error('scope is required');
   const scope = validateScope(rawScope);
+  const pageLimit = Math.min(limit, 100);
 
   span.setAttributes({ 'lorekit.scope': scope });
 
   const tracedDb = createTracedClient(db, span);
   let query = tracedDb
     .from('memories')
-    .select('key,value,tags,updated_at')
+    .select('id,key,value,tags,updated_at')
     .eq('scope', scope)
     .is('archived_at', null)
     .or('expires_at.is.null,expires_at.gt.now()')
     .order('updated_at', { ascending: false })
-    .limit(Math.min(limit, 100));
+    .order('id', { ascending: false })
+    .limit(pageLimit + 1);
   if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
   if (tags?.length) query = query.overlaps('tags', tags);
+  // Apply cursor keyset predicate when a valid cursor is supplied.
+  const decoded = cursorParam ? decodeCursor(cursorParam) : null;
+  if (decoded && decoded.sort === 'updated_at') {
+    query = query.or(`updated_at.lt.${decoded.ts},and(updated_at.eq.${decoded.ts},id.lt.${decoded.id})`);
+  }
   const { data, error } = await query;
   if (error) throw new Error(error.message);
-  const entries = data ?? [];
-  span.setAttributes({ 'lorekit.result.count': entries.length });
-  return { entries };
+  const rows = data ?? [];
+  const page = buildPage(rows, pageLimit, 'updated_at');
+  span.setAttributes({ 'lorekit.result.count': page.entries.length });
+  return page;
 }
 
 /**
@@ -330,19 +339,22 @@ export async function toolSearch(
   userId: string | null,
   span: Span,
 ) {
-  const { q, scopes, tags, limit = 20 } = params;
+  const { q, scopes, tags, limit = 20, cursor: cursorParam } = params;
   if (!q) throw new Error('q is required');
+  const pageLimit = Math.min(limit, 100);
 
   span.setAttributes({ 'lorekit.search.query': q });
 
   const tracedDb = createTracedClient(db, span);
   let query = tracedDb
     .from('memories')
-    .select('key,value,scope,tags')
+    .select('id,key,value,scope,tags,updated_at')
     .textSearch('fts', q, { type: 'websearch', config: 'english' })
     .is('archived_at', null)
     .or('expires_at.is.null,expires_at.gt.now()')
-    .limit(Math.min(limit, 100));
+    .order('updated_at', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(pageLimit + 1);
   // Tenant .or() and the scope-glob .or() below are applied as two separate
   // .or() calls, which PostgREST ANDs together — never merged into one
   // filter (see tenant-scope.ts and the Edge Cases note in plan.md).
@@ -372,11 +384,17 @@ export async function toolSearch(
     likePatterns.forEach((p) => orParts.push(`scope.like.${p}`));
     if (orParts.length) query = query.or(orParts.join(','));
   }
+  // Apply cursor keyset predicate when a valid cursor is supplied.
+  const decoded = cursorParam ? decodeCursor(cursorParam) : null;
+  if (decoded && decoded.sort === 'updated_at') {
+    query = query.or(`updated_at.lt.${decoded.ts},and(updated_at.eq.${decoded.ts},id.lt.${decoded.id})`);
+  }
   const { data, error } = await query;
   if (error) throw new Error(error.message);
-  const entries = (data ?? []).map((row, i) => ({ ...row, rank: 1 - i * 0.05 }));
-  span.setAttributes({ 'lorekit.result.count': entries.length });
-  return { entries };
+  const rows = (data ?? []).map((row, i) => ({ ...row, rank: 1 - i * 0.05 }));
+  const page = buildPage(rows, pageLimit, 'updated_at');
+  span.setAttributes({ 'lorekit.result.count': page.entries.length });
+  return page;
 }
 
 /** Soft-archive a memory by setting archived_at. */

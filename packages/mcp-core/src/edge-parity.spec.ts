@@ -102,3 +102,18 @@ describe('edge-function mirror parity', () => {
     expect(edge).toBe(core);
   });
 });
+
+describe('cursor mirror parity', () => {
+  // `supabase/functions/mcp/cursor.ts` is a self-contained mirror of
+  // `supabase/functions/_shared/api/paginate.ts`. It cannot cross-import the
+  // REST `_shared/api/` tree (edge-bare-specifier enforces self-containment).
+  // This guard ensures the two stay behaviourally identical — same codec, same
+  // keyset predicate, same buildPage logic — so MCP paging and REST paging
+  // produce compatible cursors a caller can use interchangeably.
+  it('mcp/cursor.ts stays behaviourally in sync with _shared/api/paginate.ts', () => {
+    const sharedPaginate = executableSource(path.join(functionsDir, '_shared/api/paginate.ts'));
+    const mcpCursor = executableSource(path.join(functionsDir, 'mcp/cursor.ts'));
+    expect(sharedPaginate.length).toBeGreaterThan(0);
+    expect(mcpCursor).toBe(sharedPaginate);
+  });
+});

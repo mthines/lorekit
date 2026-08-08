@@ -15,7 +15,7 @@ import { resolveProjectRoot } from './config.mjs';
 import { deriveScope } from './scope.mjs';
 import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { scopeList, gather, lintGroups } from './lessons-view.mjs';
+import { scopeList, gather, gatherStream, lintGroups, DEFAULT_MAX } from './lessons-view.mjs';
 import { log, heading, status, c } from './util.mjs';
 
 export async function lint(args) {
@@ -36,9 +36,47 @@ export async function lint(args) {
   // Deny-wins section suppression, identical to the other read commands.
   const { localDenied, remoteDenied } = resolveDenies(root, { env });
 
-  const offlineResult = localDenied ? { groups: [], total: 0 } : lintGroups(await gather(local, scopes));
+  // `lint` defaults to full-scope survey (--all). Use gatherStream for remote
+  // to drain all pages; gather (single-page) still serves local store which is
+  // already exhaustive. --max, --since, --until are forwarded when provided.
+  const surveyMax = args.max !== undefined ? Number(args.max) : DEFAULT_MAX;
+  const surveySince = args.since || undefined;
+  const surveyUntil = args.until || undefined;
+
+  let offlineResult;
+  if (localDenied) {
+    offlineResult = { groups: [], total: 0 };
+  } else {
+    offlineResult = lintGroups(await gather(local, scopes));
+  }
+
   const remoteAvailable = !remoteDenied && remote.usable();
-  const remoteResult = remoteAvailable ? lintGroups(await gather(remote, scopes)) : { groups: [], total: 0 };
+  let remoteResult;
+  if (!remoteAvailable) {
+    remoteResult = { groups: [], total: 0 };
+  } else {
+    // Stream all pages, accumulating entries per scope for linting.
+    const accumulated = new Map();
+    for (const scope of scopes) accumulated.set(scope, []);
+    await gatherStream(remote, scopes, {
+      max: surveyMax,
+      since: surveySince,
+      until: surveyUntil,
+      onPage: ({ scope, entries }) => {
+        const arr = accumulated.get(scope);
+        if (arr) for (const e of entries) arr.push(e);
+      },
+    });
+    // Build a gather()-shaped result so lintGroups can consume it unchanged.
+    const groups = [];
+    let total = 0;
+    for (const scope of scopes) {
+      const entries = accumulated.get(scope) || [];
+      total += entries.length;
+      groups.push({ scope, entries, error: null });
+    }
+    remoteResult = lintGroups({ groups, total });
+  }
 
   const offlineSection = localDenied
     ? { available: false, reason: `disabled by deny constraint (${localDenied.source})` }

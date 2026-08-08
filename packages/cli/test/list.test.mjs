@@ -53,6 +53,7 @@ test('normalizeEntry maps updated_at → updated and coerces value/tags', () => 
     key: 'k',
     value: '42',
     updated: '2026-07-01T00:00:00Z',
+    created: null,
     tags: [],
     kind: 'lesson',
     host: 'reviewer',

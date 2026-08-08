@@ -13,7 +13,7 @@ import { resolveProjectRoot } from './config.mjs';
 import { deriveScope } from './scope.mjs';
 import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { scopeList, gather, renderSection } from './lessons-view.mjs';
+import { scopeList, gather, gatherStream, renderSection, DEFAULT_MAX } from './lessons-view.mjs';
 import { resolveAppBase, mostSpecificScope } from './deeplink-pure.mjs';
 import { emitLink } from './link.mjs';
 import { log, heading, c } from './util.mjs';
@@ -69,9 +69,54 @@ export async function list(args) {
   // agent-facing control model enforces, honored here in the human read view.
   const { localDenied, remoteDenied } = resolveDenies(root, { env });
 
+  // --all: drain all pages from the remote store (for large scopes). Default
+  // is single-page per scope (what `list` has always shown). The local store is
+  // always exhaustive regardless of --all.
+  const surveyAll = Boolean(args.all);
+  const surveyMax = args.max !== undefined ? Number(args.max) : DEFAULT_MAX;
+  const surveySince = args.since || undefined;
+  const surveyUntil = args.until || undefined;
+
+  // Taxonomy `keep` predicate mirroring `gather()`'s: `gatherStream` neither
+  // forwards `kind`/`host` to the store nor post-filters, so a `--all` drain
+  // must apply the same narrowing here or `list --all --kind X` would ignore X.
+  const wanted = (v) =>
+    v == null ? null : new Set(String(v).split(',').map((s) => s.trim()).filter(Boolean));
+  const kindSet = wanted(filters.kind);
+  const hostSet = wanted(filters.host);
+  const keep = (e) =>
+    (!kindSet || (e.kind != null && kindSet.has(e.kind))) &&
+    (!hostSet || (e.host != null && hostSet.has(e.host)));
+
   const offline = localDenied ? { groups: [], total: 0 } : await gather(local, scopes, filters);
   const remoteAvailable = !remoteDenied && remote.usable();
-  const remoteResult = remoteAvailable ? await gather(remote, scopes, filters) : { groups: [], total: 0 };
+  let remoteResult;
+  if (!remoteAvailable) {
+    remoteResult = { groups: [], total: 0 };
+  } else if (surveyAll) {
+    // Full drain: accumulate all pages into a groups-shaped result.
+    const accumulated = new Map();
+    for (const scope of scopes) accumulated.set(scope, []);
+    await gatherStream(remote, scopes, {
+      max: surveyMax,
+      since: surveySince,
+      until: surveyUntil,
+      onPage: ({ scope, entries }) => {
+        const arr = accumulated.get(scope);
+        if (arr) for (const e of entries) if (keep(e)) arr.push(e);
+      },
+    });
+    const groups = [];
+    let total = 0;
+    for (const scope of scopes) {
+      const entries = accumulated.get(scope) || [];
+      total += entries.length;
+      groups.push({ scope, entries, error: null });
+    }
+    remoteResult = { groups, total };
+  } else {
+    remoteResult = await gather(remote, scopes, filters);
+  }
 
   const offlineSection = localDenied
     ? { available: false, reason: `disabled by deny constraint (${localDenied.source})` }

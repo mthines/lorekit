@@ -23,9 +23,21 @@ lorekit scopes           # every scope in the store + its lesson count
 how you notice a `branch::…` scope you had forgotten about, or a scope with
 hundreds of lessons that dwarfs the rest. Neither command reports a
 last-activity date — the inventory is counts only — so judge staleness from the
-lessons themselves once you narrow in (`lorekit list --scope <scope>` tags each
-one with its `updated` date). Read both, then pick the noisiest scope as the
-target for this pass and narrow to it with `--scope <scope>` from here on.
+lessons themselves once you narrow in. Read both, then pick the noisiest scope as
+the target for this pass and narrow to it with `--scope <scope>` from here on.
+
+**Large scopes:** when a scope has more lessons than a single page, use:
+
+```bash
+lorekit list --all --scope <scope>           # drain all pages; tags each lesson with its updated date
+lorekit list --all --scope <scope> --max 500 # cap at 500 to get a representative sample
+lorekit list --all --scope <scope> --since 2024-01-01  # only lessons created since that date
+```
+
+The remote store is paginated (default 50 entries per `list` call, 100 per
+`lint`/`dedupe` call). `--all` drains every page; `--max` applies a hard cap
+(default 5000). `lint` and `dedupe` default to full-scope survey — add `--max`
+or `--since` when the population is large enough to slow things down.
 
 ## Phase 2 — Lint (read-only)
 
@@ -56,6 +68,9 @@ makes it a clean CI gate — a passing `lint` is your Phase 6 proof.
 
 ```bash
 lorekit dedupe --json --scope <scope> --threshold 0.85
+# For large scopes, narrow the population:
+lorekit dedupe --json --scope <scope> --threshold 0.85 --key-prefix "debug-" --max 1000
+lorekit dedupe --json --scope <scope> --threshold 0.85 --since 2024-01-01
 ```
 
 Each cluster is a set of lessons whose values overlap heavily by word tokens.
@@ -63,6 +78,11 @@ Start high (`0.85`) to see the confident duplicates, then re-run lower (`0.75`,
 `0.7`) to surface looser paraphrases — but the lower you go, the more the
 clusters are coincidental overlaps rather than true duplicates, so read more
 carefully.
+
+`dedupe` surveys the full scope by default. When the population exceeds 2000
+entries it stops and prints a narrowing warning — use `--key-prefix` to focus
+on a key namespace, or `--since` to limit the date range. The `--max` flag sets
+a lower cap (default 5000, internal safety cap at 2000).
 
 For every cluster you intend to act on, read the members in full first:
 

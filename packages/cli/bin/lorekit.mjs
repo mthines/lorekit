@@ -636,6 +636,8 @@ const KNOWN_FLAGS = [
   'value', 'tags', 'source-agent', 'trigger', 'kind', 'host', 'ttl-days', 'clear-ttl', 'org', 'remote', 'local',
   'link', 'base', 'q', 'owner', 'range', 'view', 'archived',
   'origin-repo', 'origin-branch', 'origin-commit', 'origin-pr', 'no-origin',
+  // Scale-aware survey flags
+  'all', 'max', 'since', 'until', 'key-prefix',
 ];
 
 // Commands that write to disk / talk to the network on a human's behalf. These
@@ -660,7 +662,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry', 'all'],
     known: KNOWN_FLAGS,
   });
 
