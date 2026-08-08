@@ -103,6 +103,32 @@ export function validateScope(raw: string): string {
 }
 
 /**
+ * Validate a scope for TELEMETRY, never for authorization.
+ *
+ * `validateScope` is the one canonical grammar and stays that way — this is a
+ * thin total wrapper over it, not a second, laxer validator. The difference is
+ * only in the failure mode: `usage_events.scope` is a dimension recorded
+ * alongside the operation it measures, and a telemetry dimension must never
+ * fail the call it is measuring (the 00044/00054 posture). So an absent,
+ * non-string or ungrammatical scope degrades to `null` — recorded as
+ * unattributed — instead of throwing.
+ *
+ * Deliberately NOT used on the read side: `GET /memories/read-activity?scope=`
+ * is a caller-supplied FILTER, and silently coercing a typo'd filter to "no
+ * filter" would answer a different question than the one asked. That path uses
+ * the throwing `validateScope` and 400s, matching the `?correlation_id=`
+ * precedent.
+ */
+export function safeValidateScope(raw: unknown): string | null {
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  try {
+    return validateScope(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Return the scope type for use as a low-cardinality telemetry attribute.
  */
 export function scopeType(scope: string): ScopePrefix {

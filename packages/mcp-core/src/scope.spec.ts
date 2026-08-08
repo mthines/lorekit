@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateScope, scopeType, expandScopeForSearch, ScopeValidationError } from './scope.js';
+import { validateScope, safeValidateScope, scopeType, expandScopeForSearch, ScopeValidationError } from './scope.js';
 
 describe('validateScope', () => {
   it('accepts "global"', () => {
@@ -101,6 +101,57 @@ describe('expandScopeForSearch', () => {
       'project::a b::*',
     ]) {
       expect(() => expandScopeForSearch(evil)).toThrow(ScopeValidationError);
+    }
+  });
+});
+
+// `usage_events.scope` (migration 00058) is a telemetry dimension recorded
+// alongside the operation it measures, so its validator must be TOTAL: the one
+// thing it may never do is throw, because throwing would fail the very call it
+// exists to describe. It is a thin wrapper over `validateScope`, not a second
+// grammar — these cases pin the wrapper's contract, not the grammar's.
+describe('safeValidateScope', () => {
+  it('normalises a valid scope exactly as validateScope does', () => {
+    expect(safeValidateScope('Repo::mthines/LoreKit')).toBe('repo::mthines/lorekit');
+    expect(safeValidateScope('GLOBAL')).toBe('global');
+    expect(safeValidateScope('branch::mthines/x::Feat/A')).toBe('branch::mthines/x::feat/a');
+  });
+
+  // The delegation is the point: anything validateScope accepts, this returns
+  // IDENTICALLY, and anything it rejects becomes null. Asserting agreement
+  // rather than a hardcoded list is what stops the two drifting apart.
+  it('agrees with validateScope on every accepted input', () => {
+    for (const raw of ['global', 'project::my.app', 'repo::mthines/lorekit', 'branch::a/b::main']) {
+      expect(safeValidateScope(raw)).toBe(validateScope(raw));
+    }
+  });
+
+  it('returns null for an ungrammatical scope instead of throwing', () => {
+    for (const bad of ['bogus:x', 'repo:mthines/x', 'repo::', 'repo::no-slash', 'nope::x', 'project::a b']) {
+      expect(() => validateScope(bad)).toThrow(ScopeValidationError);
+      expect(safeValidateScope(bad)).toBeNull();
+    }
+  });
+
+  it('returns null for absent / empty / non-string input', () => {
+    expect(safeValidateScope('')).toBeNull();
+    expect(safeValidateScope(null)).toBeNull();
+    expect(safeValidateScope(undefined)).toBeNull();
+    expect(safeValidateScope(42)).toBeNull();
+    expect(safeValidateScope({})).toBeNull();
+    expect(safeValidateScope(['repo::a/b'])).toBeNull();
+  });
+
+  it('never throws, whatever it is handed', () => {
+    const hostile: unknown[] = [
+      '', ' ', '::', ':::', 'repo::"a",value.not.is.null', '\u0000', 'x'.repeat(5000),
+      null, undefined, 0, NaN, true, [], {}, Symbol('s'),
+      // A property that throws when read would break a naive implementation
+      // that touched anything other than the value itself.
+      { get length() { throw new Error('boom'); } },
+    ];
+    for (const input of hostile) {
+      expect(() => safeValidateScope(input)).not.toThrow();
     }
   });
 });

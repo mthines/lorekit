@@ -43,4 +43,35 @@ export function validateScope(raw: string): string {
   return normalized;
 }
 
+/**
+ * Validate a scope for TELEMETRY, never for authorization.
+ *
+ * HAND-MIRRORED from `packages/mcp-core/src/scope.ts`, NOT generated. This file
+ * is deliberately excluded from `edge-parity.spec.ts`'s MIRRORS list because the
+ * two `validateScope` BODIES differ (the edge copy is intentionally lighter —
+ * see the note inside it), so a whole-file comparison would be permanently red.
+ * `safeValidateScope` itself is identical in both trees by construction: it is
+ * a total wrapper that delegates every grammar decision to whichever
+ * `validateScope` is in scope, so the intentional body difference propagates
+ * rather than being duplicated. Keep the two wrappers in step by hand.
+ *
+ * Rationale: `usage_events.scope` is a dimension recorded alongside the
+ * operation it measures, and a telemetry dimension must never fail the call it
+ * is measuring (the 00044/00054 posture). An absent, non-string or
+ * ungrammatical scope degrades to `null` — recorded as unattributed.
+ *
+ * Deliberately NOT used on the read side: `GET /memories/read-activity?scope=`
+ * is a caller-supplied FILTER, and silently coercing a typo'd filter to "no
+ * filter" would answer a different question than the one asked. That path uses
+ * the throwing `validateScope` and 400s.
+ */
+export function safeValidateScope(raw: unknown): string | null {
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  try {
+    return validateScope(raw);
+  } catch {
+    return null;
+  }
+}
+
 
