@@ -31,9 +31,6 @@ export default function OverviewLoading() {
         </div>
       </div>
 
-      {/* Sparkline skeleton */}
-      <div className="h-36 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]" />
-
       {/* Scope health grid */}
       <div>
         <div className="mb-3 h-3 w-48 animate-pulse rounded bg-[var(--color-bg-elevated)]" />
