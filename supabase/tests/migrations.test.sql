@@ -4256,10 +4256,14 @@ $$;
 -- could read it. 00058 makes it real and puts the increment in the upsert,
 -- which is where a recurrence actually happens.
 -- AC-1: a first write inserts with seen_count = 1.
--- AC-2: a second write to the same (tenant, scope, key) increments to 2 — the
---       increment reads `memories.seen_count`, not `excluded.seen_count`, which
---       always carries the literal 1 and would pin every recurrence at 2.
--- AC-3: the count keeps climbing, and the row is still the SAME row.
+-- AC-2: a second write to the same (tenant, scope, key) increments to 2 and
+--       updates the existing row instead of inserting a second one. This says
+--       nothing about WHICH row the increment reads: `memories.seen_count + 1`
+--       and `excluded.seen_count + 1` both yield 2 on the second write.
+-- AC-3: the count keeps climbing, and the row is still the SAME row. This is
+--       the assertion that discriminates the two: `excluded` is the row the
+--       INSERT proposed and always carries the literal 1, so an `excluded`-based
+--       increment would pin the count at 2 while four writes must leave 4.
 -- AC-4: the service-role branch (p_user_id null) increments too — all three
 --       conflict branches of the RPC were edited, not just the personal one.
 -- AC-5: reviving an ARCHIVED key is NOT a recurrence. The conflict predicates
@@ -4287,15 +4291,15 @@ begin
   select seen_count into v_seen from memories where id = v_id2;
   assert v_id2 = v_id1, 'seen_count AC-2: the recurrence must update the existing row';
   assert v_seen = 2,
-    format('seen_count AC-2: the second write must increment to 2, got %s '
-           '(a value pinned at 2 across further writes means the increment reads excluded)', v_seen);
+    format('seen_count AC-2: the second write must increment to 2, got %s', v_seen);
 
   -- AC-3 — it keeps counting, on the same row.
   perform memory_write(v_uid, 'global', 'seen-count-key', 'v3');
   perform memory_write(v_uid, 'global', 'seen-count-key', 'v4');
   select seen_count into v_seen from memories where id = v_id1;
   assert v_seen = 4,
-    format('seen_count AC-3: four writes must leave seen_count = 4, got %s', v_seen);
+    format('seen_count AC-3: four writes must leave seen_count = 4, got %s '
+           '(a value pinned at 2 means the increment reads excluded.seen_count)', v_seen);
   assert (select count(*) from memories where scope = 'global' and key = 'seen-count-key') = 1,
     'seen_count AC-3: four writes must leave exactly one row';
 
