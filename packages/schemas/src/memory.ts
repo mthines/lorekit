@@ -530,8 +530,11 @@ export const MemoryEntrySchema = z.object({
   // Recurrence — how many times this lesson has been written (00059). The
   // column is NOT NULL DEFAULT 1, so a live row always has >= 1; optional here
   // for the same reason kind/host are, so a client reading a response from a
-  // backend deployed before 00059 is unaffected.
-  seen_count: z.number().int().nullable().optional(),
+  // backend deployed before 00059 is unaffected. Optional but NOT nullable,
+  // unlike the neighbours above: those mirror genuinely nullable columns,
+  // whereas a read of this one yields a number or omits the field entirely —
+  // there is no null for the schema to admit.
+  seen_count: z.number().int().optional(),
   // Ownership / authorship. Optional so an older client (and the CLI's
   // RemoteStore, which reads none of them) is unaffected by the addition.
   org_id: z.string().uuid().nullable().optional(),
