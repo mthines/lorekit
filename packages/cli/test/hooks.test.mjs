@@ -218,9 +218,13 @@ test('fetchLessons keeps the most-specific value per key — same as resolvePrec
   const expected = [];
   for (const g of resolved) for (const e of g.entries) if (e.winning) expected.push(e);
 
+  // MEMBERSHIP, not order. `fetchLessons` now ranks the winners before capping,
+  // so the injected ORDER is the scorer's; what precedence owns — and what this
+  // test is about — is which entries are in the set at all. Compared as sorted
+  // sets so a ranking change can never silently turn into a membership change.
   assert.deepEqual(
-    lessons.map((l) => `${l.scope}:${l.key}`),
-    expected.map((l) => `${l.scope}:${l.key}`),
+    lessons.map((l) => `${l.scope}:${l.key}`).sort(),
+    expected.map((l) => `${l.scope}:${l.key}`).sort(),
   );
   // The single `shared` winner is the FIRST (most-specific) scope in readOrder.
   const sharedWinners = lessons.filter((l) => l.key === 'shared');
@@ -573,4 +577,147 @@ test('nudges combine the tags hint and the ttl hint', () => {
 test('an invalid configured ttl produces no hint rather than a broken one', () => {
   const control = { tagsDefault: [], scopeDefaults: null, ttlDefault: 900 };
   assert.doesNotMatch(retrospectiveNudge(fakeScope(), control), /ttl_days/);
+});
+
+// ── fetchLessons ranks the winners before the cap ────────────────────────────
+// The observed failure this fixes: on an active repo the newest cluster of
+// writes is one task's iteration log, and a recency-ordered cap handed that
+// cluster every slot — ~13 of 15 — evicting the lessons that had been
+// re-learned all month.
+
+const RANK_NOW = Date.parse('2026-08-01T00:00:00.000Z');
+const rankDaysAgo = (n) => new Date(RANK_NOW - n * 86400000).toISOString();
+
+// A lesson shaped the way the store layer now hands them over.
+function seeded(scope, key, { days = 0, seen = 1, value = 'v' } = {}) {
+  return { scope, key, value, seenCount: seen, updatedAt: rankDaysAgo(days) };
+}
+
+test('fetchLessons ranked — the injected set is ordered by score, not by group order', async () => {
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  const s = scope.readOrder[0];
+
+  // Seeded in the WORST possible order for a recency-or-insertion sort: the
+  // best lesson is last.
+  const entries = [
+    seeded(s, 'stale-oneoff', { days: 90, seen: 1 }),
+    seeded(s, 'fresh-oneoff', { days: 0, seen: 1 }),
+    seeded(s, 'recurring', { days: 2, seen: 20 }),
+  ];
+  const { lessons } = await fetchLessons(fakeStore({ [s]: entries }), process.cwd(), { now: RANK_NOW });
+
+  assert.equal(lessons[0].key, 'recurring');
+  assert.equal(lessons[lessons.length - 1].key, 'stale-oneoff');
+});
+
+test('fetchLessons salience top slots — a recurring lesson survives a flood of newer one-offs', async () => {
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  const s = scope.readOrder[0];
+
+  // The reported shape: one task's iteration log, written today, plus the
+  // hard-won lesson from last week. Under the old recency cap the flood took
+  // all 15 slots and `hard-won` was never injected.
+  const flood = Array.from({ length: 30 }, (_, i) => seeded(s, `iteration-${i}`, { days: 0, seen: 1 }));
+  const entries = [...flood, seeded(s, 'hard-won', { days: 7, seen: 12 })];
+
+  const { lessons } = await fetchLessons(fakeStore({ [s]: entries }), process.cwd(), { now: RANK_NOW });
+
+  assert.equal(lessons.length, 15, 'still capped');
+  assert.equal(lessons[0].key, 'hard-won', 'and it is now the FIRST thing the agent reads');
+
+  // The regression guard: prove the old ordering would have dropped it.
+  const byRecencyThenInsertion = entries.slice(0, 15).map((e) => e.key);
+  assert.ok(
+    !byRecencyThenInsertion.includes('hard-won'),
+    'precondition — the pre-ranking cap did not include it',
+  );
+});
+
+test('fetchLessons ranked — with nothing recurring, the order is still recency', async () => {
+  // Salience must not invent a preference where there is no recurrence signal:
+  // a store of pure one-offs should behave exactly as it always did.
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  const s = scope.readOrder[0];
+  const entries = [
+    seeded(s, 'c', { days: 30 }),
+    seeded(s, 'a', { days: 1 }),
+    seeded(s, 'b', { days: 10 }),
+  ];
+  const { lessons } = await fetchLessons(fakeStore({ [s]: entries }), process.cwd(), { now: RANK_NOW });
+  assert.deepEqual(lessons.map((l) => l.key), ['a', 'b', 'c']);
+});
+
+test('precedence unchanged — a shadowed lesson cannot be ranked back into the set', async () => {
+  // The load-bearing property of running the scorer on the WINNERS only. The
+  // global copy is made maximally attractive (very recent, highly recurring)
+  // and the project copy maximally unattractive; precedence must still win,
+  // because which copy of a key survives is a correctness rule and not a
+  // preference the scorer gets a vote on.
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  if (scope.readOrder.length < 2) return; // needs at least two scopes to shadow
+  const [narrow] = scope.readOrder;
+  const broad = scope.readOrder[scope.readOrder.length - 1];
+
+  const { lessons } = await fetchLessons(
+    fakeStore({
+      [narrow]: [seeded(narrow, 'shared', { days: 400, seen: 1, value: 'narrow wins' })],
+      [broad]: [seeded(broad, 'shared', { days: 0, seen: 99, value: 'broad must lose' })],
+    }),
+    process.cwd(),
+    { now: RANK_NOW },
+  );
+
+  const shared = lessons.filter((l) => l.key === 'shared');
+  assert.equal(shared.length, 1, 'still exactly one copy of the key');
+  assert.equal(shared[0].scope, narrow, 'the most-specific scope still wins');
+  assert.equal(shared[0].value, 'narrow wins');
+});
+
+test('fetchLessons ranked — an entry with no ranking fields is still injected', async () => {
+  // A store that predates the seenCount/updatedAt projection (or a scope read
+  // that returned bare rows) must not vanish from the injection just because it
+  // scores zero — the hook is best-effort and a lesson is better than nothing.
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  const s = scope.readOrder[0];
+  const { lessons } = await fetchLessons(
+    fakeStore({ [s]: [{ scope: s, key: 'bare', value: 'v' }, seeded(s, 'scored', { days: 1, seen: 5 })] }),
+    process.cwd(),
+    { now: RANK_NOW },
+  );
+  assert.deepEqual(lessons.map((l) => l.key), ['scored', 'bare']);
+});
+
+test('formatLessons index shape — ranking did not change what is emitted', async () => {
+  // PR-3 is an ORDERING change. The rendered block is still the compact index:
+  // one line per lesson, `scope::key` plus a short hook, bodies a memory.read
+  // away. A change here would be a change to the injected contract.
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  const s = scope.readOrder[0];
+  const { lessons } = await fetchLessons(
+    fakeStore({
+      [s]: [
+        seeded(s, 'recurring', { days: 2, seen: 9, value: 'Always re-read the migration first.' }),
+        seeded(s, 'one-off', { days: 0, seen: 1, value: 'A single sighting.' }),
+      ],
+    }),
+    process.cwd(),
+    { now: RANK_NOW },
+  );
+  const text = formatLessons(lessons, scope);
+  const bullets = text.split('\n').filter((l) => l.startsWith('- ('));
+
+  // Still ONE line per lesson, still `- (scope) key — hook`.
+  assert.equal(bullets.length, 2);
+  assert.match(bullets[0], /^- \(.+\) recurring — Always re-read the migration first\.$/);
+  assert.match(bullets[1], /^- \(.+\) one-off — A single sighting\.$/);
+  assert.match(text.split('\n')[0], /^LoreKit: 2 memories loaded ·/);
+  // The score is an internal ordering device — it must not leak into the
+  // agent-facing text.
+  assert.ok(!/score/i.test(text), 'the score is not rendered');
 });
