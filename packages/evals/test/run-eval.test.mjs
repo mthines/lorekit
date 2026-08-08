@@ -4,8 +4,11 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
-import { main, parseArgs, runId } from "../bin/run-eval.mjs";
+import { isEntryPoint, main, parseArgs, runId } from "../bin/run-eval.mjs";
+
+const SELF = fileURLToPath(new URL("../bin/run-eval.mjs", import.meta.url));
 
 test("parseArgs defaults to the N=3 indicator design (AC-1.3)", () => {
   const options = parseArgs(["arm0"]);
@@ -49,6 +52,41 @@ test("parseArgs rejects nonsense rather than running a bad experiment", () => {
     /positive number/,
   );
   assert.throws(() => parseArgs(["arm0", "--nope"]), /unknown option/);
+});
+
+test("isEntryPoint matches the plain path, and rejects a non-entry", () => {
+  assert.equal(isEntryPoint(SELF), true);
+  // A relative invocation resolves to the same file.
+  assert.equal(isEntryPoint(path.relative(process.cwd(), SELF)), true);
+  assert.equal(isEntryPoint(path.join(path.dirname(SELF), "other.mjs")), false);
+  assert.equal(isEntryPoint(undefined), false);
+  assert.equal(isEntryPoint(""), false);
+});
+
+test("isEntryPoint survives a symlinked checkout and a path containing a space", async () => {
+  // `node --test` imports this module, so argv[1] is the test runner, not the
+  // CLI — the guard must be false here or importing would execute main().
+  assert.equal(isEntryPoint(process.argv[1]), false);
+
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "evals link "));
+  const link = path.join(dir, "run-eval.mjs");
+  try {
+    fs.symlinkSync(SELF, link);
+    // The naive `import.meta.url === \`file://${argv[1]}\`` form fails here on
+    // BOTH counts: the symlink never equals the realpath, and the space would
+    // be percent-encoded on the `import.meta.url` side.
+    assert.notEqual(`file://${link}`, new URL("../bin/run-eval.mjs", import.meta.url).href);
+    assert.equal(isEntryPoint(link), true);
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("isEntryPoint treats a missing argv[1] as 'not the entry point'", () => {
+  assert.equal(
+    isEntryPoint(path.join(os.tmpdir(), "definitely-not-here-9c1f", "x.mjs")),
+    false,
+  );
 });
 
 test("runId is filesystem-safe and sortable", () => {

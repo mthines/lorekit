@@ -11,9 +11,11 @@
 //   golden  arms 0/A/B/C x {organic,canonical}                        (PR4)
 //   scale   corpus size x lesson position sweep                       (PR5)
 //   review  pr-reviewer control vs treatment on PR #395               (PR6)
+import { realpathSync } from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 import {
   MODEL_UNDER_TEST,
@@ -195,7 +197,39 @@ export async function main(argv = process.argv.slice(2)) {
   return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+/**
+ * True when this module is the process entry point.
+ *
+ * Two independent traps, and fixing one hides the other:
+ *   • ENCODING — `import.meta.url` percent-encodes (`/My Repos/` → `/My%20Repos/`)
+ *     while `process.argv[1]` does not, so the naive
+ *     `import.meta.url === \`file://${process.argv[1]}\`` comparison is false for
+ *     any path with a space or a non-ASCII character (and for every Windows
+ *     path). Fixed by comparing decoded paths via `fileURLToPath`.
+ *   • SYMLINKS — Node resolves `import.meta.url` to the REALPATH (its default
+ *     is `--no-preserve-symlinks`), while `argv[1]` keeps whatever symlinked
+ *     path the caller typed. A checkout reached through a symlink (worktree
+ *     helpers, CI cache mounts) therefore compares realpath against symlink.
+ * Both arms are kept: the direct comparison is what still matches under
+ * `node --preserve-symlinks`, where `import.meta.url` is itself the symlinked
+ * path, so collapsing this to the realpath arm alone would be a regression.
+ * A missing `argv[1]` (`realpathSync` throws ENOENT) is not a match either.
+ *
+ * The failure mode this guards is silent: the CLI exits 0 having run nothing.
+ */
+export function isEntryPoint(entry = process.argv[1]) {
+  if (typeof entry !== "string" || entry.length === 0) return false;
+  const self = fileURLToPath(import.meta.url);
+  const entryPath = path.resolve(entry);
+  if (self === entryPath) return true;
+  try {
+    return self === realpathSync(entryPath);
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryPoint()) {
   main().then(
     (code) => process.exit(code),
     (err) => {
