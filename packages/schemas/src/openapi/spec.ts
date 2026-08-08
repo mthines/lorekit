@@ -233,7 +233,15 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
       '`memory.search` / `memory.list_archived`. Calls that identified themselves as the LoreKit ' +
       'dashboard (`X-LoreKit-Client: dashboard`) are EXCLUDED: browsing your own lore in the web UI ' +
       'is visualisation, not consumption, and would otherwise make this series grow every time you ' +
-      'looked at it. `GET /memories/usage` still counts them — use it for the complete ledger.',
+      'looked at it. `GET /memories/usage` still counts them — use it for the complete ledger.\n\n' +
+      'Buckets are returned one per `(bucket, scope)` cell, mirroring `GET /memories/activity`. ' +
+      '`scope` is nullable: a read whose scope the server could not resolve (carried in a request ' +
+      'body, or ungrammatical) is recorded as unattributed rather than dropped, so it still counts ' +
+      'toward the unfiltered total. Pass the optional `scope` query parameter to restrict the ' +
+      'series to one exact scope; because the metric is additive, those buckets SUM to the ' +
+      'per-scope headline. That per-scope total can legitimately be SMALLER than the account ' +
+      'total — the difference is the unattributable reads. An invalid `scope` is a `400`, not a ' +
+      'silently ignored filter.',
     security, request: { query: ReadActivityQuerySchema },
     responses: {
       200: { description: 'Read-activity buckets', content: { 'application/json': { schema: ReadActivityResponseSchema } } },

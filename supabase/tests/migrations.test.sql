@@ -4249,6 +4249,264 @@ begin
 end;
 $$;
 
+-- ── 74. usage_events.scope — per-scope read attribution (00058) ─────────────
+-- Reads already carried `scope_type` (the low-cardinality family: repo /
+-- branch / …), which cannot answer "how much did I read from
+-- repo::mthines/lorekit". 00058 adds the EXACT scope and regroups
+-- lorekit_read_activity one row per (bucket, scope), mirroring
+-- lorekit_memory_activity (00051), plus an optional exact-match p_scope filter.
+--
+-- AC-1: the column is nullable with a length CHECK backstop and a partial
+--       index; a NULL-scope row inserts fine and a 201-char one is refused.
+-- AC-2: the series is GROUPED — two scopes in one bucket come back as two rows
+--       with their own counts, not one merged total.
+-- AC-3: p_scope restricts to one exact scope, and the filtered buckets SUM to
+--       that scope's headline. This is why no companion total RPC exists.
+-- AC-4: a NULL-scope read is still COUNTED in the unfiltered series — reads
+--       whose scope could not be resolved are unattributed, never dropped —
+--       and is NOT swept into a named-scope filter.
+-- AC-5: the 00054 dashboard exclusion survives the regrouping, per scope.
+-- AC-6: the writer persists p_scope, and a call that omits it (every caller
+--       written before this migration) still succeeds with scope NULL.
+--
+-- Dated 2026-06 so it cannot collide with §71's 2026-04 fixture, §72's 2026-05
+-- one, or the usage-statistics section's all-time totals.
+insert into usage_events (user_id, plan_name, tool_name, scope_type, auth_type, outcome, duration_ms, result_count, client, scope, created_at) values
+  -- Two DIFFERENT scopes inside the SAME hour, which is what makes AC-2
+  -- discriminating: an ungrouped RPC returns one row of 12 here, not two.
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',   'repo',   'api_key', 'ok', 10,  8, 'mcp', 'repo::mthines/lorekit',  timestamptz '2026-06-01 01:10:00+00'),
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.search', 'repo',   'api_key', 'ok', 10,  4, 'mcp', 'repo::mthines/gw-tools', timestamptz '2026-06-01 01:20:00+00'),
+  -- A second event for the FIRST scope in a LATER bucket: p_scope must sum
+  -- across buckets, so a filter that only ever returns one row would fail AC-3.
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.read',   'repo',   'api_key', 'ok', 10,  5, 'mcp', 'repo::mthines/lorekit',  timestamptz '2026-06-01 03:00:00+00'),
+  -- Unattributable: a scope the server could not resolve (body-carried, or
+  -- ungrammatical and coerced to null by safeValidateScope).
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',   'global', 'api_key', 'ok', 10,  3, 'mcp', null,                     timestamptz '2026-06-01 01:30:00+00'),
+  -- The dashboard drawing the chart, under a real scope — must stay excluded.
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',   'repo',   'jwt',     'ok', 10, 99, 'dashboard', 'repo::mthines/lorekit', timestamptz '2026-06-01 01:40:00+00');
+
+do $$
+declare
+  v_rows    int;
+  v_count   bigint;
+  v_scope   text;
+  v_total   bigint;
+  v_id      uuid;
+  v_raised  boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- ── AC-1: the column, the CHECK and the index are real schema, not prose ──
+  select count(*) into v_rows
+    from information_schema.columns
+   where table_name = 'usage_events' and column_name = 'scope' and is_nullable = 'YES';
+  assert v_rows = 1, 'usage scope AC-1: usage_events.scope must exist and be nullable';
+
+  select count(*) into v_rows
+    from pg_indexes
+   where tablename = 'usage_events' and indexname = 'usage_events_user_scope_created_idx';
+  assert v_rows = 1, 'usage scope AC-1: the partial (user_id, scope, created_at desc) index must exist';
+
+  -- The CHECK is a BACKSTOP against an unbounded value inflating analytics
+  -- cardinality — the app-side validator is the primary gate, but a direct
+  -- insert must not be able to bypass the storage guarantee. 200 is the
+  -- boundary, so 201 is the discriminating length.
+  begin
+    insert into usage_events (user_id, tool_name, auth_type, outcome, scope)
+      values ('00000000-0000-0000-0000-0000000000a1', 'memory.list', 'jwt', 'ok', repeat('x', 201));
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, 'usage scope AC-1: a 201-char scope must violate the CHECK';
+
+  -- ...and exactly 200 is still admitted, so the CHECK is a bound, not a ban.
+  insert into usage_events (user_id, tool_name, auth_type, outcome, scope)
+    values ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'jwt', 'ok', repeat('x', 200));
+
+  -- ── AC-2 + AC-4 + AC-5: the grouped shape ─────────────────────────────────
+  -- The 01:00 hour holds three counted reads under three distinct scope values
+  -- (lorekit 8, gw-tools 4, NULL 3) plus the dashboard's 99, which is excluded.
+  select count(*) into v_rows
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 01:00:00+00', timestamptz '2026-06-01 02:00:00+00');
+  assert v_rows = 3,
+    format('usage scope AC-2/AC-4: the 01:00 hour must yield 3 (bucket,scope) rows, got %s', v_rows);
+
+  -- AC-2: each scope keeps its OWN count. A merged 12 here would mean the
+  -- grouping is cosmetic.
+  select count into v_count
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 01:00:00+00', timestamptz '2026-06-01 02:00:00+00')
+   where scope = 'repo::mthines/lorekit';
+  assert v_count = 8,
+    format('usage scope AC-2: repo::mthines/lorekit must read 8 in the 01:00 hour, got %s', v_count);
+
+  select count into v_count
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 01:00:00+00', timestamptz '2026-06-01 02:00:00+00')
+   where scope = 'repo::mthines/gw-tools';
+  assert v_count = 4,
+    format('usage scope AC-2: repo::mthines/gw-tools must read 4 in the 01:00 hour, got %s', v_count);
+
+  -- AC-4: the unattributed read is present as a `scope is null` row and still
+  -- counted. Dropping it would silently shrink the account total, which is the
+  -- exact failure `is distinct from` guards against on the client column.
+  select count into v_count
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 01:00:00+00', timestamptz '2026-06-01 02:00:00+00')
+   where scope is null;
+  assert v_count = 3,
+    format('usage scope AC-4: the NULL-scope read must be counted as 3, got %s', v_count);
+
+  -- AC-5: the dashboard's 99 is nowhere in the hour — under ANY scope. The
+  -- whole-hour total is 8 + 4 + 3 = 15; 114 would mean the regrouping lost the
+  -- 00054 exclusion.
+  select coalesce(sum(count), 0) into v_total
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 01:00:00+00', timestamptz '2026-06-01 02:00:00+00');
+  assert v_total = 15,
+    format('usage scope AC-5: the 01:00 hour must total 15 with the dashboard excluded, got %s', v_total);
+
+  -- ── AC-3: p_scope is an exact filter whose buckets SUM to the headline ────
+  -- lorekit is read in two different buckets (8 at 01:00, 5 at 03:00). Two rows
+  -- back, summing to 13 — the per-scope headline the Explorer's stats card
+  -- shows above these very bars.
+  select count(*), coalesce(sum(count), 0) into v_rows, v_total
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 00:00:00+00', timestamptz '2026-06-02 00:00:00+00',
+      'repo::mthines/lorekit');
+  assert v_rows = 2,
+    format('usage scope AC-3: the filter must span buckets, expected 2 rows, got %s', v_rows);
+  assert v_total = 13,
+    format('usage scope AC-3: repo::mthines/lorekit must sum to 13, got %s', v_total);
+
+  -- AC-3: and it is EXACT — the other scope is gone entirely, not merely
+  -- ordered later.
+  select count(*) into v_rows
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 00:00:00+00', timestamptz '2026-06-02 00:00:00+00',
+      'repo::mthines/lorekit')
+   where scope is distinct from 'repo::mthines/lorekit';
+  assert v_rows = 0,
+    format('usage scope AC-3: a filtered call must return only that scope, got %s foreign rows', v_rows);
+
+  -- AC-3 + AC-4: filtering by a named scope must NOT sweep in the NULL-scope
+  -- remainder. `=` and not `is not distinct from` — a caller asking for a named
+  -- scope wants events attributed to it. This is why the per-scope total (13)
+  -- is legitimately SMALLER than the day's account total, and the UI says so.
+  select coalesce(sum(count), 0) into v_total
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day',
+      timestamptz '2026-06-01 00:00:00+00', timestamptz '2026-06-02 00:00:00+00');
+  assert v_total = 20,
+    format('usage scope AC-4: the unfiltered day must total 20 (13 + 4 + 3), got %s', v_total);
+
+  -- A filter naming a scope with no events is empty, not everything — the
+  -- discriminating case for a predicate accidentally written as always-true.
+  select count(*) into v_rows
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day',
+      timestamptz '2026-06-01 00:00:00+00', timestamptz '2026-06-02 00:00:00+00',
+      'repo::mthines/does-not-exist');
+  assert v_rows = 0,
+    format('usage scope AC-3: an unmatched scope filter must return no rows, got %s', v_rows);
+
+  -- ── AC-6: the writer ──────────────────────────────────────────────────────
+  -- The new trailing parameter is persisted.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1',
+    p_plan_name => 'free',
+    p_tool_name => 'memory.list',
+    p_scope_type => 'repo',
+    p_auth_type => 'api_key',
+    p_outcome => 'ok',
+    p_result_count => 2,
+    p_scope => 'repo::mthines/lorekit') into v_id;
+  assert v_id is not null, 'usage scope AC-6: the writer must return the inserted id';
+  select scope into v_scope from usage_events where id = v_id;
+  assert v_scope = 'repo::mthines/lorekit',
+    format('usage scope AC-6: p_scope must be persisted, got %s', v_scope);
+
+  -- ...and a call that OMITS it — every caller written before 00058, including
+  -- the 14-argument positional form 00056 left behind — still succeeds, with
+  -- scope NULL. A stale DROP target would instead make this call ambiguous.
+  select lorekit_record_usage_event(
+    '00000000-0000-0000-0000-0000000000a1', null, 'free',
+    'memory.list', 'repo', 'jwt', 'ok', 5, null, 3, null, 'cli', null, null) into v_id;
+  assert v_id is not null, 'usage scope AC-6: the pre-00058 14-arg call must still resolve';
+  select scope into v_scope from usage_events where id = v_id;
+  assert v_scope is null,
+    format('usage scope AC-6: a call omitting p_scope must leave scope NULL, got %s', v_scope);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- AC-1: the grant surface follows 00047's hardening — the regrouped reader is
+-- reachable by an authenticated user and by service_role, and NEVER by anon.
+-- The signature changed, so the revoke/grant had to be re-issued against the
+-- NEW one; a stale grant would leave anon holding EXECUTE on a function that
+-- reads the whole usage ledger.
+do $$
+declare
+  v_sig text := 'lorekit_read_activity(uuid, text, timestamptz, timestamptz, text)';
+  v_overloads int;
+begin
+  assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
+    'usage scope: anon must NOT hold execute on the regrouped lorekit_read_activity';
+  assert has_function_privilege('authenticated', v_sig, 'EXECUTE'),
+    'usage scope: authenticated must hold execute on the regrouped lorekit_read_activity';
+  assert has_function_privilege('service_role', v_sig, 'EXECUTE'),
+    'usage scope: service_role must hold execute on the regrouped lorekit_read_activity';
+
+  -- The old 4-argument signature must be GONE, not merely shadowed. A missed
+  -- DROP leaves both overloads live, and PostgREST's named-argument resolution
+  -- would then be free to pick the ungrouped one — the endpoint would keep
+  -- working while silently returning the pre-00058 shape.
+  select count(*) into v_overloads
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'lorekit_read_activity';
+  assert v_overloads = 1,
+    format('usage scope: exactly one lorekit_read_activity overload must exist, found %s', v_overloads);
+
+  -- Same for the writer: 00056's 14-argument form must have been replaced, not
+  -- joined by a 15-argument sibling.
+  select count(*) into v_overloads
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'lorekit_record_usage_event';
+  assert v_overloads = 1,
+    format('usage scope: exactly one lorekit_record_usage_event overload must exist, found %s', v_overloads);
+end;
+$$;
+
+-- AC-6 (deferral, R10): purge_expired_memories is deliberately UNTOUCHED by
+-- 00058 — its `memory.expired` event is per-USER and spans every scope that
+-- user owns, so there is no single scope to attribute it to. Asserted, not just
+-- documented, so "we'll do it later" cannot quietly become "we did it wrong":
+-- the expiry event must still record a NULL scope.
+do $$
+declare v_scopes int;
+begin
+  set local role service_role;
+  select count(*) into v_scopes
+    from usage_events
+   where tool_name = 'memory.expired' and scope is not null;
+  assert v_scopes = 0,
+    format('usage scope R10: memory.expired must remain scope-unattributed, found %s attributed', v_scopes);
+  reset role;
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

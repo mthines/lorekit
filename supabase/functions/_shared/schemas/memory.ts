@@ -445,25 +445,43 @@ export type ActivityResponse = z.infer<typeof ActivityResponseSchema>;
  * so a caller charting both uses one set of parameters. The bucket enum is
  * REUSED rather than redeclared: a granularity admitted by one and not the
  * other would be a trap for exactly the caller rendering them side by side.
+ *
+ * `scope` is an optional exact-match FILTER (migration 00058). It is
+ * `RawScopeSchema` (shape-only) rather than `ScopeSchema` so the canonical
+ * normalisation happens once, in the handler, which can turn a rejection into a
+ * 400 — the `?correlation_id=` precedent. Because the metric is additive, the
+ * filtered buckets SUM to the per-scope headline; there is no separate total
+ * endpoint that could drift from the bars drawn above it.
  */
 export const ReadActivityQuerySchema = z.object({
   bucket: ActivityBucketUnitSchema.optional().default('day'),
   since: TimestampFilterSchema.optional(),
   until: TimestampFilterSchema.optional(),
+  scope: RawScopeSchema.optional(),
 });
 export type ReadActivityQuery = z.infer<typeof ReadActivityQuerySchema>;
 
 /**
- * One bucket of read volume: how many memory RECORDS were read in that UTC
- * hour/day.
+ * One `(bucket, scope)` cell of read volume: how many memory RECORDS were read
+ * in that UTC hour/day under that scope.
  *
  * Records, not calls — one `memory.list` returning 600 rows is one call and
  * 600 records, the same distinction `GET /memories/usage` draws between
  * `event_count` and `record_count`. Records is the additive figure a chart can
  * sum: the bars of a read sparkbar add up to "you read N memories".
+ *
+ * `scope` mirrors {@link ActivityBucketSchema}'s (migration 00058) but is
+ * NULLABLE where the write series' is not: a write always happens under a
+ * scope, while a read may carry none the server can resolve (a scope in a body
+ * the router must not consume, or an ungrammatical one, both recorded as
+ * unattributed rather than failing the call). Those rows are still counted in
+ * the unfiltered series, so summing every bucket still gives the account total
+ * — which is exactly why a per-scope total can be SMALLER than the account
+ * total, and why a UI showing both should say so.
  */
 export const ReadActivityBucketSchema = z.object({
   bucket: z.string(),
+  scope: z.string().nullable(),
   count: z.number().int().nonnegative(),
 });
 export type ReadActivityBucket = z.infer<typeof ReadActivityBucketSchema>;
