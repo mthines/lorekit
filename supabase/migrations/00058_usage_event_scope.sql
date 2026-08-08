@@ -58,6 +58,14 @@ alter table usage_events add column if not exists scope text;
 -- CHECK re-encoding the scope grammar in SQL would be a second, drift-prone
 -- copy of it, while an unbounded column would let a malformed value inflate
 -- analytics cardinality. 200 chars is the same ceiling `memories.scope` uses.
+--
+-- BACKSTOP means the recording side clamps FIRST: `safeValidateScope` returns
+-- null above `USAGE_SCOPE_MAX` (= 200), so a grammatical but over-long scope is
+-- recorded as unattributed instead of reaching this CHECK. It has to — the
+-- violation would be raised inside `lorekit_record_usage_event`, whose `when
+-- others` handler swallows it and returns null, dropping the WHOLE event rather
+-- than just the scope dimension. Same clamp-then-check pairing 00044 has between
+-- `parseCorrelationId` and `usage_events_correlation_id_len`.
 alter table usage_events drop constraint if exists usage_events_scope_len;
 alter table usage_events add constraint usage_events_scope_len
   check (scope is null or (char_length(scope) between 1 and 200));

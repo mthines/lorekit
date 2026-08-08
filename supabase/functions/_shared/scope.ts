@@ -60,15 +60,26 @@ export function validateScope(raw: string): string {
  * is measuring (the 00044/00054 posture). An absent, non-string or
  * ungrammatical scope degrades to `null` — recorded as unattributed.
  *
+ * The STORAGE bound is part of that contract: `validateScope` bounds no
+ * length, so a grammatical 201-char scope would trip `usage_events_scope_len`
+ * (00058) inside `lorekit_record_usage_event`, whose `when others` handler
+ * would drop the WHOLE event rather than just the scope. Clamping here is
+ * `parseCorrelationId`'s posture against `usage_events_correlation_id_len`.
+ * It lives on this wrapper only — `memories.scope` has no ceiling, so the
+ * grammar itself must keep accepting longer values.
+ *
  * Deliberately NOT used on the read side: `GET /memories/read-activity?scope=`
  * is a caller-supplied FILTER, and silently coercing a typo'd filter to "no
  * filter" would answer a different question than the one asked. That path uses
  * the throwing `validateScope` and 400s.
  */
+export const USAGE_SCOPE_MAX = 200;
+
 export function safeValidateScope(raw: unknown): string | null {
   if (typeof raw !== 'string' || raw.length === 0) return null;
   try {
-    return validateScope(raw);
+    const normalized = validateScope(raw);
+    return normalized.length > USAGE_SCOPE_MAX ? null : normalized;
   } catch {
     return null;
   }
