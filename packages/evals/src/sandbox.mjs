@@ -57,7 +57,14 @@ export function isInsideRealHome(candidate, realHome = REAL_LOREKIT_HOME) {
  *   <root>/cwd            working directory handed to the agent
  *   <root>/lorekit-home   scratch $LOREKIT_HOME (home tier + config.json)
  *   <root>/lorekit-store  scratch $LOREKIT_STORE (project tier)
- *   <root>/artifacts      transcripts / result JSON, copied out before dispose
+ *   <root>/artifacts      scratch space for anything a rep needs to write
+ *                        INSIDE the sandbox
+ *
+ * `artifacts` is a seam, not the artifact destination. Durable output —
+ * transcripts, `result.json`, `meta.json` — is written straight to the run's
+ * `--out` directory by `bin/run-eval.mjs`, which lives OUTSIDE the sandbox and
+ * therefore survives `dispose()` with nothing to copy out. Anything left under
+ * `<root>/artifacts` is destroyed by teardown unless `keep` is set.
  *
  * @returns {Promise<{
  *   root: string, cwd: string, lorekitHome: string, lorekitStore: string,
