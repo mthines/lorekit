@@ -65,6 +65,7 @@ export function normalizeEntry(e = {}) {
     key: e.key ?? null,
     value: e.value == null ? '' : String(e.value),
     updated: e.updated ?? e.updated_at ?? null,
+    created: e.created ?? e.created_at ?? null,
     tags,
     kind: e.kind ?? inferred.kind ?? null,
     host: e.host ?? inferred.host ?? null,
@@ -433,6 +434,8 @@ export function clusterDuplicates(entries = [], threshold = 0.8) {
 // `store.list({scope})` contract. Returns ordered per-scope groups plus a total
 // — a per-scope read failure is captured on the group, never thrown, so one bad
 // scope can't abort the listing. `store` may be a local or remote store.
+// Single-page only (the existing default behaviour). For full-scope traversal
+// use `gatherStream` below.
 export async function gather(store, scopes, filters = {}) {
   // Parse the taxonomy filters into value sets. `filters` is passed to the store
   // too (the remote narrows server-side); we ALSO post-filter the normalized
@@ -466,6 +469,208 @@ export async function gather(store, scopes, filters = {}) {
     groups.push({ scope, entries, error: null });
   }
   return { groups, total };
+}
+
+// Default maximum entries to survey in a full-scope traversal. High enough to
+// cover almost every real scope; callers can raise or lower via `--max`.
+export const DEFAULT_MAX = 5000;
+
+// Page size used by `gatherStream` for remote stores.
+const STREAM_PAGE_LIMIT = 100;
+
+// Stream every page of entries across `scopes` from `store`, invoking
+// `onPage({ scope, entries })` once per page as entries arrive. Designed for
+// linear consumers (lint, stats, dedupe) that process page-by-page without
+// accumulating all rows in memory.
+//
+// Options:
+//   max        — hard cap on total surveyed entries (default: DEFAULT_MAX). When
+//                reached the walk stops and `capped` is set in the result.
+//   since      — ISO date/timestamp lower bound, forwarded as `created_since`.
+//   until      — ISO date/timestamp upper bound, forwarded as `created_until`.
+//   keyPrefix  — key prefix filter, forwarded as `key_prefix`.
+//   onPage     — callback invoked with `{ scope, entries }` per page.
+//
+// Returns `{ surveyed, total, capped, byScope }` where:
+//   surveyed  — total entries delivered to `onPage`.
+//   total     — exact aggregate from `listScopes()` when available (remote),
+//               else equal to `surveyed`.
+//   capped    — true when `max` stopped the walk before all pages were read.
+//   byScope   — `[{ scope, count, error }]` per scope (error=null on success).
+//
+// A per-scope read failure is captured on `byScope`, never thrown — mirrors
+// `gather()`'s resilience contract. `LocalStore.list` returns everything in one
+// page (no `nextCursor`), so the loop naturally terminates after one iteration
+// offline and adds no overhead.
+export async function gatherStream(store, scopes, {
+  max = DEFAULT_MAX,
+  since,
+  until,
+  keyPrefix,
+  onPage,
+} = {}) {
+  const byScope = [];
+  let surveyed = 0;
+  let capped = false;
+
+  // Attempt to get exact aggregate counts for the remote store via listScopes().
+  // Only available on stores that implement listScopes(); degrades gracefully.
+  let scopeCountMap = null;
+  if (typeof store.listScopes === 'function') {
+    try {
+      const ls = await store.listScopes();
+      if (ls && ls.ok && Array.isArray(ls.scopes)) {
+        scopeCountMap = new Map(ls.scopes.map((s) => [s.scope, s.count]));
+      }
+    } catch { /* best-effort */ }
+  }
+
+  for (const scope of scopes) {
+    if (capped) {
+      byScope.push({ scope, count: 0, error: null });
+      continue;
+    }
+    let cursor = undefined;
+    let scopeCount = 0;
+    let scopeError = null;
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const remaining = max - surveyed;
+      if (remaining <= 0) {
+        capped = true;
+        break;
+      }
+      const pageLimit = Math.min(STREAM_PAGE_LIMIT, remaining);
+      let res;
+      try {
+        res = await store.list({
+          scope,
+          limit: pageLimit,
+          cursor,
+          ...(since ? { created_since: since } : {}),
+          ...(until ? { created_until: until } : {}),
+          ...(keyPrefix ? { key_prefix: keyPrefix } : {}),
+        });
+      } catch (e) {
+        res = { ok: false, networkError: (e && e.message) || 'error' };
+      }
+      if (!res || res.ok === false) {
+        scopeError = describeError(res);
+        break;
+      }
+      const entries = (res.entries || []).map(normalizeEntry);
+      if (entries.length > 0) {
+        if (onPage) onPage({ scope, entries });
+        scopeCount += entries.length;
+        surveyed += entries.length;
+      }
+      // hasMore absent (local store) or false → done with this scope.
+      if (!res.hasMore || !res.nextCursor) break;
+      cursor = res.nextCursor;
+      // Safety: stop if we hit the cap after this page.
+      if (surveyed >= max) {
+        capped = true;
+        break;
+      }
+    }
+    byScope.push({ scope, count: scopeCount, error: scopeError });
+  }
+
+  // Derive total: use the aggregate when available (remote), else surveyed.
+  let total = surveyed;
+  if (scopeCountMap) {
+    total = 0;
+    for (const scope of scopes) {
+      total += scopeCountMap.get(scope) ?? 0;
+    }
+  }
+
+  return { surveyed, total, capped, byScope };
+}
+
+// Token-blocking near-duplicate clustering — a performance-bounded alternative
+// to `clusterDuplicates`'s O(n²) all-pairs sweep. Uses an inverted index
+// (token → indices) to generate only the candidate pairs that share at least
+// one token, then applies the SAME Jaccard `>= threshold` + union-find logic as
+// `clusterDuplicates`. The resulting clusters are provably identical:
+//
+//   IF similarity(a, b) >= threshold > 0 THEN a and b share at least one token,
+//   so they WILL appear as a candidate pair in the inverted-index sweep.
+//
+// Keeping `clusterDuplicates` intact means equivalence is a testable property
+// (AC-7) rather than a rewrite claim. Pure.
+export function clusterDuplicatesBlocked(entries = [], threshold = 0.8) {
+  const items = entries.map((e, i) => ({
+    i,
+    scope: e.scope ?? null,
+    key: e.key ?? null,
+    tokens: tokenize(e.value),
+  }));
+
+  // Build inverted index: token → [item indices]
+  /** @type {Map<string, number[]>} */
+  const invertedIndex = new Map();
+  for (const item of items) {
+    for (const token of item.tokens) {
+      if (!invertedIndex.has(token)) invertedIndex.set(token, []);
+      invertedIndex.get(token).push(item.i);
+    }
+  }
+
+  // Generate candidate pairs: any two items sharing at least one token.
+  // Use a Set of encoded pair keys to avoid duplicates.
+  const candidatePairs = new Set();
+  for (const indices of invertedIndex.values()) {
+    for (let x = 0; x < indices.length; x += 1) {
+      for (let y = x + 1; y < indices.length; y += 1) {
+        const a = Math.min(indices[x], indices[y]);
+        const b = Math.max(indices[x], indices[y]);
+        candidatePairs.add(`${a}:${b}`);
+      }
+    }
+  }
+
+  // Apply the SAME union-find as clusterDuplicates over candidate pairs only.
+  const parent = items.map((_, i) => i);
+  const find = (x) => {
+    while (parent[x] !== x) {
+      parent[x] = parent[parent[x]];
+      x = parent[x];
+    }
+    return x;
+  };
+  const pairs = [];
+  for (const pairKey of candidatePairs) {
+    const [a, b] = pairKey.split(':').map(Number);
+    const sim = similarity(items[a].tokens, items[b].tokens);
+    if (sim >= threshold) {
+      pairs.push({ a, b, sim });
+      parent[find(a)] = find(b);
+    }
+  }
+
+  // Assemble clusters — identical logic to clusterDuplicates.
+  const byRoot = new Map();
+  for (const it of items) {
+    const r = find(it.i);
+    if (!byRoot.has(r)) byRoot.set(r, []);
+    byRoot.get(r).push(it);
+  }
+  const clusters = [];
+  for (const members of byRoot.values()) {
+    if (members.length < 2) continue;
+    const idx = new Set(members.map((m) => m.i));
+    const sims = pairs.filter((p) => idx.has(p.a) && idx.has(p.b)).map((p) => p.sim);
+    clusters.push({
+      members: members.map((m) => ({ scope: m.scope, key: m.key })),
+      size: members.length,
+      minSimilarity: sims.length ? Math.min(...sims) : threshold,
+      maxSimilarity: sims.length ? Math.max(...sims) : threshold,
+    });
+  }
+  clusters.sort((x, y) => y.size - x.size);
+  return clusters;
 }
 
 // Render one section (Offline or Remote). `section` is either

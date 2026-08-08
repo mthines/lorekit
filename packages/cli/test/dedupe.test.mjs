@@ -110,7 +110,10 @@ test('parseThreshold clamps, defaults, and rejects garbage', () => {
   assert.equal(parseThreshold(true), 0.8); // bare `--threshold` with no value
   assert.equal(parseThreshold('0.6'), 0.6);
   assert.equal(parseThreshold('2'), 1); // clamped high
-  assert.equal(parseThreshold('-1'), 0); // clamped low
+  // Floored just above 0 (Number.EPSILON), never a literal 0: the blocked
+  // clusterer's equivalence to the oracle holds only for threshold > 0.
+  assert.equal(parseThreshold('-1'), Number.EPSILON); // clamped to the positive floor
+  assert.equal(parseThreshold('0'), Number.EPSILON); // 0 is floored, not accepted
   assert.equal(parseThreshold('nope'), 0.8); // unparseable → default
 });
 

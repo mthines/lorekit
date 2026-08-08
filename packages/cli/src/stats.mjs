@@ -20,7 +20,7 @@ import { resolveProjectRoot } from './config.mjs';
 import { deriveScope } from './scope.mjs';
 import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { scopeList, gather, tallyGroups } from './lessons-view.mjs';
+import { scopeList, gather, tallyGroups, summarizeScopeInventory, filterScopeInventory } from './lessons-view.mjs';
 import { log, heading, status, c } from './util.mjs';
 
 export async function stats(args) {
@@ -44,9 +44,32 @@ export async function stats(args) {
 
   const offlineTally = localDenied ? { perScope: [], total: 0 } : tallyGroups(await gather(local, scopes));
   const remoteAvailable = !remoteDenied && remote.usable();
-  const remoteTally = remoteAvailable
-    ? tallyGroups(await gather(remote, scopes))
-    : { perScope: [], total: 0 };
+
+  // Remote counts come from the GET /memories/scopes Postgres aggregate
+  // (RemoteStore.listScopes), which is exact at any scale — never row-draining.
+  // This is the fix for `stats`=50 vs `scopes`=487: the old code used
+  // gather() which returned only the first page from the remote store.
+  let remoteTally;
+  if (!remoteAvailable) {
+    remoteTally = { perScope: [], total: 0 };
+  } else {
+    const scopesRes = await remote.listScopes();
+    if (scopesRes && scopesRes.ok && Array.isArray(scopesRes.scopes)) {
+      // Filter to only the applicable scopes; total the filtered set.
+      const filtered = filterScopeInventory(scopesRes.scopes, null).filter(
+        (s) => scopes.includes(s.scope),
+      );
+      const perScope = scopes.map((scope) => {
+        const match = filtered.find((s) => s.scope === scope);
+        return { scope, count: match ? match.count : 0, error: null };
+      });
+      const total = perScope.reduce((n, s) => n + s.count, 0);
+      remoteTally = { perScope, total };
+    } else {
+      // Fallback when listScopes() is unavailable/errors — single-page gather.
+      remoteTally = tallyGroups(await gather(remote, scopes));
+    }
+  }
 
   const offlineSection = localDenied
     ? { available: false, reason: `disabled by deny constraint (${localDenied.source})` }

@@ -190,9 +190,10 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
         scope,
         tags: { type: 'array', items: { type: 'string' }, description: 'Filter to entries carrying ANY of these labels (OR).' },
         limit,
+        cursor: { type: 'string', description: 'Opaque cursor from a previous response\'s `nextCursor`. Omit to start from the first page.' },
       },
     },
-    returns: '`{ "entries": [{ "key", "value", "tags", "updated_at" }] }` — newest first.',
+    returns: '`{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — newest first. Pass `nextCursor` back as `cursor` to retrieve the next page.',
   },
   {
     name: 'memory.delete',
@@ -234,9 +235,10 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
         },
         tags: { type: 'array', items: { type: 'string' }, description: 'Filter to entries carrying ALL of these labels (AND).' },
         limit: { type: 'integer', minimum: 1, maximum: 100, default: 20, description: 'Maximum entries to return.' },
+        cursor: { type: 'string', description: 'Opaque cursor from a previous response\'s `nextCursor`. Omit to start from the first page.' },
       },
     },
-    returns: '`{ "entries": [{ "key", "value", "scope", "tags", "rank" }] }`',
+    returns: '`{ "entries": [{ "key", "value", "scope", "tags", "rank" }], "hasMore": boolean, "nextCursor": string | null }`. Pass `nextCursor` back as `cursor` to retrieve the next page.',
   },
   {
     name: 'memory.archive',

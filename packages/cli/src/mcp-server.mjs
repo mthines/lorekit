@@ -100,12 +100,31 @@ export const MEMORY_TOOL_DEFS = [
   {
     name: 'memory.list',
     description: 'List memories for a scope',
-    inputSchema: { type: 'object', required: ['scope'] },
+    inputSchema: {
+      type: 'object',
+      required: ['scope'],
+      properties: {
+        scope: { type: 'string' },
+        tags: { type: 'array', items: { type: 'string' } },
+        limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
+        cursor: { type: 'string', description: 'Opaque cursor from a previous response\'s nextCursor. Omit to start from the first page.' },
+      },
+    },
   },
   {
     name: 'memory.search',
     description: 'Keyword search across memories',
-    inputSchema: { type: 'object', required: ['q'] },
+    inputSchema: {
+      type: 'object',
+      required: ['q'],
+      properties: {
+        q: { type: 'string' },
+        scopes: { type: 'array', items: { type: 'string' } },
+        tags: { type: 'array', items: { type: 'string' } },
+        limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+        cursor: { type: 'string', description: 'Opaque cursor from a previous response\'s nextCursor. Omit to start from the first page.' },
+      },
+    },
   },
   {
     name: 'memory.delete',

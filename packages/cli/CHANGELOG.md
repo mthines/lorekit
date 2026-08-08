@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.35.0](https://github.com/mthines/lorekit/compare/cli-v1.34.0...cli-v1.35.0) (2026-08-08)
+
+
+### Features
+
+* **cli,mcp:** scale-aware survey and grooming for large LoreKit scopes ([eb66238](https://github.com/mthines/lorekit/commit/eb66238ced671132139406ed7831a6701435892e))
+
+
+### Bug Fixes
+
+* **ci:** align dedupe/list tests with the new threshold floor and normalizeEntry field ([d69c87d](https://github.com/mthines/lorekit/commit/d69c87db7dc0b09d8152db91db094c42bb693ba6))
+* **cli,mcp:** make dedupe/list --key-prefix a real server-side prefix filter ([218344e](https://github.com/mthines/lorekit/commit/218344e6489ecae7047cd98cbac22c7bad25ff90))
+
 ## [1.34.0](https://github.com/mthines/lorekit/compare/cli-v1.33.4...cli-v1.34.0) (2026-08-06)
 
 

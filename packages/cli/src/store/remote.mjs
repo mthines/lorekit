@@ -58,19 +58,29 @@ class RemoteStore {
 
   // ── Memory operations → REST ──────────────────────────────────────────────
 
-  async list({ scope, tags, kind, host, limit } = {}) {
+  async list({ scope, tags, kind, host, limit, cursor, created_since, created_until, key_prefix } = {}) {
     const p = new URLSearchParams();
     if (scope) p.set('scope', scope);
     if (tags?.length) p.set('tags', Array.isArray(tags) ? tags.join(',') : tags);
     if (kind) p.set('kind', Array.isArray(kind) ? kind.join(',') : kind);
     if (host) p.set('host', Array.isArray(host) ? host.join(',') : host);
     if (limit) p.set('limit', String(limit));
+    if (cursor) p.set('cursor', cursor);
+    if (created_since) p.set('created_since', created_since);
+    if (created_until) p.set('created_until', created_until);
+    if (key_prefix) p.set('key_prefix', key_prefix);
     const res = await this._rest(`/memories?${p}`);
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
-    return { ok: true, entries: res.data?.entries ?? [] };
+    const data = res.data ?? {};
+    return {
+      ok: true,
+      entries: data.entries ?? [],
+      hasMore: data.hasMore ?? false,
+      nextCursor: data.nextCursor ?? null,
+    };
   }
 
-  async search({ q, scopes, tags } = {}) {
+  async search({ q, scopes, tags, limit, cursor } = {}) {
     // A list of terms collapses into ONE `websearch` query joined by `OR`, so a
     // multi-term failure lookup is a single round-trip (the server FTS ORs them
     // and stems each). `failureQuery` distils terms to `[a-z0-9]+` tokens, so no
@@ -80,9 +90,17 @@ class RemoteStore {
     if (query) body.q = query;
     if (scopes?.length) body.scopes = scopes;
     if (tags?.length) body.tags = tags;
+    if (limit) body.limit = limit;
+    if (cursor) body.cursor = cursor;
     const res = await this._rest('/memories/search', { method: 'POST', body });
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
-    return { ok: true, entries: res.data?.entries ?? [] };
+    const data = res.data ?? {};
+    return {
+      ok: true,
+      entries: data.entries ?? [],
+      hasMore: data.hasMore ?? false,
+      nextCursor: data.nextCursor ?? null,
+    };
   }
 
   async read({ scope, key } = {}) {
