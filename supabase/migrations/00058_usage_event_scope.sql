@@ -202,7 +202,11 @@ begin
        and (p_until is null or ue.created_at <  p_until)
      group by 1, ue.scope
     having sum(coalesce(ue.result_count, 0)) > 0
-     order by 1 asc;
+     -- The scope tiebreak is 00051's verbatim (`order by 1 asc, m.scope asc`).
+     -- Bucket alone stopped being a total order the moment a bucket could hold
+     -- several scopes, and this function's header claims it mirrors that shape,
+     -- so intra-bucket row order must be deterministic here too.
+     order by 1 asc, ue.scope asc;
 end;
 $$;
 
