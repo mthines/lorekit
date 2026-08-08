@@ -4325,6 +4325,37 @@ begin
   insert into usage_events (user_id, tool_name, auth_type, outcome, scope)
     values ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'jwt', 'ok', repeat('x', 200));
 
+  -- AC-1: the CHECK's blast radius, executed. The writer swallows every error
+  -- (`when others → return null`), so an over-long scope reaching the RPC does
+  -- NOT lose the scope — it loses the ENTIRE usage event, silently. That is why
+  -- `safeValidateScope` bounds length client-side at USAGE_SCOPE_MAX. Pinning
+  -- the consequence here means a future "simplification" that drops the
+  -- client-side bound fails a test instead of quietly deleting analytics rows.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1',
+    p_tool_name => 'memory.list',
+    p_auth_type => 'jwt',
+    p_outcome => 'ok',
+    p_result_count => 1,
+    p_scope => repeat('x', 201)) into v_id;
+  assert v_id is null,
+    'usage scope AC-1: an over-long scope must take the WHOLE event down (writer swallows) — '
+    || 'this is precisely why safeValidateScope bounds length before the write';
+
+  -- ...and the same call with the scope already dropped to NULL — what
+  -- safeValidateScope actually hands the writer — DOES land. The event survives;
+  -- only the dimension is lost. This is the pair that makes the bound's value
+  -- visible rather than asserted in prose.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1',
+    p_tool_name => 'memory.list',
+    p_auth_type => 'jwt',
+    p_outcome => 'ok',
+    p_result_count => 1,
+    p_scope => null) into v_id;
+  assert v_id is not null,
+    'usage scope AC-1: dropping the scope to NULL must preserve the event';
+
   -- ── AC-2 + AC-4 + AC-5: the grouped shape ─────────────────────────────────
   -- The 01:00 hour holds three counted reads under three distinct scope values
   -- (lorekit 8, gw-tools 4, NULL 3) plus the dashboard's 99, which is excluded.
