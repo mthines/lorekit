@@ -277,7 +277,16 @@ export function computeRangeTrends(
 
 // ── GET /memories/read-activity → the "Memories read" card ───────────────────
 
-/** One `(bucket, count)` cell from `GET /memories/read-activity`. */
+/**
+ * The `(bucket, count)` PROJECTION of one `GET /memories/read-activity` cell —
+ * the only two fields this card's maths reads.
+ *
+ * The wire row is `(bucket, scope, count)` as of migration 00058
+ * (`ReadActivityBucketSchema`), one row per `(bucket, scope)` rather than one
+ * per bucket. This type stays the narrow projection on purpose: a structural
+ * subtype of the wire row, so the response still assigns, while nothing here
+ * has to care that a bucket now arrives split across several scopes.
+ */
 export interface CountBucketRow {
   /** UTC start of the interval, ISO. */
   bucket: string;
@@ -285,12 +294,15 @@ export interface CountBucketRow {
 }
 
 /**
- * Bucket a scope-less `{ bucket, count }` series onto the selected range's grid.
+ * Bucket a `{ bucket, count }` series onto the selected range's grid, summing
+ * every row that lands in the same slot.
  *
- * Reads have no scope dimension, so `computeRangeTrends` — which is built
- * around per-bucket scope SETS — has nothing to offer them. Expanding the
- * response into fake `TrendRow`s to reuse it would also allocate one object per
- * record read, and a busy account reads tens of thousands of records a week.
+ * The card is an account-wide total, so the series' scope dimension (00058) is
+ * summed away here rather than carried: `computeRangeTrends` is built around
+ * per-bucket scope SETS — distinct-scope counts, first-seen scopes — and a read
+ * series has no equivalent question to ask of them. Expanding the response into
+ * fake `TrendRow`s to reuse it would also allocate one object per record read,
+ * and a busy account reads tens of thousands of records a week.
  *
  * The result is additive by construction: `points` are the raw per-bucket sums
  * over the charted window, so summing the bars gives the window total the card
