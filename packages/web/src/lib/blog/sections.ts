@@ -20,6 +20,12 @@ export interface BlogSection {
 
 export const BLOG_SECTIONS: readonly BlogSection[] = [
   {
+    id: 'agent-memory-working-set',
+    label: "Your agent's memory has a 15-item working set — on purpose",
+    summary:
+      "The first fear everyone has about agent memory is that it'll bloat every prompt. It won't. LoreKit injects a bounded 15-line index at session start and runs the real relevance search only when your agent hits a wall — here's the code, and the honest limits.",
+  },
+  {
     id: 'self-healing-agents',
     label: 'Self-healing agents are just a loop you forgot to build',
     summary:

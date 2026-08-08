@@ -1,0 +1,120 @@
+---
+title: "Your agent's memory has a 15-item working set — on purpose"
+description: "The first fear everyone has about agent memory is that it'll bloat every prompt. It won't. LoreKit injects a bounded 15-line index at session start and runs the real relevance search only when your agent hits a wall — here's the code, and the honest limits."
+date: "2026-08-08"
+author: "Mads Thines"
+readingMinutes: 7
+tags: ["agent-memory", "context-window", "retrieval", "hooks", "lorekit"]
+order: 1
+keywords: ["agent memory", "context window", "working set", "lorekit", "retrieval", "scope precedence", "session start hook", "no embeddings", "bounded injection"]
+---
+
+## The first question is always the same
+
+Show an engineer a tool that gives their coding agent persistent memory and the first question is never "does it work?" It's "so you're going to dump all of that into every prompt?"
+
+It's the right question. A memory that grows forever, injected into a context window that doesn't, is a countdown. The day your store hits a few thousand lessons is the day your agent spends more tokens remembering than working — and buries the one line that mattered under five hundred that didn't 😂.
+
+So here's LoreKit's answer, and it's a design choice, not a promise: what lands in your context at the start of a session is a **bounded working set** — an index of at most 15 one-line hooks — no matter how big your store gets. The real relevance search happens later, and only when your agent hits a wall. Your corpus grows without bound. Your prompt doesn't.
+
+## What actually lands in your context
+
+Here's the block LoreKit injected at the start of *this* writing session, verbatim:
+
+```text
+LoreKit: 15 memories loaded · repo::mthines/lorekit — considerations, not rules; read any in full with memory.read.
+- (repo::mthines/lorekit) reviewer-comment-relevance::pr395-run-summary… — fingerprint: reviewer=dash0-dev[bot]…
+- (repo::mthines/lorekit) review-outcomes::pr395-it5-converged-all-gates-green… — outcome batch: iteration 5 (final)…
+- (global) implement-suggestion-lessons::negative-source-scan-assertions… — a negative source-scan assertion is unverified until you make it fail
+- … 12 more, one line each
+```
+
+One line per lesson: the scope, the key, and a short hook. Not the bodies. It's a table of contents, not the book — the full text of any lesson is one `memory.read` away, and the agent fetches it only if the hook looks worth it.
+
+The code that builds it is the whole argument:
+
+```js
+// packages/cli/src/core/lessons.mjs
+const MAX_LESSONS = 15;
+
+export async function fetchLessons(store, cwd) {
+  const scope = deriveScope(cwd);
+  const groups = [];
+  for (const s of scope.readOrder) {              // project → branch → repo → global
+    const res = await store.list({ scope: s, limit: 25 });
+    if (!res || !res.ok) continue;                // best-effort: a bad scope contributes nothing
+    groups.push({ scope: s, entries: collect(res) });
+  }
+  const { groups: resolved } = resolvePrecedence({ groups }); // most-specific scope wins
+  const lessons = winners(resolved);                          // one per key, precedence order
+  return { scope, lessons: lessons.slice(0, MAX_LESSONS) };   // ← the entire story
+}
+```
+
+That last line is the answer to the first question. A 50-lesson store and a 10,000-lesson store produce the same-sized block, because the block is `slice(0, 15)` of one-line hooks. Roughly a kilobyte, bounded by construction, before store size is ever consulted. The rendering does the same — an index, one capped line per lesson:
+
+```js
+const HOOK_LEN = 80; // one line per lesson, never the whole body
+const body = lessons
+  .map((l) => `- (${l.scope}) ${l.key} — ${lessonHook(l.value)}`)
+  .join('\n');
+```
+
+## "So it injects 15 random lessons?"
+
+No — but I want to be precise about what "15" means, because this is where a lazy pitch would wave its hands.
+
+At the start of a session there is no task yet. Your agent hasn't touched a file. So the 15 can't be chosen by relevance to what you're about to do — there's nothing to be relevant to. They're chosen by **scope precedence**: most-specific scope first, `branch` beating `repo` beating `global`, first value per key winning. It's "what's most local to where you're standing," not "what you'll need in the next keystroke."
+
+That's a deliberate split, and naming it honestly is the point. Start-of-session injection is a cheap, bounded, always-on index. Relevance is a separate job, and LoreKit does it somewhere smarter.
+
+## Relevance is lazy — it fires when you fail
+
+The real relevance lookup happens at the exact moment it earns its cost: a tool call fails. That's when your agent knows precisely what to search for — the error is the query.
+
+On a failure, LoreKit distils search terms from the tool name plus the words that actually matter in the error, runs **one** query across your scope hierarchy, lets the store do the matching (literal substring locally, Postgres full-text search with stemming when hosted), dedupes, caps at three, and drops them in before the retry:
+
+```js
+// On a tool failure — the error text is the query.
+const terms = failureQuery(toolName, toolResponse); // tool name + salient error words, capped
+const res = await store.search({ q: terms, scopes: scope.readOrder });
+return dedupeRelevant(res.entries, 3);              // matching is the store's job; capped, best-effort
+```
+
+I don't have to hand-wave this one either. While I was writing this post, a `git clone` in my session failed, and the failure hook fired on its own:
+
+```text
+LoreKit: 3 related memories — you've hit something like this before (considerations, not rules; read in full with memory.read):
+- (global) implement-suggestion-lessons::negative-source-scan-assertions-must-be-mutation-verified — a negative source-scan assertion is unverified until you make it fail
+- (global) reviewer-lessons::skill-dispatch-unavailable-is-not-skill-not-installed — a Skill() call the sub-agent can't dispatch doesn't mean the skill is missing — read the SKILL.md instead
+- … 1 more
+```
+
+Three, not fifteen. Searched, not dumped. Fired at the wall, not at the door. That's the division of labour: a bounded index up front for "here's roughly what this repo has taught us," and a targeted, capped search on demand for "you've hit this exact thing before."
+
+## Why bounded beats big
+
+The token cost of 15 short lines was never the real fear — that's a rounding error in a 200k window. The real fear is the two failure modes a naive "inject everything" design walks straight into: your prompt grows with your corpus, and the one relevant lesson drowns in the five hundred that aren't. A bigger memory makes both worse.
+
+LoreKit refuses both by construction. The working set is a fixed-size window onto an unbounded store — the same instinct as a CPU cache or a `LIMIT` on a query, applied to the one budget an agent can't grow. Your store gets everything you ever teach it. Your context sees a window.
+
+## What it doesn't do
+
+Let me be straight about the edges, because the design has them.
+
+- **Below saturation, the block isn't magic.** With 8 lessons you get 8, not 15. It fills from 0 to 15 as you accumulate, then holds. The flat line is the ceiling, not a guarantee at every size.
+- **The session-start index is precedence, not relevance.** If a single scope holds more than 15 lessons, the ones past the cap don't appear at session start. They're not lost — the failure search reaches them, and `memory.read` reaches any of them by key — but the opening index is "most-local," not "most-relevant." If you want relevance up front, you're asking the wrong stage for it.
+- **The matcher is literal substring, no embeddings.** Deliberately — no vector index, no re-embedding bill, no drift. The trade is real: a paraphrase can miss. You get out roughly the discipline you put into keys and tags.
+- **15 is a working-set size, not a store limit.** It caps what the prompt sees per session, never what you can keep. The store holds all of it.
+
+None of these are things I'd rather you found at 2am.
+
+## See your own 15
+
+You don't have to take the number on faith. Wire up the loop and run:
+
+```bash
+lorekit tree
+```
+
+It prints exactly which lesson wins each scope, in the same precedence the session-start hook uses — the working set your next session will actually get. Then teach it your fiftieth lesson and run it again. The list doesn't get longer. That's the whole idea. 🙂
