@@ -1,32 +1,66 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { BookOpen, BookOpenCheck, Info, Layers, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { ScopeHealthGrid } from '@/components/dashboard/ScopeHealthCard';
 import { Sparkbar } from '@/components/dashboard/Sparkbar';
 import { Tooltip } from '@/components/ui/Tooltip';
+import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDashboardData } from '@/lib/queries/dashboard';
 import {
   computeCountTrend,
   computeRangeTrends,
-  type MetricRange,
+  RANGE_BUCKETS,
   type StatTrend,
 } from '@/lib/aggregations';
+import {
+  bucketPlanForRange,
+  isPresetRange,
+  rangeLabel,
+  type RangePreset,
+  type TimeRange,
+} from '@/lib/time-range';
 
-const RANGE_OPTIONS: { value: MetricRange; label: string }[] = [
+/**
+ * The presets this row offers.
+ *
+ * `all` is deliberately absent, and not as an oversight: every card here shows a
+ * period-over-period `changePct`, which needs a PRECEDING window of equal length
+ * to compare against — and "all time" has no preceding window. The Explorer,
+ * which lists rather than trends, does offer it (`?range` absent).
+ */
+const RANGE_OPTIONS: { value: RangePreset; label: string }[] = [
   { value: '24h', label: '24h' },
   { value: '7d', label: '7d' },
   { value: '30d', label: '30d' },
+  { value: '90d', label: '90d' },
 ];
 
-const RANGE_NOUN: Record<MetricRange, string> = {
-  '24h': '24 hours',
-  '7d': '7 days',
-  '30d': '30 days',
-};
+/**
+ * Module-level so the reference is stable across renders — `useUrlState`
+ * compares against it to decide whether to drop the param from the URL, and a
+ * fresh object literal each render would defeat that.
+ *
+ * The default is a PRESET rather than a resolved window, so an Overview with no
+ * `?range=` in the URL keeps asking "the last 24 hours" every time it is opened
+ * instead of pinning the day it was first loaded.
+ */
+const DEFAULT_OVERVIEW_RANGE: TimeRange = { preset: '24h' };
 
-function rangeTrendTitle(range: MetricRange): string {
-  return `Last ${RANGE_NOUN[range]} vs. previous ${RANGE_NOUN[range]}`;
+/**
+ * The grid to fall back on when the selected range has none — i.e. `all`, or a
+ * malformed `?range=` from a hand-edited URL. 30 daily buckets is the widest
+ * preset that still charts legibly; the alternative, rendering nothing, would
+ * turn a bad link into a broken page.
+ */
+const FALLBACK_PLAN = RANGE_BUCKETS['30d'];
+
+function rangeTrendTitle(range: TimeRange, nowIso: string): string {
+  const label = rangeLabel(range, nowIso);
+  // Only a fixed-length window has a comparable "previous" one to name.
+  return isPresetRange(range) && range.preset !== 'all'
+    ? `${label} vs. the previous period of the same length`
+    : `${label} vs. the preceding period of the same length`;
 }
 
 const sumPoints = (points: { value: number }[]) => points.reduce((total, p) => total + p.value, 0);
@@ -44,8 +78,8 @@ function StatRangeSelect({
   value,
   onChange,
 }: {
-  value: MetricRange;
-  onChange: (range: MetricRange) => void;
+  value: TimeRange;
+  onChange: (range: TimeRange) => void;
 }) {
   return (
     <div
@@ -54,14 +88,18 @@ function StatRangeSelect({
       className="flex items-center gap-0.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-0.5"
     >
       {RANGE_OPTIONS.map((opt) => {
-        const active = value === opt.value;
+        // Compare the PRESET, not the object: `value` is now a discriminated
+        // union whose absolute arm ({from,to}) matches no button — which is the
+        // correct rendering for a range drilled in from a chart or a deep link,
+        // since none of these presets is what the user is looking at.
+        const active = isPresetRange(value) && value.preset === opt.value;
         return (
           <button
             key={opt.value}
             type="button"
             role="radio"
             aria-checked={active}
-            onClick={() => onChange(opt.value)}
+            onClick={() => onChange({ preset: opt.value })}
             className={[
               'min-h-6 rounded px-2 py-0.5 text-[10px] font-medium tabular-nums transition-colors duration-150',
               active
@@ -97,7 +135,7 @@ function UnitTag({ label }: { label: string }) {
 }
 
 /** Skeleton that matches the real layout to prevent CLS while the query loads. */
-function DashboardStatsSkeleton() {
+export function DashboardStatsSkeleton() {
   return (
     <>
       <div>
@@ -169,17 +207,25 @@ function TrendChip({ changePct, title }: { changePct: number; title: string }) {
  */
 export function DashboardStats() {
   const { data, isLoading, isError } = useDashboardData();
-  const [range, setRange] = useState<MetricRange>('24h');
+  // URL-backed, and the SAME `range` param the Explorer reads. That is the point
+  // of the shared model: a KPI here can deep-link into a pre-filtered Explorer
+  // (PR-9) without translating between two vocabularies, and a range chosen on
+  // either page means the same thing on the other. It also makes the selection
+  // shareable, which local state never was.
+  const [range, setRange] = useUrlState<TimeRange>('range', DEFAULT_OVERVIEW_RANGE);
 
   const rows = data?.rows ?? [];
   const readBuckets = data?.readBuckets ?? [];
   // Injected once per data change so the memoised trend computations stay
   // stable across unrelated re-renders (and remain pure/testable).
   const nowIso = useMemo(() => new Date().toISOString(), [rows]);
-  const memoryTrends = useMemo(() => computeRangeTrends(rows, nowIso, range), [rows, nowIso, range]);
+  // The window → grid step. `bucketPlanForRange` returns null for an unbounded
+  // or unparseable range, which the cards cannot chart — see FALLBACK_PLAN.
+  const plan = useMemo(() => bucketPlanForRange(range, nowIso) ?? FALLBACK_PLAN, [range, nowIso]);
+  const memoryTrends = useMemo(() => computeRangeTrends(rows, nowIso, plan), [rows, nowIso, plan]);
   const readTrend = useMemo(
-    () => computeCountTrend(readBuckets, nowIso, range),
-    [readBuckets, nowIso, range],
+    () => computeCountTrend(readBuckets, nowIso, plan),
+    [readBuckets, nowIso, plan],
   );
 
   if (isLoading) return <DashboardStatsSkeleton />;
@@ -193,7 +239,10 @@ export function DashboardStats() {
   }
 
   const { scopes } = data;
-  const rangeNoun = RANGE_NOUN[range];
+  // One phrase for every card's caption and aria label, derived from the same
+  // range the grid was, so a drilled-in window reads as its dates rather than
+  // as a preset it is not.
+  const rangeText = rangeLabel(range, nowIso).toLowerCase();
 
   // Order: the two memory-count cards sit together (written, then read) so the
   // reader compares like with like, and the scope-breadth card — the only one
@@ -217,7 +266,7 @@ export function DashboardStats() {
       tooltip:
         'New memories written across all scopes in the selected range. The bars sum to the number: each bar is the memories written in that hour or day. The trend chip compares this window against the preceding one. Your all-time total across every scope is shown in the memory badge at the top right.',
       value: sumPoints(memoryTrends.lessons.points),
-      description: `in the last ${rangeNoun}`,
+      description: `in the ${rangeText}`,
       trend: memoryTrends.lessons,
       unit: 'memories',
     },
@@ -229,7 +278,7 @@ export function DashboardStats() {
       tooltip:
         'Memory records read in the selected range by your agents and tools, across the MCP tools and the REST API — one list call returning 20 memories counts as 20 records, not one read. Browsing your lore in this dashboard does NOT count: reading it here is visualisation, not consumption, so those reads are excluded and reloading a page never moves this number. Unlike the two cards beside it, this counts only YOUR reads: usage is a per-user ledger, so reads by other members of your organization are never included. The bars sum to the number, and the trend chip compares this window against the preceding one.',
       value: sumPoints(readTrend.points),
-      description: `in the last ${rangeNoun}`,
+      description: `in the ${rangeText}`,
       trend: readTrend,
       unit: 'memories',
     },
@@ -241,7 +290,7 @@ export function DashboardStats() {
       tooltip:
         'Distinct memory scopes (namespaces) with at least one memory written in the selected range. Each bar is the scopes seen for the FIRST time in that hour or day, so the bars sum to the distinct total rather than counting a long-running scope once per bucket. The trend chip compares the distinct scopes of this window against the preceding one.',
       value: memoryTrends.activeScopes,
-      description: `distinct scopes active in the last ${rangeNoun}`,
+      description: `distinct scopes active in the ${rangeText}`,
       trend: memoryTrends.newScopes,
       unit: 'scopes',
     },
@@ -268,7 +317,7 @@ export function DashboardStats() {
                   <UnitTag label={tag} />
                 </div>
                 {trend.points.length >= 2 && (
-                  <TrendChip changePct={trend.changePct} title={rangeTrendTitle(range)} />
+                  <TrendChip changePct={trend.changePct} title={rangeTrendTitle(range, nowIso)} />
                 )}
               </div>
               <div>
@@ -293,7 +342,7 @@ export function DashboardStats() {
                 points={trend.points}
                 unit={unit}
                 className="mt-auto h-7 w-full"
-                ariaLabel={`${label}: last ${rangeNoun}`}
+                ariaLabel={`${label}: ${rangeText}`}
               />
             </div>
           ))}

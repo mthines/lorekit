@@ -23,8 +23,14 @@
  * - `tags` param:     selected labels (JSON array). A memory must carry ALL of
  *   them. Server-side, shareable — "every perf regression we've learned" is a
  *   link you can paste to a teammate.
- * - `range` param:    date range, shareable. Scoped to /lore. Shared by the
- *   heatmap click, scope view, and feed view — one param drives all three.
+ * - `range` param:    time range, shareable. Scoped to /lore. Shared by the
+ *   heatmap click, scope view, and feed view — one param drives all three, and
+ *   as of the shared time model it is the SAME param the Overview writes, so a
+ *   selection means the same thing on both pages. It holds either a relative
+ *   preset (`{preset:'7d'}`, which stays live in a shared link) or an absolute
+ *   window (`{from,to}`, ISO instants or the legacy `YYYY-MM-DD` day strings).
+ *   `resolveRange` turns whichever arrived into instants; nothing downstream
+ *   sees a relative value. See `lib/time-range.ts`.
  * - `view` param:     'scope' | 'time'. Persisted in URL so a shared link
  *   lands on the correct tab.
  * - `scopePanelOpen`: local useState — ephemeral mobile accordion, NOT in URL.
@@ -45,6 +51,12 @@ import { useDebouncedUrlState } from '@/lib/hooks/useDebouncedUrlState';
 import { useIsMobile } from '@/lib/hooks/useMediaQuery';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
+import {
+  isPresetRange,
+  resolveRange,
+  toDayRange,
+  type TimeRange,
+} from '@/lib/time-range';
 import { useFacetCatalog, useMemories } from '@/lib/queries/lore';
 import {
   filtersParamValue,
@@ -269,9 +281,37 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
 
   // URL-backed date range, scoped to /lore. Shared by the heatmap click, the
   // scope view, and the feed view — one param drives all three.
-  const [range, setRange] = useUrlState<DateRange | null>('range', null, {
+  //
+  // Typed as `TimeRange` (lib/time-range.ts) rather than `DateRange`, which is
+  // what makes the param timestamp-capable: it now also carries a relative
+  // preset (`{preset:'7d'}`, which stays live in a shared link) and an absolute
+  // window precise to the hour (what a drilled-in chart bucket produces, PR-6).
+  // The widening is backward-compatible by construction — a `{from,to}` pair of
+  // day strings, the only shape this param has ever held, is still one of the
+  // arms, so every existing `?range=` link decodes exactly as before.
+  const [range, setRange] = useUrlState<TimeRange>('range', null, {
     cleanOnPathname: '/lore',
   });
+
+  // Resolved ONCE per range change, never per render: the clock is read inside
+  // the memo, so a relative preset stays a stable object between renders. It is
+  // part of the `useMemories` query key, and re-resolving on every render would
+  // mint a new key each time and refetch forever.
+  const resolvedRange = useMemo(
+    () => resolveRange(range, new Date().toISOString()),
+    [range],
+  );
+
+  // The calendar picker speaks whole UTC days and cannot render a preset or a
+  // sub-day window, so it is shown the absolute arm and nothing else. A preset
+  // reads as "no custom range" there — which is honest: the user did not pick
+  // one — while the label above the picker still names what is selected.
+  const pickerRange: DateRange | null = isPresetRange(range) ? null : range;
+
+  // Day-cell highlighting for the heatmap. Derived from the RESOLVED window, so
+  // a preset arriving from an Overview deep link lights the right cells instead
+  // of leaving the calendar blank while the list below it is clearly filtered.
+  const highlightRange: DateRange | null = resolvedRange ? toDayRange(resolvedRange) : null;
 
   // URL-backed ownership filter (plan.md Decision D9) — shareable, and the
   // accept-invite flow deep-links here (`/lore?owner=<serialised OwnerFilter>`)
@@ -357,7 +397,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     hasNextPage,
     isFetchingNextPage,
     fetchNextPage,
-  } = useMemories({ scope: selectedScope, search: committedSearch, range, filters, showArchived });
+  } = useMemories({ scope: selectedScope, search: committedSearch, range: resolvedRange, filters, showArchived });
 
   // Facet catalog for the menu (see `useFacetCatalog`) — its own endpoint query,
   // never derived from the loaded pages, so the menu's options can't shrink to
@@ -454,8 +494,12 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // Heatmap day-click: two-click range anchor → extend → reset, matching the
   // original activity page behaviour.
   function handleHeatmapDayClick(day: string) {
-    if (range && range.from === range.to) {
-      const anchor = range.from;
+    // The anchor→extend gesture only makes sense against an existing SINGLE-DAY
+    // absolute selection. A preset (or any wider window) is not an anchor, so a
+    // click on top of one starts a fresh single-day selection rather than
+    // silently extending from a boundary the user never picked.
+    const anchor = !isPresetRange(range) && range && range.from === range.to ? range.from : null;
+    if (anchor !== null) {
       setRange(day >= anchor ? { from: anchor, to: day } : { from: day, to: anchor });
     } else {
       setRange({ from: day, to: day });
@@ -623,7 +667,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             <ContributionHeatmap
               data={heatmapData}
               weeks={26}
-              selectedRange={range}
+              selectedRange={highlightRange}
               onSelectDate={handleHeatmapDayClick}
             />
           </div>
@@ -696,7 +740,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             onToggleFilterValue={handleToggleFilterValue}
             editingField={isMobile ? null : editingField}
             onEditField={setEditingField}
-            range={range}
+            range={pickerRange}
             onRangeChange={setRange}
             showArchived={showArchived}
             onToggleArchived={handleToggleArchived}
@@ -757,7 +801,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           onToggleFilterValue={handleToggleFilterValue}
           editingField={isMobile ? editingField : null}
           onEditField={setEditingField}
-          range={range}
+          range={pickerRange}
           onRangeChange={setRange}
           showArchived={showArchived}
           onToggleArchived={handleToggleArchived}
