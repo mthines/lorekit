@@ -57,7 +57,12 @@ alter table usage_events add column if not exists scope text;
 -- (the canonical `validateScope` wrapped to return null instead of throwing); a
 -- CHECK re-encoding the scope grammar in SQL would be a second, drift-prone
 -- copy of it, while an unbounded column would let a malformed value inflate
--- analytics cardinality. 200 chars is the same ceiling `memories.scope` uses.
+-- analytics cardinality. 200 chars is 00044's `usage_events_correlation_id_len`
+-- ceiling reused verbatim — deliberately NOT "the same ceiling `memories.scope`
+-- uses", which has none: that column is plain `text not null`
+-- (`00001_memories.sql:8`) with no CHECK, so a memory may legitimately be
+-- written under a scope this telemetry column would refuse. That asymmetry is
+-- the point of a backstop on a DIMENSION rather than on the record itself.
 --
 -- BACKSTOP means the recording side clamps FIRST: `safeValidateScope` returns
 -- null above `USAGE_SCOPE_MAX` (= 200), so a grammatical but over-long scope is
