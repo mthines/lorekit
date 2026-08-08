@@ -181,12 +181,18 @@ export async function runAgent({
     setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS).unref();
   }, timeoutMs);
 
+  // `error` (e.g. `claude` not on PATH) rejects this promise, so the transcript
+  // stream has to be closed in the SAME `finally` as the timer — closing it
+  // after the await only ever ran on the success path, leaking an open file
+  // descriptor for every failed spawn. `finally` awaits a returned promise, so
+  // the stream is flushed before either outcome is observed.
   const { code, signal } = await new Promise((resolve, reject) => {
     child.on("error", reject);
     child.on("close", (c, s) => resolve({ code: c, signal: s }));
-  }).finally(() => clearTimeout(killTimer));
-
-  await new Promise((resolve) => stream.end(resolve));
+  }).finally(() => {
+    clearTimeout(killTimer);
+    return new Promise((resolve) => stream.end(resolve));
+  });
 
   const wallMs = Date.now() - startedAt;
   const transcriptText = await fsp

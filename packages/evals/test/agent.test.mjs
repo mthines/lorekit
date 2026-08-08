@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
@@ -167,6 +168,42 @@ test("runAgent enforces its hard wall-clock timeout", async () => {
     assert.equal(run.timedOut, true);
     assert.ok(run.wallMs >= 250);
     assert.equal(run.resultJson, null);
+  });
+});
+
+test("a failed spawn rejects without leaking the transcript stream", async (t) => {
+  // The stream used to be closed AFTER the await, so only the success path ever
+  // reached it: `claude` not being on PATH emitted `error`, rejected, and left
+  // an open file descriptor behind for every attempt.
+  if (!fs.existsSync("/proc/self/fd")) {
+    t.skip("fd accounting needs /proc");
+    return;
+  }
+  await withSandbox({}, async (sandbox) => {
+    const transcriptPath = path.join(sandbox.artifacts, "never-spawned.jsonl");
+    await assert.rejects(() =>
+      runAgent({
+        prompt: "x",
+        cwd: sandbox.cwd,
+        env: sandbox.childEnv(),
+        transcriptPath,
+        command: path.join(sandbox.root, "definitely-not-a-binary"),
+        timeoutMs: 5_000,
+      }),
+    );
+
+    const openPaths = fs.readdirSync("/proc/self/fd").map((fd) => {
+      try {
+        return fs.readlinkSync(path.join("/proc/self/fd", fd));
+      } catch {
+        return "";
+      }
+    });
+    assert.equal(
+      openPaths.includes(transcriptPath),
+      false,
+      "the transcript stream is still open after the spawn failed",
+    );
   });
 });
 
