@@ -188,8 +188,10 @@ consequences to know before reading a number:
 
 ## `seen_count` — recurrence, counted by the writer
 
-Every read route returns `seen_count`: how many times the lesson has been written. It is
-part of `MEMORY_SELECT`, so `GET /`, `GET /:id` and `POST /search` all carry it.
+Every route that returns a memory returns `seen_count`: how many times the lesson has been
+written. It is part of `MEMORY_SELECT`, so `GET /`, `GET /:id`, `POST /search` **and the
+write route `PATCH /:id`** all carry it, and `POST /` carries it through its own explicit
+projection (`handlers/create.ts`). No route that hands back a memory omits the field.
 
 **It is derived, never supplied.** `memory_write` has no `p_seen_count` parameter and gained
 none in 00059 — the insert branches set `1` and each conflict-update branch sets
