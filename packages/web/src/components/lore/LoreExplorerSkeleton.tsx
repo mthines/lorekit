@@ -7,8 +7,11 @@
 // sidebar + list), and the mobile skeleton mirrors the `flex md:hidden` stacked
 // layout (collapsed scope header + control row + card list). The split is CSS
 // only (`hidden md:flex` / `flex md:hidden`) — matching the real component — so
-// the loading placeholder always resolves to the same shape the data will, and
-// there is no layout jump when the query settles on either breakpoint.
+// the loading placeholder resolves to the same shape the data will on either
+// breakpoint. Scope note: this skeletons the data-only panels only. The heatmap
+// panel and the view-mode tablist LoreExplorer renders ABOVE these are not
+// skeletoned here, so the no-jump guarantee applies to the scope/list panels,
+// not to those regions.
 export function LoreExplorerSkeleton() {
   return (
     <>
