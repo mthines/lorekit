@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.0](https://github.com/mthines/lorekit/compare/cli-v1.35.0...cli-v1.36.0) (2026-08-08)
+
+
+### Features
+
+* **cli:** add install --mcp-json for Claude Code on the web ([ffee10c](https://github.com/mthines/lorekit/commit/ffee10ce7121f8f03ef634c088f48fb34092ec91))
+
 ## [1.35.0](https://github.com/mthines/lorekit/compare/cli-v1.34.0...cli-v1.35.0) (2026-08-08)
 
 
