@@ -4538,6 +4538,124 @@ begin
 end;
 $$;
 
+-- ── 75. "expiring soon" — the (now, bound] list predicate (PR-2) ────────────
+-- Backs `GET /memories?expiring_within_days=N`, the Explorer's "expiring soon"
+-- Status view. NO migration: the predicate is applied by the list handler and
+-- range-scans `memories_expires_at_idx` (00030), the partial index on
+-- `expires_at is not null`.
+--
+-- SCOPE OF THIS SECTION, stated plainly so it is not read as more than it is:
+-- it asserts the PREDICATE the handler emits, over real rows, at the
+-- boundaries — the part where the semantics can be wrong. It does NOT exercise
+-- the handler's PostgREST translation; that is the live smoke test's job
+-- (`memories-api.integration.spec.ts`). The two are complementary: this one can
+-- seed a row expiring in exactly N days and an already-expired one, which a
+-- live suite cannot do without waiting.
+--
+-- AC-1: rows expiring inside the window are returned.
+-- AC-2: an ALREADY-EXPIRED row is excluded — the lower bound is exclusive, and
+--       this is why the handler re-states it instead of leaning on the live
+--       branch (which `archived=true` does not apply).
+-- AC-3: a row with NO TTL is excluded, and with no `expires_at is not null`
+--       clause: the comparisons drop it on their own, which is the claim
+--       `expiring-window.ts` makes and the one most likely to be "simplified".
+-- AC-4: the boundaries are (exclusive, inclusive] — a row expiring exactly at
+--       `now` is out; one expiring exactly at the bound is in.
+-- AC-5: the partial index that makes this affordable actually exists.
+
+-- Every row is positioned relative to a FIXED instant, so "already expired" and
+-- "expires in exactly 7 days" are exact rather than racing the suite's runtime.
+insert into memories (user_id, scope, key, value, expires_at) values
+  -- In-window: comfortably inside a 7-day horizon.
+  ('00000000-0000-0000-0000-0000000000a1', 'global', 'exp-in-3d',   'v', timestamptz '2026-06-04 12:00:00+00'),
+  -- In-window, at the far edge: expires at EXACTLY now + 7 days. The inclusive
+  -- upper bound is the whole reason this row is expected back.
+  ('00000000-0000-0000-0000-0000000000a1', 'global', 'exp-at-edge', 'v', timestamptz '2026-06-08 12:00:00+00'),
+  -- Out of window: real and live, but further out than the horizon asked for.
+  ('00000000-0000-0000-0000-0000000000a1', 'global', 'exp-in-30d',  'v', timestamptz '2026-07-01 12:00:00+00'),
+  -- Already expired: still on the table (the purge is nightly), and must never
+  -- surface in a view whose whole promise is "act before these go".
+  ('00000000-0000-0000-0000-0000000000a1', 'global', 'exp-past',    'v', timestamptz '2026-05-01 12:00:00+00'),
+  -- Exactly at `now`: expired by one instant. The discriminating row for an
+  -- accidentally-inclusive lower bound.
+  ('00000000-0000-0000-0000-0000000000a1', 'global', 'exp-at-now',  'v', timestamptz '2026-06-01 12:00:00+00'),
+  -- No TTL at all: permanent lore, never "expiring".
+  ('00000000-0000-0000-0000-0000000000a1', 'global', 'exp-none',    'v', null);
+
+do $$
+declare
+  -- The frozen clock and the 7-day horizon `expiringWindow(7, now)` derives
+  -- from it. Two literals rather than an expression, so this test cannot
+  -- reproduce an arithmetic bug in the code it is checking.
+  v_now   constant timestamptz := timestamptz '2026-06-01 12:00:00+00';
+  v_bound constant timestamptz := timestamptz '2026-06-08 12:00:00+00';
+  v_keys  text[];
+  v_rows  int;
+begin
+  set local role service_role;
+
+  -- The predicate EXACTLY as the handler emits it: two comparisons, no
+  -- `is not null`, lower exclusive, upper inclusive.
+  select array_agg(key order by key) into v_keys
+    from memories
+   where user_id = '00000000-0000-0000-0000-0000000000a1'
+     and archived_at is null
+     and key like 'exp-%'
+     and expires_at >  v_now
+     and expires_at <= v_bound;
+
+  -- AC-1 + AC-2 + AC-3 + AC-4 in one discriminating assertion. Each wrong
+  -- boundary produces a DIFFERENT wrong array, so a failure names the bug:
+  --   + exp-at-now  → the lower bound was made inclusive
+  --   - exp-at-edge → the upper bound was made exclusive
+  --   + exp-past    → the lower bound is missing entirely
+  --   + exp-in-30d  → the upper bound is missing entirely
+  --   + exp-none    → NULL is leaking through (a coalesce, or a `not (…)`)
+  assert v_keys = array['exp-at-edge', 'exp-in-3d'],
+    format('expiring AC-1..4: expected exactly {exp-at-edge, exp-in-3d}, got %s', v_keys);
+
+  -- AC-3, isolated. The no-TTL row is the one a future "simplification" would
+  -- re-admit by rewriting the pair as a NOT of the live predicate, so it gets
+  -- its own assertion rather than only living inside the array above.
+  select count(*) into v_rows
+    from memories
+   where key = 'exp-none'
+     and expires_at >  v_now
+     and expires_at <= v_bound;
+  assert v_rows = 0,
+    format('expiring AC-3: a memory with no TTL must never be "expiring soon", got %s rows', v_rows);
+
+  -- AC-2, isolated, with the reason attached: the expired row is STILL PRESENT
+  -- in the table (purging is a nightly job, not a read-path delete), so its
+  -- absence from the result is the predicate's doing and not the fixture's.
+  select count(*) into v_rows from memories where key = 'exp-past';
+  assert v_rows = 1,
+    'expiring AC-2: the fixture must still hold the expired row — otherwise its exclusion proves nothing';
+
+  reset role;
+end;
+$$;
+
+-- AC-5: the index this predicate relies on exists and is the PARTIAL one.
+-- Asserted, not assumed: the plan for `expires_at > x and expires_at <= y` is a
+-- range scan over exactly the `expires_at is not null` subset, which is why
+-- PR-2 adds no index of its own. If 00030's index were dropped or made total,
+-- this filter would quietly become a seq scan on the largest table.
+do $$
+declare v_where text;
+begin
+  select pg_get_expr(i.indpred, i.indrelid) into v_where
+    from pg_index i
+    join pg_class c on c.oid = i.indexrelid
+   where c.relname = 'memories_expires_at_idx';
+
+  assert v_where is not null,
+    'expiring AC-5: memories_expires_at_idx (00030) must exist — the expiring filter has no index of its own';
+  assert v_where like '%expires_at IS NOT NULL%',
+    format('expiring AC-5: memories_expires_at_idx must stay PARTIAL on expires_at is not null, got %s', v_where);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

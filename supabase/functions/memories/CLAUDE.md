@@ -150,6 +150,40 @@ its own `<column>_mode` of `in` (default) or `nin`.
   `not.cs`: "carries none of these" is NOT(carries any), while NOT(carries all) would also
   admit a row carrying all but one.
 
+## Filtering `GET /` — `?expiring_within_days=` ("expiring soon")
+
+`?expiring_within_days=N` (integer, 1–365) keeps only memories whose TTL runs out inside the
+window `(now, now + N days]`. The bounds come from the shared pure `expiringWindow`
+(`packages/mcp-core/src/expiring-window.ts` ↔ `_shared/expiring-window.ts`, drift-guarded by
+`edge-parity.spec.ts`), never computed inline — the boundary rules below ARE the feature, and an
+off-by-one here does not throw, it shows a row that already expired.
+
+- **The lower bound is EXCLUSIVE, the upper INCLUSIVE** — deliberately the opposite asymmetry
+  from this codebase's usual `[since, until)`. The lower is not a window edge at all: it is the
+  definition of "live" (`expires_at > now()`, the same predicate the live branch and
+  `lorekit_purge_all_expired_memories`'s complement use), so an inclusive one would surface rows
+  the next request refuses to return. The upper is inclusive because "within 7 days" plainly
+  includes something expiring at the 7-day mark.
+- **TWO predicates, not three.** There is no `expires_at is not null` clause: `null > x` and
+  `null <= x` are both SQL `NULL`, so a memory with no TTL fails the comparison and drops out on
+  its own. The reassuring-looking third clause would be dead weight the planner still carries.
+- **The `> now` bound is re-stated rather than inherited from the live branch**, which only runs
+  for `archived=false`. Without it, `?archived=true&expiring_within_days=7` would return
+  already-expired archived rows.
+- **It composes, it does not override.** With the default `archived=false` it narrows live rows
+  (the only combination the Explorer's Status control produces); combined with `archived=true` it
+  reads as "archived AND expiring soon" rather than 400ing — a filter that rejects a combination
+  its own grammar can express is a worse surprise than an empty page.
+- **No new index.** The two comparisons range-scan `memories_expires_at_idx` (00030), whose
+  partial predicate is exactly the row set they select. `migrations.test.sql` §75 asserts that
+  index still exists and is still partial, since this filter silently degrades to a seq scan on
+  the largest table if it is ever dropped or widened.
+- The 1–365 bound is spelled in BOTH `ListMemoriesQuerySchema` and `expiring-window.ts` —
+  `@lorekit/schemas` depends on nothing by design, the same arrangement `ttl_days` /
+  `TTL_MIN_DAYS` has. Unlike that one, the two are tied by an executable guard
+  (`expiring-window.spec.ts` → "agreement with ListMemoriesQuerySchema"), so a drift that would
+  turn a rejected value into a 500 fails a test instead.
+
 ## `GET /facets`
 
 `lorekit_memory_facets` (00052, widened by 00057) returns `{ facets: [{ facet, value, count }] }`

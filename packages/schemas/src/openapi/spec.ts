@@ -153,8 +153,22 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   // ── Memories ──────────────────────────────────────────────────────────────
   registry.registerPath({
     method: 'get', path: '/memories', summary: 'List memories', tags: ['Memories'],
+    description:
+      'Lists live memories by default. Filters AND across dimensions and OR within one, so ' +
+      '`?kind=lesson&host=reviewer` reads "reviewer\'s lessons".\n\n' +
+      '`expiring_within_days=N` narrows to lore whose TTL runs out soon — `expires_at` strictly ' +
+      'after now and at or before now + N days. The lower bound is exclusive because that is what ' +
+      '"still live" means everywhere else in the API (an already-expired memory is never returned); ' +
+      'the upper bound is inclusive, so "within 7 days" includes one expiring exactly 7 days out. ' +
+      'Memories with no TTL are never in the result. It is a RELATIVE horizon rather than an ' +
+      'absolute timestamp so a saved or shared link keeps answering the same question tomorrow.',
     security, request: { query: ListMemoriesQuerySchema },
-    responses: { 200: memoryPageResponse('Paginated memories'), 401: errorResponse, 403: errorResponse },
+    responses: {
+      200: memoryPageResponse('Paginated memories'),
+      // Reachable for any out-of-range query param (`limit`, `expiring_within_days`).
+      // It always was — the spec simply never said so.
+      400: errorResponse, 401: errorResponse, 403: errorResponse,
+    },
   });
   registry.registerPath({
     method: 'post', path: '/memories', summary: 'Create or update a memory', tags: ['Memories'],

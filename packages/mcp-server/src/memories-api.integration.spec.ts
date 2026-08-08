@@ -826,6 +826,80 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
     });
   });
 
+  // ── "Expiring soon" (?expiring_within_days=) ────────────────────────────────
+  // The half of the feature `migrations.test.sql` §75 cannot reach. That section
+  // asserts the PREDICATE over seeded rows (including boundary rows a live suite
+  // cannot produce without waiting); this one asserts the HANDLER — that the
+  // param survives schema coercion, reaches PostgREST as two comparisons, and
+  // composes with the live-row branch. Between them the feature is covered end
+  // to end; neither alone would have caught a param that was validated and then
+  // never applied.
+  describe('expiring-soon filter', () => {
+    const KEY_SOON = NS.name('exp-soon');
+    const KEY_LATER = NS.name('exp-later');
+    const KEY_PERMANENT = NS.name('exp-permanent');
+
+    beforeAll(async () => {
+      if (SKIP) return;
+      // Written through the public API with a real TTL, so `expires_at` is
+      // computed by `memory_write` exactly as it is in production — not injected.
+      await api('POST', '/', { scope: SCOPE, key: KEY_SOON, value: 'v', ttl_days: 1 });
+      await api('POST', '/', { scope: SCOPE, key: KEY_LATER, value: 'v', ttl_days: 365 });
+      await api('POST', '/', { scope: SCOPE, key: KEY_PERMANENT, value: 'v' });
+    }, REMOTE_TEST_TIMEOUT);
+
+    async function expiringKeys(days: number): Promise<string[]> {
+      const { status, data } = await api(
+        'GET',
+        `/?scope=${SCOPE}&limit=100&expiring_within_days=${days}`,
+      );
+      expect(status, `expiring_within_days=${days} → ${status}: ${JSON.stringify(data)}`).toBe(200);
+      return ((data as JsonObj).entries as JsonObj[]).map((e) => String(e.key));
+    }
+
+    it('returns only the memories whose TTL falls inside the window', async () => {
+      const keys = await expiringKeys(7);
+      expect(keys, 'a 1-day TTL is inside a 7-day horizon').toContain(KEY_SOON);
+      expect(keys, 'a 365-day TTL is outside it').not.toContain(KEY_LATER);
+      expect(keys, 'a memory with no TTL is never "expiring"').not.toContain(KEY_PERMANENT);
+    });
+
+    it('widening the horizon admits the further-out TTL, and still never the permanent one', async () => {
+      // The discriminating pair: if the upper bound were ignored the first test
+      // would still pass (everything comes back), and if the whole filter were
+      // ignored so would this one. Together they pin both edges — and the
+      // no-TTL row must stay absent at EVERY horizon, because its exclusion is
+      // NULL semantics, not a bound.
+      const keys = await expiringKeys(365);
+      expect(keys).toContain(KEY_SOON);
+      expect(keys).toContain(KEY_LATER);
+      expect(keys, 'no horizon is wide enough to make a permanent memory expiring').not.toContain(
+        KEY_PERMANENT,
+      );
+    });
+
+    it('composes with the other filters rather than replacing them', async () => {
+      const { status, data } = await api(
+        'GET',
+        `/?scope=${SCOPE}&limit=100&expiring_within_days=365&key=${encodeURIComponent(KEY_SOON)}`,
+      );
+      expect(status).toBe(200);
+      expect(((data as JsonObj).entries as JsonObj[]).map((e) => String(e.key))).toEqual([KEY_SOON]);
+    });
+
+    it.each([
+      ['zero — the empty window', '0'],
+      ['negative', '-1'],
+      ['past the 365-day ceiling', '366'],
+      ['fractional', '7.5'],
+      ['non-numeric', 'soon'],
+      ['empty', ''],
+    ])('rejects %s with a 400 rather than silently ignoring it', async (_label, value) => {
+      const { status } = await api('GET', `/?scope=${SCOPE}&expiring_within_days=${encodeURIComponent(value)}`);
+      expect(status, `expiring_within_days=${value} must be a 400`).toBe(400);
+    });
+  });
+
   // ── Usage statistics ─────────────────────────────────────────────────────────
   // GET /memories/usage aggregates usage_events through lorekit_usage_stats. Like
   // /scopes the concrete numbers depend on the credential (a service-role smoke
