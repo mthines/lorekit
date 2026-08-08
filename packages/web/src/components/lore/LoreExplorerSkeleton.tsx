@@ -54,12 +54,15 @@ export function LoreExplorerSkeleton() {
           <div className="h-5 w-40 animate-pulse rounded bg-[var(--color-bg-elevated)]" />
         </div>
 
-        {/* Control row: search input + filter / date / archived toggles */}
+        {/* Control row: search input + filter trigger + date pill + archived
+            toggle. The middle placeholder is a wider pill, not a square: the
+            real DateRangePicker renders a text pill ("All time"), so a square
+            here would let the row shift on load. */}
         <div className="flex items-center gap-2">
           <div className="h-9 flex-1 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)]" />
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="size-9 shrink-0 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]" />
-          ))}
+          <div className="size-9 shrink-0 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]" />
+          <div className="h-9 w-20 shrink-0 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]" />
+          <div className="size-9 shrink-0 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]" />
         </div>
 
         {/* Card list */}
