@@ -120,6 +120,13 @@ export async function createSandbox({
     /**
      * Remove any agent-instruction file from the sandbox cwd so the working
      * directory cannot spoil the gotcha. Returns the paths actually removed.
+     *
+     * ONLY `ENOENT` is swallowed. A delete that fails for any other reason —
+     * `EACCES`/`EPERM`, or a busy path — left the file in place while this
+     * function reported it as absent, which reads as "the sandbox is clean" and
+     * silently weakens the isolation invariant the arms depend on. Failing
+     * loudly is the correct outcome: the caller runs this inside `try`/`finally`
+     * with `dispose()`, so the sandbox is still torn down.
      */
     async stripInformationEnvironment() {
       const removed = [];
@@ -128,8 +135,11 @@ export async function createSandbox({
         try {
           await fs.rm(target, { recursive: true, force: false });
           removed.push(rel);
-        } catch {
-          // absent is the expected case
+        } catch (err) {
+          // Absent is the expected case; anything else means the file may still
+          // be there and the caller must not be told the cwd is clean.
+          if (err && err.code === "ENOENT") continue;
+          throw err;
         }
       }
       return removed;

@@ -112,6 +112,20 @@ test("stripInformationEnvironment clears agent-instruction files (seam for AC-2.
   });
 });
 
+test("stripInformationEnvironment throws rather than reporting an undeletable file as absent", async () => {
+  await withSandbox({}, async (sandbox) => {
+    // `.github` is a FILE here, so removing `.github/copilot-instructions.md`
+    // fails with ENOTDIR, not ENOENT. Before the fix that was swallowed and the
+    // caller was told the cwd was clean; the isolation invariant PR2 asserts on
+    // must not be satisfiable by a delete that did not happen.
+    await fsp.writeFile(path.join(sandbox.cwd, ".github"), "not a directory");
+    await assert.rejects(
+      () => sandbox.stripInformationEnvironment(),
+      (err) => err.code === "ENOTDIR",
+    );
+  });
+});
+
 test("two sandboxes never share a directory (fresh context per rep)", async () => {
   const a = await createSandbox();
   const b = await createSandbox();
