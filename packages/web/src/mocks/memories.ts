@@ -355,11 +355,19 @@ export function memoryHandlers(rows: MemoryRow[] = MEMORY_ROWS) {
     http.get('*/functions/v1/memories/read-activity', ({ request }) => {
       const url = new URL(request.url);
       const bucket = url.searchParams.get('bucket') === 'hour' ? 'hour' : 'day';
+      // `?scope=` is an EXACT match on the real endpoint (`ue.scope = p_scope`,
+      // 00058), never a prefix or a wildcard — the unfiltered call is the one
+      // that also returns the unattributable NULL-scope remainder. Honour it
+      // here or a filtered story renders every scope and silently looks like
+      // the filter does nothing.
+      const scope = url.searchParams.get('scope');
+      const buckets = readActivityFrom(rows, bucket)
+        .filter((cell) => scope === null || cell.scope === scope);
       return HttpResponse.json({
         bucket,
         since: url.searchParams.get('since') ?? FROZEN_NOW,
         until: url.searchParams.get('until') ?? FROZEN_NOW,
-        buckets: readActivityFrom(rows, bucket),
+        buckets,
       });
     }),
     http.get('*/functions/v1/memories', ({ request }) =>
