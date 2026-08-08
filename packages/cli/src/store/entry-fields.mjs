@@ -3,9 +3,11 @@
 // Both stores answer with rows in their OWN vocabulary — the remote store hands
 // back a REST `MemoryEntry` (`seen_count`, `updated_at`), the local store hands
 // back parsed frontmatter (`seen_count`, `updated`). A ranker cannot care which
-// one it is holding, so the projection lives here, once, and both stores apply
-// it on the way out. Two copies of "which key holds the timestamp" is exactly
-// the drift the repo's mirror guards exist to prevent.
+// one it is holding, so the READ-FIELD projection lives here, once, and both
+// stores apply it on the way out. Two copies of "which key holds the timestamp"
+// is exactly the drift the repo's mirror guards exist to prevent — see
+// `updatedAtOf` for the one other place in the CLI that maps the same pair, and
+// why it is not the same projection.
 //
 // TOTAL FUNCTIONS. Every entry point below is defined for any input — a null
 // row, a string where a number belongs, a hand-edited frontmatter scalar, a
@@ -42,6 +44,15 @@ export function seenCountOf(row) {
  * Date` and never the raw text: a recency decay fed `NaN` silently sinks the
  * entry to the bottom, which is a worse failure than admitting the timestamp is
  * unknown.
+ *
+ * `normalizeEntry` (`src/lessons-view.mjs`) maps the same two spellings at the
+ * OPPOSITE precedence — `updated ?? updated_at`, local first — and that is
+ * deliberate, not drift: it builds the human/`--json` VIEW row, where a local
+ * file's own `updated` is the authoritative one and the value is passed through
+ * verbatim for rendering. This function builds the RANKING row, where the
+ * remote column is authoritative and the value is normalised through `Date`.
+ * Two different projections over one pair of keys, so neither can call the
+ * other; keep them in step by hand when a spelling changes.
  */
 export function updatedAtOf(row) {
   const raw = row?.updated_at ?? row?.updated;
