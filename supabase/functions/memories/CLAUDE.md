@@ -208,6 +208,15 @@ on `archived_at is null` (00016), so writing an archived key inserts a fresh row
 `1` — the lesson was retired and is being learned again. This matches the `created_at`
 semantics on that same path.
 
+**Re-writing an expired key IS a recurrence, and that asymmetry is deliberate.** The predicates
+exclude archived rows only, so an expired-but-unarchived row is still the row the conflict
+resolves to and its count keeps climbing. Expiry is a *visibility* state — `expires_at` filters
+the row out of every read (00030) but leaves it in the table until `purge_expired_memories`
+hard-deletes it — whereas archiving is a retirement. Same key, same row, one more sighting; the
+count restarts at `1` only once the purge has actually removed the row. Note the write does not
+by itself make the row readable again: with no `ttl_seconds` and no `clear_ttl` the update branch
+keeps the past `expires_at`, so the recurrence is counted on a row the reads still skip.
+
 Rows written before 00058 read `1` (the column is `NOT NULL DEFAULT 1`, so the backfill is
 the default and no data migration ran). The field is optional in `MemoryEntrySchema` for the
 `kind`/`host` reason: a client reading from a backend deployed before 00058 sees it absent
