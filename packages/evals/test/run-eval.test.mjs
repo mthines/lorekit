@@ -54,6 +54,22 @@ test("parseArgs rejects nonsense rather than running a bad experiment", () => {
   assert.throws(() => parseArgs(["arm0", "--nope"]), /unknown option/);
 });
 
+test("a leading -h/--help is the help flag, not a subcommand", async () => {
+  for (const flag of ["-h", "--help"]) {
+    const options = parseArgs([flag]);
+    assert.equal(options.help, true, flag);
+    assert.equal(options.subcommand, null, flag);
+    // Exit 0 with the usage text, not 2 with "is not implemented yet".
+    assert.equal(await main([flag]), 0, flag);
+  }
+  // A trailing --help after a real subcommand keeps working.
+  const withSub = parseArgs(["arm0", "--help"]);
+  assert.equal(withSub.help, true);
+  assert.equal(withSub.subcommand, "arm0");
+  // A genuinely unknown subcommand is still an error, not usage.
+  assert.equal(await main(["golden"]), 2);
+});
+
 test("a value-taking flag with no value is a named parse error, not a TypeError later", () => {
   for (const flag of ["--reps", "--out", "--timeout", "--command"]) {
     assert.throws(

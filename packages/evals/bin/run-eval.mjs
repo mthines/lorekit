@@ -72,6 +72,15 @@ export function parseArgs(argv) {
     dryRun: false,
     help: false,
   };
+  // `-h` / `--help` in the subcommand position is the help FLAG, not a
+  // subcommand named "--help". Without this, `run-eval.mjs --help` falls
+  // through to the unimplemented-subcommand branch and exits 2 with
+  // `subcommand "--help" is not implemented yet` — the opposite of what the
+  // flag documents.
+  if (subcommand === "-h" || subcommand === "--help") {
+    options.subcommand = null;
+    options.help = true;
+  }
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     switch (arg) {
