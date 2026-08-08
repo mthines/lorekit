@@ -1184,13 +1184,9 @@ describe.skipIf(SKIP)('LoreKit memories API — per-scope read attribution (inte
   let probeRan = false;
   let probeReason = '';
 
-  async function raApi(method: string, path: string, body?: unknown) {
-    return api(method, path, body);
-  }
-
   /** Hard-delete this suite's key at ITS scope — the file-level helper is bound to `global`. */
   async function hardDeleteInScope(key: string): Promise<void> {
-    const { status, data } = await raApi(
+    const { status, data } = await api(
       'DELETE',
       `/?scope=${encodeURIComponent(RA_SCOPE)}&key=${encodeURIComponent(key)}&force=true`,
     );
@@ -1217,13 +1213,13 @@ describe.skipIf(SKIP)('LoreKit memories API — per-scope read attribution (inte
     // Write one memory, then READ it back through the scope-filtered list — the
     // call whose usage row should carry the scope. Both go through the public
     // API, so this exercises the real recording site, not a seeded row.
-    const created = await raApi('POST', '/', { scope: RA_SCOPE, key: RA_KEY, value: 'read-scope-probe' });
+    const created = await api('POST', '/', { scope: RA_SCOPE, key: RA_KEY, value: 'read-scope-probe' });
     if (created.status !== 201) {
       probeRan = true;
       probeReason = `create under ${RA_SCOPE} returned HTTP ${created.status}`;
       return;
     }
-    const listed = await raApi('GET', `/?scope=${encodeURIComponent(RA_SCOPE)}&limit=10`);
+    const listed = await api('GET', `/?scope=${encodeURIComponent(RA_SCOPE)}&limit=10`);
     if (listed.status !== 200) {
       probeRan = true;
       probeReason = `list under ${RA_SCOPE} returned HTTP ${listed.status}`;
@@ -1269,7 +1265,7 @@ describe.skipIf(SKIP)('LoreKit memories API — per-scope read attribution (inte
   });
 
   it('GET /memories/read-activity — every bucket carries a (nullable) scope', async () => {
-    const { status, data } = await raApi('GET', '/read-activity?bucket=day');
+    const { status, data } = await api('GET', '/read-activity?bucket=day');
     expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
     const buckets = (data as JsonObj).buckets as JsonObj[];
     expect(Array.isArray(buckets)).toBe(true);
@@ -1295,13 +1291,13 @@ describe.skipIf(SKIP)('LoreKit memories API — per-scope read attribution (inte
     // a 400 for it would fail against a live instance while saying nothing about
     // this endpoint. The charset guard stands in for it instead.
     for (const bad of ['repo:mthines/x', 'nope::x', 'project::a b']) {
-      const { status } = await raApi('GET', `/read-activity?scope=${encodeURIComponent(bad)}`);
+      const { status } = await api('GET', `/read-activity?scope=${encodeURIComponent(bad)}`);
       expect(status, `scope=${bad} should be rejected`).toBe(400);
     }
   });
 
   it('GET /memories/read-activity?scope= — returns only that scope', async () => {
-    const { status, data } = await raApi(
+    const { status, data } = await api(
       'GET', `/read-activity?bucket=hour&scope=${encodeURIComponent(RA_SCOPE)}`,
     );
     expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
@@ -1315,7 +1311,7 @@ describe.skipIf(SKIP)('LoreKit memories API — per-scope read attribution (inte
 
   it('a live read under a minted scope is attributed to it', async ({ skip }) => {
     if (!attributionObservable) skip();
-    const { status, data } = await raApi(
+    const { status, data } = await api(
       'GET', `/read-activity?bucket=hour&scope=${encodeURIComponent(RA_SCOPE)}`,
     );
     expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
