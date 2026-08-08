@@ -9,6 +9,7 @@ import {
   resolveProjectRoot,
   removeSkill,
   removeMcpServer,
+  removeWebMcpServer,
   removeClaudeHooks,
   homeDir,
 } from './config.mjs';
@@ -56,6 +57,15 @@ export async function uninstall(args) {
     step: attempt(() => removeSkill(root, scope, skill.name)),
   }));
   const mcp = attempt(() => removeMcpServer(root, scope));
+  // `install --global --mcp-json` writes the committable project .mcp.json in
+  // ADDITION to ~/.claude.json, so a GLOBAL uninstall must also clear that
+  // entry or it orphans a lorekit server pointing at a now-removed setup. A
+  // project uninstall already targets .mcp.json via `mcp` above, so this is
+  // global-only. `removeWebMcpServer` removes ONLY the committable web form, so
+  // it never deletes an unrelated embedded-token `install --project` entry a
+  // user set up separately. Surgical and idempotent: no web file ⇒ a quiet
+  // "nothing to remove", other servers in the file are preserved.
+  const webMcp = scope === 'global' ? attempt(() => removeWebMcpServer(root)) : null;
   const hooks = attempt(() => removeClaudeHooks(root, scope));
 
   // Global paths shown relative to ~; project paths repo-relative.
@@ -74,15 +84,26 @@ export async function uninstall(args) {
     done: (r) => `lorekit server removed → ${display(r.file)}`,
     noop: 'no lorekit server entry — nothing to remove',
   });
+  if (webMcp) {
+    // Always the repo-relative project path, even under a global uninstall.
+    report(webMcp, '.mcp.json (web)', {
+      done: (r) => `lorekit server removed → ${path.relative(root, r.file) || r.file}`,
+      noop: 'no committable project .mcp.json — nothing to remove',
+    });
+  }
   report(hooks, 'hooks', {
     done: (r) => `${r.removed} removed → ${display(r.file)}`,
     noop: 'no lorekit hooks — nothing to remove',
   });
 
   const skillStepList = skillSteps.map((s) => s.step);
-  const failed = [...skillStepList, mcp, hooks].some((s) => !s.ok);
+  const webSteps = webMcp ? [webMcp] : [];
+  const failed = [...skillStepList, mcp, ...webSteps, hooks].some((s) => !s.ok);
   const any =
-    (skillStepList.some((s) => s.result?.removed) || mcp.result?.removed || hooks.result?.removed) && true;
+    (skillStepList.some((s) => s.result?.removed) ||
+      mcp.result?.removed ||
+      webMcp?.result?.removed ||
+      hooks.result?.removed) && true;
 
   if (failed) {
     log(`\n  ${c.dim('Some items could not be removed and were left untouched — see above.')}`);

@@ -113,6 +113,70 @@ test('uninstall --global removes from ~/.claude, leaving user config intact', as
   });
 });
 
+test('uninstall --global also clears the committable project .mcp.json from --mcp-json', async () => {
+  // `install --global --mcp-json` writes BOTH ~/.claude.json and a project
+  // .mcp.json, so a global uninstall must clear the project one too or it
+  // orphans a lorekit server pointing at a torn-down setup.
+  const home = tmp('lk-uninst-webhome-');
+  const root = tmp('lk-uninst-webcwd-');
+  await withHome(home, async () => {
+    await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, global: true, 'mcp-json': true });
+    assert.ok(fs.existsSync(path.join(root, '.mcp.json')), 'web .mcp.json written by install');
+
+    const code = await uninstall({ dir: root, yes: true, global: true });
+    assert.equal(code, 0);
+
+    const cfg = JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8'));
+    assert.ok(!cfg.mcpServers?.lorekit, 'global lorekit server removed');
+
+    const web = JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'));
+    assert.ok(!web.mcpServers?.lorekit, 'orphaned project lorekit server also removed');
+  });
+});
+
+test('uninstall --global preserves other servers in the project .mcp.json', async () => {
+  // The web .mcp.json clear must be surgical — a co-located non-lorekit server
+  // survives, exactly as the scope-config removal does.
+  const home = tmp('lk-uninst-webhome2-');
+  const root = tmp('lk-uninst-webcwd2-');
+  await withHome(home, async () => {
+    await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, global: true, 'mcp-json': true });
+    const file = path.join(root, '.mcp.json');
+    const seeded = JSON.parse(fs.readFileSync(file, 'utf8'));
+    seeded.mcpServers.other = { command: 'x' };
+    fs.writeFileSync(file, JSON.stringify(seeded));
+
+    await uninstall({ dir: root, yes: true, global: true });
+    const web = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.ok(!web.mcpServers?.lorekit, 'lorekit removed');
+    assert.ok(web.mcpServers?.other, 'unrelated server preserved');
+  });
+});
+
+test('uninstall --global leaves an unrelated embedded-token project .mcp.json intact', async () => {
+  // The global-uninstall cleanup must remove ONLY the committable web form, not
+  // an embedded-token `install --project` entry a user set up separately.
+  const home = tmp('lk-uninst-embed-home-');
+  const root = tmp('lk-uninst-embed-cwd-');
+  await withHome(home, async () => {
+    fs.writeFileSync(
+      path.join(root, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', `${ENDPOINT}?token=${TOKEN}`] } },
+      }),
+    );
+    await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, global: true });
+    await uninstall({ dir: root, yes: true, global: true });
+
+    const proj = JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'));
+    assert.ok(proj.mcpServers?.lorekit, 'embedded-token project entry preserved by a global uninstall');
+    assert.ok(
+      proj.mcpServers.lorekit.args.some((a) => a.includes(TOKEN)),
+      'it is still the embedded-token form, untouched',
+    );
+  });
+});
+
 test('uninstall leaves a corrupt config untouched, still removes what it can, and exits non-zero', async () => {
   const root = tmp('lk-uninst-corrupt-');
   await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true });

@@ -4,11 +4,40 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { install, defaultHookMode, HOOK_PROMPT_OPTIONS, tokenPlan, maskToken } from '../src/install.mjs';
 import { skillInstallDir, mcpConfigPath, homeDir, installedHookEvents, HOOK_MODES } from '../src/config.mjs';
 
 function tmp(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
+function gitAvailable() {
+  try {
+    execFileSync('git', ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Capture everything install writes to stdout (log/status go through
+// process.stdout.write) so a test can assert on a status line.
+async function captureStdout(fn) {
+  const original = process.stdout.write.bind(process.stdout);
+  let buf = '';
+  process.stdout.write = (chunk, ...rest) => {
+    buf += typeof chunk === 'string' ? chunk : chunk.toString();
+    // Swallow the output during capture; return true like the real write.
+    if (typeof rest[rest.length - 1] === 'function') rest[rest.length - 1]();
+    return true;
+  };
+  try {
+    await fn();
+  } finally {
+    process.stdout.write = original;
+  }
+  return buf;
 }
 
 // `install` returns the traceCommand result shape ({ exitCode, ...bounded attrs }),
@@ -71,6 +100,161 @@ test('install --global writes into ~/.claude and preserves existing user config'
     assert.equal(cfg.theme, 'dark', 'unrelated user settings preserved');
     assert.ok(cfg.mcpServers.other, 'other MCP server preserved');
     assert.ok(cfg.mcpServers.lorekit, 'lorekit server added to ~/.claude.json');
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    if (prevProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = prevProfile;
+  }
+});
+
+// ── `--mcp-json`: committable, web-ready project .mcp.json ───────────────────
+//
+// Claude Code on the web clones the repo fresh, so it can only see a committed
+// repo-root .mcp.json — and only a committable (no embedded secret) one at that.
+// `--mcp-json` writes exactly that: the project file, authenticating via a
+// ${LOREKIT_TOKEN} reference rather than a token baked into the URL.
+
+// The one assertion every --mcp-json case must satisfy: the lorekit server is
+// present, points at the endpoint, references ${LOREKIT_TOKEN} in a --header,
+// and embeds no live token anywhere.
+function assertWebMcpShape(mcp) {
+  const args = mcp.mcpServers.lorekit.args;
+  assert.ok(args.includes(ENDPOINT), 'endpoint present');
+  const hi = args.indexOf('--header');
+  assert.ok(hi !== -1, '--header present');
+  assert.equal(args[hi + 1], 'Authorization:Bearer ${LOREKIT_TOKEN}', 'auth via env-var reference');
+  assert.ok(!args.some((a) => a.includes(TOKEN)), 'no embedded token');
+  assert.ok(!args.some((a) => a.includes('?token=')), 'no ?token= in the URL');
+}
+
+test('install --mcp-json writes a committable project .mcp.json referencing ${LOREKIT_TOKEN}', async () => {
+  const root = tmp('lk-webmcp-');
+  const code = await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true, 'mcp-json': true });
+  assert.equal(exitOf(code), 0);
+
+  const mcp = JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'));
+  assertWebMcpShape(mcp);
+});
+
+test('install --global --mcp-json writes BOTH ~/.claude.json and a committable project .mcp.json', async () => {
+  const home = tmp('lk-webmcp-home-');
+  const root = tmp('lk-webmcp-cwd-');
+  const prevHome = process.env.HOME;
+  const prevProfile = process.env.USERPROFILE;
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  try {
+    const code = await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, global: true, 'mcp-json': true });
+    assert.equal(exitOf(code), 0);
+
+    // Global scope still lands in ~/.claude.json (embedded token — machine-local).
+    const global = JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8'));
+    assert.ok(global.mcpServers.lorekit.args.some((a) => a.includes(TOKEN)), 'global config keeps the embedded token');
+
+    // AND the committable web file is written to the project root.
+    const web = JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'));
+    assertWebMcpShape(web);
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    if (prevProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = prevProfile;
+  }
+});
+
+test('install --project --mcp-json does not embed a token (the web form owns .mcp.json)', async () => {
+  // Without --mcp-json a project install embeds the token; --mcp-json must take
+  // over that same file with the committable form, never leave the embedded one.
+  const root = tmp('lk-webmcp-proj-');
+  await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true, 'mcp-json': true });
+  const raw = fs.readFileSync(path.join(root, '.mcp.json'), 'utf8');
+  assert.ok(!raw.includes(TOKEN), 'the resolved token never reaches the committable file');
+  assertWebMcpShape(JSON.parse(raw));
+});
+
+test('install --mcp-json strips an embedded ?token= from the endpoint (no secret in the committable file)', async () => {
+  // The committable web file must never carry a live token. An --endpoint /
+  // LOREKIT_MCP_URL value that already embeds ?token= is ordinary to paste, so
+  // it must be stripped before it lands in the file install tells you to commit.
+  const root = tmp('lk-webmcp-tokenurl-');
+  await install({
+    dir: root,
+    endpoint: `${ENDPOINT}?token=${TOKEN}`,
+    yes: true,
+    project: true,
+    'mcp-json': true,
+  });
+  const raw = fs.readFileSync(path.join(root, '.mcp.json'), 'utf8');
+  assert.ok(!raw.includes(TOKEN), 'the embedded token is stripped from the committable file');
+  assertWebMcpShape(JSON.parse(raw));
+});
+
+test('install --mcp-json preserves other MCP servers already in .mcp.json', async () => {
+  const root = tmp('lk-webmcp-merge-');
+  fs.writeFileSync(
+    path.join(root, '.mcp.json'),
+    JSON.stringify({ mcpServers: { other: { command: 'x' } } }),
+  );
+  await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true, 'mcp-json': true });
+  const mcp = JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'));
+  assert.ok(mcp.mcpServers.other, 'unrelated server preserved');
+  assertWebMcpShape(mcp);
+});
+
+test('install --mcp-json warns when the .mcp.json it wrote is git-ignored', { skip: !gitAvailable() }, async () => {
+  // The committable web file is useless if the repo will never commit it, and
+  // .mcp.json is commonly git-ignored — so install must surface that at write
+  // time. Assert the warning reaches stdout (config.test.mjs covers the
+  // underlying isMcpJsonGitIgnored detector directly).
+  const root = tmp('lk-webmcp-ignored-');
+  execFileSync('git', ['-C', root, 'init'], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(root, '.gitignore'), '.mcp.json\n');
+
+  const out = await captureStdout(() =>
+    install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true, 'mcp-json': true }),
+  );
+  // Key on the warning status line's own label — the phrase "git-ignored" also
+  // appears in the always-present closing web note, so a looser match would
+  // pass even when the warning is absent.
+  assert.match(out, /\.mcp\.json \(git\).*git-ignored/, 'install emits the git-ignored warning line');
+  assert.match(out, /un-ignore it/, 'the warning tells the user how to fix it');
+});
+
+test('install --mcp-json does NOT warn when .mcp.json is tracked', { skip: !gitAvailable() }, async () => {
+  const root = tmp('lk-webmcp-tracked-');
+  execFileSync('git', ['-C', root, 'init'], { stdio: 'ignore' });
+  const out = await captureStdout(() =>
+    install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true, 'mcp-json': true }),
+  );
+  // Same reason: assert the WARNING line (its label) is absent, not the phrase
+  // "git-ignored", which the closing note always contains.
+  assert.doesNotMatch(out, /\.mcp\.json \(git\)/, 'no warning line when the file is not ignored');
+});
+
+test('install --mcp-json reaches the write step even on an already-complete install', async () => {
+  // A fully-installed scope normally short-circuits to the "already installed"
+  // summary; an explicit --mcp-json is an intent to write that file, so it must
+  // bypass the short-circuit just as an explicit --hooks does.
+  //
+  // HOME is redirected because this uses a GLOBAL install: without it the write
+  // lands in the real ~/.claude.json, which both scribbles on the developer/CI
+  // home AND leaks a configured lorekit endpoint into every later test file's
+  // process (they all read ~/.claude.json), breaking unrelated tests.
+  const home = tmp('lk-webmcp-complete-home-');
+  const root = tmp('lk-webmcp-complete-');
+  const prevHome = process.env.HOME;
+  const prevProfile = process.env.USERPROFILE;
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  try {
+    const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, global: true };
+    await install(base); // global install, no project .mcp.json yet
+    assert.ok(!fs.existsSync(path.join(root, '.mcp.json')), 'no project .mcp.json after a plain global install');
+
+    const code = await install({ ...base, 'mcp-json': true });
+    assert.equal(exitOf(code), 0);
+    assert.ok(fs.existsSync(path.join(root, '.mcp.json')), 'the web .mcp.json is written despite the complete install');
   } finally {
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;

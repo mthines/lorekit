@@ -9,6 +9,9 @@ import {
   skillInstallDir,
   copyDir,
   upsertMcpServer,
+  upsertWebMcpServer,
+  isMcpJsonGitIgnored,
+  WEB_TOKEN_ENV_VAR,
   upsertClaudeHooks,
   resolveHookRunner,
   HOOK_MODES,
@@ -194,6 +197,12 @@ export async function install(args) {
   // circuits). `--no-hooks` is skip-only and never justifies that bypass.
   const hooksFlagExplicit = typeof args.hooks === 'string' && args.hooks.trim() !== '';
 
+  // `--mcp-json` writes a committable, env-var-referencing project .mcp.json for
+  // Claude Code on the web (see upsertWebMcpServer). It is an explicit intent to
+  // (re)write that file, so — like an explicit `--hooks` — it must reach the
+  // write step even when the scope is already fully installed.
+  const writeWebMcpJson = Boolean(args['mcp-json']);
+
   heading('LoreKit install');
   log(`  project: ${c.dim(root)}`);
 
@@ -219,7 +228,7 @@ export async function install(args) {
 
   const wiredEvents = installedHookEvents(root, scope);
 
-  if (currentState.isFullyInstalled && !force && !hooksFlagExplicit) {
+  if (currentState.isFullyInstalled && !force && !hooksFlagExplicit && !writeWebMcpJson) {
     // Surface a clear, useful already-installed summary.
     log('');
     log(
@@ -345,8 +354,28 @@ export async function install(args) {
   });
 
   // 5. Wire the MCP config for the chosen scope.
+  //    When `--mcp-json` is going to (re)write the PROJECT .mcp.json in its
+  //    committable form and the scope target IS that same file (project scope),
+  //    skip this write — otherwise we would write an embedded-token file only to
+  //    overwrite it with the committable one a moment later. A global scope
+  //    targets ~/.claude.json, a different file, so it always writes.
   const remoteUrl = buildRemoteUrl(endpoint, token);
-  const { file, existed } = upsertMcpServer(root, remoteUrl, scope);
+  const scopeWriteOwnedByWeb = writeWebMcpJson && scope === 'project';
+  let file = null;
+  let existed = false;
+  if (!scopeWriteOwnedByWeb) {
+    ({ file, existed } = upsertMcpServer(root, remoteUrl, scope));
+  }
+
+  // 5a. `--mcp-json`: write the committable, env-var-referencing project
+  //     .mcp.json for Claude Code on the web (see upsertWebMcpServer). Always
+  //     the repo-root file, regardless of scope — that is the only MCP config a
+  //     fresh web clone can see. The token is NOT embedded here: the file
+  //     references `${LOREKIT_TOKEN}`, set as an environment secret in the web UI.
+  let webMcp = null;
+  if (writeWebMcpJson) {
+    webMcp = upsertWebMcpServer(root, endpoint, WEB_TOKEN_ENV_VAR);
+  }
 
   // 5b. Hooks — the deterministic layer the Claude plugin adds on top of the
   //     skill, firing the shared `lorekit hook` engine (which reads the same
@@ -427,7 +456,30 @@ export async function install(args) {
         : 'already up to date';
     status(s.existed && s.written === 0 ? 'info' : 'pass', `skill ${s.name}`, `${skillState} → ${display(s.dest)}`);
   }
-  status('pass', mcpLabel, `${existed ? 'updated' : 'created'} lorekit server → ${display(file)}`);
+  if (file) {
+    status('pass', mcpLabel, `${existed ? 'updated' : 'created'} lorekit server → ${display(file)}`);
+  }
+  if (webMcp) {
+    // The committable web form: reported separately so it is clear this file is
+    // meant to be committed (unlike the embedded-token form) and that the token
+    // comes from an environment secret rather than the file.
+    const webPath = path.relative(root, webMcp.file) || webMcp.file;
+    status(
+      'pass',
+      '.mcp.json (web)',
+      `${webMcp.existed ? 'updated' : 'created'} committable lorekit server (auth via \${${WEB_TOKEN_ENV_VAR}}) → ${webPath}`,
+    );
+    // The web file only works if it is actually committed, and .mcp.json is
+    // commonly git-ignored (the embedded-token form is a secret). Warn when it
+    // is, so a fresh web clone silently missing the config is not a mystery.
+    if (isMcpJsonGitIgnored(root) === true) {
+      status(
+        'warn',
+        '.mcp.json (git)',
+        'git-ignored — un-ignore it (add `!.mcp.json` to .gitignore, or `git add -f .mcp.json`) or a fresh web clone will not see it',
+      );
+    }
+  }
 
   if (!touchHooks) {
     status(
@@ -465,8 +517,29 @@ export async function install(args) {
   }
 
   const kind = tokenKind(token);
-  if (kind === 'none') {
-    status('warn', 'token', 'none configured — reads/writes will fail until a token is set');
+  if (scopeWriteOwnedByWeb) {
+    // `--project --mcp-json`: the committable web .mcp.json is the ONLY config
+    // written, and it references ${LOREKIT_TOKEN} rather than storing a token —
+    // so NOTHING persists a credential here. Reporting the token's tier would
+    // imply it was configured; instead say it is not stored (and that a passed
+    // --token was therefore not persisted), pointing at the environment secret.
+    status(
+      'warn',
+      'token',
+      `not stored — the committable .mcp.json resolves \${${WEB_TOKEN_ENV_VAR}} at runtime; set it as an environment secret${
+        token ? ' (any --token you passed is not persisted)' : ''
+      }`,
+    );
+  } else if (kind === 'none') {
+    // A global --mcp-json with no token still writes the web file; explain the
+    // runtime resolution rather than implying reads/writes will fail.
+    status(
+      'warn',
+      'token',
+      webMcp
+        ? `none stored — the committable .mcp.json resolves \${${WEB_TOKEN_ENV_VAR}} at runtime; set it as an environment secret`
+        : 'none configured — reads/writes will fail until a token is set',
+    );
   } else if (kind === 'read-only') {
     status('warn', 'token', 'read-only (lk_ro_*) — the skill can read memories but not write them');
   } else if (kind === 'write-only') {
@@ -485,13 +558,24 @@ export async function install(args) {
   }
 
   log(`\n  Next: ${c.cyan('npx @lorekit/cli doctor')} to verify the connection.`);
-  if (token) {
+  // Where the token lives, and how to treat that file, depends on which MCP
+  // configs were written. The web `.mcp.json` never holds the token, so a
+  // project scope that was owned by `--mcp-json` gets the web guidance, not the
+  // "keep it out of version control" note that applies to the embedded form.
+  if (webMcp) {
     log(
       `  ${c.dim(
-        scope === 'global'
-          ? 'Note: your token is stored in ~/.claude.json (used by every project) — keep that file private.'
-          : 'Note: your token is stored in .mcp.json — keep it out of version control.',
+        `For Claude Code on the web: commit .mcp.json (it is often git-ignored — un-ignore it first), then set ${WEB_TOKEN_ENV_VAR} as an environment secret. The file references the token, so it never holds the secret itself.`,
       )}`,
+    );
+  }
+  if (token && scope === 'global') {
+    log(
+      `  ${c.dim('Note: your token is stored in ~/.claude.json (used by every project) — keep that file private.')}`,
+    );
+  } else if (token && scope === 'project' && !scopeWriteOwnedByWeb) {
+    log(
+      `  ${c.dim('Note: your token is stored in .mcp.json — keep it out of version control.')}`,
     );
   }
   // Bounded, non-PII: which of the three presets this run landed on. Counting

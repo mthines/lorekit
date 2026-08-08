@@ -164,6 +164,23 @@ npx @lorekit/cli install \
   --token    lk_rw_<your-token>
 ```
 
+**Claude Code on the web** clones the repo fresh into an ephemeral container, so
+it only sees a committed, repo-root `.mcp.json`. Add `--mcp-json` to also write
+that file in a committable form — it authenticates via a `${LOREKIT_TOKEN}`
+reference instead of an embedded token, so it holds no secret:
+
+```bash
+npx @lorekit/cli install --global --mcp-json \
+  --endpoint https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp
+```
+
+Commit the generated `.mcp.json` and set `LOREKIT_TOKEN` as an environment
+secret in the web UI. Note that `.mcp.json` is usually git-ignored (the default
+install embeds a token) — un-ignore it before committing, and keep using
+`--mcp-json` in that repo so a later plain install never writes a token into the
+now-tracked file. The command warns when the file it wrote is still git-ignored.
+See the [Claude Code on the web guide](https://lorekit.io/docs/claude-code-web).
+
 For any other MCP-compatible agent, add the endpoint and Bearer token to the agent's MCP config directly:
 
 ```jsonc

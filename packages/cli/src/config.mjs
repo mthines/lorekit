@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 // packages/cli/ — the installable package root (this file lives in src/).
@@ -366,6 +367,88 @@ export function upsertMcpServer(root, remoteUrl, scope = 'project') {
   return { file, existed };
 }
 
+// The environment variable the committable (web) .mcp.json references for its
+// token, instead of embedding a live secret. Kept as a constant so the writer,
+// the install summary, and the docs can never name a different variable.
+export const WEB_TOKEN_ENV_VAR = 'LOREKIT_TOKEN';
+
+// Strip any credential from an endpoint URL before it goes into the committable
+// web .mcp.json. The whole point of that file is to carry NO secret, so an
+// `--endpoint` / LOREKIT_MCP_URL value that already embeds `?token=lk_…` (a
+// perfectly ordinary thing to paste) must not be written verbatim — that would
+// commit a live token in the file install tells you to commit. Mirrors
+// `splitEndpoint`'s token removal (mcp.mjs) inline rather than importing it, so
+// config.mjs keeps its no-mcp.mjs-import invariant (see resolveProjectConnection),
+// and also clears userinfo for defense in depth. A non-URL string is left as-is;
+// endpoint validity is the caller's concern, not this function's.
+function stripEndpointCredentials(endpoint) {
+  try {
+    const u = new URL(endpoint);
+    u.searchParams.delete('token');
+    u.username = '';
+    u.password = '';
+    return u.toString();
+  } catch {
+    return endpoint;
+  }
+}
+
+// Merge a lorekit server entry into the PROJECT-root .mcp.json in the
+// committable form Claude Code on the web needs: instead of embedding the token
+// in the URL (a live secret, which is why the embedded form is git-ignored), it
+// authenticates via an mcp-remote `--header` that references `${LOREKIT_TOKEN}`.
+//
+// WHY this exists as a distinct writer. Claude Code on the web clones the repo
+// fresh into an ephemeral container, so the only MCP config it can see is a
+// COMMITTED, repo-root `.mcp.json` — a global `~/.claude.json` never travels to
+// the clone. And it must be committable, which the embedded-token form is not.
+// So the web path needs exactly this: the project file (never the global one)
+// with the token supplied at runtime from an environment secret. Callers set
+// `LOREKIT_TOKEN` as an environment secret in the web UI; the value is expanded
+// by Claude Code before mcp-remote is spawned. Preserves any other servers.
+//
+// The endpoint is credential-stripped first: it is the one field that could
+// carry a `?token=` in from `--endpoint` / LOREKIT_MCP_URL, and writing that
+// into a file meant to be committed would leak a live token.
+export function upsertWebMcpServer(root, endpoint, envVar = WEB_TOKEN_ENV_VAR) {
+  const file = mcpJsonPath(root); // always the project file — the web clone only sees this one
+  const config = readJsonIfExists(file) || {};
+  if (!config.mcpServers || typeof config.mcpServers !== 'object') {
+    config.mcpServers = {};
+  }
+  const existed = Boolean(config.mcpServers.lorekit);
+  config.mcpServers.lorekit = {
+    command: 'npx',
+    args: ['-y', 'mcp-remote', stripEndpointCredentials(endpoint), '--header', `Authorization:Bearer \${${envVar}}`],
+  };
+  writeFileAtomic(file, JSON.stringify(config, null, 2) + '\n');
+  return { file, existed };
+}
+
+// Is the project .mcp.json git-ignored in this repo? Tri-state so callers can
+// distinguish "definitely ignored" from "can't tell" and stay quiet when unsure:
+//   true  → ignored (git check-ignore matched)  — the caller warns
+//   false → tracked / not ignored               — nothing to say
+//   null  → unknown (no git, not a repo, error)  — say nothing
+//
+// This exists because the committable web .mcp.json (upsertWebMcpServer) only
+// works if it is actually committed, and .mcp.json is COMMONLY git-ignored (the
+// default embedded-token form is a secret, so LoreKit's own root .gitignore and
+// many projects ignore it). Silently writing a file the repo will never commit
+// is the trap this lets `install --mcp-json` warn about. `git check-ignore -q`
+// exits 0 when ignored, 1 when not, 128 on error — anything but 0/1 is unknown.
+export function isMcpJsonGitIgnored(root) {
+  try {
+    const r = spawnSync('git', ['-C', root, 'check-ignore', '-q', '.mcp.json'], { stdio: 'ignore' });
+    if (r.error) return null; // git not found / spawn failed
+    if (r.status === 0) return true;
+    if (r.status === 1) return false;
+    return null; // 128 (not a repo) or anything unexpected
+  } catch {
+    return null;
+  }
+}
+
 // Pull the configured lorekit remote URL out of the project .mcp.json, if
 // present. Non-throwing: returns null when the file is absent, invalid, or has
 // no lorekit server. Callers that need to distinguish those use readMcpConfig.
@@ -399,6 +482,37 @@ export function removeMcpServer(root, scope = 'project') {
     typeof config.mcpServers === 'object' &&
     Object.prototype.hasOwnProperty.call(config.mcpServers, 'lorekit');
   if (!hasEntry) return { file, removed: false };
+
+  delete config.mcpServers.lorekit;
+  if (Object.keys(config.mcpServers).length === 0) delete config.mcpServers;
+  writeFileAtomic(file, JSON.stringify(config, null, 2) + '\n');
+  return { file, removed: true };
+}
+
+// Is a lorekit server entry the committable WEB form — auth via a `--header`
+// that references an `${ENV_VAR}` token, as written by `upsertWebMcpServer` —
+// rather than an embedded-token or plain URL entry? Used to gate the global
+// uninstall's project-file cleanup so it only removes what `--mcp-json` wrote.
+export function isWebMcpServerEntry(server) {
+  const args = server && Array.isArray(server.args) ? server.args : [];
+  const i = args.indexOf('--header');
+  if (i === -1 || typeof args[i + 1] !== 'string') return false;
+  return /^Authorization:Bearer \$\{[^}]+\}$/.test(args[i + 1].trim());
+}
+
+// Remove the lorekit entry from the PROJECT .mcp.json ONLY when it is the
+// committable web form. `uninstall --global` calls this to clean up the file
+// `install --global --mcp-json` wrote — WITHOUT touching an unrelated
+// embedded-token `install --project` entry a user set up separately (which a
+// blind removeMcpServer(root, 'project') would delete). No-op otherwise.
+export function removeWebMcpServer(root) {
+  const file = mcpJsonPath(root);
+  const config = readJsonIfExists(file);
+  const server =
+    config && config.mcpServers && typeof config.mcpServers === 'object'
+      ? config.mcpServers.lorekit
+      : null;
+  if (!server || !isWebMcpServerEntry(server)) return { file, removed: false };
 
   delete config.mcpServers.lorekit;
   if (Object.keys(config.mcpServers).length === 0) delete config.mcpServers;
@@ -475,18 +589,29 @@ export function tokenKind(token) {
 // install), then the `mcp.endpoint` field in .lorekit.json (committable URL
 // without token — safe for VCS), then env. `splitEndpoint` is passed in to
 // avoid a circular import with mcp.mjs.
+//
+// A source that STORES a token wins outright (project beats global — closest
+// scope), but a TOKENLESS source must NOT shadow a later source that has one.
+// That shadowing is exactly what `install --global --mcp-json` created: it
+// writes a committable, token-free project .mcp.json (auth via ${LOREKIT_TOKEN})
+// AND the real token into ~/.claude.json. Returning early on the project entry
+// left the local CLI, doctor, and hooks resolving `token: null` unless
+// LOREKIT_TOKEN was exported — so a tokenless source is only remembered as an
+// endpoint fallback, and the loop keeps looking for a stored token.
 export function resolveProjectConnection(root, splitEndpoint) {
   const sources = [readLorekitServer(root), readServerFromFile(mcpConfigPath(root, 'global'))];
+  let endpointOnly = null; // closest usable endpoint that carried no token (e.g. the web .mcp.json)
   for (const configured of sources) {
-    if (configured && configured.url) {
-      const { endpoint, token } = splitEndpoint(configured.url);
-      if (endpoint && !endpoint.includes('<project-ref>')) {
-        return {
-          endpoint,
-          token: token || process.env.LOREKIT_TOKEN || null,
-        };
-      }
-    }
+    if (!configured || !configured.url) continue;
+    const { endpoint, token } = splitEndpoint(configured.url);
+    if (!endpoint || endpoint.includes('<project-ref>')) continue;
+    if (token) return { endpoint, token }; // a stored token wins; project (closest) beats global
+    if (!endpointOnly) endpointOnly = endpoint; // remember the closest tokenless source, keep looking
+  }
+  if (endpointOnly) {
+    // No source stored a token — the committable web .mcp.json is exactly this
+    // case. Fall back to the env token so the local CLI still authenticates.
+    return { endpoint: endpointOnly, token: process.env.LOREKIT_TOKEN || null };
   }
 
   // Fallback: `mcp.endpoint` in .lorekit.json — a committable URL without token.
