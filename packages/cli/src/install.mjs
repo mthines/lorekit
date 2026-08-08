@@ -527,7 +527,7 @@ export async function install(args) {
       'warn',
       'token',
       `not stored — the committable .mcp.json resolves \${${WEB_TOKEN_ENV_VAR}} at runtime; set it as an environment secret${
-        token ? ' (any --token you passed is not persisted)' : ''
+        plan.action === 'flag' ? ' (the token you supplied is not persisted)' : ''
       }`,
     );
   } else if (kind === 'none') {
