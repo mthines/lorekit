@@ -125,7 +125,7 @@ export async function handleCreate(
   }
   const { data: entry, error: fetchErr } = await createTracedClient(db, span)
     .from('memories')
-    .select('id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,origin_repo,origin_branch,origin_commit,origin_pr,kind,host')
+    .select('id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,origin_repo,origin_branch,origin_commit,origin_pr,kind,host,seen_count')
     .eq('id', row.id)
     .single();
 
