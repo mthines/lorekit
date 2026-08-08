@@ -135,6 +135,52 @@ export async function createSandbox({
       return removed;
     },
 
+    /**
+     * Scan the working directory for text that would let the agent solve the
+     * task by reading rather than remembering, and return every hit.
+     *
+     * This is the assertion behind the information-environment control: the
+     * ONLY thing that may differ between arm A and arm B is whether the store
+     * is populated. A stray doc that spells out the gotcha would lift arm A to
+     * arm B's score and the experiment would report "memory does not help"
+     * while actually having measured nothing. Failing loudly is the point.
+     *
+     * `.git` is skipped — the sandbox's git identity is deliberate wiring
+     * (see `git-identity.mjs`), not content the agent reads.
+     */
+    async findSpoilers(
+      terms = [],
+      { dir = cwd, skip = new Set([".git", "node_modules"]) } = {},
+    ) {
+      const hits = [];
+      const needles = terms.map((t) => String(t).toLowerCase()).filter(Boolean);
+      if (needles.length === 0) return hits;
+
+      const walk = async (current) => {
+        const entries = await fs
+          .readdir(current, { withFileTypes: true })
+          .catch(() => []);
+        for (const entry of entries) {
+          if (skip.has(entry.name)) continue;
+          const full = path.join(current, entry.name);
+          if (entry.isDirectory()) {
+            await walk(full);
+            continue;
+          }
+          if (!entry.isFile()) continue;
+          const text = await fs.readFile(full, "utf8").catch(() => null);
+          if (text == null) continue; // binary / unreadable
+          const haystack = text.toLowerCase();
+          for (const needle of needles) {
+            if (haystack.includes(needle))
+              hits.push({ file: path.relative(dir, full), term: needle });
+          }
+        }
+      };
+      await walk(dir);
+      return hits;
+    },
+
     disposed() {
       return isDisposed;
     },

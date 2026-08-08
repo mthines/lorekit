@@ -21,10 +21,47 @@ the mock.
 
 ## Status
 
-PR1 of six. Shipped here: the package, per-run isolation, the `claude -p`
-spawner, and one end-to-end Arm-0 run. Still to come: the memory arms (PR2), the
-golden task and its grader (PR3), metrics and reporting (PR4), the
+PR2 of six. Shipped: the package and per-run isolation, the `claude -p` spawner,
+and the memory arms — the isolated MCP config, the real SessionStart hook, store
+seeding from both lesson sources, and the information-environment control. Still
+to come: the golden task and its grader (PR3), metrics and reporting (PR4), the
 scale/position sweep (PR5), and the code-review domain (PR6).
+
+## The arms
+
+| Arm | Store                                     | Hook      | What it isolates                                                 |
+| --- | ----------------------------------------- | --------- | ---------------------------------------------------------------- |
+| 0   | empty, write allowed                      | off       | The first attempt, and the source of the organic lesson.         |
+| A   | empty                                     | installed | The retry with no memory — the control.                          |
+| B   | seeded (organic \| canonical)             | installed | The retry with memory. The only difference from A.               |
+| C   | empty, attempt-0 transcript in the prompt | installed | Diagnostic: does the lesson beat just re-reading the transcript? |
+
+Arm B runs twice, once per lesson source. **Organic** is the agent's own arm-0
+wording, stored verbatim — warts included, because the point of that source is
+that it is what the loop would really have saved. **Canonical** is a curated gold
+lesson that states the rule and the failure mode but deliberately does not
+restate the task; a lesson containing the answer to the exact prompt would
+measure copying rather than recall.
+
+## Memory arms
+
+Only the memory tools are allowed, and only the read ones. An arm that could
+call `memory_write` mid-run would contaminate its own store between attempts and
+the retry would no longer be measuring the lesson it started with; arm 0, whose
+job is to produce that lesson, is the one case that opts in.
+
+Inspect what an arm's agent would actually see, with no model and no cost:
+
+```bash
+node bin/run-eval.mjs probe --seed canonical
+node bin/run-eval.mjs probe --seed organic --lesson "$(cat lesson.md)"
+node bin/run-eval.mjs probe --seed empty        # arm A: expect zero injected
+```
+
+`probe` seeds the store, installs the real hook, runs it exactly as Claude Code
+would, and prints the injected index — scope, key and observed position per
+lesson. It is the fastest way to answer "is arm B actually different from arm
+A?" before spending a single token.
 
 ## Running
 
@@ -98,6 +135,16 @@ install` nor hand-writing the settings block: `upsertClaudeHooks(root, scope,
 runner, ['SessionStart'])` is exported from `packages/cli/src/config.mjs` and
   writes the canonical block itself. Using it keeps the harness in lockstep with
   `CLAUDE_HOOK_EVENTS` by construction rather than by a drift test.
+- **The sandbox needs a git identity, and needs a commit.** `deriveScope` builds
+  the scopes the hook reads from `remote.origin.url` and the current branch, so
+  a bare temp directory has no `branch::mthines/gw-tools::feat/x` scope at all
+  and a lesson seeded there would never be injected — arm B would differ from
+  arm A only in a store nobody reads. `git init` alone is not enough either:
+  `git rev-parse --abbrev-ref HEAD` fails on an unborn branch, `deriveScope`
+  swallows that and returns `branch: null`, and the whole experiment degrades
+  silently. So the sandbox gets an empty initial commit, and
+  `assertScopesAvailable` fails the run up front rather than letting it produce
+  numbers that look fine.
 - **Transcript capture.** `--output-format stream-json --verbose` is captured
   rather than `json`, because its final `{"type":"result"}` line carries
   everything `json` would return _and_ the full event stream. One run therefore
@@ -106,6 +153,16 @@ runner, ['SessionStart'])` is exported from `packages/cli/src/config.mjs` and
   `--output-format json` would force a second, different run to recover the
   stream. Not yet confirmed against a live `claude` binary (none is installed in
   the authoring sandbox); `outputFormat` stays overridable.
+
+## What "no CI gate" does and does not mean
+
+The LIVE runs gate nothing. Everything below the model does: the store, the
+hook, the derived scopes and the injected index are deterministic functions of
+the sandbox, so `pnpm nx test evals` asserts — for real, on every PR — that a
+seeded lesson is injected, that an empty store injects nothing, that the hook
+block matches `CLAUDE_HOOK_EVENTS`, and that the two arms differ in nothing but
+the store. The plan expected these to be manual smokes; they did not need to be,
+and an automated version fails on the PR rather than three weeks into a sweep.
 
 ## Reuse, not re-implementation
 
