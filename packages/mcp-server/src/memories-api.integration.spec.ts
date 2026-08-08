@@ -1286,7 +1286,15 @@ describe.skipIf(SKIP)('LoreKit memories API — per-scope read attribution (inte
   it('GET /memories/read-activity?scope= — an invalid scope is a 400, not an ignored filter', async () => {
     // Fails LOUD, unlike the recording side. Silently dropping a typo'd filter
     // would answer "reads everywhere" under the label the caller asked for.
-    for (const bad of ['repo:mthines/x', 'nope::x', 'repo::no-slash']) {
+    //
+    // Every case here must be rejected by the EDGE `validateScope`
+    // (`supabase/functions/_shared/scope.ts`), which is the deliberately
+    // lighter mirror: it checks the `::` separator, the prefix vocabulary and
+    // the charset, but has NO per-prefix shape check. `repo::no-slash` is
+    // therefore accepted there and rejected only by the mcp-core copy — asserting
+    // a 400 for it would fail against a live instance while saying nothing about
+    // this endpoint. The charset guard stands in for it instead.
+    for (const bad of ['repo:mthines/x', 'nope::x', 'project::a b']) {
       const { status } = await raApi('GET', `/read-activity?scope=${encodeURIComponent(bad)}`);
       expect(status, `scope=${bad} should be rejected`).toBe(400);
     }
