@@ -15,10 +15,12 @@ export default function OverviewLoading() {
       {/* Onboarding checklist skeleton */}
       <div className="h-14 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]" />
 
-      {/* Summary stats */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      {/* Summary stats — same responsive grid + card height as the real
+          DashboardStats (`grid-cols-1 sm:grid-cols-3`, `h-40`) so the mobile
+          placeholder resolves to the same single-column shape and does not jump. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {[0, 1, 2].map((i) => (
-          <div key={i} className="h-24 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]" />
+          <div key={i} className="h-40 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]" />
         ))}
       </div>
 
