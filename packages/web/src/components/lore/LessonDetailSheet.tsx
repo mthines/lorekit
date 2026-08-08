@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { AnimatePresence, motion, useDragControls } from 'motion/react';
 import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer } from 'lucide-react';
 import { Controller, useWatch, type UseFormReturn } from 'react-hook-form';
@@ -9,8 +9,10 @@ import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { MemoryOrigin } from '@/components/memory/MemoryOrigin';
 import { OwnershipBadge } from '@/components/memory/OwnershipBadge';
 import { EditableField } from '@/components/ui/EditableField';
+import { MarkdownPreview } from '@/components/ui/MarkdownPreview';
 import { TagsField } from '@/components/ui/TagsField';
 import { FormActionBar } from '@/components/ui/FormActionBar';
+import { CONTENT_TABS, DEFAULT_CONTENT_TAB, nextTabForKey, tabAfterSave, type ContentTab } from './content-tabs';
 import { useEditableForm } from '@/lib/hooks/useEditableForm';
 import { useArchiveLesson, useRestoreLesson } from '@/lib/queries/lore';
 import type { LessonEntry } from './LessonCard';
@@ -36,6 +38,12 @@ interface LessonDetailSheetProps {
    * snapshot each presentation deterministically.
    */
   layout?: 'auto' | 'drawer' | 'sheet';
+  /**
+   * Which Content tab is active on first render. Defaults to `preview`. An
+   * explicit value is used by Storybook/tests to pin either tab deterministically
+   * (the same rationale as `layout`); the product never sets it.
+   */
+  initialContentTab?: ContentTab;
 }
 
 interface LessonFormValues {
@@ -136,8 +144,126 @@ function ExpiryControl({ currentExpiresAt, form, disabled }: ExpiryControlProps)
   );
 }
 
-export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' }: LessonDetailSheetProps) {
+// ── ContentSection ─────────────────────────────────────────────────────────
+// The memory value with a Preview / Edit tab switch. Preview renders the value
+// as safe GitHub-flavored markdown (`MarkdownPreview`); Edit is the raw textarea
+// (`EditableField`). Matches the house tab a11y pattern (`ClientConfigTabs`):
+// role tablist/tab/tabpanel, aria-selected/-controls, roving tabindex + arrow
+// keys, and ≥44px (`min-h-11`) targets. Identical in the drawer and bottom sheet.
+//
+// The single `Controller` above stays mounted across a tab switch, so the form
+// value/dirty state survives; only the rendered panel swaps. Editing dirties the
+// form and the pinned Discard/Save bar appears regardless of which tab is shown.
+
+const CONTENT_TAB_LABELS: Record<ContentTab, string> = { preview: 'Preview', edit: 'Edit' };
+
+interface ContentSectionProps {
+  tab: ContentTab;
+  onTabChange: (tab: ContentTab) => void;
+  /** False for archived lessons — the Edit tab is disabled and Preview is forced. */
+  canEdit: boolean;
+  value: string;
+  onChange: (value: string) => void;
+  onEditEnd: () => void;
+  error?: string;
+}
+
+function ContentSection({ tab, onTabChange, canEdit, value, onChange, onEditEnd, error }: ContentSectionProps) {
+  const tabRefs = useRef<Record<ContentTab, HTMLButtonElement | null>>({ preview: null, edit: null });
+  const effectiveTab: ContentTab = canEdit ? tab : 'preview';
+
+  function selectTab(next: ContentTab) {
+    if (next === 'edit' && !canEdit) return;
+    onTabChange(next);
+  }
+
+  function handleKeyDown(e: ReactKeyboardEvent<HTMLButtonElement>) {
+    const next = nextTabForKey(effectiveTab, e.key);
+    if (!next) return;
+    e.preventDefault();
+    if (next === 'edit' && !canEdit) return;
+    onTabChange(next);
+    tabRefs.current[next]?.focus();
+  }
+
+  return (
+    <section aria-label="Content" className="flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-xs font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
+          Content
+        </h2>
+        <div
+          role="tablist"
+          aria-label="Content view"
+          aria-orientation="horizontal"
+          className="flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-1"
+        >
+          {CONTENT_TABS.map((id) => {
+            const selected = effectiveTab === id;
+            const disabled = id === 'edit' && !canEdit;
+            return (
+              <button
+                key={id}
+                ref={(el) => {
+                  tabRefs.current[id] = el;
+                }}
+                type="button"
+                role="tab"
+                id={`content-tab-${id}`}
+                aria-selected={selected}
+                aria-controls={`content-panel-${id}`}
+                tabIndex={selected ? 0 : -1}
+                disabled={disabled}
+                onClick={() => selectTab(id)}
+                onKeyDown={handleKeyDown}
+                className={[
+                  'flex min-h-11 items-center justify-center rounded-md px-3 text-xs font-medium transition-colors duration-150',
+                  selected
+                    ? 'bg-[var(--color-bg-raised)] text-[var(--color-content-primary)] shadow-sm'
+                    : 'text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]',
+                  disabled ? 'cursor-not-allowed opacity-40' : '',
+                ].join(' ')}
+              >
+                {CONTENT_TAB_LABELS[id]}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {effectiveTab === 'preview' ? (
+        <div
+          role="tabpanel"
+          id="content-panel-preview"
+          aria-labelledby="content-tab-preview"
+          tabIndex={0}
+          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4"
+        >
+          <MarkdownPreview value={value} />
+        </div>
+      ) : (
+        <div role="tabpanel" id="content-panel-edit" aria-labelledby="content-tab-edit">
+          <EditableField
+            label="Content"
+            hideLabel
+            value={value}
+            onChange={onChange}
+            onEditEnd={onEditEnd}
+            isEditing
+            placeholder="Enter memory content…"
+            minRows={6}
+            error={error}
+          />
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto', initialContentTab = DEFAULT_CONTENT_TAB }: LessonDetailSheetProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  // Content view: Preview (rendered markdown, default) vs Edit (raw textarea).
+  const [contentTab, setContentTab] = useState<ContentTab>(initialContentTab);
   const queryClient = useQueryClient();
   // Below `md` the panel is a bottom sheet; at/above it a right-side drawer.
   // `useIsMobile` shares one matchMedia listener across all consumers. An
@@ -233,9 +359,17 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
       void queryClient.invalidateQueries({ queryKey: ['lore-facets'] });
       toast.success('Memory saved', { description: lesson.key });
     },
+    // After a successful save, return to the Preview tab so the user sees the
+    // freshly-rendered saved markdown.
+    onSaveSuccess: () => setContentTab(tabAfterSave()),
   });
 
   const { form, isSaving, saveError, isDirty, handleSubmit, discard } = editForm;
+
+  // Reset to Preview whenever a different lesson opens.
+  useEffect(() => {
+    setContentTab(DEFAULT_CONTENT_TAB);
+  }, [lesson?.scope, lesson?.key]);
 
   // Focus close button on open; restore on close.
   useEffect(() => {
@@ -401,21 +535,19 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
               aria-label="Edit memory"
             >
               <div className="group flex flex-1 flex-col gap-5 overflow-y-auto p-5">
-                {/* Content — editable */}
+                {/* Content — Preview (rendered markdown) / Edit (raw textarea) */}
                 <Controller
                   name="value"
                   control={form.control}
                   rules={{ required: 'Content is required', minLength: { value: 1, message: 'Content cannot be empty' } }}
                   render={({ field, fieldState }) => (
-                    <EditableField
-                      label="Content"
+                    <ContentSection
+                      tab={contentTab}
+                      onTabChange={setContentTab}
+                      canEdit={!isArchived}
                       value={field.value}
                       onChange={field.onChange}
                       onEditEnd={field.onBlur}
-                      isEditing={!isArchived}
-                      readOnly={isArchived}
-                      placeholder="Enter memory content…"
-                      minRows={4}
                       error={fieldState.error?.message}
                     />
                   )}

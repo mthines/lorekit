@@ -69,6 +69,13 @@ export interface EditableFieldProps
   className?: string;
   /** Whether the field is read-only (no edit toggle). @default false */
   readOnly?: boolean;
+  /**
+   * Hide the visual heading row (label + edit affordance) while keeping the
+   * accessible `aria-label` on the section. Used when a parent supplies its own
+   * heading — e.g. the memory detail sheet, whose Content heading sits beside a
+   * Preview/Edit tablist. @default false
+   */
+  hideLabel?: boolean;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -85,6 +92,7 @@ export function EditableField({
   placeholder,
   className = '',
   readOnly = false,
+  hideLabel = false,
   ...textareaProps
 }: EditableFieldProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -123,23 +131,25 @@ export function EditableField({
 
   return (
     <section aria-label={label} className={['flex flex-col gap-2', className].join(' ')}>
-      {/* Section heading */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-xs font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
-          {label}
-        </h2>
-        {/* Edit affordance — only visible in read mode */}
-        {!isEditing && !readOnly && (
-          <button
-            type="button"
-            onClick={onEditStart}
-            aria-label={`Edit ${label}`}
-            className="flex size-6 items-center justify-center rounded text-[var(--color-content-tertiary)] opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:text-[var(--color-content-primary)] focus-visible:opacity-100"
-          >
-            <Pencil className="size-3" aria-hidden />
-          </button>
-        )}
-      </div>
+      {/* Section heading — hidden when a parent supplies its own (e.g. tabs). */}
+      {!hideLabel && (
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
+            {label}
+          </h2>
+          {/* Edit affordance — only visible in read mode */}
+          {!isEditing && !readOnly && (
+            <button
+              type="button"
+              onClick={onEditStart}
+              aria-label={`Edit ${label}`}
+              className="flex size-6 items-center justify-center rounded text-[var(--color-content-tertiary)] opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:text-[var(--color-content-primary)] focus-visible:opacity-100"
+            >
+              <Pencil className="size-3" aria-hidden />
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Field body */}
       {isEditing && !readOnly ? (
