@@ -16,6 +16,9 @@ import {
   PurgeMemoriesBodySchema,
   RestoreMemoryBodySchema,
   ScopesResponseSchema,
+  ReadActivityQuerySchema,
+  ReadActivityBucketSchema,
+  ReadActivityResponseSchema,
   PURGE_RETENTION_DAYS_DEFAULT,
 } from './memory.ts';
 
@@ -141,5 +144,82 @@ describe('ListMemoriesQuerySchema key filters', () => {
     const parsed = ListMemoriesQuerySchema.parse({ key_prefix: 'debug-' });
     expect(parsed.key_prefix).toBe('debug-');
     expect(parsed.key).toBeUndefined();
+  });
+});
+
+// ── GET /memories/read-activity, scope dimension (migration 00058) ──────────
+describe('ReadActivityQuerySchema scope filter', () => {
+  it('leaves scope undefined when the caller does not filter', () => {
+    const parsed = ReadActivityQuerySchema.parse({});
+    expect(parsed.scope).toBeUndefined();
+    expect(parsed.bucket).toBe('day');
+  });
+
+  it('accepts an exact scope to filter by', () => {
+    expect(ReadActivityQuerySchema.parse({ scope: 'repo::mthines/lorekit' }).scope)
+      .toBe('repo::mthines/lorekit');
+    expect(ReadActivityQuerySchema.parse({ scope: 'global' }).scope).toBe('global');
+  });
+
+  // Shape-only here BY DESIGN: `RawScopeSchema`, not `ScopeSchema`, so the
+  // canonical normalisation happens once in the handler, which is the layer
+  // that can turn a rejection into a 400. A schema-level transform would
+  // normalise silently and leave the handler unable to distinguish "the caller
+  // sent a typo" from "the caller sent it lowercase".
+  it('does not normalise here — the handler owns canonicalisation and the 400', () => {
+    const parsed = ReadActivityQuerySchema.parse({ scope: 'Repo::Mthines/LoreKit' });
+    expect(parsed.scope).toBe('Repo::Mthines/LoreKit');
+  });
+
+  it('still rejects a structurally impossible scope value', () => {
+    expect(ReadActivityQuerySchema.safeParse({ scope: '' }).success).toBe(false);
+    expect(ReadActivityQuerySchema.safeParse({ scope: 42 }).success).toBe(false);
+  });
+});
+
+describe('ReadActivityBucketSchema scope', () => {
+  it('accepts a named scope on a bucket', () => {
+    const parsed = ReadActivityBucketSchema.parse({
+      bucket: '2026-04-01T00:00:00.000Z', scope: 'repo::mthines/lorekit', count: 10,
+    });
+    expect(parsed.scope).toBe('repo::mthines/lorekit');
+  });
+
+  // NULLABLE, unlike the write series' scope: a read may carry no scope the
+  // server could resolve (body-carried or ungrammatical), and that read is
+  // recorded unattributed rather than dropped — so it still reaches a client.
+  it('accepts a NULL scope — unattributable reads are counted, not dropped', () => {
+    const parsed = ReadActivityBucketSchema.parse({
+      bucket: '2026-04-01T00:00:00.000Z', scope: null, count: 3,
+    });
+    expect(parsed.scope).toBeNull();
+  });
+
+  it('requires the key to be present — an absent scope is not the same as null', () => {
+    expect(ReadActivityBucketSchema.safeParse({ bucket: '2026-04-01T00:00:00.000Z', count: 3 }).success)
+      .toBe(false);
+  });
+
+  it('still rejects a non-integer or negative count', () => {
+    const base = { bucket: '2026-04-01T00:00:00.000Z', scope: null };
+    expect(ReadActivityBucketSchema.safeParse({ ...base, count: 1.5 }).success).toBe(false);
+    expect(ReadActivityBucketSchema.safeParse({ ...base, count: -1 }).success).toBe(false);
+  });
+});
+
+describe('ReadActivityResponseSchema', () => {
+  it('accepts a response mixing named and unattributed scopes in one bucket', () => {
+    const parsed = ReadActivityResponseSchema.parse({
+      bucket: 'day',
+      since: '2026-04-01T00:00:00.000Z',
+      until: '2026-04-02T00:00:00.000Z',
+      buckets: [
+        { bucket: '2026-04-01T00:00:00.000Z', scope: 'repo::mthines/lorekit', count: 7 },
+        { bucket: '2026-04-01T00:00:00.000Z', scope: null, count: 3 },
+      ],
+    });
+    // The metric is additive, which is the whole reason a per-scope filter can
+    // replace a companion "per-scope total" RPC: the cells sum to the headline.
+    expect(parsed.buckets.reduce((n, b) => n + b.count, 0)).toBe(10);
   });
 });

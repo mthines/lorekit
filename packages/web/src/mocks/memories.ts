@@ -226,7 +226,7 @@ function activityFrom(rows: MemoryRow[], unit: 'hour' | 'day') {
 }
 
 /**
- * `GET /memories/read-activity` — records read per UTC hour/day.
+ * `GET /memories/read-activity` — records read per UTC hour/day AND per scope.
  *
  * Reads live in `usage_events`, which the fixtures do not model, so this is the
  * one handler that cannot derive its response from `MEMORY_ROWS`. It instead
@@ -234,19 +234,30 @@ function activityFrom(rows: MemoryRow[], unit: 'hour' | 'day') {
  * a memory that gets read back, so each fixture contributes a small, fixed
  * number of records in its own bucket. Fixed, not random — the same
  * determinism rule the timestamps follow (see the module docblock).
+ *
+ * Cells are `(bucket, scope)`, the shape `activityFrom` already emits and the
+ * one `ReadActivityBucketSchema` requires since migration 00058. `scope` is
+ * nullable on the wire (a read the server could not attribute), but a
+ * synthesised read always knows which memory it came from, so this fixture
+ * never emits null — the null case belongs in a schema/unit test, not in a
+ * story's baseline data.
  */
 function readActivityFrom(rows: MemoryRow[], unit: 'hour' | 'day') {
-  const buckets = new Map<string, number>();
+  const cells = new Map<string, { bucket: string; scope: string; count: number }>();
   for (const [i, r] of activeRows(rows, false).entries()) {
     const bucket = unit === 'hour'
       ? `${r.created_at.slice(0, 13)}:00:00.000Z`
       : `${r.created_at.slice(0, 10)}T00:00:00.000Z`;
     // 3, 5, 7, 3, … records — a stable spread, never a clock or a PRNG.
-    buckets.set(bucket, (buckets.get(bucket) ?? 0) + 3 + ((i * 2) % 6));
+    const records = 3 + ((i * 2) % 6);
+    const cellKey = `${bucket}|${r.scope}`;
+    const prev = cells.get(cellKey);
+    if (prev) prev.count += records;
+    else cells.set(cellKey, { bucket, scope: r.scope, count: records });
   }
-  return Array.from(buckets.entries())
-    .map(([bucket, count]) => ({ bucket, count }))
-    .sort((a, b) => a.bucket.localeCompare(b.bucket));
+  return Array.from(cells.values()).sort(
+    (a, b) => a.bucket.localeCompare(b.bucket) || a.scope.localeCompare(b.scope),
+  );
 }
 
 /**
@@ -344,11 +355,19 @@ export function memoryHandlers(rows: MemoryRow[] = MEMORY_ROWS) {
     http.get('*/functions/v1/memories/read-activity', ({ request }) => {
       const url = new URL(request.url);
       const bucket = url.searchParams.get('bucket') === 'hour' ? 'hour' : 'day';
+      // `?scope=` is an EXACT match on the real endpoint (`ue.scope = p_scope`,
+      // 00058), never a prefix or a wildcard — the unfiltered call is the one
+      // that also returns the unattributable NULL-scope remainder. Honour it
+      // here or a filtered story renders every scope and silently looks like
+      // the filter does nothing.
+      const scope = url.searchParams.get('scope');
+      const buckets = readActivityFrom(rows, bucket)
+        .filter((cell) => scope === null || cell.scope === scope);
       return HttpResponse.json({
         bucket,
         since: url.searchParams.get('since') ?? FROZEN_NOW,
         until: url.searchParams.get('until') ?? FROZEN_NOW,
-        buckets: readActivityFrom(rows, bucket),
+        buckets,
       });
     }),
     http.get('*/functions/v1/memories', ({ request }) =>

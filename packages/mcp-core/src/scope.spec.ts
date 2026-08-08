@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateScope, scopeType, expandScopeForSearch, ScopeValidationError } from './scope.js';
+import { validateScope, safeValidateScope, scopeType, expandScopeForSearch, ScopeValidationError, USAGE_SCOPE_MAX } from './scope.js';
 
 describe('validateScope', () => {
   it('accepts "global"', () => {
@@ -101,6 +101,87 @@ describe('expandScopeForSearch', () => {
       'project::a b::*',
     ]) {
       expect(() => expandScopeForSearch(evil)).toThrow(ScopeValidationError);
+    }
+  });
+});
+
+// `usage_events.scope` (migration 00058) is a telemetry dimension recorded
+// alongside the operation it measures, so its validator must be TOTAL: the one
+// thing it may never do is throw, because throwing would fail the very call it
+// exists to describe. It is a thin wrapper over `validateScope`, not a second
+// grammar — these cases pin the wrapper's contract, not the grammar's.
+describe('safeValidateScope', () => {
+  it('normalises a valid scope exactly as validateScope does', () => {
+    expect(safeValidateScope('Repo::mthines/LoreKit')).toBe('repo::mthines/lorekit');
+    expect(safeValidateScope('GLOBAL')).toBe('global');
+    expect(safeValidateScope('branch::mthines/x::Feat/A')).toBe('branch::mthines/x::feat/a');
+  });
+
+  // The delegation is the point: anything validateScope accepts, this returns
+  // IDENTICALLY, and anything it rejects becomes null. Asserting agreement
+  // rather than a hardcoded list is what stops the two drifting apart.
+  it('agrees with validateScope on every accepted input', () => {
+    for (const raw of ['global', 'project::my.app', 'repo::mthines/lorekit', 'branch::a/b::main']) {
+      expect(safeValidateScope(raw)).toBe(validateScope(raw));
+    }
+  });
+
+  it('returns null for an ungrammatical scope instead of throwing', () => {
+    for (const bad of ['bogus:x', 'repo:mthines/x', 'repo::', 'repo::no-slash', 'nope::x', 'project::a b']) {
+      expect(() => validateScope(bad)).toThrow(ScopeValidationError);
+      expect(safeValidateScope(bad)).toBeNull();
+    }
+  });
+
+  it('returns null for absent / empty / non-string input', () => {
+    expect(safeValidateScope('')).toBeNull();
+    expect(safeValidateScope(null)).toBeNull();
+    expect(safeValidateScope(undefined)).toBeNull();
+    expect(safeValidateScope(42)).toBeNull();
+    expect(safeValidateScope({})).toBeNull();
+    expect(safeValidateScope(['repo::a/b'])).toBeNull();
+  });
+
+  // `validateScope` bounds no length — `project::`/`branch::` values are only
+  // charset-restricted — so without this clamp a GRAMMATICAL over-long scope
+  // reaches `usage_events` and violates `usage_events_scope_len` (00058). That
+  // violation is swallowed by `lorekit_record_usage_event`'s `when others`,
+  // which drops the WHOLE event, not just the scope. Clamping keeps the
+  // failure proportional, exactly as `parseCorrelationId` does.
+  it('clamps a grammatical scope longer than the usage_events ceiling to null', () => {
+    const atCeiling = `project::${'a'.repeat(USAGE_SCOPE_MAX - 'project::'.length)}`;
+    const overCeiling = `${atCeiling}a`;
+
+    expect(atCeiling).toHaveLength(USAGE_SCOPE_MAX);
+    expect(overCeiling).toHaveLength(USAGE_SCOPE_MAX + 1);
+
+    // The grammar itself still accepts both — the bound is the wrapper's, not
+    // validateScope's, because `memories.scope` has no such ceiling.
+    expect(validateScope(atCeiling)).toBe(atCeiling);
+    expect(validateScope(overCeiling)).toBe(overCeiling);
+
+    expect(safeValidateScope(atCeiling)).toBe(atCeiling);
+    expect(safeValidateScope(overCeiling)).toBeNull();
+  });
+
+  it('measures the ceiling against the NORMALISED scope, not the raw input', () => {
+    // Uppercase input normalises to the same length, but trailing whitespace
+    // does not — a scope that only exceeds the bound before trimming is still
+    // recordable.
+    const atCeiling = `project::${'a'.repeat(USAGE_SCOPE_MAX - 'project::'.length)}`;
+    expect(safeValidateScope(`${atCeiling.toUpperCase()}  `)).toBe(atCeiling);
+  });
+
+  it('never throws, whatever it is handed', () => {
+    const hostile: unknown[] = [
+      '', ' ', '::', ':::', 'repo::"a",value.not.is.null', '\u0000', 'x'.repeat(5000),
+      null, undefined, 0, NaN, true, [], {}, Symbol('s'),
+      // A property that throws when read would break a naive implementation
+      // that touched anything other than the value itself.
+      { get length() { throw new Error('boom'); } },
+    ];
+    for (const input of hostile) {
+      expect(() => safeValidateScope(input)).not.toThrow();
     }
   });
 });

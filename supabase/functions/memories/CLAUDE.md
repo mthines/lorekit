@@ -282,7 +282,10 @@ read counterpart to `/activity`:
   "bucket": "day",
   "since": "2026-01-01T00:00:00.000Z",
   "until": "2026-07-19T00:00:00.000Z",
-  "buckets": [{ "bucket": "2026-07-18T00:00:00.000Z", "count": 214 }]
+  "buckets": [
+    { "bucket": "2026-07-18T00:00:00.000Z", "scope": "repo::mthines/lorekit", "count": 214 },
+    { "bucket": "2026-07-18T00:00:00.000Z", "scope": null, "count": 9 }
+  ]
 }
 ```
 
@@ -291,6 +294,41 @@ read counterpart to `/activity`:
 | `bucket` | `day` | `hour` or `day` granularity — the same enum `/activity` takes. |
 | `since` | `until` − 200 days | Inclusive lower bound. |
 | `until` | now | **Exclusive** upper bound. |
+| `scope` | — | Restrict to one **exact** scope. Invalid ⇒ `400`. |
+
+**One row per `(bucket, scope)`** (migration 00058), mirroring `/activity`. `scope` is
+**nullable** here where `/activity`'s is not: a write always happens under a scope, while a
+read may carry none the server can resolve — the router reads `?scope=` from the query
+string only (it must not consume the request body), and an ungrammatical value is recorded
+as unattributed rather than failing the call it is measuring. Those rows are still counted,
+so the unfiltered series remains the complete account total.
+
+Consequently a **per-scope total can be smaller than the account total**, and the
+difference is the unattributable reads. Any UI showing both should say so rather than let
+the numbers look like a bug.
+
+`?scope=` is an exact-match filter, and because the metric is additive its buckets **sum to
+the per-scope headline** — which is why there is no companion "per-scope total" RPC. A
+second function computing the same number would be free to drift from the bars drawn above
+it, the exact property this series exists to guarantee.
+
+**The two scope paths fail in opposite directions, on purpose.** Recording a scope
+(`safeValidateScope`, `_shared/scope.ts`) is a measurement taken alongside an operation the
+caller asked for, so a bad value degrades to `null` and never breaks it. Filtering by a
+scope is the question itself, so a bad value is a `400` — silently dropping a typo'd filter
+would answer "reads everywhere" under the label the caller asked for. Same call as
+`?correlation_id=`. Both sides go through the **canonical** `validateScope`; there is no
+second grammar.
+
+`safeValidateScope` is hand-mirrored between `packages/mcp-core/src/scope.ts` and
+`supabase/functions/_shared/scope.ts` and is **not** covered by `edge-parity.spec.ts` —
+that file is excluded from `MIRRORS` because the two `validateScope` bodies deliberately
+differ. The wrapper delegates every grammar decision to whichever one is in scope, so the
+difference propagates instead of being duplicated. Keep the two wrappers in step by hand.
+
+**Deferred (R10):** `purge_expired_memories` (00045) is untouched. Its `memory.expired`
+event is per-user and spans every scope that user owns, so there is no single scope to
+attribute it to — those events stay `scope IS NULL`, asserted in `migrations.test.sql` §74.
 
 **Records, not calls.** `count` is `sum(usage_events.result_count)` over the read tools
 (`memory.read`, `memory.list`, `memory.search`, `memory.list_archived` — `permissions.ts`'s

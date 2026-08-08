@@ -103,6 +103,54 @@ export function validateScope(raw: string): string {
 }
 
 /**
+ * The ceiling `usage_events.scope` is stored under (`usage_events_scope_len`,
+ * migration 00058). Declared here, next to the validator that enforces it,
+ * for the same reason `CORRELATION_ID_MAX` sits next to `parseCorrelationId`.
+ */
+export const USAGE_SCOPE_MAX = 200;
+
+/**
+ * Validate a scope for TELEMETRY, never for authorization.
+ *
+ * `validateScope` is the one canonical grammar and stays that way — this is a
+ * thin total wrapper over it, not a second, laxer validator. The difference is
+ * only in the failure mode: `usage_events.scope` is a dimension recorded
+ * alongside the operation it measures, and a telemetry dimension must never
+ * fail the call it is measuring (the 00044/00054 posture). So an absent,
+ * non-string or ungrammatical scope degrades to `null` — recorded as
+ * unattributed — instead of throwing.
+ *
+ * The one thing this wrapper adds on top of the grammar is the STORAGE bound.
+ * `validateScope` bounds no length — a `project::`/`branch::` value is only
+ * charset-restricted — so a perfectly grammatical 201-char scope would reach
+ * `usage_events` and trip `usage_events_scope_len`. That CHECK violation is
+ * raised inside `lorekit_record_usage_event`, whose `when others` handler
+ * swallows it and returns null, so the WHOLE usage event would be lost rather
+ * than just its scope dimension. Clamping here — exactly what
+ * `parseCorrelationId` does against `usage_events_correlation_id_len` — keeps
+ * the failure proportional: an over-long scope is recorded as unattributed and
+ * the event itself still lands. The bound belongs on this wrapper and NOT on
+ * `validateScope`, because `memories.scope` has no such ceiling and the
+ * `?scope=` read filter must keep accepting every scope a memory can be
+ * written under.
+ *
+ * Deliberately NOT used on the read side: `GET /memories/read-activity?scope=`
+ * is a caller-supplied FILTER, and silently coercing a typo'd filter to "no
+ * filter" would answer a different question than the one asked. That path uses
+ * the throwing `validateScope` and 400s, matching the `?correlation_id=`
+ * precedent.
+ */
+export function safeValidateScope(raw: unknown): string | null {
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  try {
+    const normalized = validateScope(raw);
+    return normalized.length > USAGE_SCOPE_MAX ? null : normalized;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Return the scope type for use as a low-cardinality telemetry attribute.
  */
 export function scopeType(scope: string): ScopePrefix {
