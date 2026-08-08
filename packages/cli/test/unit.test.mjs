@@ -12,6 +12,10 @@ import { createLocalStore } from '../src/store/local.mjs';
 import {
   gatherStream, gather, clusterDuplicates, clusterDuplicatesBlocked, DEFAULT_MAX,
 } from '../src/lessons-view.mjs';
+import {
+  rankLessons, scoreLesson, recencyFactor, salienceFactor, relevanceFactor,
+  RECENCY_HALF_LIFE_DAYS,
+} from '../src/lessons-pure.mjs';
 import { MEMORY_TOOL_DEFS } from '../src/mcp-server.mjs';
 
 test('ownerRepoFromRemote normalizes remote URL variants', () => {
@@ -1295,5 +1299,250 @@ describe('local store read fields', () => {
       2,
       'migrate relocates a store, it does not re-sight its lessons',
     );
+  });
+});
+
+// ── rankLessons: the injection-order scorer ──────────────────────────────────
+// Ordering by recency alone is what makes a busy repo's SessionStart injection
+// useless: the newest cluster of writes is one task's iteration log, and it
+// takes every slot. These tests pin the behaviour that fixes that, and the
+// total-function guarantees the hot path relies on.
+
+describe('rankLessons', () => {
+  const DAY = 86400000;
+  const NOW = Date.parse('2026-08-01T00:00:00.000Z');
+  const at = (daysAgo) => new Date(NOW - daysAgo * DAY).toISOString();
+
+  const lesson = (key, { days = 0, seen = 1, scope = 'global', value = '' } = {}) => ({
+    scope, key, value, seenCount: seen, updatedAt: at(days),
+  });
+
+  const keys = (entries, opts) => rankLessons(entries, { now: NOW, ...opts }).map((e) => e.key);
+
+  test('rankLessons order — best first, and the input is not mutated', () => {
+    const input = [
+      lesson('old-oneoff', { days: 60, seen: 1 }),
+      lesson('fresh-recurring', { days: 1, seen: 9 }),
+      lesson('fresh-oneoff', { days: 1, seen: 1 }),
+    ];
+    const snapshot = input.map((e) => e.key);
+
+    const ranked = rankLessons(input, { now: NOW });
+    assert.deepEqual(ranked.map((e) => e.key), ['fresh-recurring', 'fresh-oneoff', 'old-oneoff']);
+    assert.deepEqual(input.map((e) => e.key), snapshot, 'the caller still holds the input order');
+    assert.notEqual(ranked, input, 'a new array, never a sort in place');
+    assert.equal(ranked[0], input[1], 'the entries themselves are passed through, not copied');
+  });
+
+  test('rankLessons salience — recurrence beats a one-off at equal recency', () => {
+    // The whole point of the scorer. Same day, same everything else.
+    assert.deepEqual(
+      keys([lesson('once', { days: 3, seen: 1 }), lesson('eight-times', { days: 3, seen: 8 })]),
+      ['eight-times', 'once'],
+    );
+  });
+
+  test('rankLessons salience — and it beats a NEWER one-off, which is the bug', () => {
+    // The observed failure: a dozen one-offs from today evict the lesson that
+    // has been re-learned all month. One of them should still lose to it.
+    const ranked = keys([
+      lesson('todays-noise-1', { days: 0, seen: 1 }),
+      lesson('todays-noise-2', { days: 0, seen: 1 }),
+      lesson('hard-won', { days: 5, seen: 25 }),
+    ]);
+    assert.equal(ranked[0], 'hard-won');
+  });
+
+  test('rankLessons salience — a set with no recurrence ranks purely on recency', () => {
+    // Nothing has recurred, so salience has nothing to say and must not invent
+    // a preference between equals.
+    assert.deepEqual(
+      keys([lesson('c', { days: 9 }), lesson('a', { days: 1 }), lesson('b', { days: 4 })]),
+      ['a', 'b', 'c'],
+    );
+  });
+
+  test('rankLessons no-terms — an empty query is identical to recency+salience', () => {
+    const entries = [
+      lesson('alpha', { days: 2, seen: 4, value: 'timeout on connect' }),
+      lesson('beta', { days: 8, seen: 9, value: 'unrelated body' }),
+      lesson('gamma', { days: 1, seen: 1, value: 'timeout again' }),
+    ];
+    // The reference ordering: relevance weighted out entirely.
+    const withoutRelevance = rankLessons(entries, {
+      now: NOW,
+      weights: { recency: 1, salience: 1, relevance: 0 },
+    }).map((e) => e.key);
+
+    assert.deepEqual(keys(entries), withoutRelevance, 'terms omitted');
+    assert.deepEqual(keys(entries, { terms: [] }), withoutRelevance, 'terms: []');
+    assert.deepEqual(keys(entries, { terms: ['', '   '] }), withoutRelevance, 'blank terms');
+  });
+
+  test('rankLessons — terms lift the lesson that matches them', () => {
+    const entries = [
+      lesson('fresh-unrelated', { days: 0, seen: 1, value: 'nothing to do with it' }),
+      lesson('stale-match', { days: 30, seen: 1, value: 'ECONNREFUSED on connect' }),
+    ];
+    assert.equal(keys(entries)[0], 'fresh-unrelated', 'without terms, recency wins');
+    assert.equal(
+      keys(entries, { terms: ['econnrefused'] })[0],
+      'stale-match',
+      'a match outweighs a month of age',
+    );
+  });
+
+  test('rankLessons deterministic ties — scope precedence, then key', () => {
+    // Identical in every scoring input, so only the tiebreakers separate them.
+    const entries = [
+      { scope: 'global', key: 'zzz', value: '', seenCount: 1, updatedAt: at(1) },
+      { scope: 'global', key: 'aaa', value: '', seenCount: 1, updatedAt: at(1) },
+      { scope: 'repo::o/r', key: 'mmm', value: '', seenCount: 1, updatedAt: at(1) },
+    ];
+    // Input order defines precedence, so `global` (seen first) outranks the repo
+    // scope here — and within it, key order decides.
+    assert.deepEqual(keys(entries), ['aaa', 'zzz', 'mmm']);
+
+    // An explicit scopeOrder overrides that, which is how a caller passes the
+    // real narrow-to-broad hierarchy.
+    assert.deepEqual(
+      keys(entries, { scopeOrder: ['repo::o/r', 'global'] }),
+      ['mmm', 'aaa', 'zzz'],
+    );
+  });
+
+  test('rankLessons deterministic ties — the same input always gives the same output', () => {
+    const entries = Array.from({ length: 25 }, (_, i) => lesson(`k${i}`, { days: i % 5, seen: (i % 3) + 1 }));
+    const first = keys(entries);
+    for (let i = 0; i < 5; i += 1) assert.deepEqual(keys(entries), first);
+    // And it is a function of `now`, not of the wall clock: same inputs, same
+    // answer, whenever the test happens to run.
+    assert.deepEqual(rankLessons(entries, { now: new Date(NOW) }).map((e) => e.key), first);
+  });
+
+  test('rankLessons malformed — junk entries never throw and never win', () => {
+    const good = lesson('good', { days: 1, seen: 5 });
+    const ranked = rankLessons(
+      [
+        null,
+        undefined,
+        'a string',
+        42,
+        {},
+        { key: 'no-timestamp' },
+        { key: 'bad-timestamp', updatedAt: 'yesterday', seenCount: 'lots' },
+        { key: 'negative', updatedAt: at(1), seenCount: -8 },
+        good,
+      ],
+      { now: NOW },
+    );
+    assert.equal(ranked[0], good, 'a well-formed recurring lesson still wins');
+    // The four non-objects are dropped; every object survives, scored on what
+    // it had — a lesson is not discarded for having a field this cannot read.
+    assert.equal(ranked.length, 5);
+    assert.ok(ranked.every((e) => e && typeof e === 'object'));
+  });
+
+  test('rankLessons malformed — an empty or non-array input is an empty result', () => {
+    for (const bad of [[], null, undefined, 'nope', 7, {}]) {
+      assert.deepEqual(rankLessons(bad, { now: NOW }), [], `input ${String(bad)}`);
+    }
+  });
+
+  test('rankLessons malformed — a broken `now` or weight set degrades, never throws', () => {
+    const entries = [lesson('a', { days: 1, seen: 2 }), lesson('b', { days: 9, seen: 1 })];
+    // An unusable clock zeroes recency for everyone rather than throwing; the
+    // remaining factors still rank.
+    assert.equal(rankLessons(entries, { now: 'not-a-date' }).length, 2);
+    // Weights that sum to zero would divide by zero — the defaults take over.
+    assert.deepEqual(
+      rankLessons(entries, { now: NOW, weights: { recency: 0, salience: 0, relevance: 0 } })
+        .map((e) => e.key),
+      keys(entries),
+    );
+    // A junk weight falls back per-field, not wholesale.
+    assert.equal(rankLessons(entries, { now: NOW, weights: { recency: 'lots' } }).length, 2);
+  });
+
+  test('rankLessons reads either spelling of the count and the timestamp', () => {
+    // An entry straight off the REST route (not through the store projection)
+    // must rank the same as one that went through it.
+    const projected = { scope: 'global', key: 'p', value: '', seenCount: 9, updatedAt: at(2) };
+    const raw = { scope: 'global', key: 'r', value: '', seen_count: 9, updated_at: at(2) };
+    const ranked = rankLessons([raw, projected], { now: NOW });
+    // Equal scores, so the key tiebreak decides — which proves neither was
+    // silently scored as zero.
+    assert.deepEqual(ranked.map((e) => e.key), ['p', 'r']);
+  });
+});
+
+describe('scoreLesson factors', () => {
+  const NOW = Date.parse('2026-08-01T00:00:00.000Z');
+  const daysAgo = (n) => new Date(NOW - n * 86400000).toISOString();
+
+  test('recencyFactor halves at the half-life and is bounded', () => {
+    assert.equal(recencyFactor(daysAgo(0), NOW), 1);
+    assert.ok(Math.abs(recencyFactor(daysAgo(RECENCY_HALF_LIFE_DAYS), NOW) - 0.5) < 1e-12);
+    assert.ok(recencyFactor(daysAgo(365), NOW) > 0, 'decays toward 0, never to it');
+    assert.ok(recencyFactor(daysAgo(365), NOW) < 0.001);
+  });
+
+  test('recencyFactor clamps a future timestamp to 1 rather than exceeding it', () => {
+    // Clock skew between writer and reader is ordinary; an unbounded score
+    // would let it beat every honestly-dated lesson.
+    assert.equal(recencyFactor(new Date(NOW + 86400000).toISOString(), NOW), 1);
+  });
+
+  test('recencyFactor scores an unknown timestamp 0, not average', () => {
+    // Treating unknown as average would let a lesson with no timestamp outrank
+    // a real one that is merely a month old.
+    for (const bad of [null, undefined, '', 'yesterday', {}]) {
+      assert.equal(recencyFactor(bad, NOW), 0, `value ${String(bad)}`);
+    }
+  });
+
+  test('salienceFactor is relative to the set, and flat when nothing recurred', () => {
+    assert.equal(salienceFactor(1, 1), 0, 'a set of one-offs has no salience signal');
+    assert.equal(salienceFactor(0, 0), 0);
+    assert.equal(salienceFactor(8, 8), 1, 'the most-recurring lesson in the set scores 1');
+    assert.ok(salienceFactor(2, 8) > salienceFactor(1, 8));
+    // Logarithmic: the 1 → 3 step is worth more than the 40 → 42 step.
+    assert.ok(
+      salienceFactor(3, 50) - salienceFactor(1, 50) > salienceFactor(42, 50) - salienceFactor(40, 50),
+    );
+  });
+
+  test('relevanceFactor is the fraction of DISTINCT terms matched', () => {
+    const entry = { key: 'retry-on-timeout', value: 'ECONNREFUSED then a timeout' };
+    assert.equal(relevanceFactor(entry, []), 0, 'no terms is 0, never 1');
+    assert.equal(relevanceFactor(entry, ['timeout']), 1);
+    assert.equal(relevanceFactor(entry, ['timeout', 'nomatch']), 0.5);
+    assert.equal(
+      relevanceFactor(entry, ['timeout', 'timeout', 'TIMEOUT']),
+      1,
+      'a repeated term cannot inflate the score',
+    );
+    assert.equal(relevanceFactor(entry, ['econnrefused']), 1, 'case-insensitive');
+    assert.equal(relevanceFactor(entry, ['retry-on']), 1, 'matches the key too');
+  });
+
+  test('relevanceFactor matches metacharacters literally, like search does', () => {
+    // Never `new RegExp(term)` — one matcher, one meaning of "matches".
+    const entry = { key: 'k', value: 'a.*(b) literally' };
+    assert.equal(relevanceFactor(entry, ['a.*(b)']), 1);
+    assert.equal(relevanceFactor({ key: 'k', value: 'axxxb' }, ['a.*(b)']), 0);
+  });
+
+  test('scoreLesson stays in [0,1] for any weighting', () => {
+    const entry = { key: 'k', value: 'timeout', seenCount: 5, updatedAt: daysAgo(1) };
+    for (const weights of [
+      undefined,
+      { recency: 5, salience: 1, relevance: 1 },
+      { recency: 0, salience: 0, relevance: 1 },
+      { recency: 0.1, salience: 99, relevance: 0 },
+    ]) {
+      const s = scoreLesson(entry, { now: NOW, terms: ['timeout'], maxSeenCount: 5, weights });
+      assert.ok(s >= 0 && s <= 1, `score ${s} out of range for ${JSON.stringify(weights)}`);
+    }
   });
 });

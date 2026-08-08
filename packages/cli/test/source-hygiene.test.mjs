@@ -74,3 +74,38 @@ test('the remote store contains no MCP transport call', () => {
     );
   }
 });
+
+// ── lessons-pure.mjs stays dependency-free ───────────────────────────────────
+// The module exists precisely so the SessionStart hot path can share the
+// precedence, matching and ranking logic with the read commands WITHOUT
+// dragging in the `lessons-view.mjs` render/`util`/lint/dedupe stack. Its
+// zero-import property is the whole reason it is a separate file, and it is
+// exactly the kind of invariant that erodes one convenient import at a time —
+// each of which then loads on every single session start, and any of which
+// could throw inside a hook contractually obliged to exit 0.
+const LESSONS_PURE = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'lessons-pure.mjs');
+
+test('lessons-pure imports nothing — not a package, not even a node builtin', () => {
+  const src = readFileSync(LESSONS_PURE, 'utf8');
+
+  // Anti-vacuity: prove we are reading the real module before asserting on it.
+  // Named per family so a rename cannot quietly make this guard pass on a stub.
+  for (const fn of ['resolvePrecedence', 'matchesQuery', 'scopeIssue', 'rankLessons', 'scoreLesson']) {
+    assert.match(src, new RegExp(`export function ${fn}\\b`), `lessons-pure.mjs is missing ${fn}() — guard would be vacuous`);
+  }
+
+  // Strip comments first: the header legitimately discusses imports in prose.
+  const code = src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map((line) => line.replace(/^\s*\/\/.*$/, ''))
+    .join('\n');
+
+  const statics = code.match(/^\s*import\s[\s\S]*?$/gm) || [];
+  assert.deepEqual(statics, [], 'lessons-pure.mjs must have no static imports');
+
+  // A dynamic `import(...)` or a `require(...)` would defeat the static check
+  // while costing the same load on the hot path.
+  assert.ok(!/\bimport\s*\(/.test(code), 'lessons-pure.mjs must not use a dynamic import()');
+  assert.ok(!/\brequire\s*\(/.test(code), 'lessons-pure.mjs must not use require()');
+});
