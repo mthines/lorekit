@@ -4,7 +4,11 @@ import { ownerRepoFromRemote } from '../src/scope.mjs';
 import { splitEndpoint, buildRemoteUrl, mcpCall } from '../src/mcp.mjs';
 import { tokenKind } from '../src/config.mjs';
 import { parseArgs, selectAction, select } from '../src/util.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createRemoteStore } from '../src/store/remote.mjs';
+import { createLocalStore } from '../src/store/local.mjs';
 import {
   gatherStream, gather, clusterDuplicates, clusterDuplicatesBlocked, DEFAULT_MAX,
 } from '../src/lessons-view.mjs';
@@ -1084,5 +1088,212 @@ describe('mcp-server cursor threading', () => {
     );
     assert.equal(result.hasMore, true, 'hasMore surfaced from search REST response');
     assert.equal(result.nextCursor, 'def456', 'nextCursor surfaced from search REST response');
+  });
+});
+
+// ── The read shape a ranking layer consumes: seenCount + updatedAt ────────────
+// Both stores answer in their own vocabulary — the remote store hands back a
+// REST `MemoryEntry` (`seen_count` / `updated_at`), the local store hands back
+// parsed frontmatter (`seen_count` / `updated`) — so a ranker that had to know
+// which one it was holding would grow two copies of the same rule. The pure
+// `entry-fields.mjs` projection is applied by both, and these tests pin the
+// contract rather than either store's internals.
+//
+// The fields are ADDITIVE: every key the store already returned survives, so an
+// existing caller cannot be broken by the projection.
+
+describe('store read fields', () => {
+  const withSeen = (n, updated) => JSON.stringify({
+    entries: [{ id: 'i1', scope: 'global', key: 'k', value: 'v', tags: [], seen_count: n, updated_at: updated }],
+  });
+
+  test('remote seenCount updatedAt — list and search carry both fields', async () => {
+    const updated = '2026-08-01T10:20:30.000Z';
+
+    const listed = await captureRestCalls(
+      (store) => store.list({ scope: 'global' }),
+      { status: 200, body: withSeen(7, updated) },
+    );
+    assert.equal(listed.result.entries[0].seenCount, 7);
+    assert.equal(listed.result.entries[0].updatedAt, updated);
+    // Additive — the original REST keys are untouched.
+    assert.equal(listed.result.entries[0].seen_count, 7);
+    assert.equal(listed.result.entries[0].value, 'v');
+
+    const searched = await captureRestCalls(
+      (store) => store.search({ q: 'v' }),
+      { status: 200, body: withSeen(3, updated) },
+    );
+    assert.equal(searched.result.entries[0].seenCount, 3);
+    assert.equal(searched.result.entries[0].updatedAt, updated);
+
+    // read() answers with the same shape — a single lookup must not differ from
+    // the listing the caller found the key in.
+    const read = await captureRestCalls(
+      (store) => store.read({ scope: 'global', key: 'k' }),
+      { status: 200, body: withSeen(2, updated) },
+    );
+    assert.equal(read.result.entry.seenCount, 2);
+    assert.equal(read.result.entry.updatedAt, updated);
+  });
+
+  test('store fields degrade — a row missing either field never throws', async () => {
+    // A backend deployed before migration 00058 returns no `seen_count` at all.
+    const { result } = await captureRestCalls(
+      (store) => store.list({ scope: 'global' }),
+      { status: 200, body: JSON.stringify({ entries: [{ key: 'k', value: 'v' }] }) },
+    );
+    assert.equal(result.entries[0].seenCount, 0, 'absent count reads as 0, not 1');
+    assert.equal(result.entries[0].updatedAt, null, 'absent timestamp reads as null');
+
+    // Garbage in every field the projection touches.
+    const junk = await captureRestCalls(
+      (store) => store.list({ scope: 'global' }),
+      {
+        status: 200,
+        body: JSON.stringify({
+          entries: [
+            { key: 'a', seen_count: 'not-a-number', updated_at: 'not-a-date' },
+            { key: 'b', seen_count: -4, updated_at: '' },
+            { key: 'c', seen_count: 2.7 },
+            null,
+          ],
+        }),
+      },
+    );
+    assert.deepEqual(junk.result.entries.map((e) => e.seenCount), [0, 0, 2, 0]);
+    assert.deepEqual(junk.result.entries.map((e) => e.updatedAt), [null, null, null, null]);
+  });
+
+  test('store fields degrade — a numeric string count is read, not dropped', async () => {
+    // PostgREST can render a bigint as a string; the projection coerces rather
+    // than silently scoring the lesson as never-seen.
+    const { result } = await captureRestCalls(
+      (store) => store.list({ scope: 'global' }),
+      { status: 200, body: JSON.stringify({ entries: [{ key: 'k', seen_count: '5' }] }) },
+    );
+    assert.equal(result.entries[0].seenCount, 5);
+  });
+});
+
+describe('local store read fields', () => {
+  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'lk-fields-'));
+
+  test('local seenCount updatedAt — list, search and read carry both fields', async () => {
+    const store = createLocalStore(tmp());
+    await store.write({ scope: 'global', key: 'k', value: 'v1' });
+
+    const listed = await store.list({ scope: 'global' });
+    assert.equal(listed.entries[0].seenCount, 1, 'a first write is one sighting');
+    assert.equal(
+      listed.entries[0].updatedAt,
+      new Date(listed.entries[0].updated).toISOString(),
+      'updatedAt is the frontmatter `updated`, normalised to ISO',
+    );
+
+    const searched = await store.search({ q: 'v1', scopes: ['global'] });
+    assert.equal(searched.entries[0].seenCount, 1);
+    assert.ok(searched.entries[0].updatedAt);
+
+    const read = await store.read({ scope: 'global', key: 'k' });
+    assert.equal(read.entry.seenCount, 1);
+    assert.ok(read.entry.updatedAt);
+  });
+
+  test('local seenCount updatedAt — a rewrite of the same key counts the recurrence', async () => {
+    const store = createLocalStore(tmp());
+    await store.write({ scope: 'global', key: 'k', value: 'v1' });
+    await store.write({ scope: 'global', key: 'k', value: 'v2' });
+    await store.write({ scope: 'global', key: 'k', value: 'v3' });
+
+    const { entries } = await store.list({ scope: 'global' });
+    assert.equal(entries.length, 1, 'the upsert must not fan out into three files');
+    assert.equal(entries[0].seenCount, 3, 'three writes of one key is three sightings');
+    assert.equal(entries[0].value, 'v3');
+  });
+
+  test('local seenCount updatedAt — a different key is its own tally', async () => {
+    const store = createLocalStore(tmp());
+    await store.write({ scope: 'global', key: 'recurring', value: 'v' });
+    await store.write({ scope: 'global', key: 'recurring', value: 'v' });
+    await store.write({ scope: 'global', key: 'one-off', value: 'v' });
+
+    const { entries } = await store.list({ scope: 'global' });
+    const bySeen = Object.fromEntries(entries.map((e) => [e.key, e.seenCount]));
+    assert.deepEqual(bySeen, { recurring: 2, 'one-off': 1 });
+  });
+
+  test('local seenCount updatedAt — reviving an archived key restarts the tally', async () => {
+    const store = createLocalStore(tmp());
+    await store.write({ scope: 'global', key: 'k', value: 'v1' });
+    await store.write({ scope: 'global', key: 'k', value: 'v2' });
+    await store.archive({ scope: 'global', key: 'k' });
+    await store.write({ scope: 'global', key: 'k', value: 'v3' });
+
+    const { entries } = await store.list({ scope: 'global' });
+    assert.equal(
+      entries[0].seenCount,
+      1,
+      'a retired lesson being learned again starts over, matching the hosted RPC',
+    );
+  });
+
+  test('store fields degrade — a local file written before the column existed', async () => {
+    const dir = tmp();
+    const store = createLocalStore(dir);
+    await store.write({ scope: 'global', key: 'k', value: 'v1' });
+
+    // Strip the column the way a file written by an older CLI would lack it.
+    const scopeDir = path.join(dir, 'global');
+    const file = path.join(scopeDir, fs.readdirSync(scopeDir)[0]);
+    fs.writeFileSync(
+      file,
+      fs.readFileSync(file, 'utf8').split('\n').filter((l) => !l.startsWith('seen_count:')).join('\n'),
+    );
+
+    const { entries } = await store.list({ scope: 'global' });
+    assert.equal(entries[0].seenCount, 0, 'absent reads as 0 — no evidence, not one sighting');
+    assert.ok(entries[0].updatedAt, 'the timestamp is unaffected');
+
+    // And the next write resumes the tally rather than throwing.
+    await store.write({ scope: 'global', key: 'k', value: 'v2' });
+    const after = await store.list({ scope: 'global' });
+    assert.equal(after.entries[0].seenCount, 1);
+  });
+
+  test('store fields degrade — a hand-edited frontmatter scalar never throws', async () => {
+    const dir = tmp();
+    const store = createLocalStore(dir);
+    await store.write({ scope: 'global', key: 'k', value: 'v1' });
+
+    const scopeDir = path.join(dir, 'global');
+    const file = path.join(scopeDir, fs.readdirSync(scopeDir)[0]);
+    fs.writeFileSync(
+      file,
+      fs.readFileSync(file, 'utf8')
+        .replace(/^seen_count: .*$/m, 'seen_count: lots')
+        .replace(/^updated: .*$/m, 'updated: yesterday'),
+    );
+
+    const { entries } = await store.list({ scope: 'global' });
+    assert.equal(entries[0].seenCount, 0);
+    assert.equal(entries[0].updatedAt, null, 'an unparseable date is null, never Invalid Date');
+  });
+
+  test('local seenCount updatedAt — putEntry relocates a count verbatim', async () => {
+    const from = createLocalStore(tmp());
+    const to = createLocalStore(tmp());
+    await from.write({ scope: 'global', key: 'k', value: 'v' });
+    await from.write({ scope: 'global', key: 'k', value: 'v' });
+
+    const { entries } = await from.list({ scope: 'global' });
+    await to.putEntry(entries[0]);
+
+    const moved = await to.list({ scope: 'global' });
+    assert.equal(
+      moved.entries[0].seenCount,
+      2,
+      'migrate relocates a store, it does not re-sight its lessons',
+    );
   });
 });
