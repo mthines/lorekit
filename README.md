@@ -110,6 +110,19 @@ npx @lorekit/cli doctor
 # → connectivity, token permission, and detected scopes, all green
 ```
 
+**Run the CLI often?** Read commands like `list`, `search`, and `tree` are
+nicer without the `npx` prefix. Install the binary globally once:
+
+```bash
+npm install -g @lorekit/cli
+```
+
+Then drop `npx @lorekit/cli` and call `lorekit` directly:
+
+```bash
+lorekit doctor
+```
+
 ### 3. That's it
 
 Your agent now remembers. Its lessons survive every session, reach every machine
