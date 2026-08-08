@@ -532,10 +532,10 @@ export const MemoryEntrySchema = z.object({
   // Taxonomy. Optional/nullable so a row written before 00056 (NULL kind/host)
   // and an older client that reads neither are both unaffected.
   kind: z.string().nullable().optional(), host: z.string().nullable().optional(),
-  // Recurrence — how many times this lesson has been written (00058). The
+  // Recurrence — how many times this lesson has been written (00059). The
   // column is NOT NULL DEFAULT 1, so a live row always has >= 1; optional here
   // for the same reason kind/host are, so a client reading a response from a
-  // backend deployed before 00058 is unaffected.
+  // backend deployed before 00059 is unaffected.
   seen_count: z.number().int().nullable().optional(),
   // Ownership / authorship. Optional so an older client (and the CLI's
   // RemoteStore, which reads none of them) is unaffected by the addition.

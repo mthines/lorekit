@@ -192,7 +192,7 @@ Every read route returns `seen_count`: how many times the lesson has been writte
 part of `MEMORY_SELECT`, so `GET /`, `GET /:id` and `POST /search` all carry it.
 
 **It is derived, never supplied.** `memory_write` has no `p_seen_count` parameter and gained
-none in 00058 — the insert branches set `1` and each conflict-update branch sets
+none in 00059 — the insert branches set `1` and each conflict-update branch sets
 `seen_count = memories.seen_count + 1`. A write whose `(tenant, scope, key)` already resolves
 to a live row *is* the second sighting, which is exactly the definition
 `lorekit-setup`'s self-improvement loop documents ("a recurrence resolves to an UPDATE that
@@ -217,9 +217,9 @@ count restarts at `1` only once the purge has actually removed the row. Note the
 by itself make the row readable again: with no `ttl_seconds` and no `clear_ttl` the update branch
 keeps the past `expires_at`, so the recurrence is counted on a row the reads still skip.
 
-Rows written before 00058 read `1` (the column is `NOT NULL DEFAULT 1`, so the backfill is
+Rows written before 00059 read `1` (the column is `NOT NULL DEFAULT 1`, so the backfill is
 the default and no data migration ran). The field is optional in `MemoryEntrySchema` for the
-`kind`/`host` reason: a client reading from a backend deployed before 00058 sees it absent
+`kind`/`host` reason: a client reading from a backend deployed before 00059 sees it absent
 rather than wrong.
 
 Nothing filters or orders on it yet, so it carries no index — the same call 00048 made for

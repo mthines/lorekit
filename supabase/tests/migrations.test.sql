@@ -4249,11 +4249,11 @@ begin
 end;
 $$;
 
--- ── 74. memories.seen_count — recurrence counted by the writer (00058) ──────
+-- ── 74. memories.seen_count — recurrence counted by the writer (00059) ──────
 -- The counter LoreKit's own skill guidance has always gated promotion on
 -- (`seen_count >= 3`) never existed as a column; it lived as hand-written text
 -- in a lesson body's `meta:` comment, so nothing incremented it and nothing
--- could read it. 00058 makes it real and puts the increment in the upsert,
+-- could read it. 00059 makes it real and puts the increment in the upsert,
 -- which is where a recurrence actually happens.
 -- AC-1: a first write inserts with seen_count = 1.
 -- AC-2: a second write to the same (tenant, scope, key) increments to 2 and
