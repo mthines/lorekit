@@ -236,14 +236,31 @@ test('install --mcp-json reaches the write step even on an already-complete inst
   // A fully-installed scope normally short-circuits to the "already installed"
   // summary; an explicit --mcp-json is an intent to write that file, so it must
   // bypass the short-circuit just as an explicit --hooks does.
+  //
+  // HOME is redirected because this uses a GLOBAL install: without it the write
+  // lands in the real ~/.claude.json, which both scribbles on the developer/CI
+  // home AND leaks a configured lorekit endpoint into every later test file's
+  // process (they all read ~/.claude.json), breaking unrelated tests.
+  const home = tmp('lk-webmcp-complete-home-');
   const root = tmp('lk-webmcp-complete-');
-  const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, global: true };
-  await install(base); // global install, no project .mcp.json yet
-  assert.ok(!fs.existsSync(path.join(root, '.mcp.json')), 'no project .mcp.json after a plain global install');
+  const prevHome = process.env.HOME;
+  const prevProfile = process.env.USERPROFILE;
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  try {
+    const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, global: true };
+    await install(base); // global install, no project .mcp.json yet
+    assert.ok(!fs.existsSync(path.join(root, '.mcp.json')), 'no project .mcp.json after a plain global install');
 
-  const code = await install({ ...base, 'mcp-json': true });
-  assert.equal(exitOf(code), 0);
-  assert.ok(fs.existsSync(path.join(root, '.mcp.json')), 'the web .mcp.json is written despite the complete install');
+    const code = await install({ ...base, 'mcp-json': true });
+    assert.equal(exitOf(code), 0);
+    assert.ok(fs.existsSync(path.join(root, '.mcp.json')), 'the web .mcp.json is written despite the complete install');
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    if (prevProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = prevProfile;
+  }
 });
 
 test('install wires the three lifecycle hooks into project settings.json', async () => {
