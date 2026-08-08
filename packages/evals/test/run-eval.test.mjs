@@ -54,6 +54,42 @@ test("parseArgs rejects nonsense rather than running a bad experiment", () => {
   assert.throws(() => parseArgs(["arm0", "--nope"]), /unknown option/);
 });
 
+test("a value-taking flag with no value is a named parse error, not a TypeError later", () => {
+  for (const flag of ["--reps", "--out", "--timeout", "--command"]) {
+    assert.throws(
+      () => parseArgs(["arm0", flag]),
+      new RegExp(`${flag} requires a value`),
+      `${flag} as the last argument must be rejected`,
+    );
+  }
+});
+
+test("the missing-value guard rejects nothing that parses today", () => {
+  // The other half of the guard: an off-by-one in the bound would still fix
+  // the reported case while breaking documented invocations, so every good
+  // form is asserted, not just the bad one.
+  const good = [
+    ["arm0"],
+    ["arm0", "--keep"],
+    ["arm0", "--dry-run"],
+    ["arm0", "--help"],
+    ["arm0", "-h"],
+    ["arm0", "--reps", "5"],
+    ["arm0", "--out", "/tmp/o"],
+    ["arm0", "--timeout", "1000"],
+    ["arm0", "--command", "echo"],
+    // A value that merely LOOKS like a flag is still a value.
+    ["arm0", "--out", "--keep"],
+    ["arm0", "--command", "node", "--reps", "2", "--keep", "--dry-run"],
+    ["arm0", "--keep", "--out", "/tmp/o"],
+  ];
+  for (const argv of good) {
+    assert.doesNotThrow(() => parseArgs(argv), `must accept: ${argv.join(" ")}`);
+  }
+  assert.equal(parseArgs(["arm0", "--out", "--keep"]).out, "--keep");
+  assert.equal(parseArgs(["arm0", "--keep", "--out", "/tmp/o"]).keep, true);
+});
+
 test("isEntryPoint matches the plain path, and rejects a non-entry", () => {
   assert.equal(isEntryPoint(SELF), true);
   // A relative invocation resolves to the same file.

@@ -47,6 +47,21 @@ Options:
 
 export function parseArgs(argv) {
   const [subcommand, ...rest] = argv;
+  /**
+   * Read the value that follows a value-taking flag, or fail with a message
+   * that names the flag. Without this, `--out` as the last argument leaves
+   * `options.out` undefined and the first `path.resolve` downstream throws a
+   * TypeError that says nothing about which flag was mistyped.
+   *
+   * Only a genuinely ABSENT value is rejected: a value that happens to look
+   * like a flag is still consumed, because these values are free-form paths
+   * and binary names, and refusing them would reject invocations that work
+   * today.
+   */
+  const takeValue = (flag, index) => {
+    if (index >= rest.length) throw new Error(`${flag} requires a value`);
+    return rest[index];
+  };
   const options = {
     subcommand: subcommand || null,
     reps: 3,
@@ -61,16 +76,16 @@ export function parseArgs(argv) {
     const arg = rest[i];
     switch (arg) {
       case "--reps":
-        options.reps = Number(rest[++i]);
+        options.reps = Number(takeValue(arg, ++i));
         break;
       case "--out":
-        options.out = rest[++i];
+        options.out = takeValue(arg, ++i);
         break;
       case "--timeout":
-        options.timeoutMs = Number(rest[++i]);
+        options.timeoutMs = Number(takeValue(arg, ++i));
         break;
       case "--command":
-        options.command = rest[++i];
+        options.command = takeValue(arg, ++i);
         break;
       case "--keep":
         options.keep = true;
