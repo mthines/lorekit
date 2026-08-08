@@ -4264,8 +4264,10 @@ $$;
 --       the assertion that discriminates the two: `excluded` is the row the
 --       INSERT proposed and always carries the literal 1, so an `excluded`-based
 --       increment would pin the count at 2 while four writes must leave 4.
--- AC-4: the service-role branch (p_user_id null) increments too — all three
---       conflict branches of the RPC were edited, not just the personal one.
+-- AC-4: the OTHER two conflict branches increment too — the service-role
+--       branch (p_user_id null) and the org branch (p_org_slug set). AC-1…AC-3
+--       only ever write through the personal branch, and 00059 edited all
+--       three, so "all three branches" has to be exercised, not asserted.
 -- AC-5: reviving an ARCHIVED key is NOT a recurrence. The conflict predicates
 --       are partial on `archived_at is null`, so this inserts a fresh row that
 --       starts back at 1 — the lesson was retired and is being learned again.
@@ -4309,6 +4311,24 @@ begin
   select seen_count into v_seen from memories where id = v_id1;
   assert v_seen = 2,
     format('seen_count AC-4: the service branch must increment as well, got %s', v_seen);
+
+  -- AC-4 — and so does the org branch (p_org_slug; a1 owns test-org / f1).
+  -- The org insert branch writes user_id null and arbitrates on
+  -- (org_id, scope, key), so it is a genuinely different conflict target from
+  -- both the personal and the service branch.
+  select id into v_id1 from memory_write(v_uid, 'global', 'seen-count-org-key', 'v1',
+                                         '{}'::text[], null, null, null, 'test-org');
+  perform memory_write(v_uid, 'global', 'seen-count-org-key', 'v2',
+                       '{}'::text[], null, null, null, 'test-org');
+  select seen_count into v_seen from memories where id = v_id1;
+  assert v_seen = 2,
+    format('seen_count AC-4: the org branch must increment as well, got %s', v_seen);
+  assert (select org_id from memories where id = v_id1)
+           = '00000000-0000-0000-0000-0000000000f1',
+    'seen_count AC-4: the org write must land on an org-owned row, not a personal one';
+  assert (select count(*) from memories
+           where scope = 'global' and key = 'seen-count-org-key') = 1,
+    'seen_count AC-4: the org recurrence must update the row, not insert a second';
 
   -- AC-5 — reviving an archived key starts over.
   select id into v_id1 from memory_write(v_uid, 'global', 'seen-count-archived-key', 'v1');
