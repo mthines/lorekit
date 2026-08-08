@@ -215,6 +215,38 @@ test('install --mcp-json does NOT warn when .mcp.json is tracked', { skip: !gitA
   assert.doesNotMatch(out, /\.mcp\.json \(git\)/, 'no warning line when the file is not ignored');
 });
 
+test('install --project (plain) warns before replacing a committable web .mcp.json with an embedded token', async () => {
+  // A committable web .mcp.json (from an earlier --mcp-json) is meant to be
+  // committed; a later plain project install embeds the token into that same
+  // file. Warn before clobbering it. --force bypasses the already-installed
+  // short-circuit so the write step (and the warning) is reached.
+  const root = tmp('lk-webmcp-clobber-');
+  await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true, 'mcp-json': true });
+  const before = fs.readFileSync(path.join(root, '.mcp.json'), 'utf8');
+  assert.ok(!before.includes(TOKEN), 'the web form embeds no token');
+
+  const out = await captureStdout(() =>
+    install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true, force: true }),
+  );
+  assert.match(
+    out,
+    /replacing the committable web entry with an embedded token/,
+    'install warns before overwriting the committable web form',
+  );
+  // The warning describes a real overwrite — the token is now embedded.
+  const after = JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'));
+  assert.ok(after.mcpServers.lorekit.args.some((a) => a.includes(TOKEN)), 'the plain install embedded the token');
+});
+
+test('install --mcp-json does NOT warn about clobbering when no web entry exists yet', async () => {
+  // A first-time plain project install has nothing to overwrite — no warning.
+  const root = tmp('lk-webmcp-noclobber-');
+  const out = await captureStdout(() =>
+    install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true }),
+  );
+  assert.doesNotMatch(out, /replacing the committable web entry/, 'no clobber warning on a fresh install');
+});
+
 test('install --mcp-json reaches the write step even on an already-complete install', async () => {
   // A fully-installed scope normally short-circuits to the "already installed"
   // summary; an explicit --mcp-json is an intent to write that file, so it must
