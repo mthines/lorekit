@@ -79,6 +79,7 @@ test("summarizeResult normalizes the fields metrics consume", () => {
     usage: { input_tokens: 100, output_tokens: 20 },
   });
   assert.deepEqual(summary, {
+    hasResult: true,
     isError: false,
     subtype: "success",
     numTurns: 7,
@@ -90,11 +91,19 @@ test("summarizeResult normalizes the fields metrics consume", () => {
   });
 });
 
-test("summarizeResult degrades to nulls on a missing result line", () => {
+test("summarizeResult reports a missing result line as an error, not a clean run", () => {
   const summary = summarizeResult(null);
-  assert.equal(summary.isError, false);
+  // A timed-out or crashed attempt produces no result line. Summarizing it as
+  // isError:false let a failed rep be counted as a success by any metric that
+  // did not also read timedOut/exitCode.
+  assert.equal(summary.hasResult, false);
+  assert.equal(summary.isError, true);
   assert.equal(summary.numTurns, null);
   assert.equal(summary.costUsd, null);
+  // The agent REPORTING an error stays distinguishable from never reporting.
+  const reported = summarizeResult({ type: "result", is_error: true });
+  assert.equal(reported.hasResult, true);
+  assert.equal(reported.isError, true);
 });
 
 test("runAgent captures the stream, result and wall time (AC-1.2)", async () => {

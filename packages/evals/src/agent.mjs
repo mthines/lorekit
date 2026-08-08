@@ -100,11 +100,20 @@ export function parseResultLine(transcriptText) {
 /**
  * Normalize the result line into the fields the metrics module consumes, so a
  * rename upstream is absorbed here rather than in every metric.
+ *
+ * A MISSING result line is an error, not a clean run. A timed-out or crashed
+ * attempt has no `{"type":"result"}` line at all, and reporting
+ * `isError: false` for it let a failed rep be counted as a success by any
+ * metric that did not additionally consult `timedOut`/`exitCode`. `hasResult`
+ * is reported alongside so a metric can still tell the two apart — the agent
+ * reporting an error is not the same event as the agent never reporting.
  */
 export function summarizeResult(resultJson) {
   const usage = (resultJson && resultJson.usage) || {};
+  const hasResult = Boolean(resultJson);
   return {
-    isError: Boolean(resultJson && resultJson.is_error),
+    hasResult,
+    isError: hasResult ? Boolean(resultJson.is_error) : true,
     subtype: (resultJson && resultJson.subtype) || null,
     numTurns:
       resultJson && typeof resultJson.num_turns === "number"
