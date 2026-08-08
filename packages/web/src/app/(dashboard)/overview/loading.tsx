@@ -15,15 +15,21 @@ export default function OverviewLoading() {
       {/* Onboarding checklist skeleton */}
       <div className="h-14 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]" />
 
-      {/* Summary stats */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="h-24 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]" />
-        ))}
+      {/* Summary stats — mirrors DashboardStatsSkeleton: a label + range-select
+          row above the grid (so the stats block doesn't shift down when the real
+          component mounts), then the same responsive grid + card height
+          (`grid-cols-1 sm:grid-cols-3`, `h-40`) as the real DashboardStats. */}
+      <div>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="h-3 w-16 animate-pulse rounded bg-[var(--color-bg-elevated)]" />
+          <div className="h-6 w-28 animate-pulse rounded-md bg-[var(--color-bg-elevated)]" />
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-40 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]" />
+          ))}
+        </div>
       </div>
-
-      {/* Sparkline skeleton */}
-      <div className="h-36 animate-pulse rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]" />
 
       {/* Scope health grid */}
       <div>
