@@ -56,7 +56,7 @@ It authenticates via a `${LOREKIT_TOKEN}` reference (an mcp-remote `--header`), 
 
 <TutorialCallout variant="warning">
 
-Once `.mcp.json` is tracked, only ever run `install` with `--mcp-json` in this repo. A *plain* `lorekit install --project` embeds a live token in that same file — now committed — and leaks it. `--mcp-json` keeps the file secret-free.
+Once `.mcp.json` is tracked, only ever run `install` with `--mcp-json` in this repo. A *plain* `lorekit install --project` embeds a live token in that same file — now committed — and leaks it. `--mcp-json` keeps the file secret-free. The install command **warns you when a plain install is about to replace a committable web `.mcp.json` with an embedded token**, so you catch the leak before it lands.
 
 </TutorialCallout>
 

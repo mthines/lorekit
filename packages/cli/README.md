@@ -103,7 +103,8 @@ from `.gitignore`, negate it with `!.mcp.json`, or `git add -f .mcp.json` once);
 `install --mcp-json` **warns when the file it wrote is still git-ignored**, so a
 fresh web clone silently missing the config is not a mystery. Once `.mcp.json` is
 tracked, only run `install --mcp-json` in that repo — a plain `install --project`
-would embed a live token in the now-committed file. See the
+would embed a live token in the now-committed file (and the command warns before
+it does). See the
 [Claude Code on the web guide](https://lorekit.io/docs/claude-code-web).
 
 In a TTY it prompts for the scope (and for `--endpoint` / `--token` if missing).

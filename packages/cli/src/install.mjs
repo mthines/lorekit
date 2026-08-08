@@ -23,6 +23,8 @@ import {
   homeDir,
   mcpConfigPath,
   readJsonIfExists,
+  readLorekitServer,
+  isWebMcpServerEntry,
 } from './config.mjs';
 import { buildRemoteUrl, splitEndpoint } from './mcp.mjs';
 import { deriveScope } from './scope.mjs';
@@ -364,6 +366,21 @@ export async function install(args) {
   let file = null;
   let existed = false;
   if (!scopeWriteOwnedByWeb) {
+    // A plain project install embeds the token in .mcp.json. If that file
+    // currently holds the committable web form (written by an earlier
+    // `--mcp-json`), this write replaces it with an embedded secret — in the
+    // very file the docs tell you to commit. Warn before clobbering it;
+    // `isWebMcpServerEntry` recognises the shape we are about to overwrite.
+    if (scope === 'project' && token) {
+      const prior = readLorekitServer(root);
+      if (prior && isWebMcpServerEntry(prior.server)) {
+        status(
+          'warn',
+          '.mcp.json',
+          `replacing the committable web entry with an embedded token — do not commit this file, or re-run with --mcp-json to keep the \${${WEB_TOKEN_ENV_VAR}} form`,
+        );
+      }
+    }
     ({ file, existed } = upsertMcpServer(root, remoteUrl, scope));
   }
 
