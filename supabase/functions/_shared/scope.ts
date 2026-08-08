@@ -44,6 +44,12 @@ export function validateScope(raw: string): string {
 }
 
 /**
+ * The ceiling `usage_events.scope` is stored under (`usage_events_scope_len`,
+ * migration 00058), mirroring `packages/mcp-core/src/scope.ts`.
+ */
+export const USAGE_SCOPE_MAX = 200;
+
+/**
  * Validate a scope for TELEMETRY, never for authorization.
  *
  * HAND-MIRRORED from `packages/mcp-core/src/scope.ts`, NOT generated. This file
@@ -73,8 +79,6 @@ export function validateScope(raw: string): string {
  * filter" would answer a different question than the one asked. That path uses
  * the throwing `validateScope` and 400s.
  */
-export const USAGE_SCOPE_MAX = 200;
-
 export function safeValidateScope(raw: unknown): string | null {
   if (typeof raw !== 'string' || raw.length === 0) return null;
   try {
