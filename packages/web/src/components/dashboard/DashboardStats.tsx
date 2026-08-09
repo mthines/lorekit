@@ -17,6 +17,7 @@ import {
   bucketPlanForRange,
   isPresetRange,
   rangeLabel,
+  resolveRange,
   type RangePreset,
   type TimeRange,
 } from '@/lib/time-range';
@@ -229,10 +230,30 @@ export function DashboardStats() {
   // The window → grid step. `bucketPlanForRange` returns null for an unbounded
   // or unparseable range, which the cards cannot chart — see FALLBACK_PLAN.
   const plan = useMemo(() => bucketPlanForRange(range, nowIso) ?? FALLBACK_PLAN, [range, nowIso]);
-  const memoryTrends = useMemo(() => computeRangeTrends(rows, nowIso, plan), [rows, nowIso, plan]);
+  // A plan is only `{unit, count}` — it says how WIDE the grid is, never where
+  // it sits — and both aggregators anchor their grid at the clock. For a preset
+  // that is exactly right ("the last 7 days" ends now), but for an ABSOLUTE
+  // window it charted the most recent `count` buckets while the caption named
+  // the selected dates: pick last July and you got this week's bars under a
+  // "Jul 1 – Jul 3" label. So an absolute arm anchors the grid at its OWN end
+  // instead. The `to` bound is EXCLUSIVE, hence the step back to the last
+  // instant inside the window — anchoring at `to` itself would shift the whole
+  // chart one bucket into the future and drop the window's first bucket.
+  //
+  // A preset and an unbounded range still anchor at `nowIso`, unchanged: that
+  // is what they mean, and it keeps every existing render identical.
+  const gridNowIso = useMemo(() => {
+    if (range === null || isPresetRange(range)) return nowIso;
+    const window = resolveRange(range, nowIso);
+    return window === null ? nowIso : new Date(Date.parse(window.to) - 1).toISOString();
+  }, [range, nowIso]);
+  const memoryTrends = useMemo(
+    () => computeRangeTrends(rows, gridNowIso, plan),
+    [rows, gridNowIso, plan],
+  );
   const readTrend = useMemo(
-    () => computeCountTrend(readBuckets, nowIso, plan),
-    [readBuckets, nowIso, plan],
+    () => computeCountTrend(readBuckets, gridNowIso, plan),
+    [readBuckets, gridNowIso, plan],
   );
 
   if (isLoading) return <DashboardStatsSkeleton />;
