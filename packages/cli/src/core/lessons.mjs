@@ -84,6 +84,19 @@ export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
   // budget and evicted the lessons that had been re-learned all month. Recency
   // is one factor now, not the ordering.
   //
+  // WHAT PRECEDENCE DOES *NOT* DO, STATED SO IT IS NOT MISREAD AS A BUG.
+  // Precedence only settles same-key collisions. Across DIFFERENT keys the cap
+  // is now a single cross-scope ranking in which `scopeOrder` is a TIEBREAK
+  // (`rankLessons` sorts on score first and only compares `scopeRank` inside
+  // `SCORE_EPSILON`) — so a recurring `global::` lesson can and will take a
+  // slot from a fresher-but-one-off `project::` one, where the old narrow-first
+  // group order always filled the budget from the most-specific scope down.
+  // That is the intended trade: the budget goes to what has been re-learned,
+  // wherever it lives, and a scope-major sort would reinstate exactly the
+  // "whatever the group order hands it" behaviour this change removes. If a
+  // narrow scope should instead be guaranteed floor space, that is a weighting
+  // change in `rankLessons`, not something to re-derive here.
+  //
   // `terms: []` is the SessionStart case: nothing has been asked yet, so the
   // relevance factor contributes nothing and the order is recency + salience.
   // `scopeOrder` is passed explicitly rather than left to the scorer's
