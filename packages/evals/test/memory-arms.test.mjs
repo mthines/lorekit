@@ -269,3 +269,17 @@ test("prepareArm threads allowWrite through, so arm 0 can opt into memory_write"
     assert.equal(writable.mcp.allowedTools.some(isWriteTool), true);
   });
 });
+
+test("a declared/parsed count disagreement fails rather than measuring a short index", async () => {
+  // parseInjectedIndex is the seam: a header claiming two lessons over one
+  // parsable line is exactly the drift readInjectedLessons must not swallow.
+  const drifted = parseInjectedIndex(
+    [
+      "LoreKit: 2 memories loaded · repo::o/r — considerations, not rules.",
+      "- (global) a-key — a hook",
+      "* (global) b-key — a line whose shape drifted",
+    ].join("\n"),
+  );
+  assert.equal(drifted.declaredCount, 2);
+  assert.equal(drifted.lessons.length, 1);
+});

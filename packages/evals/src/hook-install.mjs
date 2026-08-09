@@ -169,12 +169,27 @@ export async function readInjectedLessons(
     }
   }
 
+  const index = parseInjectedIndex(additionalContext);
+  // The header states how many lessons the hook injected; the lines are what we
+  // managed to parse. A drift in the line shape would silently shrink the set
+  // and shift every `positionOf` the retrieval axis is built on, so disagree
+  // loudly rather than measure a truncated index. A null `declaredCount` means
+  // there was no header at all (nothing injected), which is not a drift.
+  if (
+    index.declaredCount !== null &&
+    index.declaredCount !== index.lessons.length
+  ) {
+    throw new Error(
+      `injected index declares ${index.declaredCount} lessons but ${index.lessons.length} parsed — the hook's line shape drifted`,
+    );
+  }
+
   return {
     exitCode: code,
     stderr,
     raw: stdout,
     additionalContext,
-    ...parseInjectedIndex(additionalContext),
+    ...index,
   };
 }
 
