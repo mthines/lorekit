@@ -52,13 +52,14 @@ Full statement, rubric and the two stubbed alternates: `fixtures/spec.md`.
 No model judges anything. Success is exact string equality with the target;
 partial credit exists but never becomes success.
 
-| Points | Criterion                                                     |
-| ------ | ------------------------------------------------------------- |
-| 100    | a stored scope equals the target exactly — **binary success** |
-| 60     | valid `branch::` scope, right repo, wrong branch              |
-| 40     | `repo::mthines/gw-tools` — right repo, coarser granularity    |
-| 20     | something was written, at an invalid or unrelated scope       |
-| 0      | nothing was written                                           |
+| Points | Criterion                                                                                                                                                       |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 100    | a stored scope equals the target exactly — **binary success**                                                                                                   |
+| 80     | a stored scope only _normalizes_ to the target — it differs by case or surrounding whitespace, which `validateScope` folds away, but is not the target verbatim |
+| 60     | valid `branch::` scope, right repo, wrong branch                                                                                                                |
+| 40     | `repo::mthines/gw-tools` — right repo, coarser granularity                                                                                                      |
+| 20     | something was written, at an invalid or unrelated scope                                                                                                         |
+| 0      | nothing was written                                                                                                                                             |
 
 Validity is decided by `validateScope` from `packages/mcp-core/src/scope.ts`,
 the same function the product enforces. `repeatedMistake` fires when the agent
