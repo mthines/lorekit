@@ -93,25 +93,45 @@ export function resolveStatus(rawStatus: unknown, legacyArchived: unknown): Memo
  * cached query key's own archived segment (`queryKey[4]`, see `queries/lore.ts`)
  * because at that point there is no status in hand, only a key.
  *
+ * DERIVED from `statusToQueryParams` rather than re-testing `status` here, so
+ * the wire mapping has exactly one definition and this predicate cannot drift
+ * from the `archived=` the same status actually sends.
+ *
  * `expiring` is FALSE here, and that is the whole point of it being a separate
  * state rather than a modifier: an expiring memory is a live one with a
  * deadline, so it belongs to the active population and is counted, catalogued
  * and cached as one.
  */
 export function isArchivedView(status: MemoryStatus): boolean {
-  return status === 'archived';
+  return statusToQueryParams(status).archived === 'true';
 }
 
-/** The expiry horizon this status implies, or `undefined` when it implies none. */
+/**
+ * The expiry horizon this status implies, or `undefined` when it implies none.
+ *
+ * Read off `statusToQueryParams` for the same reason `isArchivedView` is: the
+ * horizon the Explorer passes to `useMemories` and the `expiring_within_days`
+ * the request carries are the same number by construction, not by two functions
+ * agreeing.
+ */
 export function expiringWithinDays(status: MemoryStatus): number | undefined {
-  return status === 'expiring' ? EXPIRING_WITHIN_DAYS : undefined;
+  return statusToQueryParams(status).expiring_within_days;
 }
 
 /**
  * The `GET /memories` params a status selects.
  *
- * One place that knows the mapping, so the list request and any future consumer
- * cannot disagree about what "expiring" means on the wire.
+ * One place that knows the mapping — and it is ON the request path, not beside
+ * it: `isArchivedView` and `expiringWithinDays` both read their answer off this
+ * function, and they are what `LoreExplorer` hands to `useMemories` and
+ * `useFacetCatalog`. The data layer still takes the two values separately
+ * (`showArchived` / `expiringWithinDays`) because the query key is built from
+ * them, so this is the point where the pair is minted; nothing downstream
+ * re-derives it from the status.
+ *
+ * That is also what makes the schema-conformance test below worth having: it
+ * guards the mapping every list request in the Explorer is built from, rather
+ * than an unused parallel copy of it.
  *
  * Note `expiring` sends `archived=false` EXPLICITLY rather than relying on the
  * route's default. The route does default to active, but the pairing is
