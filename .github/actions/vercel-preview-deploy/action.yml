@@ -48,6 +48,15 @@ inputs:
     description: Supabase anon key paired with supabase-project-ref. Empty ⇒ no override.
     required: false
     default: ''
+  require-supabase-override:
+    description: >-
+      Set 'true' by callers that ALWAYS intend a Supabase override
+      (deploy.yml's deploy-web-preview, preview.yml's deploy-web). When true, an
+      incomplete override (either supabase-* input empty, including both) becomes
+      a ::warning:: instead of a silent fallback to Vercel's pulled env. Leave
+      'false' for callers that deliberately use the pulled env (ci.yml).
+    required: false
+    default: 'false'
   git-repo-owner:
     description: VERCEL_GIT_REPO_OWNER for the build (a CLI build gets no auto-injected VERCEL_GIT_* vars).
     required: false
@@ -137,16 +146,18 @@ runs:
           echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${ANON_KEY}"
         } >> "$ENV_FILE"
 
-    # A caller that pins a Supabase project but whose anon key came back empty
-    # meant to override and could not — the Override step above self-skipped, so
-    # the build silently keeps Vercel's pulled env (production for a prod-pulled
-    # project). Flag it; deploy.yml emitted this same signal before the flow was
-    # shared. Only fires when an override was INTENDED (project-ref set), so the
-    # deliberate no-override caller (ci.yml, which passes neither) stays quiet.
+    # A caller that declared it always overrides Supabase but supplied an
+    # incomplete pair — either input empty, INCLUDING both — meant to override
+    # and could not: the Override step above self-skipped, so the build silently
+    # keeps Vercel's pulled env (production for a prod-pulled project). Flag it;
+    # deploy.yml emitted this same signal (on an empty anon key) before the flow
+    # was shared. Gated on require-supabase-override, so the deliberate
+    # no-override caller (ci.yml, which passes neither input nor the flag) stays
+    # quiet while deploy-web-preview / deploy-web still catch a missing secret.
     - name: Warn on incomplete Supabase override
-      if: ${{ inputs.supabase-project-ref != '' && inputs.supabase-anon-key == '' }}
+      if: ${{ inputs.require-supabase-override == 'true' && (inputs.supabase-project-ref == '' || inputs.supabase-anon-key == '') }}
       shell: bash
-      run: echo "::warning::supabase-project-ref set but supabase-anon-key is empty — the Supabase override was skipped and the preview build uses Vercel's pulled ${{ inputs.environment }} env, which may point at production Supabase."
+      run: echo "::warning::require-supabase-override is set but supabase-project-ref and/or supabase-anon-key is empty — the Supabase override was skipped and the preview build uses Vercel's pulled ${{ inputs.environment }} env, which may point at production Supabase."
 
     # A CLI build gets none of Vercel's auto-injected VERCEL_GIT_* system env
     # vars, so pass them through — instrumentation-client.ts bakes them into

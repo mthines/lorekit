@@ -286,6 +286,9 @@ jobs:
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
           supabase-project-ref: ${{ secrets.SUPABASE_PROJECT_REF }}
           supabase-anon-key: ${{ secrets.SUPABASE_ANON_KEY }}
+          # Always overrides at the PREVIEW Supabase project — warn (not silently
+          # fall back to the pulled env) if either secret is missing.
+          require-supabase-override: 'true'
           git-repo-owner: ${{ github.repository_owner }}
           git-repo-slug: ${{ github.event.repository.name }}
           git-commit-ref: ${{ github.ref_name }}
