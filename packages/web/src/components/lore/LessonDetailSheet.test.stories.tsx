@@ -185,6 +185,20 @@ export const PreviewIsDefault: Story = {
   },
 };
 
+export const InitialContentTabIsHonoured: Story = {
+  // The reset-to-Preview effect used to fire on mount too, so the Edit tab this
+  // prop asks for was overwritten before paint. Regression guard.
+  render: (args) => <Harness onClose={args.onClose} initialContentTab="edit" />,
+  play: async ({ step }) => {
+    await body().findByRole('dialog', { name: /memory detail/i });
+    await step('initialContentTab="edit" opens on the textarea, not Preview', async () => {
+      await waitFor(() => expect(contentTextarea()).not.toBeNull());
+      await expect(body().getByRole('tab', { name: /edit/i })).toHaveAttribute('aria-selected', 'true');
+      await expect(previewPanel()).toBeNull();
+    });
+  },
+};
+
 export const SanitizesUntrustedMarkdown: Story = {
   // Explicit render (not args) so the malicious lesson is unambiguously the one
   // rendered — the assertions must exercise the untrusted content, not the default.
