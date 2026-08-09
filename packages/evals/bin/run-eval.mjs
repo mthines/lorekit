@@ -84,29 +84,36 @@ export function parseArgs(argv) {
     dryRun: false,
     help: false,
   };
+  // A trailing value-taking flag reads `undefined` off the end of argv, which
+  // then either becomes NaN or silently falls back to a default. Every flag
+  // below takes a value, so demand one at the point it is read.
+  const value = (flag, next) => {
+    if (next === undefined) throw new Error(`${flag} requires a value`);
+    return next;
+  };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     switch (arg) {
       case "--reps":
-        options.reps = Number(rest[++i]);
+        options.reps = Number(value(arg, rest[++i]));
         break;
       case "--out":
-        options.out = rest[++i];
+        options.out = value(arg, rest[++i]);
         break;
       case "--timeout":
-        options.timeoutMs = Number(rest[++i]);
+        options.timeoutMs = Number(value(arg, rest[++i]));
         break;
       case "--command":
-        options.command = rest[++i];
+        options.command = value(arg, rest[++i]);
         break;
       case "--seed":
-        options.seed = rest[++i];
+        options.seed = value(arg, rest[++i]);
         break;
       case "--lesson":
-        options.lesson = rest[++i];
+        options.lesson = value(arg, rest[++i]);
         break;
       case "--scope":
-        options.scope = rest[++i];
+        options.scope = value(arg, rest[++i]);
         break;
       case "--keep":
         options.keep = true;

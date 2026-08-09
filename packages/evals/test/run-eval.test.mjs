@@ -49,6 +49,24 @@ test("parseArgs rejects nonsense rather than running a bad experiment", () => {
     /positive number/,
   );
   assert.throws(() => parseArgs(["arm0", "--nope"]), /unknown option/);
+
+  // A trailing value-taking flag used to read undefined off the end of argv:
+  // --scope then fell back to the branch scope and --command to "claude".
+  for (const flag of [
+    "--reps",
+    "--out",
+    "--timeout",
+    "--command",
+    "--seed",
+    "--lesson",
+    "--scope",
+  ]) {
+    assert.throws(
+      () => parseArgs(["probe", flag]),
+      new RegExp(`\\${flag} requires a value`),
+      flag,
+    );
+  }
 });
 
 test("runId is filesystem-safe and sortable", () => {
