@@ -34,16 +34,32 @@ export const RETRIEVAL_ABSENT = "absent";
  * @param {object}   args.injection    the result of `readInjectedLessons`
  * @param {object[]} args.storeEntries what `listAll` read back from the store
  * @param {string}   args.key          the pertinent lesson's key
+ * @param {string}   [args.scope]      the scope the lesson was SEEDED at. Callers
+ *                                     gather `storeEntries` across every scope in
+ *                                     `readOrder`, so matching on `key` alone lets
+ *                                     an unrelated same-key entry at another scope
+ *                                     read as in-store-not-loaded (a retrieval
+ *                                     failure) when the seeded lesson is in fact
+ *                                     absent (a harness fault). Pass it whenever
+ *                                     the seeded scope is known.
  * @returns {{ state: string, injected: boolean, inStore: boolean,
  *            position: number|null, scope: string|null, injectedCount: number,
  *            harnessFault: boolean }}
  */
-export function classifyRetrieval({ injection, storeEntries = [], key } = {}) {
+export function classifyRetrieval({
+  injection,
+  storeEntries = [],
+  key,
+  scope = null,
+} = {}) {
   if (!key) throw new TypeError("classifyRetrieval: key is required");
   const lessons = (injection && injection.lessons) || [];
 
   const hit = lessons.find((l) => l.key === key) || null;
-  const stored = storeEntries.find((e) => e && e.key === key) || null;
+  const stored =
+    storeEntries.find(
+      (e) => e && e.key === key && (!scope || e.scope === scope),
+    ) || null;
 
   let state = RETRIEVAL_ABSENT;
   if (hit) state = RETRIEVAL_INJECTED;

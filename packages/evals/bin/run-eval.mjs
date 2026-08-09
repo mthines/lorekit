@@ -270,6 +270,9 @@ async function runProbe(options) {
             injection,
             storeEntries: stored,
             key: seededKey,
+            // `stored` spans every scope in `readOrder`, so the seeded scope
+            // is what makes "absent" distinguishable from "stored elsewhere".
+            scope: arm.targetScope,
           })
         : null,
     };

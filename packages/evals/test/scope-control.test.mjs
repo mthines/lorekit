@@ -139,6 +139,7 @@ test("a branch-scoped lesson with no git is stored but NEVER injected", async ()
       injection,
       storeEntries: stored,
       key: CANONICAL_LESSON.key,
+      scope: BRANCH_SCOPE,
     });
     assert.equal(retrieval.state, RETRIEVAL_IN_STORE_NOT_LOADED);
     assert.equal(retrieval.inStore, true);
@@ -201,6 +202,29 @@ test("classifyRetrieval records the observed position, never a derived one", () 
   });
   assert.equal(retrieval.position, 2);
   assert.equal(retrieval.injectedCount, 2);
+});
+
+test("a same-key entry at another scope is ABSENT, not in-store-not-loaded", () => {
+  // `runProbe` gathers `storeEntries` across every scope in `readOrder`, so
+  // without the seeded scope this reads as a retrieval failure when it is in
+  // fact a harness fault — the exact confusion the module exists to prevent.
+  const retrieval = classifyRetrieval({
+    injection: { lessons: [] },
+    storeEntries: [{ key: "wanted", scope: "global" }],
+    key: "wanted",
+    scope: BRANCH_SCOPE,
+  });
+  assert.equal(retrieval.state, RETRIEVAL_ABSENT);
+  assert.equal(retrieval.inStore, false);
+  assert.equal(retrieval.harnessFault, true);
+
+  // Omitting the scope keeps the pre-existing key-only behaviour.
+  const unscoped = classifyRetrieval({
+    injection: { lessons: [] },
+    storeEntries: [{ key: "wanted", scope: "global" }],
+    key: "wanted",
+  });
+  assert.equal(unscoped.state, RETRIEVAL_IN_STORE_NOT_LOADED);
 });
 
 test("classifyRetrieval requires a key rather than guessing", () => {
