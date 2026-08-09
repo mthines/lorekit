@@ -102,6 +102,7 @@ Authorization: Bearer <token>
 | `source_agent` | text | Which agent wrote this (e.g. `aw-executor`) |
 | `trigger` | text | What triggered the write (e.g. `stuck-loop`) |
 | `fts` | tsvector | Generated always from `key || value` — powers full-text search |
+| `seen_count` | integer | How many times this lesson has been written — `1` on insert, `+1` on every upsert that resolves to the row. Recurrence, which the skill guidance gates promotion on (`seen_count >= 3`). Not null, defaults to 1. |
 | `created_at` | timestamptz | |
 | `updated_at` | timestamptz | Auto-updated by trigger |
 
