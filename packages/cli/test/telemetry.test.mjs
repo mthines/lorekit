@@ -996,6 +996,32 @@ test('extraAttrs cannot override the outcome the call site froze', () => {
   assert.equal(attrs['lorekit.cli.doctor.failed_checks'], 'connectivity');
 });
 
+test('the owned attribute namespace is reserved even where nothing is written', () => {
+  // Two of the owned keys are CONDITIONAL — `exit_code` only when `exitCode` is
+  // a number, each flag only when it is truthy — so overwriting key by key left
+  // the gap open in exactly the cases where the CLI emits nothing: the extras
+  // value would have been the only `lorekit.cli.exit_code` on the span, sourced
+  // from the command instead of from here.
+  const attrs = commandAttributes({
+    command: 'list',
+    args: { deep: false },
+    outcome: CLI_OUTCOMES.OK,
+    exitCode: undefined,
+    extraAttrs: {
+      'lorekit.cli.exit_code': 99,
+      'lorekit.cli.flag.deep': true,
+      'lorekit.cli.flag.made_up': true,
+      'lorekit.cli.list.entries': 12,
+    },
+  });
+
+  assert.ok(!('lorekit.cli.exit_code' in attrs), 'extras must not supply the exit code');
+  assert.ok(!('lorekit.cli.flag.deep' in attrs), 'extras must not supply a flag the args did not set');
+  assert.ok(!('lorekit.cli.flag.made_up' in attrs), 'extras must not invent a flag attribute');
+  assert.equal(attrs['lorekit.cli.outcome'], 'ok');
+  assert.equal(attrs['lorekit.cli.list.entries'], 12);
+});
+
 test('telemetry.mjs assigns outcome only from CLI_OUTCOMES, never a bare literal', async () => {
   // Source scan rather than a behavioural assertion: a fourth value added at a
   // new call site would not fail any existing test, and the failure mode is

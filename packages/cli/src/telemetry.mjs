@@ -39,6 +39,9 @@ const DEFAULT_DATASET = 'default';
 // Flags worth counting (e.g. how many installs are --global). Bounded on
 // purpose: only these booleans are ever attached, never free-form values.
 const FLAG_ATTRS = ['global', 'project', 'deep', 'yes', 'force', 'no-hooks', 'json', 'link'];
+// One definition, used both to WRITE a flag attribute and to recognise one as
+// reserved in `commandAttributes` — the two must not be able to drift.
+const FLAG_ATTR_PREFIX = 'lorekit.cli.flag.';
 
 const OFF_VALUES = new Set(['0', 'off', 'false', 'no', 'disable', 'disabled']);
 
@@ -288,21 +291,42 @@ export const CLI_OUTCOME_VALUES = Object.freeze(Object.values(CLI_OUTCOMES));
  * command failure. The vocabulary is enforced at the call sites (all of which
  * are in this file) and pinned by `telemetry.test.mjs`.
  *
- * `extraAttrs` is written FIRST so the attributes this function owns —
- * command, outcome, exit code, flags — always win. They used to be merged over
- * last, which meant a command returning `{ exitCode, 'lorekit.cli.outcome': … }`
- * silently replaced the frozen value on its way out. The source scan cannot see
- * that: it proves the literal at the call site, not that the value survives to
- * the wire. Rejecting the collision loudly is not an option here (this runs in a
- * `finally`), so the owned keys simply take precedence.
+ * The keys this function owns — command, outcome, exit code, flags — are a
+ * RESERVED NAMESPACE: an `extraAttrs` entry under one of them is dropped, and
+ * the owned value (if any) is written afterwards. `extraAttrs` used to be
+ * merged over last, which meant a command returning
+ * `{ exitCode, 'lorekit.cli.outcome': … }` silently replaced the frozen value on
+ * its way out — a runtime path the source scan cannot see, because it proves
+ * the literal at the call site and not that the value reaches the wire.
+ *
+ * Reserving the NAMESPACE rather than just overwriting key by key matters
+ * because two of the owned keys are written conditionally: `exit_code` only
+ * when `exitCode` is a number, and each flag only when it is truthy. Overwriting
+ * alone therefore left the gap open in exactly the cases where the CLI emits
+ * nothing — an extras value would have been the only `lorekit.cli.exit_code` on
+ * the span, sourced from the command rather than from here.
+ *
+ * A collision is dropped, not rejected: this runs inside the `finally` of every
+ * traced command, where throwing would turn a telemetry problem into a command
+ * failure. Losing a datum a command should not have put there is the smaller
+ * harm than emitting an unowned value under an owned key.
  */
+const isReservedAttr = (key) =>
+  key === 'lorekit.cli.command' ||
+  key === 'lorekit.cli.outcome' ||
+  key === 'lorekit.cli.exit_code' ||
+  key.startsWith(FLAG_ATTR_PREFIX);
+
 export function commandAttributes({ command, args = {}, outcome, exitCode, extraAttrs = {} }) {
-  const attrs = { ...extraAttrs };
+  const attrs = {};
+  for (const [key, value] of Object.entries(extraAttrs)) {
+    if (!isReservedAttr(key)) attrs[key] = value;
+  }
   attrs['lorekit.cli.command'] = command;
   attrs['lorekit.cli.outcome'] = outcome;
   if (typeof exitCode === 'number') attrs['lorekit.cli.exit_code'] = exitCode;
   for (const flag of FLAG_ATTRS) {
-    if (args[flag]) attrs[`lorekit.cli.flag.${flag}`] = true;
+    if (args[flag]) attrs[`${FLAG_ATTR_PREFIX}${flag}`] = true;
   }
   return attrs;
 }
