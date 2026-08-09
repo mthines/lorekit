@@ -216,6 +216,11 @@ describe('lesson-rank: the epsilon-grid tie-break is transitive', () => {
 
   it('orders near-ties one grid step apart by score, highest first', () => {
     const buckets = rankedBuckets(chain);
+    // The premise first: five DISTINCT buckets. A sorted-descending check is
+    // trivially true of a constant array, so without this the test would keep
+    // passing if the chain ever collapsed onto one bucket — which is the exact
+    // regression a widened grid would cause.
+    expect(new Set(buckets).size).toBe(chain.length);
     expect(buckets).toEqual([...buckets].sort((a, b) => b - a));
   });
 
