@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.37.0](https://github.com/mthines/lorekit/compare/cli-v1.36.0...cli-v1.37.0) (2026-08-09)
+
+
+### Features
+
+* **mcp:** add memory.scopes, the store-wide scope inventory ([5f285b3](https://github.com/mthines/lorekit/commit/5f285b361383832862168c59a09d8e3dd3e74fc7))
+* **mcp:** add memory.scopes, the store-wide scope inventory ([b2dce79](https://github.com/mthines/lorekit/commit/b2dce798efd644a24720172c69916786d716d047))
+
+
+### Bug Fixes
+
+* **cli:** carry httpStatus through RemoteStore.listScopes so the HTTP branch fires ([6aeaafd](https://github.com/mthines/lorekit/commit/6aeaafda299f382a5edb11731384a095fc801f48))
+* **cli:** sort memory.scopes by scope ascending on the stdio server ([321b4a1](https://github.com/mthines/lorekit/commit/321b4a102bc727dcc39ef9e669a5e46cdd33fe7e))
+
+
+### Documentation
+
+* **cli:** state the collation divergence in the memory.scopes sort ([5eb7f62](https://github.com/mthines/lorekit/commit/5eb7f6229c5595c7008433c53c51a06b1328131d))
+
 ## [1.36.0](https://github.com/mthines/lorekit/compare/cli-v1.35.0...cli-v1.36.0) (2026-08-08)
 
 
