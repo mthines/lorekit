@@ -393,9 +393,15 @@ class TwoTierStore {
   // That follows from tiering rather than contradicting it (`list`/`read` let
   // the project tier SHADOW home rather than merging the two rows), and the
   // alternative — seeding the count from the tier being shadowed — would make
-  // a write depend on a row it is not writing. Use `lorekit migrate --from
-  // ~/.lorekit --to project` to carry an existing tally across; that relocates
-  // counts verbatim. `--from <path>` is required — it names the store to read.
+  // a write depend on a row it is not writing. `lorekit migrate` carries an
+  // existing tally across — `putEntry` relocates counts verbatim — but point
+  // its required `--from <path>` at the SCOPE SUBTREE you mean to move, e.g.
+  // `lorekit migrate --from ~/.lorekit/repo/<owner>/<name> --to project`.
+  // `--to project` applies no scope filter (migrate has no `--scope`), so a
+  // whole-store `--from ~/.lorekit` also copies `global` entries into the
+  // project tier, where they SHADOW their home originals on every read. A
+  // subtree source is safe because `collectEntries` takes each entry's
+  // canonical scope from its own frontmatter, not from the source layout.
   async write(args = {}) {
     return this.tierFor(args.scope).write(args);
   }
