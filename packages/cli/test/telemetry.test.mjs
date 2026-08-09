@@ -972,12 +972,33 @@ test('telemetry.mjs assigns outcome only from CLI_OUTCOMES, never a bare literal
     .replace(/^\s*\/\/.*$/gm, '');
 
   const assignments = [...code.matchAll(/\boutcome\s*=\s*(?!=)([^;\n]+)/g)].map((m) => m[1].trim());
-  // Anti-vacuity: the three real assignments in traceCommand must be found.
+  // The attribute is also written as an OBJECT KEY, which `outcome =` cannot
+  // see: `commandAttributes` builds the bag, and `probeTelemetryExport` builds
+  // its own by hand rather than calling it. Scanning only the assignment form
+  // walked straight past the probe's bare literal — the one call site the
+  // vocabulary did not reach.
+  const keyedWrites = [...code.matchAll(/['"]lorekit\.cli\.outcome['"]\s*:\s*([^,\n}]+)/g)].map(
+    (m) => m[1].trim(),
+  );
+
+  // Anti-vacuity, one floor per form: the three assignments in traceCommand,
+  // and the two keyed writes (commandAttributes' bag, the probe span).
   assert.ok(assignments.length >= 3, `expected >= 3 outcome assignments, found ${assignments.length}`);
+  assert.ok(keyedWrites.length >= 2, `expected >= 2 keyed outcome writes, found ${keyedWrites.length}`);
+
   for (const rhs of assignments) {
     assert.ok(
       rhs.startsWith('CLI_OUTCOMES.'),
       `outcome must be assigned from CLI_OUTCOMES, found: ${rhs}`,
+    );
+  }
+  // `commandAttributes` legitimately forwards its own `outcome` parameter —
+  // the value reaching it already came from the frozen set. Every other keyed
+  // write must name the set directly.
+  for (const rhs of keyedWrites) {
+    assert.ok(
+      rhs === 'outcome' || rhs.startsWith('CLI_OUTCOMES.'),
+      `'lorekit.cli.outcome' must be written from CLI_OUTCOMES, found: ${rhs}`,
     );
   }
 });
