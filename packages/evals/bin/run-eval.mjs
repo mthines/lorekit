@@ -261,7 +261,7 @@ export async function prepareArm(
   // invariant obvious — nothing the agent can read may mention the gotcha.
   await sandbox.stripInformationEnvironment();
 
-  let seeded = { seeded: [] };
+  let seeded;
   if (seed === "empty")
     seeded = await empty(sandbox, { scopes: derived.readOrder });
   else if (seed === "canonical")
