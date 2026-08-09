@@ -10,6 +10,7 @@
 //   hooks.stop      — Stop-hook gating ("friction" default | "always" | "off")
 //   hooks.sessionStart          — injected-block shape ("hybrid" default | "index" | "map")
 //   hooks.sessionStart.maxChars — character budget for that block (default 1500)
+//   hooks.userPrompt — the per-turn relevance pull ("on" default | "off")
 //   hooks.adapter   — explicit adapter override ("claude" | "cursor" | "codex")
 //
 // Two layers of config, two kinds of statement:
