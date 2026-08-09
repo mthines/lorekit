@@ -177,7 +177,15 @@ export function grade({
   }
 
   // Partial credit, best-first. Every branch below is a FAILURE.
-  const validStored = stored.filter(isValidScope).map(normalizeScope);
+  //
+  // Kept as {raw, normalized} PAIRS on purpose. Matching has to happen on the
+  // normalized form (that is what makes "right repo" a meaningful question),
+  // but `matchedScope` must always report the string the store actually holds
+  // — otherwise the field means the raw scope in some bands and the lowercased
+  // one in others, and a reader cannot tell which they are looking at.
+  const validStored = stored
+    .filter(isValidScope)
+    .map((raw) => ({ raw, normalized: normalizeScope(raw) }));
   const normalizedTarget = normalizeScope(target) || target;
 
   // The agent named the right repo AND the right branch, but the stored string
@@ -203,7 +211,7 @@ export function grade({
   }
 
   const rightRepoBranch = validStored.find(
-    (s) => s.startsWith("branch::") && repoOf(s) === targetRepo,
+    (e) => e.normalized.startsWith("branch::") && repoOf(e.raw) === targetRepo,
   );
   if (rightRepoBranch) {
     return {
@@ -211,13 +219,13 @@ export function grade({
       score: SCORE_RIGHT_REPO_WRONG_BRANCH,
       repeatedMistake,
       mistakes,
-      matchedScope: rightRepoBranch,
-      detail: `branch scope for the right repo but the wrong branch: ${rightRepoBranch}`,
+      matchedScope: rightRepoBranch.raw,
+      detail: `branch scope for the right repo but the wrong branch: ${rightRepoBranch.raw}`,
     };
   }
 
   const rightRepoCoarse = validStored.find(
-    (s) => s.startsWith("repo::") && repoOf(s) === targetRepo,
+    (e) => e.normalized.startsWith("repo::") && repoOf(e.raw) === targetRepo,
   );
   if (rightRepoCoarse) {
     return {
@@ -225,8 +233,8 @@ export function grade({
       score: SCORE_RIGHT_REPO_COARSE,
       repeatedMistake,
       mistakes,
-      matchedScope: rightRepoCoarse,
-      detail: `right repo at the wrong granularity: ${rightRepoCoarse}`,
+      matchedScope: rightRepoCoarse.raw,
+      detail: `right repo at the wrong granularity: ${rightRepoCoarse.raw}`,
     };
   }
 

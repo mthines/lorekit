@@ -145,6 +145,23 @@ test("a scope that only normalizes to the target is 80, never the wrong-branch b
   assert.match(wrongBranch.detail, /wrong branch/);
 });
 
+test("matchedScope is the stored string in EVERY band, never the normalized one", () => {
+  // The store holds what was written, and success is judged against that, so a
+  // reader must not have to guess which bands report a lowercased form.
+  const cases = [
+    ["BRANCH::mthines/GW-Tools::MAIN", SCORE_RIGHT_REPO_WRONG_BRANCH],
+    ["REPO::mthines/GW-Tools", SCORE_RIGHT_REPO_COARSE],
+    ["BRANCH::mthines/GW-Tools::feat/x", SCORE_RIGHT_SCOPE_WRONG_FORM],
+    ["GLOBAL", SCORE_WROTE_SOMETHING],
+  ];
+  for (const [stored, score] of cases) {
+    const result = grade({ storedScopes: [stored] });
+    assert.equal(result.score, score, stored);
+    assert.equal(result.matchedScope, stored, stored);
+    assert.ok(result.detail.includes(stored), `${stored}: ${result.detail}`);
+  }
+});
+
 test("a single-colon scope grades invalid AND repeated-mistake (AC-3.2)", () => {
   const result = grade({ storedScopes: ["branch:mthines/gw-tools"] });
   assert.equal(isValidScope("branch:mthines/gw-tools"), false);
