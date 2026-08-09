@@ -120,7 +120,7 @@ Three things the cards deliberately do *not* do, each stated in its own tooltip:
 
 </TutorialStep>
 
-<TutorialStep number={5} title="Search across scopes with wildcards">
+<TutorialStep number={6} title="Search across scopes with wildcards">
 
 `memory.search` supports owner-level wildcards in the `scopes` parameter:
 
@@ -137,7 +137,7 @@ Wildcards only work in `memory.search` — not in `memory.read`, `memory.list`, 
 
 </TutorialStep>
 
-<TutorialStep number={6} title="Read narrow-to-broad before a task">
+<TutorialStep number={7} title="Read narrow-to-broad before a task">
 
 Agents should read from specific scopes first, then merge with broader ones. More-specific scopes win when the same key exists at multiple levels:
 
@@ -151,7 +151,7 @@ memory.list { scope: "global" }
 
 </TutorialStep>
 
-<TutorialStep number={7} title="Inspect with the CLI">
+<TutorialStep number={8} title="Inspect with the CLI">
 
 The CLI offers several commands that respect the same scope/tag logic. You can also browse memories visually in the [Explorer](/lore).
 
