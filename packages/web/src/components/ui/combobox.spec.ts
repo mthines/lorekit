@@ -44,6 +44,17 @@ describe('nextEnabledIndex', () => {
     expect(nextEnabledIndex(WITH_DISABLED, 2, -1)).toBe(0);
   });
 
+  it('normalises an out-of-range `from` in BOTH directions', () => {
+    // `n` is one past the last index, so it is outside the list exactly like
+    // -1 is. Forward from there must land on the FIRST option — with the guard
+    // written `from > n` it landed on index 1 and skipped index 0 — and
+    // backward from there must still land on the last, which is what
+    // `lastEnabledIndex` relies on.
+    expect(nextEnabledIndex(OPTIONS, OPTIONS.length, 1)).toBe(0);
+    expect(nextEnabledIndex(OPTIONS, OPTIONS.length, -1)).toBe(2);
+    expect(nextEnabledIndex(OPTIONS, OPTIONS.length + 5, 1)).toBe(0);
+  });
+
   it('returns -1 for an empty list rather than a bogus index', () => {
     expect(nextEnabledIndex([], 0, 1)).toBe(-1);
   });

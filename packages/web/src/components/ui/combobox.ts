@@ -42,7 +42,11 @@ export function nextEnabledIndex<O extends ComboboxOption>(
   // first option and pressing Up on the LAST. Left as a literal -1, the modulo
   // below sends Up to `n - 2` — it skips the last option, which is the one the
   // user was reaching for. So the sentinel is normalised per direction first.
-  const start = from < 0 || from > n ? (delta === 1 ? -1 : n) : from;
+  // `>= n` and not `> n`: `n` is itself outside the list (the last index is
+  // `n - 1`), so `from = n` — what `lastEnabledIndex` passes — must normalise
+  // too. Left as `> n`, a forward step from `n` landed on index 1 and skipped
+  // index 0 entirely.
+  const start = from < 0 || from >= n ? (delta === 1 ? -1 : n) : from;
   // Bounded by the list length: after n steps every option has been considered,
   // so anything still unfound does not exist. A `while (disabled)` search would
   // spin forever on an all-disabled list.
