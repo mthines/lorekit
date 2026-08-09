@@ -57,9 +57,16 @@ const RANGE_OPTIONS: { value: RangePreset; label: string }[] = [
 ];
 
 /**
- * Module-level so the reference is stable across renders — `useUrlState`
- * compares against it to decide whether to drop the param from the URL, and a
- * fresh object literal each render would defeat that.
+ * Module-level so the reference is stable across renders.
+ *
+ * Not for the URL's sake: `buildUrl` decides whether to drop the param by JSON
+ * equality (`serialise(next) === serialise(defaultValue)`), so a fresh literal
+ * would still be recognised as the default and still be dropped. It is the
+ * HOOK's identities that need it — `defaultValue` sits in `setState`'s
+ * `useCallback` deps and in the `cleanOnPathname` effect's deps, and the
+ * `urlValue` memo deliberately omits it while documenting that "callers are
+ * expected to pass a stable reference". A new object every render would remint
+ * the setter and re-run that effect on every render.
  *
  * The default is a PRESET rather than a resolved window, so an Overview with no
  * `?range=` in the URL keeps asking "the last 24 hours" every time it is opened
