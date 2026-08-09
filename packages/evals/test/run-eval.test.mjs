@@ -92,6 +92,10 @@ test("arm0 --dry-run writes the artifact tree without spawning (AC-1.3)", async 
       assert.equal(meta.arm, "0");
       assert.equal(meta.store, "empty");
       assert.equal(meta.model, "claude-opus-4-8");
+      // The artifact records WHICH task and WHICH target it was graded against,
+      // so a result file read later cannot be misattributed to another task.
+      assert.equal(meta.task, "branch-scope");
+      assert.equal(meta.targetScope, "branch::mthines/gw-tools::feat/x");
       // Each rep got its own sandbox, and none of them survived the run.
       assert.equal(fs.existsSync(meta.lorekitHome), false);
     }

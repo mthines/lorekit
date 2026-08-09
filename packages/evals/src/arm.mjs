@@ -129,6 +129,10 @@ export async function prepareArm(
     ownerRepo = DEFAULT_OWNER_REPO,
     branch = DEFAULT_BRANCH,
     hook = true,
+    // Only arm 0 sets this. Every other arm is read-only, so an attempt cannot
+    // contaminate its own store partway through and change what it is being
+    // measured against.
+    allowWrite = false,
   } = {},
 ) {
   if (!SEED_SOURCES.includes(seed)) {
@@ -178,7 +182,7 @@ export async function prepareArm(
   else if (seed === "organic")
     seeded = await seedOrganic(sandbox, { scope: targetScope, value: lesson });
 
-  const mcp = await writeMcpConfig(sandbox, { allowWrite: false });
+  const mcp = await writeMcpConfig(sandbox, { allowWrite });
   const hookInstall = hook ? installSessionStartHook(sandbox) : null;
 
   return {

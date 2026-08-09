@@ -21,11 +21,71 @@ the mock.
 
 ## Status
 
-PR2 of six. Shipped: the package and per-run isolation, the `claude -p` spawner,
-and the memory arms — the isolated MCP config, the real SessionStart hook, store
-seeding from both lesson sources, and the information-environment control. Still
-to come: the golden task and its grader (PR3), metrics and reporting (PR4), the
-scale/position sweep (PR5), and the code-review domain (PR6).
+PR3 of six. Shipped: the package and per-run isolation, the `claude -p` spawner,
+the memory arms, scope control, and the golden task with its deterministic
+grader. Still to come: metrics and reporting (PR4), the scale/position sweep
+(PR5), and the code-review domain (PR6).
+
+## The golden task
+
+Record a lesson scoped to the `feat/x` branch of `mthines/gw-tools`. Exactly one
+string is correct:
+
+```
+branch::mthines/gw-tools::feat/x
+```
+
+The gotcha is that `::` is the only valid separator and a branch scope carries
+the repo _and_ the branch separated by a **second** `::`. `branch:owner/repo`,
+`branch::owner/repo/branch` and `branch::branch::owner/repo` are all wrong.
+
+The prompt names the repository, the branch and the key, and says nothing about
+the scope format — not even that a format gotcha exists. An agent warned to be
+careful about separators is solving an easier task than a real turn presents.
+The target scope never appears in the prompt, and neither does a literal `::`;
+that last one is why the task's key has no `::` in it, which a test caught.
+
+Full statement, rubric and the two stubbed alternates: `fixtures/spec.md`.
+
+## Grading
+
+No model judges anything. Success is exact string equality with the target;
+partial credit exists but never becomes success.
+
+| Points | Criterion                                                     |
+| ------ | ------------------------------------------------------------- |
+| 100    | a stored scope equals the target exactly — **binary success** |
+| 60     | valid `branch::` scope, right repo, wrong branch              |
+| 40     | `repo::mthines/gw-tools` — right repo, coarser granularity    |
+| 20     | something was written, at an invalid or unrelated scope       |
+| 0      | nothing was written                                           |
+
+Validity is decided by `validateScope` from `packages/mcp-core/src/scope.ts`,
+the same function the product enforces. `repeatedMistake` fires when the agent
+made the specific mistake the stored lesson warns about — that flag is what the
+whole experiment turns on.
+
+The grader reads **two** sources, and needs both:
+
+- against the **hosted** store an invalid scope is rejected and never lands, so
+  the mistake exists only in the transcript;
+- against the **offline** store the harness uses, `store.write` performs no
+  scope validation at all — verified: `branch:mthines/gw-tools` writes
+  successfully in local mode — so the mistake lands in the store and the agent
+  is never told. (`lorekit lint`'s malformed-scope rule exists because offline
+  stores accumulate exactly these.)
+
+Reading the union keeps one grader correct in both modes. It also means the
+offline run measures **recall without a corrective signal**: the agent gets no
+rejection to learn from mid-turn, so a wrong scope stays wrong. That is a
+cleaner read of what memory contributed — no trial-and-error confound — but it
+does mean the friction signal on this task will be near zero, and a run against
+a remote store would not be comparable.
+
+Store scopes are enumerated with the store's own `listScopes()` rather than
+probed at expected locations: the agent may write somewhere nobody predicted,
+and a grader that only looked where it expected would score that as "nothing
+written".
 
 ## The arms
 

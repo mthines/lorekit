@@ -27,21 +27,17 @@ import {
   runAgent,
 } from "../src/agent.mjs";
 import { SCOPE_MODES, SEED_SOURCES, prepareArm } from "../src/arm.mjs";
+import { gradeSandbox } from "../src/grade.mjs";
 import { readInjectedLessons } from "../src/hook-install.mjs";
 import { classifyRetrieval } from "../src/retrieval.mjs";
 import { createSandbox } from "../src/sandbox.mjs";
 import { listAll } from "../src/store-setup.mjs";
-
-// PR3 replaces this with the real golden task from `src/task.mjs`. Until then
-// arm0 exercises the plumbing end to end with a prompt that is cheap and has an
-// unambiguous outcome.
-const PLACEHOLDER_PROMPT =
-  "Reply with exactly the word READY and nothing else. Do not use any tools.";
+import { taskById } from "../src/task.mjs";
 
 const USAGE = `Usage: node bin/run-eval.mjs <subcommand> [options]
 
 Subcommands:
-  arm0                 One live attempt against an empty scratch store.
+  arm0                 The golden task against an empty store, then graded.
   probe                Seed the store, install the real SessionStart hook and
                        print what it injects. Spawns no model.
 
@@ -169,12 +165,24 @@ async function runArm0(options) {
     const repDir = path.join(outDir, `rep-${rep}`);
     await fsp.mkdir(repDir, { recursive: true });
     try {
-      await sandbox.stripInformationEnvironment();
+      // Arm 0 is the ONLY arm allowed to write memory: its whole job is to
+      // produce the organic lesson arm B will later be seeded with.
+      const arm = await prepareArm(sandbox, {
+        seed: "empty",
+        scopeMode: options.scopeMode,
+        scope: options.scope,
+        git: options.git,
+        allowWrite: true,
+      });
+      const task = taskById("branch-scope");
       const meta = {
         rep,
         arm: "0",
+        task: task.id,
         model: MODEL_UNDER_TEST,
         store: "empty",
+        targetScope: task.targetScope,
+        scopeMode: arm.scopeMode,
         cwd: sandbox.cwd,
         lorekitHome: sandbox.lorekitHome,
         startedAt: new Date().toISOString(),
@@ -184,22 +192,38 @@ async function runArm0(options) {
         reps.push({ ...meta, dryRun: true });
       } else {
         const run = await runAgent({
-          prompt: PLACEHOLDER_PROMPT,
+          prompt: task.prompt(),
           cwd: sandbox.cwd,
           env: sandbox.childEnv(),
           transcriptPath: path.join(repDir, "transcript.jsonl"),
           command: options.command,
           timeoutMs: options.timeoutMs,
+          mcpConfigPath: arm.mcp.path,
+          allowedTools: arm.mcp.allowedTools,
+        });
+        // Grade BEFORE the sandbox is torn down — the store is the evidence.
+        const graded = await gradeSandbox(sandbox, {
+          transcriptText: run.transcriptText,
+          target: task.targetScope,
         });
         await fsp.writeFile(
           path.join(repDir, "result.json"),
           JSON.stringify(run.resultJson, null, 2),
+        );
+        await fsp.writeFile(
+          path.join(repDir, "grade.json"),
+          JSON.stringify(graded, null, 2),
         );
         if (run.stderr)
           await fsp.writeFile(path.join(repDir, "stderr.log"), run.stderr);
         reps.push({
           ...meta,
           ...run.summary,
+          success: graded.success,
+          score: graded.score,
+          repeatedMistake: graded.repeatedMistake,
+          storedScopes: graded.storedScopes,
+          attemptedScopes: graded.attemptedScopes,
           wallMs: run.wallMs,
           exitCode: run.exitCode,
           timedOut: run.timedOut,

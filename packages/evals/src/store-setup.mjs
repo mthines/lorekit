@@ -15,28 +15,17 @@
 import { loadControl } from "@lorekit/cli/src/control.mjs";
 import { createStore } from "@lorekit/cli/src/store/index.mjs";
 
+import { canonicalLessonText } from "./task.mjs";
+
 /**
- * The curated gold lesson for arm B (canonical). PR3 moves this text to
- * `fixtures/canonical-lesson.md` alongside the task spec; the constant stays as
- * the default so the seeding API does not change when it does.
- *
- * It states the rule and the failure mode, and deliberately does NOT restate
- * the task — a lesson that contains the answer to the exact prompt would
- * measure copying, not recall.
+ * The curated gold lesson for arm B (canonical). Its TEXT lives in
+ * `fixtures/canonical-lesson.md`, beside the task spec, so the lesson under
+ * test can be read and revised as prose rather than as a string literal — and
+ * so a test can assert it does not restate the task. A lesson containing the
+ * answer to the exact prompt would measure copying, not recall.
  */
 export const CANONICAL_LESSON = {
   key: "scope-format::double-colon-is-the-only-separator",
-  value: [
-    "Scope strings use `::` as the ONLY segment separator. A single `:` is rejected.",
-    "",
-    "The canonical forms are `global`, `project::{name}`, `repo::{owner}/{repo}` and",
-    "`branch::{owner}/{repo}::{branch}` — note that a branch scope carries the repo",
-    "AND the branch, separated by a second `::`, not by a `/` or a `-`.",
-    "",
-    "The mistake that keeps recurring is writing `branch:owner/repo` or",
-    "`branch::owner/repo/branch`: both are rejected by the validator, and the write",
-    "fails after the work is done rather than before it.",
-  ].join("\n"),
   tags: ["loop::eval-canonical"],
 };
 
@@ -113,11 +102,12 @@ export async function seedOrganic(
 }
 
 /** Arm B (canonical): seed the curated gold lesson. */
-export async function seedCanonical(
-  sandbox,
-  { scope, lesson = CANONICAL_LESSON } = {},
-) {
-  const seeded = await seedLesson(sandbox, { scope, ...lesson });
+export async function seedCanonical(sandbox, { scope, lesson = null } = {}) {
+  const resolved = lesson || {
+    ...CANONICAL_LESSON,
+    value: await canonicalLessonText(),
+  };
+  const seeded = await seedLesson(sandbox, { scope, ...resolved });
   return { seeded: [seeded] };
 }
 
