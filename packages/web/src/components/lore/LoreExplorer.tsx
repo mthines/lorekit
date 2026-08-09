@@ -297,9 +297,17 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // the memo, so a relative preset stays a stable object between renders. It is
   // part of the `useMemories` query key, and re-resolving on every render would
   // mint a new key each time and refetch forever.
+  //
+  // Keyed on the SERIALISED range, not the object: `useUrlState` re-derives its
+  // value from `searchParams`, so `range` is a fresh object identity after ANY
+  // param edit — flipping the archived toggle would otherwise re-resolve
+  // `{preset:'7d'}` against a newer clock and remint the `useMemories` key for a
+  // range the user never touched.
+  const rangeKey = JSON.stringify(range);
   const resolvedRange = useMemo(
     () => resolveRange(range, new Date().toISOString()),
-    [range],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rangeKey],
   );
 
   // The calendar picker speaks whole UTC days and cannot render a preset or a
