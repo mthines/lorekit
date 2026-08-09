@@ -189,9 +189,19 @@ export const ArrowRightDrillsInAndArrowLeftGoesBack: Story = {
       await expect(input).toHaveAttribute('aria-activedescendant', 'filter-menu-option-0');
     });
 
+    // Branch is the dimension this story drills into, and its row index moves
+    // whenever a dimension is inserted above it (Kind and Host just did). Derive
+    // the walk from `FILTER_FIELDS` rather than hardcoding a count, so the story
+    // keeps testing the arrow keys instead of the current menu ordering — which
+    // `ListsEveryDimensionFirst` is the one to assert.
+    const branchIndex = FILTER_FIELDS.findIndex((d) => d.field === 'branch');
+
     await step('ArrowDown walks dimensions without moving DOM focus', async () => {
-      await userEvent.keyboard('{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}');
-      await expect(input).toHaveAttribute('aria-activedescendant', 'filter-menu-option-4');
+      await userEvent.keyboard('{ArrowDown}'.repeat(branchIndex));
+      await expect(input).toHaveAttribute(
+        'aria-activedescendant',
+        `filter-menu-option-${branchIndex}`,
+      );
       await expect(input).toHaveFocus();
     });
 
