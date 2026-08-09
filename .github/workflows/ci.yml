@@ -127,7 +127,11 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # 22, not 20: `@lorekit/evals` imports `@lorekit/core`'s TypeScript
+          # source directly and relies on Node's native type stripping (stable
+          # since 22.18, which is the package's declared `engines` floor). On
+          # Node 20 `evals:test` dies with ERR_UNKNOWN_FILE_EXTENSION.
+          node-version: 22
           cache: pnpm
 
       - name: Install dependencies
