@@ -4,7 +4,8 @@ import { GithubAppTeaser } from '@/components/dashboard/GithubAppTeaser';
 import { buildOnboardingSteps } from '@/lib/onboarding-steps';
 import { getOnboardingState } from '@/lib/onboarding-server';
 import { listPendingInvitesForMe } from '@/lib/org-invites';
-import { DashboardStats } from '@/components/dashboard/DashboardStats';
+import { Suspense } from 'react';
+import { DashboardStats, DashboardStatsSkeleton } from '@/components/dashboard/DashboardStats';
 import { PendingInvitesBanner } from '@/components/dashboard/PendingInvitesBanner';
 
 export const metadata: Metadata = { title: 'Overview' };
@@ -39,8 +40,17 @@ export default async function OverviewPage() {
       <GithubAppTeaser hasWebhook={onboardingState.hasWebhook} />
 
       {/* Scope health stats — fetched client-side with TanStack Query so
-          navigation back to this page is instant after the first load. */}
-      <DashboardStats />
+          navigation back to this page is instant after the first load.
+
+          The Suspense boundary is REQUIRED, not decorative: the stat row's time
+          range moved from local state onto the shared URL-backed model, so the
+          subtree now calls `useSearchParams()`. Without a boundary Next.js
+          opts the whole route out of static rendering (and fails the build in
+          CI). The fallback is the skeleton the component already renders while
+          its own query is in flight, so the shell is unchanged. */}
+      <Suspense fallback={<DashboardStatsSkeleton />}>
+        <DashboardStats />
+      </Suspense>
     </div>
   );
 }

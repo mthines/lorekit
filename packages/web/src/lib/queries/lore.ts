@@ -13,7 +13,7 @@ import { dayCountsFromActivity } from '@/lib/aggregations';
 import type { ScopeNode } from '@/components/lore/ScopeTree';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { listMemories, archiveLesson, restoreLesson, type MemoryFilters, type MemoryPage } from '@/lib/lore';
-import type { DateRange } from '@/components/ui/DateRangePicker';
+import type { AbsoluteRange } from '@/lib/time-range';
 import { normalizeTags } from '@/lib/tag-filter';
 import { lessonFromMemoryEntry } from '@/lib/lesson-entry';
 import { browserAccessToken } from '@/lib/api/session-browser';
@@ -333,8 +333,22 @@ export interface UseMemoriesFilters {
   scope: string | null;
   /** Substring search applied to key and value. */
   search: string;
-  /** Date range filter on created_at. */
-  range: DateRange | null;
+  /**
+   * Resolved window filter on `created_at`, half-open `[from, to)`, or `null`
+   * for unbounded.
+   *
+   * `AbsoluteRange` (`lib/time-range.ts`), NOT the calendar picker's
+   * `DateRange`. The two are structurally identical — both are `{from, to}`
+   * strings, which is why the wrong one type-checked — but they mean opposite
+   * things at the upper bound: `DateRange` is an INCLUSIVE pair of
+   * `YYYY-MM-DD` UTC days, while what the Explorer actually passes is
+   * `resolveRange`'s output, whose `to` is an EXCLUSIVE ISO instant (an hour
+   * drilled in from a chart bucket). `dateRangeBounds` already reads both
+   * shapes correctly, so this is the contract catching up with the value, not
+   * a behaviour change. `toDayRange` is the one conversion in the other
+   * direction, for the surfaces that only speak days.
+   */
+  range: AbsoluteRange | null;
   /**
    * Labels a memory must ALL carry. Empty means no label filter.
    *
