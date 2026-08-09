@@ -327,6 +327,11 @@ describe('memory.scopes dispatch', () => {
     const cases = [
       [{ ok: false, unusable: true }, /no usable store/],
       [{ ok: false, networkError: 'ECONNREFUSED' }, /network error: ECONNREFUSED/],
+      // The shape `RemoteStore.listScopes()` REALLY returns on a non-2xx: the
+      // status at the top level, and an `error` carrying `{ message, code }`
+      // from `restFetch` — never an `error.httpStatus`.
+      [{ ok: false, httpStatus: 403, error: { code: 403, message: 'Forbidden' } }, /HTTP 403/],
+      // Tolerance for a store that nests the status instead.
       [{ ok: false, error: { httpStatus: 403 } }, /HTTP 403/],
       [{ ok: false, error: { message: 'permission denied' } }, /permission denied/],
       [{ ok: false }, /could not enumerate/],

@@ -294,7 +294,13 @@ function scopeFailureNote(res) {
   if (!res) return 'the store returned no result';
   if (res.unusable) return 'no usable store is configured';
   if (res.networkError) return `network error: ${String(res.networkError).slice(0, 200)}`;
-  const status = res.error?.httpStatus ?? res.httpStatus;
+  // `httpStatus` is the ONLY field that carries a real status: `restFetch`'s
+  // error object is `{ message, code }`, and `code` is the response body's own
+  // application code on a JSON error, so rendering it as "HTTP <code>" would
+  // print a non-status. Read the top-level field first — that is the one
+  // `RemoteStore.listScopes()` passes through — and keep the nested read as a
+  // tolerance for any store that nests it instead.
+  const status = res.httpStatus ?? res.error?.httpStatus;
   if (status) return `request failed with HTTP ${status}`;
   if (res.error?.message) return String(res.error.message).slice(0, 200);
   return 'the store could not enumerate its scopes';
