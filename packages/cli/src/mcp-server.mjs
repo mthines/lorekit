@@ -283,7 +283,20 @@ export async function listScopes(store) {
 // Sorting BOTH shapes (not just the local one) makes the guarantee a property
 // of this function instead of an assumption about the store it was handed.
 // Codepoint comparison, deliberately not `localeCompare`: the ordering must not
-// depend on the host's locale.
+// depend on the HOST's locale.
+//
+// That is ascending-by-scope, not byte-identical parity with the hosted path,
+// and the difference is worth being precise about. `order by m.scope asc` sorts
+// under the DATABASE's collation (`en_US.UTF-8` on a default Supabase project),
+// which does not order like codepoint around punctuation — and a scope string
+// is mostly punctuation (`::`, `/`, `-`), so `repo::a-b` and `repo::ab` can come
+// out in the opposite relative order on the two surfaces. Case cannot differ
+// (every scope segment is lowercased, see docs/scope-format.md). Closing the
+// remaining gap means `collate "C"` on the RPC's `order by`, which changes the
+// order `GET /memories/scopes` has always returned — a public contract change
+// that belongs in its own migration, not here. Until then: both surfaces are
+// sorted ascending, neither is unordered, and nothing should depend on the two
+// agreeing on the exact position of a punctuated neighbour.
 function sortScopes(rows) {
   return rows.sort((a, b) => (a.scope < b.scope ? -1 : a.scope > b.scope ? 1 : 0));
 }
