@@ -93,9 +93,13 @@ export function statsWindow(
   nowIso: string,
 ): { since: string; until: string } {
   const window = resolveRange(effectiveStatsRange(range, nowIso), nowIso);
-  // `effectiveStatsRange` guarantees a bounded range, so this cannot be null —
-  // but fall back rather than assert, because a caller passing a malformed
-  // range should get a usable window, not a crash in a header.
+  // A malformed range is already absorbed above: `resolveRange` returns null for
+  // it, so `effectiveStatsRange` substitutes the bounded 90-day default and this
+  // resolves. The arm below is therefore unreachable unless the `90d` preset
+  // itself stops resolving — a programming error, not caller input. It returns an
+  // EMPTY window (`since === until`) on purpose: the header then charts nothing
+  // rather than crashing, and nothing is more honest than a fabricated span the
+  // captions would misdescribe.
   if (window) return { since: window.from, until: window.to };
   const now = Date.parse(nowIso);
   return { since: new Date(now).toISOString(), until: new Date(now).toISOString() };
