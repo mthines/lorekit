@@ -33,10 +33,17 @@ context into the agent — none of them writes memory (the write is still the
 model calling `memory.write`). Three modes, selectable non-interactively with
 `--hooks <mode>`:
 
-- `all` — `SessionStart` (inject lessons) + `PostToolUseFailure` and `Stop`
+- `all` — `SessionStart` (inject lessons), `UserPromptSubmit` (inject the few
+  that match what you just typed, if any), `PostToolUseFailure` and `Stop`
   (nudge to record one). Preselected on a fresh install.
-- `read-only` — `SessionStart` only: lessons are injected, nothing ever nudges.
+- `read-only` — `SessionStart` only: lessons are injected ONCE, nothing ever
+  nudges, and nothing runs per turn.
 - `none` — skills + MCP only; memory stays model-invoked.
+
+`UserPromptSubmit` fires on every prompt, so it is deliberately quiet: it skips
+trivial prompts, stays silent when nothing matches, and never re-shows a memory
+already injected this session. `hooks.userPrompt: "off"` disables just that
+event while keeping the rest of `all`.
 
 An interactive re-run preselects whatever is already wired, so it never
 resurrects hooks you declined. `--yes` / a non-TTY run takes that same

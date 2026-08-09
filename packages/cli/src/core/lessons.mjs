@@ -330,10 +330,27 @@ export function renderScopeMap(scopeCounts) {
 // stays meaningful, and the count is capped (`MAX_TERMS`) so a huge error blob
 // can't blow up the downstream scan.
 export function failureQuery(toolName, toolResponse) {
-  const text = `${toolName ? String(toolName) : ''} ${errorText(toolResponse)}`.slice(0, MAX_SCAN_CHARS);
+  return distilTerms(`${toolName ? String(toolName) : ''} ${errorText(toolResponse)}`);
+}
+
+// The tokenizer both query builders share. Lowercased `[a-z0-9]+` runs, longer
+// than `MIN_TERM_LEN`, stopword-filtered, de-duplicated, capped at
+// `MAX_TERMS`, over at most `MAX_SCAN_CHARS` of input.
+//
+// The bound is applied to the TEXT before splitting, not to the token array
+// after: a multi-megabyte stderr blob (or a pasted file) would otherwise
+// materialise a giant token array on the way to being capped — a CPU and memory
+// spike for a result that was always going to be twelve words.
+//
+// Producing `[a-z0-9]+` runs is also what keeps the terms safe to hand to the
+// remote store, whose `search` joins them into ONE `websearch` FTS query: no
+// FTS metacharacter can survive this filter, so no caller has to escape one.
+// Pure and total.
+export function distilTerms(text) {
+  const scanned = String(text ?? '').slice(0, MAX_SCAN_CHARS).toLowerCase();
   const seen = new Set();
   const terms = [];
-  for (const raw of text.toLowerCase().split(/[^a-z0-9]+/)) {
+  for (const raw of scanned.split(/[^a-z0-9]+/)) {
     if (raw.length < MIN_TERM_LEN || STOPWORDS.has(raw) || seen.has(raw)) continue;
     seen.add(raw);
     terms.push(raw);
@@ -569,3 +586,129 @@ const STOPWORDS = new Set([
   'response',
   'status',
 ]);
+
+// ── the per-prompt relevance pull (UserPromptSubmit) ─────────────────────────
+//
+// SessionStart injects once, at the top of a session, before the user has said
+// what they are doing. That set is necessarily a guess: it is ranked on recency
+// and recurrence because there is nothing else to rank on yet. The moment the
+// user types "the migration keeps deadlocking", there IS something to rank on —
+// and until this hook, nothing used it. The only mid-session trigger was a tool
+// FAILURE, which means the loop could only ever tell you about a mistake after
+// you had already made it.
+//
+// The whole design problem is that this fires on EVERY turn, so the cost of
+// being wrong is paid over and over. Three gates keep it quiet, and each one
+// exists because the failure mode without it is worse than showing nothing:
+//
+//   LENGTH    — "yes", "continue", "go on" carry no terms worth querying, and a
+//               store lookup per keystroke-sized prompt is pure overhead.
+//   RELEVANCE — no match means silence. An "in case it helps" lesson attached
+//               to an unrelated prompt trains the reader to skim past the
+//               block, which costs the SessionStart injection its credibility
+//               too.
+//   DELTA     — a lesson already shown this session is not news. Re-injecting
+//               it is the specific way a per-turn hook becomes wallpaper.
+
+// Shortest prompt worth a store lookup. Tuned to skip the acknowledgements that
+// dominate a real session ("yes", "ok", "continue", "do it", "next") while
+// keeping anything that states an intent. Deliberately generous: the relevance
+// gate is the real filter, and this one only exists to avoid paying for a query
+// whose terms would be discarded anyway.
+const MIN_PROMPT_CHARS = 24;
+
+// Cap on lessons injected per prompt. Smaller than the SessionStart budget by an
+// order of magnitude, because this competes with the user's own turn: three
+// index lines is a glance, and anything more is an interruption.
+const MAX_PROMPT_LESSONS = 3;
+
+/**
+ * Is this prompt worth a relevance lookup?
+ *
+ * Length is measured AFTER trimming, on the raw prompt. A long prompt made
+ * entirely of stopwords still passes here and is caught by the term gate below
+ * — two cheap checks in series rather than one clever one.
+ */
+export function isSubstantivePrompt(prompt, min = MIN_PROMPT_CHARS) {
+  return String(prompt ?? '').trim().length >= min;
+}
+
+/**
+ * Distil search terms from a user prompt.
+ *
+ * The same tokenizer the failure lookup uses, for the same reason: whatever
+ * reaches the store must be `[a-z0-9]+` runs, and the two callers must agree on
+ * what counts as a term or "why did the failure hook find this and my prompt
+ * not?" becomes unanswerable.
+ *
+ * Returns `[]` for a prompt that is too short or carries nothing but stopwords,
+ * which the caller reads as "stay silent".
+ */
+export function promptQuery(prompt) {
+  if (!isSubstantivePrompt(prompt)) return [];
+  return distilTerms(prompt);
+}
+
+/**
+ * Render the per-turn block, or null when there is nothing to say.
+ *
+ * INDEX ONLY, and shorter than the failure block's lines. This arrives while
+ * the user is mid-thought, so it has to be scannable in a glance and cost as
+ * little context as possible; the body is always one `memory.read` away. The
+ * framing is "you have notes on this", never an instruction — the same
+ * considerations-not-rules posture as every other injection.
+ */
+export function formatPromptLessons(lessons) {
+  if (!lessons || lessons.length === 0) return null;
+  const noun = lessons.length === 1 ? 'memory' : 'memories';
+  const header =
+    `LoreKit: ${lessons.length} ${noun} related to this — `
+    + `considerations, not rules; read in full with memory.read:`;
+  const body = lessons.map((l) => `- (${l.scope}) ${l.key} — ${lessonHook(l.value)}`).join('\n');
+  return `${header}\n${body}`;
+}
+
+/**
+ * The per-prompt pull: query the store for this prompt's terms, rank, drop
+ * anything already shown, cap.
+ *
+ * QUERYING rather than filtering the injected set is the same call the failure
+ * hook makes, and for the same reason: a post-filter can only ever resurface a
+ * lesson that was already on screen, so a paraphrased match or one that lost
+ * the SessionStart ranking would be permanently unreachable — which is exactly
+ * the lore this hook exists to surface.
+ *
+ * RANKING runs after the store returns, because the store's own ordering is not
+ * relevance: the remote route answers `updated_at desc` and the local two-tier
+ * store answers project-tier-first. `rankLessons` with the prompt's terms
+ * applies the same scorer the SessionStart block uses, so a recurring lesson
+ * beats a fresher one-off here too.
+ *
+ * `alreadyShown` is a Set of `scope::key`. Filtering AFTER ranking rather than
+ * before is deliberate: it keeps the cap meaningful. Filtering first would let
+ * three weak lessons take the slots a strong-but-already-shown one vacated,
+ * which is worse than showing two.
+ *
+ * Best-effort and total — any failure yields `[]`, and the hook stays silent.
+ */
+export async function promptLessonsFromStore(store, scope, terms, {
+  alreadyShown = new Set(),
+  cap = MAX_PROMPT_LESSONS,
+  now = Date.now(),
+} = {}) {
+  if (!Array.isArray(terms) || terms.length === 0) return [];
+  const hits = await relevantLessonsFromStore(store, scope, terms, { cap: Number.MAX_SAFE_INTEGER });
+  if (hits.length === 0) return [];
+  const ranked = rankLessons(hits, {
+    terms,
+    now,
+    scopeOrder: Array.isArray(scope?.readOrder) ? scope.readOrder : null,
+  });
+  const fresh = ranked.filter((e) => !alreadyShown.has(lessonId(e)));
+  return dedupeRelevant(fresh, cap);
+}
+
+/** The identity a shown-set is keyed on. One spelling, used by both sides. */
+export function lessonId(entry) {
+  return `${entry?.scope ?? ''}::${entry?.key ?? ''}`;
+}

@@ -90,7 +90,23 @@ export function settingsPath(root, scope = 'project') {
 // The lifecycle events the memory loop wires: read lessons on start, nudge on a
 // tool failure, nudge a retrospective at end of turn. Mirrors the plugin's
 // hooks.json so `install` delivers the same deterministic layer.
-export const CLAUDE_HOOK_EVENTS = ['SessionStart', 'PostToolUseFailure', 'Stop'];
+export const CLAUDE_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUseFailure', 'Stop'];
+
+// The event set `all` meant BEFORE `UserPromptSubmit` was wired.
+//
+// It exists for one job: `hookModeFromEvents` must still answer 'all' for an
+// install done before that event existed. Without this, every pre-existing
+// installation would read as 'custom' the next time `install` inspected it —
+// and 'custom' is the answer that means "a human hand-wired this, do not touch
+// it", so the upgrade prompt would default to leaving them behind on the old
+// three events forever. Recognising the legacy set is what makes re-running
+// `install` an UPGRADE rather than a no-op.
+//
+// Add to this list, never edit it: each entry is a historical fact about a
+// version that shipped, not a configuration.
+const LEGACY_ALL_EVENT_SETS = [
+  ['SessionStart', 'PostToolUseFailure', 'Stop'],
+];
 
 // Matches a hook command that fires the lorekit engine, whether wired as a
 // global `lorekit hook …` or `npx -y @lorekit/cli hook …`. Shared by the
@@ -181,9 +197,14 @@ export function hookEventsForMode(mode) {
 // wired only `Stop`) — the caller must not silently rewrite such a setup.
 export function hookModeFromEvents(events) {
   const set = new Set(events || []);
+  const matches = (want) => want.length === set.size && want.every((e) => set.has(e));
   for (const mode of HOOK_MODES) {
-    const want = hookEventsForMode(mode);
-    if (want.length === set.size && want.every((e) => set.has(e))) return mode;
+    if (matches(hookEventsForMode(mode))) return mode;
+  }
+  // An install from before a lifecycle event was added is still 'all' — see
+  // LEGACY_ALL_EVENT_SETS for why reading it as 'custom' would strand it.
+  for (const legacy of LEGACY_ALL_EVENT_SETS) {
+    if (matches(legacy)) return 'all';
   }
   return 'custom';
 }

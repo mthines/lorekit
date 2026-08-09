@@ -1,0 +1,11 @@
+{
+  "adapter": "claude",
+  "event": "UserPromptSubmit",
+  "stdin": {
+    "hook_event_name": "UserPromptSubmit",
+    "session_id": "fx-cc-ups",
+    "cwd": "/repo",
+    "prompt": "the migration keeps deadlocking when the backfill runs concurrently",
+    "transcript_path": "/tmp/fx-cc-ups.jsonl"
+  }
+}

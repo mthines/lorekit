@@ -12,6 +12,11 @@ import {
   formatRelevantLessons,
   writeConfirmation,
   renderScopeMap,
+  promptQuery,
+  isSubstantivePrompt,
+  promptLessonsFromStore,
+  formatPromptLessons,
+  lessonId,
   SCOPE_READ_LIMIT,
 } from '../src/core/lessons.mjs';
 import { resolvePrecedence, matchesQuery } from '../src/lessons-pure.mjs';
@@ -1105,3 +1110,149 @@ function headerLength(text) {
 function indexLines(text) {
   return text.split('\n').filter((l) => l.startsWith('- ('));
 }
+
+// ── the per-prompt relevance pull ────────────────────────────────────────────
+// SessionStart injects before the user has said what they are doing, so its set
+// is necessarily a guess. This hook fires once there IS something to rank on.
+// Because it fires on EVERY turn, every test below is really about when it
+// stays QUIET — silence is the default answer, not the failure case.
+
+test('promptQuery — the length gate skips the acknowledgements a session is full of', () => {
+  for (const trivial of ['', '   ', 'yes', 'ok', 'continue', 'do it', 'next', 'go on']) {
+    assert.deepEqual(promptQuery(trivial), [], `"${trivial}" must not become a query`);
+  }
+});
+
+test('promptQuery — a substantive prompt distils to searchable terms', () => {
+  const terms = promptQuery('the migration keeps deadlocking when the backfill runs concurrently');
+  assert.ok(terms.includes('migration'));
+  assert.ok(terms.includes('deadlocking'));
+  assert.ok(terms.includes('backfill'));
+  // Short words are dropped by MIN_TERM_LEN, so the query stays meaningful.
+  assert.ok(!terms.includes('the'));
+  // And the shared STOPWORDS list applies — the SAME list the failure lookup
+  // uses, so "why did the failure hook find this and my prompt not?" has an
+  // answer that is not "they tokenize differently".
+  assert.ok(!promptQuery('this error failed with that response status code').includes('error'));
+});
+
+test('promptQuery — a long prompt carrying no usable term yields no terms', () => {
+  // Passes the length gate, caught by the term gate. Two cheap checks in
+  // series rather than one clever one: short words go by length, the rest by
+  // the shared stopword list.
+  assert.deepEqual(promptQuery('and the of it is to be for on with that this'), []);
+  assert.deepEqual(promptQuery('the tool call failed with this error code status'), []);
+});
+
+test('promptQuery — terms are FTS-safe, so no caller has to escape one', () => {
+  // They are joined into a single `websearch` query by the remote store. A
+  // metacharacter surviving the tokenizer would corrupt that query.
+  const terms = promptQuery('why does "SELECT * FROM x" fail with error(42) & timeout?');
+  assert.ok(terms.length > 0);
+  for (const t of terms) assert.match(t, /^[a-z0-9]+$/, `"${t}" is not FTS-safe`);
+});
+
+test('isSubstantivePrompt — the boundary is on the trimmed length', () => {
+  assert.equal(isSubstantivePrompt('x'.repeat(23)), false);
+  assert.equal(isSubstantivePrompt('x'.repeat(24)), true);
+  assert.equal(isSubstantivePrompt(`   ${'x'.repeat(24)}   `), true, 'whitespace is not content');
+  assert.equal(isSubstantivePrompt(null), false);
+  assert.equal(isSubstantivePrompt(undefined), false);
+});
+
+// A store whose `search` returns a FIXED set, so these tests are about the
+// hook's selection rules rather than about matching — which is the store's job
+// and is already covered by the corpus-backed `searchStore` above.
+function fixedHitsStore(entries) {
+  return { async search() { return { ok: true, entries }; } };
+}
+
+const PROMPT_SCOPE = { readOrder: ['repo::acme/widget', 'global'] };
+const PROMPT_NOW = Date.parse('2026-08-01T00:00:00.000Z');
+const pDaysAgo = (n) => new Date(PROMPT_NOW - n * 86400000).toISOString();
+
+test('promptLessonsFromStore — ranks the hits rather than trusting the store order', async () => {
+  // The store's own ordering is not relevance: the remote route answers
+  // `updated_at desc` and the local two-tier store answers project-tier-first.
+  const entries = [
+    { scope: 'global', key: 'fresh-oneoff', value: 'migration note', seenCount: 1, updatedAt: pDaysAgo(0) },
+    { scope: 'global', key: 'recurring', value: 'migration note', seenCount: 20, updatedAt: pDaysAgo(4) },
+  ];
+  const out = await promptLessonsFromStore(fixedHitsStore(entries), PROMPT_SCOPE, ['migration'], { now: PROMPT_NOW });
+  assert.deepEqual(out.map((e) => e.key), ['recurring', 'fresh-oneoff']);
+});
+
+test('promptLessonsFromStore — caps at three, because this interrupts the user', async () => {
+  const entries = Array.from({ length: 10 }, (_, i) => ({
+    scope: 'global', key: `k${i}`, value: 'migration', seenCount: 10 - i, updatedAt: pDaysAgo(1),
+  }));
+  const out = await promptLessonsFromStore(fixedHitsStore(entries), PROMPT_SCOPE, ['migration'], { now: PROMPT_NOW });
+  assert.equal(out.length, 3);
+  assert.deepEqual(out.map((e) => e.key), ['k0', 'k1', 'k2'], 'and they are the top three by score');
+});
+
+test('promptLessonsFromStore — a lesson already shown this session is dropped', async () => {
+  // The delta rule. Re-injecting the same lesson every turn of a conversation
+  // that stays on one topic is exactly how an injection becomes wallpaper.
+  const entries = [
+    { scope: 'global', key: 'seen-already', value: 'migration', seenCount: 20, updatedAt: pDaysAgo(1) },
+    { scope: 'global', key: 'genuinely-new', value: 'migration', seenCount: 1, updatedAt: pDaysAgo(9) },
+  ];
+  const out = await promptLessonsFromStore(fixedHitsStore(entries), PROMPT_SCOPE, ['migration'], {
+    now: PROMPT_NOW,
+    alreadyShown: new Set(['global::seen-already']),
+  });
+  assert.deepEqual(out.map((e) => e.key), ['genuinely-new'], 'the higher-scoring hit is skipped as old news');
+});
+
+test('promptLessonsFromStore — everything already shown means silence, not a filler pick', async () => {
+  const entries = [{ scope: 'global', key: 'a', value: 'migration', seenCount: 3, updatedAt: pDaysAgo(1) }];
+  const out = await promptLessonsFromStore(fixedHitsStore(entries), PROMPT_SCOPE, ['migration'], {
+    now: PROMPT_NOW,
+    alreadyShown: new Set(['global::a']),
+  });
+  assert.deepEqual(out, []);
+});
+
+test('promptLessonsFromStore — filters AFTER ranking, so the cap keeps its meaning', async () => {
+  // Filtering first would let three weak lessons take the slots a strong but
+  // already-shown one vacated. Showing two good ones beats padding to three.
+  const entries = [
+    { scope: 'global', key: 'shown-strong', value: 'migration', seenCount: 50, updatedAt: pDaysAgo(0) },
+    { scope: 'global', key: 'b', value: 'migration', seenCount: 5, updatedAt: pDaysAgo(1) },
+    { scope: 'global', key: 'c', value: 'migration', seenCount: 4, updatedAt: pDaysAgo(2) },
+    { scope: 'global', key: 'd', value: 'migration', seenCount: 3, updatedAt: pDaysAgo(3) },
+  ];
+  const out = await promptLessonsFromStore(fixedHitsStore(entries), PROMPT_SCOPE, ['migration'], {
+    now: PROMPT_NOW,
+    alreadyShown: new Set(['global::shown-strong']),
+  });
+  assert.deepEqual(out.map((e) => e.key), ['b', 'c', 'd']);
+});
+
+test('promptLessonsFromStore — no terms, no store, or a throwing store all yield silence', async () => {
+  assert.deepEqual(await promptLessonsFromStore(fixedHitsStore([]), PROMPT_SCOPE, []), []);
+  assert.deepEqual(await promptLessonsFromStore(null, PROMPT_SCOPE, ['x']), []);
+  assert.deepEqual(await promptLessonsFromStore({}, PROMPT_SCOPE, ['x']), []);
+  const throwing = { async search() { throw new Error('offline'); } };
+  assert.deepEqual(await promptLessonsFromStore(throwing, PROMPT_SCOPE, ['x']), []);
+  const notOk = { async search() { return { ok: false }; } };
+  assert.deepEqual(await promptLessonsFromStore(notOk, PROMPT_SCOPE, ['x']), []);
+});
+
+test('formatPromptLessons — an index block, never a body, and null when empty', () => {
+  assert.equal(formatPromptLessons([]), null);
+  assert.equal(formatPromptLessons(null), null);
+  const text = formatPromptLessons([
+    { scope: 'global', key: 'k', value: 'Always add the column before the backfill runs.\nMore detail here.' },
+  ]);
+  assert.match(text, /^LoreKit: 1 memory related to this — considerations, not rules/);
+  assert.match(text, /^- \(global\) k — Always add the column before the backfill runs\.$/m);
+  assert.ok(!text.includes('More detail here'), 'the body stays one memory.read away');
+});
+
+test('lessonId — one spelling of identity, shared by both sides of the shown-set', () => {
+  assert.equal(lessonId({ scope: 'global', key: 'k' }), 'global::k');
+  assert.equal(lessonId({}), '::');
+  assert.equal(lessonId(null), '::');
+});

@@ -249,7 +249,9 @@ test('upsertClaudeHooks prunes lorekit entries for events outside the selected s
   // Downgrading must REMOVE, not just stop adding — otherwise the nudges keep
   // firing after the user asked for read-only.
   const result = upsertClaudeHooks(root, 'project', 'lorekit', hookEventsForMode('read-only'));
-  assert.equal(result.removed, 2);
+  // DERIVED, never a literal: an assertion that restates the size of
+  // CLAUDE_HOOK_EVENTS goes vacuous the moment a lifecycle event is added.
+  assert.equal(result.removed, CLAUDE_HOOK_EVENTS.length - hookEventsForMode('read-only').length);
   assert.deepEqual(installedHookEvents(root, 'project'), ['SessionStart']);
 });
 
@@ -343,7 +345,14 @@ test('a version-pinned or extension-suffixed runner is recognised as ours, not a
   });
 
   const result = upsertClaudeHooks(root, 'project', 'lorekit');
-  assert.equal(result.added, 1, 'only PostToolUseFailure is genuinely new');
+  // Two of the four events were already wired (in forms the matcher has to
+  // recognise), so only the remainder is genuinely new. Derived so adding a
+  // lifecycle event does not silently make this assertion about nothing.
+  assert.equal(
+    result.added,
+    CLAUDE_HOOK_EVENTS.length - 2,
+    'only the events not already wired are added',
+  );
   assert.equal(lorekitCommandsFor(root, 'SessionStart').length, 1, 'pinned runner updated in place');
   assert.equal(lorekitCommandsFor(root, 'Stop').length, 1, 'windows runner updated in place');
 });

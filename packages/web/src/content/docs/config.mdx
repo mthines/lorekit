@@ -22,11 +22,12 @@ keywords: ["configuration", ".lorekit.json", "config.json", "mode", "store", "de
 | `mcp.endpoint` | `string` | Repo | Committable MCP URL without a token, so the connection can live in VCS. The token still comes from .mcp.json or LOREKIT_TOKEN. |
 | `tags.default` | `string[]` | Both | Tags appended to every memory.write. Both layers are merged: repo tags first, then user tags. |
 | `scope.defaults` | `Record<string, { tags: string[] }>` | Repo | Per-scope tag defaults, applied to writes whose scope starts with the key (prefix match, no wildcards). A team-level write policy. |
-| `hooks.disabled` | `("SessionStart" \| "PostToolUseFailure" \| "Stop")[]` | Both | Suppress specific lifecycle hook events. Union across layers — either layer can turn an event off. |
+| `hooks.disabled` | `("SessionStart" \| "UserPromptSubmit" \| "PostToolUseFailure" \| "Stop")[]` | Both | Suppress specific lifecycle hook events. Union across layers — either layer can turn an event off. |
 | `hooks.sessionStart` | `"hybrid" \| "index" \| "map"` | Both | Shape of the block injected at session start. hybrid (default) fills the budget with the highest-ranked memories and then names whatever was left out in a one-line scope map; index fills the budget and truncates silently; map leads with the scope map plus the three most salient memories. Repo wins over user; an unrecognised value is ignored and the next layer is tried, so a mistyped repo value falls through to the user layer before defaulting to hybrid. |
 | `hooks.sessionStart.maxChars` | `number (200–20000)` | Both | Character budget for that block. Defaults to 1500 (~375 tokens). Out-of-range values are clamped rather than rejected. Repo wins over user — a repo that declared a budget owns the decision even when the value is unparseable, so a typo degrades to the default instead of silently handing the choice to a personal config. |
+| `hooks.userPrompt` | `"on" \| "off"` | Both | Whether the per-turn relevance pull runs. On each substantive prompt it queries the store for memories matching what you just typed and injects at most three you have not already been shown this session. Defaults to on. It is a switch rather than a mode on purpose: the knobs a mode would expose (how many, how strict) are the two things that must not be turned up on a hook that fires every turn. The event itself is only wired by hook mode all, so read-only and none never reach this setting. Repo wins over user. |
 | `hooks.adapter` | `"claude" \| "cursor" \| "codex"` | Both | Explicit host adapter when auto-detection is ambiguous. Repo wins over user. |
-| `hooks.instructions` | `Record<"SessionStart" \| "PostToolUseFailure" \| "Stop", string \| null>` | Both | Per-event custom text appended to the hook output. Lets teams embed project-specific guidance (e.g. "focus on migration safety") into the injected agent context. Both layers are merged: repo instructions first, then user. null or an absent key means no instruction for that event. |
+| `hooks.instructions` | `Record<"SessionStart" \| "UserPromptSubmit" \| "PostToolUseFailure" \| "Stop", string \| null>` | Both | Per-event custom text appended to the hook output. Lets teams embed project-specific guidance (e.g. "focus on migration safety") into the injected agent context. Both layers are merged: repo instructions first, then user. null or an absent key means no instruction for that event. |
 | `telemetry.disabled` | `boolean` | Repo | Team-level opt-out of anonymous CLI usage telemetry, read from .lorekit.json only. The env var LOREKIT_TELEMETRY=0 always wins if set. |
 | `dedupe.threshold` | `number (0–1)` | Repo | Jaccard similarity cutoff for lorekit dedupe. The --threshold flag wins when passed explicitly. Defaults to 0.8. |
 
@@ -104,6 +105,7 @@ At session start LoreKit injects a compact index of the memories that apply to y
 ```json
 // .lorekit.json
 {
+  "hooks.userPrompt": "on",
   "hooks.sessionStart": "hybrid",
   "hooks.sessionStart.maxChars": 1500
 }

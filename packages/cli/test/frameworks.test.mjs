@@ -133,3 +133,28 @@ test('the vendored Claude skill is in sync with its source', () => {
   });
   assert.equal(res.status, 0, res.stdout + res.stderr);
 });
+
+// ── UserPromptSubmit: the contract is that SILENCE is valid output ───────────
+//
+// Every other hook either always emits (`Stop`, `PostToolUseFailure`) or emits
+// whatever the store had (`SessionStart`). This one fires on EVERY turn, so its
+// contract is the opposite: emitting nothing is the normal, correct answer, and
+// the only thing that must hold is that when it does speak it speaks the host's
+// JSON. A fixture that produced output here with no store configured would mean
+// a gate had come loose.
+test('UserPromptSubmit is silent without a store, and never breaks the contract', () => {
+  const fx = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'claude-UserPromptSubmit.json'), 'utf8'));
+  const out = runFixture(fx);
+  assert.equal(out, '', 'no store configured → nothing to say, so say nothing');
+});
+
+test('UserPromptSubmit stays silent on a trivial prompt', () => {
+  // The length gate. These are the acknowledgements that dominate a real
+  // session; a store lookup for each one is pure overhead on the user's
+  // critical path, and there is nothing in them to match on anyway.
+  const base = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'claude-UserPromptSubmit.json'), 'utf8'));
+  for (const prompt of ['yes', 'ok', 'continue', 'do it', 'next please', '', '   ']) {
+    const out = runFixture({ ...base, stdin: { ...base.stdin, prompt } });
+    assert.equal(out, '', `a "${prompt}" prompt must not reach the store`);
+  }
+});
