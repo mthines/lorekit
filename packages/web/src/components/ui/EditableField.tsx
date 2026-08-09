@@ -70,10 +70,12 @@ export interface EditableFieldProps
   /** Whether the field is read-only (no edit toggle). @default false */
   readOnly?: boolean;
   /**
-   * Hide the visual heading row (label + edit affordance) while keeping the
-   * accessible `aria-label` on the section. Used when a parent supplies its own
-   * heading — e.g. the memory detail sheet, whose Content heading sits beside a
-   * Preview/Edit tablist. @default false
+   * Hide the visual heading row (label + edit affordance) **and** the section's
+   * `aria-label`. Used when a parent supplies its own heading and already names
+   * the region — e.g. the memory detail sheet, whose own `aria-label="Content"`
+   * section holds the Preview/Edit tablist. Keeping the label here would nest
+   * two identically-named regions. `label` is still required: it names the
+   * textarea's id and the edit affordance. @default false
    */
   hideLabel?: boolean;
 }
@@ -130,7 +132,13 @@ export function EditableField({
   const errorId = error ? `${fieldId}-error` : undefined;
 
   return (
-    <section aria-label={label} className={['flex flex-col gap-2', className].join(' ')}>
+    // `aria-label` is dropped with the heading: the parent that sets
+    // `hideLabel` already names this region, and a nested section with the
+    // same accessible name would expose two identically-named landmarks.
+    <section
+      aria-label={hideLabel ? undefined : label}
+      className={['flex flex-col gap-2', className].join(' ')}
+    >
       {/* Section heading — hidden when a parent supplies its own (e.g. tabs). */}
       {!hideLabel && (
         <div className="flex items-center justify-between">
