@@ -214,26 +214,27 @@ semantics on that same path.
 exclude archived rows only, so an expired-but-unarchived row is still the row the conflict
 resolves to and its count keeps climbing. Expiry is a *visibility* state — `expires_at` filters
 the row out of every read (00030) but leaves it in the table until `purge_expired_memories`
-hard-deletes it — whereas archiving is a retirement. Same key, same row, one more sighting; for a
-**personal** row the purge is what eventually ends that run: once it has hard-deleted the row, the
-next write starts a fresh one at `1`. Note the write does not by itself make the row readable again:
+hard-deletes it — whereas archiving is a retirement. Same key, same row, one more sighting; the run
+ends when the row does, which for a **personal** row means either the purge hard-deleting it or an
+archive retiring it — the categorical rule above, not a second mechanism. Either way the next write
+starts a fresh row at `1`. Note the write does not by itself make the row readable again:
 with no `ttl_seconds` and no `clear_ttl` the update branch keeps the past `expires_at`, so the
 recurrence is counted on a row the reads still skip.
 
-**For an org- or service-owned row that run has no end, because the purge never reaches it.**
-`purge_expired_memories` deletes `where user_id = v_actor` (00046), and both the org branch and the
+**Expiry alone never ends that run for an org- or service-owned row, because the purge never reaches
+it.** `purge_expired_memories` deletes `where user_id = v_actor` (00046), and both the org branch and the
 service branch of `memory_write` insert `user_id null` — `null = <anything>` is never true, so no
 actor value can match and an expired org/service row is never hard-deleted. Its `seen_count`
 therefore keeps climbing on a row every read skips, for as long as the row is only *expired*.
 
-**That is a statement about the purge, not a categorical one — archiving still restarts the count
-for both.** `DELETE /memories?org=<slug>` routes to the role-gated `memory_delete` (00020,
-actor-guarded in 00046), whose non-force org branch stamps `archived_at`; and the non-org branch of
-`handlers/remove.ts` applies its tenant filter only for `api_key` auth (`toolDelete` likewise, only
-when it has a `userId`), so a service-role caller reaches a service-owned row. Once either row is
-archived, the partial conflict predicates no longer see it and the next write inserts a fresh row at
-`1` — exactly the archived-key rule above, which *is* categorical. `?force=true` deletes the row
-outright on both paths, with the same effect on the next write.
+**Archiving still ends it, for every tenancy — the two paragraphs above are about expiry, not about
+the row class.** `memory_delete` stamps `archived_at` on a personal row through its personal branch
+and on an org row through its org branch (00020, actor-guarded in 00046), and the non-org path in
+`handlers/remove.ts` / `mcp/tools.ts` applies its tenant filter only for `api_key` auth (and only
+when it has a `userId`), so a service-role caller reaches a service-owned row. In every one of those
+cases the partial conflict predicates stop seeing the row and the next write inserts a fresh one at
+`1` — the archived-key rule above, which *is* categorical. `?force=true` deletes the row outright on
+all of these paths, with the same effect on the next write.
 
 The purge gap itself is in the actor guard and predates 00059; this column only makes it observable.
 Widening the purge is deliberately **not** done here: `user_id = v_actor` is the actor guard 00046
