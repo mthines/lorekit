@@ -721,11 +721,11 @@ test('precedence unchanged — a shadowed lesson cannot be ranked back into the 
 // `fetchLessons`'s docblock states that precedence settles same-key collisions
 // only, and that across DIFFERENT keys the cap is one cross-scope ranking with
 // `scopeOrder` as a tiebreak — so a recurring broad-scope lesson takes a slot
-// from a stale narrow-scope one. That was prose. These two tests make it a
+// from a fresher-but-one-off narrow-scope one. That was prose. These tests make it a
 // contract: a future scope weight or per-scope floor has to fail here and be
 // re-decided, rather than quietly changing what the agent reads.
 
-test('ranking is cross-scope — a recurring broad lesson outranks and evicts a stale narrow one', async (t) => {
+test('ranking is cross-scope — a recurring broad lesson evicts a fresher narrow one-off', async (t) => {
   const { deriveScope } = await import('../src/scope.mjs');
   const scope = deriveScope(process.cwd());
   if (scope.readOrder.length < 2) {
@@ -737,15 +737,24 @@ test('ranking is cross-scope — a recurring broad lesson outranks and evicts a 
   const [narrow] = scope.readOrder;
   const broad = scope.readOrder[scope.readOrder.length - 1];
 
-  // Exactly MAX_LESSONS stale narrow-scope one-offs, so the cap is already full
-  // from the most-specific scope alone — the shape the OLD group order produced,
-  // in which no broad-scope lesson could ever be injected. Distinct keys, so
+  // Exactly MAX_LESSONS narrow-scope one-offs, so the cap is already full from
+  // the most-specific scope alone — the shape the OLD group order produced, in
+  // which no broad-scope lesson could ever be injected. Distinct keys, so
   // precedence shadows nothing and the ranking is the only thing under test.
+  //
+  // THE FIXTURE IS DELIBERATELY STACKED AGAINST THE CLAIM. The docblock's claim
+  // is that a RECURRING broad lesson displaces a FRESHER-BUT-ONE-OFF narrow one,
+  // so the narrow rows are written today and the broad ones a week ago: recency
+  // argues for keeping the narrow rows, and only salience can explain the
+  // eviction. Seeding the narrow rows stale instead would let plain recency
+  // produce the same result and the test would pin nothing.
+  //   narrow: recency 1.0    + salience log1p(1)/log1p(30) ≈ 0.20 → ≈ 0.40
+  //   broad:  recency 0.5^0.5 ≈ 0.71 + salience 1.0              → ≈ 0.57
   const narrowRows = Array.from({ length: MAX_LESSONS }, (_, i) =>
-    seeded(narrow, `narrow-${String(i).padStart(2, '0')}`, { days: 120, seen: 1 }),
+    seeded(narrow, `narrow-${String(i).padStart(2, '0')}`, { days: 0, seen: 1 }),
   );
   const broadRows = Array.from({ length: 3 }, (_, i) =>
-    seeded(broad, `broad-recurring-${i}`, { days: 1, seen: 30 }),
+    seeded(broad, `broad-recurring-${i}`, { days: 7, seen: 30 }),
   );
 
   const { lessons } = await fetchLessons(
@@ -763,7 +772,7 @@ test('ranking is cross-scope — a recurring broad lesson outranks and evicts a 
   assert.equal(
     lessons.filter((l) => l.scope === narrow).length,
     MAX_LESSONS - 3,
-    'three narrow lessons were evicted, which is the accepted cost of the trade',
+    'three fresher narrow one-offs were evicted, which is the accepted cost of the trade',
   );
 });
 
