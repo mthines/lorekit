@@ -248,7 +248,7 @@ describe('rangeForBucket — the drill-down builder', () => {
     expect(bucketPlanFor(drilled)).toEqual({ unit: 'hour', count: 1 });
   });
 
-  it('round-trips: a drilled day resolves back to a 1-bucket hourly plan', () => {
+  it('round-trips: a drilled day resolves back to a 24-bucket hourly plan', () => {
     // A 24h window is at the hour end of the ladder, so drilling into a DAY
     // hands the reader 24 hourly bars to drill again — the second step of the
     // drill-down, and the reason the ladder is inclusive at 48h.
