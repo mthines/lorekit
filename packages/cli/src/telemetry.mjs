@@ -246,8 +246,47 @@ function resourceAttributes(version, env = process.env) {
 // ── Payload builders (pure — unit-tested) ─────────────────────────────────────
 
 /**
+ * The CLOSED vocabulary of `lorekit.cli.outcome`, and the one place it is
+ * written down in code.
+ *
+ * The three values are not synonyms and the distinction is load-bearing:
+ *
+ * - `ok`      — ran, exit 0.
+ * - `failure` — RAN TO COMPLETION and reported a negative VERDICT (a failing
+ *               `doctor` check, a `lint` finding). The command did its job.
+ * - `error`   — CRASHED. This is the only one that also sets the span status to
+ *               `STATUS_CODE_ERROR`.
+ *
+ * That is what keeps the `cli` service's error rate a measure of the CLI being
+ * broken rather than of the user's environment being unhealthy (see the note
+ * above the non-zero-exit branch in {@link traceCommand}).
+ *
+ * WHY A FROZEN CONSTANT RATHER THAN THREE STRING LITERALS. The values were only
+ * ever written inline, so the vocabulary was discoverable from the emitted
+ * telemetry and nowhere else — and read from telemetry alone the distinction is
+ * genuinely easy to misread. A `doctor` that CRASHED in one release and FAILED
+ * GRACEFULLY in the next shows up as `error` then `failure` for the same
+ * user-visible symptom, which reads like the attribute drifting when it is
+ * actually the CLI getting better. Naming the set makes the difference legible
+ * at the call site and gives `telemetry.test.mjs` something to pin the docs to.
+ */
+export const CLI_OUTCOMES = Object.freeze({
+  OK: 'ok',
+  FAILURE: 'failure',
+  ERROR: 'error',
+});
+
+/** The same vocabulary as a value list, for guards and exhaustiveness checks. */
+export const CLI_OUTCOME_VALUES = Object.freeze(Object.values(CLI_OUTCOMES));
+
+/**
  * Collect the bounded, non-PII attributes for a command invocation. Only the
  * command name, allow-listed boolean flags, the outcome and the exit code.
+ *
+ * Deliberately does NOT validate `outcome`: this runs inside the `finally` of
+ * every traced command, where throwing would turn a telemetry problem into a
+ * command failure. The vocabulary is enforced at the call sites (all of which
+ * are in this file) and pinned by `telemetry.test.mjs`.
  */
 export function commandAttributes({ command, args = {}, outcome, exitCode, extraAttrs = {} }) {
   const attrs = { 'lorekit.cli.command': command, 'lorekit.cli.outcome': outcome };
@@ -533,7 +572,7 @@ export async function traceCommand(command, args, version, run) {
   // `outcome` is the command's VERDICT (ok | failure | error); `status` is the
   // SPAN status, and only a crash sets it to error. See the note above the
   // non-zero-exit branch below.
-  let outcome = 'ok';
+  let outcome = CLI_OUTCOMES.OK;
   let status = 'ok';
   let statusMessage;
   let extraAttrs = {};
@@ -563,11 +602,11 @@ export async function traceCommand(command, args, version, run) {
       // the CLI being broken rather than of the user's environment being
       // unhealthy. Query the failure verdicts on those attributes, never on the
       // span status.
-      outcome = 'failure';
+      outcome = CLI_OUTCOMES.FAILURE;
     }
     return exitCode;
   } catch (e) {
-    outcome = 'error';
+    outcome = CLI_OUTCOMES.ERROR;
     status = 'error';
     // Record only a bounded, non-PII identifier — NEVER e.message. Node fs /
     // network error messages embed absolute paths (e.g. "ENOENT: ... open

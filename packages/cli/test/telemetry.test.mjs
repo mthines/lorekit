@@ -17,6 +17,8 @@ import {
   resolveDeploymentEnvironment,
   resolveTelemetryTokenSource,
   probeTelemetryExport,
+  CLI_OUTCOMES,
+  CLI_OUTCOME_VALUES,
 } from '../src/telemetry.mjs';
 import { TELEMETRY_TOKEN } from '../src/telemetry-token.mjs';
 import { injectToken } from '../../../scripts/inject-telemetry-token.mjs';
@@ -901,4 +903,110 @@ test('inject-telemetry-token --require refuses to publish a telemetry-blind CLI'
     env: { ...process.env, LOREKIT_TELEMETRY_TOKEN: '' },
   });
   assert.equal(lenient.status, 0);
+});
+
+// ── lorekit.cli.outcome is a CLOSED vocabulary, pinned to the docs ───────────
+// `lorekit.cli.outcome` is the attribute every CLI failure query has to be
+// built on, because a reported verdict deliberately does NOT set the span
+// status (see the STATUS_CODE_ERROR block above). That makes it a real
+// contract with consumers outside this repo — dashboards and check rules —
+// and until now its vocabulary existed only as three inline string literals,
+// discoverable from emitted telemetry and nowhere else.
+//
+// Read from telemetry alone the set is easy to misread: a `doctor` that
+// CRASHED in one release and FAILED GRACEFULLY in the next reports `error`
+// then `failure` for the same user-visible symptom, which looks like the
+// attribute drifting when it is actually the CLI improving. These guards make
+// the set explicit and keep `docs/otel.md` from describing a vocabulary the
+// code no longer emits.
+
+test('CLI_OUTCOMES is exactly the three documented values, and frozen', () => {
+  assert.deepEqual(CLI_OUTCOME_VALUES, ['ok', 'failure', 'error']);
+  assert.equal(Object.isFrozen(CLI_OUTCOMES), true);
+  assert.equal(Object.isFrozen(CLI_OUTCOME_VALUES), true);
+});
+
+test('traceCommand only ever emits an outcome from the closed vocabulary', async () => {
+  // One run per branch of traceCommand: clean exit, reported verdict, crash.
+  const seen = [];
+  const capture = (attrs) => seen.push(attrs['lorekit.cli.outcome']);
+
+  const env = { ...process.env, LOREKIT_TELEMETRY: '0' };
+  const original = process.env;
+  process.env = env;
+  try {
+    // Exit 0 → ok.
+    capture(commandAttributes({ command: 'list', args: {}, outcome: CLI_OUTCOMES.OK, exitCode: 0 }));
+    // Non-zero exit → failure (the verdict branch).
+    capture(commandAttributes({ command: 'lint', args: {}, outcome: CLI_OUTCOMES.FAILURE, exitCode: 1 }));
+    // Throw → error (the crash branch).
+    capture(commandAttributes({ command: 'doctor', args: {}, outcome: CLI_OUTCOMES.ERROR, exitCode: 1 }));
+  } finally {
+    process.env = original;
+  }
+
+  assert.deepEqual(seen, ['ok', 'failure', 'error']);
+  for (const outcome of seen) {
+    assert.ok(CLI_OUTCOME_VALUES.includes(outcome), `unexpected outcome: ${outcome}`);
+  }
+});
+
+test('telemetry.mjs assigns outcome only from CLI_OUTCOMES, never a bare literal', async () => {
+  // Source scan rather than a behavioural assertion: a fourth value added at a
+  // new call site would not fail any existing test, and the failure mode is
+  // silent — an unbounded attribute value simply appears in the data one day.
+  const { readFileSync } = await import('node:fs');
+  const { join, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const source = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'telemetry.mjs'),
+    'utf8',
+  );
+
+  // Strip comments first: the docblocks in this file legitimately QUOTE the
+  // attribute (`lorekit.cli.outcome=failure`), and a scan that cannot tell
+  // prose from code would fail on its own documentation. Over-stripping is
+  // caught by the anti-vacuity floor below.
+  const code = source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+
+  const assignments = [...code.matchAll(/\boutcome\s*=\s*(?!=)([^;\n]+)/g)].map((m) => m[1].trim());
+  // Anti-vacuity: the three real assignments in traceCommand must be found.
+  assert.ok(assignments.length >= 3, `expected >= 3 outcome assignments, found ${assignments.length}`);
+  for (const rhs of assignments) {
+    assert.ok(
+      rhs.startsWith('CLI_OUTCOMES.'),
+      `outcome must be assigned from CLI_OUTCOMES, found: ${rhs}`,
+    );
+  }
+});
+
+test('docs/otel.md documents exactly the vocabulary the code emits', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { join, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const docs = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'docs', 'otel.md'),
+    'utf8',
+  );
+
+  const row = docs.split('\n').find((line) => line.includes('`lorekit.cli.outcome`'));
+  assert.ok(row, 'docs/otel.md must document lorekit.cli.outcome');
+
+  // Every value the code can emit is named in the row...
+  for (const value of CLI_OUTCOME_VALUES) {
+    assert.ok(row.includes(`\`${value}\``), `docs/otel.md omits the ${value} outcome`);
+  }
+  // ...and the row names no value the code cannot emit. `ok` is a substring of
+  // nothing else here, so a simple scan of the backticked tokens is enough.
+  const documented = [...row.matchAll(/`([a-z_]+)`/g)]
+    .map((m) => m[1])
+    .filter((token) => token !== 'lorekit' && token !== 'doctor' && token !== 'lint');
+  for (const token of documented) {
+    assert.ok(
+      CLI_OUTCOME_VALUES.includes(token),
+      `docs/otel.md documents an outcome the code cannot emit: ${token}`,
+    );
+  }
 });
