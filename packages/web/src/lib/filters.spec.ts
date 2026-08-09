@@ -579,7 +579,7 @@ describe('kind & host dimensions', () => {
       { field: 'kind', operator: 'in', values: ['lesson'] },
       { field: 'host', operator: 'nin', values: ['aw', 'reviewer'] },
     ];
-    const encoded = filtersParamValue(bar);
+    const encoded = filtersParamValue(bar, undefined);
     expect(resolveFilters(JSON.parse(JSON.stringify(encoded)), undefined)).toEqual(bar);
   });
 
