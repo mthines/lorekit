@@ -29,6 +29,17 @@ export const CANONICAL_LESSON = {
   tags: ["loop::eval-canonical"],
 };
 
+/**
+ * The canonical lesson as a COMPLETE seedable entry — key, tags and body.
+ *
+ * `CANONICAL_LESSON` deliberately carries no `value` (the text lives in the
+ * fixture), so spreading it straight into a seed call produces a body-less
+ * entry. Every caller that wants to seed it must go through here.
+ */
+export async function canonicalLesson() {
+  return { ...CANONICAL_LESSON, value: await canonicalLessonText() };
+}
+
 /** Resolve the real store for a sandbox. */
 export function storeFor(sandbox) {
   const control = loadControl(sandbox.cwd, { env: sandbox.childEnv() });
@@ -59,11 +70,25 @@ export async function empty(sandbox, { scopes = [] } = {}) {
   return { seeded: [] };
 }
 
-/** Write one lesson through the real write path, failing loudly on rejection. */
+/**
+ * Write one lesson through the real write path, failing loudly on rejection.
+ *
+ * The `value` guard is not defensive noise: the offline store coerces an
+ * `undefined` body to `''` and reports success, so a caller that forgot the
+ * text seeds an EMPTY lesson and every downstream assertion about retrieval
+ * still passes — the arm silently stops testing what it claims to test. That
+ * is the exact failure this file's header warns about, so it is refused here
+ * rather than in each caller.
+ */
 export async function seedLesson(
   sandbox,
   { scope, key, value, tags = [] } = {},
 ) {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new TypeError(
+      `seedLesson: a non-empty lesson body is required (scope=${scope}, key=${key})`,
+    );
+  }
   const { store } = storeFor(sandbox);
   const res = await store.write({
     scope,
@@ -103,10 +128,7 @@ export async function seedOrganic(
 
 /** Arm B (canonical): seed the curated gold lesson. */
 export async function seedCanonical(sandbox, { scope, lesson = null } = {}) {
-  const resolved = lesson || {
-    ...CANONICAL_LESSON,
-    value: await canonicalLessonText(),
-  };
+  const resolved = lesson || (await canonicalLesson());
   const seeded = await seedLesson(sandbox, { scope, ...resolved });
   return { seeded: [seeded] };
 }

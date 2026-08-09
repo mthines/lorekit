@@ -27,9 +27,11 @@ import {
 import { withSandbox } from "../src/sandbox.mjs";
 import {
   CANONICAL_LESSON,
+  canonicalLesson,
   empty,
   listAll,
   seedCanonical,
+  seedLesson,
   seedMany,
   seedOrganic,
 } from "../src/store-setup.mjs";
@@ -71,6 +73,28 @@ test("seedCanonical writes exactly one readable lesson (AC-2.3)", async () => {
     const entries = await listAll(sandbox, [TARGET_SCOPE]);
     assert.equal(entries.length, 1);
     assert.equal(entries[0].key, CANONICAL_LESSON.key);
+    assert.match(entries[0].value, /`::` as the ONLY segment separator/);
+  });
+});
+
+test("seedLesson refuses a body-less entry instead of seeding an empty one", async () => {
+  await withSandbox({}, async (sandbox) => {
+    await initGitIdentity(sandbox.cwd);
+    // The offline store coerces `undefined` to `''` and reports success, so
+    // without this guard `{ ...CANONICAL_LESSON }` seeds an empty lesson and
+    // every retrieval assertion downstream still passes.
+    await assert.rejects(
+      () => seedLesson(sandbox, { scope: TARGET_SCOPE, ...CANONICAL_LESSON }),
+      /non-empty lesson body is required/,
+    );
+    assert.deepEqual(await listAll(sandbox, [TARGET_SCOPE]), []);
+
+    const complete = await canonicalLesson();
+    assert.equal(typeof complete.value, "string");
+    assert.ok(complete.value.trim().length > 0);
+    await seedLesson(sandbox, { scope: TARGET_SCOPE, ...complete });
+    const entries = await listAll(sandbox, [TARGET_SCOPE]);
+    assert.equal(entries.length, 1);
     assert.match(entries[0].value, /`::` as the ONLY segment separator/);
   });
 });
@@ -197,7 +221,7 @@ test("position is OBSERVED from the injected set, not assumed (seam for AC-5.3)"
         key: "pad-b",
         value: "an unrelated lesson about B",
       },
-      { scope: TARGET_SCOPE, ...CANONICAL_LESSON },
+      { scope: TARGET_SCOPE, ...(await canonicalLesson()) },
     ]);
     installSessionStartHook(sandbox);
 
