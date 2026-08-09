@@ -177,9 +177,11 @@ export async function handleRelevant(
   });
 
   // `candidates` is the RANKED population, so it saturates at CANDIDATE_LIMIT —
-  // a reported 200 means "at least 200", never "exactly 200". The schema says
-  // so on the field; an exact total would need a second counting query per
-  // request, which is precisely what the cap is there to avoid.
+  // a value equal to the cap means "at least that many", never "exactly that
+  // many". Stated against the constant rather than its literal so this comment
+  // cannot go stale when the cap moves. The schema says the same on the field;
+  // an exact total would need a second counting query per request, which is
+  // precisely what the cap is there to avoid.
   const res = ok({ entries, candidates: candidates.length }, cors);
   // Let the router record the RECORD count, not just the call — see
   // RESULT_COUNT_HEADER in _shared/api/router.ts.

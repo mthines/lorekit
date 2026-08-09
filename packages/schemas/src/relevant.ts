@@ -86,10 +86,13 @@ export const RelevantResponseSchema = z.object({
    * whether narrowing the query is worth it, the same reason the SessionStart
    * block reports its own truncation.
    *
-   * It SATURATES at the route's candidate cap (200). A response reporting
-   * exactly that number means "at least 200 matched", never "200 matched" —
-   * read it as a floor, not a total. An exact total would cost a second
-   * full count on every request, which is the cost the cap exists to avoid.
+   * It SATURATES at the route's candidate cap — `CANDIDATE_LIMIT`, declared in
+   * the handler and deliberately not restated here: this package cannot import
+   * across the edge boundary, so a literal copied into this docblock would go
+   * stale the day the cap moves. A response whose `candidates` equals the cap
+   * means "at least that many matched", never "exactly that many" — read it as
+   * a floor, not a total. An exact total would cost a second full count on
+   * every request, which is the cost the cap exists to avoid.
    */
   candidates: z.number().int(),
 });
