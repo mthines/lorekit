@@ -147,11 +147,13 @@ test("a scope that only normalizes to the target is 80, never the wrong-branch b
 
 test("matchedScope is the stored string in EVERY band, never the normalized one", () => {
   // The store holds what was written, and success is judged against that, so a
-  // reader must not have to guess which bands report a lowercased form.
+  // reader must not have to guess which bands report a lowercased form. Every
+  // band that matches a stored scope is pinned here — 100 down to 20.
   const cases = [
+    [TARGET_SCOPE, SCORE_EXACT],
+    ["BRANCH::mthines/GW-Tools::feat/x", SCORE_RIGHT_SCOPE_WRONG_FORM],
     ["BRANCH::mthines/GW-Tools::MAIN", SCORE_RIGHT_REPO_WRONG_BRANCH],
     ["REPO::mthines/GW-Tools", SCORE_RIGHT_REPO_COARSE],
-    ["BRANCH::mthines/GW-Tools::feat/x", SCORE_RIGHT_SCOPE_WRONG_FORM],
     ["GLOBAL", SCORE_WROTE_SOMETHING],
   ];
   for (const [stored, score] of cases) {
@@ -160,6 +162,13 @@ test("matchedScope is the stored string in EVERY band, never the normalized one"
     assert.equal(result.matchedScope, stored, stored);
     assert.ok(result.detail.includes(stored), `${stored}: ${result.detail}`);
   }
+
+  // The one remaining band, 0, has nothing to report: an empty store matched no
+  // scope, so `matchedScope` is null rather than a fabricated string. That is
+  // what makes the claim hold for EVERY band, not only the ones that matched.
+  const nothing = grade({ storedScopes: [] });
+  assert.equal(nothing.score, SCORE_NOTHING);
+  assert.equal(nothing.matchedScope, null);
 });
 
 test("a single-colon scope grades invalid AND repeated-mistake (AC-3.2)", () => {
