@@ -47,7 +47,10 @@ Options:
   --timeout <ms>       Hard wall-clock ceiling per attempt (default ${DEFAULT_TIMEOUT_MS}).
   --command <bin>      Agent binary (default "claude"; override for smoke tests).
   --seed <source>      probe: empty | canonical | organic (default canonical).
+                       arm0 always runs against an EMPTY store and REFUSES this
+                       flag rather than ignoring it.
   --lesson <text>      probe: the arm-0 lesson text, required for --seed organic.
+                       Refused by arm0, as --seed is.
   --scope <scope>      an explicit scope to seed at (overrides the mode).
   --scope-mode <m>     branch | repo | project | global (default branch).
   --git / --no-git     force the sandbox git identity on/off. Default is on
@@ -80,9 +83,14 @@ export function parseArgs(argv) {
     keep: false,
     dryRun: false,
     help: false,
+    // Which flags the caller actually TYPED. Several options have meaningful
+    // defaults, so a subcommand that cannot honour one has no other way to tell
+    // "left at the default" apart from "asked for, and about to be ignored".
+    provided: new Set(),
   };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
+    options.provided.add(arg);
     switch (arg) {
       case "--reps":
         options.reps = Number(rest[++i]);
@@ -180,6 +188,19 @@ async function runArm0(options) {
         allowWrite: true,
       });
       const task = taskById("branch-scope");
+      // Arm 0 is the empty-store arm by definition — its job is to produce the
+      // organic lesson the seeded arms are later given — so it cannot honour a
+      // seed. Refuse rather than accept the flag and quietly run something else.
+      const ignored = ["--seed", "--lesson"].filter((f) =>
+        options.provided.has(f),
+      );
+      if (ignored.length > 0) {
+        throw new Error(
+          `arm0 always runs against an EMPTY store, so ${ignored.join(" and ")} ` +
+            `cannot be honoured here. Drop ${ignored.length > 1 ? "them" : "it"}, ` +
+            `or use the "probe" subcommand, which seeds.`,
+        );
+      }
       // `--scope` / `--scope-mode` / `--no-git` steer where the arm resolves,
       // but `gradeSandbox` below always grades against the task's fixed target.
       // A mismatch cannot produce anything but a 0-or-partial score, and it

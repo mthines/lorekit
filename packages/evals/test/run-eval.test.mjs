@@ -62,6 +62,56 @@ test("an unimplemented subcommand exits non-zero instead of pretending", async (
   assert.equal(code, 2);
 });
 
+test("arm0 refuses a seed flag instead of silently running an empty store", async () => {
+  const out = await fsp.mkdtemp(path.join(os.tmpdir(), "evals-out-"));
+  try {
+    // `--seed canonical` used to be accepted and dropped, so the artifact said
+    // store: "empty" while the caller believed it had seeded the arm.
+    await assert.rejects(
+      () =>
+        main([
+          "arm0",
+          "--reps",
+          "1",
+          "--dry-run",
+          "--seed",
+          "canonical",
+          "--out",
+          out,
+        ]),
+      /arm0 always runs against an EMPTY store/,
+    );
+    await assert.rejects(
+      () =>
+        main([
+          "arm0",
+          "--reps",
+          "1",
+          "--dry-run",
+          "--lesson",
+          "text",
+          "--out",
+          out,
+        ]),
+      /--lesson/,
+    );
+  } finally {
+    await fsp.rm(out, { recursive: true, force: true });
+  }
+});
+
+test("parseArgs records which flags were actually typed", () => {
+  assert.deepEqual([...parseArgs(["arm0"]).provided], []);
+  assert.equal(
+    parseArgs(["arm0", "--seed", "empty"]).provided.has("--seed"),
+    true,
+  );
+  // A default is not a request: leaving --seed off must stay distinguishable
+  // from passing its default value.
+  assert.equal(parseArgs(["arm0"]).seed, "canonical");
+  assert.equal(parseArgs(["arm0"]).provided.has("--seed"), false);
+});
+
 test("arm0 refuses a scope override it could never grade as a success", async () => {
   const out = await fsp.mkdtemp(path.join(os.tmpdir(), "evals-out-"));
   try {
