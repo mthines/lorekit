@@ -188,9 +188,16 @@ export async function readInjectedLessons(
  * report a cause. Reading "not injected" as "retrieval failure" here would
  * silently average a seeding regression in as evidence that memory does not
  * work.
+ *
+ * Pass `{ scope }` to require the hit to come from the scope the lesson was
+ * seeded at. The injected set spans the whole `readOrder`, so without it a
+ * foreign same-key lesson reports `injected: true` — the same asymmetry
+ * `classifyRetrieval` already filters out, and the two must agree.
  */
-export function positionOf(injection, key) {
-  const hit = injection.lessons.find((l) => l.key === key);
+export function positionOf(injection, key, { scope = null } = {}) {
+  const hit = injection.lessons.find(
+    (l) => l && l.key === key && (!scope || l.scope === scope),
+  );
   return hit
     ? { injected: true, position: hit.position, scope: hit.scope }
     : { injected: false, position: null, scope: null };

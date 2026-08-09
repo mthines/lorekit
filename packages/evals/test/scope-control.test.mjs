@@ -22,7 +22,7 @@ import {
   scopeForMode,
 } from "../src/arm.mjs";
 import { DEFAULT_BRANCH, DEFAULT_OWNER_REPO } from "../src/git-identity.mjs";
-import { readInjectedLessons } from "../src/hook-install.mjs";
+import { positionOf, readInjectedLessons } from "../src/hook-install.mjs";
 import {
   RETRIEVAL_ABSENT,
   RETRIEVAL_INJECTED,
@@ -222,6 +222,22 @@ test("a same-key lesson INJECTED from another scope is not the seeded one", () =
   assert.equal(retrieval.inStore, true);
   // The foreign lesson still counts towards what the agent actually saw.
   assert.equal(retrieval.injectedCount, 1);
+});
+
+test("positionOf agrees with classifyRetrieval about a foreign same-key hit", () => {
+  const injection = {
+    lessons: [{ position: 1, key: "wanted", scope: "global" }],
+  };
+  assert.deepEqual(positionOf(injection, "wanted"), {
+    injected: true,
+    position: 1,
+    scope: "global",
+  });
+  assert.deepEqual(positionOf(injection, "wanted", { scope: BRANCH_SCOPE }), {
+    injected: false,
+    position: null,
+    scope: null,
+  });
 });
 
 test("a same-key entry at another scope is ABSENT, not in-store-not-loaded", () => {
