@@ -53,9 +53,14 @@ import { FRICTION_FAILURE, FRICTION_STUCK_LOOP } from './friction.mjs';
 // `HARD_LESSON_CEILING` is the second bound, from the other direction. A budget
 // alone cannot stop a store of 500 one-word keys from rendering 400 lines inside
 // it, and a 400-line index is unreadable however few characters it costs. It is
-// deliberately well above any budget a sane `maxChars` can fill, so in normal
-// operation it never binds — it exists so the worst case is bounded, not to
-// shape the common one.
+// well above the DEFAULT budget, so at 1500 chars it never binds and the shape
+// is the budget's to decide. It does bind at the top of the configured range:
+// `MAX_SESSION_START_MAX_CHARS = 20000` funds roughly two hundred index lines,
+// so a deliberately large budget stops at forty memories. That is the intended
+// trade — forty lines is already at the edge of scannable, and a reader who
+// wants the rest has `memory.search` — but it is a real ceiling, not a
+// theoretical one, so raising `maxChars` past a few thousand buys characters
+// per line rather than more lines.
 const HARD_LESSON_CEILING = 40;
 
 // How many lessons ride along with the scope map in `map` mode. Small on
