@@ -193,12 +193,21 @@ test('relevantLessonsFromStore guards empty terms and scopes without querying', 
 // fail a scope's read (best-effort skip) — no network, no filesystem.
 function fakeStore(byScope, { failScopes = [] } = {}) {
   return {
-    // Honours `limit` because both real stores do (`store/local.mjs:76`,
-    // `store/remote.mjs:68` hard-slice newest-first). A fake that drops it lets
-    // a fixture seed a group the production read could never return.
+    // Mirrors the real read in BOTH of its steps, because either one alone
+    // lets a fixture seed a group production could never return:
+    //   1. SORT newest-first — `store/local.mjs:75` sorts on `updated` before
+    //      it slices, and the remote route answers in the same order. Slicing
+    //      in fixture order would keep an arbitrary 25, not the newest 25.
+    //   2. SLICE to `limit` — `store/local.mjs:76`, `store/remote.mjs:68`.
+    // The sort is unconditional, like the real one: gating it on `limit` would
+    // re-diverge for every no-limit caller. Entries are copied first, so a read
+    // never reorders a fixture another test is holding. Rows with no timestamp
+    // compare equal and keep their seeded order (`sort` is stable), so the
+    // fixtures that predate the ranking projection are unaffected.
     async list({ scope, limit }) {
       if (failScopes.includes(scope)) return { ok: false };
-      const entries = byScope[scope] || [];
+      const stamp = (e) => String(e?.updatedAt ?? e?.updated ?? '');
+      const entries = [...(byScope[scope] || [])].sort((a, b) => stamp(b).localeCompare(stamp(a)));
       return { ok: true, entries: limit ? entries.slice(0, limit) : entries };
     },
   };
