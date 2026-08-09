@@ -197,6 +197,35 @@ test("classifyMistake only ever classifies INVALID scopes", () => {
   assert.equal(classifyMistake("branch::mthines"), null);
   assert.equal(isValidScope("repo::mthines/gw tools"), false);
   assert.equal(classifyMistake("branch::mthines/gw tools/feat"), null);
+});
+
+test("classification is case- and whitespace-insensitive, like the validator", () => {
+  // A shouted attempt is invalid in exactly the same way as a lowercase one.
+  // Matching the raw string would return null and silently drop the
+  // repeatedMistake signal the whole experiment turns on.
+  assert.equal(isValidScope("BRANCH:mthines/gw-tools"), false);
+  assert.equal(
+    classifyMistake("BRANCH:mthines/gw-tools"),
+    MISTAKE_SINGLE_COLON,
+  );
+  assert.equal(
+    classifyMistake("  branch:mthines/gw-tools  "),
+    MISTAKE_SINGLE_COLON,
+  );
+  assert.equal(
+    classifyMistake("BRANCH::mthines/GW-Tools/feat/x"),
+    MISTAKE_BRANCH_WITH_SLASH,
+  );
+  assert.equal(
+    classifyMistake("BRANCH::mthines/GW-Tools"),
+    MISTAKE_BRANCH_MISSING,
+  );
+  // And an uppercased attempt still reaches the mistakes list through grade().
+  const result = grade({ attemptedScopes: ["BRANCH:mthines/gw-tools"] });
+  assert.equal(result.repeatedMistake, true);
+  assert.deepEqual(result.mistakes, [
+    { scope: "BRANCH:mthines/gw-tools", kind: MISTAKE_SINGLE_COLON },
+  ]);
   // Valid scopes are never mistakes, however they look.
   assert.equal(classifyMistake(TARGET_SCOPE), null);
   assert.equal(classifyMistake("global"), null);

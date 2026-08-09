@@ -74,8 +74,16 @@ export function classifyMistake(scope) {
   if (typeof scope !== "string" || scope === "") return null;
   if (isValidScope(scope)) return null;
 
+  // Classify the scope the way `validateScope` READS it — lowercased and
+  // trimmed. The shape tests below are string matches, so without this a
+  // shouted attempt (`BRANCH:mthines/gw-tools`) matches nothing and silently
+  // drops the `repeatedMistake` signal the whole experiment turns on. Case is
+  // never itself the mistake here: an invalid scope is invalid in the same way
+  // whatever it was shouted in.
+  const candidate = scope.toLowerCase().trim();
+
   // `branch:owner/repo` — a known prefix followed by exactly one colon.
-  if (/^(global|project|repo|branch):(?!:)/.test(scope)) {
+  if (/^(global|project|repo|branch):(?!:)/.test(candidate)) {
     return MISTAKE_SINGLE_COLON;
   }
   // A `branch::` scope with only one `::` is missing its second separator, but
@@ -87,10 +95,10 @@ export function classifyMistake(scope) {
   //
   // Collapsing them would make `mistakes` report a slash the agent never wrote.
   if (
-    scope.startsWith("branch::") &&
-    !scope.slice("branch::".length).includes("::")
+    candidate.startsWith("branch::") &&
+    !candidate.slice("branch::".length).includes("::")
   ) {
-    const segments = scope.slice("branch::".length).split("/");
+    const segments = candidate.slice("branch::".length).split("/");
     // Ask the canonical validator whether the first two segments are an
     // `owner/repo` — never re-implement its charset here. spec.md's validity
     // oracle is explicit that a vendored second validator keeps the grader
