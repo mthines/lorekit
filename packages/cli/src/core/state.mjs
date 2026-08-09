@@ -106,7 +106,8 @@ export function recordShownLessons(sessionId, ids) {
   const clean = ids.filter((id) => typeof id === 'string' && id && !id.includes('\n'));
   if (clean.length === 0) return;
   try {
-    fs.mkdirSync(stateDir(), { recursive: true });
+    // No mkdir here: `shownPath` → `markerPath` → `stateDir`, which creates the
+    // directory as part of resolving the path.
     fs.appendFileSync(shownPath(sessionId), `${clean.join('\n')}\n`);
   } catch {
     // Never break the host over bookkeeping.
