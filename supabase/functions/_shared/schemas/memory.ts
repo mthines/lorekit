@@ -185,6 +185,33 @@ export const ListMemoriesQuerySchema = z.object({
   origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
   sort: MemorySortSchema.optional().default('updated_at'),
   archived: z.enum(['true','false']).optional().default('false'),
+  /**
+   * "Expiring soon": keep only memories whose TTL runs out within the next N
+   * days — `expires_at` in `(now, now + N days]`.
+   *
+   * A RELATIVE horizon rather than an absolute `expires_before` timestamp,
+   * because this parameter's job is to back a shareable, bookmarkable view.
+   * "Expiring in the next 7 days" stays true tomorrow; `expires_before=<a
+   * Tuesday>` silently becomes a view of the past. The bound is computed
+   * per-request by `expiringWindow`, which owns the boundary semantics.
+   *
+   * Composes with the other filters rather than overriding them: with the
+   * default `archived=false` it narrows the live rows (the only combination the
+   * Explorer's Status control produces), and `archived=true` alongside it reads
+   * as "archived AND expiring soon" instead of being rejected — a filter that
+   * 400s on a combination the grammar can express is a worse surprise than an
+   * empty page.
+   *
+   * Bounds mirror `TTL_MIN_DAYS`/`TTL_MAX_DAYS` (`@lorekit/mcp-core`'s `ttl.ts`)
+   * and `EXPIRING_WITHIN_DAYS_MIN`/`_MAX` (`expiring-window.ts`); the literals
+   * are repeated here because `@lorekit/schemas` deliberately depends on
+   * nothing, exactly as `ttl_days` above already does. `expiring-window.spec.ts`
+   * asserts the two agree, so the duplication cannot drift silently.
+   *
+   * `z.coerce` because every query param arrives as a string; `.int()` runs
+   * after coercion, so `7.5` and `abc` are a 400 rather than a silent floor.
+   */
+  expiring_within_days: z.coerce.number().int().min(1).max(365).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
   cursor: z.string().optional(),
 });
@@ -350,11 +377,14 @@ export const ListFacetsQuerySchema = z.object({
    * two dimensions are enumerated but not yet filterable from the menu.
    *
    * `ListMemoriesQuerySchema`'s NON-dimension filters — `q`, `key`,
-   * `created_since` and `created_until` — are deliberately NOT mirrored, so
-   * with a search or date window active a count is an upper bound on the yield
-   * rather than the exact figure. Mirroring `q` would mean a second
-   * implementation of `likeNeedle`'s LIKE escaping inside plpgsql, and a filter
-   * value is encoded exactly one way in this repo.
+   * `created_since`, `created_until` and `expiring_within_days` — are
+   * deliberately NOT mirrored, so with a search, a date window or an
+   * expiring-soon horizon active a count is an upper bound on the yield rather
+   * than the exact figure. Mirroring `q` would mean a second implementation of
+   * `likeNeedle`'s LIKE escaping inside plpgsql, and mirroring
+   * `expiring_within_days` a second implementation of `expiringWindow`'s
+   * `now`-relative boundary — a filter value is encoded exactly one way in this
+   * repo.
    *
    * A value whose count falls to zero under the other dimensions' filters emits
    * no row at all — the same omission a null column value has — so it leaves
