@@ -19,14 +19,19 @@
  *
  * ## Dismissal
  * Three ways out, matching the platform: tap the backdrop, press Escape, or
- * drag the handle down past a threshold (or flick it — see `shouldDismissSheet`
- * in `bottom-sheet.ts`). A short, slow pull springs back.
+ * drag down past a threshold (or flick it — see `shouldDismissSheet` in
+ * `bottom-sheet.ts`). A short, slow pull springs back. The drag can start on
+ * the handle *or* on the body content — a body pull only becomes a drag when
+ * the content under the finger is not a live scroll area (`classifyBodyDrag`),
+ * so a scrollable list still scrolls.
  *
  * ## Motion (see /animations "sheet / drawer")
  * Enters by translating up from fully off-screen and leaves the same way;
  * `useReducedMotion` collapses both to a fade. Drag is a real transform driven
- * by `useDragControls` started from the handle only, so the body can still
- * scroll independently.
+ * by `useDragControls`, started from the handle unconditionally and from the
+ * body when its pointer handlers judge the gesture a drag rather than a scroll.
+ * Pulling *above* the resting top rubber-bands a little and springs back
+ * (`SHEET_DRAG_ELASTIC`), the native over-scroll feel.
  *
  * ## Portal + `container`
  * Rendered through a portal so the sheet escapes any `overflow`/stacking
@@ -40,7 +45,35 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, useDragControls, useReducedMotion } from 'motion/react';
 
-import { shouldDismissSheet } from './bottom-sheet';
+import {
+  BODY_DRAG_SLOP,
+  SHEET_DRAG_ELASTIC,
+  classifyBodyDrag,
+  shouldDismissSheet,
+} from './bottom-sheet';
+
+/**
+ * Nearest vertically-scrollable ancestor of `start`, searched up to and
+ * including `boundary` (the sheet body). Returns null when no element in that
+ * chain can actually scroll — i.e. the content fits. This is what lets a
+ * body-drag respect a *nested* scroll region (the Explorer's `FilterMenu`
+ * scrolls its value list, not the sheet body itself) instead of hijacking it.
+ */
+function nearestScrollableY(start: Element | null, boundary: Element): HTMLElement | null {
+  let el: Element | null = start;
+  while (el) {
+    if (el instanceof HTMLElement) {
+      const overflowY = getComputedStyle(el).overflowY;
+      const scrolls = overflowY === 'auto' || overflowY === 'scroll';
+      // +1 guards against sub-pixel rounding reporting a non-scrolling element
+      // as scrollable.
+      if (scrolls && el.scrollHeight > el.clientHeight + 1) return el;
+    }
+    if (el === boundary) break;
+    el = el.parentElement;
+  }
+  return null;
+}
 
 interface BottomSheetProps {
   open: boolean;
@@ -72,9 +105,45 @@ export function BottomSheet({
   const reduceMotion = useReducedMotion();
   const dragControls = useDragControls();
   const panelRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const titleId = useId();
+
+  // A gesture in progress on the body, tracked until it commits to a sheet-drag
+  // or is handed back to a content scroll. `dragListener` is off on the panel,
+  // so the sheet only drags when we explicitly `dragControls.start`.
+  const bodyGestureRef = useRef<{ startY: number; scrollEl: HTMLElement | null } | null>(null);
+
+  function onBodyPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (!e.isPrimary) return;
+    const body = bodyRef.current;
+    if (!body) return;
+    bodyGestureRef.current = {
+      startY: e.clientY,
+      scrollEl: nearestScrollableY(e.target as Element, body),
+    };
+  }
+
+  function onBodyPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    const gesture = bodyGestureRef.current;
+    if (!gesture) return;
+    const intent = classifyBodyDrag({
+      scrollTop: gesture.scrollEl?.scrollTop ?? 0,
+      scrollable: gesture.scrollEl != null,
+      dy: e.clientY - gesture.startY,
+      slop: BODY_DRAG_SLOP,
+    });
+    if (intent === 'pending') return;
+    // Decided: either hand the gesture to the sheet drag, or let the content
+    // scroll own it. Stop sampling either way.
+    bodyGestureRef.current = null;
+    if (intent === 'drag') dragControls.start(e);
+  }
+
+  function endBodyGesture() {
+    bodyGestureRef.current = null;
+  }
 
   // When contained (Storybook), the sheet is absolute within the frame and must
   // not touch the real viewport (no body scroll lock, no fixed positioning).
@@ -189,7 +258,7 @@ export function BottomSheet({
             dragControls={dragControls}
             dragListener={false}
             dragConstraints={{ top: 0, bottom: 0 }}
-            dragElastic={{ top: 0, bottom: 0.7 }}
+            dragElastic={SHEET_DRAG_ELASTIC}
             onDragEnd={(_event, info) => {
               if (shouldDismissSheet({ offsetY: info.offset.y, velocityY: info.velocity.y })) {
                 onClose();
@@ -219,9 +288,10 @@ export function BottomSheet({
             ].join(' ')}
           >
             {/* Drag region: the handle strip plus the title. Grabbing anywhere
-                here starts the drag; the body below stays independently
-                scrollable. `touch-none` stops the browser claiming the gesture
-                as a scroll before motion sees it. */}
+                here starts the drag unconditionally; the body below drags only
+                when it is not being scrolled (see the body's pointer handlers).
+                `touch-none` stops the browser claiming the gesture as a scroll
+                before motion sees it. */}
             <div
               data-testid="bottom-sheet-drag-handle"
               onPointerDown={(e) => dragControls.start(e)}
@@ -244,8 +314,21 @@ export function BottomSheet({
             </div>
 
             {/* Body — the caller's content. Kept scrollable so a long list
-                never pushes the sheet past its max height. */}
-            <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+                never pushes the sheet past its max height. A pull that starts
+                here also drags the sheet, but only when the content under the
+                finger is not a live scroll area — the pointer handlers arbitrate
+                drag-vs-scroll (see `classifyBodyDrag`). `overscroll-contain`
+                keeps a scroll from chaining out to the sheet edge. */}
+            <div
+              ref={bodyRef}
+              onPointerDown={onBodyPointerDown}
+              onPointerMove={onBodyPointerMove}
+              onPointerUp={endBodyGesture}
+              onPointerCancel={endBodyGesture}
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+            >
+              {children}
+            </div>
           </motion.div>
         </div>
       )}

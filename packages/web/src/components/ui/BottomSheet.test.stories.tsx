@@ -154,3 +154,31 @@ export const DragDownCloses: Story = {
     });
   },
 };
+
+/**
+ * The body content — not the handle — is where a real thumb usually lands, so a
+ * pull on it must also close when the content is not a scroll area. The first
+ * move lands on the body so its handler commits the gesture to a drag
+ * (`classifyBodyDrag` → `drag`); after that Motion tracks on `window`.
+ */
+export const DragContentCloses: Story = {
+  play: async ({ canvasElement, args, step }) => {
+    await open(canvasElement);
+
+    await step('dragging the non-scrollable body down dismisses the sheet', async () => {
+      const content = await body().findByText(/pick one or more labels/i);
+      pointer('pointerdown', content, 24);
+      await nextFrame();
+      pointer('pointermove', content, 48);
+      await nextFrame();
+      for (const y of [120, 200, 300]) {
+        pointer('pointermove', window, y);
+        await nextFrame();
+      }
+      pointer('pointerup', window, 300);
+
+      await waitFor(() => expect(body().queryByRole('dialog')).not.toBeInTheDocument());
+      await expect(args.onClose).toHaveBeenCalled();
+    });
+  },
+};
