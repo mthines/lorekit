@@ -1617,6 +1617,16 @@ describe('scoreLesson factors', () => {
     assert.equal(relevanceFactor(entry, new Set([''])), 0, "an empty term is dropped, not matched against everything");
     assert.equal(relevanceFactor(entry, new Set([' timeout '])), 1, 'a padded term is trimmed, not missed');
 
+    // The LONE-VALUE form the docblock also promises. Without this the
+    // `: [terms]` branch is unpinned — deleting it left the whole file green,
+    // while a bare string would be spread into one term per character.
+    assert.equal(relevanceFactor(entry, ' TIMEOUT '), 1, 'a lone term is wrapped, not spread');
+    assert.equal(relevanceFactor(entry, 'timeout'), relevanceFactor(entry, ['timeout']));
+    assert.equal(relevanceFactor(entry, 'zqx'), 0, 'a lone non-matching term is one term, not three characters');
+    assert.equal(relevanceFactor(entry, ''), 0);
+    assert.equal(relevanceFactor(entry, null), 0);
+    assert.equal(relevanceFactor(entry, 42), 0, 'a lone non-string is stringified, not iterated');
+
     // The same must hold one level up, or `scoreLesson` inherits the divergence.
     const scored = { key: 'retry-on-timeout', value: 'ECONNREFUSED then a timeout', seenCount: 1, updatedAt: daysAgo(1) };
     assert.equal(
