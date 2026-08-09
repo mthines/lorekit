@@ -1575,3 +1575,67 @@ describe('scoreLesson factors', () => {
     }
   });
 });
+
+// ── RemoteStore.relevant: the ranked shortlist ───────────────────────────────
+describe('RemoteStore.relevant', () => {
+  test('issues GET /memories/relevant with the ordered scope list', async () => {
+    const { result, calls } = await captureRestCalls(
+      (store) => store.relevant({
+        q: 'timeout',
+        // Most-specific FIRST — the order is meaningful to the server, which
+        // uses it to break ties, so it must survive the round trip verbatim.
+        scopes: ['repo::o/r', 'global'],
+        limit: 5,
+        minScore: 0.2,
+      }),
+      {
+        status: 200,
+        body: JSON.stringify({
+          entries: [{ scope: 'global', key: 'k', hook: 'A hook.', score: 0.5 }],
+          candidates: 42,
+        }),
+      },
+    );
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].method, 'GET');
+    assert.equal(
+      calls[0].url,
+      `${REMOTE_REST_BASE}/memories/relevant?q=timeout&scopes=repo%3A%3Ao%2Fr%2Cglobal&limit=5&min_score=0.2`,
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.entries[0].key, 'k');
+    assert.equal(result.candidates, 42, 'candidates surfaced so a caller can say "1 of 42"');
+  });
+
+  test('omits every parameter the caller did not supply', async () => {
+    // `q` is optional by design — without it the server ranks on recency +
+    // salience, which is the SessionStart question.
+    const { calls } = await captureRestCalls((store) => store.relevant({}), { status: 200, body: '{}' });
+    assert.equal(calls[0].url, `${REMOTE_REST_BASE}/memories/relevant?`);
+  });
+
+  test('min_score of 0 is still sent — it is a value, not an absence', async () => {
+    const { calls } = await captureRestCalls(
+      (store) => store.relevant({ minScore: 0 }),
+      { status: 200, body: '{}' },
+    );
+    assert.match(calls[0].url, /min_score=0$/);
+  });
+
+  test('returns the standard error envelope, and never a partial success', async () => {
+    const { result } = await captureRestCalls(
+      (store) => store.relevant({ q: 'x' }),
+      { status: 403, body: JSON.stringify({ error: 'forbidden' }) },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.entries, undefined);
+  });
+
+  test('a malformed body degrades to an empty shortlist rather than throwing', async () => {
+    const { result } = await captureRestCalls(
+      (store) => store.relevant({ q: 'x' }),
+      { status: 200, body: JSON.stringify({ entries: 'not-an-array' }) },
+    );
+    assert.deepEqual(result, { ok: true, entries: [], candidates: 0 });
+  });
+});

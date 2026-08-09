@@ -255,6 +255,77 @@ Both purge endpoints are user-scoped: they call RPCs keyed on `p_user_id`, so a
 well-formed; it is the credential that cannot name a purge target. Both are also
 rate-limited on the same per-user window as `POST /` (a `429` carries `Retry-After`).
 
+## `GET /relevant`
+
+The one verb that **ranks**. Returns the top-K lessons for a query as a compact index:
+
+```json
+{
+  "entries": [
+    {
+      "scope": "repo::acme/app",
+      "key": "migration-order",
+      "hook": "Always add the column before the backfill runs.",
+      "score": 0.72,
+      "factors": { "recency": 0.61, "salience": 0.85, "relevance": 1 },
+      "seen_count": 9,
+      "updated_at": "2026-07-30T09:12:00.000Z"
+    }
+  ],
+  "candidates": 47
+}
+```
+
+| Param | Default | Meaning |
+|-------|---------|---------|
+| `q` | — | Free-text query, `websearch` FTS over `key \|\| value`. **Optional.** |
+| `scopes` | all visible | Comma-separated, **most-specific first** — the order breaks ties. |
+| `limit` | `10` | 1–50. A shortlist for a context window, not a page. |
+| `min_score` | `0` | Drop hits below this. How a caller says "stay silent rather than show me something weak". |
+
+**Why it exists.** Every other read hands the caller a single-signal ordering — `GET /memories`
+is `updated_at` desc, `POST /memories/search` is FTS rank — and neither knows that a lesson
+written twelve times is worth more than one written once. Each client that wanted a useful
+shortlist fetched a page and re-sorted it locally, which is three copies of a ranking and
+three chances to disagree about what matters.
+
+**Two phases, and the split is the design.** Postgres SELECTS the candidates (an index scan
+over `fts` is the difference between reading 40 rows and reading the whole store); the shared
+scorer ORDERS them in TypeScript. The ranking is deliberately *not* SQL: it is set-relative
+(salience normalises against the most-recurring candidate) and it must agree exactly with the
+CLI hook's ordering. A plpgsql copy could not be held to that agreement by any test, whereas
+`lesson-rank-parity.spec.ts` holds `_shared/lesson-rank.ts` to the CLI's `lessons-pure.mjs`
+behaviourally — same scores, same order, over shared fixtures.
+
+**`q` is optional on purpose.** With it, relevance participates and the answer is "what
+matters for this task". Without it, the ranking is recency + salience, which is "what matters
+generally" — the SessionStart question. Requiring `q` would have forced the hook to invent a
+query for a session that has not asked anything yet.
+
+**Relevance is currently binary, and that is an honest limit.** `ts_rank` is not projectable
+through PostgREST's query grammar, so a row that matched scores 1 and — since a non-matching
+row is never returned — nothing scores between. Ordering among matches is therefore decided by
+recency and salience, which is the useful half: *these all mention your terms; here are the
+ones that keep mattering.* A graded relevance needs an RPC returning `ts_rank`, which is where
+the semantic-search work has to go anyway.
+
+**`CANDIDATE_LIMIT = 200`** bounds the pre-ranking fetch. The ranking needs a population, not
+just the page it returns — salience is normalised across candidates, so a genuinely recurring
+lesson ranked 30th by FTS must still get the chance to come first. 200 is comfortably above
+the route's own `limit` cap of 50 while staying one cheap indexed read.
+
+The response carries `candidates` (how many the FTS matched before ranking) so a caller can
+say "3 of 47" instead of implying it saw everything — the same reason the SessionStart block
+reports its own truncation.
+
+Bodies are never returned. The point of the route is deciding *which* few lessons deserve
+attention; returning the full text of ten of them would spend the context it just saved. Fetch
+what you want with `GET /:id` or `memory.read`.
+
+There is **no MCP tool** for this yet. `usage_events.tool_name` is `memory.relevant` — its own
+name rather than folding into `memory.search`, because the two answer different questions and
+collapsing them would make it impossible to tell whether agents actually reach for the ranking.
+
 ## `GET /scopes`
 
 Returns every distinct scope the caller can see with its count of active (non-archived,

@@ -157,6 +157,45 @@ Each dimension takes a comma-separated value list plus an optional `<dimension>_
 filtered on instead of listing memories and tallying them client-side — the tally is silently
 truncated past the row cap.
 
+## Which lore matters right now (`GET /memories/relevant`)
+
+Listing and searching tell you what EXISTS. They do not tell you what is worth reading:
+`GET /memories` orders by `updated_at`, `POST /memories/search` by full-text match, and neither
+knows that a lesson learned twelve times matters more than one written once. On an active repo
+that difference is the whole game — the newest writes are usually one task's iteration log.
+
+`GET /memories/relevant` is the ranked shortlist. It scores each candidate on **recency**
+(exponential decay, 14-day half-life), **salience** (`log1p(seen_count)`, normalised across the
+candidates) and **relevance** (full-text match on `q`), and returns a compact index:
+
+```bash
+curl -H "Authorization: Bearer lk_ro_…" \
+  "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/memories/relevant?\
+q=migration+backfill&scopes=repo::acme/app,global&limit=5"
+```
+
+```json
+{
+  "entries": [
+    { "scope": "repo::acme/app", "key": "migration-order",
+      "hook": "Always add the column before the backfill runs.",
+      "score": 0.72, "factors": { "recency": 0.61, "salience": 0.85, "relevance": 1 },
+      "seen_count": 9, "updated_at": "2026-07-30T09:12:00.000Z" }
+  ],
+  "candidates": 47
+}
+```
+
+| Param | Default | Meaning |
+|-------|---------|---------|
+| `q` | — | Free-text query. **Optional** — omit it and the ranking is recency + salience, i.e. "what matters generally". |
+| `scopes` | all visible | Comma-separated, **most-specific first**; the order breaks ties, so a project lesson wins over the global one it ties with. |
+| `limit` | `10` | 1–50. |
+| `min_score` | `0` | Drop weak hits. Use it when injecting automatically: showing an irrelevant lesson every turn is worse than showing none. |
+
+Bodies are not returned — fetch the ones you want with `memory.read`. `candidates` is how many
+matched before ranking, so you can tell a shortlist from the whole set.
+
 ## Limits
 
 | Limit | Default |
