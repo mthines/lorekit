@@ -213,8 +213,10 @@ function ContentSection({ tab, onTabChange, canEdit, value, onChange, onEditEnd,
               aria-selected={selected}
               aria-controls={`content-panel-${id}`}
               // Announce the global single-letter shortcut so it is
-              // discoverable to assistive tech rather than undocumented.
-              aria-keyshortcuts={CONTENT_TAB_SHORTCUT_KEYS[id]}
+              // discoverable to assistive tech — but only while the tab can
+              // actually be activated, matching `shortcutTabForKey`, which
+              // returns null for Edit on an archived memory.
+              aria-keyshortcuts={disabled ? undefined : CONTENT_TAB_SHORTCUT_KEYS[id]}
               tabIndex={selected ? 0 : -1}
               disabled={disabled}
               onClick={() => selectTab(id)}

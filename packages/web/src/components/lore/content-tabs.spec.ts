@@ -90,5 +90,12 @@ describe('content-tabs', () => {
         expect(shortcutTabForKey(CONTENT_TAB_SHORTCUT_KEYS[tab], base)).toBe(tab);
       }
     });
+
+    it('stops honouring the Edit key when editing is disabled (so the tab must stop announcing it)', () => {
+      expect(shortcutTabForKey(CONTENT_TAB_SHORTCUT_KEYS.edit, { ...base, canEdit: false })).toBeNull();
+      expect(shortcutTabForKey(CONTENT_TAB_SHORTCUT_KEYS.preview, { ...base, canEdit: false })).toBe(
+        'preview',
+      );
+    });
   });
 });
