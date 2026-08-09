@@ -103,6 +103,8 @@ Authorization: Bearer <token>
 | `trigger` | text | What triggered the write (e.g. `stuck-loop`) |
 | `fts` | tsvector | Generated always from `key || value` — powers full-text search |
 | `seen_count` | integer | How many times this lesson has been written — `1` on insert, `+1` on every upsert that resolves to the row. Recurrence, which the skill guidance gates promotion on (`seen_count >= 3`). Not null, defaults to 1. |
+| `embedding` | vector(1536) | **Dormant** (00060). Semantic-search vector; null until the embedding pipeline lands. 1536 because pgvector's HNSW index refuses more than 2000 dimensions, so a 3072-wide model could not be ANN-indexed at all. |
+| `embedding_model` | text | Which model produced `embedding`. Vectors from two models are not comparable, so a silent provider swap would leave one column holding two incompatible spaces. A CHECK enforces both-or-neither with `embedding`. |
 | `created_at` | timestamptz | |
 | `updated_at` | timestamptz | Auto-updated by trigger |
 
