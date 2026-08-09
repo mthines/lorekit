@@ -195,7 +195,8 @@ export async function readInjectedLessons(
  * `classifyRetrieval` already filters out, and the two must agree.
  */
 export function positionOf(injection, key, { scope = null } = {}) {
-  const hit = injection.lessons.find(
+  const lessons = (injection && injection.lessons) || [];
+  const hit = lessons.find(
     (l) => l && l.key === key && (!scope || l.scope === scope),
   );
   return hit
