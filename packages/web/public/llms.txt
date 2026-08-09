@@ -51,7 +51,7 @@ wired and in which scope.
 The `SessionStart` block is bounded by a character budget
 (`hooks.sessionStart.maxChars`, default 1500), not by a memory count, and
 memories are ranked by recurrence and recency before it is spent. A header
-reading `9 of 143 memories loaded` means the block was truncated — the trailing
+reading `9 of 50 memories loaded` means the block was truncated — the trailing
 `More lore: …` line names which scopes hold the rest, and `memory.search` /
 `memory.read` reach them. `hooks.sessionStart` picks the shape:
 `hybrid` (default, list + that map), `index` (list only) or `map`
