@@ -14,7 +14,7 @@
  * | Card    | Endpoint                        | Scoped by |
  * |---------|---------------------------------|-----------|
  * | Written | `GET /memories/activity`        | range, and scope CLIENT-side (the response is per `(bucket, scope)`) |
- * | Scopes  | the same response               | range |
+ * | Scopes  | the same response               | range, and scope CLIENT-side — it counts the same `rows`, so a selected scope collapses it to 1 |
  * | Read    | `GET /memories/read-activity`   | range, and scope SERVER-side (`?scope=`, migration 00058) |
  * | Expired | `GET /memories/usage`           | range only — **never scope** |
  *
