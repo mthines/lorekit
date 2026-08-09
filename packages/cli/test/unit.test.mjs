@@ -1602,13 +1602,27 @@ describe('scoreLesson factors', () => {
     assert.equal(relevanceFactor(entry, ['retry-on']), 1, 'matches the key too');
   });
 
-  test('relevanceFactor accepts an already-normalised term Set unchanged', () => {
-    // `rankLessons` normalises the query once and hands the SAME Set to every
-    // candidate, so the Set path must agree with the list path exactly.
+  test('relevanceFactor normalises a Set exactly as it normalises a list', () => {
+    // A hand-built Set used to skip normalisation entirely, so `new Set([''])`
+    // matched everything and `new Set([' timeout '])` matched nothing — two
+    // silent divergences from the list path with the same input.
     const entry = { key: 'retry-on-timeout', value: 'ECONNREFUSED then a timeout' };
-    assert.equal(relevanceFactor(entry, new Set()), 0);
-    assert.equal(relevanceFactor(entry, new Set(['timeout'])), 1);
-    assert.equal(relevanceFactor(entry, new Set(['timeout', 'nomatch'])), 0.5);
+    for (const terms of [[], [''], ['   '], ['timeout'], [' TIMEOUT '], ['timeout', 'nomatch'], ['timeout', 'TIMEOUT']]) {
+      assert.equal(
+        relevanceFactor(entry, new Set(terms)),
+        relevanceFactor(entry, terms),
+        `Set and list must agree for ${JSON.stringify(terms)}`,
+      );
+    }
+    assert.equal(relevanceFactor(entry, new Set([''])), 0, "an empty term is dropped, not matched against everything");
+    assert.equal(relevanceFactor(entry, new Set([' timeout '])), 1, 'a padded term is trimmed, not missed');
+
+    // The same must hold one level up, or `scoreLesson` inherits the divergence.
+    const scored = { key: 'retry-on-timeout', value: 'ECONNREFUSED then a timeout', seenCount: 1, updatedAt: daysAgo(1) };
+    assert.equal(
+      scoreLesson(scored, { now: NOW, terms: new Set([' TIMEOUT ']) }),
+      scoreLesson(scored, { now: NOW, terms: ['timeout'] }),
+    );
   });
 
   test('relevanceFactor matches metacharacters literally, like search does', () => {

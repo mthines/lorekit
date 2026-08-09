@@ -341,29 +341,37 @@ export function salienceFactor(seenCount, maxSeenCount) {
  * would not change the ORDER but would compress the score range and make every
  * downstream threshold meaningless.
  *
- * `terms` may be a raw list OR an already-normalised `Set` from
- * `distinctTerms`. `rankLessons` passes the Set so the query is normalised once
- * per ranking rather than once per candidate; a caller with a list is
- * unaffected and passing one is still correct.
+ * `terms` is a list, a lone term, or any `Set` — every form is normalised the
+ * same way, so `new Set([' Timeout '])` and `[' Timeout ']` score identically.
+ * Normalisation is NOT a caller responsibility and there is no pre-normalised
+ * fast path on this function: an unnormalised `Set` reaching the matcher scored
+ * `''` as a match on everything and a padded term as a match on nothing.
+ * `rankLessons` gets the once-per-ranking saving from the internal
+ * `relevanceFromTerms` instead, where the set is one this module built.
  */
 export function relevanceFactor(entry, terms) {
-  const distinct = distinctTerms(terms);
+  return relevanceFromTerms(entry, distinctTerms(terms));
+}
+
+// The matcher, over a set this module has already normalised. Internal on
+// purpose: it is the seam that lets `rankLessons` normalise the query ONCE for
+// the whole ranking instead of once per candidate (O(entries × terms) for a
+// result that cannot differ between entries) without turning "hand me a
+// correctly-shaped Set" into part of the public contract.
+function relevanceFromTerms(entry, distinct) {
   if (distinct.size === 0) return 0;
   let hits = 0;
   for (const term of distinct) if (matchesQuery(entry, term)) hits += 1;
   return hits / distinct.size;
 }
 
-// The caller's query as a set of distinct, lowercased, non-empty terms.
-//
-// Idempotent by design: a `Set` is returned as-is, which is what lets
-// `rankLessons` normalise once and hand the SAME set to every candidate. This
-// module's whole reason to exist is the SessionStart hot path, and rebuilding
-// the set per entry made the query's normalisation O(entries × terms) for a
-// result that cannot differ between entries.
+// The caller's query as a set of distinct, lowercased, non-empty terms. Accepts
+// a list, a `Set`, or a lone value, and normalises the CONTENTS in every case —
+// an earlier version short-circuited on `instanceof Set`, which let a
+// hand-built set skip trimming and empty-filtering and diverge from the list
+// path.
 function distinctTerms(terms) {
-  if (terms instanceof Set) return terms;
-  const list = Array.isArray(terms) ? terms : [terms];
+  const list = Array.isArray(terms) || terms instanceof Set ? [...terms] : [terms];
   return new Set(
     list
       .map((t) => String(t == null ? '' : t).toLowerCase().trim())
@@ -396,6 +404,13 @@ export function scoreLesson(entry, {
   maxSeenCount = 0,
   halfLifeDays = RECENCY_HALF_LIFE_DAYS,
 } = {}) {
+  return scoreWithTerms(entry, distinctTerms(terms), { now, weights, maxSeenCount, halfLifeDays });
+}
+
+// `scoreLesson` with the query already normalised. `rankLessons` calls this so
+// the whole ranking normalises the query once; `scoreLesson` normalises and
+// delegates, so no caller has to know a normalised set exists.
+function scoreWithTerms(entry, termSet, { now, weights, maxSeenCount, halfLifeDays }) {
   let w = {
     recency: numberOr(weights?.recency, DEFAULT_RANK_WEIGHTS.recency),
     salience: numberOr(weights?.salience, DEFAULT_RANK_WEIGHTS.salience),
@@ -413,7 +428,7 @@ export function scoreLesson(entry, {
   if (!(total > 0)) return 0;
   const recency = recencyFactor(entry?.updatedAt ?? entry?.updated_at ?? entry?.updated, now, halfLifeDays);
   const salience = salienceFactor(seenCountFrom(entry), maxSeenCount);
-  const relevance = relevanceFactor(entry, terms);
+  const relevance = relevanceFromTerms(entry, termSet);
   return (w.recency * recency + w.salience * salience + w.relevance * relevance) / total;
 }
 
@@ -484,7 +499,7 @@ export function rankLessons(entries = [], {
   if (list.length === 0) return [];
 
   // Normalise the query ONCE for the whole ranking, not once per candidate —
-  // `relevanceFactor` takes the set straight through.
+  // `scoreWithTerms` takes the set this module built straight through.
   const termSet = distinctTerms(terms);
 
   // One pass for the set-relative normaliser, so scoring stays O(n).
@@ -509,7 +524,7 @@ export function rankLessons(entries = [], {
     // the docblock. A score is in [0,1] and the grid is 1e-9, so the bucket is
     // always a safe integer.
     bucket: Math.round(
-      scoreLesson(entry, { terms: termSet, now, weights, maxSeenCount, halfLifeDays }) / SCORE_EPSILON,
+      scoreWithTerms(entry, termSet, { now, weights, maxSeenCount, halfLifeDays }) / SCORE_EPSILON,
     ),
     scopeRank: rankByScope.has(entry.scope) ? rankByScope.get(entry.scope) : Number.MAX_SAFE_INTEGER,
     key: String(entry.key ?? ''),
