@@ -95,9 +95,15 @@ const previewPanel = () => document.getElementById('content-panel-preview');
 const contentTextarea = () => document.querySelector('#content-panel-edit textarea');
 
 /**
- * The panel focuses its close button 80 ms after open. Any story that types
- * must land that first — otherwise the timer fires mid-`type()`, steals focus
- * from the textarea and drops the rest of the word (a real CI flake).
+ * The panel focuses its close button 80 ms after open. Every story whose
+ * assertion depends on where focus is must land that first — the race is
+ * focus-dependent, not typing-specific:
+ *   • typing into a field (the timer steals focus and drops the rest of the
+ *     word — the original CI flake), and
+ *   • `.focus()` + keys handled by a *local* `onKeyDown` (the tablist's roving
+ *     arrow navigation), which needs the tab to still hold focus.
+ * Stories driven by a document-level listener (the P/E shortcuts, Escape) or by
+ * pointer events are unaffected, since a stolen focus still reaches `document`.
  */
 const settleOpenFocus = () =>
   waitFor(() =>
@@ -268,6 +274,7 @@ export const SwitchBackToPreviewRenders: Story = {
 export const ArrowKeysSwitchTabs: Story = {
   play: async ({ step }) => {
     await body().findByRole('dialog', { name: /memory detail/i });
+    await settleOpenFocus();
     await step('arrow keys move the active tab (roving tabindex)', async () => {
       body().getByRole('tab', { name: /preview/i }).focus();
       await userEvent.keyboard('{ArrowRight}');
@@ -297,6 +304,7 @@ export const EditingRevealsSaveBar: Story = {
 export const KeyboardShortcutsSwitchTabs: Story = {
   play: async ({ step }) => {
     await body().findByRole('dialog', { name: /memory detail/i });
+    await settleOpenFocus();
     await step('E → Edit, P → Preview when focus is not in a form field', async () => {
       body().getByRole('tab', { name: /preview/i }).focus();
       await userEvent.keyboard('e');
