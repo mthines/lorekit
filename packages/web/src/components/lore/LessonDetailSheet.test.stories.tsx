@@ -202,9 +202,13 @@ export const SanitizesUntrustedMarkdown: Story = {
       // drops raw HTML — no rehype-raw — so it is neither injected nor executed).
       await expect(panel.querySelector('script')).toBeNull();
       await expect(panel.querySelector('img')).toBeNull();
-      // The javascript: URL was removed from the rendered link's href.
+      // The javascript: URL was removed from the rendered link's href. The
+      // anchor itself must still exist — `rehype-sanitize` strips the unsafe
+      // protocol, not the element — so assert it before reading the href;
+      // guarding with `if (link)` would let this pass vacuously.
       const link = panel.querySelector('a');
-      if (link) await expect(link.getAttribute('href') ?? '').not.toMatch(/^javascript:/i);
+      await expect(link).not.toBeNull();
+      await expect((link as HTMLAnchorElement).getAttribute('href') ?? '').not.toMatch(/^javascript:/i);
       // Nothing executed.
       await expect((window as unknown as { __xss_pwned?: boolean }).__xss_pwned).toBeUndefined();
     });
