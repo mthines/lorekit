@@ -352,6 +352,16 @@ export interface UseMemoriesFilters {
   filters?: Filter[];
   /** When true, fetches archived memories instead of active ones. */
   showArchived?: boolean;
+  /**
+   * "Expiring soon" horizon in days (`GET /memories?expiring_within_days=`).
+   * Absent means no expiry narrowing.
+   *
+   * Kept as its own field rather than folded into `showArchived` because the
+   * two are orthogonal on the wire, and because the archive mutations select
+   * their cache pages by the BOOLEAN at key index 4 — collapsing the two into
+   * one tri-state field would break that contract silently.
+   */
+  expiringWithinDays?: number;
 }
 
 /**
@@ -391,6 +401,12 @@ export function useMemories(filters: UseMemoriesFilters) {
       filters.range,
       filters.showArchived ?? false,
       bar,
+      // APPENDED, per the rule above: index 4 must stay the archived boolean the
+      // mutations match on. Present in the key because the active and the
+      // expiring views are different result sets over the same population — a
+      // key that ignored it would serve the unfiltered page when the user
+      // switched to Expiring and never refetch.
+      filters.expiringWithinDays ?? null,
     ],
     queryFn: ({ pageParam }) => {
       const args: MemoryFilters = {
@@ -400,6 +416,7 @@ export function useMemories(filters: UseMemoriesFilters) {
         filters: bar,
         cursor: pageParam as string | null,
         showArchived: filters.showArchived,
+        expiringWithinDays: filters.expiringWithinDays,
       };
       return listMemories(args);
     },

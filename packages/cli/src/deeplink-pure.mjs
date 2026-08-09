@@ -42,7 +42,14 @@ export const LORE_PARAM_DEFAULTS = {
   filters: null,
   tags: [], // string[] — legacy label filter (AND across labels); [] means "no filter". Still READ by the app, superseded by `filters`
   view: 'scope', // 'scope' | 'time'
-  archived: false, // boolean
+  // 'active' | 'archived' | 'expiring' | null — the Explorer's Status control.
+  // `null`, NOT 'active', is the default for `filters`' reason: the app has to
+  // tell "absent" from an explicit choice, because an absent `status` falls back
+  // to the legacy `archived` flag while an explicit `status=active` overrides it.
+  status: null,
+  // boolean — SUPERSEDED by `status`, still READ by the app so existing links
+  // (and `lorekit link --archived`) keep resolving to the archived view.
+  archived: false,
   lesson: null, // { scope, key } | null — opens the detail sheet
 };
 
@@ -50,7 +57,7 @@ export const LORE_PARAM_DEFAULTS = {
 // Mirrors the `useUrlState` call order in `LoreExplorer.tsx` (+ the `lesson`
 // param last), so `filters` and `tags` sit between `owner` and `view`. `scope`
 // precedes `lesson` so a lesson link reads `?scope=…&lesson=…`.
-const PARAM_ORDER = ['scope', 'q', 'range', 'owner', 'filters', 'tags', 'view', 'archived', 'lesson'];
+const PARAM_ORDER = ['scope', 'q', 'range', 'owner', 'filters', 'tags', 'view', 'status', 'archived', 'lesson'];
 
 // Strip trailing slashes from a base URL, falling back to the default when the
 // input is empty/absent. Pure.
