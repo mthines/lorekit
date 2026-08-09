@@ -74,6 +74,21 @@ export function requiresGit(mode) {
 }
 
 /**
+ * The same question as `requiresGit`, asked of an EXPLICIT scope string.
+ *
+ * An explicit `scope` overrides `scopeMode` outright, so the git default has to
+ * be read off the scope that will actually be used — reading it off the ignored
+ * mode is how `prepareArm(sandbox, { scope: "global" })` ended up initialising
+ * git for a scope that never needed it.
+ */
+export function requiresGitForScope(scope) {
+  const canonical = String(scope).toLowerCase();
+  return GIT_DEPENDENT_SCOPE_MODES.some((mode) =>
+    canonical.startsWith(`${mode}::`),
+  );
+}
+
+/**
  * The scope a person would TYPE for this mode, whether or not the directory
  * can discover it.
  *
@@ -115,7 +130,9 @@ export function nominalScopeForMode(mode, { ownerRepo, branch, cwd } = {}) {
  * @param {string} [options.scopeMode]  branch | repo | project | global
  * @param {string} [options.scope]      an explicit scope; overrides scopeMode
  * @param {boolean} [options.git]       force git identity on/off (default: on
- *                                      iff the scope mode needs it)
+ *                                      iff the scope actually used — the
+ *                                      explicit `scope` when given, otherwise
+ *                                      `scopeMode` — needs it)
  * @param {boolean} [options.hook]      install the SessionStart hook
  */
 export async function prepareArm(
@@ -143,10 +160,18 @@ export async function prepareArm(
   }
 
   // Default, not a requirement: git is initialised only when the requested
-  // scope needs it to exist. `git: false` with a branch scope is a legal,
+  // scope needs it to exist. An explicit `scope` overrides `scopeMode`, so the
+  // default is derived from the scope that will actually be used — otherwise
+  // the arm reports `scopeMode: "explicit"` while its git default still comes
+  // from the mode it ignored. `git: false` with a branch scope is a legal,
   // deliberately-broken arm — it is how the harness reproduces a retrieval
   // failure on purpose — so it is allowed through to the assertion below.
-  const wantGit = git === null ? requiresGit(scopeMode) : Boolean(git);
+  const wantGit =
+    git === null
+      ? scope
+        ? requiresGitForScope(scope)
+        : requiresGit(scopeMode)
+      : Boolean(git);
 
   const derived = wantGit
     ? await initGitIdentity(sandbox.cwd, { ownerRepo, branch })

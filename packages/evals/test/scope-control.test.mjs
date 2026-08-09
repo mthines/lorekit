@@ -15,6 +15,7 @@ import {
   SCOPE_MODES,
   prepareArm,
   requiresGit,
+  requiresGitForScope,
   scopeForMode,
 } from "../src/arm.mjs";
 import { DEFAULT_BRANCH, DEFAULT_OWNER_REPO } from "../src/git-identity.mjs";
@@ -231,6 +232,37 @@ test("an explicit scope overrides the mode", async () => {
     assert.equal(arm.scopeMode, "explicit");
     assert.equal(arm.targetScope, "global");
   });
+});
+
+test("an explicit scope also decides the git default, not the ignored mode", async () => {
+  // `scopeMode` still defaults to `branch` here; the explicit scope overrides
+  // it, so the git default must follow the scope actually used.
+  await withSandbox({}, async (sandbox) => {
+    const arm = await prepareArm(sandbox, {
+      seed: "canonical",
+      scope: "global",
+    });
+    assert.equal(arm.scopeMode, "explicit");
+    assert.equal(arm.gitInitialized, false);
+    assert.equal(arm.injectable, true);
+  });
+
+  await withSandbox({}, async (sandbox) => {
+    const arm = await prepareArm(sandbox, {
+      seed: "empty",
+      scopeMode: "global",
+      scope: BRANCH_SCOPE,
+    });
+    assert.equal(arm.gitInitialized, true);
+    assert.equal(arm.injectable, true);
+  });
+});
+
+test("requiresGitForScope mirrors requiresGit for a scope string", () => {
+  assert.equal(requiresGitForScope(BRANCH_SCOPE), true);
+  assert.equal(requiresGitForScope(`repo::${DEFAULT_OWNER_REPO}`), true);
+  assert.equal(requiresGitForScope("project::anything"), false);
+  assert.equal(requiresGitForScope("global"), false);
 });
 
 function require_basename(p) {
