@@ -47,6 +47,13 @@ const MALICIOUS: LessonEntry = {
   ].join('\n'),
 };
 
+/** Archived lore is read-only: the Edit tab is disabled and Preview is forced. */
+const ARCHIVED: LessonEntry = {
+  ...LESSON,
+  key: 'archived-lesson',
+  archived_at: '2026-07-30T10:00:00Z',
+};
+
 /** Controlled open state so a dismissal actually unmounts the panel. */
 function Harness({
   onClose,
@@ -211,6 +218,37 @@ export const InitialContentTabIsHonoured: Story = {
       await waitFor(() => expect(contentTextarea()).not.toBeNull());
       await expect(body().getByRole('tab', { name: /edit/i })).toHaveAttribute('aria-selected', 'true');
       await expect(previewPanel()).toBeNull();
+    });
+  },
+};
+
+export const ArchivedLoreIsPreviewOnly: Story = {
+  // The `canEdit: false` branch: the Edit tab is disabled, must not announce a
+  // shortcut it will not honour, and neither the key nor a click can leave
+  // Preview. Only the pure spec covered this before.
+  render: (args) => <Harness onClose={args.onClose} lesson={ARCHIVED} />,
+  play: async ({ step }) => {
+    await body().findByRole('dialog', { name: /memory detail/i });
+    await settleOpenFocus();
+    await step('the Edit tab is disabled and announces no shortcut', async () => {
+      const edit = body().getByRole('tab', { name: /edit/i, hidden: true });
+      await expect(edit).toBeDisabled();
+      await expect(edit).not.toHaveAttribute('aria-keyshortcuts');
+      await expect(body().getByRole('tab', { name: /preview/i })).toHaveAttribute(
+        'aria-keyshortcuts',
+        'P',
+      );
+    });
+    await step('neither the E shortcut nor a click can leave Preview', async () => {
+      await userEvent.keyboard('e');
+      await expect(contentTextarea()).toBeNull();
+      await expect(previewPanel()).not.toBeNull();
+      await userEvent.click(body().getByRole('tab', { name: /edit/i, hidden: true }));
+      await expect(contentTextarea()).toBeNull();
+      await expect(body().getByRole('tab', { name: /preview/i })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      );
     });
   },
 };
