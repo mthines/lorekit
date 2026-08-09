@@ -110,9 +110,35 @@ test('entry-fields imports nothing at all', async () => {
   );
   // Anti-vacuity: prove we read the real module before asserting on its imports.
   assert.match(src, /export function withReadFields/);
-  assert.equal(
-    (src.match(/^\s*import\s/gm) || []).length,
-    0,
+
+  // A module specifier arrives in exactly two shapes: something `from '…'`
+  // (covering `import x from`, `import {x} from`, and `export … from`, with or
+  // without a space after the keyword), or a bare side-effect `import '…'`.
+  // Anchoring on the leading keyword keeps prose in a `//` or ` *` comment line
+  // from matching. `^\s*import\s` alone missed `export … from` and
+  // `import{x}from'y'` — both give the module a real dependency.
+  const moduleDeps = (src) => [
+    ...(src.match(/^[ \t]*(?:import|export)\b[^\n]*\bfrom\s*['"]/gm) || []),
+    ...(src.match(/^[ \t]*import\s*['"]/gm) || []),
+  ];
+
+  // The detector is the assertion, so prove it still detects before trusting a
+  // zero. Each sample is a shape a dependency could really take.
+  for (const sample of [
+    "import fs from 'node:fs';",
+    "import { readFileSync } from 'node:fs';",
+    "import{x}from'y';",
+    "export { a } from './a.mjs';",
+    "export * from './a.mjs';",
+    "import 'node:fs';",
+  ]) {
+    assert.equal(moduleDeps(sample).length, 1, `detector missed: ${sample}`);
+  }
+  assert.equal(moduleDeps('// import fs from "node:fs"\n * export x from "y"\n').length, 0);
+
+  assert.deepEqual(
+    moduleDeps(src),
+    [],
     'entry-fields.mjs must stay dependency-free (no imports, not even node builtins)',
   );
 });
