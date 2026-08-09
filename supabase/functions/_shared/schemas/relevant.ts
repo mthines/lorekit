@@ -4,7 +4,7 @@
 // Why: edge functions are self-contained Deno; a bare '@lorekit/schemas/*'
 // specifier needs an import map, and the local edge runtime is not given one.
 import { z } from 'npm:zod@3';
-import { RawScopeSchema } from './scope.js';
+import { RawScopeSchema } from './scope.ts';
 
 /**
  * `GET /memories/relevant` — the one public verb that answers "which lessons

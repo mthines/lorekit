@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { RawScopeSchema } from './scope.js';
+import { RawScopeSchema } from './scope.ts';
 
 /**
  * `GET /memories/relevant` — the one public verb that answers "which lessons
