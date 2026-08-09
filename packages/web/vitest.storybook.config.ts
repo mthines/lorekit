@@ -48,6 +48,14 @@ export default defineConfig({
   // pulls a schema VALUE in (`FilterMenu.test.stories.tsx`) cannot trigger it.
   // Listing `zod` itself does NOT work — pnpm keeps it out of this package's
   // node_modules, so Vite fails to resolve it.
+  //
+  // `react-markdown` / `remark-gfm` / `rehype-sanitize` (and their large
+  // transitive graph: micromark-*, mdast-*, hast-*, unist-*) enter through
+  // `MarkdownPreview` in `LessonDetailSheet` — a second large graph this PR
+  // added. Same failure mode: Vite's initial scan can miss them and only
+  // discover them when a story first imports the graph at RUN time, which
+  // re-optimizes deps mid-run and 404s modules other test files already
+  // imported. Pre-bundle them for the same reason.
   optimizeDeps: {
     include: [
       '@storybook/nextjs-vite',
@@ -56,6 +64,9 @@ export default defineConfig({
       'motion/react',
       '@lorekit/schemas/memory',
       '@lorekit/schemas/tags',
+      'react-markdown',
+      'remark-gfm',
+      'rehype-sanitize',
     ],
   },
   test: {
