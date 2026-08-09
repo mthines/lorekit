@@ -225,7 +225,9 @@ async function runArm0(options) {
 /**
  * Build one arm's world: git identity, information-environment strip, store
  * seeding, MCP config, and (for the memory arms) the real SessionStart hook.
- * Returns the sandbox plus everything a run needs to describe itself.
+ * Takes the sandbox and returns only what the assembly produced —
+ * `{derived, targetScope, seeded, mcp, hookInstall}` — so a caller keeps using
+ * the sandbox it passed in.
  *
  * PR4's `arms.mjs` orchestrates reps on top of this; keeping the assembly in
  * one place is what stops arm A and arm B from differing in anything except
