@@ -265,12 +265,14 @@ test('install --mcp-json reaches the write step even on an already-complete inst
   }
 });
 
-test('install wires the three lifecycle hooks into project settings.json', async () => {
+test('install wires every lifecycle hook into project settings.json', async () => {
   const root = tmp('lk-hooks-');
   await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true });
 
   const settings = JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8'));
-  for (const event of ['SessionStart', 'PostToolUseFailure', 'Stop']) {
+  // Derived from the constant, never a hardcoded list: a literal triple passed
+  // unchanged whether or not a newly-wired event reached settings.json.
+  for (const event of CLAUDE_HOOK_EVENTS) {
     assert.ok(settings.hooks[event]?.length, `${event} hook group present`);
     const cmd = settings.hooks[event][0].hooks[0].command;
     assert.match(cmd, /lorekit(\/cli)? hook --adapter claude --event /);
@@ -285,7 +287,7 @@ test('install hook wiring is idempotent (no duplicate entries on re-run)', async
   await install(opts);
 
   const settings = JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8'));
-  for (const event of ['SessionStart', 'PostToolUseFailure', 'Stop']) {
+  for (const event of CLAUDE_HOOK_EVENTS) {
     assert.equal(settings.hooks[event].length, 1, `${event} not duplicated on re-run`);
   }
 });

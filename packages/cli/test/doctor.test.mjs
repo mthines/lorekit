@@ -15,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { install } from '../src/install.mjs';
+import { CLAUDE_HOOK_EVENTS } from '../src/config.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const ENDPOINT = 'https://ref.supabase.co/functions/v1/mcp';
@@ -259,7 +260,8 @@ test('doctor reports which hooks are wired and in which scope', async () => {
   const line = (runDoctor(root, home).stdout.split('\n').find((l) => l.includes('hooks project'))) ?? '';
   assert.match(line, /PASS/, `expected a passing hooks line, got: ${line}`);
   assert.match(line, /all/, 'names the resolved mode');
-  for (const event of ['SessionStart', 'PostToolUseFailure', 'Stop']) {
+  // Derived from the constant, never a hardcoded list — see install.test.mjs.
+  for (const event of CLAUDE_HOOK_EVENTS) {
     assert.match(line, new RegExp(event), `names ${event}`);
   }
 });
