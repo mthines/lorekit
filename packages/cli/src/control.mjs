@@ -291,11 +291,14 @@ export function resolveControl({
 
   // `hooks.userPrompt` — repo layer wins over user layer, default `on`.
   //
-  // Default-on is safe because the WIRING is the real switch: the event is only
-  // installed by hook mode `all`, so a user who chose `read-only` or `none`
-  // never reaches this resolution at all. For someone who did choose `all`,
-  // per-turn relevance is the feature they opted into; making them opt in twice
-  // would leave it dark for everyone who never read the config reference.
+  // Default-on is safe because for an `install` the WIRING is the real switch:
+  // the event is installed by hook mode `all` alone, so a user who chose
+  // `read-only` or `none` never reaches this resolution at all, and someone who
+  // chose `all` opted into per-turn relevance — making them opt in twice would
+  // leave it dark for everyone who never read the config reference. A
+  // marketplace-plugin install has no mode and wires the event unconditionally,
+  // so there this key is the whole opt-out; that is why it stays a real config
+  // key rather than being folded into the hook mode.
   const hooksUserPrompt =
     normalizeUserPromptMode(repoConfig['hooks.userPrompt']) ||
     normalizeUserPromptMode(userConfig['hooks.userPrompt']) ||
