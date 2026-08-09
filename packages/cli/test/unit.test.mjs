@@ -1238,6 +1238,31 @@ describe('local store read fields', () => {
     );
   });
 
+  test('local seenCount updatedAt — an EXPIRED but unarchived key keeps counting', async () => {
+    const dir = tmp();
+    const store = createLocalStore(dir);
+    await store.write({ scope: 'global', key: 'k', value: 'v1' });
+
+    // Backdate the expiry the way a lapsed TTL would leave it: hidden from
+    // reads, but never archived.
+    const scopeDir = path.join(dir, 'global');
+    const file = path.join(scopeDir, fs.readdirSync(scopeDir)[0]);
+    fs.writeFileSync(
+      file,
+      fs.readFileSync(file, 'utf8')
+        .replace(/^expires_at: .*$/m, 'expires_at: "2000-01-01T00:00:00.000Z"'),
+    );
+    const hidden = await store.list({ scope: 'global' });
+    assert.equal(hidden.entries.length, 0, 'an expired entry is hidden from reads');
+
+    await store.write({ scope: 'global', key: 'k', value: 'v2' });
+    assert.equal(
+      store.getEntry({ scope: 'global', key: 'k' }).seen_count,
+      2,
+      'expiry hides a lesson, archiving retires it — only the latter restarts the tally',
+    );
+  });
+
   test('store fields degrade — a local file written before the column existed', async () => {
     const dir = tmp();
     const store = createLocalStore(dir);

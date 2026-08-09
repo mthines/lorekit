@@ -140,6 +140,12 @@ class LocalStore {
       // next write rather than throwing or restarting the tally at 2.
       //
       // Reviving an ARCHIVED entry restarts at 1, matching the hosted RPC.
+      // An EXPIRED-but-unarchived entry does NOT: `_findByKey` ignores expiry,
+      // so the file is still found and the tally continues. That asymmetry is
+      // deliberate and mirrors the hosted side — every conflict predicate is
+      // partial on `archived_at is null` only, so an expired row is still the
+      // upsert target and its count still climbs. Expiry hides a lesson from
+      // reads; archiving retires it.
       // The two stores get there differently — every conflict predicate on
       // `memories` is partial on `archived_at is null`, so the server INSERTS a
       // fresh row, while this store revives the file in place (see the docblock
