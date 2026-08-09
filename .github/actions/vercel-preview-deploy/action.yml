@@ -137,6 +137,17 @@ runs:
           echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${ANON_KEY}"
         } >> "$ENV_FILE"
 
+    # A caller that pins a Supabase project but whose anon key came back empty
+    # meant to override and could not — the Override step above self-skipped, so
+    # the build silently keeps Vercel's pulled env (production for a prod-pulled
+    # project). Flag it; deploy.yml emitted this same signal before the flow was
+    # shared. Only fires when an override was INTENDED (project-ref set), so the
+    # deliberate no-override caller (ci.yml, which passes neither) stays quiet.
+    - name: Warn on incomplete Supabase override
+      if: ${{ inputs.supabase-project-ref != '' && inputs.supabase-anon-key == '' }}
+      shell: bash
+      run: echo "::warning::supabase-project-ref set but supabase-anon-key is empty — the Supabase override was skipped and the preview build uses Vercel's pulled ${{ inputs.environment }} env, which may point at production Supabase."
+
     # A CLI build gets none of Vercel's auto-injected VERCEL_GIT_* system env
     # vars, so pass them through — instrumentation-client.ts bakes them into
     # NEXT_PUBLIC_VCS_* (OTel VCS resource attributes) and service.version.
