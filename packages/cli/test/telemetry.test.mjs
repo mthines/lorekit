@@ -966,10 +966,46 @@ test('telemetry.mjs assigns outcome only from CLI_OUTCOMES, never a bare literal
   // Strip comments first: the docblocks in this file legitimately QUOTE the
   // attribute (`lorekit.cli.outcome=failure`), and a scan that cannot tell
   // prose from code would fail on its own documentation. Over-stripping is
-  // caught by the anti-vacuity floor below.
-  const code = source
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^\s*\/\/.*$/gm, '');
+  // caught by the anti-vacuity floors below.
+  //
+  // The `//` half has to be QUOTE-AWARE, not line-anchored. Anchoring it to
+  // the start of a line strips only whole-line comments, so a trailing
+  // `// outcome = 'x'` on a code line survives into the scan and fails the
+  // assertion below for a comment. But a blind cut at the first `//` is worse:
+  // this file contains `https://` inside string literals, and cutting there
+  // would silently delete real code — which is what the anti-vacuity floors
+  // exist to catch. So track string state and cut only outside one.
+  const stripComments = (text) => {
+    let out = '';
+    let quote = null; // "'", '"' or '`' while inside a string literal
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (quote) {
+        out += ch;
+        if (ch === '\\') {
+          out += text[i + 1] ?? '';
+          i++;
+        } else if (ch === quote) {
+          quote = null;
+        }
+        continue;
+      }
+      if (ch === '\'' || ch === '"' || ch === '`') {
+        quote = ch;
+        out += ch;
+        continue;
+      }
+      if (ch === '/' && text[i + 1] === '/') {
+        while (i < text.length && text[i] !== '\n') i++;
+        out += '\n';
+        continue;
+      }
+      out += ch;
+    }
+    return out;
+  };
+
+  const code = stripComments(source.replace(/\/\*[\s\S]*?\*\//g, ''));
 
   const assignments = [...code.matchAll(/\boutcome\s*=\s*(?!=)([^;\n]+)/g)].map((m) => m[1].trim());
   // The attribute is also written as an OBJECT KEY, which `outcome =` cannot
