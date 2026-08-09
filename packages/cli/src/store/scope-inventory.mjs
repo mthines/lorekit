@@ -99,6 +99,17 @@ function clip(v) {
  * adapter), and one that does may still throw. Both are ordinary here, so both
  * come back as `ok: false` with a reason rather than as an exception the caller
  * has to remember to catch.
+ *
+ * THE SECOND DELIBERATE DIVERGENCE from what `memory.scopes` used to answer,
+ * named here for the same reason as `shapeScopeRow`'s clamp. The old
+ * `mcp-server.mjs` path called `store.listScopes()` unguarded and let the
+ * resulting `TypeError` fall into its catch, so a store without the method
+ * reported `scope enumeration failed: store.listScopes is not a function` — an
+ * internal symbol leaked into a user-facing note, and indistinguishable from a
+ * store whose enumeration genuinely blew up. The missing method is checked
+ * first now and reported as `this store cannot enumerate scopes`; the throwing
+ * case keeps the `scope enumeration failed: <message>` wording verbatim. Two
+ * different facts, two different notes.
  */
 export async function readScopeInventory(store) {
   if (!store || typeof store.listScopes !== 'function') {
