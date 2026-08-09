@@ -287,14 +287,23 @@ export const CLI_OUTCOME_VALUES = Object.freeze(Object.values(CLI_OUTCOMES));
  * every traced command, where throwing would turn a telemetry problem into a
  * command failure. The vocabulary is enforced at the call sites (all of which
  * are in this file) and pinned by `telemetry.test.mjs`.
+ *
+ * `extraAttrs` is written FIRST so the attributes this function owns —
+ * command, outcome, exit code, flags — always win. They used to be merged over
+ * last, which meant a command returning `{ exitCode, 'lorekit.cli.outcome': … }`
+ * silently replaced the frozen value on its way out. The source scan cannot see
+ * that: it proves the literal at the call site, not that the value survives to
+ * the wire. Rejecting the collision loudly is not an option here (this runs in a
+ * `finally`), so the owned keys simply take precedence.
  */
 export function commandAttributes({ command, args = {}, outcome, exitCode, extraAttrs = {} }) {
-  const attrs = { 'lorekit.cli.command': command, 'lorekit.cli.outcome': outcome };
+  const attrs = { ...extraAttrs };
+  attrs['lorekit.cli.command'] = command;
+  attrs['lorekit.cli.outcome'] = outcome;
   if (typeof exitCode === 'number') attrs['lorekit.cli.exit_code'] = exitCode;
   for (const flag of FLAG_ATTRS) {
     if (args[flag]) attrs[`lorekit.cli.flag.${flag}`] = true;
   }
-  Object.assign(attrs, extraAttrs);
   return attrs;
 }
 

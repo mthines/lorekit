@@ -970,6 +970,32 @@ test('traceCommand only ever emits an outcome from the closed vocabulary', async
   }
 });
 
+test('extraAttrs cannot override the outcome the call site froze', () => {
+  // The source scan proves the LITERAL at each call site; it cannot prove the
+  // value survives to the wire. `commandAttributes` merges a command's
+  // diagnostic bag into the same flat namespace, so a command returning
+  // `{ exitCode, 'lorekit.cli.outcome': … }` used to replace the frozen value
+  // on the way out — silently, and invisibly to any source scan.
+  const attrs = commandAttributes({
+    command: 'doctor',
+    args: {},
+    outcome: CLI_OUTCOMES.FAILURE,
+    exitCode: 1,
+    extraAttrs: {
+      'lorekit.cli.outcome': 'bogus',
+      'lorekit.cli.command': 'not-doctor',
+      'lorekit.cli.exit_code': 99,
+      'lorekit.cli.doctor.failed_checks': 'connectivity',
+    },
+  });
+
+  assert.equal(attrs['lorekit.cli.outcome'], 'failure');
+  assert.equal(attrs['lorekit.cli.command'], 'doctor');
+  assert.equal(attrs['lorekit.cli.exit_code'], 1);
+  // ...and a non-colliding extra is still carried through.
+  assert.equal(attrs['lorekit.cli.doctor.failed_checks'], 'connectivity');
+});
+
 test('telemetry.mjs assigns outcome only from CLI_OUTCOMES, never a bare literal', async () => {
   // Source scan rather than a behavioural assertion: a fourth value added at a
   // new call site would not fail any existing test, and the failure mode is
@@ -1027,14 +1053,17 @@ test('telemetry.mjs assigns outcome only from CLI_OUTCOMES, never a bare literal
   const code = stripComments(source.replace(/\/\*[\s\S]*?\*\//g, ''));
 
   const assignments = [...code.matchAll(/\boutcome\s*=\s*(?!=)([^;\n]+)/g)].map((m) => m[1].trim());
-  // The attribute is also written as an OBJECT KEY, which `outcome =` cannot
-  // see: `commandAttributes` builds the bag, and `probeTelemetryExport` builds
-  // its own by hand rather than calling it. Scanning only the assignment form
-  // walked straight past the probe's bare literal — the one call site the
-  // vocabulary did not reach.
-  const keyedWrites = [...code.matchAll(/['"]lorekit\.cli\.outcome['"]\s*:\s*([^,\n}]+)/g)].map(
-    (m) => m[1].trim(),
-  );
+  // The attribute is also written BY NAME, which `outcome =` cannot see:
+  // `commandAttributes` builds the bag and `probeTelemetryExport` builds its own
+  // by hand rather than calling it. Scanning only the assignment form walked
+  // straight past the probe's bare literal — the one call site the vocabulary
+  // did not reach. Both spellings of a by-name write count: the object key
+  // (`'lorekit.cli.outcome': x`) and the bracket assignment
+  // (`attrs['lorekit.cli.outcome'] = x`), or moving between them would quietly
+  // drop a call site out of the scan.
+  const keyedWrites = [
+    ...code.matchAll(/['"]lorekit\.cli\.outcome['"]\s*(?::|\]\s*=(?!=))\s*([^,;\n}]+)/g),
+  ].map((m) => m[1].trim());
 
   // Anti-vacuity, one floor per form: the three assignments in traceCommand,
   // and the two keyed writes (commandAttributes' bag, the probe span).
