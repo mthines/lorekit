@@ -182,6 +182,20 @@ export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
   //      whose lessons all lost the ranking still appears, which is precisely
   //      when a reader most needs telling it is there.
   //
+  // THE COST, STATED RATHER THAN LEFT TO BE DISCOVERED. Exactness is not free
+  // on a local or two-tier store: `listScopes()` there is `_walkEntries()`
+  // (`store/local.mjs`), which reads and parses EVERY lesson file under the
+  // base dir — including the scopes outside `readOrder` that the narrowing
+  // below then throws away. So a session start now pays a store-wide walk where
+  // the derived counts cost nothing beyond the bounded read it already did. It
+  // is accepted deliberately: the walk is local disk over a store of markdown
+  // files, the hosted path aggregates in Postgres instead of walking anything,
+  // and the alternative — bounding the enumeration — reinstates the `25+` floor
+  // this change exists to remove. Narrowing the walk would mean a scope filter
+  // on the store contract, which is a change to all three implementations and
+  // to `memory.scopes`; if this ever shows up in a session-start profile, that
+  // is the fix, not a smaller limit here.
+  //
   // Best-effort, like everything on this path: an unreachable remote, a store
   // with no `listScopes`, or a throw all fall back to the derived counts —
   // approximate and `+`-suffixed, exactly what shipped before — rather than
