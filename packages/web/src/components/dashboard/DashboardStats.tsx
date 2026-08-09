@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { BookOpen, BookOpenCheck, Layers } from 'lucide-react';
 import { ScopeHealthGrid } from '@/components/dashboard/ScopeHealthCard';
 import { StatCard } from '@/components/dashboard/StatCard';
+import { RangePicker } from '@/components/ui/RangePicker';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDashboardData } from '@/lib/queries/dashboard';
 import {
@@ -15,7 +16,6 @@ import {
 import {
   bucketPlanForRange,
   gridAnchor,
-  isPresetRange,
   rangeCaption,
   rangeLabel,
   type RangePreset,
@@ -49,11 +49,7 @@ import {
  * refactor deliberately does not make. Until it is made, a hand-edited
  * `?range={"preset":"90d"}` on this page is bounded by the same 62 days.
  */
-const RANGE_OPTIONS: { value: RangePreset; label: string }[] = [
-  { value: '24h', label: '24h' },
-  { value: '7d', label: '7d' },
-  { value: '30d', label: '30d' },
-];
+const OVERVIEW_PRESETS: readonly RangePreset[] = ['24h', '7d', '30d'];
 
 /**
  * Module-level so the reference is stable across renders.
@@ -104,56 +100,6 @@ function rangeTrendTitle(range: TimeRange, nowIso: string): string {
 }
 
 const sumPoints = (points: { value: number }[]) => points.reduce((total, p) => total + p.value, 0);
-
-/**
- * Small, subtle segmented control for picking the stat row's time range. A
- * single-select radiogroup (aria-checked), sized to sit quietly above the cards
- * without competing with the metrics.
- *
- * There is ONE of these for all three cards: three independent pickers let the
- * row show three different windows at once, which made the cards impossible to
- * read against each other.
- */
-function StatRangeSelect({
-  value,
-  onChange,
-}: {
-  value: TimeRange;
-  onChange: (range: TimeRange) => void;
-}) {
-  return (
-    <div
-      role="radiogroup"
-      aria-label="Time range"
-      className="flex items-center gap-0.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-0.5"
-    >
-      {RANGE_OPTIONS.map((opt) => {
-        // Compare the PRESET, not the object: `value` is now a discriminated
-        // union whose absolute arm ({from,to}) matches no button — which is the
-        // correct rendering for a range drilled in from a chart or a deep link,
-        // since none of these presets is what the user is looking at.
-        const active = isPresetRange(value) && value.preset === opt.value;
-        return (
-          <button
-            key={opt.value}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            onClick={() => onChange({ preset: opt.value })}
-            className={[
-              'min-h-6 rounded px-2 py-0.5 text-[10px] font-medium tabular-nums transition-colors duration-150',
-              active
-                ? 'bg-[var(--color-bg-raised)] text-[var(--color-content-primary)] shadow-sm'
-                : 'text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]',
-            ].join(' ')}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 /**
  * The unit a card's number and bars are counted in — "Memory writes",
@@ -341,7 +287,14 @@ export function DashboardStats() {
       <div>
         <div className="mb-3 flex items-center justify-between gap-2">
           <p className="text-xs font-medium text-[var(--color-content-tertiary)]">Activity</p>
-          <StatRangeSelect value={range} onChange={setRange} />
+          {/* The SHARED picker — the Explorer renders the same component, so
+              the two pages cannot drift into two ways of choosing a range. */}
+          <RangePicker
+            value={range}
+            onChange={setRange}
+            presets={OVERVIEW_PRESETS}
+            nowIso={nowIso}
+          />
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {cards.map(({ id, ...card }) => (

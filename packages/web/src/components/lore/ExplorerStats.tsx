@@ -28,8 +28,8 @@
  * that admits its scope.
  */
 
-import { useMemo, useState } from 'react';
-import { BookOpen, BookOpenCheck, ChevronDown, ChevronUp, Hourglass, Layers } from 'lucide-react';
+import { useMemo } from 'react';
+import { BookOpen, BookOpenCheck, Hourglass, Layers } from 'lucide-react';
 import { StatCard } from '@/components/dashboard/StatCard';
 import {
   effectiveStatsRange,
@@ -48,6 +48,21 @@ import {
   rangeLabel,
   type TimeRange,
 } from '@/lib/time-range';
+
+/**
+ * Shorter labels for the collapsed strip.
+ *
+ * The card labels are full sentences of a kind ("Memories written") because a
+ * card has room and a heading should stand alone. Four of those on one line
+ * reads as a paragraph, so the strip leans on the number carrying the emphasis
+ * and the word only disambiguating it.
+ */
+const STRIP_LABELS: Record<string, string> = {
+  written: 'written',
+  read: 'read',
+  scopes: 'scopes',
+  expired: 'expired',
+};
 
 const sumPoints = (points: { value: number }[]) => points.reduce((total, p) => total + p.value, 0);
 
@@ -68,21 +83,22 @@ interface ExplorerStatsProps {
   /** The Explorer's shared time range. */
   range: TimeRange;
   /** Whether the filter bar currently narrows the list but not these numbers. */
-  hasActiveFilters: boolean;
   /** Human label for the selected scope, for captions. */
   scopeLabel: string;
+  /**
+   * `strip` is the collapsed rendering — the four numbers on one line, nothing
+   * else. `cards` is the expanded one. The panel chrome (heading, range picker,
+   * disclosure control) belongs to `ExplorerInsights`, which owns both states.
+   */
+  variant: 'cards' | 'strip';
 }
 
 export function ExplorerStats({
   scope,
   range,
-  hasActiveFilters,
   scopeLabel,
+  variant,
 }: ExplorerStatsProps) {
-  // Ephemeral, like the heatmap panel's collapse — a reader who folds the
-  // header away is decluttering their view, not choosing something to share.
-  const [open, setOpen] = useState(true);
-
   // One clock per mount, so the window, the grid anchor and the captions all
   // describe the same instant. Re-reading `Date.now()` at each site would let a
   // render straddle a bucket boundary and caption a chart it did not draw.
@@ -177,64 +193,56 @@ export function ExplorerStats({
     },
   ];
 
-  return (
-    <section
-      aria-label="Statistics for the current selection"
-      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
-    >
-      <div className="flex items-center justify-between gap-2 px-4 py-3">
-        <div className="flex min-w-0 flex-col">
-          <p className="text-xs font-medium text-[var(--color-content-tertiary)]">
-            {scope ? `Activity · ${scopeLabel}` : 'Activity · all scopes'}
-          </p>
-          {/* Stated only when it can actually mislead: with a filter bar active,
-              the list below shows fewer memories than these numbers count. */}
-          {hasActiveFilters && open && (
-            <p className="mt-0.5 text-[10px] text-[var(--color-content-tertiary)] opacity-70">
-              Counts the selected scope and range — filters narrow the list below, not these
-              numbers.
-            </p>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          aria-label={open ? 'Hide statistics' : 'Show statistics'}
-          className="flex min-h-9 shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-medium text-[var(--color-content-tertiary)] transition-colors duration-150 hover:text-[var(--color-content-secondary)]"
-        >
-          {open ? <ChevronUp className="size-4" aria-hidden /> : <ChevronDown className="size-4" aria-hidden />}
-        </button>
-      </div>
+  if (isError) {
+    return (
+      <p className="px-4 pb-4 text-sm text-[var(--color-content-secondary)]">
+        Failed to load statistics for this selection.
+      </p>
+    );
+  }
 
-      {open && (
-        <div className="px-4 pb-4">
-          {isError ? (
-            <p className="text-sm text-[var(--color-content-secondary)]">
-              Failed to load statistics for this selection.
-            </p>
-          ) : (
-            <div
-              // The held-frame rule: while a new selection loads, the PREVIOUS
-              // render stays put at reduced opacity instead of collapsing to
-              // skeletons. Four cards blanking on every scope click reads as the
-              // page breaking, and the layout jump loses the reader's place.
-              // Only the very first load — where there is no previous frame to
-              // hold — shows the dimmed empty state.
-              className={[
-                'grid grid-cols-1 gap-3 transition-opacity duration-150 sm:grid-cols-2 lg:grid-cols-4',
-                isFetching || isLoading ? 'opacity-60' : 'opacity-100',
-              ].join(' ')}
-              aria-busy={isFetching || isLoading}
-            >
-              {cards.map(({ id, ...card }) => (
-                <StatCard key={id} {...card} trendTitle={trendTitle} rangeTitle={rangeTitle} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </section>
+  // The held-frame rule, in both renderings: while a new selection loads the
+  // PREVIOUS render stays put at reduced opacity instead of collapsing to
+  // skeletons. Cards blanking on every scope click reads as the page breaking,
+  // and the layout jump loses the reader's place.
+  const dim = isFetching || isLoading ? 'opacity-60' : 'opacity-100';
+
+  // ── Collapsed: the numbers, and nothing else ───────────────────────────────
+  // Progressive disclosure that SUMMARISES rather than ERASES. The old collapse
+  // hid all four figures and left a header saying "Activity", which is the
+  // version of this pattern that makes people stop collapsing things: you lose
+  // the answer to keep the space. Here the answer stays and only the evidence
+  // (trends, bars, the heatmap) folds away.
+  if (variant === 'strip') {
+    return (
+      <dl
+        className={`flex flex-wrap items-baseline gap-x-5 gap-y-1 transition-opacity duration-150 ${dim}`}
+        aria-busy={isFetching || isLoading}
+      >
+        {cards.map(({ id, label, value }) => (
+          <div key={id} className="flex items-baseline gap-1.5">
+            <dd className="text-sm font-semibold tabular-nums text-[var(--color-content-primary)]">
+              {value}
+            </dd>
+            <dt className="text-[11px] text-[var(--color-content-tertiary)]">
+              {STRIP_LABELS[id] ?? label}
+            </dt>
+          </div>
+        ))}
+      </dl>
+    );
+  }
+
+  // ── Expanded: the evidence behind each number ──────────────────────────────
+  return (
+    <div
+      className={`grid grid-cols-1 gap-3 transition-opacity duration-150 sm:grid-cols-2 lg:grid-cols-4 ${dim}`}
+      aria-busy={isFetching || isLoading}
+    >
+      {cards.map(({ id, ...card }) => (
+        <StatCard key={id} {...card} trendTitle={trendTitle} rangeTitle={rangeTitle} />
+      ))}
+    </div>
   );
 }
 

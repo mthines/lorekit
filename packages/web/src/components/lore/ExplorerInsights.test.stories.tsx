@@ -2,8 +2,14 @@ import type { Meta, StoryObj } from '@storybook/react';
 import { useState } from 'react';
 import { expect, userEvent, waitFor, within } from 'storybook/test';
 
-import { ExplorerStats } from './ExplorerStats';
+import { ExplorerInsights } from './ExplorerInsights';
 import { memoryHandlers, FROZEN_NOW, EXPIRED_RECORDS, MEMORY_ROWS } from '@/mocks/memories';
+
+/** A few dated cells so the heatmap renders something once expanded. */
+const HEATMAP = [
+  { date: '2026-06-10', count: 3 },
+  { date: '2026-06-12', count: 1 },
+];
 import { withQueryClient, withFrozenClock } from '@/mocks/decorators';
 import type { TimeRange } from '@/lib/time-range';
 
@@ -36,18 +42,23 @@ function Harness({ initialScope = null as string | null }) {
           Last 24h
         </button>
       </div>
-      <ExplorerStats
+      <ExplorerInsights
         scope={scope}
-        range={range}
-        hasActiveFilters={false}
         scopeLabel={scope ? 'mthines/lorekit' : 'All scopes'}
+        range={range}
+        onRangeChange={setRange}
+        hasActiveFilters={false}
+        heatmapData={HEATMAP}
+        highlightRange={null}
+        onSelectDate={() => undefined}
+        nowIso={FROZEN_NOW}
       />
     </div>
   );
 }
 
 const meta: Meta<typeof Harness> = {
-  title: 'Lore/ExplorerStats/Tests',
+  title: 'Lore/ExplorerInsights/Tests',
   component: Harness,
   tags: ['test'],
   parameters: {
@@ -179,21 +190,94 @@ export const ExpiredTileShowsTheUsageLedger: Story = {
   },
 };
 
-export const CollapsesAwayWithoutLosingTheSelection: Story = {
+/**
+ * The disclosure, which is the point of the redesign.
+ *
+ * A collapsed panel that showed nothing would be hiding, not disclosing — and
+ * that is what the previous version did: it folded all four figures away and
+ * left a header reading "Activity". The property under test is that the ANSWER
+ * survives the collapse and only the EVIDENCE folds.
+ */
+export const CollapsedStillShowsTheNumbers: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
-    await canvas.findByText('Memories written');
 
-    await step('the header folds away', async () => {
-      await userEvent.click(canvas.getByRole('button', { name: /hide statistics/i }));
+    await step('it opens COLLAPSED — the page leads with the memories', async () => {
+      await expect(
+        canvas.getByRole('button', { name: /show activity detail/i }),
+      ).toBeInTheDocument();
+      // No cards, no heatmap.
       await expect(canvas.queryByText('Memories written')).toBeNull();
     });
 
-    await step('and comes back with the same numbers', async () => {
-      await userEvent.click(canvas.getByRole('button', { name: /show statistics/i }));
+    await step('but the four numbers are on screen', async () => {
+      // The strip, not the cards: same figures, one line.
       await waitFor(async () => {
-        await expect(await headline(canvas, 'Memories written')).toBeGreaterThan(0);
+        for (const label of ['written', 'read', 'scopes', 'expired']) {
+          await expect(canvas.getByText(label)).toBeInTheDocument();
+        }
       });
+    });
+
+    let stripWritten = '';
+    await step('and they are real values, not placeholders', async () => {
+      const written = canvas.getByText('written').previousElementSibling;
+      stripWritten = written?.textContent?.trim() ?? '';
+      await expect(Number(stripWritten)).toBeGreaterThan(0);
+    });
+
+    await step('expanding reveals the evidence behind them', async () => {
+      await userEvent.click(canvas.getByRole('button', { name: /show activity detail/i }));
+      await waitFor(async () => {
+        await expect(canvas.getByText('Memories written')).toBeInTheDocument();
+        await expect(canvas.getByText(/last 26 weeks/i)).toBeInTheDocument();
+      });
+    });
+
+    await step('and the expanded card AGREES with the strip it replaced', async () => {
+      // The two renderings read the same query, so a mismatch would mean one of
+      // them is computing its own number — the bug that makes a summary
+      // untrustworthy.
+      await expect(String(await headline(canvas, 'Memories written'))).toBe(stripWritten);
+    });
+
+    await step('collapsing returns to the strip, not to nothing', async () => {
+      await userEvent.click(canvas.getByRole('button', { name: /hide activity detail/i }));
+      await waitFor(async () => {
+        await expect(canvas.queryByText('Memories written')).toBeNull();
+        await expect(canvas.getByText('written')).toBeInTheDocument();
+      });
+    });
+  },
+};
+
+/**
+ * The range picker the Explorer was missing, and the reason it is shared with
+ * the Overview rather than reimplemented.
+ */
+export const RangePickerDrivesThePanel: Story = {
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    const group = within(await canvas.findByRole('radiogroup', { name: /time range/i }));
+
+    await step('it offers the Overview presets plus All', async () => {
+      for (const label of ['24h', '7d', '30d', 'All']) {
+        await expect(group.getByRole('radio', { name: new RegExp(label, 'i') })).toBeInTheDocument();
+      }
+    });
+
+    await step('changing it re-queries the numbers', async () => {
+      const before = canvas.getByText('written').previousElementSibling?.textContent;
+      await userEvent.click(group.getByRole('radio', { name: /All/i }));
+      await waitFor(async () => {
+        await expect(group.getByRole('radio', { name: /All/i })).toHaveAttribute(
+          'aria-checked',
+          'true',
+        );
+      });
+      // All time is a superset of the seeded window, so the figure cannot fall.
+      const after = canvas.getByText('written').previousElementSibling?.textContent;
+      await expect(Number(after)).toBeGreaterThanOrEqual(Number(before));
     });
   },
 };

@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react';
 
-import { ExplorerStats } from './ExplorerStats';
+import { ExplorerInsights } from './ExplorerInsights';
 import { memoryHandlers, FROZEN_NOW } from '@/mocks/memories';
 import { withQueryClient, withFrozenClock } from '@/mocks/decorators';
 
@@ -20,30 +20,47 @@ import { withQueryClient, withFrozenClock } from '@/mocks/decorators';
  * `Playground`, because that is what actually varies in use: all scopes vs one,
  * and with vs without a filter bar narrowing the list underneath.
  */
-const meta: Meta<typeof ExplorerStats> = {
-  title: 'Lore/ExplorerStats',
-  component: ExplorerStats,
+/** A short dated series so the heatmap has something to draw when expanded. */
+const HEATMAP = [
+  { date: '2026-06-08', count: 2 },
+  { date: '2026-06-10', count: 5 },
+  { date: '2026-06-12', count: 1 },
+];
+
+const meta: Meta<typeof ExplorerInsights> = {
+  title: 'Lore/ExplorerInsights',
+  component: ExplorerInsights,
   parameters: {
     layout: 'fullscreen',
     msw: { handlers: memoryHandlers() },
   },
   decorators: [withFrozenClock(FROZEN_NOW), withQueryClient],
+  // Shared across every story: the panel needs a heatmap dataset and a clock,
+  // and repeating them per story is how two stories end up describing
+  // different instants.
+  args: {
+    onRangeChange: () => undefined,
+    hasActiveFilters: false,
+    heatmapData: HEATMAP,
+    highlightRange: null,
+    onSelectDate: () => undefined,
+    nowIso: FROZEN_NOW,
+  },
 };
 
 export default meta;
-type Story = StoryObj<typeof ExplorerStats>;
+type Story = StoryObj<typeof ExplorerInsights>;
 
 /** All scopes, no filters — the Explorer's resting state. */
 export const Default: Story = {
   args: {
     scope: null,
     range: { preset: '30d' },
-    hasActiveFilters: false,
     scopeLabel: 'All scopes',
   },
   render: (args) => (
     <div style={{ maxWidth: '72rem', margin: '0 auto', padding: '1rem' }}>
-      <ExplorerStats {...args} />
+      <ExplorerInsights {...args} />
     </div>
   ),
 };
@@ -60,7 +77,6 @@ export const ScopeSelected: Story = {
   args: {
     scope: 'repo::mthines/lorekit',
     range: { preset: '30d' },
-    hasActiveFilters: false,
     scopeLabel: 'mthines/lorekit',
   },
   render: Default.render,
@@ -77,7 +93,6 @@ export const WithActiveFilters: Story = {
   args: {
     scope: 'repo::mthines/lorekit',
     range: { preset: '7d' },
-    hasActiveFilters: true,
     scopeLabel: 'mthines/lorekit',
   },
   render: Default.render,
@@ -94,8 +109,27 @@ export const AbsoluteRange: Story = {
   args: {
     scope: null,
     range: { from: '2026-06-10', to: '2026-06-12' },
-    hasActiveFilters: false,
     scopeLabel: 'All scopes',
   },
   render: Default.render,
+};
+
+/**
+ * The EXPANDED state, reached the way a reader reaches it.
+ *
+ * Worth its own baseline because it is the state the redesign is judged on: the
+ * four cards and the heatmap in one panel, under one header, with the range
+ * picker still in reach. A play function opens it before the screenshot so the
+ * baseline captures the real thing rather than a prop-forced approximation.
+ */
+export const Expanded: Story = {
+  args: Default.args,
+  render: Default.render,
+  play: async ({ canvasElement }) => {
+    const { within, userEvent } = await import('storybook/test');
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole('button', { name: /show activity detail/i }));
+    // Let the height animation settle so the screenshot is not mid-transition.
+    await new Promise((r) => setTimeout(r, 400));
+  },
 };
