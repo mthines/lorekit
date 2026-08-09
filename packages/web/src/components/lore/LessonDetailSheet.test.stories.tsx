@@ -102,7 +102,11 @@ const previewPanel = () => document.getElementById('content-panel-preview');
 const contentTextarea = () => document.querySelector('#content-panel-edit textarea');
 
 /**
- * The panel focuses its close button 80 ms after open.
+ * The panel focuses its close button ~80 ms after open — but ONLY when focus is
+ * not already inside the dialog when the timer fires. If a story has already
+ * placed focus inside the panel, the steal is skipped (the guard in
+ * `LessonDetailSheet.tsx`), so awaiting this helper after moving focus into the
+ * panel would hang; it is for the default open, where nothing has taken focus.
  *
  * **The rule: await this before any keyboard interaction with the panel.**
  * Left unsettled, the timer fires mid-story and moves focus — which drops the
@@ -186,6 +190,35 @@ export const DragDownCloses: Story = {
       pointer('pointerup', window, 340);
       await waitFor(() => expect(body().queryByRole('dialog')).not.toBeInTheDocument());
       await expect(args.onClose).toHaveBeenCalled();
+    });
+  },
+};
+
+export const OpenFocusSkipsWhenAlreadyInside: Story = {
+  // The open-focus effect (~80 ms after open) moves focus to the close button
+  // ONLY when focus is not already inside the dialog — a fast click straight
+  // into a control must not have its keystrokes swallowed. This puts focus on a
+  // tab WITHIN the 80 ms window and asserts the timer does not steal it.
+  //
+  // Non-vacuous by construction: the pre-guard code was an unconditional
+  // `close.focus()`, which — with focus placed here well inside the window —
+  // would move focus to the close button by the time the wait elapses, failing
+  // both assertions below (same shape as ArchivedLoreIsPreviewOnly, written to
+  // fail the pre-fix behaviour).
+  play: async ({ step }) => {
+    await body().findByRole('dialog', { name: /memory detail/i });
+    await step('focus placed inside the panel before the timer is not stolen', async () => {
+      // Place focus inside the dialog well within the ~80 ms open-focus window.
+      // A tab is focusable via .focus() (roving tabindex uses -1, not removal)
+      // and focusing it does not select it, so the panel is otherwise untouched.
+      const editTab = body().getByRole('tab', { name: /edit/i });
+      editTab.focus();
+      await expect(editTab).toHaveFocus();
+      // Wait past the ~80 ms timer. With the guard this is a no-op; the pre-guard
+      // unconditional focus would have pulled focus onto the close button by now.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await expect(editTab).toHaveFocus();
+      await expect(body().getByRole('button', { name: /close detail panel/i })).not.toHaveFocus();
     });
   },
 };
