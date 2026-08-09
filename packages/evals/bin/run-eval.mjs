@@ -77,9 +77,15 @@ export function parseArgs(argv) {
   // through to the unimplemented-subcommand branch and exits 2 with
   // `subcommand "--help" is not implemented yet` — the opposite of what the
   // flag documents.
+  //
+  // The RETURN is the other half of the fix, not a tidy-up: help is a
+  // short-circuit, so nothing after it is an option to validate. Falling into
+  // the loop made `--help arm0` and `-h --anything` throw `unknown option`
+  // instead of printing usage — asking for help and being told off for it.
   if (subcommand === "-h" || subcommand === "--help") {
     options.subcommand = null;
     options.help = true;
+    return options;
   }
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
@@ -102,10 +108,13 @@ export function parseArgs(argv) {
       case "--dry-run":
         options.dryRun = true;
         break;
+      // Same short-circuit as the subcommand-position branch above: once help
+      // is requested the rest of the argv is not a plan to validate, so
+      // `arm0 --help --anything` prints usage instead of erroring.
       case "-h":
       case "--help":
         options.help = true;
-        break;
+        return options;
       default:
         throw new Error(`unknown option: ${arg}`);
     }

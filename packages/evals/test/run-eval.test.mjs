@@ -70,6 +70,30 @@ test("a leading -h/--help is the help flag, not a subcommand", async () => {
   assert.equal(await main(["golden"]), 2);
 });
 
+test("the help flag short-circuits the rest of the argv", async () => {
+  // Asking for help and being told `unknown option` is the failure this
+  // guards: the words after the flag are not a plan to validate, so they must
+  // not reach the option loop at all.
+  for (const argv of [
+    ["--help", "arm0"],
+    ["-h", "--anything"],
+    ["--help", "--reps", "0"],
+  ]) {
+    const options = parseArgs(argv);
+    assert.equal(options.help, true, argv.join(" "));
+    assert.equal(options.subcommand, null, argv.join(" "));
+    assert.equal(await main(argv), 0, argv.join(" "));
+  }
+  // The same rule inside the loop: help wins over whatever follows it, and the
+  // real subcommand is still reported.
+  const trailing = parseArgs(["arm0", "--help", "--nope"]);
+  assert.equal(trailing.help, true);
+  assert.equal(trailing.subcommand, "arm0");
+  assert.equal(await main(["arm0", "--help", "--nope"]), 0);
+  // Without the flag, the unknown option is still rejected.
+  assert.throws(() => parseArgs(["arm0", "--nope"]), /unknown option/);
+});
+
 test("a value-taking flag with no value is a named parse error, not a TypeError later", () => {
   for (const flag of ["--reps", "--out", "--timeout", "--command"]) {
     assert.throws(
