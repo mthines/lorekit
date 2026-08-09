@@ -37,6 +37,15 @@ pass `--hooks <mode>` when you need a specific wiring.
 only skips wiring new ones. `npx @lorekit/cli doctor` reports which events are
 wired and in which scope.
 
+The `SessionStart` block is bounded by a character budget
+(`hooks.sessionStart.maxChars`, default 1500), not by a memory count, and
+memories are ranked by recurrence and recency before it is spent. A header
+reading `9 of 143 memories loaded` means the block was truncated — the trailing
+`More lore: …` line names which scopes hold the rest, and `memory.search` /
+`memory.read` reach them. `hooks.sessionStart` picks the shape:
+`hybrid` (default, list + that map), `index` (list only) or `map`
+(map + the three most salient).
+
 Full self-hosting guide (your own Supabase + Vercel): https://github.com/mthines/lorekit/blob/main/docs/install.md
 
 ## Local mode (offline, no account)

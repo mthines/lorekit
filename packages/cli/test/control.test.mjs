@@ -4,7 +4,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveControl, normalizeMode, loadControl, resolveDenies } from '../src/control.mjs';
+import {
+  resolveControl, normalizeMode, loadControl, resolveDenies,
+  normalizeSessionStartMode, DEFAULT_SESSION_START_MAX_CHARS,
+  MIN_SESSION_START_MAX_CHARS, MAX_SESSION_START_MAX_CHARS,
+} from '../src/control.mjs';
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'lk-ctl-'));
@@ -391,4 +395,69 @@ test('hooks.stop: user fallback when repo is unset; invalid falls through to def
     resolveControl({ repoConfig: { 'hooks.stop': 'nonsense' }, connection: NO_CONN }).hooksStop,
     'friction',
   );
+});
+
+// ── hooks.sessionStart — the shape and the budget of the injected block ───────
+
+test('control hooks.sessionStart: defaults to hybrid at the default budget', () => {
+  const r = resolveControl({ connection: NO_CONN });
+  assert.equal(r.hooksSessionStart, 'hybrid');
+  assert.equal(r.hooksSessionStartMaxChars, DEFAULT_SESSION_START_MAX_CHARS);
+});
+
+test('control hooks.sessionStart: repo wins over user, friendly spellings normalized', () => {
+  const r = resolveControl({
+    repoConfig: { 'hooks.sessionStart': 'MAP' },
+    userConfig: { 'hooks.sessionStart': 'index' },
+    connection: NO_CONN,
+  });
+  assert.equal(r.hooksSessionStart, 'map');
+  assert.equal(normalizeSessionStartMode('toc'), 'map');
+  assert.equal(normalizeSessionStartMode('list'), 'index');
+  assert.equal(normalizeSessionStartMode('both'), 'hybrid');
+  assert.equal(normalizeSessionStartMode('nonsense'), null);
+});
+
+test('control hooks.sessionStart: user fallback; an invalid mode degrades to hybrid', () => {
+  assert.equal(
+    resolveControl({ userConfig: { 'hooks.sessionStart': 'map' }, connection: NO_CONN }).hooksSessionStart,
+    'map',
+  );
+  // A mistyped shape must never blank the injection.
+  assert.equal(
+    resolveControl({ repoConfig: { 'hooks.sessionStart': 'nonsense' }, connection: NO_CONN }).hooksSessionStart,
+    'hybrid',
+  );
+});
+
+test('control hooks.sessionStart: maxChars is clamped, not rejected', () => {
+  const at = (cfg) => resolveControl({ repoConfig: cfg, connection: NO_CONN }).hooksSessionStartMaxChars;
+  assert.equal(at({ 'hooks.sessionStart.maxChars': 800 }), 800);
+  assert.equal(at({ 'hooks.sessionStart.maxChars': '800' }), 800, 'hand-edited JSON strings are read');
+  assert.equal(at({ 'hooks.sessionStart.maxChars': 12 }), MIN_SESSION_START_MAX_CHARS, 'a tiny budget clamps up');
+  assert.equal(at({ 'hooks.sessionStart.maxChars': 1500000 }), MAX_SESSION_START_MAX_CHARS, 'a typo clamps down');
+  // Unusable values fall back to the default rather than throwing — every read
+  // command calls this resolver, including ones that never inject anything.
+  for (const bad of [null, undefined, '', 'lots', {}, []]) {
+    assert.equal(at({ 'hooks.sessionStart.maxChars': bad }), DEFAULT_SESSION_START_MAX_CHARS, `${JSON.stringify(bad)}`);
+  }
+});
+
+test('control hooks.sessionStart: a declared-but-garbage repo budget still beats the user layer', () => {
+  // The `ttl.default` rule. Choosing the layer on the PARSED value would let a
+  // typo'd project policy silently become a per-machine one, so two developers
+  // on the same commit would get different blocks and neither could tell why.
+  const r = resolveControl({
+    repoConfig: { 'hooks.sessionStart.maxChars': 'nine hundred' },
+    userConfig: { 'hooks.sessionStart.maxChars': 400 },
+    connection: NO_CONN,
+  });
+  assert.equal(r.hooksSessionStartMaxChars, DEFAULT_SESSION_START_MAX_CHARS);
+
+  // An ABSENT repo key does fall through — only a declared one claims it.
+  const fellThrough = resolveControl({
+    userConfig: { 'hooks.sessionStart.maxChars': 400 },
+    connection: NO_CONN,
+  });
+  assert.equal(fellThrough.hooksSessionStartMaxChars, 400);
 });
