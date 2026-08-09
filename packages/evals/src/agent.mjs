@@ -195,12 +195,27 @@ export async function runAgent({
   // after the await only ever ran on the success path, leaking an open file
   // descriptor for every failed spawn. `finally` awaits a returned promise, so
   // the stream is flushed before either outcome is observed.
+  //
+  // Waiting on `close`, not on `end()`'s callback, is the load-bearing half:
+  // that callback fires on `finish` — the bytes are flushed but the descriptor
+  // is released later — so `runAgent` could still return with the transcript fd
+  // open, which is exactly what the leak regression test observes (and did,
+  // intermittently, on CI). `close` is the fd-released signal. The `closed`
+  // guard covers the success path, where `pipe` already ended and auto-destroyed
+  // the stream: there the event has fired and waiting for it would hang.
   const { code, signal } = await new Promise((resolve, reject) => {
     child.on("error", reject);
     child.on("close", (c, s) => resolve({ code: c, signal: s }));
   }).finally(() => {
     clearTimeout(killTimer);
-    return new Promise((resolve) => stream.end(resolve));
+    return new Promise((resolve) => {
+      if (stream.closed) {
+        resolve();
+        return;
+      }
+      stream.once("close", resolve);
+      stream.end();
+    });
   });
 
   const wallMs = Date.now() - startedAt;
