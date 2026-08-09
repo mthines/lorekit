@@ -33,6 +33,15 @@ type MemoryRow = Tables<'memories'>;
  * Bounded because the cost is real: every candidate is fetched, scored and
  * mostly discarded. 200 is comfortably more than any `limit` this route accepts
  * (50) while staying one cheap indexed read.
+ *
+ * AND THE HONEST LIMIT THE BOUND BUYS: the window is cut in `updated_at desc`
+ * order, NOT by rank. On a store with more than `CANDIDATE_LIMIT` active rows
+ * matching the filters — most acutely with no `q`, where the filters are just
+ * "active" — an old lesson with a high `seen_count` never enters the set, so
+ * salience cannot surface the very row it exists for. It is a recency-windowed
+ * ranking, not a global one. Widening the cap only moves the cliff; removing it
+ * needs the candidates chosen by rank in Postgres, which is the same `ts_rank`
+ * RPC graded relevance needs (see the relevance note below) and belongs there.
  */
 const CANDIDATE_LIMIT = 200;
 
