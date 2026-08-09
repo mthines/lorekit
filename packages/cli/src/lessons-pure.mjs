@@ -226,11 +226,16 @@ export function resolveScopeKeyArgs(positionals = [], options = {}) {
 //               then contributes the same constant to every candidate and the
 //               ordering is recency + salience alone.
 //
-// PURE AND TOTAL. `now` is injected, never read from the clock, so a ranking is
-// reproducible in a test and in a bug report. Every missing or malformed field
-// degrades to its zero rather than throwing — this runs on the SessionStart hot
-// path behind a hook that must exit 0, and losing the whole injection to save
-// one unparseable timestamp is a bad trade.
+// PURE AND TOTAL, with one scoped exception. `now` is a PARAMETER: the
+// arithmetic never reads the clock, every factor is a function of the value
+// passed in, and a caller that supplies one gets a ranking that is exactly
+// reproducible in a test and in a bug report. `scoreLesson` and `rankLessons`
+// default it to `Date.now()` at the call boundary so the common caller need not
+// thread a clock through — that default is the ONLY clock read, it happens once
+// per call, and passing `now` explicitly removes it. Every missing or malformed
+// field degrades to its zero rather than throwing — this runs on the
+// SessionStart hot path behind a hook that must exit 0, and losing the whole
+// injection to save one unparseable timestamp is a bad trade.
 
 // Age at which a lesson's recency factor halves. Two weeks is roughly the span
 // over which a repo's "what am I working on" context turns over: yesterday's
