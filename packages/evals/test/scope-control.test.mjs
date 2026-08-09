@@ -301,6 +301,19 @@ test("an explicit scope overrides the mode", async () => {
   });
 });
 
+test("a mixed-case explicit scope is canonicalised before it is seeded", async () => {
+  await withSandbox({}, async (sandbox) => {
+    const arm = await prepareArm(sandbox, {
+      seed: "canonical",
+      scope: BRANCH_SCOPE.toUpperCase(),
+    });
+    assert.equal(arm.gitInitialized, true);
+    assert.equal(arm.targetScope, BRANCH_SCOPE);
+    // The whole point: it compares against `readOrder` in the same form.
+    assert.equal(arm.injectable, true);
+  });
+});
+
 test("an explicit scope also decides the git default, not the ignored mode", async () => {
   // `scopeMode` still defaults to `branch` here; the explicit scope overrides
   // it, so the git default must follow the scope actually used.

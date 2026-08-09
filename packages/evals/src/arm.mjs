@@ -185,8 +185,14 @@ export async function prepareArm(
   // it. The nominal fallback is not a workaround — it is the case the harness
   // must be able to construct, because a person or an agent can write that
   // scope from that directory too.
+  //
+  // An explicit scope is lowercased for the same reason `nominalScopeForMode`
+  // is: that is the canonical form the validator normalizes to and the form
+  // `readOrder` carries, so a mixed-case value would otherwise seed one string
+  // and compare against another — reporting `injectable: false` for a scope
+  // the hook can see perfectly well.
   const targetScope =
-    scope ||
+    (scope && String(scope).toLowerCase()) ||
     scopeForMode(derived, scopeMode) ||
     nominalScopeForMode(scopeMode, { ownerRepo, branch, cwd: sandbox.cwd });
 
