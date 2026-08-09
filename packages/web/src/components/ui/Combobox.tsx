@@ -294,6 +294,12 @@ export function Combobox<T extends string>({
             role="combobox"
             aria-expanded
             aria-controls={listboxId}
+            // Here as well as on the trigger, not instead of it: this input is
+            // what holds DOM focus while `searchable`, and a screen reader
+            // announces `aria-activedescendant` from the FOCUSED element only.
+            // Left on the trigger alone, the highlight moved silently for
+            // exactly the shape that has a highlight worth announcing.
+            aria-activedescendant={highlight >= 0 ? `${baseId}-option-${highlight}` : undefined}
             aria-label={`Search ${label.toLowerCase()}`}
             value={query}
             onChange={(e) => setQuery(e.target.value)}

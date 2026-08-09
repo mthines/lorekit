@@ -175,6 +175,19 @@ export const SearchFiltersAndRehomesTheHighlight: Story = {
       });
     });
 
+    await step('the FOCUSED element points at the highlight', async () => {
+      // A screen reader reads `aria-activedescendant` off whatever holds DOM
+      // focus, and while `searchable` that is this input — not the trigger. On
+      // the trigger alone the highlight moved silently in the one shape that
+      // has a search box to move it with.
+      const search = menu.getByRole('combobox', { name: /search status/i });
+      await waitFor(async () => {
+        const active = search.getAttribute('aria-activedescendant');
+        await expect(active).toBeTruthy();
+        await expect(document.getElementById(active as string)).toHaveAttribute('role', 'option');
+      });
+    });
+
     await step('Enter selects the re-homed highlight, not a stale index', async () => {
       // Before narrowing, the highlight sat on `Active` at index 0. After it,
       // index 0 is `Expiring` — a stale index would select nothing here.
