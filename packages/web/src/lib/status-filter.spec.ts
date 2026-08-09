@@ -133,10 +133,15 @@ describe('expiringWithinDays', () => {
     expect(expiringWithinDays('archived')).toBeUndefined();
   });
 
-  it('agrees with what statusToQueryParams sends', () => {
-    for (const status of MEMORY_STATUSES) {
-      expect(statusToQueryParams(status).expiring_within_days).toBe(expiringWithinDays(status));
-    }
+  it('sends the literal horizon on the wire', () => {
+    // Pinned to the number, not read back out of `expiringWithinDays`:
+    // `expiringWithinDays` IS `statusToQueryParams(...).expiring_within_days`,
+    // so comparing the two asserts the call against itself and survives any
+    // change to the horizon — including one that puts it outside the 1–365 the
+    // route admits.
+    expect(statusToQueryParams('expiring').expiring_within_days).toBe(7);
+    expect(statusToQueryParams('active').expiring_within_days).toBeUndefined();
+    expect(statusToQueryParams('archived').expiring_within_days).toBeUndefined();
   });
 });
 
