@@ -174,83 +174,27 @@ jobs:
         with:
           ref: ${{ needs.guard.outputs.pr_sha }}
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 20
-          cache: pnpm
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Vercel CLI
-        run: pnpm add -g vercel
-
-      - name: Pull Vercel environment
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-        run: vercel pull --yes --environment=preview
-
-      # Overrides the Vercel-pulled preview vars with staging values by
-      # rewriting the env file `vercel pull` produced and `vercel build`
-      # actually reads (.vercel/.env.preview.local). Editing this file — not
-      # .env.local — is what guarantees the override: `vercel build` injects
-      # these values into process.env, and Next.js never lets a .env.local
-      # entry override a variable already set in process.env. We strip any
-      # pulled NEXT_PUBLIC_SUPABASE_* lines first so ours are the only
-      # definitions. This mutates only the runner's local copy for this one
-      # build; push-triggered Vercel previews never run this workflow, so
-      # their env is unchanged.
-      - name: Override Supabase config with staging values
-        env:
-          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
-          ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-        run: |
-          ENV_FILE=".vercel/.env.preview.local"
-          if [ ! -f "$ENV_FILE" ]; then
-            echo "::error::$ENV_FILE not found — did 'vercel pull' run?"
-            exit 1
-          fi
-          # Drop any pulled Supabase vars so ours are the only definitions.
-          grep -vE '^(NEXT_PUBLIC_SUPABASE_URL|NEXT_PUBLIC_SUPABASE_ANON_KEY|NEXT_PUBLIC_SUPABASE_PROJECT_REF)=' \
-            "$ENV_FILE" > "$ENV_FILE.tmp" || true
-          mv "$ENV_FILE.tmp" "$ENV_FILE"
-          {
-            echo "NEXT_PUBLIC_SUPABASE_URL=https://${PROJECT_REF}.supabase.co"
-            echo "NEXT_PUBLIC_SUPABASE_PROJECT_REF=${PROJECT_REF}"
-            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${ANON_KEY}"
-          } >> "$ENV_FILE"
-
-      - name: Build Vercel preview
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-        run: vercel build
-
-      - name: Deploy to Vercel preview
+      # Shared build+deploy flow (see .github/actions/vercel-preview-deploy).
+      # Overrides the pulled preview env with the staging Supabase project so the
+      # /preview build talks to staging, in lock-step with deploy.yml's
+      # smoke-preview. This mutates only the runner's local copy for this one
+      # build; nothing is written back to Vercel's stored env.
+      - name: Deploy Vercel preview
         id: deploy
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-        run: |
-          # Vercel prints the deployment URL to stdout and progress to stderr;
-          # keep them separate (no 2>&1) and grep the URL so a trailing stderr
-          # line can never be mistaken for the deployment URL.
-          deploy_out="$(vercel deploy --prebuilt)"
-          echo "$deploy_out"
-          URL="$(printf '%s\n' "$deploy_out" | grep -Eo 'https://[^[:space:]]+' | tail -1)"
-          if [ -z "$URL" ]; then
-            echo "::error::Could not parse Vercel deployment URL"
-            exit 1
-          fi
-          echo "url=$URL" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/vercel-preview-deploy
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          supabase-project-ref: ${{ secrets.SUPABASE_PROJECT_REF }}
+          supabase-anon-key: ${{ secrets.SUPABASE_ANON_KEY }}
+          # Always overrides at the staging Supabase project — warn (not silently
+          # fall back to the pulled env) if either secret is missing.
+          require-supabase-override: 'true'
+          git-repo-owner: ${{ github.repository_owner }}
+          git-repo-slug: ${{ github.event.repository.name }}
+          git-commit-ref: ${{ needs.guard.outputs.pr_branch }}
+          git-commit-sha: ${{ needs.guard.outputs.pr_sha }}
 
   smoke:
     name: Smoke test → preview API

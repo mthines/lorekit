@@ -65,6 +65,10 @@ import {
   UsageStatsResponseSchema,
 } from '../usage.ts';
 import {
+  RelevantQuerySchema,
+  RelevantResponseSchema,
+} from '../relevant.ts';
+import {
   GetBlogLikesQuerySchema,
   LikeBlogBodySchema,
   BlogLikesResponseSchema,
@@ -264,6 +268,28 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
     security, request: { query: ReadActivityQuerySchema },
     responses: {
       200: { description: 'Read-activity buckets', content: { 'application/json': { schema: ReadActivityResponseSchema } } },
+      400: errorResponse, 401: errorResponse, 403: errorResponse,
+    },
+  });
+  registry.registerPath({
+    method: 'get', path: '/memories/relevant',
+    summary: 'Top-K lessons ranked for a query — the shortlist, not the whole match set', tags: ['Memories'],
+    description:
+      'The one verb that RANKS. Every other read returns a single-signal ordering — ' +
+      '`GET /memories` is `updated_at` desc, `POST /memories/search` is FTS rank — so a caller ' +
+      'wanting a useful shortlist had to fetch a page and re-sort it, and every client that did ' +
+      'so disagreed with the others. Here the score combines RECENCY (exponential decay, 14-day ' +
+      'half-life), SALIENCE (`log1p(seen_count)` normalised across the candidates, so a lesson ' +
+      'learned twelve times outranks one written once) and RELEVANCE (full-text match on `q`). ' +
+      'The response is a compact index — scope, key, a one-line hook and the score — because the ' +
+      'point is deciding WHICH few lessons deserve a reader\'s attention; fetch the bodies with ' +
+      '`GET /memories/:id` or `memory.read`. `q` is optional: without it the ranking is recency + ' +
+      'salience, which answers "what matters generally" rather than "what matters for this". ' +
+      '`scopes` is ordered most-specific first and that order breaks ties, so a project lesson ' +
+      'wins over the global one it ties with.',
+    security, request: { query: RelevantQuerySchema },
+    responses: {
+      200: { description: 'Ranked lessons', content: { 'application/json': { schema: RelevantResponseSchema } } },
       400: errorResponse, 401: errorResponse, 403: errorResponse,
     },
   });

@@ -16,6 +16,7 @@
     "./member": "./src/member.ts",
     "./invite": "./src/invite.ts",
     "./usage": "./src/usage.ts",
+    "./relevant": "./src/relevant.ts",
     "./openapi/spec": "./src/openapi/spec.ts",
     "./tool-catalog": "./src/tool-catalog.ts",
     "./llms/render": "./src/llms/render.ts"

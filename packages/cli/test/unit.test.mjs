@@ -4,10 +4,18 @@ import { ownerRepoFromRemote } from '../src/scope.mjs';
 import { splitEndpoint, buildRemoteUrl, mcpCall } from '../src/mcp.mjs';
 import { tokenKind } from '../src/config.mjs';
 import { parseArgs, selectAction, select } from '../src/util.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createRemoteStore } from '../src/store/remote.mjs';
+import { createLocalStore } from '../src/store/local.mjs';
 import {
   gatherStream, gather, clusterDuplicates, clusterDuplicatesBlocked, DEFAULT_MAX,
 } from '../src/lessons-view.mjs';
+import {
+  rankLessons, scoreLesson, recencyFactor, salienceFactor, relevanceFactor,
+  RECENCY_HALF_LIFE_DAYS, DEFAULT_RANK_WEIGHTS,
+} from '../src/lessons-pure.mjs';
 import { MEMORY_TOOL_DEFS } from '../src/mcp-server.mjs';
 
 test('ownerRepoFromRemote normalizes remote URL variants', () => {
@@ -1088,5 +1096,669 @@ describe('mcp-server cursor threading', () => {
     );
     assert.equal(result.hasMore, true, 'hasMore surfaced from search REST response');
     assert.equal(result.nextCursor, 'def456', 'nextCursor surfaced from search REST response');
+  });
+});
+
+// ── The read shape a ranking layer consumes: seenCount + updatedAt ────────────
+// Both stores answer in their own vocabulary — the remote store hands back a
+// REST `MemoryEntry` (`seen_count` / `updated_at`), the local store hands back
+// parsed frontmatter (`seen_count` / `updated`) — so a ranker that had to know
+// which one it was holding would grow two copies of the same rule. The pure
+// `entry-fields.mjs` projection is applied by both, and these tests pin the
+// contract rather than either store's internals.
+//
+// The fields are ADDITIVE: every key the store already returned survives, so an
+// existing caller cannot be broken by the projection.
+
+describe('store read fields', () => {
+  const withSeen = (n, updated) => JSON.stringify({
+    entries: [{ id: 'i1', scope: 'global', key: 'k', value: 'v', tags: [], seen_count: n, updated_at: updated }],
+  });
+
+  test('remote seenCount updatedAt — list and search carry both fields', async () => {
+    const updated = '2026-08-01T10:20:30.000Z';
+
+    const listed = await captureRestCalls(
+      (store) => store.list({ scope: 'global' }),
+      { status: 200, body: withSeen(7, updated) },
+    );
+    assert.equal(listed.result.entries[0].seenCount, 7);
+    assert.equal(listed.result.entries[0].updatedAt, updated);
+    // Additive — the original REST keys are untouched.
+    assert.equal(listed.result.entries[0].seen_count, 7);
+    assert.equal(listed.result.entries[0].value, 'v');
+
+    const searched = await captureRestCalls(
+      (store) => store.search({ q: 'v' }),
+      { status: 200, body: withSeen(3, updated) },
+    );
+    assert.equal(searched.result.entries[0].seenCount, 3);
+    assert.equal(searched.result.entries[0].updatedAt, updated);
+
+    // read() answers with the same shape — a single lookup must not differ from
+    // the listing the caller found the key in.
+    const read = await captureRestCalls(
+      (store) => store.read({ scope: 'global', key: 'k' }),
+      { status: 200, body: withSeen(2, updated) },
+    );
+    assert.equal(read.result.entry.seenCount, 2);
+    assert.equal(read.result.entry.updatedAt, updated);
+  });
+
+  test('store fields degrade — a row missing either field never throws', async () => {
+    // A backend deployed before migration 00058 returns no `seen_count` at all.
+    const { result } = await captureRestCalls(
+      (store) => store.list({ scope: 'global' }),
+      { status: 200, body: JSON.stringify({ entries: [{ key: 'k', value: 'v' }] }) },
+    );
+    assert.equal(result.entries[0].seenCount, 0, 'absent count reads as 0, not 1');
+    assert.equal(result.entries[0].updatedAt, null, 'absent timestamp reads as null');
+
+    // Garbage in every field the projection touches.
+    const junk = await captureRestCalls(
+      (store) => store.list({ scope: 'global' }),
+      {
+        status: 200,
+        body: JSON.stringify({
+          entries: [
+            { key: 'a', seen_count: 'not-a-number', updated_at: 'not-a-date' },
+            { key: 'b', seen_count: -4, updated_at: '' },
+            { key: 'c', seen_count: 2.7 },
+            null,
+          ],
+        }),
+      },
+    );
+    assert.deepEqual(junk.result.entries.map((e) => e.seenCount), [0, 0, 2, 0]);
+    assert.deepEqual(junk.result.entries.map((e) => e.updatedAt), [null, null, null, null]);
+  });
+
+  test('store fields degrade — a numeric string count is read, not dropped', async () => {
+    // PostgREST can render a bigint as a string; the projection coerces rather
+    // than silently scoring the lesson as never-seen.
+    const { result } = await captureRestCalls(
+      (store) => store.list({ scope: 'global' }),
+      { status: 200, body: JSON.stringify({ entries: [{ key: 'k', seen_count: '5' }] }) },
+    );
+    assert.equal(result.entries[0].seenCount, 5);
+  });
+});
+
+describe('local store read fields', () => {
+  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'lk-fields-'));
+
+  test('local seenCount updatedAt — list, search and read carry both fields', async () => {
+    const store = createLocalStore(tmp());
+    await store.write({ scope: 'global', key: 'k', value: 'v1' });
+
+    const listed = await store.list({ scope: 'global' });
+    assert.equal(listed.entries[0].seenCount, 1, 'a first write is one sighting');
+    assert.equal(
+      listed.entries[0].updatedAt,
+      new Date(listed.entries[0].updated).toISOString(),
+      'updatedAt is the frontmatter `updated`, normalised to ISO',
+    );
+
+    const searched = await store.search({ q: 'v1', scopes: ['global'] });
+    assert.equal(searched.entries[0].seenCount, 1);
+    assert.ok(searched.entries[0].updatedAt);
+
+    const read = await store.read({ scope: 'global', key: 'k' });
+    assert.equal(read.entry.seenCount, 1);
+    assert.ok(read.entry.updatedAt);
+  });
+
+  test('local seenCount updatedAt — a rewrite of the same key counts the recurrence', async () => {
+    const store = createLocalStore(tmp());
+    await store.write({ scope: 'global', key: 'k', value: 'v1' });
+    await store.write({ scope: 'global', key: 'k', value: 'v2' });
+    await store.write({ scope: 'global', key: 'k', value: 'v3' });
+
+    const { entries } = await store.list({ scope: 'global' });
+    assert.equal(entries.length, 1, 'the upsert must not fan out into three files');
+    assert.equal(entries[0].seenCount, 3, 'three writes of one key is three sightings');
+    assert.equal(entries[0].value, 'v3');
+  });
+
+  test('local seenCount updatedAt — a different key is its own tally', async () => {
+    const store = createLocalStore(tmp());
+    await store.write({ scope: 'global', key: 'recurring', value: 'v' });
+    await store.write({ scope: 'global', key: 'recurring', value: 'v' });
+    await store.write({ scope: 'global', key: 'one-off', value: 'v' });
+
+    const { entries } = await store.list({ scope: 'global' });
+    const bySeen = Object.fromEntries(entries.map((e) => [e.key, e.seenCount]));
+    assert.deepEqual(bySeen, { recurring: 2, 'one-off': 1 });
+  });
+
+  test('local seenCount updatedAt — reviving an archived key restarts the tally', async () => {
+    const store = createLocalStore(tmp());
+    await store.write({ scope: 'global', key: 'k', value: 'v1' });
+    await store.write({ scope: 'global', key: 'k', value: 'v2' });
+    await store.archive({ scope: 'global', key: 'k' });
+    await store.write({ scope: 'global', key: 'k', value: 'v3' });
+
+    const { entries } = await store.list({ scope: 'global' });
+    assert.equal(
+      entries[0].seenCount,
+      1,
+      'a retired lesson being learned again starts over, matching the hosted RPC',
+    );
+  });
+
+  test('store fields degrade — a local file written before the column existed', async () => {
+    const dir = tmp();
+    const store = createLocalStore(dir);
+    await store.write({ scope: 'global', key: 'k', value: 'v1' });
+
+    // Strip the column the way a file written by an older CLI would lack it.
+    const scopeDir = path.join(dir, 'global');
+    const file = path.join(scopeDir, fs.readdirSync(scopeDir)[0]);
+    fs.writeFileSync(
+      file,
+      fs.readFileSync(file, 'utf8').split('\n').filter((l) => !l.startsWith('seen_count:')).join('\n'),
+    );
+
+    const { entries } = await store.list({ scope: 'global' });
+    assert.equal(entries[0].seenCount, 0, 'absent reads as 0 — no evidence, not one sighting');
+    assert.ok(entries[0].updatedAt, 'the timestamp is unaffected');
+
+    // And the next write resumes the tally rather than throwing.
+    await store.write({ scope: 'global', key: 'k', value: 'v2' });
+    const after = await store.list({ scope: 'global' });
+    assert.equal(after.entries[0].seenCount, 1);
+  });
+
+  test('store fields degrade — a hand-edited frontmatter scalar never throws', async () => {
+    const dir = tmp();
+    const store = createLocalStore(dir);
+    await store.write({ scope: 'global', key: 'k', value: 'v1' });
+
+    const scopeDir = path.join(dir, 'global');
+    const file = path.join(scopeDir, fs.readdirSync(scopeDir)[0]);
+    fs.writeFileSync(
+      file,
+      fs.readFileSync(file, 'utf8')
+        .replace(/^seen_count: .*$/m, 'seen_count: lots')
+        .replace(/^updated: .*$/m, 'updated: yesterday'),
+    );
+
+    const { entries } = await store.list({ scope: 'global' });
+    assert.equal(entries[0].seenCount, 0);
+    assert.equal(entries[0].updatedAt, null, 'an unparseable date is null, never Invalid Date');
+  });
+
+  test('local seenCount updatedAt — putEntry relocates a count verbatim', async () => {
+    const from = createLocalStore(tmp());
+    const to = createLocalStore(tmp());
+    await from.write({ scope: 'global', key: 'k', value: 'v' });
+    await from.write({ scope: 'global', key: 'k', value: 'v' });
+
+    const { entries } = await from.list({ scope: 'global' });
+    await to.putEntry(entries[0]);
+
+    const moved = await to.list({ scope: 'global' });
+    assert.equal(
+      moved.entries[0].seenCount,
+      2,
+      'migrate relocates a store, it does not re-sight its lessons',
+    );
+  });
+});
+
+// ── rankLessons: the injection-order scorer ──────────────────────────────────
+// Ordering by recency alone is what makes a busy repo's SessionStart injection
+// useless: the newest cluster of writes is one task's iteration log, and it
+// takes every slot. These tests pin the behaviour that fixes that, and the
+// total-function guarantees the hot path relies on.
+
+describe('rankLessons', () => {
+  const DAY = 86400000;
+  const NOW = Date.parse('2026-08-01T00:00:00.000Z');
+  const at = (daysAgo) => new Date(NOW - daysAgo * DAY).toISOString();
+
+  const lesson = (key, { days = 0, seen = 1, scope = 'global', value = '' } = {}) => ({
+    scope, key, value, seenCount: seen, updatedAt: at(days),
+  });
+
+  const keys = (entries, opts) => rankLessons(entries, { now: NOW, ...opts }).map((e) => e.key);
+
+  test('rankLessons order — best first, and the input is not mutated', () => {
+    const input = [
+      lesson('old-oneoff', { days: 60, seen: 1 }),
+      lesson('fresh-recurring', { days: 1, seen: 9 }),
+      lesson('fresh-oneoff', { days: 1, seen: 1 }),
+    ];
+    const snapshot = input.map((e) => e.key);
+
+    const ranked = rankLessons(input, { now: NOW });
+    assert.deepEqual(ranked.map((e) => e.key), ['fresh-recurring', 'fresh-oneoff', 'old-oneoff']);
+    assert.deepEqual(input.map((e) => e.key), snapshot, 'the caller still holds the input order');
+    assert.notEqual(ranked, input, 'a new array, never a sort in place');
+    assert.equal(ranked[0], input[1], 'the entries themselves are passed through, not copied');
+  });
+
+  test('rankLessons salience — recurrence beats a one-off at equal recency', () => {
+    // The whole point of the scorer. Same day, same everything else.
+    assert.deepEqual(
+      keys([lesson('once', { days: 3, seen: 1 }), lesson('eight-times', { days: 3, seen: 8 })]),
+      ['eight-times', 'once'],
+    );
+  });
+
+  test('rankLessons salience — and it beats a NEWER one-off, which is the bug', () => {
+    // The observed failure: a dozen one-offs from today evict the lesson that
+    // has been re-learned all month. One of them should still lose to it.
+    const ranked = keys([
+      lesson('todays-noise-1', { days: 0, seen: 1 }),
+      lesson('todays-noise-2', { days: 0, seen: 1 }),
+      lesson('hard-won', { days: 5, seen: 25 }),
+    ]);
+    assert.equal(ranked[0], 'hard-won');
+  });
+
+  test('rankLessons salience — a set with no recurrence ranks purely on recency', () => {
+    // Nothing has recurred, so salience has nothing to say and must not invent
+    // a preference between equals.
+    assert.deepEqual(
+      keys([lesson('c', { days: 9 }), lesson('a', { days: 1 }), lesson('b', { days: 4 })]),
+      ['a', 'b', 'c'],
+    );
+  });
+
+  test('rankLessons no-terms — an empty query is identical to recency+salience', () => {
+    const entries = [
+      lesson('alpha', { days: 2, seen: 4, value: 'timeout on connect' }),
+      lesson('beta', { days: 8, seen: 9, value: 'unrelated body' }),
+      lesson('gamma', { days: 1, seen: 1, value: 'timeout again' }),
+    ];
+    // The reference ordering: relevance weighted out entirely.
+    const withoutRelevance = rankLessons(entries, {
+      now: NOW,
+      weights: { recency: 1, salience: 1, relevance: 0 },
+    }).map((e) => e.key);
+
+    assert.deepEqual(keys(entries), withoutRelevance, 'terms omitted');
+    assert.deepEqual(keys(entries, { terms: [] }), withoutRelevance, 'terms: []');
+    assert.deepEqual(keys(entries, { terms: ['', '   '] }), withoutRelevance, 'blank terms');
+  });
+
+  test('rankLessons — terms lift the lesson that matches them', () => {
+    const entries = [
+      lesson('fresh-unrelated', { days: 0, seen: 1, value: 'nothing to do with it' }),
+      lesson('stale-match', { days: 30, seen: 1, value: 'ECONNREFUSED on connect' }),
+    ];
+    assert.equal(keys(entries)[0], 'fresh-unrelated', 'without terms, recency wins');
+    assert.equal(
+      keys(entries, { terms: ['econnrefused'] })[0],
+      'stale-match',
+      'a match outweighs a month of age',
+    );
+  });
+
+  test('rankLessons deterministic ties — scope precedence, then key', () => {
+    // Identical in every scoring input, so only the tiebreakers separate them.
+    const entries = [
+      { scope: 'global', key: 'zzz', value: '', seenCount: 1, updatedAt: at(1) },
+      { scope: 'global', key: 'aaa', value: '', seenCount: 1, updatedAt: at(1) },
+      { scope: 'repo::o/r', key: 'mmm', value: '', seenCount: 1, updatedAt: at(1) },
+    ];
+    // Input order defines precedence, so `global` (seen first) outranks the repo
+    // scope here — and within it, key order decides.
+    assert.deepEqual(keys(entries), ['aaa', 'zzz', 'mmm']);
+
+    // An explicit scopeOrder overrides that, which is how a caller passes the
+    // real narrow-to-broad hierarchy.
+    assert.deepEqual(
+      keys(entries, { scopeOrder: ['repo::o/r', 'global'] }),
+      ['mmm', 'aaa', 'zzz'],
+    );
+  });
+
+  test('rankLessons deterministic ties — near-ties do not depend on input order', () => {
+    // An `abs(a - b) <= epsilon` tie is not transitive: three scores a grid
+    // step apart give a~b, b~c and c>a, the comparator stops being a strict
+    // weak ordering, and `sort` falls back to arrival position. Measured
+    // against that form, these three lessons produced THREE different
+    // orderings across the six permutations. Keys are chosen to disagree with
+    // recency order so the tiebreak has to actually do the work.
+    const near = [
+      { scope: 'global', key: 'z', value: '', seenCount: 1, updatedAt: new Date(NOW - 0).toISOString() },
+      { scope: 'global', key: 'y', value: '', seenCount: 1, updatedAt: new Date(NOW - 3).toISOString() },
+      { scope: 'global', key: 'x', value: '', seenCount: 1, updatedAt: new Date(NOW - 6).toISOString() },
+    ];
+    const permutations = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+    const orderings = new Set(
+      permutations.map((p) => rankLessons(p.map((i) => near[i]), { now: NOW }).map((e) => e.key).join(',')),
+    );
+    assert.equal(orderings.size, 1, `input order changed the ranking: ${[...orderings].join(' | ')}`);
+    // Whatever the one ordering is, every entry is still present exactly once —
+    // a comparator that is not a strict weak ordering can also drop or repeat.
+    assert.deepEqual([...orderings][0].split(',').sort(), ['x', 'y', 'z']);
+  });
+
+  test('rankLessons deterministic ties — the same input always gives the same output', () => {
+    const entries = Array.from({ length: 25 }, (_, i) => lesson(`k${i}`, { days: i % 5, seen: (i % 3) + 1 }));
+    const first = keys(entries);
+    for (let i = 0; i < 5; i += 1) assert.deepEqual(keys(entries), first);
+    // And it is a function of `now`, not of the wall clock: same inputs, same
+    // answer, whenever the test happens to run.
+    assert.deepEqual(rankLessons(entries, { now: new Date(NOW) }).map((e) => e.key), first);
+  });
+
+  test('rankLessons malformed — junk entries never throw and never win', () => {
+    const good = lesson('good', { days: 1, seen: 5 });
+    const ranked = rankLessons(
+      [
+        null,
+        undefined,
+        'a string',
+        42,
+        {},
+        { key: 'no-timestamp' },
+        { key: 'bad-timestamp', updatedAt: 'yesterday', seenCount: 'lots' },
+        { key: 'negative', updatedAt: at(1), seenCount: -8 },
+        good,
+      ],
+      { now: NOW },
+    );
+    assert.equal(ranked[0], good, 'a well-formed recurring lesson still wins');
+    // The four non-objects are dropped; every object survives, scored on what
+    // it had — a lesson is not discarded for having a field this cannot read.
+    assert.equal(ranked.length, 5);
+    assert.ok(ranked.every((e) => e && typeof e === 'object'));
+  });
+
+  test('rankLessons malformed — an empty or non-array input is an empty result', () => {
+    for (const bad of [[], null, undefined, 'nope', 7, {}]) {
+      assert.deepEqual(rankLessons(bad, { now: NOW }), [], `input ${String(bad)}`);
+    }
+  });
+
+  test('rankLessons malformed — a broken `now` or weight set degrades, never throws', () => {
+    const entries = [lesson('a', { days: 1, seen: 2 }), lesson('b', { days: 9, seen: 1 })];
+    // An unusable clock zeroes recency for everyone rather than throwing; the
+    // remaining factors still rank.
+    assert.equal(rankLessons(entries, { now: 'not-a-date' }).length, 2);
+    // Weights that sum to zero would divide by zero — the defaults take over.
+    assert.deepEqual(
+      rankLessons(entries, { now: NOW, weights: { recency: 0, salience: 0, relevance: 0 } })
+        .map((e) => e.key),
+      keys(entries),
+    );
+    // A junk weight falls back per-field, not wholesale.
+    assert.equal(rankLessons(entries, { now: NOW, weights: { recency: 'lots' } }).length, 2);
+  });
+
+  test('rankLessons reads either spelling of the count and the timestamp', () => {
+    // An entry straight off the REST route (not through the store projection)
+    // must rank the same as one that went through it.
+    const projected = { scope: 'global', key: 'z-projected', value: '', seenCount: 9, updatedAt: at(2) };
+    const raw = { scope: 'global', key: 'a-raw', value: '', seen_count: 9, updated_at: at(2) };
+    const ranked = rankLessons([projected, raw], { now: NOW });
+    // `raw` deliberately carries the SMALLER key, so first place is reachable
+    // only by TYING on score. If either snake_case field went unread it would
+    // score strictly lower (recency and salience both collapse to 0) and sort
+    // second, and the key tiebreak would never be consulted — which is what
+    // makes this assertion discriminate rather than merely restate the input.
+    assert.deepEqual(ranked.map((e) => e.key), ['a-raw', 'z-projected']);
+  });
+});
+
+describe('scoreLesson factors', () => {
+  const NOW = Date.parse('2026-08-01T00:00:00.000Z');
+  const daysAgo = (n) => new Date(NOW - n * 86400000).toISOString();
+
+  test('recencyFactor halves at the half-life and is bounded', () => {
+    assert.equal(recencyFactor(daysAgo(0), NOW), 1);
+    assert.ok(Math.abs(recencyFactor(daysAgo(RECENCY_HALF_LIFE_DAYS), NOW) - 0.5) < 1e-12);
+    assert.ok(recencyFactor(daysAgo(365), NOW) > 0, 'decays toward 0, never to it');
+    assert.ok(recencyFactor(daysAgo(365), NOW) < 0.001);
+  });
+
+  test('recencyFactor honours an explicit halfLifeDays, and falls back on junk', () => {
+    // The parameter was unpinned: nothing proved it was read, and nothing
+    // proved its `Number.isFinite` guard chose the constant rather than
+    // producing a NaN score.
+    assert.ok(Math.abs(recencyFactor(daysAgo(7), NOW, 7) - 0.5) < 1e-12, 'halves at the given half-life');
+    assert.ok(Math.abs(recencyFactor(daysAgo(28), NOW, 7) - 0.0625) < 1e-12, 'four half-lives at 7 days');
+    // A shorter half-life decays faster than the default at the same age.
+    assert.ok(recencyFactor(daysAgo(14), NOW, 1) < recencyFactor(daysAgo(14), NOW));
+
+    for (const bad of [0, -7, NaN, Infinity, 'lots', null, {}]) {
+      assert.equal(
+        recencyFactor(daysAgo(RECENCY_HALF_LIFE_DAYS), NOW, bad),
+        recencyFactor(daysAgo(RECENCY_HALF_LIFE_DAYS), NOW),
+        `half-life ${String(bad)} must fall back to the default, not produce NaN`,
+      );
+    }
+  });
+
+  test('halfLifeDays is plumbed through rankLessons and scoreLesson', () => {
+    // The whole path is `rankLessons` -> `scoreLesson` -> `recencyFactor`; a
+    // link dropped anywhere in it is silent, because the default is a valid
+    // answer for every input.
+    const entry = { key: 'k', value: '', seenCount: 1, updatedAt: daysAgo(14) };
+    assert.ok(
+      scoreLesson(entry, { now: NOW, halfLifeDays: 1 }) < scoreLesson(entry, { now: NOW }),
+      'scoreLesson must forward halfLifeDays',
+    );
+
+    // A recurring-but-old lesson beats a fresh one-off at the default
+    // half-life; a one-day half-life collapses its recency and flips the order.
+    const entries = [
+      { scope: 'global', key: 'fresh-oneoff', value: '', seenCount: 1, updatedAt: daysAgo(0) },
+      { scope: 'global', key: 'old-recurring', value: '', seenCount: 40, updatedAt: daysAgo(20) },
+    ];
+    assert.deepEqual(
+      rankLessons(entries, { now: NOW }).map((e) => e.key),
+      ['old-recurring', 'fresh-oneoff'],
+    );
+    assert.deepEqual(
+      rankLessons(entries, { now: NOW, halfLifeDays: 1 }).map((e) => e.key),
+      ['fresh-oneoff', 'old-recurring'],
+      'rankLessons must forward halfLifeDays',
+    );
+  });
+
+  test('recencyFactor clamps a future timestamp to 1 rather than exceeding it', () => {
+    // Clock skew between writer and reader is ordinary; an unbounded score
+    // would let it beat every honestly-dated lesson.
+    assert.equal(recencyFactor(new Date(NOW + 86400000).toISOString(), NOW), 1);
+  });
+
+  test('recencyFactor scores an unknown timestamp 0, not average', () => {
+    // Treating unknown as average would let a lesson with no timestamp outrank
+    // a real one that is merely a month old.
+    for (const bad of [null, undefined, '', 'yesterday', {}]) {
+      assert.equal(recencyFactor(bad, NOW), 0, `value ${String(bad)}`);
+    }
+  });
+
+  test('salienceFactor is relative to the set, and flat when nothing recurred', () => {
+    assert.equal(salienceFactor(1, 1), 0, 'a set of one-offs has no salience signal');
+    assert.equal(salienceFactor(0, 0), 0);
+    assert.equal(salienceFactor(8, 8), 1, 'the most-recurring lesson in the set scores 1');
+    assert.ok(salienceFactor(2, 8) > salienceFactor(1, 8));
+    // A count above the stated maximum clamps rather than exceeding the bound.
+    // `rankLessons` derives the max from the set so this never binds in-set —
+    // it binds on a direct caller, which is the only way the docblock's [0,1]
+    // can be broken. Unclamped, `log1p(5)/log1p(2)` is 1.63.
+    assert.equal(salienceFactor(5, 2), 1);
+    assert.equal(salienceFactor(500, 2), 1);
+    // Logarithmic: the 1 → 3 step is worth more than the 40 → 42 step.
+    assert.ok(
+      salienceFactor(3, 50) - salienceFactor(1, 50) > salienceFactor(42, 50) - salienceFactor(40, 50),
+    );
+  });
+
+  test('relevanceFactor is the fraction of DISTINCT terms matched', () => {
+    const entry = { key: 'retry-on-timeout', value: 'ECONNREFUSED then a timeout' };
+    assert.equal(relevanceFactor(entry, []), 0, 'no terms is 0, never 1');
+    assert.equal(relevanceFactor(entry, ['timeout']), 1);
+    assert.equal(relevanceFactor(entry, ['timeout', 'nomatch']), 0.5);
+    assert.equal(
+      relevanceFactor(entry, ['timeout', 'timeout', 'TIMEOUT']),
+      1,
+      'a repeated term cannot inflate the score',
+    );
+    assert.equal(relevanceFactor(entry, ['econnrefused']), 1, 'case-insensitive');
+    assert.equal(relevanceFactor(entry, ['retry-on']), 1, 'matches the key too');
+  });
+
+  test('relevanceFactor normalises a Set exactly as it normalises a list', () => {
+    // A hand-built Set used to skip normalisation entirely, so `new Set([''])`
+    // matched everything and `new Set([' timeout '])` matched nothing — two
+    // silent divergences from the list path with the same input.
+    const entry = { key: 'retry-on-timeout', value: 'ECONNREFUSED then a timeout' };
+    for (const terms of [[], [''], ['   '], ['timeout'], [' TIMEOUT '], ['timeout', 'nomatch'], ['timeout', 'TIMEOUT']]) {
+      assert.equal(
+        relevanceFactor(entry, new Set(terms)),
+        relevanceFactor(entry, terms),
+        `Set and list must agree for ${JSON.stringify(terms)}`,
+      );
+    }
+    assert.equal(relevanceFactor(entry, new Set([''])), 0, "an empty term is dropped, not matched against everything");
+    assert.equal(relevanceFactor(entry, new Set([' timeout '])), 1, 'a padded term is trimmed, not missed');
+
+    // The LONE-VALUE form the docblock also promises. Without this the
+    // `: [terms]` branch is unpinned — deleting it left the whole file green,
+    // while a bare string would be spread into one term per character.
+    assert.equal(relevanceFactor(entry, ' TIMEOUT '), 1, 'a lone term is wrapped, not spread');
+    assert.equal(relevanceFactor(entry, 'timeout'), relevanceFactor(entry, ['timeout']));
+    // `tue` is the discriminator: it is not a substring of the value, but each
+    // of `t`, `u` and `e` is, so a spread would score 1. `zqx` and ` TIMEOUT `
+    // score the same either way and prove nothing on their own.
+    assert.equal(relevanceFactor(entry, 'tue'), 0, 'a lone term is matched whole, not character by character');
+    assert.equal(relevanceFactor(entry, 'zqx'), 0);
+    assert.equal(relevanceFactor(entry, ''), 0);
+    assert.equal(relevanceFactor(entry, null), 0);
+    assert.equal(relevanceFactor(entry, 42), 0, 'a lone non-string is stringified, not iterated');
+
+    // The same must hold one level up, or `scoreLesson` inherits the divergence.
+    const scored = { key: 'retry-on-timeout', value: 'ECONNREFUSED then a timeout', seenCount: 1, updatedAt: daysAgo(1) };
+    assert.equal(
+      scoreLesson(scored, { now: NOW, terms: new Set([' TIMEOUT ']) }),
+      scoreLesson(scored, { now: NOW, terms: ['timeout'] }),
+    );
+  });
+
+  test('relevanceFactor matches metacharacters literally, like search does', () => {
+    // Never `new RegExp(term)` — one matcher, one meaning of "matches".
+    const entry = { key: 'k', value: 'a.*(b) literally' };
+    assert.equal(relevanceFactor(entry, ['a.*(b)']), 1);
+    assert.equal(relevanceFactor({ key: 'k', value: 'axxxb' }, ['a.*(b)']), 0);
+  });
+
+  test('scoreLesson stays in [0,1] for any weighting', () => {
+    const entry = { key: 'k', value: 'timeout', seenCount: 5, updatedAt: daysAgo(1) };
+    for (const weights of [
+      undefined,
+      { recency: 5, salience: 1, relevance: 1 },
+      { recency: 0, salience: 0, relevance: 1 },
+      { recency: 0.1, salience: 99, relevance: 0 },
+    ]) {
+      const s = scoreLesson(entry, { now: NOW, terms: ['timeout'], maxSeenCount: 5, weights });
+      assert.ok(s >= 0 && s <= 1, `score ${s} out of range for ${JSON.stringify(weights)}`);
+    }
+  });
+
+  test('DEFAULT_RANK_WEIGHTS is frozen, and a zeroed weight set cannot recurse', () => {
+    // An exported mutable object is shared state, and this one is the fallback
+    // the totality guarantee rests on. Zeroing its fields used to turn the
+    // fallback branch into unbounded recursion — a real RangeError, inside a
+    // hook contractually obliged to exit 0.
+    assert.ok(Object.isFrozen(DEFAULT_RANK_WEIGHTS), 'the exported default weights must be frozen');
+    assert.throws(
+      () => { DEFAULT_RANK_WEIGHTS.recency = 0; },
+      TypeError,
+      'a write must fail in the caller frame, not three layers down the stack',
+    );
+    assert.deepEqual({ ...DEFAULT_RANK_WEIGHTS }, { recency: 1, salience: 1, relevance: 1 });
+
+    // Belt and braces: the fallback substitutes once instead of recursing, so
+    // totality no longer depends on the export having gone unmutated.
+    const entry = { key: 'k', value: '', seenCount: 1, updatedAt: daysAgo(1) };
+    const zeroed = { recency: 0, salience: 0, relevance: 0 };
+    assert.equal(
+      scoreLesson(entry, { now: NOW, weights: zeroed }),
+      scoreLesson(entry, { now: NOW }),
+      'a zero-sum weight set scores exactly as the defaults do',
+    );
+  });
+
+  test('scoreLesson stays in [0,1] when the caller gets maxSeenCount wrong', () => {
+    // The bound must not depend on the caller passing the set's real maximum:
+    // `scoreLesson` is exported so a caller can explain ONE ranking, and a
+    // direct caller is exactly who can get the normaliser wrong.
+    const entry = { key: 'k', value: 'timeout', seenCount: 5, updatedAt: daysAgo(0) };
+    for (const maxSeenCount of [2, 1, 0, -3, NaN, undefined]) {
+      const s = scoreLesson(entry, { now: NOW, terms: ['timeout'], maxSeenCount });
+      assert.ok(s >= 0 && s <= 1, `score ${s} out of range for maxSeenCount ${String(maxSeenCount)}`);
+    }
+  });
+});
+
+// ── RemoteStore.relevant: the ranked shortlist ───────────────────────────────
+describe('RemoteStore.relevant', () => {
+  test('issues GET /memories/relevant with the ordered scope list', async () => {
+    const { result, calls } = await captureRestCalls(
+      (store) => store.relevant({
+        q: 'timeout',
+        // Most-specific FIRST — the order is meaningful to the server, which
+        // uses it to break ties, so it must survive the round trip verbatim.
+        scopes: ['repo::o/r', 'global'],
+        limit: 5,
+        minScore: 0.2,
+      }),
+      {
+        status: 200,
+        body: JSON.stringify({
+          entries: [{ scope: 'global', key: 'k', hook: 'A hook.', score: 0.5 }],
+          candidates: 42,
+        }),
+      },
+    );
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].method, 'GET');
+    assert.equal(
+      calls[0].url,
+      `${REMOTE_REST_BASE}/memories/relevant?q=timeout&scopes=repo%3A%3Ao%2Fr%2Cglobal&limit=5&min_score=0.2`,
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.entries[0].key, 'k');
+    assert.equal(result.candidates, 42, 'candidates surfaced so a caller can say "1 of 42"');
+  });
+
+  test('omits every parameter the caller did not supply', async () => {
+    // `q` is optional by design — without it the server ranks on recency +
+    // salience, which is the SessionStart question.
+    const { calls } = await captureRestCalls((store) => store.relevant({}), { status: 200, body: '{}' });
+    assert.equal(calls[0].url, `${REMOTE_REST_BASE}/memories/relevant?`);
+  });
+
+  test('min_score of 0 is still sent — it is a value, not an absence', async () => {
+    const { calls } = await captureRestCalls(
+      (store) => store.relevant({ minScore: 0 }),
+      { status: 200, body: '{}' },
+    );
+    assert.match(calls[0].url, /min_score=0$/);
+  });
+
+  test('returns the standard error envelope, and never a partial success', async () => {
+    const { result } = await captureRestCalls(
+      (store) => store.relevant({ q: 'x' }),
+      { status: 403, body: JSON.stringify({ error: 'forbidden' }) },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.entries, undefined);
+  });
+
+  test('a malformed body degrades to an empty shortlist rather than throwing', async () => {
+    const { result } = await captureRestCalls(
+      (store) => store.relevant({ q: 'x' }),
+      { status: 200, body: JSON.stringify({ entries: 'not-an-array' }) },
+    );
+    assert.deepEqual(result, { ok: true, entries: [], candidates: 0 });
   });
 });

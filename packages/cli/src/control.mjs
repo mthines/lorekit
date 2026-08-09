@@ -8,6 +8,8 @@
 //   ttl.default     — days until a write with no explicit TTL expires
 //   hooks.disabled  — array of hook event names to suppress (e.g. ["Stop"])
 //   hooks.stop      — Stop-hook gating ("friction" default | "always" | "off")
+//   hooks.sessionStart          — injected-block shape ("hybrid" default | "index" | "map")
+//   hooks.sessionStart.maxChars — character budget for that block (default 1500)
 //   hooks.adapter   — explicit adapter override ("claude" | "cursor" | "codex")
 //
 // Two layers of config, two kinds of statement:
@@ -53,6 +55,56 @@ export function normalizeStopMode(v) {
   if (['always', 'all', 'on', 'true', 'every'].includes(s)) return 'always';
   if (['friction', 'smart', 'auto'].includes(s)) return 'friction';
   return null;
+}
+
+// SessionStart shape: what the injected block LOOKS like once the budget is
+// spent. All three spend the same character budget; they differ in what they do
+// with the lessons that did not fit.
+//   hybrid (default) — top-ranked lessons, then a one-line scope map naming what
+//                      was left out, so nothing is silently invisible.
+//   index            — lessons only. The pre-budget behaviour, minus the magic
+//                      count: a big store is simply truncated with no map.
+//   map              — the scope map plus a handful of the most salient lessons.
+//                      For a large store where the inventory matters more than
+//                      any particular lesson.
+// Friendly spellings for the same reason `normalizeStopMode` has them: these are
+// hand-edited JSON files.
+export const SESSION_START_MODES = ['hybrid', 'index', 'map'];
+export function normalizeSessionStartMode(v) {
+  if (typeof v !== 'string') return null;
+  const s = v.trim().toLowerCase();
+  if (['hybrid', 'both', 'auto', 'default'].includes(s)) return 'hybrid';
+  if (['index', 'list', 'lessons', 'full'].includes(s)) return 'index';
+  if (['map', 'scopes', 'summary', 'toc'].includes(s)) return 'map';
+  return null;
+}
+
+// The default SessionStart character budget, and the bounds a configured one is
+// held to. ~1500 chars is roughly 375 tokens on the 4-chars-per-token heuristic
+// — enough for a dozen index lines plus the frame, and small enough that it
+// stays a footnote in a context window rather than a section of it.
+//
+// The floor is what one header plus one lesson line needs; below it the block
+// would be a header and nothing else, which is worse than not firing. The
+// ceiling is a backstop against a typo'd `"maxChars": 1500000` turning every
+// session start into a wall of text — the hard lesson ceiling in
+// `core/lessons.mjs` bounds it a second time, from the other direction.
+export const DEFAULT_SESSION_START_MAX_CHARS = 1500;
+export const MIN_SESSION_START_MAX_CHARS = 200;
+export const MAX_SESSION_START_MAX_CHARS = 20000;
+
+// Clamp a configured budget into the supported range, or null when the value is
+// not a usable number at all (absent, a bare string, NaN). Total: the caller
+// substitutes the default for null. Out-of-range CLAMPS rather than rejecting —
+// a user who wrote `"maxChars": 50` wants a small block, and honouring the floor
+// is closer to that intent than silently restoring the 1500 default.
+export function normalizeSessionStartMaxChars(v) {
+  const n = firstNumber(v);
+  if (n === null) return null;
+  const i = Math.round(n);
+  if (i < MIN_SESSION_START_MAX_CHARS) return MIN_SESSION_START_MAX_CHARS;
+  if (i > MAX_SESSION_START_MAX_CHARS) return MAX_SESSION_START_MAX_CHARS;
+  return i;
 }
 
 // A config value that is meant to be a number, or null when it is absent or is
@@ -204,6 +256,30 @@ export function resolveControl({
     normalizeStopMode(userConfig['hooks.stop']) ||
     'friction';
 
+  // `hooks.sessionStart` — repo layer wins over user layer, default `hybrid`.
+  // Chooses the SHAPE of the injected block (see SESSION_START_MODES). An
+  // unrecognised value falls through to the next layer and finally to the
+  // default, exactly like `hooks.stop`: a mistyped shape must degrade to the
+  // sensible one, never blank the injection.
+  const hooksSessionStart =
+    normalizeSessionStartMode(repoConfig['hooks.sessionStart']) ||
+    normalizeSessionStartMode(userConfig['hooks.sessionStart']) ||
+    'hybrid';
+
+  // `hooks.sessionStart.maxChars` — the character budget that block may spend.
+  //
+  // The LAYER is chosen before the value is parsed, the `ttl.default` rule (see
+  // declaresScalar): a repo that declared a budget owns the decision even when
+  // the value it declared is garbage, so a typo degrades to the default rather
+  // than silently handing the decision to whatever the developer happens to have
+  // in their home directory. Two people on the same commit must get the same
+  // block.
+  const sessionStartMaxCharsRaw = declaresScalar(repoConfig['hooks.sessionStart.maxChars'])
+    ? repoConfig['hooks.sessionStart.maxChars']
+    : userConfig['hooks.sessionStart.maxChars'];
+  const hooksSessionStartMaxChars =
+    normalizeSessionStartMaxChars(sessionStartMaxCharsRaw) ?? DEFAULT_SESSION_START_MAX_CHARS;
+
   // `hooks.adapter` — repo layer wins over user layer (explicit project override).
   const hooksAdapter =
     (typeof repoConfig['hooks.adapter'] === 'string' && repoConfig['hooks.adapter'].trim()) ||
@@ -242,6 +318,8 @@ export function resolveControl({
     scopeDefaults,
     hooksDisabled,
     hooksStop,
+    hooksSessionStart,
+    hooksSessionStartMaxChars,
     hooksAdapter,
     hooksInstructions,
   };

@@ -4762,6 +4762,100 @@ begin
 end;
 $$;
 
+-- ── 75. The FTS candidate selection GET /memories/relevant ranks over (00001) ─
+-- `GET /memories/relevant` fetches candidates with
+-- `textSearch('fts', q, { type: 'websearch', config: 'english' })` and then
+-- ranks them in TypeScript. The RANKING is unit-tested (and held to the CLI's
+-- copy by `lesson-rank-parity.spec.ts`), but the SELECTION is pure SQL and had
+-- NO coverage anywhere in this file: the `fts` generated column has existed
+-- since 00001 and nothing asserted what it matches. A change to its expression
+-- or its text-search config would silently change which lessons are reachable —
+-- through this route and through `POST /memories/search`, which uses the same
+-- column.
+-- AC-1: a term in the VALUE matches, and AC-5 rides along with it.
+-- AC-2: a term in the KEY matches — `fts` is generated over `key || value`, so
+--       a lesson whose body never repeats its own title is still findable.
+-- AC-3: English STEMMING is on: `migrations` finds `migration`. That is what
+--       makes the endpoint usable with a natural-language query instead of an
+--       exact keyword.
+-- AC-4: a quoted phrase matches as a phrase, and websearch negation excludes.
+-- AC-5: the ACTIVE partition — an archived row and an expired row are not
+--       candidates, matching the handler's `archived_at is null` +
+--       `expires_at is null or expires_at > now()` predicate.
+-- AC-6: a term present in nothing matches nothing. Without this, every other
+--       assertion here would still pass if the predicate were a no-op that let
+--       recency rank the tenant's entire store.
+do $$
+declare
+  v_uid  constant uuid := '00000000-0000-0000-0000-0000000000a1';
+  v_hits integer;
+begin
+  perform memory_write(v_uid, 'global', 'fts-migration-order',
+    'Always add the column before the backfill runs.');
+  perform memory_write(v_uid, 'global', 'fts-flaky-retry',
+    'The retry wrapper hides a real race in the fixture.');
+  perform memory_write(v_uid, 'global', 'fts-archived-one',
+    'An archived lesson about backfill that must not be a candidate.');
+  perform memory_write(v_uid, 'global', 'fts-expired-one',
+    'An expired lesson about backfill that must not be a candidate.');
+
+  update memories set archived_at = now()
+    where user_id = v_uid and key = 'fts-archived-one';
+  update memories set expires_at = now() - interval '1 day'
+    where user_id = v_uid and key = 'fts-expired-one';
+
+  -- AC-1 + AC-5 — a term in the value, and only the ACTIVE row carrying it.
+  select count(*) into v_hits from memories
+   where user_id = v_uid and key like 'fts-%'
+     and archived_at is null and (expires_at is null or expires_at > now())
+     and fts @@ websearch_to_tsquery('english', 'backfill');
+  assert v_hits = 1,
+    format('relevant AC-1/AC-5: "backfill" must match exactly the one ACTIVE lesson, got %s '
+           '(three rows contain the word; the archived and expired ones are not candidates)', v_hits);
+
+  -- AC-2 — a term present only in the KEY.
+  select count(*) into v_hits from memories
+   where user_id = v_uid and key like 'fts-%'
+     and archived_at is null and (expires_at is null or expires_at > now())
+     and fts @@ websearch_to_tsquery('english', 'flaky');
+  assert v_hits = 1,
+    format('relevant AC-2: a term present only in the key must match — fts is generated '
+           'over key || value — got %s', v_hits);
+
+  -- AC-3 — English stemming.
+  select count(*) into v_hits from memories
+   where user_id = v_uid and key like 'fts-%'
+     and archived_at is null and (expires_at is null or expires_at > now())
+     and fts @@ websearch_to_tsquery('english', 'migrations');
+  assert v_hits = 1,
+    format('relevant AC-3: the english config must stem "migrations" onto "migration", got %s '
+           '(a `simple` config would return 0 and make natural-language queries useless)', v_hits);
+
+  -- AC-4 — phrase and negation, the two websearch operators a caller can type.
+  select count(*) into v_hits from memories
+   where user_id = v_uid and key like 'fts-%'
+     and archived_at is null and (expires_at is null or expires_at > now())
+     and fts @@ websearch_to_tsquery('english', '"real race"');
+  assert v_hits = 1,
+    format('relevant AC-4: a quoted phrase must match as a phrase, got %s', v_hits);
+
+  select count(*) into v_hits from memories
+   where user_id = v_uid and key like 'fts-%'
+     and archived_at is null and (expires_at is null or expires_at > now())
+     and fts @@ websearch_to_tsquery('english', 'lesson -backfill');
+  assert v_hits = 0,
+    format('relevant AC-4: websearch negation must exclude the negated term, got %s', v_hits);
+
+  -- AC-6 — anti-vacuity for every assertion above.
+  select count(*) into v_hits from memories
+   where user_id = v_uid and key like 'fts-%'
+     and archived_at is null and (expires_at is null or expires_at > now())
+     and fts @@ websearch_to_tsquery('english', 'kubernetes');
+  assert v_hits = 0,
+    format('relevant AC-6: a term present in no lesson must match nothing, got %s', v_hits);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
