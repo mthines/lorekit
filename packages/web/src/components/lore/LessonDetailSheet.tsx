@@ -238,7 +238,10 @@ function ContentSection({ tab, onTabChange, canEdit, value, onChange, onEditEnd,
           id="content-panel-preview"
           aria-labelledby="content-tab-preview"
           tabIndex={0}
-          className="focus-visible:outline-none"
+          // The panel is focusable (it is the tablist's target), so it needs a
+          // visible ring — `outline-none` alone would land a keyboard user here
+          // invisibly, against packages/web/CLAUDE.md's visible-focus floor.
+          className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
         >
           <MarkdownPreview value={value} />
         </div>
