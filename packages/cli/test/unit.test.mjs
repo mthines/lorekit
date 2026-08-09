@@ -1467,12 +1467,15 @@ describe('rankLessons', () => {
   test('rankLessons reads either spelling of the count and the timestamp', () => {
     // An entry straight off the REST route (not through the store projection)
     // must rank the same as one that went through it.
-    const projected = { scope: 'global', key: 'p', value: '', seenCount: 9, updatedAt: at(2) };
-    const raw = { scope: 'global', key: 'r', value: '', seen_count: 9, updated_at: at(2) };
-    const ranked = rankLessons([raw, projected], { now: NOW });
-    // Equal scores, so the key tiebreak decides — which proves neither was
-    // silently scored as zero.
-    assert.deepEqual(ranked.map((e) => e.key), ['p', 'r']);
+    const projected = { scope: 'global', key: 'z-projected', value: '', seenCount: 9, updatedAt: at(2) };
+    const raw = { scope: 'global', key: 'a-raw', value: '', seen_count: 9, updated_at: at(2) };
+    const ranked = rankLessons([projected, raw], { now: NOW });
+    // `raw` deliberately carries the SMALLER key, so first place is reachable
+    // only by TYING on score. If either snake_case field went unread it would
+    // score strictly lower (recency and salience both collapse to 0) and sort
+    // second, and the key tiebreak would never be consulted — which is what
+    // makes this assertion discriminate rather than merely restate the input.
+    assert.deepEqual(ranked.map((e) => e.key), ['a-raw', 'z-projected']);
   });
 });
 
