@@ -42,8 +42,24 @@ export default defineConfig({
   // `react-dom` (via `createPortal`) and `motion/react` (drag/AnimatePresence)
   // both first enter the story graph through `BottomSheet`, so declare them
   // here alongside the setup-file deps.
+  // The Lore filter stories are the last un-pre-bundled entry: `FilterMenu` /
+  // `FilterPill` import `@/lib/filters`, which imports `@lorekit/schemas/{memory,
+  // tags}`, whose only heavy transitive dep is `zod`. No earlier-loaded story
+  // reaches it, so `zod` was discovered mid-run and re-hashed the react shim,
+  // failing `FilterMenu.test.stories.tsx` on every cold CI run. `zod` is NOT a
+  // direct dependency of `@lorekit/web` (it belongs to `@lorekit/schemas`), so a
+  // bare `'zod'` entry cannot be resolved from this package's root and is a
+  // silent no-op — force-optimize the workspace subpaths that DO resolve here
+  // instead, which pulls their `zod` import into the cold-start bundle.
   optimizeDeps: {
-    include: ['@storybook/nextjs-vite', 'storybook/test', 'react-dom', 'motion/react'],
+    include: [
+      '@storybook/nextjs-vite',
+      'storybook/test',
+      'react-dom',
+      'motion/react',
+      '@lorekit/schemas/memory',
+      '@lorekit/schemas/tags',
+    ],
   },
   test: {
     name: 'storybook',
