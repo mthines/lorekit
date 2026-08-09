@@ -367,10 +367,17 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
 
   const { form, isSaving, saveError, isDirty, handleSubmit, discard } = editForm;
 
-  // Reset to Preview whenever a different lesson opens.
+  // Identity of the open lesson (null while the panel is closed).
+  const lessonId = lesson ? `${lesson.scope}\u0000${lesson.key}` : null;
+  // Reset to Preview whenever a *different* lesson opens. The ref is seeded
+  // with the mount-time identity so the first run is a no-op — otherwise this
+  // effect would overwrite `initialContentTab` before paint.
+  const shownLessonIdRef = useRef(lessonId);
   useEffect(() => {
+    if (shownLessonIdRef.current === lessonId) return;
+    shownLessonIdRef.current = lessonId;
     setContentTab(DEFAULT_CONTENT_TAB);
-  }, [lesson?.scope, lesson?.key]);
+  }, [lessonId]);
 
   // Focus close button on open; restore on close.
   useEffect(() => {
