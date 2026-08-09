@@ -99,8 +99,13 @@ export const CLAUDE_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostTool
 // installation would read as 'custom' the next time `install` inspected it —
 // and 'custom' is the answer that means "a human hand-wired this, do not touch
 // it", so the upgrade prompt would default to leaving them behind on the old
-// three events forever. Recognising the legacy set is what makes re-running
-// `install` an UPGRADE rather than a no-op.
+// three events forever. Recognising the legacy set is what lets `install`
+// UPGRADE such a wiring instead of preserving it verbatim.
+//
+// It does NOT make a bare `install` re-run an upgrade. A fully-installed scope
+// short-circuits in `install.mjs` before the hook step, so reaching this
+// recognition still needs `--hooks <mode>` or `--force`; the short-circuit
+// summary names that command when an upgrade is available.
 //
 // Add to this list, never edit it: each entry is a historical fact about a
 // version that shipped, not a configuration.

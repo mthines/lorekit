@@ -678,6 +678,38 @@ function lorekitHookCount(root, event = 'SessionStart') {
     .length;
 }
 
+// Strip a lorekit hook entry for one event, leaving the pre-UserPromptSubmit
+// wiring an install from an older version would have left behind.
+function unwireHookEvent(root, event) {
+  const file = path.join(root, '.claude', 'settings.json');
+  const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
+  delete settings.hooks[event];
+  fs.writeFileSync(file, JSON.stringify(settings, null, 2) + '\n');
+}
+
+test('the already-installed summary names an available hook upgrade', async () => {
+  const root = tmp('lk-hook-upgrade-');
+  const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
+  assert.equal(exitOf(await install(base)), 0, 'first install succeeds');
+
+  // A current install has nothing to upgrade, so the hint must stay silent —
+  // a permanent "upgrade available" is noise nobody can act on.
+  const current = await captureStdout(() => install(base));
+  assert.doesNotMatch(current, /Hook upgrade available/);
+
+  // Drop back to the legacy three-event set. It still reads as `all`, but the
+  // short-circuit returns before the hook step, so nothing rewires it.
+  unwireHookEvent(root, 'UserPromptSubmit');
+  const legacy = await captureStdout(() => install(base));
+  assert.match(legacy, /Hook upgrade available: UserPromptSubmit/);
+  assert.match(legacy, /--hooks all/);
+  assert.deepEqual(
+    installedHookEvents(root, 'project').includes('UserPromptSubmit'),
+    false,
+    'the hint is a hint: a bare re-run still does not rewire',
+  );
+});
+
 test('a plain install does NOT repair duplicated hook entries on a complete install', async () => {
   const root = tmp('lk-dupe-shortcircuit-');
   const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };

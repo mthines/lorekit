@@ -273,6 +273,26 @@ export async function install(args) {
         : `  ${c.dim('Hooks: none wired — the skills work, but only when the model invokes them')}`,
     );
 
+    // An install predating a lifecycle event still reads as its mode (see
+    // LEGACY_ALL_EVENT_SETS in config.mjs), but this branch returns before the
+    // hook step — so the upgrade is available and will not happen on its own.
+    // Say so here rather than leaving the user to infer it: silently keeping a
+    // stale event set is how a wired install stops firing the hooks it says it
+    // has. Only ever a HINT — rewiring stays an explicit `--hooks` / `--force`.
+    const wiredMode = hookModeFromEvents(wiredEvents);
+    // `custom` is excluded deliberately: it means a human hand-wired this, and
+    // `hookEventsForMode` answers the full set for any unrecognised mode, so
+    // including it would advertise an "upgrade" to a wiring the user chose —
+    // named by a `--hooks custom` the flag does not even accept.
+    const missingEvents = wiredMode === 'custom'
+      ? []
+      : hookEventsForMode(wiredMode).filter((e) => !wiredEvents.includes(e));
+    if (missingEvents.length > 0) {
+      log(
+        `  ${c.yellow(`Hook upgrade available: ${missingEvents.join(', ')} — run --hooks ${wiredMode} to wire ${missingEvents.length === 1 ? 'it' : 'them'}.`)}`,
+      );
+    }
+
     log('');
     log(`  Run ${c.cyan('npx @lorekit/cli doctor')} to verify the connection.`);
     log(`  Change the hooks with ${c.cyan(`--hooks ${HOOK_MODES.join('|')}`)}.`);
