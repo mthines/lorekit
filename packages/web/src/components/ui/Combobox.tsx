@@ -64,10 +64,28 @@ export interface ComboboxItem<T extends string = string> extends ComboboxOption<
 
 interface ComboboxProps<T extends string> {
   options: readonly ComboboxItem<T>[];
-  value: T;
+  /**
+   * The selected option, or `null` when the current value is not one of them.
+   *
+   * Nullable because a control's value can legitimately live outside its option
+   * set: the Overview's range picker offers three presets, but the range can
+   * also be an absolute window drilled in from a chart. Rendering that as "no
+   * selection" is honest — none of the presets IS what the user is looking at —
+   * and {@link ComboboxProps.triggerLabel} is how the trigger still says what it
+   * is.
+   */
+  value: T | null;
   onChange: (value: T) => void;
   /** Accessible name for the control. Also the sheet's title on mobile. */
   label: string;
+  /**
+   * Override the trigger's text.
+   *
+   * For the case above: with the value outside the option set there is no
+   * option label to show, and falling back to the control's name ("Time range")
+   * would hide the fact that a range is selected at all.
+   */
+  triggerLabel?: string;
   /** Show a search box above the list. Off by default — a short list does not need one. */
   searchable?: boolean;
   /** Placeholder for the search box. */
@@ -89,6 +107,7 @@ export function Combobox<T extends string>({
   value,
   onChange,
   label,
+  triggerLabel,
   searchable = false,
   searchPlaceholder = 'Search…',
   className = '',
@@ -341,6 +360,9 @@ export function Combobox<T extends string>({
   );
 
   const TriggerIcon = selected?.icon;
+  // The override wins, then the selected option, then the control's own name —
+  // which is only reached when nothing is selected and no override was given.
+  const triggerText = triggerLabel ?? selected?.label ?? label;
 
   return (
     <>
@@ -356,7 +378,7 @@ export function Combobox<T extends string>({
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
         aria-activedescendant={open && highlight >= 0 ? `${baseId}-option-${highlight}` : undefined}
-        aria-label={`${label}: ${selected?.label ?? 'none'}`}
+        aria-label={`${label}: ${triggerLabel ?? selected?.label ?? 'none'}`}
         onClick={() => (open ? close() : openMenu())}
         onKeyDown={onKeyDown}
         className={[
@@ -365,7 +387,7 @@ export function Combobox<T extends string>({
         ].join(' ')}
       >
         {TriggerIcon && <TriggerIcon className="size-3.5 shrink-0" aria-hidden />}
-        {!compact && <span className="truncate">{selected?.label ?? label}</span>}
+        {!compact && <span className="truncate">{triggerText}</span>}
         <ChevronDown className="size-3.5 shrink-0 opacity-60" aria-hidden />
       </button>
 
