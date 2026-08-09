@@ -34,7 +34,15 @@ import type {
 // ── Model ────────────────────────────────────────────────────────────────────
 
 /** A filterable dimension, named for the user-facing word rather than the column. */
-export type FilterField = 'label' | 'agent' | 'trigger' | 'repo' | 'branch' | 'pr';
+export type FilterField =
+  | 'label'
+  | 'kind'
+  | 'host'
+  | 'agent'
+  | 'trigger'
+  | 'repo'
+  | 'branch'
+  | 'pr';
 
 /**
  * How a dimension's values combine.
@@ -59,11 +67,13 @@ export interface Filter {
  * This mirrors `MemoryFacetSchema` (`@lorekit/schemas/memory`) exactly — the
  * endpoint's response is assigned to `FacetValue[]` in `queries/lore.ts`, so a
  * dimension the server can emit and this union cannot name is a type error, not
- * a silent narrowing. That is why it is WIDER than {@link FilterField}: `kind`
- * and `host` (migration 00056) are catalogued but have no `FILTER_FIELDS` row
- * yet, so their rows arrive and are ignored — `facetOptions` selects by
- * `requireField(field).facet` and {@link rootSuggestions} skips a facet no
- * descriptor maps. Giving them a filter pill is a separate change.
+ * a silent narrowing.
+ *
+ * It is now one-to-one with {@link FilterField}: `kind` and `host` (migration
+ * 00056, catalogued by 00057) were the last two facets the server emitted with
+ * no descriptor to map them, so their rows arrived and were silently ignored.
+ * They have pills now. Keep the two in step — a facet with no descriptor is not
+ * a type error, it is a dimension that quietly does nothing.
  */
 export type FacetName =
   | 'tag'
@@ -111,6 +121,38 @@ export const FILTER_FIELDS: readonly FilterFieldDescriptor[] = [
     searchPlaceholder: 'Search labels…',
     facet: 'tag',
     operators: ['all', 'in', 'nin'],
+    format: (v) => v,
+  },
+  {
+    // The coarsest partition of the store, so it sits high: `bus` events are
+    // transient outcome records and `signal`s are per-repo filters, and neither
+    // is what someone browsing lessons means to be reading. Its vocabulary is
+    // CLOSED (`MemoryKindSchema` — lesson / bus / signal), unlike every other
+    // dimension here, so the value list is short by construction and the search
+    // box is vestigial rather than load-bearing. That is not worth a second
+    // descriptor shape: the facet catalog still supplies the values (and their
+    // counts), so a kind nobody has written does not appear, which a hardcoded
+    // list of three would get wrong.
+    field: 'kind',
+    label: 'Kind',
+    searchPlaceholder: 'Search kinds…',
+    facet: 'kind',
+    operators: ['in', 'nin'],
+    format: (v) => v,
+  },
+  {
+    // Beside Kind because the two form the phrase the taxonomy exists for —
+    // `?kind=lesson&host=reviewer` reads "reviewer's lessons".
+    //
+    // Distinct from Agent, and deliberately not merged with it: `host` is the
+    // skill or agent that OWNS the bucket (`reviewer`, `aw`, `ci-auto-fix`),
+    // while `source_agent` is whoever WROTE the row. They usually agree and
+    // sometimes do not, which is exactly when you want to be able to ask.
+    field: 'host',
+    label: 'Host',
+    searchPlaceholder: 'Search hosts…',
+    facet: 'host',
+    operators: ['in', 'nin'],
     format: (v) => v,
   },
   {
@@ -624,6 +666,17 @@ export function filtersToQueryParams(
       case 'trigger':
         params.trigger = joined;
         params.trigger_mode = scalarModeFor(filter.operator);
+        break;
+      // The taxonomy pair. `GET /memories` has accepted these since 00056 and
+      // the handler has always filtered on them — the only thing that was
+      // missing was a descriptor to turn a pill into the param.
+      case 'kind':
+        params.kind = joined;
+        params.kind_mode = scalarModeFor(filter.operator);
+        break;
+      case 'host':
+        params.host = joined;
+        params.host_mode = scalarModeFor(filter.operator);
         break;
       case 'repo':
         params.origin_repo = joined;
