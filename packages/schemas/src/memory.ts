@@ -368,8 +368,9 @@ export const ListFacetsQuerySchema = z.object({
    * The dashboard's Explorer passes its active filter bar AND the selected
    * `scope` here (`listFacetsRequest` ← `filtersToFacetParams` plus
    * `useFacetCatalog`'s `scope`), so its filter-menu counts drill down and match
-   * the scoped list. `kind`/`host` still have no `FILTER_FIELDS` row, so those
-   * two dimensions are enumerated but not yet filterable from the menu.
+   * the scoped list. All eight dimensions — `kind` and `host` included — now
+   * have a filter pill, so every facet this route can emit is one the menu can
+   * act on.
    *
    * `ListMemoriesQuerySchema`'s NON-dimension filters — `q`, `key`,
    * `created_since`, `created_until` and `expiring_within_days` — are

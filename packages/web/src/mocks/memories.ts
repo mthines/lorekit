@@ -25,6 +25,7 @@
  * classic visual-regression flake source this module deliberately avoids.
  */
 import { http, HttpResponse } from 'msw';
+import { resolveKindHost } from '@lorekit/schemas/tags';
 
 /**
  * The instant the story clock is frozen to. Fixtures below are dated relative to
@@ -63,6 +64,16 @@ export interface MemoryRow {
   origin_branch: string | null;
   origin_commit: string | null;
   origin_pr: number | null;
+  /**
+   * Taxonomy (migration 00056) — the bucket KIND and the owning HOST.
+   *
+   * Derived from the row's `loop::…` tags by the REAL `resolveKindHost`, not
+   * hand-written per fixture, because that is precisely what the write path
+   * does when a write carries no explicit values. A hand-maintained pair could
+   * disagree with the tags beside it and the fixture would still look right.
+   */
+  kind: string | null;
+  host: string | null;
 }
 
 /** The origin half of a fixture row. Every field independently optional. */
@@ -102,6 +113,9 @@ function row(
     origin_branch: origin.origin_branch ?? null,
     origin_commit: origin.origin_commit ?? null,
     origin_pr: origin.origin_pr ?? null,
+    // Inferred from the loop tags by the same function the write path calls, so
+    // a fixture's taxonomy can never contradict the tags rendered next to it.
+    ...resolveKindHost({ tags }),
   };
 }
 
@@ -115,8 +129,8 @@ export const MEMORY_ROWS: MemoryRow[] = [
   row('m02', 'global', 'aw-lessons::npx-over-pnpm-exec', 'Run browser-mode Vitest via npx — pnpm exec keeps the Playwright child stdio open and the run never returns.', ['loop::aw-lessons'], 30, 'aw', {}, 'tool-failure'),
   row('m03', 'repo::mthines/lorekit', 'edge-parity::mirror-pattern', 'Pure logic that both mcp-core and the Deno edge need lives once in mcp-core and is mirrored self-contained; a spec guards drift.', ['architecture'], 26, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'main' }, 'retrospective'),
   row('m04', 'repo::mthines/lorekit', 'scope-format::double-colon', 'The canonical scope separator is :: — a single colon is a 400. All segments lowercased.', ['scope', 'validation'], 50, 'claude'),
-  row('m05', 'repo::mthines/lorekit', 'audit::one-vocabulary', 'AUDIT_ACTIONS is the single list; the SQL CHECK, the web copy, and the edge mirror are all asserted equal by a drift spec.', ['audit'], 74, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'main', origin_pr: 311 }, 'review-comment'),
-  row('m06', 'repo::mthines/lorekit', 'rls::service-role-user-filter', 'api_key auth uses the service-role client — every query MUST .eq(user_id, userId) or it leaks across tenants.', ['security', 'rls'], 98, 'claude', {}, 'review-comment'),
+  row('m05', 'repo::mthines/lorekit', 'audit::one-vocabulary', 'AUDIT_ACTIONS is the single list; the SQL CHECK, the web copy, and the edge mirror are all asserted equal by a drift spec.', ['audit', 'loop::reviewer-comment-relevance'], 74, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'main', origin_pr: 311 }, 'review-comment'),
+  row('m06', 'repo::mthines/lorekit', 'rls::service-role-user-filter', 'api_key auth uses the service-role client — every query MUST .eq(user_id, userId) or it leaks across tenants.', ['security', 'rls', 'loop::review-outcomes'], 98, 'claude', {}, 'review-comment'),
   row('m07', 'branch::mthines/lorekit::feat/storybook', 'msw::wildcard-origin', 'Match the edge function with a */functions/v1 wildcard so the handler survives an unset NEXT_PUBLIC_SUPABASE_URL.', ['storybook', 'msw'], 5 * 24, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'feat/storybook', origin_pr: 311 }, 'tool-failure'),
   row('m08', 'branch::mthines/lorekit::feat/storybook', 'snapshot::freeze-the-clock', 'Freeze Date before rendering any time-relative UI, or "3d ago" and trend chips flake the baseline overnight.', ['storybook', 'flake'], 5 * 24 + 6, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'feat/storybook' }, 'tool-failure'),
   row('m09', 'project::agent-skills', 'routing::tier-detection', 'When in doubt, route Full — an over-planned Micro wastes compute, but an under-planned architectural task ships wrong code.', ['aw', 'routing'], 10 * 24, 'aw', { origin_repo: 'mthines/agent-skills', origin_branch: 'main' }, 'retrospective'),
@@ -192,6 +206,8 @@ function facetsFrom(rows: MemoryRow[], archived: boolean) {
     for (const tag of r.tags) bump('tag', tag);
     bump('source_agent', r.source_agent);
     bump('trigger', r.trigger);
+    bump('kind', r.kind);
+    bump('host', r.host);
     bump('origin_repo', r.origin_repo);
     bump('origin_branch', r.origin_branch);
     bump('origin_pr', r.origin_pr);
@@ -309,6 +325,8 @@ function listFrom(rows: MemoryRow[], url: URL) {
           : tags.some((t) => r.tags.includes(t))))
     .filter(scalar('source_agent', (r) => r.source_agent))
     .filter(scalar('trigger', (r) => r.trigger))
+    .filter(scalar('kind', (r) => r.kind))
+    .filter(scalar('host', (r) => r.host))
     .filter(scalar('origin_repo', (r) => r.origin_repo))
     .filter(scalar('origin_branch', (r) => r.origin_branch))
     .filter(scalar('origin_pr', (r) => r.origin_pr))
