@@ -154,12 +154,15 @@ export function statusToQueryParams(status: MemoryStatus): Partial<ListMemoriesQ
  * What to persist to `?status=` — `null` meaning "drop the param".
  *
  * The default is dropped so a shared link stays clean, matching how every other
- * Explorer param behaves. There is deliberately no `filtersParamValue`-style
- * exception for a legacy link: selecting Active while `?archived=true` is in the
- * URL DOES need to survive a reload, but `resolveStatus` already gives `status`
- * precedence, so writing `status=active` alongside the stale flag is the correct
- * and self-explanatory encoding — and it is not the default-drop case, because
- * the param is only dropped when nothing else contradicts it.
+ * Explorer param behaves — but only when nothing contradicts it. A legacy
+ * `?archived=true` in the URL does contradict it: dropping `status` there would
+ * let `resolveStatus` fall back to the stale flag and silently undo the
+ * selection on reload. So Active is written EXPLICITLY in that one case, which
+ * `resolveStatus` then gives precedence over the flag.
+ *
+ * That exception is narrower than `filtersParamValue`'s: it turns on the legacy
+ * flag actually being present, not on the value being non-empty, so the clean
+ * link — the overwhelmingly common one — still drops the param.
  */
 export function statusParamValue(status: MemoryStatus, legacyArchived: boolean): MemoryStatus | null {
   if (status !== DEFAULT_STATUS) return status;
