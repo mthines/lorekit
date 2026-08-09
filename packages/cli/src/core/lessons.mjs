@@ -314,9 +314,11 @@ function fitLines(lessons, budget, ceiling) {
 
 // The scope map: one line naming every scope that holds lessons and how many,
 // so a truncated block still tells the reader WHERE the rest live and which verb
-// reaches them. `25+` marks a scope whose read hit `SCOPE_READ_LIMIT`, so a
-// lower bound never reads as an exact total. Null when there is nothing to
-// describe. Pure.
+// reaches them. A trailing `+` marks a scope whose read hit `SCOPE_READ_LIMIT`,
+// so a lower bound never reads as an exact total. The SUFFIX and the DIGITS come
+// from different places — `atReadLimit` from the pre-precedence read, `count`
+// from the winners that survived shadowing — so a capped scope renders `24+` as
+// readily as `25+`. Null when there is nothing to describe. Pure.
 export function renderScopeMap(scopeCounts) {
   const rows = (Array.isArray(scopeCounts) ? scopeCounts : [])
     .filter((s) => s && s.scope && Number(s.count) > 0);
