@@ -13,6 +13,7 @@ import {
   taskById,
 } from "../src/task.mjs";
 import { isValidScope } from "../src/grade.mjs";
+import { DEFAULT_BRANCH, DEFAULT_OWNER_REPO } from "../src/git-identity.mjs";
 
 test("the target scope is the canonical branch form and is valid (AC-3.3)", () => {
   assert.equal(TARGET_SCOPE, "branch::mthines/gw-tools::feat/x");
@@ -49,6 +50,18 @@ test("the spec records the target and the rubric (AC-3.3)", async () => {
   assert.ok(spec.includes(TARGET_SCOPE));
   assert.match(spec, /## Rubric/);
   assert.match(spec, /exact string equality/);
+});
+
+test("the task target and the sandbox identity are ONE fact, not two", () => {
+  // arm0 refuses to run when the arm's resolved scope is not the graded target,
+  // so drift between these pairs would break every run. They must come from a
+  // single source rather than agree by coincidence.
+  assert.equal(TARGET_OWNER_REPO, DEFAULT_OWNER_REPO);
+  assert.equal(TARGET_BRANCH, DEFAULT_BRANCH);
+  assert.equal(
+    TARGET_SCOPE,
+    `branch::${DEFAULT_OWNER_REPO}::${DEFAULT_BRANCH}`,
+  );
 });
 
 test("the spec says which mistake kinds the seeded lesson actually names", async () => {

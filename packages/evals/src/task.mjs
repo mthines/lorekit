@@ -9,15 +9,25 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { DEFAULT_BRANCH, DEFAULT_OWNER_REPO } from "./git-identity.mjs";
+
 const FIXTURES = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
   "fixtures",
 );
 
-/** The repository and branch the golden task is about. */
-export const TARGET_OWNER_REPO = "mthines/gw-tools";
-export const TARGET_BRANCH = "feat/x";
+/**
+ * The repository and branch the golden task is about.
+ *
+ * Re-exported from `git-identity.mjs` rather than restated: the task targets
+ * the identity the sandbox is GIVEN, so these are one fact with two names, not
+ * two facts that happen to agree. arm0 refuses to run when the arm's resolved
+ * scope is not the graded target, which would turn any drift between the two
+ * pairs into a hard failure of every run.
+ */
+export const TARGET_OWNER_REPO = DEFAULT_OWNER_REPO;
+export const TARGET_BRANCH = DEFAULT_BRANCH;
 
 /** The one string a successful attempt must produce, verbatim. */
 export const TARGET_SCOPE = `branch::${TARGET_OWNER_REPO}::${TARGET_BRANCH}`;
