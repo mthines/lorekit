@@ -9,6 +9,8 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 
+import { installedHookEvents } from "@lorekit/cli/src/config.mjs";
+
 import { prepareArm } from "../bin/run-eval.mjs";
 import { initGitIdentity } from "../src/git-identity.mjs";
 import { withSandbox } from "../src/sandbox.mjs";
@@ -86,7 +88,10 @@ test("both memory arms are prepared identically except for the store (AC-2.4)", 
         entries,
         readOrder: arm.derived.readOrder,
         allowedTools: arm.mcp.allowedTools,
-        hookEvents: arm.hookInstall.events,
+        // Read back from the sandbox's own settings.json, not from the
+        // constant installSessionStartHook echoes — comparing that to itself
+        // is an assertion that can never fail.
+        hookEvents: installedHookEvents(sandbox.cwd, "project"),
         server: JSON.stringify(arm.mcp.config.mcpServers.lorekit.args),
         seededCount: arm.seeded.seeded.length,
       };
