@@ -311,9 +311,12 @@ so whole scopes go missing for exactly the accounts with the most lore.
 
 > The local stdio server (`lorekit mcp`) exposes this tool too, over whichever store is
 > configured, and honours the same scope-ascending ordering — the offline store enumerates in
-> walk order, so the server sorts before answering. When a store cannot enumerate — an
-> unreachable or unconfigured remote — it answers `{ "scopes": [], "note": "<reason>" }`
-> rather than failing the call, matching how the `lorekit scopes` command degrades.
+> walk order, so the server sorts before answering. Over the **offline** store it OMITS
+> `last_activity` instead of sending `null`: that store records no per-scope freshness at all,
+> which is a different fact from "this scope has none". The hosted surface always sends the
+> key. When a store cannot enumerate — an unreachable or unconfigured remote — it answers
+> `{ "scopes": [], "note": "<reason>" }` rather than failing the call, matching how the
+> `lorekit scopes` command degrades.
 
 ---
 
