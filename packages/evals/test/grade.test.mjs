@@ -250,6 +250,14 @@ test("classification is case- and whitespace-insensitive, like the validator", (
   assert.deepEqual(result.mistakes, [
     { scope: "BRANCH:mthines/gw-tools", kind: MISTAKE_SINGLE_COLON },
   ]);
+  // `global` takes no argument, so `global:x` is not the single-colon mistake
+  // — `global::x` is equally invalid. validateScope's own single-colon branch
+  // omits `global` for the same reason, and counting it here would lift
+  // repeatedMistake for something the lesson never described.
+  assert.equal(isValidScope("global:x"), false);
+  assert.equal(classifyMistake("global:x"), null);
+  assert.equal(classifyMistake("global::x"), null);
+  assert.equal(grade({ attemptedScopes: ["global:x"] }).repeatedMistake, false);
   // Valid scopes are never mistakes, however they look.
   assert.equal(classifyMistake(TARGET_SCOPE), null);
   assert.equal(classifyMistake("global"), null);

@@ -83,7 +83,13 @@ export function classifyMistake(scope) {
   const candidate = scope.toLowerCase().trim();
 
   // `branch:owner/repo` — a known prefix followed by exactly one colon.
-  if (/^(global|project|repo|branch):(?!:)/.test(candidate)) {
+  //
+  // The prefix set is `validateScope`'s single-colon set exactly: project,
+  // repo, branch. `global` is deliberately absent, there and here. `global`
+  // takes no argument, so `global:x` is not "wrote `:` where `::` belonged" —
+  // `global::x` is equally invalid — and counting it would lift
+  // `repeatedMistake` for a mistake the lesson does not describe.
+  if (/^(project|repo|branch):(?!:)/.test(candidate)) {
     return MISTAKE_SINGLE_COLON;
   }
   // A `branch::` scope with only one `::` is missing its second separator, but
