@@ -246,7 +246,14 @@ export const RECENCY_HALF_LIFE_DAYS = 14;
 // Equal thirds. Deliberately not tuned: with no corpus to tune against, an
 // invented weighting is a guess wearing a decimal point. They are a parameter
 // so a caller can experiment, and so a future PR can change them with evidence.
-export const DEFAULT_RANK_WEIGHTS = { recency: 1, salience: 1, relevance: 1 };
+//
+// FROZEN. An exported mutable object is shared state, and this one is the
+// fallback the totality guarantee rests on: a caller that zeroed its fields
+// turned `scoreLesson`'s "fall back to the defaults" branch into unbounded
+// recursion (a real `RangeError`, raised inside a hook the header promises will
+// never throw). Freezing makes the corruption a `TypeError` at the assignment,
+// in the caller's own frame, instead of a stack overflow three layers down.
+export const DEFAULT_RANK_WEIGHTS = Object.freeze({ recency: 1, salience: 1, relevance: 1 });
 
 // Two scores closer than this are the same score. Sized well below any
 // difference the factors can produce meaningfully (a one-second age gap moves a
@@ -375,7 +382,12 @@ function distinctTerms(terms) {
  * The weighted sum is divided by the total weight, so the result stays in [0,1]
  * whatever weights are supplied and two runs with different weightings remain
  * comparable. A weight set that sums to zero falls back to the defaults rather
- * than dividing by zero.
+ * than dividing by zero — ONCE, by substitution rather than by recursion. The
+ * recursive form was total only while `DEFAULT_RANK_WEIGHTS` still summed above
+ * zero, which made a totality guarantee depend on an exported object nobody had
+ * mutated yet. If even the defaults are degenerate every lesson scores 0, which
+ * is honest (no weighted signal is left) and hands the ordering to the
+ * tiebreakers instead of to a stack overflow.
  */
 export function scoreLesson(entry, {
   terms = [],
@@ -384,15 +396,21 @@ export function scoreLesson(entry, {
   maxSeenCount = 0,
   halfLifeDays = RECENCY_HALF_LIFE_DAYS,
 } = {}) {
-  const w = {
+  let w = {
     recency: numberOr(weights?.recency, DEFAULT_RANK_WEIGHTS.recency),
     salience: numberOr(weights?.salience, DEFAULT_RANK_WEIGHTS.salience),
     relevance: numberOr(weights?.relevance, DEFAULT_RANK_WEIGHTS.relevance),
   };
-  const total = w.recency + w.salience + w.relevance;
+  let total = w.recency + w.salience + w.relevance;
   if (!(total > 0)) {
-    return scoreLesson(entry, { terms, now, weights: DEFAULT_RANK_WEIGHTS, maxSeenCount, halfLifeDays });
+    w = {
+      recency: numberOr(DEFAULT_RANK_WEIGHTS.recency, 0),
+      salience: numberOr(DEFAULT_RANK_WEIGHTS.salience, 0),
+      relevance: numberOr(DEFAULT_RANK_WEIGHTS.relevance, 0),
+    };
+    total = w.recency + w.salience + w.relevance;
   }
+  if (!(total > 0)) return 0;
   const recency = recencyFactor(entry?.updatedAt ?? entry?.updated_at ?? entry?.updated, now, halfLifeDays);
   const salience = salienceFactor(seenCountFrom(entry), maxSeenCount);
   const relevance = relevanceFactor(entry, terms);

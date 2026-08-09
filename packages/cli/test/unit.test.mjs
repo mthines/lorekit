@@ -14,7 +14,7 @@ import {
 } from '../src/lessons-view.mjs';
 import {
   rankLessons, scoreLesson, recencyFactor, salienceFactor, relevanceFactor,
-  RECENCY_HALF_LIFE_DAYS,
+  RECENCY_HALF_LIFE_DAYS, DEFAULT_RANK_WEIGHTS,
 } from '../src/lessons-pure.mjs';
 import { MEMORY_TOOL_DEFS } from '../src/mcp-server.mjs';
 
@@ -1562,6 +1562,30 @@ describe('scoreLesson factors', () => {
       const s = scoreLesson(entry, { now: NOW, terms: ['timeout'], maxSeenCount: 5, weights });
       assert.ok(s >= 0 && s <= 1, `score ${s} out of range for ${JSON.stringify(weights)}`);
     }
+  });
+
+  test('DEFAULT_RANK_WEIGHTS is frozen, and a zeroed weight set cannot recurse', () => {
+    // An exported mutable object is shared state, and this one is the fallback
+    // the totality guarantee rests on. Zeroing its fields used to turn the
+    // fallback branch into unbounded recursion — a real RangeError, inside a
+    // hook contractually obliged to exit 0.
+    assert.ok(Object.isFrozen(DEFAULT_RANK_WEIGHTS), 'the exported default weights must be frozen');
+    assert.throws(
+      () => { DEFAULT_RANK_WEIGHTS.recency = 0; },
+      TypeError,
+      'a write must fail in the caller frame, not three layers down the stack',
+    );
+    assert.deepEqual({ ...DEFAULT_RANK_WEIGHTS }, { recency: 1, salience: 1, relevance: 1 });
+
+    // Belt and braces: the fallback substitutes once instead of recursing, so
+    // totality no longer depends on the export having gone unmutated.
+    const entry = { key: 'k', value: '', seenCount: 1, updatedAt: daysAgo(1) };
+    const zeroed = { recency: 0, salience: 0, relevance: 0 };
+    assert.equal(
+      scoreLesson(entry, { now: NOW, weights: zeroed }),
+      scoreLesson(entry, { now: NOW }),
+      'a zero-sum weight set scores exactly as the defaults do',
+    );
   });
 
   test('scoreLesson stays in [0,1] when the caller gets maxSeenCount wrong', () => {
