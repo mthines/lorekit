@@ -118,7 +118,7 @@ export const HOOK_PROMPT_OPTIONS = [
   {
     label: 'Yes, all of them',
     value: 'all',
-    hint: 'inject lessons at session start; nudge on a tool failure and at end of turn',
+    hint: 'inject lessons at session start and as each prompt matches them; nudge on a tool failure and at end of turn',
   },
   {
     label: 'Read-only',

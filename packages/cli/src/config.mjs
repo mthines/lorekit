@@ -87,9 +87,11 @@ export function settingsPath(root, scope = 'project') {
   return path.join(base, '.claude', 'settings.json');
 }
 
-// The lifecycle events the memory loop wires: read lessons on start, nudge on a
+// The lifecycle events the memory loop wires: read lessons on start, pull the
+// ones matching each substantive prompt as the turn is submitted, nudge on a
 // tool failure, nudge a retrospective at end of turn. Mirrors the plugin's
-// hooks.json so `install` delivers the same deterministic layer.
+// hooks.json so `install` delivers the same deterministic layer — a parity test
+// in `test/frameworks.test.mjs` holds the two lists to that claim.
 export const CLAUDE_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PostToolUseFailure', 'Stop'];
 
 // The event set `all` meant BEFORE `UserPromptSubmit` was wired.

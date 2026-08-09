@@ -490,9 +490,9 @@ links now back the hooks' write-confirmation and retrospective nudges.)
 The **shared hook engine** behind the Claude Code / Cursor / Codex plugins.
 It is not run by hand — the plugins wire it into their hook config. It reads
 the host framework's JSON on stdin and prints that host's injection format on
-stdout (lessons at session start; relevant lessons plus a write-nudge on a tool
-failure; a retrospective nudge at end of turn), always exiting 0 so it can never
-block the host agent.
+stdout (lessons at session start; the ones matching each substantive prompt as
+you go; relevant lessons plus a write-nudge on a tool failure; a retrospective
+nudge at end of turn), always exiting 0 so it can never block the host agent.
 
 ```bash
 lorekit hook --adapter <claude|cursor|codex> --event <SessionStart|Stop|…>
