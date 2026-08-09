@@ -130,7 +130,12 @@ export const KindAndHostFilterTheTaxonomy: Story = {
 
     await step('Kind drills in to its closed vocabulary, with counts', async () => {
       await userEvent.click(canvas.getByRole('option', { name: /kind/i }));
-      const values = canvas.getAllByRole('option');
+      // The drill-in is a state update, so the value list has to be AWAITED —
+      // a sync read here returns the root dimension list that is still mounted.
+      // Scoped to the level-two listbox for the same reason: `option` at
+      // document scope cannot tell the two levels apart.
+      const list = await canvas.findByRole('listbox', { name: /kind values/i });
+      const values = within(list).getAllByRole('option');
       await expect(values).toHaveLength(3);
       await expect(values[0]).toHaveTextContent('lesson');
       // Counts come from the facet catalog, ordered count-desc as the RPC emits.
