@@ -37,9 +37,15 @@ This is a good golden task for four reasons:
 3. **It is un-guessable from the working directory.** The sandbox is stripped of
    every agent-instruction file, so the format cannot be read off a doc — only
    remembered, inferred, or discovered by trial and error.
-4. **The failure is observable.** A rejected write returns an error the agent
-   can react to, so a rep that fails after several attempts is distinguishable
-   from one that fails immediately — which is what the friction metric reads.
+4. **The failure is observable — against the HOSTED store.** There, an invalid
+   scope is rejected with an error the agent can react to, so a rep that fails
+   after several attempts is distinguishable from one that fails immediately,
+   which is what the friction metric reads. **This does not hold offline.** The
+   offline store the harness actually runs against performs no scope validation
+   in `store.write`: the bad scope lands, nothing is rejected, and the agent is
+   never told. Offline the friction signal on this task is therefore near zero,
+   and the mistake is recoverable only from the union of the store and the
+   transcript — which is exactly why `grade.mjs` reads both.
 
 ## Rubric
 
