@@ -1532,6 +1532,15 @@ describe('scoreLesson factors', () => {
     assert.equal(relevanceFactor(entry, ['retry-on']), 1, 'matches the key too');
   });
 
+  test('relevanceFactor accepts an already-normalised term Set unchanged', () => {
+    // `rankLessons` normalises the query once and hands the SAME Set to every
+    // candidate, so the Set path must agree with the list path exactly.
+    const entry = { key: 'retry-on-timeout', value: 'ECONNREFUSED then a timeout' };
+    assert.equal(relevanceFactor(entry, new Set()), 0);
+    assert.equal(relevanceFactor(entry, new Set(['timeout'])), 1);
+    assert.equal(relevanceFactor(entry, new Set(['timeout', 'nomatch'])), 0.5);
+  });
+
   test('relevanceFactor matches metacharacters literally, like search does', () => {
     // Never `new RegExp(term)` — one matcher, one meaning of "matches".
     const entry = { key: 'k', value: 'a.*(b) literally' };

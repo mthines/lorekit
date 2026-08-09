@@ -333,18 +333,35 @@ export function salienceFactor(seenCount, maxSeenCount) {
  * silently become "everything is maximally relevant" — which, being a constant,
  * would not change the ORDER but would compress the score range and make every
  * downstream threshold meaningless.
+ *
+ * `terms` may be a raw list OR an already-normalised `Set` from
+ * `distinctTerms`. `rankLessons` passes the Set so the query is normalised once
+ * per ranking rather than once per candidate; a caller with a list is
+ * unaffected and passing one is still correct.
  */
 export function relevanceFactor(entry, terms) {
-  const list = Array.isArray(terms) ? terms : [terms];
-  const distinct = new Set(
-    list
-      .map((t) => String(t == null ? '' : t).toLowerCase().trim())
-      .filter(Boolean),
-  );
+  const distinct = distinctTerms(terms);
   if (distinct.size === 0) return 0;
   let hits = 0;
   for (const term of distinct) if (matchesQuery(entry, term)) hits += 1;
   return hits / distinct.size;
+}
+
+// The caller's query as a set of distinct, lowercased, non-empty terms.
+//
+// Idempotent by design: a `Set` is returned as-is, which is what lets
+// `rankLessons` normalise once and hand the SAME set to every candidate. This
+// module's whole reason to exist is the SessionStart hot path, and rebuilding
+// the set per entry made the query's normalisation O(entries × terms) for a
+// result that cannot differ between entries.
+function distinctTerms(terms) {
+  if (terms instanceof Set) return terms;
+  const list = Array.isArray(terms) ? terms : [terms];
+  return new Set(
+    list
+      .map((t) => String(t == null ? '' : t).toLowerCase().trim())
+      .filter(Boolean),
+  );
 }
 
 /**
@@ -433,6 +450,10 @@ export function rankLessons(entries = [], {
   const list = Array.isArray(entries) ? entries.filter((e) => e && typeof e === 'object') : [];
   if (list.length === 0) return [];
 
+  // Normalise the query ONCE for the whole ranking, not once per candidate —
+  // `relevanceFactor` takes the set straight through.
+  const termSet = distinctTerms(terms);
+
   // One pass for the set-relative normaliser, so scoring stays O(n).
   let maxSeenCount = 0;
   for (const e of list) maxSeenCount = Math.max(maxSeenCount, seenCountFrom(e));
@@ -450,7 +471,7 @@ export function rankLessons(entries = [], {
   const scored = list.map((entry, index) => ({
     entry,
     index,
-    score: scoreLesson(entry, { terms, now, weights, maxSeenCount, halfLifeDays }),
+    score: scoreLesson(entry, { terms: termSet, now, weights, maxSeenCount, halfLifeDays }),
     scopeRank: rankByScope.has(entry.scope) ? rankByScope.get(entry.scope) : Number.MAX_SAFE_INTEGER,
     key: String(entry.key ?? ''),
   }));
