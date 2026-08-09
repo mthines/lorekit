@@ -59,7 +59,6 @@ import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
 import { StatusControl } from './StatusControl';
 import {
-  DEFAULT_STATUS,
   EXPIRING_WITHIN_DAYS,
   expiringWithinDays,
   isArchivedView,
@@ -477,12 +476,14 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     [lessons, ownerFilter],
   );
 
-  const isFiltered =
-    search.trim() !== '' ||
-    range !== null ||
-    status !== DEFAULT_STATUS ||
-    ownerFilter !== 'all' ||
-    filters.length > 0;
+  // Has the user narrowed WITHIN the current view? `status` is deliberately not
+  // one of these: it selects which population is listed, not a predicate over
+  // it, so "Archived" or "Expiring" being selected must not read as "you
+  // filtered something out". That distinction is what the empty state turns on
+  // — a status view with nothing narrowing it gets its own copy, the same view
+  // with a search that matched nothing gets "no matches".
+  const isNarrowedWithinView =
+    search.trim() !== '' || range !== null || ownerFilter !== 'all' || filters.length > 0;
 
   // Every filter mutation closes the lesson sidebar for one reason: the open
   // lesson may not survive the new predicate, and a detail panel describing a
@@ -629,31 +630,34 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
         <EmptyState
           icon={EMPTY_STATE_ICONS[status]}
           title={
-            status === 'archived'
-              ? 'No archived memories'
-              : // An empty EXPIRING view is good news, not a failed search, so it
-                // gets its own copy rather than falling through to "no matches".
-                // Reading "No matching memories" when the honest answer is
-                // "nothing is about to be lost" would send someone hunting for a
-                // filter to remove.
-                status === 'expiring'
-                ? 'Nothing expiring soon'
-                : isFiltered
-                  ? 'No matching memories'
+            // Narrowing is checked FIRST, and only then the status. A search or
+            // a filter that matched nothing is a failed search in every view —
+            // reading "Nothing expiring soon" (or "No archived memories") when
+            // the honest answer is "your query matched nothing here" hides the
+            // control the user needs to undo.
+            isNarrowedWithinView
+              ? 'No matching memories'
+              : status === 'archived'
+                ? 'No archived memories'
+                : // An unnarrowed EXPIRING view is good news, not a failed
+                  // search, so it gets its own copy. That is only true once the
+                  // narrowed case above has been taken.
+                  status === 'expiring'
+                  ? 'Nothing expiring soon'
                   : 'No memories in this scope'
           }
           description={
-            status === 'archived'
-              ? 'Archive a memory from its detail panel to see it here.'
-              : status === 'expiring'
-                ? `No live memory in this view runs out within ${EXPIRING_WITHIN_DAYS} days.`
-                : isFiltered
-                  ? // Filters AND together, so the most likely cause of an empty
-                    // list is one condition too many — name that before search
-                    // terms and dates, which the user can already see.
-                    filters.length > 1
-                    ? 'No memory satisfies every filter — try removing one.'
-                    : 'Try a different search term, filter, or date range.'
+            isNarrowedWithinView
+              ? // Filters AND together, so the most likely cause of an empty
+                // list is one condition too many — name that before search
+                // terms and dates, which the user can already see.
+                filters.length > 1
+                ? 'No memory satisfies every filter — try removing one.'
+                : 'Try a different search term, filter, or date range.'
+              : status === 'archived'
+                ? 'Archive a memory from its detail panel to see it here.'
+                : status === 'expiring'
+                  ? `No live memory in this view runs out within ${EXPIRING_WITHIN_DAYS} days.`
                   : 'Memories will appear here once your agents start writing.'
           }
         />
