@@ -117,7 +117,12 @@ export const KeyboardSelectsWithoutLeavingTheTrigger: Story = {
       await waitFor(async () => {
         await expect(canvas.getByTestId('value')).toHaveTextContent('expiring');
       });
-      await expect(within(document.body).queryByRole('listbox', { name: /status/i })).toBeNull();
+      // The popover unmounts through an exit animation, so the listbox lingers a
+      // frame after the commit — wait it out rather than racing it (as the
+      // dismissal steps below do).
+      await waitFor(async () => {
+        await expect(within(document.body).queryByRole('listbox', { name: /status/i })).toBeNull();
+      });
     });
 
     await step('and focus comes back to the trigger', async () => {
@@ -207,7 +212,11 @@ export const EscapeAndClickOutsideBothDismiss: Story = {
       const menu = await open(canvasElement);
       await userEvent.keyboard('{ArrowDown}');
       await userEvent.keyboard('{Escape}');
-      await expect(menu.queryByRole('listbox', { name: /status/i })).toBeNull();
+      // Dismissal animates out, so the listbox is removed a frame later — wait
+      // for it, mirroring the click-outside step below.
+      await waitFor(async () => {
+        await expect(menu.queryByRole('listbox', { name: /status/i })).toBeNull();
+      });
       // The highlight is not a selection — moving it and bailing must change
       // nothing.
       await expect(canvas.getByTestId('value')).toHaveTextContent('active');
