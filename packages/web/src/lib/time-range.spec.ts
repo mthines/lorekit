@@ -5,6 +5,7 @@ import {
   bucketPlanForRange,
   rangeForBucket,
   rangeLabel,
+  rangeCaption,
   toDayRange,
   isPresetRange,
   isDayString,
@@ -310,20 +311,6 @@ describe('rangeLabel', () => {
     expect(rangeLabel({ preset: '90d' }, NOW)).toBe('Last 90 days');
   });
 
-  // The Overview's card captions are `in the ${rangeLabel(...).toLowerCase()}`,
-  // where they used to be `in the last ${RANGE_NOUN[range]}`. That refactor is
-  // only safe while the two produce the SAME sentence — the committed visual
-  // baselines pin those captions pixel for pixel, and an interaction test reads
-  // "in the last 30 days" literally. Pin the phrasing here so a future reword of
-  // rangeLabel fails a fast unit test instead of a slow browser snapshot.
-  it('lowercases into the exact caption phrasing the stat cards had before', () => {
-    const caption = (preset: '24h' | '7d' | '30d') =>
-      `in the ${rangeLabel({ preset }, NOW).toLowerCase()}`;
-    expect(caption('24h')).toBe('in the last 24 hours');
-    expect(caption('7d')).toBe('in the last 7 days');
-    expect(caption('30d')).toBe('in the last 30 days');
-  });
-
   it('calls both spellings of unbounded "All time"', () => {
     expect(rangeLabel(null, NOW)).toBe('All time');
     expect(rangeLabel({ preset: 'all' }, NOW)).toBe('All time');
@@ -369,5 +356,36 @@ describe('rangeLabel', () => {
 
   it('falls back to All time for a malformed window', () => {
     expect(rangeLabel({ from: 'nope', to: 'also-nope' }, NOW)).toBe('All time');
+  });
+});
+
+describe('rangeCaption', () => {
+  // The Overview's card captions are `in ${rangeCaption(...)}`, and before that
+  // `in the ${rangeLabel(...).toLowerCase()}`, and before that
+  // `in the last ${RANGE_NOUN[range]}`. Each refactor is only safe while the
+  // PRESET arm produces the SAME sentence — the committed visual baselines pin
+  // those captions pixel for pixel, and an interaction test reads
+  // "in the last 30 days" literally. Pin the phrasing here so a future reword
+  // fails a fast unit test instead of a slow browser snapshot.
+  it('keeps the preset captions byte-for-byte what the stat cards already showed', () => {
+    const caption = (preset: '24h' | '7d' | '30d') => `in ${rangeCaption({ preset }, NOW)}`;
+    expect(caption('24h')).toBe('in the last 24 hours');
+    expect(caption('7d')).toBe('in the last 7 days');
+    expect(caption('30d')).toBe('in the last 30 days');
+  });
+
+  it('leaves an absolute window its own casing, and drops the article', () => {
+    // The bug this function exists for: `rangeLabel().toLowerCase()` rendered
+    // "in the jul 1 – jul 3". A date is a name, not prose.
+    expect(rangeCaption({ from: '2026-07-01', to: '2026-07-03' }, NOW)).toBe('Jul 1 – Jul 3');
+    expect(rangeCaption({ from: '2026-07-01', to: '2026-07-01' }, NOW)).toBe('Jul 1');
+  });
+
+  it('says "all time", not "the all time", for every unbounded spelling', () => {
+    expect(rangeCaption(null, NOW)).toBe('all time');
+    expect(rangeCaption({ preset: 'all' }, NOW)).toBe('all time');
+    // A malformed absolute window falls back to the unbounded LABEL, so it has
+    // to reach the unbounded CAPTION too — never "in All time".
+    expect(rangeCaption({ from: 'nope', to: 'also-nope' }, NOW)).toBe('all time');
   });
 });

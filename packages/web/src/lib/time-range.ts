@@ -291,3 +291,29 @@ export function rangeLabel(range: TimeRange, nowIso: string): string {
   const right = fmt(to);
   return left === right ? left : `${left} – ${right}`;
 }
+
+/**
+ * The range as a CAPTION fragment — the words that follow "in" under a stat
+ * card, rather than a title in its own right.
+ *
+ * {@link rangeLabel} is a TITLE: it is capitalised, and its absolute arm renders
+ * real month names. The captions used to lowercase that title wholesale, which
+ * is right for a preset ("in the last 7 days") and wrong for every other arm — a
+ * window drilled in from a chart read "in the jul 1 – jul 3", and an unbounded
+ * range read "in the all time". A duration is prose and takes a definite
+ * article; a date is a NAME and takes neither.
+ *
+ * So the article and the casing are decided per arm here, once, instead of at
+ * each caption site. The PRESET arm is deliberately byte-for-byte what the old
+ * expression produced (`the ${label.toLowerCase()}`): the Overview's committed
+ * visual baselines pin those captions pixel for pixel, and an interaction test
+ * reads "in the last 30 days" literally.
+ */
+export function rangeCaption(range: TimeRange, nowIso: string): string {
+  if (range === null || (isPresetRange(range) && range.preset === 'all')) return 'all time';
+  if (isPresetRange(range)) return `the ${rangeLabel(range, nowIso).toLowerCase()}`;
+  // A malformed absolute window falls back to the unbounded LABEL, so it needs
+  // the unbounded caption too — otherwise a bad link reads "in All time".
+  const label = rangeLabel(range, nowIso);
+  return label === 'All time' ? 'all time' : label;
+}

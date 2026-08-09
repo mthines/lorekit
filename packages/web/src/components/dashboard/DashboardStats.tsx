@@ -16,6 +16,7 @@ import {
 import {
   bucketPlanForRange,
   isPresetRange,
+  rangeCaption,
   rangeLabel,
   resolveRange,
   type RangePreset,
@@ -281,10 +282,17 @@ export function DashboardStats() {
   }
 
   const { scopes } = data;
-  // One phrase for every card's caption and aria label, derived from the same
-  // range the grid was, so a drilled-in window reads as its dates rather than
-  // as a preset it is not.
-  const rangeText = rangeLabel(range, nowIso).toLowerCase();
+  // One phrase for every card's caption, derived from the same range the grid
+  // was, so a drilled-in window reads as its dates rather than as a preset it is
+  // not. `rangeCaption` (not `rangeLabel().toLowerCase()`) because only a preset
+  // is prose: lowercasing the absolute arm turned "Jul 1 – Jul 3" into a date
+  // nobody writes, and it supplies its own article, so the sites below say
+  // "in ${…}" rather than "in the ${…}".
+  const rangeText = rangeCaption(range, nowIso);
+  // The aria label wants the TITLE, not the caption fragment — a screen reader
+  // hears it after the card's name, where "Last 24 hours" reads better than the
+  // article-carrying "the last 24 hours".
+  const rangeTitle = rangeLabel(range, nowIso);
 
   // Order: the two memory-count cards sit together (written, then read) so the
   // reader compares like with like, and the scope-breadth card — the only one
@@ -308,7 +316,7 @@ export function DashboardStats() {
       tooltip:
         'New memories written across all scopes in the selected range. The bars sum to the number: each bar is the memories written in that hour or day. The trend chip compares this window against the preceding one. Your all-time total across every scope is shown in the memory badge at the top right.',
       value: sumPoints(memoryTrends.lessons.points),
-      description: `in the ${rangeText}`,
+      description: `in ${rangeText}`,
       trend: memoryTrends.lessons,
       unit: 'memories',
     },
@@ -320,7 +328,7 @@ export function DashboardStats() {
       tooltip:
         'Memory records read in the selected range by your agents and tools, across the MCP tools and the REST API — one list call returning 20 memories counts as 20 records, not one read. Browsing your lore in this dashboard does NOT count: reading it here is visualisation, not consumption, so those reads are excluded and reloading a page never moves this number. Unlike the two cards beside it, this counts only YOUR reads: usage is a per-user ledger, so reads by other members of your organization are never included. The bars sum to the number, and the trend chip compares this window against the preceding one.',
       value: sumPoints(readTrend.points),
-      description: `in the ${rangeText}`,
+      description: `in ${rangeText}`,
       trend: readTrend,
       unit: 'memories',
     },
@@ -332,7 +340,7 @@ export function DashboardStats() {
       tooltip:
         'Distinct memory scopes (namespaces) with at least one memory written in the selected range. Each bar is the scopes seen for the FIRST time in that hour or day, so the bars sum to the distinct total rather than counting a long-running scope once per bucket. The trend chip compares the distinct scopes of this window against the preceding one.',
       value: memoryTrends.activeScopes,
-      description: `distinct scopes active in the ${rangeText}`,
+      description: `distinct scopes active in ${rangeText}`,
       trend: memoryTrends.newScopes,
       unit: 'scopes',
     },
@@ -384,7 +392,7 @@ export function DashboardStats() {
                 points={trend.points}
                 unit={unit}
                 className="mt-auto h-7 w-full"
-                ariaLabel={`${label}: ${rangeText}`}
+                ariaLabel={`${label}: ${rangeTitle}`}
               />
             </div>
           ))}
