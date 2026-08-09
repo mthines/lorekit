@@ -41,9 +41,22 @@ export default defineConfig({
   // the optimized react shim is re-hashed out from under an in-flight import).
   // `react-dom` (via `createPortal`) and `motion/react` (drag/AnimatePresence)
   // both first enter the story graph through `BottomSheet`, so declare them
-  // here alongside the setup-file deps.
+  // here alongside the setup-file deps. The `@lorekit/schemas` subpaths are
+  // here because they are workspace-linked SOURCE: Vite walks into them, finds
+  // their bare `zod` import and re-optimizes mid-run ("new dependencies found:
+  // zod" → reload). Pre-bundling the subpath inlines zod, so a story that first
+  // pulls a schema VALUE in (`FilterMenu.test.stories.tsx`) cannot trigger it.
+  // Listing `zod` itself does NOT work — pnpm keeps it out of this package's
+  // node_modules, so Vite fails to resolve it.
   optimizeDeps: {
-    include: ['@storybook/nextjs-vite', 'storybook/test', 'react-dom', 'motion/react'],
+    include: [
+      '@storybook/nextjs-vite',
+      'storybook/test',
+      'react-dom',
+      'motion/react',
+      '@lorekit/schemas/memory',
+      '@lorekit/schemas/tags',
+    ],
   },
   test: {
     name: 'storybook',
