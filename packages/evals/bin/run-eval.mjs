@@ -48,12 +48,17 @@ Options:
   --command <bin>      Agent binary (default "claude"; override for smoke tests).
   --seed <source>      probe: empty | canonical | organic (default canonical).
   --lesson <text>      probe: the arm-0 lesson text, required for --seed organic.
-  --scope <scope>      probe: an explicit scope to seed at (overrides the mode).
-  --scope-mode <m>     probe: branch | repo | project | global (default branch).
-  --git / --no-git     probe: force the sandbox git identity on/off. Default is
-                       on only for the scope modes that need it (branch, repo);
+  --scope <scope>      an explicit scope to seed at (overrides the mode).
+  --scope-mode <m>     branch | repo | project | global (default branch).
+  --git / --no-git     force the sandbox git identity on/off. Default is on
+                       only for the scope modes that need it (branch, repo);
                        --no-git with a branch scope reproduces a RETRIEVAL
                        failure on purpose.
+                       These three apply to arm0 as well as probe. arm0 always
+                       grades against the golden task's FIXED target scope, so
+                       an override that resolves elsewhere could only ever
+                       score a failure; arm0 refuses that combination up front
+                       rather than reporting it as a model result.
   --keep               Leave each sandbox on disk for inspection.
   --dry-run            Build and print the plan without spawning the agent.
   -h, --help           Show this help.
@@ -175,6 +180,19 @@ async function runArm0(options) {
         allowWrite: true,
       });
       const task = taskById("branch-scope");
+      // `--scope` / `--scope-mode` / `--no-git` steer where the arm resolves,
+      // but `gradeSandbox` below always grades against the task's fixed target.
+      // A mismatch cannot produce anything but a 0-or-partial score, and it
+      // would read as the model failing the task. Refuse it, the same way
+      // `taskById` refuses a stub rather than running an empty eval.
+      if (arm.targetScope !== task.targetScope) {
+        throw new Error(
+          `arm0 grades against the fixed target ${task.targetScope}, but the ` +
+            `scope options resolved to ${arm.targetScope}; a run with this ` +
+            `combination could only score a failure. Drop the scope override, ` +
+            `or use the "probe" subcommand, which is not graded.`,
+        );
+      }
       const meta = {
         rep,
         arm: "0",

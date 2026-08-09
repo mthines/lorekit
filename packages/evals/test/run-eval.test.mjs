@@ -62,6 +62,36 @@ test("an unimplemented subcommand exits non-zero instead of pretending", async (
   assert.equal(code, 2);
 });
 
+test("arm0 refuses a scope override it could never grade as a success", async () => {
+  const out = await fsp.mkdtemp(path.join(os.tmpdir(), "evals-out-"));
+  try {
+    // arm0 grades against the golden task's fixed branch:: target, so a run
+    // steered at repo:: granularity could only ever score a failure — and it
+    // would read as the model failing the task rather than as a bad invocation.
+    await assert.rejects(
+      () =>
+        main([
+          "arm0",
+          "--reps",
+          "1",
+          "--dry-run",
+          "--scope-mode",
+          "repo",
+          "--out",
+          out,
+        ]),
+      /could only score a failure/,
+    );
+    // The default invocation resolves to the target and is unaffected.
+    assert.equal(
+      await main(["arm0", "--reps", "1", "--dry-run", "--out", out]),
+      0,
+    );
+  } finally {
+    await fsp.rm(out, { recursive: true, force: true });
+  }
+});
+
 test("arm0 --dry-run writes the artifact tree without spawning (AC-1.3)", async () => {
   const out = await fsp.mkdtemp(path.join(os.tmpdir(), "evals-out-"));
   try {
