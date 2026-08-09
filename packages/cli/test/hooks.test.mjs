@@ -23,9 +23,12 @@ import { codex } from '../src/adapters/codex.mjs';
 // scope of this checkout, so it is the same value for every test in the file.
 // Resolved ONCE at module level: the tests that need it were each paying for
 // their own call on top of the one `fetchLessons` makes internally, which is
-// the bulk of this file's runtime. Shared safely because nothing mutates the
-// returned object — every consumer reads `readOrder` (`core/lessons.mjs:55`,
-// `:106`, `:226`) and none reorders or appends to it.
+// the bulk of this file's runtime. Nothing in `core/lessons.mjs` ever sees this
+// object — `fetchLessons` derives its own scope from the `cwd` it is handed,
+// and `relevantLessonsFromStore` is only ever called here with the synthetic
+// `SCOPE` fixture — so the sharers are the test bodies in this file. Shared
+// safely because each of them only reads `scope.readOrder`; none reorders or
+// appends to it.
 const REAL_SCOPE = deriveScope(process.cwd());
 
 test('isFailure reads exit codes and error flags conservatively', () => {
