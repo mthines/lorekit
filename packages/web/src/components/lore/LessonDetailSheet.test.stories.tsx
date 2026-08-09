@@ -232,7 +232,7 @@ export const ArchivedLoreIsPreviewOnly: Story = {
     await body().findByRole('dialog', { name: /memory detail/i });
     await settleOpenFocus();
     await step('the Edit tab is disabled and announces no shortcut', async () => {
-      const edit = body().getByRole('tab', { name: /edit/i, hidden: true });
+      const edit = body().getByRole('tab', { name: /edit/i });
       await expect(edit).toBeDisabled();
       await expect(edit).not.toHaveAttribute('aria-keyshortcuts');
       await expect(body().getByRole('tab', { name: /preview/i })).toHaveAttribute(
@@ -244,7 +244,7 @@ export const ArchivedLoreIsPreviewOnly: Story = {
       await userEvent.keyboard('e');
       await expect(contentTextarea()).toBeNull();
       await expect(previewPanel()).not.toBeNull();
-      await userEvent.click(body().getByRole('tab', { name: /edit/i, hidden: true }));
+      await userEvent.click(body().getByRole('tab', { name: /edit/i }));
       await expect(contentTextarea()).toBeNull();
       await expect(body().getByRole('tab', { name: /preview/i })).toHaveAttribute(
         'aria-selected',
