@@ -88,7 +88,7 @@ export function MarkdownPreview({ value, className = '' }: MarkdownPreviewProps)
   }
 
   return (
-    <div className={['markdown-body', PROSE, className].join(' ')}>
+    <div className={[PROSE, className].join(' ')}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeSanitize]}
