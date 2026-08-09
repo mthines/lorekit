@@ -94,6 +94,16 @@ const previewPanel = () => document.getElementById('content-panel-preview');
 // <input> elements, so `role=textbox` is ambiguous but the element query is not.
 const contentTextarea = () => document.querySelector('#content-panel-edit textarea');
 
+/**
+ * The panel focuses its close button 80 ms after open. Any story that types
+ * must land that first — otherwise the timer fires mid-`type()`, steals focus
+ * from the textarea and drops the rest of the word (a real CI flake).
+ */
+const settleOpenFocus = () =>
+  waitFor(() =>
+    expect(body().getByRole('button', { name: /close detail panel/i })).toHaveFocus(),
+  );
+
 // ── Dismissal ────────────────────────────────────────────────────────────────
 
 export const OpensAsASheet: Story = {
@@ -271,6 +281,7 @@ export const ArrowKeysSwitchTabs: Story = {
 export const EditingRevealsSaveBar: Story = {
   play: async ({ step }) => {
     await body().findByRole('dialog', { name: /memory detail/i });
+    await settleOpenFocus();
     await step('typing in the Edit textarea reveals the pinned Discard/Save bar', async () => {
       await userEvent.click(body().getByRole('tab', { name: /edit/i }));
       await waitFor(() => expect(contentTextarea()).not.toBeNull());
@@ -301,6 +312,7 @@ export const KeyboardShortcutsSwitchTabs: Story = {
 export const ShortcutIgnoredWhileTyping: Story = {
   play: async ({ step }) => {
     await body().findByRole('dialog', { name: /memory detail/i });
+    await settleOpenFocus();
     await step('typing p/e inside the textarea never switches tabs', async () => {
       await userEvent.click(body().getByRole('tab', { name: /edit/i }));
       await waitFor(() => expect(contentTextarea()).not.toBeNull());
