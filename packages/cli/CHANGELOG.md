@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.39.0](https://github.com/mthines/lorekit/compare/cli-v1.38.0...cli-v1.39.0) (2026-08-09)
+
+
+### Features
+
+* **web:** replace the archived toggle with a Status control ([875dbc9](https://github.com/mthines/lorekit/commit/875dbc98a1bfd9ffa8ffaa255fe05dc219b9c288))
+
 ## [1.38.0](https://github.com/mthines/lorekit/compare/cli-v1.37.0...cli-v1.38.0) (2026-08-09)
 
 
