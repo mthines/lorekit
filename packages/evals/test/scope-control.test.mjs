@@ -238,6 +238,27 @@ test("positionOf agrees with classifyRetrieval about a foreign same-key hit", ()
     position: null,
     scope: null,
   });
+
+  // The pairing the name claims, asserted rather than described: the same two
+  // cases through `classifyRetrieval` must reach the same verdict.
+  const unscoped = classifyRetrieval({
+    injection,
+    storeEntries: [],
+    key: "wanted",
+  });
+  assert.equal(unscoped.injected, true);
+  assert.equal(unscoped.position, 1);
+  assert.equal(unscoped.state, RETRIEVAL_INJECTED);
+
+  const scoped = classifyRetrieval({
+    injection,
+    storeEntries: [],
+    key: "wanted",
+    scope: BRANCH_SCOPE,
+  });
+  assert.equal(scoped.injected, false);
+  assert.equal(scoped.position, null);
+  assert.equal(scoped.state, RETRIEVAL_ABSENT);
 });
 
 test("a same-key entry at another scope is ABSENT, not in-store-not-loaded", () => {
