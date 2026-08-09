@@ -326,7 +326,7 @@ The one verb that **ranks**. Returns the top-K lessons for a query as a compact 
 | `q` | — | Free-text query, `websearch` FTS over `key \|\| value`. **Optional.** |
 | `scopes` | all visible | Comma-separated, **most-specific first** — the order breaks ties. |
 | `limit` | `10` | 1–50. A shortlist for a context window, not a page. |
-| `min_score` | `0` | Drop hits below this. How a caller says "stay silent rather than show me something weak". |
+| `min_score` | `0` | Drop hits below this — how a caller says "stay silent rather than show me something weak". Note: with `q` set, matched hits floor at ~`1/3` (relevance is binary today), so `min_score ≤ 0.333…` is a no-op until graded relevance. |
 
 **Why it exists.** Every other read hands the caller a single-signal ordering — `GET /memories`
 is `updated_at` desc, `POST /memories/search` is FTS rank — and neither knows that a lesson
