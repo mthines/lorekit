@@ -24,6 +24,7 @@ import type {
   ScopesResponse,
   UpdateMemoryBody,
 } from '@lorekit/schemas/memory';
+import type { UsageStatsQuery, UsageStatsResponse } from '@lorekit/schemas/usage';
 import { restFetch } from './rest';
 
 /** The `GET /memories` query, minus the params the schema defaults for us. */
@@ -209,5 +210,33 @@ export function purgeMemoriesRequest(
     accessToken,
     method: 'POST',
     body: { retention_days: retentionDays },
+  });
+}
+
+/**
+ * `GET /memories/usage` — aggregate usage statistics over a window.
+ *
+ * The Explorer's stats header reads exactly one figure from this:
+ * `summary.expired`, the number of memory RECORDS a purge deleted because their
+ * TTL had run out. That is the only place expiry is observable — a lazy read
+ * filters expired rows but never deletes them, so there is no discrete expiry
+ * moment on the read path; `purge_expired_memories` (migration 00045) records
+ * one event per run carrying the count it removed, and this sums those.
+ *
+ * **It takes no `scope`.** `usage_events` is a per-user ledger with no scope
+ * dimension on the expiry event (PR-1 deliberately deferred attributing one —
+ * the purge is per-user and spans scopes), so this figure is ACCOUNT-WIDE for
+ * the window even when the caller has a scope selected. Any UI showing it beside
+ * scoped numbers has to say so.
+ */
+export function usageRequest(
+  accessToken: string,
+  params: Partial<UsageStatsQuery>,
+  signal?: AbortSignal,
+): Promise<UsageStatsResponse> {
+  return restFetch<UsageStatsResponse>('/memories/usage', {
+    accessToken,
+    query: { ...params },
+    ...(signal ? { signal } : {}),
   });
 }

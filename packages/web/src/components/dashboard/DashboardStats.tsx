@@ -1,10 +1,9 @@
 'use client';
 
 import { useMemo } from 'react';
-import { BookOpen, BookOpenCheck, Info, Layers, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { BookOpen, BookOpenCheck, Layers } from 'lucide-react';
 import { ScopeHealthGrid } from '@/components/dashboard/ScopeHealthCard';
-import { Sparkbar } from '@/components/dashboard/Sparkbar';
-import { Tooltip } from '@/components/ui/Tooltip';
+import { StatCard } from '@/components/dashboard/StatCard';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDashboardData } from '@/lib/queries/dashboard';
 import {
@@ -15,10 +14,10 @@ import {
 } from '@/lib/aggregations';
 import {
   bucketPlanForRange,
+  gridAnchor,
   isPresetRange,
   rangeCaption,
   rangeLabel,
-  resolveRange,
   type RangePreset,
   type TimeRange,
 } from '@/lib/time-range';
@@ -167,13 +166,6 @@ function StatRangeSelect({
  * counted and the verb, because "writes" alone does not say writes of what —
  * and the Scopes card counts scopes written to, not memories.
  */
-function UnitTag({ label }: { label: string }) {
-  return (
-    <span className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
-      {label}
-    </span>
-  );
-}
 
 /** Skeleton that matches the real layout to prevent CLS while the query loads. */
 export function DashboardStatsSkeleton() {
@@ -209,26 +201,6 @@ export function DashboardStatsSkeleton() {
 }
 
 /** Period-over-period percentage-change chip. */
-function TrendChip({ changePct, title }: { changePct: number; title: string }) {
-  const dir = changePct > 0 ? 'up' : changePct < 0 ? 'down' : 'flat';
-  const Icon = dir === 'up' ? TrendingUp : dir === 'down' ? TrendingDown : Minus;
-  const color =
-    dir === 'up'
-      ? 'text-[var(--color-success)]'
-      : dir === 'down'
-        ? 'text-[var(--color-error)]'
-        : 'text-[var(--color-content-tertiary)]';
-
-  return (
-    <span
-      className={`flex items-center gap-1 text-xs font-medium tabular-nums ${color}`}
-      title={title}
-    >
-      <Icon className="size-3.5" aria-hidden />
-      {changePct > 0 ? `+${changePct}` : changePct}%
-    </span>
-  );
-}
 
 /**
  * Client component — fetches scope health, write activity and read activity via
@@ -275,11 +247,11 @@ export function DashboardStats() {
   //
   // A preset and an unbounded range still anchor at `nowIso`, unchanged: that
   // is what they mean, and it keeps every existing render identical.
-  const gridNowIso = useMemo(() => {
-    if (range === null || isPresetRange(range)) return nowIso;
-    const window = resolveRange(range, nowIso);
-    return window === null ? nowIso : new Date(Date.parse(window.to) - 1).toISOString();
-  }, [range, nowIso]);
+  // Extracted to `lib/time-range.ts` now that the Explorer's stats header needs
+  // the identical rule — the rule is invisible when wrong (both charts still
+  // render, they just describe a period nobody selected), which is the worst
+  // kind of thing to keep two copies of.
+  const gridNowIso = useMemo(() => gridAnchor(range, nowIso), [range, nowIso]);
   const memoryTrends = useMemo(
     () => computeRangeTrends(rows, gridNowIso, plan),
     [rows, gridNowIso, plan],
@@ -372,47 +344,13 @@ export function DashboardStats() {
           <StatRangeSelect value={range} onChange={setRange} />
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {cards.map(({ id, icon: Icon, label, tag, tooltip, value, description, trend, unit }) => (
-            <div
+          {cards.map(({ id, ...card }) => (
+            <StatCard
               key={id}
-              className="flex flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <div className="flex size-9 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                    <Icon className="size-4 text-[var(--color-accent)]" aria-hidden />
-                  </div>
-                  <UnitTag label={tag} />
-                </div>
-                {trend.points.length >= 2 && (
-                  <TrendChip changePct={trend.changePct} title={rangeTrendTitle(range, nowIso)} />
-                )}
-              </div>
-              <div>
-                <p className="text-2xl font-bold tabular-nums text-[var(--color-content-primary)]">
-                  {value}
-                </p>
-                <p className="flex items-center gap-1 text-xs text-[var(--color-content-tertiary)]">
-                  {label}
-                  <Tooltip content={tooltip} side="top" align="center">
-                    <Info
-                      className="size-3 shrink-0 text-[var(--color-content-tertiary)] opacity-60"
-                      aria-hidden
-                    />
-                  </Tooltip>
-                </p>
-                <p className="mt-0.5 text-[10px] text-[var(--color-content-tertiary)] opacity-70">
-                  {description}
-                </p>
-              </div>
-              {/* Per-metric trend — hover (desktop) or tap (mobile) a bar for values. */}
-              <Sparkbar
-                points={trend.points}
-                unit={unit}
-                className="mt-auto h-7 w-full"
-                ariaLabel={`${label}: ${rangeTitle}`}
-              />
-            </div>
+              {...card}
+              trendTitle={rangeTrendTitle(range, nowIso)}
+              rangeTitle={rangeTitle}
+            />
           ))}
         </div>
       </div>

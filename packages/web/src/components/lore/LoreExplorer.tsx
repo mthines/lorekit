@@ -44,6 +44,7 @@
 import { useCallback, useMemo, useTransition, useState } from 'react';
 import { Search, BookOpen, ChevronDown, ChevronUp, Loader2, List, LayoutGrid, Archive, User, Building2, Users } from 'lucide-react';
 import { ScopeTree, type ScopeNode } from './ScopeTree';
+import { ExplorerStats } from './ExplorerStats';
 import { LessonCard } from './LessonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useUrlState } from '@/lib/hooks/useUrlState';
@@ -659,6 +660,17 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             ? 'Loading more memories'
             : `${filteredLessons.length} memor${filteredLessons.length === 1 ? 'y' : 'ies'} loaded`}
       </p>
+
+      {/* ── Stats header ────────────────────────────────────────────────────
+          Above the heatmap because it answers the coarser question: the cards
+          say how much and how broad, the heatmap says when. Both follow the
+          same scope and range. */}
+      <ExplorerStats
+        scope={selectedScope}
+        range={range}
+        hasActiveFilters={filters.length > 0}
+        scopeLabel={selectedScopeLabel}
+      />
 
       {/* ── Heatmap panel (collapsible) ─────────────────────────────────── */}
       <div className="overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]">

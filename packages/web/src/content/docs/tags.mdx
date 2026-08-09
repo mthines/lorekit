@@ -99,6 +99,27 @@ The last three dimensions come from **provenance** — the repo, branch and PR a
 
 </TutorialStep>
 
+<TutorialStep number={5} title="Read the stats header above the list">
+
+The Explorer opens with four cards above the memory list, describing **the scope and time range you have selected** rather than your whole account:
+
+| Card | Counts |
+| --- | --- |
+| Memories written | New memories in the range, under the selected scope |
+| Memories read | Memory *records* read — one list call returning 20 memories counts as 20 |
+| Scopes active | Distinct scopes with at least one memory written in the range |
+| Memories expired | Records deleted because their TTL ran out |
+
+Every card with bars is **additive**: summing the bars reproduces the number above them, so the chart and the total can never tell different stories. Click the chevron to fold the header away.
+
+Three things the cards deliberately do *not* do, each stated in its own tooltip:
+
+- **Memories read counts only your own reads,** and only those LoreKit could attribute to a scope — so per-scope totals can be smaller than the account total. Reads from this dashboard are excluded: browsing your lore is visualisation, not consumption.
+- **Memories expired is account-wide** even with a scope selected. Expiry is recorded when the nightly purge removes a row, and that purge runs per user across every scope, so there is no scope on the event to filter by.
+- **Filters narrow the list, not the cards.** With a filter bar active the header says so in a line under its title.
+
+</TutorialStep>
+
 <TutorialStep number={5} title="Search across scopes with wildcards">
 
 `memory.search` supports owner-level wildcards in the `scopes` parameter:

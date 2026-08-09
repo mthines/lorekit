@@ -64,9 +64,25 @@ export function dayCountsFromActivity(rows: readonly ActivityBucketRow[]): DayCo
  * keeps that function — the one with the period-over-period comparison logic
  * and the tests that pin it — untouched by the move to the API.
  */
-export function trendRowsFromActivity(rows: readonly ActivityBucketRow[]): TrendRow[] {
+export function trendRowsFromActivity(
+  rows: readonly ActivityBucketRow[],
+  /**
+   * Keep only cells under this EXACT scope. `null`/absent means every scope.
+   *
+   * Filtered here rather than server-side because `GET /memories/activity` has
+   * no `scope` parameter — it returns one cell per `(bucket, scope)`, so the
+   * narrowing is a property of the response the client already has, and asking
+   * the server for it would be a round trip for a filter over data in hand.
+   *
+   * EXACT, not prefix: `repo::owner/name` does not include its branches. That
+   * matches what selecting a scope in the Explorer's tree filters the LIST to,
+   * and the header has to agree with the list beneath it.
+   */
+  scope?: string | null,
+): TrendRow[] {
   const out: TrendRow[] = [];
   for (const row of rows) {
+    if (scope != null && row.scope !== scope) continue;
     for (let i = 0; i < row.count; i++) {
       out.push({ scope: row.scope, created_at: row.bucket });
     }
