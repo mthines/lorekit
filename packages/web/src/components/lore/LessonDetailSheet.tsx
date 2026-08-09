@@ -387,10 +387,20 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
     setContentTab(DEFAULT_CONTENT_TAB);
   }, [lessonId]);
 
-  // Focus close button on open; restore on close.
+  // Focus close button on open; restore on close. The delay lets the open
+  // animation start first, which means focus can already be somewhere inside
+  // the panel by the time it fires (a fast click straight into the Content
+  // textarea) — pulling it back to the close button would swallow the keystrokes
+  // that follow. So this only ever moves focus INTO the panel, never within it.
   useEffect(() => {
     if (lesson) {
-      const timer = setTimeout(() => closeRef.current?.focus(), 80);
+      const timer = setTimeout(() => {
+        const close = closeRef.current;
+        if (!close) return;
+        const panel = close.closest('[role="dialog"]');
+        if (panel?.contains(document.activeElement)) return;
+        close.focus();
+      }, 80);
       return () => clearTimeout(timer);
     }
     return undefined;
