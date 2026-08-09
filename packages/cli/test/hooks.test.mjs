@@ -28,8 +28,14 @@ import { codex } from '../src/adapters/codex.mjs';
 // and `relevantLessonsFromStore` is only ever called here with the synthetic
 // `SCOPE` fixture — so the sharers are the test bodies in this file. Shared
 // safely because each of them only reads `scope.readOrder`; none reorders or
-// appends to it.
-const REAL_SCOPE = deriveScope(process.cwd());
+// appends to it. Frozen so that stays an enforced invariant rather than a
+// promise in a comment — `readOrder` too, since `Object.freeze` is shallow and
+// the array is the thing a test could reorder or append to.
+const REAL_SCOPE = (() => {
+  const scope = deriveScope(process.cwd());
+  Object.freeze(scope.readOrder);
+  return Object.freeze(scope);
+})();
 
 test('isFailure reads exit codes and error flags conservatively', () => {
   assert.equal(isFailure('Bash', { exit_code: 1 }), true);
