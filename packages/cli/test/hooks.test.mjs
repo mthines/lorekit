@@ -14,9 +14,19 @@ import {
   writeConfirmation,
 } from '../src/core/lessons.mjs';
 import { resolvePrecedence, matchesQuery } from '../src/lessons-pure.mjs';
+import { deriveScope } from '../src/scope.mjs';
 import { claude } from '../src/adapters/claude.mjs';
 import { cursor } from '../src/adapters/cursor.mjs';
 import { codex } from '../src/adapters/codex.mjs';
+
+// `deriveScope` shells out to git three times (~0.8s here), and it is the real
+// scope of this checkout, so it is the same value for every test in the file.
+// Resolved ONCE at module level: the tests that need it were each paying for
+// their own call on top of the one `fetchLessons` makes internally, which is
+// the bulk of this file's runtime. Shared safely because nothing mutates the
+// returned object — every consumer reads `readOrder` (`core/lessons.mjs:55`,
+// `:106`, `:226`) and none reorders or appends to it.
+const REAL_SCOPE = deriveScope(process.cwd());
 
 test('isFailure reads exit codes and error flags conservatively', () => {
   assert.equal(isFailure('Bash', { exit_code: 1 }), true);
@@ -219,8 +229,7 @@ test('fetchLessons keeps the most-specific value per key — same as resolvePrec
   const shared = (scope, v) => ({ scope, key: 'shared', value: v });
   const byScope = {};
   // Build groups in readOrder to compute the expected winners independently.
-  const { deriveScope } = await import('../src/scope.mjs');
-  const scope = deriveScope(process.cwd());
+  const scope = REAL_SCOPE;
   scope.readOrder.forEach((s, i) => {
     byScope[s] = [shared(s, `body-${i}`), { scope: s, key: `only-${i}`, value: `u${i}` }];
   });
@@ -247,8 +256,7 @@ test('fetchLessons keeps the most-specific value per key — same as resolvePrec
 });
 
 test('fetchLessons is best-effort: a failed scope read is skipped, not thrown', async () => {
-  const { deriveScope } = await import('../src/scope.mjs');
-  const scope = deriveScope(process.cwd());
+  const scope = REAL_SCOPE;
   const first = scope.readOrder[0];
   const last = scope.readOrder[scope.readOrder.length - 1];
   const store = fakeStore({ [last]: [{ scope: last, key: 'survivor', value: 'v' }] }, { failScopes: [first] });
@@ -257,8 +265,7 @@ test('fetchLessons is best-effort: a failed scope read is skipped, not thrown', 
 });
 
 test('fetchLessons caps at MAX_LESSONS', async () => {
-  const { deriveScope } = await import('../src/scope.mjs');
-  const scope = deriveScope(process.cwd());
+  const scope = REAL_SCOPE;
   const many = Array.from({ length: 30 }, (_, i) => ({ scope: scope.readOrder[0], key: `k${i}`, value: 'v' }));
   const { lessons } = await fetchLessons(fakeStore({ [scope.readOrder[0]]: many }), process.cwd());
   assert.equal(lessons.length, MAX_LESSONS);
@@ -608,8 +615,7 @@ function seeded(scope, key, { days = 0, seen = 1, value = 'v' } = {}) {
 }
 
 test('fetchLessons ranked — the injected set is ordered by score, not by group order', async () => {
-  const { deriveScope } = await import('../src/scope.mjs');
-  const scope = deriveScope(process.cwd());
+  const scope = REAL_SCOPE;
   const s = scope.readOrder[0];
 
   // Seeded in the WORST possible order for a recency-or-insertion sort: the
@@ -626,8 +632,7 @@ test('fetchLessons ranked — the injected set is ordered by score, not by group
 });
 
 test('fetchLessons salience top slots — a recurring lesson survives a flood of newer one-offs', async () => {
-  const { deriveScope } = await import('../src/scope.mjs');
-  const scope = deriveScope(process.cwd());
+  const scope = REAL_SCOPE;
   const s = scope.readOrder[0];
 
   // The reported shape: one task's iteration log, written today, plus the
@@ -672,8 +677,7 @@ test('fetchLessons salience top slots — a recurring lesson survives a flood of
 test('fetchLessons ranked — with nothing recurring, the order is still recency', async () => {
   // Salience must not invent a preference where there is no recurrence signal:
   // a store of pure one-offs should behave exactly as it always did.
-  const { deriveScope } = await import('../src/scope.mjs');
-  const scope = deriveScope(process.cwd());
+  const scope = REAL_SCOPE;
   const s = scope.readOrder[0];
   const entries = [
     seeded(s, 'c', { days: 30 }),
@@ -690,8 +694,7 @@ test('precedence unchanged — a shadowed lesson cannot be ranked back into the 
   // and the project copy maximally unattractive; precedence must still win,
   // because which copy of a key survives is a correctness rule and not a
   // preference the scorer gets a vote on.
-  const { deriveScope } = await import('../src/scope.mjs');
-  const scope = deriveScope(process.cwd());
+  const scope = REAL_SCOPE;
   if (scope.readOrder.length < 2) {
     // Report the no-op instead of returning green. A bare `return` would let
     // this load-bearing precedence property go untested and unnoticed on any
@@ -726,8 +729,7 @@ test('precedence unchanged — a shadowed lesson cannot be ranked back into the 
 // re-decided, rather than quietly changing what the agent reads.
 
 test('ranking is cross-scope — a recurring broad lesson evicts a fresher narrow one-off', async (t) => {
-  const { deriveScope } = await import('../src/scope.mjs');
-  const scope = deriveScope(process.cwd());
+  const scope = REAL_SCOPE;
   if (scope.readOrder.length < 2) {
     // Report the no-op rather than returning green — same reason as the
     // shadowing test above: silence here would hide the property, not prove it.
@@ -780,8 +782,7 @@ test('ranking is cross-scope — but the narrower scope still wins an equal scor
   // The other half of the trade, and the reason `scopeOrder` is passed at all:
   // the hierarchy is a real tiebreak, so when the score says nothing it decides.
   // Both entries are identical in every scoring input and differ only in scope.
-  const { deriveScope } = await import('../src/scope.mjs');
-  const scope = deriveScope(process.cwd());
+  const scope = REAL_SCOPE;
   if (scope.readOrder.length < 2) {
     t.skip('needs at least two scopes to compete for the cap');
     return;
@@ -805,8 +806,7 @@ test('fetchLessons ranked — an entry with no ranking fields is still injected'
   // A store that predates the seenCount/updatedAt projection (or a scope read
   // that returned bare rows) must not vanish from the injection just because it
   // scores zero — the hook is best-effort and a lesson is better than nothing.
-  const { deriveScope } = await import('../src/scope.mjs');
-  const scope = deriveScope(process.cwd());
+  const scope = REAL_SCOPE;
   const s = scope.readOrder[0];
   const { lessons } = await fetchLessons(
     fakeStore({ [s]: [{ scope: s, key: 'bare', value: 'v' }, seeded(s, 'scored', { days: 1, seen: 5 })] }),
@@ -820,8 +820,7 @@ test('formatLessons index shape — ranking did not change what is emitted', asy
   // PR-3 is an ORDERING change. The rendered block is still the compact index:
   // one line per lesson, `scope::key` plus a short hook, bodies a memory.read
   // away. A change here would be a change to the injected contract.
-  const { deriveScope } = await import('../src/scope.mjs');
-  const scope = deriveScope(process.cwd());
+  const scope = REAL_SCOPE;
   const s = scope.readOrder[0];
   const { lessons } = await fetchLessons(
     fakeStore({
