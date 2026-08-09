@@ -7,6 +7,7 @@ import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import { ListMemoriesQuerySchema, MEMORY_SELECT, shapeMemoryRow } from '../../_shared/schemas/memory.ts';
 import { parseTagsParam, pgArrayLiteral } from '../../_shared/schemas/tags.ts';
 import { likeNeedle, ilikeClause, inListLiteral } from '../../_shared/schemas/filter.ts';
+import { expiringWindow } from '../../_shared/expiring-window.ts';
 import type { ScalarFilterMode } from '../../_shared/schemas/memory.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
@@ -150,6 +151,26 @@ export async function handleList(
   // as an ISO date/timestamp by the schema before reaching PostgREST.
   if (params.created_since) q = q.gte('created_at', params.created_since);
   if (params.created_until) q = q.lt('created_at', params.created_until);
+
+  // "Expiring soon" — `expires_at` in `(now, now + N days]`. The asymmetric
+  // boundary lives in the shared `expiringWindow`, not here, so the tested copy
+  // and the deployed one cannot drift (edge-parity.spec.ts).
+  //
+  // TWO predicates, not three: a memory with no TTL needs no `is not null`
+  // clause because `null > x` and `null <= x` are both SQL NULL, so it fails
+  // the comparison and drops out on its own. Both are plain conjuncts, so this
+  // ANDs with the live branch above rather than widening it — and it re-states
+  // the `> now` bound instead of leaning on that branch, so `archived=true`
+  // (which has no liveness guard) still cannot surface an already-expired row.
+  //
+  // Range-scans `memories_expires_at_idx` (00030), the partial index on
+  // `expires_at is not null` — which is precisely the row set these two
+  // comparisons select, so no new index is needed.
+  if (params.expiring_within_days !== undefined) {
+    const window = expiringWindow(params.expiring_within_days, new Date().toISOString());
+    q = q.gt('expires_at', window.after).lte('expires_at', window.onOrBefore);
+    span.setAttributes({ 'lorekit.expiring_within_days': params.expiring_within_days });
+  }
 
   // api_key auth uses service-role client (bypasses RLS) — apply tenant filter.
   // JWT auth uses RLS-scoped client — RLS handles visibility automatically.

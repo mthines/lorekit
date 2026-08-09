@@ -2,13 +2,15 @@
 // MCP handshake (initialize → tools/list → tools/call) over newline-delimited
 // JSON-RPC, asserting a memory.write → read/list round-trip against a temp
 // `.lore/` store, plus the error and robustness contracts.
-import { test } from 'node:test';
+import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { listScopes } from '../src/mcp-server.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 
@@ -76,8 +78,8 @@ test('initialize → tools/list → write/read/list round-trip over stdio', asyn
   assert.deepEqual(init.result.capabilities, { tools: {} });
 
   const list = m.get(2);
-  // 6 memory.* tools + 4 org.* tools
-  assert.equal(list.result.tools.length, 10);
+  // 7 memory.* tools + 4 org.* tools
+  assert.equal(list.result.tools.length, 11);
   assert.ok(list.result.tools.some((t) => t.name === 'memory.write'));
   assert.ok(list.result.tools.some((t) => t.name === 'memory.archive'));
   assert.ok(list.result.tools.some((t) => t.name === 'org.create'));
@@ -232,4 +234,158 @@ test('org.unknown tool returns a JSON-RPC error, not a crash', async () => {
   const m = byId(messages).get(1);
   assert.equal(m.error.code, -32601);
   assert.match(m.error.message, /Unknown tool/);
+});
+
+// ── memory.scopes: the store-wide inventory ──────────────────────────────────
+// An agent that cannot enumerate scopes cannot know what it does not know:
+// every other read tool needs a scope named up front, so without this the only
+// reachable lore is the lore whose scope the agent could already name.
+
+test('memory.scopes is advertised and returns the store-wide inventory', async () => {
+  const store = tmpDir();
+  const home = tmpDir();
+  const { messages } = await serve(
+    [
+      { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} },
+      // Seed three scopes, one of them with two memories.
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'memory.write', arguments: { scope: 'global', key: 'g1', value: 'v' } } },
+      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'memory.write', arguments: { scope: 'repo::acme/widget', key: 'r1', value: 'v' } } },
+      { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'memory.write', arguments: { scope: 'repo::acme/widget', key: 'r2', value: 'v' } } },
+      { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'memory.scopes', arguments: {} } },
+    ],
+    { store, home },
+  );
+
+  const m = byId(messages);
+
+  const def = m.get(1).result.tools.find((t) => t.name === 'memory.scopes');
+  assert.ok(def, 'memory.scopes is advertised in tools/list');
+  // Takes no arguments — an inventory has nothing to narrow by.
+  assert.deepEqual(def.inputSchema, { type: 'object', properties: {} });
+
+  const res = m.get(5);
+  assert.ok(!res.result.isError, 'a successful enumeration is not a tool error');
+  const payload = JSON.parse(res.result.content[0].text);
+  const counts = Object.fromEntries(payload.scopes.map((s) => [s.scope, s.count]));
+  assert.deepEqual(counts, { global: 1, 'repo::acme/widget': 2 });
+  // Store-wide, not cwd-scoped: `repo::acme/widget` is not this working
+  // directory's scope and is enumerated anyway.
+  assert.ok(!('note' in payload), 'a healthy enumeration carries no note');
+});
+
+test('memory.scopes is not advertised when the memory store is off', async () => {
+  // It is a memory tool, so it follows the same gating as the rest — `off`
+  // advertises the org tools only.
+  const { messages } = await serve(
+    [{ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }],
+    { store: tmpDir(), mode: 'off' },
+  );
+  const tools = byId(messages).get(1).result.tools.map((t) => t.name);
+  assert.ok(!tools.includes('memory.scopes'));
+  assert.ok(tools.includes('org.list'), 'org tools are still advertised');
+});
+
+// The dispatch normaliser, unit-tested against each store shape. `createHandler`
+// builds its own store from the control model, so the fakes go straight to the
+// exported function — the same one the dispatch table calls.
+describe('memory.scopes dispatch', () => {
+  test('normalises the local store bare-array shape', async () => {
+    const local = { async listScopes() { return [{ scope: 'global', count: 3 }]; } };
+    assert.deepEqual(await listScopes(local), {
+      ok: true,
+      scopes: [{ scope: 'global', count: 3 }],
+    });
+  });
+
+  test('normalises the remote store envelope shape, keeping last_activity', async () => {
+    const remote = {
+      async listScopes() {
+        return {
+          ok: true,
+          scopes: [
+            { scope: 'global', count: 12, last_activity: '2026-07-30T09:12:00.000Z' },
+            { scope: 'repo::a/b', count: 3 },
+          ],
+        };
+      },
+    };
+    assert.deepEqual(await listScopes(remote), {
+      ok: true,
+      scopes: [
+        { scope: 'global', count: 12, last_activity: '2026-07-30T09:12:00.000Z' },
+        // OMITTED, never null — a consumer can tell "this store does not report
+        // freshness" from "this scope has none".
+        { scope: 'repo::a/b', count: 3 },
+      ],
+    });
+  });
+
+  test('degrades to an empty inventory plus a note, never a tool error', async () => {
+    // Exit-clean, mirroring the `scopes` command: "I could not enumerate" is a
+    // fact about the store, not a failed call, and a model handed a tool error
+    // is liable to retry rather than carry on with the lore it can reach.
+    const cases = [
+      [{ ok: false, unusable: true }, /no usable store/],
+      [{ ok: false, networkError: 'ECONNREFUSED' }, /network error: ECONNREFUSED/],
+      // The shape `RemoteStore.listScopes()` REALLY returns on a non-2xx: the
+      // status at the top level, and an `error` carrying `{ message, code }`
+      // from `restFetch` — never an `error.httpStatus`.
+      [{ ok: false, httpStatus: 403, error: { code: 403, message: 'Forbidden' } }, /HTTP 403/],
+      // Tolerance for a store that nests the status instead.
+      [{ ok: false, error: { httpStatus: 403 } }, /HTTP 403/],
+      [{ ok: false, error: { message: 'permission denied' } }, /permission denied/],
+      [{ ok: false }, /could not enumerate/],
+      [undefined, /no result/],
+    ];
+    for (const [result, pattern] of cases) {
+      const out = await listScopes({ async listScopes() { return result; } });
+      assert.equal(out.ok, true, `ok stays true for ${JSON.stringify(result)}`);
+      assert.deepEqual(out.scopes, []);
+      assert.match(out.note, pattern);
+    }
+  });
+
+  test('a throwing store degrades instead of taking the session down', async () => {
+    const out = await listScopes({ async listScopes() { throw new Error('disk on fire'); } });
+    assert.equal(out.ok, true);
+    assert.deepEqual(out.scopes, []);
+    assert.match(out.note, /scope enumeration failed: disk on fire/);
+  });
+
+  test('a malformed row is coerced rather than propagated', async () => {
+    const out = await listScopes({
+      async listScopes() { return [{ scope: 'global' }, { scope: 'x', count: 'lots' }, {}]; },
+    });
+    // Sorted by scope ascending, so the empty-scope row leads.
+    assert.deepEqual(out.scopes, [
+      { scope: '', count: 0 },
+      { scope: 'global', count: 0 },
+      { scope: 'x', count: 0 },
+    ]);
+  });
+
+  test('sorts by scope ascending regardless of the store shape', async () => {
+    // The documented contract (docs/mcp-tools.md, the tool catalog, llms.txt).
+    // The hosted RPC already orders by scope asc; the local/two-tier stores
+    // return walk order, so the normaliser is what makes the two agree.
+    const unsorted = [
+      { scope: 'repo::acme/api', count: 1 },
+      { scope: 'global', count: 2 },
+      { scope: 'branch::acme/api::main', count: 3 },
+    ];
+    const expected = ['branch::acme/api::main', 'global', 'repo::acme/api'];
+
+    const local = await listScopes({ async listScopes() { return unsorted; } });
+    assert.deepEqual(local.scopes.map((s) => s.scope), expected);
+
+    const remote = await listScopes({ async listScopes() { return { ok: true, scopes: unsorted }; } });
+    assert.deepEqual(remote.scopes.map((s) => s.scope), expected);
+  });
+
+  test('a store with no scopes yields an empty inventory and no note', async () => {
+    // Distinct from the failure case above: an empty store is a successful
+    // enumeration that found nothing, and must not read as an error.
+    const out = await listScopes({ async listScopes() { return []; } });
+    assert.deepEqual(out, { ok: true, scopes: [] });
+  });
 });

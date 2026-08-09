@@ -21,6 +21,14 @@ const meta: Meta<typeof DashboardStats> = {
     chromatic: { disableSnapshot: true },
     layout: 'fullscreen',
     msw: { handlers: memoryHandlers() },
+    // The range selector is URL-backed (`useUrlState` → `useRouter` /
+    // `usePathname` / `useSearchParams`), so the story has to provide
+    // `@storybook/nextjs-vite`'s App Router context or those hooks throw
+    // "invariant expected app router to be mounted" before a single card
+    // renders. The mocked router's `replace` is a spy that never actually
+    // changes `useSearchParams()`, which is exactly why `useUrlState`'s
+    // optimistic layer is what keeps the checked state moving here.
+    nextjs: { appDirectory: true },
   },
   decorators: [withFrozenClock(FROZEN_NOW), withQueryClient],
 };

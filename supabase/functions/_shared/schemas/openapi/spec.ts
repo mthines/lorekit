@@ -65,6 +65,10 @@ import {
   UsageStatsResponseSchema,
 } from '../usage.ts';
 import {
+  RelevantQuerySchema,
+  RelevantResponseSchema,
+} from '../relevant.ts';
+import {
   GetBlogLikesQuerySchema,
   LikeBlogBodySchema,
   BlogLikesResponseSchema,
@@ -158,8 +162,22 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   // ── Memories ──────────────────────────────────────────────────────────────
   registry.registerPath({
     method: 'get', path: '/memories', summary: 'List memories', tags: ['Memories'],
+    description:
+      'Lists live memories by default. Filters AND across dimensions and OR within one, so ' +
+      '`?kind=lesson&host=reviewer` reads "reviewer\'s lessons".\n\n' +
+      '`expiring_within_days=N` narrows to lore whose TTL runs out soon — `expires_at` strictly ' +
+      'after now and at or before now + N days. The lower bound is exclusive because that is what ' +
+      '"still live" means everywhere else in the API (an already-expired memory is never returned); ' +
+      'the upper bound is inclusive, so "within 7 days" includes one expiring exactly 7 days out. ' +
+      'Memories with no TTL are never in the result. It is a RELATIVE horizon rather than an ' +
+      'absolute timestamp so a saved or shared link keeps answering the same question tomorrow.',
     security, request: { query: ListMemoriesQuerySchema },
-    responses: { 200: memoryPageResponse('Paginated memories'), 401: errorResponse, 403: errorResponse },
+    responses: {
+      200: memoryPageResponse('Paginated memories'),
+      // Reachable for any out-of-range query param (`limit`, `expiring_within_days`).
+      // It always was — the spec simply never said so.
+      400: errorResponse, 401: errorResponse, 403: errorResponse,
+    },
   });
   registry.registerPath({
     method: 'post', path: '/memories', summary: 'Create or update a memory', tags: ['Memories'],
@@ -238,10 +256,40 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
       '`memory.search` / `memory.list_archived`. Calls that identified themselves as the LoreKit ' +
       'dashboard (`X-LoreKit-Client: dashboard`) are EXCLUDED: browsing your own lore in the web UI ' +
       'is visualisation, not consumption, and would otherwise make this series grow every time you ' +
-      'looked at it. `GET /memories/usage` still counts them — use it for the complete ledger.',
+      'looked at it. `GET /memories/usage` still counts them — use it for the complete ledger.\n\n' +
+      'Buckets are returned one per `(bucket, scope)` cell, mirroring `GET /memories/activity`. ' +
+      '`scope` is nullable: a read whose scope the server could not resolve (carried in a request ' +
+      'body, or ungrammatical) is recorded as unattributed rather than dropped, so it still counts ' +
+      'toward the unfiltered total. Pass the optional `scope` query parameter to restrict the ' +
+      'series to one exact scope; because the metric is additive, those buckets SUM to the ' +
+      'per-scope headline. That per-scope total can legitimately be SMALLER than the account ' +
+      'total — the difference is the unattributable reads. An invalid `scope` is a `400`, not a ' +
+      'silently ignored filter.',
     security, request: { query: ReadActivityQuerySchema },
     responses: {
       200: { description: 'Read-activity buckets', content: { 'application/json': { schema: ReadActivityResponseSchema } } },
+      400: errorResponse, 401: errorResponse, 403: errorResponse,
+    },
+  });
+  registry.registerPath({
+    method: 'get', path: '/memories/relevant',
+    summary: 'Top-K lessons ranked for a query — the shortlist, not the whole match set', tags: ['Memories'],
+    description:
+      'The one verb that RANKS. Every other read returns a single-signal ordering — ' +
+      '`GET /memories` is `updated_at` desc, `POST /memories/search` is FTS rank — so a caller ' +
+      'wanting a useful shortlist had to fetch a page and re-sort it, and every client that did ' +
+      'so disagreed with the others. Here the score combines RECENCY (exponential decay, 14-day ' +
+      'half-life), SALIENCE (`log1p(seen_count)` normalised across the candidates, so a lesson ' +
+      'learned twelve times outranks one written once) and RELEVANCE (full-text match on `q`). ' +
+      'The response is a compact index — scope, key, a one-line hook and the score — because the ' +
+      'point is deciding WHICH few lessons deserve a reader\'s attention; fetch the bodies with ' +
+      '`GET /memories/:id` or `memory.read`. `q` is optional: without it the ranking is recency + ' +
+      'salience, which answers "what matters generally" rather than "what matters for this". ' +
+      '`scopes` is ordered most-specific first and that order breaks ties, so a project lesson ' +
+      'wins over the global one it ties with.',
+    security, request: { query: RelevantQuerySchema },
+    responses: {
+      200: { description: 'Ranked lessons', content: { 'application/json': { schema: RelevantResponseSchema } } },
       400: errorResponse, 401: errorResponse, 403: errorResponse,
     },
   });

@@ -4249,6 +4249,613 @@ begin
 end;
 $$;
 
+-- ── 74. usage_events.scope — per-scope read attribution (00058) ─────────────
+-- Reads already carried `scope_type` (the low-cardinality family: repo /
+-- branch / …), which cannot answer "how much did I read from
+-- repo::mthines/lorekit". 00058 adds the EXACT scope and regroups
+-- lorekit_read_activity one row per (bucket, scope), mirroring
+-- lorekit_memory_activity (00051), plus an optional exact-match p_scope filter.
+--
+-- AC-1: the column is nullable with a length CHECK backstop and a partial
+--       index; a NULL-scope row inserts fine and a 201-char one is refused.
+-- AC-2: the series is GROUPED — two scopes in one bucket come back as two rows
+--       with their own counts, not one merged total.
+-- AC-3: p_scope restricts to one exact scope, and the filtered buckets SUM to
+--       that scope's headline. This is why no companion total RPC exists.
+-- AC-4: a NULL-scope read is still COUNTED in the unfiltered series — reads
+--       whose scope could not be resolved are unattributed, never dropped —
+--       and is NOT swept into a named-scope filter.
+-- AC-5: the 00054 dashboard exclusion survives the regrouping, per scope.
+-- AC-6: the writer persists p_scope, and a call that omits it (every caller
+--       written before this migration) still succeeds with scope NULL.
+--
+-- Dated 2026-06 so it cannot collide with §71's 2026-04 fixture, §72's 2026-05
+-- one, or the usage-statistics section's all-time totals.
+insert into usage_events (user_id, plan_name, tool_name, scope_type, auth_type, outcome, duration_ms, result_count, client, scope, created_at) values
+  -- Two DIFFERENT scopes inside the SAME hour, which is what makes AC-2
+  -- discriminating: an ungrouped RPC returns one row of 12 here, not two.
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',   'repo',   'api_key', 'ok', 10,  8, 'mcp', 'repo::mthines/lorekit',  timestamptz '2026-06-01 01:10:00+00'),
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.search', 'repo',   'api_key', 'ok', 10,  4, 'mcp', 'repo::mthines/gw-tools', timestamptz '2026-06-01 01:20:00+00'),
+  -- A second event for the FIRST scope in a LATER bucket: p_scope must sum
+  -- across buckets, so a filter that only ever returns one row would fail AC-3.
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.read',   'repo',   'api_key', 'ok', 10,  5, 'mcp', 'repo::mthines/lorekit',  timestamptz '2026-06-01 03:00:00+00'),
+  -- Unattributable: a scope the server could not resolve (body-carried, or
+  -- ungrammatical and coerced to null by safeValidateScope).
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',   'global', 'api_key', 'ok', 10,  3, 'mcp', null,                     timestamptz '2026-06-01 01:30:00+00'),
+  -- The dashboard drawing the chart, under a real scope — must stay excluded.
+  ('00000000-0000-0000-0000-0000000000a1', 'free', 'memory.list',   'repo',   'jwt',     'ok', 10, 99, 'dashboard', 'repo::mthines/lorekit', timestamptz '2026-06-01 01:40:00+00');
+
+do $$
+declare
+  v_rows    int;
+  v_count   bigint;
+  v_scope   text;
+  v_total   bigint;
+  v_id      uuid;
+  v_raised  boolean := false;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"service_role"}', true);
+
+  -- ── AC-1: the column, the CHECK and the index are real schema, not prose ──
+  select count(*) into v_rows
+    from information_schema.columns
+   where table_name = 'usage_events' and column_name = 'scope' and is_nullable = 'YES';
+  assert v_rows = 1, 'usage scope AC-1: usage_events.scope must exist and be nullable';
+
+  select count(*) into v_rows
+    from pg_indexes
+   where tablename = 'usage_events' and indexname = 'usage_events_user_scope_created_idx';
+  assert v_rows = 1, 'usage scope AC-1: the partial (user_id, scope, created_at desc) index must exist';
+
+  -- The CHECK is a BACKSTOP against an unbounded value inflating analytics
+  -- cardinality — the app-side validator is the primary gate, but a direct
+  -- insert must not be able to bypass the storage guarantee. 200 is the
+  -- boundary, so 201 is the discriminating length.
+  begin
+    insert into usage_events (user_id, tool_name, auth_type, outcome, scope)
+      values ('00000000-0000-0000-0000-0000000000a1', 'memory.list', 'jwt', 'ok', repeat('x', 201));
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, 'usage scope AC-1: a 201-char scope must violate the CHECK';
+
+  -- ...and exactly 200 is still admitted, so the CHECK is a bound, not a ban.
+  insert into usage_events (user_id, tool_name, auth_type, outcome, scope)
+    values ('00000000-0000-0000-0000-0000000000a1', 'memory.write', 'jwt', 'ok', repeat('x', 200));
+
+  -- AC-1: the CHECK's blast radius, executed. The writer swallows every error
+  -- (`when others → return null`), so an over-long scope reaching the RPC does
+  -- NOT lose the scope — it loses the ENTIRE usage event, silently. That is why
+  -- `safeValidateScope` bounds length client-side at USAGE_SCOPE_MAX. Pinning
+  -- the consequence here means a future "simplification" that drops the
+  -- client-side bound fails a test instead of quietly deleting analytics rows.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1',
+    p_tool_name => 'memory.list',
+    p_auth_type => 'jwt',
+    p_outcome => 'ok',
+    p_result_count => 1,
+    p_scope => repeat('x', 201)) into v_id;
+  assert v_id is null,
+    'usage scope AC-1: an over-long scope must take the WHOLE event down (writer swallows) — '
+    || 'this is precisely why safeValidateScope bounds length before the write';
+
+  -- ...and the same call with the scope already dropped to NULL — what
+  -- safeValidateScope actually hands the writer — DOES land. The event survives;
+  -- only the dimension is lost. This is the pair that makes the bound's value
+  -- visible rather than asserted in prose.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1',
+    p_tool_name => 'memory.list',
+    p_auth_type => 'jwt',
+    p_outcome => 'ok',
+    p_result_count => 1,
+    p_scope => null) into v_id;
+  assert v_id is not null,
+    'usage scope AC-1: dropping the scope to NULL must preserve the event';
+
+  -- ── AC-2 + AC-4 + AC-5: the grouped shape ─────────────────────────────────
+  -- The 01:00 hour holds three counted reads under three distinct scope values
+  -- (lorekit 8, gw-tools 4, NULL 3) plus the dashboard's 99, which is excluded.
+  select count(*) into v_rows
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 01:00:00+00', timestamptz '2026-06-01 02:00:00+00');
+  assert v_rows = 3,
+    format('usage scope AC-2/AC-4: the 01:00 hour must yield 3 (bucket,scope) rows, got %s', v_rows);
+
+  -- AC-2: each scope keeps its OWN count. A merged 12 here would mean the
+  -- grouping is cosmetic.
+  select count into v_count
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 01:00:00+00', timestamptz '2026-06-01 02:00:00+00')
+   where scope = 'repo::mthines/lorekit';
+  assert v_count = 8,
+    format('usage scope AC-2: repo::mthines/lorekit must read 8 in the 01:00 hour, got %s', v_count);
+
+  select count into v_count
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 01:00:00+00', timestamptz '2026-06-01 02:00:00+00')
+   where scope = 'repo::mthines/gw-tools';
+  assert v_count = 4,
+    format('usage scope AC-2: repo::mthines/gw-tools must read 4 in the 01:00 hour, got %s', v_count);
+
+  -- AC-4: the unattributed read is present as a `scope is null` row and still
+  -- counted. Dropping it would silently shrink the account total, which is the
+  -- exact failure `is distinct from` guards against on the client column.
+  select count into v_count
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 01:00:00+00', timestamptz '2026-06-01 02:00:00+00')
+   where scope is null;
+  assert v_count = 3,
+    format('usage scope AC-4: the NULL-scope read must be counted as 3, got %s', v_count);
+
+  -- AC-5: the dashboard's 99 is nowhere in the hour — under ANY scope. The
+  -- whole-hour total is 8 + 4 + 3 = 15; 114 would mean the regrouping lost the
+  -- 00054 exclusion.
+  select coalesce(sum(count), 0) into v_total
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 01:00:00+00', timestamptz '2026-06-01 02:00:00+00');
+  assert v_total = 15,
+    format('usage scope AC-5: the 01:00 hour must total 15 with the dashboard excluded, got %s', v_total);
+
+  -- ── AC-3: p_scope is an exact filter whose buckets SUM to the headline ────
+  -- lorekit is read in two different buckets (8 at 01:00, 5 at 03:00). Two rows
+  -- back, summing to 13 — the per-scope headline the Explorer's stats card
+  -- shows above these very bars.
+  select count(*), coalesce(sum(count), 0) into v_rows, v_total
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 00:00:00+00', timestamptz '2026-06-02 00:00:00+00',
+      'repo::mthines/lorekit');
+  assert v_rows = 2,
+    format('usage scope AC-3: the filter must span buckets, expected 2 rows, got %s', v_rows);
+  assert v_total = 13,
+    format('usage scope AC-3: repo::mthines/lorekit must sum to 13, got %s', v_total);
+
+  -- AC-3: and it is EXACT — the other scope is gone entirely, not merely
+  -- ordered later.
+  select count(*) into v_rows
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'hour',
+      timestamptz '2026-06-01 00:00:00+00', timestamptz '2026-06-02 00:00:00+00',
+      'repo::mthines/lorekit')
+   where scope is distinct from 'repo::mthines/lorekit';
+  assert v_rows = 0,
+    format('usage scope AC-3: a filtered call must return only that scope, got %s foreign rows', v_rows);
+
+  -- AC-3 + AC-4: filtering by a named scope must NOT sweep in the NULL-scope
+  -- remainder. `=` and not `is not distinct from` — a caller asking for a named
+  -- scope wants events attributed to it. This is why the per-scope total (13)
+  -- is legitimately SMALLER than the day's account total, and the UI says so.
+  select coalesce(sum(count), 0) into v_total
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day',
+      timestamptz '2026-06-01 00:00:00+00', timestamptz '2026-06-02 00:00:00+00');
+  assert v_total = 20,
+    format('usage scope AC-4: the unfiltered day must total 20 (13 + 4 + 3), got %s', v_total);
+
+  -- A filter naming a scope with no events is empty, not everything — the
+  -- discriminating case for a predicate accidentally written as always-true.
+  select count(*) into v_rows
+    from lorekit_read_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day',
+      timestamptz '2026-06-01 00:00:00+00', timestamptz '2026-06-02 00:00:00+00',
+      'repo::mthines/does-not-exist');
+  assert v_rows = 0,
+    format('usage scope AC-3: an unmatched scope filter must return no rows, got %s', v_rows);
+
+  -- ── AC-6: the writer ──────────────────────────────────────────────────────
+  -- The new trailing parameter is persisted.
+  select lorekit_record_usage_event(
+    p_user_id => '00000000-0000-0000-0000-0000000000a1',
+    p_plan_name => 'free',
+    p_tool_name => 'memory.list',
+    p_scope_type => 'repo',
+    p_auth_type => 'api_key',
+    p_outcome => 'ok',
+    p_result_count => 2,
+    p_scope => 'repo::mthines/lorekit') into v_id;
+  assert v_id is not null, 'usage scope AC-6: the writer must return the inserted id';
+  select scope into v_scope from usage_events where id = v_id;
+  assert v_scope = 'repo::mthines/lorekit',
+    format('usage scope AC-6: p_scope must be persisted, got %s', v_scope);
+
+  -- ...and a call that OMITS it — every caller written before 00058, including
+  -- the 14-argument positional form 00056 left behind — still succeeds, with
+  -- scope NULL. A stale DROP target would instead make this call ambiguous.
+  select lorekit_record_usage_event(
+    '00000000-0000-0000-0000-0000000000a1', null, 'free',
+    'memory.list', 'repo', 'jwt', 'ok', 5, null, 3, null, 'cli', null, null) into v_id;
+  assert v_id is not null, 'usage scope AC-6: the pre-00058 14-arg call must still resolve';
+  select scope into v_scope from usage_events where id = v_id;
+  assert v_scope is null,
+    format('usage scope AC-6: a call omitting p_scope must leave scope NULL, got %s', v_scope);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- AC-1: the grant surface follows 00047's hardening — the regrouped reader is
+-- reachable by an authenticated user and by service_role, and NEVER by anon.
+-- The signature changed, so the revoke/grant had to be re-issued against the
+-- NEW one; a stale grant would leave anon holding EXECUTE on a function that
+-- reads the whole usage ledger.
+do $$
+declare
+  v_sig text := 'lorekit_read_activity(uuid, text, timestamptz, timestamptz, text)';
+  v_overloads int;
+begin
+  assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
+    'usage scope: anon must NOT hold execute on the regrouped lorekit_read_activity';
+  assert has_function_privilege('authenticated', v_sig, 'EXECUTE'),
+    'usage scope: authenticated must hold execute on the regrouped lorekit_read_activity';
+  assert has_function_privilege('service_role', v_sig, 'EXECUTE'),
+    'usage scope: service_role must hold execute on the regrouped lorekit_read_activity';
+
+  -- The old 4-argument signature must be GONE, not merely shadowed. A missed
+  -- DROP leaves both overloads live, and PostgREST's named-argument resolution
+  -- would then be free to pick the ungrouped one — the endpoint would keep
+  -- working while silently returning the pre-00058 shape.
+  select count(*) into v_overloads
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'lorekit_read_activity';
+  assert v_overloads = 1,
+    format('usage scope: exactly one lorekit_read_activity overload must exist, found %s', v_overloads);
+
+  -- Same for the writer: 00056's 14-argument form must have been replaced, not
+  -- joined by a 15-argument sibling.
+  select count(*) into v_overloads
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.proname = 'lorekit_record_usage_event';
+  assert v_overloads = 1,
+    format('usage scope: exactly one lorekit_record_usage_event overload must exist, found %s', v_overloads);
+end;
+$$;
+
+-- AC-6 (deferral, R10): purge_expired_memories is deliberately UNTOUCHED by
+-- 00058 — its `memory.expired` event is per-USER and spans every scope that
+-- user owns, so there is no single scope to attribute it to. Asserted, not just
+-- documented, so "we'll do it later" cannot quietly become "we did it wrong":
+-- the expiry event must still record a NULL scope.
+do $$
+declare v_scopes int;
+begin
+  set local role service_role;
+  select count(*) into v_scopes
+    from usage_events
+   where tool_name = 'memory.expired' and scope is not null;
+  assert v_scopes = 0,
+    format('usage scope R10: memory.expired must remain scope-unattributed, found %s attributed', v_scopes);
+  reset role;
+end;
+$$;
+
+-- ── 75. "expiring soon" — the (now, bound] list predicate (PR-2) ────────────
+-- Backs `GET /memories?expiring_within_days=N`, the Explorer's "expiring soon"
+-- Status view. NO migration: the predicate is applied by the list handler and
+-- range-scans `memories_expires_at_idx` (00030), the partial index on
+-- `expires_at is not null`.
+--
+-- SCOPE OF THIS SECTION, stated plainly so it is not read as more than it is:
+-- it asserts the PREDICATE the handler emits, over real rows, at the
+-- boundaries — the part where the semantics can be wrong. It does NOT exercise
+-- the handler's PostgREST translation; that is the live smoke test's job
+-- (`memories-api.integration.spec.ts`). The two are complementary: this one can
+-- seed a row expiring in exactly N days and an already-expired one, which a
+-- live suite cannot do without waiting.
+--
+-- AC-1: rows expiring inside the window are returned.
+-- AC-2: an ALREADY-EXPIRED row is excluded — the lower bound is exclusive, and
+--       this is why the handler re-states it instead of leaning on the live
+--       branch (which `archived=true` does not apply).
+-- AC-3: a row with NO TTL is excluded, and with no `expires_at is not null`
+--       clause: the comparisons drop it on their own, which is the claim
+--       `expiring-window.ts` makes and the one most likely to be "simplified".
+-- AC-4: the boundaries are (exclusive, inclusive] — a row expiring exactly at
+--       `now` is out; one expiring exactly at the bound is in.
+-- AC-5: the partial index that makes this affordable actually exists.
+
+-- Every row is positioned relative to a FIXED instant, so "already expired" and
+-- "expires in exactly 7 days" are exact rather than racing the suite's runtime.
+insert into memories (user_id, scope, key, value, expires_at) values
+  -- In-window: comfortably inside a 7-day horizon.
+  ('00000000-0000-0000-0000-0000000000a1', 'global', 'exp-in-3d',   'v', timestamptz '2026-06-04 12:00:00+00'),
+  -- In-window, at the far edge: expires at EXACTLY now + 7 days. The inclusive
+  -- upper bound is the whole reason this row is expected back.
+  ('00000000-0000-0000-0000-0000000000a1', 'global', 'exp-at-edge', 'v', timestamptz '2026-06-08 12:00:00+00'),
+  -- Out of window: real and live, but further out than the horizon asked for.
+  ('00000000-0000-0000-0000-0000000000a1', 'global', 'exp-in-30d',  'v', timestamptz '2026-07-01 12:00:00+00'),
+  -- Already expired: still on the table (the purge is nightly), and must never
+  -- surface in a view whose whole promise is "act before these go".
+  ('00000000-0000-0000-0000-0000000000a1', 'global', 'exp-past',    'v', timestamptz '2026-05-01 12:00:00+00'),
+  -- Exactly at `now`: expired by one instant. The discriminating row for an
+  -- accidentally-inclusive lower bound.
+  ('00000000-0000-0000-0000-0000000000a1', 'global', 'exp-at-now',  'v', timestamptz '2026-06-01 12:00:00+00'),
+  -- No TTL at all: permanent lore, never "expiring".
+  ('00000000-0000-0000-0000-0000000000a1', 'global', 'exp-none',    'v', null);
+
+do $$
+declare
+  -- The frozen clock and the 7-day horizon `expiringWindow(7, now)` derives
+  -- from it. Two literals rather than an expression, so this test cannot
+  -- reproduce an arithmetic bug in the code it is checking.
+  v_now   constant timestamptz := timestamptz '2026-06-01 12:00:00+00';
+  v_bound constant timestamptz := timestamptz '2026-06-08 12:00:00+00';
+  v_keys  text[];
+  v_rows  int;
+begin
+  set local role service_role;
+
+  -- The predicate EXACTLY as the handler emits it: two comparisons, no
+  -- `is not null`, lower exclusive, upper inclusive.
+  select array_agg(key order by key) into v_keys
+    from memories
+   where user_id = '00000000-0000-0000-0000-0000000000a1'
+     and archived_at is null
+     and key like 'exp-%'
+     and expires_at >  v_now
+     and expires_at <= v_bound;
+
+  -- AC-1 + AC-2 + AC-3 + AC-4 in one discriminating assertion. Each wrong
+  -- boundary produces a DIFFERENT wrong array, so a failure names the bug:
+  --   + exp-at-now  → the lower bound was made inclusive
+  --   - exp-at-edge → the upper bound was made exclusive
+  --   + exp-past    → the lower bound is missing entirely
+  --   + exp-in-30d  → the upper bound is missing entirely
+  --   + exp-none    → NULL is leaking through (a coalesce, or a `not (…)`)
+  assert v_keys = array['exp-at-edge', 'exp-in-3d'],
+    format('expiring AC-1..4: expected exactly {exp-at-edge, exp-in-3d}, got %s', v_keys);
+
+  -- AC-3, isolated. The no-TTL row is the one a future "simplification" would
+  -- re-admit by rewriting the pair as a NOT of the live predicate, so it gets
+  -- its own assertion rather than only living inside the array above.
+  select count(*) into v_rows
+    from memories
+   where key = 'exp-none'
+     and expires_at >  v_now
+     and expires_at <= v_bound;
+  assert v_rows = 0,
+    format('expiring AC-3: a memory with no TTL must never be "expiring soon", got %s rows', v_rows);
+
+  -- AC-2, isolated, with the reason attached: the expired row is STILL PRESENT
+  -- in the table (purging is a nightly job, not a read-path delete), so its
+  -- absence from the result is the predicate's doing and not the fixture's.
+  select count(*) into v_rows from memories where key = 'exp-past';
+  assert v_rows = 1,
+    'expiring AC-2: the fixture must still hold the expired row — otherwise its exclusion proves nothing';
+
+  reset role;
+end;
+$$;
+
+-- AC-5: the index this predicate relies on exists and is the PARTIAL one.
+-- Asserted, not assumed: the plan for `expires_at > x and expires_at <= y` is a
+-- range scan over exactly the `expires_at is not null` subset, which is why
+-- PR-2 adds no index of its own. If 00030's index were dropped or made total,
+-- this filter would quietly become a seq scan on the largest table.
+do $$
+declare v_where text;
+begin
+  select pg_get_expr(i.indpred, i.indrelid) into v_where
+    from pg_index i
+    join pg_class c on c.oid = i.indexrelid
+   where c.relname = 'memories_expires_at_idx';
+
+  assert v_where is not null,
+    'expiring AC-5: memories_expires_at_idx (00030) must exist — the expiring filter has no index of its own';
+  assert v_where like '%expires_at IS NOT NULL%',
+    format('expiring AC-5: memories_expires_at_idx must stay PARTIAL on expires_at is not null, got %s', v_where);
+end;
+$$;
+
+-- ── 76. memories.seen_count — recurrence counted by the writer (00059) ──────
+-- The counter LoreKit's own skill guidance has always gated promotion on
+-- (`seen_count >= 3`) never existed as a column; it lived as hand-written text
+-- in a lesson body's `meta:` comment, so nothing incremented it and nothing
+-- could read it. 00059 makes it real and puts the increment in the upsert,
+-- which is where a recurrence actually happens.
+-- AC-1: a first write inserts with seen_count = 1.
+-- AC-2: a second write to the same (tenant, scope, key) increments to 2 and
+--       updates the existing row instead of inserting a second one. This says
+--       nothing about WHICH row the increment reads: `memories.seen_count + 1`
+--       and `excluded.seen_count + 1` both yield 2 on the second write.
+-- AC-3: the count keeps climbing, and the row is still the SAME row. This is
+--       the assertion that discriminates the two: `excluded` is the row the
+--       INSERT proposed and always carries the literal 1, so an `excluded`-based
+--       increment would pin the count at 2 while four writes must leave 4.
+-- AC-4: the OTHER two conflict branches increment too — the service-role
+--       branch (p_user_id null) and the org branch (p_org_slug set). AC-1…AC-3
+--       only ever write through the personal branch, and 00059 edited all
+--       three, so "all three branches" has to be exercised, not asserted.
+-- AC-5: reviving an ARCHIVED key is NOT a recurrence. The conflict predicates
+--       are partial on `archived_at is null`, so this inserts a fresh row that
+--       starts back at 1 — the lesson was retired and is being learned again.
+-- AC-6: the CHECK is a real backstop — a direct write of 0 is rejected, so a
+--       corrupt value fails loudly instead of silently sinking a lesson's
+--       salience in whatever ranks on this column later.
+do $$
+declare
+  v_uid constant uuid := '00000000-0000-0000-0000-0000000000a1';
+  v_id1    uuid;
+  v_id2    uuid;
+  v_seen   integer;
+  v_raised boolean := false;
+begin
+  -- AC-1 — first sighting.
+  select id into v_id1 from memory_write(v_uid, 'global', 'seen-count-key', 'v1');
+  select seen_count into v_seen from memories where id = v_id1;
+  assert v_seen = 1,
+    format('seen_count AC-1: a first write must insert seen_count = 1, got %s', v_seen);
+
+  -- AC-2 — the recurrence.
+  select id into v_id2 from memory_write(v_uid, 'global', 'seen-count-key', 'v2');
+  select seen_count into v_seen from memories where id = v_id2;
+  assert v_id2 = v_id1, 'seen_count AC-2: the recurrence must update the existing row';
+  assert v_seen = 2,
+    format('seen_count AC-2: the second write must increment to 2, got %s', v_seen);
+
+  -- AC-3 — it keeps counting, on the same row.
+  perform memory_write(v_uid, 'global', 'seen-count-key', 'v3');
+  perform memory_write(v_uid, 'global', 'seen-count-key', 'v4');
+  select seen_count into v_seen from memories where id = v_id1;
+  assert v_seen = 4,
+    format('seen_count AC-3: four writes must leave seen_count = 4, got %s '
+           '(a value pinned at 2 means the increment reads excluded.seen_count)', v_seen);
+  assert (select count(*) from memories where scope = 'global' and key = 'seen-count-key') = 1,
+    'seen_count AC-3: four writes must leave exactly one row';
+
+  -- AC-4 — the service-role branch counts too (p_user_id null).
+  select id into v_id1 from memory_write(null, 'global', 'seen-count-service-key', 'v1');
+  perform memory_write(null, 'global', 'seen-count-service-key', 'v2');
+  select seen_count into v_seen from memories where id = v_id1;
+  assert v_seen = 2,
+    format('seen_count AC-4: the service branch must increment as well, got %s', v_seen);
+
+  -- AC-4 — and so does the org branch (p_org_slug; a1 owns test-org / f1).
+  -- The org insert branch writes user_id null and arbitrates on
+  -- (org_id, scope, key), so it is a genuinely different conflict target from
+  -- both the personal and the service branch.
+  select id into v_id1 from memory_write(v_uid, 'global', 'seen-count-org-key', 'v1',
+                                         '{}'::text[], null, null, null, 'test-org');
+  perform memory_write(v_uid, 'global', 'seen-count-org-key', 'v2',
+                       '{}'::text[], null, null, null, 'test-org');
+  select seen_count into v_seen from memories where id = v_id1;
+  assert v_seen = 2,
+    format('seen_count AC-4: the org branch must increment as well, got %s', v_seen);
+  assert (select org_id from memories where id = v_id1)
+           = '00000000-0000-0000-0000-0000000000f1',
+    'seen_count AC-4: the org write must land on an org-owned row, not a personal one';
+  assert (select count(*) from memories
+           where scope = 'global' and key = 'seen-count-org-key') = 1,
+    'seen_count AC-4: the org recurrence must update the row, not insert a second';
+
+  -- AC-5 — reviving an archived key starts over.
+  select id into v_id1 from memory_write(v_uid, 'global', 'seen-count-archived-key', 'v1');
+  perform memory_write(v_uid, 'global', 'seen-count-archived-key', 'v2');
+  select seen_count into v_seen from memories where id = v_id1;
+  assert v_seen = 2, format('seen_count AC-5: precondition — expected 2, got %s', v_seen);
+
+  update memories set archived_at = now() where id = v_id1;
+  select id into v_id2 from memory_write(v_uid, 'global', 'seen-count-archived-key', 'v3');
+  select seen_count into v_seen from memories where id = v_id2;
+  assert v_id2 <> v_id1,
+    'seen_count AC-5: writing an archived key must insert a NEW row, not revive the archived one';
+  assert v_seen = 1,
+    format('seen_count AC-5: the revived lesson must start back at 1, got %s', v_seen);
+
+  -- AC-6 — the CHECK backstop.
+  begin
+    update memories set seen_count = 0 where id = v_id2;
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised,
+    'seen_count AC-6: memories_seen_count_positive must reject a non-positive count';
+end;
+$$;
+
+-- ── 75. The FTS candidate selection GET /memories/relevant ranks over (00001) ─
+-- `GET /memories/relevant` fetches candidates with
+-- `textSearch('fts', q, { type: 'websearch', config: 'english' })` and then
+-- ranks them in TypeScript. The RANKING is unit-tested (and held to the CLI's
+-- copy by `lesson-rank-parity.spec.ts`), but the SELECTION is pure SQL and had
+-- NO coverage anywhere in this file: the `fts` generated column has existed
+-- since 00001 and nothing asserted what it matches. A change to its expression
+-- or its text-search config would silently change which lessons are reachable —
+-- through this route and through `POST /memories/search`, which uses the same
+-- column.
+-- AC-1: a term in the VALUE matches, and AC-5 rides along with it.
+-- AC-2: a term in the KEY matches — `fts` is generated over `key || value`, so
+--       a lesson whose body never repeats its own title is still findable.
+-- AC-3: English STEMMING is on: `migrations` finds `migration`. That is what
+--       makes the endpoint usable with a natural-language query instead of an
+--       exact keyword.
+-- AC-4: a quoted phrase matches as a phrase, and websearch negation excludes.
+-- AC-5: the ACTIVE partition — an archived row and an expired row are not
+--       candidates, matching the handler's `archived_at is null` +
+--       `expires_at is null or expires_at > now()` predicate.
+-- AC-6: a term present in nothing matches nothing. Without this, every other
+--       assertion here would still pass if the predicate were a no-op that let
+--       recency rank the tenant's entire store.
+do $$
+declare
+  v_uid  constant uuid := '00000000-0000-0000-0000-0000000000a1';
+  v_hits integer;
+begin
+  perform memory_write(v_uid, 'global', 'fts-migration-order',
+    'Always add the column before the backfill runs.');
+  perform memory_write(v_uid, 'global', 'fts-flaky-retry',
+    'The retry wrapper hides a real race in the fixture.');
+  perform memory_write(v_uid, 'global', 'fts-archived-one',
+    'An archived lesson about backfill that must not be a candidate.');
+  perform memory_write(v_uid, 'global', 'fts-expired-one',
+    'An expired lesson about backfill that must not be a candidate.');
+
+  update memories set archived_at = now()
+    where user_id = v_uid and key = 'fts-archived-one';
+  update memories set expires_at = now() - interval '1 day'
+    where user_id = v_uid and key = 'fts-expired-one';
+
+  -- AC-1 + AC-5 — a term in the value, and only the ACTIVE row carrying it.
+  select count(*) into v_hits from memories
+   where user_id = v_uid and key like 'fts-%'
+     and archived_at is null and (expires_at is null or expires_at > now())
+     and fts @@ websearch_to_tsquery('english', 'backfill');
+  assert v_hits = 1,
+    format('relevant AC-1/AC-5: "backfill" must match exactly the one ACTIVE lesson, got %s '
+           '(three rows contain the word; the archived and expired ones are not candidates)', v_hits);
+
+  -- AC-2 — a term present only in the KEY.
+  select count(*) into v_hits from memories
+   where user_id = v_uid and key like 'fts-%'
+     and archived_at is null and (expires_at is null or expires_at > now())
+     and fts @@ websearch_to_tsquery('english', 'flaky');
+  assert v_hits = 1,
+    format('relevant AC-2: a term present only in the key must match — fts is generated '
+           'over key || value — got %s', v_hits);
+
+  -- AC-3 — English stemming.
+  select count(*) into v_hits from memories
+   where user_id = v_uid and key like 'fts-%'
+     and archived_at is null and (expires_at is null or expires_at > now())
+     and fts @@ websearch_to_tsquery('english', 'migrations');
+  assert v_hits = 1,
+    format('relevant AC-3: the english config must stem "migrations" onto "migration", got %s '
+           '(a `simple` config would return 0 and make natural-language queries useless)', v_hits);
+
+  -- AC-4 — phrase and negation, the two websearch operators a caller can type.
+  select count(*) into v_hits from memories
+   where user_id = v_uid and key like 'fts-%'
+     and archived_at is null and (expires_at is null or expires_at > now())
+     and fts @@ websearch_to_tsquery('english', '"real race"');
+  assert v_hits = 1,
+    format('relevant AC-4: a quoted phrase must match as a phrase, got %s', v_hits);
+
+  select count(*) into v_hits from memories
+   where user_id = v_uid and key like 'fts-%'
+     and archived_at is null and (expires_at is null or expires_at > now())
+     and fts @@ websearch_to_tsquery('english', 'lesson -backfill');
+  assert v_hits = 0,
+    format('relevant AC-4: websearch negation must exclude the negated term, got %s', v_hits);
+
+  -- AC-6 — anti-vacuity for every assertion above.
+  select count(*) into v_hits from memories
+   where user_id = v_uid and key like 'fts-%'
+     and archived_at is null and (expires_at is null or expires_at > now())
+     and fts @@ websearch_to_tsquery('english', 'kubernetes');
+  assert v_hits = 0,
+    format('relevant AC-6: a term present in no lesson must match nothing, got %s', v_hits);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

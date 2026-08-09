@@ -41,13 +41,23 @@ export default defineConfig({
   // the optimized react shim is re-hashed out from under an in-flight import).
   // `react-dom` (via `createPortal`) and `motion/react` (drag/AnimatePresence)
   // both first enter the story graph through `BottomSheet`, so declare them
-  // here alongside the setup-file deps. The `@lorekit/schemas` subpaths are
-  // here because they are workspace-linked SOURCE: Vite walks into them, finds
-  // their bare `zod` import and re-optimizes mid-run ("new dependencies found:
-  // zod" → reload). Pre-bundling the subpath inlines zod, so a story that first
-  // pulls a schema VALUE in (`FilterMenu.test.stories.tsx`) cannot trigger it.
-  // Listing `zod` itself does NOT work — pnpm keeps it out of this package's
-  // node_modules, so Vite fails to resolve it.
+  // here alongside the setup-file deps.
+  // The Lore filter stories are the last un-pre-bundled entry. `FilterMenu` /
+  // `FilterPill` import `@/lib/filters`, which VALUE-imports `@lorekit/schemas/
+  // tags` — the first time the browser test graph reaches the linked
+  // `@lorekit/schemas` workspace package. No earlier-loaded story does, so Vite
+  // discovered it mid-run and re-optimized, re-hashing the react shim out from
+  // under an in-flight import and failing `FilterMenu.test.stories.tsx` on every
+  // cold CI run. The trigger is the LINKED PACKAGE, not any one heavy dep:
+  // `tags` (`schemas/src/tags.ts`) is pure and imports nothing, and `filters.ts`
+  // imports `@lorekit/schemas/memory` (the one that pulls `zod`) TYPE-only, so
+  // it is erased at runtime and never loaded here. Force-optimize both
+  // resolvable subpaths so the whole linked package is in the cold-start bundle:
+  // `tags` is the entry actually reached at runtime today; `memory` is included
+  // so a future runtime (value) import of it cannot reintroduce the same reload.
+  // (A bare `'zod'` cannot work — `zod` is a dep of `@lorekit/schemas`, not of
+  // `@lorekit/web`, so it does not resolve from this package's root: Vite warns
+  // "Failed to resolve dependency: zod" and skips it.)
   //
   // `react-markdown` / `remark-gfm` / `rehype-sanitize` (and their large
   // transitive graph: micromark-*, mdast-*, hast-*, unist-*) enter through
@@ -62,8 +72,8 @@ export default defineConfig({
       'storybook/test',
       'react-dom',
       'motion/react',
-      '@lorekit/schemas/memory',
       '@lorekit/schemas/tags',
+      '@lorekit/schemas/memory',
       'react-markdown',
       'remark-gfm',
       'rehype-sanitize',

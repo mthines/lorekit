@@ -11,11 +11,32 @@ import {
   relevantLessonsFromStore,
   formatRelevantLessons,
   writeConfirmation,
+  renderScopeMap,
+  SCOPE_READ_LIMIT,
 } from '../src/core/lessons.mjs';
 import { resolvePrecedence, matchesQuery } from '../src/lessons-pure.mjs';
+import { deriveScope } from '../src/scope.mjs';
 import { claude } from '../src/adapters/claude.mjs';
 import { cursor } from '../src/adapters/cursor.mjs';
 import { codex } from '../src/adapters/codex.mjs';
+
+// `deriveScope` shells out to git three times (~0.8s here), and it is the real
+// scope of this checkout, so it is the same value for every test in the file.
+// Resolved ONCE at module level: the tests that need it were each paying for
+// their own call on top of the one `fetchLessons` makes internally, which is
+// the bulk of this file's runtime. Nothing in `core/lessons.mjs` ever sees this
+// object — `fetchLessons` derives its own scope from the `cwd` it is handed,
+// and `relevantLessonsFromStore` is only ever called here with the synthetic
+// `SCOPE` fixture — so the sharers are the test bodies in this file. Shared
+// safely because each of them only reads `scope.readOrder`; none reorders or
+// appends to it. Frozen so that stays an enforced invariant rather than a
+// promise in a comment — `readOrder` too, since `Object.freeze` is shallow and
+// the array is the thing a test could reorder or append to.
+const REAL_SCOPE = (() => {
+  const scope = deriveScope(process.cwd());
+  Object.freeze(scope.readOrder);
+  return Object.freeze(scope);
+})();
 
 test('isFailure reads exit codes and error flags conservatively', () => {
   assert.equal(isFailure('Bash', { exit_code: 1 }), true);
@@ -192,9 +213,22 @@ test('relevantLessonsFromStore guards empty terms and scopes without querying', 
 // fail a scope's read (best-effort skip) — no network, no filesystem.
 function fakeStore(byScope, { failScopes = [] } = {}) {
   return {
-    async list({ scope }) {
+    // Mirrors the real read in BOTH of its steps, because either one alone
+    // lets a fixture seed a group production could never return:
+    //   1. SORT newest-first — `store/local.mjs:75` sorts on `updated` before
+    //      it slices, and the remote route answers in the same order. Slicing
+    //      in fixture order would keep an arbitrary 25, not the newest 25.
+    //   2. SLICE to `limit` — `store/local.mjs:76`, `store/remote.mjs:68`.
+    // The sort is unconditional, like the real one: gating it on `limit` would
+    // re-diverge for every no-limit caller. Entries are copied first, so a read
+    // never reorders a fixture another test is holding. Rows with no timestamp
+    // compare equal and keep their seeded order (`sort` is stable), so the
+    // fixtures that predate the ranking projection are unaffected.
+    async list({ scope, limit }) {
       if (failScopes.includes(scope)) return { ok: false };
-      return { ok: true, entries: byScope[scope] || [] };
+      const stamp = (e) => String(e?.updatedAt ?? e?.updated ?? '');
+      const entries = [...(byScope[scope] || [])].sort((a, b) => stamp(b).localeCompare(stamp(a)));
+      return { ok: true, entries: limit ? entries.slice(0, limit) : entries };
     },
   };
 }
@@ -205,8 +239,7 @@ test('fetchLessons keeps the most-specific value per key — same as resolvePrec
   const shared = (scope, v) => ({ scope, key: 'shared', value: v });
   const byScope = {};
   // Build groups in readOrder to compute the expected winners independently.
-  const { deriveScope } = await import('../src/scope.mjs');
-  const scope = deriveScope(process.cwd());
+  const scope = REAL_SCOPE;
   scope.readOrder.forEach((s, i) => {
     byScope[s] = [shared(s, `body-${i}`), { scope: s, key: `only-${i}`, value: `u${i}` }];
   });
@@ -218,9 +251,13 @@ test('fetchLessons keeps the most-specific value per key — same as resolvePrec
   const expected = [];
   for (const g of resolved) for (const e of g.entries) if (e.winning) expected.push(e);
 
+  // MEMBERSHIP, not order. `fetchLessons` now ranks the winners before capping,
+  // so the injected ORDER is the scorer's; what precedence owns — and what this
+  // test is about — is which entries are in the set at all. Compared as sorted
+  // sets so a ranking change can never silently turn into a membership change.
   assert.deepEqual(
-    lessons.map((l) => `${l.scope}:${l.key}`),
-    expected.map((l) => `${l.scope}:${l.key}`),
+    lessons.map((l) => `${l.scope}:${l.key}`).sort(),
+    expected.map((l) => `${l.scope}:${l.key}`).sort(),
   );
   // The single `shared` winner is the FIRST (most-specific) scope in readOrder.
   const sharedWinners = lessons.filter((l) => l.key === 'shared');
@@ -229,8 +266,7 @@ test('fetchLessons keeps the most-specific value per key — same as resolvePrec
 });
 
 test('fetchLessons is best-effort: a failed scope read is skipped, not thrown', async () => {
-  const { deriveScope } = await import('../src/scope.mjs');
-  const scope = deriveScope(process.cwd());
+  const scope = REAL_SCOPE;
   const first = scope.readOrder[0];
   const last = scope.readOrder[scope.readOrder.length - 1];
   const store = fakeStore({ [last]: [{ scope: last, key: 'survivor', value: 'v' }] }, { failScopes: [first] });
@@ -238,12 +274,42 @@ test('fetchLessons is best-effort: a failed scope read is skipped, not thrown', 
   assert.deepEqual(lessons.map((l) => l.key), ['survivor']);
 });
 
-test('fetchLessons caps at MAX_LESSONS (15)', async () => {
-  const { deriveScope } = await import('../src/scope.mjs');
-  const scope = deriveScope(process.cwd());
-  const many = Array.from({ length: 30 }, (_, i) => ({ scope: scope.readOrder[0], key: `k${i}`, value: 'v' }));
-  const { lessons } = await fetchLessons(fakeStore({ [scope.readOrder[0]]: many }), process.cwd());
-  assert.equal(lessons.length, 15);
+test('fetchLessons has no fixed count cap — only the hard safety ceiling', async (t) => {
+  // The old `MAX_LESSONS = 15` was both a ceiling AND a floor: any group of
+  // candidates became exactly 15, whatever they cost. The bound is now the character
+  // budget at RENDER time, so the fetch returns everything up to a worst-case
+  // safety ceiling and lets `formatLessons` decide what fits.
+  //
+  // Both fixtures are spread ACROSS scopes rather than piled into one, because
+  // `fetchLessons` reads each scope with `limit: 25` and `fakeStore` honours it:
+  // a 30-row single-scope group is a read the store can never return, so the
+  // scenario would be unreachable and the assertion would pin the read cap
+  // rather than the absence of a count cap.
+  const scope = REAL_SCOPE;
+  if (scope.readOrder.length < 2) {
+    t.skip('needs at least two scopes to exceed the per-scope read limit');
+    return;
+  }
+  const [a, b] = scope.readOrder;
+
+  const spread = {
+    [a]: Array.from({ length: 12 }, (_, i) => ({ scope: a, key: `a${i}`, value: 'v' })),
+    [b]: Array.from({ length: 12 }, (_, i) => ({ scope: b, key: `b${i}`, value: 'v' })),
+  };
+  const { lessons, applicable } = await fetchLessons(fakeStore(spread), process.cwd());
+  assert.equal(lessons.length, 24, 'not truncated to a magic number');
+  assert.equal(applicable, 24);
+
+  // Every scope read to its limit overruns the documented worst-case ceiling
+  // (40), so a huge store can never materialise an unbounded index.
+  const huge = Object.fromEntries(scope.readOrder.map((s) => [
+    s,
+    Array.from({ length: 25 }, (_, i) => ({ scope: s, key: `${s}-h${i}`, value: 'v' })),
+  ]));
+  const seeded = 25 * scope.readOrder.length;
+  const big = await fetchLessons(fakeStore(huge), process.cwd());
+  assert.equal(big.lessons.length, 40, 'hard ceiling still bounds the worst case');
+  assert.equal(big.applicable, seeded, 'but the applicable total is counted before it');
 });
 
 test('matchesQuery re-export from lessons-pure matches the search matcher', () => {
@@ -574,3 +640,468 @@ test('an invalid configured ttl produces no hint rather than a broken one', () =
   const control = { tagsDefault: [], scopeDefaults: null, ttlDefault: 900 };
   assert.doesNotMatch(retrospectiveNudge(fakeScope(), control), /ttl_days/);
 });
+
+// ── fetchLessons ranks the winners before the cap ────────────────────────────
+// The observed failure this fixes: on an active repo the newest cluster of
+// writes is one task's iteration log, and a recency-ordered cap handed that
+// cluster every slot — ~13 of 15 — evicting the lessons that had been
+// re-learned all month.
+
+const RANK_NOW = Date.parse('2026-08-01T00:00:00.000Z');
+const rankDaysAgo = (n) => new Date(RANK_NOW - n * 86400000).toISOString();
+
+// The count cap the injected set USED to have (`MAX_LESSONS = 15`), kept here as
+// a local literal because it is a HISTORICAL value, not a live one: the
+// regression guard below replays the pre-ranking path to prove what that path
+// would have dropped. Binding it to a current constant would be wrong twice
+// over — production has no count cap left to bind to, and a guard that moves
+// with today's bound stops describing the behaviour it exists to pin.
+const PRE_RANKING_CAP = 15;
+
+// A lesson shaped the way the store layer now hands them over.
+function seeded(scope, key, { days = 0, seen = 1, value = 'v' } = {}) {
+  return { scope, key, value, seenCount: seen, updatedAt: rankDaysAgo(days) };
+}
+
+test('fetchLessons ranked — the injected set is ordered by score, not by group order', async () => {
+  const scope = REAL_SCOPE;
+  const s = scope.readOrder[0];
+
+  // Seeded in the WORST possible order for a recency-or-insertion sort: the
+  // best lesson is last.
+  const entries = [
+    seeded(s, 'stale-oneoff', { days: 90, seen: 1 }),
+    seeded(s, 'fresh-oneoff', { days: 0, seen: 1 }),
+    seeded(s, 'recurring', { days: 2, seen: 20 }),
+  ];
+  const { lessons } = await fetchLessons(fakeStore({ [s]: entries }), process.cwd(), { now: RANK_NOW });
+
+  assert.equal(lessons[0].key, 'recurring');
+  assert.equal(lessons[lessons.length - 1].key, 'stale-oneoff');
+});
+
+test('fetchLessons salience top slots — a recurring lesson survives a flood of newer one-offs', async () => {
+  const scope = REAL_SCOPE;
+  const s = scope.readOrder[0];
+
+  // The reported shape: one task's iteration log, written today, plus the
+  // hard-won lesson from last week. Under the old recency cap the flood took
+  // every slot and `hard-won` was never injected.
+  //
+  // 20, not 30: `fetchLessons` reads each scope with `limit: 25`, so a larger
+  // single-scope group is a read the store can never return and the scenario
+  // would be unreachable. 20 + `hard-won` = 21 rows survive the read and still
+  // over-fill the historical count cap, which is the condition under test.
+  const flood = Array.from({ length: 20 }, (_, i) => seeded(s, `iteration-${i}`, { days: 0, seen: 1 }));
+  const entries = [...flood, seeded(s, 'hard-won', { days: 7, seen: 12 })];
+
+  const { lessons } = await fetchLessons(fakeStore({ [s]: entries }), process.cwd(), { now: RANK_NOW });
+
+  assert.equal(lessons[0].key, 'hard-won', 'it is now the FIRST thing the agent reads');
+
+  // The regression guard: prove the PRE-RANKING path would have dropped it.
+  // Replay that path rather than slicing `entries` — in the fixture `hard-won`
+  // is appended last, so a slice of `entries` holds whatever the merge does and
+  // guards nothing. Here the group is ordered the way `store.list` contracts to
+  // (newest-first), run through the SAME `resolvePrecedence` merge
+  // `fetchLessons` runs, then capped: `hard-won` falls outside the cap because
+  // it is OLDER than the flood, which is the property that actually regressed.
+  const newestFirst = [...entries].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  const { groups: preRanking } = resolvePrecedence({
+    groups: [{ scope: s, error: null, entries: newestFirst }],
+  });
+  const preRankingKeys = preRanking
+    .flatMap((g) => g.entries)
+    .filter((e) => e.winning)
+    .slice(0, PRE_RANKING_CAP)
+    .map((e) => e.key);
+  assert.equal(preRankingKeys.length, PRE_RANKING_CAP, 'precondition — the pre-ranking cap was actually saturated');
+  assert.ok(
+    !preRankingKeys.includes('hard-won'),
+    'precondition — the pre-ranking cap did not include it',
+  );
+});
+
+test('fetchLessons ranked — with nothing recurring, the order is still recency', async () => {
+  // Salience must not invent a preference where there is no recurrence signal:
+  // a store of pure one-offs should behave exactly as it always did.
+  const scope = REAL_SCOPE;
+  const s = scope.readOrder[0];
+  const entries = [
+    seeded(s, 'c', { days: 30 }),
+    seeded(s, 'a', { days: 1 }),
+    seeded(s, 'b', { days: 10 }),
+  ];
+  const { lessons } = await fetchLessons(fakeStore({ [s]: entries }), process.cwd(), { now: RANK_NOW });
+  assert.deepEqual(lessons.map((l) => l.key), ['a', 'b', 'c']);
+});
+
+test('precedence unchanged — a shadowed lesson cannot be ranked back into the set', async (t) => {
+  // The load-bearing property of running the scorer on the WINNERS only. The
+  // global copy is made maximally attractive (very recent, highly recurring)
+  // and the project copy maximally unattractive; precedence must still win,
+  // because which copy of a key survives is a correctness rule and not a
+  // preference the scorer gets a vote on.
+  const scope = REAL_SCOPE;
+  if (scope.readOrder.length < 2) {
+    // Report the no-op instead of returning green. A bare `return` would let
+    // this load-bearing precedence property go untested and unnoticed on any
+    // checkout whose `deriveScope` yields a single scope.
+    t.skip('needs at least two scopes to shadow');
+    return;
+  }
+  const [narrow] = scope.readOrder;
+  const broad = scope.readOrder[scope.readOrder.length - 1];
+
+  const { lessons } = await fetchLessons(
+    fakeStore({
+      [narrow]: [seeded(narrow, 'shared', { days: 400, seen: 1, value: 'narrow wins' })],
+      [broad]: [seeded(broad, 'shared', { days: 0, seen: 99, value: 'broad must lose' })],
+    }),
+    process.cwd(),
+    { now: RANK_NOW },
+  );
+
+  const shared = lessons.filter((l) => l.key === 'shared');
+  assert.equal(shared.length, 1, 'still exactly one copy of the key');
+  assert.equal(shared[0].scope, narrow, 'the most-specific scope still wins');
+  assert.equal(shared[0].value, 'narrow wins');
+});
+
+// ── the cross-scope budget trade, locked ─────────────────────────────────────
+// `fetchLessons`'s docblock states that precedence settles same-key collisions
+// only, and that across DIFFERENT keys the cap is one cross-scope ranking with
+// `scopeOrder` as a tiebreak — so a recurring broad-scope lesson takes a slot
+// from a fresher-but-one-off narrow-scope one. That was prose. These tests make it a
+// contract: a future scope weight or per-scope floor has to fail here and be
+// re-decided, rather than quietly changing what the agent reads.
+
+test('ranking is cross-scope — a recurring broad lesson evicts a fresher narrow one-off', async (t) => {
+  const scope = REAL_SCOPE;
+  if (scope.readOrder.length < 2) {
+    // Report the no-op rather than returning green — same reason as the
+    // shadowing test above: silence here would hide the property, not prove it.
+    t.skip('needs at least two scopes to compete for the cap');
+    return;
+  }
+  const [narrow] = scope.readOrder;
+  const broad = scope.readOrder[scope.readOrder.length - 1];
+
+  // Enough narrow-scope one-offs to fill any plausible budget from the
+  // most-specific scope alone — the shape the OLD group order produced, in
+  // which no broad-scope lesson could ever be injected. Distinct keys, so
+  // precedence shadows nothing and the ranking is the only thing under test.
+  //
+  // THE FIXTURE IS DELIBERATELY STACKED AGAINST THE CLAIM. The docblock's claim
+  // is that a RECURRING broad lesson displaces a FRESHER-BUT-ONE-OFF narrow one,
+  // so the narrow rows are written today and the broad ones a week ago: recency
+  // argues for keeping the narrow rows, and only salience can explain the
+  // eviction. Seeding the narrow rows stale instead would let plain recency
+  // produce the same result and the test would pin nothing.
+  // `scoreLesson` AVERAGES its three equally-weighted factors — relevance is in
+  // the divisor even though `terms: []` makes it 0 here — so each line below is
+  // (recency + salience + 0) / 3, the 3 being the sum of `DEFAULT_RANK_WEIGHTS`:
+  //   narrow: (1.00 + log1p(1)/log1p(30)) / 3 = (1.00 + 0.20) / 3 ≈ 0.40
+  //   broad:  (0.5^(7/14)      + 1.00   ) / 3 = (0.71 + 1.00) / 3 ≈ 0.57
+  const narrowRows = Array.from({ length: 15 }, (_, i) =>
+    seeded(narrow, `narrow-${String(i).padStart(2, '0')}`, { days: 0, seen: 1 }),
+  );
+  const broadRows = Array.from({ length: 3 }, (_, i) =>
+    seeded(broad, `broad-recurring-${i}`, { days: 7, seen: 30 }),
+  );
+
+  const { lessons } = await fetchLessons(
+    fakeStore({ [narrow]: narrowRows, [broad]: broadRows }),
+    process.cwd(),
+    { now: RANK_NOW },
+  );
+
+  assert.deepEqual(
+    lessons.slice(0, 3).map((l) => l.scope),
+    [broad, broad, broad],
+    'the recurring broad lessons lead — score decides, scope does not reserve',
+  );
+
+  // THE EVICTION IS NOW THE BUDGET'S, NOT THE FETCH'S. `fetchLessons` no longer
+  // caps at a count, so the trade this test names — a recurring broad lesson
+  // displacing a fresher narrow one — is only observable once something is
+  // actually left out. Render under a budget that fits exactly three lesson
+  // lines and assert WHICH three survive.
+  //
+  // The budget is measured from the unbounded render rather than hand-counted,
+  // so a change to the header or the line format cannot silently turn this into
+  // a test of arithmetic. `index` mode is used so no scope-map line is reserved
+  // out of the budget — the reservation is `hybrid`'s behaviour and has its own
+  // coverage.
+  // `fitLines` charges the budget for the lesson lines only (each `+ 1` for the
+  // newline that joins it) — the header is not billed — so the budget is summed
+  // the same way rather than from the whole rendered block.
+  const [, ...allLines] = formatLessons(lessons, scope, { mode: 'index' }).split('\n');
+  const roomForThree = allLines.slice(0, 3).reduce((n, l) => n + l.length + 1, 0);
+
+  const tight = formatLessons(lessons, scope, { mode: 'index', maxChars: roomForThree });
+  const shownLines = tight.split('\n').slice(1);
+  assert.equal(shownLines.length, 3, 'precondition — the budget fits exactly three lesson lines');
+  assert.ok(
+    shownLines.every((l) => l.startsWith(`- (${broad}) `)),
+    'the recurring broad lessons are what the budget keeps',
+  );
+  assert.ok(
+    !tight.includes(`(${narrow})`),
+    'every fresher narrow one-off was evicted, which is the accepted cost of the trade',
+  );
+});
+
+test('ranking is cross-scope — but the narrower scope still wins an equal score', async (t) => {
+  // The other half of the trade, and the reason `scopeOrder` is passed at all:
+  // the hierarchy is a real tiebreak, so when the score says nothing it decides.
+  // Both entries are identical in every scoring input and differ only in scope.
+  const scope = REAL_SCOPE;
+  if (scope.readOrder.length < 2) {
+    t.skip('needs at least two scopes to compete for the cap');
+    return;
+  }
+  const [narrow] = scope.readOrder;
+  const broad = scope.readOrder[scope.readOrder.length - 1];
+
+  const { lessons } = await fetchLessons(
+    fakeStore({
+      [narrow]: [seeded(narrow, 'a-narrow', { days: 3, seen: 4 })],
+      [broad]: [seeded(broad, 'a-broad', { days: 3, seen: 4 })],
+    }),
+    process.cwd(),
+    { now: RANK_NOW },
+  );
+
+  assert.deepEqual(lessons.map((l) => l.scope), [narrow, broad]);
+});
+
+test('fetchLessons ranked — an entry with no ranking fields is still injected', async () => {
+  // A store that predates the seenCount/updatedAt projection (or a scope read
+  // that returned bare rows) must not vanish from the injection just because it
+  // scores zero — the hook is best-effort and a lesson is better than nothing.
+  const scope = REAL_SCOPE;
+  const s = scope.readOrder[0];
+  const { lessons } = await fetchLessons(
+    fakeStore({ [s]: [{ scope: s, key: 'bare', value: 'v' }, seeded(s, 'scored', { days: 1, seen: 5 })] }),
+    process.cwd(),
+    { now: RANK_NOW },
+  );
+  assert.deepEqual(lessons.map((l) => l.key), ['scored', 'bare']);
+});
+
+test('formatLessons index shape — ranking did not change what is emitted', async () => {
+  // PR-3 is an ORDERING change. The rendered block is still the compact index:
+  // one line per lesson, `scope::key` plus a short hook, bodies a memory.read
+  // away. A change here would be a change to the injected contract.
+  const scope = REAL_SCOPE;
+  const s = scope.readOrder[0];
+  const { lessons } = await fetchLessons(
+    fakeStore({
+      [s]: [
+        seeded(s, 'recurring', { days: 2, seen: 9, value: 'Always re-read the migration first.' }),
+        seeded(s, 'one-off', { days: 0, seen: 1, value: 'A single sighting.' }),
+      ],
+    }),
+    process.cwd(),
+    { now: RANK_NOW },
+  );
+  const text = formatLessons(lessons, scope);
+  const bullets = text.split('\n').filter((l) => l.startsWith('- ('));
+
+  // Still ONE line per lesson, still `- (scope) key — hook`.
+  assert.equal(bullets.length, 2);
+  assert.match(bullets[0], /^- \(.+\) recurring — Always re-read the migration first\.$/);
+  assert.match(bullets[1], /^- \(.+\) one-off — A single sighting\.$/);
+  assert.match(text.split('\n')[0], /^LoreKit: 2 memories loaded ·/);
+  // The score is an internal ordering device — it must not leak into the
+  // agent-facing text.
+  assert.ok(!/score/i.test(text), 'the score is not rendered');
+});
+
+// ── PR 4: the budget-aware SessionStart cap, the scope map, and the modes ─────
+//
+// The count cap is gone. What bounds the injected block now is a CHARACTER
+// budget (`hooks.sessionStart.maxChars`), and what happens to the lessons that
+// do not fit is decided by a shape (`hooks.sessionStart`): `hybrid` names them
+// in a one-line scope map, `index` truncates silently, `map` leads with the
+// inventory. These tests pin all three plus the two degenerate sizes — a store
+// far under the budget and a store far over it.
+
+const BUDGET_SCOPE = { repoScope: 'repo::acme/widget' };
+
+// A lesson with a predictable line length, so a budget assertion is arithmetic
+// rather than a guess.
+function budgetLesson(i, { scope = 'repo::acme/widget', value = 'a lesson body that is long enough to cost something' } = {}) {
+  return { scope, key: `lesson-${String(i).padStart(3, '0')}`, value };
+}
+
+test('sessionStart budget — the block stops at the configured character budget', () => {
+  const lessons = Array.from({ length: 40 }, (_, i) => budgetLesson(i));
+  const text = formatLessons(lessons, BUDGET_SCOPE, { maxChars: 600, applicable: 40 });
+
+  assert.ok(text.length <= 600 + headerLength(text), 'lesson lines respect the budget');
+  const lines = indexLines(text);
+  assert.ok(lines.length > 0 && lines.length < 40, `truncated to ${lines.length} of 40`);
+
+  // A LARGER budget must show strictly more — otherwise the number is decorative.
+  const roomier = indexLines(formatLessons(lessons, BUDGET_SCOPE, { maxChars: 1500, applicable: 40 }));
+  assert.ok(roomier.length > lines.length, 'a bigger budget shows more lessons');
+
+  // And there is no residual magic 15 anywhere in the path.
+  assert.notEqual(roomier.length, 15, 'not the old fixed count');
+});
+
+test('sessionStart budget — one over-long lesson still renders, never an empty index', () => {
+  // A header with nothing under it tells the reader nothing and looks identical
+  // to an empty store. One visible overrun beats a silent blank.
+  const giant = [{ scope: 'global', key: 'k'.repeat(300), value: 'v'.repeat(300) }];
+  const text = formatLessons(giant, BUDGET_SCOPE, { maxChars: 200, applicable: 1 });
+  assert.equal(indexLines(text).length, 1);
+});
+
+test('sessionStart map fallback — a 500-lesson store renders a scope map, not an arbitrary slice', () => {
+  const lessons = [
+    ...Array.from({ length: 400 }, (_, i) => budgetLesson(i, { scope: 'repo::acme/widget' })),
+    ...Array.from({ length: 100 }, (_, i) => budgetLesson(i + 400, { scope: 'global' })),
+  ];
+  const scopeCounts = [
+    { scope: 'repo::acme/widget', count: 400, atReadLimit: true },
+    { scope: 'global', count: 100, atReadLimit: false },
+  ];
+  const text = formatLessons(lessons, BUDGET_SCOPE, { maxChars: 1500, scopeCounts, applicable: 500 });
+
+  const shown = indexLines(text).length;
+  assert.ok(shown > 0 && shown < 500);
+  assert.match(text, /^More lore: /m, 'the remainder is named, not silently dropped');
+  assert.match(text, /repo::acme\/widget 400\+/, 'a read-limited count is marked as a lower bound');
+  assert.match(text, /global 100/);
+  assert.match(text, /memory\.search or memory\.read to drill in/, 'and it says how to reach them');
+  // The header admits the truncation rather than reporting only what it rendered.
+  assert.match(text, new RegExp(`^LoreKit: ${shown} of 500 memories loaded ·`));
+});
+
+test('sessionStart under budget — a 6-lesson store renders all 6 with no map', () => {
+  const lessons = Array.from({ length: 6 }, (_, i) => budgetLesson(i));
+  const scopeCounts = [{ scope: 'repo::acme/widget', count: 6, atReadLimit: false }];
+  const text = formatLessons(lessons, BUDGET_SCOPE, { maxChars: 1500, scopeCounts, applicable: 6 });
+
+  assert.equal(indexLines(text).length, 6, 'no padding, no truncation');
+  assert.ok(!/More lore:/.test(text), 'nothing was left out, so nothing claims otherwise');
+  assert.match(text, /^LoreKit: 6 memories loaded ·/, 'and the header does not say "6 of 6"');
+});
+
+test('sessionStart modes — index, map and hybrid each produce their documented shape', () => {
+  const lessons = Array.from({ length: 40 }, (_, i) => budgetLesson(i));
+  const scopeCounts = [{ scope: 'repo::acme/widget', count: 40, atReadLimit: false }];
+  const opts = { maxChars: 800, scopeCounts, applicable: 40 };
+
+  const index = formatLessons(lessons, BUDGET_SCOPE, { ...opts, mode: 'index' });
+  assert.ok(indexLines(index).length > 1);
+  assert.ok(!/More lore:/.test(index), 'index truncates without a map — that is its whole difference');
+
+  const map = formatLessons(lessons, BUDGET_SCOPE, { ...opts, mode: 'map' });
+  assert.equal(indexLines(map).length, 3, 'map leads with the inventory plus a few salient lessons');
+  assert.match(map, /^More lore: /m);
+
+  const hybrid = formatLessons(lessons, BUDGET_SCOPE, { ...opts, mode: 'hybrid' });
+  assert.ok(indexLines(hybrid).length > indexLines(map).length, 'hybrid fills the budget first');
+  assert.match(hybrid, /^More lore: /m, 'and names the remainder');
+
+  // An unrecognised mode is hybrid, never a blank block.
+  const junk = formatLessons(lessons, BUDGET_SCOPE, { ...opts, mode: 'nonsense' });
+  assert.equal(junk, hybrid);
+});
+
+test('sessionStart default — an unconfigured caller gets hybrid at the default budget', () => {
+  const lessons = Array.from({ length: 40 }, (_, i) => budgetLesson(i));
+  const scopeCounts = [{ scope: 'repo::acme/widget', count: 40, atReadLimit: false }];
+
+  // No mode, no maxChars — exactly what a repo with no `.lorekit.json` gets.
+  const bare = formatLessons(lessons, BUDGET_SCOPE, { scopeCounts, applicable: 40 });
+  const explicit = formatLessons(lessons, BUDGET_SCOPE, {
+    scopeCounts, applicable: 40, mode: 'hybrid', maxChars: 1500,
+  });
+  assert.equal(bare, explicit, 'the defaults are the documented ones');
+
+  // And it never throws on a missing/garbage budget — this runs inside a hook.
+  for (const maxChars of [undefined, null, 0, -1, NaN, 'lots']) {
+    const text = formatLessons(lessons, BUDGET_SCOPE, { scopeCounts, applicable: 40, maxChars });
+    assert.ok(typeof text === 'string' && text.length > 0, `degrades for ${String(maxChars)}`);
+  }
+  // Absent scopeCounts simply means no map — never a crash.
+  assert.ok(formatLessons(lessons, BUDGET_SCOPE, { applicable: 40 }).length > 0);
+});
+
+test('sessionStart budget — an empty store is unchanged (null, or the instruction alone)', () => {
+  assert.equal(formatLessons([], BUDGET_SCOPE, { maxChars: 1500 }), null);
+  const withInstruction = formatLessons([], BUDGET_SCOPE, { instruction: 'be careful' });
+  assert.match(withInstruction, /^LoreKit: 0 memories loaded ·/);
+  assert.match(withInstruction, /Project instruction: be careful/);
+});
+
+test('fetchLessons scope map — counts come from the winners, per scope, in readOrder', async () => {
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  const [first, ...rest] = scope.readOrder;
+  const last = rest[rest.length - 1] ?? first;
+  const byScope = {
+    [first]: [{ key: 'a', value: 'v' }, { key: 'shared', value: 'near' }],
+    [last]: [{ key: 'shared', value: 'far' }, { key: 'b', value: 'v' }],
+  };
+  const { scopeCounts } = await fetchLessons(fakeStore(byScope), process.cwd());
+
+  const counts = Object.fromEntries(scopeCounts.map((s) => [s.scope, s.count]));
+  assert.equal(counts[first], 2);
+  // `shared` is shadowed at the broader scope, so it is NOT counted twice — the
+  // map describes what the reader can act on, not what is stored.
+  assert.equal(counts[last], 1);
+  assert.deepEqual(
+    scopeCounts.map((s) => s.scope),
+    scope.readOrder.filter((s) => counts[s] > 0),
+    'ordered by the hierarchy, not by count',
+  );
+  assert.ok(scopeCounts.every((s) => s.atReadLimit === false), 'nothing hit the per-scope read cap');
+});
+
+// The `+` suffix is the only thing that stops a capped count from reading as an
+// exact total, and until now nothing drove it through `fetchLessons` — the true
+// case was hand-built straight into `renderScopeMap`, so the `raw.length >=
+// SCOPE_READ_LIMIT` detection in the fetch itself was never exercised. The
+// threshold is imported, not retyped: an assertion that restates a production
+// constant goes vacuous the moment the constant moves.
+test('fetchLessons scope map — a scope read to the cap reports a lower bound, not a total', async () => {
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  const [capped, ...rest] = scope.readOrder;
+  const under = rest[rest.length - 1] ?? null;
+
+  const byScope = {
+    // Exactly the cap: what a real store returns when there is more behind it.
+    [capped]: Array.from({ length: SCOPE_READ_LIMIT }, (_, i) => ({ key: `k${i}`, value: `v${i}` })),
+  };
+  if (under) byScope[under] = [{ key: 'lonely', value: 'v' }];
+
+  const { scopeCounts } = await fetchLessons(fakeStore(byScope), process.cwd());
+  const rows = Object.fromEntries(scopeCounts.map((s) => [s.scope, s]));
+
+  assert.equal(rows[capped].count, SCOPE_READ_LIMIT, 'precondition — the capped scope really is saturated');
+  assert.equal(rows[capped].atReadLimit, true, 'a read that came back full is a floor, not a total');
+  if (under) assert.equal(rows[under].atReadLimit, false, 'a scope under the cap is an exact count');
+
+  const map = renderScopeMap(scopeCounts);
+  assert.ok(
+    map.includes(`${capped} ${SCOPE_READ_LIMIT}+`),
+    'the capped scope renders with the + suffix',
+  );
+  if (under) assert.doesNotMatch(map, /lonely/, 'the map names scopes and counts, not keys');
+});
+
+// The header is not part of the lesson budget — it is the frame. Measure it so
+// the budget assertion above is about the lines it actually bounds.
+function headerLength(text) {
+  return text.split('\n')[0].length + 1;
+}
+function indexLines(text) {
+  return text.split('\n').filter((l) => l.startsWith('- ('));
+}

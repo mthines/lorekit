@@ -49,7 +49,10 @@ describe('READ_TOOLS / WRITE_TOOLS', () => {
 
   it('cover the documented tool families', () => {
     expect([...READ_TOOLS].sort()).toEqual(
-      ['memory.list', 'memory.list_archived', 'memory.read', 'memory.search'].sort(),
+      // `memory.scopes` is the inventory read: the one read tool that takes no
+      // scope. It is gated with the family because scope STRINGS embed repo and
+      // project names — it is not exempt merely because it names no scope.
+      ['memory.list', 'memory.list_archived', 'memory.read', 'memory.scopes', 'memory.search'].sort(),
     );
     expect([...WRITE_TOOLS].sort()).toEqual(
       ['memory.archive', 'memory.delete', 'memory.purge', 'memory.purge_expired', 'memory.restore', 'memory.write'].sort(),

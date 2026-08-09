@@ -5,7 +5,10 @@ import { expect, fn, userEvent, waitFor, within } from 'storybook/test';
 import { FilterMenu } from './FilterMenu';
 import { FilterPillRow } from './FilterBar';
 import { FACETS } from './filter-fixtures';
+import { ListMemoriesQuerySchema } from '@lorekit/schemas/memory';
 import {
+  FILTER_FIELDS,
+  filtersToQueryParams,
   removeFilter,
   setFilterOperator,
   toggleFilterValue,
@@ -69,7 +72,12 @@ export default meta;
 type Story = StoryObj<typeof Harness>;
 
 async function openMenu(canvasElement: HTMLElement) {
-  const trigger = await within(canvasElement).findByRole('button', { name: /add filter/i });
+  // The trigger relabels itself once a condition is committed ("Add filter" →
+  // "Filters: n applied. Add or edit a filter"), so a story that reopens the
+  // menu after committing a pill needs both spellings.
+  const trigger = await within(canvasElement).findByRole('button', {
+    name: /add (?:or edit a )?filter/i,
+  });
   await userEvent.click(trigger);
   // The popover lives outside `canvasElement` now — scope to the document.
   const screen = within(document.body);
@@ -83,13 +91,102 @@ export const ListsEveryDimensionFirst: Story = {
 
     await step('level one is the dimension list, not a value list', async () => {
       const rows = canvas.getAllByRole('option');
-      await expect(rows).toHaveLength(6);
+      // Counted from FILTER_FIELDS rather than a literal, so adding a dimension
+      // extends this test instead of breaking it — the ends stay pinned as
+      // literals because menu ORDER is a deliberate design decision, not an
+      // artefact of the array.
+      await expect(rows).toHaveLength(FILTER_FIELDS.length);
       await expect(rows[0]).toHaveTextContent('Label');
-      await expect(rows[5]).toHaveTextContent('Pull request');
+      await expect(rows[rows.length - 1]).toHaveTextContent('Pull request');
+    });
+
+    await step('the taxonomy pair sits together, high in the list', async () => {
+      // Kind partitions the store most coarsely (a `bus` event is not what
+      // someone browsing lessons means to read) and Host is the phrase's other
+      // half — `kind=lesson & host=reviewer` is "reviewer's lessons".
+      const rows = canvas.getAllByRole('option');
+      await expect(rows[1]).toHaveTextContent('Kind');
+      await expect(rows[2]).toHaveTextContent('Host');
     });
 
     await step('the listbox announces itself as the dimension chooser', async () => {
       await expect(canvas.getByRole('listbox', { name: /filter by/i })).toBeInTheDocument();
+    });
+  },
+};
+
+/**
+ * The taxonomy pair, end to end through the UI.
+ *
+ * `GET /memories` has accepted `kind` / `host` since migration 00056 and the
+ * facets route has catalogued them since 00057 — the values were arriving and
+ * being dropped for want of a `FILTER_FIELDS` row. This asserts the whole path
+ * a user actually takes: the dimension is listed with its counts, drilling in
+ * shows the catalog, selecting commits a pill, and the committed bar maps to
+ * the query params the route understands.
+ *
+ * The last step matters most. Every earlier story stops at the pill, which is
+ * where the previous gap hid: a dimension can be perfectly navigable and still
+ * send nothing.
+ */
+export const KindAndHostFilterTheTaxonomy: Story = {
+  play: async ({ canvasElement, step }) => {
+    const canvas = await openMenu(canvasElement);
+
+    await step('Kind drills in to its closed vocabulary, with counts', async () => {
+      await userEvent.click(canvas.getByRole('option', { name: /kind/i }));
+      // The drill-in is a state update, so the value list has to be AWAITED —
+      // a sync read here returns the root dimension list that is still mounted.
+      // Scoped to the level-two listbox for the same reason: `option` at
+      // document scope cannot tell the two levels apart.
+      const list = await canvas.findByRole('listbox', { name: /kind values/i });
+      const values = within(list).getAllByRole('option');
+      await expect(values).toHaveLength(3);
+      await expect(values[0]).toHaveTextContent('lesson');
+      // Counts come from the facet catalog, ordered count-desc as the RPC emits.
+      await expect(values[0]).toHaveTextContent('52');
+    });
+
+    await step('selecting a value commits a Kind pill', async () => {
+      await userEvent.click(canvas.getByRole('option', { name: /lesson/i }));
+      // The pill's own label, as every other story asserts it: a `/Kind/` text
+      // match also hits the `aria-live` announcement, and `/lesson/` hits both
+      // that and the value segment.
+      await expect(await within(canvasElement).findByLabelText('Kind is lesson')).toBeInTheDocument();
+    });
+
+    await step('Host is a separate dimension, not a second Agent', async () => {
+      // `aw` exists under BOTH host and source_agent, so a menu that conflated
+      // them would show one row here and commit the wrong param.
+      // A click toggles and STAYS open, so the menu is still on Kind's values:
+      // go back a level rather than reopening, which would close it.
+      await userEvent.keyboard('{Escape}');
+      await canvas.findByRole('listbox', { name: /filter by/i });
+
+      await userEvent.click(canvas.getByRole('option', { name: /^host/i }));
+      const list = await canvas.findByRole('listbox', { name: /host values/i });
+      const values = within(list).getAllByRole('option');
+      await expect(values.map((v) => v.textContent).join(' ')).toContain('reviewer');
+      await userEvent.click(within(list).getByRole('option', { name: /reviewer/i }));
+    });
+
+    await step('the committed bar maps to the params the route accepts', async () => {
+      // The step the earlier stories never take. Asserted against the SCHEMA,
+      // not a hand-written string, so a param the route does not accept fails
+      // here rather than being dropped silently on the wire.
+      const params = filtersToQueryParams([
+        { field: 'kind', operator: 'in', values: ['lesson'] },
+        { field: 'host', operator: 'in', values: ['reviewer'] },
+      ]);
+      await expect(params).toEqual({
+        kind: 'lesson',
+        kind_mode: 'in',
+        host: 'reviewer',
+        host_mode: 'in',
+      });
+      for (const key of Object.keys(params)) {
+        await expect(Object.keys(ListMemoriesQuerySchema.shape)).toContain(key);
+      }
     });
   },
 };
@@ -103,9 +200,19 @@ export const ArrowRightDrillsInAndArrowLeftGoesBack: Story = {
       await expect(input).toHaveAttribute('aria-activedescendant', 'filter-menu-option-0');
     });
 
+    // Branch is the dimension this story drills into, and its row index moves
+    // whenever a dimension is inserted above it (Kind and Host just did). Derive
+    // the walk from `FILTER_FIELDS` rather than hardcoding a count, so the story
+    // keeps testing the arrow keys instead of the current menu ordering — which
+    // `ListsEveryDimensionFirst` is the one to assert.
+    const branchIndex = FILTER_FIELDS.findIndex((d) => d.field === 'branch');
+
     await step('ArrowDown walks dimensions without moving DOM focus', async () => {
-      await userEvent.keyboard('{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}');
-      await expect(input).toHaveAttribute('aria-activedescendant', 'filter-menu-option-4');
+      await userEvent.keyboard('{ArrowDown}'.repeat(branchIndex));
+      await expect(input).toHaveAttribute(
+        'aria-activedescendant',
+        `filter-menu-option-${branchIndex}`,
+      );
       await expect(input).toHaveFocus();
     });
 

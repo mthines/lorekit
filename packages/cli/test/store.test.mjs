@@ -26,6 +26,7 @@ test('serializeEntry / parseEntry round-trip', () => {
     origin_commit: null,
     origin_pr: null,
     expires_at: null,
+    seen_count: null,
     value: 'First line of the lesson.\nSecond line with details.',
   };
   const parsed = parseEntry(serializeEntry(entry));
@@ -202,6 +203,7 @@ test('putEntry upserts verbatim by scope+key, preserving created/updated/archive
     origin_commit: null,
     origin_pr: null,
     expires_at: null,
+    seen_count: null,
     value: 'preserved body',
   };
   await store.putEntry(entry);
@@ -308,6 +310,7 @@ test('origin fields round-trip through the on-disk format', () => {
     origin_commit: 'a1b2c3d4e5f6',
     origin_pr: 482,
     expires_at: null,
+    seen_count: null,
     value: 'A lesson learned in a pull request.',
   };
   assert.deepEqual(parseEntry(serializeEntry(entry)), entry);

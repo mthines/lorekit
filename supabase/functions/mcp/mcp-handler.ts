@@ -5,7 +5,7 @@
 
 import { type AuthContext, getDb, canWrite, canRead, getUserId, isJwtAuth } from './auth.ts';
 import { type StorageAdapter } from './storage-adapter.ts';
-import { UserInputError } from '../_shared/scope.ts';
+import { UserInputError, safeValidateScope } from '../_shared/scope.ts';
 import { OrgPermissionError } from './org-permissions.ts';
 import {
   toolWrite,
@@ -18,6 +18,7 @@ import {
   toolRestore,
   toolPurge,
   toolPurgeExpired,
+  toolScopes,
   toolOrgCreate,
   toolOrgList,
   toolOrgRename,
@@ -59,6 +60,7 @@ const MEMORY_TOOLS = {
   'memory.restore':       toolRestore,
   'memory.purge':         toolPurge,
   'memory.purge_expired':  toolPurgeExpired,
+  'memory.scopes':        toolScopes,
 } as const;
 
 // org.* tools — dispatched with (db, args, span). They require JWT auth
@@ -220,6 +222,13 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     const scopeType = rawScope
       ? (rawScope.split('::')[0] ?? 'unknown')
       : 'unknown';
+    // The EXACT scope, for `usage_events.scope` (migration 00058) — what makes
+    // "records read from repo::owner/name" answerable, which the deliberately
+    // low-cardinality `scopeType` above cannot. Normalised through the canonical
+    // validator but TOTAL: an absent or ungrammatical scope records null rather
+    // than failing the tool call it is measuring. Resolved ONCE, before the try,
+    // so the success and error recording paths cannot disagree about it.
+    const usageScope = safeValidateScope(rawScope);
     const toolSpan = span.child(`lorekit.${toolName}`, {
       'lorekit.tool.name': toolName,
       'lorekit.scope.type': scopeType,
@@ -301,6 +310,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           planName,
           toolName,
           scopeType: rawScope ? scopeType : null,
+          scope: usageScope,
           authType: auth.type as 'api_key' | 'jwt',
           outcome: 'ok',
           durationMs,
@@ -342,6 +352,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           planName: null,  // skip plan lookup on error path to keep it fast
           toolName,
           scopeType: rawScope ? scopeType : null,
+          scope: usageScope,
           authType: auth.type as 'api_key' | 'jwt',
           outcome,
           durationMs,

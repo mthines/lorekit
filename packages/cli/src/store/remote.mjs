@@ -20,6 +20,7 @@
 // Zero-dependency.
 import { restFetch, mcpToRestBase } from '../mcp.mjs';
 import { getActiveTraceparent } from '../telemetry.mjs';
+import { withReadFields } from './entry-fields.mjs';
 
 // Drop undefined/null args so JSON payloads stay tidy.
 function stripUndefined(obj) {
@@ -74,7 +75,10 @@ class RemoteStore {
     const data = res.data ?? {};
     return {
       ok: true,
-      entries: data.entries ?? [],
+      // `withReadFields` is additive — every key the route returned survives —
+      // so this projection costs existing callers nothing and gives a ranker
+      // the same `seenCount`/`updatedAt` pair the local store answers with.
+      entries: (data.entries ?? []).map(withReadFields),
       hasMore: data.hasMore ?? false,
       nextCursor: data.nextCursor ?? null,
     };
@@ -97,9 +101,42 @@ class RemoteStore {
     const data = res.data ?? {};
     return {
       ok: true,
-      entries: data.entries ?? [],
+      entries: (data.entries ?? []).map(withReadFields),
       hasMore: data.hasMore ?? false,
       nextCursor: data.nextCursor ?? null,
+    };
+  }
+
+  // Top-K lessons RANKED for a query — `GET /memories/relevant`.
+  //
+  // The difference from `search()` is the ordering, and it is the whole point:
+  // search returns what MATCHES (ordered `updated_at desc` by the handler),
+  // this returns what is worth READING, scored on recency + salience +
+  // relevance by the same ranking the SessionStart hook applies. It answers in
+  // a compact index — scope, key, a one-line hook, the score — never full
+  // bodies, so a caller pays for the shortlist and fetches only what it wants.
+  //
+  // `scopes` is ordered MOST-SPECIFIC FIRST and that order is meaningful: the
+  // server uses it to break ties, so passing `deriveScope().readOrder` verbatim
+  // gives a project lesson precedence over the global one it ties with.
+  //
+  // Returns the store's standard `{ ok, entries }` envelope so a caller can
+  // treat it like any other read, plus `candidates` — how many the FTS matched
+  // before ranking — so it can say "3 of 47" rather than implying it saw
+  // everything.
+  async relevant({ q, scopes, limit, minScore } = {}) {
+    const p = new URLSearchParams();
+    if (q) p.set('q', q);
+    if (scopes?.length) p.set('scopes', Array.isArray(scopes) ? scopes.join(',') : scopes);
+    if (limit) p.set('limit', String(limit));
+    if (minScore != null) p.set('min_score', String(minScore));
+    const res = await this._rest(`/memories/relevant?${p}`);
+    if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
+    const data = res.data ?? {};
+    return {
+      ok: true,
+      entries: Array.isArray(data.entries) ? data.entries : [],
+      candidates: Number(data.candidates) || 0,
     };
   }
 
@@ -112,7 +149,9 @@ class RemoteStore {
     const res = await this._rest(`/memories?${p}`);
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
     const entries = res.data?.entries ?? [];
-    return { ok: true, entry: entries[0] ?? null };
+    // Same projection as list/search — a single read must not answer with a
+    // different shape than the listing the caller found the key in.
+    return { ok: true, entry: entries[0] ? withReadFields(entries[0]) : null };
   }
 
   async write(args = {}) {
@@ -217,11 +256,43 @@ class RemoteStore {
   // is not relied upon (the server sorts by scope asc; the view re-sorts by
   // scope type). Failures use this store's standard `{ ok:false, error,
   // networkError }` envelope so the caller can degrade gracefully.
+  //
+  // `httpStatus` is carried through VERBATIM from `restFetch`, which is the ONLY
+  // place the real status lives: its error object holds `{ message, code }`,
+  // where `code` is the response body's own application code on a JSON error
+  // (a string like `permission_denied`) and only incidentally the status on a
+  // non-JSON one. A consumer that wants to say "HTTP 403" must therefore read
+  // `httpStatus`, never `error.code` — `mcp-server.mjs`'s `scopeFailureNote`
+  // does exactly that, and it had nothing to read until this field was passed
+  // through. Additive: `scopes.mjs`, `stats.mjs` and `lessons-view.mjs` all
+  // branch on `ok` / `unusable` / `networkError` and ignore the extra key.
   async listScopes() {
     const res = await this._rest('/memories/scopes');
-    if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError, unusable: res.unusable };
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: res.error,
+        httpStatus: res.httpStatus,
+        networkError: res.networkError,
+        unusable: res.unusable,
+      };
+    }
     const scopes = Array.isArray(res.data?.scopes) ? res.data.scopes : [];
-    return { ok: true, scopes: scopes.map((s) => ({ scope: s.scope, count: Number(s.count) || 0 })) };
+    // `last_activity` (migration 00049) is `max(created_at)` over exactly the
+    // counted rows — per-scope freshness without listing rows to reduce them,
+    // which is the row-cap trap this endpoint exists to avoid. It is passed
+    // through when present and OMITTED when absent (an older backend, or the
+    // offline store, which has no equivalent), so a consumer can tell "this
+    // store does not report freshness" from "this scope has none". Callers that
+    // read only `{ scope, count }` — `scopes.mjs`, `stats.mjs` — are unaffected.
+    return {
+      ok: true,
+      scopes: scopes.map((s) => ({
+        scope: s.scope,
+        count: Number(s.count) || 0,
+        ...(s.last_activity ? { last_activity: s.last_activity } : {}),
+      })),
+    };
   }
 
   // Authentication probe for doctor — does the configured token STILL work?
