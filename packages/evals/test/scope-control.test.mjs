@@ -264,6 +264,12 @@ test("prepareArm rejects an unknown seed or scope mode up front", async () => {
       () => prepareArm(sandbox, { scopeMode: "nope" }),
       TypeError,
     );
+    // An explicit scope does not buy a pass on the mode: `parseArgs` rejects
+    // the same value, so accepting it here would be the only silent path.
+    await assert.rejects(
+      () => prepareArm(sandbox, { scope: "global", scopeMode: "nope" }),
+      TypeError,
+    );
   });
 });
 

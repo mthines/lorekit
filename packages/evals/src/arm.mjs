@@ -153,7 +153,11 @@ export async function prepareArm(
       `unknown seed source "${seed}"; expected one of ${SEED_SOURCES.join(", ")}`,
     );
   }
-  if (!scope && !SCOPE_MODES.includes(scopeMode)) {
+  // Validated even when an explicit `scope` makes it unused: `parseArgs`
+  // rejects an unknown `--scope-mode`, and silently accepting one here only
+  // because a scope happened to be passed too would let a typo through on the
+  // one path where nothing else is watching.
+  if (!SCOPE_MODES.includes(scopeMode)) {
     throw new TypeError(
       `unknown scope mode "${scopeMode}"; expected one of ${SCOPE_MODES.join(", ")}`,
     );
