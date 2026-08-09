@@ -750,8 +750,11 @@ test('ranking is cross-scope — a recurring broad lesson evicts a fresher narro
   // argues for keeping the narrow rows, and only salience can explain the
   // eviction. Seeding the narrow rows stale instead would let plain recency
   // produce the same result and the test would pin nothing.
-  //   narrow: recency 1.0    + salience log1p(1)/log1p(30) ≈ 0.20 → ≈ 0.40
-  //   broad:  recency 0.5^0.5 ≈ 0.71 + salience 1.0              → ≈ 0.57
+  // `scoreLesson` AVERAGES its three equally-weighted factors — relevance is in
+  // the divisor even though `terms: []` makes it 0 here — so each line below is
+  // (recency + salience + 0) / 3, the 3 being the sum of `DEFAULT_RANK_WEIGHTS`:
+  //   narrow: (1.00 + log1p(1)/log1p(30)) / 3 = (1.00 + 0.20) / 3 ≈ 0.40
+  //   broad:  (0.5^(7/14)      + 1.00   ) / 3 = (0.71 + 1.00) / 3 ≈ 0.57
   const narrowRows = Array.from({ length: MAX_LESSONS }, (_, i) =>
     seeded(narrow, `narrow-${String(i).padStart(2, '0')}`, { days: 0, seen: 1 }),
   );
