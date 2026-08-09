@@ -206,14 +206,21 @@ export const OpenFocusSkipsWhenAlreadyInside: Story = {
   // both assertions below (same shape as ArchivedLoreIsPreviewOnly, written to
   // fail the pre-fix behaviour).
   play: async ({ step }) => {
-    await body().findByRole('dialog', { name: /memory detail/i });
+    // Place focus inside the dialog SYNCHRONOUSLY, before the first `await` can
+    // yield to the event loop and let the ~80 ms open-focus timer fire. The
+    // component is already mounted when `play` runs (the harness opens with the
+    // lesson set, and AnimatePresence renders its children on the mount commit),
+    // so the Edit tab is queryable with a synchronous `getByRole` — no async
+    // `findBy*` needed. Gating this focus behind an awaited query would race the
+    // timer: if the query resolved after ~80 ms the timer would already have run
+    // with focus OUTSIDE the panel, the guard's skip-branch would never be
+    // exercised, and the story would go green without testing the guard at all.
+    // A tab is focusable via .focus() (roving tabindex uses -1, not removal) and
+    // focusing it does not select it, so the panel is otherwise untouched.
+    const editTab = body().getByRole('tab', { name: /edit/i });
+    editTab.focus();
+    await expect(editTab).toHaveFocus();
     await step('focus placed inside the panel before the timer is not stolen', async () => {
-      // Place focus inside the dialog well within the ~80 ms open-focus window.
-      // A tab is focusable via .focus() (roving tabindex uses -1, not removal)
-      // and focusing it does not select it, so the panel is otherwise untouched.
-      const editTab = body().getByRole('tab', { name: /edit/i });
-      editTab.focus();
-      await expect(editTab).toHaveFocus();
       // Wait past the ~80 ms timer. With the guard this is a no-op; the pre-guard
       // unconditional focus would have pulled focus onto the close button by now.
       await new Promise((resolve) => setTimeout(resolve, 250));
