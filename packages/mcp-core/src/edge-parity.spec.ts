@@ -80,6 +80,9 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   // cross-LANGUAGE twin that no byte comparison can cover — the CLI's
   // `lessons-pure.mjs` — guarded behaviourally by `lesson-rank-parity.spec.ts`.
   ['lesson-rank.ts', '_shared/lesson-rank.ts'],
+  // The pure half of the embedding pipeline. The impure half (`fetch`, the API
+  // key) is `_shared/embedding-client.ts`, which is Deno-only and not mirrored.
+  ['embedding.ts', '_shared/embedding.ts'],
   // Two rules lifted OUT of Deno-only files so vitest can assert them:
   // rest-audit-actor.ts is `auditUserId` (was inline in _shared/api/auth.ts),
   // rest-response-outcome.ts is the status→usage_events.outcome

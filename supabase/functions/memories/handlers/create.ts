@@ -11,6 +11,7 @@ import { parseCreatedAt, CreatedAtError } from '../../_shared/created-at.ts';
 import { parseOrigin, OriginError } from '../../_shared/origin.ts';
 import { resolveKindHost } from '../../_shared/schemas/tags.ts';
 import { recordAudit } from '../../_shared/audit.ts';
+import { embedOnWrite } from '../../_shared/embed-on-write.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Database } from '../../_shared/database.types.ts';
 
@@ -131,6 +132,12 @@ export async function handleCreate(
 
   if (fetchErr) { span.error(`DB: ${fetchErr.message}`); throw fetchErr; }
   span.setAttributes({ 'lorekit.memory_id': row.id, 'lorekit.write.inserted': row.inserted !== false });
+
+  // Queue the embedding. Returns synchronously and is a no-op unless embedding
+  // is explicitly enabled AND a key is configured — see `embed-on-write.ts` for
+  // why it backgrounds rather than awaits, and why it SKIPS rather than falling
+  // back to awaiting when the runtime has no background hook.
+  embedOnWrite(db, span, { id: row.id, key: body.key, value: body.value }, Deno.env.toObject());
 
   // Audit AFTER the write succeeded. Same action/resource/target/metadata
   // shape as toolWrite, so the MCP and REST surfaces produce comparable rows.
