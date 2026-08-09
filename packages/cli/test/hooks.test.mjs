@@ -627,10 +627,25 @@ test('fetchLessons salience top slots — a recurring lesson survives a flood of
   assert.equal(lessons.length, 15, 'still capped');
   assert.equal(lessons[0].key, 'hard-won', 'and it is now the FIRST thing the agent reads');
 
-  // The regression guard: prove the old ordering would have dropped it.
-  const byRecencyThenInsertion = entries.slice(0, 15).map((e) => e.key);
+  // The regression guard: prove the PRE-RANKING path would have dropped it.
+  // Replay that path rather than slicing `entries` — in the fixture `hard-won`
+  // is appended last, so a slice of `entries` holds whatever the merge does and
+  // guards nothing. Here the group is ordered the way `store.list` contracts to
+  // (newest-first), run through the SAME `resolvePrecedence` merge
+  // `fetchLessons` runs, then capped: `hard-won` falls outside the cap because
+  // it is OLDER than the flood, which is the property that actually regressed.
+  const newestFirst = [...entries].sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  const { groups: preRanking } = resolvePrecedence({
+    groups: [{ scope: s, error: null, entries: newestFirst }],
+  });
+  const preRankingKeys = preRanking
+    .flatMap((g) => g.entries)
+    .filter((e) => e.winning)
+    .slice(0, 15)
+    .map((e) => e.key);
+  assert.equal(preRankingKeys.length, 15, 'precondition — the pre-ranking cap was actually saturated');
   assert.ok(
-    !byRecencyThenInsertion.includes('hard-won'),
+    !preRankingKeys.includes('hard-won'),
     'precondition — the pre-ranking cap did not include it',
   );
 });
