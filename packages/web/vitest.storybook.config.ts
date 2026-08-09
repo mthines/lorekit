@@ -58,6 +58,14 @@ export default defineConfig({
   // (A bare `'zod'` cannot work — `zod` is a dep of `@lorekit/schemas`, not of
   // `@lorekit/web`, so it does not resolve from this package's root: Vite warns
   // "Failed to resolve dependency: zod" and skips it.)
+  //
+  // `react-markdown` / `remark-gfm` / `rehype-sanitize` (and their large
+  // transitive graph: micromark-*, mdast-*, hast-*, unist-*) enter through
+  // `MarkdownPreview` in `LessonDetailSheet` — a second large graph this PR
+  // added. Same failure mode: Vite's initial scan can miss them and only
+  // discover them when a story first imports the graph at RUN time, which
+  // re-optimizes deps mid-run and 404s modules other test files already
+  // imported. Pre-bundle them for the same reason.
   optimizeDeps: {
     include: [
       '@storybook/nextjs-vite',
@@ -66,6 +74,9 @@ export default defineConfig({
       'motion/react',
       '@lorekit/schemas/tags',
       '@lorekit/schemas/memory',
+      'react-markdown',
+      'remark-gfm',
+      'rehype-sanitize',
     ],
   },
   test: {
