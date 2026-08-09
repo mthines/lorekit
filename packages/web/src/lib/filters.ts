@@ -25,6 +25,7 @@
 
 import { normalizeTagList } from '@lorekit/schemas/tags';
 import type {
+  ActivityQuery,
   ListFacetsQuery,
   ListMemoriesQuery,
   ScalarFilterMode,
@@ -704,22 +705,51 @@ export function filtersToQueryParams(
 }
 
 /**
- * The active filters as `GET /memories/facets` drill-down params.
+ * The active filters as the DIMENSION params every memory route now shares.
  *
- * The facets route mirrors `GET /memories`' DIMENSION filter params under the
- * same names (`ListFacetsQuerySchema`, migration 00057), so this is exactly
- * {@link filtersToQueryParams} — every key it sets is one the facets route also
- * accepts. Passing them turns the catalog's counts into drill-down figures: the
- * endpoint counts each dimension with every OTHER active filter applied but not
- * its own (self-exclusion, done server-side), so a value's count is what
- * selecting it would actually yield while the dimension you are standing in
- * still shows its alternatives. Absent filters → the global catalog, unchanged.
+ * Three routes accept the same eight dimensions under the same names — the list
+ * (`GET /memories`), the value catalog (`GET /memories/facets`, migration 00057)
+ * and the write series (`GET /memories/activity`, migration 00060) — because
+ * they are declared once server-side as `MemoryDimensionFilterShape`. So there
+ * is one builder here rather than one per route, and forwarding a filter state
+ * to all three cannot produce three different narrowings.
  *
  * The cast is sound because `filtersToQueryParams` only ever sets dimension
- * keys; the two query types differ only in the NON-dimension keys (`q`, `key`,
- * `sort`, …) it never touches — which the facets route deliberately does not
- * mirror.
+ * keys; the query types differ only in the NON-dimension keys (`q`, `key`,
+ * `sort`, …) it never touches — which neither aggregate route mirrors. That
+ * soundness is not compiler-guaranteed, so `filters.spec.ts` asserts every key
+ * this emits is in each target schema's shape.
+ */
+export function filtersToDimensionParams<T>(filters: readonly Filter[]): Partial<T> {
+  return filtersToQueryParams(filters) as Partial<T>;
+}
+
+/**
+ * The active filters as `GET /memories/facets` drill-down params.
+ *
+ * Passing them turns the catalog's counts into drill-down figures: the endpoint
+ * counts each dimension with every OTHER active filter applied but not its own
+ * (self-exclusion, done server-side), so a value's count is what selecting it
+ * would actually yield while the dimension you are standing in still shows its
+ * alternatives. Absent filters → the global catalog, unchanged.
  */
 export function filtersToFacetParams(filters: readonly Filter[]): Partial<ListFacetsQuery> {
-  return filtersToQueryParams(filters) as Partial<ListFacetsQuery>;
+  return filtersToDimensionParams<ListFacetsQuery>(filters);
+}
+
+/**
+ * The active filters as `GET /memories/activity` params.
+ *
+ * What makes the Explorer's stats header agree with the list beneath it: the
+ * same filter state narrows both, so "Memories written" counts exactly the rows
+ * the list is showing. Before migration 00060 the series took only a window, so
+ * the header counted everything while the list showed the filtered subset.
+ *
+ * Note this narrows the WRITE series only. `/read-activity` and `/usage`
+ * deliberately take no dimension filters — they aggregate `usage_events`, whose
+ * per-event dimensions describe the CALL rather than the records it touched —
+ * so the Read and Expired cards stay account-level and say so.
+ */
+export function filtersToActivityParams(filters: readonly Filter[]): Partial<ActivityQuery> {
+  return filtersToDimensionParams<ActivityQuery>(filters);
 }

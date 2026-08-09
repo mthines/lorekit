@@ -38,7 +38,7 @@ export const Default: Story = {
   args: {
     scope: null,
     range: { preset: '30d' },
-    hasActiveFilters: false,
+    filters: [],
     scopeLabel: 'All scopes',
   },
   render: (args) => (
@@ -60,7 +60,7 @@ export const ScopeSelected: Story = {
   args: {
     scope: 'repo::mthines/lorekit',
     range: { preset: '30d' },
-    hasActiveFilters: false,
+    filters: [],
     scopeLabel: 'mthines/lorekit',
   },
   render: Default.render,
@@ -77,7 +77,7 @@ export const WithActiveFilters: Story = {
   args: {
     scope: 'repo::mthines/lorekit',
     range: { preset: '7d' },
-    hasActiveFilters: true,
+    filters: [{ field: 'kind', operator: 'in', values: ['lesson'] }],
     scopeLabel: 'mthines/lorekit',
   },
   render: Default.render,
@@ -94,7 +94,7 @@ export const AbsoluteRange: Story = {
   args: {
     scope: null,
     range: { from: '2026-06-10', to: '2026-06-12' },
-    hasActiveFilters: false,
+    filters: [],
     scopeLabel: 'All scopes',
   },
   render: Default.render,

@@ -235,6 +235,52 @@ function facetsFrom(rows: MemoryRow[], archived: boolean) {
     );
 }
 
+/**
+ * Does a fixture row satisfy the dimension filters on a request?
+ *
+ * Mirrors the semantics migration 00060's `lorekit_match_*` helpers own —
+ * including the one that matters: **`nin` requires the value to be non-null**,
+ * so an unattributed row is excluded from a negated filter rather than slipping
+ * through. A mock that got that wrong would make a story green against the one
+ * behaviour the helpers were extracted to protect.
+ */
+function matchesDimensions(row: MemoryRow, params: URLSearchParams): boolean {
+  const values = (key: string) =>
+    params.get(key)?.split(',').map((v) => v.trim()).filter(Boolean) ?? null;
+
+  const scope = params.get('scope');
+  if (scope !== null && row.scope !== scope) return false;
+
+  const tags = values('tags');
+  if (tags) {
+    const mode = params.get('tags_mode') ?? 'any';
+    const hit =
+      mode === 'all'
+        ? tags.every((t) => row.tags.includes(t))
+        : tags.some((t) => row.tags.includes(t));
+    if (mode === 'none' ? hit : !hit) return false;
+  }
+
+  const scalars: [string, string | number | null][] = [
+    ['source_agent', row.source_agent],
+    ['trigger', row.trigger],
+    ['kind', row.kind],
+    ['host', row.host],
+    ['origin_repo', row.origin_repo],
+    ['origin_branch', row.origin_branch],
+    ['origin_pr', row.origin_pr],
+  ];
+  for (const [key, raw] of scalars) {
+    const filter = values(key);
+    if (!filter) continue;
+    const hit = raw !== null && raw !== undefined && filter.includes(String(raw));
+    // Note the null rule: a row with no value fails BOTH branches.
+    const ok = params.get(`${key}_mode`) === 'nin' ? raw !== null && !hit : hit;
+    if (!ok) return false;
+  }
+  return true;
+}
+
 /** `GET /memories/activity` — `(bucket, scope)` cells, UTC-anchored. */
 function activityFrom(rows: MemoryRow[], unit: 'hour' | 'day') {
   const cells = new Map<string, { bucket: string; scope: string; count: number }>();
@@ -374,11 +420,21 @@ export function memoryHandlers(rows: MemoryRow[] = MEMORY_ROWS) {
     http.get('*/functions/v1/memories/activity', ({ request }) => {
       const url = new URL(request.url);
       const bucket = url.searchParams.get('bucket') === 'hour' ? 'hour' : 'day';
+      // The route takes the same eight dimension filters `GET /memories` does
+      // (migration 00060). Honour them here or a story asserting that the stats
+      // header narrows would pass against a handler that ignores the filter —
+      // the same trap the `?scope=` read-activity handler documents.
+      //
+      // This is a REIMPLEMENTATION and proves nothing about the plpgsql
+      // predicates; `migrations.test.sql` §77–§79 own those. What it does prove
+      // is that the client SENDS the params, which is the half a browser test
+      // can see.
+      const dimensionFiltered = rows.filter((r) => matchesDimensions(r, url.searchParams));
       return HttpResponse.json({
         bucket,
         since: url.searchParams.get('since') ?? FROZEN_NOW,
         until: url.searchParams.get('until') ?? FROZEN_NOW,
-        buckets: activityFrom(rows, bucket),
+        buckets: activityFrom(dimensionFiltered, bucket),
       });
     }),
     http.get('*/functions/v1/memories/read-activity', ({ request }) => {

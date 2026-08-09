@@ -10,6 +10,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  ActivityQuerySchema,
   ListFacetsQuerySchema,
   ListMemoriesQuerySchema,
   MemoryFacetSchema,
@@ -22,6 +23,7 @@ import {
   filterPhrase,
   filtersFromLegacyTags,
   filtersPhrase,
+  filtersToActivityParams,
   filtersToFacetParams,
   filtersToQueryParams,
   findFilter,
@@ -628,6 +630,38 @@ describe('FILTER_FIELDS', () => {
    * side did not, which is how a dimension could be mapped to a param the list
    * route ignores and still typecheck.
    */
+  it('maps every dimension to a param GET /memories/activity accepts', () => {
+    // The third consumer of the shared dimension shape (migration 00060). Its
+    // cast is sound only while every key `filtersToQueryParams` emits is a real
+    // activity param — the same guard the facets side already has, because the
+    // failure mode is identical: a param the route ignores is silently dropped
+    // on the wire and the chart quietly stops agreeing with the list.
+    const oneEach: Filter[] = FILTER_FIELDS.map((d) => ({
+      field: d.field,
+      operator: d.operators[0],
+      values: d.field === 'pr' ? ['1'] : ['x'],
+    }));
+    const params = filtersToActivityParams(oneEach);
+    const allowed = new Set(Object.keys(ActivityQuerySchema.shape));
+
+    expect(Object.keys(params).length).toBeGreaterThanOrEqual(FILTER_FIELDS.length);
+    for (const key of Object.keys(params)) {
+      expect(allowed, `"${key}" is not an ActivityQuery param`).toContain(key);
+    }
+  });
+
+  it('sends the SAME params to the list, the catalog and the series', () => {
+    // The property the whole shared-shape change exists for: one filter state
+    // must reach all three routes identically, or the list, the menu counts and
+    // the chart describe three different populations.
+    const bar: Filter[] = [
+      { field: 'kind', operator: 'in', values: ['lesson'] },
+      { field: 'branch', operator: 'nin', values: ['main'] },
+    ];
+    expect(filtersToActivityParams(bar)).toEqual(filtersToFacetParams(bar));
+    expect(filtersToActivityParams(bar)).toEqual(filtersToQueryParams(bar));
+  });
+
   it('maps every dimension to a param GET /memories accepts', () => {
     const oneEach: Filter[] = FILTER_FIELDS.map((d) => ({
       field: d.field,

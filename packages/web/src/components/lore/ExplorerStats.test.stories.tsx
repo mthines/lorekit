@@ -6,6 +6,10 @@ import { ExplorerStats } from './ExplorerStats';
 import { memoryHandlers, FROZEN_NOW, EXPIRED_RECORDS, MEMORY_ROWS } from '@/mocks/memories';
 import { withQueryClient, withFrozenClock } from '@/mocks/decorators';
 import type { TimeRange } from '@/lib/time-range';
+import type { Filter } from '@/lib/filters';
+
+/** Stable empty default — a fresh array each render would remint the query key. */
+const NO_FILTERS: Filter[] = [];
 
 /**
  * Interaction tests for the Explorer's stats header.
@@ -39,8 +43,30 @@ function Harness({ initialScope = null as string | null }) {
       <ExplorerStats
         scope={scope}
         range={range}
-        hasActiveFilters={false}
+        filters={NO_FILTERS}
         scopeLabel={scope ? 'mthines/lorekit' : 'All scopes'}
+      />
+    </div>
+  );
+}
+
+/** Owns a filter bar as well, so a story can apply one mid-play. */
+function FilteredHarness() {
+  const [filters, setFilters] = useState<Filter[]>(NO_FILTERS);
+  return (
+    <div style={{ maxWidth: '72rem', padding: '1rem' }}>
+      <button
+        type="button"
+        onClick={() => setFilters([{ field: 'kind', operator: 'in', values: ['lesson'] }])}
+        style={{ marginBottom: '0.75rem' }}
+      >
+        Filter kind=lesson
+      </button>
+      <ExplorerStats
+        scope={null}
+        range={{ preset: '30d' }}
+        filters={filters}
+        scopeLabel="All scopes"
       />
     </div>
   );
@@ -175,6 +201,53 @@ export const ExpiredTileShowsTheUsageLedger: Story = {
       const expired = await canvas.findByText('Memories expired');
       const card = expired.closest('div')?.parentElement;
       await expect(card?.querySelector('[role="img"]')).toBeNull();
+    });
+  },
+};
+
+/**
+ * The filter bar narrows the WRITE series (migration 00060) and cannot narrow
+ * the read/usage ones — so two cards follow the bar and two do not. This is the
+ * asymmetry the header exists to be honest about, and the only way to see it is
+ * to watch all four at once.
+ */
+export const FiltersNarrowWrittenAndScopesOnly: Story = {
+  render: () => <FilteredHarness />,
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+
+    let written = 0;
+    let read = 0;
+    await step('unfiltered: capture all four figures', async () => {
+      await waitFor(async () => {
+        written = await headline(canvas, 'Memories written');
+        await expect(written).toBeGreaterThan(0);
+      });
+      read = await headline(canvas, 'Memories read');
+      await expect(read).toBeGreaterThan(0);
+    });
+
+    await step('applying a filter narrows Written', async () => {
+      await userEvent.click(canvas.getByRole('button', { name: 'Filter kind=lesson' }));
+      await waitFor(async () => {
+        // Strictly fewer: the fixtures carry several kinds, so a header that
+        // dropped the param on the way to the server would show the same
+        // number and pass a "> 0" assertion.
+        await expect(await headline(canvas, 'Memories written')).toBeLessThan(written);
+      });
+    });
+
+    await step('Read is UNCHANGED, because it cannot follow the bar', async () => {
+      await expect(await headline(canvas, 'Memories read')).toBe(read);
+    });
+
+    await step('Expired is unchanged too', async () => {
+      await expect(await headline(canvas, 'Memories expired')).toBe(EXPIRED_RECORDS);
+    });
+
+    await step('and the header names which two are account-level', async () => {
+      // Without this line the reader would reasonably assume all four narrowed.
+      await expect(canvas.getByText(/Read and Expired, which are account-level/)).toBeInTheDocument();
     });
   },
 };

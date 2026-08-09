@@ -668,7 +668,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
       <ExplorerStats
         scope={selectedScope}
         range={range}
-        hasActiveFilters={filters.length > 0}
+        filters={filters}
         scopeLabel={selectedScopeLabel}
       />
 

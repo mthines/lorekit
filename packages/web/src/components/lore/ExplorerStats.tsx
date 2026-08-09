@@ -17,11 +17,15 @@
  * - **Expired is account-wide.** `usage_events` carries no scope on the expiry
  *   event, because the purge is per-user and spans scopes. Its tooltip says so
  *   and its caption drops the scope name.
- * - **The filter bar does not narrow any of it.** `/activity`,
- *   `/read-activity` and `/usage` take a window (and the read series a scope);
- *   none takes the Explorer's dimension filters. Rather than let four numbers
- *   quietly disagree with the list under them, the header states the mismatch
- *   inline the moment a filter is active.
+ * - **The filter bar narrows only two of the four.** `/activity` takes the same
+ *   eight dimension filters `GET /memories` does (migration 00060), so Written
+ *   and Scopes count exactly the rows the list is showing. `/read-activity` and
+ *   `/usage` take none: they aggregate `usage_events`, whose per-event
+ *   dimensions describe the CALL rather than the records it touched, so
+ *   narrowing them by a memory dimension would answer a different question than
+ *   it appeared to. With a bar active the header names the two that stay
+ *   account-level — silence there would read as "all four are filtered" and
+ *   quietly overstate what was consumed.
  *
  * Both are the honest rendering of what the API can answer today. Neither is
  * papered over, because a stat header that is subtly wrong is worse than one
@@ -31,6 +35,7 @@
 import { useMemo, useState } from 'react';
 import { BookOpen, BookOpenCheck, ChevronDown, ChevronUp, Hourglass, Layers } from 'lucide-react';
 import { StatCard } from '@/components/dashboard/StatCard';
+import type { Filter } from '@/lib/filters';
 import {
   effectiveStatsRange,
   statsWindow,
@@ -63,8 +68,15 @@ interface ExplorerStatsProps {
   scope: string | null;
   /** The Explorer's shared time range. */
   range: TimeRange;
-  /** Whether the filter bar currently narrows the list but not these numbers. */
-  hasActiveFilters: boolean;
+  /**
+   * The Explorer's filter bar.
+   *
+   * Narrows the WRITE series server-side (migration 00060), so Written and
+   * Scopes count exactly the rows the list below is showing. Read and Expired
+   * cannot follow it — see the module docblock — which is the asymmetry the
+   * header states rather than hides.
+   */
+  filters: readonly Filter[];
   /** Human label for the selected scope, for captions. */
   scopeLabel: string;
 }
@@ -72,7 +84,7 @@ interface ExplorerStatsProps {
 export function ExplorerStats({
   scope,
   range,
-  hasActiveFilters,
+  filters,
   scopeLabel,
 }: ExplorerStatsProps) {
   // Ephemeral, like the heatmap panel's collapse — a reader who folds the
@@ -95,6 +107,7 @@ export function ExplorerStats({
     plan.unit,
     window.since,
     window.until,
+    filters,
   );
 
   // The absolute arm anchors its grid at its own end, not at the clock — see
@@ -125,7 +138,7 @@ export function ExplorerStats({
       icon: BookOpen,
       label: 'Memories written',
       tag: 'Memory writes',
-      tooltip: `Memories written${scope ? ` under ${scopeLabel}` : ' across every scope'} in the selected range. The bars sum to the number: each bar is the memories written in that hour or day.`,
+      tooltip: `Memories written${scope ? ` under ${scopeLabel}` : ' across every scope'} in the selected range${filters.length > 0 ? ', narrowed by the active filters' : ''}. The bars sum to the number: each bar is the memories written in that hour or day.`,
       value: sumPoints(memoryTrends.lessons.points),
       description: `in ${rangeText}${scopeText}`,
       trend: memoryTrends.lessons,
@@ -136,10 +149,22 @@ export function ExplorerStats({
       icon: BookOpenCheck,
       label: 'Memories read',
       tag: 'Memory reads',
-      // The caveat PR-1 deferred to this card, stated where the number is read.
-      tooltip: scope
-        ? `Memory RECORDS read under ${scopeLabel} in the selected range — one list call returning 20 memories counts as 20. Only reads LoreKit could attribute to a scope are counted, so a per-scope total can be smaller than the account total: a read whose scope the server could not resolve is recorded unattributed rather than dropped. Reads from this dashboard are excluded — browsing your lore is visualisation, not consumption — and usage is a per-user ledger, so a co-member's reads are never included.`
-        : 'Memory RECORDS read in the selected range — one list call returning 20 memories counts as 20, not one. Reads from this dashboard are excluded: browsing your lore is visualisation, not consumption. Usage is a per-user ledger, so a co-member\u2019s reads are never included.',
+      // The caveat PR-1 deferred to this card, stated where the number is read —
+      // plus the one the filter bar introduces.
+      tooltip: [
+        scope
+          ? `Memory RECORDS read under ${scopeLabel} in the selected range — one list call returning 20 memories counts as 20. Only reads LoreKit could attribute to a scope are counted, so a per-scope total can be smaller than the account total: a read whose scope the server could not resolve is recorded unattributed rather than dropped.`
+          : 'Memory RECORDS read in the selected range — one list call returning 20 memories counts as 20, not one.',
+        // Named explicitly rather than left to the reader: with a bar active the
+        // card beside this one IS narrowed, so silence here would read as "both
+        // are filtered" and quietly overstate what was consumed.
+        filters.length > 0
+          ? 'NOT narrowed by the filter bar: reads are recorded against the call, not the records it returned, so there is no memory dimension on them to filter by.'
+          : '',
+        'Reads from this dashboard are excluded — browsing your lore is visualisation, not consumption — and usage is a per-user ledger, so a co-member\u2019s reads are never included.',
+      ]
+        .filter(Boolean)
+        .join(' '),
       value: sumPoints(readTrend.points),
       description: `in ${rangeText}${scopeText}`,
       trend: readTrend,
@@ -151,7 +176,7 @@ export function ExplorerStats({
       label: 'Scopes active',
       tag: 'Scope breadth',
       tooltip:
-        'Distinct scopes with at least one memory written in the selected range. Each bar is the scopes seen for the FIRST time in that hour or day, so the bars sum to the distinct total rather than counting a long-running scope once per bucket.',
+        `Distinct scopes with at least one memory written in the selected range${filters.length > 0 ? ', narrowed by the active filters' : ''}. Each bar is the scopes seen for the FIRST time in that hour or day, so the bars sum to the distinct total rather than counting a long-running scope once per bucket.`,
       value: memoryTrends.activeScopes,
       description: `distinct scopes active in ${rangeText}`,
       trend: memoryTrends.newScopes,
@@ -163,7 +188,7 @@ export function ExplorerStats({
       label: 'Memories expired',
       tag: 'Expiry',
       tooltip:
-        'Memory records deleted in the selected range because their TTL ran out. Counted when the nightly purge removes them, which is the only moment expiry is observable — a read simply hides an expired row. This figure is ACCOUNT-WIDE even when a scope is selected: the purge runs per user and spans scopes, so the underlying event carries no scope to filter on.',
+        `Memory records deleted in the selected range because their TTL ran out. Counted when the nightly purge removes them, which is the only moment expiry is observable — a read simply hides an expired row. This figure is ACCOUNT-WIDE even when a scope${filters.length > 0 ? ' or a filter' : ''} is selected: the purge runs per user and spans scopes, so the underlying event carries no scope or memory dimension to filter on.`,
       value: data?.expired ?? 0,
       // No scope suffix, deliberately — see the tooltip.
       description: `across your account in ${rangeText}`,
@@ -183,12 +208,14 @@ export function ExplorerStats({
           <p className="text-xs font-medium text-[var(--color-content-tertiary)]">
             {scope ? `Activity · ${scopeLabel}` : 'Activity · all scopes'}
           </p>
-          {/* Stated only when it can actually mislead: with a filter bar active,
-              the list below shows fewer memories than these numbers count. */}
-          {hasActiveFilters && open && (
+          {/* Stated only when it can actually mislead. Written and Scopes now
+              narrow with the bar (migration 00060), so the note is no longer
+              "these numbers ignore your filters" — it is the two cards that
+              still cannot follow it, named so a reader knows which figures to
+              trust against the list. */}
+          {filters.length > 0 && open && (
             <p className="mt-0.5 text-[10px] text-[var(--color-content-tertiary)] opacity-70">
-              Counts the selected scope and range — filters narrow the list below, not these
-              numbers.
+              Filtered — except Read and Expired, which are account-level.
             </p>
           )}
         </div>
