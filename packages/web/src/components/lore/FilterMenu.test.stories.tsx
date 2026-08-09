@@ -153,7 +153,8 @@ export const KindAndHostFilterTheTaxonomy: Story = {
       // them would show one row here and commit the wrong param.
       const reopened = await openMenu(canvasElement);
       await userEvent.click(reopened.getByRole('option', { name: /^host/i }));
-      const values = reopened.getAllByRole('option');
+      const list = await reopened.findByRole('listbox', { name: /host values/i });
+      const values = within(list).getAllByRole('option');
       await expect(values.map((v) => v.textContent).join(' ')).toContain('reviewer');
       await userEvent.click(reopened.getByRole('option', { name: /reviewer/i }));
     });
