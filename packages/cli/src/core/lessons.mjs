@@ -214,9 +214,10 @@ export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
   // approximate and `+`-suffixed, exactly what shipped before — rather than
   // costing the user their scope map. `readScopeInventory` never throws.
   const inventory = await inventoryPromise;
+  const derivedCounts = scopeInventory(ranked, scope.readOrder, truncatedScopes);
   const scopeCounts = inventory.ok
-    ? scopeInventoryFromStore(inventory.scopes, scope.readOrder)
-    : scopeInventory(ranked, scope.readOrder, truncatedScopes);
+    ? scopeInventoryFromStore(inventory.scopes, scope.readOrder, derivedCounts)
+    : derivedCounts;
 
   // `applicable` is the honest denominator for the header — how many the reader
   // has, as opposed to how many fitted. It is counted BEFORE the ceiling, so
@@ -237,11 +238,21 @@ export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
 // map describes THIS workspace. Naming a scope the reader is not working in
 // would be noise dressed up as guidance.
 //
-// Every row is exact, so none carries `atReadLimit` — the `+` suffix exists to
-// admit that a number is a floor, and these are not. A scope with no active
+// An enumerated row is exact and so never carries `atReadLimit` — the `+`
+// suffix exists to admit that a number is a floor, and an enumerated one is
+// not. A row that fell back to the derived count keeps the flag it came with,
+// because that number IS a floor. A scope with no active
 // lesson is omitted, matching `scopeInventory`: a row reading `0` is noise, and
 // there is nothing to drill into. Pure.
-export function scopeInventoryFromStore(scopes, scopeOrder = []) {
+// `fallback` is the derived inventory — the same rows the failure path uses —
+// and it is consulted PER SCOPE, not only when the whole enumeration failed.
+// `ok: true` means the store answered, not that the answer is complete: a row
+// can be missing, or carry a count that `shapeScopeRow` had to coerce to 0.
+// Without the per-scope fallback a scope that just contributed injected lessons
+// would drop off the map entirely — the reader would see lore in the digest
+// with no row saying where it lives, which is a worse answer than the
+// approximate one this had in hand all along.
+export function scopeInventoryFromStore(scopes, scopeOrder = [], fallback = []) {
   const counts = new Map();
   for (const row of Array.isArray(scopes) ? scopes : []) {
     const s = row?.scope;
@@ -249,9 +260,17 @@ export function scopeInventoryFromStore(scopes, scopeOrder = []) {
     const n = Number(row.count);
     if (Number.isFinite(n) && n > 0) counts.set(s, n);
   }
+  const derived = new Map();
+  for (const row of Array.isArray(fallback) ? fallback : []) {
+    if (row?.scope) derived.set(row.scope, row);
+  }
   return (Array.isArray(scopeOrder) ? scopeOrder : [])
-    .filter((s) => counts.has(s))
-    .map((s) => ({ scope: s, count: counts.get(s), atReadLimit: false }));
+    .filter((s) => counts.has(s) || derived.has(s))
+    .map((s) => (counts.has(s)
+      ? { scope: s, count: counts.get(s), atReadLimit: false }
+      // The derived row keeps its own `atReadLimit`, so a fallen-back scope
+      // still renders `25+` rather than posing as an exact number.
+      : { ...derived.get(s) }));
 }
 
 // Per-scope counts over an already-ranked lesson list, in the given scope order.

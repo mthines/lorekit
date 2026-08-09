@@ -1283,6 +1283,38 @@ test('fetchLessons scope map — falls back to the derived counts when enumerati
   assert.equal(noMethod.scopeCounts.find((s) => s.scope === capped).atReadLimit, true);
 });
 
+test('fetchLessons scope map — a successful enumeration that omits a scope falls back per scope', async () => {
+  // `ok: true` means the store answered, not that the answer is complete. A
+  // scope that just contributed injected lessons must keep a row: dropping it
+  // would show the reader lore in the digest with nothing saying where it
+  // lives, which is worse than the approximate count already in hand.
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  if (scope.readOrder.length < 2) return;
+  const [narrow] = scope.readOrder;
+  const broad = scope.readOrder[scope.readOrder.length - 1];
+
+  const byScope = {
+    [narrow]: Array.from({ length: SCOPE_READ_LIMIT }, (_, i) => ({ key: `n${i}`, value: 'v' })),
+    [broad]: [{ key: 'b1', value: 'v' }, { key: 'b2', value: 'v' }],
+  };
+
+  // The enumeration succeeds and names only the broad scope. The narrow one is
+  // missing entirely; a zero-count row must behave the same way.
+  const { scopeCounts } = await fetchLessons(
+    enumerableStore(byScope, [{ scope: broad, count: 9 }, { scope: 'repo::elsewhere/x', count: 0 }]),
+    process.cwd(),
+  );
+
+  const rows = Object.fromEntries(scopeCounts.map((s) => [s.scope, s]));
+  assert.equal(rows[broad].count, 9, 'the enumerated scope keeps its exact count');
+  assert.equal(rows[broad].atReadLimit, false);
+  assert.ok(rows[narrow], 'the omitted scope is not silently dropped from the map');
+  assert.equal(rows[narrow].count, SCOPE_READ_LIMIT, 'it falls back to the derived count');
+  assert.equal(rows[narrow].atReadLimit, true, 'and the derived count still admits it is a floor');
+  assert.deepEqual(scopeCounts.map((s) => s.scope), [narrow, broad], 'still ordered by the hierarchy');
+});
+
 test('fetchLessons scope map — enumeration never changes the injected lessons', async () => {
   // The map is a footer. Whether the store could enumerate must not move a
   // single lesson, or this "refactor" would be a behaviour change in disguise.
