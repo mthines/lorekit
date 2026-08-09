@@ -428,7 +428,7 @@ export async function probeTelemetryExport(config, { version = '0.0.0', timeoutM
     name: 'lorekit.cli.doctor.telemetry_probe',
     attributes: {
       'lorekit.cli.command': 'doctor',
-      'lorekit.cli.outcome': 'ok',
+      'lorekit.cli.outcome': CLI_OUTCOMES.OK,
       'lorekit.telemetry.probe': true,
     },
     startMs: now,
