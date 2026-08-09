@@ -240,13 +240,15 @@ const MEMORY_DISPATCH = {
 // /memories/scopes` and the `lorekit scopes` command have answered this since
 // migration 00039; the MCP surface was the one caller that could not ask.
 //
-// THE TWO STORES ANSWER IN DIFFERENT SHAPES, and normalising here is the whole
-// job of this function. `LocalStore`/`TwoTierStore.listScopes()` return a BARE
-// ARRAY (`[{ scope, count }]`), while `RemoteStore.listScopes()` returns the
-// standard `{ ok, scopes }` envelope — or `{ ok: false, error, networkError,
-// unusable }`. A tool that passed either through verbatim would hand the model
-// two different contracts for one tool name depending on a config value it
-// cannot see.
+// THE TWO STORES ANSWER IN DIFFERENT SHAPES, and reconciling them is NO LONGER
+// this function's job — it moved to `store/scope-inventory.mjs`, which the
+// SessionStart scope map reads too. `LocalStore`/`TwoTierStore.listScopes()`
+// return a BARE ARRAY (`[{ scope, count }]`), while `RemoteStore.listScopes()`
+// returns the standard `{ ok, scopes }` envelope — or `{ ok: false, error,
+// networkError, unusable }`. A tool that passed either through verbatim would
+// hand the model two different contracts for one tool name depending on a
+// config value it cannot see. What is left here is what only the MCP surface
+// owns: the ascending sort and the exit-clean degradation below.
 //
 // DEGRADATION IS EXIT-CLEAN, mirroring the `scopes` command, which reports an
 // unreachable remote as a short note at exit 0 rather than failing the run. An
