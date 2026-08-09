@@ -440,6 +440,47 @@ size is bounded by distinct active (hour, scope) pairs rather than by memory cou
 The window is bounded by default deliberately: an unbounded aggregate over `memories` grows
 with account age and no caller wants "all time".
 
+**It takes the dimension filters too, as of 00060.** The same eight `GET /` narrows on
+(`scope`, `tags`/`tags_mode`, and a `<dim>`/`<dim>_mode` pair per scalar dimension), named
+identically, with the same OR-within / AND-across semantics — so a surface charting activity
+beside a list can narrow both with one filter state and have the two agree. Before this, the
+Explorer's stats header counted every memory while the list under it showed the filtered
+subset: two numbers on one screen describing different populations, with nothing on screen
+saying which was which.
+
+Three things worth knowing:
+
+- **The predicates are shared, not copied.** `lorekit_match_text` / `_tags` / `_int` (00060)
+  are `language sql` + `immutable` single expressions, so PostgreSQL INLINES them and the
+  planner still sees a plain boolean over the column. They exist because the rule most likely
+  to be lost in a copy is that **`nin` requires the value to be NON-NULL** — `x <> all(...)`
+  alone is NULL for a null `x`, which reads as false, so "agent is not aw" would silently drop
+  every unattributed memory. That was written out eight times in 00057 and would have been
+  sixteen. `lorekit_memory_facets` was re-created to compose the same helpers, so there is one
+  definition rather than two; `migrations.test.sql` §79 EXECUTES the agreement between the
+  catalog and the series rather than asserting it in prose.
+- **The translation is shared too.** `memoryFilterRpcArgs`
+  (`packages/mcp-core/src/memory-filter-args.ts` ↔ `_shared/memory-filter-args.ts`,
+  edge-parity-guarded) is the ONE query-params → `p_*` mapping, used by this handler and by
+  `/facets`. One splitting rule, one digits-only rule for `origin_pr`, one set of mode defaults.
+- **An unfiltered call is byte-for-byte what it was before the parameters existed** — every one
+  is trailing and defaulted, asserted as §78 AC-1.
+
+**`/read-activity` and `/usage` deliberately get none of this.** Both aggregate `usage_events`,
+which does have `kind`/`host` columns (00056) — and neither is usable as a memory filter:
+
+1. They were never written. `recordUsageEvent` did not pass `p_kind`/`p_host` to the writer
+   RPC, so every row in the table has NULL in both. (Fixed alongside 00060, so rows written
+   from now on carry what the caller resolved — which is exactly why point 2 matters.)
+2. Even populated they mean something else. A usage event's `kind` comes from the CALL'S
+   ARGUMENTS (`resolveKindHost(toolArgs)`), so it records "this call mentioned kind=lesson",
+   not "this call touched lesson records" — and on a READ tool the argument is a *filter*, so
+   the value is unambiguous only for writes. Narrowing a records-read series by it would answer
+   a question nobody asked, in a way no caption could honestly describe.
+
+So a UI showing both must let Written and Scopes narrow with the filter bar while Read and
+Expired stay account-level, and say so. An honest asymmetry beats a uniform lie.
+
 ## `GET /read-activity`
 
 Memory **records read** per UTC hour or day, over a half-open `[since, until)` window — the

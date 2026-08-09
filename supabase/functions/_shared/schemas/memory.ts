@@ -354,6 +354,49 @@ export type MemoryFacet = z.infer<typeof MemoryFacetSchema>;
  * must describe the population it will be used to filter, and active and
  * archived are different populations.
  */
+/**
+ * The eight DIMENSION filters, as a reusable shape.
+ *
+ * Every route that narrows memories by dimension spells these identically —
+ * `GET /memories` (the list), `GET /memories/facets` (the value catalog) and
+ * `GET /memories/activity` (the write series) — so a caller can forward one
+ * filter state to all three verbatim. Declared once here because they had been
+ * written out three times, and a dimension added to one route but not another
+ * is not a type error, it is a filter that quietly does nothing on one surface.
+ *
+ * `scope` rides along because it is applied the same way and by the same
+ * callers, even though it is a hard filter rather than a facetable dimension.
+ *
+ * Deliberately NOT included: `q`, `key`, `created_since`, `created_until` and
+ * `expiring_within_days`. Those are the list route's own, and mirroring them
+ * into an aggregate would mean a second implementation of `likeNeedle`'s LIKE
+ * escaping (and of `expiringWindow`'s `now`-relative boundary) inside plpgsql.
+ * A filter value is encoded exactly one way in this codebase.
+ */
+export const MemoryDimensionFilterShape = {
+  scope: RawScopeSchema.optional(),
+  tags: z.string().optional(),
+  tags_mode: TagsModeSchema.optional().default('any'),
+  source_agent: ValueListSchema.optional(),
+  source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
+  trigger: ValueListSchema.optional(),
+  trigger_mode: ScalarFilterModeSchema.optional().default('in'),
+  kind: ValueListSchema.optional(),
+  kind_mode: ScalarFilterModeSchema.optional().default('in'),
+  host: ValueListSchema.optional(),
+  host_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_repo: ValueListSchema.optional(),
+  origin_repo_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_branch: ValueListSchema.optional(),
+  origin_branch_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_pr: ValueListSchema.optional(),
+  origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
+} as const;
+
+/** The dimension filters on their own, for a route that takes only these. */
+export const MemoryDimensionFilterSchema = z.object(MemoryDimensionFilterShape);
+export type MemoryDimensionFilters = z.infer<typeof MemoryDimensionFilterSchema>;
+
 export const ListFacetsQuerySchema = z.object({
   archived: z.enum(['true', 'false']).optional().default('false'),
   /**
@@ -391,23 +434,7 @@ export const ListFacetsQuerySchema = z.object({
    * no row at all — the same omission a null column value has — so it leaves
    * the menu until the filter is cleared.
    */
-  scope: RawScopeSchema.optional(),
-  tags: z.string().optional(),
-  tags_mode: TagsModeSchema.optional().default('any'),
-  source_agent: ValueListSchema.optional(),
-  source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
-  trigger: ValueListSchema.optional(),
-  trigger_mode: ScalarFilterModeSchema.optional().default('in'),
-  kind: ValueListSchema.optional(),
-  kind_mode: ScalarFilterModeSchema.optional().default('in'),
-  host: ValueListSchema.optional(),
-  host_mode: ScalarFilterModeSchema.optional().default('in'),
-  origin_repo: ValueListSchema.optional(),
-  origin_repo_mode: ScalarFilterModeSchema.optional().default('in'),
-  origin_branch: ValueListSchema.optional(),
-  origin_branch_mode: ScalarFilterModeSchema.optional().default('in'),
-  origin_pr: ValueListSchema.optional(),
-  origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
+  ...MemoryDimensionFilterShape,
 });
 export type ListFacetsQuery = z.infer<typeof ListFacetsQuerySchema>;
 
@@ -439,6 +466,20 @@ export const ActivityQuerySchema = z.object({
   bucket: ActivityBucketUnitSchema.optional().default('day'),
   since: TimestampFilterSchema.optional(),
   until: TimestampFilterSchema.optional(),
+  /**
+   * The same eight DIMENSION filters `GET /memories` takes (migration 00060),
+   * so a surface charting activity beside a list can narrow both with one
+   * filter state and have the two agree.
+   *
+   * That agreement is the point. The Explorer's stats header sits directly above
+   * the list, and before this the header counted every memory while the list
+   * showed the filtered subset — two numbers on one screen describing different
+   * populations, with nothing on screen saying which was which.
+   *
+   * All optional; with none supplied the response is byte-for-byte what it was
+   * before they existed.
+   */
+  ...MemoryDimensionFilterShape,
 });
 export type ActivityQuery = z.infer<typeof ActivityQuerySchema>;
 

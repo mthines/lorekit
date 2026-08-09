@@ -6,6 +6,7 @@ import type { Span } from '../../_shared/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Database } from '../../_shared/database.types.ts';
 import { ActivityQuerySchema } from '../../_shared/schemas/memory.ts';
+import { hasMemoryFilters, memoryFilterRpcArgs } from '../../_shared/memory-filter-args.ts';
 
 type ActivityRow = Database['public']['Functions']['lorekit_memory_activity']['Returns'][number];
 
@@ -55,11 +56,20 @@ export async function handleActivity(
   });
 
   const tracedDb = createTracedClient(db, span);
+  // The eight dimension filters, translated by the SHARED mapper the facets
+  // handler uses (migration 00060). One translation means a caller forwarding
+  // one filter state to both routes gets a chart and a catalog that agree; two
+  // hand-written argument objects would eventually not.
+  const filterArgs = memoryFilterRpcArgs(params);
+  if (hasMemoryFilters(filterArgs)) {
+    span.setAttributes({ 'lorekit.filtered': true });
+  }
   const { data, error } = await tracedDb.rpc<ActivityRow>('lorekit_memory_activity', {
     p_user_id: auth.userId ?? null,
     p_bucket: params.bucket,
     p_since: since,
     p_until: until,
+    ...filterArgs,
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 

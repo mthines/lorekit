@@ -237,6 +237,19 @@ export function generateSpec(baseUrl = 'https://pqokxlhvnosogizsjztg.supabase.co
   registry.registerPath({
     method: 'get', path: '/memories/activity',
     summary: 'Memories created per UTC hour/day per scope over a window', tags: ['Memories'],
+    description:
+      'Write volume per bucket. Takes the SAME eight dimension filters as `GET /memories` ' +
+      '(`scope`, `tags`/`tags_mode`, and a `<dim>`/`<dim>_mode` pair for `source_agent`, ' +
+      '`trigger`, `kind`, `host`, `origin_repo`, `origin_branch` and `origin_pr`), with the same ' +
+      'semantics: OR within a dimension, AND across dimensions. Forward a filter state here and ' +
+      'to `GET /memories` and the chart will describe exactly the rows the list returns.\n\n' +
+      'The list route\'s other filters — `q`, `key`, `created_since`, `created_until` and ' +
+      '`expiring_within_days` — are deliberately NOT mirrored; use `since`/`until` for the ' +
+      'window. With none of the dimension filters supplied the response is unchanged.\n\n' +
+      'Note that `GET /memories/read-activity` and `GET /memories/usage` take no dimension ' +
+      'filters. They aggregate `usage_events`, whose per-event dimensions describe the CALL ' +
+      'rather than the records it touched, so narrowing them by a memory dimension would answer ' +
+      'a different question than it appeared to.',
     security, request: { query: ActivityQuerySchema },
     responses: {
       200: { description: 'Activity buckets', content: { 'application/json': { schema: ActivityResponseSchema } } },

@@ -7,6 +7,7 @@ import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Database } from '../../_shared/database.types.ts';
 import { ListFacetsQuerySchema, MemoryFacetSchema } from '../../_shared/schemas/memory.ts';
 import { parseTagsParam } from '../../_shared/schemas/tags.ts';
+import { memoryFilterRpcArgs } from '../../_shared/memory-filter-args.ts';
 
 type FacetRow = Database['public']['Functions']['lorekit_memory_facets']['Returns'][number];
 
@@ -75,15 +76,12 @@ export async function handleFacets(
   });
 
   // Parse the caller's active filters (same names/shapes as GET /memories) so
-  // the RPC can compute drill-down counts. Empty → null = "not filtered". A
-  // comma-list splits by the one shared rule (`parseTagsParam`); `origin_pr` is
-  // digits-only (a non-numeric entry narrows the filter, never 400s the page).
-  const q = validated.data;
-  const list = (v?: string) => { const a = parseTagsParam(v); return a.length ? a : null; };
-  const prList = (() => {
-    const a = parseTagsParam(q.origin_pr).filter((v) => /^\d+$/.test(v));
-    return a.length ? a : null;
-  })();
+  // the RPC can compute drill-down counts. The translation is the SHARED
+  // `memoryFilterRpcArgs` (migration 00060) — one splitting rule, one
+  // digits-only rule for `origin_pr`, one set of mode defaults — so this route
+  // and `GET /activity` cannot narrow the same filter state differently. A
+  // chart whose catalog disagreed with it would be worse than either alone.
+  const filterArgs = memoryFilterRpcArgs(validated.data);
 
   const tracedDb = createTracedClient(db, span);
   // Service-role callers have no user id; the RPC recognises a null p_user_id
@@ -91,23 +89,7 @@ export async function handleFacets(
   const { data, error } = await tracedDb.rpc<FacetRow>('lorekit_memory_facets', {
     p_user_id: auth.userId ?? null,
     p_archived: archived,
-    p_scope: q.scope ?? null,
-    p_tags: list(q.tags),
-    p_tags_mode: q.tags_mode,
-    p_source_agent: list(q.source_agent),
-    p_source_agent_mode: q.source_agent_mode,
-    p_trigger: list(q.trigger),
-    p_trigger_mode: q.trigger_mode,
-    p_kind: list(q.kind),
-    p_kind_mode: q.kind_mode,
-    p_host: list(q.host),
-    p_host_mode: q.host_mode,
-    p_origin_repo: list(q.origin_repo),
-    p_origin_repo_mode: q.origin_repo_mode,
-    p_origin_branch: list(q.origin_branch),
-    p_origin_branch_mode: q.origin_branch_mode,
-    p_origin_pr: prList,
-    p_origin_pr_mode: q.origin_pr_mode,
+    ...filterArgs,
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 

@@ -4856,6 +4856,241 @@ begin
 end;
 $$;
 
+-- ── 77. Shared dimension-filter predicates (00060) ──────────────────────────
+-- Three inlinable helpers replace eight hand-written `case` blocks per caller.
+-- The rule most likely to be lost in a copy — and the reason they exist — is
+-- that `nin` requires the value to be NON-NULL, so an unattributed row is
+-- EXCLUDED from a negated filter rather than silently dropped by NULL logic.
+--
+-- AC-1: a null filter is "not filtered" and matches everything.
+-- AC-2: `in` is membership; `nin` its negation.
+-- AC-3: a NULL column value satisfies neither `in` NOR `nin` — the load-bearing
+--       asymmetry. `x <> all(...)` alone is NULL for a null x, which reads as
+--       false, so "agent is not aw" would drop every unattributed memory.
+-- AC-4: the helpers are TOTAL — they return a boolean, never NULL, for every
+--       combination including a null value and a null mode.
+-- AC-5: tags modes — `all` is containment, `any` overlap, `none` the negation
+--       of `any` (never of `all`, which would admit "all but one").
+-- AC-6: the integer helper compares NUMERICALLY, so `007` matches PR 7 exactly
+--       as the list route does.
+
+do $$
+begin
+  -- AC-1: null filter matches everything, whatever the mode says.
+  assert lorekit_match_text('aw', null, 'in'),      'match_text AC-1: null filter must match';
+  assert lorekit_match_text('aw', null, 'nin'),     'match_text AC-1: null filter must match under nin';
+  assert lorekit_match_text(null, null, 'in'),      'match_text AC-1: null value + null filter must match';
+  assert lorekit_match_tags(array['a'], null, 'all'), 'match_tags AC-1: null filter must match';
+  assert lorekit_match_int(7, null, 'in'),          'match_int AC-1: null filter must match';
+
+  -- AC-2: membership and its negation.
+  assert lorekit_match_text('aw', array['aw','claude'], 'in'),
+    'match_text AC-2: a listed value must match under in';
+  assert not lorekit_match_text('other', array['aw'], 'in'),
+    'match_text AC-2: an unlisted value must not match under in';
+  assert lorekit_match_text('other', array['aw'], 'nin'),
+    'match_text AC-2: an unlisted value must match under nin';
+  assert not lorekit_match_text('aw', array['aw'], 'nin'),
+    'match_text AC-2: a listed value must not match under nin';
+
+  -- AC-3: THE asymmetry. A row with no value is excluded either way.
+  assert not lorekit_match_text(null, array['aw'], 'in'),
+    'match_text AC-3: a null value must not match a positive filter';
+  assert not lorekit_match_text(null, array['aw'], 'nin'),
+    'match_text AC-3: a null value must NOT satisfy a negated filter — that is the '
+    'null test the helper exists to centralise';
+  assert not lorekit_match_int(null, array[7], 'nin'),
+    'match_int AC-3: the integer helper must share the null rule';
+
+  -- AC-4: total — never NULL, so a caller can AND the result directly.
+  assert lorekit_match_text(null, array['aw'], 'in') is not null,
+    'match_text AC-4: must return a boolean, never NULL';
+  assert lorekit_match_text('aw', array['aw'], null) is not null,
+    'match_text AC-4: a null mode must default, not propagate NULL';
+  assert lorekit_match_text('aw', array['aw'], null),
+    'match_text AC-4: a null mode must default to `in`';
+  assert lorekit_match_tags(array['a'], array['a'], null),
+    'match_tags AC-4: a null mode must default to `any`';
+
+  -- AC-5: the three tag modes.
+  assert lorekit_match_tags(array['a','b'], array['a','b'], 'all'),
+    'match_tags AC-5: containment holds when every label is present';
+  assert not lorekit_match_tags(array['a'], array['a','b'], 'all'),
+    'match_tags AC-5: containment fails when one label is missing';
+  assert lorekit_match_tags(array['a'], array['a','b'], 'any'),
+    'match_tags AC-5: overlap holds on one shared label';
+  assert not lorekit_match_tags(array['a'], array['a','b'], 'none'),
+    'match_tags AC-5: `none` must reject a row sharing ANY label';
+  -- The discriminating case for `none` being NOT(any) rather than NOT(all):
+  -- a row carrying every named label must be rejected, and so must one
+  -- carrying just one of them (asserted above).
+  assert not lorekit_match_tags(array['a','b'], array['a','b'], 'none'),
+    'match_tags AC-5: `none` must reject a row carrying all named labels';
+  assert lorekit_match_tags(array['c'], array['a','b'], 'none'),
+    'match_tags AC-5: `none` must accept a row sharing no label';
+  assert lorekit_match_tags('{}'::text[], array['a'], 'none'),
+    'match_tags AC-5: a row with no labels shares none, so `none` accepts it';
+
+  -- AC-6: numeric comparison, so a zero-padded entry still matches.
+  assert lorekit_match_int(7, array[7], 'in'), 'match_int AC-6: 7 must match 7';
+  assert lorekit_match_int(7, (select array_agg(x::integer) from unnest(array['007']) as x), 'in'),
+    'match_int AC-6: `007` must resolve to 7 and match, exactly as GET /memories does';
+end;
+$$;
+
+-- ── 78. GET /memories/activity honours the dimension filters (00060) ────────
+-- The header above the Explorer's list counted every memory while the list
+-- showed the filtered subset. AC-1..AC-5 pin that the series now narrows by the
+-- same eight dimensions, and — the part most likely to regress — that an
+-- UNFILTERED call is byte-for-byte what it was before the parameters existed.
+
+insert into memories (user_id, scope, key, value, tags, source_agent, trigger, kind, host, origin_repo, origin_branch, origin_pr, created_at) values
+  ('00000000-0000-0000-0000-0000000000a1', 'repo::acme/app', 'act-f-1', 'v', array['perf'],  'aw',     'stuck-loop', 'lesson', 'aw',       'acme/app', 'main', 11, timestamptz '2026-09-01 10:00:00+00'),
+  ('00000000-0000-0000-0000-0000000000a1', 'repo::acme/app', 'act-f-2', 'v', array['perf','ci'], 'claude', 'review',  'lesson', 'reviewer', 'acme/app', 'main', 11, timestamptz '2026-09-01 11:00:00+00'),
+  ('00000000-0000-0000-0000-0000000000a1', 'global',         'act-f-3', 'v', array['ci'],    'claude', 'review',     'bus',    'review',   null,       null,   null, timestamptz '2026-09-01 12:00:00+00'),
+  -- No agent, no kind, no origin: the row that a NEGATED filter must EXCLUDE.
+  ('00000000-0000-0000-0000-0000000000a1', 'global',         'act-f-4', 'v', '{}'::text[],   null,     null,         null,     null,       null,       null,   null, timestamptz '2026-09-01 13:00:00+00');
+
+do $$
+declare
+  v_uid  constant uuid := '00000000-0000-0000-0000-0000000000a1';
+  v_from constant timestamptz := timestamptz '2026-09-01 00:00:00+00';
+  v_to   constant timestamptz := timestamptz '2026-09-02 00:00:00+00';
+  v_total bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"service_role"}', v_uid), true);
+
+  -- AC-1: an UNFILTERED call still returns every row. The compatibility
+  -- assertion — every existing caller passes only the original four arguments.
+  select coalesce(sum(count), 0) into v_total
+    from lorekit_memory_activity(v_uid, 'day', v_from, v_to);
+  assert v_total = 4,
+    format('activity AC-1: unfiltered must count all 4 seeded memories, got %s', v_total);
+
+  -- AC-2: a single dimension narrows.
+  select coalesce(sum(count), 0) into v_total
+    from lorekit_memory_activity(v_uid, 'day', v_from, v_to, p_kind => array['lesson']);
+  assert v_total = 2,
+    format('activity AC-2: kind=lesson must count 2, got %s', v_total);
+
+  -- AC-3: dimensions AND together, values within one OR together.
+  select coalesce(sum(count), 0) into v_total
+    from lorekit_memory_activity(v_uid, 'day', v_from, v_to,
+      p_source_agent => array['aw','claude'], p_kind => array['lesson']);
+  assert v_total = 2,
+    format('activity AC-3: (aw OR claude) AND lesson must count 2, got %s', v_total);
+  select coalesce(sum(count), 0) into v_total
+    from lorekit_memory_activity(v_uid, 'day', v_from, v_to,
+      p_source_agent => array['aw'], p_kind => array['bus']);
+  assert v_total = 0,
+    format('activity AC-3: AND, not OR — nothing satisfies both, got %s', v_total);
+
+  -- AC-4: `nin` excludes the unattributed row too. The discriminating case for
+  -- the shared null rule: a naive `<> all(...)` would return 1 here (act-f-3
+  -- only), silently hiding act-f-4 from a filter that never named it.
+  select coalesce(sum(count), 0) into v_total
+    from lorekit_memory_activity(v_uid, 'day', v_from, v_to,
+      p_source_agent => array['aw'], p_source_agent_mode => 'nin');
+  assert v_total = 2,
+    format('activity AC-4: agent nin aw must count the 2 claude rows and exclude the '
+           'unattributed one, got %s', v_total);
+
+  -- AC-5: tags modes and the scope hard-filter compose with the rest.
+  select coalesce(sum(count), 0) into v_total
+    from lorekit_memory_activity(v_uid, 'day', v_from, v_to,
+      p_tags => array['perf','ci'], p_tags_mode => 'all');
+  assert v_total = 1,
+    format('activity AC-5: tags all [perf,ci] must count only the row carrying both, got %s', v_total);
+  select coalesce(sum(count), 0) into v_total
+    from lorekit_memory_activity(v_uid, 'day', v_from, v_to, p_scope => 'repo::acme/app');
+  assert v_total = 2,
+    format('activity AC-5: the scope hard-filter must count 2, got %s', v_total);
+
+  -- AC-5: origin_pr compares numerically, and a non-numeric list filters
+  -- nothing rather than emptying the chart (the list route's behaviour).
+  select coalesce(sum(count), 0) into v_total
+    from lorekit_memory_activity(v_uid, 'day', v_from, v_to, p_origin_pr => array['011']);
+  assert v_total = 2,
+    format('activity AC-5: origin_pr `011` must resolve to 11 and count 2, got %s', v_total);
+  select coalesce(sum(count), 0) into v_total
+    from lorekit_memory_activity(v_uid, 'day', v_from, v_to, p_origin_pr => array['nope']);
+  assert v_total = 4,
+    format('activity AC-5: an all-non-numeric origin_pr list must filter nothing, got %s', v_total);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 79. The facet catalog and the activity series narrow IDENTICALLY (00060) ─
+-- The whole reason the predicates were extracted: two callers, one definition.
+-- A drift between them would show a menu offering a value whose count does not
+-- match the chart beside it. Executed rather than asserted in prose.
+do $$
+declare
+  v_uid       constant uuid := '00000000-0000-0000-0000-0000000000a1';
+  v_from      constant timestamptz := timestamptz '2026-09-01 00:00:00+00';
+  v_to        constant timestamptz := timestamptz '2026-09-02 00:00:00+00';
+  v_activity  bigint;
+  v_facet     bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"service_role"}', v_uid), true);
+
+  -- Under the SAME filter, the activity total and the facet count for the
+  -- dimension being filtered must describe the same rows. `kind` is counted
+  -- with every OTHER filter applied but not its own (self-exclusion), so with
+  -- only a kind filter active its own cell counts the unfiltered population —
+  -- which is why the comparison below filters on AGENT and reads the KIND cell.
+  select coalesce(sum(count), 0) into v_activity
+    from lorekit_memory_activity(v_uid, 'day', v_from, v_to,
+      p_source_agent => array['claude'], p_kind => array['lesson']);
+
+  select coalesce(count, 0) into v_facet
+    from lorekit_memory_facets(v_uid, false, null,
+      null, 'any',
+      array['claude'], 'in',
+      null, 'in',
+      null, 'in',
+      null, 'in',
+      null, 'in',
+      null, 'in',
+      null, 'in')
+   where facet = 'kind' and value = 'lesson';
+
+  assert v_activity = v_facet,
+    format('shared predicates: the activity series (%s) and the facet count (%s) must '
+           'agree under the same agent filter — they now share lorekit_match_*',
+           v_activity, v_facet);
+
+  -- And the negated form agrees too, which is where a hand-copied null rule
+  -- would have diverged first.
+  select coalesce(sum(count), 0) into v_activity
+    from lorekit_memory_activity(v_uid, 'day', v_from, v_to,
+      p_source_agent => array['aw'], p_source_agent_mode => 'nin', p_kind => array['bus']);
+  select coalesce(count, 0) into v_facet
+    from lorekit_memory_facets(v_uid, false, null,
+      null, 'any',
+      array['aw'], 'nin',
+      null, 'in',
+      null, 'in',
+      null, 'in',
+      null, 'in',
+      null, 'in',
+      null, 'in')
+   where facet = 'kind' and value = 'bus';
+  assert v_activity = v_facet,
+    format('shared predicates: negated filters must agree too — activity %s vs facet %s',
+           v_activity, v_facet);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

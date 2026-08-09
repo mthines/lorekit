@@ -91,6 +91,11 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   // Pure aggregation/window logic for GET /memories/usage — mirrored into the
   // _shared tree because the usage handler cannot cross-import mcp-core.
   ['usage-stats.ts', '_shared/usage-stats.ts'],
+  // The ONE query-params → RPC-args translation for the eight dimension
+  // filters, shared by the facets and activity handlers. Mirrored because the
+  // edge tree cannot cross-import mcp-core; guarded because the two aggregates
+  // must narrow identically or a chart and the catalog beside it disagree.
+  ['memory-filter-args.ts', '_shared/memory-filter-args.ts'],
   // The `(now, now + days]` bounds behind `GET /memories?expiring_within_days=`.
   // Mirrored for the usage-stats reason (the list handler cannot cross-import
   // mcp-core) and guarded here rather than left inline because the asymmetric
