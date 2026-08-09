@@ -122,9 +122,11 @@ runs:
     # Rewrite the env file `vercel build` actually reads
     # (.vercel/.env.<environment>.local) — the only file whose values win over a
     # .env.local entry — so the build talks to the caller-named Supabase project.
-    # Skipped when no anon key is supplied: the pulled Vercel env values remain.
+    # Runs only when BOTH inputs are supplied (a partial pair can't form a valid
+    # URL); otherwise the pulled Vercel env values remain. "override ran" ⟺ both
+    # present, so the warn step below fires on exactly the incomplete cases.
     - name: Override Supabase config
-      if: ${{ inputs.supabase-anon-key != '' }}
+      if: ${{ inputs.supabase-anon-key != '' && inputs.supabase-project-ref != '' }}
       shell: bash
       env:
         PROJECT_REF: ${{ inputs.supabase-project-ref }}
