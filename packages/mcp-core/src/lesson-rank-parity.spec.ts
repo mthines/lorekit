@@ -183,3 +183,51 @@ describe('lesson-rank: the server-only relevance input', () => {
     for (const bad of [null, undefined, NaN, 'nope', {}]) expect(at(bad)).toBe(0);
   });
 });
+
+describe('lesson-rank: the epsilon-grid tie-break is transitive', () => {
+  // The tie-break quantises each score onto the SCORE_EPSILON grid and compares
+  // buckets, NOT `Math.abs(a - b) <= SCORE_EPSILON` — the non-transitive form the
+  // CLI twin rejects, under which a chain of rows each one grid step from its
+  // neighbour reads as a run of pairwise "ties" and the order falls to input
+  // position, so the same set ranks differently under different permutations.
+  // The existing FIXTURES only cover EXACT ties, which the old form got right;
+  // this pins the NEAR-tie case the bucket comparison was introduced for.
+  //
+  // relevance drives the scores because it is the one input settable to an exact
+  // value — recency and salience are transcendental and cannot be placed on the
+  // grid deterministically. That makes this a TS-only check (like the
+  // server-only-relevance block above): the CLI derives relevance from terms.
+  // The two twins run the IDENTICAL bucket algorithm, and their agreement over
+  // the shared inputs is already pinned by the whole-set order tests above.
+  const relevanceOnly = { recency: 0, salience: 0, relevance: 1 };
+
+  // Five rows exactly one grid step apart in score, identical in every
+  // tiebreaker (same scope, same key) so ONLY the score can separate them.
+  const chain = Array.from({ length: 5 }, (_, i) => ({
+    scope: 'global',
+    key: 'k',
+    relevance: 0.5 + i * EPSILON_TS,
+  }));
+
+  // The ranked scores, expressed as their grid buckets (integers), so the
+  // assertion does not hinge on float formatting.
+  const rankedBuckets = (rows: typeof chain) =>
+    rankTs(rows, { now: NOW, weights: relevanceOnly }).map((r) => Math.round(r.score / EPSILON_TS));
+
+  it('orders near-ties one grid step apart by score, highest first', () => {
+    const buckets = rankedBuckets(chain);
+    expect(buckets).toEqual([...buckets].sort((a, b) => b - a));
+  });
+
+  it('produces the same order for every input permutation', () => {
+    const canonical = rankedBuckets(chain);
+    for (const perm of [
+      [4, 3, 2, 1, 0],
+      [0, 2, 4, 1, 3],
+      [2, 0, 3, 4, 1],
+      [1, 4, 0, 3, 2],
+    ]) {
+      expect(rankedBuckets(perm.map((i) => chain[i]))).toEqual(canonical);
+    }
+  });
+});
