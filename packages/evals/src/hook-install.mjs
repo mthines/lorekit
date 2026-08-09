@@ -25,7 +25,7 @@ import {
   upsertClaudeHooks,
 } from "@lorekit/cli/src/config.mjs";
 
-import { LOREKIT_BIN } from "./paths.mjs";
+import { LOREKIT_BIN, lorekitCommand } from "./paths.mjs";
 
 /** Read-only install: SessionStart injects; nothing ever nudges or writes. */
 export const READ_ONLY_EVENTS = ["SessionStart"];
@@ -36,7 +36,8 @@ export const READ_ONLY_EVENTS = ["SessionStart"];
  * to be on `PATH`.
  */
 export function hookRunner(bin = LOREKIT_BIN) {
-  return `${process.execPath} ${bin}`;
+  const { command, args } = lorekitCommand([], { bin });
+  return [command, ...args].join(" ");
 }
 
 /**
@@ -124,10 +125,8 @@ export async function readInjectedLessons(
   });
 
   const { stdout, stderr, code } = await new Promise((resolve, reject) => {
-    const child = spawn(
-      process.execPath,
+    const { command, args } = lorekitCommand(
       [
-        bin,
         "hook",
         "--adapter",
         "claude",
@@ -136,12 +135,13 @@ export async function readInjectedLessons(
         "--dir",
         sandbox.cwd,
       ],
-      {
-        cwd: sandbox.cwd,
-        env: sandbox.childEnv(),
-        stdio: ["pipe", "pipe", "pipe"],
-      },
+      { bin },
     );
+    const child = spawn(command, args, {
+      cwd: sandbox.cwd,
+      env: sandbox.childEnv(),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     let out = "";
     let err = "";
     child.stdout.setEncoding("utf8");

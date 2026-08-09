@@ -17,6 +17,6 @@ export const LOREKIT_BIN = fileURLToPath(
  * the whole experiment depends on the store, hook and MCP server being THIS
  * checkout's.
  */
-export function lorekitCommand(args = []) {
-  return { command: process.execPath, args: [LOREKIT_BIN, ...args] };
+export function lorekitCommand(args = [], { bin = LOREKIT_BIN } = {}) {
+  return { command: process.execPath, args: [bin, ...args] };
 }

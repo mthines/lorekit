@@ -19,7 +19,7 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
 
-import { LOREKIT_BIN } from "./paths.mjs";
+import { LOREKIT_BIN, lorekitCommand } from "./paths.mjs";
 
 /** The server key in `mcpServers`, and therefore the tool-name namespace. */
 export const MCP_SERVER_NAME = "lorekit";
@@ -56,11 +56,12 @@ export function buildMcpConfig({
       "buildMcpConfig: lorekitHome and lorekitStore are required",
     );
   }
+  const { command, args } = lorekitCommand(["mcp"], { bin });
   return {
     mcpServers: {
       [MCP_SERVER_NAME]: {
-        command: process.execPath,
-        args: [bin, "mcp"],
+        command,
+        args,
         env: {
           LOREKIT_HOME: lorekitHome,
           LOREKIT_STORE: lorekitStore,
