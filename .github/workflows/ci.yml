@@ -250,6 +250,141 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: npx vitest run --config vitest.storybook.config.ts --changed="$BASE" --passWithNoTests
 
+  # ── Web preview — deploy a Vercel preview, ONLY when web paths changed ────────
+  #    Replaces Vercel's native Git integration for the dashboard project. That
+  #    integration deployed a preview on EVERY PR/branch push — even docs- or
+  #    backend-only ones — and each deployment counts against the Vercel Hobby
+  #    quota even when the dashboard's Ignored Build Step skips the actual build.
+  #    Here the preview is gated on the `web` path filter, so a PR with no web
+  #    changes creates no Vercel deployment at all.
+  #
+  #    Quota-friendly build strategy: `vercel build` runs on THIS runner and
+  #    `vercel deploy --prebuilt` uploads the result, so Vercel spends no build
+  #    minutes — only a single deployment is created, and only when relevant.
+  #
+  #    The env is Vercel's own "preview" environment (`vercel pull
+  #    --environment=preview`) — a faithful replacement for what the Git
+  #    integration used, so the preview behaves exactly as before.
+  #
+  #    Non-blocking by design: it is deliberately NOT in the `summary` gate's
+  #    `needs`, so a transient Vercel failure can never block a merge (the old
+  #    Vercel preview check wasn't a merge gate either). It self-skips green on a
+  #    fork PR where the Vercel secrets are unavailable.
+  web-preview:
+    name: Web — Vercel preview (changed)
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.web == 'true'
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      # Are the Vercel secrets available? On a fork PR they are not, and there is
+      # nothing the contributor can do about it — warn and skip the deploy rather
+      # than red-X a PR over a missing secret. `contents: read` is safe on forks;
+      # the deploy steps below only run when this resolves to `true`.
+      - name: Check Vercel secrets are available
+        id: guard
+        run: |
+          if [ -n "$VERCEL_TOKEN" ] && [ -n "$VERCEL_ORG_ID" ] && [ -n "$VERCEL_PROJECT_ID" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Vercel secrets unavailable (fork PR?) — skipping the preview deploy for this run."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout repository
+        if: steps.guard.outputs.run == 'true'
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up pnpm
+        if: steps.guard.outputs.run == 'true'
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node.js
+        if: steps.guard.outputs.run == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: pnpm
+
+      # Pinned to match deploy.yml's web jobs so a local `vercel build` and CI
+      # render on the same CLI.
+      - name: Install Vercel CLI
+        if: steps.guard.outputs.run == 'true'
+        run: pnpm add -g vercel@58
+
+      - name: Pull Vercel environment (preview)
+        if: steps.guard.outputs.run == 'true'
+        run: vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+
+      # A CLI build gets none of Vercel's auto-injected VERCEL_GIT_* system env
+      # vars, so set them by hand — instrumentation-client.ts bakes them into
+      # NEXT_PUBLIC_VCS_* (OTel VCS resource attributes) and service.version.
+      # Use the PR head ref/SHA (not github.ref_name/github.sha, which on a
+      # pull_request are the synthetic `refs/pull/N/merge` merge commit).
+      - name: Build (preview)
+        if: steps.guard.outputs.run == 'true'
+        env:
+          VERCEL_GIT_REPO_OWNER: ${{ github.repository_owner }}
+          VERCEL_GIT_REPO_SLUG: ${{ github.event.repository.name }}
+          VERCEL_GIT_COMMIT_REF: ${{ github.head_ref }}
+          VERCEL_GIT_COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+        run: vercel build --token="$VERCEL_TOKEN"
+
+      - name: Deploy to Vercel (preview)
+        id: deploy
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          # Vercel prints the deployment URL to stdout and progress to stderr;
+          # grep the URL so a trailing stderr line is never mistaken for it.
+          out="$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")"
+          echo "$out"
+          URL="$(printf '%s\n' "$out" | grep -Eo 'https://[^[:space:]]+' | tail -1)"
+          if [ -z "$URL" ]; then
+            echo "::error::Could not parse Vercel preview deployment URL"
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      # Post (or update) a single sticky comment with the preview URL — the same
+      # affordance the Vercel bot used to provide. Idempotent: it edits its own
+      # marker comment on re-run instead of stacking a new one per push.
+      - name: Comment preview URL on the PR
+        if: steps.guard.outputs.run == 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.url }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const marker = '<!-- lorekit-web-preview -->';
+            const url = process.env.PREVIEW_URL;
+            const sha = process.env.PR_SHA.slice(0, 7);
+            const body = [
+              marker,
+              '### ▲ Web preview deployed',
+              '',
+              `🔗 **[Open preview → ${url}](${url})**`,
+              '',
+              `Commit \`${sha}\` · [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+            ].join('\n');
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number,
+            });
+            const existing = comments.find(c => c.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
   # ── Migration-order guard — reject out-of-order migration prefixes ───────────
   #    Fails a PR that ADDS a migration numbered <= the highest already on the
   #    base branch — the collision that later wedges `supabase db push` on deploy

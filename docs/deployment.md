@@ -17,14 +17,17 @@ production** with smoke gates and automatic rollback of both the functions and
 the web deployment. The manual commands below are for first-time project setup
 and local operations.
 
-> **The web dashboard is deployed by `deploy.yml`, not by Vercel's Git
-> integration.** Vercel's native auto-deploy on `main` is turned off
-> (`packages/web/vercel.json` → `git.deploymentEnabled.main = false`), so the FE
-> and API flip to production together instead of skewing apart — Vercel used to
-> deploy the frontend the instant `main` was pushed, while the API crawled
-> through the preview→smoke→prod pipeline. If you fork this, mirror the flag (or
-> disable Git deployments for `main` in the Vercel dashboard) or you will
-> double-deploy.
+> **The web dashboard is deployed by `deploy.yml` / `ci.yml`, not by Vercel's
+> Git integration.** Vercel's native auto-deploy is turned off entirely
+> (`packages/web/vercel.json` → `git.deploymentEnabled = false`). Production is
+> promoted by `deploy.yml`, so the FE and API flip to production together
+> instead of skewing apart — Vercel used to deploy the frontend the instant
+> `main` was pushed, while the API crawled through the preview→smoke→prod
+> pipeline. PR **previews** are deployed by `ci.yml`'s `web-preview` job, gated
+> on the `web` path filter — so a PR with no web changes creates **no** Vercel
+> deployment (and spends no quota), where the Git integration used to deploy on
+> every push. If you fork this, mirror the flag (or disable Git deployments in
+> the Vercel dashboard) or you will double-deploy.
 
 ---
 
@@ -34,7 +37,7 @@ Two GitHub Actions workflows own the lifecycle:
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `.github/workflows/ci.yml` | PRs to `main` | **Verify before merge.** `check` (affected typecheck/test/lint — unit tests, all mocked) and `integration` (boots a local Supabase → migrations apply → serves the real Edge Functions → asserts an authenticated MCP `tools/list` returns 200, plus schema lint). `integration` only runs when API/backend paths change (see [below](#only-runs-when-relevant)); the web build is verified by Vercel's own PR check (preview deploys on a PR are unaffected — the `deploymentEnabled` flag only turns off the `main` production auto-deploy). |
+| `.github/workflows/ci.yml` | PRs to `main` | **Verify before merge.** `check` (affected typecheck/test/lint — unit tests, all mocked) and `integration` (boots a local Supabase → migrations apply → serves the real Edge Functions → asserts an authenticated MCP `tools/list` returns 200, plus schema lint). `integration` only runs when API/backend paths change (see [below](#only-runs-when-relevant)); the web build is verified by the `web-test` (Storybook) and `web-preview` (Vercel preview deploy) jobs, both gated on the `web` path filter so a PR with no web changes deploys nothing and spends no Vercel quota. |
 | `.github/workflows/deploy.yml` | push to `main`, `workflow_dispatch` | **Deploy the already-verified commit** — Supabase (migrations + Edge Functions) **and** the Vercel web dashboard, in lockstep. No test re-run — preview-first promotion only. |
 
 ### Tests run once, on the PR
@@ -755,14 +758,18 @@ In your Vercel project → Settings → General:
 | Output Directory | `.next` |
 | Install Command | `cd ../.. && pnpm install` |
 
-> **Production auto-deploy is off.** `packages/web/vercel.json` sets
-> `git.deploymentEnabled.main = false`, so Vercel no longer deploys the
-> production dashboard when `main` is pushed — `deploy.yml` promotes it instead
-> (see [FE ↔ API deploy in lockstep](#fe--api-deploy-in-lockstep-no-availability-skew)).
-> PR/branch preview deploys are unaffected. Create a **Vercel access token**
+> **Vercel Git auto-deploy is off.** `packages/web/vercel.json` sets
+> `git.deploymentEnabled = false`, so Vercel deploys nothing on a Git push —
+> `deploy.yml` promotes production (see [FE ↔ API deploy in lockstep](#fe--api-deploy-in-lockstep-no-availability-skew))
+> and `ci.yml`'s `web-preview` job deploys PR previews, gated on the `web` path
+> filter so unrelated PRs spend no quota. This also disables the dashboard's
+> Ignored Build Step approach, which still created (quota-counting) deployments
+> even when it skipped the build. Create a **Vercel access token**
 > (Account Settings → Tokens) and store it as the repo secret `VERCEL_TOKEN`,
 > alongside `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` (found in `.vercel/project.json`
-> after `vercel link`, or in the project's Settings).
+> after `vercel link`, or in the project's Settings). These three secrets are
+> repo-level, so `ci.yml`'s `web-preview` job reads them on PR runs (a fork PR
+> with no access self-skips green).
 
 Environment variables to add:
 
