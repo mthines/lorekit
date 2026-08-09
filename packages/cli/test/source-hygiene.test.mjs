@@ -148,3 +148,31 @@ test('lessons-pure imports nothing — not a package, not even a node builtin', 
   assert.ok(!/\bimport\s*\(/.test(code), 'lessons-pure.mjs must not use a dynamic import()');
   assert.ok(!/\brequire\s*\(/.test(code), 'lessons-pure.mjs must not use require()');
 });
+
+// ── The SessionStart set is bounded by a budget, not by a magic count ─────────
+// `MAX_LESSONS = 15` was a number with no derivation that acted as a floor as
+// well as a ceiling — a six-lesson workspace and a six-hundred-lesson one both
+// got fifteen. It is replaced by `hooks.sessionStart.maxChars`. This guard makes
+// its return a visible edit rather than a quiet reintroduction.
+const LESSONS_CORE = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'core', 'lessons.mjs');
+
+test('no fixed lesson count cap survives in the SessionStart path', () => {
+  const src = readFileSync(LESSONS_CORE, 'utf8');
+
+  // Anti-vacuity: prove this is the module the guard means to read.
+  assert.match(src, /export async function fetchLessons/, 'core/lessons.mjs did not parse');
+  assert.match(src, /HARD_LESSON_CEILING/, 'the worst-case ceiling is missing');
+
+  // Strip comments — the header legitimately NAMES the retired constant to
+  // explain why it is gone.
+  const code = src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map((line) => line.replace(/^\s*\/\/.*$/, ''))
+    .join('\n');
+
+  assert.ok(
+    !/\bMAX_LESSONS\b/.test(code),
+    'MAX_LESSONS is back — the injected set is budgeted by hooks.sessionStart.maxChars',
+  );
+});

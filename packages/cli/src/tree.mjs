@@ -14,8 +14,9 @@
 //
 // It does NOT show the injected ORDER. The hook ranks the precedence winners
 // with the pure `rankLessons` (recency + salience + relevance, scope only a
-// tiebreak) before capping at MAX_LESSONS, so what the agent reads first is the
-// scorer's order, not `readOrder`'s. `tree` stays a precedence view: uncapped,
+// tiebreak) and then spends a character budget on them
+// (`hooks.sessionStart.maxChars`), so what the agent reads first is the
+// scorer's order, not `readOrder`'s. `tree` stays a precedence view: unbudgeted,
 // unranked, grouped narrow→broad, so a large workspace may list more winners
 // than the hook injects and in a different order.
 //
