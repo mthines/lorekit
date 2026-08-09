@@ -25,8 +25,17 @@ function toCount(value: unknown): number {
  * Staleness is bounded and harmless: the counter is a blog vanity metric, and
  * the ONE reader (`components/blog/PostLikes.tsx`) fetches it once on mount and
  * then tracks its own likes from the POST response, never re-issuing the GET.
- * So a visitor never sees their own click go missing — the only thing that can
- * lag is ANOTHER visitor's like, for at most `max-age`.
+ * WITHIN a page view that makes the visitor's own clicks exact — the total they
+ * watch is the one the POST returned, which no cache sits in front of.
+ *
+ * ACROSS page views the guarantee is weaker, and it is worth being precise
+ * about why: the mount GET can be served by a shared cache populated before the
+ * visitor's like landed, so a revisit inside `s-maxage` can show a total
+ * missing their own click. That is bounded by the directive below and self-heals
+ * on the next revalidation, and it is the honest cost of caching a global
+ * counter — it is NOT prevented by the client's `cache: 'no-store'`, which only
+ * rules out the visitor's OWN cache, and it is the reason a browser `max-age`
+ * would make this strictly worse rather than merely redundant.
  *
  * WHAT THIS DOES AND DOES NOT FIX. The endpoint shows ~660 ms average latency
  * in production, but the query behind it is a primary-key lookup on a
