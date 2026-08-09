@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { isFailure } from '../src/core/failure.mjs';
 import {
+  MAX_LESSONS,
   fetchLessons,
   formatLessons,
   retrospectiveNudge,
@@ -246,12 +247,12 @@ test('fetchLessons is best-effort: a failed scope read is skipped, not thrown', 
   assert.deepEqual(lessons.map((l) => l.key), ['survivor']);
 });
 
-test('fetchLessons caps at MAX_LESSONS (15)', async () => {
+test('fetchLessons caps at MAX_LESSONS', async () => {
   const { deriveScope } = await import('../src/scope.mjs');
   const scope = deriveScope(process.cwd());
   const many = Array.from({ length: 30 }, (_, i) => ({ scope: scope.readOrder[0], key: `k${i}`, value: 'v' }));
   const { lessons } = await fetchLessons(fakeStore({ [scope.readOrder[0]]: many }), process.cwd());
-  assert.equal(lessons.length, 15);
+  assert.equal(lessons.length, MAX_LESSONS);
 });
 
 test('matchesQuery re-export from lessons-pure matches the search matcher', () => {
@@ -622,18 +623,18 @@ test('fetchLessons salience top slots — a recurring lesson survives a flood of
 
   // The reported shape: one task's iteration log, written today, plus the
   // hard-won lesson from last week. Under the old recency cap the flood took
-  // all 15 slots and `hard-won` was never injected.
+  // every slot and `hard-won` was never injected.
   //
   // 20, not 30: `fetchLessons` reads each scope with `limit: 25`, so a larger
   // single-scope group is a read the store can never return and the scenario
   // would be unreachable. 20 + `hard-won` = 21 rows survive the read and still
-  // over-fill the 15-slot cap, which is the condition under test.
+  // over-fill the `MAX_LESSONS` cap, which is the condition under test.
   const flood = Array.from({ length: 20 }, (_, i) => seeded(s, `iteration-${i}`, { days: 0, seen: 1 }));
   const entries = [...flood, seeded(s, 'hard-won', { days: 7, seen: 12 })];
 
   const { lessons } = await fetchLessons(fakeStore({ [s]: entries }), process.cwd(), { now: RANK_NOW });
 
-  assert.equal(lessons.length, 15, 'still capped');
+  assert.equal(lessons.length, MAX_LESSONS, 'still capped');
   assert.equal(lessons[0].key, 'hard-won', 'and it is now the FIRST thing the agent reads');
 
   // The regression guard: prove the PRE-RANKING path would have dropped it.
@@ -650,9 +651,9 @@ test('fetchLessons salience top slots — a recurring lesson survives a flood of
   const preRankingKeys = preRanking
     .flatMap((g) => g.entries)
     .filter((e) => e.winning)
-    .slice(0, 15)
+    .slice(0, MAX_LESSONS)
     .map((e) => e.key);
-  assert.equal(preRankingKeys.length, 15, 'precondition — the pre-ranking cap was actually saturated');
+  assert.equal(preRankingKeys.length, MAX_LESSONS, 'precondition — the pre-ranking cap was actually saturated');
   assert.ok(
     !preRankingKeys.includes('hard-won'),
     'precondition — the pre-ranking cap did not include it',

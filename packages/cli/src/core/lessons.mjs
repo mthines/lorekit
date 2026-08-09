@@ -26,7 +26,10 @@ import { loreScopeUrl, buildLessonUrl } from '../deeplink-pure.mjs';
 import { resolveDefaultTtlDays, matchesScopePrefix } from '../store/ttl.mjs';
 import { FRICTION_FAILURE, FRICTION_STUCK_LOOP } from './friction.mjs';
 
-const MAX_LESSONS = 15;
+// Cap on the SessionStart set. Exported so tests assert against the constant
+// rather than restating its value — a saturation precondition written as a
+// literal goes vacuously true the moment this number moves.
+export const MAX_LESSONS = 15;
 // Cap on lessons injected on a failure — a small, focused "you've seen this
 // before" set, never the whole applicable corpus.
 const MAX_RELEVANT = 3;
