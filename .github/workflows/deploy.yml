@@ -148,7 +148,7 @@ jobs:
           fi
           # Web = the Next.js dashboard + the schemas it transpiles + the workspace
           # files that change how it installs, plus this workflow.
-          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|packages/schemas/|package\.json|pnpm-lock\.yaml|nx\.json|\.github/workflows/deploy\.yml)'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|packages/schemas/|package\.json|pnpm-lock\.yaml|nx\.json|\.github/actions/vercel-preview-deploy/|\.github/workflows/deploy\.yml)'; then
             WEB=true
           fi
           echo "api=$API" >> "$GITHUB_OUTPUT"

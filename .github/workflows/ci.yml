@@ -87,7 +87,7 @@ jobs:
           # Web gate: the Next.js dashboard, plus the workspace files that change
           # how it installs or is configured. Drives the Storybook interaction +
           # visual-regression job so it never boots a browser on unrelated PRs.
-          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|package\.json|pnpm-lock\.yaml|nx\.json|\.github/workflows/ci\.yml)'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|package\.json|pnpm-lock\.yaml|nx\.json|\.github/actions/vercel-preview-deploy/|\.github/workflows/ci\.yml)'; then
             echo "web=true" >> "$GITHUB_OUTPUT"
           else
             echo "web=false" >> "$GITHUB_OUTPUT"
