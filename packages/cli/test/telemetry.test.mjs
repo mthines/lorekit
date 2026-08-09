@@ -927,24 +927,43 @@ test('CLI_OUTCOMES is exactly the three documented values, and frozen', () => {
 });
 
 test('traceCommand only ever emits an outcome from the closed vocabulary', async () => {
-  // One run per branch of traceCommand: clean exit, reported verdict, crash.
-  const seen = [];
-  const capture = (attrs) => seen.push(attrs['lorekit.cli.outcome']);
+  // Drives the REAL traceCommand once per branch — clean exit, reported
+  // verdict, crash — and reads each outcome back off the span that was
+  // actually exported. Asserting over hand-passed constants would only restate
+  // the previous test: the values would come from the test, not from the code
+  // under scan, so a fourth branch emitting something new would still pass.
+  //
+  // The single-branch tests above pin the outcome↔span-status pairing; this one
+  // pins the SET — every branch traceCommand has lands inside CLI_OUTCOMES.
+  const prevHeaders = process.env.OTEL_EXPORTER_OTLP_HEADERS;
+  process.env.OTEL_EXPORTER_OTLP_HEADERS = 'Authorization=Bearer test';
+  const { calls, restore } = stubFetch();
 
-  const env = { ...process.env, LOREKIT_TELEMETRY: '0' };
-  const original = process.env;
-  process.env = env;
+  const outcomeOf = (call) => {
+    const span = call.body.resourceSpans[0].scopeSpans[0].spans[0];
+    return Object.fromEntries(span.attributes.map((a) => [a.key, a.value]))[
+      'lorekit.cli.outcome'
+    ].stringValue;
+  };
+
   try {
     // Exit 0 → ok.
-    capture(commandAttributes({ command: 'list', args: {}, outcome: CLI_OUTCOMES.OK, exitCode: 0 }));
+    assert.equal(await traceCommand('list', {}, '1.0.0', async () => 0), 0);
     // Non-zero exit → failure (the verdict branch).
-    capture(commandAttributes({ command: 'lint', args: {}, outcome: CLI_OUTCOMES.FAILURE, exitCode: 1 }));
+    assert.equal(await traceCommand('lint', {}, '1.0.0', async () => 1), 1);
     // Throw → error (the crash branch).
-    capture(commandAttributes({ command: 'doctor', args: {}, outcome: CLI_OUTCOMES.ERROR, exitCode: 1 }));
+    await assert.rejects(
+      traceCommand('doctor', {}, '1.0.0', async () => {
+        throw new TypeError('boom');
+      }),
+    );
   } finally {
-    process.env = original;
+    restore();
+    if (prevHeaders === undefined) delete process.env.OTEL_EXPORTER_OTLP_HEADERS;
+    else process.env.OTEL_EXPORTER_OTLP_HEADERS = prevHeaders;
   }
 
+  const seen = calls.filter((c) => c.url.endsWith('/v1/traces')).map(outcomeOf);
   assert.deepEqual(seen, ['ok', 'failure', 'error']);
   for (const outcome of seen) {
     assert.ok(CLI_OUTCOME_VALUES.includes(outcome), `unexpected outcome: ${outcome}`);
