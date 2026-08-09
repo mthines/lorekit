@@ -29,7 +29,7 @@ import { resolveDefaultTtlDays, matchesScopePrefix } from '../store/ttl.mjs';
 // unconfigured workspace gets. `formatLessons` is called directly by tests and
 // by the no-store path in `hook.mjs`, so it needs its own fallback rather than
 // relying on every caller to pass one.
-import { DEFAULT_SESSION_START_MAX_CHARS } from '../control.mjs';
+import { DEFAULT_SESSION_START_MAX_CHARS, SESSION_START_MODES } from '../control.mjs';
 import { FRICTION_FAILURE, FRICTION_STUCK_LOOP } from './friction.mjs';
 
 // THE INJECTED SET IS BOUNDED BY A CHARACTER BUDGET, NOT BY A COUNT.
@@ -244,7 +244,7 @@ export function formatLessons(lessons, scope, {
   const budget = Number.isFinite(maxChars) && maxChars > 0
     ? maxChars
     : DEFAULT_SESSION_START_MAX_CHARS;
-  const shape = ['hybrid', 'index', 'map'].includes(mode) ? mode : 'hybrid';
+  const shape = SESSION_START_MODES.includes(mode) ? mode : 'hybrid';
   const total = typeof applicable === 'number' && applicable >= all.length ? applicable : all.length;
 
   // The map line is composed BEFORE the lessons are chosen, because in `hybrid`
