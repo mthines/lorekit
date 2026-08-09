@@ -235,7 +235,13 @@ async function runArm0(options) {
  */
 export async function prepareArm(
   sandbox,
-  { seed = "canonical", lesson = null, scope = null, hook = true } = {},
+  {
+    seed = "canonical",
+    lesson = null,
+    scope = null,
+    hook = true,
+    allowWrite = false,
+  } = {},
 ) {
   const derived = await initGitIdentity(sandbox.cwd, {
     ownerRepo: DEFAULT_OWNER_REPO,
@@ -263,7 +269,7 @@ export async function prepareArm(
       `seed must be one of ${SEED_SOURCES.join(", ")}, got ${seed}`,
     );
 
-  const mcp = await writeMcpConfig(sandbox, { allowWrite: false });
+  const mcp = await writeMcpConfig(sandbox, { allowWrite });
   const hookInstall = hook ? installSessionStartHook(sandbox) : null;
 
   return { derived, targetScope, seeded, mcp, hookInstall };

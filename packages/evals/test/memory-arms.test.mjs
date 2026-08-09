@@ -25,6 +25,7 @@ import {
   positionOf,
   readInjectedLessons,
 } from "../src/hook-install.mjs";
+import { WRITE_TOOLS } from "../src/mcp-config.mjs";
 import { withSandbox } from "../src/sandbox.mjs";
 import {
   CANONICAL_LESSON,
@@ -34,6 +35,8 @@ import {
   seedMany,
   seedOrganic,
 } from "../src/store-setup.mjs";
+
+const isWriteTool = (tool) => WRITE_TOOLS.includes(tool);
 
 const TARGET_SCOPE = `branch::${DEFAULT_OWNER_REPO}::${DEFAULT_BRANCH}`;
 
@@ -250,5 +253,19 @@ test("an unrecognised seed fails loudly rather than silently becoming arm A", as
       () => prepareArm(sandbox, { seed: "cannonical" }),
       /seed must be one of empty, canonical, organic, got cannonical/,
     );
+  });
+});
+
+test("prepareArm threads allowWrite through, so arm 0 can opt into memory_write", async () => {
+  await withSandbox({}, async (sandbox) => {
+    const readOnly = await prepareArm(sandbox, { seed: "canonical" });
+    assert.equal(readOnly.mcp.allowedTools.some(isWriteTool), false);
+  });
+  await withSandbox({}, async (sandbox) => {
+    const writable = await prepareArm(sandbox, {
+      seed: "canonical",
+      allowWrite: true,
+    });
+    assert.equal(writable.mcp.allowedTools.some(isWriteTool), true);
   });
 });
