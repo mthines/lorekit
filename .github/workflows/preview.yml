@@ -178,7 +178,7 @@ jobs:
       # Overrides the pulled preview env with the staging Supabase project so the
       # /preview build talks to staging, in lock-step with deploy.yml's
       # smoke-preview. This mutates only the runner's local copy for this one
-      # build; push-triggered Vercel previews never run this workflow.
+      # build; nothing is written back to Vercel's stored env.
       - name: Deploy Vercel preview
         id: deploy
         uses: ./.github/actions/vercel-preview-deploy
