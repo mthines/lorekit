@@ -94,27 +94,36 @@ test('lessons-pure imports nothing — not a package, not even a node builtin', 
     assert.match(src, new RegExp(`export function ${fn}\\b`), `lessons-pure.mjs is missing ${fn}() — guard would be vacuous`);
   }
 
-  // Strip comments first: the header legitimately discusses imports in prose.
+  // Strip comments first: this module's header legitimately discusses imports
+  // in prose, and so do comments trailing real code.
+  //
+  // Truncating at a `//` is a character scan rather than a regex because both
+  // cheap approximations were wrong in opposite directions, and each one was
+  // shipped and then caught: stripping only WHOLE-LINE comments let
+  // `} // derived from the set` read as a re-export tail, while a regex
+  // truncation is blind to quotes, so `const sep = '//'; require('node:fs');`
+  // collapsed to `const sep = '` and hid a real dynamic dependency. Tracking
+  // the quote state costs ten lines and is correct in both directions, which
+  // also means one view of the source serves every assertion below.
+  const stripLineComment = (line) => {
+    let quote = null;
+    for (let i = 0; i < line.length; i += 1) {
+      const ch = line[i];
+      if (quote) {
+        if (ch === '\\') { i += 1; continue; }
+        if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === "'" || ch === '"' || ch === '`') { quote = ch; continue; }
+      if (ch === '/' && line[i + 1] === '/') return line.slice(0, i);
+    }
+    return line;
+  };
+
   const code = src
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n')
-    .map((line) => line.replace(/^\s*\/\/.*$/, ''))
-    .join('\n');
-
-  // A SECOND, more aggressive view that also drops TRAILING comments, because
-  // stripping only whole-line ones left `} // derived from the set` looking
-  // like a re-export tail. The `[^:]` guard keeps a `https://` URL's slashes
-  // out of it.
-  //
-  // This truncation is NOT string-aware — `const sep = '//';` loses everything
-  // after the quote — so it is safe ONLY for the head-anchored patterns below,
-  // where cutting a line's tail cannot remove the head that would match. The
-  // `import(` / `require(` checks scan anywhere on the line, so they must run
-  // against `code`: on this view `const sep = '//'; require('node:fs');`
-  // truncates to `const sep = '` and a real dynamic dependency disappears.
-  const heads = code
-    .split('\n')
-    .map((line) => line.replace(/(^|[^:])\/\/.*$/, '$1'))
+    .map(stripLineComment)
     .join('\n');
 
   // A static dependency is not always `import`-prefixed. `export { x } from 'p'`
@@ -127,15 +136,15 @@ test('lessons-pure imports nothing — not a package, not even a node builtin', 
   // word: a dependency always names a module, while prose and a parameter
   // called `from` (`export function f(a, from)`) do not. A guard that trips on
   // English is a guard the next person deletes.
-  const statics = heads.match(
+  const statics = code.match(
     /^\s*(?:import\b[\s\S]*?$|export\b[^\n]*\bfrom\s*['"][^\n]*$|\}[^\n]*\bfrom\s*['"][^\n]*$)/gm,
   ) || [];
   assert.deepEqual(statics, [], 'lessons-pure.mjs must have no static imports or re-exports');
 
   // A dynamic `import(...)` or a `require(...)` would defeat the static check
-  // while costing the same load on the hot path. These run against `code`, not
-  // `heads` — see the note above: they match anywhere on a line, so a
-  // non-string-aware tail truncation can hide a real call behind a `'//'`.
+  // while costing the same load on the hot path. Unlike the patterns above
+  // these match ANYWHERE on a line, which is why the comment strip has to be
+  // string-aware rather than merely conservative.
   assert.ok(!/\bimport\s*\(/.test(code), 'lessons-pure.mjs must not use a dynamic import()');
   assert.ok(!/\brequire\s*\(/.test(code), 'lessons-pure.mjs must not use require()');
 });
