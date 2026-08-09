@@ -1506,6 +1506,12 @@ describe('scoreLesson factors', () => {
     assert.equal(salienceFactor(0, 0), 0);
     assert.equal(salienceFactor(8, 8), 1, 'the most-recurring lesson in the set scores 1');
     assert.ok(salienceFactor(2, 8) > salienceFactor(1, 8));
+    // A count above the stated maximum clamps rather than exceeding the bound.
+    // `rankLessons` derives the max from the set so this never binds in-set —
+    // it binds on a direct caller, which is the only way the docblock's [0,1]
+    // can be broken. Unclamped, `log1p(5)/log1p(2)` is 1.63.
+    assert.equal(salienceFactor(5, 2), 1);
+    assert.equal(salienceFactor(500, 2), 1);
     // Logarithmic: the 1 → 3 step is worth more than the 40 → 42 step.
     assert.ok(
       salienceFactor(3, 50) - salienceFactor(1, 50) > salienceFactor(42, 50) - salienceFactor(40, 50),
@@ -1543,6 +1549,17 @@ describe('scoreLesson factors', () => {
     ]) {
       const s = scoreLesson(entry, { now: NOW, terms: ['timeout'], maxSeenCount: 5, weights });
       assert.ok(s >= 0 && s <= 1, `score ${s} out of range for ${JSON.stringify(weights)}`);
+    }
+  });
+
+  test('scoreLesson stays in [0,1] when the caller gets maxSeenCount wrong', () => {
+    // The bound must not depend on the caller passing the set's real maximum:
+    // `scoreLesson` is exported so a caller can explain ONE ranking, and a
+    // direct caller is exactly who can get the normaliser wrong.
+    const entry = { key: 'k', value: 'timeout', seenCount: 5, updatedAt: daysAgo(0) };
+    for (const maxSeenCount of [2, 1, 0, -3, NaN, undefined]) {
+      const s = scoreLesson(entry, { now: NOW, terms: ['timeout'], maxSeenCount });
+      assert.ok(s >= 0 && s <= 1, `score ${s} out of range for maxSeenCount ${String(maxSeenCount)}`);
     }
   });
 });

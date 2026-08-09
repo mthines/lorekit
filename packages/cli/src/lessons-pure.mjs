@@ -296,12 +296,19 @@ export function recencyFactor(updatedAt, now, halfLifeDays = RECENCY_HALF_LIFE_D
  * recurred, so salience has nothing to say and the other factors decide. Note
  * this makes a set of all-one-offs rank purely on recency, which is correct:
  * the ranking only claims to separate recurring from non-recurring.
+ *
+ * A `seenCount` ABOVE `maxSeenCount` is clamped to 1 rather than allowed to
+ * exceed it, for the same reason `recencyFactor` clamps a future timestamp.
+ * `rankLessons` derives the maximum from the set, so in-set the clamp never
+ * binds; it binds when a caller reaches this (or `scoreLesson`) directly with a
+ * maximum that is not the set's, and without it the `[0,1]` both docblocks
+ * promise would simply be false — `salienceFactor(5, 2)` is 1.63.
  */
 export function salienceFactor(seenCount, maxSeenCount) {
   const n = Number.isFinite(seenCount) ? Math.max(0, seenCount) : 0;
   const max = Number.isFinite(maxSeenCount) ? Math.max(0, maxSeenCount) : 0;
   if (max <= 1) return 0;
-  return Math.log1p(n) / Math.log1p(max);
+  return Math.min(1, Math.log1p(n) / Math.log1p(max));
 }
 
 /**
