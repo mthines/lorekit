@@ -92,6 +92,16 @@ describe('lesson-rank ↔ lessons-pure: the factors agree', () => {
       expect(salienceTs(n, max)).toBeCloseTo(cli.salienceFactor(n, max), 15);
     }
   });
+
+  it('salience, above the set maximum — the clamp both sides promise', () => {
+    // Every other fixture uses n <= max, so none of them can catch a missing
+    // `Math.min(1, …)`. These reach the factor with a maximum that is not the
+    // set's, which is the only way the clamp binds.
+    for (const [n, max] of [[5, 2], [50, 3], [1000, 2]]) {
+      expect(salienceTs(n, max)).toBeCloseTo(cli.salienceFactor(n, max), 15);
+      expect(salienceTs(n, max)).toBe(1);
+    }
+  });
 });
 
 describe('lesson-rank ↔ lessons-pure: whole-set ranking agrees', () => {
