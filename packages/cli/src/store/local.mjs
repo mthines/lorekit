@@ -386,6 +386,15 @@ class TwoTierStore {
     return this.home.read({ scope, key });
   }
 
+  // A write goes to ONE tier — the tier `scope` resolves to — and never reads
+  // the other. So `seen_count` is counted PER TIER: opting a repo into a
+  // project tier makes the first write of an already-home-held key a fresh
+  // entry there, restarting its tally at 1 while the home copy keeps its own.
+  // That follows from tiering rather than contradicting it (`list`/`read` let
+  // the project tier SHADOW home rather than merging the two rows), and the
+  // alternative — seeding the count from the tier being shadowed — would make
+  // a write depend on a row it is not writing. Use `lorekit migrate --to
+  // project` to carry an existing tally across; that relocates counts verbatim.
   async write(args = {}) {
     return this.tierFor(args.scope).write(args);
   }

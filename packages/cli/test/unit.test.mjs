@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRemoteStore } from '../src/store/remote.mjs';
-import { createLocalStore } from '../src/store/local.mjs';
+import { createLocalStore, createTwoTierStore } from '../src/store/local.mjs';
 import {
   gatherStream, gather, clusterDuplicates, clusterDuplicatesBlocked, DEFAULT_MAX,
 } from '../src/lessons-view.mjs';
@@ -1303,6 +1303,33 @@ describe('local store read fields', () => {
     const { entries } = await store.list({ scope: 'global' });
     assert.equal(entries[0].seenCount, 0);
     assert.equal(entries[0].updatedAt, null, 'an unparseable date is null, never Invalid Date');
+  });
+
+  test('local seenCount updatedAt — the tally is per TIER, not per key', async () => {
+    const home = tmp();
+    const project = path.join(tmp(), '.lorekit');
+    const scope = 'repo::o/r';
+
+    // Home-only first: two sightings land in the home tier.
+    const before = createTwoTierStore({ home, project });
+    await before.write({ scope, key: 'k', value: 'v1' });
+    await before.write({ scope, key: 'k', value: 'v2' });
+    assert.equal((await before.list({ scope })).entries[0].seenCount, 2);
+
+    // Opting the project tier in re-routes the write; it is a new entry THERE.
+    fs.mkdirSync(project, { recursive: true });
+    const after = createTwoTierStore({ home, project });
+    await after.write({ scope, key: 'k', value: 'v3' });
+    assert.equal(
+      (await after.list({ scope })).entries[0].seenCount,
+      1,
+      'the project tier shadows home rather than merging, so its tally is its own',
+    );
+    assert.equal(
+      createLocalStore(home).getEntry({ scope, key: 'k' }).seen_count,
+      2,
+      'and the shadowed home copy keeps the count it had',
+    );
   });
 
   test('local seenCount updatedAt — putEntry relocates a count verbatim', async () => {
