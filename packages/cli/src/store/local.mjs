@@ -10,6 +10,7 @@ import path from 'node:path';
 import { serializeEntry, parseEntry, slugify, scopeToDir } from './format.mjs';
 import { normalizeCreatedAt } from './created-at.mjs';
 import { isLive, resolveExpiresAt } from './ttl.mjs';
+import { seenCountOf, withReadFields } from './entry-fields.mjs';
 
 export function createLocalStore(baseDir) {
   return new LocalStore(baseDir);
@@ -73,13 +74,18 @@ class LocalStore {
     }
     rows.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));
     if (limit) rows = rows.slice(0, limit);
-    return { ok: true, entries: rows };
+    // The same additive projection the remote store applies, so a caller that
+    // ranks entries never has to ask which store produced them.
+    return { ok: true, entries: rows.map(withReadFields) };
   }
 
   // read({ scope, key }) → { ok, entry } — null when absent, archived, or expired.
   async read({ scope, key } = {}) {
     const found = this._findByKey(scope, key);
-    return { ok: true, entry: found && isLive(found.entry) ? found.entry : null };
+    return {
+      ok: true,
+      entry: found && isLive(found.entry) ? withReadFields(found.entry) : null,
+    };
   }
 
   // write(...) → { ok, entry } — upsert by scope+key. Preserves `created` and
@@ -127,6 +133,27 @@ class LocalStore {
       updated: existing ? now : override || now,
       archived_at: null,
       expires_at,
+      // Recurrence, counted the way the hosted `memory_write` RPC counts it
+      // (migration 00059): a write against a key this store already holds IS
+      // the next sighting. `seenCountOf` floors an absent/hand-edited value to
+      // 0, so a file written before this column existed resumes at 1 on its
+      // next write rather than throwing or restarting the tally at 2.
+      //
+      // Reviving an ARCHIVED entry restarts at 1, matching the hosted RPC.
+      // An EXPIRED-but-unarchived entry does NOT: `_findByKey` ignores expiry,
+      // so the file is still found and the tally continues. That asymmetry is
+      // deliberate and mirrors the hosted side — every conflict predicate is
+      // partial on `archived_at is null` only, so an expired row is still the
+      // upsert target and its count still climbs. Expiry hides a lesson from
+      // reads; archiving retires it.
+      // The two stores get there differently — every conflict predicate on
+      // `memories` is partial on `archived_at is null`, so the server INSERTS a
+      // fresh row, while this store revives the file in place (see the docblock
+      // above) — but the count means the same thing on both: the lesson was
+      // retired and is being learned again, not seen once more.
+      seen_count: existing && !existing.entry.archived_at
+        ? seenCountOf(existing.entry) + 1
+        : 1,
       value: value == null ? '' : String(value),
     };
     const file = existing ? existing.file : this._freshPath(dir, key);
@@ -158,6 +185,10 @@ class LocalStore {
       updated: entry.updated ?? now,
       archived_at: entry.archived_at ?? null,
       expires_at: entry.expires_at ?? null,
+      // Verbatim, like every field here: migrate relocates a store, it does not
+      // re-sight its lessons, so a relocated entry must keep the count it had.
+      // An entry that never carried one lands as null and reads back as 0.
+      seen_count: entry.seen_count ?? null,
       value: entry.value == null ? '' : String(entry.value),
     };
     const file = existing ? existing.file : this._freshPath(dir, entry.key);
@@ -355,6 +386,22 @@ class TwoTierStore {
     return this.home.read({ scope, key });
   }
 
+  // A write goes to ONE tier — the tier `scope` resolves to — and never reads
+  // the other. So `seen_count` is counted PER TIER: opting a repo into a
+  // project tier makes the first write of an already-home-held key a fresh
+  // entry there, restarting its tally at 1 while the home copy keeps its own.
+  // That follows from tiering rather than contradicting it (`list`/`read` let
+  // the project tier SHADOW home rather than merging the two rows), and the
+  // alternative — seeding the count from the tier being shadowed — would make
+  // a write depend on a row it is not writing. `lorekit migrate` carries an
+  // existing tally across — `putEntry` relocates counts verbatim — but point
+  // its required `--from <path>` at the SCOPE SUBTREE you mean to move, e.g.
+  // `lorekit migrate --from ~/.lorekit/repo/<owner>/<name> --to project`.
+  // `--to project` applies no scope filter (migrate has no `--scope`), so a
+  // whole-store `--from ~/.lorekit` also copies `global` entries into the
+  // project tier, where they SHADOW their home originals on every read. A
+  // subtree source is safe because `collectEntries` takes each entry's
+  // canonical scope from its own frontmatter, not from the source layout.
   async write(args = {}) {
     return this.tierFor(args.scope).write(args);
   }

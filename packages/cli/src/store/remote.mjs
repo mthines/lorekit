@@ -20,6 +20,7 @@
 // Zero-dependency.
 import { restFetch, mcpToRestBase } from '../mcp.mjs';
 import { getActiveTraceparent } from '../telemetry.mjs';
+import { withReadFields } from './entry-fields.mjs';
 
 // Drop undefined/null args so JSON payloads stay tidy.
 function stripUndefined(obj) {
@@ -74,7 +75,10 @@ class RemoteStore {
     const data = res.data ?? {};
     return {
       ok: true,
-      entries: data.entries ?? [],
+      // `withReadFields` is additive — every key the route returned survives —
+      // so this projection costs existing callers nothing and gives a ranker
+      // the same `seenCount`/`updatedAt` pair the local store answers with.
+      entries: (data.entries ?? []).map(withReadFields),
       hasMore: data.hasMore ?? false,
       nextCursor: data.nextCursor ?? null,
     };
@@ -97,7 +101,7 @@ class RemoteStore {
     const data = res.data ?? {};
     return {
       ok: true,
-      entries: data.entries ?? [],
+      entries: (data.entries ?? []).map(withReadFields),
       hasMore: data.hasMore ?? false,
       nextCursor: data.nextCursor ?? null,
     };
@@ -112,7 +116,9 @@ class RemoteStore {
     const res = await this._rest(`/memories?${p}`);
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
     const entries = res.data?.entries ?? [];
-    return { ok: true, entry: entries[0] ?? null };
+    // Same projection as list/search — a single read must not answer with a
+    // different shape than the listing the caller found the key in.
+    return { ok: true, entry: entries[0] ? withReadFields(entries[0]) : null };
   }
 
   async write(args = {}) {
