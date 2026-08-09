@@ -103,6 +103,56 @@ test('migrate --to project creates the opted-in project dir on apply', async () 
   });
 });
 
+test('migrate relocates a differing seen_count instead of calling the entry unchanged', async () => {
+  const srcDir = tmpDir();
+  const s = createLocalStore(srcDir);
+  for (const value of ['gv', 'gv', 'gv']) await s.write({ scope: 'global', key: 'g1', value });
+  const entry = s.getEntry({ scope: 'global', key: 'g1' });
+  assert.equal(entry.seen_count, 3);
+
+  // A destination holding the SAME entry in every respect but the tally — the
+  // case `sameEntry` used to classify `noop`, stranding the source's count.
+  const home = tmpDir();
+  await createLocalStore(home).putEntry({ ...entry, seen_count: 1 });
+
+  await withHome(home, async () => {
+    await quiet(() => migrate({ from: srcDir, to: 'home', apply: true, dir: tmpDir() }));
+    const dest = createLocalStore(home);
+    assert.equal(
+      dest.getEntry({ scope: 'global', key: 'g1' }).seen_count,
+      3,
+      'migrate relocates a store, so it relocates the count too',
+    );
+
+    // Still idempotent: the relocated entry now matches, so a re-run moves nothing.
+    await quiet(() => migrate({ from: srcDir, to: 'home', apply: true, dir: tmpDir() }));
+    assert.equal(dest.getEntry({ scope: 'global', key: 'g1' }).seen_count, 3);
+  });
+});
+
+test('migrate treats an absent and a zero seen_count as the same non-evidence', async () => {
+  const srcDir = tmpDir();
+  const s = createLocalStore(srcDir);
+  await s.write({ scope: 'global', key: 'g1', value: 'gv' });
+  const entry = s.getEntry({ scope: 'global', key: 'g1' });
+
+  // A pre-column source file (no count at all) against a destination carrying 0
+  // must stay `noop` — otherwise every run would rewrite every legacy entry.
+  const home = tmpDir();
+  await createLocalStore(home).putEntry({ ...entry, seen_count: 0 });
+  const srcFileDir = path.join(srcDir, 'global');
+  const srcFile = path.join(srcFileDir, fs.readdirSync(srcFileDir)[0]);
+  fs.writeFileSync(
+    srcFile,
+    fs.readFileSync(srcFile, 'utf8').split('\n').filter((l) => !l.startsWith('seen_count:')).join('\n'),
+  );
+
+  await withHome(home, async () => {
+    await quiet(() => migrate({ from: srcDir, to: 'home', apply: true, dir: tmpDir() }));
+    assert.equal(createLocalStore(home).getEntry({ scope: 'global', key: 'g1' }).seen_count, 0);
+  });
+});
+
 test('migrate errors when --from is missing or does not exist', async () => {
   const home = tmpDir();
   await withHome(home, async () => {

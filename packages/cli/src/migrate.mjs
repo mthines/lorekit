@@ -17,6 +17,7 @@ import { resolveProjectRoot } from './config.mjs';
 import { localStoreDirs } from './control.mjs';
 import { createLocalStore, createTwoTierStore } from './store/index.mjs';
 import { parseEntry } from './store/format.mjs';
+import { seenCountOf } from './store/entry-fields.mjs';
 import { log, heading, status, err, c } from './util.mjs';
 
 // Recursively collect every parseable LoreKit entry under a base dir. The
@@ -50,6 +51,15 @@ function collectEntries(base) {
 }
 
 // Full-field equality (ignoring nothing) so a re-run after apply is NOOP.
+//
+// `seen_count` is part of that equality, not an exception. `putEntry` relocates
+// the count verbatim, so leaving it out of the comparison made a re-run whose
+// ONLY difference was the tally land as `noop` — the destination kept its own
+// count and the source's was silently dropped, contradicting the one thing
+// `putEntry` promises. Read through `seenCountOf` rather than compared raw, so
+// an entry written before the column existed (`null`) and one that carries an
+// explicit `0` are the same "no evidence" and do not churn a `noop` into an
+// `update` on every run.
 function sameEntry(a, b) {
   if (!a || !b) return false;
   const norm = (e) =>
@@ -60,6 +70,7 @@ function sameEntry(a, b) {
       created: e.created ?? null,
       updated: e.updated ?? null,
       archived_at: e.archived_at ?? null,
+      seen_count: seenCountOf(e),
       value: e.value == null ? '' : String(e.value),
     });
   return norm(a) === norm(b);
