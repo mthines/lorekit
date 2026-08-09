@@ -253,3 +253,14 @@ jobs:
               issue_number: number,
               body,
             });
+            // Close the loop on the triggering comment with a terminal reaction
+            // (rocket = done, confused = failed), mirroring preview.yml. Only a
+            // comment trigger has a reaction target; a dispatch run has none.
+            if (context.eventName === 'issue_comment') {
+              await github.rest.reactions.createForIssueComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: context.payload.comment.id,
+                content: ok ? 'rocket' : 'confused',
+              });
+            }
