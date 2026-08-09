@@ -47,13 +47,14 @@ This is a good golden task for four reasons:
 target; everything else is partial credit, and partial credit never becomes
 success.
 
-| Points | Criterion                                                                                             |
-| ------ | ----------------------------------------------------------------------------------------------------- |
-| 100    | A stored scope equals the target exactly. **Binary success.**                                         |
-| 60     | A stored scope is a _valid_ `branch::` scope for the right repo, but the branch differs.              |
-| 40     | A stored scope is valid and names the right repo at a coarser granularity (`repo::mthines/gw-tools`). |
-| 20     | Something was written, but at an invalid or unrelated scope.                                          |
-| 0      | Nothing was written at all.                                                                           |
+| Points | Criterion                                                                                                                                                                                                                    |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 100    | A stored scope equals the target exactly. **Binary success.**                                                                                                                                                                |
+| 80     | A stored scope _normalizes_ to the target — it differs only by case or surrounding whitespace, which `validateScope` folds away — but is not the target verbatim. Still a failure: the offline store holds what was written. |
+| 60     | A stored scope is a _valid_ `branch::` scope for the right repo, but the branch differs.                                                                                                                                     |
+| 40     | A stored scope is valid and names the right repo at a coarser granularity (`repo::mthines/gw-tools`).                                                                                                                        |
+| 20     | Something was written, but at an invalid or unrelated scope.                                                                                                                                                                 |
+| 0      | Nothing was written at all.                                                                                                                                                                                                  |
 
 `repeatedMistake` is flagged when any _attempted_ scope is invalid in the
 specific way this lesson warns about — a single `:` after a known prefix, or a

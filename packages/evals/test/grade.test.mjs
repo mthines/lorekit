@@ -8,6 +8,7 @@ import {
   SCORE_NOTHING,
   SCORE_RIGHT_REPO_COARSE,
   SCORE_RIGHT_REPO_WRONG_BRANCH,
+  SCORE_RIGHT_SCOPE_WRONG_FORM,
   SCORE_WROTE_SOMETHING,
   attemptedScopesFromTranscript,
   classifyMistake,
@@ -109,6 +110,30 @@ test("case differences normalize to success — the validator lowercases (AC-3.2
     false,
     "the store holds what was written; an uppercased scope is a different string",
   );
+});
+
+test("a scope that only normalizes to the target is 80, never the wrong-branch band", () => {
+  // The rubric reserves 60 for a branch that ACTUALLY differs. A case- or
+  // whitespace-only variant names the right branch, so grading it 60 with a
+  // "wrong branch" detail would misreport what the agent did.
+  for (const variant of [
+    "BRANCH::mthines/GW-Tools::feat/x",
+    `  ${TARGET_SCOPE}  `,
+  ]) {
+    const result = grade({ storedScopes: [variant] });
+    assert.equal(result.success, false, variant);
+    assert.equal(result.score, SCORE_RIGHT_SCOPE_WRONG_FORM, variant);
+    assert.equal(result.matchedScope, variant);
+    assert.match(result.detail, /normalizes to the target/);
+    assert.doesNotMatch(result.detail, /wrong branch/);
+  }
+
+  // A genuinely different branch still lands on 60.
+  const wrongBranch = grade({
+    storedScopes: ["branch::mthines/gw-tools::main"],
+  });
+  assert.equal(wrongBranch.score, SCORE_RIGHT_REPO_WRONG_BRANCH);
+  assert.match(wrongBranch.detail, /wrong branch/);
 });
 
 test("a single-colon scope grades invalid AND repeated-mistake (AC-3.2)", () => {

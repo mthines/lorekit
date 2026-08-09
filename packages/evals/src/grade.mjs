@@ -29,6 +29,7 @@ import { storeFor } from "./store-setup.mjs";
 
 /** Scores. Exact match is the only success; the rest never reach it. */
 export const SCORE_EXACT = 100;
+export const SCORE_RIGHT_SCOPE_WRONG_FORM = 80;
 export const SCORE_RIGHT_REPO_WRONG_BRANCH = 60;
 export const SCORE_RIGHT_REPO_COARSE = 40;
 export const SCORE_WROTE_SOMETHING = 20;
@@ -144,6 +145,29 @@ export function grade({
 
   // Partial credit, best-first. Every branch below is a FAILURE.
   const validStored = stored.filter(isValidScope).map(normalizeScope);
+  const normalizedTarget = normalizeScope(target) || target;
+
+  // The agent named the right repo AND the right branch, but the stored string
+  // is not the target verbatim — it differs only by case or surrounding
+  // whitespace, which `validateScope` folds away. This is NOT the 60 band: the
+  // rubric reserves 60 for a branch that actually differs, and reporting it as
+  // "the wrong branch" would misread the transcript. It is still a failure,
+  // because success is exact equality with what the store holds.
+  const rightScopeWrongForm = stored.find(
+    (s) => s !== target && normalizeScope(s) === normalizedTarget,
+  );
+  if (rightScopeWrongForm) {
+    return {
+      success: false,
+      score: SCORE_RIGHT_SCOPE_WRONG_FORM,
+      repeatedMistake,
+      mistakes,
+      matchedScope: rightScopeWrongForm,
+      detail:
+        `normalizes to the target but was not stored verbatim: ` +
+        `${JSON.stringify(rightScopeWrongForm)} vs ${JSON.stringify(target)}`,
+    };
+  }
 
   const rightRepoBranch = validStored.find(
     (s) => s.startsWith("branch::") && repoOf(s) === targetRepo,
