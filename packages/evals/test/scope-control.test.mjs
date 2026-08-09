@@ -15,6 +15,7 @@ import {
   GIT_DEPENDENT_SCOPE_MODES,
   SCOPE_MODES,
   assertArmInjectable,
+  nominalScopeForMode,
   prepareArm,
   requiresGit,
   requiresGitForScope,
@@ -328,6 +329,30 @@ test("assertArmInjectable rejects an unreachable scope and passes a reachable ar
     // Returns the arm itself, so it can be used inline at a call site.
     assert.equal(assertArmInjectable(reachable), reachable);
   });
+});
+
+test("nominalScopeForMode types every mode, and rejects nonsense", () => {
+  const opts = {
+    ownerRepo: DEFAULT_OWNER_REPO,
+    branch: DEFAULT_BRANCH,
+    cwd: "/tmp/Some-Sandbox-Dir",
+  };
+  assert.equal(nominalScopeForMode("branch", opts), BRANCH_SCOPE);
+  assert.equal(
+    nominalScopeForMode("repo", opts),
+    `repo::${DEFAULT_OWNER_REPO}`,
+  );
+  assert.equal(
+    nominalScopeForMode("project", opts),
+    "project::some-sandbox-dir",
+  );
+  assert.equal(nominalScopeForMode("global", opts), "global");
+  // Both separators, per the docblock — a Windows-shaped path resolves the same.
+  assert.equal(
+    nominalScopeForMode("project", { ...opts, cwd: "C:\\tmp\\Sandbox" }),
+    "project::sandbox",
+  );
+  assert.throws(() => nominalScopeForMode("nope", opts), TypeError);
 });
 
 test("requiresGitForScope mirrors requiresGit for a scope string", () => {
