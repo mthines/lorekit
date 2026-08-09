@@ -214,16 +214,27 @@ export function rankLessons<T extends RankableLesson>(
     if (e.scope !== undefined && !rankByScope.has(e.scope)) rankByScope.set(e.scope, rankByScope.size);
   }
 
-  const scored = list.map((entry, index) => ({
-    entry,
-    index,
-    score: scoreLesson(entry, { now, weights, maxSeenCount, halfLifeDays }),
-    scopeRank: rankByScope.has(entry.scope) ? (rankByScope.get(entry.scope) as number) : Number.MAX_SAFE_INTEGER,
-    key: String(entry.key ?? ''),
-  }));
+  const scored = list.map((entry, index) => {
+    const score = scoreLesson(entry, { now, weights, maxSeenCount, halfLifeDays });
+    return {
+      entry,
+      index,
+      score,
+      // The score rounded onto the SCORE_EPSILON grid. Comparing THIS rather
+      // than the raw score is what keeps "close enough to be a tie" TRANSITIVE:
+      // `Math.abs(a - b) <= SCORE_EPSILON` is not transitive, so a chain of
+      // near-tied rows (each within epsilon of its neighbour but not of the
+      // ends) can order inconsistently — the exact form the CLI twin rejects.
+      // A score is in [0,1] and the grid is 1e-9, so the bucket is always a
+      // safe integer. Mirrors `lessons-pure.mjs`.
+      bucket: Math.round(score / SCORE_EPSILON),
+      scopeRank: rankByScope.has(entry.scope) ? (rankByScope.get(entry.scope) as number) : Number.MAX_SAFE_INTEGER,
+      key: String(entry.key ?? ''),
+    };
+  });
 
   scored.sort((a, b) => {
-    if (Math.abs(b.score - a.score) > SCORE_EPSILON) return b.score - a.score;
+    if (a.bucket !== b.bucket) return b.bucket - a.bucket;
     if (a.scopeRank !== b.scopeRank) return a.scopeRank - b.scopeRank;
     if (a.key !== b.key) return a.key < b.key ? -1 : 1;
     return a.index - b.index;
