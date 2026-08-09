@@ -4856,7 +4856,7 @@ begin
 end;
 $$;
 
--- ── 76. memories.embedding — the dormant semantic column (00060) ────────────
+-- ── 77. memories.embedding — the dormant semantic column (00060) ────────────
 -- 00060 lands the schema for semantic search with NOTHING reading or writing
 -- it. These assertions are therefore mostly about ABSENCE of effect: the point
 -- of a dormant migration is that you can prove it changed no behaviour, and a
