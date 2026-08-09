@@ -74,3 +74,77 @@ test('the remote store contains no MCP transport call', () => {
     );
   }
 });
+
+// ── lessons-pure.mjs stays dependency-free ───────────────────────────────────
+// The module exists precisely so the SessionStart hot path can share the
+// precedence, matching and ranking logic with the read commands WITHOUT
+// dragging in the `lessons-view.mjs` render/`util`/lint/dedupe stack. Its
+// zero-import property is the whole reason it is a separate file, and it is
+// exactly the kind of invariant that erodes one convenient import at a time —
+// each of which then loads on every single session start, and any of which
+// could throw inside a hook contractually obliged to exit 0.
+const LESSONS_PURE = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'lessons-pure.mjs');
+
+test('lessons-pure imports nothing — not a package, not even a node builtin', () => {
+  const src = readFileSync(LESSONS_PURE, 'utf8');
+
+  // Anti-vacuity: prove we are reading the real module before asserting on it.
+  // Named per family so a rename cannot quietly make this guard pass on a stub.
+  for (const fn of ['resolvePrecedence', 'matchesQuery', 'scopeIssue', 'rankLessons', 'scoreLesson']) {
+    assert.match(src, new RegExp(`export function ${fn}\\b`), `lessons-pure.mjs is missing ${fn}() — guard would be vacuous`);
+  }
+
+  // Strip comments first: this module's header legitimately discusses imports
+  // in prose, and so do comments trailing real code.
+  //
+  // Truncating at a `//` is a character scan rather than a regex because both
+  // cheap approximations were wrong in opposite directions, and each one was
+  // shipped and then caught: stripping only WHOLE-LINE comments let
+  // `} // derived from the set` read as a re-export tail, while a regex
+  // truncation is blind to quotes, so `const sep = '//'; require('node:fs');`
+  // collapsed to `const sep = '` and hid a real dynamic dependency. Tracking
+  // the quote state costs ten lines and is correct in both directions, which
+  // also means one view of the source serves every assertion below.
+  const stripLineComment = (line) => {
+    let quote = null;
+    for (let i = 0; i < line.length; i += 1) {
+      const ch = line[i];
+      if (quote) {
+        if (ch === '\\') { i += 1; continue; }
+        if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === "'" || ch === '"' || ch === '`') { quote = ch; continue; }
+      if (ch === '/' && line[i + 1] === '/') return line.slice(0, i);
+    }
+    return line;
+  };
+
+  const code = src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map(stripLineComment)
+    .join('\n');
+
+  // A static dependency is not always `import`-prefixed. `export { x } from 'p'`
+  // and `export * from 'p'` are RE-EXPORTS: they load the module on the hot
+  // path exactly like an import does, and they slip past both the `import(`
+  // and the `require(` checks below. A multi-line specifier list carries its
+  // `from` on the closing line, so that shape is matched too.
+  //
+  // Both re-export arms require a QUOTED SPECIFIER after `from`, not the bare
+  // word: a dependency always names a module, while prose and a parameter
+  // called `from` (`export function f(a, from)`) do not. A guard that trips on
+  // English is a guard the next person deletes.
+  const statics = code.match(
+    /^\s*(?:import\b[\s\S]*?$|export\b[^\n]*\bfrom\s*['"][^\n]*$|\}[^\n]*\bfrom\s*['"][^\n]*$)/gm,
+  ) || [];
+  assert.deepEqual(statics, [], 'lessons-pure.mjs must have no static imports or re-exports');
+
+  // A dynamic `import(...)` or a `require(...)` would defeat the static check
+  // while costing the same load on the hot path. Unlike the patterns above
+  // these match ANYWHERE on a line, which is why the comment strip has to be
+  // string-aware rather than merely conservative.
+  assert.ok(!/\bimport\s*\(/.test(code), 'lessons-pure.mjs must not use a dynamic import()');
+  assert.ok(!/\brequire\s*\(/.test(code), 'lessons-pure.mjs must not use require()');
+});
