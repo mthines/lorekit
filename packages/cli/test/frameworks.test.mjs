@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CLAUDE_HOOK_EVENTS } from '../src/config.mjs';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const BIN = path.join(HERE, '..', 'bin', 'lorekit.mjs');
@@ -102,6 +103,32 @@ test('Claude plugin config validates (claude plugin validate)', (t) => {
     timeout: 60000,
   });
   assert.equal(res.status, 0, `claude plugin validate failed:\n${res.stdout}\n${res.stderr}`);
+});
+
+// `config.mjs` states that CLAUDE_HOOK_EVENTS mirrors the plugin's hooks.json,
+// but nothing enforced it: the two are hand-edited in separate files, so an
+// event added to one and forgotten in the other ships as a plugin install that
+// silently wires fewer hooks than `lorekit install` does. Assert the agreement
+// the docblock claims, both directions.
+test('the Claude plugin hooks.json mirrors CLAUDE_HOOK_EVENTS', () => {
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(REPO, 'plugins', 'lorekit-claude', 'hooks', 'hooks.json'), 'utf8'),
+  );
+  assert.deepEqual(
+    Object.keys(manifest.hooks).sort(),
+    [...CLAUDE_HOOK_EVENTS].sort(),
+    'plugin hooks.json and CLAUDE_HOOK_EVENTS declare different events',
+  );
+  // A key alone is not wiring — each group must actually fire the engine for
+  // its own event, or parity would pass on an empty placeholder.
+  for (const event of CLAUDE_HOOK_EVENTS) {
+    const groups = manifest.hooks[event];
+    assert.ok(Array.isArray(groups) && groups.length > 0, `${event} has no hook group`);
+    const command = groups[0].hooks[0].command;
+    assert.match(command, /@lorekit\/cli hook/, `${event} does not invoke the lorekit engine`);
+    assert.match(command, /--adapter claude\b/, `${event} is not wired for the claude adapter`);
+    assert.match(command, new RegExp(`--event ${event}\\b`), `${event} passes a different --event`);
+  }
 });
 
 test('Cursor hooks.json is structurally valid', () => {
