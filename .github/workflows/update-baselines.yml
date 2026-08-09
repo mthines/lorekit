@@ -174,12 +174,20 @@ jobs:
             packages/web/node_modules/.cache/storybook
           key: web-vite-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'packages/web/.storybook/**', 'packages/web/vitest.storybook.config.ts') }}
 
-      # `-u` regenerates baselines and passes. Invoked via `npx` (not
+      # `-u` regenerates the visual baselines and passes. Invoked via `npx` (not
       # `pnpm exec` / `nx`) for the same reason ci.yml uses it: those wrappers
       # keep the Playwright child's stdio open and the run never returns.
+      #
+      # Interaction tests (`*.test.stories.tsx`) are EXCLUDED on purpose: they
+      # set `chromatic.disableSnapshot`, so they generate no baseline, and `-u`
+      # cannot fix a failing `play`-function assertion. Running them here would
+      # only let an unrelated interaction failure abort the job before the
+      # regenerated baselines are committed — which is exactly what discarded a
+      # real refresh. Interaction correctness stays the `web-test` gate's job;
+      # this tool's single responsibility is the visual baselines.
       - name: Regenerate visual baselines (vitest -u)
         working-directory: packages/web
-        run: npx vitest run --config vitest.storybook.config.ts -u
+        run: npx vitest run --config vitest.storybook.config.ts -u --exclude '**/*.test.stories.tsx'
 
       # Stage ONLY the screenshot baselines (`:(glob)` enables `**`), so an
       # unrelated stray write can never ride along in the commit.

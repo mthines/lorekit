@@ -107,10 +107,14 @@ branch. Two ways to run it against a specific PR:
 - **Comment `/update-baselines` on the PR** (write-access users only), or
 - **Actions ▸ "Update visual baselines" ▸ Run workflow**, entering the PR number.
 
-It runs `vitest -u` over the whole suite, stages only files under `__screenshots__/` (matching
-baselines are rewritten byte-identical and produce no diff), commits, pushes, and comments the
-outcome on the PR. Two limits worth knowing:
+It runs `vitest -u` over the **visual stories only** (`--exclude '**/*.test.stories.tsx'`), stages
+only files under `__screenshots__/` (matching baselines are rewritten byte-identical and produce no
+diff), commits, pushes, and comments the outcome on the PR. Three limits worth knowing:
 
+- **It never runs the interaction tests.** Those set `chromatic.disableSnapshot` (so they produce no
+  baseline) and `-u` can't fix a failing `play` assertion — running them would only let an unrelated
+  interaction failure abort the job before the regenerated baselines are committed. Interaction
+  correctness stays the `web-test` gate's job; a red interaction test still blocks the PR there.
 - **Fork PRs are rejected** — `GITHUB_TOKEN` can't push to a fork branch, so regenerate locally
   and push from the fork instead.
 - The baseline commit is pushed with `GITHUB_TOKEN`, which by design does **not** re-trigger
