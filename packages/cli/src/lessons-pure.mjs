@@ -457,6 +457,21 @@ function seenCountFrom(entry) {
  * the same count differ in the tenth decimal place, which is noise, not a
  * preference. `SCORE_EPSILON` treats a difference that small as a tie so the
  * meaningful tiebreaker decides instead of floating-point dust.
+ *
+ * That tie is applied by QUANTISING each score onto a `SCORE_EPSILON` grid, not
+ * by an `abs(a - b) <= SCORE_EPSILON` comparison. The comparison form reads
+ * more naturally and is wrong: approximate equality is not TRANSITIVE, so three
+ * scores a grid-step apart give a≈b, b≈c and c>a, the comparator stops being a
+ * strict weak ordering, and the result depends on the order the rows arrived in
+ * — exactly the determinism this docblock claims. Measured before the fix:
+ * three lessons 3ms apart produced three different orderings across the six
+ * permutations of one input. Rounding first makes "same score" an equivalence
+ * relation, so the scope/key tiebreak is what decides every near tie.
+ *
+ * The residual cost is a boundary: two scores closer than a grid step can still
+ * land in adjacent buckets and be ordered by score. That is unavoidable for any
+ * transitive notion of approximate equality, and it is a far smaller defect
+ * than an ordering that changes with input order.
  */
 export function rankLessons(entries = [], {
   terms = [],
@@ -489,13 +504,19 @@ export function rankLessons(entries = [], {
   const scored = list.map((entry, index) => ({
     entry,
     index,
-    score: scoreLesson(entry, { terms: termSet, now, weights, maxSeenCount, halfLifeDays }),
+    // The score rounded onto the SCORE_EPSILON grid. Comparing THIS rather than
+    // the raw score is what keeps "close enough to be a tie" transitive — see
+    // the docblock. A score is in [0,1] and the grid is 1e-9, so the bucket is
+    // always a safe integer.
+    bucket: Math.round(
+      scoreLesson(entry, { terms: termSet, now, weights, maxSeenCount, halfLifeDays }) / SCORE_EPSILON,
+    ),
     scopeRank: rankByScope.has(entry.scope) ? rankByScope.get(entry.scope) : Number.MAX_SAFE_INTEGER,
     key: String(entry.key ?? ''),
   }));
 
   scored.sort((a, b) => {
-    if (Math.abs(b.score - a.score) > SCORE_EPSILON) return b.score - a.score;
+    if (a.bucket !== b.bucket) return b.bucket - a.bucket;
     if (a.scopeRank !== b.scopeRank) return a.scopeRank - b.scopeRank;
     if (a.key !== b.key) return a.key < b.key ? -1 : 1;
     return a.index - b.index; // stable: equal in every respect keeps input order

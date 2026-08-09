@@ -1411,6 +1411,28 @@ describe('rankLessons', () => {
     );
   });
 
+  test('rankLessons deterministic ties — near-ties do not depend on input order', () => {
+    // An `abs(a - b) <= epsilon` tie is not transitive: three scores a grid
+    // step apart give a~b, b~c and c>a, the comparator stops being a strict
+    // weak ordering, and `sort` falls back to arrival position. Measured
+    // against that form, these three lessons produced THREE different
+    // orderings across the six permutations. Keys are chosen to disagree with
+    // recency order so the tiebreak has to actually do the work.
+    const near = [
+      { scope: 'global', key: 'z', value: '', seenCount: 1, updatedAt: new Date(NOW - 0).toISOString() },
+      { scope: 'global', key: 'y', value: '', seenCount: 1, updatedAt: new Date(NOW - 3).toISOString() },
+      { scope: 'global', key: 'x', value: '', seenCount: 1, updatedAt: new Date(NOW - 6).toISOString() },
+    ];
+    const permutations = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+    const orderings = new Set(
+      permutations.map((p) => rankLessons(p.map((i) => near[i]), { now: NOW }).map((e) => e.key).join(',')),
+    );
+    assert.equal(orderings.size, 1, `input order changed the ranking: ${[...orderings].join(' | ')}`);
+    // Whatever the one ordering is, every entry is still present exactly once —
+    // a comparator that is not a strict weak ordering can also drop or repeat.
+    assert.deepEqual([...orderings][0].split(',').sort(), ['x', 'y', 'z']);
+  });
+
   test('rankLessons deterministic ties — the same input always gives the same output', () => {
     const entries = Array.from({ length: 25 }, (_, i) => lesson(`k${i}`, { days: i % 5, seen: (i % 3) + 1 }));
     const first = keys(entries);
