@@ -30,9 +30,13 @@ on:
   issue_comment:
     types: [created]
 
-# One in-flight run per PR; a newer trigger supersedes an older one.
+# One in-flight run per PR; a newer trigger supersedes an older one. The group
+# key includes a command discriminator so it spans ONLY real triggers
+# (workflow_dispatch or a `/update-baselines` comment): without it, every
+# unrelated comment on the PR joins the group and cancel-in-progress would abort
+# an in-flight regeneration before the job `if:` skips that no-op run.
 concurrency:
-  group: update-baselines-${{ github.event.inputs.pr || github.event.issue.number }}
+  group: update-baselines-${{ github.event.inputs.pr || github.event.issue.number }}-${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.comment.body, '/update-baselines') }}
   cancel-in-progress: true
 
 # Least privilege: grant nothing by default; the one job grants exactly what it needs.
