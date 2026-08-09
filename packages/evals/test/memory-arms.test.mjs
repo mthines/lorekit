@@ -11,6 +11,7 @@ import { test } from "node:test";
 
 import { CLAUDE_HOOK_EVENTS } from "@lorekit/cli/src/config.mjs";
 
+import { prepareArm } from "../bin/run-eval.mjs";
 import {
   DEFAULT_BRANCH,
   DEFAULT_OWNER_REPO,
@@ -241,4 +242,13 @@ test("parseInjectedIndex is total over odd hook output", () => {
   assert.equal(parsed.lessons[0].hook, "a hook — with an em dash inside it");
   assert.equal(parsed.lessons[1].scope, "branch::o/r::b");
   assert.equal(parsed.lessons[1].position, 2);
+});
+
+test("an unrecognised seed fails loudly rather than silently becoming arm A", async () => {
+  await withSandbox({}, async (sandbox) => {
+    await assert.rejects(
+      () => prepareArm(sandbox, { seed: "cannonical" }),
+      /seed must be one of empty, canonical, organic, got cannonical/,
+    );
+  });
 });

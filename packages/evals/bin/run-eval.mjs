@@ -255,6 +255,13 @@ export async function prepareArm(
     seeded = await seedCanonical(sandbox, { scope: targetScope });
   else if (seed === "organic")
     seeded = await seedOrganic(sandbox, { scope: targetScope, value: lesson });
+  // Falling through would leave `seeded` empty and turn arm B into arm A — a
+  // null result that measured nothing. Fail like `empty()` and
+  // `assertScopesAvailable` do.
+  else
+    throw new Error(
+      `seed must be one of ${SEED_SOURCES.join(", ")}, got ${seed}`,
+    );
 
   const mcp = await writeMcpConfig(sandbox, { allowWrite: false });
   const hookInstall = hook ? installSessionStartHook(sandbox) : null;
