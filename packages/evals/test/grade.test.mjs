@@ -16,6 +16,7 @@ import {
   grade,
   gradeSandbox,
   isValidScope,
+  normalizeScope,
   repoOf,
 } from "../src/grade.mjs";
 import { TARGET_KEY, TARGET_SCOPE } from "../src/task.mjs";
@@ -100,17 +101,24 @@ for (const c of CASES) {
   });
 }
 
-test("case differences normalize to success — the validator lowercases (AC-3.2)", () => {
-  // `validateScope` returns the lowercased form, so an agent that shouted the
-  // repo name still produced the canonical scope. Exactness is judged after
-  // the canonical normalization, not before it.
-  const result = grade({ storedScopes: ["branch::mthines/gw-tools::feat/x"] });
-  assert.equal(result.success, true);
+test("success is judged BEFORE normalization — case differences do not succeed (AC-3.2)", () => {
+  // `validateScope` lowercases, so a shouted scope is *valid* and normalizes to
+  // the target — but the offline store holds the string that was written, and
+  // success is exact equality with that. The old name for this test claimed the
+  // opposite of what it asserts.
+  assert.equal(isValidScope("BRANCH::mthines/GW-Tools::feat/x"), true);
+  assert.equal(
+    normalizeScope("BRANCH::mthines/GW-Tools::feat/x"),
+    TARGET_SCOPE,
+    "the validator folds the case away",
+  );
   assert.equal(
     grade({ storedScopes: ["BRANCH::mthines/GW-Tools::feat/x"] }).success,
     false,
     "the store holds what was written; an uppercased scope is a different string",
   );
+  // The verbatim target is the only shape that succeeds.
+  assert.equal(grade({ storedScopes: [TARGET_SCOPE] }).success, true);
 });
 
 test("a scope that only normalizes to the target is 80, never the wrong-branch band", () => {
