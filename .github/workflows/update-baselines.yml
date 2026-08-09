@@ -55,6 +55,29 @@ jobs:
       contents: write # push the regenerated baselines back onto the PR branch
       pull-requests: write # react to the triggering comment / post a summary
     steps:
+      # `author_association` (in the job `if:`) is a cheap pre-filter, not a
+      # permission: a read-only COLLABORATOR or a non-write org MEMBER matches it
+      # too. Authoritatively verify the commenter has write (or admin) access
+      # before anything touches the `contents: write` token. workflow_dispatch is
+      # exempt — GitHub already requires write access to dispatch a workflow.
+      - name: Verify commenter has write access
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v7
+        with:
+          script: |
+            const { data: perm } =
+              await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: context.payload.comment.user.login,
+              });
+            if (!['write', 'admin'].includes(perm.permission)) {
+              core.setFailed(
+                `@${context.payload.comment.user.login} has '${perm.permission}' access; ` +
+                '/update-baselines requires write access to this repository.',
+              );
+            }
+
       # Acknowledge a comment trigger immediately so the user knows it started
       # (dispatch runs are already visible in the Actions tab).
       - name: React to the command
