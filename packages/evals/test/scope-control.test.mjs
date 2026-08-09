@@ -261,6 +261,18 @@ test("positionOf agrees with classifyRetrieval about a foreign same-key hit", ()
   assert.equal(scoped.state, RETRIEVAL_ABSENT);
 });
 
+test("positionOf tolerates a lessons-less injection, as classifyRetrieval does", () => {
+  const none = { injected: false, position: null, scope: null };
+  assert.deepEqual(positionOf(undefined, "wanted"), none);
+  assert.deepEqual(positionOf({}, "wanted"), none);
+  assert.deepEqual(positionOf({ lessons: null }, "wanted"), none);
+  // The paired function reaches the same verdict from the same input.
+  assert.equal(
+    classifyRetrieval({ injection: undefined, key: "wanted" }).state,
+    RETRIEVAL_ABSENT,
+  );
+});
+
 test("a same-key entry at another scope is ABSENT, not in-store-not-loaded", () => {
   // `runProbe` gathers `storeEntries` across every scope in `readOrder`, so
   // without the seeded scope this reads as a retrieval failure when it is in
