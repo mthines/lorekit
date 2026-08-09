@@ -37,8 +37,18 @@ function toCount(value: unknown): number {
  * a cold start faster; what it does is stop the request reaching the function
  * at all on a revisit, which is the only lever that helps when the cost is
  * per-invocation rather than per-row. Do not read this as a database fix.
+ *
+ * THIS IS A SHARED-CACHE DIRECTIVE ONLY — deliberately no browser `max-age`.
+ * The sole caller, `publicRestFetch` (`packages/web/src/lib/api/rest.ts`),
+ * sends `cache: 'no-store'`, so the browser neither stores nor reuses this
+ * response and any private freshness lifetime here would be dead weight —
+ * `max-age=0` says so explicitly rather than leaving a heuristic to guess one.
+ * The win therefore comes from `s-maxage` / `stale-while-revalidate` at a
+ * shared cache in front of the function, never from the visitor's own cache.
+ * Do not add a `max-age` back without first changing that fetch, and read the
+ * staleness note above before you do.
  */
-const LIKES_CACHE_CONTROL = 'public, max-age=60, s-maxage=300, stale-while-revalidate=900';
+const LIKES_CACHE_CONTROL = 'public, max-age=0, s-maxage=300, stale-while-revalidate=900';
 
 /** `GET /blog/likes?slug=…` → `{ likes }`, the post's global total (0 if none). */
 export async function handleGetLikes(
