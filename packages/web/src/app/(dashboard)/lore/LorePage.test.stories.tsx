@@ -40,8 +40,10 @@ export const RendersScopeTree: Story = {
     });
 
     await step('The MSW-mocked scope tree resolves', async () => {
-      // The "All scopes" row is rendered once the scope-tree query settles.
-      await expect(await canvas.findByText(/all scopes/i)).toBeInTheDocument();
+      // Exact string, not /all scopes/i: the stats header above the list also
+      // says "Activity · all scopes", so a substring match resolves two nodes.
+      // This one is the scope panel's selected-scope label.
+      await expect(await canvas.findByText('All scopes')).toBeInTheDocument();
     });
   },
 };
