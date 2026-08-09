@@ -8,6 +8,7 @@ import {
   resolveControl, normalizeMode, loadControl, resolveDenies,
   normalizeSessionStartMode, DEFAULT_SESSION_START_MAX_CHARS,
   MIN_SESSION_START_MAX_CHARS, MAX_SESSION_START_MAX_CHARS,
+  HOOK_INSTRUCTION_EVENTS,
 } from '../src/control.mjs';
 
 function tmpDir() {
@@ -16,6 +17,27 @@ function tmpDir() {
 
 const USABLE = { usable: true, endpoint: 'https://ref.supabase.co/functions/v1/mcp', token: 'lk_rw_x' };
 const NO_CONN = { usable: false, endpoint: null, token: null };
+
+test('hooks.instructions resolves every lifecycle event, UserPromptSubmit included', () => {
+  // The resolver used to iterate a private three-event literal, so a
+  // `UserPromptSubmit` instruction was accepted in config and silently dropped.
+  assert.deepEqual(HOOK_INSTRUCTION_EVENTS, [
+    'SessionStart', 'UserPromptSubmit', 'PostToolUseFailure', 'Stop',
+  ]);
+  const r = resolveControl({
+    connection: NO_CONN,
+    repoConfig: {
+      'hooks.instructions': {
+        SessionStart: 'a',
+        UserPromptSubmit: 'b',
+        PostToolUseFailure: 'c',
+        Stop: 'd',
+      },
+    },
+  });
+  assert.deepEqual(Object.keys(r.hooksInstructions), HOOK_INSTRUCTION_EVENTS);
+  assert.equal(r.hooksInstructions.UserPromptSubmit, 'b');
+});
 
 test('normalizeMode accepts friendly spellings incl. persistent-memory backends', () => {
   assert.equal(normalizeMode('REMOTE'), 'remote');

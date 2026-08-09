@@ -673,14 +673,21 @@ export function promptQuery(prompt) {
  * framing is "you have notes on this", never an instruction — the same
  * considerations-not-rules posture as every other injection.
  */
-export function formatPromptLessons(lessons) {
+export function formatPromptLessons(lessons, { instruction = null } = {}) {
   if (!lessons || lessons.length === 0) return null;
   const noun = lessons.length === 1 ? 'memory' : 'memories';
   const header =
     `LoreKit: ${lessons.length} ${noun} related to this — `
     + `considerations, not rules; read in full with memory.read:`;
   const body = lessons.map((l) => `- (${l.scope}) ${l.key} — ${lessonHook(l.value)}`).join('\n');
-  return `${header}\n${body}`;
+  // `hooks.instructions.UserPromptSubmit`, appended the same way the other
+  // events append theirs. It rides an EXISTING block and never creates one:
+  // this hook fires on every turn, so an instruction that could emit on its own
+  // would be a line on every prompt — the noise the relevance gate exists to
+  // prevent.
+  const extra = typeof instruction === 'string' && instruction.trim()
+    ? `\n\nProject instruction: ${instruction}` : '';
+  return `${header}\n${body}${extra}`;
 }
 
 /**

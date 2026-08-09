@@ -113,6 +113,18 @@ export const DEFAULT_SESSION_START_MAX_CHARS = 1500;
 export const MIN_SESSION_START_MAX_CHARS = 200;
 export const MAX_SESSION_START_MAX_CHARS = 20000;
 
+// The events `hooks.instructions` can carry text for — every lifecycle event
+// that emits something a project instruction could ride along with. Exported so
+// `doctor` reports the same set the resolver reads: they were separate literals
+// and drifted, which is how `UserPromptSubmit` ended up documented, accepted in
+// config, and silently dropped by both.
+export const HOOK_INSTRUCTION_EVENTS = [
+  'SessionStart',
+  'UserPromptSubmit',
+  'PostToolUseFailure',
+  'Stop',
+];
+
 // Clamp a configured budget into the supported range, or null when the value is
 // not a usable number at all (absent, a bare string, NaN). Total: the caller
 // substitutes the default for null. Out-of-range CLAMPS rather than rejecting —
@@ -323,7 +335,6 @@ export function resolveControl({
   // Both layers contribute: repo instructions come first, user instructions follow
   // (same direction as `tags.default` — repo supplements, user personalises).
   // null for a given event means "no custom instruction for that event".
-  const HOOK_EVENTS = ['SessionStart', 'PostToolUseFailure', 'Stop'];
   const hooksInstructions = {};
   {
     const repoInstr =
@@ -332,7 +343,7 @@ export function resolveControl({
     const userInstr =
       (userConfig['hooks.instructions'] && typeof userConfig['hooks.instructions'] === 'object')
         ? userConfig['hooks.instructions'] : {};
-    for (const ev of HOOK_EVENTS) {
+    for (const ev of HOOK_INSTRUCTION_EVENTS) {
       const parts = [repoInstr[ev], userInstr[ev]]
         .filter((v) => typeof v === 'string' && v.trim().length > 0);
       hooksInstructions[ev] = parts.length > 0 ? parts.join('\n') : null;

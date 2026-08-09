@@ -166,7 +166,9 @@ async function run(args) {
       // credibility too.
       if (lessons.length === 0) return 0;
       recordShownLessons(parsed.sessionId, lessons.map(lessonId));
-      emit(formatPromptLessons(lessons));
+      emit(formatPromptLessons(lessons, {
+        instruction: (control.hooksInstructions && control.hooksInstructions.UserPromptSubmit) || null,
+      }));
     } catch {
       // Best-effort, like every other branch: the user's turn proceeds either
       // way, and a store hiccup must never cost them their prompt.

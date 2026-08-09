@@ -718,6 +718,7 @@ Both files share this schema — all fields optional:
 
   "hooks.instructions": {
     "SessionStart":        "Focus on migration safety. Treat any lesson tagged 'migration' as high-priority.",
+    "UserPromptSubmit":    "Prefer a memory that names the file you are editing.",
     "PostToolUseFailure":  "When recording a failure, always include the exact command and exit code.",
     "Stop":                null
   },

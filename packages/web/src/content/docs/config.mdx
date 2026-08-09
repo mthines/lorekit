@@ -78,7 +78,7 @@ Machine-local preferences live in `~/.lorekit/config.json`. This is where a priv
 
 <TutorialStep number={3} title="Add project-specific hook instructions">
 
-Use `hooks.instructions` to inject custom guidance into the three hook events. The agent sees your text appended to each event's output — your default LoreKit messages stay unchanged:
+Use `hooks.instructions` to inject custom guidance into the four hook events. The agent sees your text appended to each event's output — your default LoreKit messages stay unchanged:
 
 ```json
 // .lorekit.json
@@ -86,6 +86,9 @@ Use `hooks.instructions` to inject custom guidance into the three hook events. T
   "hooks.instructions": {
     // Injected at session start, after the memory index.
     "SessionStart":       "Focus on migration safety. Any lesson tagged 'migration' is high-priority.",
+    // Injected with the per-turn relevance block — only on a turn that already
+    // has one, so it never adds a line to every prompt.
+    "UserPromptSubmit":   "Prefer a memory that names the file you are editing.",
     // Injected alongside the failure nudge when a tool call fails.
     "PostToolUseFailure": "When recording a failure, include the exact command and exit code.",
     // Injected with the retrospective nudge at end-of-turn (null = disabled for this event).

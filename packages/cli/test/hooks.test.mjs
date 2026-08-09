@@ -490,6 +490,25 @@ test('formatLessons with no instruction still returns null for empty lessons', (
   assert.equal(formatLessons([], { repoScope: 'repo::a/b' }, { instruction: null }), null);
 });
 
+test('formatPromptLessons appends the UserPromptSubmit instruction to an existing block', () => {
+  const lessons = [{ key: 'k1', value: 'some lesson', scope: 'repo::a/b' }];
+  const out = formatPromptLessons(lessons, { instruction: 'Prefer a memory naming the file.' });
+  assert.match(out, /Project instruction:/);
+  assert.match(out, /Prefer a memory naming the file/);
+  // Absent / blank / non-string instructions leave the block byte-unchanged.
+  const bare = formatPromptLessons(lessons);
+  assert.equal(formatPromptLessons(lessons, {}), bare);
+  assert.equal(formatPromptLessons(lessons, { instruction: null }), bare);
+  assert.equal(formatPromptLessons(lessons, { instruction: '   ' }), bare);
+});
+
+test('formatPromptLessons never emits an instruction on its own', () => {
+  // The per-prompt hook fires every turn, so an instruction that could emit
+  // without a relevance hit would be a line on every single prompt.
+  assert.equal(formatPromptLessons([], { instruction: 'Always cite the file.' }), null);
+  assert.equal(formatPromptLessons(null, { instruction: 'Always cite the file.' }), null);
+});
+
 test('retrospectiveNudge appends instruction from control.hooksInstructions.Stop', () => {
   const scope = fakeScope();
   const control = {

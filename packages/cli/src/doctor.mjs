@@ -23,7 +23,7 @@ import {
   probeTelemetryExport,
 } from './telemetry.mjs';
 import { deriveScope } from './scope.mjs';
-import { loadControl } from './control.mjs';
+import { loadControl, HOOK_INSTRUCTION_EVENTS } from './control.mjs';
 import { createStore } from './store/index.mjs';
 import { log, heading, status, c } from './util.mjs';
 
@@ -157,10 +157,9 @@ export async function doctor(args) {
   // 6. Hook instructions — show resolved per-event custom instructions when any are set.
   {
     const instr = control.hooksInstructions || {};
-    const EVENTS = ['SessionStart', 'PostToolUseFailure', 'Stop'];
-    const configured = EVENTS.filter((ev) => instr[ev]);
+    const configured = HOOK_INSTRUCTION_EVENTS.filter((ev) => instr[ev]);
     if (configured.length > 0) {
-      for (const ev of EVENTS) {
+      for (const ev of HOOK_INSTRUCTION_EVENTS) {
         const text = instr[ev];
         if (text) {
           record('info', `hooks.instructions.${ev}`, c.dim(text.length > 80 ? text.slice(0, 77) + '…' : text));
