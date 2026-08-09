@@ -5,6 +5,7 @@ import { BookOpen, BookOpenCheck, Info, Layers, TrendingUp, TrendingDown, Minus 
 import { ScopeHealthGrid } from '@/components/dashboard/ScopeHealthCard';
 import { Sparkbar } from '@/components/dashboard/Sparkbar';
 import { Tooltip } from '@/components/ui/Tooltip';
+import { Combobox, type ComboboxItem } from '@/components/ui/Combobox';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDashboardData } from '@/lib/queries/dashboard';
 import {
@@ -31,29 +32,27 @@ import {
  * to compare against — and "all time" has no preceding window. The Explorer,
  * which lists rather than trends, does offer it (`?range` absent).
  *
- * The set is deliberately UNCHANGED by this PR, even though the shared model now
- * understands `90d` too (`RANGE_PRESETS`). This is a refactor of what the
- * selection MEANS, not of what the control offers, and the committed visual
- * baselines (`__screenshots__/DashboardStats.stories.tsx`) pin this row pixel for
- * pixel — a fourth button is a baseline regeneration, which belongs with the
- * stats-header work that redesigns this control rather than smuggled in here.
- *
- * The MODEL does not block a fourth button — `{ preset: '90d' }` already
- * resolves — but the DATA would, and that is the larger of the two reasons.
- * `useDashboardData` fetches `TREND_WINDOW_DAYS = 62` days
+ * `90d` is absent for a DATA reason, and it survives this control becoming a
+ * combobox — a list has room for a fourth row where the old segmented group did
+ * not, so the constraint is worth restating rather than assuming it was about
+ * width. `useDashboardData` fetches `TREND_WINDOW_DAYS = 62` days
  * (`lib/queries/dashboard.ts`), sized as the widest preset here plus the equal
  * preceding window every card compares against, plus slack. A `90d` selection
  * charts 90 daily buckets over 62 days of data, and its comparison half is
- * entirely outside the fetch — so the trend chip reads `+100%` by construction.
- * Offering `90d` means widening that fetch to ~182 days, tripling the activity
- * payload on every Overview load; widen-vs-clamp-vs-drop is a product call this
- * refactor deliberately does not make. Until it is made, a hand-edited
+ * entirely outside the fetch — so the trend chip would read `+100%` by
+ * construction. Offering it means widening that fetch to ~182 days, tripling the
+ * activity payload on every Overview load; widen-vs-clamp-vs-drop is a product
+ * call to make deliberately. Until it is made, a hand-edited
  * `?range={"preset":"90d"}` on this page is bounded by the same 62 days.
+ *
+ * The short `label` keeps the trigger as narrow as the buttons it replaced; the
+ * `hint` says the same thing in words, which is what the segmented group had
+ * nowhere to put.
  */
-const RANGE_OPTIONS: { value: RangePreset; label: string }[] = [
-  { value: '24h', label: '24h' },
-  { value: '7d', label: '7d' },
-  { value: '30d', label: '30d' },
+const RANGE_OPTIONS: ComboboxItem<RangePreset>[] = [
+  { value: '24h', label: '24h', hint: 'Last 24 hours' },
+  { value: '7d', label: '7d', hint: 'Last 7 days' },
+  { value: '30d', label: '30d', hint: 'Last 30 days' },
 ];
 
 /**
@@ -118,41 +117,28 @@ const sumPoints = (points: { value: number }[]) => points.reduce((total, p) => t
 function StatRangeSelect({
   value,
   onChange,
+  nowIso,
 }: {
   value: TimeRange;
   onChange: (range: TimeRange) => void;
+  /** Injected so the custom-range label describes the same instant the cards do. */
+  nowIso: string;
 }) {
+  // The value is a discriminated union and the options are presets, so the two
+  // do not line up one-to-one. An ABSOLUTE arm — a window drilled in from a
+  // chart, or a deep link — matches no option, which is the honest rendering:
+  // none of these presets IS what the user is looking at. `triggerLabel` is
+  // what stops that reading as "nothing selected"; it names the actual window.
+  const preset = isPresetRange(value) ? value.preset : null;
+
   return (
-    <div
-      role="radiogroup"
-      aria-label="Time range"
-      className="flex items-center gap-0.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-0.5"
-    >
-      {RANGE_OPTIONS.map((opt) => {
-        // Compare the PRESET, not the object: `value` is now a discriminated
-        // union whose absolute arm ({from,to}) matches no button — which is the
-        // correct rendering for a range drilled in from a chart or a deep link,
-        // since none of these presets is what the user is looking at.
-        const active = isPresetRange(value) && value.preset === opt.value;
-        return (
-          <button
-            key={opt.value}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            onClick={() => onChange({ preset: opt.value })}
-            className={[
-              'min-h-6 rounded px-2 py-0.5 text-[10px] font-medium tabular-nums transition-colors duration-150',
-              active
-                ? 'bg-[var(--color-bg-raised)] text-[var(--color-content-primary)] shadow-sm'
-                : 'text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]',
-            ].join(' ')}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
-    </div>
+    <Combobox
+      options={RANGE_OPTIONS}
+      value={preset}
+      onChange={(next) => onChange({ preset: next })}
+      label="Time range"
+      {...(preset === null ? { triggerLabel: rangeLabel(value, nowIso) } : {})}
+    />
   );
 }
 
@@ -182,7 +168,13 @@ export function DashboardStatsSkeleton() {
       <div>
         <div className="mb-3 flex items-center justify-between gap-2">
           <div className="h-3 w-16 animate-pulse rounded bg-[var(--color-bg-elevated)]" />
-          <div className="h-6 w-28 animate-pulse rounded-md bg-[var(--color-bg-elevated)]" />
+          {/* The range picker's slot. `h-9 w-16` tracks the Combobox trigger
+              (`min-h-9`, a short label plus a chevron), not the three-segment
+              group it replaced — that was `h-6 w-28`, so the row would have
+              grown 12px taller and shrunk 48px narrower the moment the query
+              settled. Sizing a skeleton to the control it no longer renders is
+              the whole failure mode this placeholder exists to avoid. */}
+          <div className="h-9 w-16 animate-pulse rounded-lg bg-[var(--color-bg-elevated)]" />
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {Array.from({ length: 3 }).map((_, i) => (
@@ -369,7 +361,7 @@ export function DashboardStats() {
       <div>
         <div className="mb-3 flex items-center justify-between gap-2">
           <p className="text-xs font-medium text-[var(--color-content-tertiary)]">Activity</p>
-          <StatRangeSelect value={range} onChange={setRange} />
+          <StatRangeSelect value={range} onChange={setRange} nowIso={nowIso} />
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {cards.map(({ id, icon: Icon, label, tag, tooltip, value, description, trend, unit }) => (

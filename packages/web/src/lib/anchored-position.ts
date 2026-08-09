@@ -1,5 +1,7 @@
 /**
- * Pure placement math for the Lore Explorer's filter popover.
+ * Pure placement math for any surface portaled to `document.body` and anchored
+ * to a trigger — the filter popover, the pill's operator listbox, and the
+ * shared `Combobox`.
  *
  * The popover is portaled to `document.body` and therefore positioned
  * `fixed` — it has to be, because the trigger sits inside the Explorer's

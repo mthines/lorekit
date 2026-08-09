@@ -17,7 +17,7 @@ import {
   POPOVER_WIDTH,
   VIEWPORT_MARGIN,
   anchoredPosition,
-} from './filter-menu-position';
+} from './anchored-position';
 
 const VIEWPORT = { width: 1280, height: 800 };
 
