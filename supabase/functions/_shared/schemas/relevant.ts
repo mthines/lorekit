@@ -86,9 +86,15 @@ export type RelevantEntry = z.infer<typeof RelevantEntrySchema>;
 export const RelevantResponseSchema = z.object({
   entries: z.array(RelevantEntrySchema),
   /**
-   * How many candidates the FTS matched before ranking and truncation. Lets a
-   * caller say "3 of 47 shown" and know whether narrowing the query is worth
-   * it — the same reason the SessionStart block reports its own truncation.
+   * How many candidates were RANKED to produce `entries` — the fetched set, not
+   * the total the filters match. Lets a caller say "3 of 47 shown" and know
+   * whether narrowing the query is worth it, the same reason the SessionStart
+   * block reports its own truncation.
+   *
+   * It SATURATES at the route's candidate cap (200). A response reporting
+   * exactly that number means "at least 200 matched", never "200 matched" —
+   * read it as a floor, not a total. An exact total would cost a second
+   * full count on every request, which is the cost the cap exists to avoid.
    */
   candidates: z.number().int(),
 });
