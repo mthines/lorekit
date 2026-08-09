@@ -372,11 +372,14 @@ export const ListFacetsQuerySchema = z.object({
    * two dimensions are enumerated but not yet filterable from the menu.
    *
    * `ListMemoriesQuerySchema`'s NON-dimension filters — `q`, `key`,
-   * `created_since` and `created_until` — are deliberately NOT mirrored, so
-   * with a search or date window active a count is an upper bound on the yield
-   * rather than the exact figure. Mirroring `q` would mean a second
-   * implementation of `likeNeedle`'s LIKE escaping inside plpgsql, and a filter
-   * value is encoded exactly one way in this repo.
+   * `created_since`, `created_until` and `expiring_within_days` — are
+   * deliberately NOT mirrored, so with a search, a date window or an
+   * expiring-soon horizon active a count is an upper bound on the yield rather
+   * than the exact figure. Mirroring `q` would mean a second implementation of
+   * `likeNeedle`'s LIKE escaping inside plpgsql, and mirroring
+   * `expiring_within_days` a second implementation of `expiringWindow`'s
+   * `now`-relative boundary — a filter value is encoded exactly one way in this
+   * repo.
    *
    * A value whose count falls to zero under the other dimensions' filters emits
    * no row at all — the same omission a null column value has — so it leaves
