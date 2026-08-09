@@ -339,6 +339,34 @@ describe('rangeLabel', () => {
     expect(rangeLabel({ from: '2026-07-01', to: '2026-07-03' }, NOW)).toBe('Jul 1 – Jul 3');
   });
 
+  it('renders a sub-day window with its times, stepping back off the exclusive bound', () => {
+    // The other branch of isWholeDayWindow, previously unasserted: a window
+    // that does not land on whole UTC days has a time worth showing — and it is
+    // the only place the off-by-one is observable to the MINUTE. The hour
+    // drilled in from a 14:00 bar must end at 14:59, never at the following
+    // 15:00, which is the exclusive bound the window does not include.
+    //
+    // Built through Intl rather than hardcoded so the case pins the behaviour
+    // (a time is shown; the end is the last instant inside) and not the
+    // runtime's locale.
+    const fmt = (iso: string) =>
+      new Date(iso).toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: 'UTC',
+      });
+    const label = rangeLabel(
+      { from: '2026-07-01T14:00:00.000Z', to: '2026-07-01T15:00:00.000Z' },
+      NOW,
+    );
+
+    expect(label).toBe(`${fmt('2026-07-01T14:00:00.000Z')} – ${fmt('2026-07-01T14:59:59.999Z')}`);
+    // And it is genuinely the other branch: the whole-day form shows no time.
+    expect(label).not.toBe(rangeLabel({ from: '2026-07-01', to: '2026-07-01' }, NOW));
+  });
+
   it('falls back to All time for a malformed window', () => {
     expect(rangeLabel({ from: 'nope', to: 'also-nope' }, NOW)).toBe('All time');
   });
