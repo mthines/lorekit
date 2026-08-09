@@ -256,11 +256,17 @@ jobs:
             // Close the loop on the triggering comment with a terminal reaction
             // (rocket = done, confused = failed), mirroring preview.yml. Only a
             // comment trigger has a reaction target; a dispatch run has none.
+            // Best-effort: a 403 / rate-limit on this cosmetic reaction must not
+            // fail an otherwise-successful run whose result comment already posted.
             if (context.eventName === 'issue_comment') {
-              await github.rest.reactions.createForIssueComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: context.payload.comment.id,
-                content: ok ? 'rocket' : 'confused',
-              });
+              try {
+                await github.rest.reactions.createForIssueComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: context.payload.comment.id,
+                  content: ok ? 'rocket' : 'confused',
+                });
+              } catch (err) {
+                core.warning(`Could not react to the triggering comment: ${err.message}`);
+              }
             }
