@@ -23,8 +23,14 @@
  * - `tags` param:     selected labels (JSON array). A memory must carry ALL of
  *   them. Server-side, shareable — "every perf regression we've learned" is a
  *   link you can paste to a teammate.
- * - `range` param:    date range, shareable. Scoped to /lore. Shared by the
- *   heatmap click, scope view, and feed view — one param drives all three.
+ * - `range` param:    time range, shareable. Scoped to /lore. Shared by the
+ *   heatmap click, scope view, and feed view — one param drives all three, and
+ *   as of the shared time model it is the SAME param the Overview writes, so a
+ *   selection means the same thing on both pages. It holds either a relative
+ *   preset (`{preset:'7d'}`, which stays live in a shared link) or an absolute
+ *   window (`{from,to}`, ISO instants or the legacy `YYYY-MM-DD` day strings).
+ *   `resolveRange` turns whichever arrived into instants; nothing downstream
+ *   sees a relative value. See `lib/time-range.ts`.
  * - `view` param:     'scope' | 'time'. Persisted in URL so a shared link
  *   lands on the correct tab.
  * - `status` param:   'active' | 'archived' | 'expiring'. The population being
@@ -61,17 +67,12 @@ import {
   statusParamValue,
   type MemoryStatus,
 } from '@/lib/status-filter';
-
-/**
- * The empty-state icon per status. Declared as an exhaustive record so a fourth
- * status cannot ship without one — the same reason `FIELD_ICONS` is a
- * `Record<FilterField, …>`.
- */
-const EMPTY_STATE_ICONS: Record<MemoryStatus, typeof BookOpen> = {
-  active: BookOpen,
-  archived: Archive,
-  expiring: Clock,
-};
+import {
+  isPresetRange,
+  resolveRange,
+  toDayRange,
+  type TimeRange,
+} from '@/lib/time-range';
 import { useFacetCatalog, useMemories } from '@/lib/queries/lore';
 import {
   filtersParamValue,
@@ -90,6 +91,17 @@ import type { LessonEntry } from './LessonCard';
 import { ContributionHeatmap } from '@/components/activity/ContributionHeatmap';
 import { ActivityFeed } from '@/components/activity/ActivityFeed';
 import { filterByOwnership, type OwnerFilter } from '@/lib/org-ui';
+
+/**
+ * The empty-state icon per status. Declared as an exhaustive record so a fourth
+ * status cannot ship without one — the same reason `FIELD_ICONS` is a
+ * `Record<FilterField, …>`.
+ */
+const EMPTY_STATE_ICONS: Record<MemoryStatus, typeof BookOpen> = {
+  active: BookOpen,
+  archived: Archive,
+  expiring: Clock,
+};
 
 type ViewMode = 'scope' | 'time';
 
@@ -278,9 +290,52 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
 
   // URL-backed date range, scoped to /lore. Shared by the heatmap click, the
   // scope view, and the feed view — one param drives all three.
-  const [range, setRange] = useUrlState<DateRange | null>('range', null, {
+  //
+  // Typed as `TimeRange` (lib/time-range.ts) rather than `DateRange`, which is
+  // what makes the param timestamp-capable: it now also carries a relative
+  // preset (`{preset:'7d'}`, which stays live in a shared link) and an absolute
+  // window precise to the hour (what a drilled-in chart bucket produces, PR-6).
+  // The widening is backward-compatible by construction — a `{from,to}` pair of
+  // day strings, the only shape this param has ever held, is still one of the
+  // arms, so every existing `?range=` link decodes exactly as before.
+  const [range, setRange] = useUrlState<TimeRange>('range', null, {
     cleanOnPathname: '/lore',
   });
+
+  // Resolved ONCE per range change, never per render: the clock is read inside
+  // the memo, so a relative preset stays a stable object between renders. It is
+  // part of the `useMemories` query key, and re-resolving on every render would
+  // mint a new key each time and refetch forever.
+  //
+  // Keyed on the SERIALISED range, not the object: `useUrlState` re-derives its
+  // value from `searchParams`, so `range` is a fresh object identity after ANY
+  // param edit — flipping the archived toggle would otherwise re-resolve
+  // `{preset:'7d'}` against a newer clock and remint the `useMemories` key for a
+  // range the user never touched.
+  const rangeKey = JSON.stringify(range);
+  const resolvedRange = useMemo(
+    () => resolveRange(range, new Date().toISOString()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rangeKey],
+  );
+
+  // Day-cell highlighting for the heatmap. Derived from the RESOLVED window, so
+  // a preset arriving from an Overview deep link lights the right cells instead
+  // of leaving the calendar blank while the list below it is clearly filtered.
+  const highlightRange: DateRange | null = resolvedRange ? toDayRange(resolvedRange) : null;
+
+  // The calendar picker speaks whole UTC days and cannot render a preset or a
+  // sub-day window, so it is shown the absolute arm and nothing else. A preset
+  // reads as "no custom range" there — which is honest: the user did not pick
+  // one — while the label above the picker still names what is selected.
+  //
+  // It is shown the DAY form, not the raw param. `DateRange` is documented as
+  // an INCLUSIVE `YYYY-MM-DD` pair, and now that the absolute arm can carry ISO
+  // instants with an exclusive `to` (a bucket drilled in from a chart), handing
+  // the raw value over would feed a day picker timestamps. `toDayRange` is
+  // already the one conversion, and it is a no-op for the legacy day pair this
+  // param has always held.
+  const pickerRange: DateRange | null = isPresetRange(range) ? null : highlightRange;
 
   // URL-backed ownership filter (plan.md Decision D9) — shareable, and the
   // accept-invite flow deep-links here (`/lore?owner=<serialised OwnerFilter>`)
@@ -382,7 +437,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   } = useMemories({
     scope: selectedScope,
     search: committedSearch,
-    range,
+    range: resolvedRange,
     filters,
     showArchived,
     expiringWithinDays: expiringWithinDays(status),
@@ -487,8 +542,12 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // Heatmap day-click: two-click range anchor → extend → reset, matching the
   // original activity page behaviour.
   function handleHeatmapDayClick(day: string) {
-    if (range && range.from === range.to) {
-      const anchor = range.from;
+    // The anchor→extend gesture only makes sense against an existing SINGLE-DAY
+    // absolute selection. A preset (or any wider window) is not an anchor, so a
+    // click on top of one starts a fresh single-day selection rather than
+    // silently extending from a boundary the user never picked.
+    const anchor = !isPresetRange(range) && range && range.from === range.to ? range.from : null;
+    if (anchor !== null) {
       setRange(day >= anchor ? { from: anchor, to: day } : { from: day, to: anchor });
     } else {
       setRange({ from: day, to: day });
@@ -665,7 +724,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             <ContributionHeatmap
               data={heatmapData}
               weeks={26}
-              selectedRange={range}
+              selectedRange={highlightRange}
               onSelectDate={handleHeatmapDayClick}
             />
           </div>
@@ -738,7 +797,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             onToggleFilterValue={handleToggleFilterValue}
             editingField={isMobile ? null : editingField}
             onEditField={setEditingField}
-            range={range}
+            range={pickerRange}
             onRangeChange={setRange}
             status={status}
             onStatusChange={handleStatusChange}
@@ -799,7 +858,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           onToggleFilterValue={handleToggleFilterValue}
           editingField={isMobile ? editingField : null}
           onEditField={setEditingField}
-          range={range}
+          range={pickerRange}
           onRangeChange={setRange}
           status={status}
           onStatusChange={handleStatusChange}

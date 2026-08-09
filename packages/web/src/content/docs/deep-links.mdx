@@ -29,7 +29,7 @@ The Explorer reads each parameter with `useUrlState`, which does `JSON.parse(sea
 | --- | --- | --- |
 | `scope` | `null` | Filter to one scope. `null` means all scopes. |
 | `q` | `""` | Search query (pre-fills the search box). |
-| `range` | `null` | Date range `{ "from": "YYYY-MM-DD", "to": "YYYY-MM-DD" }`. |
+| `range` | `null` | Time range. Either a **relative** preset — `{ "preset": "24h" \| "7d" \| "30d" \| "90d" \| "all" }` — or an **absolute** window `{ "from", "to" }`. `null` means all time. See below. |
 | `owner` | `"all"` | Ownership filter: `"all"`, `"personal"`, or `{ "orgId": "…" }`. |
 | `filters` | `null` | The Explorer filter bar: an array of `{ "field", "operator", "values" }` conditions over `label`, `agent`, `trigger`, `repo`, `branch` and `pr` (OR within a field, AND across fields). `null` means the param is absent and the legacy `tags` shorthand still applies; `[]` means the bar was explicitly emptied. |
 | `tags` | `[]` | Legacy label filter, AND across labels (e.g. `["perf","ci"]`). Superseded by `filters`, still read so older links keep working. |
@@ -39,6 +39,19 @@ The Explorer reads each parameter with `useUrlState`, which does `JSON.parse(sea
 | `lesson` | `null` | `{ "scope", "key" }` — opens that memory's detail sheet. |
 
 > The CLI mirrors this exact table in `deeplink-pure.mjs` (`LORE_PARAM_DEFAULTS`), and a cross-package test reads the real `useUrlState` parameters from the web source so the two can never drift.
+
+### `range`: relative links stay live, absolute links stay put
+
+A time range is one of two different things, and the parameter keeps them apart on purpose:
+
+- A **preset** is a question that stays true — `{"preset":"7d"}` means "the last seven days" whenever the link is opened, so a range you share in a PR or a runbook keeps answering it next week.
+- An **absolute window** is a moment you are pointing at — `{"from":"2026-07-01T14:00:00.000Z","to":"2026-07-01T15:00:00.000Z"}` is that hour, forever, which is what you want when you are showing someone a spike.
+
+Both resolve to exact instants when the page loads; only the preset is re-resolved against the current clock. Windows are half-open — `from` is included, `to` is not.
+
+**The Overview reads the same `range`, over less data.** `range` is the one parameter the Explorer and the Overview share, so a link means the same window on both pages — but they do not fetch the same amount. The Explorer queries exactly the window you name, with no upper bound. The Overview's stat cards are re-bucketed in the browser from a single fetch covering the **last 62 days**, sized for its own widest picker preset (`30d`) plus the equal preceding window each card's trend chip compares against. A range that reaches outside those 62 days — `{"preset":"90d"}`, or an absolute window older than that — still resolves exactly as documented here and lists correctly in the Explorer, but charts partial or empty bars on the Overview. The Overview's own picker offers `24h` / `7d` / `30d` for this reason.
+
+The `{ "from", "to" }` arm accepts **either** ISO timestamps (precise to the hour) **or** the `YYYY-MM-DD` day strings this parameter has always used. A bare day means the whole UTC day, and the `to` day is **inclusive**: `{"from":"2026-07-01","to":"2026-07-03"}` is three days. Every `?range=` link written before timestamps were supported therefore still resolves to exactly the window it always did.
 
 ## Link to a scope
 

@@ -9,6 +9,8 @@
  * or TanStack.
  */
 
+import type { BucketPlan } from '@/lib/time-range';
+
 /** A per-calendar-day (UTC) count, as the contribution heatmap renders it. */
 export interface DayCount {
   date: string; // YYYY-MM-DD
@@ -93,11 +95,26 @@ export interface StatTrend {
   changePct: number;
 }
 
-/** Selectable time range for a stat card's chart + trend. */
+/**
+ * Selectable time range for a stat card's chart + trend.
+ *
+ * @deprecated as an INPUT to the compute functions — they now take a
+ * {@link BucketPlan} directly, so an arbitrary window (a drilled-down hour, a
+ * custom range) can be charted, not just one of three named presets. The
+ * vocabulary itself lives in `lib/time-range.ts` (`RangePreset`, which adds
+ * `90d`/`all`); this alias and {@link RANGE_BUCKETS} remain as the preset→grid
+ * lookup and are what `bucketPlanForRange` is asserted against.
+ */
 export type MetricRange = '24h' | '7d' | '30d';
 
-/** Bucket granularity + count charted for each selectable range. */
-export const RANGE_BUCKETS: Record<MetricRange, { unit: 'hour' | 'day'; count: number }> = {
+/**
+ * Bucket granularity + count charted for each named preset.
+ *
+ * Kept as the reference table even though `bucketPlanFor` now DERIVES the same
+ * grid from a window's span: `time-range.spec.ts` asserts the derived plan
+ * equals these entries, so the ladder cannot silently re-bucket the Overview.
+ */
+export const RANGE_BUCKETS: Record<MetricRange, BucketPlan> = {
   '24h': { unit: 'hour', count: 24 },
   '7d': { unit: 'day', count: 7 },
   '30d': { unit: 'day', count: 30 },
@@ -197,14 +214,18 @@ function bucketLabel(start: number, unit: 'hour' | 'day'): string {
 }
 
 /**
- * Build a stat card's trends for a selected range, all UTC-aligned oldest→newest.
+ * Build a stat card's trends for a bucket grid, all UTC-aligned oldest→newest.
  *
- * The range picks the bucket granularity and count (see `RANGE_BUCKETS`): 24h →
- * 24 hourly buckets, 7d → 7 daily, 30d → 30 daily. To compute a period-over-period
- * `changePct` without a second query, `2 × count` buckets are tallied and only the
- * recent `count` are charted; the preceding `count` form the comparison window.
- * This keeps the sparkbar window identical to the trend window — the two can no
- * longer disagree.
+ * Takes the GRID (`{ unit, count }`), not a preset name: an aggregation has no
+ * business knowing that "7d" is a thing a picker offers, and taking the grid is
+ * what lets an arbitrary window — a drilled-down hour, a custom range — be
+ * charted by the same code that charts a preset. `bucketPlanFor`
+ * (`lib/time-range.ts`) derives the grid; `RANGE_BUCKETS` is the preset lookup.
+ *
+ * To compute a period-over-period `changePct` without a second query, `2 × count`
+ * buckets are tallied and only the recent `count` are charted; the preceding
+ * `count` form the comparison window. This keeps the sparkbar window identical to
+ * the trend window — the two can no longer disagree.
  *
  * `nowIso` is injected rather than read from the clock so the function is pure
  * and deterministic for tests.
@@ -212,9 +233,9 @@ function bucketLabel(start: number, unit: 'hour' | 'day'): string {
 export function computeRangeTrends(
   rows: TrendRow[],
   nowIso: string,
-  range: MetricRange,
+  plan: BucketPlan,
 ): RangeTrends {
-  const { unit, count } = RANGE_BUCKETS[range];
+  const { unit, count } = plan;
   const unitMs = unit === 'hour' ? HOUR_MS : DAY_MS;
   const now = Date.parse(nowIso);
   const parsed = rows.map((r) => ({ t: Date.parse(r.created_at), scope: r.scope }));
@@ -318,9 +339,9 @@ export interface CountBucketRow {
 export function computeCountTrend(
   rows: readonly CountBucketRow[],
   nowIso: string,
-  range: MetricRange,
+  plan: BucketPlan,
 ): StatTrend {
-  const { unit, count } = RANGE_BUCKETS[range];
+  const { unit, count } = plan;
   const unitMs = unit === 'hour' ? HOUR_MS : DAY_MS;
   const anchor = bucketAnchor(Date.parse(nowIso), unit);
   const total = count * 2;

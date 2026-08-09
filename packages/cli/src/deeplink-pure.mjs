@@ -30,7 +30,12 @@ export const DEFAULT_APP_BASE = 'https://lorekit.io';
 export const LORE_PARAM_DEFAULTS = {
   scope: null, // string | null — null means "all scopes"
   q: '', // string search query
-  range: null, // { from, to } | null (DateRange, "YYYY-MM-DD")
+  // { from, to } | { preset } | null. The CLI emits only the { from, to } arm
+  // (day strings via --range/--from/--to), which the Explorer still reads as
+  // whole UTC days with an INCLUSIVE end day — unchanged. The web model also
+  // accepts ISO instants in that arm and a relative { preset: '7d' } arm
+  // (packages/web/src/lib/time-range.ts); neither has a CLI flag yet.
+  range: null,
   owner: 'all', // 'all' | 'personal' | { orgId }
   // Filter[] | null — the Explorer's multi-dimension filter bar (label / agent /
   // trigger / repo / branch / pr). `null`, NOT `[]`, is the default on purpose:

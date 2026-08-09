@@ -126,13 +126,15 @@ global                             # least specific
 
 ## Filtering lore (dashboard Explorer + REST)
 
-The Explorer at lorekit.io/lore filters on six dimensions. Values combine with **OR inside one
+The Explorer at lorekit.io/lore filters on eight dimensions. Values combine with **OR inside one
 dimension** and **AND across dimensions**, and the whole filter set is in the URL, so a filtered
 view is a shareable link.
 
 | Dimension | Memory field | Operators |
 |-----------|--------------|-----------|
 | Label | `tags` | includes all (default), includes any, includes none |
+| Kind | `kind` | is / is either of, is not |
+| Host | `host` | is / is either of, is not |
 | Agent | `source_agent` | is / is either of, is not |
 | Trigger | `trigger` | is / is either of, is not |
 | Repository | `origin_repo` | is / is either of, is not |
@@ -150,6 +152,12 @@ source_agent=aw&origin_branch=main&tags=flaky&tags_mode=none"
 
 Each dimension takes a comma-separated value list plus an optional `<dimension>_mode` of `in`
 (default) or `nin` (negate); labels use `tags_mode` of `any` (default), `all`, or `none`.
+
+`kind` and `host` are the memory TAXONOMY: `kind` is the bucket type — a closed vocabulary of
+`lesson`, `bus` and `signal` — and `host` is the skill or agent that owns the bucket. Together they
+read as the phrase they exist for: `?kind=lesson&host=reviewer` is "reviewer's lessons". Note that
+`host` is not `source_agent`: the host OWNS the bucket, the agent WROTE the row, and they can
+differ.
 
 ### Finding lore that is about to expire
 
