@@ -1,0 +1,50 @@
+-- Give the memories list seek its `id` tiebreaker.
+--
+-- `memories_scope_updated_at_idx` (00033) was designed for the query toolList
+-- ran AT THE TIME:
+--
+--   … WHERE scope = ? AND archived_at IS NULL
+--     ORDER BY updated_at DESC LIMIT ?
+--
+-- so `(scope, updated_at desc)` satisfied the order exactly. Keyset pagination
+-- landed afterwards and changed both halves of that query. It now orders by a
+-- COMPOSITE key and seeks on it:
+--
+--   … WHERE scope = ? AND archived_at IS NULL
+--     AND (updated_at < ?ts OR (updated_at = ?ts AND id < ?id))
+--     ORDER BY updated_at DESC, id DESC LIMIT ?
+--
+-- (`supabase/functions/mcp/tools.ts` toolList / `memories/handlers/list.ts`,
+-- predicate built by `_shared/api/paginate.ts` + `mcp/cursor.ts`.)
+--
+-- The existing index stops at `updated_at`, so `id` is not available to the
+-- scan: the tiebreaker becomes a heap recheck on every candidate row, and the
+-- planner cannot stop early at LIMIT when a timestamp is not unique. This is
+-- EXACTLY the omission 00012 fixed for `audit_log` — 00010's
+-- `(user_id, created_at desc)` lacked the same `id` column, for the same
+-- keyset predicate — and the fix here is 00012's fix.
+--
+-- Cost is concentrated where it is felt most: deep pagination over a large
+-- scope, which is the shape the busiest caller actually has (37% of list calls
+-- in a recent 24h window came back with `has_more`, and the deepest walk paged
+-- a single scope ~a dozen times at 543–765 ms per page).
+--
+-- The partial predicate is carried over verbatim from 00033 so the two indexes
+-- describe the same row population. The expiry filter
+-- (`expires_at IS NULL OR expires_at > now()`) is deliberately NOT in the
+-- predicate: `now()` is volatile and PostgreSQL rejects it in an index
+-- predicate — the same reason 00033 gave for adding no `rate_limit_counters`
+-- index.
+--
+-- Forward-only and additive. `IF NOT EXISTS` so it can be applied to a running
+-- production database (`CONCURRENTLY` is not used inside migrations because it
+-- cannot run in a transaction).
+--
+-- The superseded `memories_scope_updated_at_idx` is deliberately LEFT IN PLACE.
+-- Dropping an index in the same migration that adds its replacement gives the
+-- planner no fallback if the new one is not yet warm, and this is the hottest
+-- read path in the product; retiring it is a separate, observable decision.
+
+create index if not exists memories_scope_updated_at_id_idx
+  on memories (scope, updated_at desc, id desc)
+  where archived_at is null;

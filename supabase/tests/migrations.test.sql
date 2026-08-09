@@ -4856,6 +4856,39 @@ begin
 end;
 $$;
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- Keyset-covering index for the memories list seek — 00060.
+-- The audit_log precedent (00012, asserted above) applied to the hottest read
+-- path in the product: the list query orders by (updated_at desc, id desc) and
+-- seeks on the same pair, so the index must carry the id column or the
+-- tiebreaker becomes a heap recheck. 00033's (scope, updated_at desc) index
+-- predates keyset pagination entirely.
+-- ═════════════════════════════════════════════════════════════════════════
+do $$
+declare
+  v_keyset_idx boolean;
+  v_partial    boolean;
+begin
+  select exists (
+    select 1 from pg_indexes
+    where tablename = 'memories' and indexname = 'memories_scope_updated_at_id_idx'
+  ) into v_keyset_idx;
+  assert v_keyset_idx,
+    'memories keyset: (scope, updated_at desc, id desc) covering index must exist';
+
+  -- The partial predicate is the half that makes it describe the same row
+  -- population as 00033's index; an index over ALL rows would still satisfy the
+  -- existence check above while quietly covering archived lore too.
+  select exists (
+    select 1 from pg_indexes
+    where tablename = 'memories' and indexname = 'memories_scope_updated_at_id_idx'
+      and indexdef ilike '%where (archived_at IS NULL)%'
+  ) into v_partial;
+  assert v_partial,
+    'memories keyset: the covering index must stay partial on archived_at is null';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
