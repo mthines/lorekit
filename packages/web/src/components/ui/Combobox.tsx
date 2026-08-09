@@ -126,7 +126,7 @@ export function Combobox<T extends string>({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLUListElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const visible = useMemo(() => filterOptions(options, query), [options, query]);
   const selected = options.find((o) => o.value === value);
@@ -309,7 +309,11 @@ export function Combobox<T extends string>({
           />
         </div>
       )}
-      <ul
+      {/* A `div`, not a `ul`: every child of a listbox must be an option, and a
+          `ul` forces an `li` wrapper around each one that the accessibility
+          tree then has to see through. `FilterMenu` renders its options as
+          direct children of its listbox for the same reason. */}
+      <div
         ref={listRef}
         id={listboxId}
         role="listbox"
@@ -317,51 +321,52 @@ export function Combobox<T extends string>({
         className="max-h-full overflow-y-auto p-1"
       >
         {visible.length === 0 && (
-          <li className="px-3 py-2 text-xs text-[var(--color-content-tertiary)]">No matches</li>
+          <p role="presentation" className="px-3 py-2 text-xs text-[var(--color-content-tertiary)]">
+            No matches
+          </p>
         )}
         {visible.map((option, i) => {
           const Icon = option.icon;
           const isSelected = option.value === value;
           return (
-            <li key={option.value}>
-              <button
-                type="button"
-                id={`${baseId}-option-${i}`}
-                role="option"
-                aria-selected={isSelected}
-                aria-disabled={option.disabled}
-                disabled={option.disabled}
-                // Pointer, not click: the click-outside handler runs on
-                // pointerdown, so a click listener would fire after the menu
-                // had already begun closing on some browsers.
-                onPointerUp={() => !option.disabled && commit(option.value)}
-                onMouseEnter={() => !option.disabled && setHighlight(i)}
-                className={[
-                  'flex min-h-11 w-full items-center gap-2 rounded-md px-2 text-left text-sm transition-colors duration-100',
-                  option.disabled
-                    ? 'cursor-not-allowed text-[var(--color-content-tertiary)] opacity-50'
-                    : i === highlight
-                      ? 'bg-[var(--color-bg-elevated)] text-[var(--color-content-primary)]'
-                      : 'text-[var(--color-content-secondary)]',
-                ].join(' ')}
-              >
-                {Icon && <Icon className="size-4 shrink-0" aria-hidden />}
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate">{option.label}</span>
-                  {option.hint && (
-                    <span className="truncate text-[10px] text-[var(--color-content-tertiary)]">
-                      {option.hint}
-                    </span>
-                  )}
-                </span>
-                {isSelected && (
-                  <Check className="size-4 shrink-0 text-[var(--color-accent)]" aria-hidden />
+            <button
+              key={option.value}
+              type="button"
+              id={`${baseId}-option-${i}`}
+              role="option"
+              aria-selected={isSelected}
+              aria-disabled={option.disabled}
+              disabled={option.disabled}
+              // Pointer, not click: the click-outside handler runs on
+              // pointerdown, so a click listener would fire after the menu
+              // had already begun closing on some browsers.
+              onPointerUp={() => !option.disabled && commit(option.value)}
+              onMouseEnter={() => !option.disabled && setHighlight(i)}
+              className={[
+                'flex min-h-11 w-full items-center gap-2 rounded-md px-2 text-left text-sm transition-colors duration-100',
+                option.disabled
+                  ? 'cursor-not-allowed text-[var(--color-content-tertiary)] opacity-50'
+                  : i === highlight
+                    ? 'bg-[var(--color-bg-elevated)] text-[var(--color-content-primary)]'
+                    : 'text-[var(--color-content-secondary)]',
+              ].join(' ')}
+            >
+              {Icon && <Icon className="size-4 shrink-0" aria-hidden />}
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate">{option.label}</span>
+                {option.hint && (
+                  <span className="truncate text-[10px] text-[var(--color-content-tertiary)]">
+                    {option.hint}
+                  </span>
                 )}
-              </button>
-            </li>
+              </span>
+              {isSelected && (
+                <Check className="size-4 shrink-0 text-[var(--color-accent)]" aria-hidden />
+              )}
+            </button>
           );
         })}
-      </ul>
+      </div>
     </>
   );
 
