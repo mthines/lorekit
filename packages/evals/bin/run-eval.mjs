@@ -166,6 +166,20 @@ export function runId(now = new Date()) {
 }
 
 async function runArm0(options) {
+  // Pure ARGUMENT validation, hoisted above every sandbox: arm 0 is the
+  // empty-store arm by definition — its job is to produce the organic lesson
+  // the seeded arms are later given — so it cannot honour a seed. Refusing here
+  // costs nothing, where refusing inside the loop would first git-initialise,
+  // strip and MCP-configure a sandbox only to throw it away.
+  const ignored = ["--seed", "--lesson"].filter((f) => options.provided.has(f));
+  if (ignored.length > 0) {
+    throw new Error(
+      `arm0 always runs against an EMPTY store, so ${ignored.join(" and ")} ` +
+        `cannot be honoured here. Drop ${ignored.length > 1 ? "them" : "it"}, ` +
+        `or use the "probe" subcommand, which seeds.`,
+    );
+  }
+
   const id = runId();
   const outDir = path.resolve(options.out, `arm0-${id}`);
   await fsp.mkdir(outDir, { recursive: true });
@@ -188,19 +202,10 @@ async function runArm0(options) {
         allowWrite: true,
       });
       const task = taskById("branch-scope");
-      // Arm 0 is the empty-store arm by definition — its job is to produce the
-      // organic lesson the seeded arms are later given — so it cannot honour a
-      // seed. Refuse rather than accept the flag and quietly run something else.
-      const ignored = ["--seed", "--lesson"].filter((f) =>
-        options.provided.has(f),
-      );
-      if (ignored.length > 0) {
-        throw new Error(
-          `arm0 always runs against an EMPTY store, so ${ignored.join(" and ")} ` +
-            `cannot be honoured here. Drop ${ignored.length > 1 ? "them" : "it"}, ` +
-            `or use the "probe" subcommand, which seeds.`,
-        );
-      }
+      // NOT hoistable, unlike the seed check above: this one reads the scope
+      // the arm actually RESOLVED to, which only exists after `prepareArm`. It
+      // fires on rep 1, so at most one sandbox is ever built for nothing.
+      //
       // `--scope` / `--scope-mode` / `--no-git` steer where the arm resolves,
       // but `gradeSandbox` below always grades against the task's fixed target.
       // A mismatch cannot produce anything but a 0-or-partial score, and it

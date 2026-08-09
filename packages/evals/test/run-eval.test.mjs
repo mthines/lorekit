@@ -95,6 +95,9 @@ test("arm0 refuses a seed flag instead of silently running an empty store", asyn
         ]),
       /--lesson/,
     );
+    // The refusal is pure argument validation and is hoisted above every
+    // sandbox, so nothing was built and no artifact directory was created.
+    assert.deepEqual(await fsp.readdir(out), []);
   } finally {
     await fsp.rm(out, { recursive: true, force: true });
   }
