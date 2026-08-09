@@ -256,7 +256,10 @@ jobs:
   #    backend-only ones — and each deployment counts against the Vercel Hobby
   #    quota even when the dashboard's Ignored Build Step skips the actual build.
   #    Here the preview is gated on the `web` path filter, so a PR with no web
-  #    changes creates no Vercel deployment at all.
+  #    changes creates no Vercel deployment at all. It ALSO skips redeploying when
+  #    a new commit changed no web file SINCE this PR's last preview (the "Decide"
+  #    step diffs against the SHA recorded in the sticky comment), so a burst of
+  #    non-web commits on a web PR spends one deployment, not one per push.
   #
   #    Quota-friendly build strategy: `vercel build` runs on THIS runner and
   #    `vercel deploy --prebuilt` uploads the result, so Vercel spends no build
@@ -297,10 +300,54 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Incremental skip: redeploy only if a web file actually changed since this
+      # PR's LAST preview. The sticky comment records that commit (as `sha=<full>`
+      # in its marker); compare it to the current head via the GitHub API — no
+      # local git/checkout needed. Skip when nothing under the web globs changed,
+      # so a burst of non-web commits on a web PR doesn't spend a deployment each.
+      # Fail-safe to deploy on any doubt: no prior preview, a rebase/force-push
+      # (compare status not `ahead`), a diff too large to inspect, or an API error.
+      - name: Decide whether a redeploy is needed
+        id: decide
+        if: steps.guard.outputs.run == 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const findMarker = '<!-- lorekit-web-preview';
+            const webRe = /^(packages\/web\/|package\.json$|pnpm-lock\.yaml$|nx\.json$|\.github\/actions\/vercel-preview-deploy\/|\.github\/workflows\/ci\.yml$)/;
+            const headSha = process.env.HEAD_SHA;
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const deploy = (why) => { core.info(`web preview: deploy — ${why}`); core.setOutput('deploy', 'true'); };
+            const skip = (why) => { core.notice(`Skipping web-preview redeploy — ${why}.`); core.setOutput('deploy', 'false'); };
+            let prevSha = null;
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+              const existing = comments.find(c => c.body?.includes(findMarker));
+              prevSha = existing?.body?.match(/lorekit-web-preview sha=([0-9a-f]{40})/)?.[1] ?? null;
+            } catch (e) {
+              return deploy(`could not read the prior preview comment (${e.message})`);
+            }
+            if (!prevSha) return deploy('no prior preview on this PR');
+            if (prevSha === headSha) return skip(`head ${headSha.slice(0, 7)} is already the deployed preview`);
+            try {
+              const cmp = await github.rest.repos.compareCommitsWithBasehead({ owner, repo, basehead: `${prevSha}...${headSha}` });
+              if (cmp.data.status !== 'ahead') return deploy(`compare status '${cmp.data.status}' (rebase/force-push) — can't confirm`);
+              const files = cmp.data.files ?? [];
+              if (files.length >= 300) return deploy('diff too large to inspect fully');
+              return files.some(f => webRe.test(f.filename))
+                ? deploy(`web files changed since ${prevSha.slice(0, 7)}`)
+                : skip(`no web file changed since ${prevSha.slice(0, 7)}; the existing preview is still current`);
+            } catch (e) {
+              return deploy(`compare API failed (${e.message})`);
+            }
+
       # Use the PR head ref/SHA (not github.ref_name/github.sha, which on a
       # pull_request are the synthetic `refs/pull/N/merge` merge commit).
       - name: Checkout repository
-        if: steps.guard.outputs.run == 'true'
+        if: steps.guard.outputs.run == 'true' && steps.decide.outputs.deploy == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Shared build+deploy flow (see .github/actions/vercel-preview-deploy).
@@ -308,7 +355,7 @@ jobs:
       # replacement for what the Git integration deployed.
       - name: Deploy Vercel preview
         id: preview
-        if: steps.guard.outputs.run == 'true'
+        if: steps.guard.outputs.run == 'true' && steps.decide.outputs.deploy == 'true'
         uses: ./.github/actions/vercel-preview-deploy
         with:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
@@ -323,18 +370,22 @@ jobs:
       # affordance the Vercel bot used to provide. Idempotent: it edits its own
       # marker comment on re-run instead of stacking a new one per push.
       - name: Comment preview URL on the PR
-        if: steps.guard.outputs.run == 'true'
+        if: steps.guard.outputs.run == 'true' && steps.decide.outputs.deploy == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           PREVIEW_URL: ${{ steps.preview.outputs.url }}
           PR_SHA: ${{ github.event.pull_request.head.sha }}
         with:
           script: |
-            const marker = '<!-- lorekit-web-preview -->';
+            const fullSha = process.env.PR_SHA;
+            // Stable find-key; the stored line also carries the full SHA so the
+            // "Decide" step above can diff the next commit against this deploy.
+            const findMarker = '<!-- lorekit-web-preview';
+            const markerLine = `<!-- lorekit-web-preview sha=${fullSha} -->`;
             const url = process.env.PREVIEW_URL;
-            const sha = process.env.PR_SHA.slice(0, 7);
+            const sha = fullSha.slice(0, 7);
             const body = [
-              marker,
+              markerLine,
               '### ▲ Web preview deployed',
               '',
               `🔗 **[Open preview → ${url}](${url})**`,
@@ -346,7 +397,7 @@ jobs:
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner, repo, issue_number,
             });
-            const existing = comments.find(c => c.body?.includes(marker));
+            const existing = comments.find(c => c.body?.includes(findMarker));
             if (existing) {
               await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
             } else {

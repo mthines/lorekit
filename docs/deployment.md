@@ -26,10 +26,15 @@ and local operations.
 > pipeline. PR **previews** are deployed by `ci.yml`'s `web-preview` job, gated
 > on the `web` path filter — so a PR with no web changes creates **no** Vercel
 > deployment (and spends no quota), where the Git integration used to deploy on
-> every push. If you fork this, mirror the flag (or disable Git deployments in
-> the Vercel dashboard) or you will double-deploy.
+> every push. It goes further: on a web PR it **skips redeploying between commits
+> when no web file changed since that PR's last preview** (`web-preview`'s
+> "Decide" step diffs the current head against the SHA recorded in the sticky
+> preview comment via the compare API, and fails safe to deploy on any doubt), so
+> a burst of non-web commits spends one deployment, not one per push. If you fork
+> this, mirror the flag (or disable Git deployments in the Vercel dashboard) or
+> you will double-deploy.
 >
-> The three preview-deploy jobs (`ci.yml` `web-preview`, `deploy.yml`
+> The three preview jobs (`ci.yml` `web-preview`, `deploy.yml`
 > `deploy-web-preview`, `preview.yml` `deploy-web`) share one implementation:
 > the composite action **`.github/actions/vercel-preview-deploy`** (pull → build
 > on the runner → deploy prebuilt → return the URL; callers supply only the env
@@ -37,6 +42,14 @@ and local operations.
 > exist at the checked-out ref: `ci.yml`/`deploy.yml` always have it (they check
 > out the PR merge ref / `main`), but a `/preview` on a branch that predates this
 > action will fail to resolve it until that branch merges `main`.
+>
+> **`deploy.yml`'s `deploy-web-preview` runs the composite in BUILD-ONLY mode**
+> (`deploy: 'false'`): it builds the FE against the preview Supabase project as a
+> gate but creates **no** deployment. That deployment was pure quota waste —
+> `smoke-preview` tests the API only (it never fetched the web URL) and
+> production is promoted from the separate `stage-web-production` build, so
+> nothing consumed the preview. The build still fails the pipeline if the FE
+> can't compile.
 
 ---
 

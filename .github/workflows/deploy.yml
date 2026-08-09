@@ -256,13 +256,17 @@ jobs:
             sleep 10
           done
 
-  # ── 1b. Deploy WEB to PREVIEW (Vercel) ────────────────────────────────────────
-  #    Builds the dashboard against the PREVIEW Supabase project and deploys a
-  #    Vercel preview, so the FE that smoke-preview exercises is the same bundle
-  #    the API preview just shipped. Runs in parallel with deploy-preview — a
-  #    Vercel build does not need the freshly-deployed functions to compile.
+  # ── 1b. Verify WEB build → PREVIEW (Vercel, BUILD-ONLY) ───────────────────────
+  #    Builds the dashboard against the PREVIEW Supabase project as a GATE — if
+  #    web changed, prove the FE still builds before we touch production — but
+  #    does NOT deploy (deploy: 'false'), so it spends ZERO Vercel deployment
+  #    quota. The deployment this used to create was pure waste: smoke-preview
+  #    tests the API only (it never hit the web URL — this job has no job-level
+  #    output), and production is promoted from the SEPARATE stage-web-production
+  #    build, never from this preview. Runs in parallel with deploy-preview — the
+  #    build needs no freshly-deployed functions to compile.
   deploy-web-preview:
-    name: Deploy web → preview (Vercel)
+    name: Verify web build → preview (Vercel, build-only)
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.web == 'true'
@@ -273,11 +277,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
 
-      # Shared build+deploy flow (see .github/actions/vercel-preview-deploy).
-      # Pins the FE at the PREVIEW Supabase project so smoke exercises the same
-      # API bundle deploy-preview just shipped; the override self-skips when the
-      # anon key is unset, leaving Vercel's pulled preview env in place.
-      - name: Deploy Vercel preview
+      # Shared flow (see .github/actions/vercel-preview-deploy) in BUILD-ONLY mode
+      # (deploy: 'false' below): builds the FE against the PREVIEW Supabase project
+      # as a gate, creating no Vercel deployment. require-supabase-override warns
+      # if either preview secret is missing.
+      - name: Verify web build (preview, build-only)
         id: deploy
         uses: ./.github/actions/vercel-preview-deploy
         with:
@@ -293,20 +297,15 @@ jobs:
           git-repo-slug: ${{ github.event.repository.name }}
           git-commit-ref: ${{ github.ref_name }}
           git-commit-sha: ${{ github.sha }}
+          # Build-only gate: prove the FE builds against the preview backend, but
+          # create NO Vercel deployment — this preview was never smoke-tested and
+          # production promotes the separate stage-web-production build.
+          deploy: 'false'
 
-      - name: Verify preview deployment responds
-        env:
-          URL: ${{ steps.deploy.outputs.url }}
+      - name: Note build result
         run: |
-          CODE=$(curl -s -o /dev/null -w '%{http_code}' -L "$URL")
-          echo "### Web preview" >> "$GITHUB_STEP_SUMMARY"
-          echo "- URL: $URL (HTTP $CODE)" >> "$GITHUB_STEP_SUMMARY"
-          # Vercel deployment protection can return 401 for a raw preview URL;
-          # accept any non-5xx as "the build served".
-          if [ "$CODE" -ge 500 ]; then
-            echo "::error::Web preview returned HTTP $CODE"
-            exit 1
-          fi
+          echo "### Web build (preview backend)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Built the dashboard against the preview Supabase project as a gate (build-only — no Vercel deployment created)." >> "$GITHUB_STEP_SUMMARY"
 
   # ── 1c. STAGE web production build (Vercel, pre-built, no domain) ──────────────
   #    Builds the production dashboard bundle (against Vercel's PRODUCTION env, so

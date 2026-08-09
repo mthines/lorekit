@@ -73,10 +73,19 @@ inputs:
     description: VERCEL_GIT_COMMIT_SHA for the build.
     required: false
     default: ''
+  deploy:
+    description: >-
+      Set 'false' to run pull → override → build as a build-only GATE and skip
+      `vercel deploy` (so NO Vercel deployment is created and no quota is spent).
+      Used by deploy.yml's deploy-web-preview, whose deployment was never
+      smoke-tested — the build succeeding is the only signal it needs. When
+      'false' the `url` output is empty. Defaults to 'true' (build + deploy).
+    required: false
+    default: 'true'
 
 outputs:
   url:
-    description: The deployed Vercel preview URL.
+    description: The deployed Vercel preview URL (empty when deploy is 'false').
     value: ${{ steps.deploy.outputs.url }}
 
 runs:
@@ -176,8 +185,11 @@ runs:
         VERCEL_GIT_COMMIT_SHA: ${{ inputs.git-commit-sha }}
       run: vercel build --token="$VERCEL_TOKEN"
 
+    # Skipped in build-only mode (deploy: 'false') — the build above is the gate,
+    # and no deployment is created, so no Vercel quota is spent.
     - name: Deploy (prebuilt)
       id: deploy
+      if: ${{ inputs.deploy == 'true' }}
       shell: bash
       env:
         VERCEL_TOKEN: ${{ inputs.vercel-token }}
