@@ -95,6 +95,28 @@ hold the Playwright browser child's stdio open, so the run never returns. Playwr
 to `1.56.0` so local and CI pixels compare like-for-like; bumping it means regenerating
 baselines with `-u` on Linux/Chromium.
 
+## Updating baselines from CI (no local toolchain needed)
+
+Baselines are Linux/Chromium PNGs generated with the pinned Playwright build, so a run on a
+different OS or browser version produces pixels that will never match CI. When you can't (or
+don't want to) reproduce that toolchain locally, the **Update visual baselines** workflow
+(`.github/workflows/update-baselines.yml`) regenerates them on the same runner image and browser
+build `web-test` uses, then commits **only** the changed screenshots straight back onto the PR's
+branch. Two ways to run it against a specific PR:
+
+- **Comment `/update-baselines` on the PR** (write-access users only), or
+- **Actions ▸ "Update visual baselines" ▸ Run workflow**, entering the PR number.
+
+It runs `vitest -u` over the whole suite, stages only files under `__screenshots__/` (matching
+baselines are rewritten byte-identical and produce no diff), commits, pushes, and comments the
+outcome on the PR. Two limits worth knowing:
+
+- **Fork PRs are rejected** — `GITHUB_TOKEN` can't push to a fork branch, so regenerate locally
+  and push from the fork instead.
+- The baseline commit is pushed with `GITHUB_TOKEN`, which by design does **not** re-trigger
+  workflows, so `web-test` won't auto-run on it. Push a follow-up commit (or swap in a PAT) if you
+  need CI to re-verify.
+
 ## Deploying Storybook to Vercel (separate project, Git integration)
 
 Storybook deploys as its **own** Vercel project on the same repo, alongside the dashboard

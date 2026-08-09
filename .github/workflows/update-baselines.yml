@@ -1,0 +1,255 @@
+# ── Update Storybook visual baselines for a PR ───────────────────────────────
+#   On-demand regeneration of the committed visual-regression screenshots
+#   (`packages/web/src/**/__screenshots__/**/*-chromium-linux.png`) for a single
+#   PR, committed straight back onto that PR's branch.
+#
+#   Why this exists: the `web-test` job (ci.yml) only *compares* against the
+#   committed baselines — it never writes them. When a change legitimately alters
+#   what a component renders, the baselines must be regenerated on Linux/Chromium
+#   with the pinned Playwright build so they compare like-for-like. Doing that by
+#   hand needs a matching local toolchain; this workflow does it on the same
+#   runner image and browser build CI uses, so the result is authoritative.
+#
+#   Two ways to run it against a specific PR:
+#     • Comment `/update-baselines` on the PR (write-access users only).
+#     • Actions ▸ "Update visual baselines" ▸ Run workflow, enter the PR number.
+#
+#   It runs `vitest -u` (full suite by default), then commits ONLY the changed
+#   files under `__screenshots__/`. Baselines that still match are rewritten
+#   byte-identical and produce no diff, so the commit contains exactly the
+#   baselines that actually moved.
+name: Update visual baselines
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to update visual baselines for
+        required: true
+        type: string
+  issue_comment:
+    types: [created]
+
+# One in-flight run per PR; a newer trigger supersedes an older one. The group
+# key includes a command discriminator so it spans ONLY real triggers
+# (workflow_dispatch or a `/update-baselines` comment): without it, every
+# unrelated comment on the PR joins the group and cancel-in-progress would abort
+# an in-flight regeneration before the job `if:` skips that no-op run.
+concurrency:
+  group: update-baselines-${{ github.event.inputs.pr || github.event.issue.number }}-${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.comment.body, '/update-baselines') }}
+  cancel-in-progress: true
+
+# Least privilege: grant nothing by default; the one job grants exactly what it needs.
+permissions: {}
+
+jobs:
+  update-baselines:
+    name: Regenerate + commit baselines
+    # Manual dispatch, OR a `/update-baselines` comment on a PR from someone with
+    # write access. The author-association gate keeps drive-by commenters from
+    # pushing commits to a branch via this workflow.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.pull_request != null &&
+       startsWith(github.event.comment.body, '/update-baselines') &&
+       contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # a wedged browser run must not burn the whole 6h ceiling
+    permissions:
+      contents: write # push the regenerated baselines back onto the PR branch
+      pull-requests: write # react to the triggering comment / post a summary
+    steps:
+      # `author_association` (in the job `if:`) is a cheap pre-filter, not a
+      # permission: a read-only COLLABORATOR or a non-write org MEMBER matches it
+      # too. Authoritatively verify the commenter has write (or admin) access
+      # before anything touches the `contents: write` token. workflow_dispatch is
+      # exempt — GitHub already requires write access to dispatch a workflow.
+      - name: Verify commenter has write access
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v7
+        with:
+          script: |
+            const { data: perm } =
+              await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: context.payload.comment.user.login,
+              });
+            if (!['write', 'admin'].includes(perm.permission)) {
+              core.setFailed(
+                `@${context.payload.comment.user.login} has '${perm.permission}' access; ` +
+                '/update-baselines requires write access to this repository.',
+              );
+            }
+
+      # Acknowledge a comment trigger immediately so the user knows it started
+      # (dispatch runs are already visible in the Actions tab).
+      - name: React to the command
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes',
+            });
+
+      # Resolve the PR number (from the input or the comment) and its head branch.
+      # A fork PR is rejected: GITHUB_TOKEN cannot push to a fork, so there is
+      # nowhere to commit the baselines back to.
+      - name: Resolve target PR
+        id: pr
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v7
+        with:
+          script: |
+            const number = Number(
+              context.eventName === 'workflow_dispatch'
+                ? context.payload.inputs.pr
+                : context.payload.issue.number,
+            );
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: number,
+            });
+            // Set `number` before the fork check so a rejected fork still gets
+            // an explanatory failure comment from the final step.
+            core.setOutput('number', String(number));
+            if (pr.head.repo.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+              core.setFailed(
+                `PR #${number} is from a fork (${pr.head.repo.full_name}); ` +
+                'the workflow token cannot push baselines to a fork branch. ' +
+                'Regenerate locally and push from the fork instead.',
+              );
+              return;
+            }
+            core.setOutput('ref', pr.head.ref);
+
+      - name: Checkout PR branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.pr.outputs.ref }}
+          fetch-depth: 0
+          # Do NOT leave the write token in .git/config: it would be available to
+          # `pnpm install` lifecycle scripts and the whole vitest browser run. The
+          # commit step below authenticates its single push explicitly instead.
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Mirror ci.yml's web-test job exactly: key the browser cache on the
+      # resolved Playwright version (pinned to 1.56.0 so the Chromium build
+      # matches the one the baselines were generated with).
+      - name: Resolve Playwright version
+        id: pw
+        working-directory: packages/web
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Playwright Chromium (+ OS deps)
+        run: pnpm --filter @lorekit/web exec playwright install --with-deps chromium
+
+      - name: Cache Vite/Storybook optimizer
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            packages/web/node_modules/.vite
+            packages/web/node_modules/.cache/storybook
+          key: web-vite-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'packages/web/.storybook/**', 'packages/web/vitest.storybook.config.ts') }}
+
+      # `-u` regenerates baselines and passes. Invoked via `npx` (not
+      # `pnpm exec` / `nx`) for the same reason ci.yml uses it: those wrappers
+      # keep the Playwright child's stdio open and the run never returns.
+      - name: Regenerate visual baselines (vitest -u)
+        working-directory: packages/web
+        run: npx vitest run --config vitest.storybook.config.ts -u
+
+      # Stage ONLY the screenshot baselines (`:(glob)` enables `**`), so an
+      # unrelated stray write can never ride along in the commit.
+      # `REF`/`NUMBER` are passed via env, never interpolated into the shell:
+      # a branch name can legally contain `$()` / backticks, which would execute
+      # if `${{ … }}` were spliced into a `run:` line.
+      - name: Commit + push updated baselines
+        id: commit
+        env:
+          REF: ${{ steps.pr.outputs.ref }}
+          NUMBER: ${{ steps.pr.outputs.number }}
+          # The write token, scoped to just this step (persist-credentials:false
+          # kept it out of .git/config for install + the vitest run above).
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- ':(glob)packages/web/src/**/__screenshots__/**'
+          staged="$(git diff --cached --name-only)"
+          if [ -z "$staged" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No baseline changes — every screenshot still matches."
+            exit 0
+          fi
+          printf 'Staged baselines:\n%s\n' "$staged"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "count=$(printf '%s\n' "$staged" | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          git commit -m "chore(web): update Storybook visual baselines" \
+                     -m "Regenerated by the Update visual baselines workflow for PR #${NUMBER}."
+          # Authenticate only this push (persist-credentials:false above). GH_TOKEN
+          # is the auto-masked GITHUB_TOKEN, so it stays redacted in the run log.
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "HEAD:${REF}"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Report the outcome on the PR. NOTE: this commit is pushed with
+      # GITHUB_TOKEN, which by design does NOT re-trigger workflow runs, so
+      # `web-test` will not auto-run on it — push an empty follow-up commit (or
+      # use a PAT here) if you need CI to re-verify.
+      - name: Comment result on PR
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v7
+        with:
+          script: |
+            const number = ${{ steps.pr.outputs.number || 0 }};
+            if (!number) return;
+            const changed = '${{ steps.commit.outputs.changed }}' === 'true';
+            const ok = '${{ job.status }}' === 'success';
+            let body;
+            if (!ok) {
+              body =
+                '❌ **Update visual baselines** failed. See the ' +
+                `[run log](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}` +
+                `/actions/runs/${context.runId}).`;
+            } else if (!changed) {
+              body =
+                'ℹ️ **Update visual baselines**: no changes — every screenshot ' +
+                'still matches its committed baseline.';
+            } else {
+              body =
+                `✅ **Update visual baselines**: committed ${{ steps.commit.outputs.count || 0 }} ` +
+                `updated baseline(s) as \`${{ steps.commit.outputs.sha }}\`.\n\n` +
+                'ℹ️ This commit was pushed with `GITHUB_TOKEN`, so `web-test` will ' +
+                'not re-run automatically — push a follow-up commit if you need CI ' +
+                'to re-verify.';
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: number,
+              body,
+            });
