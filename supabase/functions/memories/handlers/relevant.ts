@@ -71,8 +71,10 @@ export async function handleRelevant(
   const params = validated.data;
 
   // Most-specific first. The ORDER is meaningful — it is the precedence
-  // hierarchy, and the scorer uses it to break ties — so it is preserved
-  // verbatim rather than sorted or de-duplicated into a set.
+  // hierarchy, and the scorer uses it to break ties — so `parseTagsParam` keeps
+  // first-appearance order rather than sorting. It does trim each entry and drop
+  // later duplicates (`normalizeTagList`), which cannot change the precedence a
+  // caller expressed: a repeat only ever restates a rank already claimed.
   const scopes = parseTagsParam(params.scopes);
 
   span.setAttributes({
