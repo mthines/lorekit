@@ -4857,7 +4857,7 @@ end;
 $$;
 
 -- ═════════════════════════════════════════════════════════════════════════
--- Keyset-covering index for the memories list seek — 00060.
+-- Keyset-covering index for the memories list seek — 00061.
 -- The audit_log precedent (00012, asserted above) applied to the hottest read
 -- path in the product: the list query orders by (updated_at desc, id desc) and
 -- seeks on the same pair, so the index must carry the id column or the
@@ -4886,6 +4886,154 @@ begin
   ) into v_partial;
   assert v_partial,
     'memories keyset: the covering index must stay partial on archived_at is null';
+end;
+$$;
+
+-- ── 77. memories.embedding — the dormant semantic column (00060) ────────────
+-- 00060 lands the schema for semantic search with NOTHING reading or writing
+-- it. These assertions are therefore mostly about ABSENCE of effect: the point
+-- of a dormant migration is that you can prove it changed no behaviour, and a
+-- structural claim in a comment proves nothing.
+-- AC-1: the extension, both columns and both indexes are real schema.
+-- AC-2: the column is NULLABLE with NO DEFAULT. Null means "not embedded yet",
+--       which is the state every existing row is in and the state the backfill
+--       will query for; a default would make "never embedded" indistinguishable
+--       from "embedded as zeroes".
+-- AC-3: every pre-existing row reads null — the migration backfilled nothing.
+-- AC-4: `memory_write` is UNAFFECTED. It takes no embedding parameter and a
+--       write leaves the column null, so the whole existing write path is
+--       untouched by a column it does not know about.
+-- AC-5: the pairing CHECK holds in both directions. A vector without a model is
+--       unattributable and a model without a vector is a lie about what the row
+--       holds; both are silent failures, so they are refused at the storage
+--       layer rather than trusted to a writer that does not exist yet.
+-- AC-6: the model column's length backstop bounds an unbounded free-text value.
+-- AC-7: a vector of the WRONG WIDTH is refused. This is what pins the 1536
+--       decision to the schema — pgvector's HNSW index rejects more than 2000
+--       dimensions, so a later "let's just use the 3072 model" would otherwise
+--       fail at index-build time in a deploy rather than here.
+do $$
+declare
+  v_uid   constant uuid := '00000000-0000-0000-0000-0000000000a1';
+  v_rows  int;
+  v_id    uuid;
+  v_null  int;
+  v_raised boolean;
+  v_msg   text;
+  -- A syntactically valid 1536-dimension vector, built rather than typed.
+  v_vec   constant text := '[' || array_to_string(array_fill(0.001::real, array[1536]), ',') || ']';
+begin
+  -- AC-1 — the extension and the schema it made possible.
+  select count(*) into v_rows from pg_extension where extname = 'vector';
+  assert v_rows = 1, 'embeddings AC-1: the vector extension must be enabled';
+
+  select count(*) into v_rows
+    from information_schema.columns
+   where table_name = 'memories' and column_name = 'embedding';
+  assert v_rows = 1, 'embeddings AC-1: memories.embedding must exist';
+
+  select count(*) into v_rows
+    from information_schema.columns
+   where table_name = 'memories' and column_name = 'embedding_model';
+  assert v_rows = 1, 'embeddings AC-1: memories.embedding_model must exist';
+
+  select count(*) into v_rows
+    from pg_indexes
+   where tablename = 'memories' and indexname = 'memories_embedding_hnsw_idx';
+  assert v_rows = 1, 'embeddings AC-1: the HNSW ANN index must exist';
+
+  select count(*) into v_rows
+    from pg_indexes
+   where tablename = 'memories' and indexname = 'memories_embedding_pending_idx';
+  assert v_rows = 1,
+    'embeddings AC-1: the backfill coverage index must exist — without it a '
+    'resumable backfill scans the whole table on every batch';
+
+  -- The index must be HNSW, not IVFFlat. Built on an empty table IVFFlat
+  -- produces meaningless centroids and has to be dropped and rebuilt once data
+  -- lands, which is a second migration on a table that is large by then.
+  select count(*) into v_rows
+    from pg_class c
+    join pg_am am on am.oid = c.relam
+   where c.relname = 'memories_embedding_hnsw_idx' and am.amname = 'hnsw';
+  assert v_rows = 1, 'embeddings AC-1: the ANN index must use HNSW, not IVFFlat';
+
+  -- AC-2 — nullable, and no default.
+  select count(*) into v_rows
+    from information_schema.columns
+   where table_name = 'memories' and column_name = 'embedding'
+     and is_nullable = 'YES' and column_default is null;
+  assert v_rows = 1, 'embeddings AC-2: embedding must be nullable with no default';
+
+  -- AC-3 — the migration embedded nothing. Anti-vacuity first: there must be
+  -- rows to be null, or this assertion is about the empty set.
+  select count(*) into v_rows from memories;
+  assert v_rows > 0, 'embeddings AC-3: precondition — earlier sections must have written rows';
+  select count(*) into v_null from memories where embedding is null;
+  assert v_null = v_rows,
+    format('embeddings AC-3: every pre-existing row must read null, got %s of %s', v_null, v_rows);
+
+  -- AC-4 — the existing write path is untouched by a column it does not know.
+  select id into v_id from memory_write(v_uid, 'global', 'embedding-dormant-key', 'v');
+  select count(*) into v_rows
+    from memories where id = v_id and embedding is null and embedding_model is null;
+  assert v_rows = 1, 'embeddings AC-4: memory_write must leave both columns null';
+
+  -- AC-5 — the pairing CHECK, both directions.
+  v_raised := false;
+  begin
+    update memories set embedding = v_vec::vector where id = v_id;
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, 'embeddings AC-5: a vector with no model must be refused';
+
+  v_raised := false;
+  begin
+    update memories set embedding_model = 'text-embedding-3-small' where id = v_id;
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, 'embeddings AC-5: a model with no vector must be refused';
+
+  -- ...and the pair together is admitted, so the CHECK is a pairing rule and
+  -- not a ban on ever using the columns.
+  update memories
+     set embedding = v_vec::vector, embedding_model = 'text-embedding-3-small'
+   where id = v_id;
+  select count(*) into v_rows from memories where id = v_id and embedding is not null;
+  assert v_rows = 1, 'embeddings AC-5: a vector WITH its model must be admitted';
+
+  -- AC-6 — the model length backstop.
+  v_raised := false;
+  begin
+    update memories set embedding_model = repeat('x', 129) where id = v_id;
+  exception when check_violation then
+    v_raised := true;
+  end;
+  assert v_raised, 'embeddings AC-6: a 129-char embedding_model must violate the CHECK';
+
+  -- AC-7 — the width is pinned by the type, so a wrong-dimension vector cannot
+  -- be stored at all. The handler is `data_exception` (SQLSTATE class 22) and
+  -- not `others`: pgvector's typmod coercion raises ERRCODE_DATA_EXCEPTION with
+  -- "expected 1536 dimensions, not 3", so `others` would let ANY failure —
+  -- including one unrelated to width — satisfy the assertion. The message check
+  -- is what keeps the assertion pinned to the dimension mismatch it claims to
+  -- prove rather than to "some class-22 error happened". It carries the literal
+  -- `1536` on purpose: matching only `%dimensions%` would prove *a* width
+  -- complaint and would keep passing if the column were silently redefined to
+  -- some other width, which is the one redefinition this AC exists to catch.
+  v_raised := false;
+  v_msg    := null;
+  begin
+    update memories set embedding = '[0.1,0.2,0.3]'::vector where id = v_id;
+  exception when data_exception then
+    v_raised := true;
+    v_msg    := sqlerrm;
+  end;
+  assert v_raised, 'embeddings AC-7: a 3-dimension vector must be refused by the 1536-wide column';
+  assert v_msg like '%1536 dimensions%',
+    format('embeddings AC-7: the refusal must name the 1536-wide column, got %L', v_msg);
 end;
 $$;
 

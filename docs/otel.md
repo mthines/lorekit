@@ -35,7 +35,7 @@ Attributes on `lorekit.memory.*` spans:
 |-----------|---------|-------|
 | `lorekit.tool.name` | `memory.write` | Bounded set — safe as metric dimension |
 | `lorekit.scope` | `repo::mthines/gw-tools` | Canonical scope string |
-| `lorekit.scope.type` | `repo` | `global` \| `project` \| `repo` \| `branch` |
+| `lorekit.scope.type` | `repo` | `global` \| `project` \| `repo` \| `branch` \| `mixed` (a multi-type `memory.search`) \| `invalid` (ungrammatical input). **Omitted entirely** when the operation carries no scope — never a placeholder. Resolved by the shared `scope-type-attribute.ts` |
 | `lorekit.key` | `aw-lessons::worktree-naming` | Lesson key |
 | `lorekit.source_agent` | `aw-executor` | Agent that triggered the write |
 | `lorekit.trigger` | `stuck-loop` | What triggered the write |
@@ -98,7 +98,7 @@ select tool_name,
 | `org_id` | `uuid` | Set for org-owned writes, null for personal |
 | `plan_name` | `text` | `'free'` or a future plan name |
 | `tool_name` | `text` | e.g. `memory.write`, `memory.search`, `transport` (rate-limit) |
-| `scope_type` | `text` | `global` \| `project` \| `repo` \| `branch` \| `null` (org tools) |
+| `scope_type` | `text` | `global` \| `project` \| `repo` \| `branch` \| `invalid` (ungrammatical `scope` argument) \| `null` (org tools, and any call with no singular `scope`) |
 | `auth_type` | `text` | `api_key` \| `jwt` (excludes service-role) |
 | `outcome` | `text` | `ok` \| `cap_exceeded` \| `rate_limited` \| `permission_denied` \| `error` |
 | `duration_ms` | `integer` | Wall-clock handler time |

@@ -1105,3 +1105,240 @@ function headerLength(text) {
 function indexLines(text) {
   return text.split('\n').filter((l) => l.startsWith('- ('));
 }
+
+// ── the scope map's counts come from the store, not from the bounded read ────
+// The map tells a reader how much lore sits in each scope that this injection
+// did not show them, so the numbers have to be the store's real totals. Derived
+// from the bounded read they could only ever be `SCOPE_READ_LIMIT+`, which is a
+// floor rather than a quantity.
+
+// A store that can enumerate. `inventory` is returned verbatim so a test can
+// choose either envelope: the bare array a LocalStore answers with, or the
+// `{ ok, scopes }` a RemoteStore does.
+function enumerableStore(byScope, inventory) {
+  const base = fakeStore(byScope);
+  return { ...base, listScopes: async () => inventory };
+}
+
+test('fetchLessons scope map — exact counts from the local store bare-array form', async () => {
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  const [first] = scope.readOrder;
+
+  const { scopeCounts } = await fetchLessons(
+    enumerableStore({ [first]: [{ key: 'a', value: 'v' }] }, [{ scope: first, count: 412 }]),
+    process.cwd(),
+  );
+
+  assert.deepEqual(scopeCounts, [{ scope: first, count: 412, atReadLimit: false }]);
+  assert.match(
+    renderScopeMap(scopeCounts),
+    new RegExp(`${first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} 412(?!\\+)`),
+    'an exact count carries no + suffix — the suffix admits a floor, and this is not one',
+  );
+});
+
+test('fetchLessons scope map — exact counts from the remote envelope form', async () => {
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  const [first] = scope.readOrder;
+
+  const { scopeCounts } = await fetchLessons(
+    enumerableStore(
+      { [first]: [{ key: 'a', value: 'v' }] },
+      { ok: true, scopes: [{ scope: first, count: 77, last_activity: '2026-07-30T09:12:00.000Z' }] },
+    ),
+    process.cwd(),
+  );
+
+  assert.equal(scopeCounts[0].count, 77);
+  assert.equal(scopeCounts[0].atReadLimit, false);
+});
+
+test('fetchLessons scope map — the enumeration is issued before the per-scope reads', async () => {
+  // The inventory needs nothing from the read loop, so awaiting it after the
+  // loop would cost a remote store one extra SERIAL round-trip on the
+  // session-start path. Pin the ordering rather than trusting the source to
+  // keep it: a later edit that moves the call back below the loop is invisible
+  // to every other assertion in this file.
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  const [first] = scope.readOrder;
+
+  const calls = [];
+  const base = fakeStore({ [first]: [{ key: 'a', value: 'v' }] });
+  const store = {
+    async list(args) {
+      calls.push('list');
+      return base.list(args);
+    },
+    async listScopes() {
+      calls.push('listScopes');
+      return [{ scope: first, count: 5 }];
+    },
+  };
+
+  const { scopeCounts } = await fetchLessons(store, process.cwd());
+
+  assert.equal(calls[0], 'listScopes', 'the enumeration starts before the first per-scope read');
+  assert.ok(calls.includes('list'), 'precondition — the read loop still ran');
+  assert.deepEqual(scopeCounts, [{ scope: first, count: 5, atReadLimit: false }]);
+});
+
+test('fetchLessons scope map — the store total counts what EXISTS, not what was injected', async (t) => {
+  // Two deliberate differences from the derived counts, both because the map
+  // answers a different question from the injected set.
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  if (scope.readOrder.length < 2) {
+    t.skip('needs at least two scopes to tell the enumerated total from the injected set');
+    return;
+  }
+  const [narrow] = scope.readOrder;
+  const broad = scope.readOrder[scope.readOrder.length - 1];
+
+  const { scopeCounts, lessons } = await fetchLessons(
+    enumerableStore(
+      {
+        [narrow]: [{ key: 'shared', value: 'near' }],
+        // Every lesson here is shadowed, so NONE of them reaches the injected
+        // set — and the reader most needs telling the scope is there.
+        [broad]: [{ key: 'shared', value: 'far' }],
+      },
+      [{ scope: narrow, count: 1 }, { scope: broad, count: 9 }],
+    ),
+    process.cwd(),
+  );
+
+  assert.equal(lessons.filter((l) => l.scope === broad).length, 0, 'precondition — nothing from the broad scope survived');
+  const rows = Object.fromEntries(scopeCounts.map((s) => [s.scope, s.count]));
+  assert.equal(rows[broad], 9, 'a scope whose lessons all lost is still on the map');
+  assert.equal(rows[narrow], 1);
+});
+
+test('fetchLessons scope map — narrowed to readOrder and ordered by the hierarchy', async () => {
+  // `listScopes()` is store-wide by design (it backs the `scopes` command).
+  // The map describes THIS workspace, so a scope the reader is not working in
+  // is noise dressed up as guidance.
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  const inOrder = scope.readOrder.map((s, i) => ({ scope: s, count: i + 1 }));
+
+  const { scopeCounts } = await fetchLessons(
+    enumerableStore({ [scope.readOrder[0]]: [{ key: 'a', value: 'v' }] }, [
+      { scope: 'repo::somewhere/else', count: 999 },
+      // Reversed, to prove the output order is `readOrder`'s and not the
+      // inventory's.
+      ...inOrder.slice().reverse(),
+    ]),
+    process.cwd(),
+  );
+
+  assert.deepEqual(scopeCounts.map((s) => s.scope), scope.readOrder);
+  assert.ok(
+    !scopeCounts.some((s) => s.scope === 'repo::somewhere/else'),
+    'an unrelated scope is not on this workspace’s map',
+  );
+});
+
+test('fetchLessons scope map — a zero-count scope is omitted, not rendered as 0', async () => {
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  const [first] = scope.readOrder;
+  const { scopeCounts } = await fetchLessons(
+    enumerableStore({ [first]: [{ key: 'a', value: 'v' }] }, [
+      { scope: first, count: 3 },
+      ...scope.readOrder.slice(1).map((s) => ({ scope: s, count: 0 })),
+    ]),
+    process.cwd(),
+  );
+  assert.deepEqual(scopeCounts, [{ scope: first, count: 3, atReadLimit: false }]);
+});
+
+test('fetchLessons scope map — falls back to the derived counts when enumeration fails', async () => {
+  // Best-effort, like everything on this path. An unreachable remote must cost
+  // the reader precision, never the map itself.
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  const [capped] = scope.readOrder;
+  const byScope = {
+    [capped]: Array.from({ length: SCOPE_READ_LIMIT }, (_, i) => ({ key: `k${i}`, value: `v${i}` })),
+  };
+
+  const failures = [
+    ['envelope failure', { ok: false, networkError: 'ECONNREFUSED' }],
+    ['unusable store', { ok: false, unusable: true }],
+    ['no result at all', undefined],
+  ];
+  for (const [label, inventory] of failures) {
+    const { scopeCounts } = await fetchLessons(enumerableStore(byScope, inventory), process.cwd());
+    const row = scopeCounts.find((s) => s.scope === capped);
+    assert.equal(row.count, SCOPE_READ_LIMIT, `${label}: falls back to the bounded count`);
+    assert.equal(row.atReadLimit, true, `${label}: and says so with the + suffix`);
+  }
+
+  // A throwing store, and a store with no `listScopes` at all — both ordinary.
+  const throwing = { ...fakeStore(byScope), listScopes: async () => { throw new Error('disk on fire'); } };
+  const thrown = await fetchLessons(throwing, process.cwd());
+  assert.equal(thrown.scopeCounts.find((s) => s.scope === capped).atReadLimit, true);
+
+  const noMethod = await fetchLessons(fakeStore(byScope), process.cwd());
+  assert.equal(noMethod.scopeCounts.find((s) => s.scope === capped).atReadLimit, true);
+});
+
+test('fetchLessons scope map — a successful enumeration that omits a scope falls back per scope', async (t) => {
+  // `ok: true` means the store answered, not that the answer is complete. A
+  // scope that just contributed injected lessons must keep a row: dropping it
+  // would show the reader lore in the digest with nothing saying where it
+  // lives, which is worse than the approximate count already in hand.
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  if (scope.readOrder.length < 2) {
+    t.skip('needs at least two scopes for the enumeration to omit one of them');
+    return;
+  }
+  const [narrow] = scope.readOrder;
+  const broad = scope.readOrder[scope.readOrder.length - 1];
+
+  const byScope = {
+    [narrow]: Array.from({ length: SCOPE_READ_LIMIT }, (_, i) => ({ key: `n${i}`, value: 'v' })),
+    [broad]: [{ key: 'b1', value: 'v' }, { key: 'b2', value: 'v' }],
+  };
+
+  // The enumeration succeeds and names only the broad scope. The narrow one is
+  // missing entirely; a zero-count row must behave the same way.
+  const { scopeCounts } = await fetchLessons(
+    enumerableStore(byScope, [{ scope: broad, count: 9 }, { scope: 'repo::elsewhere/x', count: 0 }]),
+    process.cwd(),
+  );
+
+  const rows = Object.fromEntries(scopeCounts.map((s) => [s.scope, s]));
+  assert.equal(rows[broad].count, 9, 'the enumerated scope keeps its exact count');
+  assert.equal(rows[broad].atReadLimit, false);
+  assert.ok(rows[narrow], 'the omitted scope is not silently dropped from the map');
+  assert.equal(rows[narrow].count, SCOPE_READ_LIMIT, 'it falls back to the derived count');
+  assert.equal(rows[narrow].atReadLimit, true, 'and the derived count still admits it is a floor');
+  assert.deepEqual(scopeCounts.map((s) => s.scope), [narrow, broad], 'still ordered by the hierarchy');
+});
+
+test('fetchLessons scope map — enumeration never changes the injected lessons', async () => {
+  // The map is a footer. Whether the store could enumerate must not move a
+  // single lesson, or this "refactor" would be a behaviour change in disguise.
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  const [first] = scope.readOrder;
+  const byScope = {
+    [first]: [
+      { key: 'recurring', value: 'v', seenCount: 9, updatedAt: '2026-07-01T00:00:00.000Z' },
+      { key: 'one-off', value: 'v', seenCount: 1, updatedAt: '2026-07-31T00:00:00.000Z' },
+    ],
+  };
+  const withInventory = await fetchLessons(enumerableStore(byScope, [{ scope: first, count: 500 }]), process.cwd());
+  const without = await fetchLessons(fakeStore(byScope), process.cwd());
+
+  assert.deepEqual(
+    withInventory.lessons.map((l) => l.key),
+    without.lessons.map((l) => l.key),
+  );
+  assert.equal(withInventory.applicable, without.applicable);
+});

@@ -6,6 +6,7 @@
 import { type AuthContext, getDb, canWrite, canRead, getUserId, isJwtAuth } from './auth.ts';
 import { type StorageAdapter } from './storage-adapter.ts';
 import { UserInputError, safeValidateScope } from '../_shared/scope.ts';
+import { scopeTypeAttribute } from '../_shared/scope-type-attribute.ts';
 import { OrgPermissionError } from './org-permissions.ts';
 import {
   toolWrite,
@@ -219,9 +220,14 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     }
 
     const rawScope = toolArgs['scope'] as string | undefined;
-    const scopeType = rawScope
-      ? (rawScope.split('::')[0] ?? 'unknown')
-      : 'unknown';
+    // BOUNDED, and absent rather than placeholdered. This used to be
+    // `rawScope ? rawScope.split('::')[0] : 'unknown'`, which had two failure
+    // modes: an ungrammatical scope echoed the caller's own prefix into a
+    // dimension declared low-cardinality, and a tool that takes no `scope` at
+    // all recorded the literal `unknown`. `memory.search` takes `scopes` (an
+    // ARRAY), so EVERY search landed in that placeholder bucket. See
+    // `_shared/scope-type-attribute.ts`.
+    const scopeType = scopeTypeAttribute(rawScope, toolArgs['scopes']);
     // The EXACT scope, for `usage_events.scope` (migration 00058) — what makes
     // "records read from repo::owner/name" answerable, which the deliberately
     // low-cardinality `scopeType` above cannot. Normalised through the canonical
@@ -231,7 +237,10 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
     const usageScope = safeValidateScope(rawScope);
     const toolSpan = span.child(`lorekit.${toolName}`, {
       'lorekit.tool.name': toolName,
-      'lorekit.scope.type': scopeType,
+      // Omitted when the tool carries no scope at all — the same conditional
+      // spread `lorekit.scope` below already uses, and the posture
+      // `api/router.ts` states for `auth.user_id`: absent, never empty.
+      ...(scopeType ? { 'lorekit.scope.type': scopeType } : {}),
       ...(rawScope ? { 'lorekit.scope': rawScope } : {}),
     });
 

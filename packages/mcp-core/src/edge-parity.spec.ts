@@ -101,6 +101,11 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   // CORS origin allowlist matching (www/apex sibling expansion) — mirrored into
   // the _shared/api tree because cors.ts (Deno) cannot cross-import mcp-core.
   ['cors-origins.ts', '_shared/api/cors-origins.ts'],
+  // The bounded value behind `lorekit.scope.type`. Mirrored because BOTH
+  // transports resolve it before validation — mcp-handler.ts from the tool
+  // arguments, api/router.ts from the query string — and neither can
+  // cross-import mcp-core.
+  ['scope-type-attribute.ts', '_shared/scope-type-attribute.ts'],
 ];
 
 describe('edge-function mirror parity', () => {
