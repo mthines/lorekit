@@ -191,6 +191,13 @@ test("classifyMistake only ever classifies INVALID scopes", () => {
     classifyMistake("branch::mthines/gw-tools"),
     MISTAKE_BRANCH_MISSING,
   );
+  // A trailing slash IS the slash mistake: the separator was written, the
+  // branch name after it is just empty. Reporting an omitted branch here would
+  // name a mistake the agent did not make.
+  assert.equal(
+    classifyMistake("branch::mthines/gw-tools/"),
+    MISTAKE_BRANCH_WITH_SLASH,
+  );
   // Not even an `owner/repo` — invalid for an unrelated reason. The owner/repo
   // test is DELEGATED to `validateScope`, never a copy of its charset, so a
   // segment the validator rejects is not one of the two branch mistakes.

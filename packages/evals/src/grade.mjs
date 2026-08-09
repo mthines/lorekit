@@ -105,9 +105,13 @@ export function classifyMistake(scope) {
     // passing while the product's rules move, and a hand-copied charset would
     // make MISTAKE_BRANCH_MISSING quietly stop firing the day it widens.
     if (!isValidScope(`repo::${segments.slice(0, 2).join("/")}`)) return null;
-    // Anything after `owner/repo` is the branch, glued on with `/`.
-    const appended = segments.slice(2).join("/");
-    return appended === "" ? MISTAKE_BRANCH_MISSING : MISTAKE_BRANCH_WITH_SLASH;
+    // Which mistake it is turns on whether a `/` was WRITTEN after the repo,
+    // not on whether what follows is non-empty. `branch::owner/repo/` has an
+    // empty tail but the slash is right there, so it is the slash mistake;
+    // only `branch::owner/repo`, with no third segment at all, is the omission.
+    return segments.length > 2
+      ? MISTAKE_BRANCH_WITH_SLASH
+      : MISTAKE_BRANCH_MISSING;
   }
   return null;
 }
