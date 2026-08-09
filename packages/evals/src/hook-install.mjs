@@ -81,7 +81,9 @@ export function parseInjectedIndex(text) {
   const lessons = [];
   for (const line of lines) {
     // The separator is an em dash; the hook text itself may contain one, so the
-    // match is anchored on the leading `- (scope) key ` shape and non-greedy.
+    // match is anchored on the leading `- (scope) key ` shape: the key is a
+    // single non-space token, so the FIRST em dash after it ends the key field
+    // and any later one stays inside the captured hook text.
     const m = line.match(/^-\s+\(([^)]+)\)\s+(\S+)\s+—\s*([\s\S]*)$/);
     if (!m) continue;
     lessons.push({
