@@ -190,7 +190,10 @@ runs:
         # line can never be mistaken for the deployment URL.
         out="$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")"
         echo "$out"
-        URL="$(printf '%s\n' "$out" | grep -Eo 'https://[^[:space:]]+' | tail -1)"
+        # `|| true` so grep's no-match exit (1) doesn't abort under pipefail/set -e
+        # before the guard below runs — an empty URL is handled by that guard,
+        # which prints a clear ::error:: and exits 1, so nothing is swallowed.
+        URL="$(printf '%s\n' "$out" | grep -Eo 'https://[^[:space:]]+' | tail -1 || true)"
         if [ -z "$URL" ]; then
           echo "::error::Could not parse Vercel preview deployment URL"
           exit 1
