@@ -753,7 +753,7 @@ export async function toolPurgeExpired(
  * Tenant scoping lives INSIDE the RPC (it composes `lorekit_member_org_ids`
  * exactly as the `memories` RLS read policies do), so there is deliberately no
  * `applyTenantScope` call here — there is no query to scope, and a second
- * predicate would be somewhere for the two to drift. This mirrors
+ * predicate would be a place for the two to drift. This mirrors
  * `memories/handlers/scopes.ts`, which makes the same call and the same
  * argument; the two surfaces answer identically by construction.
  */
