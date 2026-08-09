@@ -8,7 +8,11 @@ import { deriveScope } from '../scope.mjs';
 // can't drift from it, and the hot path never pulls in the `lessons-view.mjs`
 // render/`util` stack. (Failure-relevance matching is the store's job now, so
 // the hook no longer needs `matchesQuery` — `search` still does.)
-import { resolvePrecedence } from '../lessons-pure.mjs';
+// `rankLessons` comes from the same dependency-free module for the same reason:
+// the injected set is chosen by ONE scorer, and a future `memory.relevant` verb
+// must be able to reuse it rather than grow a second ranking with its own idea
+// of what "most useful" means.
+import { resolvePrecedence, rankLessons } from '../lessons-pure.mjs';
 // The deep-link builder is the SAME pure module the `link` command and the
 // `--link` flag use, so the hook's confirmation/nudge links are JSON-encoded
 // correctly (a raw `?scope=global` silently means "all scopes") and can't drift
@@ -22,7 +26,10 @@ import { loreScopeUrl, buildLessonUrl } from '../deeplink-pure.mjs';
 import { resolveDefaultTtlDays, matchesScopePrefix } from '../store/ttl.mjs';
 import { FRICTION_FAILURE, FRICTION_STUCK_LOOP } from './friction.mjs';
 
-const MAX_LESSONS = 15;
+// Cap on the SessionStart set. Exported so tests assert against the constant
+// rather than restating its value — a saturation precondition written as a
+// literal goes vacuously true the moment this number moves.
+export const MAX_LESSONS = 15;
 // Cap on lessons injected on a failure — a small, focused "you've seen this
 // before" set, never the whole applicable corpus.
 const MAX_RELEVANT = 3;
@@ -42,7 +49,7 @@ const MAX_SCAN_CHARS = 4096;
 // precedence via the shared pure `resolvePrecedence` (the SAME first-seen /
 // more-specific-wins merge `tree` renders) — so the hook and `tree` provably
 // can't drift. Any per-scope failure is skipped (memory is best-effort).
-export async function fetchLessons(store, cwd) {
+export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
   const scope = deriveScope(cwd);
   const groups = [];
   for (const s of scope.readOrder) {
@@ -55,12 +62,49 @@ export async function fetchLessons(store, cwd) {
   }
   // First value per key wins (most-specific scope, since `readOrder` is
   // narrow→broad) — exactly what the old inline `byKey` merge did, now via the
-  // one shared resolver. The winners, in group order, are the injected set.
+  // one shared resolver.
   const { groups: resolved } = resolvePrecedence({ groups });
-  const lessons = [];
+  const winners = [];
   for (const g of resolved) {
-    for (const e of g.entries) if (e.winning) lessons.push(e);
+    for (const e of g.entries) if (e.winning) winners.push(e);
   }
+
+  // THE TWO STEPS ANSWER DIFFERENT QUESTIONS, AND THE ORDER MATTERS.
+  //
+  // `resolvePrecedence` decides WHICH COPY of a key survives — a project
+  // lesson shadows the global lesson of the same name — and that is a
+  // correctness rule, not a preference. `rankLessons` then decides WHICH OF THE
+  // SURVIVORS a reader sees first. Ranking runs on the winners only, so a
+  // shadowed lesson can never be promoted back into the set by scoring well;
+  // precedence still owns the merge, exactly as `tree` renders it.
+  //
+  // Before this, the cap took whatever the group order happened to hand it,
+  // which is recency within a scope. On an active repo the newest cluster is
+  // one task's iteration log, so a dozen near-identical one-offs took the whole
+  // budget and evicted the lessons that had been re-learned all month. Recency
+  // is one factor now, not the ordering.
+  //
+  // WHAT PRECEDENCE DOES *NOT* DO, STATED SO IT IS NOT MISREAD AS A BUG.
+  // Precedence only settles same-key collisions. Across DIFFERENT keys the cap
+  // is now a single cross-scope ranking in which `scopeOrder` is a TIEBREAK
+  // (`rankLessons` sorts on score first and only compares `scopeRank` inside
+  // `SCORE_EPSILON`) — so a recurring `global::` lesson can and will take a
+  // slot from a fresher-but-one-off `project::` one, where the old narrow-first
+  // group order always filled the budget from the most-specific scope down.
+  // That is the intended trade: the budget goes to what has been re-learned,
+  // wherever it lives, and a scope-major sort would reinstate exactly the
+  // "whatever the group order hands it" behaviour this change removes. If a
+  // narrow scope should instead be guaranteed floor space, that is a weighting
+  // change in `rankLessons`, not something to re-derive here.
+  //
+  // `terms: []` is the SessionStart case: nothing has been asked yet, so the
+  // relevance factor contributes nothing and the order is recency + salience.
+  // `scopeOrder` is passed explicitly rather than left to the scorer's
+  // first-appearance default — they agree today, but the hierarchy is
+  // `readOrder`'s to state, not an artefact of how this function happens to
+  // build its array.
+  const lessons = rankLessons(winners, { terms: [], now, scopeOrder: scope.readOrder });
+
   return { scope, lessons: lessons.slice(0, MAX_LESSONS) };
 }
 
