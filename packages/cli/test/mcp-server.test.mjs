@@ -356,11 +356,30 @@ describe('memory.scopes dispatch', () => {
     const out = await listScopes({
       async listScopes() { return [{ scope: 'global' }, { scope: 'x', count: 'lots' }, {}]; },
     });
+    // Sorted by scope ascending, so the empty-scope row leads.
     assert.deepEqual(out.scopes, [
+      { scope: '', count: 0 },
       { scope: 'global', count: 0 },
       { scope: 'x', count: 0 },
-      { scope: '', count: 0 },
     ]);
+  });
+
+  test('sorts by scope ascending regardless of the store shape', async () => {
+    // The documented contract (docs/mcp-tools.md, the tool catalog, llms.txt).
+    // The hosted RPC already orders by scope asc; the local/two-tier stores
+    // return walk order, so the normaliser is what makes the two agree.
+    const unsorted = [
+      { scope: 'repo::acme/api', count: 1 },
+      { scope: 'global', count: 2 },
+      { scope: 'branch::acme/api::main', count: 3 },
+    ];
+    const expected = ['branch::acme/api::main', 'global', 'repo::acme/api'];
+
+    const local = await listScopes({ async listScopes() { return unsorted; } });
+    assert.deepEqual(local.scopes.map((s) => s.scope), expected);
+
+    const remote = await listScopes({ async listScopes() { return { ok: true, scopes: unsorted }; } });
+    assert.deepEqual(remote.scopes.map((s) => s.scope), expected);
   });
 
   test('a store with no scopes yields an empty inventory and no note', async () => {

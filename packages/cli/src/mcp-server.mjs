@@ -264,14 +264,28 @@ export async function listScopes(store) {
   }
 
   // Local/two-tier: the bare array form.
-  if (Array.isArray(res)) return { ok: true, scopes: res.map(shapeScope) };
+  if (Array.isArray(res)) return { ok: true, scopes: sortScopes(res.map(shapeScope)) };
 
   // Remote: the envelope form.
   if (res && res.ok) {
-    return { ok: true, scopes: (Array.isArray(res.scopes) ? res.scopes : []).map(shapeScope) };
+    return { ok: true, scopes: sortScopes((Array.isArray(res.scopes) ? res.scopes : []).map(shapeScope)) };
   }
 
   return { ok: true, scopes: [], note: scopeFailureNote(res) };
+}
+
+// Sorted by scope ascending, which is the contract `docs/mcp-tools.md`, the
+// tool catalog and `llms.txt` all state for `memory.scopes`. The HOSTED surface
+// gets that ordering from `lorekit_memory_scopes` (`order by m.scope asc`,
+// migration 00039/00049), but `LocalStore`/`TwoTierStore.listScopes()` both
+// return their `Map` insertion order — a walk order, not an ordering — so the
+// stdio server owns it here rather than the two surfaces answering differently.
+// Sorting BOTH shapes (not just the local one) makes the guarantee a property
+// of this function instead of an assumption about the store it was handed.
+// Codepoint comparison, deliberately not `localeCompare`: the ordering must not
+// depend on the host's locale.
+function sortScopes(rows) {
+  return rows.sort((a, b) => (a.scope < b.scope ? -1 : a.scope > b.scope ? 1 : 0));
 }
 
 // One inventory row. `last_activity` is passed through when the store supplied

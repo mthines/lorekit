@@ -310,9 +310,10 @@ rows and deduping client-side — a client-side count is silently truncated past
 so whole scopes go missing for exactly the accounts with the most lore.
 
 > The local stdio server (`lorekit mcp`) exposes this tool too, over whichever store is
-> configured. When a store cannot enumerate — an unreachable or unconfigured remote — it
-> answers `{ "scopes": [], "note": "<reason>" }` rather than failing the call, matching how
-> the `lorekit scopes` command degrades.
+> configured, and honours the same scope-ascending ordering — the offline store enumerates in
+> walk order, so the server sorts before answering. When a store cannot enumerate — an
+> unreachable or unconfigured remote — it answers `{ "scopes": [], "note": "<reason>" }`
+> rather than failing the call, matching how the `lorekit scopes` command degrades.
 
 ---
 
