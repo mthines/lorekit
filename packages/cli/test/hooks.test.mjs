@@ -833,8 +833,11 @@ test('ranking is cross-scope — a recurring broad lesson evicts a fresher narro
   // a test of arithmetic. `index` mode is used so no scope-map line is reserved
   // out of the budget — the reservation is `hybrid`'s behaviour and has its own
   // coverage.
-  const [header, ...allLines] = formatLessons(lessons, scope, { mode: 'index' }).split('\n');
-  const roomForThree = [header, ...allLines.slice(0, 3)].join('\n').length;
+  // `fitLines` charges the budget for the lesson lines only (each `+ 1` for the
+  // newline that joins it) — the header is not billed — so the budget is summed
+  // the same way rather than from the whole rendered block.
+  const [, ...allLines] = formatLessons(lessons, scope, { mode: 'index' }).split('\n');
+  const roomForThree = allLines.slice(0, 3).reduce((n, l) => n + l.length + 1, 0);
 
   const tight = formatLessons(lessons, scope, { mode: 'index', maxChars: roomForThree });
   const shownLines = tight.split('\n').slice(1);
