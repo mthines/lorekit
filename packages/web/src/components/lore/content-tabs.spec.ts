@@ -4,6 +4,7 @@ import {
   CONTENT_TABS,
   DEFAULT_CONTENT_TAB,
   nextTabForKey,
+  shortcutTabForKey,
   tabAfterSave,
   type ContentTab,
 } from './content-tabs';
@@ -49,6 +50,38 @@ describe('content-tabs', () => {
 
     it('returns null when the current tab is not in the set', () => {
       expect(nextTabForKey('nope' as ContentTab, 'ArrowRight')).toBeNull();
+    });
+  });
+
+  describe('shortcutTabForKey — P/E global shortcuts', () => {
+    const base = { hasModifier: false, inFormField: false, canEdit: true };
+
+    it('maps p → preview and e → edit (case-insensitive)', () => {
+      expect(shortcutTabForKey('p', base)).toBe('preview');
+      expect(shortcutTabForKey('P', base)).toBe('preview');
+      expect(shortcutTabForKey('e', base)).toBe('edit');
+      expect(shortcutTabForKey('E', base)).toBe('edit');
+    });
+
+    it('never fires while focus is in a form field (typing p/e must not switch)', () => {
+      expect(shortcutTabForKey('p', { ...base, inFormField: true })).toBeNull();
+      expect(shortcutTabForKey('e', { ...base, inFormField: true })).toBeNull();
+    });
+
+    it('never fires when a command modifier is held', () => {
+      expect(shortcutTabForKey('e', { ...base, hasModifier: true })).toBeNull();
+      expect(shortcutTabForKey('p', { ...base, hasModifier: true })).toBeNull();
+    });
+
+    it('suppresses e (edit) when editing is disabled, but still allows p', () => {
+      expect(shortcutTabForKey('e', { ...base, canEdit: false })).toBeNull();
+      expect(shortcutTabForKey('p', { ...base, canEdit: false })).toBe('preview');
+    });
+
+    it('ignores any other key', () => {
+      for (const key of ['a', 'x', 'Enter', ' ', 'Escape']) {
+        expect(shortcutTabForKey(key, base)).toBeNull();
+      }
     });
   });
 });

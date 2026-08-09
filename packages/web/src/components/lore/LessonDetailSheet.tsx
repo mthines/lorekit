@@ -12,7 +12,7 @@ import { EditableField } from '@/components/ui/EditableField';
 import { MarkdownPreview } from '@/components/ui/MarkdownPreview';
 import { TagsField } from '@/components/ui/TagsField';
 import { FormActionBar } from '@/components/ui/FormActionBar';
-import { CONTENT_TABS, DEFAULT_CONTENT_TAB, nextTabForKey, tabAfterSave, type ContentTab } from './content-tabs';
+import { CONTENT_TABS, DEFAULT_CONTENT_TAB, nextTabForKey, shortcutTabForKey, tabAfterSave, type ContentTab } from './content-tabs';
 import { useEditableForm } from '@/lib/hooks/useEditableForm';
 import { useArchiveLesson, useRestoreLesson } from '@/lib/queries/lore';
 import type { LessonEntry } from './LessonCard';
@@ -188,56 +188,57 @@ function ContentSection({ tab, onTabChange, canEdit, value, onChange, onEditEnd,
 
   return (
     <section aria-label="Content" className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-xs font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
-          Content
-        </h2>
-        <div
-          role="tablist"
-          aria-label="Content view"
-          aria-orientation="horizontal"
-          className="flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-1"
-        >
-          {CONTENT_TABS.map((id) => {
-            const selected = effectiveTab === id;
-            const disabled = id === 'edit' && !canEdit;
-            return (
-              <button
-                key={id}
-                ref={(el) => {
-                  tabRefs.current[id] = el;
-                }}
-                type="button"
-                role="tab"
-                id={`content-tab-${id}`}
-                aria-selected={selected}
-                aria-controls={`content-panel-${id}`}
-                tabIndex={selected ? 0 : -1}
-                disabled={disabled}
-                onClick={() => selectTab(id)}
-                onKeyDown={handleKeyDown}
-                className={[
-                  'flex min-h-11 items-center justify-center rounded-md px-3 text-xs font-medium transition-colors duration-150',
-                  selected
-                    ? 'bg-[var(--color-bg-raised)] text-[var(--color-content-primary)] shadow-sm'
-                    : 'text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]',
-                  disabled ? 'cursor-not-allowed opacity-40' : '',
-                ].join(' ')}
-              >
-                {CONTENT_TAB_LABELS[id]}
-              </button>
-            );
-          })}
-        </div>
+      {/* Compact segmented control, left-aligned. The heading is dropped — the
+          tabs are self-explanatory — but `aria-label="Content"` keeps the
+          region named for assistive tech. `w-fit` hugs the two tabs rather than
+          stretching into a full-width bar. */}
+      <div
+        role="tablist"
+        aria-label="Content view"
+        aria-orientation="horizontal"
+        className="flex w-fit gap-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5"
+      >
+        {CONTENT_TABS.map((id) => {
+          const selected = effectiveTab === id;
+          const disabled = id === 'edit' && !canEdit;
+          return (
+            <button
+              key={id}
+              ref={(el) => {
+                tabRefs.current[id] = el;
+              }}
+              type="button"
+              role="tab"
+              id={`content-tab-${id}`}
+              aria-selected={selected}
+              aria-controls={`content-panel-${id}`}
+              tabIndex={selected ? 0 : -1}
+              disabled={disabled}
+              onClick={() => selectTab(id)}
+              onKeyDown={handleKeyDown}
+              // Compact on desktop (≈28px) but a ≥44px tap target on mobile.
+              className={[
+                'flex min-h-11 items-center justify-center rounded-md px-3 py-1 text-xs font-medium transition-colors duration-150 md:min-h-7',
+                selected
+                  ? 'bg-[var(--color-bg-raised)] text-[var(--color-content-primary)] shadow-sm'
+                  : 'text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]',
+                disabled ? 'cursor-not-allowed opacity-40' : '',
+              ].join(' ')}
+            >
+              {CONTENT_TAB_LABELS[id]}
+            </button>
+          );
+        })}
       </div>
 
       {effectiveTab === 'preview' ? (
+        // Preview renders directly on the panel background — no card/border/inset.
         <div
           role="tabpanel"
           id="content-panel-preview"
           aria-labelledby="content-tab-preview"
           tabIndex={0}
-          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-4"
+          className="focus-visible:outline-none"
         >
           <MarkdownPreview value={value} />
         </div>
@@ -389,6 +390,29 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto',
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [lesson, onClose, isDirty]);
+
+  // Global P / E shortcuts switch the Content tab — but never while focus is in
+  // a form field (so typing "p"/"e" into the textarea, tags or expiry input is
+  // untouched) and never with a command modifier held (`shortcutTabForKey`).
+  useEffect(() => {
+    if (!lesson) return undefined;
+    function onKeyDown(e: KeyboardEvent) {
+      const el = document.activeElement as HTMLElement | null;
+      const inFormField =
+        el != null &&
+        (el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.tagName === 'SELECT' ||
+          el.isContentEditable);
+      const hasModifier = e.metaKey || e.ctrlKey || e.altKey;
+      const next = shortcutTabForKey(e.key, { hasModifier, inFormField, canEdit: !isArchived });
+      if (!next) return;
+      e.preventDefault();
+      setContentTab(next);
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [lesson, isArchived]);
 
   function handleArchive() {
     if (!lesson) return;

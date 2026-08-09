@@ -257,8 +257,43 @@ export const EditingRevealsSaveBar: Story = {
       await userEvent.click(body().getByRole('tab', { name: /edit/i }));
       await waitFor(() => expect(contentTextarea()).not.toBeNull());
       await userEvent.type(contentTextarea() as HTMLTextAreaElement, ' Keep RLS central.');
-      await expect(await body().findByRole('region', { name: /unsaved changes/i })).toBeVisible();
+      // The bar mounts then animates opacity 0→1 (Motion), so poll for visibility.
+      const bar = await body().findByRole('region', { name: /unsaved changes/i });
+      await waitFor(() => expect(bar).toBeVisible());
       await expect(body().getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+    });
+  },
+};
+
+export const KeyboardShortcutsSwitchTabs: Story = {
+  play: async ({ step }) => {
+    await body().findByRole('dialog', { name: /memory detail/i });
+    await step('E → Edit, P → Preview when focus is not in a form field', async () => {
+      body().getByRole('tab', { name: /preview/i }).focus();
+      await userEvent.keyboard('e');
+      await waitFor(() => expect(contentTextarea()).not.toBeNull());
+      await expect(body().getByRole('tab', { name: /edit/i })).toHaveAttribute('aria-selected', 'true');
+      await userEvent.keyboard('p');
+      await waitFor(() => expect(contentTextarea()).toBeNull());
+      await expect(body().getByRole('tab', { name: /preview/i })).toHaveAttribute('aria-selected', 'true');
+    });
+  },
+};
+
+export const ShortcutIgnoredWhileTyping: Story = {
+  play: async ({ step }) => {
+    await body().findByRole('dialog', { name: /memory detail/i });
+    await step('typing p/e inside the textarea never switches tabs', async () => {
+      await userEvent.click(body().getByRole('tab', { name: /edit/i }));
+      await waitFor(() => expect(contentTextarea()).not.toBeNull());
+      const textarea = contentTextarea() as HTMLTextAreaElement;
+      textarea.focus();
+      await userEvent.type(textarea, ' peek'); // contains both 'p' and 'e'
+      // The letters landed in the field (poll — the controlled value settles async).
+      await waitFor(() => expect((contentTextarea() as HTMLTextAreaElement | null)?.value ?? '').toContain('peek'));
+      // …and the tab never switched: still Edit, textarea still present.
+      await expect(body().getByRole('tab', { name: /edit/i })).toHaveAttribute('aria-selected', 'true');
+      await expect(contentTextarea()).not.toBeNull();
     });
   },
 };

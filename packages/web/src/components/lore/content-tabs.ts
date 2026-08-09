@@ -51,3 +51,29 @@ export function nextTabForKey(
       return null;
   }
 }
+
+/**
+ * Global single-letter shortcut: `P` → Preview, `E` → Edit. Returns the tab to
+ * activate, or `null` to leave the event alone.
+ *
+ * Deliberately inert when:
+ *   - a command modifier is held (`hasModifier`) — never hijack Cmd/Ctrl/Alt+E;
+ *   - focus is in a form field (`inFormField`) — so typing "p"/"e" into the
+ *     content textarea, the tag input or the expiry input never switches tabs;
+ *   - `E` is pressed but editing is disabled (`canEdit` false — archived lesson).
+ * Case-insensitive so Caps Lock / a stray Shift still works.
+ */
+export function shortcutTabForKey(
+  key: string,
+  opts: { hasModifier: boolean; inFormField: boolean; canEdit: boolean },
+): ContentTab | null {
+  if (opts.hasModifier || opts.inFormField) return null;
+  switch (key.toLowerCase()) {
+    case 'p':
+      return 'preview';
+    case 'e':
+      return opts.canEdit ? 'edit' : null;
+    default:
+      return null;
+  }
+}
