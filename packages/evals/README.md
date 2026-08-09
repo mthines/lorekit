@@ -43,6 +43,44 @@ lesson that states the rule and the failure mode but deliberately does not
 restate the task; a lesson containing the answer to the exact prompt would
 measure copying rather than recall.
 
+## Scope is chosen, not derived
+
+A LoreKit scope is an explicit argument: `memory.write` requires `scope`, and no
+write path in the CLI derives one. Git decides only which scopes a _directory_
+discovers — `deriveScope` turns the remote and branch into the `readOrder` the
+SessionStart hook reads from. In a directory with no repository the read order
+is just `[project::<basename>, global]`, yet a `branch::owner/repo::x` lesson
+still writes there perfectly happily. It simply is never injected.
+
+That gap is the reason the harness treats scope as a first-class knob rather
+than a consequence of the sandbox's git identity. Without it, an arm-B rep that
+fails is unreadable — it could mean either of two unrelated things:
+
+| Retrieval state       | A failure means                                           | Report it as                                             |
+| --------------------- | --------------------------------------------------------- | -------------------------------------------------------- |
+| `injected`            | the lesson was on screen and the agent still got it wrong | **utilization**                                          |
+| `in-store-not-loaded` | the lesson never reached the context at all               | **retrieval** — the lesson's content is not on trial     |
+| `absent`              | nothing was stored                                        | **harness fault** — discard the rep, never average it in |
+
+`classifyRetrieval` computes that state for every rep and it travels with the
+result. Collapsing the three would let a seeding regression read as evidence
+that memory does not work, which is the most expensive mistake this harness
+could make.
+
+`--scope-mode global` is the control that isolates scope resolution from memory
+utility: global injects in any directory, git or not. If arm B lifts at `global`
+but not at `branch::`, that is a scope-resolution finding, not a memory finding.
+
+```bash
+node bin/run-eval.mjs probe --scope-mode global            # injects, no git needed
+node bin/run-eval.mjs probe --scope-mode branch --no-git   # written, never injected
+```
+
+Git identity defaults to on only for the modes that need it (`branch`, `repo`).
+`--no-git` with a branch scope is a legal, deliberately-broken arm — it is how
+the harness reproduces a retrieval failure on purpose, and the second command
+above is the executable demonstration.
+
 ## Memory arms
 
 Only the memory tools are allowed, and only the read ones. An arm that could
@@ -135,7 +173,7 @@ install` nor hand-writing the settings block: `upsertClaudeHooks(root, scope,
 runner, ['SessionStart'])` is exported from `packages/cli/src/config.mjs` and
   writes the canonical block itself. Using it keeps the harness in lockstep with
   `CLAUDE_HOOK_EVENTS` by construction rather than by a drift test.
-- **The sandbox needs a git identity, and needs a commit.** `deriveScope` builds
+- **A git-identity sandbox needs a commit, not just `git init`.** `deriveScope` builds
   the scopes the hook reads from `remote.origin.url` and the current branch, so
   a bare temp directory has no `branch::mthines/gw-tools::feat/x` scope at all
   and a lesson seeded there would never be injected — arm B would differ from

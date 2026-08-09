@@ -9,7 +9,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 
-import { prepareArm } from "../bin/run-eval.mjs";
+import { prepareArm } from "../src/arm.mjs";
 import { initGitIdentity } from "../src/git-identity.mjs";
 import { withSandbox } from "../src/sandbox.mjs";
 

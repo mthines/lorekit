@@ -26,19 +26,11 @@ import {
   DEFAULT_TIMEOUT_MS,
   runAgent,
 } from "../src/agent.mjs";
-import {
-  initGitIdentity,
-  assertScopesAvailable,
-  DEFAULT_OWNER_REPO,
-  DEFAULT_BRANCH,
-} from "../src/git-identity.mjs";
-import {
-  installSessionStartHook,
-  readInjectedLessons,
-} from "../src/hook-install.mjs";
-import { writeMcpConfig } from "../src/mcp-config.mjs";
+import { SCOPE_MODES, SEED_SOURCES, prepareArm } from "../src/arm.mjs";
+import { readInjectedLessons } from "../src/hook-install.mjs";
+import { classifyRetrieval } from "../src/retrieval.mjs";
 import { createSandbox } from "../src/sandbox.mjs";
-import { empty, seedCanonical, seedOrganic } from "../src/store-setup.mjs";
+import { listAll } from "../src/store-setup.mjs";
 
 // PR3 replaces this with the real golden task from `src/task.mjs`. Until then
 // arm0 exercises the plumbing end to end with a prompt that is cheap and has an
@@ -60,14 +52,16 @@ Options:
   --command <bin>      Agent binary (default "claude"; override for smoke tests).
   --seed <source>      probe: empty | canonical | organic (default canonical).
   --lesson <text>      probe: the arm-0 lesson text, required for --seed organic.
-  --scope <scope>      probe: scope to seed at (default the branch scope).
+  --scope <scope>      probe: an explicit scope to seed at (overrides the mode).
+  --scope-mode <m>     probe: branch | repo | project | global (default branch).
+  --git / --no-git     probe: force the sandbox git identity on/off. Default is
+                       on only for the scope modes that need it (branch, repo);
+                       --no-git with a branch scope reproduces a RETRIEVAL
+                       failure on purpose.
   --keep               Leave each sandbox on disk for inspection.
   --dry-run            Build and print the plan without spawning the agent.
   -h, --help           Show this help.
 `;
-
-/** The two lesson sources the design calls for, plus the arm-A control. */
-export const SEED_SOURCES = ["empty", "canonical", "organic"];
 
 export function parseArgs(argv) {
   const [subcommand, ...rest] = argv;
@@ -80,6 +74,8 @@ export function parseArgs(argv) {
     seed: "canonical",
     lesson: null,
     scope: null,
+    scopeMode: "branch",
+    git: null,
     keep: false,
     dryRun: false,
     help: false,
@@ -107,6 +103,15 @@ export function parseArgs(argv) {
         break;
       case "--scope":
         options.scope = rest[++i];
+        break;
+      case "--scope-mode":
+        options.scopeMode = rest[++i];
+        break;
+      case "--no-git":
+        options.git = false;
+        break;
+      case "--git":
+        options.git = true;
         break;
       case "--keep":
         options.keep = true;
@@ -137,6 +142,11 @@ export function parseArgs(argv) {
   }
   if (options.seed === "organic" && !options.lesson) {
     throw new Error("--seed organic requires --lesson <text>");
+  }
+  if (!SCOPE_MODES.includes(options.scopeMode)) {
+    throw new Error(
+      `--scope-mode must be one of ${SCOPE_MODES.join(", ")}, got ${options.scopeMode}`,
+    );
   }
   return options;
 }
@@ -222,44 +232,6 @@ async function runArm0(options) {
   return { outDir, summary };
 }
 
-/**
- * Build one arm's world: git identity, information-environment strip, store
- * seeding, MCP config, and (for the memory arms) the real SessionStart hook.
- * Returns the sandbox plus everything a run needs to describe itself.
- *
- * PR4's `arms.mjs` orchestrates reps on top of this; keeping the assembly in
- * one place is what stops arm A and arm B from differing in anything except
- * the store, which is the whole experimental control.
- */
-export async function prepareArm(
-  sandbox,
-  { seed = "canonical", lesson = null, scope = null, hook = true } = {},
-) {
-  const derived = await initGitIdentity(sandbox.cwd, {
-    ownerRepo: DEFAULT_OWNER_REPO,
-    branch: DEFAULT_BRANCH,
-  });
-  const targetScope = scope || derived.branchScope;
-  assertScopesAvailable(derived, [targetScope]);
-
-  // Strip AFTER git init: the repo has no content, but the order makes the
-  // invariant obvious — nothing the agent can read may mention the gotcha.
-  await sandbox.stripInformationEnvironment();
-
-  let seeded = { seeded: [] };
-  if (seed === "empty")
-    seeded = await empty(sandbox, { scopes: derived.readOrder });
-  else if (seed === "canonical")
-    seeded = await seedCanonical(sandbox, { scope: targetScope });
-  else if (seed === "organic")
-    seeded = await seedOrganic(sandbox, { scope: targetScope, value: lesson });
-
-  const mcp = await writeMcpConfig(sandbox, { allowWrite: false });
-  const hookInstall = hook ? installSessionStartHook(sandbox) : null;
-
-  return { derived, targetScope, seeded, mcp, hookInstall };
-}
-
 async function runProbe(options) {
   const sandbox = await createSandbox({ keep: options.keep });
   try {
@@ -267,13 +239,24 @@ async function runProbe(options) {
       seed: options.seed,
       lesson: options.lesson,
       scope: options.scope,
+      scopeMode: options.scopeMode,
+      git: options.git,
     });
     const injection = await readInjectedLessons(sandbox);
+    const stored = await listAll(sandbox, [
+      ...new Set([...arm.derived.readOrder, arm.targetScope]),
+    ]);
+    const seededKey = arm.seeded.seeded[0] ? arm.seeded.seeded[0].key : null;
+
     return {
       subcommand: "probe",
       seed: options.seed,
+      scopeMode: arm.scopeMode,
       scope: arm.targetScope,
+      gitInitialized: arm.gitInitialized,
       readOrder: arm.derived.readOrder,
+      // The headline: is the seeded scope one the hook can even see here?
+      injectable: arm.injectable,
       seeded: arm.seeded.seeded,
       mcpConfig: arm.mcp.config,
       allowedTools: arm.mcp.allowedTools,
@@ -282,6 +265,13 @@ async function runProbe(options) {
       injectedHeader: injection.header,
       injectedCount: injection.lessons.length,
       injected: injection.lessons,
+      retrieval: seededKey
+        ? classifyRetrieval({
+            injection,
+            storeEntries: stored,
+            key: seededKey,
+          })
+        : null,
     };
   } finally {
     await sandbox.dispose();
