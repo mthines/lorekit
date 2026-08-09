@@ -205,6 +205,24 @@ test("classifyRetrieval records the observed position, never a derived one", () 
   assert.equal(retrieval.injectedCount, 2);
 });
 
+test("a same-key lesson INJECTED from another scope is not the seeded one", () => {
+  // The injected set spans the whole `readOrder`, so the scope filter has to
+  // apply to both lookups or a foreign hit reads as the seeded lesson.
+  const retrieval = classifyRetrieval({
+    injection: {
+      lessons: [{ position: 1, key: "wanted", scope: "global" }],
+    },
+    storeEntries: [{ key: "wanted", scope: BRANCH_SCOPE }],
+    key: "wanted",
+    scope: BRANCH_SCOPE,
+  });
+  assert.equal(retrieval.state, RETRIEVAL_IN_STORE_NOT_LOADED);
+  assert.equal(retrieval.injected, false);
+  assert.equal(retrieval.inStore, true);
+  // The foreign lesson still counts towards what the agent actually saw.
+  assert.equal(retrieval.injectedCount, 1);
+});
+
 test("a same-key entry at another scope is ABSENT, not in-store-not-loaded", () => {
   // `runProbe` gathers `storeEntries` across every scope in `readOrder`, so
   // without the seeded scope this reads as a retrieval failure when it is in
