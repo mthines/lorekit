@@ -97,6 +97,19 @@ export const SCOPE_READ_LIMIT = 25;
 
 export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
   const scope = deriveScope(cwd);
+  // Issued BEFORE the per-scope read loop and awaited after it. Nothing in the
+  // inventory depends on the loop, so awaiting it afterwards would cost a
+  // remote store one extra SERIAL round-trip on the session-start path; started
+  // here it overlaps the per-scope reads instead. On a local store `listScopes`
+  // is synchronous under its async signature, so the overlap is nil there and
+  // the ordering is merely harmless.
+  //
+  // Leaving the promise unawaited across the loop is safe because
+  // `readScopeInventory` cannot reject: its "store cannot enumerate" guard
+  // returns before the `try`, and the `try` covers both a synchronous throw and
+  // a rejected `listScopes()`. Keep that property if either is ever touched — a
+  // floating promise that can reject would take the hook down with it.
+  const inventoryPromise = readScopeInventory(store);
   const groups = [];
   // Per scope: did the read come back full? Then the count below is a floor,
   // not a total, and the map must say so rather than quietly under-report.
@@ -200,7 +213,7 @@ export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
   // with no `listScopes`, or a throw all fall back to the derived counts —
   // approximate and `+`-suffixed, exactly what shipped before — rather than
   // costing the user their scope map. `readScopeInventory` never throws.
-  const inventory = await readScopeInventory(store);
+  const inventory = await inventoryPromise;
   const scopeCounts = inventory.ok
     ? scopeInventoryFromStore(inventory.scopes, scope.readOrder)
     : scopeInventory(ranked, scope.readOrder, truncatedScopes);

@@ -1155,6 +1155,36 @@ test('fetchLessons scope map — exact counts from the remote envelope form', as
   assert.equal(scopeCounts[0].atReadLimit, false);
 });
 
+test('fetchLessons scope map — the enumeration is issued before the per-scope reads', async () => {
+  // The inventory needs nothing from the read loop, so awaiting it after the
+  // loop would cost a remote store one extra SERIAL round-trip on the
+  // session-start path. Pin the ordering rather than trusting the source to
+  // keep it: a later edit that moves the call back below the loop is invisible
+  // to every other assertion in this file.
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  const [first] = scope.readOrder;
+
+  const calls = [];
+  const base = fakeStore({ [first]: [{ key: 'a', value: 'v' }] });
+  const store = {
+    async list(args) {
+      calls.push('list');
+      return base.list(args);
+    },
+    async listScopes() {
+      calls.push('listScopes');
+      return [{ scope: first, count: 5 }];
+    },
+  };
+
+  const { scopeCounts } = await fetchLessons(store, process.cwd());
+
+  assert.equal(calls[0], 'listScopes', 'the enumeration starts before the first per-scope read');
+  assert.ok(calls.includes('list'), 'precondition — the read loop still ran');
+  assert.deepEqual(scopeCounts, [{ scope: first, count: 5, atReadLimit: false }]);
+});
+
 test('fetchLessons scope map — the store total counts what EXISTS, not what was injected', async () => {
   // Two deliberate differences from the derived counts, both because the map
   // answers a different question from the injected set.
