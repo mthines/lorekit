@@ -39,7 +39,7 @@ export const DEFAULT_STATUS: MemoryStatus = 'active';
  */
 export const EXPIRING_WITHIN_DAYS = 7;
 
-/** Label for the segmented control, in control order. */
+/** Label for each state, in control order. */
 export const STATUS_LABELS: Record<MemoryStatus, string> = {
   active: 'Active',
   archived: 'Archived',

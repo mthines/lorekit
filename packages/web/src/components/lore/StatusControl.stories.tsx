@@ -23,12 +23,16 @@ type Story = StoryObj<typeof StatusControl>;
 const noop = () => undefined;
 
 /**
- * Every state selected, desktop then mobile.
+ * The trigger in each state, labelled then icon-only.
  *
- * All three rows are rendered together rather than as three stories because
- * the thing worth eyeballing is the CONTRAST between selected and unselected
- * segments — a single screenshot per state cannot show that the selected
- * segment is legible against its two neighbours at each width.
+ * All three are rendered together rather than as three stories because what is
+ * worth eyeballing is that the trigger stays the SAME SHAPE as its label
+ * changes length — "Active" and "Expiring" must not resize the toolbar around
+ * them, which a single screenshot per state could not show.
+ *
+ * The open list is not screenshotted: it is portaled and positioned from the
+ * trigger's measured rect, so a baseline would pin wherever the trigger
+ * happened to land in this story. `Combobox.test.stories.tsx` covers it.
  */
 export const Default: Story = {
   render: () => (

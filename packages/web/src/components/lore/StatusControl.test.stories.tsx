@@ -17,9 +17,15 @@ import {
  *
  * The control replaced an `archived` on/off button, so these cover the two
  * things that change when a boolean becomes a three-way single-select: that
- * exactly one state is ever active (a toggle could not get this wrong; a
- * radiogroup can), and that each selection reaches the wire as the params that
- * state means.
+ * exactly one state is ever selected (a toggle could not get this wrong; a
+ * list can), and that each selection reaches the wire as the params that state
+ * means.
+ *
+ * The control is now the shared `Combobox`, so the popup's own behaviour —
+ * keyboard movement, filtering, the mobile bottom sheet — is covered by
+ * `Combobox.test.stories.tsx` and `combobox.spec.ts`. What is asserted here is
+ * what is specific to STATUS: the three states, their hints, and their query
+ * mapping.
  *
  * The URL round-trip is asserted through the pure codec rather than a real
  * router. `useUrlState` is covered by its own tests, and what can actually
@@ -51,36 +57,63 @@ const meta: Meta<typeof Harness> = {
 export default meta;
 type Story = StoryObj<typeof Harness>;
 
+/** The popup is portaled to `document.body`, so its rows resolve there. */
+async function openStatus(canvasElement: HTMLElement) {
+  const trigger = await within(canvasElement).findByRole('button', { name: /^Status:/ });
+  await userEvent.click(trigger);
+  const screen = within(document.body);
+  await screen.findByRole('listbox', { name: /status/i });
+  return screen;
+}
+
 export const ExactlyOneStateIsEverSelected: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
 
-    await step('it is a radiogroup with one option per state', async () => {
-      const group = canvas.getByRole('radiogroup', { name: /status/i });
-      await expect(within(group).getAllByRole('radio')).toHaveLength(MEMORY_STATUSES.length);
+    await step('the trigger names the CURRENT state without opening anything', async () => {
+      // The reason this is a combobox and not three segments: the value is read
+      // constantly and changed rarely, so the resting state should show the
+      // answer rather than the alternatives.
+      await expect(canvas.getByRole('button', { name: /^Status: Active/ })).toBeInTheDocument();
     });
 
-    await step('Active is checked by default and the others are not', async () => {
-      await expect(canvas.getByRole('radio', { name: /^Active/ })).toBeChecked();
-      await expect(canvas.getByRole('radio', { name: /^Archived/ })).not.toBeChecked();
-      await expect(canvas.getByRole('radio', { name: /^Expiring/ })).not.toBeChecked();
+    const menu = await openStatus(canvasElement);
+
+    await step('the popup is a listbox with one option per state', async () => {
+      await expect(menu.getAllByRole('option')).toHaveLength(MEMORY_STATUSES.length);
+    });
+
+    await step('Active is selected and the others are not', async () => {
+      await expect(menu.getByRole('option', { name: /Active/ })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      );
+      await expect(menu.getByRole('option', { name: /Archived/ })).toHaveAttribute(
+        'aria-selected',
+        'false',
+      );
     });
 
     await step('selecting another state deselects the previous one', async () => {
-      await userEvent.click(canvas.getByRole('radio', { name: /^Expiring/ }));
-      await expect(canvas.getByRole('radio', { name: /^Expiring/ })).toBeChecked();
-      // The property a boolean toggle could not get wrong and a radiogroup can:
-      // no combination of clicks may ever leave two states active.
-      const checked = canvas
-        .getAllByRole('radio')
-        .filter((r) => r.getAttribute('aria-checked') === 'true');
-      await expect(checked).toHaveLength(1);
+      await userEvent.click(menu.getByRole('option', { name: /Expiring/ }));
+      await expect(canvas.getByRole('button', { name: /^Status: Expiring/ })).toBeInTheDocument();
+
+      const reopened = await openStatus(canvasElement);
+      // The property a boolean toggle could not get wrong and a list can: no
+      // sequence of clicks may ever leave two states selected.
+      const selected = reopened
+        .getAllByRole('option')
+        .filter((o) => o.getAttribute('aria-selected') === 'true');
+      await expect(selected).toHaveLength(1);
+      await userEvent.keyboard('{Escape}');
     });
 
-    await step('the horizon is in the accessible name, not just the tooltip', async () => {
-      // "Expiring" alone does not say over what period, and the control is too
-      // small to spell it out visually.
-      await expect(canvas.getByRole('radio', { name: /Expiring.*7 days/i })).toBeInTheDocument();
+    await step('the horizon is on the row, not hidden in a tooltip', async () => {
+      // "Expiring" alone does not say over what period. The segmented control
+      // had nowhere to put this; a list row does.
+      const reopened = await openStatus(canvasElement);
+      await expect(reopened.getByText(/expiring within 7 days/i)).toBeInTheDocument();
+      await userEvent.keyboard('{Escape}');
     });
   },
 };
@@ -97,7 +130,7 @@ export const EachStateSelectsItsQuery: Story = {
     });
 
     await step('Archived selects the archived population', async () => {
-      await userEvent.click(canvas.getByRole('radio', { name: /^Archived/ }));
+      await userEvent.click((await openStatus(canvasElement)).getByRole('option', { name: /Archived/ }));
       await expect(query()).toBe(JSON.stringify({ archived: 'true' }));
       await expect(param()).toBe('status=archived');
     });
@@ -105,7 +138,7 @@ export const EachStateSelectsItsQuery: Story = {
     await step('Expiring stays a LIVE view and adds the horizon', async () => {
       // The discriminating assertion for the third state: if it sent
       // archived=true it would list the one population it is useless for.
-      await userEvent.click(canvas.getByRole('radio', { name: /^Expiring/ }));
+      await userEvent.click((await openStatus(canvasElement)).getByRole('option', { name: /Expiring/ }));
       await expect(query()).toBe(
         JSON.stringify({ archived: 'false', expiring_within_days: 7 }),
       );
@@ -126,12 +159,12 @@ export const SelectingActiveOverridesALegacyArchivedLink: Story = {
     const canvas = within(canvasElement);
 
     await step('a legacy link opens on the archived view', async () => {
-      await expect(canvas.getByRole('radio', { name: /^Archived/ })).toBeChecked();
+      await expect(canvas.getByRole('button', { name: /^Status: Archived/ })).toBeInTheDocument();
       await expect(resolveStatus(null, true)).toBe('archived');
     });
 
     await step('choosing Active writes the param EXPLICITLY rather than dropping it', async () => {
-      await userEvent.click(canvas.getByRole('radio', { name: /^Active/ }));
+      await userEvent.click((await openStatus(canvasElement)).getByRole('option', { name: /Active/ }));
       await expect(canvas.getByTestId('param').textContent).toBe('status=active');
     });
 
