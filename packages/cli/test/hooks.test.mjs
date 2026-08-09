@@ -665,7 +665,7 @@ test('fetchLessons ranked — with nothing recurring, the order is still recency
   assert.deepEqual(lessons.map((l) => l.key), ['a', 'b', 'c']);
 });
 
-test('precedence unchanged — a shadowed lesson cannot be ranked back into the set', async () => {
+test('precedence unchanged — a shadowed lesson cannot be ranked back into the set', async (t) => {
   // The load-bearing property of running the scorer on the WINNERS only. The
   // global copy is made maximally attractive (very recent, highly recurring)
   // and the project copy maximally unattractive; precedence must still win,
@@ -673,7 +673,13 @@ test('precedence unchanged — a shadowed lesson cannot be ranked back into the 
   // preference the scorer gets a vote on.
   const { deriveScope } = await import('../src/scope.mjs');
   const scope = deriveScope(process.cwd());
-  if (scope.readOrder.length < 2) return; // needs at least two scopes to shadow
+  if (scope.readOrder.length < 2) {
+    // Report the no-op instead of returning green. A bare `return` would let
+    // this load-bearing precedence property go untested and unnoticed on any
+    // checkout whose `deriveScope` yields a single scope.
+    t.skip('needs at least two scopes to shadow');
+    return;
+  }
   const [narrow] = scope.readOrder;
   const broad = scope.readOrder[scope.readOrder.length - 1];
 
