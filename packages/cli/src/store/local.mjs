@@ -393,8 +393,9 @@ class TwoTierStore {
   // That follows from tiering rather than contradicting it (`list`/`read` let
   // the project tier SHADOW home rather than merging the two rows), and the
   // alternative — seeding the count from the tier being shadowed — would make
-  // a write depend on a row it is not writing. Use `lorekit migrate --to
-  // project` to carry an existing tally across; that relocates counts verbatim.
+  // a write depend on a row it is not writing. Use `lorekit migrate --from
+  // ~/.lorekit --to project` to carry an existing tally across; that relocates
+  // counts verbatim. `--from <path>` is required — it names the store to read.
   async write(args = {}) {
     return this.tierFor(args.scope).write(args);
   }
