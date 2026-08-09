@@ -28,12 +28,19 @@ import {
  * period-over-period `changePct`, which needs a PRECEDING window of equal length
  * to compare against — and "all time" has no preceding window. The Explorer,
  * which lists rather than trends, does offer it (`?range` absent).
+ *
+ * The set is deliberately UNCHANGED by this PR, even though the shared model now
+ * understands `90d` too (`RANGE_PRESETS`). This is a refactor of what the
+ * selection MEANS, not of what the control offers, and the committed visual
+ * baselines (`__screenshots__/DashboardStats.stories.tsx`) pin this row pixel for
+ * pixel — a fourth button is a baseline regeneration, which belongs with the
+ * stats-header work that redesigns this control rather than smuggled in here.
+ * Nothing about the model blocks it: `{ preset: '90d' }` already resolves.
  */
 const RANGE_OPTIONS: { value: RangePreset; label: string }[] = [
   { value: '24h', label: '24h' },
   { value: '7d', label: '7d' },
   { value: '30d', label: '30d' },
-  { value: '90d', label: '90d' },
 ];
 
 /**

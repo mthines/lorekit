@@ -310,6 +310,20 @@ describe('rangeLabel', () => {
     expect(rangeLabel({ preset: '90d' }, NOW)).toBe('Last 90 days');
   });
 
+  // The Overview's card captions are `in the ${rangeLabel(...).toLowerCase()}`,
+  // where they used to be `in the last ${RANGE_NOUN[range]}`. That refactor is
+  // only safe while the two produce the SAME sentence — the committed visual
+  // baselines pin those captions pixel for pixel, and an interaction test reads
+  // "in the last 30 days" literally. Pin the phrasing here so a future reword of
+  // rangeLabel fails a fast unit test instead of a slow browser snapshot.
+  it('lowercases into the exact caption phrasing the stat cards had before', () => {
+    const caption = (preset: '24h' | '7d' | '30d') =>
+      `in the ${rangeLabel({ preset }, NOW).toLowerCase()}`;
+    expect(caption('24h')).toBe('in the last 24 hours');
+    expect(caption('7d')).toBe('in the last 7 days');
+    expect(caption('30d')).toBe('in the last 30 days');
+  });
+
   it('calls both spellings of unbounded "All time"', () => {
     expect(rangeLabel(null, NOW)).toBe('All time');
     expect(rangeLabel({ preset: 'all' }, NOW)).toBe('All time');
