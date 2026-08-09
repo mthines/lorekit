@@ -63,12 +63,26 @@ const DEFAULT_OVERVIEW_RANGE: TimeRange = { preset: '24h' };
  */
 const FALLBACK_PLAN = RANGE_BUCKETS['30d'];
 
+/**
+ * The trend chip's tooltip: what this window is being compared against.
+ *
+ * There is only ONE comparison rule — the immediately preceding window of the
+ * same length — so there is only one sentence for a bounded range. The branch
+ * this replaced offered "previous" and "preceding" as if they were different
+ * comparisons, and its unbounded arm read "All time vs. the preceding period of
+ * the same length", naming a period that cannot exist.
+ *
+ * An unbounded range has no grid of its own, so the cards fall back to
+ * {@link FALLBACK_PLAN} — the tooltip names THAT window rather than the
+ * selection, because the fallback grid is what the bars and the chip actually
+ * describe.
+ */
 function rangeTrendTitle(range: TimeRange, nowIso: string): string {
-  const label = rangeLabel(range, nowIso);
-  // Only a fixed-length window has a comparable "previous" one to name.
-  return isPresetRange(range) && range.preset !== 'all'
-    ? `${label} vs. the previous period of the same length`
-    : `${label} vs. the preceding period of the same length`;
+  if (bucketPlanForRange(range, nowIso) === null) {
+    const period = `${FALLBACK_PLAN.count} ${FALLBACK_PLAN.unit}s`;
+    return `The last ${period} vs. the preceding ${period}`;
+  }
+  return `${rangeLabel(range, nowIso)} vs. the preceding period of the same length`;
 }
 
 const sumPoints = (points: { value: number }[]) => points.reduce((total, p) => total + p.value, 0);
