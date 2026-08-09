@@ -1185,12 +1185,15 @@ test('fetchLessons scope map — the enumeration is issued before the per-scope 
   assert.deepEqual(scopeCounts, [{ scope: first, count: 5, atReadLimit: false }]);
 });
 
-test('fetchLessons scope map — the store total counts what EXISTS, not what was injected', async () => {
+test('fetchLessons scope map — the store total counts what EXISTS, not what was injected', async (t) => {
   // Two deliberate differences from the derived counts, both because the map
   // answers a different question from the injected set.
   const { deriveScope } = await import('../src/scope.mjs');
   const scope = deriveScope(process.cwd());
-  if (scope.readOrder.length < 2) return;
+  if (scope.readOrder.length < 2) {
+    t.skip('needs at least two scopes to tell the enumerated total from the injected set');
+    return;
+  }
   const [narrow] = scope.readOrder;
   const broad = scope.readOrder[scope.readOrder.length - 1];
 
@@ -1283,14 +1286,17 @@ test('fetchLessons scope map — falls back to the derived counts when enumerati
   assert.equal(noMethod.scopeCounts.find((s) => s.scope === capped).atReadLimit, true);
 });
 
-test('fetchLessons scope map — a successful enumeration that omits a scope falls back per scope', async () => {
+test('fetchLessons scope map — a successful enumeration that omits a scope falls back per scope', async (t) => {
   // `ok: true` means the store answered, not that the answer is complete. A
   // scope that just contributed injected lessons must keep a row: dropping it
   // would show the reader lore in the digest with nothing saying where it
   // lives, which is worse than the approximate count already in hand.
   const { deriveScope } = await import('../src/scope.mjs');
   const scope = deriveScope(process.cwd());
-  if (scope.readOrder.length < 2) return;
+  if (scope.readOrder.length < 2) {
+    t.skip('needs at least two scopes for the enumeration to omit one of them');
+    return;
+  }
   const [narrow] = scope.readOrder;
   const broad = scope.readOrder[scope.readOrder.length - 1];
 
