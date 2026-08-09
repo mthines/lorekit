@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.38.0](https://github.com/mthines/lorekit/compare/cli-v1.37.0...cli-v1.38.0) (2026-08-09)
+
+
+### Features
+
+* **cli:** budget the SessionStart block instead of counting it ([901f2f3](https://github.com/mthines/lorekit/commit/901f2f33ab95602386e48f46b86cc2cf6c64adba))
+* **cli:** budget the SessionStart block instead of counting it ([c953d5c](https://github.com/mthines/lorekit/commit/c953d5cbe4300d9af6f1d24f5e4d20399727fb5a))
+
+
+### Bug Fixes
+
+* **stack:** land PRs 407, 409, 411, 414 and 421 on main ([7bae960](https://github.com/mthines/lorekit/commit/7bae960b26b2241d3dd314d78f77987b2fc6ae3f))
+
+
+### Documentation
+
+* **cli:** make the docblock header sample reachable too ([acf734e](https://github.com/mthines/lorekit/commit/acf734e2611ef1d22de897dbe7d195c613752c14))
+* **config:** correct the hooks.sessionStart fall-through claim ([b32d06a](https://github.com/mthines/lorekit/commit/b32d06acd08e3c45f25045a1c7536725609e37ac))
+* retire the MAX_LESSONS cap from the prose that still described it ([15cf352](https://github.com/mthines/lorekit/commit/15cf352831d66c2a39129baa68cce9394ef42e66))
+
 ## [1.37.0](https://github.com/mthines/lorekit/compare/cli-v1.36.0...cli-v1.37.0) (2026-08-09)
 
 
