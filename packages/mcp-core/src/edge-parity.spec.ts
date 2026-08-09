@@ -87,6 +87,13 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   // Pure aggregation/window logic for GET /memories/usage — mirrored into the
   // _shared tree because the usage handler cannot cross-import mcp-core.
   ['usage-stats.ts', '_shared/usage-stats.ts'],
+  // The `(now, now + days]` bounds behind `GET /memories?expiring_within_days=`.
+  // Mirrored for the usage-stats reason (the list handler cannot cross-import
+  // mcp-core) and guarded here rather than left inline because the asymmetric
+  // boundary — exclusive lower so an already-expired row is never shown,
+  // inclusive upper so "within 7 days" includes day 7 — is the entire feature,
+  // and a drift between the tested copy and the deployed one is silent.
+  ['expiring-window.ts', '_shared/expiring-window.ts'],
   // CORS origin allowlist matching (www/apex sibling expansion) — mirrored into
   // the _shared/api tree because cors.ts (Deno) cannot cross-import mcp-core.
   ['cors-origins.ts', '_shared/api/cors-origins.ts'],
