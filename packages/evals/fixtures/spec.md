@@ -56,11 +56,17 @@ success.
 | 20     | Something was written, but at an invalid or unrelated scope.                                                                                                                                                                 |
 | 0      | Nothing was written at all.                                                                                                                                                                                                  |
 
-`repeatedMistake` is flagged when any _attempted_ scope is invalid in the
-specific way this lesson warns about — a single `:` after a known prefix, or a
-`branch::` scope whose branch was appended with `/` rather than `::`. It is the
-signal the whole experiment turns on: it fires when the agent made the exact
-mistake the stored lesson describes.
+`repeatedMistake` is flagged when any _attempted_ scope is invalid in one of the
+specific ways this lesson warns about. It is the signal the whole experiment
+turns on: it fires when the agent made the exact mistake the stored lesson
+describes. Each kind is recorded separately, because they are different recall
+failures:
+
+| Kind                         | Shape                                                                                     |
+| ---------------------------- | ----------------------------------------------------------------------------------------- |
+| `single-colon`               | `branch:mthines/gw-tools` — a single `:` after a known prefix                             |
+| `branch-appended-with-slash` | `branch::mthines/gw-tools/feat/x` — the branch glued on with `/` instead of a second `::` |
+| `branch-segment-missing`     | `branch::mthines/gw-tools` — the branch segment omitted altogether                        |
 
 ## Validity oracle
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  MISTAKE_BRANCH_MISSING,
   MISTAKE_BRANCH_WITH_SLASH,
   MISTAKE_SINGLE_COLON,
   SCORE_EXACT,
@@ -175,6 +176,15 @@ test("classifyMistake only ever classifies INVALID scopes", () => {
     classifyMistake("branch::mthines/gw-tools/feat/x"),
     MISTAKE_BRANCH_WITH_SLASH,
   );
+  // Omitting the branch entirely is a DIFFERENT recall failure from appending
+  // it with a slash, and the mistakes list must not report a slash that was
+  // never written.
+  assert.equal(
+    classifyMistake("branch::mthines/gw-tools"),
+    MISTAKE_BRANCH_MISSING,
+  );
+  // Not even an `owner/repo` — invalid for an unrelated reason.
+  assert.equal(classifyMistake("branch::mthines"), null);
   // Valid scopes are never mistakes, however they look.
   assert.equal(classifyMistake(TARGET_SCOPE), null);
   assert.equal(classifyMistake("global"), null);

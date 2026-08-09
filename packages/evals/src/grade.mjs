@@ -37,6 +37,7 @@ export const SCORE_NOTHING = 0;
 
 export const MISTAKE_SINGLE_COLON = "single-colon";
 export const MISTAKE_BRANCH_WITH_SLASH = "branch-appended-with-slash";
+export const MISTAKE_BRANCH_MISSING = "branch-segment-missing";
 
 /** Is this scope acceptable to the canonical validator? Never throws. */
 export function isValidScope(scope) {
@@ -72,13 +73,27 @@ export function classifyMistake(scope) {
   if (/^(global|project|repo|branch):(?!:)/.test(scope)) {
     return MISTAKE_SINGLE_COLON;
   }
-  // `branch::owner/repo/branch` — the branch appended with `/` instead of a
-  // second `::`. Recognised by having exactly one `::` under a branch prefix.
+  // A `branch::` scope with only one `::` is missing its second separator, but
+  // there are TWO distinct recall failures behind that shape and the experiment
+  // reads them separately:
+  //
+  //   branch::owner/repo/branch  — the branch appended with `/` instead of `::`
+  //   branch::owner/repo         — the branch segment omitted altogether
+  //
+  // Collapsing them would make `mistakes` report a slash the agent never wrote.
   if (
     scope.startsWith("branch::") &&
     !scope.slice("branch::".length).includes("::")
   ) {
-    return MISTAKE_BRANCH_WITH_SLASH;
+    const segments = scope.slice("branch::".length).split("/");
+    const looksLikeOwnerRepo =
+      segments.length >= 2 &&
+      /^[\w.-]+$/.test(segments[0]) &&
+      /^[\w.-]+$/.test(segments[1]);
+    if (!looksLikeOwnerRepo) return null;
+    // Anything after `owner/repo` is the branch, glued on with `/`.
+    const appended = segments.slice(2).join("/");
+    return appended === "" ? MISTAKE_BRANCH_MISSING : MISTAKE_BRANCH_WITH_SLASH;
   }
   return null;
 }
