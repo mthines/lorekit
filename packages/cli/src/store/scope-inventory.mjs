@@ -55,6 +55,14 @@ export function normalizeScopeInventory(result) {
  * `GET /memories/scopes` has since migration 00049) and OMITTED — never null —
  * when it did not, so a consumer can tell "this store does not report
  * freshness" from "this scope has none".
+ *
+ * ONE DELIBERATE DIVERGENCE from the `shapeScope` this replaced, named here so
+ * it is not mistaken for an accident: the count is clamped at 0, where the old
+ * helper passed a negative through. A negative count is not a quantity any
+ * store can honestly report — `LocalStore` increments a counter and the hosted
+ * route is a `count(*)` — so it can only ever be a malformed row, and `-3` in a
+ * `memory.scopes` answer is worse than `0`. Unreachable from either real store;
+ * it is the coercion boundary being total, not a behaviour anyone can observe.
  */
 export function shapeScopeRow(s) {
   const count = Number(s?.count);
