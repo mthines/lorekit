@@ -17,8 +17,12 @@ import { BottomSheet } from './BottomSheet';
  * body (`within(document.body)`), not the story canvas.
  */
 
-/** Trigger + controlled sheet, with `onClose` forwarded to a spy. */
-function Harness({ onClose }: { onClose: () => void }) {
+/**
+ * Trigger + controlled sheet, with `onClose` forwarded to a spy. `scrollable`
+ * fills the body with enough rows to overflow it, turning it into a live scroll
+ * area — the case where a body pull must scroll, not close.
+ */
+function Harness({ onClose, scrollable = false }: { onClose: () => void; scrollable?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <div>
@@ -35,6 +39,12 @@ function Harness({ onClose }: { onClose: () => void }) {
       >
         <div className="p-4 text-sm text-[var(--color-content-secondary)]">
           <p>Pick one or more labels.</p>
+          {scrollable &&
+            Array.from({ length: 40 }, (_, i) => (
+              <p key={i} className="py-3">
+                Label {i + 1}
+              </p>
+            ))}
         </div>
       </BottomSheet>
     </div>
@@ -157,9 +167,9 @@ export const DragDownCloses: Story = {
 
 /**
  * The body content — not the handle — is where a real thumb usually lands, so a
- * pull on it must also close when the content is not a scroll area. The first
- * move lands on the body so its handler commits the gesture to a drag
- * (`classifyBodyDrag` → `drag`); after that Motion tracks on `window`.
+ * pull on it must also close when the content is not a scroll area. The drag is
+ * started on the body's pointer-down (`onBodyPointerDown`); Motion then tracks
+ * the move/up on `window`.
  */
 export const DragContentCloses: Story = {
   play: async ({ canvasElement, args, step }) => {
@@ -169,8 +179,6 @@ export const DragContentCloses: Story = {
       const content = await body().findByText(/pick one or more labels/i);
       pointer('pointerdown', content, 24);
       await nextFrame();
-      pointer('pointermove', content, 48);
-      await nextFrame();
       for (const y of [120, 200, 300]) {
         pointer('pointermove', window, y);
         await nextFrame();
@@ -179,6 +187,36 @@ export const DragContentCloses: Story = {
 
       await waitFor(() => expect(body().queryByRole('dialog')).not.toBeInTheDocument());
       await expect(args.onClose).toHaveBeenCalled();
+    });
+  },
+};
+
+/**
+ * The complement: when the body IS a live scroll area, a pull on the content
+ * must NOT start a sheet drag — it belongs to the scroll — so the sheet stays
+ * open. `onBodyPointerDown` sees a scrollable ancestor under the pointer and
+ * never calls `dragControls.start`, so even a long downward gesture leaves the
+ * dialog in place. (The handle drag, tested above, remains the way to close.)
+ */
+export const ScrollableContentDoesNotClose: Story = {
+  args: { scrollable: true },
+  play: async ({ canvasElement, args, step }) => {
+    await open(canvasElement);
+
+    await step('dragging a scrollable body does not dismiss the sheet', async () => {
+      const content = await body().findByText(/pick one or more labels/i);
+      pointer('pointerdown', content, 24);
+      await nextFrame();
+      for (const y of [120, 200, 300]) {
+        pointer('pointermove', window, y);
+        await nextFrame();
+      }
+      pointer('pointerup', window, 300);
+
+      // Give any (unwanted) drag time to settle, then assert it stayed open.
+      await nextFrame();
+      await expect(body().queryByRole('dialog')).toBeInTheDocument();
+      await expect(args.onClose).not.toHaveBeenCalled();
     });
   },
 };
