@@ -23,6 +23,8 @@ keywords: ["configuration", ".lorekit.json", "config.json", "mode", "store", "de
 | `tags.default` | `string[]` | Both | Tags appended to every memory.write. Both layers are merged: repo tags first, then user tags. |
 | `scope.defaults` | `Record<string, { tags: string[] }>` | Repo | Per-scope tag defaults, applied to writes whose scope starts with the key (prefix match, no wildcards). A team-level write policy. |
 | `hooks.disabled` | `("SessionStart" \| "PostToolUseFailure" \| "Stop")[]` | Both | Suppress specific lifecycle hook events. Union across layers — either layer can turn an event off. |
+| `hooks.sessionStart` | `"hybrid" \| "index" \| "map"` | Both | Shape of the block injected at session start. hybrid (default) fills the budget with the highest-ranked memories and then names whatever was left out in a one-line scope map; index fills the budget and truncates silently; map leads with the scope map plus the three most salient memories. Repo wins over user; an unrecognised value is ignored and the next layer is tried, so a mistyped repo value falls through to the user layer before defaulting to hybrid. |
+| `hooks.sessionStart.maxChars` | `number (200–20000)` | Both | Character budget for that block. Defaults to 1500 (~375 tokens). Out-of-range values are clamped rather than rejected. Repo wins over user — a repo that declared a budget owns the decision even when the value is unparseable, so a typo degrades to the default instead of silently handing the choice to a personal config. |
 | `hooks.adapter` | `"claude" \| "cursor" \| "codex"` | Both | Explicit host adapter when auto-detection is ambiguous. Repo wins over user. |
 | `hooks.instructions` | `Record<"SessionStart" \| "PostToolUseFailure" \| "Stop", string \| null>` | Both | Per-event custom text appended to the hook output. Lets teams embed project-specific guidance (e.g. "focus on migration safety") into the injected agent context. Both layers are merged: repo instructions first, then user. null or an absent key means no instruction for that event. |
 | `telemetry.disabled` | `boolean` | Repo | Team-level opt-out of anonymous CLI usage telemetry, read from .lorekit.json only. The env var LOREKIT_TELEMETRY=0 always wins if set. |
@@ -95,7 +97,37 @@ Both config layers are merged — repo instructions come first, user instruction
 
 </TutorialStep>
 
-<TutorialStep number={4} title="Understand precedence & deny">
+<TutorialStep number={4} title="Size the session-start memory block">
+
+At session start LoreKit injects a compact index of the memories that apply to your working directory. How much of the agent's context that block may occupy is a **character budget**, not a memory count — a count says nothing about cost, and the same number is both padding for a small store and truncation for a large one.
+
+```json
+// .lorekit.json
+{
+  "hooks.sessionStart": "hybrid",
+  "hooks.sessionStart.maxChars": 1500
+}
+```
+
+Memories are ranked before the budget is spent, so the ones that survive are the most-recurring and most-recent, not merely the newest. When the budget runs out, the shape decides what happens to the rest:
+
+- **`hybrid`** (default) — fill the budget, then add one line naming what was left out and where it lives:
+
+  ```text
+  LoreKit: 9 of 50 memories loaded · repo::acme/widget — considerations, not rules; read any in full with memory.read.
+  - (repo::acme/widget) migration-order — Always add the column before the backfill…
+  - (global) flaky-e2e — The retry wrapper hides a real race in the fixture…
+  More lore: repo::acme/widget 25+ · global 25+ — memory.search or memory.read to drill in.
+  ```
+
+- **`index`** — the same list with no trailing map. Truncation is silent, so prefer this only when you know the store is small.
+- **`map`** — lead with the scope map and just three of the most salient memories. For a large store, where knowing the inventory matters more than any one memory.
+
+The header reads `9 of 50` whenever the block is truncated, so an agent can tell that reaching for `memory.search` is worth it. The denominator is what the fetch returned, not what the store holds: each scope is read to a cap of 25 memories, so a four-scope workspace tops out at 100 and the numbers above are two capped scopes. A count in the map ending in `+` (`25+`) is a scope that hit that cap — a lower bound, not a total. `memory.search` and `memory.read` reach past it.
+
+</TutorialStep>
+
+<TutorialStep number={5} title="Understand precedence & deny">
 
 A *selection* (which mode to use) is resolved highest-precedence first:
 
@@ -111,7 +143,7 @@ A *constraint* (`deny`) always wins, regardless of the selection. Denies are a u
 
 </TutorialStep>
 
-<TutorialStep number={5} title="Check the resolved mode">
+<TutorialStep number={6} title="Check the resolved mode">
 
 Run the CLI doctor to see the resolved mode, **which source decided it**, and any active deny constraints:
 

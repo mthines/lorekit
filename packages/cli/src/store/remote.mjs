@@ -20,6 +20,7 @@
 // Zero-dependency.
 import { restFetch, mcpToRestBase } from '../mcp.mjs';
 import { getActiveTraceparent } from '../telemetry.mjs';
+import { withReadFields } from './entry-fields.mjs';
 
 // Drop undefined/null args so JSON payloads stay tidy.
 function stripUndefined(obj) {
@@ -74,7 +75,10 @@ class RemoteStore {
     const data = res.data ?? {};
     return {
       ok: true,
-      entries: data.entries ?? [],
+      // `withReadFields` is additive — every key the route returned survives —
+      // so this projection costs existing callers nothing and gives a ranker
+      // the same `seenCount`/`updatedAt` pair the local store answers with.
+      entries: (data.entries ?? []).map(withReadFields),
       hasMore: data.hasMore ?? false,
       nextCursor: data.nextCursor ?? null,
     };
@@ -97,9 +101,42 @@ class RemoteStore {
     const data = res.data ?? {};
     return {
       ok: true,
-      entries: data.entries ?? [],
+      entries: (data.entries ?? []).map(withReadFields),
       hasMore: data.hasMore ?? false,
       nextCursor: data.nextCursor ?? null,
+    };
+  }
+
+  // Top-K lessons RANKED for a query — `GET /memories/relevant`.
+  //
+  // The difference from `search()` is the ordering, and it is the whole point:
+  // search returns what MATCHES (ordered `updated_at desc` by the handler),
+  // this returns what is worth READING, scored on recency + salience +
+  // relevance by the same ranking the SessionStart hook applies. It answers in
+  // a compact index — scope, key, a one-line hook, the score — never full
+  // bodies, so a caller pays for the shortlist and fetches only what it wants.
+  //
+  // `scopes` is ordered MOST-SPECIFIC FIRST and that order is meaningful: the
+  // server uses it to break ties, so passing `deriveScope().readOrder` verbatim
+  // gives a project lesson precedence over the global one it ties with.
+  //
+  // Returns the store's standard `{ ok, entries }` envelope so a caller can
+  // treat it like any other read, plus `candidates` — how many the FTS matched
+  // before ranking — so it can say "3 of 47" rather than implying it saw
+  // everything.
+  async relevant({ q, scopes, limit, minScore } = {}) {
+    const p = new URLSearchParams();
+    if (q) p.set('q', q);
+    if (scopes?.length) p.set('scopes', Array.isArray(scopes) ? scopes.join(',') : scopes);
+    if (limit) p.set('limit', String(limit));
+    if (minScore != null) p.set('min_score', String(minScore));
+    const res = await this._rest(`/memories/relevant?${p}`);
+    if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
+    const data = res.data ?? {};
+    return {
+      ok: true,
+      entries: Array.isArray(data.entries) ? data.entries : [],
+      candidates: Number(data.candidates) || 0,
     };
   }
 
@@ -112,7 +149,9 @@ class RemoteStore {
     const res = await this._rest(`/memories?${p}`);
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
     const entries = res.data?.entries ?? [];
-    return { ok: true, entry: entries[0] ?? null };
+    // Same projection as list/search — a single read must not answer with a
+    // different shape than the listing the caller found the key in.
+    return { ok: true, entry: entries[0] ? withReadFields(entries[0]) : null };
   }
 
   async write(args = {}) {

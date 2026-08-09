@@ -61,6 +61,7 @@ export const MIRRORED_SCHEMA_FILES = [
   'member.ts',
   'invite.ts',
   'usage.ts',
+  'relevant.ts',
   'openapi/spec.ts',
 ];
 

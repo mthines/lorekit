@@ -672,6 +672,30 @@ Both files share this schema — all fields optional:
                            //  transcript; on Cursor/Codex there is none, so "friction"
                            //  falls back to firing so no lesson is silently lost)
 
+  "hooks.sessionStart": "hybrid",
+                           // shape of the block injected at session start:
+                           //   "hybrid" (default) — fill the character budget with the
+                           //     highest-ranked memories, then add one line naming what
+                           //     was left out and where it lives
+                           //   "index"            — the same list, no trailing map
+                           //                        (truncation is silent)
+                           //   "map"              — lead with the scope map plus the
+                           //                        three most salient memories
+                           // repo wins over user; an unrecognised value is ignored and the
+                           // next layer is tried, so a mistyped repo value falls through to
+                           // the user layer before defaulting to hybrid
+
+  "hooks.sessionStart.maxChars": 1500,
+                           // character budget for that block (default 1500, ~375 tokens)
+                           // bounded to 200–20000; an out-of-range value is CLAMPED, not
+                           // rejected — a small number means "keep it short", and honouring
+                           // the floor is closer to that intent than restoring the default
+                           // repo wins over user, and a declared-but-unparseable repo value
+                           // still claims the decision (a typo'd project policy degrades to
+                           // the default rather than silently becoming a per-machine one)
+                           // memories are RANKED before the budget is spent, so what
+                           // survives is the most-recurring and most-recent, not the newest
+
   "hooks.adapter": "claude",
                            // explicit adapter when auto-detection is ambiguous
                            // values: "claude" | "cursor" | "codex"
