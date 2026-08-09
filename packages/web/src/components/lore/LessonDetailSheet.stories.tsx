@@ -29,11 +29,25 @@ type Story = StoryObj<typeof LessonDetailSheet>;
 
 const noop = () => undefined;
 
-/** Personal lesson (no org) so no member-identity fetch fires; fixed timestamps. */
+/** Personal lesson (no org) so no member-identity fetch fires; fixed timestamps.
+ *  The value is markdown so the default Preview tab shows a rendered README-style
+ *  block (heading, list, inline + fenced code, link) rather than raw source. */
 const LESSON: LessonEntry = {
   key: 'prefer-server-actions',
-  value:
-    'Reach for a server action over a route handler for dashboard mutations — it keeps the auth context and RLS in one place and avoids a second fetch layer.',
+  value: [
+    '## Prefer server actions',
+    '',
+    'Reach for a **server action** over a route handler for dashboard mutations:',
+    '',
+    '- keeps the auth context and RLS in one place',
+    '- avoids a second `fetch` layer',
+    '',
+    '```ts',
+    'await updateLesson(scope, key, { value });',
+    '```',
+    '',
+    'See the [docs](https://lorekit.io/docs) for the full rationale.',
+  ].join('\n'),
   tags: ['auth', 'performance', 'nextjs'],
   created_at: '2026-06-15T09:00:00Z',
   updated_at: '2026-07-28T14:30:00Z',
@@ -74,6 +88,15 @@ export const Default: Story = {
         <LessonDetailSheet lesson={LESSON} onClose={noop} layout="drawer" />
       </DeviceFrame>
     </div>
+  ),
+};
+
+/** The Edit tab pinned open — the raw-markdown textarea (drawer presentation). */
+export const EditView: Story = {
+  render: () => (
+    <DeviceFrame w={720} h={560}>
+      <LessonDetailSheet lesson={LESSON} onClose={noop} layout="drawer" initialContentTab="edit" />
+    </DeviceFrame>
   ),
 };
 

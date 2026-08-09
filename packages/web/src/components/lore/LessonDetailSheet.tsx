@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { AnimatePresence, motion, useDragControls } from 'motion/react';
 import { X, Bot, Zap, Clock, CalendarClock, Archive, RotateCcw, Github, Users, UserCircle, Timer } from 'lucide-react';
 import { Controller, useWatch, type UseFormReturn } from 'react-hook-form';
@@ -9,8 +9,10 @@ import { ScopeBadge } from '@/components/memory/ScopeBadge';
 import { MemoryOrigin } from '@/components/memory/MemoryOrigin';
 import { OwnershipBadge } from '@/components/memory/OwnershipBadge';
 import { EditableField } from '@/components/ui/EditableField';
+import { MarkdownPreview } from '@/components/ui/MarkdownPreview';
 import { TagsField } from '@/components/ui/TagsField';
 import { FormActionBar } from '@/components/ui/FormActionBar';
+import { CONTENT_TABS, CONTENT_TAB_SHORTCUT_KEYS, DEFAULT_CONTENT_TAB, nextTabForKey, shortcutTabForKey, tabAfterSave, type ContentTab } from './content-tabs';
 import { useEditableForm } from '@/lib/hooks/useEditableForm';
 import { useArchiveLesson, useRestoreLesson } from '@/lib/queries/lore';
 import type { LessonEntry } from './LessonCard';
@@ -36,6 +38,12 @@ interface LessonDetailSheetProps {
    * snapshot each presentation deterministically.
    */
   layout?: 'auto' | 'drawer' | 'sheet';
+  /**
+   * Which Content tab is active on first render. Defaults to `preview`. An
+   * explicit value is used by Storybook/tests to pin either tab deterministically
+   * (the same rationale as `layout`); the product never sets it.
+   */
+  initialContentTab?: ContentTab;
 }
 
 interface LessonFormValues {
@@ -136,8 +144,135 @@ function ExpiryControl({ currentExpiresAt, form, disabled }: ExpiryControlProps)
   );
 }
 
-export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' }: LessonDetailSheetProps) {
+// ── ContentSection ─────────────────────────────────────────────────────────
+// The memory value with a Preview / Edit tab switch. Preview renders the value
+// as safe GitHub-flavored markdown (`MarkdownPreview`); Edit is the raw textarea
+// (`EditableField`). Matches the house tab a11y pattern (`ClientConfigTabs`):
+// role tablist/tab/tabpanel, aria-selected/-controls, roving tabindex + arrow
+// keys, and ≥44px (`min-h-11`) targets. Identical in the drawer and bottom sheet.
+//
+// The single `Controller` above stays mounted across a tab switch, so the form
+// value/dirty state survives; only the rendered panel swaps. Editing dirties the
+// form and the pinned Discard/Save bar appears regardless of which tab is shown.
+
+const CONTENT_TAB_LABELS: Record<ContentTab, string> = { preview: 'Preview', edit: 'Edit' };
+
+interface ContentSectionProps {
+  tab: ContentTab;
+  onTabChange: (tab: ContentTab) => void;
+  /** False for archived lessons — the Edit tab is disabled and Preview is forced. */
+  canEdit: boolean;
+  value: string;
+  onChange: (value: string) => void;
+  onEditEnd: () => void;
+  error?: string;
+}
+
+function ContentSection({ tab, onTabChange, canEdit, value, onChange, onEditEnd, error }: ContentSectionProps) {
+  const tabRefs = useRef<Record<ContentTab, HTMLButtonElement | null>>({ preview: null, edit: null });
+  const effectiveTab: ContentTab = canEdit ? tab : 'preview';
+
+  function selectTab(next: ContentTab) {
+    if (next === 'edit' && !canEdit) return;
+    onTabChange(next);
+  }
+
+  function handleKeyDown(e: ReactKeyboardEvent<HTMLButtonElement>) {
+    const next = nextTabForKey(effectiveTab, e.key);
+    if (!next) return;
+    e.preventDefault();
+    if (next === 'edit' && !canEdit) return;
+    onTabChange(next);
+    tabRefs.current[next]?.focus();
+  }
+
+  return (
+    <section aria-label="Content" className="flex flex-col gap-2">
+      {/* Compact segmented control, left-aligned. The heading is dropped — the
+          tabs are self-explanatory — but `aria-label="Content"` keeps the
+          region named for assistive tech. `w-fit` hugs the two tabs rather than
+          stretching into a full-width bar. */}
+      <div
+        role="tablist"
+        aria-label="Content view"
+        aria-orientation="horizontal"
+        className="flex w-fit gap-0.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] p-0.5"
+      >
+        {CONTENT_TABS.map((id) => {
+          const selected = effectiveTab === id;
+          const disabled = id === 'edit' && !canEdit;
+          return (
+            <button
+              key={id}
+              ref={(el) => {
+                tabRefs.current[id] = el;
+              }}
+              type="button"
+              role="tab"
+              id={`content-tab-${id}`}
+              aria-selected={selected}
+              aria-controls={`content-panel-${id}`}
+              // Announce the global single-letter shortcut so it is
+              // discoverable to assistive tech — but only while the tab can
+              // actually be activated, matching `shortcutTabForKey`, which
+              // returns null for Edit on an archived memory.
+              aria-keyshortcuts={disabled ? undefined : CONTENT_TAB_SHORTCUT_KEYS[id]}
+              tabIndex={selected ? 0 : -1}
+              disabled={disabled}
+              onClick={() => selectTab(id)}
+              onKeyDown={handleKeyDown}
+              // Compact on desktop (≈28px) but a ≥44px tap target on mobile.
+              className={[
+                'flex min-h-11 items-center justify-center rounded-md px-3 py-1 text-xs font-medium transition-colors duration-150 md:min-h-7',
+                selected
+                  ? 'bg-[var(--color-bg-raised)] text-[var(--color-content-primary)] shadow-sm'
+                  : 'text-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]',
+                disabled ? 'cursor-not-allowed opacity-40' : '',
+              ].join(' ')}
+            >
+              {CONTENT_TAB_LABELS[id]}
+            </button>
+          );
+        })}
+      </div>
+
+      {effectiveTab === 'preview' ? (
+        // Preview renders directly on the panel background — no card/border/inset.
+        <div
+          role="tabpanel"
+          id="content-panel-preview"
+          aria-labelledby="content-tab-preview"
+          tabIndex={0}
+          // The panel is focusable (it is the tablist's target), so it needs a
+          // visible ring — `outline-none` alone would land a keyboard user here
+          // invisibly, against packages/web/CLAUDE.md's visible-focus floor.
+          className="rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
+        >
+          <MarkdownPreview value={value} />
+        </div>
+      ) : (
+        <div role="tabpanel" id="content-panel-edit" aria-labelledby="content-tab-edit">
+          <EditableField
+            label="Content"
+            hideLabel
+            value={value}
+            onChange={onChange}
+            onEditEnd={onEditEnd}
+            isEditing
+            placeholder="Enter memory content…"
+            minRows={6}
+            error={error}
+          />
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto', initialContentTab = DEFAULT_CONTENT_TAB }: LessonDetailSheetProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  // Content view: Preview (rendered markdown, default) vs Edit (raw textarea).
+  const [contentTab, setContentTab] = useState<ContentTab>(initialContentTab);
   const queryClient = useQueryClient();
   // Below `md` the panel is a bottom sheet; at/above it a right-side drawer.
   // `useIsMobile` shares one matchMedia listener across all consumers. An
@@ -233,14 +368,39 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
       void queryClient.invalidateQueries({ queryKey: ['lore-facets'] });
       toast.success('Memory saved', { description: lesson.key });
     },
+    // After a successful save, return to the Preview tab so the user sees the
+    // freshly-rendered saved markdown.
+    onSaveSuccess: () => setContentTab(tabAfterSave()),
   });
 
   const { form, isSaving, saveError, isDirty, handleSubmit, discard } = editForm;
 
-  // Focus close button on open; restore on close.
+  // Identity of the open lesson (null while the panel is closed).
+  const lessonId = lesson ? `${lesson.scope}\u0000${lesson.key}` : null;
+  // Reset to Preview whenever a *different* lesson opens. The ref is seeded
+  // with the mount-time identity so the first run is a no-op — otherwise this
+  // effect would overwrite `initialContentTab` before paint.
+  const shownLessonIdRef = useRef(lessonId);
+  useEffect(() => {
+    if (shownLessonIdRef.current === lessonId) return;
+    shownLessonIdRef.current = lessonId;
+    setContentTab(DEFAULT_CONTENT_TAB);
+  }, [lessonId]);
+
+  // Focus close button on open; restore on close. The delay lets the open
+  // animation start first, which means focus can already be somewhere inside
+  // the panel by the time it fires (a fast click straight into the Content
+  // textarea) — pulling it back to the close button would swallow the keystrokes
+  // that follow. So this only ever moves focus INTO the panel, never within it.
   useEffect(() => {
     if (lesson) {
-      const timer = setTimeout(() => closeRef.current?.focus(), 80);
+      const timer = setTimeout(() => {
+        const close = closeRef.current;
+        if (!close) return;
+        const panel = close.closest('[role="dialog"]');
+        if (panel?.contains(document.activeElement)) return;
+        close.focus();
+      }, 80);
       return () => clearTimeout(timer);
     }
     return undefined;
@@ -255,6 +415,29 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [lesson, onClose, isDirty]);
+
+  // Global P / E shortcuts switch the Content tab — but never while focus is in
+  // a form field (so typing "p"/"e" into the textarea, tags or expiry input is
+  // untouched) and never with a command modifier held (`shortcutTabForKey`).
+  useEffect(() => {
+    if (!lesson) return undefined;
+    function onKeyDown(e: KeyboardEvent) {
+      const el = document.activeElement as HTMLElement | null;
+      const inFormField =
+        el != null &&
+        (el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.tagName === 'SELECT' ||
+          el.isContentEditable);
+      const hasModifier = e.metaKey || e.ctrlKey || e.altKey;
+      const next = shortcutTabForKey(e.key, { hasModifier, inFormField, canEdit: !isArchived });
+      if (!next) return;
+      e.preventDefault();
+      setContentTab(next);
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [lesson, isArchived]);
 
   function handleArchive() {
     if (!lesson) return;
@@ -401,21 +584,19 @@ export function LessonDetailSheet({ lesson, onClose, onMutated, layout = 'auto' 
               aria-label="Edit memory"
             >
               <div className="group flex flex-1 flex-col gap-5 overflow-y-auto p-5">
-                {/* Content — editable */}
+                {/* Content — Preview (rendered markdown) / Edit (raw textarea) */}
                 <Controller
                   name="value"
                   control={form.control}
                   rules={{ required: 'Content is required', minLength: { value: 1, message: 'Content cannot be empty' } }}
                   render={({ field, fieldState }) => (
-                    <EditableField
-                      label="Content"
+                    <ContentSection
+                      tab={contentTab}
+                      onTabChange={setContentTab}
+                      canEdit={!isArchived}
                       value={field.value}
                       onChange={field.onChange}
                       onEditEnd={field.onBlur}
-                      isEditing={!isArchived}
-                      readOnly={isArchived}
-                      placeholder="Enter memory content…"
-                      minRows={4}
                       error={fieldState.error?.message}
                     />
                   )}
