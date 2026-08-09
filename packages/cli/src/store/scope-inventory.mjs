@@ -52,9 +52,9 @@ export function normalizeScopeInventory(result) {
  * One inventory row, coerced.
  *
  * `last_activity` is passed through when the store supplied it (the hosted
- * `GET /memories/scopes` has since migration 00049) and OMITTED — never null —
- * when it did not, so a consumer can tell "this store does not report
- * freshness" from "this scope has none".
+ * `GET /memories/scopes` has returned it since migration 00049) and OMITTED —
+ * never null — when it did not, so a consumer can tell "this store does not
+ * report freshness" from "this scope has none".
  *
  * ONE DELIBERATE DIVERGENCE from the `shapeScope` this replaced, named here so
  * it is not mistaken for an accident: the count is clamped at 0, where the old
