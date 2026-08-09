@@ -13,6 +13,7 @@ import { deriveScope } from "@lorekit/cli/src/scope.mjs";
 import {
   GIT_DEPENDENT_SCOPE_MODES,
   SCOPE_MODES,
+  assertArmInjectable,
   prepareArm,
   requiresGit,
   requiresGitForScope,
@@ -255,6 +256,34 @@ test("an explicit scope also decides the git default, not the ignored mode", asy
     });
     assert.equal(arm.gitInitialized, true);
     assert.equal(arm.injectable, true);
+  });
+});
+
+test("assertArmInjectable rejects an unreachable scope and passes a reachable arm through", async () => {
+  // The deliberately-broken arm: a branch scope seeded in a directory that
+  // derives no branch scope at all. The assertion is the caller's opt-in guard
+  // against making that mistake by accident.
+  await withSandbox({}, async (sandbox) => {
+    const unreachable = await prepareArm(sandbox, {
+      seed: "canonical",
+      scopeMode: "branch",
+      git: false,
+    });
+    assert.equal(unreachable.injectable, false);
+    assert.throws(
+      () => assertArmInjectable(unreachable),
+      /does not derive the required scope/,
+    );
+  });
+
+  await withSandbox({}, async (sandbox) => {
+    const reachable = await prepareArm(sandbox, {
+      seed: "canonical",
+      scopeMode: "global",
+    });
+    assert.equal(reachable.injectable, true);
+    // Returns the arm itself, so it can be used inline at a call site.
+    assert.equal(assertArmInjectable(reachable), reachable);
   });
 });
 
