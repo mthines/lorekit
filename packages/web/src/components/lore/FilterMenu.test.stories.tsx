@@ -72,7 +72,12 @@ export default meta;
 type Story = StoryObj<typeof Harness>;
 
 async function openMenu(canvasElement: HTMLElement) {
-  const trigger = await within(canvasElement).findByRole('button', { name: /add filter/i });
+  // The trigger relabels itself once a condition is committed ("Add filter" →
+  // "Filters: n applied. Add or edit a filter"), so a story that reopens the
+  // menu after committing a pill needs both spellings.
+  const trigger = await within(canvasElement).findByRole('button', {
+    name: /add (?:or edit a )?filter/i,
+  });
   await userEvent.click(trigger);
   // The popover lives outside `canvasElement` now — scope to the document.
   const screen = within(document.body);
@@ -144,19 +149,25 @@ export const KindAndHostFilterTheTaxonomy: Story = {
 
     await step('selecting a value commits a Kind pill', async () => {
       await userEvent.click(canvas.getByRole('option', { name: /lesson/i }));
-      await within(canvasElement).findByText(/Kind/);
-      await expect(within(canvasElement).getByText(/lesson/)).toBeInTheDocument();
+      // The pill's own label, as every other story asserts it: a `/Kind/` text
+      // match also hits the `aria-live` announcement, and `/lesson/` hits both
+      // that and the value segment.
+      await expect(await within(canvasElement).findByLabelText('Kind is lesson')).toBeInTheDocument();
     });
 
     await step('Host is a separate dimension, not a second Agent', async () => {
       // `aw` exists under BOTH host and source_agent, so a menu that conflated
       // them would show one row here and commit the wrong param.
-      const reopened = await openMenu(canvasElement);
-      await userEvent.click(reopened.getByRole('option', { name: /^host/i }));
-      const list = await reopened.findByRole('listbox', { name: /host values/i });
+      // A click toggles and STAYS open, so the menu is still on Kind's values:
+      // go back a level rather than reopening, which would close it.
+      await userEvent.keyboard('{Escape}');
+      await canvas.findByRole('listbox', { name: /filter by/i });
+
+      await userEvent.click(canvas.getByRole('option', { name: /^host/i }));
+      const list = await canvas.findByRole('listbox', { name: /host values/i });
       const values = within(list).getAllByRole('option');
       await expect(values.map((v) => v.textContent).join(' ')).toContain('reviewer');
-      await userEvent.click(reopened.getByRole('option', { name: /reviewer/i }));
+      await userEvent.click(within(list).getByRole('option', { name: /reviewer/i }));
     });
 
     await step('the committed bar maps to the params the route accepts', async () => {
