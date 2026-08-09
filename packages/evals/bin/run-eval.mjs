@@ -182,7 +182,6 @@ async function runArm0(options) {
 
   const id = runId();
   const outDir = path.resolve(options.out, `arm0-${id}`);
-  await fsp.mkdir(outDir, { recursive: true });
 
   const reps = [];
   for (let rep = 1; rep <= options.reps; rep++) {
@@ -190,7 +189,6 @@ async function runArm0(options) {
     // working directory, or hook state.
     const sandbox = await createSandbox({ keep: options.keep });
     const repDir = path.join(outDir, `rep-${rep}`);
-    await fsp.mkdir(repDir, { recursive: true });
     try {
       // Arm 0 is the ONLY arm allowed to write memory: its whole job is to
       // produce the organic lesson arm B will later be seeded with.
@@ -219,6 +217,10 @@ async function runArm0(options) {
             `or use the "probe" subcommand, which is not graded.`,
         );
       }
+      // Create the artifact tree only now that the scope guard has passed, so a
+      // refused invocation leaves no empty arm0-<id>/rep-N/ behind — matching the
+      // seed refusal hoisted above the loop. `recursive` creates outDir too.
+      await fsp.mkdir(repDir, { recursive: true });
       const meta = {
         rep,
         arm: "0",

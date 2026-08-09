@@ -135,6 +135,10 @@ test("arm0 refuses a scope override it could never grade as a success", async ()
         ]),
       /could only score a failure/,
     );
+    // The artifact tree is created lazily, only after the guard passes, so a
+    // refused invocation leaves no empty arm0-<id>/rep-N/ behind — the same
+    // contract the seed refusal above already holds to.
+    assert.deepEqual(await fsp.readdir(out), []);
     // The default invocation resolves to the target and is unaffected.
     assert.equal(
       await main(["arm0", "--reps", "1", "--dry-run", "--out", out]),
