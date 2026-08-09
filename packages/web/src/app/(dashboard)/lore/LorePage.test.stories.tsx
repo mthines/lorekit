@@ -40,10 +40,13 @@ export const RendersScopeTree: Story = {
     });
 
     await step('The MSW-mocked scope tree resolves', async () => {
-      // Exact string, not /all scopes/i: the stats header above the list also
-      // says "Activity · all scopes", so a substring match resolves two nodes.
-      // This one is the scope panel's selected-scope label.
-      await expect(await canvas.findByText('All scopes')).toBeInTheDocument();
+      // The tree itself, not the "All scopes" label beside it: that label is a
+      // constant an EMPTY scopes response would still render, so it proves the
+      // query settled and nothing about what it returned. `ScopeTree` renders
+      // this list only when it has at least one mocked scope row.
+      await expect(
+        await canvas.findByRole('tree', { name: /memory scopes/i }),
+      ).toBeInTheDocument();
     });
   },
 };
