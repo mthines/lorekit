@@ -217,7 +217,7 @@ q=migration+backfill&scopes=repo::acme/app,global&limit=5"
 | `q` | — | Free-text query. **Optional** — omit it and the ranking is recency + salience, i.e. "what matters generally". |
 | `scopes` | all visible | Comma-separated, **most-specific first**; the order breaks ties, so a project lesson wins over the global one it ties with. |
 | `limit` | `10` | 1–50. |
-| `min_score` | `0` | Drop weak hits. Use it when injecting automatically: showing an irrelevant lesson every turn is worse than showing none. |
+| `min_score` | `0` | Drop weak hits when injecting automatically — an irrelevant lesson every turn is worse than none. Note: with `q` set, matched hits floor at ~`0.33` (relevance is binary today), so a value ≤ `1/3` is a no-op; finer gating arrives with graded relevance. |
 
 Bodies are not returned — fetch the ones you want with `memory.read`. `candidates` is how many
 matched before ranking, so you can tell a shortlist from the whole set.

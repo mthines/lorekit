@@ -59,6 +59,14 @@ export const RelevantQuerySchema = z.object({
    * matched; raising it is how a caller says "stay silent rather than show me
    * something weak" — which is what a per-turn hook needs, since injecting an
    * irrelevant lesson on every prompt is worse than injecting nothing.
+   *
+   * Mind the floor this reaches today. When `q` is set every matched candidate
+   * carries `relevance: 1` — relevance is binary here (see the handler's
+   * docblock) — so with the endpoint's equal weights no matched score drops
+   * below `1/3`, and a `min_score` at or under `0.333…` is therefore a no-op.
+   * Above `1/3` it still discriminates, on recency and salience. A `min_score`
+   * that gates across the whole range needs graded FTS relevance, which lands
+   * with the ranked-relevance RPC (PR 11).
    */
   min_score: z.coerce.number().min(0).max(1).optional().default(0),
 });
