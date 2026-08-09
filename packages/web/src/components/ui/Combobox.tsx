@@ -107,6 +107,7 @@ export function Combobox<T extends string>({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
 
   const visible = useMemo(() => filterOptions(options, query), [options, query]);
   const selected = options.find((o) => o.value === value);
@@ -139,6 +140,22 @@ export function Combobox<T extends string>({
   useEffect(() => {
     if (open) setHighlight((h) => clampHighlight(visible, h));
   }, [visible, open]);
+
+  // Keep the highlighted row scrolled into view as the arrows walk past the
+  // fold. The highlight travels by `aria-activedescendant`, so DOM focus never
+  // moves and the browser never scrolls for us — on a list longer than the
+  // 240px popover (or the sheet's band) keyboard navigation would otherwise
+  // walk off-screen. `FilterMenu` does the same for the same reason.
+  //
+  // Indexed rather than queried by id: `useId()` emits colons, which are not
+  // valid in a bare CSS id selector, and the rendered order is `visible`'s
+  // order — disabled options are rendered too, so the indices line up.
+  useEffect(() => {
+    if (!open || highlight < 0) return;
+    listRef.current?.querySelectorAll('[role="option"]')[highlight]?.scrollIntoView({
+      block: 'nearest',
+    });
+  }, [highlight, open, visible]);
 
   // ── placement (desktop only) ───────────────────────────────────────────────
   const measure = useCallback(() => {
@@ -268,6 +285,7 @@ export function Combobox<T extends string>({
         </div>
       )}
       <ul
+        ref={listRef}
         id={listboxId}
         role="listbox"
         aria-label={label}
