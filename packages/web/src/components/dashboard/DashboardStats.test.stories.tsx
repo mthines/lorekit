@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react';
-import { expect, userEvent, within } from 'storybook/test';
+import { expect, userEvent, waitFor, within } from 'storybook/test';
 
 import { DashboardStats } from './DashboardStats';
 import { memoryHandlers, FROZEN_NOW } from '@/mocks/memories';
@@ -75,8 +75,14 @@ export const RangeSelectorSwitches: Story = {
     // The picker is the shared `Combobox` now, so its popup is PORTALED to
     // document.body — the rows do not resolve inside the story canvas.
     const openPicker = async () => {
-      await userEvent.click(canvas.getByRole('button', { name: /^Time range:/ }));
       const screen = within(document.body);
+      // The popup unmounts through an `AnimatePresence` exit, so a reopen right
+      // after a commit click would resolve against the OUTGOING listbox. Same
+      // race the Combobox and StatusControl stories wait out.
+      await waitFor(async () => {
+        await expect(screen.queryByRole('listbox', { name: /time range/i })).toBeNull();
+      });
+      await userEvent.click(canvas.getByRole('button', { name: /^Time range:/ }));
       await screen.findByRole('listbox', { name: /time range/i });
       return screen;
     };
