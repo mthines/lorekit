@@ -1115,8 +1115,8 @@ function indexLines(text) {
 // A store that can enumerate. `inventory` is returned verbatim so a test can
 // choose either envelope: the bare array a LocalStore answers with, or the
 // `{ ok, scopes }` a RemoteStore does.
-function enumerableStore(byScope, inventory, opts = {}) {
-  const base = fakeStore(byScope, opts);
+function enumerableStore(byScope, inventory) {
+  const base = fakeStore(byScope);
   return { ...base, listScopes: async () => inventory };
 }
 
