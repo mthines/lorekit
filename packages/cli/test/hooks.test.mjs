@@ -708,6 +708,81 @@ test('precedence unchanged — a shadowed lesson cannot be ranked back into the 
   assert.equal(shared[0].value, 'narrow wins');
 });
 
+// ── the cross-scope budget trade, locked ─────────────────────────────────────
+// `fetchLessons`'s docblock states that precedence settles same-key collisions
+// only, and that across DIFFERENT keys the cap is one cross-scope ranking with
+// `scopeOrder` as a tiebreak — so a recurring broad-scope lesson takes a slot
+// from a stale narrow-scope one. That was prose. These two tests make it a
+// contract: a future scope weight or per-scope floor has to fail here and be
+// re-decided, rather than quietly changing what the agent reads.
+
+test('ranking is cross-scope — a recurring broad lesson outranks and evicts a stale narrow one', async (t) => {
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  if (scope.readOrder.length < 2) {
+    // Report the no-op rather than returning green — same reason as the
+    // shadowing test above: silence here would hide the property, not prove it.
+    t.skip('needs at least two scopes to compete for the cap');
+    return;
+  }
+  const [narrow] = scope.readOrder;
+  const broad = scope.readOrder[scope.readOrder.length - 1];
+
+  // Exactly MAX_LESSONS stale narrow-scope one-offs, so the cap is already full
+  // from the most-specific scope alone — the shape the OLD group order produced,
+  // in which no broad-scope lesson could ever be injected. Distinct keys, so
+  // precedence shadows nothing and the ranking is the only thing under test.
+  const narrowRows = Array.from({ length: MAX_LESSONS }, (_, i) =>
+    seeded(narrow, `narrow-${String(i).padStart(2, '0')}`, { days: 120, seen: 1 }),
+  );
+  const broadRows = Array.from({ length: 3 }, (_, i) =>
+    seeded(broad, `broad-recurring-${i}`, { days: 1, seen: 30 }),
+  );
+
+  const { lessons } = await fetchLessons(
+    fakeStore({ [narrow]: narrowRows, [broad]: broadRows }),
+    process.cwd(),
+    { now: RANK_NOW },
+  );
+
+  assert.equal(lessons.length, MAX_LESSONS, 'still capped');
+  assert.deepEqual(
+    lessons.slice(0, 3).map((l) => l.scope),
+    [broad, broad, broad],
+    'the recurring broad lessons lead — score decides, scope does not reserve',
+  );
+  assert.equal(
+    lessons.filter((l) => l.scope === narrow).length,
+    MAX_LESSONS - 3,
+    'three narrow lessons were evicted, which is the accepted cost of the trade',
+  );
+});
+
+test('ranking is cross-scope — but the narrower scope still wins an equal score', async (t) => {
+  // The other half of the trade, and the reason `scopeOrder` is passed at all:
+  // the hierarchy is a real tiebreak, so when the score says nothing it decides.
+  // Both entries are identical in every scoring input and differ only in scope.
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  if (scope.readOrder.length < 2) {
+    t.skip('needs at least two scopes to compete for the cap');
+    return;
+  }
+  const [narrow] = scope.readOrder;
+  const broad = scope.readOrder[scope.readOrder.length - 1];
+
+  const { lessons } = await fetchLessons(
+    fakeStore({
+      [narrow]: [seeded(narrow, 'a-narrow', { days: 3, seen: 4 })],
+      [broad]: [seeded(broad, 'a-broad', { days: 3, seen: 4 })],
+    }),
+    process.cwd(),
+    { now: RANK_NOW },
+  );
+
+  assert.deepEqual(lessons.map((l) => l.scope), [narrow, broad]);
+});
+
 test('fetchLessons ranked — an entry with no ranking fields is still injected', async () => {
   // A store that predates the seenCount/updatedAt projection (or a scope read
   // that returned bare rows) must not vanish from the injection just because it
