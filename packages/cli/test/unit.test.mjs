@@ -1622,7 +1622,11 @@ describe('scoreLesson factors', () => {
     // while a bare string would be spread into one term per character.
     assert.equal(relevanceFactor(entry, ' TIMEOUT '), 1, 'a lone term is wrapped, not spread');
     assert.equal(relevanceFactor(entry, 'timeout'), relevanceFactor(entry, ['timeout']));
-    assert.equal(relevanceFactor(entry, 'zqx'), 0, 'a lone non-matching term is one term, not three characters');
+    // `tue` is the discriminator: it is not a substring of the value, but each
+    // of `t`, `u` and `e` is, so a spread would score 1. `zqx` and ` TIMEOUT `
+    // score the same either way and prove nothing on their own.
+    assert.equal(relevanceFactor(entry, 'tue'), 0, 'a lone term is matched whole, not character by character');
+    assert.equal(relevanceFactor(entry, 'zqx'), 0);
     assert.equal(relevanceFactor(entry, ''), 0);
     assert.equal(relevanceFactor(entry, null), 0);
     assert.equal(relevanceFactor(entry, 42), 0, 'a lone non-string is stringified, not iterated');
