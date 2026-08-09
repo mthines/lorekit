@@ -116,16 +116,20 @@ async function run(args) {
       return 0;
     }
     const { scope: readScope, lessons, scopeCounts, applicable } = await fetchLessons(store, root);
-    // Record what this injection showed, so the per-prompt hook treats it as
-    // already seen. Bookkeeping only — `recordShownLessons` never throws, and a
-    // failure here costs at most one repeated lesson later in the session.
-    recordShownLessons(parsed.sessionId, (lessons || []).map(lessonId));
     emit(formatLessons(lessons, readScope, {
       instruction: sessionInstruction,
       mode: control.hooksSessionStart,
       maxChars: control.hooksSessionStartMaxChars,
       scopeCounts,
       applicable,
+      // Record what this injection RENDERED, so the per-prompt hook treats it as
+      // already seen. It must be the rendered subset, not the fetched set: the
+      // budget and the hard ceiling routinely drop lessons, and marking those
+      // shown would let the delta gate suppress — for the whole session —
+      // exactly the lessons the reader never saw. Bookkeeping only:
+      // `recordShownLessons` never throws, and a failure costs at most one
+      // repeated lesson later in the session.
+      onShown: (rendered) => recordShownLessons(parsed.sessionId, rendered.map(lessonId)),
     }));
     return 0;
   }

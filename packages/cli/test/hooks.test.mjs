@@ -67,6 +67,55 @@ test('formatLessons returns null when empty and a block otherwise', () => {
   assert.doesNotMatch(out, /second/); // only the first line is included
 });
 
+test('formatLessons reports only the lessons it RENDERED to onShown', () => {
+  const lessons = Array.from({ length: 8 }, (_, i) => ({
+    key: `k${i}`,
+    value: `lesson number ${i}`,
+    scope: 'repo::a/b',
+  }));
+  const seen = [];
+  const out = formatLessons(lessons, { repoScope: 'repo::a/b' }, {
+    maxChars: 120,
+    onShown: (rendered) => seen.push(...rendered.map((l) => l.key)),
+  });
+  // The budget binds, so the block is a strict subset — and `onShown` must
+  // describe that subset, never the whole candidate set.
+  assert.ok(seen.length > 0);
+  assert.ok(seen.length < lessons.length);
+  for (const key of seen) assert.match(out, new RegExp(key));
+  for (const l of lessons) {
+    if (!seen.includes(l.key)) assert.doesNotMatch(out, new RegExp(`${l.key} —`));
+  }
+});
+
+test('formatLessons reports every lesson to onShown when the budget fits them all', () => {
+  const lessons = [
+    { key: 'k1', value: 'one', scope: 'repo::a/b' },
+    { key: 'k2', value: 'two', scope: 'repo::a/b' },
+  ];
+  const seen = [];
+  formatLessons(lessons, { repoScope: 'repo::a/b' }, {
+    maxChars: 20000,
+    onShown: (rendered) => seen.push(...rendered.map((l) => l.key)),
+  });
+  assert.deepEqual(seen, ['k1', 'k2']);
+});
+
+test('formatLessons reports an empty set when there is nothing to show, and survives a throwing onShown', () => {
+  const seen = [];
+  assert.equal(
+    formatLessons([], { repoScope: 'repo::a/b' }, { onShown: (r) => seen.push(r) }),
+    null,
+  );
+  assert.deepEqual(seen, [[]]);
+  const out = formatLessons(
+    [{ key: 'k1', value: 'v', scope: 'repo::a/b' }],
+    { repoScope: 'repo::a/b' },
+    { onShown: () => { throw new Error('bookkeeping blew up'); } },
+  );
+  assert.match(out, /k1/);
+});
+
 test('nudges name the write scope', () => {
   assert.match(retrospectiveNudge({ repoScope: 'repo::a/b' }), /memory\.write to repo::a\/b/);
   assert.match(failureNudge('Bash', { repoScope: null }), /memory\.write to global/);

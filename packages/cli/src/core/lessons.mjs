@@ -223,15 +223,29 @@ function lessonHook(value, max = HOOK_LEN) {
 // `hooks.instructions.SessionStart` in the control config. Lets teams inject
 // project-specific guidance (e.g. "focus on migration safety") without touching
 // the hook internals. Visible even when there are no lessons.
+// `onShown` — an optional callback receiving the lessons this call actually
+// RENDERED, which is a subset of `lessons` whenever the budget or the ceiling
+// binds. The selection happens in here and nowhere else, so a caller that needs
+// to know what the reader saw (the shown-set bookkeeping) has to be told rather
+// than re-deriving it — a second copy of the fit maths would drift the moment
+// either bound changes.
 export function formatLessons(lessons, scope, {
   instruction = null,
   mode = 'hybrid',
   maxChars = DEFAULT_SESSION_START_MAX_CHARS,
   scopeCounts = null,
   applicable = null,
+  onShown = null,
 } = {}) {
+  // Never let bookkeeping break the render: this function's contract is to
+  // return a block, and a throwing callback must not cost the reader theirs.
+  const report = (rendered) => {
+    if (typeof onShown !== 'function') return;
+    try { onShown(rendered); } catch { /* best-effort */ }
+  };
   const all = Array.isArray(lessons) ? lessons : [];
   if (all.length === 0) {
+    report([]);
     // No lessons — only emit if there is a custom instruction to show.
     if (!instruction) return null;
     return (
@@ -256,6 +270,7 @@ export function formatLessons(lessons, scope, {
 
   const ceiling = shape === 'map' ? Math.min(MAP_TOP_K, HARD_LESSON_CEILING) : HARD_LESSON_CEILING;
   const { shown } = fitLines(all, budget - reserve, ceiling);
+  report(shown.map((s) => s.lesson));
 
   // `map` always shows the inventory; `hybrid` shows it only when something was
   // actually left out — otherwise the reader is looking at the complete set and
