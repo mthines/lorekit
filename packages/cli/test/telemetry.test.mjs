@@ -1096,8 +1096,20 @@ test('docs/otel.md documents exactly the vocabulary the code emits', async () =>
     'utf8',
   );
 
-  const row = docs.split('\n').find((line) => line.includes('`lorekit.cli.outcome`'));
-  assert.ok(row, 'docs/otel.md must document lorekit.cli.outcome');
+  // Must be the TABLE ROW, not merely the first line mentioning the attribute:
+  // the prose below the table already names it twice, and prose added ABOVE it
+  // would be picked instead and then fail with a confusing "no alternation"
+  // message about a sentence. Require the line to be a table row (leading `|`)
+  // and to be unambiguous.
+  const rows = docs
+    .split('\n')
+    .filter((line) => line.trimStart().startsWith('|') && line.includes('`lorekit.cli.outcome`'));
+  assert.equal(
+    rows.length,
+    1,
+    `docs/otel.md must document lorekit.cli.outcome in exactly one table row, found ${rows.length}`,
+  );
+  const row = rows[0];
 
   // Every value the code can emit is named in the row...
   for (const value of CLI_OUTCOME_VALUES) {
