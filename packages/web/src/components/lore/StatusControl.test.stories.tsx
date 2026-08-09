@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react';
 import { useState } from 'react';
-import { expect, userEvent, within } from 'storybook/test';
+import { expect, userEvent, waitFor, within } from 'storybook/test';
 
 import { StatusControl } from './StatusControl';
 import {
@@ -59,9 +59,16 @@ type Story = StoryObj<typeof Harness>;
 
 /** The popup is portaled to `document.body`, so its rows resolve there. */
 async function openStatus(canvasElement: HTMLElement) {
+  const screen = within(document.body);
+  // A previous step may have just committed or dismissed the popup, which
+  // unmounts through an `AnimatePresence` exit — reopening while the outgoing
+  // listbox is still mounted would resolve `findByRole` against IT, and the
+  // assertions that follow would read the pre-selection list.
+  await waitFor(async () => {
+    await expect(screen.queryByRole('listbox', { name: /status/i })).toBeNull();
+  });
   const trigger = await within(canvasElement).findByRole('button', { name: /^Status:/ });
   await userEvent.click(trigger);
-  const screen = within(document.body);
   await screen.findByRole('listbox', { name: /status/i });
   return screen;
 }
