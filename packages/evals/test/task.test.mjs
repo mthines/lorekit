@@ -51,6 +51,24 @@ test("the spec records the target and the rubric (AC-3.3)", async () => {
   assert.match(spec, /exact string equality/);
 });
 
+test("the spec says which mistake kinds the seeded lesson actually names", async () => {
+  const spec = await specText();
+  const lesson = await canonicalLessonText();
+
+  // The lesson names the single-colon and slash-appended forms...
+  assert.match(lesson, /branch:owner\/repo/);
+  assert.match(lesson, /branch::owner\/repo\/branch/);
+  // ...and says nothing about omitting the branch segment, so the spec must not
+  // claim `repeatedMistake` always means "the mistake the lesson warned about".
+  assert.equal(/omitt|missing/i.test(lesson), false);
+  assert.match(spec, /In the lesson\?/);
+  assert.match(
+    spec,
+    /`branch-segment-missing`\s*\|[^|]*\|\s*no\s*\|/,
+    "the kinds table must mark branch-segment-missing as absent from the lesson",
+  );
+});
+
 test("the two alternates are registered as stubs with their grader need (AC-3.4)", () => {
   const stubs = Object.values(TASKS).filter((t) => !t.implemented);
   assert.equal(stubs.length, 2);

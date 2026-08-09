@@ -63,16 +63,19 @@ success.
 | 0      | Nothing was written at all.                                                                                                                                                                                                  |
 
 `repeatedMistake` is flagged when any _attempted_ scope is invalid in one of the
-specific ways this lesson warns about. It is the signal the whole experiment
-turns on: it fires when the agent made the exact mistake the stored lesson
-describes. Each kind is recorded separately, because they are different recall
-failures:
+specific ways the grader recognises. Each kind is recorded separately, because
+they are different recall failures — and the `In the lesson?` column is
+load-bearing: only the first two are described by `fixtures/canonical-lesson.md`,
+so only those two support the reading "the agent repeated the exact mistake the
+stored lesson warned about". The third is a scope-format mistake the grader can
+name but the seeded lesson never mentions; an analysis that conflated them would
+credit memory with a warning it never gave.
 
-| Kind                         | Shape                                                                                     |
-| ---------------------------- | ----------------------------------------------------------------------------------------- |
-| `single-colon`               | `branch:mthines/gw-tools` — a single `:` after a known prefix                             |
-| `branch-appended-with-slash` | `branch::mthines/gw-tools/feat/x` — the branch glued on with `/` instead of a second `::` |
-| `branch-segment-missing`     | `branch::mthines/gw-tools` — the branch segment omitted altogether                        |
+| Kind                         | Shape                                                                                     | In the lesson? |
+| ---------------------------- | ----------------------------------------------------------------------------------------- | -------------- |
+| `single-colon`               | `branch:mthines/gw-tools` — a single `:` after a known prefix                             | yes            |
+| `branch-appended-with-slash` | `branch::mthines/gw-tools/feat/x` — the branch glued on with `/` instead of a second `::` | yes            |
+| `branch-segment-missing`     | `branch::mthines/gw-tools` — the branch segment omitted altogether                        | no             |
 
 ## Validity oracle
 

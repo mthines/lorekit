@@ -63,8 +63,11 @@ partial credit exists but never becomes success.
 
 Validity is decided by `validateScope` from `packages/mcp-core/src/scope.ts`,
 the same function the product enforces. `repeatedMistake` fires when the agent
-made the specific mistake the stored lesson warns about — that flag is what the
-whole experiment turns on.
+made one of the scope-format mistakes the grader recognises — that flag is what
+the whole experiment turns on. Only two of the three kinds (`single-colon` and
+`branch-appended-with-slash`) are described by the seeded lesson;
+`branch-segment-missing` is not, so it does not evidence a repeated _warning_.
+`fixtures/spec.md` carries the table.
 
 The grader reads **two** sources, and needs both:
 
