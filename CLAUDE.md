@@ -482,7 +482,7 @@ overridable (no billing built yet — see [docs/limits.md](./docs/limits.md)):
 All `lorekit.*` spans carry:
 - `lorekit.tool.name` — bounded: `memory.write|read|list|delete|search`
 - `lorekit.scope` — canonical scope string
-- `lorekit.scope.type` — bounded: `global|project|repo|branch`
+- `lorekit.scope.type` — bounded: `global|project|repo|branch|mixed|invalid`, and OMITTED when the operation carries no scope. Resolved by the shared `scope-type-attribute.ts` (mirrored into `_shared/`), never by an inline `split('::')` in a transport
 - `lorekit.key` — lesson key
 - `service.namespace` — always `lorekit`
 - `deployment.environment.name` — `production|preview|development|local` (from `VERCEL_ENV`), plus the synthetic `test` stamped on smoke/CI runs (the pipelines set `DEPLOYMENT_ENVIRONMENT=test`; the edge also honours it per-request via the `X-LoreKit-Deployment-Environment` header, allowlisted to `test`) — see [docs/otel.md](./docs/otel.md) → "Smoke / test runs are tagged"
