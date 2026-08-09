@@ -33,6 +33,12 @@
  *   sees a relative value. See `lib/time-range.ts`.
  * - `view` param:     'scope' | 'time'. Persisted in URL so a shared link
  *   lands on the correct tab.
+ * - `status` param:   'active' | 'archived' | 'expiring'. The population being
+ *   viewed, as opposed to the filters that narrow it. Absent means "fall back
+ *   to the legacy `archived` flag", which is why its default is `null` rather
+ *   than `'active'`.
+ * - `archived` param: the superseded boolean. Still READ so existing links keep
+ *   resolving; never written. Same treatment as the legacy `tags` shorthand.
  * - `scopePanelOpen`: local useState — ephemeral mobile accordion, NOT in URL.
  *   Defaults to closed so the phone layout leads with the memories.
  * - `heatmapOpen`:    local useState — ephemeral panel collapse, NOT in URL.
@@ -42,7 +48,7 @@
  */
 
 import { useCallback, useMemo, useTransition, useState } from 'react';
-import { Search, BookOpen, ChevronDown, ChevronUp, Loader2, List, LayoutGrid, Archive, User, Building2, Users } from 'lucide-react';
+import { Search, BookOpen, ChevronDown, ChevronUp, Loader2, List, LayoutGrid, User, Building2, Users } from 'lucide-react';
 import { ScopeTree, type ScopeNode } from './ScopeTree';
 import { LessonCard } from './LessonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -51,6 +57,16 @@ import { useDebouncedUrlState } from '@/lib/hooks/useDebouncedUrlState';
 import { useIsMobile } from '@/lib/hooks/useMediaQuery';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
+import { StatusControl } from './StatusControl';
+import {
+  EXPIRING_WITHIN_DAYS,
+  expiringWithinDays,
+  isArchivedView,
+  resolveStatus,
+  STATUS_ICONS,
+  statusParamValue,
+  type MemoryStatus,
+} from '@/lib/status-filter';
 import {
   isPresetRange,
   resolveRange,
@@ -158,7 +174,7 @@ function OwnershipFilterBar({
   );
 }
 
-// ── Filter bar (search + labels + date + archived) ────────────────────────────
+// ── Filter bar (search + filters + date + status) ─────────────────────────────
 // Shared by both tabs and both breakpoints. `variant` carries the only two
 // differences between the desktop and mobile renders: the desktop bar sits in a
 // bordered header (`border-b`/padding), uses smaller type + the page `bg`, and
@@ -184,8 +200,8 @@ function ControlRow({
   onEditField,
   range,
   onRangeChange,
-  showArchived,
-  onToggleArchived,
+  status,
+  onStatusChange,
 }: {
   variant: 'desktop' | 'mobile';
   search: string;
@@ -197,8 +213,8 @@ function ControlRow({
   onEditField: (field: FilterField | null) => void;
   range: DateRange | null;
   onRangeChange: (range: DateRange | null) => void;
-  showArchived: boolean;
-  onToggleArchived: () => void;
+  status: MemoryStatus;
+  onStatusChange: (status: MemoryStatus) => void;
 }) {
   const desktop = variant === 'desktop';
 
@@ -227,25 +243,7 @@ function ControlRow({
         variant={variant}
       />
       <DateRangePicker value={range} onChange={onRangeChange} className="shrink-0" />
-      <button
-        type="button"
-        onClick={onToggleArchived}
-        aria-pressed={showArchived}
-        aria-label={showArchived ? 'Showing archived memories — click to show active' : 'Show archived memories'}
-        title={desktop ? (showArchived ? 'Showing archived' : 'Show archived') : undefined}
-        className={[
-          'flex min-h-9 shrink-0 items-center rounded-lg border transition-all duration-150',
-          desktop ? 'gap-1.5 px-2.5 py-1.5 text-xs font-medium' : 'justify-center p-2',
-          showArchived
-            ? 'border-amber-400/40 bg-amber-400/10 text-amber-400'
-            : `border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-content-tertiary)]${
-                desktop ? ' hover:border-[var(--color-content-tertiary)] hover:text-[var(--color-content-secondary)]' : ''
-              }`,
-        ].join(' ')}
-      >
-        <Archive className={desktop ? 'size-3.5' : 'size-4'} aria-hidden />
-        {desktop && <span className="hidden sm:inline">Archived</span>}
-      </button>
+      <StatusControl value={status} onChange={onStatusChange} variant={variant} />
     </div>
   );
 }
@@ -399,12 +397,25 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // Local-only: heatmap panel collapse. Ephemeral UI — not shareable.
   const [heatmapOpen, setHeatmapOpen] = useState(true);
 
-  // URL-backed archived toggle — scoped to /lore.
-  const [showArchived, setShowArchived] = useUrlState<boolean>('archived', false, {
+  // URL-backed Status — scoped to /lore. Defaults to `null` (param absent), not
+  // to 'active', for the reason `filters` defaults to null: absent has to be
+  // distinguishable from an explicit choice, because an absent `status` falls
+  // back to the legacy `archived` flag and an explicit one overrides it.
+  const [rawStatus, setRawStatus] = useUrlState<MemoryStatus | null>('status', null, {
     cleanOnPathname: '/lore',
   });
 
-  // Paginated lesson list — server-side filtered by scope / search / range / archived.
+  // The superseded boolean. Still READ so `?archived=true` links in PRs, Slack
+  // and `lorekit link --archived` output keep resolving to the archived view —
+  // the same treatment the legacy `?tags=` shorthand gets. Never written.
+  const [legacyArchived] = useUrlState<boolean>('archived', false, {
+    cleanOnPathname: '/lore',
+  });
+
+  const status = resolveStatus(rawStatus, legacyArchived);
+  const showArchived = isArchivedView(status);
+
+  // Paginated lesson list — server-side filtered by scope / search / range / status.
   const {
     data,
     isLoading,
@@ -412,7 +423,14 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     hasNextPage,
     isFetchingNextPage,
     fetchNextPage,
-  } = useMemories({ scope: selectedScope, search: committedSearch, range: resolvedRange, filters, showArchived });
+  } = useMemories({
+    scope: selectedScope,
+    search: committedSearch,
+    range: resolvedRange,
+    filters,
+    showArchived,
+    expiringWithinDays: expiringWithinDays(status),
+  });
 
   // Facet catalog for the menu (see `useFacetCatalog`) — its own endpoint query,
   // never derived from the loaded pages, so the menu's options can't shrink to
@@ -448,12 +466,14 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     [lessons, ownerFilter],
   );
 
-  const isFiltered =
-    search.trim() !== '' ||
-    range !== null ||
-    showArchived ||
-    ownerFilter !== 'all' ||
-    filters.length > 0;
+  // Has the user narrowed WITHIN the current view? `status` is deliberately not
+  // one of these: it selects which population is listed, not a predicate over
+  // it, so "Archived" or "Expiring" being selected must not read as "you
+  // filtered something out". That distinction is what the empty state turns on
+  // — a status view with nothing narrowing it gets its own copy, the same view
+  // with a search that matched nothing gets "no matches".
+  const isNarrowedWithinView =
+    search.trim() !== '' || range !== null || ownerFilter !== 'all' || filters.length > 0;
 
   // Every filter mutation closes the lesson sidebar for one reason: the open
   // lesson may not survive the new predicate, and a detail panel describing a
@@ -479,9 +499,13 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     closeLesson();
   }
 
-  function handleToggleArchived() {
-    setShowArchived(!showArchived);
-    // Close the sidebar — the open lesson may not exist in the other list.
+  function handleStatusChange(next: MemoryStatus) {
+    // `statusParamValue` decides whether the param is written or dropped — it
+    // has to be written even for the default when a legacy `archived=true` is
+    // still in the URL, or selecting Active would silently undo itself on the
+    // next reload.
+    setRawStatus(statusParamValue(next, legacyArchived));
+    // Close the sidebar — the open lesson may not exist in the other population.
     closeLesson();
   }
 
@@ -594,25 +618,37 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     if (filteredLessons.length === 0 && !hasNextPage) {
       return (
         <EmptyState
-          icon={showArchived ? Archive : BookOpen}
+          icon={STATUS_ICONS[status]}
           title={
-            showArchived
-              ? 'No archived memories'
-              : isFiltered
-                ? 'No matching memories'
-                : 'No memories in this scope'
+            // Narrowing is checked FIRST, and only then the status. A search or
+            // a filter that matched nothing is a failed search in every view —
+            // reading "Nothing expiring soon" (or "No archived memories") when
+            // the honest answer is "your query matched nothing here" hides the
+            // control the user needs to undo.
+            isNarrowedWithinView
+              ? 'No matching memories'
+              : status === 'archived'
+                ? 'No archived memories'
+                : // An unnarrowed EXPIRING view is good news, not a failed
+                  // search, so it gets its own copy. That is only true once the
+                  // narrowed case above has been taken.
+                  status === 'expiring'
+                  ? 'Nothing expiring soon'
+                  : 'No memories in this scope'
           }
           description={
-            showArchived
-              ? 'Archive a memory from its detail panel to see it here.'
-              : isFiltered
-                ? // Filters AND together, so the most likely cause of an empty
-                  // list is one condition too many — name that before search
-                  // terms and dates, which the user can already see.
-                  filters.length > 1
-                  ? 'No memory satisfies every filter — try removing one.'
-                  : 'Try a different search term, filter, or date range.'
-                : 'Memories will appear here once your agents start writing.'
+            isNarrowedWithinView
+              ? // Filters AND together, so the most likely cause of an empty
+                // list is one condition too many — name that before search
+                // terms and dates, which the user can already see.
+                filters.length > 1
+                ? 'No memory satisfies every filter — try removing one.'
+                : 'Try a different search term, filter, or date range.'
+              : status === 'archived'
+                ? 'Archive a memory from its detail panel to see it here.'
+                : status === 'expiring'
+                  ? `No live memory in this view runs out within ${EXPIRING_WITHIN_DAYS} days.`
+                  : 'Memories will appear here once your agents start writing.'
           }
         />
       );
@@ -757,8 +793,8 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             onEditField={setEditingField}
             range={pickerRange}
             onRangeChange={setRange}
-            showArchived={showArchived}
-            onToggleArchived={handleToggleArchived}
+            status={status}
+            onStatusChange={handleStatusChange}
           />
 
           <FilterPillRow
@@ -818,8 +854,8 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           onEditField={setEditingField}
           range={pickerRange}
           onRangeChange={setRange}
-          showArchived={showArchived}
-          onToggleArchived={handleToggleArchived}
+          status={status}
+          onStatusChange={handleStatusChange}
         />
 
         <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] empty:hidden">

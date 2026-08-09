@@ -13,6 +13,10 @@ import { deriveScope } from '../scope.mjs';
 // must be able to reuse it rather than grow a second ranking with its own idea
 // of what "most useful" means.
 import { resolvePrecedence, rankLessons } from '../lessons-pure.mjs';
+// The store's own scope inventory, normalised — the SAME helper `memory.scopes`
+// uses, so the map and the MCP tool cannot disagree about what a scope holds or
+// about what a failed enumeration looks like.
+import { readScopeInventory } from '../store/scope-inventory.mjs';
 // The deep-link builder is the SAME pure module the `link` command and the
 // `--link` flag use, so the hook's confirmation/nudge links are JSON-encoded
 // correctly (a raw `?scope=global` silently means "all scopes") and can't drift
@@ -93,6 +97,19 @@ export const SCOPE_READ_LIMIT = 25;
 
 export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
   const scope = deriveScope(cwd);
+  // Issued BEFORE the per-scope read loop and awaited after it. Nothing in the
+  // inventory depends on the loop, so awaiting it afterwards would cost a
+  // remote store one extra SERIAL round-trip on the session-start path; started
+  // here it overlaps the per-scope reads instead. On a local store `listScopes`
+  // is synchronous under its async signature, so the overlap is nil there and
+  // the ordering is merely harmless.
+  //
+  // Leaving the promise unawaited across the loop is safe because
+  // `readScopeInventory` cannot reject: its "store cannot enumerate" guard
+  // returns before the `try`, and the `try` covers both a synchronous throw and
+  // a rejected `listScopes()`. Keep that property if either is ever touched — a
+  // floating promise that can reject would take the hook down with it.
+  const inventoryPromise = readScopeInventory(store);
   const groups = [];
   // Per scope: did the read come back full? Then the count below is a floor,
   // not a total, and the map must say so rather than quietly under-report.
@@ -152,11 +169,55 @@ export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
   // build its array.
   const ranked = rankLessons(winners, { terms: [], now, scopeOrder: scope.readOrder });
 
-  // The scope map is built from the SAME pass, over the winners — the set a
-  // reader could actually act on, so a shadowed duplicate is not counted twice.
-  // Order follows `readOrder` (most-specific first) rather than count, because
-  // the map is a map: it should read like the hierarchy it describes.
-  const scopeCounts = scopeInventory(ranked, scope.readOrder, truncatedScopes);
+  // ── the scope map: EXACT counts when the store can enumerate ───────────────
+  //
+  // The map's job is to tell a reader how much lore is sitting in each scope
+  // that this injection did not show them, so its numbers should be the store's
+  // real totals. Deriving them from the bounded read above cannot do that: the
+  // read stops at `SCOPE_READ_LIMIT`, so a scope holding 400 lessons reported
+  // `25+` — technically honest, useless as a quantity, and the `+` was doing a
+  // lot of work.
+  //
+  // `listScopes()` answers exactly, at any size, on BOTH stores: the local one
+  // walks its own tree, and the remote one hits `GET /memories/scopes`, which
+  // aggregates in Postgres (migration 00039) rather than counting rows a
+  // response cap may have truncated. That is the same reason `stats` and
+  // `scopes` were moved onto it.
+  //
+  // TWO SEMANTIC DIFFERENCES, both deliberate, because the map answers a
+  // different question from the injected set:
+  //
+  //   1. It counts EVERY active lesson in the scope, not just the ones that
+  //      survived precedence. A key shadowed at a broader scope is still a real
+  //      row you can `memory.read` there, and the map is a pointer to what
+  //      exists — not a summary of what was injected.
+  //   2. It is not bounded by what this session happened to read, so a scope
+  //      whose lessons all lost the ranking still appears, which is precisely
+  //      when a reader most needs telling it is there.
+  //
+  // THE COST, STATED RATHER THAN LEFT TO BE DISCOVERED. Exactness is not free
+  // on a local or two-tier store: `listScopes()` there is `_walkEntries()`
+  // (`store/local.mjs`), which reads and parses EVERY lesson file under the
+  // base dir — including the scopes outside `readOrder` that the narrowing
+  // below then throws away. So a session start now pays a store-wide walk where
+  // the derived counts cost nothing beyond the bounded read it already did. It
+  // is accepted deliberately: the walk is local disk over a store of markdown
+  // files, the hosted path aggregates in Postgres instead of walking anything,
+  // and the alternative — bounding the enumeration — reinstates the `25+` floor
+  // this change exists to remove. Narrowing the walk would mean a scope filter
+  // on the store contract, which is a change to all three implementations and
+  // to `memory.scopes`; if this ever shows up in a session-start profile, that
+  // is the fix, not a smaller limit here.
+  //
+  // Best-effort, like everything on this path: an unreachable remote, a store
+  // with no `listScopes`, or a throw all fall back to the derived counts —
+  // approximate and `+`-suffixed, exactly what shipped before — rather than
+  // costing the user their scope map. `readScopeInventory` never throws.
+  const inventory = await inventoryPromise;
+  const derivedCounts = scopeInventory(ranked, scope.readOrder, truncatedScopes);
+  const scopeCounts = inventory.ok
+    ? scopeInventoryFromStore(inventory.scopes, scope.readOrder, derivedCounts)
+    : derivedCounts;
 
   // `applicable` is the honest denominator for the header — how many the reader
   // has, as opposed to how many fitted. It is counted BEFORE the ceiling, so
@@ -167,6 +228,49 @@ export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
     scopeCounts,
     applicable: ranked.length,
   };
+}
+
+// Per-scope counts from the STORE's own inventory, narrowed to the scopes this
+// working directory reads and ordered by the hierarchy.
+//
+// The narrowing is the point: `listScopes()` is deliberately store-wide (it
+// backs the `scopes` command, which enumerates everywhere), but the SessionStart
+// map describes THIS workspace. Naming a scope the reader is not working in
+// would be noise dressed up as guidance.
+//
+// An enumerated row is exact and so never carries `atReadLimit` — the `+`
+// suffix exists to admit that a number is a floor, and an enumerated one is
+// not. A row that fell back to the derived count keeps the flag it came with,
+// because that number IS a floor. A scope with no active
+// lesson is omitted, matching `scopeInventory`: a row reading `0` is noise, and
+// there is nothing to drill into. Pure.
+// `fallback` is the derived inventory — the same rows the failure path uses —
+// and it is consulted PER SCOPE, not only when the whole enumeration failed.
+// `ok: true` means the store answered, not that the answer is complete: a row
+// can be missing, or carry a count that `shapeScopeRow` had to coerce to 0.
+// Without the per-scope fallback a scope that just contributed injected lessons
+// would drop off the map entirely — the reader would see lore in the digest
+// with no row saying where it lives, which is a worse answer than the
+// approximate one this had in hand all along.
+export function scopeInventoryFromStore(scopes, scopeOrder = [], fallback = []) {
+  const counts = new Map();
+  for (const row of Array.isArray(scopes) ? scopes : []) {
+    const s = row?.scope;
+    if (!s) continue;
+    const n = Number(row.count);
+    if (Number.isFinite(n) && n > 0) counts.set(s, n);
+  }
+  const derived = new Map();
+  for (const row of Array.isArray(fallback) ? fallback : []) {
+    if (row?.scope) derived.set(row.scope, row);
+  }
+  return (Array.isArray(scopeOrder) ? scopeOrder : [])
+    .filter((s) => counts.has(s) || derived.has(s))
+    .map((s) => (counts.has(s)
+      ? { scope: s, count: counts.get(s), atReadLimit: false }
+      // The derived row keeps its own `atReadLimit`, so a fallen-back scope
+      // still renders `25+` rather than posing as an exact number.
+      : { ...derived.get(s) }));
 }
 
 // Per-scope counts over an already-ranked lesson list, in the given scope order.
