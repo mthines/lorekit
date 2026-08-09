@@ -95,15 +95,15 @@ const previewPanel = () => document.getElementById('content-panel-preview');
 const contentTextarea = () => document.querySelector('#content-panel-edit textarea');
 
 /**
- * The panel focuses its close button 80 ms after open. Every story whose
- * assertion depends on where focus is must land that first — the race is
- * focus-dependent, not typing-specific:
- *   • typing into a field (the timer steals focus and drops the rest of the
- *     word — the original CI flake), and
- *   • `.focus()` + keys handled by a *local* `onKeyDown` (the tablist's roving
- *     arrow navigation), which needs the tab to still hold focus.
- * Stories driven by a document-level listener (the P/E shortcuts, Escape) or by
- * pointer events are unaffected, since a stolen focus still reaches `document`.
+ * The panel focuses its close button 80 ms after open.
+ *
+ * **The rule: await this before any keyboard interaction with the panel.**
+ * Left unsettled, the timer fires mid-story and moves focus — which drops the
+ * tail of a `userEvent.type` (the original CI flake) or takes a tab out of
+ * focus before the tablist's own `onKeyDown` can read the arrow key. Keeping it
+ * uniform is deliberate: a per-story "is this one exposed?" judgement is the
+ * kind of rule that gets re-derived wrongly by the next author. Pointer-only
+ * stories (click, drag, backdrop tap) do not need it.
  */
 const settleOpenFocus = () =>
   waitFor(() =>
