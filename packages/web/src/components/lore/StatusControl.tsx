@@ -22,25 +22,14 @@
  * segmented group costs once the pointer has travelled.
  */
 
-import { Archive, BookOpen, Clock } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
 import { Combobox, type ComboboxItem } from '@/components/ui/Combobox';
 import {
   MEMORY_STATUSES,
   STATUS_HINTS,
+  STATUS_ICONS,
   STATUS_LABELS,
   type MemoryStatus,
 } from '@/lib/status-filter';
-
-/**
- * One icon per state, so the trigger is recognisable at the icon-only width the
- * phone layout collapses it to.
- */
-const STATUS_ICONS: Record<MemoryStatus, LucideIcon> = {
-  active: BookOpen,
-  archived: Archive,
-  expiring: Clock,
-};
 
 /**
  * Built from the single source in `lib/status-filter.ts`, so a state added

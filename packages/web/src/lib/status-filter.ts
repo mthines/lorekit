@@ -18,6 +18,8 @@
  * and `lib/time-range.ts` follow.
  */
 
+import { Archive, BookOpen, Clock } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import type { ListMemoriesQuery } from '@lorekit/schemas/memory';
 
 /** The three states a Status selection can be in. */
@@ -54,6 +56,22 @@ export const STATUS_HINTS: Record<MemoryStatus, string> = {
   active: 'Live memories',
   archived: 'Archived memories',
   expiring: `Live memories expiring within ${EXPIRING_WITHIN_DAYS} days`,
+};
+
+/**
+ * One icon per state, beside its label and its hint.
+ *
+ * It lives here rather than in the control because it has TWO consumers — the
+ * `StatusControl` trigger, which collapses to icon-only at the phone width, and
+ * the Explorer's per-status empty state. Two records of the same three icons
+ * drift; one exhaustive `Record` means a fourth status cannot ship without one.
+ * (`audit-actions.ts` and `docs/sections.ts` already pair icons with their
+ * vocabulary in `lib/` for the same reason.)
+ */
+export const STATUS_ICONS: Record<MemoryStatus, LucideIcon> = {
+  active: BookOpen,
+  archived: Archive,
+  expiring: Clock,
 };
 
 function isMemoryStatus(value: unknown): value is MemoryStatus {

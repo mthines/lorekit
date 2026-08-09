@@ -48,7 +48,7 @@
  */
 
 import { useCallback, useMemo, useTransition, useState } from 'react';
-import { Search, BookOpen, ChevronDown, ChevronUp, Loader2, List, LayoutGrid, Archive, Clock, User, Building2, Users } from 'lucide-react';
+import { Search, BookOpen, ChevronDown, ChevronUp, Loader2, List, LayoutGrid, User, Building2, Users } from 'lucide-react';
 import { ScopeTree, type ScopeNode } from './ScopeTree';
 import { LessonCard } from './LessonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -63,6 +63,7 @@ import {
   expiringWithinDays,
   isArchivedView,
   resolveStatus,
+  STATUS_ICONS,
   statusParamValue,
   type MemoryStatus,
 } from '@/lib/status-filter';
@@ -90,17 +91,6 @@ import type { LessonEntry } from './LessonCard';
 import { ContributionHeatmap } from '@/components/activity/ContributionHeatmap';
 import { ActivityFeed } from '@/components/activity/ActivityFeed';
 import { filterByOwnership, type OwnerFilter } from '@/lib/org-ui';
-
-/**
- * The empty-state icon per status. Declared as an exhaustive record so a fourth
- * status cannot ship without one — the same reason `FIELD_ICONS` is a
- * `Record<FilterField, …>`.
- */
-const EMPTY_STATE_ICONS: Record<MemoryStatus, typeof BookOpen> = {
-  active: BookOpen,
-  archived: Archive,
-  expiring: Clock,
-};
 
 type ViewMode = 'scope' | 'time';
 
@@ -628,7 +618,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     if (filteredLessons.length === 0 && !hasNextPage) {
       return (
         <EmptyState
-          icon={EMPTY_STATE_ICONS[status]}
+          icon={STATUS_ICONS[status]}
           title={
             // Narrowing is checked FIRST, and only then the status. A search or
             // a filter that matched nothing is a failed search in every view —
