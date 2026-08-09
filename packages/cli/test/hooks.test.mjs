@@ -18,6 +18,7 @@ import {
   formatPromptLessons,
   lessonId,
   SCOPE_READ_LIMIT,
+  PROMPT_FETCH_TIMEOUT_MS,
 } from '../src/core/lessons.mjs';
 import { resolvePrecedence, matchesQuery } from '../src/lessons-pure.mjs';
 import { deriveScope } from '../src/scope.mjs';
@@ -1238,6 +1239,24 @@ function fixedHitsStore(entries) {
 const PROMPT_SCOPE = { readOrder: ['repo::acme/widget', 'global'] };
 const PROMPT_NOW = Date.parse('2026-08-01T00:00:00.000Z');
 const pDaysAgo = (n) => new Date(PROMPT_NOW - n * 86400000).toISOString();
+
+test('promptLessonsFromStore — queries under the tight per-prompt budget, not restFetch default', async () => {
+  // This runs before the user's turn is handed to the assistant, so a wedged
+  // store must cost a fraction of a second rather than restFetch's 10s.
+  let seen;
+  const store = { async search(args) { seen = args; return { ok: true, entries: [] }; } };
+  await promptLessonsFromStore(store, PROMPT_SCOPE, ['migration'], { now: PROMPT_NOW });
+  assert.equal(seen.timeoutMs, PROMPT_FETCH_TIMEOUT_MS);
+  assert.ok(PROMPT_FETCH_TIMEOUT_MS < 10000, 'and it is tighter than the store default');
+});
+
+test('promptLessonsFromStore — a timed-out lookup is silence, not an error', async () => {
+  // What an aborted restFetch looks like from here. The hook's default answer
+  // is nothing, so the budget can never cost the user their prompt.
+  const store = { async search() { throw Object.assign(new Error('aborted'), { name: 'AbortError' }); } };
+  const out = await promptLessonsFromStore(store, PROMPT_SCOPE, ['migration'], { now: PROMPT_NOW });
+  assert.deepEqual(out, []);
+});
 
 test('promptLessonsFromStore — ranks the hits rather than trusting the store order', async () => {
   // The store's own ordering is not relevance: the remote route answers

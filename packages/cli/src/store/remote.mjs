@@ -84,7 +84,11 @@ class RemoteStore {
     };
   }
 
-  async search({ q, scopes, tags, limit, cursor } = {}) {
+  // `timeoutMs` is optional and defaults to `restFetch`'s own budget, so every
+  // existing caller is unaffected. It exists for the callers on a user's
+  // critical path, which would rather answer nothing than stall (see
+  // `PROMPT_FETCH_TIMEOUT_MS` in `core/lessons.mjs`).
+  async search({ q, scopes, tags, limit, cursor, timeoutMs } = {}) {
     // A list of terms collapses into ONE `websearch` query joined by `OR`, so a
     // multi-term failure lookup is a single round-trip (the server FTS ORs them
     // and stems each). `failureQuery` distils terms to `[a-z0-9]+` tokens, so no
@@ -96,7 +100,7 @@ class RemoteStore {
     if (tags?.length) body.tags = tags;
     if (limit) body.limit = limit;
     if (cursor) body.cursor = cursor;
-    const res = await this._rest('/memories/search', { method: 'POST', body });
+    const res = await this._rest('/memories/search', { method: 'POST', body, timeoutMs });
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
     const data = res.data ?? {};
     return {

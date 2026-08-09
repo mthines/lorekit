@@ -412,12 +412,15 @@ export function dedupeRelevant(entries, cap = MAX_RELEVANT) {
 // capped by the pure `dedupeRelevant`, keeping the store's own ordering (see its
 // docblock). Best-effort: an unusable/throwing store returns [] so the
 // caller falls back to the write-nudge alone.
-export async function relevantLessonsFromStore(store, scope, terms, { cap = MAX_RELEVANT } = {}) {
+export async function relevantLessonsFromStore(store, scope, terms, { cap = MAX_RELEVANT, timeoutMs } = {}) {
   if (!store || typeof store.search !== 'function') return [];
   if (!scope || !Array.isArray(scope.readOrder) || scope.readOrder.length === 0) return [];
   if (!Array.isArray(terms) || terms.length === 0) return [];
   try {
-    const res = await store.search({ q: terms, scopes: scope.readOrder });
+    // `timeoutMs` is forwarded, not defaulted here: a store that ignores it
+    // (the offline one is filesystem-bound) behaves exactly as before, and an
+    // omitted value leaves `restFetch`'s own budget in place.
+    const res = await store.search({ q: terms, scopes: scope.readOrder, timeoutMs });
     if (!res || !res.ok || !Array.isArray(res.entries)) return [];
     return dedupeRelevant(res.entries, cap);
   } catch {
@@ -637,6 +640,16 @@ const MIN_PROMPT_CHARS = 24;
 // index lines is a glance, and anything more is an interruption.
 const MAX_PROMPT_LESSONS = 3;
 
+// Fetch budget for the per-prompt pull, deliberately far below `restFetch`'s
+// 10s default. This is the ONE lookup that sits on the user's critical path —
+// it runs before their turn is handed to the assistant — so a slow or wedged
+// store must cost them a fraction of a second, not ten. Timing out is not a
+// failure mode here: the abort surfaces as no hits, and no hits is already this
+// hook's most common and entirely valid answer. Same reasoning as
+// `telemetry.mjs`'s 1500 ms export budget; a touch more generous because a
+// missed lesson is worth slightly more than a missed metric.
+export const PROMPT_FETCH_TIMEOUT_MS = 2000;
+
 /**
  * Is this prompt worth a relevance lookup?
  *
@@ -712,14 +725,21 @@ export function formatPromptLessons(lessons, { instruction = null } = {}) {
  * which is worse than showing two.
  *
  * Best-effort and total — any failure yields `[]`, and the hook stays silent.
+ * That includes the fetch budget: the lookup runs under
+ * `PROMPT_FETCH_TIMEOUT_MS` rather than `restFetch`'s 10s default, and an abort
+ * arrives here as no hits, the same as a store that simply had nothing.
  */
 export async function promptLessonsFromStore(store, scope, terms, {
   alreadyShown = new Set(),
   cap = MAX_PROMPT_LESSONS,
   now = Date.now(),
+  timeoutMs = PROMPT_FETCH_TIMEOUT_MS,
 } = {}) {
   if (!Array.isArray(terms) || terms.length === 0) return [];
-  const hits = await relevantLessonsFromStore(store, scope, terms, { cap: Number.MAX_SAFE_INTEGER });
+  const hits = await relevantLessonsFromStore(store, scope, terms, {
+    cap: Number.MAX_SAFE_INTEGER,
+    timeoutMs,
+  });
   if (hits.length === 0) return [];
   const ranked = rankLessons(hits, {
     terms,
