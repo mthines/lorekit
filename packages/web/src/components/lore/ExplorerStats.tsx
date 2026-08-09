@@ -88,13 +88,13 @@ export function ExplorerStats({
   // captioned as 90 days. See `effectiveStatsRange`.
   const shown = useMemo(() => effectiveStatsRange(range, nowIso), [range, nowIso]);
   const plan = useMemo(() => bucketPlanForRange(shown, nowIso) ?? FALLBACK_PLAN, [shown, nowIso]);
-  const window = useMemo(() => statsWindow(shown, nowIso), [shown, nowIso]);
+  const queryWindow = useMemo(() => statsWindow(shown, nowIso), [shown, nowIso]);
 
   const { data, isLoading, isError, isFetching } = useExplorerStats(
     scope,
     plan.unit,
-    window.since,
-    window.until,
+    queryWindow.since,
+    queryWindow.until,
   );
 
   // The absolute arm anchors its grid at its own end, not at the clock — see
