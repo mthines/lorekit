@@ -138,9 +138,13 @@ async function run(args) {
     // The per-turn relevance pull. Fires on EVERY prompt, so every branch below
     // is a reason to stay silent — the hook's default answer is nothing.
     //
-    // Config gate. The EVENT is only wired by hook mode `all`, so reaching
-    // here at all means the user opted into the full lifecycle; `hooks.userPrompt`
-    // is the way to keep that and switch off just this one.
+    // Config gate, and the ONLY off switch some users have. Via `install` the
+    // event is wired by hook mode `all` alone, so reaching here means the user
+    // opted into the full lifecycle and `hooks.userPrompt` lets them keep it
+    // while switching off just this one. Via the Claude marketplace plugin
+    // there is no mode at all — `plugins/lorekit-claude/hooks/hooks.json` wires
+    // the event unconditionally — so for a plugin install this setting is the
+    // whole opt-out.
     if ((control.hooksUserPrompt || 'on') === 'off') return 0;
 
     // Length gate. "yes" / "continue" / "do it" carry nothing worth querying,
