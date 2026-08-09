@@ -20,13 +20,18 @@
  *
  * ## ARIA
  *
- * With `searchable`, the trigger is a text `combobox` owning a `listbox`. Without
- * it there is nothing to type into, so the trigger is a `button` with
- * `aria-haspopup="listbox"` — the correct pattern for a select-like control, and
- * deliberately NOT `role="combobox"` on a non-editable element, which would
- * promise an input that is not there. Either way the popup is a `listbox`,
- * options are `option`s with `aria-selected`, and the highlight travels by
- * `aria-activedescendant` so DOM focus never leaves the trigger.
+ * The trigger is ALWAYS a `button` with `aria-haspopup="listbox"` — the correct
+ * pattern for a select-like control, and deliberately NOT `role="combobox"` on
+ * a non-editable element, which would promise an input that is not there. It
+ * keeps `aria-haspopup` in both shapes: the trigger pops up a listbox either
+ * way, so dropping the attribute when `searchable` only announced the control
+ * as less than it is.
+ *
+ * `searchable` adds a text `combobox` INSIDE the popup — the search box, which
+ * is the editable element that owns the listbox while it holds focus. Either
+ * way the popup is a `listbox`, options are `option`s with `aria-selected`, and
+ * the highlight travels by `aria-activedescendant` so DOM focus never leaves
+ * whichever of the two the user is typing or arrowing in.
  *
  * The decisions worth testing without a browser — keyboard movement, filtering,
  * where the highlight opens — live in the pure `combobox.ts`.
@@ -324,10 +329,12 @@ export function Combobox<T extends string>({
       <button
         ref={triggerRef}
         type="button"
-        // Not `role="combobox"`: without a search box there is nothing to type
-        // into, and promising an input that is not there is worse than the
-        // plain button pattern.
-        {...(searchable ? {} : { 'aria-haspopup': 'listbox' as const })}
+        // Not `role="combobox"`: the trigger is never editable, and promising
+        // an input that is not there is worse than the plain button pattern.
+        // `searchable` puts the real `combobox` on the search box inside the
+        // popup, which does not change what THIS control does — it pops up a
+        // listbox in both shapes, so it advertises that in both shapes.
+        aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
         aria-activedescendant={open && highlight >= 0 ? `${baseId}-option-${highlight}` : undefined}
