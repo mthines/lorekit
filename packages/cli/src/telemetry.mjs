@@ -282,6 +282,13 @@ export const CLI_OUTCOMES = Object.freeze({
 /** The same vocabulary as a value list, for guards and exhaustiveness checks. */
 export const CLI_OUTCOME_VALUES = Object.freeze(Object.values(CLI_OUTCOMES));
 
+/** The attribute keys `commandAttributes` owns — see its docblock below. */
+const isReservedAttr = (key) =>
+  key === 'lorekit.cli.command' ||
+  key === 'lorekit.cli.outcome' ||
+  key === 'lorekit.cli.exit_code' ||
+  key.startsWith(FLAG_ATTR_PREFIX);
+
 /**
  * Collect the bounded, non-PII attributes for a command invocation. Only the
  * command name, allow-listed boolean flags, the outcome and the exit code.
@@ -311,12 +318,6 @@ export const CLI_OUTCOME_VALUES = Object.freeze(Object.values(CLI_OUTCOMES));
  * failure. Losing a datum a command should not have put there is the smaller
  * harm than emitting an unowned value under an owned key.
  */
-const isReservedAttr = (key) =>
-  key === 'lorekit.cli.command' ||
-  key === 'lorekit.cli.outcome' ||
-  key === 'lorekit.cli.exit_code' ||
-  key.startsWith(FLAG_ATTR_PREFIX);
-
 export function commandAttributes({ command, args = {}, outcome, exitCode, extraAttrs = {} }) {
   const attrs = {};
   for (const [key, value] of Object.entries(extraAttrs)) {
