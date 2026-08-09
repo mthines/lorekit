@@ -4886,6 +4886,7 @@ declare
   v_id    uuid;
   v_null  int;
   v_raised boolean;
+  v_msg   text;
   -- A syntactically valid 1536-dimension vector, built rather than typed.
   v_vec   constant text := '[' || array_to_string(array_fill(0.001::real, array[1536]), ',') || ']';
 begin
@@ -4980,14 +4981,23 @@ begin
   assert v_raised, 'embeddings AC-6: a 129-char embedding_model must violate the CHECK';
 
   -- AC-7 — the width is pinned by the type, so a wrong-dimension vector cannot
-  -- be stored at all.
+  -- be stored at all. The handler is `data_exception` (SQLSTATE class 22) and
+  -- not `others`: pgvector's typmod coercion raises ERRCODE_DATA_EXCEPTION with
+  -- "expected 1536 dimensions, not 3", so `others` would let ANY failure —
+  -- including one unrelated to width — satisfy the assertion. The message check
+  -- is what keeps the assertion pinned to the dimension mismatch it claims to
+  -- prove rather than to "some class-22 error happened".
   v_raised := false;
+  v_msg    := null;
   begin
     update memories set embedding = '[0.1,0.2,0.3]'::vector where id = v_id;
-  exception when others then
+  exception when data_exception then
     v_raised := true;
+    v_msg    := sqlerrm;
   end;
   assert v_raised, 'embeddings AC-7: a 3-dimension vector must be refused by the 1536-wide column';
+  assert v_msg like '%dimensions%',
+    format('embeddings AC-7: the refusal must be about the vector width, got %L', v_msg);
 end;
 $$;
 
