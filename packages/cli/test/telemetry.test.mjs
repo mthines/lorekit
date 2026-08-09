@@ -1074,15 +1074,27 @@ test('docs/otel.md documents exactly the vocabulary the code emits', async () =>
   for (const value of CLI_OUTCOME_VALUES) {
     assert.ok(row.includes(`\`${value}\``), `docs/otel.md omits the ${value} outcome`);
   }
-  // ...and the row names no value the code cannot emit. `ok` is a substring of
-  // nothing else here, so a simple scan of the backticked tokens is enough.
-  const documented = [...row.matchAll(/`([a-z_]+)`/g)]
-    .map((m) => m[1])
-    .filter((token) => token !== 'lorekit' && token !== 'doctor' && token !== 'lint');
-  for (const token of documented) {
-    assert.ok(
-      CLI_OUTCOME_VALUES.includes(token),
-      `docs/otel.md documents an outcome the code cannot emit: ${token}`,
-    );
-  }
+  // ...and the row names no value the code cannot emit. Read that off the
+  // row's VALUE ALTERNATION (`ok` \| `failure` \| `error`) rather than off every
+  // backticked token in the row, which also picks up the prose after the em
+  // dash (`doctor`, `lint`) and would fail the moment the explanation gained
+  // another backticked word. Excluding those by name is a list that has to be
+  // maintained in step with the prose — and it had already gone stale:
+  // `lorekit` was on it although `[a-z_]+` can never match
+  // `lorekit.cli.outcome`. The alternation is the part of the row that IS the
+  // vocabulary, so pin that and let the prose say whatever it needs to.
+  // The separator must be the ESCAPED `\|`: the row is a Markdown table row, so
+  // a bare `|` is a cell boundary — matching it would swallow the neighbouring
+  // "default value" cell (also `ok`) into the alternation.
+  const alternation = row.match(/`[a-z_]+`(?:\s*\\\|\s*`[a-z_]+`)+/);
+  assert.ok(
+    alternation,
+    'docs/otel.md must list the outcome values as a `a` \\| `b` alternation',
+  );
+  const documented = [...alternation[0].matchAll(/`([a-z_]+)`/g)].map((m) => m[1]);
+  assert.deepEqual(
+    documented,
+    [...CLI_OUTCOME_VALUES],
+    'docs/otel.md must document exactly the outcomes the code can emit',
+  );
 });
