@@ -160,6 +160,23 @@ source_agent=aw&origin_branch=main&tags=flaky&tags_mode=none"
 Each dimension takes a comma-separated value list plus an optional `<dimension>_mode` of `in`
 (default) or `nin` (negate); labels use `tags_mode` of `any` (default), `all`, or `none`.
 
+### Finding lore that is about to expire
+
+`?expiring_within_days=N` (1–365) narrows the list to memories whose TTL runs out soon — those
+with an `expires_at` strictly after now and at or before now + N days. Memories with no TTL are
+never included, and neither are ones that have already expired.
+
+```bash
+# What am I about to lose this week?
+curl -H "Authorization: Bearer lk_ro_…" \
+  "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/memories?expiring_within_days=7"
+```
+
+It is a relative horizon on purpose: "expiring in the next 7 days" still asks the same question
+tomorrow, where a saved link with an absolute date would quietly become a view of the past. Use it
+to review what is about to lapse and either let it go or refresh the TTL with `memory.write`
+(`ttl_days`, or `clear_ttl` to make it permanent).
+
 `GET /memories/facets` returns every filterable value with its memory count
 (`{ "facets": [{ "facet": "origin_branch", "value": "main", "count": 27 }] }`), partitioned by
 `?archived=true|false` and narrowable with `?facets=tag,trigger`. Use it to discover what can be

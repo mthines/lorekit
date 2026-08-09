@@ -295,6 +295,10 @@ test('listScopes() degrades gracefully on a non-2xx', async () => {
   });
   assert.equal(result.ok, false);
   assert.equal(result.error.code, 500);
+  // Carried through from `restFetch` so a consumer can render "HTTP 500";
+  // `error.code` is the body's application code on a JSON error and is not a
+  // status. `mcp-server.mjs`'s `scopeFailureNote` reads exactly this field.
+  assert.equal(result.httpStatus, 500);
   assert.equal(result.networkError, undefined);
 });
 

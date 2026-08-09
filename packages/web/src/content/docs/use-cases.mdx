@@ -2,7 +2,7 @@
 title: "Use cases"
 description: "End-to-end examples showing how scopes, tags, and org sharing come together for real development workflows."
 order: 9
-keywords: ["use cases", "autonomous workflow", "aw", "stuck-loop", "ci", "github actions", "org sharing", "scope binding", "branch scope", "ttl_days", "memory.purge_expired", "runbook"]
+keywords: ["use cases", "autonomous workflow", "aw", "stuck-loop", "ci", "github actions", "org sharing", "scope binding", "branch scope", "ttl_days", "expiring_within_days", "memory.purge_expired", "runbook"]
 ---
 
 ### Autonomous workflow self-improvement
@@ -192,6 +192,22 @@ memory.write {
   ttl_days: 3
 }
 ```
+
+**See what is about to expire, before it does**
+
+An expiry you never look at is a deletion you did not decide on. `GET /memories` takes
+`expiring_within_days` (1–365) to list exactly the memories whose TTL runs out inside that horizon —
+still live, but not for long — so you can review them and either let them lapse or extend them.
+
+```bash
+# What lapses in the next 7 days?
+curl -H "Authorization: Bearer lk_ro_…" \
+  "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/memories?expiring_within_days=7"
+```
+
+Memories with no TTL never appear here, and neither do ones that already expired — this is the
+"act now" list, not an audit of everything with a deadline. Refresh anything worth keeping with a
+new `ttl_days`, or `clear_ttl: true` to make it permanent.
 
 **Clean up expired entries explicitly**
 
