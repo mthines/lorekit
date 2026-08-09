@@ -1512,6 +1512,51 @@ describe('scoreLesson factors', () => {
     assert.ok(recencyFactor(daysAgo(365), NOW) < 0.001);
   });
 
+  test('recencyFactor honours an explicit halfLifeDays, and falls back on junk', () => {
+    // The parameter was unpinned: nothing proved it was read, and nothing
+    // proved its `Number.isFinite` guard chose the constant rather than
+    // producing a NaN score.
+    assert.ok(Math.abs(recencyFactor(daysAgo(7), NOW, 7) - 0.5) < 1e-12, 'halves at the given half-life');
+    assert.ok(Math.abs(recencyFactor(daysAgo(28), NOW, 7) - 0.0625) < 1e-12, 'four half-lives at 7 days');
+    // A shorter half-life decays faster than the default at the same age.
+    assert.ok(recencyFactor(daysAgo(14), NOW, 1) < recencyFactor(daysAgo(14), NOW));
+
+    for (const bad of [0, -7, NaN, Infinity, 'lots', null, {}]) {
+      assert.equal(
+        recencyFactor(daysAgo(RECENCY_HALF_LIFE_DAYS), NOW, bad),
+        recencyFactor(daysAgo(RECENCY_HALF_LIFE_DAYS), NOW),
+        `half-life ${String(bad)} must fall back to the default, not produce NaN`,
+      );
+    }
+  });
+
+  test('halfLifeDays is plumbed through rankLessons and scoreLesson', () => {
+    // The whole path is `rankLessons` -> `scoreLesson` -> `recencyFactor`; a
+    // link dropped anywhere in it is silent, because the default is a valid
+    // answer for every input.
+    const entry = { key: 'k', value: '', seenCount: 1, updatedAt: daysAgo(14) };
+    assert.ok(
+      scoreLesson(entry, { now: NOW, halfLifeDays: 1 }) < scoreLesson(entry, { now: NOW }),
+      'scoreLesson must forward halfLifeDays',
+    );
+
+    // A recurring-but-old lesson beats a fresh one-off at the default
+    // half-life; a one-day half-life collapses its recency and flips the order.
+    const entries = [
+      { scope: 'global', key: 'fresh-oneoff', value: '', seenCount: 1, updatedAt: daysAgo(0) },
+      { scope: 'global', key: 'old-recurring', value: '', seenCount: 40, updatedAt: daysAgo(20) },
+    ];
+    assert.deepEqual(
+      rankLessons(entries, { now: NOW }).map((e) => e.key),
+      ['old-recurring', 'fresh-oneoff'],
+    );
+    assert.deepEqual(
+      rankLessons(entries, { now: NOW, halfLifeDays: 1 }).map((e) => e.key),
+      ['fresh-oneoff', 'old-recurring'],
+      'rankLessons must forward halfLifeDays',
+    );
+  });
+
   test('recencyFactor clamps a future timestamp to 1 rather than exceeding it', () => {
     // Clock skew between writer and reader is ordinary; an unbounded score
     // would let it beat every honestly-dated lesson.
