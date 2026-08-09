@@ -53,6 +53,16 @@ export function nextTabForKey(
 }
 
 /**
+ * The single-letter shortcut announced for each tab (`aria-keyshortcuts`) and
+ * honoured by {@link shortcutTabForKey}. One map so the announced key and the
+ * handled key can never drift.
+ */
+export const CONTENT_TAB_SHORTCUT_KEYS = {
+  preview: 'P',
+  edit: 'E',
+} as const satisfies Record<ContentTab, string>;
+
+/**
  * Global single-letter shortcut: `P` → Preview, `E` → Edit. Returns the tab to
  * activate, or `null` to leave the event alone.
  *
@@ -68,12 +78,10 @@ export function shortcutTabForKey(
   opts: { hasModifier: boolean; inFormField: boolean; canEdit: boolean },
 ): ContentTab | null {
   if (opts.hasModifier || opts.inFormField) return null;
-  switch (key.toLowerCase()) {
-    case 'p':
-      return 'preview';
-    case 'e':
-      return opts.canEdit ? 'edit' : null;
-    default:
-      return null;
-  }
+  const match = CONTENT_TABS.find(
+    (tab) => CONTENT_TAB_SHORTCUT_KEYS[tab].toLowerCase() === key.toLowerCase(),
+  );
+  if (!match) return null;
+  if (match === 'edit' && !opts.canEdit) return null;
+  return match;
 }

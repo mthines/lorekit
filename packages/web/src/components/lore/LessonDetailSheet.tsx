@@ -12,7 +12,7 @@ import { EditableField } from '@/components/ui/EditableField';
 import { MarkdownPreview } from '@/components/ui/MarkdownPreview';
 import { TagsField } from '@/components/ui/TagsField';
 import { FormActionBar } from '@/components/ui/FormActionBar';
-import { CONTENT_TABS, DEFAULT_CONTENT_TAB, nextTabForKey, shortcutTabForKey, tabAfterSave, type ContentTab } from './content-tabs';
+import { CONTENT_TABS, CONTENT_TAB_SHORTCUT_KEYS, DEFAULT_CONTENT_TAB, nextTabForKey, shortcutTabForKey, tabAfterSave, type ContentTab } from './content-tabs';
 import { useEditableForm } from '@/lib/hooks/useEditableForm';
 import { useArchiveLesson, useRestoreLesson } from '@/lib/queries/lore';
 import type { LessonEntry } from './LessonCard';
@@ -212,6 +212,9 @@ function ContentSection({ tab, onTabChange, canEdit, value, onChange, onEditEnd,
               id={`content-tab-${id}`}
               aria-selected={selected}
               aria-controls={`content-panel-${id}`}
+              // Announce the global single-letter shortcut so it is
+              // discoverable to assistive tech rather than undocumented.
+              aria-keyshortcuts={CONTENT_TAB_SHORTCUT_KEYS[id]}
               tabIndex={selected ? 0 : -1}
               disabled={disabled}
               onClick={() => selectTab(id)}

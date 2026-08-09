@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 
 import {
   CONTENT_TABS,
+  CONTENT_TAB_SHORTCUT_KEYS,
   DEFAULT_CONTENT_TAB,
   nextTabForKey,
   shortcutTabForKey,
@@ -81,6 +82,12 @@ describe('content-tabs', () => {
     it('ignores any other key', () => {
       for (const key of ['a', 'x', 'Enter', ' ', 'Escape']) {
         expect(shortcutTabForKey(key, base)).toBeNull();
+      }
+    });
+
+    it('honours exactly the keys it announces via aria-keyshortcuts', () => {
+      for (const tab of CONTENT_TABS) {
+        expect(shortcutTabForKey(CONTENT_TAB_SHORTCUT_KEYS[tab], base)).toBe(tab);
       }
     });
   });
