@@ -37,7 +37,18 @@ import {
  * baselines (`__screenshots__/DashboardStats.stories.tsx`) pin this row pixel for
  * pixel — a fourth button is a baseline regeneration, which belongs with the
  * stats-header work that redesigns this control rather than smuggled in here.
- * Nothing about the model blocks it: `{ preset: '90d' }` already resolves.
+ *
+ * The MODEL does not block a fourth button — `{ preset: '90d' }` already
+ * resolves — but the DATA would, and that is the larger of the two reasons.
+ * `useDashboardData` fetches `TREND_WINDOW_DAYS = 62` days
+ * (`lib/queries/dashboard.ts`), sized as the widest preset here plus the equal
+ * preceding window every card compares against, plus slack. A `90d` selection
+ * charts 90 daily buckets over 62 days of data, and its comparison half is
+ * entirely outside the fetch — so the trend chip reads `+100%` by construction.
+ * Offering `90d` means widening that fetch to ~182 days, tripling the activity
+ * payload on every Overview load; widen-vs-clamp-vs-drop is a product call this
+ * refactor deliberately does not make. Until it is made, a hand-edited
+ * `?range={"preset":"90d"}` on this page is bounded by the same 62 days.
  */
 const RANGE_OPTIONS: { value: RangePreset; label: string }[] = [
   { value: '24h', label: '24h' },
