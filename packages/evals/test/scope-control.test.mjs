@@ -6,6 +6,7 @@
 // halves, because the experiment's readability depends on the difference:
 // a lesson that was never injected did not fail on its merits.
 import assert from "node:assert/strict";
+import path from "node:path";
 import { test } from "node:test";
 
 import { deriveScope } from "@lorekit/cli/src/scope.mjs";
@@ -63,7 +64,7 @@ test("git decides only what a directory DISCOVERS", async () => {
   await withSandbox({}, async (sandbox) => {
     const withoutGit = deriveScope(sandbox.cwd);
     assert.deepEqual(withoutGit.readOrder, [
-      `project::${require_basename(sandbox.cwd)}`,
+      `project::${path.basename(sandbox.cwd).toLowerCase()}`,
       "global",
     ]);
     assert.equal(withoutGit.branchScope, null);
@@ -317,7 +318,3 @@ test("requiresGitForScope mirrors requiresGit for a scope string", () => {
   assert.equal(requiresGitForScope("project::anything"), false);
   assert.equal(requiresGitForScope("global"), false);
 });
-
-function require_basename(p) {
-  return p.split("/").pop().toLowerCase();
-}
