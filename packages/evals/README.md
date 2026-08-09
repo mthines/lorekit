@@ -158,11 +158,14 @@ runner, ['SessionStart'])` is exported from `packages/cli/src/config.mjs` and
 
 The LIVE runs gate nothing. Everything below the model does: the store, the
 hook, the derived scopes and the injected index are deterministic functions of
-the sandbox, so `pnpm nx test evals` asserts — for real, on every PR — that a
-seeded lesson is injected, that an empty store injects nothing, that the hook
-block matches `CLAUDE_HOOK_EVENTS`, and that the two arms differ in nothing but
-the store. The plan expected these to be manual smokes; they did not need to be,
-and an automated version fails on the PR rather than three weeks into a sweep.
+the sandbox, so `pnpm nx test evals` asserts — for real — that a seeded lesson
+is injected, that an empty store injects nothing, that the hook block matches
+`CLAUDE_HOOK_EVENTS`, and that the two arms differ in nothing but the store. The
+plan expected these to be manual smokes; they did not need to be, and an
+automated version fails on a PR rather than three weeks into a sweep. Note that
+`ci.yml` runs on `pull_request` targeting `main` only, so a PR stacked onto
+another feature branch does not run this suite until the stack retargets `main`
+— run it locally while the stack is open.
 
 ## Reuse, not re-implementation
 
