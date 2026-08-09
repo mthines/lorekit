@@ -1,0 +1,16 @@
+{
+  "name": "evals",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/evals/src",
+  "projectType": "application",
+  "tags": [],
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --test test/*.test.mjs",
+        "cwd": "packages/evals"
+      }
+    }
+  }
+}
