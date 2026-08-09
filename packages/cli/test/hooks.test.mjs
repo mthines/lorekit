@@ -192,9 +192,13 @@ test('relevantLessonsFromStore guards empty terms and scopes without querying', 
 // fail a scope's read (best-effort skip) — no network, no filesystem.
 function fakeStore(byScope, { failScopes = [] } = {}) {
   return {
-    async list({ scope }) {
+    // Honours `limit` because both real stores do (`store/local.mjs:76`,
+    // `store/remote.mjs:68` hard-slice newest-first). A fake that drops it lets
+    // a fixture seed a group the production read could never return.
+    async list({ scope, limit }) {
       if (failScopes.includes(scope)) return { ok: false };
-      return { ok: true, entries: byScope[scope] || [] };
+      const entries = byScope[scope] || [];
+      return { ok: true, entries: limit ? entries.slice(0, limit) : entries };
     },
   };
 }
@@ -619,7 +623,12 @@ test('fetchLessons salience top slots — a recurring lesson survives a flood of
   // The reported shape: one task's iteration log, written today, plus the
   // hard-won lesson from last week. Under the old recency cap the flood took
   // all 15 slots and `hard-won` was never injected.
-  const flood = Array.from({ length: 30 }, (_, i) => seeded(s, `iteration-${i}`, { days: 0, seen: 1 }));
+  //
+  // 20, not 30: `fetchLessons` reads each scope with `limit: 25`, so a larger
+  // single-scope group is a read the store can never return and the scenario
+  // would be unreachable. 20 + `hard-won` = 21 rows survive the read and still
+  // over-fill the 15-slot cap, which is the condition under test.
+  const flood = Array.from({ length: 20 }, (_, i) => seeded(s, `iteration-${i}`, { days: 0, seen: 1 }));
   const entries = [...flood, seeded(s, 'hard-won', { days: 7, seen: 12 })];
 
   const { lessons } = await fetchLessons(fakeStore({ [s]: entries }), process.cwd(), { now: RANK_NOW });
