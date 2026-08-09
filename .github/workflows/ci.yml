@@ -297,59 +297,27 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Checkout repository
-        if: steps.guard.outputs.run == 'true'
-        uses: actions/checkout@v7.0.1
-
-      - name: Set up pnpm
-        if: steps.guard.outputs.run == 'true'
-        uses: pnpm/action-setup@v6
-
-      - name: Set up Node.js
-        if: steps.guard.outputs.run == 'true'
-        uses: actions/setup-node@v7
-        with:
-          node-version: 20
-          cache: pnpm
-
-      # Pinned to match deploy.yml's web jobs so a local `vercel build` and CI
-      # render on the same CLI.
-      - name: Install Vercel CLI
-        if: steps.guard.outputs.run == 'true'
-        run: pnpm add -g vercel@58
-
-      - name: Pull Vercel environment (preview)
-        if: steps.guard.outputs.run == 'true'
-        run: vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
-
-      # A CLI build gets none of Vercel's auto-injected VERCEL_GIT_* system env
-      # vars, so set them by hand — instrumentation-client.ts bakes them into
-      # NEXT_PUBLIC_VCS_* (OTel VCS resource attributes) and service.version.
       # Use the PR head ref/SHA (not github.ref_name/github.sha, which on a
       # pull_request are the synthetic `refs/pull/N/merge` merge commit).
-      - name: Build (preview)
+      - name: Checkout repository
         if: steps.guard.outputs.run == 'true'
-        env:
-          VERCEL_GIT_REPO_OWNER: ${{ github.repository_owner }}
-          VERCEL_GIT_REPO_SLUG: ${{ github.event.repository.name }}
-          VERCEL_GIT_COMMIT_REF: ${{ github.head_ref }}
-          VERCEL_GIT_COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
-        run: vercel build --token="$VERCEL_TOKEN"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Deploy to Vercel (preview)
-        id: deploy
+      # Shared build+deploy flow (see .github/actions/vercel-preview-deploy).
+      # No Supabase override: this uses Vercel's own preview env, a faithful
+      # replacement for what the Git integration deployed.
+      - name: Deploy Vercel preview
+        id: preview
         if: steps.guard.outputs.run == 'true'
-        run: |
-          # Vercel prints the deployment URL to stdout and progress to stderr;
-          # grep the URL so a trailing stderr line is never mistaken for it.
-          out="$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")"
-          echo "$out"
-          URL="$(printf '%s\n' "$out" | grep -Eo 'https://[^[:space:]]+' | tail -1)"
-          if [ -z "$URL" ]; then
-            echo "::error::Could not parse Vercel preview deployment URL"
-            exit 1
-          fi
-          echo "url=$URL" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/vercel-preview-deploy
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          git-repo-owner: ${{ github.repository_owner }}
+          git-repo-slug: ${{ github.event.repository.name }}
+          git-commit-ref: ${{ github.head_ref }}
+          git-commit-sha: ${{ github.event.pull_request.head.sha }}
 
       # Post (or update) a single sticky comment with the preview URL — the same
       # affordance the Vercel bot used to provide. Idempotent: it edits its own
@@ -358,7 +326,7 @@ jobs:
         if: steps.guard.outputs.run == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          PREVIEW_URL: ${{ steps.deploy.outputs.url }}
+          PREVIEW_URL: ${{ steps.preview.outputs.url }}
           PR_SHA: ${{ github.event.pull_request.head.sha }}
         with:
           script: |

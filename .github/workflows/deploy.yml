@@ -4,8 +4,10 @@
 # Both the API (Supabase edge functions + migrations) AND the web dashboard
 # (Next.js on Vercel) are deployed here, in lockstep, so the frontend and backend
 # flip to production together instead of skewing apart. Vercel's native Git
-# auto-deploy is disabled (packages/web/vercel.json → git.deploymentEnabled.main
-# = false); this workflow is now the ONLY path the dashboard reaches production.
+# auto-deploy is disabled entirely (packages/web/vercel.json →
+# git.deploymentEnabled = false); this workflow is the ONLY path the dashboard
+# reaches production, and ci.yml deploys PR previews. The shared Vercel
+# build+deploy flow lives in .github/actions/vercel-preview-deploy.
 #
 #   deploy-preview (API) ────────┐
 #   deploy-web-preview (FE) ──────┤
@@ -267,94 +269,27 @@ jobs:
     environment: preview
     permissions:
       contents: read
-    env:
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7.0.1
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v6
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: 20
-          cache: pnpm
-
-      - name: Verify Vercel secrets are set
-        run: |
-          missing=""
-          [ -z "$VERCEL_TOKEN" ] && missing="$missing VERCEL_TOKEN"
-          [ -z "$VERCEL_ORG_ID" ] && missing="$missing VERCEL_ORG_ID"
-          [ -z "$VERCEL_PROJECT_ID" ] && missing="$missing VERCEL_PROJECT_ID"
-          if [ -n "$missing" ]; then
-            echo "::error::Missing repo-level Vercel secrets:$missing. Add them under Settings ▸ Secrets and variables ▸ Actions."
-            exit 1
-          fi
-
-      - name: Install Vercel CLI
-        run: pnpm add -g vercel@58
-
-      - name: Pull Vercel environment (preview)
-        run: vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
-
-      # Point the preview FE at the PREVIEW Supabase project so smoke exercises the
-      # same API bundle deploy-preview just shipped. Mirrors preview.yml: rewrite
-      # the env file `vercel build` actually reads (.vercel/.env.preview.local), the
-      # only file whose values win over a .env.local entry. Skipped when
-      # SUPABASE_ANON_KEY is unset — the pulled Vercel preview env values remain
-      # (which may target production); set it in the preview environment to
-      # guarantee the FE talks to the preview API.
-      - name: Override Supabase config with preview-project values
-        env:
-          PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
-          ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-        run: |
-          ENV_FILE=".vercel/.env.preview.local"
-          if [ -z "$ANON_KEY" ]; then
-            echo "::warning::SUPABASE_ANON_KEY unset for the preview environment — the preview web build uses Vercel's pulled Supabase env, which may point at production. Set it to pin the FE at the preview API."
-            exit 0
-          fi
-          if [ ! -f "$ENV_FILE" ]; then
-            echo "::error::$ENV_FILE not found — did 'vercel pull' run?"
-            exit 1
-          fi
-          grep -vE '^(NEXT_PUBLIC_SUPABASE_URL|NEXT_PUBLIC_SUPABASE_ANON_KEY|NEXT_PUBLIC_SUPABASE_PROJECT_REF)=' \
-            "$ENV_FILE" > "$ENV_FILE.tmp" || true
-          mv "$ENV_FILE.tmp" "$ENV_FILE"
-          {
-            echo "NEXT_PUBLIC_SUPABASE_URL=https://${PROJECT_REF}.supabase.co"
-            echo "NEXT_PUBLIC_SUPABASE_PROJECT_REF=${PROJECT_REF}"
-            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${ANON_KEY}"
-          } >> "$ENV_FILE"
-
-      # A CLI build gets none of Vercel's auto-injected VERCEL_GIT_* system env
-      # vars, so set them by hand — instrumentation-client.ts bakes them into
-      # NEXT_PUBLIC_VCS_* (OTel VCS resource attributes) and service.version.
-      - name: Build (preview)
-        env:
-          VERCEL_GIT_REPO_OWNER: ${{ github.repository_owner }}
-          VERCEL_GIT_REPO_SLUG: ${{ github.event.repository.name }}
-          VERCEL_GIT_COMMIT_REF: ${{ github.ref_name }}
-          VERCEL_GIT_COMMIT_SHA: ${{ github.sha }}
-        run: vercel build --token="$VERCEL_TOKEN"
-
-      - name: Deploy to Vercel (preview)
+      # Shared build+deploy flow (see .github/actions/vercel-preview-deploy).
+      # Pins the FE at the PREVIEW Supabase project so smoke exercises the same
+      # API bundle deploy-preview just shipped; the override self-skips when the
+      # anon key is unset, leaving Vercel's pulled preview env in place.
+      - name: Deploy Vercel preview
         id: deploy
-        run: |
-          # Vercel prints the deployment URL to stdout and progress to stderr;
-          # grep the URL so a trailing stderr line is never mistaken for it.
-          out="$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")"
-          echo "$out"
-          URL="$(printf '%s\n' "$out" | grep -Eo 'https://[^[:space:]]+' | tail -1)"
-          if [ -z "$URL" ]; then
-            echo "::error::Could not parse Vercel preview deployment URL"
-            exit 1
-          fi
-          echo "url=$URL" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/vercel-preview-deploy
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          supabase-project-ref: ${{ secrets.SUPABASE_PROJECT_REF }}
+          supabase-anon-key: ${{ secrets.SUPABASE_ANON_KEY }}
+          git-repo-owner: ${{ github.repository_owner }}
+          git-repo-slug: ${{ github.event.repository.name }}
+          git-commit-ref: ${{ github.ref_name }}
+          git-commit-sha: ${{ github.sha }}
 
       - name: Verify preview deployment responds
         env:

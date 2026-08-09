@@ -1,0 +1,174 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Composite action: build + deploy a Vercel PREVIEW deployment.
+#
+# The pull → (optional Supabase override) → build → deploy → parse-URL sequence
+# used to be copy-pasted across three jobs — ci.yml's `web-preview`, deploy.yml's
+# `deploy-web-preview`, and preview.yml's `deploy-web`. This is the single source
+# of truth for that flow; the callers supply only what differs (which env values
+# to pin, which git ref to attribute, and what to do with the resulting URL).
+#
+# The runner does the `next build` (`vercel build`) and uploads a prebuilt
+# deployment (`vercel deploy --prebuilt`), so Vercel spends no build minutes.
+#
+# The caller MUST check out the repo BEFORE invoking this action (a local
+# composite action needs its own files on disk, and `cache: pnpm` needs the
+# lockfile). The checkout ref differs per caller, so it stays in the caller.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Vercel preview deploy
+description: Build on the runner and deploy a prebuilt Vercel preview; returns the deployment URL.
+
+inputs:
+  vercel-token:
+    description: Vercel access token (repo secret VERCEL_TOKEN).
+    required: true
+  vercel-org-id:
+    description: Vercel org id (repo secret VERCEL_ORG_ID).
+    required: true
+  vercel-project-id:
+    description: Vercel project id (repo secret VERCEL_PROJECT_ID).
+    required: true
+  environment:
+    description: Vercel environment to pull/build against.
+    required: false
+    default: preview
+  vercel-cli-version:
+    description: Vercel CLI version to install (pinned so local and CI render on the same CLI).
+    required: false
+    default: '58'
+  supabase-project-ref:
+    description: >-
+      Supabase project ref to pin the FE at. When set together with
+      supabase-anon-key, the pulled NEXT_PUBLIC_SUPABASE_* vars are overwritten
+      so the build talks to this project. Leave empty to use Vercel's own pulled
+      environment values unchanged.
+    required: false
+    default: ''
+  supabase-anon-key:
+    description: Supabase anon key paired with supabase-project-ref. Empty ⇒ no override.
+    required: false
+    default: ''
+  git-repo-owner:
+    description: VERCEL_GIT_REPO_OWNER for the build (a CLI build gets no auto-injected VERCEL_GIT_* vars).
+    required: false
+    default: ''
+  git-repo-slug:
+    description: VERCEL_GIT_REPO_SLUG for the build.
+    required: false
+    default: ''
+  git-commit-ref:
+    description: VERCEL_GIT_COMMIT_REF for the build (branch name).
+    required: false
+    default: ''
+  git-commit-sha:
+    description: VERCEL_GIT_COMMIT_SHA for the build.
+    required: false
+    default: ''
+
+outputs:
+  url:
+    description: The deployed Vercel preview URL.
+    value: ${{ steps.deploy.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up pnpm
+      uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+    - name: Set up Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 20
+        cache: pnpm
+
+    - name: Verify Vercel secrets are set
+      shell: bash
+      env:
+        VERCEL_TOKEN: ${{ inputs.vercel-token }}
+        VERCEL_ORG_ID: ${{ inputs.vercel-org-id }}
+        VERCEL_PROJECT_ID: ${{ inputs.vercel-project-id }}
+      run: |
+        missing=""
+        [ -z "$VERCEL_TOKEN" ] && missing="$missing VERCEL_TOKEN"
+        [ -z "$VERCEL_ORG_ID" ] && missing="$missing VERCEL_ORG_ID"
+        [ -z "$VERCEL_PROJECT_ID" ] && missing="$missing VERCEL_PROJECT_ID"
+        if [ -n "$missing" ]; then
+          echo "::error::Missing repo-level Vercel secrets:$missing. Add them under Settings ▸ Secrets and variables ▸ Actions."
+          exit 1
+        fi
+
+    - name: Install Vercel CLI
+      shell: bash
+      run: pnpm add -g vercel@${{ inputs.vercel-cli-version }}
+
+    - name: Pull Vercel environment
+      shell: bash
+      env:
+        VERCEL_TOKEN: ${{ inputs.vercel-token }}
+        VERCEL_ORG_ID: ${{ inputs.vercel-org-id }}
+        VERCEL_PROJECT_ID: ${{ inputs.vercel-project-id }}
+      run: vercel pull --yes --environment="${{ inputs.environment }}" --token="$VERCEL_TOKEN"
+
+    # Rewrite the env file `vercel build` actually reads
+    # (.vercel/.env.<environment>.local) — the only file whose values win over a
+    # .env.local entry — so the build talks to the caller-named Supabase project.
+    # Skipped when no anon key is supplied: the pulled Vercel env values remain.
+    - name: Override Supabase config
+      if: ${{ inputs.supabase-anon-key != '' }}
+      shell: bash
+      env:
+        PROJECT_REF: ${{ inputs.supabase-project-ref }}
+        ANON_KEY: ${{ inputs.supabase-anon-key }}
+        ENVIRONMENT: ${{ inputs.environment }}
+      run: |
+        ENV_FILE=".vercel/.env.${ENVIRONMENT}.local"
+        if [ ! -f "$ENV_FILE" ]; then
+          echo "::error::$ENV_FILE not found — did 'vercel pull' run?"
+          exit 1
+        fi
+        # Drop any pulled Supabase vars so ours are the only definitions.
+        grep -vE '^(NEXT_PUBLIC_SUPABASE_URL|NEXT_PUBLIC_SUPABASE_ANON_KEY|NEXT_PUBLIC_SUPABASE_PROJECT_REF)=' \
+          "$ENV_FILE" > "$ENV_FILE.tmp" || true
+        mv "$ENV_FILE.tmp" "$ENV_FILE"
+        {
+          echo "NEXT_PUBLIC_SUPABASE_URL=https://${PROJECT_REF}.supabase.co"
+          echo "NEXT_PUBLIC_SUPABASE_PROJECT_REF=${PROJECT_REF}"
+          echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${ANON_KEY}"
+        } >> "$ENV_FILE"
+
+    # A CLI build gets none of Vercel's auto-injected VERCEL_GIT_* system env
+    # vars, so pass them through — instrumentation-client.ts bakes them into
+    # NEXT_PUBLIC_VCS_* (OTel VCS resource attributes) and service.version.
+    - name: Build
+      shell: bash
+      env:
+        VERCEL_TOKEN: ${{ inputs.vercel-token }}
+        VERCEL_ORG_ID: ${{ inputs.vercel-org-id }}
+        VERCEL_PROJECT_ID: ${{ inputs.vercel-project-id }}
+        VERCEL_GIT_REPO_OWNER: ${{ inputs.git-repo-owner }}
+        VERCEL_GIT_REPO_SLUG: ${{ inputs.git-repo-slug }}
+        VERCEL_GIT_COMMIT_REF: ${{ inputs.git-commit-ref }}
+        VERCEL_GIT_COMMIT_SHA: ${{ inputs.git-commit-sha }}
+      run: vercel build --token="$VERCEL_TOKEN"
+
+    - name: Deploy (prebuilt)
+      id: deploy
+      shell: bash
+      env:
+        VERCEL_TOKEN: ${{ inputs.vercel-token }}
+        VERCEL_ORG_ID: ${{ inputs.vercel-org-id }}
+        VERCEL_PROJECT_ID: ${{ inputs.vercel-project-id }}
+      run: |
+        set -euo pipefail
+        # Vercel prints the deployment URL to stdout and progress to stderr;
+        # keep them separate (no 2>&1) and grep the URL so a trailing stderr
+        # line can never be mistaken for the deployment URL.
+        out="$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")"
+        echo "$out"
+        URL="$(printf '%s\n' "$out" | grep -Eo 'https://[^[:space:]]+' | tail -1)"
+        if [ -z "$URL" ]; then
+          echo "::error::Could not parse Vercel preview deployment URL"
+          exit 1
+        fi
+        echo "url=$URL" >> "$GITHUB_OUTPUT"

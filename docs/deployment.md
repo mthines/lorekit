@@ -28,6 +28,15 @@ and local operations.
 > deployment (and spends no quota), where the Git integration used to deploy on
 > every push. If you fork this, mirror the flag (or disable Git deployments in
 > the Vercel dashboard) or you will double-deploy.
+>
+> The three preview-deploy jobs (`ci.yml` `web-preview`, `deploy.yml`
+> `deploy-web-preview`, `preview.yml` `deploy-web`) share one implementation:
+> the composite action **`.github/actions/vercel-preview-deploy`** (pull → build
+> on the runner → deploy prebuilt → return the URL; callers supply only the env
+> to pin and the git ref to attribute). It is a **local** action, so it must
+> exist at the checked-out ref: `ci.yml`/`deploy.yml` always have it (they check
+> out the PR merge ref / `main`), but a `/preview` on a branch that predates this
+> action will fail to resolve it until that branch merges `main`.
 
 ---
 
