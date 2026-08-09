@@ -84,10 +84,14 @@ export function resolveStatus(rawStatus: unknown, legacyArchived: unknown): Memo
  * Whether this status views the ARCHIVED population.
  *
  * The distinction the boolean toggle used to be, kept as its own function
- * because three call sites need it and each would otherwise re-derive it:
- * the list request, the facet catalog (a catalog must describe the population
- * it filters — `GET /memories/facets?archived=`), and the archive mutations'
- * cache predicate.
+ * rather than an inline `status === 'archived'` because it is the point where
+ * the Explorer's status collapses to the boolean the data layer still speaks.
+ * `LoreExplorer` calls it once and feeds the result to both consumers of that
+ * boolean: `useMemories` (the list request) and `useFacetCatalog` (a catalog
+ * must describe the population it filters — `GET /memories/facets?archived=`).
+ * The archive mutations do NOT call it — they match invalidation targets on the
+ * cached query key's own archived segment (`queryKey[4]`, see `queries/lore.ts`)
+ * because at that point there is no status in hand, only a key.
  *
  * `expiring` is FALSE here, and that is the whole point of it being a separate
  * state rather than a modifier: an expiring memory is a live one with a
