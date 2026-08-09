@@ -18,6 +18,7 @@ import {
   toolRestore,
   toolPurge,
   toolPurgeExpired,
+  toolScopes,
   toolOrgCreate,
   toolOrgList,
   toolOrgRename,
@@ -59,6 +60,7 @@ const MEMORY_TOOLS = {
   'memory.restore':       toolRestore,
   'memory.purge':         toolPurge,
   'memory.purge_expired':  toolPurgeExpired,
+  'memory.scopes':        toolScopes,
 } as const;
 
 // org.* tools — dispatched with (db, args, span). They require JWT auth

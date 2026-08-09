@@ -25,6 +25,17 @@ const source = readFileSync(toolsPath, 'utf8');
 // The four read handlers widened in Phase 1 (plan.md Technical Approach #2).
 // Write/delete/archive/restore/purge stay personal-only (Requirement R7) and
 // are deliberately excluded from this guard.
+//
+// `toolScopes` is a FIFTH read handler and is deliberately absent, for a
+// different reason than the write family: it has no query to scope. It calls
+// the `lorekit_memory_scopes` RPC (migration 00039/00049), which composes
+// `lorekit_member_org_ids` inside Postgres exactly as the `memories` RLS read
+// policies do, so the tenant predicate is already applied one layer down. An
+// `applyTenantScope` call there would be a SECOND predicate over the same
+// visibility rule and a place for the two to drift — the same argument
+// `supabase/functions/mcp/tools.ts`'s `toolScopes` docblock and
+// `memories/handlers/scopes.ts` both make. A future read handler that does
+// build a `memories` query belongs in this list.
 const READ_HANDLERS = ['toolRead', 'toolList', 'toolSearch', 'toolListArchived'];
 
 function extractFunctionBody(src: string, fnName: string): string {
