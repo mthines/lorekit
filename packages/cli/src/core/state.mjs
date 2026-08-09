@@ -58,11 +58,15 @@ export function sessionMarkerExists(sessionId, tag) {
 // a duplicate line is harmless because the reader is a Set. A read-modify-write
 // would be the version that loses entries under a race.
 
-// Cap on ids retained per session. A long session with a large store could
-// otherwise grow this file without bound, and the value of an id decays anyway
-// — re-showing a lesson from 600 injections ago is not the repetition this
-// guards against. The cap is applied on READ (newest kept), so the writer stays
-// a bare append.
+// Cap on how many ids are READ back per session — it bounds the shown-set, not
+// the file. The writer stays a bare append (that is what makes it race-safe),
+// so a long session with a large store still grows the file on disk; it is
+// session-scoped scratch in a temp/plugin-data directory, and the host clears
+// it with the rest of the session's hook state.
+//
+// Reading only the newest N is enough for what this guards: the value of an id
+// decays, and re-showing a lesson from 600 injections ago is not the repetition
+// the shown-set exists to prevent.
 const MAX_SHOWN_IDS = 500;
 
 function shownPath(sessionId) {
