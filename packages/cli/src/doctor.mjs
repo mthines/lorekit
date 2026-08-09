@@ -110,8 +110,12 @@ export async function doctor(args) {
         // the same `missingHookEvents` derivation.
         const mode = hookModeFromEvents(events);
         const missing = missingHookEvents(events);
+        // Name the SCOPE in the command. `install` prompts for project vs
+        // global when neither flag is given, so a bare command offered against
+        // a `hooks global` gap can just as easily rewire the project and leave
+        // the gap exactly where it was.
         const upgrade = missing.length > 0
-          ? ` — missing ${missing.join(', ')}; run \`lorekit install --hooks ${mode}\` to wire ${missing.length === 1 ? 'it' : 'them'}`
+          ? ` — missing ${missing.join(', ')}; run \`lorekit install --${scope} --hooks ${mode}\` to wire ${missing.length === 1 ? 'it' : 'them'}`
           : '';
         record('pass', `hooks ${scope}`, `${mode} — ${events.join(', ')}${upgrade}`);
       }

@@ -285,8 +285,26 @@ test('doctor names the upgrade a legacy hook wiring still reports as `all`', asy
   const line = res.stdout.split('\n').find((l) => l.includes('hooks project')) ?? '';
   assert.match(line, /PASS/, `a stale wiring still works, so it is not a failure: ${line}`);
   assert.match(line, /missing UserPromptSubmit/, `names the gap, got: ${line}`);
-  assert.match(line, /lorekit install --hooks all/, `names the command, got: ${line}`);
+  assert.match(line, /lorekit install --project --hooks all/, `names the command, got: ${line}`);
   assert.equal(res.status, 0, 'and the advisory never changes doctor\'s exit code');
+});
+
+test('the hook upgrade command names the scope it would actually repair', async () => {
+  // `install` prompts for project vs global when neither flag is given, so a
+  // bare command offered against a global gap can rewire the project instead
+  // and leave the gap untouched.
+  const root = tmp('lk-doc-legacy-global-');
+  const home = tmp('lk-doc-legacy-global-home-');
+  await installWith({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, global: true }, home);
+
+  const settings = path.join(home, '.claude', 'settings.json');
+  const parsed = JSON.parse(fs.readFileSync(settings, 'utf8'));
+  delete parsed.hooks.UserPromptSubmit;
+  fs.writeFileSync(settings, JSON.stringify(parsed, null, 2));
+
+  const line = runDoctor(root, home).stdout.split('\n').find((l) => l.includes('hooks global')) ?? '';
+  assert.match(line, /missing UserPromptSubmit/, `names the gap, got: ${line}`);
+  assert.match(line, /lorekit install --global --hooks all/, `names the global scope, got: ${line}`);
 });
 
 test('doctor says so when no hooks are wired, so a deliberate opt-out is legible', async () => {
