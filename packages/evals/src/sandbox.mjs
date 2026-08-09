@@ -64,6 +64,10 @@ export function isInsideRealHome(candidate, realHome = REAL_LOREKIT_HOME) {
  *   artifacts: string, env: Record<string,string>,
  *   childEnv: (extra?: Record<string,string>) => Record<string,string>,
  *   stripInformationEnvironment: () => Promise<string[]>,
+ *   findSpoilers: (
+ *     terms?: string[],
+ *     opts?: { dir?: string, skip?: Set<string> },
+ *   ) => Promise<{ file: string, term: string }[]>,
  *   disposed: () => boolean, dispose: () => Promise<void>,
  * }>}
  */
