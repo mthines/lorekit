@@ -160,7 +160,7 @@ export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
 
   // `applicable` is the honest denominator for the header — how many the reader
   // has, as opposed to how many fitted. It is counted BEFORE the ceiling, so
-  // "8 of 143" stays true no matter how the render is bounded.
+  // "8 of 50" stays true no matter how the render is bounded.
   return {
     scope,
     lessons: ranked.slice(0, HARD_LESSON_CEILING),
@@ -263,7 +263,7 @@ export function formatLessons(lessons, scope, {
   // shows it, which is the whole difference between `index` and `hybrid`.
   const showMap = Boolean(map) && (shape === 'map' || (shape === 'hybrid' && shown.length < total));
 
-  // Say `8 of 143` whenever the two differ. The old header reported only what it
+  // Say `8 of 50` whenever the two differ. The old header reported only what it
   // had rendered, so a truncated block was indistinguishable from a complete one
   // and the agent had no way to know that reaching for `memory.search` was worth
   // it. The count is what makes the truncation self-describing.
