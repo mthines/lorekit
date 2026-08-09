@@ -146,6 +146,17 @@ export const MEMORY_TOOL_DEFS = [
     description: 'Soft-archive a memory. Hidden from reads but restorable.',
     inputSchema: { type: 'object', required: ['scope', 'key'] },
   },
+  {
+    name: 'memory.scopes',
+    // The description tells the model WHEN to reach for this, not just what it
+    // returns: every other read tool needs a scope named up front, so this is
+    // the one that answers "what is there?" before you can ask "what is in it?".
+    description:
+      'List every scope in the store with how many active memories it holds — '
+      + 'the inventory to consult when you do not already know which scope to read. '
+      + 'Takes no arguments and is store-wide, NOT limited to the current directory.',
+    inputSchema: { type: 'object', properties: {} },
+  },
 ];
 
 // Org tools — always advertised regardless of memory mode. They always route
@@ -215,7 +226,83 @@ const MEMORY_DISPATCH = {
   'memory.search': (store, a) => store.search(a),
   'memory.delete': (store, a) => store.delete(a),
   'memory.archive': (store, a) => store.archive(a),
+  'memory.scopes': (store) => listScopes(store),
 };
+
+// `memory.scopes` — the store-wide inventory, normalised.
+//
+// This exists because an agent that cannot enumerate scopes cannot know what it
+// does not know. `memory.list` and `memory.search` both need a scope (or a
+// scope list) up front, so without this the only reachable lore is the lore
+// whose scope the agent could already name — and the SessionStart injection is
+// deliberately a bounded slice, not an index of the whole store. `GET
+// /memories/scopes` and the `lorekit scopes` command have answered this since
+// migration 00039; the MCP surface was the one caller that could not ask.
+//
+// THE TWO STORES ANSWER IN DIFFERENT SHAPES, and normalising here is the whole
+// job of this function. `LocalStore`/`TwoTierStore.listScopes()` return a BARE
+// ARRAY (`[{ scope, count }]`), while `RemoteStore.listScopes()` returns the
+// standard `{ ok, scopes }` envelope — or `{ ok: false, error, networkError,
+// unusable }`. A tool that passed either through verbatim would hand the model
+// two different contracts for one tool name depending on a config value it
+// cannot see.
+//
+// DEGRADATION IS EXIT-CLEAN, mirroring the `scopes` command, which reports an
+// unreachable remote as a short note at exit 0 rather than failing the run. An
+// inventory that cannot be built is `{ scopes: [], note }` with `ok: true`, so
+// `toolResult` does NOT mark it `isError`: "I could not enumerate" is a fact
+// about the store, not a failed tool call, and a model that receives a
+// tool-level error is liable to retry it rather than carry on with the lore it
+// can already reach. The note says which, in bounded, non-PII terms.
+export async function listScopes(store) {
+  let res;
+  try {
+    res = await store.listScopes();
+  } catch (e) {
+    // A store that cannot enumerate must not take the session down with it.
+    return { ok: true, scopes: [], note: `scope enumeration failed: ${errText(e)}` };
+  }
+
+  // Local/two-tier: the bare array form.
+  if (Array.isArray(res)) return { ok: true, scopes: res.map(shapeScope) };
+
+  // Remote: the envelope form.
+  if (res && res.ok) {
+    return { ok: true, scopes: (Array.isArray(res.scopes) ? res.scopes : []).map(shapeScope) };
+  }
+
+  return { ok: true, scopes: [], note: scopeFailureNote(res) };
+}
+
+// One inventory row. `last_activity` is passed through when the store supplied
+// it (the hosted `GET /memories/scopes` has returned it since migration 00049)
+// and OMITTED — never null — when it did not, so a client can tell "this store
+// does not report freshness" from "this scope has no activity".
+function shapeScope(s) {
+  const scope = String(s?.scope ?? '');
+  const count = Number(s?.count);
+  const row = { scope, count: Number.isFinite(count) ? count : 0 };
+  const last = s?.last_activity ?? s?.lastActivity;
+  return last ? { ...row, last_activity: last } : row;
+}
+
+// A short, bounded reason an enumeration produced nothing. Deliberately built
+// here rather than reusing `lessons-view.mjs`'s `describeError`: that module
+// carries the whole render/`util` stack, and this server has kept clear of it.
+// The vocabulary matches what that helper reports, so the two read alike.
+function scopeFailureNote(res) {
+  if (!res) return 'the store returned no result';
+  if (res.unusable) return 'no usable store is configured';
+  if (res.networkError) return `network error: ${String(res.networkError).slice(0, 200)}`;
+  const status = res.error?.httpStatus ?? res.httpStatus;
+  if (status) return `request failed with HTTP ${status}`;
+  if (res.error?.message) return String(res.error.message).slice(0, 200);
+  return 'the store could not enumerate its scopes';
+}
+
+function errText(e) {
+  return String(e?.message ?? e).slice(0, 200);
+}
 
 // Provenance for a tool call: the caller's explicit values win, the working
 // directory and CI environment fill the rest. Best-effort — a failure to shell

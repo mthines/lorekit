@@ -731,3 +731,56 @@ export async function toolPurgeExpired(
 
   return { purged };
 }
+
+/**
+ * List every scope the caller can see, with its count of active (non-archived,
+ * non-expired) memories and when that scope was last written to.
+ *
+ * THE ONE READ TOOL THAT TAKES NO SCOPE, and the reason it exists: every other
+ * read tool REQUIRES one (`memory.read`/`memory.list` take a `scope`,
+ * `memory.search` a `scopes` list), so without this an agent can only reach
+ * lore whose scope it could already name. That made the store's contents a
+ * function of what the agent happened to guess. `GET /memories/scopes` and the
+ * `lorekit scopes` command have answered this since migration 00039; the MCP
+ * surface was the only caller that could not ask.
+ *
+ * The aggregation runs in Postgres (`lorekit_memory_scopes`), NOT as a
+ * `select('scope')` plus a client-side `Set`. The client-side form is silently
+ * wrong past PostgREST's row cap: the response is truncated with no error, so
+ * whole scopes go missing for exactly the accounts with the most lore — which
+ * are the accounts that need an inventory most.
+ *
+ * Tenant scoping lives INSIDE the RPC (it composes `lorekit_member_org_ids`
+ * exactly as the `memories` RLS read policies do), so there is deliberately no
+ * `applyTenantScope` call here — there is no query to scope, and a second
+ * predicate would be somewhere for the two to drift. This mirrors
+ * `memories/handlers/scopes.ts`, which makes the same call and the same
+ * argument; the two surfaces answer identically by construction.
+ */
+export async function toolScopes(
+  db: ReturnType<typeof createClient>,
+  _params: Params,
+  userId: string | null,
+  span: Span,
+) {
+  const tracedDb = createTracedClient(db, span);
+  // A service-role caller has no user id; the RPC reads a null `p_user_id` on a
+  // service_role connection as "no tenant filter", matching every other read.
+  const { data, error } = await tracedDb.rpc('lorekit_memory_scopes', {
+    p_user_id: userId ?? null,
+  });
+  if (error) throw new Error((error as { message: string }).message);
+
+  const rows = (data ?? []) as { scope: string; count: number | string; last_activity: string | null }[];
+  const scopes = rows.map((r) => ({
+    scope: r.scope,
+    count: Number(r.count),
+    // max(created_at) over exactly the counted rows (migration 00049) — per-scope
+    // freshness without listing rows to reduce them, which is the row-cap trap
+    // this tool exists to avoid. Null when the scope somehow counted nothing.
+    last_activity: r.last_activity ? new Date(r.last_activity).toISOString() : null,
+  }));
+
+  span.setAttributes({ 'lorekit.result_count': scopes.length });
+  return { scopes };
+}

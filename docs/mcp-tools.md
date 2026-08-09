@@ -265,6 +265,57 @@ Restore a soft-archived lesson back to active. Requires a token with write permi
 
 ---
 
+## memory.scopes
+
+List every scope the caller can see, with how many active memories it holds and when it was
+last written to. Takes no arguments. Requires a token with read permission (`lk_rw_*` or
+`lk_ro_*`).
+
+This is the one read tool that takes **no scope**, and that is the point of it: every other
+read tool requires a scope up front (`memory.read` / `memory.list` take a `scope`,
+`memory.search` a `scopes` list), so without an inventory an agent can only reach lore whose
+scope it could already name. Reach for it before a `memory.list`/`memory.search` when you do
+not already know which scope to ask about.
+
+It is **store-wide**, not limited to any working directory — unlike the `lorekit list` /
+`search` / `stats` commands, which are scoped to the current repo. It is the same inventory
+`GET /memories/scopes` and the `lorekit scopes` command return.
+
+```json
+{
+  "params": {
+    "name": "memory.scopes",
+    "arguments": {}
+  }
+}
+```
+
+**Returns:** `{ "scopes": [{ "scope", "count", "last_activity" }] }`, sorted by scope ascending.
+
+```json
+{
+  "scopes": [
+    { "scope": "global", "count": 12, "last_activity": "2026-07-30T09:12:00.000Z" },
+    { "scope": "repo::acme/app", "count": 3, "last_activity": "2026-07-28T17:04:00.000Z" }
+  ]
+}
+```
+
+- `count` is **active** memories only — non-archived and non-expired.
+- `last_activity` is the newest `created_at` among exactly those counted rows, or `null`.
+  It lets you judge which scopes are live without listing their rows to find out.
+
+The aggregation runs in Postgres (`lorekit_memory_scopes`, migration 00039), not by listing
+rows and deduping client-side — a client-side count is silently truncated past the row cap,
+so whole scopes go missing for exactly the accounts with the most lore.
+
+> The local stdio server (`lorekit mcp`) exposes this tool too, over whichever store is
+> configured. When a store cannot enumerate — an unreachable or unconfigured remote — it
+> answers `{ "scopes": [], "note": "<reason>" }` rather than failing the call, matching how
+> the `lorekit scopes` command degrades.
+
+---
+
 ## memory.list_archived
 
 List soft-archived lessons for a scope, newest archived first. Requires a token with read permission (`lk_rw_*` or `lk_ro_*`).

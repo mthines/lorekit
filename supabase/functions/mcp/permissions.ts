@@ -18,6 +18,18 @@ export const READ_TOOLS: ReadonlySet<string> = new Set([
   'memory.list',
   'memory.search',
   'memory.list_archived',
+  // The inventory read. It takes no scope — that is the point of it — so it is
+  // read-gated like the rest of the family rather than left ungated because it
+  // names no scope: scope STRINGS embed repo and project names, which is the
+  // same reason `lorekit_memory_scopes` carries no `anon` grant.
+  //
+  // NOTE for the read-activity metric: `lorekit_read_activity` (00053) sums
+  // `result_count` over a HARD-CODED list of the four tools above and must NOT
+  // grow this one. That series answers "how many MEMORIES did I read"; this tool
+  // returns scope rows, not memories, so counting it would inflate the number
+  // with records that are not lore. Permission gating and the records-read
+  // metric are different questions about the same family.
+  'memory.scopes',
 ]);
 
 /** Write-family tools — require `canWrite`. */

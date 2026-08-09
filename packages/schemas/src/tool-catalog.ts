@@ -244,6 +244,18 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
     returns: '`{ "archived": true }` if found and archived, `{ "archived": false }` if already archived or not found.',
   },
   {
+    name: 'memory.scopes',
+    description:
+      'List every scope in the store with how many active memories it holds and when it was last '
+      + 'written to — the inventory to consult when you do not already know which scope to read. '
+      + 'Takes no arguments and is store-wide, NOT limited to any working directory. Every other '
+      + 'read tool requires a scope up front, so this is the one that answers "what is there?".',
+    permission: 'read',
+    auth: 'token-or-jwt',
+    inputSchema: { type: 'object', properties: {} },
+    returns: '`{ "scopes": [{ "scope", "count", "last_activity" }] }`, sorted by scope ascending. `count` is active (non-archived, non-expired) memories; `last_activity` is the newest `created_at` among them, or `null`.',
+  },
+  {
     name: 'memory.list_archived',
     description: 'List archived (soft-deleted) lessons for a scope',
     permission: 'read',

@@ -221,7 +221,21 @@ class RemoteStore {
     const res = await this._rest('/memories/scopes');
     if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError, unusable: res.unusable };
     const scopes = Array.isArray(res.data?.scopes) ? res.data.scopes : [];
-    return { ok: true, scopes: scopes.map((s) => ({ scope: s.scope, count: Number(s.count) || 0 })) };
+    // `last_activity` (migration 00049) is `max(created_at)` over exactly the
+    // counted rows — per-scope freshness without listing rows to reduce them,
+    // which is the row-cap trap this endpoint exists to avoid. It is passed
+    // through when present and OMITTED when absent (an older backend, or the
+    // offline store, which has no equivalent), so a consumer can tell "this
+    // store does not report freshness" from "this scope has none". Callers that
+    // read only `{ scope, count }` — `scopes.mjs`, `stats.mjs` — are unaffected.
+    return {
+      ok: true,
+      scopes: scopes.map((s) => ({
+        scope: s.scope,
+        count: Number(s.count) || 0,
+        ...(s.last_activity ? { last_activity: s.last_activity } : {}),
+      })),
+    };
   }
 
   // Authentication probe for doctor — does the configured token STILL work?
