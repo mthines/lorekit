@@ -145,6 +145,7 @@ export const BackdropTapCloses: Story = {
 export const EscapeCloses: Story = {
   play: async ({ args, step }) => {
     await body().findByRole('dialog', { name: /memory detail/i });
+    await settleOpenFocus();
     await step('Escape on a clean form dismisses the sheet', async () => {
       await userEvent.keyboard('{Escape}');
       await waitFor(() => expect(body().queryByRole('dialog')).not.toBeInTheDocument());
