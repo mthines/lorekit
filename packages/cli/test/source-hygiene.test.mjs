@@ -101,8 +101,15 @@ test('lessons-pure imports nothing — not a package, not even a node builtin', 
     .map((line) => line.replace(/^\s*\/\/.*$/, ''))
     .join('\n');
 
-  const statics = code.match(/^\s*import\s[\s\S]*?$/gm) || [];
-  assert.deepEqual(statics, [], 'lessons-pure.mjs must have no static imports');
+  // A static dependency is not always `import`-prefixed. `export { x } from 'p'`
+  // and `export * from 'p'` are RE-EXPORTS: they load the module on the hot
+  // path exactly like an import does, and they slip past both the `import(`
+  // and the `require(` checks below. A multi-line specifier list carries its
+  // `from` on the closing line, so that shape is matched too.
+  const statics = code.match(
+    /^\s*(?:import\b[\s\S]*?$|export\b[^\n]*\bfrom\b[^\n]*$|\}[^\n]*\bfrom\b[^\n]*$)/gm,
+  ) || [];
+  assert.deepEqual(statics, [], 'lessons-pure.mjs must have no static imports or re-exports');
 
   // A dynamic `import(...)` or a `require(...)` would defeat the static check
   // while costing the same load on the hot path.
