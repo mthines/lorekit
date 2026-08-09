@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  gridAnchor,
   resolveRange,
   bucketPlanFor,
   bucketPlanForRange,
@@ -407,5 +408,40 @@ describe('rangeCaption', () => {
     // A malformed absolute window falls back to the unbounded LABEL, so it has
     // to reach the unbounded CAPTION too — never "in All time".
     expect(rangeCaption({ from: 'nope', to: 'also-nope' }, NOW)).toBe('all time');
+  });
+});
+
+describe('gridAnchor', () => {
+  it('leaves a preset anchored at the clock — "the last 7 days" ends now', () => {
+    expect(gridAnchor({ preset: '7d' }, NOW)).toBe(NOW);
+    expect(gridAnchor({ preset: 'all' }, NOW)).toBe(NOW);
+    expect(gridAnchor(null, NOW)).toBe(NOW);
+  });
+
+  it('anchors an absolute window at its OWN end, not at the clock', () => {
+    // The bug this exists for: a plan carries only {unit,count}, so an absolute
+    // range charted the most recent N buckets while the caption named the
+    // selected dates — last July's label over this week's bars.
+    const anchor = gridAnchor({ from: '2026-07-01', to: '2026-07-03' }, NOW);
+    expect(anchor.startsWith('2026-07-03')).toBe(true);
+    expect(anchor).not.toBe(NOW);
+  });
+
+  it('steps back one millisecond, because the stored `to` is EXCLUSIVE', () => {
+    // Anchoring at `to` itself would shift the chart one bucket into the future
+    // and silently drop the window's first bucket.
+    const window = { from: '2026-07-01T00:00:00.000Z', to: '2026-07-02T00:00:00.000Z' };
+    expect(gridAnchor(window, NOW)).toBe('2026-07-01T23:59:59.999Z');
+  });
+
+  it('keeps the anchor INSIDE the window it describes', () => {
+    const window = resolveRange({ from: '2026-07-01', to: '2026-07-03' }, NOW);
+    const anchor = Date.parse(gridAnchor({ from: '2026-07-01', to: '2026-07-03' }, NOW));
+    expect(anchor).toBeGreaterThanOrEqual(Date.parse(requireWindow(window).from));
+    expect(anchor).toBeLessThan(Date.parse(requireWindow(window).to));
+  });
+
+  it('falls back to the clock for a malformed window rather than NaN', () => {
+    expect(gridAnchor({ from: 'nope', to: 'also-nope' }, NOW)).toBe(NOW);
   });
 });

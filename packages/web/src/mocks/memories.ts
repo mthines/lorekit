@@ -33,6 +33,17 @@ import { resolveKindHost } from '@lorekit/schemas/tags';
  */
 export const FROZEN_NOW = '2026-06-15T12:00:00.000Z';
 
+/**
+ * Memory records the purge removed in the window — the Expired tile's number.
+ *
+ * A fixed constant rather than a value derived from `MEMORY_ROWS`, because
+ * expired rows are DELETED: there is nothing left in the table to derive it
+ * from, which is exactly why the figure comes from the usage ledger and not
+ * from a row count. Non-round so a story asserting it cannot pass against a
+ * placeholder zero or a coincidental total.
+ */
+export const EXPIRED_RECORDS = 17;
+
 const FROZEN_MS = new Date(FROZEN_NOW).getTime();
 const HOUR = 3_600_000;
 
@@ -386,6 +397,40 @@ export function memoryHandlers(rows: MemoryRow[] = MEMORY_ROWS) {
         since: url.searchParams.get('since') ?? FROZEN_NOW,
         until: url.searchParams.get('until') ?? FROZEN_NOW,
         buckets,
+      });
+    }),
+    http.get('*/functions/v1/memories/usage', ({ request }) => {
+      const url = new URL(request.url);
+      // The Explorer's stats header reads exactly one figure from this
+      // endpoint: `summary.expired`. Everything else is filled in to the real
+      // response's SHAPE rather than left out, so a consumer that starts
+      // reading another field gets a plausible number instead of `undefined`.
+      //
+      // Deliberately NOT derived from the fixture rows and deliberately NOT
+      // scope-aware: expiry is recorded per purge run, the purge spans scopes,
+      // and the real endpoint takes no `scope` at all. A mock that filtered by
+      // scope would let a story "prove" a per-scope expiry figure the API
+      // cannot produce.
+      const expired = EXPIRED_RECORDS;
+      return HttpResponse.json({
+        range: {
+          since: url.searchParams.get('since') ?? null,
+          until: url.searchParams.get('until') ?? null,
+        },
+        correlation_id: url.searchParams.get('correlation_id'),
+        summary: {
+          total_events: 128,
+          reads: 96,
+          writes: 24,
+          other: 8,
+          records_read: 1_284,
+          record_count: 1_284,
+          event_count: 128,
+          expired,
+          by_outcome: { ok: 126, error: 2 },
+        },
+        by_tool: [],
+        by_scope_type: [],
       });
     }),
     http.get('*/functions/v1/memories', ({ request }) =>
