@@ -52,9 +52,13 @@ import {
 const sumPoints = (points: { value: number }[]) => points.reduce((total, p) => total + p.value, 0);
 
 /**
- * The grid an unbounded or unparseable range falls back to — the same 30 daily
- * buckets the Overview uses, for the same reason: rendering nothing would turn
- * a bad link into a broken page.
+ * A last-resort grid, and — like `statsWindow`'s empty-window arm — one nothing
+ * reaches today. `bucketPlanForRange` is called with `shown`, which is
+ * `effectiveStatsRange`'s output, so an unbounded or unparseable selection has
+ * ALREADY been substituted for the bounded `90d` default and charts 90 days,
+ * not these 30 daily buckets. It stays as the same 30-day grid the Overview
+ * uses so that if the preset table ever stops resolving, a bad link degrades to
+ * a page that renders rather than a broken one.
  */
 const FALLBACK_PLAN = RANGE_BUCKETS['30d'];
 
