@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react';
 import { useState } from 'react';
-import { expect, userEvent, waitFor, within } from 'storybook/test';
+import { expect, fireEvent, userEvent, waitFor, within } from 'storybook/test';
 import { Archive, BookOpen, Clock } from 'lucide-react';
 
 import { Combobox, type ComboboxItem } from './Combobox';
@@ -140,8 +140,14 @@ export const ADisabledOptionIsVisibleButUnselectable: Story = {
       await expect(menu.getByRole('option', { name: /Purged/ })).toBeInTheDocument();
     });
 
-    await step('clicking it changes nothing and leaves the list open', async () => {
-      await userEvent.click(menu.getByRole('option', { name: /Purged/ }));
+    await step('committing on it changes nothing and leaves the list open', async () => {
+      const purged = menu.getByRole('option', { name: /Purged/ });
+      // `userEvent.click` would assert nothing here: the row is a real
+      // `disabled` button, so the browser suppresses a user-driven click before
+      // it reaches React. Dispatching `pointerup` — the event the row commits
+      // on, and one React does NOT withhold from a disabled button — is what
+      // puts the `!option.disabled` guard in `onPointerUp` under test.
+      fireEvent.pointerUp(purged);
       await expect(canvas.getByTestId('value')).toHaveTextContent('active');
       await expect(menu.getByRole('listbox', { name: /status/i })).toBeInTheDocument();
     });
