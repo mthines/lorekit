@@ -11,6 +11,8 @@ import {
   relevantLessonsFromStore,
   formatRelevantLessons,
   writeConfirmation,
+  renderScopeMap,
+  SCOPE_READ_LIMIT,
 } from '../src/core/lessons.mjs';
 import { resolvePrecedence, matchesQuery } from '../src/lessons-pure.mjs';
 import { deriveScope } from '../src/scope.mjs';
@@ -1057,6 +1059,39 @@ test('fetchLessons scope map — counts come from the winners, per scope, in rea
     'ordered by the hierarchy, not by count',
   );
   assert.ok(scopeCounts.every((s) => s.atReadLimit === false), 'nothing hit the per-scope read cap');
+});
+
+// The `+` suffix is the only thing that stops a capped count from reading as an
+// exact total, and until now nothing drove it through `fetchLessons` — the true
+// case was hand-built straight into `renderScopeMap`, so the `raw.length >=
+// SCOPE_READ_LIMIT` detection in the fetch itself was never exercised. The
+// threshold is imported, not retyped: an assertion that restates a production
+// constant goes vacuous the moment the constant moves.
+test('fetchLessons scope map — a scope read to the cap reports a lower bound, not a total', async () => {
+  const { deriveScope } = await import('../src/scope.mjs');
+  const scope = deriveScope(process.cwd());
+  const [capped, ...rest] = scope.readOrder;
+  const under = rest[rest.length - 1] ?? null;
+
+  const byScope = {
+    // Exactly the cap: what a real store returns when there is more behind it.
+    [capped]: Array.from({ length: SCOPE_READ_LIMIT }, (_, i) => ({ key: `k${i}`, value: `v${i}` })),
+  };
+  if (under) byScope[under] = [{ key: 'lonely', value: 'v' }];
+
+  const { scopeCounts } = await fetchLessons(fakeStore(byScope), process.cwd());
+  const rows = Object.fromEntries(scopeCounts.map((s) => [s.scope, s]));
+
+  assert.equal(rows[capped].count, SCOPE_READ_LIMIT, 'precondition — the capped scope really is saturated');
+  assert.equal(rows[capped].atReadLimit, true, 'a read that came back full is a floor, not a total');
+  if (under) assert.equal(rows[under].atReadLimit, false, 'a scope under the cap is an exact count');
+
+  const map = renderScopeMap(scopeCounts);
+  assert.ok(
+    map.includes(`${capped} ${SCOPE_READ_LIMIT}+`),
+    'the capped scope renders with the + suffix',
+  );
+  if (under) assert.doesNotMatch(map, /lonely/, 'the map names scopes and counts, not keys');
 });
 
 // The header is not part of the lesson budget — it is the frame. Measure it so

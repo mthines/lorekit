@@ -89,7 +89,7 @@ const MAX_SCAN_CHARS = 4096;
 // many lessons reports a lower-bound count in the scope map — rendered `25+`
 // rather than a number that looks exact. `memory.scopes` answers it exactly and
 // is the follow-up that replaces this.
-const SCOPE_READ_LIMIT = 25;
+export const SCOPE_READ_LIMIT = 25;
 
 export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
   const scope = deriveScope(cwd);
