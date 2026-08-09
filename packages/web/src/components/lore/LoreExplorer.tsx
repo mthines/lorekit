@@ -310,16 +310,23 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     [rangeKey],
   );
 
-  // The calendar picker speaks whole UTC days and cannot render a preset or a
-  // sub-day window, so it is shown the absolute arm and nothing else. A preset
-  // reads as "no custom range" there — which is honest: the user did not pick
-  // one — while the label above the picker still names what is selected.
-  const pickerRange: DateRange | null = isPresetRange(range) ? null : range;
-
   // Day-cell highlighting for the heatmap. Derived from the RESOLVED window, so
   // a preset arriving from an Overview deep link lights the right cells instead
   // of leaving the calendar blank while the list below it is clearly filtered.
   const highlightRange: DateRange | null = resolvedRange ? toDayRange(resolvedRange) : null;
+
+  // The calendar picker speaks whole UTC days and cannot render a preset or a
+  // sub-day window, so it is shown the absolute arm and nothing else. A preset
+  // reads as "no custom range" there — which is honest: the user did not pick
+  // one — while the label above the picker still names what is selected.
+  //
+  // It is shown the DAY form, not the raw param. `DateRange` is documented as
+  // an INCLUSIVE `YYYY-MM-DD` pair, and now that the absolute arm can carry ISO
+  // instants with an exclusive `to` (a bucket drilled in from a chart), handing
+  // the raw value over would feed a day picker timestamps. `toDayRange` is
+  // already the one conversion, and it is a no-op for the legacy day pair this
+  // param has always held.
+  const pickerRange: DateRange | null = isPresetRange(range) ? null : highlightRange;
 
   // URL-backed ownership filter (plan.md Decision D9) — shareable, and the
   // accept-invite flow deep-links here (`/lore?owner=<serialised OwnerFilter>`)
