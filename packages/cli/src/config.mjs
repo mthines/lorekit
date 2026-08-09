@@ -216,6 +216,26 @@ export function hookModeFromEvents(events) {
   return 'custom';
 }
 
+// Which events an existing wiring is MISSING relative to the mode it reads as.
+//
+// An install predating a lifecycle event still reads as its mode (see
+// LEGACY_ALL_EVENT_SETS), so `hookModeFromEvents` alone cannot tell a current
+// `all` from a stale one — and a stale one keeps reporting the mode it no
+// longer delivers. This is the difference, and it is the single derivation
+// BOTH surfaces that report it use: `install`'s already-installed summary and
+// `doctor`'s hooks line. A second copy is how the two would come to disagree
+// about what "up to date" means.
+//
+// `custom` yields [] deliberately: it means a human hand-wired this, and
+// `hookEventsForMode` answers the full set for any unrecognised mode, so
+// anything else would advertise an "upgrade" away from a wiring the user chose.
+export function missingHookEvents(events) {
+  const mode = hookModeFromEvents(events);
+  if (mode === 'custom') return [];
+  const wired = new Set(events || []);
+  return hookEventsForMode(mode).filter((e) => !wired.has(e));
+}
+
 // Extract the flat list of hook command strings for one event out of the nested
 // group shape Claude Code uses: { [event]: [ { hooks: [ { type, command } ] } ] }.
 export function hookCommandsForEvent(hooksObj, event) {

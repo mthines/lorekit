@@ -16,6 +16,7 @@ import {
   CLAUDE_HOOK_EVENTS,
   hookEventsForMode,
   hookModeFromEvents,
+  missingHookEvents,
   installedHookEvents,
   upsertClaudeHooks,
   isMcpJsonGitIgnored,
@@ -217,6 +218,21 @@ test('hookModeFromEvents is the inverse, and reports an unrecognised set as cust
   assert.equal(hookModeFromEvents(['SessionStart', 'Stop']), 'custom');
   // Order must not matter — the settings file is not ordered.
   assert.equal(hookModeFromEvents([...CLAUDE_HOOK_EVENTS].reverse()), 'all');
+});
+
+test('missingHookEvents names the gap a legacy wiring still reports as its mode', () => {
+  // The whole point: hookModeFromEvents says `all` for the pre-UserPromptSubmit
+  // triple, so the mode alone cannot tell a current install from a stale one.
+  const legacy = ['SessionStart', 'PostToolUseFailure', 'Stop'];
+  assert.equal(hookModeFromEvents(legacy), 'all', 'precondition: it still reads as all');
+  assert.deepEqual(missingHookEvents(legacy), ['UserPromptSubmit']);
+
+  assert.deepEqual(missingHookEvents(CLAUDE_HOOK_EVENTS), [], 'a current install has no gap');
+  assert.deepEqual(missingHookEvents(['SessionStart']), [], 'read-only is complete for its mode');
+  assert.deepEqual(missingHookEvents([]), [], 'none is complete for its mode');
+  // custom means a human hand-wired it; there is no upgrade to advertise.
+  assert.deepEqual(missingHookEvents(['Stop']), []);
+  assert.deepEqual(missingHookEvents(undefined), []);
 });
 
 test('installedHookEvents reads only lorekit entries, and never throws', () => {

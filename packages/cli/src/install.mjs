@@ -17,6 +17,7 @@ import {
   HOOK_MODES,
   hookEventsForMode,
   hookModeFromEvents,
+  missingHookEvents,
   installedHookEvents,
   resolveConnection,
   tokenKind,
@@ -280,13 +281,9 @@ export async function install(args) {
     // stale event set is how a wired install stops firing the hooks it says it
     // has. Only ever a HINT — rewiring stays an explicit `--hooks` / `--force`.
     const wiredMode = hookModeFromEvents(wiredEvents);
-    // `custom` is excluded deliberately: it means a human hand-wired this, and
-    // `hookEventsForMode` answers the full set for any unrecognised mode, so
-    // including it would advertise an "upgrade" to a wiring the user chose —
-    // named by a `--hooks custom` the flag does not even accept.
-    const missingEvents = wiredMode === 'custom'
-      ? []
-      : hookEventsForMode(wiredMode).filter((e) => !wiredEvents.includes(e));
+    // `missingHookEvents` owns the derivation (incl. why `custom` is excluded)
+    // so `doctor`'s hooks line reports the same upgrade this summary does.
+    const missingEvents = missingHookEvents(wiredEvents);
     if (missingEvents.length > 0) {
       log(
         `  ${c.yellow(`Hook upgrade available: ${missingEvents.join(', ')} — run --hooks ${wiredMode} to wire ${missingEvents.length === 1 ? 'it' : 'them'}.`)}`,

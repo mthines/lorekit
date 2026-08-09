@@ -11,6 +11,7 @@ import {
   CLAUDE_HOOK_EVENTS,
   installedHookEvents,
   hookModeFromEvents,
+  missingHookEvents,
   readLorekitServer,
   readMcpConfig,
   tokenKind,
@@ -101,7 +102,18 @@ export async function doctor(args) {
       );
     } else {
       for (const { scope, events } of perScope) {
-        record('pass', `hooks ${scope}`, `${hookModeFromEvents(events)} — ${events.join(', ')}`);
+        // An install predating a lifecycle event still READS as its mode, so
+        // reporting the mode alone tells a legacy wiring it is current — the
+        // one state where this line is actively misleading. Stay a `pass` (the
+        // wiring works, it is just not the full set any more) and name the
+        // upgrade the same way `install`'s already-installed summary does, via
+        // the same `missingHookEvents` derivation.
+        const mode = hookModeFromEvents(events);
+        const missing = missingHookEvents(events);
+        const upgrade = missing.length > 0
+          ? ` — missing ${missing.join(', ')}; run \`lorekit install --hooks ${mode}\` to wire ${missing.length === 1 ? 'it' : 'them'}`
+          : '';
+        record('pass', `hooks ${scope}`, `${mode} — ${events.join(', ')}${upgrade}`);
       }
     }
   }
