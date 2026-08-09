@@ -97,9 +97,16 @@ export const HOUR_LADDER_MAX_MS = 48 * HOUR_MS;
 
 const DAY_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Whether a `?range=` value is the relative arm. */
+/**
+ * Whether a `?range=` value is the relative arm.
+ *
+ * The `typeof` guard is not redundant: `?range=` is hand-editable and decoded
+ * with `JSON.parse`, so it can arrive as a primitive (`?range=5`,
+ * `?range="7d"`). `'preset' in 5` is a `TypeError`, which would crash the page
+ * instead of failing open to "all time" the way {@link resolveRange} promises.
+ */
 export function isPresetRange(range: TimeRange): range is { preset: RangePreset } {
-  return range !== null && 'preset' in range;
+  return typeof range === 'object' && range !== null && 'preset' in range;
 }
 
 /** Whether a bound is a legacy `YYYY-MM-DD` day string rather than an instant. */
