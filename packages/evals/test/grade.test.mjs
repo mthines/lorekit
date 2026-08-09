@@ -191,8 +191,12 @@ test("classifyMistake only ever classifies INVALID scopes", () => {
     classifyMistake("branch::mthines/gw-tools"),
     MISTAKE_BRANCH_MISSING,
   );
-  // Not even an `owner/repo` — invalid for an unrelated reason.
+  // Not even an `owner/repo` — invalid for an unrelated reason. The owner/repo
+  // test is DELEGATED to `validateScope`, never a copy of its charset, so a
+  // segment the validator rejects is not one of the two branch mistakes.
   assert.equal(classifyMistake("branch::mthines"), null);
+  assert.equal(isValidScope("repo::mthines/gw tools"), false);
+  assert.equal(classifyMistake("branch::mthines/gw tools/feat"), null);
   // Valid scopes are never mistakes, however they look.
   assert.equal(classifyMistake(TARGET_SCOPE), null);
   assert.equal(classifyMistake("global"), null);

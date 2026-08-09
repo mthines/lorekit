@@ -59,8 +59,13 @@ export function normalizeScope(scope) {
 }
 
 /**
- * Classify an invalid scope as one of the two mistakes the canonical lesson
- * warns about, or null when it is invalid for some unrelated reason.
+ * Classify an invalid scope as one of the recognised scope-format mistakes, or
+ * null when it is invalid for some unrelated reason.
+ *
+ * `MISTAKE_SINGLE_COLON` and `MISTAKE_BRANCH_WITH_SLASH` are the two forms the
+ * canonical lesson names; `MISTAKE_BRANCH_MISSING` is recognised by the grader
+ * but NOT described by the lesson, so `repeatedMistake` is not a pure "the
+ * agent repeated what it was told" signal for that kind. See `fixtures/spec.md`.
  *
  * Only invalid scopes are classified: a VALID scope is never a mistake, however
  * odd it looks, because the validator is the authority on that question.
@@ -86,11 +91,12 @@ export function classifyMistake(scope) {
     !scope.slice("branch::".length).includes("::")
   ) {
     const segments = scope.slice("branch::".length).split("/");
-    const looksLikeOwnerRepo =
-      segments.length >= 2 &&
-      /^[\w.-]+$/.test(segments[0]) &&
-      /^[\w.-]+$/.test(segments[1]);
-    if (!looksLikeOwnerRepo) return null;
+    // Ask the canonical validator whether the first two segments are an
+    // `owner/repo` — never re-implement its charset here. spec.md's validity
+    // oracle is explicit that a vendored second validator keeps the grader
+    // passing while the product's rules move, and a hand-copied charset would
+    // make MISTAKE_BRANCH_MISSING quietly stop firing the day it widens.
+    if (!isValidScope(`repo::${segments.slice(0, 2).join("/")}`)) return null;
     // Anything after `owner/repo` is the branch, glued on with `/`.
     const appended = segments.slice(2).join("/");
     return appended === "" ? MISTAKE_BRANCH_MISSING : MISTAKE_BRANCH_WITH_SLASH;
