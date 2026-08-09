@@ -4986,7 +4986,10 @@ begin
   -- "expected 1536 dimensions, not 3", so `others` would let ANY failure —
   -- including one unrelated to width — satisfy the assertion. The message check
   -- is what keeps the assertion pinned to the dimension mismatch it claims to
-  -- prove rather than to "some class-22 error happened".
+  -- prove rather than to "some class-22 error happened". It carries the literal
+  -- `1536` on purpose: matching only `%dimensions%` would prove *a* width
+  -- complaint and would keep passing if the column were silently redefined to
+  -- some other width, which is the one redefinition this AC exists to catch.
   v_raised := false;
   v_msg    := null;
   begin
@@ -4996,8 +4999,8 @@ begin
     v_msg    := sqlerrm;
   end;
   assert v_raised, 'embeddings AC-7: a 3-dimension vector must be refused by the 1536-wide column';
-  assert v_msg like '%dimensions%',
-    format('embeddings AC-7: the refusal must be about the vector width, got %L', v_msg);
+  assert v_msg like '%1536 dimensions%',
+    format('embeddings AC-7: the refusal must name the 1536-wide column, got %L', v_msg);
 end;
 $$;
 
