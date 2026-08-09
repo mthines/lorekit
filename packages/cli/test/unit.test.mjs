@@ -1138,7 +1138,7 @@ describe('store read fields', () => {
   });
 
   test('store fields degrade — a row missing either field never throws', async () => {
-    // A backend deployed before migration 00058 returns no `seen_count` at all.
+    // A backend deployed before migration 00059 returns no `seen_count` at all.
     const { result } = await captureRestCalls(
       (store) => store.list({ scope: 'global' }),
       { status: 200, body: JSON.stringify({ entries: [{ key: 'k', value: 'v' }] }) },
