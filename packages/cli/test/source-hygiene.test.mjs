@@ -94,11 +94,16 @@ test('lessons-pure imports nothing — not a package, not even a node builtin', 
     assert.match(src, new RegExp(`export function ${fn}\\b`), `lessons-pure.mjs is missing ${fn}() — guard would be vacuous`);
   }
 
-  // Strip comments first: the header legitimately discusses imports in prose.
+  // Strip comments first: the header legitimately discusses imports in prose,
+  // and so do TRAILING comments — stripping only whole-line ones left
+  // `} // derived from the set` looking like a re-export tail. The `[^:]`
+  // guard keeps a `//` that belongs to a `https://` URL out of it. Truncating
+  // at a `//` can only ever make a line SHORTER, and every pattern below
+  // anchors on the head of the line, so this cannot hide a real dependency.
   const code = src
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n')
-    .map((line) => line.replace(/^\s*\/\/.*$/, ''))
+    .map((line) => line.replace(/^\s*\/\/.*$/, '').replace(/(^|[^:])\/\/.*$/, '$1'))
     .join('\n');
 
   // A static dependency is not always `import`-prefixed. `export { x } from 'p'`
@@ -106,8 +111,13 @@ test('lessons-pure imports nothing — not a package, not even a node builtin', 
   // path exactly like an import does, and they slip past both the `import(`
   // and the `require(` checks below. A multi-line specifier list carries its
   // `from` on the closing line, so that shape is matched too.
+  //
+  // Both re-export arms require a QUOTED SPECIFIER after `from`, not the bare
+  // word: a dependency always names a module, while prose and a parameter
+  // called `from` (`export function f(a, from)`) do not. A guard that trips on
+  // English is a guard the next person deletes.
   const statics = code.match(
-    /^\s*(?:import\b[\s\S]*?$|export\b[^\n]*\bfrom\b[^\n]*$|\}[^\n]*\bfrom\b[^\n]*$)/gm,
+    /^\s*(?:import\b[\s\S]*?$|export\b[^\n]*\bfrom\s*['"][^\n]*$|\}[^\n]*\bfrom\s*['"][^\n]*$)/gm,
   ) || [];
   assert.deepEqual(statics, [], 'lessons-pure.mjs must have no static imports or re-exports');
 
