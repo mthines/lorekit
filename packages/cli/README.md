@@ -681,7 +681,9 @@ Both files share this schema — all fields optional:
                            //                        (truncation is silent)
                            //   "map"              — lead with the scope map plus the
                            //                        three most salient memories
-                           // repo wins over user; an unrecognised value falls back to hybrid
+                           // repo wins over user; an unrecognised value is ignored and the
+                           // next layer is tried, so a mistyped repo value falls through to
+                           // the user layer before defaulting to hybrid
 
   "hooks.sessionStart.maxChars": 1500,
                            // character budget for that block (default 1500, ~375 tokens)
