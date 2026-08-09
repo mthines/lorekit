@@ -177,13 +177,17 @@ export async function readInjectedLessons(
 }
 
 /**
- * Where a key landed in the injected set — the primitive PR4's retrieval metric
- * and PR5's position axis are both built on.
+ * Where a key landed in the injected set — the position primitive PR5's
+ * position axis is built on.
  *
- * `injected` (present, and where) is kept distinct from `absent` on purpose: a
- * failure with the lesson present is a UTILIZATION failure, while a failure with
- * it absent is a RETRIEVAL failure, and collapsing the two would make the
- * scale/position sweep unable to say which one it measured.
+ * It answers ONE question: was the lesson injected, and at what position. It
+ * deliberately does NOT attribute a failure. Telling a RETRIEVAL failure
+ * (stored, but never loaded) from a HARNESS fault (never stored at all) needs
+ * the store contents, which this function never sees — `classifyRetrieval` in
+ * `retrieval.mjs` owns that three-way call and is the only thing that may
+ * report a cause. Reading "not injected" as "retrieval failure" here would
+ * silently average a seeding regression in as evidence that memory does not
+ * work.
  */
 export function positionOf(injection, key) {
   const hit = injection.lessons.find((l) => l.key === key);
