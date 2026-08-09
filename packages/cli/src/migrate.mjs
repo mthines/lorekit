@@ -50,7 +50,34 @@ function collectEntries(base) {
   return out;
 }
 
-// Full-field equality (ignoring nothing) so a re-run after apply is NOOP.
+// Every non-identity column `putEntry` relocates verbatim, so a difference in
+// ANY of them is a real change rather than a `noop`. `scope` and `key` are the
+// identity the two entries were looked up by and are equal by construction;
+// `value` is the body, compared separately below.
+//
+// Exported so `migrate.test.mjs` can assert parity with `format.mjs`'s `FIELDS`.
+// The list has been short twice — `seen_count` at first, then `expires_at` and
+// the four `origin_*` columns — and the symptom is silent data loss, not a
+// failing test: an entry differing only in an omitted column is classified
+// `noop`, so the destination keeps its own value and the source's TTL or
+// provenance is dropped on the floor. The guard makes the next column additive.
+export const COMPARED_FIELDS = [
+  'tags',
+  'source_agent',
+  'trigger',
+  'origin_repo',
+  'origin_branch',
+  'origin_commit',
+  'origin_pr',
+  'created',
+  'updated',
+  'archived_at',
+  'expires_at',
+  'seen_count',
+];
+
+// Full-field equality over COMPARED_FIELDS (+ `value`) so a re-run after apply
+// is NOOP.
 //
 // `seen_count` is part of that equality, not an exception. `putEntry` relocates
 // the count verbatim, so leaving it out of the comparison made a re-run whose
@@ -60,16 +87,21 @@ function collectEntries(base) {
 // an entry written before the column existed (`null`) and one that carries an
 // explicit `0` are the same "no evidence" and do not churn a `noop` into an
 // `update` on every run.
-function sameEntry(a, b) {
+export function sameEntry(a, b) {
   if (!a || !b) return false;
   const norm = (e) =>
     JSON.stringify({
       tags: [...(e.tags || [])].sort(),
       source_agent: e.source_agent ?? null,
       trigger: e.trigger ?? null,
+      origin_repo: e.origin_repo ?? null,
+      origin_branch: e.origin_branch ?? null,
+      origin_commit: e.origin_commit ?? null,
+      origin_pr: e.origin_pr ?? null,
       created: e.created ?? null,
       updated: e.updated ?? null,
       archived_at: e.archived_at ?? null,
+      expires_at: e.expires_at ?? null,
       seen_count: seenCountOf(e),
       value: e.value == null ? '' : String(e.value),
     });
