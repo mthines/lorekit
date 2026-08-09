@@ -297,6 +297,26 @@ describe('type guards', () => {
     expect(isPresetRange(null)).toBe(false);
   });
 
+  // The arm the `typeof` guard exists for, and the only one whose absence is a
+  // CRASH rather than a wrong answer. `?range=` is hand-editable and decoded
+  // with `JSON.parse`, so a link can carry a primitive; `'preset' in 5` is a
+  // TypeError, which would take the page down instead of failing open to all
+  // time. The guard's docblock names `?range=5` and `?range="7d"` by hand — so
+  // assert exactly those, and assert the whole chain fails open, not just the
+  // guard that returns false.
+  it.each([
+    ['a number, ?range=5', 5],
+    ['a string, ?range="7d"', '7d'],
+    ['a boolean, ?range=true', true],
+  ])('fails open rather than throwing for %s', (_label, primitive) => {
+    const range = primitive as unknown as TimeRange;
+    expect(() => isPresetRange(range)).not.toThrow();
+    expect(isPresetRange(range)).toBe(false);
+    expect(resolveRange(range, NOW)).toBeNull();
+    expect(rangeLabel(range, NOW)).toBe('All time');
+    expect(bucketPlanForRange(range, NOW)).toBeNull();
+  });
+
   it('isDayString accepts only a bare UTC day', () => {
     expect(isDayString('2026-07-01')).toBe(true);
     expect(isDayString('2026-07-01T00:00:00.000Z')).toBe(false);
