@@ -168,7 +168,13 @@ export function DashboardStatsSkeleton() {
       <div>
         <div className="mb-3 flex items-center justify-between gap-2">
           <div className="h-3 w-16 animate-pulse rounded bg-[var(--color-bg-elevated)]" />
-          <div className="h-6 w-28 animate-pulse rounded-md bg-[var(--color-bg-elevated)]" />
+          {/* The range picker's slot. `h-9 w-16` tracks the Combobox trigger
+              (`min-h-9`, a short label plus a chevron), not the three-segment
+              group it replaced — that was `h-6 w-28`, so the row would have
+              grown 12px taller and shrunk 48px narrower the moment the query
+              settled. Sizing a skeleton to the control it no longer renders is
+              the whole failure mode this placeholder exists to avoid. */}
+          <div className="h-9 w-16 animate-pulse rounded-lg bg-[var(--color-bg-elevated)]" />
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {Array.from({ length: 3 }).map((_, i) => (
