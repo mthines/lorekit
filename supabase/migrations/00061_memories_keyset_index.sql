@@ -20,9 +20,17 @@
 -- The existing index stops at `updated_at`, so `id` is not available to the
 -- scan: the tiebreaker becomes a heap recheck on every candidate row, and the
 -- planner cannot stop early at LIMIT when a timestamp is not unique. This is
--- EXACTLY the omission 00012 fixed for `audit_log` — 00010's
+-- the same omission 00012 fixed for `audit_log` — 00010's
 -- `(user_id, created_at desc)` lacked the same `id` column, for the same
--- keyset predicate — and the fix here is 00012's fix.
+-- keyset predicate.
+--
+-- The fix here is 00012's fix with ONE deliberate difference: 00012 built
+-- `(user_id, created_at desc, id)`, with `id` ASC. The seek it serves orders by
+-- `created_at DESC, id DESC`, and a (DESC, ASC) index yields that pair in
+-- neither scan direction, so 00012 recovered the index-only tiebreaker lookup
+-- but not the ordered scan. `id desc` below matches the ORDER BY exactly. The
+-- corresponding correction on `audit_log_user_created_id_idx` is a separate,
+-- separately-measured migration on a different table and is not made here.
 --
 -- Cost is concentrated where it is felt most: deep pagination over a large
 -- scope, which is the shape the busiest caller actually has (37% of list calls
