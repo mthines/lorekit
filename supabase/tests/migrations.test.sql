@@ -4868,6 +4868,7 @@ do $$
 declare
   v_keyset_idx boolean;
   v_partial    boolean;
+  v_columns    boolean;
 begin
   select exists (
     select 1 from pg_indexes
@@ -4886,6 +4887,22 @@ begin
   ) into v_partial;
   assert v_partial,
     'memories keyset: the covering index must stay partial on archived_at is null';
+
+  -- The name and the predicate together still say nothing about the COLUMN
+  -- LIST, and the column list IS the fix: an index of this exact name built as
+  -- (scope, updated_at desc) — or with `id` ASC, which is 00012's residual
+  -- mismatch — satisfies both assertions above while leaving the keyset seek
+  -- exactly as uncovered as 00033 left it. `pg_get_indexdef` renders the
+  -- ordered column list verbatim, the same catalog-rendered-text idiom AC-5
+  -- above uses for `pg_get_expr(indpred)`.
+  select exists (
+    select 1 from pg_indexes
+    where tablename = 'memories' and indexname = 'memories_scope_updated_at_id_idx'
+      and indexdef ilike '%(scope, updated_at desc, id desc)%'
+  ) into v_columns;
+  assert v_columns,
+    'memories keyset: the covering index must be on (scope, updated_at desc, id desc) '
+    'in that order — a same-named index over other columns is not the fix';
 end;
 $$;
 
