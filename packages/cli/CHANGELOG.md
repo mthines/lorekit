@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.39.2](https://github.com/mthines/lorekit/compare/cli-v1.39.1...cli-v1.39.2) (2026-08-10)
+
+
+### Bug Fixes
+
+* **cli:** let the frozen outcome win over a command's extraAttrs ([6235513](https://github.com/mthines/lorekit/commit/62355135da76bcc218b38678914ee70c05c991e8))
+* **cli:** reserve the whole owned attribute namespace from extraAttrs ([c17df73](https://github.com/mthines/lorekit/commit/c17df73dfe425d4e3ff9522c8ce5ded6ab45672d))
+
 ## [1.39.1](https://github.com/mthines/lorekit/compare/cli-v1.39.0...cli-v1.39.1) (2026-08-09)
 
 
