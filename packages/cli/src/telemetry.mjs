@@ -39,6 +39,9 @@ const DEFAULT_DATASET = 'default';
 // Flags worth counting (e.g. how many installs are --global). Bounded on
 // purpose: only these booleans are ever attached, never free-form values.
 const FLAG_ATTRS = ['global', 'project', 'deep', 'yes', 'force', 'no-hooks', 'json', 'link'];
+// One definition, used both to WRITE a flag attribute and to recognise one as
+// reserved in `commandAttributes` — the two must not be able to drift.
+const FLAG_ATTR_PREFIX = 'lorekit.cli.flag.';
 
 const OFF_VALUES = new Set(['0', 'off', 'false', 'no', 'disable', 'disabled']);
 
@@ -246,16 +249,86 @@ function resourceAttributes(version, env = process.env) {
 // ── Payload builders (pure — unit-tested) ─────────────────────────────────────
 
 /**
+ * The CLOSED vocabulary of `lorekit.cli.outcome`, and the one place it is
+ * written down in code.
+ *
+ * The three values are not synonyms and the distinction is load-bearing:
+ *
+ * - `ok`      — ran, exit 0.
+ * - `failure` — RAN TO COMPLETION and reported a negative VERDICT (a failing
+ *               `doctor` check, a `lint` finding). The command did its job.
+ * - `error`   — CRASHED. This is the only one that also sets the span status to
+ *               `STATUS_CODE_ERROR`.
+ *
+ * That is what keeps the `cli` service's error rate a measure of the CLI being
+ * broken rather than of the user's environment being unhealthy (see the note
+ * above the non-zero-exit branch in {@link traceCommand}).
+ *
+ * WHY A FROZEN CONSTANT RATHER THAN THREE STRING LITERALS. The values were only
+ * ever written inline, so the vocabulary was discoverable from the emitted
+ * telemetry and nowhere else — and read from telemetry alone the distinction is
+ * genuinely easy to misread. A `doctor` that CRASHED in one release and FAILED
+ * GRACEFULLY in the next shows up as `error` then `failure` for the same
+ * user-visible symptom, which reads like the attribute drifting when it is
+ * actually the CLI getting better. Naming the set makes the difference legible
+ * at the call site and gives `telemetry.test.mjs` something to pin the docs to.
+ */
+export const CLI_OUTCOMES = Object.freeze({
+  OK: 'ok',
+  FAILURE: 'failure',
+  ERROR: 'error',
+});
+
+/** The same vocabulary as a value list, for guards and exhaustiveness checks. */
+export const CLI_OUTCOME_VALUES = Object.freeze(Object.values(CLI_OUTCOMES));
+
+/** The attribute keys `commandAttributes` owns — see its docblock below. */
+const isReservedAttr = (key) =>
+  key === 'lorekit.cli.command' ||
+  key === 'lorekit.cli.outcome' ||
+  key === 'lorekit.cli.exit_code' ||
+  key.startsWith(FLAG_ATTR_PREFIX);
+
+/**
  * Collect the bounded, non-PII attributes for a command invocation. Only the
  * command name, allow-listed boolean flags, the outcome and the exit code.
+ *
+ * Deliberately does NOT validate `outcome`: this runs inside the `finally` of
+ * every traced command, where throwing would turn a telemetry problem into a
+ * command failure. The vocabulary is enforced at the call sites (all of which
+ * are in this file) and pinned by `telemetry.test.mjs`.
+ *
+ * The keys this function owns — command, outcome, exit code, flags — are a
+ * RESERVED NAMESPACE: an `extraAttrs` entry under one of them is dropped, and
+ * the owned value (if any) is written afterwards. `extraAttrs` used to be
+ * merged over last, which meant a command returning
+ * `{ exitCode, 'lorekit.cli.outcome': … }` silently replaced the frozen value on
+ * its way out — a runtime path the source scan cannot see, because it proves
+ * the literal at the call site and not that the value reaches the wire.
+ *
+ * Reserving the NAMESPACE rather than just overwriting key by key matters
+ * because two of the owned keys are written conditionally: `exit_code` only
+ * when `exitCode` is a number, and each flag only when it is truthy. Overwriting
+ * alone therefore left the gap open in exactly the cases where the CLI emits
+ * nothing — an extras value would have been the only `lorekit.cli.exit_code` on
+ * the span, sourced from the command rather than from here.
+ *
+ * A collision is dropped, not rejected: this runs inside the `finally` of every
+ * traced command, where throwing would turn a telemetry problem into a command
+ * failure. Losing a datum a command should not have put there is the smaller
+ * harm than emitting an unowned value under an owned key.
  */
 export function commandAttributes({ command, args = {}, outcome, exitCode, extraAttrs = {} }) {
-  const attrs = { 'lorekit.cli.command': command, 'lorekit.cli.outcome': outcome };
+  const attrs = {};
+  for (const [key, value] of Object.entries(extraAttrs)) {
+    if (!isReservedAttr(key)) attrs[key] = value;
+  }
+  attrs['lorekit.cli.command'] = command;
+  attrs['lorekit.cli.outcome'] = outcome;
   if (typeof exitCode === 'number') attrs['lorekit.cli.exit_code'] = exitCode;
   for (const flag of FLAG_ATTRS) {
-    if (args[flag]) attrs[`lorekit.cli.flag.${flag}`] = true;
+    if (args[flag]) attrs[`${FLAG_ATTR_PREFIX}${flag}`] = true;
   }
-  Object.assign(attrs, extraAttrs);
   return attrs;
 }
 
@@ -389,7 +462,7 @@ export async function probeTelemetryExport(config, { version = '0.0.0', timeoutM
     name: 'lorekit.cli.doctor.telemetry_probe',
     attributes: {
       'lorekit.cli.command': 'doctor',
-      'lorekit.cli.outcome': 'ok',
+      'lorekit.cli.outcome': CLI_OUTCOMES.OK,
       'lorekit.telemetry.probe': true,
     },
     startMs: now,
@@ -533,7 +606,7 @@ export async function traceCommand(command, args, version, run) {
   // `outcome` is the command's VERDICT (ok | failure | error); `status` is the
   // SPAN status, and only a crash sets it to error. See the note above the
   // non-zero-exit branch below.
-  let outcome = 'ok';
+  let outcome = CLI_OUTCOMES.OK;
   let status = 'ok';
   let statusMessage;
   let extraAttrs = {};
@@ -563,11 +636,11 @@ export async function traceCommand(command, args, version, run) {
       // the CLI being broken rather than of the user's environment being
       // unhealthy. Query the failure verdicts on those attributes, never on the
       // span status.
-      outcome = 'failure';
+      outcome = CLI_OUTCOMES.FAILURE;
     }
     return exitCode;
   } catch (e) {
-    outcome = 'error';
+    outcome = CLI_OUTCOMES.ERROR;
     status = 'error';
     // Record only a bounded, non-PII identifier — NEVER e.message. Node fs /
     // network error messages embed absolute paths (e.g. "ENOENT: ... open
