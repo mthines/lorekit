@@ -8,7 +8,15 @@ import { deriveScope } from '../scope.mjs';
 // can't drift from it, and the hot path never pulls in the `lessons-view.mjs`
 // render/`util` stack. (Failure-relevance matching is the store's job now, so
 // the hook no longer needs `matchesQuery` — `search` still does.)
-import { resolvePrecedence } from '../lessons-pure.mjs';
+// `rankLessons` comes from the same dependency-free module for the same reason:
+// the injected set is chosen by ONE scorer, and a future `memory.relevant` verb
+// must be able to reuse it rather than grow a second ranking with its own idea
+// of what "most useful" means.
+import { resolvePrecedence, rankLessons } from '../lessons-pure.mjs';
+// The store's own scope inventory, normalised — the SAME helper `memory.scopes`
+// uses, so the map and the MCP tool cannot disagree about what a scope holds or
+// about what a failed enumeration looks like.
+import { readScopeInventory } from '../store/scope-inventory.mjs';
 // The deep-link builder is the SAME pure module the `link` command and the
 // `--link` flag use, so the hook's confirmation/nudge links are JSON-encoded
 // correctly (a raw `?scope=global` silently means "all scopes") and can't drift
@@ -20,9 +28,45 @@ import { loreScopeUrl, buildLessonUrl } from '../deeplink-pure.mjs';
 // over MCP, in the agent's context. Advising the number is the only lever the
 // hook has, which is exactly why it must not be a second, hand-kept copy.
 import { resolveDefaultTtlDays, matchesScopePrefix } from '../store/ttl.mjs';
+// The budget default lives with the rest of the config vocabulary in
+// `control.mjs`, so the resolver and the renderer cannot disagree about what an
+// unconfigured workspace gets. `formatLessons` is called directly by tests and
+// by the no-store path in `hook.mjs`, so it needs its own fallback rather than
+// relying on every caller to pass one.
+import { DEFAULT_SESSION_START_MAX_CHARS, SESSION_START_MODES } from '../control.mjs';
 import { FRICTION_FAILURE, FRICTION_STUCK_LOOP } from './friction.mjs';
 
-const MAX_LESSONS = 15;
+// THE INJECTED SET IS BOUNDED BY A CHARACTER BUDGET, NOT BY A COUNT.
+//
+// It used to be `MAX_LESSONS = 15` — a number with no derivation. Fifteen of
+// what? A fifteen-line index of terse keys and a fifteen-line index of long ones
+// differ by an order of magnitude in what they cost the context window, and the
+// number said nothing about either. Worse, it was a HARD floor as well as a
+// ceiling: a workspace with six lessons and a workspace with six hundred both
+// got fifteen, so the small store was padded to a number and the large one was
+// truncated to it, silently, with no way for the reader to know which had
+// happened.
+//
+// What actually matters is how much of the window the block occupies, so that is
+// what is spent. `hooks.sessionStart.maxChars` (control.mjs) sets it; the shape
+// the remainder takes is `hooks.sessionStart`. Characters, not tokens: a real
+// tokenizer is a dependency this package does not have and will not take, and
+// the ~4-chars-per-token heuristic is accurate enough for a budget whose job is
+// to bound an order of magnitude.
+//
+// `HARD_LESSON_CEILING` is the second bound, from the other direction. A budget
+// alone cannot stop a store of 500 one-word keys from rendering 400 lines inside
+// it, and a 400-line index is unreadable however few characters it costs. It is
+// deliberately well above any budget a sane `maxChars` can fill, so in normal
+// operation it never binds — it exists so the worst case is bounded, not to
+// shape the common one.
+const HARD_LESSON_CEILING = 40;
+
+// How many lessons ride along with the scope map in `map` mode. Small on
+// purpose: the point of that shape is the inventory, and a "map" that is mostly
+// lessons is just `index` with extra steps.
+const MAP_TOP_K = 3;
+
 // Cap on lessons injected on a failure — a small, focused "you've seen this
 // before" set, never the whole applicable corpus.
 const MAX_RELEVANT = 3;
@@ -42,26 +86,212 @@ const MAX_SCAN_CHARS = 4096;
 // precedence via the shared pure `resolvePrecedence` (the SAME first-seen /
 // more-specific-wins merge `tree` renders) — so the hook and `tree` provably
 // can't drift. Any per-scope failure is skipped (memory is best-effort).
-export async function fetchLessons(store, cwd) {
+// Per-scope read cap. Unchanged from the count-capped era: it bounds the FETCH,
+// which is a different question from how much gets injected, and raising it
+// would make every session start pay for rows the budget was never going to
+// show. Its one visible consequence is that a scope holding more than this
+// many lessons reports a lower-bound count in the scope map — rendered `25+`
+// rather than a number that looks exact. `memory.scopes` answers it exactly and
+// is the follow-up that replaces this.
+export const SCOPE_READ_LIMIT = 25;
+
+export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
   const scope = deriveScope(cwd);
+  // Issued BEFORE the per-scope read loop and awaited after it. Nothing in the
+  // inventory depends on the loop, so awaiting it afterwards would cost a
+  // remote store one extra SERIAL round-trip on the session-start path; started
+  // here it overlaps the per-scope reads instead. On a local store `listScopes`
+  // is synchronous under its async signature, so the overlap is nil there and
+  // the ordering is merely harmless.
+  //
+  // Leaving the promise unawaited across the loop is safe because
+  // `readScopeInventory` cannot reject: its "store cannot enumerate" guard
+  // returns before the `try`, and the `try` covers both a synchronous throw and
+  // a rejected `listScopes()`. Keep that property if either is ever touched — a
+  // floating promise that can reject would take the hook down with it.
+  const inventoryPromise = readScopeInventory(store);
   const groups = [];
+  // Per scope: did the read come back full? Then the count below is a floor,
+  // not a total, and the map must say so rather than quietly under-report.
+  const truncatedScopes = new Set();
   for (const s of scope.readOrder) {
-    const res = await store.list({ scope: s, limit: 25 });
+    const res = await store.list({ scope: s, limit: SCOPE_READ_LIMIT });
     if (!res || !res.ok) continue; // best-effort: a failed scope contributes nothing
-    const entries = (Array.isArray(res.entries) ? res.entries : [])
+    const raw = Array.isArray(res.entries) ? res.entries : [];
+    if (raw.length >= SCOPE_READ_LIMIT) truncatedScopes.add(s);
+    const entries = raw
       .filter((e) => e && e.key)
       .map((e) => ({ ...e, scope: s }));
     groups.push({ scope: s, error: null, entries });
   }
   // First value per key wins (most-specific scope, since `readOrder` is
   // narrow→broad) — exactly what the old inline `byKey` merge did, now via the
-  // one shared resolver. The winners, in group order, are the injected set.
+  // one shared resolver.
   const { groups: resolved } = resolvePrecedence({ groups });
-  const lessons = [];
+  const winners = [];
   for (const g of resolved) {
-    for (const e of g.entries) if (e.winning) lessons.push(e);
+    for (const e of g.entries) if (e.winning) winners.push(e);
   }
-  return { scope, lessons: lessons.slice(0, MAX_LESSONS) };
+
+  // THE TWO STEPS ANSWER DIFFERENT QUESTIONS, AND THE ORDER MATTERS.
+  //
+  // `resolvePrecedence` decides WHICH COPY of a key survives — a project
+  // lesson shadows the global lesson of the same name — and that is a
+  // correctness rule, not a preference. `rankLessons` then decides WHICH OF THE
+  // SURVIVORS a reader sees first. Ranking runs on the winners only, so a
+  // shadowed lesson can never be promoted back into the set by scoring well;
+  // precedence still owns the merge, exactly as `tree` renders it.
+  //
+  // Before this, the cap took whatever the group order happened to hand it,
+  // which is recency within a scope. On an active repo the newest cluster is
+  // one task's iteration log, so a dozen near-identical one-offs took the whole
+  // budget and evicted the lessons that had been re-learned all month. Recency
+  // is one factor now, not the ordering.
+  //
+  // WHAT PRECEDENCE DOES *NOT* DO, STATED SO IT IS NOT MISREAD AS A BUG.
+  // Precedence only settles same-key collisions. Across DIFFERENT keys the cap
+  // is now a single cross-scope ranking in which `scopeOrder` is a TIEBREAK
+  // (`rankLessons` sorts on score first and only compares `scopeRank` inside
+  // `SCORE_EPSILON`) — so a recurring `global::` lesson can and will take a
+  // slot from a fresher-but-one-off `project::` one, where the old narrow-first
+  // group order always filled the budget from the most-specific scope down.
+  // That is the intended trade: the budget goes to what has been re-learned,
+  // wherever it lives, and a scope-major sort would reinstate exactly the
+  // "whatever the group order hands it" behaviour this change removes. If a
+  // narrow scope should instead be guaranteed floor space, that is a weighting
+  // change in `rankLessons`, not something to re-derive here.
+  //
+  // `terms: []` is the SessionStart case: nothing has been asked yet, so the
+  // relevance factor contributes nothing and the order is recency + salience.
+  // `scopeOrder` is passed explicitly rather than left to the scorer's
+  // first-appearance default — they agree today, but the hierarchy is
+  // `readOrder`'s to state, not an artefact of how this function happens to
+  // build its array.
+  const ranked = rankLessons(winners, { terms: [], now, scopeOrder: scope.readOrder });
+
+  // ── the scope map: EXACT counts when the store can enumerate ───────────────
+  //
+  // The map's job is to tell a reader how much lore is sitting in each scope
+  // that this injection did not show them, so its numbers should be the store's
+  // real totals. Deriving them from the bounded read above cannot do that: the
+  // read stops at `SCOPE_READ_LIMIT`, so a scope holding 400 lessons reported
+  // `25+` — technically honest, useless as a quantity, and the `+` was doing a
+  // lot of work.
+  //
+  // `listScopes()` answers exactly, at any size, on BOTH stores: the local one
+  // walks its own tree, and the remote one hits `GET /memories/scopes`, which
+  // aggregates in Postgres (migration 00039) rather than counting rows a
+  // response cap may have truncated. That is the same reason `stats` and
+  // `scopes` were moved onto it.
+  //
+  // TWO SEMANTIC DIFFERENCES, both deliberate, because the map answers a
+  // different question from the injected set:
+  //
+  //   1. It counts EVERY active lesson in the scope, not just the ones that
+  //      survived precedence. A key shadowed at a broader scope is still a real
+  //      row you can `memory.read` there, and the map is a pointer to what
+  //      exists — not a summary of what was injected.
+  //   2. It is not bounded by what this session happened to read, so a scope
+  //      whose lessons all lost the ranking still appears, which is precisely
+  //      when a reader most needs telling it is there.
+  //
+  // THE COST, STATED RATHER THAN LEFT TO BE DISCOVERED. Exactness is not free
+  // on a local or two-tier store: `listScopes()` there is `_walkEntries()`
+  // (`store/local.mjs`), which reads and parses EVERY lesson file under the
+  // base dir — including the scopes outside `readOrder` that the narrowing
+  // below then throws away. So a session start now pays a store-wide walk where
+  // the derived counts cost nothing beyond the bounded read it already did. It
+  // is accepted deliberately: the walk is local disk over a store of markdown
+  // files, the hosted path aggregates in Postgres instead of walking anything,
+  // and the alternative — bounding the enumeration — reinstates the `25+` floor
+  // this change exists to remove. Narrowing the walk would mean a scope filter
+  // on the store contract, which is a change to all three implementations and
+  // to `memory.scopes`; if this ever shows up in a session-start profile, that
+  // is the fix, not a smaller limit here.
+  //
+  // Best-effort, like everything on this path: an unreachable remote, a store
+  // with no `listScopes`, or a throw all fall back to the derived counts —
+  // approximate and `+`-suffixed, exactly what shipped before — rather than
+  // costing the user their scope map. `readScopeInventory` never throws.
+  const inventory = await inventoryPromise;
+  const derivedCounts = scopeInventory(ranked, scope.readOrder, truncatedScopes);
+  const scopeCounts = inventory.ok
+    ? scopeInventoryFromStore(inventory.scopes, scope.readOrder, derivedCounts)
+    : derivedCounts;
+
+  // `applicable` is the honest denominator for the header — how many the reader
+  // has, as opposed to how many fitted. It is counted BEFORE the ceiling, so
+  // "8 of 50" stays true no matter how the render is bounded.
+  return {
+    scope,
+    lessons: ranked.slice(0, HARD_LESSON_CEILING),
+    scopeCounts,
+    applicable: ranked.length,
+  };
+}
+
+// Per-scope counts from the STORE's own inventory, narrowed to the scopes this
+// working directory reads and ordered by the hierarchy.
+//
+// The narrowing is the point: `listScopes()` is deliberately store-wide (it
+// backs the `scopes` command, which enumerates everywhere), but the SessionStart
+// map describes THIS workspace. Naming a scope the reader is not working in
+// would be noise dressed up as guidance.
+//
+// An enumerated row is exact and so never carries `atReadLimit` — the `+`
+// suffix exists to admit that a number is a floor, and an enumerated one is
+// not. A row that fell back to the derived count keeps the flag it came with,
+// because that number IS a floor. A scope with no active
+// lesson is omitted, matching `scopeInventory`: a row reading `0` is noise, and
+// there is nothing to drill into. Pure.
+// `fallback` is the derived inventory — the same rows the failure path uses —
+// and it is consulted PER SCOPE, not only when the whole enumeration failed.
+// `ok: true` means the store answered, not that the answer is complete: a row
+// can be missing, or carry a count that `shapeScopeRow` had to coerce to 0.
+// Without the per-scope fallback a scope that just contributed injected lessons
+// would drop off the map entirely — the reader would see lore in the digest
+// with no row saying where it lives, which is a worse answer than the
+// approximate one this had in hand all along.
+export function scopeInventoryFromStore(scopes, scopeOrder = [], fallback = []) {
+  const counts = new Map();
+  for (const row of Array.isArray(scopes) ? scopes : []) {
+    const s = row?.scope;
+    if (!s) continue;
+    const n = Number(row.count);
+    if (Number.isFinite(n) && n > 0) counts.set(s, n);
+  }
+  const derived = new Map();
+  for (const row of Array.isArray(fallback) ? fallback : []) {
+    if (row?.scope) derived.set(row.scope, row);
+  }
+  return (Array.isArray(scopeOrder) ? scopeOrder : [])
+    .filter((s) => counts.has(s) || derived.has(s))
+    .map((s) => (counts.has(s)
+      ? { scope: s, count: counts.get(s), atReadLimit: false }
+      // The derived row keeps its own `atReadLimit`, so a fallen-back scope
+      // still renders `25+` rather than posing as an exact number.
+      : { ...derived.get(s) }));
+}
+
+// Per-scope counts over an already-ranked lesson list, in the given scope order.
+// A scope with no surviving lesson is omitted — a map row reading `0` is noise,
+// and the reader cannot act on an empty scope. Pure.
+export function scopeInventory(lessons, scopeOrder = [], truncated = new Set()) {
+  const counts = new Map();
+  for (const l of Array.isArray(lessons) ? lessons : []) {
+    const s = l?.scope;
+    if (!s) continue;
+    counts.set(s, (counts.get(s) || 0) + 1);
+  }
+  // `scopeOrder` first (the hierarchy), then anything else that turned up, so a
+  // lesson carrying an unexpected scope is still counted rather than dropped.
+  const ordered = [...scopeOrder.filter((s) => counts.has(s))];
+  for (const s of counts.keys()) if (!ordered.includes(s)) ordered.push(s);
+  return ordered.map((s) => ({
+    scope: s,
+    count: counts.get(s),
+    atReadLimit: truncated.has ? truncated.has(s) : false,
+  }));
 }
 
 // Cap on a lesson's one-line hook in the injected index. Long enough to jog
@@ -97,23 +327,103 @@ function lessonHook(value, max = HOOK_LEN) {
 // `hooks.instructions.SessionStart` in the control config. Lets teams inject
 // project-specific guidance (e.g. "focus on migration safety") without touching
 // the hook internals. Visible even when there are no lessons.
-export function formatLessons(lessons, scope, { instruction = null } = {}) {
-  const noun = lessons && lessons.length === 1 ? 'memory' : 'memories';
-  if (!lessons || lessons.length === 0) {
+export function formatLessons(lessons, scope, {
+  instruction = null,
+  mode = 'hybrid',
+  maxChars = DEFAULT_SESSION_START_MAX_CHARS,
+  scopeCounts = null,
+  applicable = null,
+} = {}) {
+  const all = Array.isArray(lessons) ? lessons : [];
+  if (all.length === 0) {
     // No lessons — only emit if there is a custom instruction to show.
     if (!instruction) return null;
     return (
-      `LoreKit: 0 ${noun} loaded · ${scope.repoScope || 'this workspace'} ` +
+      `LoreKit: 0 memories loaded · ${scope.repoScope || 'this workspace'} ` +
       `— considerations, not rules; read any in full with memory.read.\n\n` +
       `Project instruction: ${instruction}`
     );
   }
+
+  const budget = Number.isFinite(maxChars) && maxChars > 0
+    ? maxChars
+    : DEFAULT_SESSION_START_MAX_CHARS;
+  const shape = SESSION_START_MODES.includes(mode) ? mode : 'hybrid';
+  const total = typeof applicable === 'number' && applicable >= all.length ? applicable : all.length;
+
+  // The map line is composed BEFORE the lessons are chosen, because in `hybrid`
+  // its length has to be reserved out of the budget. Appending it afterwards
+  // would let the block overrun the very number the config asked for — a budget
+  // you can exceed by one more line is not a budget.
+  const map = renderScopeMap(scopeCounts);
+  const reserve = shape === 'index' || !map ? 0 : map.length + 1;
+
+  const ceiling = shape === 'map' ? Math.min(MAP_TOP_K, HARD_LESSON_CEILING) : HARD_LESSON_CEILING;
+  const { shown } = fitLines(all, budget - reserve, ceiling);
+
+  // `map` always shows the inventory; `hybrid` shows it only when something was
+  // actually left out — otherwise the reader is looking at the complete set and
+  // a "…and here is what you are missing" line would be a lie. `index` never
+  // shows it, which is the whole difference between `index` and `hybrid`.
+  const showMap = Boolean(map) && (shape === 'map' || (shape === 'hybrid' && shown.length < total));
+
+  // Say `8 of 50` whenever the two differ. The old header reported only what it
+  // had rendered, so a truncated block was indistinguishable from a complete one
+  // and the agent had no way to know that reaching for `memory.search` was worth
+  // it. The count is what makes the truncation self-describing.
+  const counted = shown.length === total
+    ? `${total} ${total === 1 ? 'memory' : 'memories'}`
+    : `${shown.length} of ${total} memories`;
   const header =
-    `LoreKit: ${lessons.length} ${noun} loaded · ${scope.repoScope || 'this workspace'} ` +
+    `LoreKit: ${counted} loaded · ${scope.repoScope || 'this workspace'} ` +
     `— considerations, not rules; read any in full with memory.read.`;
-  const body = lessons.map((l) => `- (${l.scope}) ${l.key} — ${lessonHook(l.value)}`).join('\n');
+
+  const parts = [header, ...shown.map((s) => s.line)];
+  if (showMap) parts.push(map);
   const instructionBlock = instruction ? `\n\nProject instruction: ${instruction}` : '';
-  return `${header}\n${body}${instructionBlock}`;
+  return `${parts.join('\n')}${instructionBlock}`;
+}
+
+// One index line for a lesson. Pure.
+function lessonLine(l) {
+  return `- (${l.scope}) ${l.key} — ${lessonHook(l.value)}`;
+}
+
+// Take lessons in order until the next line would not fit, or the ceiling is
+// reached. Returns `{ shown, used }`.
+//
+// THE FIRST LINE IS ALWAYS TAKEN, even when it alone exceeds the budget. A
+// header with nothing under it is strictly worse than one over-long line: the
+// reader learns nothing and cannot tell whether the store is empty or the budget
+// is misconfigured. One line over budget is a visible, self-explaining overrun;
+// zero lines is a silent one. Pure.
+function fitLines(lessons, budget, ceiling) {
+  const shown = [];
+  let used = 0;
+  for (const l of lessons) {
+    if (shown.length >= ceiling) break;
+    const line = lessonLine(l);
+    const cost = line.length + 1; // the newline that joins it
+    if (shown.length > 0 && used + cost > budget) break;
+    used += cost;
+    shown.push({ lesson: l, line });
+  }
+  return { shown, used };
+}
+
+// The scope map: one line naming every scope that holds lessons and how many,
+// so a truncated block still tells the reader WHERE the rest live and which verb
+// reaches them. `25+` marks a scope whose read hit `SCOPE_READ_LIMIT`, so a
+// lower bound never reads as an exact total. Null when there is nothing to
+// describe. Pure.
+export function renderScopeMap(scopeCounts) {
+  const rows = (Array.isArray(scopeCounts) ? scopeCounts : [])
+    .filter((s) => s && s.scope && Number(s.count) > 0);
+  if (rows.length === 0) return null;
+  const body = rows
+    .map((s) => `${s.scope} ${s.count}${s.atReadLimit ? '+' : ''}`)
+    .join(' · ');
+  return `More lore: ${body} — memory.search or memory.read to drill in.`;
 }
 
 // Distil a small set of significant, lowercased search TERMS from a tool

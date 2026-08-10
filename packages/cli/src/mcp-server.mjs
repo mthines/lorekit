@@ -29,6 +29,7 @@ import { loadControl } from './control.mjs';
 import { createStore } from './store/index.mjs';
 import { createRemoteStore } from './store/remote.mjs';
 import { deriveOrigin, mergeOrigin } from './origin.mjs';
+import { readScopeInventory } from './store/scope-inventory.mjs';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_INFO = { name: 'lorekit-local', version: '1.0.0' };
@@ -239,13 +240,15 @@ const MEMORY_DISPATCH = {
 // /memories/scopes` and the `lorekit scopes` command have answered this since
 // migration 00039; the MCP surface was the one caller that could not ask.
 //
-// THE TWO STORES ANSWER IN DIFFERENT SHAPES, and normalising here is the whole
-// job of this function. `LocalStore`/`TwoTierStore.listScopes()` return a BARE
-// ARRAY (`[{ scope, count }]`), while `RemoteStore.listScopes()` returns the
-// standard `{ ok, scopes }` envelope — or `{ ok: false, error, networkError,
-// unusable }`. A tool that passed either through verbatim would hand the model
-// two different contracts for one tool name depending on a config value it
-// cannot see.
+// THE TWO STORES ANSWER IN DIFFERENT SHAPES, and reconciling them is NO LONGER
+// this function's job — it moved to `store/scope-inventory.mjs`, which the
+// SessionStart scope map reads too. `LocalStore`/`TwoTierStore.listScopes()`
+// return a BARE ARRAY (`[{ scope, count }]`), while `RemoteStore.listScopes()`
+// returns the standard `{ ok, scopes }` envelope — or `{ ok: false, error,
+// networkError, unusable }`. A tool that passed either through verbatim would
+// hand the model two different contracts for one tool name depending on a
+// config value it cannot see. What is left here is what only the MCP surface
+// owns: the ascending sort and the exit-clean degradation below.
 //
 // DEGRADATION IS EXIT-CLEAN, mirroring the `scopes` command, which reports an
 // unreachable remote as a short note at exit 0 rather than failing the run. An
@@ -255,23 +258,16 @@ const MEMORY_DISPATCH = {
 // tool-level error is liable to retry it rather than carry on with the lore it
 // can already reach. The note says which, in bounded, non-PII terms.
 export async function listScopes(store) {
-  let res;
-  try {
-    res = await store.listScopes();
-  } catch (e) {
-    // A store that cannot enumerate must not take the session down with it.
-    return { ok: true, scopes: [], note: `scope enumeration failed: ${errText(e)}` };
-  }
-
-  // Local/two-tier: the bare array form.
-  if (Array.isArray(res)) return { ok: true, scopes: sortScopes(res.map(shapeScope)) };
-
-  // Remote: the envelope form.
-  if (res && res.ok) {
-    return { ok: true, scopes: sortScopes((Array.isArray(res.scopes) ? res.scopes : []).map(shapeScope)) };
-  }
-
-  return { ok: true, scopes: [], note: scopeFailureNote(res) };
+  // The array-vs-envelope branch and the failure vocabulary live in the shared
+  // `store/scope-inventory.mjs` — the SessionStart scope map needs the same
+  // normalisation, and two copies of "what does a failed enumeration look like"
+  // is how the two surfaces end up disagreeing about it.
+  const { ok, scopes, reason } = await readScopeInventory(store);
+  // `ok: true` either way: an enumeration that could not run is a fact about
+  // the store, not a failed tool call, so it must not reach `toolResult` as an
+  // `isError` a model is liable to retry instead of carrying on with the lore
+  // it can already reach.
+  return ok ? { ok: true, scopes: sortScopes(scopes) } : { ok: true, scopes: [], note: reason };
 }
 
 // Sorted by scope ascending, which is the contract `docs/mcp-tools.md`, the
@@ -299,42 +295,6 @@ export async function listScopes(store) {
 // agreeing on the exact position of a punctuated neighbour.
 function sortScopes(rows) {
   return rows.sort((a, b) => (a.scope < b.scope ? -1 : a.scope > b.scope ? 1 : 0));
-}
-
-// One inventory row. `last_activity` is passed through when the store supplied
-// it (the hosted `GET /memories/scopes` has returned it since migration 00049)
-// and OMITTED — never null — when it did not, so a client can tell "this store
-// does not report freshness" from "this scope has no activity".
-function shapeScope(s) {
-  const scope = String(s?.scope ?? '');
-  const count = Number(s?.count);
-  const row = { scope, count: Number.isFinite(count) ? count : 0 };
-  const last = s?.last_activity ?? s?.lastActivity;
-  return last ? { ...row, last_activity: last } : row;
-}
-
-// A short, bounded reason an enumeration produced nothing. Deliberately built
-// here rather than reusing `lessons-view.mjs`'s `describeError`: that module
-// carries the whole render/`util` stack, and this server has kept clear of it.
-// The vocabulary matches what that helper reports, so the two read alike.
-function scopeFailureNote(res) {
-  if (!res) return 'the store returned no result';
-  if (res.unusable) return 'no usable store is configured';
-  if (res.networkError) return `network error: ${String(res.networkError).slice(0, 200)}`;
-  // `httpStatus` is the ONLY field that carries a real status: `restFetch`'s
-  // error object is `{ message, code }`, and `code` is the response body's own
-  // application code on a JSON error, so rendering it as "HTTP <code>" would
-  // print a non-status. Read the top-level field first — that is the one
-  // `RemoteStore.listScopes()` passes through — and keep the nested read as a
-  // tolerance for any store that nests it instead.
-  const status = res.httpStatus ?? res.error?.httpStatus;
-  if (status) return `request failed with HTTP ${status}`;
-  if (res.error?.message) return String(res.error.message).slice(0, 200);
-  return 'the store could not enumerate its scopes';
-}
-
-function errText(e) {
-  return String(e?.message ?? e).slice(0, 200);
 }
 
 // Provenance for a tool call: the caller's explicit values win, the working

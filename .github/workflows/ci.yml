@@ -87,7 +87,7 @@ jobs:
           # Web gate: the Next.js dashboard, plus the workspace files that change
           # how it installs or is configured. Drives the Storybook interaction +
           # visual-regression job so it never boots a browser on unrelated PRs.
-          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|package\.json|pnpm-lock\.yaml|nx\.json|\.github/workflows/ci\.yml)'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|package\.json|pnpm-lock\.yaml|nx\.json|\.github/actions/vercel-preview-deploy/|\.github/workflows/ci\.yml)'; then
             echo "web=true" >> "$GITHUB_OUTPUT"
           else
             echo "web=false" >> "$GITHUB_OUTPUT"
@@ -127,7 +127,11 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # 22, not 20: `@lorekit/evals` imports `@lorekit/core`'s TypeScript
+          # source directly and relies on Node's native type stripping (stable
+          # since 22.18, which is the package's declared `engines` floor). On
+          # Node 20 `evals:test` dies with ERR_UNKNOWN_FILE_EXTENSION.
+          node-version: 22
           cache: pnpm
 
       - name: Install dependencies
@@ -249,6 +253,170 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: npx vitest run --config vitest.storybook.config.ts --changed="$BASE" --passWithNoTests
+
+  # ── Web preview — deploy a Vercel preview, ONLY when web paths changed ────────
+  #    Replaces Vercel's native Git integration for the dashboard project. That
+  #    integration deployed a preview on EVERY PR/branch push — even docs- or
+  #    backend-only ones — and each deployment counts against the Vercel Hobby
+  #    quota even when the dashboard's Ignored Build Step skips the actual build.
+  #    Here the preview is gated on the `web` path filter, so a PR with no web
+  #    changes creates no Vercel deployment at all. It ALSO skips redeploying when
+  #    a new commit changed no web file SINCE this PR's last preview (the "Decide"
+  #    step diffs against the SHA recorded in the sticky comment), so a burst of
+  #    non-web commits on a web PR spends one deployment, not one per push.
+  #
+  #    Quota-friendly build strategy: `vercel build` runs on THIS runner and
+  #    `vercel deploy --prebuilt` uploads the result, so Vercel spends no build
+  #    minutes — only a single deployment is created, and only when relevant.
+  #
+  #    The env is Vercel's own "preview" environment (`vercel pull
+  #    --environment=preview`) — a faithful replacement for what the Git
+  #    integration used, so the preview behaves exactly as before.
+  #
+  #    Non-blocking by design: it is deliberately NOT in the `summary` gate's
+  #    `needs`, so a transient Vercel failure can never block a merge (the old
+  #    Vercel preview check wasn't a merge gate either). It self-skips green on a
+  #    fork PR where the Vercel secrets are unavailable.
+  web-preview:
+    name: Web — Vercel preview (changed)
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.web == 'true'
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      # Are the Vercel secrets available? On a fork PR they are not, and there is
+      # nothing the contributor can do about it — warn and skip the deploy rather
+      # than red-X a PR over a missing secret. `contents: read` is safe on forks;
+      # the deploy steps below only run when this resolves to `true`.
+      - name: Check Vercel secrets are available
+        id: guard
+        run: |
+          if [ -n "$VERCEL_TOKEN" ] && [ -n "$VERCEL_ORG_ID" ] && [ -n "$VERCEL_PROJECT_ID" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Vercel secrets unavailable (fork PR?) — skipping the preview deploy for this run."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Incremental skip: redeploy only if a web file actually changed since this
+      # PR's LAST preview. The sticky comment records that commit (as `sha=<full>`
+      # in its marker); compare it to the current head via the GitHub API — no
+      # local git/checkout needed. Skip when nothing under the web globs changed,
+      # so a burst of non-web commits on a web PR doesn't spend a deployment each.
+      # Fail-safe to deploy on any doubt: no prior preview, a rebase/force-push
+      # (compare status not `ahead`), a diff too large to inspect, or an API error.
+      - name: Decide whether a redeploy is needed
+        id: decide
+        if: steps.guard.outputs.run == 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const findMarker = '<!-- lorekit-web-preview';
+            const webRe = /^(packages\/web\/|package\.json$|pnpm-lock\.yaml$|nx\.json$|\.github\/actions\/vercel-preview-deploy\/|\.github\/workflows\/ci\.yml$)/;
+            const headSha = process.env.HEAD_SHA;
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const deploy = (why) => { core.info(`web preview: deploy — ${why}`); core.setOutput('deploy', 'true'); };
+            const skip = (why) => { core.notice(`Skipping web-preview redeploy — ${why}.`); core.setOutput('deploy', 'false'); };
+            let prevSha = null;
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+              const existing = comments.find(c => c.body?.includes(findMarker));
+              prevSha = existing?.body?.match(/lorekit-web-preview sha=([0-9a-f]{40})/)?.[1] ?? null;
+            } catch (e) {
+              return deploy(`could not read the prior preview comment (${e.message})`);
+            }
+            if (!prevSha) return deploy('no prior preview on this PR');
+            if (prevSha === headSha) return skip(`head ${headSha.slice(0, 7)} is already the deployed preview`);
+            try {
+              const cmp = await github.rest.repos.compareCommitsWithBasehead({ owner, repo, basehead: `${prevSha}...${headSha}` });
+              if (cmp.data.status !== 'ahead') return deploy(`compare status '${cmp.data.status}' (rebase/force-push) — can't confirm`);
+              const files = cmp.data.files ?? [];
+              if (files.length >= 300) return deploy('diff too large to inspect fully');
+              return files.some(f => webRe.test(f.filename))
+                ? deploy(`web files changed since ${prevSha.slice(0, 7)}`)
+                : skip(`no web file changed since ${prevSha.slice(0, 7)}; the existing preview is still current`);
+            } catch (e) {
+              return deploy(`compare API failed (${e.message})`);
+            }
+
+      # Use the PR head ref/SHA (not github.ref_name/github.sha, which on a
+      # pull_request are the synthetic `refs/pull/N/merge` merge commit).
+      - name: Checkout repository
+        if: steps.guard.outputs.run == 'true' && steps.decide.outputs.deploy == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Shared build+deploy flow (see .github/actions/vercel-preview-deploy).
+      # No Supabase override: this uses Vercel's own preview env, a faithful
+      # replacement for what the Git integration deployed.
+      - name: Deploy Vercel preview
+        id: preview
+        if: steps.guard.outputs.run == 'true' && steps.decide.outputs.deploy == 'true'
+        uses: ./.github/actions/vercel-preview-deploy
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          git-repo-owner: ${{ github.repository_owner }}
+          git-repo-slug: ${{ github.event.repository.name }}
+          git-commit-ref: ${{ github.head_ref }}
+          git-commit-sha: ${{ github.event.pull_request.head.sha }}
+          # Stable per-PR alias, re-pointed each run (like Vercel's branch URL).
+          alias-label: pr-${{ github.event.pull_request.number }}
+
+      # Post (or update) a single sticky comment — a Vercel-style status table
+      # with the stable "latest" preview link plus the immutable per-commit link.
+      # Idempotent: it edits its own marker comment on re-run, never stacks.
+      - name: Comment preview URL on the PR
+        if: steps.guard.outputs.run == 'true' && steps.decide.outputs.deploy == 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PREVIEW_URL: ${{ steps.preview.outputs.url }}
+          ALIAS_URL: ${{ steps.preview.outputs.alias-url }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const fullSha = process.env.PR_SHA;
+            // Stable find-key; the stored line also carries the full SHA so the
+            // "Decide" step above can diff the next commit against this deploy.
+            const findMarker = '<!-- lorekit-web-preview';
+            const markerLine = `<!-- lorekit-web-preview sha=${fullSha} -->`;
+            const commitUrl = process.env.PREVIEW_URL;               // immutable, this commit
+            const aliasUrl = process.env.ALIAS_URL || '';            // stable, latest (may be empty)
+            const previewUrl = aliasUrl || commitUrl;                // fall back if aliasing was unavailable
+            const sha = fullSha.slice(0, 7);
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            // github-script runs in a real Node runner, so Date is available here.
+            const updated = new Date().toISOString().replace('T', ' ').slice(0, 16);
+            const body = [
+              markerLine,
+              'The dashboard preview for this PR — redeployed on each push that changes the web app.',
+              '',
+              '| Name | Status | Preview | Deployment (this commit) | Updated (UTC) |',
+              '| :--- | :----- | :------ | :----------------------- | :------------ |',
+              `| **lorekit** | ✅ Ready | [Visit Preview](${previewUrl}) | [\`${sha}\`](${commitUrl}) | ${updated} |`,
+              '',
+              `<sub>**Preview** always points at the PR's latest commit; **Deployment** is this exact commit${aliasUrl ? '' : ' (stable alias unavailable this run — see workflow logs)'}. · [Workflow logs](${runUrl})</sub>`,
+            ].join('\n');
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number,
+            });
+            const existing = comments.find(c => c.body?.includes(findMarker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
 
   # ── Migration-order guard — reject out-of-order migration prefixes ───────────
   #    Fails a PR that ADDS a migration numbered <= the highest already on the

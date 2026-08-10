@@ -10,6 +10,7 @@ import path from 'node:path';
 import { serializeEntry, parseEntry, slugify, scopeToDir } from './format.mjs';
 import { normalizeCreatedAt } from './created-at.mjs';
 import { isLive, resolveExpiresAt } from './ttl.mjs';
+import { seenCountOf, withReadFields } from './entry-fields.mjs';
 
 export function createLocalStore(baseDir) {
   return new LocalStore(baseDir);
@@ -73,13 +74,18 @@ class LocalStore {
     }
     rows.sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')));
     if (limit) rows = rows.slice(0, limit);
-    return { ok: true, entries: rows };
+    // The same additive projection the remote store applies, so a caller that
+    // ranks entries never has to ask which store produced them.
+    return { ok: true, entries: rows.map(withReadFields) };
   }
 
   // read({ scope, key }) → { ok, entry } — null when absent, archived, or expired.
   async read({ scope, key } = {}) {
     const found = this._findByKey(scope, key);
-    return { ok: true, entry: found && isLive(found.entry) ? found.entry : null };
+    return {
+      ok: true,
+      entry: found && isLive(found.entry) ? withReadFields(found.entry) : null,
+    };
   }
 
   // write(...) → { ok, entry } — upsert by scope+key. Preserves `created` and
@@ -127,6 +133,21 @@ class LocalStore {
       updated: existing ? now : override || now,
       archived_at: null,
       expires_at,
+      // Recurrence, counted the way the hosted `memory_write` RPC counts it
+      // (migration 00058): a write against a key this store already holds IS
+      // the next sighting. `seenCountOf` floors an absent/hand-edited value to
+      // 0, so a file written before this column existed resumes at 1 on its
+      // next write rather than throwing or restarting the tally at 2.
+      //
+      // Reviving an ARCHIVED entry restarts at 1, matching the hosted RPC.
+      // The two stores get there differently — every conflict predicate on
+      // `memories` is partial on `archived_at is null`, so the server INSERTS a
+      // fresh row, while this store revives the file in place (see the docblock
+      // above) — but the count means the same thing on both: the lesson was
+      // retired and is being learned again, not seen once more.
+      seen_count: existing && !existing.entry.archived_at
+        ? seenCountOf(existing.entry) + 1
+        : 1,
       value: value == null ? '' : String(value),
     };
     const file = existing ? existing.file : this._freshPath(dir, key);
@@ -158,6 +179,10 @@ class LocalStore {
       updated: entry.updated ?? now,
       archived_at: entry.archived_at ?? null,
       expires_at: entry.expires_at ?? null,
+      // Verbatim, like every field here: migrate relocates a store, it does not
+      // re-sight its lessons, so a relocated entry must keep the count it had.
+      // An entry that never carried one lands as null and reads back as 0.
+      seen_count: entry.seen_count ?? null,
       value: entry.value == null ? '' : String(entry.value),
     };
     const file = existing ? existing.file : this._freshPath(dir, entry.key);

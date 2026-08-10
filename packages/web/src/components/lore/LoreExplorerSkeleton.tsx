@@ -57,15 +57,21 @@ export function LoreExplorerSkeleton() {
           <div className="h-5 w-40 animate-pulse rounded bg-[var(--color-bg-elevated)]" />
         </div>
 
-        {/* Control row: search input + filter trigger + date pill + archived
-            toggle. The middle placeholder is a wider pill, not a square: the
-            real DateRangePicker renders a text pill ("All time"), so a square
-            here would let the row shift on load. */}
+        {/* Control row: search input + filter trigger + date pill + Status
+            control. Each placeholder is shaped like what replaces it, because
+            this row's whole job is to not shift on load: the DateRangePicker
+            renders a text pill ("All time"), so its slot is a wide pill rather
+            than a square. The Status control is the shared `Combobox` in its
+            `compact` variant here, which is icon + chevron only — a little
+            wider than a square and much narrower than the three-segment
+            radiogroup it replaced, which is what the previous `w-28` was sized
+            for. Both are approximations, sized to the icon-only width so the
+            row can only ever grow slightly, never jump. */}
         <div className="flex items-center gap-2">
           <div className="h-9 flex-1 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)]" />
           <div className="size-9 shrink-0 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]" />
           <div className="h-9 w-20 shrink-0 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]" />
-          <div className="size-9 shrink-0 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]" />
+          <div className="h-9 w-14 shrink-0 animate-pulse rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]" />
         </div>
 
         {/* Card list */}

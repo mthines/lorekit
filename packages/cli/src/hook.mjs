@@ -106,8 +106,14 @@ async function run(args) {
       }
       return 0;
     }
-    const { scope: readScope, lessons } = await fetchLessons(store, root);
-    emit(formatLessons(lessons, readScope, { instruction: sessionInstruction }));
+    const { scope: readScope, lessons, scopeCounts, applicable } = await fetchLessons(store, root);
+    emit(formatLessons(lessons, readScope, {
+      instruction: sessionInstruction,
+      mode: control.hooksSessionStart,
+      maxChars: control.hooksSessionStartMaxChars,
+      scopeCounts,
+      applicable,
+    }));
     return 0;
   }
 

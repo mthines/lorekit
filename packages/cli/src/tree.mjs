@@ -9,9 +9,16 @@
 // first) and keeps the FIRST value seen per key, so a more-specific scope
 // shadows a broader scope's same-key lesson. `tree` resolves over that same
 // `readOrder` set via the pure `resolvePrecedence`, so it shows the same
-// resolution order the agent is injected with (the hook additionally caps the
-// injected set at MAX_LESSONS; `tree` is uncapped, so a large workspace may list
-// more winners than the hook injects).
+// RESOLUTION — which copy of a key wins and which are shadowed — that the agent
+// is injected under.
+//
+// It does NOT show the injected ORDER. The hook ranks the precedence winners
+// with the pure `rankLessons` (recency + salience + relevance, scope only a
+// tiebreak) and then spends a character budget on them
+// (`hooks.sessionStart.maxChars`), so what the agent reads first is the
+// scorer's order, not `readOrder`'s. `tree` stays a precedence view: unbudgeted,
+// unranked, grouped narrow→broad, so a large workspace may list more winners
+// than the hook injects and in a different order.
 //
 // NOTE on scope coverage: `readOrder` is the injected set. As of the smart-hooks
 // PR it INCLUDES `project::` (project is the most-specific scope and now wins /

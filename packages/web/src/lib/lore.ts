@@ -191,6 +191,15 @@ export interface MemoryFilters {
    * When false/absent, returns only active memories (archived_at IS NULL).
    */
   showArchived?: boolean;
+  /**
+   * Narrow to memories whose TTL runs out within N days — the route's
+   * `expiring_within_days` (1–365). Absent means no expiry narrowing.
+   *
+   * Passed straight through and bounded by the route, not here: an
+   * out-of-range value is a 400 the caller should see, and re-implementing the
+   * bound in the dashboard would be a second copy of it to keep in step.
+   */
+  expiringWithinDays?: number;
 }
 
 export type MemoryPage = Page<LessonEntry>;
@@ -233,6 +242,9 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
       limit: pageSize,
       sort: 'created_at',
       archived: filters.showArchived ? 'true' : 'false',
+      ...(filters.expiringWithinDays !== undefined
+        ? { expiring_within_days: filters.expiringWithinDays }
+        : {}),
       ...(filters.scope ? { scope: filters.scope } : {}),
       ...(filters.search ? { q: filters.search } : {}),
       ...(bounds.gte ? { created_since: bounds.gte } : {}),

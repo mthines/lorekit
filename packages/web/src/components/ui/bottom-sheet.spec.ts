@@ -2,8 +2,9 @@
  * BottomSheet — pure drag-dismiss tests (node environment, no DOM/React).
  *
  * Covers `shouldDismissSheet`, the single decision behind drag-to-close. The
- * rendered behaviour (backdrop click, Escape, focus, the actual pointer drag)
- * is covered by the interaction stories in `BottomSheet.test.stories.tsx`.
+ * rendered behaviour (backdrop click, Escape, focus, the actual pointer drag —
+ * from the handle *and* from non-scrolling body content) is covered by the
+ * interaction stories in `BottomSheet.test.stories.tsx`.
  */
 
 import { describe, it, expect } from 'vitest';

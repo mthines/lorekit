@@ -106,9 +106,11 @@ pnpm nx test mcp-core                            # needs supabase start
 | Output Directory | `.next` |
 | Install Command | `cd ../.. && pnpm install` |
 
-> Production auto-deploy on `main` is **off** (`packages/web/vercel.json` →
-> `git.deploymentEnabled.main = false`) — the `deploy.yml` pipeline promotes the
-> dashboard in lockstep with the API. PR preview deploys still work. See
+> Vercel Git auto-deploy is **off entirely** (`packages/web/vercel.json` →
+> `git.deploymentEnabled = false`), so Vercel deploys nothing on a Git push —
+> the `deploy.yml` pipeline promotes the dashboard to production in lockstep
+> with the API, and `ci.yml`'s `web-preview` job deploys PR previews, gated on
+> the `web` path filter so a PR with no web changes spends no quota. See
 > [docs/deployment.md](./docs/deployment.md).
 
 ---
@@ -119,7 +121,7 @@ pnpm nx test mcp-core                            # needs supabase start
 |--------|-------------|
 | `SUPABASE_PROJECT_REF` | Your project ref |
 | `SUPABASE_ACCESS_TOKEN` | From [supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens) |
-| `VERCEL_TOKEN` | Vercel access token (Account Settings → Tokens) — lets `deploy.yml` build + promote the web dashboard |
+| `VERCEL_TOKEN` | Vercel access token (Account Settings → Tokens) — lets `deploy.yml` build + promote the web dashboard, and `ci.yml`'s `web-preview` job deploy PR previews |
 | `VERCEL_ORG_ID` | From `.vercel/project.json` after `vercel link` (or Vercel project settings) |
 | `VERCEL_PROJECT_ID` | From `.vercel/project.json` after `vercel link` |
 | `LOREKIT_TELEMETRY_TOKEN` | Dash0 ingest-only token — the smoke/CI jobs pass it so their edge telemetry exports (tagged `deployment.environment.name=test`); also injected into the CLI tarball at publish by `release.yml`. Fork PRs without it skip telemetry gracefully. |

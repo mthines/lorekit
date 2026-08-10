@@ -76,6 +76,10 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   ['github-app-jwt.ts', 'mcp/github-app-jwt.ts'],
   ['trace-context.ts', '_shared/trace-context.ts'],
   ['rest-tool-name.ts', '_shared/rest-tool-name.ts'],
+  // The ranking used by GET /memories/relevant. Note this file has a SECOND,
+  // cross-LANGUAGE twin that no byte comparison can cover — the CLI's
+  // `lessons-pure.mjs` — guarded behaviourally by `lesson-rank-parity.spec.ts`.
+  ['lesson-rank.ts', '_shared/lesson-rank.ts'],
   // Two rules lifted OUT of Deno-only files so vitest can assert them:
   // rest-audit-actor.ts is `auditUserId` (was inline in _shared/api/auth.ts),
   // rest-response-outcome.ts is the status→usage_events.outcome
@@ -97,6 +101,11 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   // CORS origin allowlist matching (www/apex sibling expansion) — mirrored into
   // the _shared/api tree because cors.ts (Deno) cannot cross-import mcp-core.
   ['cors-origins.ts', '_shared/api/cors-origins.ts'],
+  // The bounded value behind `lorekit.scope.type`. Mirrored because BOTH
+  // transports resolve it before validation — mcp-handler.ts from the tool
+  // arguments, api/router.ts from the query string — and neither can
+  // cross-import mcp-core.
+  ['scope-type-attribute.ts', '_shared/scope-type-attribute.ts'],
 ];
 
 describe('edge-function mirror parity', () => {

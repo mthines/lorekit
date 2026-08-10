@@ -1,5 +1,49 @@
 # Changelog
 
+## [1.39.2](https://github.com/mthines/lorekit/compare/cli-v1.39.1...cli-v1.39.2) (2026-08-10)
+
+
+### Bug Fixes
+
+* **cli:** let the frozen outcome win over a command's extraAttrs ([6235513](https://github.com/mthines/lorekit/commit/62355135da76bcc218b38678914ee70c05c991e8))
+* **cli:** reserve the whole owned attribute namespace from extraAttrs ([c17df73](https://github.com/mthines/lorekit/commit/c17df73dfe425d4e3ff9522c8ce5ded6ab45672d))
+
+## [1.39.1](https://github.com/mthines/lorekit/compare/cli-v1.39.0...cli-v1.39.1) (2026-08-09)
+
+
+### Documentation
+
+* **cli:** name the no-listScopes note as the second deliberate divergence ([8ddf8a1](https://github.com/mthines/lorekit/commit/8ddf8a130403f67c0394720b2fbd3c2ef0a1b8c8))
+* **cli:** restore the verb the shapeScope extraction dropped ([49a6c9a](https://github.com/mthines/lorekit/commit/49a6c9aa76860b4c570b345deb92e3ed0ef32bfd))
+* **cli:** stop claiming normalisation is listScopes' whole job here ([c60c3dd](https://github.com/mthines/lorekit/commit/c60c3dddba14b2f5b350d87138e9a02092aebc87))
+
+## [1.39.0](https://github.com/mthines/lorekit/compare/cli-v1.38.0...cli-v1.39.0) (2026-08-09)
+
+
+### Features
+
+* **web:** replace the archived toggle with a Status control ([875dbc9](https://github.com/mthines/lorekit/commit/875dbc98a1bfd9ffa8ffaa255fe05dc219b9c288))
+
+## [1.38.0](https://github.com/mthines/lorekit/compare/cli-v1.37.0...cli-v1.38.0) (2026-08-09)
+
+
+### Features
+
+* **cli:** budget the SessionStart block instead of counting it ([901f2f3](https://github.com/mthines/lorekit/commit/901f2f33ab95602386e48f46b86cc2cf6c64adba))
+* **cli:** budget the SessionStart block instead of counting it ([c953d5c](https://github.com/mthines/lorekit/commit/c953d5cbe4300d9af6f1d24f5e4d20399727fb5a))
+
+
+### Bug Fixes
+
+* **stack:** land PRs 407, 409, 411, 414 and 421 on main ([7bae960](https://github.com/mthines/lorekit/commit/7bae960b26b2241d3dd314d78f77987b2fc6ae3f))
+
+
+### Documentation
+
+* **cli:** make the docblock header sample reachable too ([acf734e](https://github.com/mthines/lorekit/commit/acf734e2611ef1d22de897dbe7d195c613752c14))
+* **config:** correct the hooks.sessionStart fall-through claim ([b32d06a](https://github.com/mthines/lorekit/commit/b32d06acd08e3c45f25045a1c7536725609e37ac))
+* retire the MAX_LESSONS cap from the prose that still described it ([15cf352](https://github.com/mthines/lorekit/commit/15cf352831d66c2a39129baa68cce9394ef42e66))
+
 ## [1.37.0](https://github.com/mthines/lorekit/compare/cli-v1.36.0...cli-v1.37.0) (2026-08-09)
 
 

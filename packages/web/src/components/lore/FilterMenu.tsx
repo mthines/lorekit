@@ -101,7 +101,7 @@ import {
   MAX_LIST_HEIGHT,
   anchoredPosition,
   type AnchoredPosition,
-} from '@/lib/filter-menu-position';
+} from '@/lib/anchored-position';
 import {
   FILTER_FIELDS,
   facetOptions,
