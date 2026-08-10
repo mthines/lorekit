@@ -262,8 +262,8 @@ class RemoteStore {
   // where `code` is the response body's own application code on a JSON error
   // (a string like `permission_denied`) and only incidentally the status on a
   // non-JSON one. A consumer that wants to say "HTTP 403" must therefore read
-  // `httpStatus`, never `error.code` — `mcp-server.mjs`'s `scopeFailureNote`
-  // does exactly that, and it had nothing to read until this field was passed
+  // `httpStatus`, never `error.code` — `store/scope-inventory.mjs`'s
+  // `failureReason` does exactly that, and it had nothing to read until this field was passed
   // through. Additive: `scopes.mjs`, `stats.mjs` and `lessons-view.mjs` all
   // branch on `ok` / `unusable` / `networkError` and ignore the extra key.
   async listScopes() {

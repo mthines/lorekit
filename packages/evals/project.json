@@ -1,0 +1,33 @@
+{
+  "name": "evals",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/evals/src",
+  "projectType": "application",
+  "tags": [],
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --test test/*.test.mjs",
+        "cwd": "packages/evals"
+      }
+    },
+    "eval": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "cwd": "packages/evals",
+        "command": "node bin/run-eval.mjs"
+      },
+      "configurations": {
+        "probe": { "command": "node bin/run-eval.mjs probe --seed canonical" },
+        "arm0": {
+          "command": "node bin/run-eval.mjs arm0 --reps 1 --keep --out ./.eval-out"
+        },
+        "arm0n3": {
+          "command": "node bin/run-eval.mjs arm0 --reps 3 --out ./.eval-out"
+        }
+      }
+    }
+  }
+}

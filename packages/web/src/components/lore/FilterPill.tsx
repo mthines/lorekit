@@ -56,7 +56,7 @@ import {
   type Filter,
   type FilterOperator,
 } from '@/lib/filters';
-import { anchoredPosition, type AnchoredPosition } from '@/lib/filter-menu-position';
+import { anchoredPosition, type AnchoredPosition } from '@/lib/anchored-position';
 import { FIELD_ICONS } from './FilterMenu';
 
 /**

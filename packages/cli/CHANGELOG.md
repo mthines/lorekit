@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.39.1](https://github.com/mthines/lorekit/compare/cli-v1.39.0...cli-v1.39.1) (2026-08-09)
+
+
+### Documentation
+
+* **cli:** name the no-listScopes note as the second deliberate divergence ([8ddf8a1](https://github.com/mthines/lorekit/commit/8ddf8a130403f67c0394720b2fbd3c2ef0a1b8c8))
+* **cli:** restore the verb the shapeScope extraction dropped ([49a6c9a](https://github.com/mthines/lorekit/commit/49a6c9aa76860b4c570b345deb92e3ed0ef32bfd))
+* **cli:** stop claiming normalisation is listScopes' whole job here ([c60c3dd](https://github.com/mthines/lorekit/commit/c60c3dddba14b2f5b350d87138e9a02092aebc87))
+
+## [1.39.0](https://github.com/mthines/lorekit/compare/cli-v1.38.0...cli-v1.39.0) (2026-08-09)
+
+
+### Features
+
+* **web:** replace the archived toggle with a Status control ([875dbc9](https://github.com/mthines/lorekit/commit/875dbc98a1bfd9ffa8ffaa255fe05dc219b9c288))
+
 ## [1.38.0](https://github.com/mthines/lorekit/compare/cli-v1.37.0...cli-v1.38.0) (2026-08-09)
 
 
