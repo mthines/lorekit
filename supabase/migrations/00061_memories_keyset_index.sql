@@ -40,6 +40,15 @@
 -- production database (`CONCURRENTLY` is not used inside migrations because it
 -- cannot run in a transaction).
 --
+-- LOCK WINDOW: because the build is not `CONCURRENTLY`, it takes a SHARE lock
+-- on `memories` for the duration — reads continue, writes BLOCK until the
+-- index is built. `IF NOT EXISTS` makes re-application free but does not
+-- shorten the first build. Sizing that window is a deploy-time call on the
+-- live table, not something this file can assert; if it is ever too long for
+-- the write path, the escape hatch is to build the index out-of-band with
+-- `CREATE INDEX CONCURRENTLY` before deploying, after which this migration
+-- is a no-op.
+--
 -- SCOPE: `sort=updated_at` only. `GET /memories` also accepts
 -- `sort=created_at`, whose keyset seeks `(created_at, id)` under the same
 -- `scope` filter, and no index covers that pair either. That page is
