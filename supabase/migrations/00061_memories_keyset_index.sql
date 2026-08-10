@@ -40,6 +40,15 @@
 -- production database (`CONCURRENTLY` is not used inside migrations because it
 -- cannot run in a transaction).
 --
+-- SCOPE: `sort=updated_at` only. `GET /memories` also accepts
+-- `sort=created_at`, whose keyset seeks `(created_at, id)` under the same
+-- `scope` filter, and no index covers that pair either. That page is
+-- deliberately out of scope here: the measured cost is on the default sort
+-- (`memory.list` is the most-called MCP tool and always sorts by `updated_at`),
+-- and every index on `memories` is write amplification on the hottest table in
+-- the product, so the second one should be justified by its own measurement
+-- rather than added on symmetry. Tracked as a follow-up, not fixed here.
+--
 -- The superseded `memories_scope_updated_at_idx` is deliberately LEFT IN PLACE.
 -- Dropping an index in the same migration that adds its replacement gives the
 -- planner no fallback if the new one is not yet warm, and this is the hottest
