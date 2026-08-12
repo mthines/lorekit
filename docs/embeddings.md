@@ -117,10 +117,24 @@ There is **no retry** on the write path: a retry there is only a slower way to
 fail, and the backfill retries by construction because it selects on
 `embedding is null`.
 
-Three different causes produce "no embeddings appeared", and they are told apart
-on the span rather than by reading provider logs:
-`lorekit.embedding.enqueued` (queued), `lorekit.embedding.skipped`
-(no background runtime), or an `embedding failed:` span error.
+The causes of "no embeddings appeared" are told apart on the spans rather than
+by reading provider logs — but they are on **two** spans, and which one matters:
+
+| Span | Signal | Meaning |
+|------|--------|---------|
+| the **request** span | `lorekit.embedding.enqueued` | the call was handed to the background runtime |
+| the **request** span | `lorekit.embedding.skipped = no_background_runtime` | no `waitUntil` on this runtime; the row stays null for the backfill |
+| `lorekit.embedding.write` (detached) | `lorekit.embedding.skipped = no_vector` | the provider answered, with no vector for this input |
+| `lorekit.embedding.write` (detached) | an `embedding update:` / `embedding failed:` error | the write or the provider call failed |
+
+Everything after the enqueue lands on the **detached** `lorekit.embedding.write`
+span, not on the request span. It has to: `traceRequest` ends the request span
+and drains its batch in a `finally` that runs before the background callback
+resolves, so an outcome recorded on the request span would never be exported —
+`enqueued` would be the only observable half. The consequence for an operator is
+that a request span showing `enqueued` and nothing else is **not** a failure
+signal; the outcome is on the child span, which carries `lorekit.memory_id` and
+`lorekit.embedding.model` so it can be found from the memory alone.
 
 > `PATCH /memories/:id` does **not** re-embed. An edited memory keeps its old
 > vector until the backfill is next run — a known gap, not an oversight: it
