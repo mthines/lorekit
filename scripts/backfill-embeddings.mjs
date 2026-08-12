@@ -235,6 +235,10 @@ async function main() {
   let emptyRows = 0;
   const started = Date.now();
   let costChars = 0;
+  // A new terminal state owes the summary a new headline: the `MAX_SKIP_IDS`
+  // break exits with work still queued, and printing `── backfill complete ──`
+  // there would tell an operator the store is done when it is not.
+  let stoppedEarly = false;
 
   // Rows this RUN cannot process: a batch the provider rejected, and a row with
   // no embeddable text. Both stay `embedding is null`, so without this the next
@@ -250,6 +254,7 @@ async function main() {
     // proven it cannot process, and the counts below tell the operator what to
     // fix before rerunning.
     if (skipIds.size > MAX_SKIP_IDS) {
+      stoppedEarly = true;
       log(`  stopping: ${skipIds.size} row(s) could not be processed this run (see counts below)`);
       break;
     }
@@ -368,7 +373,11 @@ async function main() {
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
 
   log('');
-  log(args.dryRun ? '── dry run (nothing was sent or written) ──' : '── backfill complete ──');
+  log(args.dryRun
+    ? '── dry run (nothing was sent or written) ──'
+    : stoppedEarly
+      ? '── backfill stopped early (work remains) ──'
+      : '── backfill complete ──');
   log(`  rows:      ${done}${failed ? ` (${failed} failed, still null — rerun to retry)` : ''}`);
   if (emptyRows) log(`  unusable:  ${emptyRows} (no embeddable text — these will never be filled)`);
   log(`  batches:   ${batches}`);
@@ -376,6 +385,10 @@ async function main() {
   log(`  ~tokens:   ${cost.approxTokens}`);
   log(`  est. cost: ${cost.usd == null ? 'unknown (set LOREKIT_EMBEDDING_USD_PER_MTOK)' : `$${cost.usd.toFixed(4)}`}`);
   log(`  elapsed:   ${seconds}s`);
+  if (stoppedEarly) {
+    log(`  stopped:   ${skipIds.size} unprocessable row(s) passed the ${MAX_SKIP_IDS} cap — rows are still`);
+    log('             waiting; fix the cause above and rerun to pick them up.');
+  }
   if (args.dryRun) log('  (one page only — multiply by your pending count for a whole-store estimate)');
 
   // Exit 0 even with failures: a partially-complete backfill is a normal state
