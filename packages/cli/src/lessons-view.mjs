@@ -430,6 +430,56 @@ export function clusterDuplicates(entries = [], threshold = 0.8) {
   return clusters;
 }
 
+// Compile a `--cluster-by-key` pattern into a stateless RegExp, or null on bad
+// input (empty / non-string / unparseable) — never throws, mirroring
+// `parseThreshold`'s "never crash on bad input" contract. Strips the global /
+// sticky flags so `.exec` stays stateless across calls. Pure.
+export function compileKeyPattern(raw) {
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  try {
+    const re = new RegExp(raw);
+    return re.flags ? new RegExp(re.source, re.flags.replace(/[gy]/g, '')) : re;
+  } catch {
+    return null;
+  }
+}
+
+// Cluster entries by a shared KEY capture rather than value overlap. Two entries
+// cluster iff their keys yield the SAME first capture group of `pattern` (or the
+// same full match when the pattern has no capture group). This catches
+// coordinate-key duplicate FAMILIES — many `bucket::pr{N}-{commentId}::slug` rows
+// recorded for one review comment, whose slugs (and thus values) differ enough
+// that `clusterDuplicates`'s Jaccard sweep never links them. Returns only 2+
+// clusters, each `{ members: [{ scope, key }], size, keyGroup }`, largest first
+// (ties broken by keyGroup for stable output). A key that doesn't match the
+// pattern is left unclustered. Pure — O(n), no threshold.
+export function clusterByKeyPattern(entries = [], pattern) {
+  const re =
+    pattern instanceof RegExp
+      ? new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, ''))
+      : compileKeyPattern(pattern);
+  if (!re) return [];
+  const byGroup = new Map();
+  for (const e of entries) {
+    const key = e.key == null ? '' : String(e.key);
+    re.lastIndex = 0;
+    const m = re.exec(key);
+    if (!m) continue;
+    const group = m[1] ?? m[0];
+    if (!byGroup.has(group)) byGroup.set(group, []);
+    byGroup.get(group).push({ scope: e.scope ?? null, key });
+  }
+  const clusters = [];
+  for (const [keyGroup, members] of byGroup) {
+    if (members.length < 2) continue;
+    clusters.push({ members, size: members.length, keyGroup });
+  }
+  clusters.sort(
+    (x, y) => y.size - x.size || String(x.keyGroup).localeCompare(String(y.keyGroup)),
+  );
+  return clusters;
+}
+
 // Collect a store's non-archived entries for each scope, via the common
 // `store.list({scope})` contract. Returns ordered per-scope groups plus a total
 // — a per-scope read failure is captured on the group, never thrown, so one bad

@@ -542,18 +542,25 @@ HEURISTIC — Jaccard overlap of lowercased word tokens, not a semantic/embeddin
 measure — so it surfaces candidates for a human to review, and can both miss
 paraphrases and group coincidental overlaps. Tune the cutoff with --threshold.
 
+Pass --cluster-by-key <regex> to cluster by KEY shape instead of value overlap:
+entries whose keys share the same first capture group (or full match) form one
+family. This catches coordinate-key debt — e.g. many pr{N}-{commentId} rows for
+one review comment — that the value heuristic misses when the values differ.
+
 ${c.bold('Options')}
-  -d, --dir <path>        Target project root (default: current directory)
-      --scope <scope>     Restrict to a single scope (default: all applicable)
-      --threshold <0..1>  Similarity cutoff to cluster a pair (default: 0.8)
-      --json              Machine-readable output (clusters + similarity signal)
-  -e, --endpoint <url>    Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
-  -t, --token <token>     Remote token override (else .mcp.json / LOREKIT_TOKEN)
-      --store <path>      Local project-tier store directory (default: .lorekit)
+  -d, --dir <path>          Target project root (default: current directory)
+      --scope <scope>       Restrict to a single scope (default: all applicable)
+      --threshold <0..1>    Similarity cutoff to cluster a pair (default: 0.8)
+      --cluster-by-key <re> Cluster by shared key capture instead of value overlap
+      --json                Machine-readable output (clusters + signal)
+  -e, --endpoint <url>      Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
+  -t, --token <token>       Remote token override (else .mcp.json / LOREKIT_TOKEN)
+      --store <path>        Local project-tier store directory (default: .lorekit)
 
 ${c.bold('Examples')}
   npx @lorekit/cli dedupe
   npx @lorekit/cli dedupe --threshold 0.6 --json
+  npx @lorekit/cli dedupe --cluster-by-key "(pr\\d+-\\d+)" --json
 `,
   link: `${c.bold('lorekit link')} — print a shareable dashboard deep-link URL ${c.dim('(alias: url)')}
 
@@ -652,7 +659,7 @@ const KNOWN_FLAGS = [
   'link', 'base', 'q', 'owner', 'range', 'view', 'archived',
   'origin-repo', 'origin-branch', 'origin-commit', 'origin-pr', 'no-origin',
   // Scale-aware survey flags
-  'all', 'max', 'since', 'until', 'key-prefix',
+  'all', 'max', 'since', 'until', 'key-prefix', 'cluster-by-key',
 ];
 
 // Commands that write to disk / talk to the network on a human's behalf. These

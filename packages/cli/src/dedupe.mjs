@@ -15,8 +15,8 @@ import { resolveProjectRoot, readLorekitJson } from './config.mjs';
 import { deriveScope } from './scope.mjs';
 import { resolveDenies } from './control.mjs';
 import { resolveStores, remoteUnavailableReason } from './stores.mjs';
-import { scopeList, gather, gatherStream, clusterDuplicates, clusterDuplicatesBlocked, DEFAULT_MAX } from './lessons-view.mjs';
-import { log, heading, status, c } from './util.mjs';
+import { scopeList, gather, gatherStream, clusterDuplicates, clusterDuplicatesBlocked, clusterByKeyPattern, compileKeyPattern, DEFAULT_MAX } from './lessons-view.mjs';
+import { log, heading, status, err, c } from './util.mjs';
 
 const DEFAULT_THRESHOLD = 0.8;
 // Maximum entries to accumulate before the token-blocking index becomes
@@ -77,6 +77,25 @@ export async function dedupe(args) {
     args.threshold !== undefined
       ? parseThreshold(args.threshold)
       : (repoThreshold(root) ?? DEFAULT_THRESHOLD);
+
+  // `--cluster-by-key <regex>` switches from value-overlap clustering to KEY-shape
+  // clustering: entries whose keys share the same first capture group (or full
+  // match) of the regex are grouped as a duplicate family — catches coordinate-key
+  // debt (e.g. `bucket::pr{N}-{commentId}::slug`) that the Jaccard heuristic misses
+  // when the values differ. A bare flag (no value) or an unparseable regex is a
+  // usage error: report it and exit non-zero rather than silently surveying by value.
+  const clusterByKeyRaw = args['cluster-by-key'];
+  const byKeyMode = clusterByKeyRaw !== undefined;
+  const keyPattern = byKeyMode ? compileKeyPattern(clusterByKeyRaw) : null;
+  if (byKeyMode && !keyPattern) {
+    err(
+      clusterByKeyRaw === true
+        ? '--cluster-by-key needs a regex value, e.g. --cluster-by-key "(pr\\d+-\\d+)"'
+        : `--cluster-by-key: invalid regex ${JSON.stringify(String(clusterByKeyRaw))}`,
+    );
+    return { exitCode: 1 };
+  }
+
   const scopeInfo = deriveScope(root);
   // Default to every applicable scope; `--scope <s>` narrows to one.
   const scopes = args.scope && typeof args.scope === 'string' ? [args.scope] : scopeList(scopeInfo);
@@ -156,7 +175,9 @@ export async function dedupe(args) {
       }
       return {
         available: true,
-        clusters: clusterDuplicatesBlocked(entries, threshold),
+        clusters: byKeyMode
+          ? clusterByKeyPattern(entries, keyPattern)
+          : clusterDuplicatesBlocked(entries, threshold),
         errored: flat.errored,
         popCapped,
       };
@@ -164,7 +185,9 @@ export async function dedupe(args) {
     const { entries, errored, popCapped } = await streamAccumulate(store);
     return {
       available: true,
-      clusters: clusterDuplicatesBlocked(entries, threshold),
+      clusters: byKeyMode
+        ? clusterByKeyPattern(entries, keyPattern)
+        : clusterDuplicatesBlocked(entries, threshold),
       errored,
       popCapped,
     };
@@ -188,12 +211,16 @@ export async function dedupe(args) {
   const remoteClusters = remoteSection.available ? remoteSection.clusters.length : 0;
 
   if (args.json) {
-    log(JSON.stringify(buildJson({ root, scopes, threshold, offlineSection, remoteSection }), null, 2));
+    log(JSON.stringify(buildJson({ root, scopes, threshold, byKeyMode, keyPattern, offlineSection, remoteSection }), null, 2));
   } else {
     heading('LoreKit dedupe');
     log(`  project: ${c.dim(root)}`);
     log(`  scopes:  ${scopes.join('  →  ')}`);
-    log(`  ${c.dim(`heuristic: Jaccard word-token overlap >= ${threshold} (not semantic)`)}`);
+    log(
+      byKeyMode
+        ? `  ${c.dim(`key-shape: clustering by shared key capture of /${keyPattern.source}/`)}`
+        : `  ${c.dim(`heuristic: Jaccard word-token overlap >= ${threshold} (not semantic)`)}`,
+    );
 
     if (offlineSection.available && offlineSection.popCapped) {
       log(`  ${c.yellow('!')} population cap (${DEDUPE_POP_CAP}) reached for Offline — results are partial. Narrow with --key-prefix, --since, or --max.`);
@@ -255,25 +282,35 @@ function renderDedupeSection(header, section) {
   let n = 0;
   for (const cluster of section.clusters) {
     n += 1;
-    const range =
-      cluster.minSimilarity === cluster.maxSimilarity
-        ? cluster.minSimilarity.toFixed(2)
-        : `${cluster.minSimilarity.toFixed(2)}–${cluster.maxSimilarity.toFixed(2)}`;
-    log(`  ${c.yellow('•')} cluster ${n} ${c.dim(`(${cluster.size} memories, similarity ${range})`)}`);
+    // Key-shape clusters carry a `keyGroup`; value-overlap clusters carry a
+    // similarity range. Render whichever signal the cluster has.
+    let signal;
+    if (cluster.keyGroup !== undefined) {
+      signal = `${cluster.size} memories, key-group "${cluster.keyGroup}"`;
+    } else {
+      const range =
+        cluster.minSimilarity === cluster.maxSimilarity
+          ? cluster.minSimilarity.toFixed(2)
+          : `${cluster.minSimilarity.toFixed(2)}–${cluster.maxSimilarity.toFixed(2)}`;
+      signal = `${cluster.size} memories, similarity ${range}`;
+    }
+    log(`  ${c.yellow('•')} cluster ${n} ${c.dim(`(${signal})`)}`);
     for (const m of cluster.members) {
       log(`    ${c.cyan('-')} ${m.scope}::${m.key}`);
     }
   }
 }
 
-// The `--json` payload: `{ root, scopes, threshold, offline, remote }` — each
-// store a `{ available, clusters: [{ members, size, minSimilarity,
-// maxSimilarity }], errored }` record (or an unavailable note).
-function buildJson({ root, scopes, threshold, offlineSection, remoteSection }) {
+// The `--json` payload: `{ root, scopes, mode, threshold|keyPattern, offline,
+// remote }`. In value mode (`mode: "value"`) each cluster carries `minSimilarity`
+// / `maxSimilarity`; in key-shape mode (`mode: "key"`) each carries `keyGroup`.
+// Each store is a `{ available, clusters, errored }` record (or an unavailable note).
+function buildJson({ root, scopes, threshold, byKeyMode, keyPattern, offlineSection, remoteSection }) {
   return {
     root,
     scopes,
-    threshold,
+    mode: byKeyMode ? 'key' : 'value',
+    ...(byKeyMode ? { keyPattern: keyPattern.source } : { threshold }),
     offline: sectionJson(offlineSection),
     remote: sectionJson(remoteSection),
   };
