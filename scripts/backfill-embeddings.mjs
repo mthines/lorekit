@@ -116,8 +116,9 @@ const MAX_SKIP_IDS = 200;
  *
  * The guard answers "is this well-formed"; what a fallback MEANS is a per-flag
  * question. `--batch-size` / `--sleep-ms` fall back to a safe bound, so they
- * take the fallback. `--limit`'s fallback is `null` = unbounded, so `parseArgs`
- * treats a `null` result there as a usage error instead of accepting it.
+ * take the fallback once the value is known to BE a value. `--limit`'s fallback
+ * is `null` = unbounded, so `parseArgs` treats a `null` result there as a usage
+ * error instead of accepting it.
  */
 function numArg(raw, { fallback, min = 0 }) {
   const n = Number(raw);
@@ -130,53 +131,63 @@ function isMissingValue(raw) {
   return raw === undefined || raw.startsWith('--') || raw.trim() === '';
 }
 
+/** How a missing value is reported, identically for every flag that takes one. */
+function missingValueError(flag, raw, what) {
+  return `${flag} needs ${what} (got ${raw === undefined ? 'nothing' : `"${raw}"`}).`;
+}
+
+/**
+ * Every flag this script accepts. An argument that is not in this set is a
+ * usage error, never ignored: a typo used to fall through the `if/else` chain
+ * silently, so `--scpoe personal` ran every scope and `--dry-runn` billed a
+ * real run — the loudest possible failures, reported as none at all.
+ */
+const KNOWN_FLAGS = new Set(['--dry-run', '--limit', '--batch-size', '--scope', '--sleep-ms']);
+
 function parseArgs(argv) {
   const args = { dryRun: false, limit: null, batchSize: MAX_BATCH_ITEMS, scope: null, sleepMs: 0, error: null };
+  const fail = (message) => { args.error = message; return args; };
+
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
-    if (a === '--dry-run') args.dryRun = true;
-    else if (a === '--limit') {
-      // `--limit` is the ONE flag whose fallback is not safe. `--batch-size`
-      // and `--sleep-ms` fall back to a bounded default, but `--limit`'s
-      // absence means "no limit" — so `--limit 0`, a negative, or a typo would
-      // silently promote a bounded run that spends money into an unbounded one.
-      // A malformed value is a usage error, not a default.
-      const raw = argv[++i];
-      const n = numArg(raw, { fallback: null, min: 1 });
+
+    if (a === '--dry-run') { args.dryRun = true; continue; }
+
+    if (!KNOWN_FLAGS.has(a)) {
+      return fail(`unknown argument "${a}". Accepted flags: ${[...KNOWN_FLAGS].join(', ')}.`);
+    }
+
+    // EVERY value-taking flag consumes its argument through the same guard.
+    // Without it, `--batch-size --scope personal` swallows `--scope` into
+    // `numArg`, falls back to the default, and the run silently widens to every
+    // scope — a value-taking flag that eats the NEXT flag is wrong regardless of
+    // whether its own fallback is safe.
+    const raw = argv[++i];
+
+    if (a === '--limit') {
+      // `--limit` is the flag whose fallback is not safe: `--batch-size` and
+      // `--sleep-ms` fall back to a bounded default, but `--limit`'s absence
+      // means "no limit", so `--limit 0`, a negative, or a typo would silently
+      // promote a bounded run that spends money into an unbounded one.
+      const n = isMissingValue(raw) ? null : numArg(raw, { fallback: null, min: 1 });
       if (n == null) {
-        args.error = `--limit needs a positive integer (got ${raw === undefined ? 'nothing' : `"${raw}"`}). `
-          + 'It is the only flag that bounds what a run spends, so it is never defaulted away — omit it for no limit.';
-        return args;
+        return fail(`${missingValueError('--limit', raw, 'a positive integer')} `
+          + 'It is the only flag that bounds what a run spends, so it is never defaulted away — omit it for no limit.');
       }
       args.limit = n;
-    } else if (a === '--batch-size') {
-      // A value-taking flag that eats the NEXT flag is wrong even when its own
-      // fallback is safe: `--batch-size --scope personal` swallowed `--scope`
-      // into `numArg`, defaulted the batch size, and silently widened the run
-      // to every scope. Guard the value before interpreting it.
-      const raw = argv[++i];
-      if (isMissingValue(raw)) {
-        args.error = `--batch-size needs a positive integer (got ${raw === undefined ? 'nothing' : `"${raw}"`}).`;
-        return args;
-      }
-      args.batchSize = Math.min(numArg(raw, { fallback: MAX_BATCH_ITEMS, min: 1 }), MAX_BATCH_ITEMS);
     } else if (a === '--scope') {
-      // Same shape as `--limit`: the fallback (`null` = EVERY scope) widens the
-      // run rather than bounding it, so a missing value — or the next flag,
-      // swallowed as this one's argument — must not be accepted silently.
-      const raw = argv[++i];
+      // The fallback here (`null` = EVERY scope) widens the run rather than
+      // bounding it, so a missing value is never assumed.
       if (isMissingValue(raw)) {
-        args.error = `--scope needs a scope string (got ${raw === undefined ? 'nothing' : `"${raw}"`}). `
-          + 'Omitting it is how you ask for every scope, so a missing value is never assumed.';
-        return args;
+        return fail(`${missingValueError('--scope', raw, 'a scope string')} `
+          + 'Omitting it is how you ask for every scope, so a missing value is never assumed.');
       }
       args.scope = raw;
+    } else if (a === '--batch-size') {
+      if (isMissingValue(raw)) return fail(missingValueError('--batch-size', raw, 'a positive integer'));
+      args.batchSize = Math.min(numArg(raw, { fallback: MAX_BATCH_ITEMS, min: 1 }), MAX_BATCH_ITEMS);
     } else if (a === '--sleep-ms') {
-      const raw = argv[++i];
-      if (isMissingValue(raw)) {
-        args.error = `--sleep-ms needs a non-negative integer (got ${raw === undefined ? 'nothing' : `"${raw}"`}).`;
-        return args;
-      }
+      if (isMissingValue(raw)) return fail(missingValueError('--sleep-ms', raw, 'a non-negative integer'));
       args.sleepMs = numArg(raw, { fallback: 0, min: 0 });
     }
   }

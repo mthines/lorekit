@@ -138,6 +138,8 @@ enabling it.
 | `--scope <s>` | all | Only rows in this exact scope. A missing or flag-shaped value is a usage error, not "every scope". |
 | `--sleep-ms <n>` | 0 | Pause between batches, for rate-limit relief. |
 
+An unrecognised flag, or a flag whose value is missing or flag-shaped, is a usage error — the script never falls back silently on the arguments that decide what a paid run touches.
+
 Five properties worth knowing before you run it on a large store:
 
 - **Idempotent and resumable, with no state of its own.** The work queue is a
