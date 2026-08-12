@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   resolveEmbeddingConfig, embeddingInput, isEmbeddable, buildEmbeddingRequest,
-  parseEmbeddingResponse, toVectorLiteral, batchInputs, estimateCost, supportsDimensions,
+  parseEmbeddingResponse, toVectorLiteral, batchInputs, estimateCost, estimateCostFromChars, supportsDimensions,
   EmbeddingError, EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL, MAX_EMBED_CHARS,
 } from './embedding.js';
 
@@ -194,6 +194,40 @@ describe('estimateCost', () => {
   it('is total over junk', () => {
     expect(estimateCost([], null)).toEqual({ chars: 0, approxTokens: 0, usd: null });
     expect(estimateCost(null as never, null).chars).toBe(0);
+  });
+});
+
+// Reached directly, not only through `estimateCost`: this is the entry point the
+// backfill's cost line runs on (it streams a counter rather than retaining the
+// texts), so its own guards need their own coverage.
+describe('estimateCostFromChars', () => {
+  it('reports chars, approximate tokens and usd from a count', () => {
+    const est = estimateCostFromChars(4000, 0.02);
+    expect(est.chars).toBe(4000);
+    expect(est.approxTokens).toBe(1000);
+    expect(est.usd).toBeCloseTo(0.00002, 10);
+  });
+
+  it('agrees with estimateCost over the same corpus', () => {
+    const texts = ['a'.repeat(1234), 'b'.repeat(77)];
+    const chars = texts.reduce((n, t) => n + t.length, 0);
+    expect(estimateCostFromChars(chars, 0.02)).toEqual(estimateCost(texts, 0.02));
+  });
+
+  it('reports usd as NULL when no price is configured, never 0', () => {
+    expect(estimateCostFromChars(4000, null).usd).toBeNull();
+    expect(estimateCostFromChars(4000, Number.NaN).usd).toBeNull();
+    expect(estimateCostFromChars(4000, Number.POSITIVE_INFINITY).usd).toBeNull();
+  });
+
+  it('floors a non-integer count rather than reporting a fractional char', () => {
+    expect(estimateCostFromChars(4000.9, null).chars).toBe(4000);
+  });
+
+  it('clamps a non-positive or non-finite count to zero', () => {
+    for (const junk of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, undefined, null, '4000']) {
+      expect(estimateCostFromChars(junk as never, 0.02)).toEqual({ chars: 0, approxTokens: 0, usd: 0 });
+    }
   });
 });
 
