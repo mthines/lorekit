@@ -138,7 +138,7 @@ enabling it.
 | `--scope <s>` | all | Only rows in this exact scope. |
 | `--sleep-ms <n>` | 0 | Pause between batches, for rate-limit relief. |
 
-Four properties worth knowing before you run it on a large store:
+Five properties worth knowing before you run it on a large store:
 
 - **Idempotent and resumable, with no state of its own.** The work queue is a
   query (`embedding is null`), so an interrupted run leaves a valid store and
@@ -149,7 +149,18 @@ Four properties worth knowing before you run it on a large store:
   skips rows silently, and the gap is invisible afterwards.
 - **A failed batch is skipped, not fatal**, and those rows stay null for the
   next run. There is no `--strict`: a partially-complete backfill is a normal
-  state here, so the script exits 0 and reports the counts.
+  state here, so the script exits 0 and reports the counts. The failure unit
+  differs by phase — the provider call is all-or-nothing for its batch, while
+  the row writes settle individually, so a row that was written is counted
+  `rows`, never `failed`.
+- **A run can stop with work left, and says so.** A row this run cannot process
+  (a rejected batch, a memory with no embeddable text) is excluded from the
+  queue for the rest of the run, because the queue is a query and a row left
+  null would otherwise be served forever. That exclusion list travels in the
+  URL, so it is capped at 200 rows; past the cap the run stops and prints
+  `── backfill stopped early (work remains) ──` with a `stopped:` count instead
+  of `── backfill complete ──`. Fix what the failure lines name, then rerun —
+  the next run starts from a clean exclusion list.
 - **It never prints the key.** Provider error bodies are truncated; the key only
   ever travels in a header.
 
