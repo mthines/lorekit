@@ -48,7 +48,10 @@
  *   a transient 5xx) must not end a run that has thousands of rows left. The
  *   failures are counted and reported, and those rows stay null for the next
  *   run. `--strict` is deliberately absent: a partially-complete backfill is a
- *   normal state here, not an error condition.
+ *   normal state here, not an error condition. The failure UNIT differs by
+ *   phase: the embed call is all-or-nothing for its group (no vectors, no
+ *   writes), while the row writes settle individually, so a row that landed is
+ *   counted `done` even when a sibling in the same group rejects.
  *
  *   A ROW THIS RUN CANNOT PROCESS IS EXCLUDED FROM THE QUEUE, NOT JUST SKIPPED.
  *   The queue is the query `embedding is null`, so a row the run leaves null is
@@ -155,16 +158,32 @@ const WRITE_CONCURRENCY = 8;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Run `fn` over every item with at most `limit` in flight, preserving each
- * item's index. Rejects with the first error, exactly like `Promise.all`, so
- * the caller's failure accounting is unchanged.
+ * Run `fn` over every item with at most `limit` in flight, SETTLING each item
+ * independently. Returns one index-aligned entry per item: `{ ok: true }`, or
+ * `{ ok: false, error }`.
+ *
+ * `Promise.all` semantics were wrong here for an accounting reason, not a
+ * throughput one. Making the write phase concurrent moved the failure boundary:
+ * the first PATCH rejection abandoned its siblings, so the whole group was
+ * counted `failed`, added to `skipIds`, and reported as "still null — rerun to
+ * retry" — false for every row that had already been written. A concurrency
+ * change is an accounting change; settle per item and count per item.
  */
-async function mapConcurrent(items, limit, fn) {
+async function mapSettled(items, limit, fn) {
+  const results = new Array(items.length);
   let next = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    for (let i = next++; i < items.length; i = next++) await fn(items[i], i);
+    for (let i = next++; i < items.length; i = next++) {
+      try {
+        await fn(items[i], i);
+        results[i] = { ok: true };
+      } catch (e) {
+        results[i] = { ok: false, error: e };
+      }
+    }
   });
   await Promise.all(workers);
+  return results;
 }
 
 function log(...parts) {
@@ -276,6 +295,9 @@ async function main() {
         continue;
       }
 
+      // The EMBED call is the one all-or-nothing step: no vectors means no row
+      // in this group can be written, so the group is the failure unit here.
+      let vectors;
       try {
         const res = await fetch(config.endpoint, {
           method: 'POST',
@@ -284,32 +306,7 @@ async function main() {
           signal: AbortSignal.timeout(60_000),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
-        const vectors = parseEmbeddingResponse(await res.json(), group.length);
-
-        // Concurrent, not serial: one awaited PATCH per row made the write phase
-        // dominate a large run and undid the batching the embed call just did.
-        //
-        // A single BULK upsert per batch is not reachable from here. `memories`
-        // is arbitrated by PARTIAL unique indexes (`where archived_at is null`,
-        // 00003/00016) that PostgREST's `upsert(onConflict)` cannot target —
-        // which is why `memory_write` exists — and an id-keyed upsert would have
-        // to carry every NOT NULL column, so a payload of just the two embedding
-        // columns would clobber scope/key/value. A bounded pool buys the same
-        // wall-clock win with the same statements.
-        await mapConcurrent(group, WRITE_CONCURRENCY, (u, i) => rest(
-          supabaseUrl, serviceKey,
-          `/memories?id=eq.${u.row.id}`,
-          {
-            method: 'PATCH',
-            // Both columns in ONE statement — the 00060 CHECK requires
-            // both-or-neither, so a split update would be rejected.
-            body: JSON.stringify({
-              embedding: toVectorLiteral(vectors[i]),
-              embedding_model: config.model,
-            }),
-          },
-        ));
-        done += group.length;
+        vectors = parseEmbeddingResponse(await res.json(), group.length);
       } catch (e) {
         // Skipped, not fatal: one bad batch must not end a run with thousands
         // of rows left, and these rows stay null for the next one. Excluded from
@@ -318,6 +315,47 @@ async function main() {
         failed += group.length;
         for (const u of group) skipIds.add(u.row.id);
         log(`  batch failed (${group.length} rows), continuing: ${String(e?.message ?? e).slice(0, 200)}`);
+        if (args.sleepMs) await sleep(args.sleepMs);
+        continue;
+      }
+
+      // The WRITE phase is per row, and so is its accounting. Concurrent, not
+      // serial: one awaited PATCH per row made the write phase dominate a large
+      // run and undid the batching the embed call just did. Settled, not
+      // all-or-nothing: a row that was written is `done`, never `failed`, even
+      // when a sibling in the same group rejects.
+      //
+      // A single BULK upsert per batch is not reachable from here. `memories`
+      // is arbitrated by PARTIAL unique indexes (`where archived_at is null`,
+      // 00003/00016) that PostgREST's `upsert(onConflict)` cannot target —
+      // which is why `memory_write` exists — and an id-keyed upsert would have
+      // to carry every NOT NULL column, so a payload of just the two embedding
+      // columns would clobber scope/key/value. A bounded pool buys the same
+      // wall-clock win with the same statements.
+      const writes = await mapSettled(group, WRITE_CONCURRENCY, (u, i) => rest(
+        supabaseUrl, serviceKey,
+        `/memories?id=eq.${u.row.id}`,
+        {
+          method: 'PATCH',
+          // Both columns in ONE statement — the 00060 CHECK requires
+          // both-or-neither, so a split update would be rejected.
+          body: JSON.stringify({
+            embedding: toVectorLiteral(vectors[i]),
+            embedding_model: config.model,
+          }),
+        },
+      ));
+
+      const written = writes.filter((w) => w.ok).length;
+      done += written;
+      if (written < group.length) {
+        // Only the rows that actually failed leave the queue: a written row is
+        // no longer `embedding is null`, and excluding a row this run succeeded
+        // on would be a lie in both the counts and the exclusion list.
+        const firstError = writes.find((w) => !w.ok)?.error;
+        for (let i = 0; i < group.length; i += 1) if (!writes[i].ok) skipIds.add(group[i].row.id);
+        failed += group.length - written;
+        log(`  ${group.length - written} of ${group.length} row write(s) failed, continuing: ${String(firstError?.message ?? firstError).slice(0, 200)}`);
       }
 
       if (args.sleepMs) await sleep(args.sleepMs);
