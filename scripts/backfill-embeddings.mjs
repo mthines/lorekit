@@ -104,8 +104,8 @@ const {
 const MAX_SKIP_IDS = 200;
 
 /**
- * A numeric flag's value, or `fallback` when it is missing, non-numeric, or
- * below `min`.
+ * A numeric flag's value, or `null` when it is missing, non-numeric, or below
+ * `min`.
  *
  * `Number(undefined)` is `NaN`, and `NaN` survives a `|| default` guard whose
  * default is falsy — it then reaches PostgREST as the literal text `NaN`, so
@@ -114,16 +114,31 @@ const MAX_SKIP_IDS = 200;
  * returns, and a negative `--sleep-ms` is a no-op pretending to be rate-limit
  * relief. One guard for all three flags rather than a per-flag idiom.
  *
- * The guard answers "is this well-formed"; what a fallback MEANS is a per-flag
- * question. `--batch-size` / `--sleep-ms` fall back to a safe bound, so they
- * take the fallback once the value is known to BE a value. `--limit`'s fallback
- * is `null` = unbounded, so `parseArgs` treats a `null` result there as a usage
- * error instead of accepting it.
+ * IT RETURNS `null` RATHER THAN A FALLBACK, AND THAT IS THE POINT. A guard that
+ * hands back a safe default cannot distinguish "the operator asked for this
+ * value" from "the operator typed something this script could not read", so
+ * `--sleep-ms abc` became `0` — the requested rate-limit relief silently
+ * deleted on the one flag whose entire purpose is slowing a paid run, and
+ * `--batch-size abc` silently promoted to the maximum. A safe fallback makes a
+ * MISSING value safe; it never makes a MALFORMED one correct, because a
+ * malformed value is a typo and a typo has an author to tell. `--limit` and
+ * `--scope` already reported a usage error for exactly this shape; every
+ * value-taking flag now answers the same way.
+ *
+ * The two questions stay separate: `isMissingValue` asks "is this a value at
+ * all, or the next flag", this asks "is this value well-formed for this flag",
+ * and `parseArgs` owns what an absent flag MEANS (no limit, every scope, a
+ * default batch size, no sleep).
  */
-function numArg(raw, { fallback, min = 0 }) {
+function numArg(raw, { min = 0 }) {
   const n = Number(raw);
-  if (!Number.isFinite(n) || n < min) return fallback;
+  if (!Number.isFinite(n) || n < min) return null;
   return Math.floor(n);
+}
+
+/** How a malformed value is reported, identically for every flag that takes one. */
+function badValueError(flag, raw, what) {
+  return `${flag} needs ${what} (got "${raw}").`;
 }
 
 /** `true` when `raw` cannot be a flag's value: absent, blank, or the next flag. */
@@ -157,26 +172,32 @@ function parseArgs(argv) {
       return fail(`unknown argument "${a}". Accepted flags: ${[...KNOWN_FLAGS].join(', ')}.`);
     }
 
-    // EVERY value-taking flag consumes its argument through the same guard.
-    // Without it, `--batch-size --scope personal` swallows `--scope` into
-    // `numArg`, falls back to the default, and the run silently widens to every
-    // scope — a value-taking flag that eats the NEXT flag is wrong regardless of
-    // whether its own fallback is safe.
+    // EVERY value-taking flag consumes its argument through the same guard, and
+    // EVERY one reports a usage error for a value it cannot read. Without the
+    // first, `--batch-size --scope personal` swallows `--scope` and the run
+    // silently widens to every scope; without the second, `--sleep-ms abc`
+    // silently becomes `0`. A default is how an OMITTED flag stays safe — it is
+    // never how a typo is answered, because a typo has an author to tell.
     const raw = argv[++i];
 
     if (a === '--limit') {
-      // `--limit` is the flag whose fallback is not safe: `--batch-size` and
-      // `--sleep-ms` fall back to a bounded default, but `--limit`'s absence
-      // means "no limit", so `--limit 0`, a negative, or a typo would silently
-      // promote a bounded run that spends money into an unbounded one.
-      const n = isMissingValue(raw) ? null : numArg(raw, { fallback: null, min: 1 });
-      if (n == null) {
+      // `--limit` is the flag whose ABSENCE is not safe: omitting it means "no
+      // limit", so `--limit 0`, a negative, or a typo must never be allowed to
+      // promote a bounded run that spends money into an unbounded one. The
+      // other flags are bounded either way; this one is the reason the whole
+      // parser refuses rather than defaults.
+      if (isMissingValue(raw)) {
         return fail(`${missingValueError('--limit', raw, 'a positive integer')} `
+          + 'It is the only flag that bounds what a run spends, so it is never defaulted away — omit it for no limit.');
+      }
+      const n = numArg(raw, { min: 1 });
+      if (n == null) {
+        return fail(`${badValueError('--limit', raw, 'a positive integer')} `
           + 'It is the only flag that bounds what a run spends, so it is never defaulted away — omit it for no limit.');
       }
       args.limit = n;
     } else if (a === '--scope') {
-      // The fallback here (`null` = EVERY scope) widens the run rather than
+      // The default here (`null` = EVERY scope) widens the run rather than
       // bounding it, so a missing value is never assumed.
       if (isMissingValue(raw)) {
         return fail(`${missingValueError('--scope', raw, 'a scope string')} `
@@ -185,10 +206,14 @@ function parseArgs(argv) {
       args.scope = raw;
     } else if (a === '--batch-size') {
       if (isMissingValue(raw)) return fail(missingValueError('--batch-size', raw, 'a positive integer'));
-      args.batchSize = Math.min(numArg(raw, { fallback: MAX_BATCH_ITEMS, min: 1 }), MAX_BATCH_ITEMS);
+      const n = numArg(raw, { min: 1 });
+      if (n == null) return fail(badValueError('--batch-size', raw, 'a positive integer'));
+      args.batchSize = Math.min(n, MAX_BATCH_ITEMS);
     } else if (a === '--sleep-ms') {
       if (isMissingValue(raw)) return fail(missingValueError('--sleep-ms', raw, 'a non-negative integer'));
-      args.sleepMs = numArg(raw, { fallback: 0, min: 0 });
+      const n = numArg(raw, { min: 0 });
+      if (n == null) return fail(badValueError('--sleep-ms', raw, 'a non-negative integer'));
+      args.sleepMs = n;
     }
   }
   return args;

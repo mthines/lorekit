@@ -141,11 +141,11 @@ enabling it.
 |------|---------|---------|
 | `--dry-run` | off | Plan and cost only. One page, no provider call, no write. |
 | `--limit <n>` | none | Stop after n rows. A missing, zero, negative, or non-numeric value is a usage error, not "no limit" — it is the flag that bounds what a run spends. |
-| `--batch-size <n>` | 96 | Rows per provider request (hard-capped at 96). |
+| `--batch-size <n>` | 96 | Rows per provider request (hard-capped at 96). A zero, negative, or non-numeric value is a usage error, not the cap. |
 | `--scope <s>` | all | Only rows in this exact scope. A missing or flag-shaped value is a usage error, not "every scope". |
-| `--sleep-ms <n>` | 0 | Pause between batches, for rate-limit relief. |
+| `--sleep-ms <n>` | 0 | Pause between batches, for rate-limit relief. A negative or non-numeric value is a usage error, not "no pause". |
 
-An unrecognised flag, or a flag whose value is missing or flag-shaped, is a usage error — the script never falls back silently on the arguments that decide what a paid run touches.
+An unrecognised flag, or a flag whose value is missing, flag-shaped, or unreadable as a number, is a usage error — the script never falls back silently on the arguments that decide what a paid run touches. The defaults in this table are what an **omitted** flag means; they are never what a typo means.
 
 Five properties worth knowing before you run it on a large store:
 
