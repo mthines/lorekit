@@ -60,22 +60,43 @@ export function embedOnWrite(
   }
 
   span.setAttributes({ 'lorekit.embedding.enqueued': true });
+
+  // The outcome must be recorded on a DETACHED span, not on `span`.
+  // `traceRequest` ends the request span and flushes its batch in a `finally`,
+  // which runs before this callback resolves — anything written to `span` from
+  // here on is added to a drained batch and never exported. That would leave
+  // `enqueued` (set above, before the flush) as the only observable half of the
+  // story, which is precisely the "three different causes look alike" failure
+  // this module's reporting exists to prevent.
+  const { span: bg, flush } = span.detachedChild('lorekit.embedding.write', {
+    'lorekit.memory_id': memory.id,
+    'lorekit.embedding.model': config.model,
+  });
+
   host.waitUntil((async () => {
     try {
       const [vector] = await embedTexts([text], config);
-      if (!vector) return;
+      if (!vector) {
+        bg.setAttributes({ 'lorekit.embedding.skipped': 'no_vector' });
+        return;
+      }
       // `embedding_model` is written in the SAME statement as the vector. The
       // 00060 CHECK requires both-or-neither, so splitting them would not merely
       // be untidy — it would be rejected.
-      const { error } = await createTracedClient(db, span)
+      const { error } = await createTracedClient(db, bg)
         .from('memories')
         .update({ embedding: toVectorLiteral(vector), embedding_model: config.model })
         .eq('id', memory.id);
-      if (error) span.error(`embedding update: ${error.message}`);
+      if (error) bg.error(`embedding update: ${error.message}`);
     } catch (e) {
       // Swallowed on purpose. The memory is already saved; the backfill will
       // find this row again because its embedding is still null.
-      span.error(`embedding failed: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
+      bg.error(`embedding failed: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
+    } finally {
+      bg.end();
+      // Awaited: this task IS the isolate's keep-alive, so a fire-and-forget
+      // export here can be torn down mid-flight.
+      await flush();
     }
   })());
 }
