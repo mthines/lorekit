@@ -19,9 +19,14 @@ import { scopeList, gather, gatherStream, clusterDuplicates, clusterDuplicatesBl
 import { log, heading, status, err, c } from './util.mjs';
 
 const DEFAULT_THRESHOLD = 0.8;
-// Maximum entries to accumulate before the token-blocking index becomes
-// memory-prohibitive. Beyond this the user must narrow via --key-prefix /
-// --since / --max.
+// Maximum entries to accumulate before the survey becomes memory-prohibitive.
+// It bounds the accumulated entry list itself, so it applies in BOTH modes —
+// key-shape clustering is O(n) and needs no blocking index, but it still holds
+// the whole population in memory, and an unbounded remote drain is the risk the
+// cap exists for. In value mode it additionally bounds the token-blocking index,
+// which is the super-linear part. Beyond the cap the results are genuinely
+// partial in either mode, and the user must narrow via --key-prefix / --since /
+// --max.
 const DEDUPE_POP_CAP = 2000;
 
 // Smallest threshold the blocked clusterer accepts. `clusterDuplicatesBlocked`
