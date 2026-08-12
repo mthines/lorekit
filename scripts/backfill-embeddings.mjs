@@ -100,15 +100,32 @@ const {
  */
 const MAX_SKIP_IDS = 200;
 
+/**
+ * A numeric flag's value, or `fallback` when it is missing, non-numeric, or
+ * below `min`.
+ *
+ * `Number(undefined)` is `NaN`, and `NaN` survives a `|| default` guard whose
+ * default is falsy — it then reaches PostgREST as the literal text `NaN`, so
+ * the bound silently vanishes instead of failing. A NEGATIVE value passes `||`
+ * untouched and is just as wrong: a negative `--batch-size` is what `Math.min`
+ * returns, and a negative `--sleep-ms` is a no-op pretending to be rate-limit
+ * relief. One guard for all three flags rather than a per-flag idiom.
+ */
+function numArg(raw, { fallback, min = 0 }) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < min) return fallback;
+  return Math.floor(n);
+}
+
 function parseArgs(argv) {
   const args = { dryRun: false, limit: null, batchSize: MAX_BATCH_ITEMS, scope: null, sleepMs: 0 };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--dry-run') args.dryRun = true;
-    else if (a === '--limit') args.limit = Number(argv[++i]);
-    else if (a === '--batch-size') args.batchSize = Math.min(Number(argv[++i]) || MAX_BATCH_ITEMS, MAX_BATCH_ITEMS);
+    else if (a === '--limit') args.limit = numArg(argv[++i], { fallback: null, min: 1 });
+    else if (a === '--batch-size') args.batchSize = Math.min(numArg(argv[++i], { fallback: MAX_BATCH_ITEMS, min: 1 }), MAX_BATCH_ITEMS);
     else if (a === '--scope') args.scope = argv[++i];
-    else if (a === '--sleep-ms') args.sleepMs = Number(argv[++i]) || 0;
+    else if (a === '--sleep-ms') args.sleepMs = numArg(argv[++i], { fallback: 0, min: 0 });
   }
   return args;
 }
