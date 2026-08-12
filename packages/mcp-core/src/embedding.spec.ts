@@ -107,10 +107,30 @@ describe('acceptsDimensionsParam', () => {
     expect(acceptsDimensionsParam('text-embedding-3-small')).toBe(true);
     expect(acceptsDimensionsParam('  text-embedding-3-large  ')).toBe(true);
     expect(acceptsDimensionsParam('text-embedding-ada-002')).toBe(false);
-    expect(acceptsDimensionsParam('azure/text-embedding-3-small')).toBe(false);
+    expect(acceptsDimensionsParam('bge-m3')).toBe(false);
     expect(acceptsDimensionsParam('')).toBe(false);
     expect(acceptsDimensionsParam(null)).toBe(false);
     expect(acceptsDimensionsParam(undefined)).toBe(false);
+  });
+
+  it('sees the family through a compatible proxy\'s provider prefix', () => {
+    // OpenRouter / LiteLLM / Azure routers address the SAME OpenAI models under
+    // a namespaced id. Excluding them would ask a 3072-native `-3-large` at its
+    // native width and then hard-reject the response — every call failing,
+    // which is worse than the 400 this gate was written to avoid.
+    expect(acceptsDimensionsParam('openai/text-embedding-3-small')).toBe(true);
+    expect(acceptsDimensionsParam('azure/text-embedding-3-large')).toBe(true);
+    expect(acceptsDimensionsParam('azure/openai/text-embedding-3-small')).toBe(true);
+    expect(acceptsDimensionsParam('OpenAI/Text-Embedding-3-Small')).toBe(true);
+    // A prefix is a prefix — the family still has to be the model itself.
+    expect(acceptsDimensionsParam('openai/text-embedding-ada-002')).toBe(false);
+    expect(acceptsDimensionsParam('cohere/embed-v4')).toBe(false);
+  });
+
+  it('answers conservatively for a deployment name that hides the family', () => {
+    // No name-based test can reach an Azure deployment called `embeddings-prod`.
+    // The safe answer is to omit the field: the response width is still checked.
+    expect(acceptsDimensionsParam('embeddings-prod')).toBe(false);
   });
 
   it('answers a different question from supportsDimensions', () => {

@@ -58,10 +58,18 @@ serve this column.
 The field is sent **only** to that family. `dimensions` arrived with it;
 `ada-002` and a number of OpenAI-compatible endpoints reject an unrecognised
 field with a 400, so sending it unconditionally would break every call against
-exactly the endpoints listed as swappable above. Any other model is asked at its
-native width instead, and the width is still enforced on the way back: a model
-that cannot serve 1536 is refused loudly — `parseEmbeddingResponse` throws on a
-wrong-width vector, naming the width, rather than storing it.
+exactly the endpoints listed as swappable above. A **provider prefix counts as
+the same family** — `openai/text-embedding-3-small` and
+`azure/text-embedding-3-large`, the form OpenRouter/LiteLLM/Azure routers use,
+are recognised — because those are the same OpenAI models, and excluding them
+would break the proxies this rule exists to protect.
+
+Any other model is asked at its native width instead, and the width is still
+enforced on the way back: a model that cannot serve 1536 is refused loudly —
+`parseEmbeddingResponse` throws on a wrong-width vector, naming the width,
+rather than storing it. That is also the answer for a deployment name that hides
+the model (an Azure deployment called `embeddings-prod`): no name-based rule can
+see the family, so the field is omitted and the response is checked.
 
 ---
 

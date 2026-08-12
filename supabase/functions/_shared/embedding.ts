@@ -159,9 +159,25 @@ export function isEmbeddable(text: unknown): boolean {
  * provider whose native width already fits needs no configuration to work, and
  * one whose width does not fit cannot be made to work by a flag. Distinct from
  * `supportsDimensions`, which answers whether a NATIVE width fits at all.
+ *
+ * A LEADING PROVIDER PREFIX IS PART OF THE FAMILY NAME, NOT A DIFFERENT MODEL.
+ * The compatible proxies this gate exists to protect (OpenRouter, LiteLLM,
+ * Azure routers) address the very same OpenAI models as `openai/…`,
+ * `azure/…`, occasionally nested — and an anchored `^text-embedding-3-` would
+ * exclude exactly those callers, asking a 3072-native `-3-large` at its native
+ * width and then hard-rejecting the response. That turns "the field is
+ * refused" into "every call fails", which is worse than the bug this function
+ * was written for. Any number of `/`-delimited prefix segments is therefore
+ * skipped, and the comparison is case-insensitive because a router's
+ * deployment id is frequently not lowercase.
+ *
+ * A deployment name that hides the family entirely (an Azure deployment called
+ * `embeddings-prod`) is out of reach of any name-based test and gets the
+ * conservative answer: no `dimensions`, and a loud width error if that model
+ * cannot serve this column.
  */
 export function acceptsDimensionsParam(model: unknown): boolean {
-  return /^text-embedding-3-/.test(String(model ?? '').trim());
+  return /^(?:[^/\s]+\/)*text-embedding-3-/i.test(String(model ?? '').trim());
 }
 
 /** The OpenAI-compatible request body. One shape, both callers. */
