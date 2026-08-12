@@ -110,6 +110,11 @@ const MAX_SKIP_IDS = 200;
  * untouched and is just as wrong: a negative `--batch-size` is what `Math.min`
  * returns, and a negative `--sleep-ms` is a no-op pretending to be rate-limit
  * relief. One guard for all three flags rather than a per-flag idiom.
+ *
+ * The guard answers "is this well-formed"; what a fallback MEANS is a per-flag
+ * question. `--batch-size` / `--sleep-ms` fall back to a safe bound, so they
+ * take the fallback. `--limit`'s fallback is `null` = unbounded, so `parseArgs`
+ * treats a `null` result there as a usage error instead of accepting it.
  */
 function numArg(raw, { fallback, min = 0 }) {
   const n = Number(raw);
@@ -118,12 +123,25 @@ function numArg(raw, { fallback, min = 0 }) {
 }
 
 function parseArgs(argv) {
-  const args = { dryRun: false, limit: null, batchSize: MAX_BATCH_ITEMS, scope: null, sleepMs: 0 };
+  const args = { dryRun: false, limit: null, batchSize: MAX_BATCH_ITEMS, scope: null, sleepMs: 0, error: null };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--dry-run') args.dryRun = true;
-    else if (a === '--limit') args.limit = numArg(argv[++i], { fallback: null, min: 1 });
-    else if (a === '--batch-size') args.batchSize = Math.min(numArg(argv[++i], { fallback: MAX_BATCH_ITEMS, min: 1 }), MAX_BATCH_ITEMS);
+    else if (a === '--limit') {
+      // `--limit` is the ONE flag whose fallback is not safe. `--batch-size`
+      // and `--sleep-ms` fall back to a bounded default, but `--limit`'s
+      // absence means "no limit" — so `--limit 0`, a negative, or a typo would
+      // silently promote a bounded run that spends money into an unbounded one.
+      // A malformed value is a usage error, not a default.
+      const raw = argv[++i];
+      const n = numArg(raw, { fallback: null, min: 1 });
+      if (n == null) {
+        args.error = `--limit needs a positive integer (got ${raw === undefined ? 'nothing' : `"${raw}"`}). `
+          + 'It is the only flag that bounds what a run spends, so it is never defaulted away — omit it for no limit.';
+        return args;
+      }
+      args.limit = n;
+    } else if (a === '--batch-size') args.batchSize = Math.min(numArg(argv[++i], { fallback: MAX_BATCH_ITEMS, min: 1 }), MAX_BATCH_ITEMS);
     else if (a === '--scope') args.scope = argv[++i];
     else if (a === '--sleep-ms') args.sleepMs = numArg(argv[++i], { fallback: 0, min: 0 });
   }
@@ -169,6 +187,10 @@ async function rest(base, key, pathAndQuery, init = {}) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.error) {
+    log(args.error);
+    return 1;
+  }
   const env = process.env;
   const supabaseUrl = env.SUPABASE_URL;
   const serviceKey = env.SUPABASE_SERVICE_ROLE_KEY;

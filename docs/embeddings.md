@@ -133,7 +133,7 @@ enabling it.
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `--dry-run` | off | Plan and cost only. One page, no provider call, no write. |
-| `--limit <n>` | none | Stop after n rows. |
+| `--limit <n>` | none | Stop after n rows. A missing, zero, negative, or non-numeric value is a usage error, not "no limit" — it is the flag that bounds what a run spends. |
 | `--batch-size <n>` | 96 | Rows per provider request (hard-capped at 96). |
 | `--scope <s>` | all | Only rows in this exact scope. |
 | `--sleep-ms <n>` | 0 | Pause between batches, for rate-limit relief. |
