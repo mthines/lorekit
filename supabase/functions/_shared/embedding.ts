@@ -269,11 +269,25 @@ export interface CostEstimate {
  */
 export function estimateCost(texts: readonly string[], usdPerMillionTokens: number | null): CostEstimate {
   const chars = (Array.isArray(texts) ? texts : []).reduce((n, t) => n + String(t ?? '').length, 0);
-  const approxTokens = Math.ceil(chars / CHARS_PER_TOKEN);
+  return estimateCostFromChars(chars, usdPerMillionTokens);
+}
+
+/**
+ * The same estimate from a character COUNT.
+ *
+ * A caller that streams through the corpus — the backfill does, batch by batch —
+ * has no reason to retain every embedded string just to total their lengths at
+ * the end; on a large store that is the run's only unbounded allocation. It gets
+ * the counter, and `CHARS_PER_TOKEN` stays in one place instead of being copied
+ * into the script.
+ */
+export function estimateCostFromChars(chars: number, usdPerMillionTokens: number | null): CostEstimate {
+  const total = typeof chars === 'number' && Number.isFinite(chars) && chars > 0 ? Math.floor(chars) : 0;
+  const approxTokens = Math.ceil(total / CHARS_PER_TOKEN);
   const usd = typeof usdPerMillionTokens === 'number' && Number.isFinite(usdPerMillionTokens)
     ? (approxTokens / 1_000_000) * usdPerMillionTokens
     : null;
-  return { chars, approxTokens, usd };
+  return { chars: total, approxTokens, usd };
 }
 
 /** Does a model's native width fit this column? Advisory — a provider that

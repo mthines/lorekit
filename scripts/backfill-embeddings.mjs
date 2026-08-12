@@ -80,7 +80,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MODULE = path.join(HERE, '..', 'packages', 'mcp-core', 'src', 'embedding.ts');
 const {
   resolveEmbeddingConfig, embeddingInput, isEmbeddable, toVectorLiteral,
-  buildEmbeddingRequest, parseEmbeddingResponse, batchInputs, estimateCost,
+  buildEmbeddingRequest, parseEmbeddingResponse, batchInputs, estimateCostFromChars,
   MAX_BATCH_ITEMS,
 } = await import(MODULE).catch((e) => {
   process.stderr.write(
@@ -176,7 +176,7 @@ async function main() {
   let batches = 0;
   let emptyRows = 0;
   const started = Date.now();
-  const costTexts = [];
+  let costChars = 0;
 
   // Rows this RUN cannot process: a batch the provider rejected, and a row with
   // no embeddable text. Both stay `embedding is null`, so without this the next
@@ -226,7 +226,11 @@ async function main() {
 
     for (const group of batchInputs(usable, (u) => u.text, { maxItems: args.batchSize })) {
       batches += 1;
-      for (const u of group) costTexts.push(u.text);
+      // The COUNT, not the texts. Retaining every embedded string kept up to
+      // MAX_EMBED_CHARS per row alive for the whole run — on a large store the
+      // only unbounded allocation in the script — and the cost line only ever
+      // needed the total.
+      for (const u of group) costChars += u.text.length;
 
       if (args.dryRun) {
         done += group.length;
@@ -275,7 +279,7 @@ async function main() {
     if (args.dryRun) break; // one page is enough to characterise the cost
   }
 
-  const cost = estimateCost(costTexts, config.usdPerMillionTokens);
+  const cost = estimateCostFromChars(costChars, config.usdPerMillionTokens);
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
 
   log('');
