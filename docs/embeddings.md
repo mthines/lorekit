@@ -216,7 +216,7 @@ split update is rejected.
 | File | Role |
 |------|------|
 | `packages/mcp-core/src/embedding.ts` | **Pure**: what to embed, request shape, response validation, batching, cost. Unit-tested without a key. |
-| `packages/mcp-core/src/embedding.spec.ts` | 26 tests over the above. |
+| `packages/mcp-core/src/embedding.spec.ts` | Unit tests over the above — config resolution, input construction, request shape, response validation, batching, and cost. No key required. |
 | `supabase/functions/_shared/embedding.ts` | Verbatim mirror (`edge-parity.spec.ts`). |
 | `supabase/functions/_shared/embedding-client.ts` | **Impure**: the `fetch`, the key, the timeout. Deno-only, not mirrored. |
 | `supabase/functions/_shared/embed-on-write.ts` | The background-and-swallow write path. |
