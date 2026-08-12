@@ -17,6 +17,17 @@ import type { Database } from '../../_shared/database.types.ts';
 
 type RateLimitRow = Database['public']['Functions']['lorekit_check_rate_limit']['Returns'][number];
 
+/**
+ * The environment, snapshotted once per isolate.
+ *
+ * `Deno.env.toObject()` copies the WHOLE secret environment, and reading five
+ * embedding variables did that on every `POST /memories` — including the
+ * disabled path, which is the one that has to stay free. Secrets are fixed for
+ * an isolate's lifetime, so a boot-time snapshot is the same value. `embedOnWrite`
+ * keeps taking `env` as a parameter so it stays testable with an injected one.
+ */
+const ENV = Deno.env.toObject();
+
 export async function handleCreate(
   req: Request, auth: AuthContext, db: DbClient, span: Span,
   _params: Record<string, string>, cors: Record<string, string>,
@@ -137,7 +148,7 @@ export async function handleCreate(
   // is explicitly enabled AND a key is configured — see `embed-on-write.ts` for
   // why it backgrounds rather than awaits, and why it SKIPS rather than falling
   // back to awaiting when the runtime has no background hook.
-  embedOnWrite(db, span, { id: row.id, key: body.key, value: body.value }, Deno.env.toObject());
+  embedOnWrite(db, span, { id: row.id, key: body.key, value: body.value }, ENV);
 
   // Audit AFTER the write succeeded. Same action/resource/target/metadata
   // shape as toolWrite, so the MCP and REST surfaces produce comparable rows.
