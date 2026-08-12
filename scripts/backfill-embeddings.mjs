@@ -125,6 +125,11 @@ function numArg(raw, { fallback, min = 0 }) {
   return Math.floor(n);
 }
 
+/** `true` when `raw` cannot be a flag's value: absent, blank, or the next flag. */
+function isMissingValue(raw) {
+  return raw === undefined || raw.startsWith('--') || raw.trim() === '';
+}
+
 function parseArgs(argv) {
   const args = { dryRun: false, limit: null, batchSize: MAX_BATCH_ITEMS, scope: null, sleepMs: 0, error: null };
   for (let i = 0; i < argv.length; i += 1) {
@@ -144,19 +149,36 @@ function parseArgs(argv) {
         return args;
       }
       args.limit = n;
-    } else if (a === '--batch-size') args.batchSize = Math.min(numArg(argv[++i], { fallback: MAX_BATCH_ITEMS, min: 1 }), MAX_BATCH_ITEMS);
-    else if (a === '--scope') {
+    } else if (a === '--batch-size') {
+      // A value-taking flag that eats the NEXT flag is wrong even when its own
+      // fallback is safe: `--batch-size --scope personal` swallowed `--scope`
+      // into `numArg`, defaulted the batch size, and silently widened the run
+      // to every scope. Guard the value before interpreting it.
+      const raw = argv[++i];
+      if (isMissingValue(raw)) {
+        args.error = `--batch-size needs a positive integer (got ${raw === undefined ? 'nothing' : `"${raw}"`}).`;
+        return args;
+      }
+      args.batchSize = Math.min(numArg(raw, { fallback: MAX_BATCH_ITEMS, min: 1 }), MAX_BATCH_ITEMS);
+    } else if (a === '--scope') {
       // Same shape as `--limit`: the fallback (`null` = EVERY scope) widens the
       // run rather than bounding it, so a missing value — or the next flag,
       // swallowed as this one's argument — must not be accepted silently.
       const raw = argv[++i];
-      if (raw === undefined || raw.startsWith('--') || raw.trim() === '') {
+      if (isMissingValue(raw)) {
         args.error = `--scope needs a scope string (got ${raw === undefined ? 'nothing' : `"${raw}"`}). `
           + 'Omitting it is how you ask for every scope, so a missing value is never assumed.';
         return args;
       }
       args.scope = raw;
-    } else if (a === '--sleep-ms') args.sleepMs = numArg(argv[++i], { fallback: 0, min: 0 });
+    } else if (a === '--sleep-ms') {
+      const raw = argv[++i];
+      if (isMissingValue(raw)) {
+        args.error = `--sleep-ms needs a non-negative integer (got ${raw === undefined ? 'nothing' : `"${raw}"`}).`;
+        return args;
+      }
+      args.sleepMs = numArg(raw, { fallback: 0, min: 0 });
+    }
   }
   return args;
 }
