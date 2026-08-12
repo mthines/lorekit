@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   resolveEmbeddingConfig, embeddingInput, isEmbeddable, buildEmbeddingRequest,
   parseEmbeddingResponse, toVectorLiteral, batchInputs, estimateCost, estimateCostFromChars, supportsDimensions,
+  acceptsDimensionsParam,
   EmbeddingError, EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL, MAX_EMBED_CHARS,
 } from './embedding.js';
 
@@ -73,11 +74,24 @@ describe('embeddingInput', () => {
 });
 
 describe('buildEmbeddingRequest', () => {
-  it('asks for the column width explicitly', () => {
+  it('asks for the column width explicitly on the family that accepts it', () => {
     // Matryoshka truncation is what lets a 3072-native model serve a 1536-wide
     // column instead of being unusable.
-    const body = buildEmbeddingRequest(['a', 'b'], { model: 'm' });
-    expect(body).toEqual({ model: 'm', input: ['a', 'b'], dimensions: EMBEDDING_DIMENSIONS, encoding_format: 'float' });
+    const body = buildEmbeddingRequest(['a', 'b'], { model: 'text-embedding-3-large' });
+    expect(body).toEqual({
+      model: 'text-embedding-3-large', input: ['a', 'b'], dimensions: EMBEDDING_DIMENSIONS, encoding_format: 'float',
+    });
+  });
+
+  it('omits dimensions for a model whose API would reject the field', () => {
+    // ada-002 and several OpenAI-compatible endpoints 400 on an unrecognised
+    // field, which would break every call against the provider swap the docs
+    // advertise. The width is still enforced — on the RESPONSE.
+    for (const model of ['text-embedding-ada-002', 'bge-m3', 'm']) {
+      const body = buildEmbeddingRequest(['a'], { model });
+      expect(body).toEqual({ model, input: ['a'], encoding_format: 'float' });
+      expect('dimensions' in body).toBe(false);
+    }
   });
 
   it('copies the inputs rather than aliasing the caller\'s array', () => {
@@ -85,6 +99,26 @@ describe('buildEmbeddingRequest', () => {
     const body = buildEmbeddingRequest(inputs, { model: 'm' });
     inputs.push('b');
     expect(body.input).toEqual(['a']);
+  });
+});
+
+describe('acceptsDimensionsParam', () => {
+  it('is true only for the text-embedding-3 family, and is total over junk', () => {
+    expect(acceptsDimensionsParam('text-embedding-3-small')).toBe(true);
+    expect(acceptsDimensionsParam('  text-embedding-3-large  ')).toBe(true);
+    expect(acceptsDimensionsParam('text-embedding-ada-002')).toBe(false);
+    expect(acceptsDimensionsParam('azure/text-embedding-3-small')).toBe(false);
+    expect(acceptsDimensionsParam('')).toBe(false);
+    expect(acceptsDimensionsParam(null)).toBe(false);
+    expect(acceptsDimensionsParam(undefined)).toBe(false);
+  });
+
+  it('answers a different question from supportsDimensions', () => {
+    // One is about the REQUEST field, the other about a native width fitting
+    // the column. A 3072-native -3-* model accepts the param and does not fit
+    // natively; that combination is the whole reason the param is sent.
+    expect(acceptsDimensionsParam(DEFAULT_EMBEDDING_MODEL)).toBe(true);
+    expect(supportsDimensions(3072)).toBe(false);
   });
 });
 

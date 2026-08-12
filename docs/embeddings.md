@@ -50,11 +50,18 @@ preference: pgvector's HNSW index refuses more than **2000 dimensions** on the
 `vector` type, so a 3072-wide model could not be ANN-indexed at all without
 switching the column to `halfvec` and halving precision.
 
-This does **not** lock you to one provider. Every request asks for
-`dimensions: 1536` explicitly, and models supporting Matryoshka truncation (the
-`-3-*` family and several others) honour it — so a 3072-native model can serve
-this column. A model that cannot is refused loudly:
-`parseEmbeddingResponse` throws on a wrong-width vector rather than storing it.
+This does **not** lock you to one provider. A request to the
+`text-embedding-3-*` family asks for `dimensions: 1536` explicitly, and those
+models honour it through Matryoshka truncation — so a 3072-native model can
+serve this column.
+
+The field is sent **only** to that family. `dimensions` arrived with it;
+`ada-002` and a number of OpenAI-compatible endpoints reject an unrecognised
+field with a 400, so sending it unconditionally would break every call against
+exactly the endpoints listed as swappable above. Any other model is asked at its
+native width instead, and the width is still enforced on the way back: a model
+that cannot serve 1536 is refused loudly — `parseEmbeddingResponse` throws on a
+wrong-width vector, naming the width, rather than storing it.
 
 ---
 

@@ -140,6 +140,30 @@ export function isEmbeddable(text: unknown): boolean {
   return String(text ?? '').trim().length > 0;
 }
 
+/**
+ * Does this model's API accept the `dimensions` request parameter?
+ *
+ * `dimensions` arrived with the `text-embedding-3-*` family. `ada-002` predates
+ * it and a number of OpenAI-COMPATIBLE endpoints reject an unrecognised field
+ * outright, so sending it unconditionally 400s EVERY call against exactly the
+ * provider swap this schema advertises as supported. Gate it on the family that
+ * documents the parameter and let every other provider answer at its native
+ * width.
+ *
+ * Omitting it is safe because the width is still checked: a provider whose
+ * native width is not this column's is refused loudly by
+ * `parseEmbeddingResponse`, with the width in the message — a failure that
+ * names the real constraint, rather than a 400 that names a field.
+ *
+ * A model-family test rather than a sixth `LOREKIT_EMBEDDING_*` variable: a
+ * provider whose native width already fits needs no configuration to work, and
+ * one whose width does not fit cannot be made to work by a flag. Distinct from
+ * `supportsDimensions`, which answers whether a NATIVE width fits at all.
+ */
+export function acceptsDimensionsParam(model: unknown): boolean {
+  return /^text-embedding-3-/.test(String(model ?? '').trim());
+}
+
 /** The OpenAI-compatible request body. One shape, both callers. */
 export function buildEmbeddingRequest(inputs: readonly string[], config: Pick<EmbeddingConfig, 'model'>) {
   return {
@@ -148,8 +172,9 @@ export function buildEmbeddingRequest(inputs: readonly string[], config: Pick<Em
     // Ask the provider to return exactly the width the column is declared at.
     // Models supporting Matryoshka truncation (the `-3-*` family and several
     // others) honour this, which is what lets a 3072-native model be used
-    // against a 1536-wide column instead of being unusable.
-    dimensions: EMBEDDING_DIMENSIONS,
+    // against a 1536-wide column instead of being unusable. Sent ONLY to the
+    // family that documents the parameter — see `acceptsDimensionsParam`.
+    ...(acceptsDimensionsParam(config.model) ? { dimensions: EMBEDDING_DIMENSIONS } : {}),
     encoding_format: 'float',
   };
 }
