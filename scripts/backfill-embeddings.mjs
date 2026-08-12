@@ -145,8 +145,18 @@ function parseArgs(argv) {
       }
       args.limit = n;
     } else if (a === '--batch-size') args.batchSize = Math.min(numArg(argv[++i], { fallback: MAX_BATCH_ITEMS, min: 1 }), MAX_BATCH_ITEMS);
-    else if (a === '--scope') args.scope = argv[++i];
-    else if (a === '--sleep-ms') args.sleepMs = numArg(argv[++i], { fallback: 0, min: 0 });
+    else if (a === '--scope') {
+      // Same shape as `--limit`: the fallback (`null` = EVERY scope) widens the
+      // run rather than bounding it, so a missing value — or the next flag,
+      // swallowed as this one's argument — must not be accepted silently.
+      const raw = argv[++i];
+      if (raw === undefined || raw.startsWith('--') || raw.trim() === '') {
+        args.error = `--scope needs a scope string (got ${raw === undefined ? 'nothing' : `"${raw}"`}). `
+          + 'Omitting it is how you ask for every scope, so a missing value is never assumed.';
+        return args;
+      }
+      args.scope = raw;
+    } else if (a === '--sleep-ms') args.sleepMs = numArg(argv[++i], { fallback: 0, min: 0 });
   }
   return args;
 }
