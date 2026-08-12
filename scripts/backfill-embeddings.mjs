@@ -130,7 +130,24 @@ function parseArgs(argv) {
   return args;
 }
 
+/** Concurrent row writes per batch. Enough to hide the round-trip latency, few
+ *  enough to stay polite to PostgREST's connection pool. */
+const WRITE_CONCURRENCY = 8;
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Run `fn` over every item with at most `limit` in flight, preserving each
+ * item's index. Rejects with the first error, exactly like `Promise.all`, so
+ * the caller's failure accounting is unchanged.
+ */
+async function mapConcurrent(items, limit, fn) {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (let i = next++; i < items.length; i = next++) await fn(items[i], i);
+  });
+  await Promise.all(workers);
+}
 
 function log(...parts) {
   process.stdout.write(`${parts.join(' ')}\n`);
@@ -247,21 +264,29 @@ async function main() {
         if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
         const vectors = parseEmbeddingResponse(await res.json(), group.length);
 
-        for (let i = 0; i < group.length; i += 1) {
-          await rest(
-            supabaseUrl, serviceKey,
-            `/memories?id=eq.${group[i].row.id}`,
-            {
-              method: 'PATCH',
-              // Both columns in ONE statement — the 00060 CHECK requires
-              // both-or-neither, so a split update would be rejected.
-              body: JSON.stringify({
-                embedding: toVectorLiteral(vectors[i]),
-                embedding_model: config.model,
-              }),
-            },
-          );
-        }
+        // Concurrent, not serial: one awaited PATCH per row made the write phase
+        // dominate a large run and undid the batching the embed call just did.
+        //
+        // A single BULK upsert per batch is not reachable from here. `memories`
+        // is arbitrated by PARTIAL unique indexes (`where archived_at is null`,
+        // 00003/00016) that PostgREST's `upsert(onConflict)` cannot target —
+        // which is why `memory_write` exists — and an id-keyed upsert would have
+        // to carry every NOT NULL column, so a payload of just the two embedding
+        // columns would clobber scope/key/value. A bounded pool buys the same
+        // wall-clock win with the same statements.
+        await mapConcurrent(group, WRITE_CONCURRENCY, (u, i) => rest(
+          supabaseUrl, serviceKey,
+          `/memories?id=eq.${u.row.id}`,
+          {
+            method: 'PATCH',
+            // Both columns in ONE statement — the 00060 CHECK requires
+            // both-or-neither, so a split update would be rejected.
+            body: JSON.stringify({
+              embedding: toVectorLiteral(vectors[i]),
+              embedding_model: config.model,
+            }),
+          },
+        ));
         done += group.length;
       } catch (e) {
         // Skipped, not fatal: one bad batch must not end a run with thousands
