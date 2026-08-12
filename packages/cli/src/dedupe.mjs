@@ -252,7 +252,13 @@ export async function dedupe(args) {
     log('');
     const total = offlineClusters + remoteClusters;
     if (total === 0) {
-      log(`  ${c.green('✓')} no likely-duplicate clusters at this threshold`);
+      // "at this threshold" is only true in value mode — key-shape mode has no
+      // cutoff, so name the pattern that found nothing instead.
+      log(
+        byKeyMode
+          ? `  ${c.green('✓')} no key-shape clusters for /${keyPattern.source}/`
+          : `  ${c.green('✓')} no likely-duplicate clusters at this threshold`,
+      );
     } else {
       const plural = total === 1 ? '' : 's';
       log(`  ${c.yellow('!')} ${total} duplicate cluster${plural} found`);

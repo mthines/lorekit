@@ -356,6 +356,14 @@ test('dedupe --cluster-by-key with no regex value is a usage error (exit 1)', ()
   assert.match(res.stderr, /needs a regex value/);
 });
 
+test('the empty summary names the pattern in key mode, never a threshold', () => {
+  const { root, home } = seedCoordKeys();
+  const res = runDedupe(root, home, ['--cluster-by-key', '(nomatch\\d+)']);
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /no key-shape clusters for \/\(nomatch\\d\+\)\//);
+  assert.equal(/at this threshold/.test(res.stdout), false);
+});
+
 test('dedupe --cluster-by-key with an explicit --threshold is a usage error (exit 1)', () => {
   const { root, home } = seedCoordKeys();
   const res = runDedupe(root, home, ['--cluster-by-key', '(pr\\d+-\\d+)', '--threshold', '0.6', '--json']);
