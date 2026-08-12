@@ -180,6 +180,8 @@ heuristic the CLI's SessionStart budget uses; neither needs better than an order
 of magnitude), and the estimated dollars for **one page**. Multiply by your
 pending count for a whole-store figure.
 
+On a real run the cost line counts a batch only once the provider has accepted it, so a rejected batch is never billed into `chars:` / `est. cost:`.
+
 `usd` reports as `unknown` rather than `0` when no price is configured. A
 guessed price is worse than an absent one when the number is about to inform a
 decision.

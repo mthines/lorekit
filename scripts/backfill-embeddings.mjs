@@ -303,9 +303,12 @@ async function main() {
       // MAX_EMBED_CHARS per row alive for the whole run — on a large store the
       // only unbounded allocation in the script — and the cost line only ever
       // needed the total.
-      for (const u of group) costChars += u.text.length;
+      const groupChars = group.reduce((n, u) => n + u.text.length, 0);
 
       if (args.dryRun) {
+        // A dry run bills the PLAN: nothing is sent, and the whole point is
+        // what the run WOULD cost, so every batch counts.
+        costChars += groupChars;
         done += group.length;
         continue;
       }
@@ -333,6 +336,12 @@ async function main() {
         if (args.sleepMs) await sleep(args.sleepMs);
         continue;
       }
+
+      // Charged only once the provider ACCEPTED the batch. Counting before the
+      // call billed the run for text it never embedded, so a run with rejected
+      // batches reported a cost the invoice will not show. A write that fails
+      // afterwards still counts: the tokens were spent either way.
+      costChars += groupChars;
 
       // The WRITE phase is per row, and so is its accounting. Concurrent, not
       // serial: one awaited PATCH per row made the write phase dominate a large
