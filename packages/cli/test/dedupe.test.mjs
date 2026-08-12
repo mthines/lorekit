@@ -127,11 +127,11 @@ test('compileKeyPattern returns a RegExp for valid input, null for bad input', (
   assert.equal(compileKeyPattern('(unclosed'), null); // unparseable regex → null, never throws
 });
 
-test('compileKeyPattern strips global/sticky flags so exec stays stateless', () => {
-  const re = compileKeyPattern('(pr\\d+)');
-  // built from a plain string it has no flags; passing a /g RegExp through
-  // clusterByKeyPattern must still be stateless — assert the compiled form is clean.
-  assert.equal(re.flags.includes('g'), false);
+test('clusterByKeyPattern strips global/sticky flags so exec stays stateless', () => {
+  // A string source can carry no flags at all, so the stateless guarantee for
+  // compileKeyPattern is structural — record it, then exercise the branch that
+  // actually strips: clusterByKeyPattern's RegExp input.
+  assert.equal(compileKeyPattern('(pr\\d+)').flags, '');
   // A deliberately /g regex must not desync exec state across entries. With
   // `(pr\d+-\d+)` the two keys capture pr9-1 vs pr9-2 (distinct) → no cluster;
   // a stateful lastIndex bug would make the second exec miss and change the count.
