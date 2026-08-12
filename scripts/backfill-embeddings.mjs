@@ -50,6 +50,18 @@
  *   run. `--strict` is deliberately absent: a partially-complete backfill is a
  *   normal state here, not an error condition.
  *
+ *   A ROW THIS RUN CANNOT PROCESS IS EXCLUDED FROM THE QUEUE, NOT JUST SKIPPED.
+ *   The queue is the query `embedding is null`, so a row the run leaves null is
+ *   a row the next page returns again. Across RUNS that is the feature (the next
+ *   run retries a transient failure); within ONE run it is a livelock — a
+ *   deterministic failure (revoked key, unusable model, an input the provider
+ *   always rejects) re-fetches the identical page and fails it forever. The same
+ *   shape sits one branch over: a row with no embeddable text can never leave the
+ *   queue either, and a page made entirely of them used to end the run early
+ *   while embeddable rows were still waiting further down the ordering. Both go
+ *   into one `skipIds` set that the query excludes, so every pass either makes
+ *   progress or terminates.
+ *
  *   IT NEVER PRINTS THE KEY. Provider error bodies are truncated and the key
  *   only ever travels in a header.
  *
@@ -78,6 +90,15 @@ const {
   );
   process.exit(1);
 });
+
+/**
+ * How many rows this run may carry in its exclusion list before it stops.
+ *
+ * The list travels in the query string, so it has to be bounded by something;
+ * ~40 characters per uuid entry puts this comfortably inside every proxy's URL
+ * limit.
+ */
+const MAX_SKIP_IDS = 200;
 
 function parseArgs(argv) {
   const args = { dryRun: false, limit: null, batchSize: MAX_BATCH_ITEMS, scope: null, sleepMs: 0 };
@@ -136,18 +157,34 @@ async function main() {
   let done = 0;
   let failed = 0;
   let batches = 0;
+  let emptyRows = 0;
   const started = Date.now();
   const costTexts = [];
+
+  // Rows this RUN cannot process: a batch the provider rejected, and a row with
+  // no embeddable text. Both stay `embedding is null`, so without this the next
+  // page is the same page — see the properties block above.
+  const skipIds = new Set();
 
   for (;;) {
     if (args.limit != null && done >= args.limit) break;
     const want = args.limit != null ? Math.min(args.batchSize, args.limit - done) : args.batchSize;
 
+    // The exclusion list travels in the URL, so it cannot grow without bound.
+    // Stopping is the honest outcome: what is left is what this run has already
+    // proven it cannot process, and the counts below tell the operator what to
+    // fix before rerunning.
+    if (skipIds.size > MAX_SKIP_IDS) {
+      log(`  stopping: ${skipIds.size} row(s) could not be processed this run (see counts below)`);
+      break;
+    }
+    const skipFilter = skipIds.size > 0 ? `&id=not.in.(${[...skipIds].join(',')})` : '';
+
     // RE-QUERY, never offset: rows filled by this run drop out of the result on
     // their own, and an offset walk over a set being mutated skips rows.
     const rows = await rest(
       supabaseUrl, serviceKey,
-      `/memories?select=id,key,value&embedding=is.null&archived_at=is.null${scopeFilter}`
+      `/memories?select=id,key,value&embedding=is.null&archived_at=is.null${scopeFilter}${skipFilter}`
       + `&order=created_at.desc&limit=${want}`,
     );
     if (!Array.isArray(rows) || rows.length === 0) break;
@@ -156,13 +193,19 @@ async function main() {
       .map((r) => ({ row: r, text: embeddingInput(r) }))
       .filter((r) => isEmbeddable(r.text));
 
-    // A row whose text is empty can never be embedded, so leaving it in the
-    // queue would make the loop spin forever on the same page. It is reported
-    // and left alone — an empty memory is a lint finding, not a backfill's
-    // problem to fix.
+    // A row whose text is empty can never be embedded. It is reported and left
+    // alone — an empty memory is a lint finding, not a backfill's problem to fix
+    // — but it is excluded from the queue, or a page made of them comes back
+    // unchanged for the rest of the run.
     const empty = rows.length - usable.length;
-    if (empty > 0) log(`  skipped ${empty} row(s) with no embeddable text`);
-    if (usable.length === 0) break;
+    if (empty > 0) {
+      emptyRows += empty;
+      for (const r of rows) if (!isEmbeddable(embeddingInput(r))) skipIds.add(r.id);
+      log(`  skipped ${empty} row(s) with no embeddable text`);
+    }
+    // `continue`, not `break`: the embeddable rows further down the ordering are
+    // still work this run should do.
+    if (usable.length === 0) continue;
 
     for (const group of batchInputs(usable, (u) => u.text, { maxItems: args.batchSize })) {
       batches += 1;
@@ -201,8 +244,11 @@ async function main() {
         done += group.length;
       } catch (e) {
         // Skipped, not fatal: one bad batch must not end a run with thousands
-        // of rows left, and these rows stay null for the next one.
+        // of rows left, and these rows stay null for the next one. Excluded from
+        // THIS run's queue so a deterministic failure cannot re-serve the same
+        // page forever.
         failed += group.length;
+        for (const u of group) skipIds.add(u.row.id);
         log(`  batch failed (${group.length} rows), continuing: ${String(e?.message ?? e).slice(0, 200)}`);
       }
 
@@ -218,6 +264,7 @@ async function main() {
   log('');
   log(args.dryRun ? '── dry run (nothing was sent or written) ──' : '── backfill complete ──');
   log(`  rows:      ${done}${failed ? ` (${failed} failed, still null — rerun to retry)` : ''}`);
+  if (emptyRows) log(`  unusable:  ${emptyRows} (no embeddable text — these will never be filled)`);
   log(`  batches:   ${batches}`);
   log(`  chars:     ${cost.chars}`);
   log(`  ~tokens:   ${cost.approxTokens}`);
