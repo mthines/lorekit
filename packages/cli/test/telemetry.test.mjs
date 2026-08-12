@@ -17,6 +17,8 @@ import {
   resolveDeploymentEnvironment,
   resolveTelemetryTokenSource,
   probeTelemetryExport,
+  CLI_OUTCOMES,
+  CLI_OUTCOME_VALUES,
 } from '../src/telemetry.mjs';
 import { TELEMETRY_TOKEN } from '../src/telemetry-token.mjs';
 import { injectToken } from '../../../scripts/inject-telemetry-token.mjs';
@@ -901,4 +903,265 @@ test('inject-telemetry-token --require refuses to publish a telemetry-blind CLI'
     env: { ...process.env, LOREKIT_TELEMETRY_TOKEN: '' },
   });
   assert.equal(lenient.status, 0);
+});
+
+// ── lorekit.cli.outcome is a CLOSED vocabulary, pinned to the docs ───────────
+// `lorekit.cli.outcome` is the attribute every CLI failure query has to be
+// built on, because a reported verdict deliberately does NOT set the span
+// status (see the STATUS_CODE_ERROR block above). That makes it a real
+// contract with consumers outside this repo — dashboards and check rules —
+// and until now its vocabulary existed only as three inline string literals,
+// discoverable from emitted telemetry and nowhere else.
+//
+// Read from telemetry alone the set is easy to misread: a `doctor` that
+// CRASHED in one release and FAILED GRACEFULLY in the next reports `error`
+// then `failure` for the same user-visible symptom, which looks like the
+// attribute drifting when it is actually the CLI improving. These guards make
+// the set explicit and keep `docs/otel.md` from describing a vocabulary the
+// code no longer emits.
+
+test('CLI_OUTCOMES is exactly the three documented values, and frozen', () => {
+  assert.deepEqual(CLI_OUTCOME_VALUES, ['ok', 'failure', 'error']);
+  assert.equal(Object.isFrozen(CLI_OUTCOMES), true);
+  assert.equal(Object.isFrozen(CLI_OUTCOME_VALUES), true);
+});
+
+test('traceCommand only ever emits an outcome from the closed vocabulary', async () => {
+  // Drives the REAL traceCommand once per branch — clean exit, reported
+  // verdict, crash — and reads each outcome back off the span that was
+  // actually exported. Asserting over hand-passed constants would only restate
+  // the previous test: the values would come from the test, not from the code
+  // under scan, so a fourth branch emitting something new would still pass.
+  //
+  // The single-branch tests above pin the outcome↔span-status pairing; this one
+  // pins the SET — every branch traceCommand has lands inside CLI_OUTCOMES.
+  const prevHeaders = process.env.OTEL_EXPORTER_OTLP_HEADERS;
+  process.env.OTEL_EXPORTER_OTLP_HEADERS = 'Authorization=Bearer test';
+  const { calls, restore } = stubFetch();
+
+  const outcomeOf = (call) => {
+    const span = call.body.resourceSpans[0].scopeSpans[0].spans[0];
+    return Object.fromEntries(span.attributes.map((a) => [a.key, a.value]))[
+      'lorekit.cli.outcome'
+    ].stringValue;
+  };
+
+  try {
+    // Exit 0 → ok.
+    assert.equal(await traceCommand('list', {}, '1.0.0', async () => 0), 0);
+    // Non-zero exit → failure (the verdict branch).
+    assert.equal(await traceCommand('lint', {}, '1.0.0', async () => 1), 1);
+    // Throw → error (the crash branch).
+    await assert.rejects(
+      traceCommand('doctor', {}, '1.0.0', async () => {
+        throw new TypeError('boom');
+      }),
+    );
+  } finally {
+    restore();
+    if (prevHeaders === undefined) delete process.env.OTEL_EXPORTER_OTLP_HEADERS;
+    else process.env.OTEL_EXPORTER_OTLP_HEADERS = prevHeaders;
+  }
+
+  const seen = calls.filter((c) => c.url.endsWith('/v1/traces')).map(outcomeOf);
+  assert.deepEqual(seen, ['ok', 'failure', 'error']);
+  for (const outcome of seen) {
+    assert.ok(CLI_OUTCOME_VALUES.includes(outcome), `unexpected outcome: ${outcome}`);
+  }
+});
+
+test('extraAttrs cannot override the outcome the call site froze', () => {
+  // The source scan proves the LITERAL at each call site; it cannot prove the
+  // value survives to the wire. `commandAttributes` merges a command's
+  // diagnostic bag into the same flat namespace, so a command returning
+  // `{ exitCode, 'lorekit.cli.outcome': … }` used to replace the frozen value
+  // on the way out — silently, and invisibly to any source scan.
+  const attrs = commandAttributes({
+    command: 'doctor',
+    args: {},
+    outcome: CLI_OUTCOMES.FAILURE,
+    exitCode: 1,
+    extraAttrs: {
+      'lorekit.cli.outcome': 'bogus',
+      'lorekit.cli.command': 'not-doctor',
+      'lorekit.cli.exit_code': 99,
+      'lorekit.cli.doctor.failed_checks': 'connectivity',
+    },
+  });
+
+  assert.equal(attrs['lorekit.cli.outcome'], 'failure');
+  assert.equal(attrs['lorekit.cli.command'], 'doctor');
+  assert.equal(attrs['lorekit.cli.exit_code'], 1);
+  // ...and a non-colliding extra is still carried through.
+  assert.equal(attrs['lorekit.cli.doctor.failed_checks'], 'connectivity');
+});
+
+test('the owned attribute namespace is reserved even where nothing is written', () => {
+  // Two of the owned keys are CONDITIONAL — `exit_code` only when `exitCode` is
+  // a number, each flag only when it is truthy — so overwriting key by key left
+  // the gap open in exactly the cases where the CLI emits nothing: the extras
+  // value would have been the only `lorekit.cli.exit_code` on the span, sourced
+  // from the command instead of from here.
+  const attrs = commandAttributes({
+    command: 'list',
+    args: { deep: false },
+    outcome: CLI_OUTCOMES.OK,
+    exitCode: undefined,
+    extraAttrs: {
+      'lorekit.cli.exit_code': 99,
+      'lorekit.cli.flag.deep': true,
+      'lorekit.cli.flag.made_up': true,
+      'lorekit.cli.list.entries': 12,
+    },
+  });
+
+  assert.ok(!('lorekit.cli.exit_code' in attrs), 'extras must not supply the exit code');
+  assert.ok(!('lorekit.cli.flag.deep' in attrs), 'extras must not supply a flag the args did not set');
+  assert.ok(!('lorekit.cli.flag.made_up' in attrs), 'extras must not invent a flag attribute');
+  assert.equal(attrs['lorekit.cli.outcome'], 'ok');
+  assert.equal(attrs['lorekit.cli.list.entries'], 12);
+});
+
+test('telemetry.mjs assigns outcome only from CLI_OUTCOMES, never a bare literal', async () => {
+  // Source scan rather than a behavioural assertion: a fourth value added at a
+  // new call site would not fail any existing test, and the failure mode is
+  // silent — an unbounded attribute value simply appears in the data one day.
+  const { readFileSync } = await import('node:fs');
+  const { join, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const source = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'telemetry.mjs'),
+    'utf8',
+  );
+
+  // Strip comments first: the docblocks in this file legitimately QUOTE the
+  // attribute (`lorekit.cli.outcome=failure`), and a scan that cannot tell
+  // prose from code would fail on its own documentation. Over-stripping is
+  // caught by the anti-vacuity floors below.
+  //
+  // The `//` half has to be QUOTE-AWARE, not line-anchored. Anchoring it to
+  // the start of a line strips only whole-line comments, so a trailing
+  // `// outcome = 'x'` on a code line survives into the scan and fails the
+  // assertion below for a comment. But a blind cut at the first `//` is worse:
+  // this file contains `https://` inside string literals, and cutting there
+  // would silently delete real code — which is what the anti-vacuity floors
+  // exist to catch. So track string state and cut only outside one.
+  const stripComments = (text) => {
+    let out = '';
+    let quote = null; // "'", '"' or '`' while inside a string literal
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (quote) {
+        out += ch;
+        if (ch === '\\') {
+          out += text[i + 1] ?? '';
+          i++;
+        } else if (ch === quote) {
+          quote = null;
+        }
+        continue;
+      }
+      if (ch === '\'' || ch === '"' || ch === '`') {
+        quote = ch;
+        out += ch;
+        continue;
+      }
+      if (ch === '/' && text[i + 1] === '/') {
+        while (i < text.length && text[i] !== '\n') i++;
+        out += '\n';
+        continue;
+      }
+      out += ch;
+    }
+    return out;
+  };
+
+  const code = stripComments(source.replace(/\/\*[\s\S]*?\*\//g, ''));
+
+  const assignments = [...code.matchAll(/\boutcome\s*=\s*(?!=)([^;\n]+)/g)].map((m) => m[1].trim());
+  // The attribute is also written BY NAME, which `outcome =` cannot see:
+  // `commandAttributes` builds the bag and `probeTelemetryExport` builds its own
+  // by hand rather than calling it. Scanning only the assignment form walked
+  // straight past the probe's bare literal — the one call site the vocabulary
+  // did not reach. Both spellings of a by-name write count: the object key
+  // (`'lorekit.cli.outcome': x`) and the bracket assignment
+  // (`attrs['lorekit.cli.outcome'] = x`), or moving between them would quietly
+  // drop a call site out of the scan.
+  const keyedWrites = [
+    ...code.matchAll(/['"]lorekit\.cli\.outcome['"]\s*(?::|\]\s*=(?!=))\s*([^,;\n}]+)/g),
+  ].map((m) => m[1].trim());
+
+  // Anti-vacuity, one floor per form: the three assignments in traceCommand,
+  // and the two keyed writes (commandAttributes' bag, the probe span).
+  assert.ok(assignments.length >= 3, `expected >= 3 outcome assignments, found ${assignments.length}`);
+  assert.ok(keyedWrites.length >= 2, `expected >= 2 keyed outcome writes, found ${keyedWrites.length}`);
+
+  for (const rhs of assignments) {
+    assert.ok(
+      rhs.startsWith('CLI_OUTCOMES.'),
+      `outcome must be assigned from CLI_OUTCOMES, found: ${rhs}`,
+    );
+  }
+  // `commandAttributes` legitimately forwards its own `outcome` parameter —
+  // the value reaching it already came from the frozen set. Every other keyed
+  // write must name the set directly.
+  for (const rhs of keyedWrites) {
+    assert.ok(
+      rhs === 'outcome' || rhs.startsWith('CLI_OUTCOMES.'),
+      `'lorekit.cli.outcome' must be written from CLI_OUTCOMES, found: ${rhs}`,
+    );
+  }
+});
+
+test('docs/otel.md documents exactly the vocabulary the code emits', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { join, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const docs = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'docs', 'otel.md'),
+    'utf8',
+  );
+
+  // Must be the TABLE ROW, not merely the first line mentioning the attribute:
+  // the prose below the table already names it twice, and prose added ABOVE it
+  // would be picked instead and then fail with a confusing "no alternation"
+  // message about a sentence. Require the line to be a table row (leading `|`)
+  // and to be unambiguous.
+  const rows = docs
+    .split('\n')
+    .filter((line) => line.trimStart().startsWith('|') && line.includes('`lorekit.cli.outcome`'));
+  assert.equal(
+    rows.length,
+    1,
+    `docs/otel.md must document lorekit.cli.outcome in exactly one table row, found ${rows.length}`,
+  );
+  const row = rows[0];
+
+  // Every value the code can emit is named in the row...
+  for (const value of CLI_OUTCOME_VALUES) {
+    assert.ok(row.includes(`\`${value}\``), `docs/otel.md omits the ${value} outcome`);
+  }
+  // ...and the row names no value the code cannot emit. Read that off the
+  // row's VALUE ALTERNATION (`ok` \| `failure` \| `error`) rather than off every
+  // backticked token in the row, which also picks up the prose after the em
+  // dash (`doctor`, `lint`) and would fail the moment the explanation gained
+  // another backticked word. Excluding those by name is a list that has to be
+  // maintained in step with the prose — and it had already gone stale:
+  // `lorekit` was on it although `[a-z_]+` can never match
+  // `lorekit.cli.outcome`. The alternation is the part of the row that IS the
+  // vocabulary, so pin that and let the prose say whatever it needs to.
+  // The separator must be the ESCAPED `\|`: the row is a Markdown table row, so
+  // a bare `|` is a cell boundary — matching it would swallow the neighbouring
+  // "default value" cell (also `ok`) into the alternation.
+  const alternation = row.match(/`[a-z_]+`(?:\s*\\\|\s*`[a-z_]+`)+/);
+  assert.ok(
+    alternation,
+    'docs/otel.md must list the outcome values as a `a` \\| `b` alternation',
+  );
+  const documented = [...alternation[0].matchAll(/`([a-z_]+)`/g)].map((m) => m[1]);
+  assert.deepEqual(
+    documented,
+    [...CLI_OUTCOME_VALUES],
+    'docs/otel.md must document exactly the outcomes the code can emit',
+  );
 });

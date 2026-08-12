@@ -34,6 +34,14 @@ and local operations.
 > this, mirror the flag (or disable Git deployments in the Vercel dashboard) or
 > you will double-deploy.
 >
+> The sticky comment is a Vercel-style status table exposing **both** URLs, like
+> the Git integration did: a **stable** `Preview` link (a `lorekit-pr-<n>-<scope>`
+> alias the job re-points to the newest deployment via `vercel alias set` — which
+> re-points, not deploys, so it costs no quota) and the **immutable** per-commit
+> `Deployment` link. The alias `<scope>` is derived from the deployment host so it
+> satisfies the CORS allowlist (`isVercelPreviewOrigin`); if aliasing isn't
+> permitted on the plan, the comment degrades to the per-commit link alone.
+>
 > The three preview jobs (`ci.yml` `web-preview`, `deploy.yml`
 > `deploy-web-preview`, `preview.yml` `deploy-web`) share one implementation:
 > the composite action **`.github/actions/vercel-preview-deploy`** (pull → build

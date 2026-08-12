@@ -102,6 +102,15 @@ importers:
 
   packages/cli: {}
 
+  packages/evals:
+    dependencies:
+      '@lorekit/cli':
+        specifier: workspace:*
+        version: link:../cli
+      '@lorekit/core':
+        specifier: workspace:*
+        version: link:../mcp-core
+
   packages/mcp-core:
     dependencies:
       '@lorekit/schemas':
@@ -13027,7 +13036,7 @@ snapshots:
       sirv: 3.0.2
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.0
-      vitest: 4.0.9(@types/debug@4.1.13)(@types/node@20.19.9)(@vitest/browser-playwright@4.0.9)(@vitest/ui@4.0.9)(jiti@2.7.0)(less@4.7.0)(lightningcss@1.32.0)(msw@2.15.0(@types/node@20.19.9)(typescript@5.9.3))(sass-embedded@1.100.0)(sass@1.69.0)(terser@5.49.0)(yaml@2.9.0)
+      vitest: 4.0.9(@types/debug@4.1.13)(@types/node@20.19.9)(@vitest/browser-playwright@4.0.9)(@vitest/ui@4.0.9)(jiti@2.4.2)(less@4.7.0)(lightningcss@1.32.0)(msw@2.15.0(@types/node@20.19.9)(typescript@5.9.3))(sass-embedded@1.100.0)(sass@1.69.0)(terser@5.49.0)(yaml@2.9.0)
 
   '@vitest/utils@3.2.4':
     dependencies:

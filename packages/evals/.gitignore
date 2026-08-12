@@ -1,0 +1,3 @@
+# Live-run artifacts: transcripts, result JSON and summaries. Deliberately kept
+# out of git — they are large, per-machine, and can contain model output.
+.eval-out/

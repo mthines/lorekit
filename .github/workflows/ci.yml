@@ -127,7 +127,11 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # 22, not 20: `@lorekit/evals` imports `@lorekit/core`'s TypeScript
+          # source directly and relies on Node's native type stripping (stable
+          # since 22.18, which is the package's declared `engines` floor). On
+          # Node 20 `evals:test` dies with ERR_UNKNOWN_FILE_EXTENSION.
+          node-version: 22
           cache: pnpm
 
       - name: Install dependencies
@@ -365,15 +369,18 @@ jobs:
           git-repo-slug: ${{ github.event.repository.name }}
           git-commit-ref: ${{ github.head_ref }}
           git-commit-sha: ${{ github.event.pull_request.head.sha }}
+          # Stable per-PR alias, re-pointed each run (like Vercel's branch URL).
+          alias-label: pr-${{ github.event.pull_request.number }}
 
-      # Post (or update) a single sticky comment with the preview URL — the same
-      # affordance the Vercel bot used to provide. Idempotent: it edits its own
-      # marker comment on re-run instead of stacking a new one per push.
+      # Post (or update) a single sticky comment — a Vercel-style status table
+      # with the stable "latest" preview link plus the immutable per-commit link.
+      # Idempotent: it edits its own marker comment on re-run, never stacks.
       - name: Comment preview URL on the PR
         if: steps.guard.outputs.run == 'true' && steps.decide.outputs.deploy == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           PREVIEW_URL: ${{ steps.preview.outputs.url }}
+          ALIAS_URL: ${{ steps.preview.outputs.alias-url }}
           PR_SHA: ${{ github.event.pull_request.head.sha }}
         with:
           script: |
@@ -382,15 +389,22 @@ jobs:
             // "Decide" step above can diff the next commit against this deploy.
             const findMarker = '<!-- lorekit-web-preview';
             const markerLine = `<!-- lorekit-web-preview sha=${fullSha} -->`;
-            const url = process.env.PREVIEW_URL;
+            const commitUrl = process.env.PREVIEW_URL;               // immutable, this commit
+            const aliasUrl = process.env.ALIAS_URL || '';            // stable, latest (may be empty)
+            const previewUrl = aliasUrl || commitUrl;                // fall back if aliasing was unavailable
             const sha = fullSha.slice(0, 7);
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            // github-script runs in a real Node runner, so Date is available here.
+            const updated = new Date().toISOString().replace('T', ' ').slice(0, 16);
             const body = [
               markerLine,
-              '### ▲ Web preview deployed',
+              'The dashboard preview for this PR — redeployed on each push that changes the web app.',
               '',
-              `🔗 **[Open preview → ${url}](${url})**`,
+              '| Name | Status | Preview | Deployment (this commit) | Updated (UTC) |',
+              '| :--- | :----- | :------ | :----------------------- | :------------ |',
+              `| **lorekit** | ✅ Ready | [Visit Preview](${previewUrl}) | [\`${sha}\`](${commitUrl}) | ${updated} |`,
               '',
-              `Commit \`${sha}\` · [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+              `<sub>**Preview** always points at the PR's latest commit; **Deployment** is this exact commit${aliasUrl ? '' : ' (stable alias unavailable this run — see workflow logs)'}. · [Workflow logs](${runUrl})</sub>`,
             ].join('\n');
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request.number;
