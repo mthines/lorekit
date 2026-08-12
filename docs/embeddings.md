@@ -169,6 +169,51 @@ enabling it.
 
 An unrecognised flag, or a flag whose value is missing, flag-shaped, or unreadable as a number, is a usage error — the script never falls back silently on the arguments that decide what a paid run touches. The defaults in this table are what an **omitted** flag means; they are never what a typo means.
 
+That parser is unit-tested — `scripts/backfill-embeddings.test.mjs`, `node --test`, no dependencies — so every row above is an executed assertion rather than a promise. Run it with `node --test scripts/backfill-embeddings.test.mjs` (needs Node >= 22.18, the same floor the script itself asserts).
+
+#### Wiring the parser test into CI (one-time, must be committed by a human)
+
+The GitHub App that opens automated PRs cannot modify `.github/workflows/**` (no
+`workflows` permission), so the job below is **not** applied by the PR that added
+the test — add it by hand, the same way the smoke sweeper's steps were
+(`docs/deployment.md` → "Wiring the sweep into CI"). The test itself works
+without it; this is what makes it run on every PR.
+
+It is its own job rather than a step in `check` because that job pins Node 20 for
+NX, and this script imports the pure embedding module as TypeScript, which needs
+Node's type stripping. It is ungated because it is a checkout plus one
+zero-dependency `node --test` — a path filter would cost more to maintain than the
+seconds it saves.
+
+Add to `.github/workflows/ci.yml`, before the `summary` job:
+
+```yaml
+  backfill-args:
+    name: Backfill argument parser
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          # >= 22.18 for native TypeScript stripping — the script imports
+          # packages/mcp-core/src/embedding.ts directly, with no build step.
+          node-version: 22
+
+      - name: Unit-test the backfill argument parser
+        run: node --test scripts/backfill-embeddings.test.mjs
+```
+
+Then add it to the `summary` gate so a failure is not silently ignored:
+
+```yaml
+    needs: [changes, check, plugin, integration, web-test, migration-order, backfill-args]
+```
+
 Five properties worth knowing before you run it on a large store:
 
 - **Idempotent and resumable, with no state of its own.** The work queue is a
@@ -242,7 +287,8 @@ split update is rejected.
 | `supabase/functions/_shared/embedding.ts` | Verbatim mirror (`edge-parity.spec.ts`). |
 | `supabase/functions/_shared/embedding-client.ts` | **Impure**: the `fetch`, the key, the timeout. Deno-only, not mirrored. |
 | `supabase/functions/_shared/embed-on-write.ts` | The background-and-swallow write path. |
-| `scripts/backfill-embeddings.mjs` | The manual backfill. Imports the pure module rather than re-implementing it. |
+| `scripts/backfill-embeddings.mjs` | The manual backfill. Imports the pure module rather than re-implementing it. Exports `parseArgs` behind an `invokedDirectly` seam so importing it never starts a run. |
+| `scripts/backfill-embeddings.test.mjs` | `node --test` cover for `parseArgs` — the guard on what a paid run touches. CI wiring is a one-time human step, above. |
 
 The pure/impure split is the `github-app-jwt.ts` pattern, and it matters more
 here than usual: this is the first code in the repo that spends money per call,

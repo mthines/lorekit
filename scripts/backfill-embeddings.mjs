@@ -159,7 +159,15 @@ function missingValueError(flag, raw, what) {
  */
 const KNOWN_FLAGS = new Set(['--dry-run', '--limit', '--batch-size', '--scope', '--sleep-ms']);
 
-function parseArgs(argv) {
+/**
+ * Exported for `backfill-embeddings.test.mjs`. This is the one function in the
+ * script that decides what a paid run touches and how much it spends, and it
+ * has taken four rounds of usage-error hardening — every one of which was a
+ * REVIEW finding rather than a failing test, because nothing executed it. The
+ * `invokedDirectly` seam at the bottom (the `check-migration-order.mjs`
+ * pattern) is what lets a test import it without the script running.
+ */
+export function parseArgs(argv) {
   const args = { dryRun: false, limit: null, batchSize: MAX_BATCH_ITEMS, scope: null, sleepMs: 0, error: null };
   const fail = (message) => { args.error = message; return args; };
 
@@ -473,7 +481,13 @@ async function main() {
   return 0;
 }
 
-main().then((code) => process.exit(code), (e) => {
-  log(`backfill failed: ${String(e?.message ?? e).slice(0, 400)}`);
-  process.exit(1);
-});
+// Run the backfill only when invoked as a script, not when imported by a test.
+// The `check-migration-order.mjs` seam: without it, importing this module to
+// unit-test `parseArgs` would start a real, paid run.
+const invokedDirectly = process.argv[1] && /backfill-embeddings\.mjs$/.test(process.argv[1]);
+if (invokedDirectly) {
+  main().then((code) => process.exit(code), (e) => {
+    log(`backfill failed: ${String(e?.message ?? e).slice(0, 400)}`);
+    process.exit(1);
+  });
+}
