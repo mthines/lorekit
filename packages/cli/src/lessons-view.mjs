@@ -432,13 +432,14 @@ export function clusterDuplicates(entries = [], threshold = 0.8) {
 
 // Compile a `--cluster-by-key` pattern into a stateless RegExp, or null on bad
 // input (empty / non-string / unparseable) — never throws, mirroring
-// `parseThreshold`'s "never crash on bad input" contract. Strips the global /
-// sticky flags so `.exec` stays stateless across calls. Pure.
+// `parseThreshold`'s "never crash on bad input" contract. The source is always a
+// STRING, so `new RegExp(raw)` carries no flags and is stateless by construction
+// — flag stripping is only needed on the RegExp branch of `clusterByKeyPattern`,
+// which can be handed a caller-built `/…/g`. Pure.
 export function compileKeyPattern(raw) {
   if (typeof raw !== 'string' || raw.length === 0) return null;
   try {
-    const re = new RegExp(raw);
-    return re.flags ? new RegExp(re.source, re.flags.replace(/[gy]/g, '')) : re;
+    return new RegExp(raw);
   } catch {
     return null;
   }
