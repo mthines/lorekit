@@ -100,6 +100,15 @@ export async function dedupe(args) {
     );
     return { exitCode: 1 };
   }
+  // Key-shape mode has no similarity cutoff, so an explicit `--threshold` would
+  // be silently ignored — the same silent fallback the bad-regex branch above
+  // refuses. Refuse it too. Only the EXPLICIT flag errors: a repo-level
+  // `dedupe.threshold` in .lorekit.json is a value-mode default, not a request,
+  // so it must not break a key-mode run.
+  if (byKeyMode && args.threshold !== undefined) {
+    err('--threshold is not used with --cluster-by-key (key-shape clustering has no similarity cutoff); drop one of them');
+    return { exitCode: 1 };
+  }
 
   const scopeInfo = deriveScope(root);
   // Default to every applicable scope; `--scope <s>` narrows to one.
@@ -252,11 +261,14 @@ export async function dedupe(args) {
   }
 
   // Bounded, non-PII telemetry extras — counts + a boolean, never a scope
-  // string, key, path, or token.
+  // string, key, path, or token. `threshold` is emitted only in value mode,
+  // where it is the cutoff actually applied; the key-mode pattern is user text
+  // and is never emitted, only the bounded mode name.
   return {
     exitCode: 0,
     'lorekit.cli.dedupe.scope_count': scopes.length,
-    'lorekit.cli.dedupe.threshold': threshold,
+    'lorekit.cli.dedupe.mode': byKeyMode ? 'key' : 'value',
+    ...(byKeyMode ? {} : { 'lorekit.cli.dedupe.threshold': threshold }),
     'lorekit.cli.dedupe.offline_clusters': offlineClusters,
     'lorekit.cli.dedupe.remote_clusters': remoteClusters,
     'lorekit.cli.dedupe.remote_available': remoteAvailable,

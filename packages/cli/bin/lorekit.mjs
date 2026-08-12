@@ -546,6 +546,8 @@ Pass --cluster-by-key <regex> to cluster by KEY shape instead of value overlap:
 entries whose keys share the same first capture group (or full match) form one
 family. This catches coordinate-key debt — e.g. many pr{N}-{commentId} rows for
 one review comment — that the value heuristic misses when the values differ.
+Key-shape mode has no similarity cutoff, so --threshold and --cluster-by-key are
+mutually exclusive: passing both is a usage error rather than a silent ignore.
 
 ${c.bold('Options')}
   -d, --dir <path>          Target project root (default: current directory)

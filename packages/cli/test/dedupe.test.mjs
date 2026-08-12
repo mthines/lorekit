@@ -356,6 +356,23 @@ test('dedupe --cluster-by-key with no regex value is a usage error (exit 1)', ()
   assert.match(res.stderr, /needs a regex value/);
 });
 
+test('dedupe --cluster-by-key with an explicit --threshold is a usage error (exit 1)', () => {
+  const { root, home } = seedCoordKeys();
+  const res = runDedupe(root, home, ['--cluster-by-key', '(pr\\d+-\\d+)', '--threshold', '0.6', '--json']);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /--threshold is not used with --cluster-by-key/);
+});
+
+test('a repo-level dedupe.threshold never breaks a --cluster-by-key run', () => {
+  const { root, home } = seedCoordKeys();
+  fs.writeFileSync(path.join(root, '.lorekit.json'), JSON.stringify({ 'dedupe.threshold': 0.6 }));
+  const res = runDedupe(root, home, ['--cluster-by-key', '(pr\\d+-\\d+)', '--json']);
+  assert.equal(res.status, 0, res.stderr);
+  const out = JSON.parse(res.stdout);
+  assert.equal(out.mode, 'key');
+  assert.equal(out.threshold, undefined);
+});
+
 // ── dedupe.threshold in .lorekit.json ─────────────────────────────────────────
 
 test('repoThreshold reads dedupe.threshold from .lorekit.json', () => {
