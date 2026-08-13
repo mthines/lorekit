@@ -77,7 +77,9 @@ const MAX_SHOWN_IDS = 500;
 // id still inside the read window. It is session-scoped scratch in a
 // temp/plugin-data directory the host clears with the rest of the session's
 // hook state; compaction just keeps it bounded within one long-lived session.
-const COMPACT_AT_BYTES = 256 * 1024;
+// Exported so the test asserts the bound against THIS value rather than a
+// restated literal that would silently stop proving it if the threshold moved.
+export const COMPACT_AT_BYTES = 256 * 1024;
 
 function shownPath(sessionId) {
   return `${markerPath(sessionId, 'shown')}.ids`;

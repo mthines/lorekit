@@ -17,7 +17,7 @@ function isolate() {
 }
 
 const state = await import('../src/core/state.mjs');
-const { shownLessons, recordShownLessons, firstTimeThisSession } = state;
+const { shownLessons, recordShownLessons, firstTimeThisSession, COMPACT_AT_BYTES } = state;
 
 describe('the shown-set', () => {
   test('records ids and reads them back', () => {
@@ -94,20 +94,26 @@ describe('the shown-set', () => {
 
   test('the on-disk file is bounded by compaction, not just the read', () => {
     // The append-only writer keeps the hot path race-safe; without compaction a
-    // long session would grow the file without bound. Drive it well past the
-    // compaction threshold (256 KB) over many writes and assert the file shrinks
-    // back on its own while the newest ids survive and the oldest are dropped.
+    // long session would grow the file without bound. Drive it well past
+    // COMPACT_AT_BYTES over many writes and assert the file shrinks back on its
+    // own while the newest ids survive and the oldest are dropped. Sized off the
+    // exported constant so raising the threshold cannot silently stop the test
+    // from actually crossing it.
     const dir = isolate();
-    for (let batch = 0; batch < 30; batch++) {
-      const ids = Array.from({ length: 1000 }, (_, i) => `global::b${batch}-k${i}`);
+    const idsPerBatch = 1000;
+    // Write ~2.5× the threshold so compaction is exercised regardless of value.
+    const batches = Math.ceil((COMPACT_AT_BYTES * 2.5) / (idsPerBatch * 18));
+    const lastId = `global::b${batches - 1}-k${idsPerBatch - 1}`;
+    for (let batch = 0; batch < batches; batch++) {
+      const ids = Array.from({ length: idsPerBatch }, (_, i) => `global::b${batch}-k${i}`);
       recordShownLessons('s1', ids);
     }
     const idsFile = fs.readdirSync(dir).find((f) => f.endsWith('.ids'));
     assert.ok(idsFile, 'the shown-set file exists');
     const size = fs.statSync(path.join(dir, idsFile)).size;
-    assert.ok(size <= 256 * 1024, `file stayed bounded, compacted to ${size} bytes`);
+    assert.ok(size <= COMPACT_AT_BYTES, `file stayed bounded, compacted to ${size} bytes`);
     const seen = shownLessons('s1');
-    assert.ok(seen.has('global::b29-k999'), 'the newest id survived compaction');
+    assert.ok(seen.has(lastId), 'the newest id survived compaction');
     assert.ok(!seen.has('global::b0-k0'), 'the oldest id was dropped');
   });
 
