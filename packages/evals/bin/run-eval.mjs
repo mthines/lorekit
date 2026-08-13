@@ -27,6 +27,11 @@ import {
   runAgent,
 } from "../src/agent.mjs";
 import { SCOPE_MODES, SEED_SOURCES, prepareArm } from "../src/arm.mjs";
+import {
+  assertCleanEnvironment,
+  describeEnvironment,
+  summarizeEnvironment,
+} from "../src/environment.mjs";
 import { gradeSandbox } from "../src/grade.mjs";
 import { readInjectedLessons } from "../src/hook-install.mjs";
 import { classifyRetrieval } from "../src/retrieval.mjs";
@@ -38,6 +43,9 @@ const USAGE = `Usage: node bin/run-eval.mjs <subcommand> [options]
 
 Subcommands:
   arm0                 The golden task against an empty store, then graded.
+  preflight            One throwaway model call in a prepared sandbox, then
+                       report what the session actually loaded. Exits non-zero
+                       when the environment is contaminated.
   probe                Seed the store, install the real SessionStart hook and
                        print what it injects. Spawns no model.
 
@@ -244,8 +252,15 @@ async function runArm0(options) {
           transcriptPath: path.join(repDir, "transcript.jsonl"),
           command: options.command,
           timeoutMs: options.timeoutMs,
-          mcpConfigPath: arm.mcp.path,
-          allowedTools: arm.mcp.allowedTools,
+          ...arm.agentOptions,
+        });
+        // What the session really loaded. A rep that ran with the developer's
+        // skills or plugins in context is not a data point — the lorekit-memory
+        // skill alone states the golden task's answer — so the verdict is
+        // recorded on the rep and the summary counts it as discarded.
+        const environment = assertCleanEnvironment(summarizeEnvironment(run), {
+          sandboxRoot: sandbox.root,
+          expectedHooks: arm.hookInstall ? 1 : 0,
         });
         // Grade BEFORE the sandbox is torn down — the store is the evidence.
         const graded = await gradeSandbox(sandbox, {
@@ -260,6 +275,10 @@ async function runArm0(options) {
           path.join(repDir, "grade.json"),
           JSON.stringify(graded, null, 2),
         );
+        await fsp.writeFile(
+          path.join(repDir, "environment.json"),
+          JSON.stringify(environment, null, 2),
+        );
         if (run.stderr)
           await fsp.writeFile(path.join(repDir, "stderr.log"), run.stderr);
         reps.push({
@@ -270,6 +289,11 @@ async function runArm0(options) {
           repeatedMistake: graded.repeatedMistake,
           storedScopes: graded.storedScopes,
           attemptedScopes: graded.attemptedScopes,
+          environmentClean: environment.clean,
+          environmentFindings: environment.findings.map((f) => f.kind),
+          // A contaminated rep is DISCARDED, not counted as a failure — the
+          // same rule `retrieval.mjs` applies to a harness fault.
+          discarded: !environment.clean,
           wallMs: run.wallMs,
           exitCode: run.exitCode,
           timedOut: run.timedOut,
@@ -293,6 +317,10 @@ async function runArm0(options) {
     // Restated in every artifact on purpose: whoever reads a result file months
     // from now must see the caveat without going back to the README.
     caveat: `N=${options.reps} is a low-power INDICATOR, not proof. Treat differences as directional.`,
+    // Surfaced at the top level so a contaminated batch is impossible to read
+    // past. `usableReps` — not `reps` — is the N any conclusion may cite.
+    discardedReps: reps.filter((r) => r.discarded).length,
+    usableReps: reps.filter((r) => !r.dryRun && !r.discarded).length,
     results: reps,
   };
   await fsp.writeFile(
@@ -300,6 +328,49 @@ async function runArm0(options) {
     JSON.stringify(summary, null, 2),
   );
   return { outDir, summary };
+}
+
+/**
+ * The cheapest possible check that a real run would be measuring the model and
+ * not the machine: one throwaway prompt in a fully-prepared sandbox, then read
+ * the init event back.
+ *
+ * It costs one trivial model call, and it is the only way to know. On the
+ * machine this was written for, the unisolated equivalent loaded ~130 skills
+ * and 5 plugins for $1.13 — including the skill that states the golden task's
+ * answer. Exits non-zero when the environment is dirty, so it can gate a
+ * batch: `node bin/run-eval.mjs preflight && node bin/run-eval.mjs arm0 …`.
+ */
+async function runPreflight(options) {
+  const sandbox = await createSandbox({ keep: options.keep });
+  try {
+    const arm = await prepareArm(sandbox, { seed: "empty" });
+    const run = await runAgent({
+      prompt: "Reply with exactly the word READY and nothing else.",
+      cwd: sandbox.cwd,
+      env: sandbox.childEnv(),
+      transcriptPath: path.join(sandbox.artifacts, "preflight.jsonl"),
+      command: options.command,
+      timeoutMs: options.timeoutMs,
+      ...arm.agentOptions,
+    });
+    const verdict = assertCleanEnvironment(summarizeEnvironment(run), {
+      sandboxRoot: sandbox.root,
+      expectedHooks: 1,
+    });
+    return {
+      subcommand: "preflight",
+      clean: verdict.clean,
+      verifiable: verdict.verifiable,
+      verdict: describeEnvironment(verdict),
+      findings: verdict.findings,
+      environment: verdict.summary,
+      costUsd: run.summary.costUsd,
+      argv: run.argv,
+    };
+  } finally {
+    await sandbox.dispose();
+  }
 }
 
 async function runProbe(options) {
@@ -353,6 +424,11 @@ export async function main(argv = process.argv.slice(2)) {
   if (options.help || !options.subcommand) {
     process.stdout.write(USAGE);
     return 0;
+  }
+  if (options.subcommand === "preflight") {
+    const result = await runPreflight(options);
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return result.clean ? 0 : 1;
   }
   if (options.subcommand === "probe") {
     const result = await runProbe(options);
