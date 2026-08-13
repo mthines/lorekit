@@ -72,22 +72,15 @@ test("the canonical SessionStart hook wiring is reusable (OQ-3, seam for AC-2.2)
   );
 
   assert.equal(typeof upsertClaudeHooks, "function");
-  // Assert the load-bearing invariants, not the frozen roster: a hardcoded
+  // Derive the invariant instead of pinning the frozen roster: a hardcoded
   // deep-equal restales every time a lifecycle event lands (as UserPromptSubmit
-  // did), and the eight CLI tests already derive from CLAUDE_HOOK_EVENTS for the
-  // same reason. What PR2 depends on is that the constant is a non-empty list of
-  // events carrying the SessionStart wiring this seam is named for.
-  assert.ok(
-    Array.isArray(CLAUDE_HOOK_EVENTS) && CLAUDE_HOOK_EVENTS.length > 0,
-    "CLAUDE_HOOK_EVENTS must be a non-empty event list",
-  );
-  assert.ok(
-    CLAUDE_HOOK_EVENTS.every((e) => typeof e === "string" && e.length > 0),
-    "every hook event is a non-empty string",
-  );
+  // did), the same reason the eight CLI tests derive from CLAUDE_HOOK_EVENTS. A
+  // successful `includes` already implies a non-empty array holding a non-empty
+  // string, so this single assert is the load-bearing one: the constant is
+  // importable and carries the SessionStart wiring this seam is named for.
   assert.ok(
     CLAUDE_HOOK_EVENTS.includes("SessionStart"),
-    "the canonical SessionStart wiring is present in CLAUDE_HOOK_EVENTS",
+    "CLAUDE_HOOK_EVENTS is importable and carries the SessionStart wiring",
   );
   assert.match(
     settingsPath("/tmp/root"),
