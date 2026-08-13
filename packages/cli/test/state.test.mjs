@@ -92,6 +92,25 @@ describe('the shown-set', () => {
     assert.ok(!seen.has('global::k0'), 'the oldest is dropped');
   });
 
+  test('the on-disk file is bounded by compaction, not just the read', () => {
+    // The append-only writer keeps the hot path race-safe; without compaction a
+    // long session would grow the file without bound. Drive it well past the
+    // compaction threshold (256 KB) over many writes and assert the file shrinks
+    // back on its own while the newest ids survive and the oldest are dropped.
+    const dir = isolate();
+    for (let batch = 0; batch < 30; batch++) {
+      const ids = Array.from({ length: 1000 }, (_, i) => `global::b${batch}-k${i}`);
+      recordShownLessons('s1', ids);
+    }
+    const idsFile = fs.readdirSync(dir).find((f) => f.endsWith('.ids'));
+    assert.ok(idsFile, 'the shown-set file exists');
+    const size = fs.statSync(path.join(dir, idsFile)).size;
+    assert.ok(size <= 256 * 1024, `file stayed bounded, compacted to ${size} bytes`);
+    const seen = shownLessons('s1');
+    assert.ok(seen.has('global::b29-k999'), 'the newest id survived compaction');
+    assert.ok(!seen.has('global::b0-k0'), 'the oldest id was dropped');
+  });
+
   test('does not disturb the one-shot markers that share its directory', () => {
     isolate();
     recordShownLessons('s1', ['global::a']);

@@ -53,24 +53,58 @@ export function sessionMarkerExists(sessionId, tag) {
 // Deliberately the same directory and the same session key as the markers, so a
 // session's hook state is one thing that appears and disappears together.
 //
-// STORED AS LINES, APPENDED, NEVER REWRITTEN. An append is atomic enough for
+// STORED AS LINES, APPENDED on the hot path. An append is atomic enough for
 // this: two hooks racing can interleave whole lines but cannot corrupt one, and
 // a duplicate line is harmless because the reader is a Set. A read-modify-write
-// would be the version that loses entries under a race.
+// on every write would be the version that loses entries under a race — which
+// is why the common write stays a bare append. Left there the file would grow
+// without bound in a long session, so it is instead bounded by an occasional
+// atomic-rename compaction (see COMPACT_AT_BYTES below), never a per-write
+// rewrite.
 
-// Cap on how many ids are READ back per session — it bounds the shown-set, not
-// the file. The writer stays a bare append (that is what makes it race-safe),
-// so a long session with a large store still grows the file on disk; it is
-// session-scoped scratch in a temp/plugin-data directory, and the host clears
-// it with the rest of the session's hook state.
-//
-// Reading only the newest N is enough for what this guards: the value of an id
-// decays, and re-showing a lesson from 600 injections ago is not the repetition
-// the shown-set exists to prevent.
+// Cap on how many ids are READ back per session — the newest N. Reading only
+// the newest N is enough for what this guards: the value of an id decays, and
+// re-showing a lesson from 600 injections ago is not the repetition the
+// shown-set exists to prevent.
 const MAX_SHOWN_IDS = 500;
+
+// Bound the file ON DISK, not just the read. The append-only writer keeps the
+// hot path race-safe, but on its own a long session would grow the file without
+// limit. Once the file passes this size the writer rewrites it down to the
+// newest MAX_SHOWN_IDS ids via a temp-file + atomic rename (see
+// `compactIfLarge`). The threshold sits well above what `shownLessons` ever
+// reads, so compaction is rare — amortized O(1) per append — and never drops an
+// id still inside the read window. It is session-scoped scratch in a
+// temp/plugin-data directory the host clears with the rest of the session's
+// hook state; compaction just keeps it bounded within one long-lived session.
+const COMPACT_AT_BYTES = 256 * 1024;
 
 function shownPath(sessionId) {
   return `${markerPath(sessionId, 'shown')}.ids`;
+}
+
+// Rewrite the append-only file down to its newest MAX_SHOWN_IDS ids once it has
+// grown past COMPACT_AT_BYTES, via a temp-file + atomic rename. rename(2) is
+// atomic on POSIX and the temp file lives in the same directory (so the same
+// filesystem), so a concurrent reader always sees a complete old-or-new file,
+// never a torn one. A racing append lost to the rename is the same "at worst a
+// repeat" trade the bare append already makes, and it can only happen on the
+// rare compaction — not the hot path. Best-effort: any failure leaves the file
+// as-is and never breaks the host.
+function compactIfLarge(file) {
+  try {
+    if (fs.statSync(file).size <= COMPACT_AT_BYTES) return;
+    const kept = fs
+      .readFileSync(file, 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .slice(-MAX_SHOWN_IDS);
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, kept.length ? `${kept.join('\n')}\n` : '');
+    fs.renameSync(tmp, file);
+  } catch {
+    // Compaction is best-effort; a failure just leaves the file large.
+  }
 }
 
 /**
@@ -108,7 +142,11 @@ export function recordShownLessons(sessionId, ids) {
   try {
     // No mkdir here: `shownPath` → `markerPath` → `stateDir`, which creates the
     // directory as part of resolving the path.
-    fs.appendFileSync(shownPath(sessionId), `${clean.join('\n')}\n`);
+    const file = shownPath(sessionId);
+    fs.appendFileSync(file, `${clean.join('\n')}\n`);
+    // The append above is the race-safe hot path; this bounds the file on disk,
+    // rewriting down to the newest ids only once it has grown large.
+    compactIfLarge(file);
   } catch {
     // Never break the host over bookkeeping.
   }
