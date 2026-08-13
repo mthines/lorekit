@@ -288,7 +288,7 @@ export async function install(args) {
     const missingEvents = missingHookEvents(wiredEvents);
     if (missingEvents.length > 0) {
       log(
-        `  ${c.yellow(`Hook upgrade available: ${missingEvents.join(', ')} — run --hooks ${wiredMode} to wire ${missingEvents.length === 1 ? 'it' : 'them'}.`)}`,
+        `  ${c.yellow(`Hook upgrade available: ${missingEvents.join(', ')} — run lorekit install --${scope} --hooks ${wiredMode} to wire ${missingEvents.length === 1 ? 'it' : 'them'}.`)}`,
       );
     }
 
