@@ -182,6 +182,10 @@ Full details — the two-tier layout, write routing, the control model, and
 migration — are in
 [packages/cli/README.md](./packages/cli/README.md#memory-modes--the-control-model).
 
+Want the dashboard against your local files too? `npx @lorekit/cli serve`
+(alias `web`) runs it locally, against your local `.lorekit/` store — no
+Supabase project, no account. See [docs/local-web.md](./docs/local-web.md).
+
 ## How memory is organized
 
 Lessons are partitioned by **scope** — a short string that says how widely a

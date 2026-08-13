@@ -2,7 +2,7 @@
 title: "Offline storage"
 description: "Store lore locally on your machine using the LoreKit CLI — no account, no network, full privacy. Memories live in a plain directory you own and control."
 order: 2
-keywords: ["offline", "local store", "cli", "install", "doctor", "mcp", "memory.write", "scope", ".lorekit.json", "deny", "mode", "search"]
+keywords: ["offline", "local store", "cli", "install", "doctor", "mcp", "memory.write", "scope", ".lorekit.json", "deny", "mode", "search", "serve", "dashboard"]
 ---
 
 <TutorialCallout variant="tip">
@@ -89,7 +89,19 @@ Matches a literal, case-insensitive substring against the memory key or value. W
 
 </TutorialStep>
 
-<TutorialStep number={6} title="(Optional) Commit a project config file">
+<TutorialStep number={6} title="Browse your offline lore in the dashboard">
+
+```bash
+npx @lorekit/cli serve
+```
+
+Runs this same dashboard **locally, against your local `.lorekit/` store** — no Supabase project, no account. It starts a small local server that speaks the dashboard's own API over your offline files, launches the dashboard pointed at it, prints both URLs, and opens your browser. Covers the Lore Explorer and scope tree: list, filter, search, view, edit, archive, and restore — read **and** write, straight to your `.lorekit/*.md` files. Press <kbd>Ctrl-C</kbd> to stop.
+
+The alias `lorekit web` does the same thing. See [Local web dev mode](https://github.com/mthines/lorekit/blob/main/docs/local-web.md) for the full command reference.
+
+</TutorialStep>
+
+<TutorialStep number={7} title="(Optional) Commit a project config file">
 
 Drop a `.lorekit.json` at the repo root to set the default memory mode for everyone on the team — no per-machine env var needed:
 

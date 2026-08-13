@@ -534,6 +534,28 @@ this variant needs no endpoint or token for local mode:
 }
 ```
 
+### `lorekit serve` (alias `web`)
+
+Run the LoreKit **dashboard locally, against your local `.lorekit/` (+
+`~/.lorekit/`) file store** — no Supabase project, no hosted account. Starts a
+zero-dependency `node:http` REST shim over your local store, launches the
+dashboard pointed at it, prints both URLs, and opens your browser:
+
+```bash
+lorekit serve
+lorekit web --port 5000 --web-port 5001   # custom ports; auto-increment if taken
+lorekit serve --dev                       # contributors: run the dashboard's source dev server instead
+```
+
+Covers the Lore Explorer + scope tree — list, filter, search, the scope tree,
+and viewing/editing/archiving/restoring one lesson, read **and** write. The
+Overview analytics page and every org/invite/token/audit-log surface are out
+of scope (no local-file equivalent). By default it launches a prebuilt
+standalone bundle the CLI locates or lazily downloads and caches under
+`~/.lorekit/web/<version>/` — no repo checkout needed; `--dev` is the
+contributor path. Press <kbd>Ctrl-C</kbd> to stop both. Full reference:
+[docs/local-web.md](../../docs/local-web.md).
+
 ## Memory modes & the control model
 
 Memory has a controllable backend. Three **modes**:
@@ -541,7 +563,7 @@ Memory has a controllable backend. Three **modes**:
 | Mode | Where lessons live | Notes |
 |------|--------------------|-------|
 | `off` | nowhere | Memory is disabled — every hook event and store op is a silent no-op. |
-| `local` | markdown files in two tiers (see below) | **Local means _not_ on the hosted website** — local lessons never sync to the LoreKit dashboard. That is the point of local: private-by-default, greppable, git-native. |
+| `local` | markdown files in two tiers (see below) | **Local means _not_ on the hosted website** — local lessons never sync to the hosted LoreKit dashboard. That is the point of local: private-by-default, greppable, git-native. `lorekit serve` runs the SAME dashboard code entirely locally, against these files, if you want the browsing/editing UI without a hosted account — see above. |
 | `remote` | the hosted LoreKit API (REST) | The shared, cross-machine backend. Reads stay silent until an endpoint + token are configured. This is the default. |
 
 ### Local store layout — two tiers

@@ -8,6 +8,7 @@
 | [org-sharing.md](./org-sharing.md) | Users + operators | Organizations & shared lore: roles, invites, ownership, deletion + recovery, invite emails |
 | [github-app.md](./github-app.md) | Developers + operators | GitHub App integration: architecture, data model, fail-safe pending identity, Setup-URL bounce, post-merge operational runbook |
 | [api-tokens.md](./api-tokens.md) | Developers | Token types, permissions, generation, CI usage |
+| [local-web.md](./local-web.md) | Users + developers | `lorekit serve` — run the dashboard locally against the local file store, no Supabase project needed |
 | [limits.md](./limits.md) | Agents + developers | Memory cap, rate limiting, per-user overrides, 429 semantics |
 | [otel.md](./otel.md) | Developers | Dash0 setup, custom spans, environment variables |
 | [telemetry-quality-review.md](./telemetry-quality-review.md) | Developers | Cross-service `traceparent` correlation contract, telemetry-quality review vs OTel semantic conventions, and the tests that guard it |
