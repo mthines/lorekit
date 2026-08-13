@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.40.0](https://github.com/mthines/lorekit/compare/cli-v1.39.2...cli-v1.40.0) (2026-08-13)
+
+
+### Features
+
+* **cli:** add `dedupe --cluster-by-key` for coordinate-key families ([#446](https://github.com/mthines/lorekit/issues/446)) ([5576f44](https://github.com/mthines/lorekit/commit/5576f44942f03b7839d9733383e811888395bbe9))
+
+
+### Bug Fixes
+
+* **cli:** review follow-ups for install --mcp-json ([#399](https://github.com/mthines/lorekit/issues/399)) ([#415](https://github.com/mthines/lorekit/issues/415)) ([b19ceb3](https://github.com/mthines/lorekit/commit/b19ceb3d241736b12a4f4846641bf3dbb68c132b))
+
 ## [1.39.2](https://github.com/mthines/lorekit/compare/cli-v1.39.1...cli-v1.39.2) (2026-08-10)
 
 

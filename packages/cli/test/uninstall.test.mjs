@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { install } from '../src/install.mjs';
 import { uninstall } from '../src/uninstall.mjs';
+import { withHome } from './helpers.mjs';
 
 function tmp(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -14,21 +15,6 @@ function tmp(prefix) {
 
 const ENDPOINT = 'https://ref.supabase.co/functions/v1/mcp';
 const TOKEN = 'lk_rw_test';
-
-function withHome(home, fn) {
-  const prevHome = process.env.HOME;
-  const prevProfile = process.env.USERPROFILE;
-  process.env.HOME = home;
-  process.env.USERPROFILE = home;
-  return Promise.resolve()
-    .then(fn)
-    .finally(() => {
-      if (prevHome === undefined) delete process.env.HOME;
-      else process.env.HOME = prevHome;
-      if (prevProfile === undefined) delete process.env.USERPROFILE;
-      else process.env.USERPROFILE = prevProfile;
-    });
-}
 
 test('uninstall --project removes skill, MCP entry, and hooks', async () => {
   const root = tmp('lk-uninst-proj-');

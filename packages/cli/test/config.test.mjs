@@ -421,6 +421,39 @@ test('resolveProjectConnection: a tokenless web .mcp.json does not shadow the gl
   }
 });
 
+test('resolveProjectConnection: the winning token brings its own endpoint, not the closer tokenless one', () => {
+  // A tokenless project source and a token-bearing global source with DISTINCT
+  // endpoints: the global token wins (project stored none) and MUST be paired
+  // with the global endpoint — a token authenticates one endpoint, so the closer
+  // tokenless project endpoint is not used when a later source carries a token.
+  const PROJECT_ENDPOINT = 'https://project.supabase.co/functions/v1/mcp';
+  const GLOBAL_ENDPOINT = 'https://global.supabase.co/functions/v1/mcp';
+  const home = tmpRoot();
+  const root = tmpRoot();
+  upsertWebMcpServer(root, PROJECT_ENDPOINT); // project: web form, no token
+  fs.writeFileSync(
+    path.join(home, '.claude.json'),
+    JSON.stringify({
+      mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', `${GLOBAL_ENDPOINT}?token=lk_rw_global`] } },
+    }),
+  );
+
+  const prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, TOK: process.env.LOREKIT_TOKEN };
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  delete process.env.LOREKIT_TOKEN;
+  try {
+    const conn = resolveProjectConnection(root, splitEndpoint);
+    assert.equal(conn.token, 'lk_rw_global', 'global token wins — project stored none');
+    assert.equal(conn.endpoint, GLOBAL_ENDPOINT, 'endpoint travels with the winning token, not the closer tokenless one');
+  } finally {
+    for (const [k, v] of [['HOME', prev.HOME], ['USERPROFILE', prev.USERPROFILE], ['LOREKIT_TOKEN', prev.TOK]]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});
+
 test('isWebMcpServerEntry recognises the committable web form only', () => {
   assert.equal(
     isWebMcpServerEntry({ args: ['-y', 'mcp-remote', WEB_ENDPOINT, '--header', 'Authorization:Bearer ${LOREKIT_TOKEN}'] }),

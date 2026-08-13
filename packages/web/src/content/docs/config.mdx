@@ -29,7 +29,7 @@ keywords: ["configuration", ".lorekit.json", "config.json", "mode", "store", "de
 | `hooks.adapter` | `"claude" \| "cursor" \| "codex"` | Both | Explicit host adapter when auto-detection is ambiguous. Repo wins over user. |
 | `hooks.instructions` | `Record<"SessionStart" \| "UserPromptSubmit" \| "PostToolUseFailure" \| "Stop", string \| null>` | Both | Per-event custom text appended to the hook output. Lets teams embed project-specific guidance (e.g. "focus on migration safety") into the injected agent context. Both layers are merged: repo instructions first, then user. null or an absent key means no instruction for that event. |
 | `telemetry.disabled` | `boolean` | Repo | Team-level opt-out of anonymous CLI usage telemetry, read from .lorekit.json only. The env var LOREKIT_TELEMETRY=0 always wins if set. |
-| `dedupe.threshold` | `number (0–1)` | Repo | Jaccard similarity cutoff for lorekit dedupe. The --threshold flag wins when passed explicitly. Defaults to 0.8. |
+| `dedupe.threshold` | `number (0–1)` | Repo | Jaccard similarity cutoff for lorekit dedupe value-overlap clustering. The --threshold flag wins when passed explicitly. Defaults to 0.8. Key-shape clustering (lorekit dedupe --cluster-by-key) applies no cutoff, so this key is ignored there and passing --threshold alongside --cluster-by-key is a usage error. |
 
 **Layer** notes where a property is read from: `Both` layers, the `Repo` file only (team-level policy), or the `User` file only.
 

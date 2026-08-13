@@ -1,0 +1,76 @@
+-- Give the memories list seek its `id` tiebreaker.
+--
+-- `memories_scope_updated_at_idx` (00033) was designed for the query toolList
+-- ran AT THE TIME:
+--
+--   … WHERE scope = ? AND archived_at IS NULL
+--     ORDER BY updated_at DESC LIMIT ?
+--
+-- so `(scope, updated_at desc)` satisfied the order exactly. Keyset pagination
+-- landed afterwards and changed both halves of that query. It now orders by a
+-- COMPOSITE key and seeks on it:
+--
+--   … WHERE scope = ? AND archived_at IS NULL
+--     AND (updated_at < ?ts OR (updated_at = ?ts AND id < ?id))
+--     ORDER BY updated_at DESC, id DESC LIMIT ?
+--
+-- (`supabase/functions/mcp/tools.ts` toolList / `memories/handlers/list.ts`,
+-- predicate built by `_shared/api/paginate.ts` + `mcp/cursor.ts`.)
+--
+-- The existing index stops at `updated_at`, so `id` is not available to the
+-- scan: the tiebreaker becomes a heap recheck on every candidate row, and the
+-- planner cannot stop early at LIMIT when a timestamp is not unique. This is
+-- the same omission 00012 fixed for `audit_log` — 00010's
+-- `(user_id, created_at desc)` lacked the same `id` column, for the same
+-- keyset predicate.
+--
+-- The fix here is 00012's fix with ONE deliberate difference: 00012 built
+-- `(user_id, created_at desc, id)`, with `id` ASC. The seek it serves orders by
+-- `created_at DESC, id DESC`, and a (DESC, ASC) index yields that pair in
+-- neither scan direction, so 00012 recovered the index-only tiebreaker lookup
+-- but not the ordered scan. `id desc` below matches the ORDER BY exactly. The
+-- corresponding correction on `audit_log_user_created_id_idx` is a separate,
+-- separately-measured migration on a different table and is not made here.
+--
+-- Cost is concentrated where it is felt most: deep pagination over a large
+-- scope, which is the shape the busiest caller actually has (37% of list calls
+-- in a recent 24h window came back with `has_more`, and the deepest walk paged
+-- a single scope ~a dozen times at 543–765 ms per page).
+--
+-- The partial predicate is carried over verbatim from 00033 so the two indexes
+-- describe the same row population. The expiry filter
+-- (`expires_at IS NULL OR expires_at > now()`) is deliberately NOT in the
+-- predicate: `now()` is volatile and PostgreSQL rejects it in an index
+-- predicate — the same reason 00033 gave for adding no `rate_limit_counters`
+-- index.
+--
+-- Forward-only and additive. `IF NOT EXISTS` so it can be applied to a running
+-- production database (`CONCURRENTLY` is not used inside migrations because it
+-- cannot run in a transaction).
+--
+-- LOCK WINDOW: because the build is not `CONCURRENTLY`, it takes a SHARE lock
+-- on `memories` for the duration — reads continue, writes BLOCK until the
+-- index is built. `IF NOT EXISTS` makes re-application free but does not
+-- shorten the first build. Sizing that window is a deploy-time call on the
+-- live table, not something this file can assert; if it is ever too long for
+-- the write path, the escape hatch is to build the index out-of-band with
+-- `CREATE INDEX CONCURRENTLY` before deploying, after which this migration
+-- is a no-op.
+--
+-- SCOPE: `sort=updated_at` only. `GET /memories` also accepts
+-- `sort=created_at`, whose keyset seeks `(created_at, id)` under the same
+-- `scope` filter, and no index covers that pair either. That page is
+-- deliberately out of scope here: the measured cost is on the default sort
+-- (`memory.list` is the most-called MCP tool and always sorts by `updated_at`),
+-- and every index on `memories` is write amplification on the hottest table in
+-- the product, so the second one should be justified by its own measurement
+-- rather than added on symmetry. Tracked as a follow-up, not fixed here.
+--
+-- The superseded `memories_scope_updated_at_idx` is deliberately LEFT IN PLACE.
+-- Dropping an index in the same migration that adds its replacement gives the
+-- planner no fallback if the new one is not yet warm, and this is the hottest
+-- read path in the product; retiring it is a separate, observable decision.
+
+create index if not exists memories_scope_updated_at_id_idx
+  on memories (scope, updated_at desc, id desc)
+  where archived_at is null;

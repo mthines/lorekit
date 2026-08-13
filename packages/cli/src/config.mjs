@@ -639,7 +639,12 @@ export function tokenKind(token) {
 // avoid a circular import with mcp.mjs.
 //
 // A source that STORES a token wins outright (project beats global — closest
-// scope), but a TOKENLESS source must NOT shadow a later source that has one.
+// scope), and it brings its OWN endpoint: a token authenticates one endpoint,
+// so the two must travel together. A TOKENLESS source therefore never shadows a
+// later source that has a token — not its token AND not its endpoint; its
+// endpoint is only remembered as a fallback, used solely when NO source stores a
+// token. (So "closest-scope-first" governs which token wins; the endpoint simply
+// follows that token.)
 // That shadowing is exactly what `install --global --mcp-json` created: it
 // writes a committable, token-free project .mcp.json (auth via ${LOREKIT_TOKEN})
 // AND the real token into ~/.claude.json. Returning early on the project entry
