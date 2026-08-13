@@ -168,29 +168,31 @@ test('search accepts a list of terms and OR-matches them in one pass', async () 
   assert.equal(none.entries.length, 3);
 });
 
-test('search honours a limit so the per-prompt walk stays bounded', async () => {
+test('search honours walkLimit so the per-prompt walk stays bounded', async () => {
   // The per-prompt hook walks the local store on the user's critical path; an
   // unbounded walk a remote timeout cannot interrupt is the scalability hazard.
-  // A limit caps matches and stops the walk — later scopes are skipped once it
+  // walkLimit caps matches and stops the walk — later scopes are skipped once it
   // is reached, so the retained hits are the nearest-scope (first-listed) ones.
+  // It is named walkLimit, not limit, so it never reaches the remote store's
+  // `body.limit` and truncates that hit set pre-ranking.
   const store = createLocalStore(tmpDir());
   for (let i = 0; i < 10; i++) {
     await store.write({ scope: 'repo::o/r', key: `near-${i}`, value: 'deadlock on migrate' });
   }
   await store.write({ scope: 'global', key: 'far', value: 'deadlock on migrate' });
 
-  const capped = await store.search({ q: ['deadlock'], scopes: ['repo::o/r', 'global'], limit: 3 });
-  assert.equal(capped.entries.length, 3, 'the walk stopped at the limit');
+  const capped = await store.search({ q: ['deadlock'], scopes: ['repo::o/r', 'global'], walkLimit: 3 });
+  assert.equal(capped.entries.length, 3, 'the walk stopped at walkLimit');
   assert.ok(
     capped.entries.every((e) => e.scope === 'repo::o/r'),
     'the nearest scope filled the cap; the later scope was never walked',
   );
 
   const unbounded = await store.search({ q: ['deadlock'], scopes: ['repo::o/r', 'global'] });
-  assert.equal(unbounded.entries.length, 11, 'omitting the limit stays unbounded as before');
+  assert.equal(unbounded.entries.length, 11, 'omitting walkLimit stays unbounded as before');
 });
 
-test('two-tier search honours a limit across both tiers', async () => {
+test('two-tier search honours walkLimit across both tiers', async () => {
   const home = tmpDir();
   const project = tmpDir();
   for (let i = 0; i < 5; i++) {
@@ -198,7 +200,7 @@ test('two-tier search honours a limit across both tiers', async () => {
     await createLocalStore(project).write({ scope: 'repo::o/r', key: `p${i}`, value: 'timeout retry' });
   }
   const store = createTwoTierStore({ home, project });
-  const capped = await store.search({ q: ['timeout'], scopes: ['repo::o/r', 'global'], limit: 4 });
+  const capped = await store.search({ q: ['timeout'], scopes: ['repo::o/r', 'global'], walkLimit: 4 });
   assert.equal(capped.entries.length, 4, 'the merged two-tier result honours the cap');
 });
 

@@ -516,18 +516,19 @@ export function dedupeRelevant(entries, cap = MAX_RELEVANT) {
 // capped by the pure `dedupeRelevant`, keeping the store's own ordering (see its
 // docblock). Best-effort: an unusable/throwing store returns [] so the
 // caller falls back to the write-nudge alone.
-export async function relevantLessonsFromStore(store, scope, terms, { cap = MAX_RELEVANT, timeoutMs, limit } = {}) {
+export async function relevantLessonsFromStore(store, scope, terms, { cap = MAX_RELEVANT, timeoutMs, walkLimit } = {}) {
   if (!store || typeof store.search !== 'function') return [];
   if (!scope || !Array.isArray(scope.readOrder) || scope.readOrder.length === 0) return [];
   if (!Array.isArray(terms) || terms.length === 0) return [];
   try {
-    // `timeoutMs` is forwarded, not defaulted here: a store that ignores it
-    // (the offline one is filesystem-bound) behaves exactly as before, and an
-    // omitted value leaves `restFetch`'s own budget in place. `limit` is the
-    // budget for the offline store that `timeoutMs` cannot bound — the local
-    // search walks scope files synchronously, so a hot-path caller passes a
-    // limit to stop the walk; an omitted value leaves it unbounded as before.
-    const res = await store.search({ q: terms, scopes: scope.readOrder, timeoutMs, limit });
+    // `timeoutMs` bounds the REMOTE route (a network fetch); `walkLimit` bounds
+    // the OFFLINE one (a synchronous file walk `timeoutMs` cannot interrupt).
+    // They are deliberately separate names: `RemoteStore.search` reads `limit`
+    // (→ `body.limit`), so a shared name would truncate the remote hit set
+    // BEFORE `rankLessons` runs — exactly what a hot-path caller must avoid.
+    // `walkLimit` is honoured only by the local stores; the remote ignores it
+    // and stays bounded by `timeoutMs` alone, as it was before this budget.
+    const res = await store.search({ q: terms, scopes: scope.readOrder, timeoutMs, walkLimit });
     if (!res || !res.ok || !Array.isArray(res.entries)) return [];
     return dedupeRelevant(res.entries, cap);
   } catch {
@@ -760,11 +761,12 @@ export const PROMPT_FETCH_TIMEOUT_MS = 2000;
 // The offline-store counterpart to the fetch budget above. `timeoutMs` bounds
 // the remote route, but the local store walks every scope's files synchronously
 // on every prompt — an unbounded walk a wall-clock budget cannot interrupt. The
-// per-prompt pull passes this cap so the offline walk stops after enough
-// candidates: the block ranks then keeps only MAX_PROMPT_LESSONS, so a few
-// hundred nearest-scope hits is far more than the ranker needs to surface the
-// best three. Only the hot-path caller passes it; the failure hook stays
-// unbounded, as it was.
+// per-prompt pull forwards this as `walkLimit` (NOT `limit`, which the remote
+// store maps to `body.limit` and would truncate its hit set pre-ranking), so it
+// bounds only the offline walk: the block ranks then keeps MAX_PROMPT_LESSONS,
+// so a few hundred nearest-scope hits is far more than the ranker needs to
+// surface the best three. Only the hot-path caller passes it; the failure hook
+// stays unbounded, as it was.
 export const PROMPT_LOCAL_SEARCH_LIMIT = 200;
 
 /**
@@ -856,7 +858,7 @@ export async function promptLessonsFromStore(store, scope, terms, {
   const hits = await relevantLessonsFromStore(store, scope, terms, {
     cap: Number.MAX_SAFE_INTEGER,
     timeoutMs,
-    limit: PROMPT_LOCAL_SEARCH_LIMIT,
+    walkLimit: PROMPT_LOCAL_SEARCH_LIMIT,
   });
   if (hits.length === 0) return [];
   const ranked = rankLessons(hits, {
