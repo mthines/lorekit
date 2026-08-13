@@ -235,17 +235,29 @@ class LocalStore {
   // this walks each scope EXACTLY ONCE — the failure hook passes all its terms
   // in one call rather than one call per term, so N terms no longer re-read the
   // store N times. An empty query (or empty list) returns everything, unchanged.
-  async search({ q, scopes, tags } = {}) {
+  // `limit` bounds the walk for hot-path callers (the per-prompt hook): a local
+  // search re-reads every scope's files synchronously, which the remote
+  // `timeoutMs` cannot bound, so an unbounded store would stall the prompt.
+  // Once `limit` matches are collected the walk stops — later scopes in
+  // `scopes` are skipped entirely. Scopes are visited most-specific-first, so
+  // the retained matches are the nearest-scope ones, consistent with this
+  // store's precedence. Omitted → unbounded, exactly as before.
+  async search({ q, scopes, tags, limit } = {}) {
     const needles = (Array.isArray(q) ? q : [q])
       .map((n) => String(n || '').toLowerCase())
       .filter(Boolean);
     const matchAll = needles.length === 0;
+    const cap = Number.isInteger(limit) && limit > 0 ? limit : Infinity;
     const out = [];
     for (const scope of scopes || []) {
+      if (out.length >= cap) break;
       const { entries } = await this.list({ scope, tags });
       for (const e of entries) {
         const hay = `${e.key}\n${(e.tags || []).join(' ')}\n${e.value || ''}`.toLowerCase();
-        if (matchAll || needles.some((n) => hay.includes(n))) out.push(e);
+        if (matchAll || needles.some((n) => hay.includes(n))) {
+          out.push(e);
+          if (out.length >= cap) break;
+        }
       }
     }
     return { ok: true, entries: out };
@@ -412,13 +424,16 @@ class TwoTierStore {
     return this.home.restore({ scope, key });
   }
 
-  async search({ q, scopes, tags } = {}) {
-    const homeRes = await this.home.search({ q, scopes, tags });
+  async search({ q, scopes, tags, limit } = {}) {
+    const homeRes = await this.home.search({ q, scopes, tags, limit });
     const projRes = this.projectActive()
-      ? await this.project.search({ q, scopes, tags })
+      ? await this.project.search({ q, scopes, tags, limit })
       : { entries: [] };
     const merged = mergeByKey(projRes.entries, homeRes.entries, (e) => `${e.scope}\x00${e.key}`);
-    return { ok: true, entries: merged };
+    // Each tier is already `limit`-bounded; slice the merged, de-duplicated set
+    // so the two-tier walk honours the same cap the hot-path caller asked for.
+    const capped = Number.isInteger(limit) && limit > 0 ? merged.slice(0, limit) : merged;
+    return { ok: true, entries: capped };
   }
 
   // Merged, de-duplicated non-archived count across the given scopes.
