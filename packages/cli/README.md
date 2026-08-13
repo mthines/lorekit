@@ -672,8 +672,11 @@ Both files share this schema — all fields optional:
                            // a switch, not a mode: the knobs a mode would expose (how
                            // many, how strict) are the two things that must not be
                            // turned up on a hook that fires every single turn.
-                           // only reached under hook mode "all" — "read-only" and
-                           // "none" never wire the event. repo wins over user
+                           // two install paths reach it: hook mode "all" ("read-only"
+                           // and "none" never wire the event), and the Claude
+                           // marketplace plugin, whose hooks.json wires it
+                           // unconditionally — no mode involved, so hooks.userPrompt is
+                           // a plugin user's only opt-out. repo wins over user
 
   "hooks.stop": "friction",
                            // gate the end-of-turn retrospective nudge:
