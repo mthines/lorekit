@@ -11,6 +11,7 @@
 import {
   buildEmbeddingRequest,
   parseEmbeddingResponse,
+  redactKey,
   EmbeddingError,
   type EmbeddingConfig,
 } from './embedding.ts';
@@ -58,7 +59,10 @@ export async function embedTexts(inputs: readonly string[], config: EmbeddingCon
     } catch {
       detail = '';
     }
-    throw new EmbeddingError(`embedding request failed with HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
+    // Redacted: several providers reflect the offending credential in the error
+    // body, which would move the key out of a header and into a log.
+    const safe = redactKey(detail, config.apiKey);
+    throw new EmbeddingError(`embedding request failed with HTTP ${res.status}${safe ? `: ${safe}` : ''}`);
   }
 
   return parseEmbeddingResponse(await res.json(), inputs.length);

@@ -278,6 +278,72 @@ split update is rejected.
 
 ---
 
+## Smoke tests
+
+Two layers, because they catch different things and cost different amounts.
+
+### Offline resilience — `scripts/backfill-embeddings.smoke.test.mjs`
+
+Drives the **real backfill script** as a child process against a fake provider
+and a fake PostgREST on localhost. No key, no network, no money, so it is
+deterministic and runs anywhere:
+
+```bash
+node --test scripts/backfill-embeddings.smoke.test.mjs
+```
+
+It exists because the unit specs cover the pure decisions and the argument
+parsing, but neither runs the script's **loop** — and the loop is where every
+property that matters under failure lives. Each of these is a fixture rather
+than something to wait for a provider to do:
+
+| Failure | Required behaviour |
+|---------|--------------------|
+| Provider 500 on one batch | Skip that batch, finish the run, leave those rows null |
+| Provider fails *every* time | Terminate — do not re-serve the same page forever |
+| Wrong-width vector | Refuse; write nothing |
+| Malformed / non-JSON body | Skipped batch, exit 0, nothing written |
+| Response missing one input's vector | Refuse the whole batch, not partial credit |
+| Provider reflects the key in an error | The key never reaches stdout or stderr |
+| Row with no embeddable text | Skipped, and does not stall the page |
+| `--dry-run` | No provider call, no write, and works with no key |
+
+> The key-leak test found a real one. Several providers echo the offending
+> credential back in an error body ("invalid api key: sk-…"), and the script
+> logs provider errors because a bare status code sends an operator hunting.
+> `redactKey` now runs at every point that turns a provider response into a
+> message — in the script and in the edge client.
+
+### Live — `scripts/smoke-embeddings.mjs`
+
+Proves the path a fake cannot: a wrong model name, a revoked key, a changed
+response shape, a model whose real output width does not match the column, and
+grants that only exist in the real database.
+
+```bash
+node scripts/smoke-embeddings.mjs          # writes, checks, cleans up
+node scripts/smoke-embeddings.mjs --keep   # leave the artefacts for inspection
+```
+
+It checks that the provider answers at the declared width (reporting latency),
+that a real vector round-trips through the column with its model, and that the
+both-or-neither CHECK is live on the real database rather than merely present in
+a migration file.
+
+**It writes to a live tenant, so cleanup is the point.** Every artefact is
+minted through the same namespace contract the other live suites use — the name
+is registered at mint time, carries a timestamp, and matches
+`SMOKE_ARTEFACT_PATTERN` (its `embed-` label is part of that closed set), so a
+run that crashes before cleanup is still recognisable to
+`scripts/smoke-cleanup.mjs`. Deletion is a **hard** delete; the default soft
+archive would leave a row behind on every run forever. A leak is reported as a
+warning rather than thrown, so it is visible without turning a passing run red.
+
+It refuses to run against a project with embedding disabled: a skipped run that
+reports success is worse than no run.
+
+---
+
 ## Where the code lives
 
 | File | Role |

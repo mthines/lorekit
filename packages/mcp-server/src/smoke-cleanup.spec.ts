@@ -34,6 +34,8 @@ describe('SMOKE_ARTEFACT_PATTERN / smokeArtefactTimestamp', () => {
     ['smoke-1717171717171', 1717171717171],
     ['memories-smoke-1717171717171-restore', 1717171717171],
     ['byod-smoke-1717171717171-global', 1717171717171],
+    // The embedding smoke script's label (scripts/smoke-embeddings.mjs).
+    ['embed-smoke-1717171717171-write', 1717171717171],
     ['smoke-1717171717171-org-id-form', 1717171717171],
     ['smoke-1717171717171-tok', 1717171717171],
   ])('recognises %s', (name, expected) => {

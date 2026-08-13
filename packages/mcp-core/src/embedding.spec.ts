@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  resolveEmbeddingConfig, embeddingInput, isEmbeddable, buildEmbeddingRequest,
+  resolveEmbeddingConfig, embeddingInput, isEmbeddable, buildEmbeddingRequest, redactKey,
   parseEmbeddingResponse, toVectorLiteral, batchInputs, estimateCost, estimateCostFromChars, supportsDimensions,
   acceptsDimensionsParam,
   EmbeddingError, EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL, MAX_EMBED_CHARS,
@@ -289,5 +289,36 @@ describe('supportsDimensions', () => {
   it('is advisory about the column width', () => {
     expect(supportsDimensions(1536)).toBe(true);
     expect(supportsDimensions(3072)).toBe(false);
+  });
+});
+
+describe('redactKey', () => {
+  // Provider error bodies are echoed into logs because a bare status code sends
+  // an operator hunting — but several providers REFLECT the offending
+  // credential in that body, which moves the key out of a header and into
+  // stdout, a CI log, and anywhere that log is shipped.
+  const key = 'sk-live-abcdef123456';
+
+  it('removes every occurrence, not just the first', () => {
+    expect(redactKey(`bad key ${key} (sent ${key})`, key)).toBe('bad key [redacted] (sent [redacted])');
+  });
+
+  it('leaves the rest of the message intact — the reason is the useful part', () => {
+    expect(redactKey(`quota exceeded for ${key}, retry in 60s`, key))
+      .toBe('quota exceeded for [redacted], retry in 60s');
+  });
+
+  it('leaves text alone when there is no key, or one too short to be real', () => {
+    // Redacting a 3-character string would blank unrelated text and make the
+    // message useless.
+    expect(redactKey('invalid model', null)).toBe('invalid model');
+    expect(redactKey('invalid model', undefined)).toBe('invalid model');
+    expect(redactKey('a short key: abc', 'abc')).toBe('a short key: abc');
+  });
+
+  it('is total over junk input', () => {
+    expect(redactKey(null, key)).toBe('');
+    expect(redactKey(undefined, key)).toBe('');
+    expect(redactKey(42, key)).toBe('42');
   });
 });

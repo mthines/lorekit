@@ -336,3 +336,24 @@ export function estimateCostFromChars(chars: number, usdPerMillionTokens: number
 export function supportsDimensions(nativeDimensions: number): boolean {
   return nativeDimensions === EMBEDDING_DIMENSIONS;
 }
+
+/**
+ * Strip an API key out of text that is about to be logged.
+ *
+ * Provider error bodies are echoed into logs because they carry the actual
+ * reason a call failed — quota, a bad model name, a revoked key — and a bare
+ * status code sends an operator hunting. But several providers REFLECT the
+ * offending credential in that body ("invalid api key: sk-..."), so echoing it
+ * verbatim moves the key from a header, where it belongs, into stdout, a CI log
+ * and anywhere that log is shipped.
+ *
+ * Applied at every point that turns a provider response into a message, rather
+ * than trusted to each call site to remember. A short or absent key is left
+ * alone: redacting a 3-character string would blank unrelated text and make the
+ * message useless, and no real key is that short.
+ */
+export function redactKey(text: unknown, apiKey: string | null | undefined): string {
+  const out = String(text ?? '');
+  if (typeof apiKey !== 'string' || apiKey.length < 8) return out;
+  return out.split(apiKey).join('[redacted]');
+}

@@ -82,7 +82,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 // v23.6 onward (type stripping); there is no build step to run first.
 const MODULE = path.join(HERE, '..', 'packages', 'mcp-core', 'src', 'embedding.ts');
 const {
-  resolveEmbeddingConfig, embeddingInput, isEmbeddable, toVectorLiteral,
+  resolveEmbeddingConfig, embeddingInput, isEmbeddable, toVectorLiteral, redactKey,
   buildEmbeddingRequest, parseEmbeddingResponse, batchInputs, estimateCostFromChars,
   MAX_BATCH_ITEMS,
 } = await import(MODULE).catch((e) => {
@@ -389,7 +389,11 @@ async function main() {
           body: JSON.stringify(buildEmbeddingRequest(group.map((u) => u.text), config)),
           signal: AbortSignal.timeout(60_000),
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
+        // Redacted before it can reach a log: several providers reflect the
+        // offending credential in the error body.
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${redactKey((await res.text()).slice(0, 300), config.apiKey)}`);
+        }
         vectors = parseEmbeddingResponse(await res.json(), group.length);
       } catch (e) {
         // Skipped, not fatal: one bad batch must not end a run with thousands
