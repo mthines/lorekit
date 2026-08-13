@@ -21,6 +21,7 @@ import { hook } from '../src/hook.mjs';
 import { migrate } from '../src/migrate.mjs';
 import { bootstrap } from '../src/bootstrap.mjs';
 import { mcpServer } from '../src/mcp-server.mjs';
+import { serve } from '../src/serve.mjs';
 import { traceCommand } from '../src/telemetry.mjs';
 import { loadDotEnv } from '../src/dotenv.mjs';
 
@@ -103,6 +104,15 @@ ${c.bold('Commands')}
               resolved store (local .lorekit/ offline, or remote passthrough) so
               .mcp.json can point at the CLI instead of mcp-remote. Speaks
               JSON-RPC on stdin/stdout — not run by hand.
+  serve (web) Run the LoreKit dashboard locally against the local .lorekit/
+              file store — no Supabase project needed. Starts a zero-dependency
+              REST shim over the local store, launches the dashboard against
+              it, prints both URLs, and tears both down on Ctrl-C. Covers the
+              Lore Explorer + scope tree (list/filter/search, scope tree,
+              view/edit/archive/restore); the Overview analytics page is out of
+              scope. By default launches the prebuilt standalone bundle (no
+              repo checkout needed); --dev runs the source dev server instead
+              (requires a repo checkout).
 
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
@@ -639,6 +649,35 @@ Machine-facing: exposes the memory.* tools backed by the resolved store (local
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
 `,
+  serve: `${c.bold('lorekit serve')} — run the LoreKit dashboard locally against the local file store ${c.dim('(alias: web)')}
+
+${c.bold('Usage')}
+  npx @lorekit/cli serve [options]
+
+Starts a zero-dependency REST shim (node:http) over the local .lorekit/ (+
+~/.lorekit/) two-tier file store, then launches the Next.js dashboard pointed
+at it, prints both URLs, and tears both down on Ctrl-C. Covers the Lore
+Explorer + scope tree — list/filter/search, the scope tree, viewing, editing,
+archiving, and restoring a lesson. The Overview analytics page is out of
+scope for local mode.
+
+By default this launches the PREBUILT standalone bundle the CLI locates or
+lazily downloads and caches under ~/.lorekit/web/<version>/ — no repo
+checkout needed. Pass --dev to run the source dev server instead (requires a
+checkout of this repo, with dependencies installed).
+
+${c.bold('Options')}
+  -d, --dir <path>        Target project root whose .lorekit/ is served (default: current directory)
+      --port <n>          Port for the REST shim (default: ${4850}; auto-increments if taken)
+      --web-port <n>       Port for the dashboard (default: ${4851}; auto-increments if taken)
+      --dev                Run the dashboard's source dev server instead of the prebuilt bundle
+      --no-open            Do not open the dashboard URL in a browser
+
+${c.bold('Examples')}
+  npx @lorekit/cli serve
+  npx @lorekit/cli web --port 5000 --web-port 5001
+  npx @lorekit/cli serve --dev --no-open
+`,
 };
 
 // Every long flag the CLI understands (after alias resolution). Passed to the
@@ -653,6 +692,8 @@ const KNOWN_FLAGS = [
   'origin-repo', 'origin-branch', 'origin-commit', 'origin-pr', 'no-origin',
   // Scale-aware survey flags
   'all', 'max', 'since', 'until', 'key-prefix',
+  // `serve` / `web`
+  'port', 'web-port', 'dev', 'no-open',
 ];
 
 // Commands that write to disk / talk to the network on a human's behalf. These
@@ -660,12 +701,12 @@ const KNOWN_FLAGS = [
 // never fail on a stray flag, and only ever receive flags we control).
 const HUMAN_COMMANDS = new Set([
   'install', 'uninstall', 'doctor', 'list', 'search', 'show', 'stats', 'scopes',
-  'diff', 'tree', 'lint', 'dedupe', 'link', 'migrate', 'write',
+  'diff', 'tree', 'lint', 'dedupe', 'link', 'migrate', 'write', 'serve',
 ]);
 
 // Command aliases — canonicalized before help / dispatch so `lorekit ls --help`
 // and telemetry both resolve to the real command name.
-const COMMAND_ALIASES = { ls: 'list', grep: 'search', resolve: 'tree', url: 'link' };
+const COMMAND_ALIASES = { ls: 'list', grep: 'search', resolve: 'tree', url: 'link', web: 'serve' };
 
 async function main() {
   // Load a `.env` from the current directory (if any) before anything reads the
@@ -677,7 +718,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const args = parseArgs(argv, {
     aliases: { d: 'dir', e: 'endpoint', t: 'token', y: 'yes', h: 'help', v: 'version' },
-    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'mcp-json', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry', 'all'],
+    booleans: ['yes', 'force', 'deep', 'apply', 'help', 'version', 'global', 'project', 'no-hooks', 'mcp-json', 'no-origin', 'json', 'remote', 'local', 'link', 'archived', 'clear-ttl', 'telemetry', 'all', 'dev', 'no-open'],
     known: KNOWN_FLAGS,
   });
 
@@ -760,6 +801,8 @@ async function main() {
       return traceCommand('bootstrap', args, VERSION, () => bootstrap(args));
     case 'write':
       return traceCommand('write', args, VERSION, () => write(args));
+    case 'serve':
+      return traceCommand('serve', args, VERSION, () => serve(args));
     default:
       err(`${c.red('Unknown command:')} ${command}\n`);
       log(HELP);

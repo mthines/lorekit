@@ -7,6 +7,14 @@ const nextConfig: NextConfig = {
   // Disable Next.js's built-in ESLint step — NX runs it separately via nx lint
   eslint: { ignoreDuringBuilds: true },
 
+  // A self-contained server bundle (`.next/standalone/server.js`, its own
+  // `node_modules`, no separate `next start`) — what `scripts/build-web-bundle.mjs`
+  // packages for `lorekit serve` (no `--dev`) to fetch, cache, and launch with
+  // no repo checkout (plan D7/P2). Inert on Vercel: its own build pipeline
+  // ignores `output` and serves every route as its own managed function —
+  // this key only matters to the CLI's own build script.
+  output: 'standalone',
+
   // Pin every asset URL and Server Action request to the deployment that built
   // the bundle making it (Vercel Skew Protection).
   //
