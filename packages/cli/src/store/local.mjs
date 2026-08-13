@@ -305,6 +305,25 @@ class LocalStore {
     }
     return [...counts.entries()].map(([scope, count]) => ({ scope, count }));
   }
+
+  // listRaw({ scope }) → { ok, entries } — EVERY entry (live + archived +
+  // expired), unfiltered and unsorted. The additive read primitive the local
+  // web dev mode shim (`packages/cli/src/serve/`) needs and no existing method
+  // provides: `list()` hides archived/expired rows via `isLive`, and there is
+  // no "list archived" equivalent on this store — the shim's `archived=true`
+  // partition and `expiring_within_days` filter both need to see hidden rows
+  // to apply their own predicate, not this store's.
+  //
+  // With `scope` given, reads only that scope's directory (mirroring `list`).
+  // Without it, walks every scope on disk (`_walkEntries`) — the store-wide
+  // read `GET /memories` with no `?scope=` needs. Additive: every existing
+  // caller of `list`/`read`/etc is unaffected.
+  async listRaw({ scope } = {}) {
+    const rows = scope
+      ? this._readAll(scope).map((r) => r.entry)
+      : this._walkEntries().map((r) => r.entry);
+    return { ok: true, entries: rows.map(withReadFields) };
+  }
 }
 
 // A scope string is global when its type segment is `global`.
@@ -446,5 +465,15 @@ class TwoTierStore {
       }
     }
     return [...counts.entries()].map(([scope, count]) => ({ scope, count }));
+  }
+
+  // Merged, de-duplicated listRaw across both tiers — project shadows home,
+  // the same first-wins merge `list()`/`search()` use. See LocalStore.listRaw
+  // for why this exists.
+  async listRaw({ scope } = {}) {
+    const homeRes = await this.home.listRaw({ scope });
+    const projRes = this.projectActive() ? await this.project.listRaw({ scope }) : { entries: [] };
+    const merged = mergeByKey(projRes.entries, homeRes.entries, (e) => `${e.scope}\x00${e.key}`);
+    return { ok: true, entries: merged };
   }
 }

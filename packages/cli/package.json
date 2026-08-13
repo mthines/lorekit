@@ -35,6 +35,10 @@
   "scripts": {
     "start": "node bin/lorekit.mjs",
     "doctor": "node bin/lorekit.mjs doctor",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs src/serve/*.test.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@lorekit/schemas": "workspace:*"
   }
 }
