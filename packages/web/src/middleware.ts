@@ -4,6 +4,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 // Shared with /api/auth/callback and the client-side password sign-in so all
 // three enforce one definition of a safe `?next=` target.
 import { safeNextPath } from '@/lib/auth-redirect';
+import { isLocalModeServer } from '@/lib/local-mode';
 
 /** 24 hours — matches the Supabase project jwt_expiry so the cookie
  *  outlives the access token and the refresh token can be used. */
@@ -85,6 +86,13 @@ export async function middleware(request: NextRequest) {
       },
     },
   );
+
+  // Local web dev mode (plan D3): the local REST shim implements no GoTrue
+  // auth endpoints at all, so `getUser()` below has nothing real to resolve
+  // against — skip it outright rather than let it round-trip to a server that
+  // cannot answer. INVARIANT (AC-12): with the flag unset, every line below
+  // this check runs exactly as it did before this branch existed.
+  if (isLocalModeServer()) return response;
 
   // Refresh session if the access token has expired; supabase-ssr will
   // transparently use the refresh token and write new cookies via setAll.

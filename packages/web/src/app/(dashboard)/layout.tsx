@@ -12,6 +12,7 @@ import { ToastProvider } from '@/components/providers/ToastProvider';
 import { OnboardingProvider } from '@/components/providers/OnboardingProvider';
 import { getOnboardingState } from '@/lib/onboarding-server';
 import { resolveDashboardBootstrap } from '@/lib/dashboard-bootstrap';
+import { isLocalModeServer, LOCAL_MODE_USER } from '@/lib/local-mode';
 import { Toaster } from 'sonner';
 import { CommandPaletteProvider } from '@/components/command/CommandPaletteProvider';
 import { CommandPalette } from '@/components/command/CommandPalette';
@@ -32,7 +33,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // decides what they can see, an absent or expired session reads nothing, and
   // the result is discarded on the redirect path below.
   const bootstrap = await resolveDashboardBootstrap({
-    getUser: async () => (await supabase.auth.getUser()).data.user,
+    // Local web dev mode (plan D3; deviation recorded in `lib/local-mode.ts`'s
+    // docblock and in plan.md's Progress Log): the local REST shim implements
+    // no real Supabase Auth, so a real `getUser()` here would always resolve
+    // to "no session" and redirect every request to a `/login` that cannot
+    // authenticate either. Resolve to the one synthetic local user instead.
+    // INVARIANT (AC-12): with the flag unset this is exactly the real
+    // `getUser()` call it always was — no other line in this component changes.
+    getUser: async () =>
+      isLocalModeServer() ? LOCAL_MODE_USER : (await supabase.auth.getUser()).data.user,
     getOnboardingState,
     onboardingFallback: { hasLessons: false, hasWebhook: false },
   });
