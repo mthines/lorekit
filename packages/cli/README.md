@@ -677,7 +677,9 @@ Both files share this schema — all fields optional:
                            // and "none" never wire the event), and the Claude
                            // marketplace plugin, whose hooks.json wires it
                            // unconditionally — no mode involved, so hooks.userPrompt is
-                           // a plugin user's only opt-out. repo wins over user
+                           // the mode-independent opt-out there. (hooks.disabled:
+                           // ["UserPromptSubmit"] also switches it off, one gate
+                           // earlier, so it is not the only opt-out.) repo wins over user
 
   "hooks.stop": "friction",
                            // gate the end-of-turn retrospective nudge:
