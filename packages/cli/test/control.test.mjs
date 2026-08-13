@@ -11,6 +11,7 @@ import {
   MIN_SESSION_START_MAX_CHARS, MAX_SESSION_START_MAX_CHARS,
   HOOK_INSTRUCTION_EVENTS,
 } from '../src/control.mjs';
+import { CLAUDE_HOOK_EVENTS } from '../src/config.mjs';
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'lk-ctl-'));
@@ -22,9 +23,11 @@ const NO_CONN = { usable: false, endpoint: null, token: null };
 test('hooks.instructions resolves every lifecycle event, UserPromptSubmit included', () => {
   // The resolver used to iterate a private three-event literal, so a
   // `UserPromptSubmit` instruction was accepted in config and silently dropped.
-  assert.deepEqual(HOOK_INSTRUCTION_EVENTS, [
-    'SessionStart', 'UserPromptSubmit', 'PostToolUseFailure', 'Stop',
-  ]);
+  // Assert PARITY with CLAUDE_HOOK_EVENTS rather than re-pinning the roster: a
+  // hardcoded copy here is a third hand-maintained list that can drift from the
+  // wiring the same way the original literal did — this catches the next event
+  // that lands in only one of them (the mirror guard frameworks.test.mjs has).
+  assert.deepEqual([...HOOK_INSTRUCTION_EVENTS].sort(), [...CLAUDE_HOOK_EVENTS].sort());
   const r = resolveControl({
     connection: NO_CONN,
     repoConfig: {
