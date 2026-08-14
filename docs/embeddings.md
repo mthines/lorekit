@@ -124,8 +124,11 @@ by reading provider logs — but they are on **two** spans, and which one matter
 |------|--------|---------|
 | the **request** span | `lorekit.embedding.enqueued` | the call was handed to the background runtime |
 | the **request** span | `lorekit.embedding.skipped = no_background_runtime` | no `waitUntil` on this runtime; the row stays null for the backfill |
-| `lorekit.embedding.write` (detached) | `lorekit.embedding.skipped = no_vector` | the provider answered, with no vector for this input |
 | `lorekit.embedding.write` (detached) | an `embedding update:` / `embedding failed:` error | the write or the provider call failed |
+
+There is no `no_vector` signal: response validation is strict and throws, so a
+provider that answers without a usable vector arrives as an `embedding failed:`
+error on the same span rather than as a separate skip reason.
 
 Everything after the enqueue lands on the **detached** `lorekit.embedding.write`
 span, not on the request span. It has to: `traceRequest` ends the request span

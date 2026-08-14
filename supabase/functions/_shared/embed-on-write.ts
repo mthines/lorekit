@@ -75,11 +75,11 @@ export function embedOnWrite(
 
   host.waitUntil((async () => {
     try {
+      // No empty-vector branch: `parseEmbeddingResponse` is strict on purpose
+      // and THROWS unless it returns exactly one validated vector for one
+      // input, so a `!vector` guard here could never fire. It is caught below
+      // as an `embedding failed:` error like every other provider fault.
       const [vector] = await embedTexts([text], config);
-      if (!vector) {
-        bg.setAttributes({ 'lorekit.embedding.skipped': 'no_vector' });
-        return;
-      }
       // `embedding_model` is written in the SAME statement as the vector. The
       // 00060 CHECK requires both-or-neither, so splitting them would not merely
       // be untidy — it would be rejected.
