@@ -16,16 +16,20 @@ import {
   parseInitEvent,
 } from "../src/agent.mjs";
 import {
+  EXPECTED_MCP_SERVERS,
   FINDING_CWD,
   FINDING_FOREIGN_HOOKS,
   FINDING_MCP_SERVERS,
+  FINDING_MISSING_HOOKS,
   FINDING_NO_INIT,
   FINDING_PLUGINS,
   FINDING_SKILLS,
+  FINDING_SLASH_COMMANDS,
   assertCleanEnvironment,
   describeEnvironment,
   summarizeEnvironment,
 } from "../src/environment.mjs";
+import { MCP_SERVER_NAME } from "../src/mcp-config.mjs";
 import { prepareArm } from "../src/arm.mjs";
 import { withSandbox } from "../src/sandbox.mjs";
 
@@ -114,6 +118,66 @@ test("five hooks firing when one was installed is contamination", () => {
   );
   assert.equal(verdict.clean, false);
   assert.ok(verdict.findings.some((f) => f.kind === FINDING_FOREIGN_HOOKS));
+});
+
+test("fewer hooks than expected is contamination, not a clean run", () => {
+  // The opposite of the five-hook case, and the more dangerous one: the
+  // harness's own SessionStart never fired, so no lesson was injected and arm B
+  // ran as arm A. Scoring that rep would report "memory does not help".
+  const verdict = assertCleanEnvironment(
+    summarizeEnvironment({ init: CLEAN_INIT, hookEvents: [] }),
+    { sandboxRoot: "/tmp/lorekit-eval-abc123", expectedHooks: 1 },
+  );
+  assert.equal(verdict.clean, false);
+  assert.equal(verdict.verifiable, true, "the init event was there");
+  assert.ok(verdict.findings.some((f) => f.kind === FINDING_MISSING_HOOKS));
+});
+
+test("a hook firing on another event is foreign even when the count matches", () => {
+  // One hook fired, one was expected — arithmetic says clean. It was not ours.
+  const verdict = assertCleanEnvironment(
+    summarizeEnvironment({
+      init: CLEAN_INIT,
+      hookEvents: [{ name: "PreToolUse:Bash", event: "PreToolUse" }],
+    }),
+    { sandboxRoot: "/tmp/lorekit-eval-abc123", expectedHooks: 1 },
+  );
+  assert.equal(verdict.clean, false);
+  assert.ok(verdict.findings.some((f) => f.kind === FINDING_FOREIGN_HOOKS));
+});
+
+test("a hook with no recorded event is unknown, never foreign", () => {
+  const verdict = assertCleanEnvironment(
+    summarizeEnvironment({
+      init: CLEAN_INIT,
+      hookEvents: [{ name: "SessionStart:startup", event: null }],
+    }),
+    { sandboxRoot: "/tmp/lorekit-eval-abc123", expectedHooks: 1 },
+  );
+  assert.equal(verdict.clean, true, JSON.stringify(verdict.findings));
+});
+
+test("slash commands in scope are contamination", () => {
+  // `--disable-slash-commands` expresses the intent; this is the check that the
+  // running `claude` actually honoured it.
+  const verdict = assertCleanEnvironment(
+    summarizeEnvironment({
+      init: { ...CLEAN_INIT, slash_commands: ["compact", "review"] },
+      hookEvents: [{ name: "SessionStart:startup", event: "SessionStart" }],
+    }),
+    { sandboxRoot: "/tmp/lorekit-eval-abc123", expectedHooks: 1 },
+  );
+  assert.equal(verdict.clean, false);
+  const finding = verdict.findings.find(
+    (f) => f.kind === FINDING_SLASH_COMMANDS,
+  );
+  assert.deepEqual(finding.values, ["compact", "review"]);
+});
+
+test("the allowed MCP server is the one the harness actually writes", () => {
+  // Not a tautology: `EXPECTED_MCP_SERVERS` spelled the name itself once, so
+  // renaming the server key flagged every rep as contaminated by its own store.
+  assert.deepEqual(EXPECTED_MCP_SERVERS, [MCP_SERVER_NAME]);
 });
 
 test("running outside the sandbox is contamination", () => {
