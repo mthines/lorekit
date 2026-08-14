@@ -13,7 +13,7 @@
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { validateScope } from '../_shared/scope.ts';
+import { validateScope, UserInputError } from '../_shared/scope.ts';
 import { createTracedClient, type Span } from '../_shared/otel.ts';
 import { translateCapError } from './limits.ts';
 import { translateOrgPermissionError } from './org-permissions.ts';
@@ -220,7 +220,14 @@ export async function toolList(
   const scope = validateScope(rawScope);
   const pageLimit = Math.min(limit, 100);
 
-  // Any value other than 'rank' falls through to the recency path (D3/D7).
+  // Validate `order` against the same closed set the catalog `enum` and
+  // `MemoryListSchema` accept ('recency' | 'rank'). A present-but-invalid value
+  // (e.g. `"Rank"`) must be REJECTED, not silently coerced to recency — a quiet
+  // fallthrough would mask a caller typo and diverge from the schema contract.
+  // `undefined` means "unspecified" and defaults to recency (D3).
+  if (params.order !== undefined && params.order !== 'recency' && params.order !== 'rank') {
+    throw new UserInputError(`Invalid order "${params.order}": expected "recency" or "rank"`);
+  }
   const ranked = params.order === 'rank';
 
   span.setAttributes({ 'lorekit.scope': scope });
@@ -270,7 +277,14 @@ export async function toolList(
       updated_at: entry.updated_at,
     }));
 
-    span.setAttributes({ 'lorekit.result.count': entries.length });
+    // `candidate_count` saturates at CANDIDATE_LIMIT — mirrors the observability
+    // `memories/handlers/relevant.ts` exposes so a truncated window is visible in
+    // telemetry (a `candidate_count === CANDIDATE_LIMIT` read may have ranked over
+    // a windowed subset). `result.count` is the post-`limit` page size.
+    span.setAttributes({
+      'lorekit.result.count': entries.length,
+      'lorekit.candidate_count': candidates.length,
+    });
     // `hasMore` is FALSE here by contract, not by accident. Everywhere else in
     // this codebase `hasMore: true` means "there is another page, and
     // `nextCursor` is how you reach it" (`cursor.ts` buildPage,
