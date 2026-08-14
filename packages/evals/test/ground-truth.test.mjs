@@ -165,3 +165,32 @@ test("AC-1-reuse: ground-truth.mjs re-encodes NO `loop::` literal and imports th
     "ground-truth.mjs must import inferKindHost from @lorekit/schemas/tags",
   );
 });
+
+test("AC-1(d): a plain lessons bucket sharing an outcome HOST is not ground truth", () => {
+  // `inferKindHost` maps `loop::<host>-lessons` to that host, so
+  // `loop::reviewer-lessons` resolves to host "reviewer" exactly as
+  // `loop::reviewer-comment-relevance` does. A host-only membership check let an
+  // ordinary lessons row into the ground truth; the `kind` half (bus/signal, not
+  // lesson) is what keeps the two apart.
+  const reviewerLesson = {
+    scope: "repo::mthines/lorekit",
+    key: "reviewer::some-lesson",
+    tags: ["loop::reviewer-lessons"],
+    origin_pr: null,
+  };
+  const reviewLesson = {
+    scope: "repo::mthines/lorekit",
+    key: "review::some-lesson",
+    tags: ["loop::review-lessons"],
+    origin_pr: null,
+  };
+  assert.equal(shouldSurface(reviewerLesson, QUERY), false);
+  assert.equal(shouldSurface(reviewLesson, QUERY), false);
+  assert.equal(relevanceWeight(reviewerLesson, QUERY), 0);
+  // The two real outcome buckets still qualify.
+  assert.equal(shouldSurface(M05, QUERY), true);
+  assert.equal(shouldSurface(M06, QUERY), true);
+  // And they are excluded from a built ground truth.
+  const gt = buildGroundTruth([M05, M06, reviewerLesson, reviewLesson], QUERY);
+  assert.deepEqual(new Set(gt.keys), new Set([M05.key, M06.key]));
+});

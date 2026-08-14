@@ -26,8 +26,20 @@ import { inferKindHost } from "@lorekit/schemas/tags";
  */
 export const RECURRENCE_CONFIRMED_AT = 3;
 
-/** The two buckets the spec names as the outcome signal, by their resolved host. */
+/**
+ * The two buckets the spec names as the outcome signal, identified by the
+ * `{ kind, host }` the shipped resolver returns.
+ *
+ * HOST ALONE IS NOT ENOUGH. `inferKindHost` maps `loop::<host>-lessons` to that
+ * host, so a plain `loop::reviewer-lessons` row also resolves to host
+ * `reviewer` — it would clear a host-only check and pollute the ground truth
+ * with ordinary lessons. The outcome buckets are the NON-lesson kinds: the
+ * `bus` (`host: review`) and the `signal` (`host: reviewer`). Gating on the
+ * pair keeps the classification owned by `@lorekit/schemas` while excluding
+ * every `lesson` bucket, present or future.
+ */
 const OUTCOME_HOSTS = new Set(["review", "reviewer"]);
+const OUTCOME_KINDS = new Set(["bus", "signal"]);
 
 /**
  * Read a non-negative integer `seen_count` off a row in either shape the stores
@@ -76,7 +88,9 @@ export function repoOfQuery(query = {}) {
  *
  * A row qualifies iff BOTH hold:
  *   1. its tags resolve (via the shipped `inferKindHost`) to an outcome/relevance
- *      bucket — `host` ∈ {review, reviewer}; and
+ *      bucket — `kind` ∈ {bus, signal} AND `host` ∈ {review, reviewer}. The kind
+ *      half is load-bearing: a `loop::reviewer-lessons` row resolves to host
+ *      `reviewer` too, and a host-only check would admit it; and
  *   2. it matches the query repo. Match is a DISJUNCTION, per the spec's
  *      "`origin_pr` / repo scope matches": the row's scope names the query repo,
  *      OR its `origin_repo` does. `origin_pr`, when the query pins one, further
@@ -89,8 +103,9 @@ export function repoOfQuery(query = {}) {
 export function shouldSurface(row, query = {}) {
   if (!row || typeof row !== "object") return false;
 
-  const { host } = inferKindHost(row.tags);
+  const { kind, host } = inferKindHost(row.tags);
   if (!host || !OUTCOME_HOSTS.has(host)) return false;
+  if (!kind || !OUTCOME_KINDS.has(kind)) return false;
 
   const wantRepo = repoOfQuery(query);
   if (wantRepo) {
