@@ -19,6 +19,7 @@ import {
   lessonId,
   SCOPE_READ_LIMIT,
   PROMPT_FETCH_TIMEOUT_MS,
+  PROMPT_LOCAL_SEARCH_LIMIT,
 } from '../src/core/lessons.mjs';
 import { resolvePrecedence, matchesQuery } from '../src/lessons-pure.mjs';
 import { deriveScope } from '../src/scope.mjs';
@@ -1485,6 +1486,21 @@ test('promptLessonsFromStore — queries under the tight per-prompt budget, not 
   await promptLessonsFromStore(store, PROMPT_SCOPE, ['migration'], { now: PROMPT_NOW });
   assert.equal(seen.timeoutMs, PROMPT_FETCH_TIMEOUT_MS);
   assert.ok(PROMPT_FETCH_TIMEOUT_MS < 10000, 'and it is tighter than the store default');
+});
+
+test('promptLessonsFromStore — bounds the local walk as `walkLimit`, never as `limit`', async () => {
+  // The sibling of the `timeoutMs` assertion above, and the reason the option
+  // is not called `limit`: `RemoteStore.search` destructures `limit` and maps
+  // it to `body.limit`, so a name collision on this store-agnostic seam would
+  // silently truncate the REMOTE hit set before `rankLessons` ever ran. Both
+  // halves are asserted deliberately — the presence of `walkLimit` alone would
+  // still pass if a second, wire-visible `limit` were added alongside it, and
+  // the absence of `limit` alone would pass if the bound were dropped entirely.
+  let seen;
+  const store = { async search(args) { seen = args; return { ok: true, entries: [] }; } };
+  await promptLessonsFromStore(store, PROMPT_SCOPE, ['migration'], { now: PROMPT_NOW });
+  assert.equal(seen.walkLimit, PROMPT_LOCAL_SEARCH_LIMIT, 'the local walk is bounded');
+  assert.equal(seen.limit, undefined, 'and the bound never reaches the remote store as `limit`');
 });
 
 test('promptLessonsFromStore — a timed-out lookup is silence, not an error', async () => {
