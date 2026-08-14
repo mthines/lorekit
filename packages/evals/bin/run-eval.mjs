@@ -190,27 +190,26 @@ export function runId(now = new Date()) {
  * @param {string[]} flags    the flags this subcommand cannot honour
  * @param {string} because    why, phrased to complete "…, so <flags> cannot be
  *                            honoured here."
+ * @param {string} [hint]     what to do instead, appended to the refusal
  */
-function refuseUnhonourableFlags(options, flags, because) {
+function refuseUnhonourableFlags(options, flags, because, hint = "") {
   const ignored = flags.filter((f) => options.provided.has(f));
   if (ignored.length === 0) return;
   throw new Error(
     `${because}, so ${ignored.join(" and ")} cannot be honoured here. ` +
-      `Drop ${ignored.length > 1 ? "them" : "it"}.`,
+      `Drop ${ignored.length > 1 ? "them" : "it"}${hint ? `, ${hint}` : ""}.`,
   );
 }
 
 async function runArm0(options) {
   // Arm 0 is the empty-store arm by definition — its job is to produce the
   // organic lesson the seeded arms are later given — so it cannot honour a seed.
-  const ignored = ["--seed", "--lesson"].filter((f) => options.provided.has(f));
-  if (ignored.length > 0) {
-    throw new Error(
-      `arm0 always runs against an EMPTY store, so ${ignored.join(" and ")} ` +
-        `cannot be honoured here. Drop ${ignored.length > 1 ? "them" : "it"}, ` +
-        `or use the "probe" subcommand, which seeds.`,
-    );
-  }
+  refuseUnhonourableFlags(
+    options,
+    ["--seed", "--lesson"],
+    "arm0 always runs against an EMPTY store",
+    'or use the "probe" subcommand, which seeds',
+  );
 
   const id = runId();
   const outDir = path.resolve(options.out, `arm0-${id}`);
