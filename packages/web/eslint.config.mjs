@@ -126,6 +126,9 @@ export default [
   {
     // `storybook-static/**` is the Storybook build artifact (gitignored); the
     // MSW worker is a generated vendor file — neither should be linted.
+    // `**/next-env.d.ts` is a NEW ignore, not a re-scoping: it is a Next.js
+    // *generated* declaration file (rewritten on every build, gitignored), so
+    // linting it only ever reports on code nobody edits.
     //
     // Globs are `**/`-prefixed because `@nx/eslint:lint` runs ESLint from the
     // workspace root and passes this config via `--config`; flat-config global
