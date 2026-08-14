@@ -26,6 +26,7 @@ import { decodeCursor, buildPage } from './cursor.ts';
 import { resolveKindHost } from '../_shared/schemas/tags.ts';
 import { rankLessons } from '../_shared/lesson-rank.ts';
 import type { RankableLesson } from '../_shared/lesson-rank.ts';
+import { outcomeFromTags } from '../_shared/outcome-signal.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
@@ -242,7 +243,7 @@ export async function toolList(
     // seen_count is selected here and dropped from the wire response (D4).
     let rankQuery = tracedDb
       .from('memories')
-      .select('id,key,value,tags,updated_at,seen_count')
+      .select('id,key,value,tags,updated_at,seen_count,origin_pr')
       .eq('scope', scope)
       .is('archived_at', null)
       .or('expires_at.is.null,expires_at.gt.now()')
@@ -263,6 +264,7 @@ export async function toolList(
         tags: r.tags,
         updated_at: r.updated_at,
         seen_count: r.seen_count,
+        outcome: outcomeFromTags(r.tags, r.origin_pr),
       }),
     );
 

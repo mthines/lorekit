@@ -212,7 +212,7 @@ export function resolveScopeKeyArgs(positionals = [], options = {}) {
 // takes every slot, evicting the durable lessons that have been re-learned a
 // dozen times. Recency is a signal, not the ranking.
 //
-// The score is a weighted sum of three factors, each normalised to [0,1]:
+// The score is a weighted sum of four factors, each normalised to [0,1]:
 //
 //   recency   — exponential decay on age. Half-life, not a cliff: a lesson does
 //               not stop mattering on a particular day.
@@ -225,6 +225,12 @@ export function resolveScopeKeyArgs(positionals = [], options = {}) {
 //               when no terms are supplied, which is the SessionStart case: it
 //               then contributes the same constant to every candidate and the
 //               ordering is recency + salience alone.
+//   outcome   — applied/resolution history in [0,1]. The factor only ever
+//               LIFTS: a lesson tagged on an outcome bus scores 1.0 and one
+//               carried to a PR 0.75, while a lesson with no history gets the
+//               COLD_START_OUTCOME_PRIOR (0.5) — the neutral floor, never 0.
+//               So a proven lesson ranks up; an unproven one is not penalised
+//               for lacking history and rides on recency and relevance.
 //
 // PURE AND TOTAL, with one scoped exception. `now` is a PARAMETER: the
 // arithmetic never reads the clock, every factor is a function of the value
@@ -243,7 +249,7 @@ export function resolveScopeKeyArgs(positionals = [], options = {}) {
 // nothing — a year-old lesson that has recurred 30 times still deserves a slot.
 export const RECENCY_HALF_LIFE_DAYS = 14;
 
-// Equal thirds. Deliberately not tuned: with no corpus to tune against, an
+// Equal quarters. Deliberately not tuned: with no corpus to tune against, an
 // invented weighting is a guess wearing a decimal point. They are a parameter
 // so a caller can experiment, and so a future PR can change them with evidence.
 //
@@ -253,7 +259,21 @@ export const RECENCY_HALF_LIFE_DAYS = 14;
 // recursion (a real `RangeError`, raised inside a hook the header promises will
 // never throw). Freezing makes the corruption a `TypeError` at the assignment,
 // in the caller's own frame, instead of a stack overflow three layers down.
-export const DEFAULT_RANK_WEIGHTS = Object.freeze({ recency: 1, salience: 1, relevance: 1 });
+export const DEFAULT_RANK_WEIGHTS = Object.freeze({ recency: 1, salience: 1, relevance: 1, outcome: 1 });
+
+/**
+ * The cold-start prior for the outcome factor. A new lesson with no applied /
+ * resolution history gets this value rather than 0. The rationale: scoring
+ * absent outcome at 0 would sink every new lesson below stale ones purely for
+ * lacking outcome history (outcome-lag). 0.5 is the neutral midpoint of [0,1]
+ * — a cold lesson contributes an average outcome term, so it ranks on
+ * recency and relevance instead of being penalised for being new.
+ *
+ * This is the ONE deliberate asymmetry vs `normalizeRelevance` (which returns
+ * 0 for absent / unreadable input). Mirrored byte-identically in
+ * `packages/mcp-core/src/lesson-rank.ts` and its edge twin.
+ */
+export const COLD_START_OUTCOME_PRIOR = 0.5;
 
 // Two scores closer than this are the same score. Sized well below any
 // difference the factors can produce meaningfully (a one-second age gap moves a
@@ -380,6 +400,21 @@ function distinctTerms(terms) {
 }
 
 /**
+ * Normalize an outcome value into [0,1]. Absent or unreadable input returns
+ * `COLD_START_OUTCOME_PRIOR` — the deliberate asymmetry vs `normalizeRelevance`
+ * (which returns 0 for absent input). A present value is clamped to [0,1].
+ *
+ * The cold-start prior ensures a new lesson with no outcome history is not
+ * penalised during outcome-lag — it contributes an average outcome term and
+ * ranks on recency + relevance instead.
+ */
+export function normalizeOutcome(value) {
+  const n = typeof value === 'string' ? Number(value) : value;
+  if (typeof n !== 'number' || !Number.isFinite(n)) return COLD_START_OUTCOME_PRIOR;
+  return Math.min(1, Math.max(0, n));
+}
+
+/**
  * Score one lesson in [0,1].
  *
  * `maxSeenCount` belongs to the candidate SET, so this is normally reached
@@ -415,21 +450,24 @@ function scoreWithTerms(entry, termSet, { now, weights, maxSeenCount, halfLifeDa
     recency: numberOr(weights?.recency, DEFAULT_RANK_WEIGHTS.recency),
     salience: numberOr(weights?.salience, DEFAULT_RANK_WEIGHTS.salience),
     relevance: numberOr(weights?.relevance, DEFAULT_RANK_WEIGHTS.relevance),
+    outcome: numberOr(weights?.outcome, DEFAULT_RANK_WEIGHTS.outcome),
   };
-  let total = w.recency + w.salience + w.relevance;
+  let total = w.recency + w.salience + w.relevance + w.outcome;
   if (!(total > 0)) {
     w = {
       recency: numberOr(DEFAULT_RANK_WEIGHTS.recency, 0),
       salience: numberOr(DEFAULT_RANK_WEIGHTS.salience, 0),
       relevance: numberOr(DEFAULT_RANK_WEIGHTS.relevance, 0),
+      outcome: numberOr(DEFAULT_RANK_WEIGHTS.outcome, 0),
     };
-    total = w.recency + w.salience + w.relevance;
+    total = w.recency + w.salience + w.relevance + w.outcome;
   }
   if (!(total > 0)) return 0;
   const recency = recencyFactor(entry?.updatedAt ?? entry?.updated_at ?? entry?.updated, now, halfLifeDays);
   const salience = salienceFactor(seenCountFrom(entry), maxSeenCount);
   const relevance = relevanceFromTerms(entry, termSet);
-  return (w.recency * recency + w.salience * salience + w.relevance * relevance) / total;
+  const outcome = normalizeOutcome(entry?.outcome);
+  return (w.recency * recency + w.salience * salience + w.relevance * relevance + w.outcome * outcome) / total;
 }
 
 // A non-negative finite number, or the fallback. Guards a caller passing a

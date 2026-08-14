@@ -311,8 +311,8 @@ The one verb that **ranks**. Returns the top-K lessons for a query as a compact 
       "scope": "repo::acme/app",
       "key": "migration-order",
       "hook": "Always add the column before the backfill runs.",
-      "score": 0.72,
-      "factors": { "recency": 0.61, "salience": 0.85, "relevance": 1 },
+      "score": 0.74,
+      "factors": { "recency": 0.61, "salience": 0.85, "relevance": 1, "outcome": 0.5 },
       "seen_count": 9,
       "updated_at": "2026-07-30T09:12:00.000Z"
     }
@@ -326,7 +326,7 @@ The one verb that **ranks**. Returns the top-K lessons for a query as a compact 
 | `q` | — | Free-text query, `websearch` FTS over `key \|\| value`. **Optional.** |
 | `scopes` | all visible | Comma-separated, **most-specific first** — the order breaks ties. |
 | `limit` | `10` | 1–50. A shortlist for a context window, not a page. |
-| `min_score` | `0` | Drop hits below this — how a caller says "stay silent rather than show me something weak". Note: with `q` set, matched hits floor at ~`1/3` (relevance is binary today), so `min_score ≤ 0.333…` is a no-op until graded relevance. |
+| `min_score` | `0` | Drop hits below this — how a caller says "stay silent rather than show me something weak". Note: with `q` set, matched hits floor at `(1 + 0.5) / 4 = 0.375` (relevance is binary and outcome never sinks below its `0.5` prior today), so `min_score ≤ 0.375` is a no-op until graded relevance. |
 
 **Why it exists.** Every other read hands the caller a single-signal ordering — `GET /memories`
 is `updated_at` desc, `POST /memories/search` is FTS rank — and neither knows that a lesson

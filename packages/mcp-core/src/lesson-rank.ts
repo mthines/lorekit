@@ -38,12 +38,19 @@ export interface RankableLesson {
   updated?: string | Date | null;
   /** Server-supplied relevance in [0,1] — see `rankLessons`. */
   relevance?: number | null;
+  /**
+   * Outcome factor in [0,1] — applied/resolution history.
+   * Absent → `normalizeOutcome` returns `COLD_START_OUTCOME_PRIOR`.
+   * Derived by the edge handler from `tags` + `origin_pr`; not a DB column.
+   */
+  outcome?: number | null;
 }
 
 export interface RankWeights {
   recency: number;
   salience: number;
   relevance: number;
+  outcome: number;
 }
 
 /**
@@ -53,8 +60,22 @@ export interface RankWeights {
  */
 export const RECENCY_HALF_LIFE_DAYS = 14;
 
-/** Equal thirds. Deliberately untuned — see `lessons-pure.mjs`. */
-export const DEFAULT_RANK_WEIGHTS: RankWeights = { recency: 1, salience: 1, relevance: 1 };
+/** Equal quarters. Deliberately untuned — see `lessons-pure.mjs`. */
+export const DEFAULT_RANK_WEIGHTS: RankWeights = { recency: 1, salience: 1, relevance: 1, outcome: 1 };
+
+/**
+ * The cold-start prior for the outcome factor. A new lesson with no applied /
+ * resolution history gets this value rather than 0. The rationale: scoring
+ * absent outcome at 0 would sink every new lesson below stale ones purely for
+ * lacking outcome history (outcome-lag). 0.5 is the neutral midpoint of [0,1]
+ * — a cold lesson contributes an average outcome term, so it ranks on
+ * recency and relevance instead of being penalised for being new.
+ *
+ * This is the ONE deliberate asymmetry vs `normalizeRelevance` (which returns
+ * 0 for absent / unreadable input). Mirrored byte-identically in the edge twin
+ * and `packages/cli/src/lessons-pure.mjs`.
+ */
+export const COLD_START_OUTCOME_PRIOR = 0.5;
 
 /** Two scores closer than this are the same score. */
 export const SCORE_EPSILON = 1e-9;
@@ -134,6 +155,21 @@ export function normalizeRelevance(value: unknown): number {
   return Math.min(1, Math.max(0, n));
 }
 
+/**
+ * Normalize an outcome value into [0,1]. Absent or unreadable input returns
+ * `COLD_START_OUTCOME_PRIOR` — the deliberate asymmetry vs `normalizeRelevance`
+ * (which returns 0 for absent input). A present value is clamped to [0,1].
+ *
+ * The cold-start prior ensures a new lesson with no outcome history is not
+ * penalised during outcome-lag — it contributes an average outcome term and
+ * ranks on recency + relevance instead.
+ */
+export function normalizeOutcome(value: unknown): number {
+  const n = typeof value === 'string' ? Number(value) : value;
+  if (typeof n !== 'number' || !Number.isFinite(n)) return COLD_START_OUTCOME_PRIOR;
+  return Math.min(1, Math.max(0, n));
+}
+
 export interface ScoreOptions {
   now?: unknown;
   weights?: Partial<RankWeights>;
@@ -161,15 +197,17 @@ export function scoreLesson(entry: RankableLesson | null | undefined, options: S
     recency: numberOr(weights?.recency, DEFAULT_RANK_WEIGHTS.recency),
     salience: numberOr(weights?.salience, DEFAULT_RANK_WEIGHTS.salience),
     relevance: numberOr(weights?.relevance, DEFAULT_RANK_WEIGHTS.relevance),
+    outcome: numberOr(weights?.outcome, DEFAULT_RANK_WEIGHTS.outcome),
   };
-  const total = w.recency + w.salience + w.relevance;
+  const total = w.recency + w.salience + w.relevance + w.outcome;
   if (!(total > 0)) {
     return scoreLesson(entry, { now, weights: DEFAULT_RANK_WEIGHTS, maxSeenCount, halfLifeDays });
   }
   const recency = recencyFactor(updatedAtFrom(entry), now, halfLifeDays);
   const salience = salienceFactor(seenCountFrom(entry), maxSeenCount);
   const relevance = normalizeRelevance(entry?.relevance);
-  return (w.recency * recency + w.salience * salience + w.relevance * relevance) / total;
+  const outcome = normalizeOutcome(entry?.outcome);
+  return (w.recency * recency + w.salience * salience + w.relevance * relevance + w.outcome * outcome) / total;
 }
 
 export interface RankOptions extends Omit<ScoreOptions, 'maxSeenCount'> {

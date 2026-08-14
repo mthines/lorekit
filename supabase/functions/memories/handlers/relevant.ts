@@ -17,10 +17,12 @@ import {
   recencyFactor,
   salienceFactor,
   normalizeRelevance,
+  normalizeOutcome,
   seenCountFrom,
   updatedAtFrom,
 } from '../../_shared/lesson-rank.ts';
 import type { RankableLesson } from '../../_shared/lesson-rank.ts';
+import { outcomeFromTags } from '../../_shared/outcome-signal.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -142,6 +144,10 @@ export async function handleRelevant(
     seen_count: (r as MemoryRow & { seen_count?: number }).seen_count ?? null,
     updated_at: r.updated_at,
     relevance: matched ? 1 : 0,
+    outcome: outcomeFromTags(
+      (r as MemoryRow & { tags?: string[] | null }).tags,
+      (r as MemoryRow & { origin_pr?: number | null }).origin_pr,
+    ),
   }));
 
   const now = Date.now();
@@ -166,6 +172,10 @@ export async function handleRelevant(
         recency: recencyFactor(updatedAtFrom(entry), now),
         salience: salienceFactor(seenCountFrom(entry), maxSeenCount),
         relevance: normalizeRelevance(entry.relevance),
+        // `score` now averages a 4th factor. Reported so `factors` still
+        // reconciles with `score` — an absent outcome surfaces as the
+        // cold-start prior (`normalizeOutcome`), not a missing key.
+        outcome: normalizeOutcome(entry.outcome),
       },
       seen_count: seenCountFrom(entry) || null,
       updated_at: entry.updated_at ?? null,
