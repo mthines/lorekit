@@ -13,7 +13,13 @@ import {
 // re-implementation" invariant: the ground truth is derived from the same rows
 // the dashboard stories render, so a change to the mock's outcome/relevance rows
 // is caught here rather than silently diverging from a hand-maintained list.
-import { MEMORY_ROWS } from "../../web/src/mocks/memories.ts";
+//
+// Reached through the PACKAGE specifier, not a `../../web/…` relative path, and
+// declared as a devDependency in this package's package.json — the same
+// convention cross-package-imports.test.mjs uses for `@lorekit/core/src/scope.ts`.
+// The edge is real either way (the module pulls in `msw`); declaring it keeps it
+// visible to the workspace graph instead of smuggling it past the manifest.
+import { MEMORY_ROWS } from "@lorekit/web/src/mocks/memories.ts";
 
 const FIXTURES = path.join(
   path.dirname(fileURLToPath(import.meta.url)),

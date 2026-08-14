@@ -17,6 +17,9 @@
     "@lorekit/core": "workspace:*",
     "@lorekit/schemas": "workspace:*"
   },
+  "devDependencies": {
+    "@lorekit/web": "workspace:*"
+  },
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "eval": "node bin/run-eval.mjs"
