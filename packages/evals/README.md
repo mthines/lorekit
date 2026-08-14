@@ -359,6 +359,14 @@ node bin/mine-ground-truth.mjs --confirm --scope repo::mthines/lorekit
 git add fixtures/ground-truth.real.json && git commit -m "chore(evals): real relevance baseline"
 ```
 
+The mine **walks every page** of `remote.list` (`hasMore` / `nextCursor`, the
+same termination `gatherStream` uses), so a tag with more than one page of rows
+is never frozen as a silently truncated snapshot; a repeating cursor or a walk
+past `MAX_PAGES` aborts with exit 4 and writes nothing. Its flags are strict:
+`--scope` and `--out` each require a present, non-empty value — `--confirm
+--scope` is a usage error rather than a run that quietly mines *every* scope —
+and an unrecognised flag is refused rather than ignored.
+
 The CLI token is **user-scoped**. A maintainer who needs a **cross-tenant**
 (service-role) read can set `LOREKIT_GROUND_TRUTH_SERVICE_ROLE=1` to acknowledge
 that intent and wire in `@lorekit/mcp-core`'s `createHostedAdapter`
