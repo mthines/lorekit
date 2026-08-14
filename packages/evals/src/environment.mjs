@@ -37,7 +37,16 @@ import { MCP_SERVER_NAME } from "./mcp-config.mjs";
  */
 export const EXPECTED_MCP_SERVERS = [MCP_SERVER_NAME];
 
-/** Hook events an arm expects to fire. Only the harness's own SessionStart. */
+/**
+ * Hook events an arm expects to fire. Only the harness's own SessionStart.
+ *
+ * Checked as identity, not just as a count: a user-level `PreToolUse` firing
+ * while ours does not keeps the total at one and would otherwise read as clean.
+ * The limit of what a transcript can prove: `hook_name` is the generic
+ * `SessionStart:startup` for anyone's hook, so a foreign hook on the SAME event
+ * is indistinguishable from ours here — that case is caught by the count, not
+ * by identity.
+ */
 export const EXPECTED_HOOK_EVENT = "SessionStart";
 
 export const FINDING_SKILLS = "skills-loaded";
@@ -71,7 +80,14 @@ export function summarizeEnvironment({ init = null, hookEvents = [] } = {}) {
       : [],
     mcpServers: servers.map((s) => (s && s.name) || String(s)),
     toolCount: Array.isArray(init && init.tools) ? init.tools.length : 0,
-    hooks: (hookEvents || []).map((h) => h.name || "(unnamed)"),
+    hooks: (hookEvents || []).map((h) => (h && h.name) || "(unnamed)"),
+    // The event each hook fired on, kept alongside the names so the check can
+    // compare identity and not only how many fired. `null` when the transcript
+    // did not carry one — unknown, which is never treated as foreign.
+    hookEvents: (hookEvents || []).map((h) => ({
+      name: (h && h.name) || "(unnamed)",
+      event: (h && h.event) || null,
+    })),
   };
 }
 
@@ -86,6 +102,7 @@ export function summarizeEnvironment({ init = null, hookEvents = [] } = {}) {
  * @param {number} [options.expectedHooks]    how many hooks should have fired,
  *                                            exactly — more is a foreign hook,
  *                                            fewer means ours never fired
+ * @param {string} [options.expectedHookEvent] the only event a hook may fire on
  */
 export function assertCleanEnvironment(
   summary,
@@ -93,6 +110,7 @@ export function assertCleanEnvironment(
     sandboxRoot = null,
     expectedMcpServers = EXPECTED_MCP_SERVERS,
     expectedHooks = 1,
+    expectedHookEvent = EXPECTED_HOOK_EVENT,
   } = {},
 ) {
   const findings = [];
@@ -162,6 +180,21 @@ export function assertCleanEnvironment(
       kind: FINDING_MISSING_HOOKS,
       detail: `${summary.hooks.length} hooks fired, expected ${expectedHooks}: the harness's own hook did not fire${summary.hooks.length > 0 ? `; saw ${summary.hooks.join(", ")}` : ""}`,
       values: summary.hooks,
+    });
+  }
+
+  // Identity, not arithmetic. A foreign hook that SUBSTITUTES for ours keeps
+  // the count at `expectedHooks`, so the count check above cannot see it. An
+  // unknown event (`null` — the transcript carried no `hook_event`) is left
+  // alone: "we could not tell" must not be reported as "it was foreign".
+  const foreignHookEvents = (summary.hookEvents || []).filter(
+    (h) => h.event !== null && h.event !== expectedHookEvent,
+  );
+  if (foreignHookEvents.length > 0) {
+    findings.push({
+      kind: FINDING_FOREIGN_HOOKS,
+      detail: `${foreignHookEvents.length} hook(s) fired on an unexpected event, expected only ${expectedHookEvent}: ${foreignHookEvents.map((h) => `${h.name} (${h.event})`).join(", ")}`,
+      values: foreignHookEvents.map((h) => h.event),
     });
   }
 
