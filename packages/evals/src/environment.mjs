@@ -26,8 +26,16 @@
 // so the harness judges the outcome and refuses to score a contaminated rep.
 // A rep that ran dirty is not a data point; it is a discarded run.
 
-/** MCP servers an arm is allowed to see. Anything else is contamination. */
-export const EXPECTED_MCP_SERVERS = ["lorekit"];
+import { MCP_SERVER_NAME } from "./mcp-config.mjs";
+
+/**
+ * MCP servers an arm is allowed to see. Anything else is contamination.
+ *
+ * Derived from `MCP_SERVER_NAME` rather than spelled again: that constant is
+ * the key the harness writes into `.mcp.json`, so renaming the server there
+ * would otherwise make every rep read as contaminated by its own store.
+ */
+export const EXPECTED_MCP_SERVERS = [MCP_SERVER_NAME];
 
 /** Hook events an arm expects to fire. Only the harness's own SessionStart. */
 export const EXPECTED_HOOK_EVENT = "SessionStart";
