@@ -231,7 +231,9 @@ Five properties worth knowing before you run it on a large store:
   state here, so the script exits 0 and reports the counts. The failure unit
   differs by phase — the provider call is all-or-nothing for its batch, while
   the row writes settle individually, so a row that was written is counted
-  `rows`, never `failed`.
+  `rows`, never `failed`. A run that ends with `failed` above zero prints
+  `── backfill incomplete (work remains) ──`, not `── backfill complete ──`:
+  those rows are still null and a rerun retries them, so the headline says so.
 - **A run can stop with work left, and says so.** A row this run cannot process
   (a rejected batch, a memory with no embeddable text) is excluded from the
   queue for the rest of the run, because the queue is a query and a row left
@@ -239,7 +241,12 @@ Five properties worth knowing before you run it on a large store:
   URL, so it is capped at 200 rows; past the cap the run stops and prints
   `── backfill stopped early (work remains) ──` with a `stopped:` count instead
   of `── backfill complete ──`. Fix what the failure lines name, then rerun —
-  the next run starts from a clean exclusion list.
+  the next run starts from a clean exclusion list. The three headlines are
+  therefore `complete` (nothing retryable left), `incomplete (work remains)`
+  (the walk finished, some rows failed), and `stopped early (work remains)`
+  (the exclusion-list cap ended the walk with rows still queued). Only
+  `unusable:` rows — no embeddable text — are excluded from "work remains",
+  because a rerun will never fill them.
 - **It never prints the key.** Provider error bodies are truncated; the key only
   ever travels in a header.
 

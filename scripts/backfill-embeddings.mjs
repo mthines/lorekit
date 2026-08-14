@@ -315,6 +315,12 @@ async function main() {
   // break exits with work still queued, and printing `── backfill complete ──`
   // there would tell an operator the store is done when it is not.
   let stoppedEarly = false;
+  // `stoppedEarly` is not the only way a run ends with work left. `failed > 0`
+  // is the SAME state — those rows are still null and a rerun retries them — so
+  // the headline is driven by "is there retryable work", not by which break
+  // fired. `emptyRows` is deliberately excluded: a row with no embeddable text
+  // will never be filled, so a rerun would change nothing.
+  const workRemains = () => stoppedEarly || failed > 0;
 
   // Rows this RUN cannot process: a batch the provider rejected, and a row with
   // no embeddable text. Both stay `embedding is null`, so without this the next
@@ -466,7 +472,9 @@ async function main() {
     ? '── dry run (nothing was sent or written) ──'
     : stoppedEarly
       ? '── backfill stopped early (work remains) ──'
-      : '── backfill complete ──');
+      : workRemains()
+        ? '── backfill incomplete (work remains) ──'
+        : '── backfill complete ──');
   log(`  rows:      ${done}${failed ? ` (${failed} failed, still null — rerun to retry)` : ''}`);
   if (emptyRows) log(`  unusable:  ${emptyRows} (no embeddable text — these will never be filled)`);
   log(`  batches:   ${batches}`);
