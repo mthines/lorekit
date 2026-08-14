@@ -217,3 +217,35 @@ test("AC-5: a repeating cursor is refused rather than spun on", async () => {
   // Nothing was written.
   assert.equal(fs.existsSync(out), false);
 });
+
+test("AC-6: a value-taking flag never swallows the next flag or an empty value", () => {
+  // `--confirm --scope` must not leave scope undefined (which would mine EVERY
+  // scope), and `--scope --confirm` must not eat the confirm flag.
+  assert.throws(() => parseMineArgs(["--confirm", "--scope"]), /--scope requires a value/);
+  assert.throws(() => parseMineArgs(["--scope", "--confirm"]), /--scope requires a value/);
+  assert.throws(() => parseMineArgs(["--out"]), /--out requires a value/);
+  assert.throws(() => parseMineArgs(["--out", "--confirm"]), /--out requires a value/);
+  // Malformed (present but empty) is refused too, not just missing.
+  assert.throws(() => parseMineArgs(["--scope", "   "]), /non-empty/);
+  assert.throws(() => parseMineArgs(["--out", ""]), /--out requires a non-empty value/);
+  // The happy paths still parse.
+  assert.equal(parseMineArgs(["--scope", "repo::a/b", "--confirm"]).scope, "repo::a/b");
+  assert.equal(parseMineArgs(["--confirm", "--out", "/tmp/x.json"]).out, "/tmp/x.json");
+  // A typo'd flag is a usage error, never a silent widening.
+  assert.throws(() => parseMineArgs(["--scpoe", "repo::a/b"]), /unknown option/);
+});
+
+test("AC-6: main surfaces a bad flag as usage and never reaches the store", async () => {
+  const errs = [];
+  const code = await main(["--confirm", "--scope"], {
+    log: () => {},
+    err: (m) => errs.push(String(m)),
+    deps: {
+      resolveStores: () => {
+        throw new Error("resolveStores must not be reached on the usage path");
+      },
+    },
+  });
+  assert.equal(code, 2);
+  assert.match(errs.join("\n"), /--scope requires a value/);
+});

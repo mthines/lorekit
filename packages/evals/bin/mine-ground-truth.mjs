@@ -154,18 +154,45 @@ const USAGE = `mine-ground-truth — freeze a real retrieval-relevance baseline 
   if you intend a cross-tenant service-role read (see the README runbook).
 `;
 
-/** Minimal, dependency-free arg parse. */
+/**
+ * Is `raw` a missing value for a value-taking flag — end of argv, or the NEXT
+ * flag? `--confirm --scope` must not leave `scope` undefined (which would mine
+ * EVERY scope), and `--scope --confirm` must not swallow the confirm flag.
+ * A value-taking flag that consumes the next FLAG is wrong regardless of how
+ * safe its own default happens to be.
+ */
+function isMissingValue(raw) {
+  return raw === undefined || (typeof raw === "string" && raw.startsWith("-"));
+}
+
+/**
+ * Minimal, dependency-free arg parse.
+ *
+ * Every value-taking flag answers the same three questions, so no sibling is
+ * left behind: is a value PRESENT (`isMissingValue`), is it WELL-FORMED for this
+ * flag (non-empty), and is the flag itself RECOGNISED (the `else` throw closes
+ * the set, so a typo like `--scpoe` is a usage error, never a silent widening).
+ */
 export function parseMineArgs(argv = []) {
   const out = {
     confirm: false,
     scope: "repo::mthines/lorekit",
     out: REAL_SNAPSHOT_PATH,
   };
+  const valueFor = (flag, raw) => {
+    if (isMissingValue(raw)) {
+      throw new Error(`${flag} requires a value`);
+    }
+    if (raw.trim() === "") {
+      throw new Error(`${flag} requires a non-empty value`);
+    }
+    return raw;
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--confirm") out.confirm = true;
-    else if (a === "--scope") out.scope = argv[++i];
-    else if (a === "--out") out.out = argv[++i];
+    else if (a === "--scope") out.scope = valueFor("--scope", argv[++i]);
+    else if (a === "--out") out.out = valueFor("--out", argv[++i]);
     else if (a === "--help" || a === "-h") out.help = true;
     else throw new Error(`unknown option "${a}"`);
   }
