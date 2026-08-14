@@ -204,6 +204,48 @@ test('two-tier search honours walkLimit across both tiers', async () => {
   assert.equal(capped.entries.length, 4, 'the merged two-tier result honours the cap');
 });
 
+test('two-tier search splits the walkLimit budget so a full project tier cannot starve home', async () => {
+  // The per-prompt hot path caps BOTH tiers at walkLimit and then merges
+  // project-first. Slicing that merge to walkLimit would hand every slot to the
+  // project tier, and `rankLessons` would never see a home-tier lesson at all.
+  const home = tmpDir();
+  const project = tmpDir();
+  for (let i = 0; i < 10; i++) {
+    await createLocalStore(project).write({ scope: 'repo::o/r', key: `p${i}`, value: 'timeout retry' });
+  }
+  for (let i = 0; i < 10; i++) {
+    await createLocalStore(home).write({ scope: 'global', key: `h${i}`, value: 'timeout retry' });
+  }
+  const store = createTwoTierStore({ home, project });
+  const walkLimit = 6;
+
+  // PREMISE — the project tier alone over-fills the budget. Without this the
+  // assertions below are satisfiable by a project tier that was simply small,
+  // and the test would pass against the very slice it exists to rule out.
+  const projectOnly = await createLocalStore(project)
+    .search({ q: ['timeout'], scopes: ['repo::o/r', 'global'], walkLimit });
+  assert.equal(projectOnly.entries.length, walkLimit, 'the project tier fills the cap on its own');
+
+  const hits = await store.search({ q: ['timeout'], scopes: ['repo::o/r', 'global'], walkLimit });
+  assert.equal(hits.entries.length, walkLimit, 'the merged result still honours the cap');
+  assert.equal(
+    hits.entries.filter((e) => e.key.startsWith('h')).length,
+    walkLimit / 2,
+    'the home tier keeps its half of the budget',
+  );
+  assert.equal(
+    hits.entries.filter((e) => e.key.startsWith('p')).length,
+    walkLimit / 2,
+    'and the project tier keeps its own half rather than the whole slice',
+  );
+
+  // An unused half is handed back: with no home tier the project still fills
+  // the cap, so the split never costs a single-tier install any depth.
+  const projectHeavy = createTwoTierStore({ home: tmpDir(), project });
+  const alone = await projectHeavy.search({ q: ['timeout'], scopes: ['repo::o/r', 'global'], walkLimit });
+  assert.equal(alone.entries.length, walkLimit, 'an empty home tier gives its share back to project');
+});
+
 test('two-tier search accepts a term list and OR-matches across both tiers', async () => {
   const { home, project } = { home: tmpDir(), project: tmpDir() };
   await createLocalStore(home).write({ scope: 'global', key: 'g', value: 'econnrefused on connect' });

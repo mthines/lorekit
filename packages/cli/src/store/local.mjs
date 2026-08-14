@@ -428,16 +428,33 @@ class TwoTierStore {
   }
 
   async search({ q, scopes, tags, walkLimit } = {}) {
+    const id = (e) => `${e.scope}\x00${e.key}`;
     const homeRes = await this.home.search({ q, scopes, tags, walkLimit });
     const projRes = this.projectActive()
       ? await this.project.search({ q, scopes, tags, walkLimit })
       : { entries: [] };
-    const merged = mergeByKey(projRes.entries, homeRes.entries, (e) => `${e.scope}\x00${e.key}`);
-    // Each tier is already `walkLimit`-bounded; slice the merged, de-duplicated
-    // set so the two-tier walk honours the same cap the hot-path caller asked
-    // for.
-    const capped = Number.isInteger(walkLimit) && walkLimit > 0 ? merged.slice(0, walkLimit) : merged;
-    return { ok: true, entries: capped };
+    const merged = mergeByKey(projRes.entries, homeRes.entries, id);
+    if (!Number.isInteger(walkLimit) || walkLimit <= 0) return { ok: true, entries: merged };
+
+    // Each tier is walked under its OWN `walkLimit` (that bound exists to stop
+    // an unbounded synchronous file walk on the per-prompt hot path, so it has
+    // to stay per-tier). Slicing the project-first merge to `walkLimit` would
+    // then starve the home tier outright: a project tier that fills its own
+    // budget occupies every slot, and no home-tier lesson survives to reach
+    // `rankLessons`. Split the budget instead — each tier is guaranteed its
+    // half, and whatever the other tier leaves unused is handed straight back,
+    // so a single populated tier still fills the cap exactly as before.
+    const projectIds = new Set(projRes.entries.map(id));
+    const fromProject = merged.filter((e) => projectIds.has(id(e)));
+    const fromHome = merged.filter((e) => !projectIds.has(id(e)));
+    const projectTake = Math.min(
+      fromProject.length,
+      Math.max(Math.ceil(walkLimit / 2), walkLimit - fromHome.length),
+    );
+    return {
+      ok: true,
+      entries: [...fromProject.slice(0, projectTake), ...fromHome.slice(0, walkLimit - projectTake)],
+    };
   }
 
   // Merged, de-duplicated non-archived count across the given scopes.
