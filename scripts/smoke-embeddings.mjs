@@ -105,6 +105,10 @@ async function main() {
     const probeText = embeddingInput({ key: mint('probe'), value: 'A probe lesson for the live embedding smoke.' });
     const t0 = Date.now();
     let vector = null;
+    // The failure detail is CARRIED, not reported here: `provider responds` is
+    // one check with one outcome, and reporting it from the catch as well would
+    // print the same label twice and count a single provider failure twice.
+    let probeError = null;
     try {
       const res = await fetch(config.endpoint, {
         method: 'POST',
@@ -121,10 +125,14 @@ async function main() {
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${redactKey((await res.text()).slice(0, 200), config.apiKey)}`);
       vector = (await res.json())?.data?.[0]?.embedding ?? null;
     } catch (e) {
-      check(false, 'provider responds', redactKey(String(e?.message ?? e), config.apiKey));
+      probeError = redactKey(String(e?.message ?? e), config.apiKey);
     }
     const latencyMs = Date.now() - t0;
-    check(Array.isArray(vector), 'provider responds', `${latencyMs}ms`);
+    check(
+      Array.isArray(vector),
+      'provider responds',
+      Array.isArray(vector) ? `${latencyMs}ms` : (probeError ?? 'no embedding in the response body'),
+    );
     check(
       Array.isArray(vector) && vector.length === EMBEDDING_DIMENSIONS,
       `provider emits ${EMBEDDING_DIMENSIONS} dimensions`,
