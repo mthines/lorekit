@@ -81,6 +81,23 @@ test("arm0 refuses a seed flag instead of silently running an empty store", asyn
         ]),
       /arm0 always runs against an EMPTY store/,
     );
+    // The hint is part of the contract, not decoration: arm0 shares its
+    // refusal helper with preflight and probe, and only this assertion stops
+    // the shared message from dropping the pointer to the seeding subcommand.
+    await assert.rejects(
+      () =>
+        main([
+          "arm0",
+          "--reps",
+          "1",
+          "--dry-run",
+          "--seed",
+          "canonical",
+          "--out",
+          out,
+        ]),
+      /use the "probe" subcommand, which seeds/,
+    );
     await assert.rejects(
       () =>
         main([
@@ -106,8 +123,9 @@ test("arm0 refuses a seed flag instead of silently running an empty store", asyn
 test("preflight refuses the flags it cannot honour, before spawning anything", async () => {
   // preflight prepares ONE fixed empty-store arm. `--scope-mode repo` used to
   // be accepted and dropped, so the caller believed they had checked a
-  // repo-scoped arm's environment. There is no --dry-run here: the refusal has
-  // to land before `createSandbox`, or this test would spawn the agent.
+  // repo-scoped arm's environment. Every refusal below has to land BEFORE
+  // `createSandbox` — including the `--dry-run` case, which preflight refuses
+  // rather than honours — or this test would spawn the agent for real.
   await assert.rejects(
     () => main(["preflight", "--scope-mode", "repo"]),
     /--scope-mode cannot be honoured here/,
