@@ -13,7 +13,7 @@
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { validateScope } from '../_shared/scope.ts';
+import { validateScope, UserInputError } from '../_shared/scope.ts';
 import { createTracedClient, type Span } from '../_shared/otel.ts';
 import { translateCapError } from './limits.ts';
 import { translateOrgPermissionError } from './org-permissions.ts';
@@ -24,9 +24,22 @@ import { recordAudit } from '../_shared/audit.ts';
 import { applyTenantScope } from './tenant-scope.ts';
 import { decodeCursor, buildPage } from './cursor.ts';
 import { resolveKindHost } from '../_shared/schemas/tags.ts';
+import { rankLessons } from '../_shared/lesson-rank.ts';
+import type { RankableLesson } from '../_shared/lesson-rank.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
+
+/**
+ * How many rows the ranked path fetches before scoring. Mirrors the same
+ * constant in `memories/handlers/relevant.ts` — see its docblock for the
+ * rationale and the honest "recency-windowed ranking" caveat.
+ *
+ * Bounded because the cost is real (every candidate is fetched and mostly
+ * discarded). 200 is well above any `limit` this tool accepts (max 100) while
+ * staying one cheap indexed read.
+ */
+const CANDIDATE_LIMIT = 200;
 
 // deno-lint-ignore no-explicit-any
 export type Params = Record<string, any>;
@@ -207,9 +220,84 @@ export async function toolList(
   const scope = validateScope(rawScope);
   const pageLimit = Math.min(limit, 100);
 
+  // Validate `order` against the same closed set the catalog `enum` and
+  // `MemoryListSchema` accept ('recency' | 'rank'). A present-but-invalid value
+  // (e.g. `"Rank"`) must be REJECTED, not silently coerced to recency — a quiet
+  // fallthrough would mask a caller typo and diverge from the schema contract.
+  // `undefined` means "unspecified" and defaults to recency (D3).
+  if (params.order !== undefined && params.order !== 'recency' && params.order !== 'rank') {
+    throw new UserInputError(`Invalid order "${params.order}": expected "recency" or "rank"`);
+  }
+  const ranked = params.order === 'rank';
+
   span.setAttributes({ 'lorekit.scope': scope });
 
   const tracedDb = createTracedClient(db, span);
+
+  if (ranked) {
+    // ── Ranked path (D1/D2/D4/D8) ─────────────────────────────────────────
+    // Mirrors `memories/handlers/relevant.ts`: fetch a bounded candidate window
+    // (updated_at desc), rank in TypeScript via the shared edge rankLessons,
+    // return a bounded top-N page. No cursor decode (D7 — cursor is ignored).
+    // seen_count is selected here and dropped from the wire response (D4).
+    let rankQuery = tracedDb
+      .from('memories')
+      .select('id,key,value,tags,updated_at,seen_count')
+      .eq('scope', scope)
+      .is('archived_at', null)
+      .or('expires_at.is.null,expires_at.gt.now()')
+      .order('updated_at', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(CANDIDATE_LIMIT);
+    if (userId) rankQuery = applyTenantScope(rankQuery, userId, await memberOrgIds(db, userId));
+    if (tags?.length) rankQuery = rankQuery.overlaps('tags', tags);
+    const { data: rankData, error: rankError } = await rankQuery;
+    if (rankError) throw new Error(rankError.message);
+
+    const candidates: (RankableLesson & { id: string; key: string; value: string; tags: string[]; updated_at: string | null })[] = (rankData ?? []).map(
+      // deno-lint-ignore no-explicit-any
+      (r: any) => ({
+        id: r.id,
+        key: r.key,
+        value: r.value,
+        tags: r.tags,
+        updated_at: r.updated_at,
+        seen_count: r.seen_count,
+      }),
+    );
+
+    const rankedLessons = rankLessons(candidates, { now: Date.now() });
+    const page = rankedLessons.slice(0, pageLimit);
+
+    const entries = page.map(({ entry }) => ({
+      id: entry.id,
+      key: entry.key,
+      value: entry.value,
+      tags: entry.tags,
+      updated_at: entry.updated_at,
+    }));
+
+    // `candidate_count` saturates at CANDIDATE_LIMIT — mirrors the observability
+    // `memories/handlers/relevant.ts` exposes so a truncated window is visible in
+    // telemetry (a `candidate_count === CANDIDATE_LIMIT` read may have ranked over
+    // a windowed subset). `result.count` is the post-`limit` page size.
+    span.setAttributes({
+      'lorekit.result.count': entries.length,
+      'lorekit.candidate_count': candidates.length,
+    });
+    // `hasMore` is FALSE here by contract, not by accident. Everywhere else in
+    // this codebase `hasMore: true` means "there is another page, and
+    // `nextCursor` is how you reach it" (`cursor.ts` buildPage,
+    // `_shared/api/paginate.ts`). Ranked mode has no cursor, so a `true` would
+    // promise a page no caller can ever fetch. A ranked read is a single
+    // bounded top-N over a CANDIDATE_LIMIT window — the same shape as
+    // `memories/handlers/relevant.ts`, which likewise never advertises
+    // pagination. Truncation is inherent to the mode and documented on the
+    // tool, not signalled per response.
+    return { entries, hasMore: false, nextCursor: null };
+  }
+
+  // ── Recency path (default) — UNCHANGED ──────────────────────────────────
   let query = tracedDb
     .from('memories')
     .select('id,key,value,tags,updated_at')
