@@ -113,7 +113,7 @@ export type RelevantResponse = z.infer<typeof RelevantResponseSchema>;
  * every candidate — of which there may be many times the returned limit — would
  * move a lot of text out of Postgres to throw almost all of it away.
  */
-export const RELEVANT_SELECT = 'scope,key,value,seen_count,updated_at';
+export const RELEVANT_SELECT = 'scope,key,value,seen_count,updated_at,tags,origin_pr';
 
 /** Cap on a lesson's one-line hook. Matches the CLI hook's `HOOK_LEN`. */
 export const RELEVANT_HOOK_LEN = 80;

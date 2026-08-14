@@ -161,7 +161,7 @@ List all lessons for a scope — newest first by default, or best-first with `or
 | `tags` | `[]` | Filter — only return lessons with at least one of these tags |
 | `limit` | `50` | Max results (cap: 100) |
 | `cursor` | | Opaque cursor from a previous response's `nextCursor`. Omit to start from the first page. Ignored when `order` is `rank` |
-| `order` | `recency` | `recency` — `updated_at` desc with cursor pagination. `rank` — salience + recency scoring over a bounded candidate window, returned as a single top-N page |
+| `order` | `recency` | `recency` — `updated_at` desc with cursor pagination. `rank` — four-factor scoring (recency, salience, relevance, outcome) over a bounded candidate window, returned as a single top-N page |
 
 **Returns:** `{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }`
 
