@@ -205,11 +205,12 @@ List lessons for a scope.
 | `scope` | ✓ | string | Canonical scope string, e.g. `repo::mthines/lorekit`. |
 | `tags` |  | array | Filter to entries carrying ANY of these labels (OR). _(array of string)_ |
 | `limit` |  | integer | Maximum entries to return. _(1–100, default `50`)_ |
-| `cursor` |  | string | Opaque cursor from a previous response's `nextCursor`. Omit to start from the first page. |
+| `cursor` |  | string | Opaque cursor from a previous response's `nextCursor`. Omit to start from the first page. Ignored when `order` is `rank` (ranked mode returns a single bounded page; `hasMore` is always false and `nextCursor` always null). |
+| `order` |  | string | recency (default, updated_at desc + cursor pagination) or rank (salience+recency; bounded top-N, no cursor). _(default `recency`)_ |
 
 Requires **read** permission.
 
-Returns: `{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — newest first. Pass `nextCursor` back as `cursor` to retrieve the next page.
+Returns: `{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — newest-first (recency mode) or best-first by salience+recency (rank mode). Pass `nextCursor` back as `cursor` to paginate — recency mode only. Rank mode is a single bounded top-N page: `hasMore` is always false and `nextCursor` always null.
 
 ---
 
