@@ -433,7 +433,7 @@ async function runProbe(options) {
   refuseUnhonourableFlags(
     options,
     ["--reps", "--out", "--timeout", "--command", "--dry-run"],
-    "probe builds one arm and spawns no model, so it writes no run directory and is already dry",
+    "probe builds one arm, spawns no model, writes no run directory and is already dry",
   );
 
   const sandbox = await createSandbox({ keep: options.keep });
