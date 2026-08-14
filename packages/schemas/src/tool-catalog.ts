@@ -185,11 +185,11 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
         scope,
         tags: { type: 'array', items: { type: 'string' }, description: 'Filter to entries carrying ANY of these labels (OR).' },
         limit,
-        cursor: { type: 'string', description: 'Opaque cursor from a previous response\'s `nextCursor`. Omit to start from the first page. Ignored when `order` is `rank` (ranked mode returns a single bounded page; `nextCursor` will be null).' },
+        cursor: { type: 'string', description: 'Opaque cursor from a previous response\'s `nextCursor`. Omit to start from the first page. Ignored when `order` is `rank` (ranked mode returns a single bounded page; `hasMore` is always false and `nextCursor` always null).' },
         order: { type: 'string', enum: ['recency', 'rank'], default: 'recency', description: 'recency (default, updated_at desc + cursor pagination) or rank (salience+recency; bounded top-N, no cursor).' },
       },
     },
-    returns: '`{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — newest-first (recency mode) or best-first by salience+recency (rank mode). Pass `nextCursor` back as `cursor` to paginate (recency only; `nextCursor` is always null in rank mode).',
+    returns: '`{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — newest-first (recency mode) or best-first by salience+recency (rank mode). Pass `nextCursor` back as `cursor` to paginate — recency mode only. Rank mode is a single bounded top-N page: `hasMore` is always false and `nextCursor` always null.',
   },
   {
     name: 'memory.delete',

@@ -261,7 +261,6 @@ export async function toolList(
 
     const rankedLessons = rankLessons(candidates, { now: Date.now() });
     const page = rankedLessons.slice(0, pageLimit);
-    const hasMore = rankedLessons.length > pageLimit;
 
     const entries = page.map(({ entry }) => ({
       id: entry.id,
@@ -272,7 +271,16 @@ export async function toolList(
     }));
 
     span.setAttributes({ 'lorekit.result.count': entries.length });
-    return { entries, hasMore, nextCursor: null };
+    // `hasMore` is FALSE here by contract, not by accident. Everywhere else in
+    // this codebase `hasMore: true` means "there is another page, and
+    // `nextCursor` is how you reach it" (`cursor.ts` buildPage,
+    // `_shared/api/paginate.ts`). Ranked mode has no cursor, so a `true` would
+    // promise a page no caller can ever fetch. A ranked read is a single
+    // bounded top-N over a CANDIDATE_LIMIT window — the same shape as
+    // `memories/handlers/relevant.ts`, which likewise never advertises
+    // pagination. Truncation is inherent to the mode and documented on the
+    // tool, not signalled per response.
+    return { entries, hasMore: false, nextCursor: null };
   }
 
   // ── Recency path (default) — UNCHANGED ──────────────────────────────────
