@@ -11,6 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   DeleteMemoryQuerySchema,
+  MemoryListSchema,
   MemoryWriteSchema,
   ListMemoriesQuerySchema,
   PurgeMemoriesBodySchema,
@@ -221,5 +222,33 @@ describe('ReadActivityResponseSchema', () => {
     // The metric is additive, which is the whole reason a per-scope filter can
     // replace a companion "per-scope total" RPC: the cells sum to the headline.
     expect(parsed.buckets.reduce((n, b) => n + b.count, 0)).toBe(10);
+  });
+});
+
+// ── MemoryListSchema.order (AC-2) ────────────────────────────────────────────
+
+describe('MemoryListSchema order', () => {
+  it('defaults to recency when order is omitted', () => {
+    const parsed = MemoryListSchema.parse({ scope: 'global' });
+    expect(parsed.order).toBe('recency');
+  });
+
+  it('accepts order: recency explicitly', () => {
+    expect(MemoryListSchema.parse({ scope: 'global', order: 'recency' }).order).toBe('recency');
+  });
+
+  it('accepts order: rank', () => {
+    expect(MemoryListSchema.parse({ scope: 'global', order: 'rank' }).order).toBe('rank');
+  });
+
+  it.each(['newest', 'desc', 'relevance', '', 'RANK'])('rejects an invalid order value: %j', (order) => {
+    expect(MemoryListSchema.safeParse({ scope: 'global', order }).success).toBe(false);
+  });
+
+  it('does not affect other fields — limit still defaults to 50', () => {
+    const parsed = MemoryListSchema.parse({ scope: 'global', order: 'rank' });
+    expect(parsed.limit).toBe(50);
+    expect(parsed.cursor).toBeUndefined();
+    expect(parsed.tags).toBeUndefined();
   });
 });

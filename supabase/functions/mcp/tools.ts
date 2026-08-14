@@ -24,9 +24,22 @@ import { recordAudit } from '../_shared/audit.ts';
 import { applyTenantScope } from './tenant-scope.ts';
 import { decodeCursor, buildPage } from './cursor.ts';
 import { resolveKindHost } from '../_shared/schemas/tags.ts';
+import { rankLessons } from '../_shared/lesson-rank.ts';
+import type { RankableLesson } from '../_shared/lesson-rank.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
+
+/**
+ * How many rows the ranked path fetches before scoring. Mirrors the same
+ * constant in `memories/handlers/relevant.ts` — see its docblock for the
+ * rationale and the honest "recency-windowed ranking" caveat.
+ *
+ * Bounded because the cost is real (every candidate is fetched and mostly
+ * discarded). 200 is well above any `limit` this tool accepts (max 100) while
+ * staying one cheap indexed read.
+ */
+const CANDIDATE_LIMIT = 200;
 
 // deno-lint-ignore no-explicit-any
 export type Params = Record<string, any>;
@@ -207,9 +220,62 @@ export async function toolList(
   const scope = validateScope(rawScope);
   const pageLimit = Math.min(limit, 100);
 
+  // Any value other than 'rank' falls through to the recency path (D3/D7).
+  const ranked = params.order === 'rank';
+
   span.setAttributes({ 'lorekit.scope': scope });
 
   const tracedDb = createTracedClient(db, span);
+
+  if (ranked) {
+    // ── Ranked path (D1/D2/D4/D8) ─────────────────────────────────────────
+    // Mirrors `memories/handlers/relevant.ts`: fetch a bounded candidate window
+    // (updated_at desc), rank in TypeScript via the shared edge rankLessons,
+    // return a bounded top-N page. No cursor decode (D7 — cursor is ignored).
+    // seen_count is selected here and dropped from the wire response (D4).
+    let rankQuery = tracedDb
+      .from('memories')
+      .select('id,key,value,tags,updated_at,seen_count')
+      .eq('scope', scope)
+      .is('archived_at', null)
+      .or('expires_at.is.null,expires_at.gt.now()')
+      .order('updated_at', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(CANDIDATE_LIMIT);
+    if (userId) rankQuery = applyTenantScope(rankQuery, userId, await memberOrgIds(db, userId));
+    if (tags?.length) rankQuery = rankQuery.overlaps('tags', tags);
+    const { data: rankData, error: rankError } = await rankQuery;
+    if (rankError) throw new Error(rankError.message);
+
+    const candidates: (RankableLesson & { id: string; key: string; value: string; tags: string[]; updated_at: string | null })[] = (rankData ?? []).map(
+      // deno-lint-ignore no-explicit-any
+      (r: any) => ({
+        id: r.id,
+        key: r.key,
+        value: r.value,
+        tags: r.tags,
+        updated_at: r.updated_at,
+        seen_count: r.seen_count,
+      }),
+    );
+
+    const rankedLessons = rankLessons(candidates, { now: Date.now() });
+    const page = rankedLessons.slice(0, pageLimit);
+    const hasMore = rankedLessons.length > pageLimit;
+
+    const entries = page.map(({ entry }) => ({
+      id: entry.id,
+      key: entry.key,
+      value: entry.value,
+      tags: entry.tags,
+      updated_at: entry.updated_at,
+    }));
+
+    span.setAttributes({ 'lorekit.result.count': entries.length });
+    return { entries, hasMore, nextCursor: null };
+  }
+
+  // ── Recency path (default) — UNCHANGED ──────────────────────────────────
   let query = tracedDb
     .from('memories')
     .select('id,key,value,tags,updated_at')
