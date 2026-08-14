@@ -307,3 +307,25 @@ test("AC-6: with the flag unset there is no service-role notice", async () => {
   }
   assert.equal(/cross-tenant/.test(errs.join("\n")), false);
 });
+
+test("AC-5: a zero-row mine refuses to write an EMPTY baseline", async () => {
+  // An empty ground truth scores recall 1 by design ("nothing to miss"), so an
+  // empty snapshot stamped `real-hosted-snapshot` would look perfect while
+  // measuring nothing — worse than the truncated snapshot the pagination walk
+  // prevents, and reachable by an ordinary wrong --scope.
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "mine-gt-"));
+  const out = path.join(dir, "ground-truth.real.json");
+  const errs = [];
+  const { remote, connection } = pagingRemote({});
+
+  const code = await main(["--confirm", "--out", out], {
+    log: () => {},
+    err: (m) => errs.push(String(m)),
+    deps: { resolveStores: () => ({ remote, connection }) },
+  });
+
+  assert.equal(code, 5);
+  assert.match(errs.join("\n"), /EMPTY baseline/);
+  assert.match(errs.join("\n"), /Nothing was written/);
+  assert.equal(fs.existsSync(out), false);
+});

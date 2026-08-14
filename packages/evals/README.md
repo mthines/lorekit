@@ -362,7 +362,10 @@ git add fixtures/ground-truth.real.json && git commit -m "chore(evals): real rel
 The mine **walks every page** of `remote.list` (`hasMore` / `nextCursor`, the
 same termination `gatherStream` uses), so a tag with more than one page of rows
 is never frozen as a silently truncated snapshot; a repeating cursor or a walk
-past `MAX_PAGES` aborts with exit 4 and writes nothing. Its flags are strict:
+past `MAX_PAGES` aborts with exit 4 and writes nothing. A **zero-row** mine is
+refused too (exit 5): an empty ground truth scores `recallAtK = 1` by design
+("nothing to miss"), so an empty `real-hosted-snapshot` would look perfect while
+measuring nothing. Its flags are strict:
 `--scope` and `--out` each require a present, non-empty value — `--confirm
 --scope` is a usage error rather than a run that quietly mines *every* scope —
 and an unrecognised flag is refused rather than ignored.

@@ -326,6 +326,21 @@ export async function main(
   const redacted = [...byKey.values()].map(redactToMetadata);
   const entries = privacyPreflight(redacted); // throws → abort before any write
 
+  // The THIRD way this snapshot can be untrustworthy, alongside truncated and
+  // partial: EMPTY. An empty baseline is worse than a truncated one, because
+  // `recallAtK` returns 1 for an empty ground truth ("nothing to miss") — so a
+  // zero-row mine would score PERFECTLY, stamped `real-hosted-snapshot`, with no
+  // warning anywhere. Nothing is written; the operator gets the two ordinary
+  // causes to check.
+  if (entries.length === 0) {
+    err(
+      `No outcome/relevance rows found for scope ${args.scope} (tags: ${OUTCOME_TAGS.join(", ")}). ` +
+        "Refusing to write an EMPTY baseline — it would score a perfect recall against nothing. " +
+        "Check --scope, and that this token can see those rows. Nothing was written.",
+    );
+    return 5;
+  }
+
   const snapshot = {
     _README:
       "REAL retrieval-relevance baseline mined from the hosted store. Metadata only — no lesson bodies. Safe to commit and to gate downstream PRs against, subject to review.",
