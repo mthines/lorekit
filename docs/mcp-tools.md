@@ -168,6 +168,9 @@ List all lessons for a scope — newest first by default, or best-first with `or
 - `recency` (default): pass `nextCursor` back as `cursor` to read the next page.
 - `rank`: a single bounded top-N page — `hasMore` is always `false` and `nextCursor` always `null`.
   Raise `limit` (cap 100) rather than paginating.
+  Ranking scores at most the **200 most recently updated** rows in the scope (a bounded candidate
+  window); in a scope with more than 200 active lessons the ranking is over that recency window,
+  not the whole scope, and `hasMore: false` reflects the page — not that the scope is exhausted.
 
 ---
 
