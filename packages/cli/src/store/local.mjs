@@ -235,17 +235,32 @@ class LocalStore {
   // this walks each scope EXACTLY ONCE — the failure hook passes all its terms
   // in one call rather than one call per term, so N terms no longer re-read the
   // store N times. An empty query (or empty list) returns everything, unchanged.
-  async search({ q, scopes, tags } = {}) {
+  // `walkLimit` bounds the walk for hot-path callers (the per-prompt hook): a
+  // local search re-reads every scope's files synchronously, which the remote
+  // `timeoutMs` cannot bound, so an unbounded store would stall the prompt.
+  // Once `walkLimit` matches are collected the walk stops — later scopes in
+  // `scopes` are skipped entirely. Scopes are visited most-specific-first, so
+  // the retained matches are the nearest-scope ones, consistent with this
+  // store's precedence. Omitted → unbounded, exactly as before. Named
+  // `walkLimit`, NOT `limit`, so it is local-only: `RemoteStore.search` reads
+  // `limit` (→ `body.limit`) and a shared name would truncate the remote hit
+  // set pre-ranking, which the per-prompt caller must not do.
+  async search({ q, scopes, tags, walkLimit } = {}) {
     const needles = (Array.isArray(q) ? q : [q])
       .map((n) => String(n || '').toLowerCase())
       .filter(Boolean);
     const matchAll = needles.length === 0;
+    const cap = Number.isInteger(walkLimit) && walkLimit > 0 ? walkLimit : Infinity;
     const out = [];
     for (const scope of scopes || []) {
+      if (out.length >= cap) break;
       const { entries } = await this.list({ scope, tags });
       for (const e of entries) {
         const hay = `${e.key}\n${(e.tags || []).join(' ')}\n${e.value || ''}`.toLowerCase();
-        if (matchAll || needles.some((n) => hay.includes(n))) out.push(e);
+        if (matchAll || needles.some((n) => hay.includes(n))) {
+          out.push(e);
+          if (out.length >= cap) break;
+        }
       }
     }
     return { ok: true, entries: out };
@@ -412,13 +427,34 @@ class TwoTierStore {
     return this.home.restore({ scope, key });
   }
 
-  async search({ q, scopes, tags } = {}) {
-    const homeRes = await this.home.search({ q, scopes, tags });
+  async search({ q, scopes, tags, walkLimit } = {}) {
+    const id = (e) => `${e.scope}\x00${e.key}`;
+    const homeRes = await this.home.search({ q, scopes, tags, walkLimit });
     const projRes = this.projectActive()
-      ? await this.project.search({ q, scopes, tags })
+      ? await this.project.search({ q, scopes, tags, walkLimit })
       : { entries: [] };
-    const merged = mergeByKey(projRes.entries, homeRes.entries, (e) => `${e.scope}\x00${e.key}`);
-    return { ok: true, entries: merged };
+    const merged = mergeByKey(projRes.entries, homeRes.entries, id);
+    if (!Number.isInteger(walkLimit) || walkLimit <= 0) return { ok: true, entries: merged };
+
+    // Each tier is walked under its OWN `walkLimit` (that bound exists to stop
+    // an unbounded synchronous file walk on the per-prompt hot path, so it has
+    // to stay per-tier). Slicing the project-first merge to `walkLimit` would
+    // then starve the home tier outright: a project tier that fills its own
+    // budget occupies every slot, and no home-tier lesson survives to reach
+    // `rankLessons`. Split the budget instead — each tier is guaranteed its
+    // half, and whatever the other tier leaves unused is handed straight back,
+    // so a single populated tier still fills the cap exactly as before.
+    const projectIds = new Set(projRes.entries.map(id));
+    const fromProject = merged.filter((e) => projectIds.has(id(e)));
+    const fromHome = merged.filter((e) => !projectIds.has(id(e)));
+    const projectTake = Math.min(
+      fromProject.length,
+      Math.max(Math.ceil(walkLimit / 2), walkLimit - fromHome.length),
+    );
+    return {
+      ok: true,
+      entries: [...fromProject.slice(0, projectTake), ...fromHome.slice(0, walkLimit - projectTake)],
+    };
   }
 
   // Merged, de-duplicated non-archived count across the given scopes.

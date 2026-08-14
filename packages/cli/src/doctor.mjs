@@ -11,6 +11,7 @@ import {
   CLAUDE_HOOK_EVENTS,
   installedHookEvents,
   hookModeFromEvents,
+  missingHookEvents,
   readLorekitServer,
   readMcpConfig,
   tokenKind,
@@ -23,7 +24,7 @@ import {
   probeTelemetryExport,
 } from './telemetry.mjs';
 import { deriveScope } from './scope.mjs';
-import { loadControl } from './control.mjs';
+import { loadControl, HOOK_INSTRUCTION_EVENTS } from './control.mjs';
 import { createStore } from './store/index.mjs';
 import { log, heading, status, c } from './util.mjs';
 
@@ -101,7 +102,22 @@ export async function doctor(args) {
       );
     } else {
       for (const { scope, events } of perScope) {
-        record('pass', `hooks ${scope}`, `${hookModeFromEvents(events)} — ${events.join(', ')}`);
+        // An install predating a lifecycle event still READS as its mode, so
+        // reporting the mode alone tells a legacy wiring it is current — the
+        // one state where this line is actively misleading. Stay a `pass` (the
+        // wiring works, it is just not the full set any more) and name the
+        // upgrade the same way `install`'s already-installed summary does, via
+        // the same `missingHookEvents` derivation.
+        const mode = hookModeFromEvents(events);
+        const missing = missingHookEvents(events);
+        // Name the SCOPE in the command. `install` prompts for project vs
+        // global when neither flag is given, so a bare command offered against
+        // a `hooks global` gap can just as easily rewire the project and leave
+        // the gap exactly where it was.
+        const upgrade = missing.length > 0
+          ? ` — missing ${missing.join(', ')}; run \`lorekit install --${scope} --hooks ${mode}\` to wire ${missing.length === 1 ? 'it' : 'them'}`
+          : '';
+        record('pass', `hooks ${scope}`, `${mode} — ${events.join(', ')}${upgrade}`);
       }
     }
   }
@@ -157,10 +173,9 @@ export async function doctor(args) {
   // 6. Hook instructions — show resolved per-event custom instructions when any are set.
   {
     const instr = control.hooksInstructions || {};
-    const EVENTS = ['SessionStart', 'PostToolUseFailure', 'Stop'];
-    const configured = EVENTS.filter((ev) => instr[ev]);
+    const configured = HOOK_INSTRUCTION_EVENTS.filter((ev) => instr[ev]);
     if (configured.length > 0) {
-      for (const ev of EVENTS) {
+      for (const ev of HOOK_INSTRUCTION_EVENTS) {
         const text = instr[ev];
         if (text) {
           record('info', `hooks.instructions.${ev}`, c.dim(text.length > 80 ? text.slice(0, 77) + '…' : text));

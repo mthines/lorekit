@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CLAUDE_HOOK_EVENTS } from '../src/config.mjs';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const BIN = path.join(HERE, '..', 'bin', 'lorekit.mjs');
@@ -104,6 +105,32 @@ test('Claude plugin config validates (claude plugin validate)', (t) => {
   assert.equal(res.status, 0, `claude plugin validate failed:\n${res.stdout}\n${res.stderr}`);
 });
 
+// `config.mjs` states that CLAUDE_HOOK_EVENTS mirrors the plugin's hooks.json,
+// but nothing enforced it: the two are hand-edited in separate files, so an
+// event added to one and forgotten in the other ships as a plugin install that
+// silently wires fewer hooks than `lorekit install` does. Assert the agreement
+// the docblock claims, both directions.
+test('the Claude plugin hooks.json mirrors CLAUDE_HOOK_EVENTS', () => {
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(REPO, 'plugins', 'lorekit-claude', 'hooks', 'hooks.json'), 'utf8'),
+  );
+  assert.deepEqual(
+    Object.keys(manifest.hooks).sort(),
+    [...CLAUDE_HOOK_EVENTS].sort(),
+    'plugin hooks.json and CLAUDE_HOOK_EVENTS declare different events',
+  );
+  // A key alone is not wiring — each group must actually fire the engine for
+  // its own event, or parity would pass on an empty placeholder.
+  for (const event of CLAUDE_HOOK_EVENTS) {
+    const groups = manifest.hooks[event];
+    assert.ok(Array.isArray(groups) && groups.length > 0, `${event} has no hook group`);
+    const command = groups[0].hooks[0].command;
+    assert.match(command, /@lorekit\/cli hook/, `${event} does not invoke the lorekit engine`);
+    assert.match(command, /--adapter claude\b/, `${event} is not wired for the claude adapter`);
+    assert.match(command, new RegExp(`--event ${event}\\b`), `${event} passes a different --event`);
+  }
+});
+
 test('Cursor hooks.json is structurally valid', () => {
   const cfg = JSON.parse(fs.readFileSync(path.join(REPO, 'plugins', 'lorekit-cursor', 'hooks.json'), 'utf8'));
   assert.equal(cfg.version, 1);
@@ -132,4 +159,29 @@ test('the vendored Claude skill is in sync with its source', () => {
     encoding: 'utf8',
   });
   assert.equal(res.status, 0, res.stdout + res.stderr);
+});
+
+// ── UserPromptSubmit: the contract is that SILENCE is valid output ───────────
+//
+// Every other hook either always emits (`Stop`, `PostToolUseFailure`) or emits
+// whatever the store had (`SessionStart`). This one fires on EVERY turn, so its
+// contract is the opposite: emitting nothing is the normal, correct answer, and
+// the only thing that must hold is that when it does speak it speaks the host's
+// JSON. A fixture that produced output here with no store configured would mean
+// a gate had come loose.
+test('UserPromptSubmit is silent without a store, and never breaks the contract', () => {
+  const fx = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'claude-UserPromptSubmit.json'), 'utf8'));
+  const out = runFixture(fx);
+  assert.equal(out, '', 'no store configured → nothing to say, so say nothing');
+});
+
+test('UserPromptSubmit stays silent on a trivial prompt', () => {
+  // The length gate. These are the acknowledgements that dominate a real
+  // session; a store lookup for each one is pure overhead on the user's
+  // critical path, and there is nothing in them to match on anyway.
+  const base = JSON.parse(fs.readFileSync(path.join(FIXTURES, 'claude-UserPromptSubmit.json'), 'utf8'));
+  for (const prompt of ['yes', 'ok', 'continue', 'do it', 'next please', '', '   ']) {
+    const out = runFixture({ ...base, stdin: { ...base.stdin, prompt } });
+    assert.equal(out, '', `a "${prompt}" prompt must not reach the store`);
+  }
 });
