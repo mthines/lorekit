@@ -249,3 +249,16 @@ test("AC-6: main surfaces a bad flag as usage and never reaches the store", asyn
   assert.equal(code, 2);
   assert.match(errs.join("\n"), /--scope requires a value/);
 });
+
+test("AC-5: a string seen_count is mined as a number, not dropped to null", () => {
+  // The hosted projection hands `seen_count` back as a string on some paths;
+  // `seenCountOf` in src/ground-truth.mjs already accepts one, so redaction must
+  // not require a `number` and silently mine `null` (later weighted 0).
+  assert.equal(redactToMetadata({ seen_count: "7" }).seenCount, 7);
+  assert.equal(redactToMetadata({ seenCount: "3.9" }).seenCount, 3);
+  assert.equal(redactToMetadata({ seenCount: "-2" }).seenCount, 0);
+  // Absent still stays null — the placeholder tell, not a 0 count.
+  assert.equal(redactToMetadata({}).seenCount, null);
+  // Present but unparseable degrades to 0, exactly as seenCountOf does.
+  assert.equal(redactToMetadata({ seen_count: "not-a-number" }).seenCount, 0);
+});

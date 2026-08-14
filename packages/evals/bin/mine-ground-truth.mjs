@@ -29,6 +29,8 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { seenCountOf } from "../src/ground-truth.mjs";
+
 const FIXTURES = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -55,17 +57,18 @@ export const METADATA_FIELDS = ["scope", "key", "tags", "origin_pr", "seenCount"
  * point every emitted entry passes through.
  */
 export function redactToMetadata(row) {
-  const seenCount =
-    row?.seenCount ?? row?.seen_count ?? null;
+  // ABSENT stays `null` (the placeholder tell: the seed carries no count at
+  // all), but a PRESENT count is read with the same coercion `seenCountOf`
+  // applies — the hosted projection hands `seen_count` back as a string on some
+  // paths, and a local re-implementation that required a `number` mined it as
+  // `null` and had it later weighted 0.
+  const raw = row?.seenCount ?? row?.seen_count ?? null;
   return {
     scope: row?.scope ?? null,
     key: row?.key ?? null,
     tags: Array.isArray(row?.tags) ? [...row.tags] : [],
     origin_pr: row?.origin_pr ?? null,
-    seenCount:
-      typeof seenCount === "number" && Number.isFinite(seenCount)
-        ? Math.max(0, Math.floor(seenCount))
-        : null,
+    seenCount: raw == null ? null : seenCountOf({ seenCount: raw }),
   };
 }
 
