@@ -40,7 +40,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const {
-  resolveEmbeddingConfig, embeddingInput, EMBEDDING_DIMENSIONS, redactKey,
+  resolveEmbeddingConfig, embeddingInput, buildEmbeddingRequest, EMBEDDING_DIMENSIONS, redactKey,
 } = await import(path.join(HERE, '..', 'packages', 'mcp-core', 'src', 'embedding.ts'));
 
 // The label is part of the CLOSED set in `SMOKE_ARTEFACT_PATTERN`. Minting
@@ -109,9 +109,13 @@ async function main() {
       const res = await fetch(config.endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
-        body: JSON.stringify({
-          model: config.model, input: [probeText], dimensions: EMBEDDING_DIMENSIONS, encoding_format: 'float',
-        }),
+        // The SHARED builder, not a hand-rolled body. `dimensions` is only
+        // legal on the `text-embedding-3-*` family (`acceptsDimensionsParam`),
+        // so sending it unconditionally 400s on exactly the ada-002 and
+        // compatible endpoints `docs/embeddings.md` calls swappable — and the
+        // probe would fail on a provider the product itself handles. The smoke
+        // must send the request the write path sends.
+        body: JSON.stringify(buildEmbeddingRequest([probeText], config)),
         signal: AbortSignal.timeout(30_000),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${redactKey((await res.text()).slice(0, 200), config.apiKey)}`);
