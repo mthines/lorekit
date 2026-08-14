@@ -43,7 +43,7 @@ const {
   resolveEmbeddingConfig, embeddingInput, buildEmbeddingRequest, EMBEDDING_DIMENSIONS, redactKey,
 } = await import(path.join(HERE, '..', 'packages', 'mcp-core', 'src', 'embedding.ts'));
 const {
-  createSmokeNamespace, sweepSmokeArtefacts,
+  createSmokeNamespace, sweepSmokeArtefacts, describeSweepFailures,
 } = await import(path.join(HERE, '..', 'packages', 'mcp-server', 'src', 'smoke-cleanup.ts'));
 
 // The label is part of the CLOSED set in `SMOKE_ARTEFACT_PATTERN`. Minting
@@ -203,9 +203,15 @@ async function main() {
       });
       log(`\ncleanup: removed ${removed.length}/${minted.length}`);
       // A leak is a WARNING, never a thrown hook: it must be visible without
-      // turning a passing run red, and `scripts/smoke-cleanup.mjs` sweeps by
-      // name pattern afterwards regardless.
-      if (failed.length) log(`  WARNING: could not remove ${failed.map((f) => f.name).join(', ')} — the sweeper will`);
+      // turning a passing run red, and `scripts/smoke-cleanup.mjs` sweeps the
+      // `embed-` label by name pattern afterwards regardless.
+      //
+      // Rendered by the SHARED formatter, which names the REASON beside each
+      // artefact. A list of keys with no cause tells an operator that something
+      // leaked and nothing about why — a permissions error, a 404 and a network
+      // timeout all read identically, and only one of them needs acting on.
+      const warning = describeSweepFailures({ removed, failed }, 'live embedding smoke');
+      if (warning) log(warning);
     }
   }
 
