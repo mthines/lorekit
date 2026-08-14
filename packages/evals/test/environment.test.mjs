@@ -188,6 +188,26 @@ test("running outside the sandbox is contamination", () => {
   assert.ok(verdict.findings.some((f) => f.kind === FINDING_CWD));
 });
 
+test("a sandbox cwd reported as its realpath is inside the sandbox", async () => {
+  // `os.tmpdir()` is a symlink on macOS, and the agent reports the resolved
+  // form. If the sandbox root were the unresolved `mkdtemp` path, this prefix
+  // test would fail for every rep and the whole batch would be discarded as
+  // "ran outside the sandbox".
+  await withSandbox({}, async (sandbox) => {
+    const verdict = assertCleanEnvironment(
+      summarizeEnvironment({
+        init: { ...CLEAN_INIT, cwd: await fsp.realpath(sandbox.cwd) },
+      }),
+      { sandboxRoot: sandbox.root, expectedHooks: 0 },
+    );
+    assert.equal(
+      verdict.findings.some((f) => f.kind === FINDING_CWD),
+      false,
+      JSON.stringify(verdict.findings),
+    );
+  });
+});
+
 test("a missing init event is UNVERIFIABLE, never clean", () => {
   const verdict = assertCleanEnvironment(summarizeEnvironment({ init: null }));
   assert.equal(verdict.clean, false);
