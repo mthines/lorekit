@@ -189,7 +189,7 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
         order: { type: 'string', enum: ['recency', 'rank'], default: 'recency', description: 'recency (default, updated_at desc + cursor pagination) or rank (salience+recency; bounded top-N, no cursor). Note: rank results are MMR-diversified, so they are NOT strictly score-descending — a more diverse lower-scored lesson can precede a higher-scored near-duplicate.' },
       },
     },
-    returns: '`{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — newest-first (recency mode) or best-first by salience+recency (rank mode). Pass `nextCursor` back as `cursor` to paginate — recency mode only. Rank mode is a single bounded top-N page: `hasMore` is always false and `nextCursor` always null.',
+    returns: '`{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — newest-first (recency mode) or ranked by salience+recency then MMR-diversified (rank mode). Because rank mode diversifies, entries are NOT strictly score-descending — a more diverse lower-scored lesson can precede a higher-scored near-duplicate. Pass `nextCursor` back as `cursor` to paginate — recency mode only. Rank mode is a single bounded top-N page: `hasMore` is always false and `nextCursor` always null.',
   },
   {
     name: 'memory.delete',

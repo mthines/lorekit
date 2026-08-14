@@ -289,10 +289,14 @@ describe('selectDiverse parity: TS ↔ .mjs produce the same diverse selection',
     const tsDiverse = selectDiverseTs(tsRanked, K);
     const tsOrder = tsDiverse.map((r) => `${r.entry.scope}::${r.entry.key}`);
 
-    // .mjs side — rank to get bare entries + need scores for selectDiverse
+    // .mjs side — rank to get bare entries + need scores for selectDiverse.
+    // Derive maxSeenCount FROM the fixture (max seenCount) rather than hard-coding
+    // 0: that is the population value `rankLessons` scores against internally, so
+    // the parallel `.mjs` scores are rebuilt by the SAME route rankTs used. A
+    // fixture that later gains a non-zero `seenCount` then stays honest instead of
+    // silently diverging.
     const jsRanked = cli.rankLessons(divergeFixtures, rankOpts);
-    // Compute scores in parallel using the .mjs scorer (same maxSeenCount=0, same now)
-    const maxSeenCount = 0;
+    const maxSeenCount = Math.max(0, ...divergeFixtures.map((f) => f.seenCount ?? 0));
     const jsScores = jsRanked.map((e) => cli.scoreLesson(e, { now: NOW, maxSeenCount, terms: [] }));
     const jsDiverse = cli.selectDiverse(jsRanked, K, { scores: jsScores });
     const jsOrder = jsDiverse.map((e) => {

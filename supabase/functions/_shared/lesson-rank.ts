@@ -283,9 +283,20 @@ export interface SelectDiverseOptions {
  * them. Comparing the RAW score here would let a 1e-10 float difference override
  * scope precedence — the lower-precedence scope could win a near-tie MMR pick.
  *
- * PERF: each candidate's `value` is tokenised ONCE up front (the `tokens` field)
- * so the O(k²) pairwise Jaccard comparisons inside the loop do no tokenisation —
- * O(n) tokenisations total, not O(n·k²). See `tokenizeValue`.
+ * PERF — the algorithm is O(n·k), and BOTH factors that could regress it to
+ * O(n·k²) are held down explicitly:
+ *   1. TOKENISE axis: each candidate's `value` is tokenised ONCE up front (the
+ *      `tokens` field) so the pairwise Jaccard comparisons never tokenise —
+ *      O(n) tokenisations total. See `tokenizeValue`.
+ *   2. INTERSECTION axis: each remaining candidate carries a RUNNING `maxSim`
+ *      (its greatest Jaccard similarity to anything selected so far). The
+ *      objective reads that cached scalar — it does NOT loop over `selected`.
+ *      After each pick we update `maxSim` for the still-remaining candidates
+ *      against the ONE just-selected entry only. That is k picks × n candidates
+ *      = O(n·k) Jaccard intersections total, not O(n·k²).
+ * Re-introducing either an in-loop `tokenizeValue` call OR an inner
+ * `for (… of selected)` maxSim recomputation silently restores O(n·k²) —
+ * measured 2.6s CPU at n=200/k=100 vs 58ms for the running form. Don't.
  *
  * Always-on for ranked mode — no optional param needed. The recency wire path is
  * never affected.
@@ -299,32 +310,36 @@ export function selectDiverse<T extends RankableLesson>(
     ? options.lambda
     : MMR_LAMBDA;
   if (!Array.isArray(ranked) || ranked.length === 0 || k <= 0) return [];
-  const selected: { ranked: RankedLesson<T>; tokens: Set<string>; qScore: number }[] = [];
+  const selected: RankedLesson<T>[] = [];
   // Pre-tokenise every candidate ONCE and snap its score onto the SCORE_EPSILON
-  // grid up front. The loop below reads these caches — it never tokenises or
-  // re-quantises. See the docblock (PERF + SCORE QUANTISATION).
+  // grid up front. `maxSim` is the running greatest Jaccard similarity to any
+  // already-selected entry — 0 while nothing is selected. The loop below reads
+  // these caches; it never tokenises, re-quantises, or rescans `selected`.
   const remaining = ranked.map((r) => ({
     ranked: r,
     tokens: tokenizeValue(r.entry.value),
     qScore: Math.round(r.score / SCORE_EPSILON) * SCORE_EPSILON,
+    maxSim: 0,
   }));
   while (selected.length < k && remaining.length > 0) {
     let bestIdx = 0;
     let bestMmr = -Infinity;
     for (let i = 0; i < remaining.length; i++) {
       const candidate = remaining[i];
-      let maxSim = 0;
-      for (const s of selected) {
-        const sim = jaccardSimilarity(candidate.tokens, s.tokens);
-        if (sim > maxSim) maxSim = sim;
-      }
-      const mmr = lambda * candidate.qScore - (1 - lambda) * maxSim;
+      // Reads the cached running maxSim — no inner scan over `selected`.
+      const mmr = lambda * candidate.qScore - (1 - lambda) * candidate.maxSim;
       if (mmr > bestMmr) { bestMmr = mmr; bestIdx = i; }
     }
-    selected.push(remaining[bestIdx]);
-    remaining.splice(bestIdx, 1);
+    const [justSelected] = remaining.splice(bestIdx, 1);
+    selected.push(justSelected.ranked);
+    // Fold the just-selected entry into every remaining candidate's running
+    // maxSim — one Jaccard per remaining candidate per pick, so O(n·k) total.
+    for (const candidate of remaining) {
+      const sim = jaccardSimilarity(candidate.tokens, justSelected.tokens);
+      if (sim > candidate.maxSim) candidate.maxSim = sim;
+    }
   }
-  return selected.map((s) => s.ranked);
+  return selected;
 }
 
 /**

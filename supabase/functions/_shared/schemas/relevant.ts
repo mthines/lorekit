@@ -95,6 +95,13 @@ export const RelevantEntrySchema = z.object({
 export type RelevantEntry = z.infer<typeof RelevantEntrySchema>;
 
 export const RelevantResponseSchema = z.object({
+  /**
+   * The selected lessons, ranked by salience+recency then MMR-diversified (same
+   * selection as the MCP `memory.list order=rank` path). Because of the
+   * diversification these are NOT strictly score-descending — a more diverse
+   * lower-scored lesson can precede a higher-scored near-duplicate. Read them as
+   * a diverse best-set, not a monotonic score ordering.
+   */
   entries: z.array(RelevantEntrySchema),
   /**
    * How many candidates were RANKED to produce `entries` — the fetched set, not
