@@ -172,7 +172,7 @@ export async function handleRelevant(
         recency: recencyFactor(updatedAtFrom(entry), now),
         salience: salienceFactor(seenCountFrom(entry), maxSeenCount),
         relevance: normalizeRelevance(entry.relevance),
-        // The 4th factor `score` now averages. Reported so `factors` still
+        // `score` now averages a 4th factor. Reported so `factors` still
         // reconciles with `score` — an absent outcome surfaces as the
         // cold-start prior (`normalizeOutcome`), not a missing key.
         outcome: normalizeOutcome(entry.outcome),

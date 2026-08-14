@@ -313,9 +313,23 @@ describe('lesson-rank: outcome factor and cold-start prior', () => {
     const keys = ranked.map((r) => r.entry.key);
     expect(keys[0]).toBe('cold-new');
 
-    // The prior being > 0 is what gives the cold row its advantage over the
-    // old row with explicit outcome:0. Assert the constant is neutral-positive.
-    expect(COLD_START_OUTCOME_PRIOR).toBeGreaterThan(0);
-    expect(COLD_START_OUTCOME_PRIOR).toBeLessThanOrEqual(1);
+    // The load-bearing check: hold recency, salience and relevance EQUAL between
+    // the two rows so the ONLY difference is outcome. The cold row (absent
+    // outcome → prior) must still outrank an explicit `outcome: 0` row — that
+    // ordering can only come from the prior being > 0. Zeroing the prior would
+    // tie the two, so this assertion fails the moment the prior degrades.
+    const coldSameAge = { key: 'cold', updatedAt: daysAgo(3), seenCount: 5 };
+    const zeroSameAge = { key: 'zero', updatedAt: daysAgo(3), seenCount: 5, outcome: 0.0 };
+    const tieRank = rankTs([zeroSameAge, coldSameAge], { now: NOW });
+    expect(tieRank[0].entry.key).toBe('cold');
+
+    // Score the pair against the same population (maxSeenCount) rankLessons uses,
+    // so the strict-greater is on the ranking's own arithmetic, not a re-derived
+    // one. The gap is exactly the prior contribution: COLD_START_OUTCOME_PRIOR/4.
+    const opts = { now: NOW, maxSeenCount: 5 };
+    const coldScore = scoreTs(coldSameAge, opts);
+    const zeroScore = scoreTs(zeroSameAge, opts);
+    expect(coldScore).toBeGreaterThan(zeroScore);
+    expect(coldScore - zeroScore).toBeCloseTo(COLD_START_OUTCOME_PRIOR / 4, 9);
   });
 });
