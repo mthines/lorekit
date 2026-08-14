@@ -45,7 +45,11 @@ Subcommands:
   arm0                 The golden task against an empty store, then graded.
   preflight            One throwaway model call in a prepared sandbox, then
                        report what the session actually loaded. Exits non-zero
-                       when the environment is contaminated.
+                       when the environment is contaminated. It is a single
+                       call in a fixed empty-store arm and writes no run
+                       directory, so it REFUSES --seed, --lesson, --scope,
+                       --scope-mode, --git/--no-git, --reps and --out rather
+                       than ignoring them.
   probe                Seed the store, install the real SessionStart hook and
                        print what it injects. Spawns no model.
 
@@ -173,12 +177,32 @@ export function runId(now = new Date()) {
   return now.toISOString().replace(/[:.]/g, "-");
 }
 
+/**
+ * Refuse flags a subcommand would silently ignore.
+ *
+ * Pure ARGUMENT validation, meant to be hoisted above every sandbox: refusing
+ * here costs nothing, where refusing inside the loop would first git-initialise,
+ * strip and MCP-configure a sandbox only to throw it away. Silently ignoring is
+ * the failure worth preventing — a caller who typed `--scope-mode repo` and got
+ * a `branch::` run reads the result as a finding about the model.
+ *
+ * @param {object} options    from `parseArgs`
+ * @param {string[]} flags    the flags this subcommand cannot honour
+ * @param {string} because    why, phrased to complete "…, so <flags> cannot be
+ *                            honoured here."
+ */
+function refuseUnhonourableFlags(options, flags, because) {
+  const ignored = flags.filter((f) => options.provided.has(f));
+  if (ignored.length === 0) return;
+  throw new Error(
+    `${because}, so ${ignored.join(" and ")} cannot be honoured here. ` +
+      `Drop ${ignored.length > 1 ? "them" : "it"}.`,
+  );
+}
+
 async function runArm0(options) {
-  // Pure ARGUMENT validation, hoisted above every sandbox: arm 0 is the
-  // empty-store arm by definition — its job is to produce the organic lesson
-  // the seeded arms are later given — so it cannot honour a seed. Refusing here
-  // costs nothing, where refusing inside the loop would first git-initialise,
-  // strip and MCP-configure a sandbox only to throw it away.
+  // Arm 0 is the empty-store arm by definition — its job is to produce the
+  // organic lesson the seeded arms are later given — so it cannot honour a seed.
   const ignored = ["--seed", "--lesson"].filter((f) => options.provided.has(f));
   if (ignored.length > 0) {
     throw new Error(
@@ -342,6 +366,25 @@ async function runArm0(options) {
  * batch: `node bin/run-eval.mjs preflight && node bin/run-eval.mjs arm0 …`.
  */
 async function runPreflight(options) {
+  // One throwaway call in a fixed, empty-store arm: the information environment
+  // is what is being measured, and it does not vary with the seed, the scope, or
+  // whether the sandbox has a git identity. Every one of those flags would have
+  // been accepted and dropped on the floor.
+  refuseUnhonourableFlags(
+    options,
+    [
+      "--seed",
+      "--lesson",
+      "--scope",
+      "--scope-mode",
+      "--git",
+      "--no-git",
+      "--reps",
+      "--out",
+    ],
+    "preflight is a single call in a fixed empty-store arm, and writes no run directory",
+  );
+
   const sandbox = await createSandbox({ keep: options.keep });
   try {
     const arm = await prepareArm(sandbox, { seed: "empty" });

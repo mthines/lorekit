@@ -103,6 +103,23 @@ test("arm0 refuses a seed flag instead of silently running an empty store", asyn
   }
 });
 
+test("preflight refuses the flags it cannot honour, before spawning anything", async () => {
+  // preflight prepares ONE fixed empty-store arm. `--scope-mode repo` used to
+  // be accepted and dropped, so the caller believed they had checked a
+  // repo-scoped arm's environment. There is no --dry-run here: the refusal has
+  // to land before `createSandbox`, or this test would spawn the agent.
+  await assert.rejects(
+    () => main(["preflight", "--scope-mode", "repo"]),
+    /--scope-mode cannot be honoured here/,
+  );
+  await assert.rejects(
+    () => main(["preflight", "--seed", "canonical", "--no-git"]),
+    /--seed and --no-git cannot be honoured here/,
+  );
+  await assert.rejects(() => main(["preflight", "--reps", "3"]), /--reps/);
+  await assert.rejects(() => main(["preflight", "--out", "x"]), /--out/);
+});
+
 test("parseArgs records which flags were actually typed", () => {
   assert.deepEqual([...parseArgs(["arm0"]).provided], []);
   assert.equal(
