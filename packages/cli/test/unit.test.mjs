@@ -1749,14 +1749,30 @@ describe('scoreLesson factors', () => {
     const keys = ranked.map((e) => e.key);
     assert.equal(keys[0], 'cold-new', 'cold new row must rank first — prior is not 0');
 
-    // Mental revert: if prior were 0 the cold row would get outcome:0 just like
-    // the old row, so the ordering would depend solely on recency (cold-new would
-    // still win, but the test demonstrates the prior's role).
-    // Setting both to outcome:0.0 makes the cold-new still win on recency —
-    // but the point is that a COLD row should not be penalised for absent history.
-    // Assert the prior equals COLD_START_OUTCOME_PRIOR (not 0):
-    assert.ok(COLD_START_OUTCOME_PRIOR > 0, 'COLD_START_OUTCOME_PRIOR must be greater than 0');
-    assert.ok(COLD_START_OUTCOME_PRIOR <= 1, 'COLD_START_OUTCOME_PRIOR must be at most 1');
+    // The load-bearing check: hold recency, salience and relevance EQUAL between
+    // the two rows so the ONLY difference is outcome. The cold row (absent
+    // outcome → prior) must still outrank an explicit `outcome: 0` row — that
+    // ordering can only come from the prior being > 0. Zeroing the prior would
+    // tie the two, so this assertion fails the moment the prior degrades.
+    const coldSameAge = { key: 'cold', updatedAt: daysAgo(3), seenCount: 5 };
+    const zeroSameAge = { key: 'zero', updatedAt: daysAgo(3), seenCount: 5, outcome: 0.0 };
+    const tieRank = rankLessons([zeroSameAge, coldSameAge], { now: NOW });
+    assert.equal(tieRank[0].key, 'cold', 'cold (prior) must outrank an equally-recent outcome:0 row');
+
+    // Score the pair against the same population (maxSeenCount) rankLessons uses,
+    // so the strict-greater is on the ranking's own arithmetic, not a re-derived
+    // one. The gap is exactly the prior contribution: COLD_START_OUTCOME_PRIOR/4.
+    const opts = { now: NOW, maxSeenCount: 5 };
+    const coldScore = scoreLesson(coldSameAge, opts);
+    const zeroScore = scoreLesson(zeroSameAge, opts);
+    assert.ok(
+      coldScore > zeroScore,
+      'the prior must produce a strictly higher score, not a tie broken by key order',
+    );
+    assert.ok(
+      Math.abs((coldScore - zeroScore) - COLD_START_OUTCOME_PRIOR / 4) < 1e-9,
+      'the score gap is exactly the prior spread over the four equal weights',
+    );
   });
 });
 

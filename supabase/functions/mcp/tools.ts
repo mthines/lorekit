@@ -26,6 +26,7 @@ import { decodeCursor, buildPage } from './cursor.ts';
 import { resolveKindHost } from '../_shared/schemas/tags.ts';
 import { rankLessons } from '../_shared/lesson-rank.ts';
 import type { RankableLesson } from '../_shared/lesson-rank.ts';
+import { outcomeFromTags } from '../_shared/outcome-signal.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
@@ -40,27 +41,6 @@ export const PURGE_RETENTION_DAYS_DEFAULT = 30;
  * staying one cheap indexed read.
  */
 const CANDIDATE_LIMIT = 200;
-
-/**
- * Outcome bus tags that signal a positive applied/resolution outcome.
- * Mirrors the same constant in `memories/handlers/relevant.ts`.
- */
-const OUTCOME_BUS_TAGS = ['loop::review-outcomes', 'loop::reviewer-comment-relevance'] as const;
-
-/**
- * Map a row's tags and origin_pr to an outcome score in [0,1], or `undefined`
- * when no signal is present (the scorer applies the cold-start prior).
- *
- * Ladder: bus tag present → 1.0; non-null origin_pr → 0.75; neither → undefined.
- * Lives here rather than in the pure scorer to keep the scorer free of
- * repo-schema knowledge — symmetric with how `relevant.ts` derives outcome.
- */
-function outcomeFromRowTags(tags: string[] | null | undefined, originPr: number | null | undefined): number | undefined {
-  const t: string[] = Array.isArray(tags) ? tags : [];
-  if (OUTCOME_BUS_TAGS.some((tag) => t.includes(tag))) return 1.0;
-  if (originPr != null) return 0.75;
-  return undefined;
-}
 
 // deno-lint-ignore no-explicit-any
 export type Params = Record<string, any>;
@@ -284,7 +264,7 @@ export async function toolList(
         tags: r.tags,
         updated_at: r.updated_at,
         seen_count: r.seen_count,
-        outcome: outcomeFromRowTags(r.tags, r.origin_pr),
+        outcome: outcomeFromTags(r.tags, r.origin_pr),
       }),
     );
 

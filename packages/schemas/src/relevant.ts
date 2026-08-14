@@ -57,11 +57,13 @@ export const RelevantQuerySchema = z.object({
    *
    * Mind the floor this reaches today. When `q` is set every matched candidate
    * carries `relevance: 1` — relevance is binary here (see the handler's
-   * docblock) — so with the endpoint's equal weights no matched score drops
-   * below `1/3`, and a `min_score` at or under `0.333…` is therefore a no-op.
-   * Above `1/3` it still discriminates, on recency and salience. A `min_score`
-   * that gates across the whole range needs graded FTS relevance, which lands
-   * with the ranked-relevance RPC (PR 11).
+   * docblock) — and the outcome factor never sinks below its cold-start prior
+   * of `0.5` (it maps to `1`, `0.75`, or the prior — never `0`). So with the
+   * endpoint's four equal weights no matched score drops below
+   * `(1 + 0.5) / 4 = 0.375`, and a `min_score` at or under `0.375` is therefore
+   * a no-op. Above `0.375` it still discriminates, on recency and salience. A
+   * `min_score` that gates across the whole range needs graded FTS relevance,
+   * which lands with the ranked-relevance RPC (PR 11).
    */
   min_score: z.coerce.number().min(0).max(1).optional().default(0),
 });
@@ -75,11 +77,12 @@ export const RelevantEntrySchema = z.object({
   hook: z.string(),
   /** Composite rank in [0,1]. Comparable within one response, not across. */
   score: z.number(),
-  /** The three factors, so a caller can explain or re-weight a ranking. */
+  /** The four factors, so a caller can explain or re-weight a ranking. */
   factors: z.object({
     recency: z.number(),
     salience: z.number(),
     relevance: z.number(),
+    outcome: z.number(),
   }),
   seen_count: z.number().int().nullable(),
   updated_at: z.string().nullable(),

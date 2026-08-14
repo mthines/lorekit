@@ -225,11 +225,12 @@ export function resolveScopeKeyArgs(positionals = [], options = {}) {
 //               when no terms are supplied, which is the SessionStart case: it
 //               then contributes the same constant to every candidate and the
 //               ordering is recency + salience alone.
-//   outcome   — applied/resolution history in [0,1]. A lesson that was carried
-//               to a PR or tagged on an outcome bus ranks up; one never applied
-//               sinks. A cold new lesson with no history gets the
-//               COLD_START_OUTCOME_PRIOR (0.5) so it ranks on recency and
-//               relevance instead of being penalised for lacking history.
+//   outcome   — applied/resolution history in [0,1]. The factor only ever
+//               LIFTS: a lesson tagged on an outcome bus scores 1.0 and one
+//               carried to a PR 0.75, while a lesson with no history gets the
+//               COLD_START_OUTCOME_PRIOR (0.5) — the neutral floor, never 0.
+//               So a proven lesson ranks up; an unproven one is not penalised
+//               for lacking history and rides on recency and relevance.
 //
 // PURE AND TOTAL, with one scoped exception. `now` is a PARAMETER: the
 // arithmetic never reads the clock, every factor is a function of the value
@@ -440,7 +441,6 @@ export function scoreLesson(entry, {
 } = {}) {
   return scoreWithTerms(entry, distinctTerms(terms), { now, weights, maxSeenCount, halfLifeDays });
 }
-
 
 // `scoreLesson` with the query already normalised. `rankLessons` calls this so
 // the whole ranking normalises the query once; `scoreLesson` normalises and

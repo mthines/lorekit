@@ -17,39 +17,14 @@ import {
   recencyFactor,
   salienceFactor,
   normalizeRelevance,
+  normalizeOutcome,
   seenCountFrom,
   updatedAtFrom,
 } from '../../_shared/lesson-rank.ts';
 import type { RankableLesson } from '../../_shared/lesson-rank.ts';
+import { outcomeFromTags } from '../../_shared/outcome-signal.ts';
 
 type MemoryRow = Tables<'memories'>;
-
-/**
- * Outcome bus tags that indicate a lesson has a strong positive outcome
- * (applied/resolved a review thread). Order matters: bus tag wins over origin_pr.
- */
-const OUTCOME_BUS_TAGS = ['loop::review-outcomes', 'loop::reviewer-comment-relevance'] as const;
-
-/**
- * Map a memory row's tags and origin_pr to an outcome score in [0,1], or
- * `undefined` when no outcome signal is present (the scorer's cold-start prior
- * will apply).
- *
- * Ladder (highest to lowest signal strength):
- *   1. Outcome-bus tag present → 1.0 (strong positive: applied/resolved)
- *   2. Non-null origin_pr → 0.75 (weak positive: carried to a PR)
- *   3. Neither → undefined (cold: scorer applies COLD_START_OUTCOME_PRIOR)
- *
- * Lives in the handler, not the pure scorer, to keep the shared module free of
- * repo-schema knowledge — symmetric with how relevance is derived outside the
- * scorer and handed in as a number.
- */
-function outcomeFromRow(r: MemoryRow & { tags?: string[] | null; origin_pr?: number | null }): number | undefined {
-  const tags: string[] = Array.isArray(r.tags) ? r.tags : [];
-  if (OUTCOME_BUS_TAGS.some((t) => tags.includes(t))) return 1.0;
-  if (r.origin_pr != null) return 0.75;
-  return undefined;
-}
 
 /**
  * How many rows the FTS may return before ranking. The ranking is set-relative
@@ -169,7 +144,10 @@ export async function handleRelevant(
     seen_count: (r as MemoryRow & { seen_count?: number }).seen_count ?? null,
     updated_at: r.updated_at,
     relevance: matched ? 1 : 0,
-    outcome: outcomeFromRow(r),
+    outcome: outcomeFromTags(
+      (r as MemoryRow & { tags?: string[] | null }).tags,
+      (r as MemoryRow & { origin_pr?: number | null }).origin_pr,
+    ),
   }));
 
   const now = Date.now();
@@ -194,6 +172,10 @@ export async function handleRelevant(
         recency: recencyFactor(updatedAtFrom(entry), now),
         salience: salienceFactor(seenCountFrom(entry), maxSeenCount),
         relevance: normalizeRelevance(entry.relevance),
+        // The 4th factor `score` now averages. Reported so `factors` still
+        // reconciles with `score` — an absent outcome surfaces as the
+        // cold-start prior (`normalizeOutcome`), not a missing key.
+        outcome: normalizeOutcome(entry.outcome),
       },
       seen_count: seenCountFrom(entry) || null,
       updated_at: entry.updated_at ?? null,
