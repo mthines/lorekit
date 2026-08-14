@@ -77,19 +77,25 @@ test("AC-1: sweep.mjs imports rankLessons from @lorekit/cli/src/lessons-pure.mjs
     'sweep.mjs must import from "@lorekit/cli/src/lessons-pure.mjs"',
   );
 
-  // rankLessons must be called (not just imported-and-dropped).
-  assert.ok(
-    /rankLessons/.test(src),
-    "sweep.mjs must call rankLessons",
-  );
-
-    // No re-encoded scoring formulas.  These are the exact identifiers the real
-  // ranker uses internally — their presence in sweep.mjs CODE (outside comments)
-  // would mean a copy.  Strip comment lines before checking.
+  // Strip comment lines up front — the docblock names `rankLessons` and the
+  // formula identifiers repeatedly, so every symbol assertion below must run
+  // against comment-stripped CODE or it cannot bite.
   const codeOnly = src
     .split("\n")
     .filter((line) => !/^\s*\/\//.test(line))  // drop single-line comments
     .join("\n");
+
+  // rankLessons must be CALLED in code — match the call form `rankLessons(`, not
+  // a bare mention. The docblock is stripped (codeOnly) and the `import { … }`
+  // line has no trailing paren, so this fails if the real call site were deleted.
+  assert.ok(
+    /rankLessons\s*\(/.test(codeOnly),
+    "sweep.mjs must call rankLessons (not just import it)",
+  );
+
+  // No re-encoded scoring formulas.  These are the exact identifiers the real
+  // ranker uses internally — their presence in sweep.mjs CODE (outside comments)
+  // would mean a copy.
   const forbidden = [
     /Math\.exp\(/,
     /Math\.log1p\(/,

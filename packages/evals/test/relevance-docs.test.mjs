@@ -9,13 +9,25 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
 // ── AC-7 (sweep): README documents the scale/position sweep (PR5) ────────────
 
-test("AC-7-sweep: README Status line names PR5 as shipped", () => {
+test("AC-7-sweep: README Status line names the sweep as shipped, not still-to-come", () => {
   const readme = read("README.md");
-  // PR5 must appear in the Status section.
-  assert.match(readme, /PR5/);
-  // The status must reflect PR5 is shipped (not "still to come").
-  // We assert the sweep section exists — if it's "still to come" this line won't match.
-  assert.match(readme, /scale\/position sweep/i);
+
+  // Isolate the Status section (from "## Status" up to the next "## " heading) so
+  // the assertion cannot be satisfied by the "## Scale/position sweep" heading
+  // further down the file.
+  const statusMatch = readme.match(/^## Status\b([\s\S]*?)(?=^## )/m);
+  assert.ok(statusMatch, "README must have a ## Status section");
+  const status = statusMatch[1];
+
+  // The Status must list the scale/position sweep in its SHIPPED clause — i.e.
+  // before the "Still to come" boundary. If the sweep were still-to-come this
+  // fails, which the previous heading-only match could not detect.
+  const shipped = status.split(/Still to come/i)[0];
+  assert.match(
+    shipped,
+    /scale\/position sweep\*\*\s*\(PR5\)/i,
+    "Status must name the scale/position sweep (PR5) as shipped, before 'Still to come'",
+  );
 });
 
 test("AC-7-sweep: README documents the sweep, both arms (recency vs rank), and the cliff", () => {

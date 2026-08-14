@@ -125,7 +125,7 @@ export function makeDecoys(count, { seed = 1, now = Date.now(), ageSpreadDays = 
       value: `SYNTHETIC DECOY row ${i} (seed=${seed}) — placeholder for real corpus at volume. Upgrade: bin/mine-ground-truth.mjs`,
       // No outcome/relevance tags — shouldSurface() must return false.
       tags: [],
-      seen_count: Math.floor(prng() * 5), // low, never confirmed (< RECURRENCE_CONFIRMED_AT)
+      seen_count: Math.floor(prng() * 3), // 0–2: never confirmed (< RECURRENCE_CONFIRMED_AT = 3)
       scope: "global",
       updated_at,
       source: "synthetic",
@@ -337,15 +337,10 @@ export function runSweep({
     // there is no explicit candidate-limit cap in the plain recency baseline
     // (it is the baseline UNDER TEST).  We take the top-`limit` rows.
     const recencyKeys = recencyOrder(pool, { limit });
-    const recencyInWindow = pool
-      .slice() // avoid mutating
-      .sort((a, b) => {
-        const ta = a?.updated_at ? new Date(a.updated_at).getTime() : 0;
-        const tb = b?.updated_at ? new Date(b.updated_at).getTime() : 0;
-        return tb - ta;
-      })
-      .slice(0, limit)
-      .some((r) => r.key === primaryTargetKey);
+    // `recencyKeys` is already the top-`limit` recency-sorted keys; the target is
+    // in the recency window iff it appears there — derive it directly rather than
+    // re-sorting and re-slicing the pool.
+    const recencyInWindow = recencyKeys.includes(primaryTargetKey);
 
     const recencyTgtRank = targetRank(recencyKeys, primaryTargetKey);
 
@@ -395,7 +390,8 @@ export function runSweep({
 
 /**
  * Read the sweep curve and name the first pool size at which each arm loses the
- * target from its top-K output (targetRank === null). That boundary is the cliff.
+ * target from its top-50 page (targetRank === null, where the page size is the
+ * hard-coded `limit = 50`, not `k`). That boundary is the cliff.
  *
  * For the ranked arm the cliff is specifically the WINDOW-EVICTION cliff
  * (targetInWindow === false AND targetRank === null), not merely score decay.

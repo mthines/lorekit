@@ -398,7 +398,8 @@ size does relevance degrade?**
 
 `src/sweep.mjs` injects **synthetic decoys** at increasing pool sizes around a
 **fixed real-signal-defined target** and measures, for each size, whether the
-target surfaces in the top-K — in two ways:
+target surfaces in the top-50 page (the hard-coded `limit = 50`, not `k`) — in
+two ways:
 
 | Arm | Model |
 | --- | ----- |
