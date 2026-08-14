@@ -367,11 +367,16 @@ past `MAX_PAGES` aborts with exit 4 and writes nothing. Its flags are strict:
 --scope` is a usage error rather than a run that quietly mines *every* scope —
 and an unrecognised flag is refused rather than ignored.
 
-The CLI token is **user-scoped**. A maintainer who needs a **cross-tenant**
-(service-role) read can set `LOREKIT_GROUND_TRUTH_SERVICE_ROLE=1` to acknowledge
-that intent and wire in `@lorekit/mcp-core`'s `createHostedAdapter`
-(`SUPABASE_SERVICE_ROLE_KEY`) — kept off the happy path because a service-role
-read can surface other users' rows, which must be an explicit choice.
+The CLI token is **user-scoped**, and so is every mine this script performs — it
+does **not** implement a cross-tenant read. A maintainer who needs one wires
+`@lorekit/mcp-core`'s `createHostedAdapter` (`SUPABASE_SERVICE_ROLE_KEY`) in by
+hand; it is kept off the happy path because a service-role read can surface other
+users' rows, which must be an explicit choice.
+
+`LOREKIT_GROUND_TRUTH_SERVICE_ROLE=1` is an **acknowledgement flag, not a
+switch**: setting it does not widen the read, and the script prints a notice
+saying exactly that, so a user-scoped mine is never mistaken for a cross-tenant
+one.
 
 The **privacy pre-flight** (`privacyPreflight`) runs on the entries about to be
 written and aborts the whole write if any still carries a `value`/`body`, any

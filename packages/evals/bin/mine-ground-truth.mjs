@@ -17,13 +17,17 @@
 //
 // REUSE, NOT A NEW CLIENT. The query goes through the CLI's shipped remote store
 // (`resolveStores` → `remote.list({ scope, tags })`), which is the same
-// server-side `overlaps('tags', …)` path the product uses. A maintainer who
-// needs a cross-tenant (service-role) read — the CLI token is user-scoped — can
-// set LOREKIT_GROUND_TRUTH_SERVICE_ROLE=1 to acknowledge that intent; the wiring
-// for `@lorekit/mcp-core`'s `createHostedAdapter` (SUPABASE_SERVICE_ROLE_KEY) is
-// documented in the README runbook rather than defaulted on, because a
-// service-role read can surface OTHER users' rows and that must be an explicit
-// choice, never the happy path.
+// server-side `overlaps('tags', …)` path the product uses. That store is always
+// USER-SCOPED (the CLI token is), and this script does NOT implement a
+// cross-tenant read: a maintainer who needs one wires `@lorekit/mcp-core`'s
+// `createHostedAdapter` (SUPABASE_SERVICE_ROLE_KEY) by hand per the README
+// runbook, because a service-role read can surface OTHER users' rows and that
+// must be an explicit choice, never the happy path.
+//
+// LOREKIT_GROUND_TRUTH_SERVICE_ROLE=1 is therefore an ACKNOWLEDGEMENT flag, not
+// a switch. Setting it does not widen the read; the script says so out loud
+// (`SERVICE_ROLE_NOTICE`) rather than letting an operator believe a cross-tenant
+// mine happened when a user-scoped one did.
 import fsp from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
@@ -153,9 +157,19 @@ const USAGE = `mine-ground-truth — freeze a real retrieval-relevance baseline 
     --out       Output path (default: fixtures/ground-truth.real.json).
 
   A usable remote connection is required (run \`lorekit install\` or set
-  LOREKIT_MCP_URL + LOREKIT_TOKEN). Set LOREKIT_GROUND_TRUTH_SERVICE_ROLE=1 only
-  if you intend a cross-tenant service-role read (see the README runbook).
+  LOREKIT_MCP_URL + LOREKIT_TOKEN). The read is ALWAYS user-scoped: this script
+  does not implement a cross-tenant service-role read, and
+  LOREKIT_GROUND_TRUTH_SERVICE_ROLE=1 only acknowledges that intent — the
+  \`createHostedAdapter\` wiring is manual (see the README runbook).
 `;
+
+/** The env var that acknowledges cross-tenant intent, and the notice it earns. */
+export const SERVICE_ROLE_ENV = "LOREKIT_GROUND_TRUTH_SERVICE_ROLE";
+export const SERVICE_ROLE_NOTICE =
+  `${SERVICE_ROLE_ENV}=1 is set, but this script does NOT implement a cross-tenant ` +
+  "service-role read — the mine below is USER-SCOPED via the CLI token. Wire " +
+  "@lorekit/mcp-core's createHostedAdapter (SUPABASE_SERVICE_ROLE_KEY) by hand per " +
+  "the README runbook if you need one.";
 
 /**
  * Is `raw` a missing value for a value-taking flag — end of argv, or the NEXT
@@ -233,6 +247,12 @@ export async function main(
     );
     err(USAGE);
     return 2;
+  }
+
+  // The acknowledgement flag is READ, so setting it is never silently inert —
+  // it earns an explicit "this did not widen the read" notice.
+  if (process.env[SERVICE_ROLE_ENV]) {
+    err(SERVICE_ROLE_NOTICE);
   }
 
   // Only now do we reach for the store. Import lazily so the refusal path above

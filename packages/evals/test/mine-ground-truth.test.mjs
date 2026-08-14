@@ -13,6 +13,7 @@ import {
   METADATA_FIELDS,
   OUTCOME_TAGS,
   PAGE_LIMIT,
+  SERVICE_ROLE_ENV,
 } from "../bin/mine-ground-truth.mjs";
 
 test("AC-5: redactToMetadata drops the lesson body and keeps only metadata", () => {
@@ -261,4 +262,48 @@ test("AC-5: a string seen_count is mined as a number, not dropped to null", () =
   assert.equal(redactToMetadata({}).seenCount, null);
   // Present but unparseable degrades to 0, exactly as seenCountOf does.
   assert.equal(redactToMetadata({ seen_count: "not-a-number" }).seenCount, 0);
+});
+
+test("AC-6: the service-role acknowledgement flag is READ, and says it did not widen the read", async () => {
+  // The flag used to be documented but never read, so setting it changed
+  // nothing and the operator could believe a cross-tenant mine had happened.
+  const errs = [];
+  const prior = process.env[SERVICE_ROLE_ENV];
+  process.env[SERVICE_ROLE_ENV] = "1";
+  try {
+    const code = await main(["--confirm"], {
+      log: () => {},
+      err: (m) => errs.push(String(m)),
+      // No usable remote → returns 3 before any query; the notice must already
+      // have been printed by then.
+      deps: {
+        resolveStores: () => ({ remote: { usable: () => false }, connection: {} }),
+      },
+    });
+    assert.equal(code, 3);
+  } finally {
+    if (prior === undefined) delete process.env[SERVICE_ROLE_ENV];
+    else process.env[SERVICE_ROLE_ENV] = prior;
+  }
+  const joined = errs.join("\n");
+  assert.match(joined, /does NOT implement a cross-tenant/);
+  assert.match(joined, /USER-SCOPED/);
+});
+
+test("AC-6: with the flag unset there is no service-role notice", async () => {
+  const errs = [];
+  const prior = process.env[SERVICE_ROLE_ENV];
+  delete process.env[SERVICE_ROLE_ENV];
+  try {
+    await main(["--confirm"], {
+      log: () => {},
+      err: (m) => errs.push(String(m)),
+      deps: {
+        resolveStores: () => ({ remote: { usable: () => false }, connection: {} }),
+      },
+    });
+  } finally {
+    if (prior !== undefined) process.env[SERVICE_ROLE_ENV] = prior;
+  }
+  assert.equal(/cross-tenant/.test(errs.join("\n")), false);
 });
