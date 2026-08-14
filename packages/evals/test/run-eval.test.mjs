@@ -123,6 +123,20 @@ test("preflight refuses the flags it cannot honour, before spawning anything", a
   await assert.rejects(() => main(["preflight", "--dry-run"]), /--dry-run/);
 });
 
+test("probe refuses the run flags it cannot honour either", async () => {
+  // probe spawns no model and writes no run directory, so everything about
+  // running the agent or collecting artifacts was accepted and dropped.
+  await assert.rejects(
+    () => main(["probe", "--reps", "2"]),
+    /--reps cannot be honoured here/,
+  );
+  await assert.rejects(() => main(["probe", "--out", "x"]), /--out/);
+  await assert.rejects(() => main(["probe", "--timeout", "1000"]), /--timeout/);
+  await assert.rejects(() => main(["probe", "--command", "echo"]), /--command/);
+  // Already dry; the flag would have promised something probe never does.
+  await assert.rejects(() => main(["probe", "--dry-run"]), /--dry-run/);
+});
+
 test("parseArgs records which flags were actually typed", () => {
   assert.deepEqual([...parseArgs(["arm0"]).provided], []);
   assert.equal(

@@ -52,7 +52,9 @@ Subcommands:
                        --git/--no-git, --reps, --out and --dry-run rather than
                        ignoring them.
   probe                Seed the store, install the real SessionStart hook and
-                       print what it injects. Spawns no model.
+                       print what it injects. Spawns no model, so it REFUSES
+                       --reps, --out, --timeout, --command and --dry-run rather
+                       than ignoring them.
 
 Options:
   --reps <n>           Repetitions (default 3; N=3 is a low-power INDICATOR).
@@ -424,6 +426,16 @@ async function runPreflight(options) {
 }
 
 async function runProbe(options) {
+  // probe builds ONE arm and reads the hook's injection back; it spawns no
+  // model and writes no run directory. Everything to do with running the agent
+  // or collecting artifacts would therefore be accepted and dropped —
+  // `--dry-run` most misleadingly of all, since probe is already dry.
+  refuseUnhonourableFlags(
+    options,
+    ["--reps", "--out", "--timeout", "--command", "--dry-run"],
+    "probe builds one arm and spawns no model, so it writes no run directory and is already dry",
+  );
+
   const sandbox = await createSandbox({ keep: options.keep });
   try {
     const arm = await prepareArm(sandbox, {
