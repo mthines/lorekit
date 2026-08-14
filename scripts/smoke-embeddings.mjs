@@ -42,21 +42,27 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const {
   resolveEmbeddingConfig, embeddingInput, buildEmbeddingRequest, EMBEDDING_DIMENSIONS, redactKey,
 } = await import(path.join(HERE, '..', 'packages', 'mcp-core', 'src', 'embedding.ts'));
+const {
+  createSmokeNamespace, sweepSmokeArtefacts,
+} = await import(path.join(HERE, '..', 'packages', 'mcp-server', 'src', 'smoke-cleanup.ts'));
 
 // The label is part of the CLOSED set in `SMOKE_ARTEFACT_PATTERN`. Minting
 // outside it would produce a name the orphan sweeper never recognises, so this
 // string cannot be changed here alone — see the pattern's docblock.
 const LABEL = 'embed';
-const PREFIX = `${LABEL}-smoke-${Date.now()}`;
+// The SHARED namespace, not a local `${LABEL}-smoke-${Date.now()}` plus a local
+// array. Building the name here would reproduce the prefix and the mint
+// registry while dropping the two checks that make them worth having: the label
+// must be in the closed set, and EVERY suffix must stay inside `[a-z0-9-]`. A
+// suffix with an underscore or a capital mints a name `SMOKE_ARTEFACT_PATTERN`
+// never matches, which is not a failed run — it is a row left in a live tenant
+// that nothing will ever sweep.
+const ns = createSmokeNamespace(LABEL);
+const PREFIX = ns.prefix;
 const SCOPE = 'global';
 
 const log = (...p) => process.stdout.write(`${p.join(' ')}\n`);
-const minted = [];
-function mint(suffix) {
-  const name = `${PREFIX}-${suffix}`;
-  minted.push(name);
-  return name;
-}
+const mint = (suffix) => ns.name(suffix);
 
 async function rest(base, key, pathAndQuery, init = {}) {
   const res = await fetch(`${base}/rest/v1${pathAndQuery}`, {
@@ -183,26 +189,23 @@ async function main() {
     log(failures === 0 ? `PASS (probe latency ${latencyMs}ms)` : `FAIL — ${failures} check(s) failed`);
   } finally {
     // Always, even on a throw: this wrote to a live tenant.
+    const minted = ns.minted();
     if (keep) {
       log(`\n--keep: left ${minted.length} artefact(s) behind under ${PREFIX}`);
     } else {
-      let removed = 0;
-      const leftovers = [];
-      for (const name of minted) {
-        try {
-          // HARD delete. The default is a soft archive, which would leave a row
-          // behind on every run forever — the exact leak the sweeper exists for.
-          await rest(base, key, `/memories?key=eq.${encodeURIComponent(name)}`, { method: 'DELETE' });
-          removed += 1;
-        } catch {
-          leftovers.push(name);
-        }
-      }
-      log(`\ncleanup: removed ${removed}/${minted.length}`);
+      // The SHARED sweep, not a local delete loop: it bounds the concurrency so
+      // teardown never bursts past the endpoint's rate limit, and it reports in
+      // input order regardless of completion order. HARD delete — the default is
+      // a soft archive, which would leave a row behind on every run forever,
+      // the exact leak the sweeper exists for.
+      const { removed, failed } = await sweepSmokeArtefacts(minted, async (name) => {
+        await rest(base, key, `/memories?key=eq.${encodeURIComponent(name)}`, { method: 'DELETE' });
+      });
+      log(`\ncleanup: removed ${removed.length}/${minted.length}`);
       // A leak is a WARNING, never a thrown hook: it must be visible without
       // turning a passing run red, and `scripts/smoke-cleanup.mjs` sweeps by
       // name pattern afterwards regardless.
-      if (leftovers.length) log(`  WARNING: could not remove ${leftovers.join(', ')} — the sweeper will`);
+      if (failed.length) log(`  WARNING: could not remove ${failed.map((f) => f.name).join(', ')} — the sweeper will`);
     }
   }
 
