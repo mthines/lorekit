@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
 import {
   rankLessons as rankTs,
+  selectDiverse as selectDiverseTs,
   scoreLesson as scoreTs,
   recencyFactor as recencyTs,
   salienceFactor as salienceTs,
@@ -35,7 +36,8 @@ import {
 // loaded by URL at runtime rather than as a typed import.
 const cliModulePath = join(import.meta.dirname, '../../cli/src/lessons-pure.mjs');
 const cli = await import(/* @vite-ignore */ `file://${cliModulePath}`) as {
-  rankLessons: (entries: unknown[], opts?: Record<string, unknown>) => { key?: string }[];
+  rankLessons: (entries: unknown[], opts?: Record<string, unknown>) => { key?: string; scope?: string; value?: string }[];
+  selectDiverse: (entries: unknown[], k: number, opts?: { lambda?: number; scores?: number[] }) => { key?: string; scope?: string }[];
   scoreLesson: (entry: unknown, opts?: Record<string, unknown>) => number;
   recencyFactor: (updatedAt: unknown, now: unknown, halfLifeDays?: number) => number;
   salienceFactor: (seen: unknown, max: unknown) => number;
@@ -44,6 +46,7 @@ const cli = await import(/* @vite-ignore */ `file://${cliModulePath}`) as {
   DEFAULT_RANK_WEIGHTS: { recency: number; salience: number; relevance: number; outcome: number };
   SCORE_EPSILON: number;
   COLD_START_OUTCOME_PRIOR: number;
+  MMR_LAMBDA: number;
 };
 
 const NOW = Date.parse('2026-08-01T00:00:00.000Z');
@@ -243,6 +246,81 @@ describe('lesson-rank: the epsilon-grid tie-break is transitive', () => {
     ]) {
       expect(rankedBuckets(perm.map((i) => chain[i]))).toEqual(canonical);
     }
+  });
+});
+
+// ── selectDiverse parity: TS and .mjs produce the same selected scope::key order ─
+//
+// This block exercises `selectDiverse` across both twins and asserts:
+//  1. TS and .mjs select the same scope::key order over the shared fixture.
+//  2. The selected order DIVERGES from the raw-rank order — proving the fixture
+//     exercises MMR (not just a pass-through of rank order).
+//
+// Fixture design: three near-duplicate high-score lessons (similar value text)
+// plus one distinct lesson ranked lower by recency. MMR should prefer the
+// distinct lesson over the 2nd near-duplicate because its maxSim to already-
+// selected entries is low, boosting its MMR score over a 3rd near-dup.
+// Isolation: relevance=1 and outcome=1 on all four to equalize those factors;
+// recency differentiates raw rank order. weights zeroed on salience so the
+// seenCount doesn't interfere.
+
+describe('selectDiverse parity: TS ↔ .mjs produce the same diverse selection', () => {
+  // Four entries: A/B/C share the same "caching timeout retry" vocabulary (near-dups);
+  // D has "database schema migration" vocabulary (distinct). Under MMR, after
+  // selecting A (highest raw rank), the next pick favours D over B because sim(D,A)
+  // is near-zero while sim(B,A) is high — so D enters the top-3 ahead of B.
+  const divergeFixtures = [
+    { scope: 'global', key: 'A', seenCount: 0, updatedAt: daysAgo(1),  relevance: 1, outcome: 1, value: 'caching timeout retry exponential backoff caching timeout retry' },
+    { scope: 'global', key: 'B', seenCount: 0, updatedAt: daysAgo(2),  relevance: 1, outcome: 1, value: 'caching timeout retry exponential backoff strategy caching' },
+    { scope: 'global', key: 'C', seenCount: 0, updatedAt: daysAgo(3),  relevance: 1, outcome: 1, value: 'caching timeout retry exponential backoff pattern retry' },
+    { scope: 'global', key: 'D', seenCount: 0, updatedAt: daysAgo(4),  relevance: 1, outcome: 1, value: 'database schema migration rollback strategy index creation' },
+  ];
+  const K = 3;
+  // Isolation weights: zeroing salience so seenCount=0 for all doesn't matter;
+  // zeroing recency ensures only relevance+outcome drive the raw rank (all equal).
+  // To GET a diverge, we DO want recency to differentiate raw rank (A>B>C>D) so
+  // the raw order would be [A,B,C] but MMR picks [A,D,B] or similar.
+  // Use default weights so recency drives raw rank.
+  const rankOpts = { now: NOW };
+
+  it('TS and .mjs agree on the selected scope::key order (R9 diverge fixture)', () => {
+    // TS side
+    const tsRanked = rankTs(divergeFixtures, rankOpts);
+    const tsDiverse = selectDiverseTs(tsRanked, K);
+    const tsOrder = tsDiverse.map((r) => `${r.entry.scope}::${r.entry.key}`);
+
+    // .mjs side — rank to get bare entries + need scores for selectDiverse
+    const jsRanked = cli.rankLessons(divergeFixtures, rankOpts);
+    // Compute scores in parallel using the .mjs scorer (same maxSeenCount=0, same now)
+    const maxSeenCount = 0;
+    const jsScores = jsRanked.map((e) => cli.scoreLesson(e, { now: NOW, maxSeenCount, terms: [] }));
+    const jsDiverse = cli.selectDiverse(jsRanked, K, { scores: jsScores });
+    const jsOrder = jsDiverse.map((e) => {
+      const row = e as { scope?: string; key?: string };
+      return `${row.scope}::${row.key}`;
+    });
+
+    expect(tsOrder).toEqual(jsOrder);
+  });
+
+  it('the selected order diverges from the raw-rank order (MMR is exercised)', () => {
+    // Raw-rank order by recency: A(1d), B(2d), C(3d), D(4d) → top-3 = [A,B,C]
+    const tsRanked = rankTs(divergeFixtures, rankOpts);
+    const rawOrder = tsRanked.slice(0, K).map((r) => `${r.entry.scope}::${r.entry.key}`);
+    const tsDiverse = selectDiverseTs(tsRanked, K);
+    const mmrOrder = tsDiverse.map((r) => `${r.entry.scope}::${r.entry.key}`);
+
+    // MMR must pick differently from the raw top-K (if they were the same,
+    // the fixture does not exercise the diversity term at all).
+    expect(mmrOrder).not.toEqual(rawOrder);
+    // D must appear in the MMR selection (it is the distinct lesson).
+    expect(mmrOrder).toContain('global::D');
+    // A must be first (highest raw score, seeds the selection).
+    expect(mmrOrder[0]).toBe('global::A');
+  });
+
+  it('MMR_LAMBDA constant matches the CLI twin', () => {
+    expect(cli.MMR_LAMBDA).toBe(0.7);
   });
 });
 

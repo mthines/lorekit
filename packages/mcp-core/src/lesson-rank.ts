@@ -221,6 +221,81 @@ export interface RankedLesson<T extends RankableLesson> {
 }
 
 /**
+ * MMR λ (lambda) — weight given to relevance vs diversity in the MMR objective.
+ * At 0.7 the selector favours relevance, with 0.3 of the budget for diversity.
+ * Anchored to Carbonell & Goldstein (1998), the original MMR paper.
+ * Mirrored byte-identically in the edge twin and `packages/cli/src/lessons-pure.mjs`.
+ */
+export const MMR_LAMBDA = 0.7;
+
+/**
+ * Word/token Jaccard similarity on the lesson `value`.
+ *
+ * Tokenises by case-folding and splitting on non-alphanumeric characters,
+ * deduplicating into a Set, then returning |A∩B| / |A∪B|. Both-empty → 0.
+ * Dependency-free and deterministic so it mirrors byte-identically across
+ * TS, Deno, and the `.mjs` twin.
+ */
+function jaccardSimilarity(a: unknown, b: unknown): number {
+  const tokenize = (v: unknown): Set<string> => {
+    const tokens = String(v ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    return new Set(tokens);
+  };
+  const setA = tokenize(a);
+  const setB = tokenize(b);
+  if (setA.size === 0 && setB.size === 0) return 0;
+  let intersection = 0;
+  for (const t of setA) if (setB.has(t)) intersection += 1;
+  const union = setA.size + setB.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+export interface SelectDiverseOptions {
+  lambda?: number;
+}
+
+/**
+ * Select the top-K lessons from a ranked list using Maximal Marginal Relevance
+ * (Carbonell & Goldstein, 1998).
+ *
+ * Greedy MMR: seed with the highest-ranked candidate, then at each step pick
+ * the unselected candidate that maximises
+ *   λ·score(i) − (1−λ)·max_{j∈selected} jaccardSimilarity(value_i, value_j)
+ * Ties in the MMR objective break by input order (first-wins) so the result
+ * is deterministic over the already-rank-ordered input.
+ *
+ * Always-on for ranked mode — no optional param needed. The recency wire path is
+ * never affected.
+ */
+export function selectDiverse<T extends RankableLesson>(
+  ranked: readonly RankedLesson<T>[],
+  k: number,
+  options: SelectDiverseOptions = {},
+): RankedLesson<T>[] {
+  const lambda = typeof options.lambda === 'number' && Number.isFinite(options.lambda)
+    ? options.lambda
+    : MMR_LAMBDA;
+  if (!Array.isArray(ranked) || ranked.length === 0 || k <= 0) return [];
+  const selected: RankedLesson<T>[] = [];
+  const remaining = ranked.slice();
+  while (selected.length < k && remaining.length > 0) {
+    let bestIdx = 0;
+    let bestMmr = -Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const candidate = remaining[i];
+      const maxSim = selected.length === 0
+        ? 0
+        : Math.max(...selected.map((s) => jaccardSimilarity(candidate.entry.value, s.entry.value)));
+      const mmr = lambda * candidate.score - (1 - lambda) * maxSim;
+      if (mmr > bestMmr) { bestMmr = mmr; bestIdx = i; }
+    }
+    selected.push(remaining[bestIdx]);
+    remaining.splice(bestIdx, 1);
+  }
+  return selected;
+}
+
+/**
  * Rank rows best-first, returning `{ entry, score }` pairs in a NEW array.
  *
  * The score is returned rather than discarded because this one feeds an API
