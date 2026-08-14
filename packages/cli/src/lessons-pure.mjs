@@ -496,20 +496,30 @@ function seenCountFrom(entry) {
 export const MMR_LAMBDA = 0.7;
 
 /**
- * Word/token Jaccard similarity on the lesson `value`.
+ * Tokenise a lesson `value` into a deduplicated Set: case-fold, split on
+ * non-alphanumeric characters, drop empties. Dependency-free and deterministic
+ * so it mirrors the TS/Deno twin's `tokenizeValue`.
  *
- * Tokenises by case-folding and splitting on non-alphanumeric characters,
- * deduplicating into a Set, then returning |A∩B| / |A∪B|. Both-empty → 0.
- * Dependency-free and deterministic so it mirrors byte-identically across
- * TS, Deno, and the `.mjs` twin.
+ * PERF: `selectDiverse` calls this ONCE per candidate before the MMR loop and
+ * caches the result. `jaccardSimilarity` takes the cached Sets, so the O(k²)
+ * pairwise comparisons inside the loop cost no tokenisation. Do NOT re-introduce
+ * a `tokenize(value)` call inside the loop: that regresses the hot path to
+ * O(n·k²) tokenisations (measured 34s CPU at n=200/k=100 with 1.5KB values).
  */
-function jaccardSimilarity(a, b) {
-  const tokenize = (v) => {
-    const tokens = String(v ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-    return new Set(tokens);
-  };
-  const setA = tokenize(a);
-  const setB = tokenize(b);
+function tokenizeValue(v) {
+  const tokens = String(v ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return new Set(tokens);
+}
+
+/**
+ * Word/token Jaccard similarity between two PRE-TOKENISED value Sets:
+ * |A∩B| / |A∪B|. Both-empty → 0.
+ *
+ * Takes Sets rather than raw values on purpose — the caller tokenises each
+ * candidate once (see `tokenizeValue`) so this stays allocation-free on the
+ * O(k²) hot path.
+ */
+function jaccardSimilarity(setA, setB) {
   if (setA.size === 0 && setB.size === 0) return 0;
   let intersection = 0;
   for (const t of setA) if (setB.has(t)) intersection += 1;
@@ -522,36 +532,67 @@ function jaccardSimilarity(a, b) {
  * (Carbonell & Goldstein, 1998).
  *
  * Accepts bare entries (the shape `rankLessons` returns in the `.mjs` twin)
- * plus a parallel `scores` array (required for the MMR relevance term).
+ * plus a parallel `scores` array — REQUIRED, one score per entry. This is the
+ * MMR relevance term; there is no meaningful default. A missing `scores`, a
+ * non-array, or a length that does not match `entries` throws rather than
+ * silently defaulting to 0 for every entry (which would degrade selection to
+ * pure diversity and quietly discard the ranking). The TS twin cannot hit this
+ * footgun — it reads the score off each `{ entry, score }` input.
+ *
  * Greedy MMR: seed with index 0 (highest-ranked), then at each step pick
  * the unselected candidate that maximises
- *   λ·score(i) − (1−λ)·max_{j∈selected} jaccardSimilarity(value_i, value_j)
+ *   λ·quantise(score(i)) − (1−λ)·max_{j∈selected} jaccardSimilarity(value_i, value_j)
  * Ties break by input order (first-wins) for determinism.
+ *
+ * SCORE QUANTISATION: the relevance term uses the score SNAPPED onto the
+ * `SCORE_EPSILON` grid — the exact grid `rankLessons` buckets on for its
+ * scope-precedence tie-break. Two scores within `SCORE_EPSILON` land in the same
+ * bucket, so the MMR objective sees them as equal and the input order (which
+ * `rankLessons` already sorted by scope precedence, then key) decides. Comparing
+ * the RAW score would let a 1e-10 float difference override scope precedence.
+ *
+ * PERF: each candidate's `value` is tokenised ONCE up front so the O(k²)
+ * pairwise Jaccard comparisons inside the loop do no tokenisation — O(n)
+ * tokenisations total, not O(n·k²). See `tokenizeValue`.
  *
  * Always-on for ranked mode — no optional param needed. The recency wire path is
  * never affected.
  */
-export function selectDiverse(entries, k, { lambda = MMR_LAMBDA, scores = [] } = {}) {
+export function selectDiverse(entries, k, { lambda = MMR_LAMBDA, scores } = {}) {
   if (!Array.isArray(entries) || entries.length === 0 || k <= 0) return [];
+  if (!Array.isArray(scores) || scores.length !== entries.length) {
+    throw new TypeError(
+      `selectDiverse: \`scores\` must be an array with one score per entry `
+        + `(got ${Array.isArray(scores) ? `length ${scores.length}` : typeof scores} `
+        + `for ${entries.length} entries)`,
+    );
+  }
   const selected = [];
-  const selectedScores = [];
-  const remaining = entries.map((e, i) => ({ entry: e, score: scores[i] ?? 0, origIdx: i }));
+  // Pre-tokenise every candidate ONCE and snap its score onto the SCORE_EPSILON
+  // grid up front. The loop below reads these caches — it never tokenises or
+  // re-quantises. See the docblock (PERF + SCORE QUANTISATION).
+  const remaining = entries.map((e, i) => ({
+    entry: e,
+    tokens: tokenizeValue(e?.value),
+    qScore: Math.round((scores[i] ?? 0) / SCORE_EPSILON) * SCORE_EPSILON,
+  }));
   while (selected.length < k && remaining.length > 0) {
     let bestIdx = 0;
     let bestMmr = -Infinity;
     for (let i = 0; i < remaining.length; i++) {
       const candidate = remaining[i];
-      const maxSim = selected.length === 0
-        ? 0
-        : Math.max(...selected.map((s) => jaccardSimilarity(candidate.entry?.value, s?.value)));
-      const mmr = lambda * candidate.score - (1 - lambda) * maxSim;
+      let maxSim = 0;
+      for (const s of selected) {
+        const sim = jaccardSimilarity(candidate.tokens, s.tokens);
+        if (sim > maxSim) maxSim = sim;
+      }
+      const mmr = lambda * candidate.qScore - (1 - lambda) * maxSim;
       if (mmr > bestMmr) { bestMmr = mmr; bestIdx = i; }
     }
-    selected.push(remaining[bestIdx].entry);
-    selectedScores.push(remaining[bestIdx].score);
+    selected.push(remaining[bestIdx]);
     remaining.splice(bestIdx, 1);
   }
-  return selected;
+  return selected.map((s) => s.entry);
 }
 
 /**

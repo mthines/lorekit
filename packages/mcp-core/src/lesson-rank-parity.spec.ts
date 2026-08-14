@@ -276,11 +276,11 @@ describe('selectDiverse parity: TS ↔ .mjs produce the same diverse selection',
     { scope: 'global', key: 'D', seenCount: 0, updatedAt: daysAgo(4),  relevance: 1, outcome: 1, value: 'database schema migration rollback strategy index creation' },
   ];
   const K = 3;
-  // Isolation weights: zeroing salience so seenCount=0 for all doesn't matter;
-  // zeroing recency ensures only relevance+outcome drive the raw rank (all equal).
-  // To GET a diverge, we DO want recency to differentiate raw rank (A>B>C>D) so
-  // the raw order would be [A,B,C] but MMR picks [A,D,B] or similar.
-  // Use default weights so recency drives raw rank.
+  // Default weights (no zeroing) so recency differentiates the raw rank
+  // A>B>C>D — the raw top-3 is [A,B,C], but MMR picks [A,D,B] or similar because
+  // D's low similarity to A promotes it over the near-duplicate B. relevance=1
+  // and outcome=1 on all four equalise those factors; seenCount=0 on all four
+  // means salience is 0 for everyone regardless of its weight.
   const rankOpts = { now: NOW };
 
   it('TS and .mjs agree on the selected scope::key order (R9 diverge fixture)', () => {

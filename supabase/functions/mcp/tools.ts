@@ -269,6 +269,11 @@ export async function toolList(
     );
 
     const rankedLessons = rankLessons(candidates, { now: Date.now() });
+    // NOTE: `selectDiverse` applies MMR diversification, which REORDERS the page.
+    // The returned rows are therefore NO LONGER monotonically descending by
+    // score — a lower-scored but more diverse lesson can precede a higher-scored
+    // near-duplicate. Consumers of `order=rank` must not assume score-monotonic
+    // output; the tool-catalog `order` description (tool-catalog.ts) says so too.
     const page = selectDiverse(rankedLessons, pageLimit);
 
     const entries = page.map(({ entry }) => ({

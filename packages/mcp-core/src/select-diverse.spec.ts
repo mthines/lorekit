@@ -112,15 +112,19 @@ describe('selectDiverse: MMR objective and core behavior (AC-1)', () => {
   });
 
   it('first-wins tie-break: equal MMR scores resolve by input order', () => {
-    // Two entries with IDENTICAL score AND identical value → same MMR objective.
-    // Input order determines the winner (first-wins).
+    // Three entries with IDENTICAL score AND identical value. After x seeds the
+    // selection, y and z have the SAME MMR objective (same score, same sim to x),
+    // so this is a genuine tie between two remaining candidates — not the sole
+    // survivor. First-wins must pick y (index 1) over z (index 2) purely on input
+    // order. A `>=` (last-wins) comparator would flip this to z and fail.
     const x = ranked({ scope: 'g', key: 'x', value: 'unique distinct content here' }, 0.8);
     const y = ranked({ scope: 'g', key: 'y', value: 'unique distinct content here' }, 0.8);
-    // Seed is x (index 0). Next pick: MMR(y) after x selected = 0.7*0.8 - 0.3*1 = 0.26.
-    // No other candidate — y is selected as-is.
-    const result = selectDiverse([x, y], 2);
+    const z = ranked({ scope: 'g', key: 'z', value: 'unique distinct content here' }, 0.8);
+    // Seed is x (index 0). Next pick: MMR(y) = MMR(z) = 0.7*0.8 - 0.3*1 = 0.26.
+    // The tie breaks to y because it appears first in the input.
+    const result = selectDiverse([x, y, z], 2);
     expect(result[0].entry.key).toBe('x'); // seeded first
-    expect(result[1].entry.key).toBe('y'); // only remaining
+    expect(result[1].entry.key).toBe('y'); // wins the tie over z on input order
   });
 
   it('degenerate inputs: empty array returns []', () => {
@@ -189,5 +193,49 @@ describe('selectDiverse: integration with real rankLessons output (AC-1)', () =>
     expect(keys).toContain('di');
     // nd3 (lowest raw score among near-dups) must NOT appear — displaced by di.
     expect(keys).not.toContain('nd3');
+  });
+});
+
+// ── Scope precedence survives MMR for near-equal scores (BLOCKING 2) ───────────
+//
+// The MMR objective quantises `score` onto the SCORE_EPSILON grid before using
+// it — the same grid `rankLessons` buckets on. So two scores within
+// SCORE_EPSILON are equal to MMR, and the input order (which `rankLessons` has
+// already sorted by scope precedence, then key) decides between them. Comparing
+// the RAW score would let a sub-epsilon float difference override precedence.
+
+describe('selectDiverse: scope precedence survives MMR for near-equal scores (BLOCKING 2)', () => {
+  it('keeps the higher-precedence scope first when raw scores differ by < SCORE_EPSILON', () => {
+    // hi (higher precedence) has a raw score a hair BELOW lo's — the lower-
+    // precedence row. The gap is a fraction of SCORE_EPSILON, so both land in the
+    // same quantisation bucket. Distinct values → zero Jaccard penalty, so only
+    // the relevance term drives selection: the test isolates the score comparison.
+    const hi = ranked({ scope: 'global', key: 'k', value: 'alpha beta gamma' }, 0.5);
+    const lo = ranked({ scope: 'repo', key: 'k', value: 'delta epsilon zeta' }, 0.5 + SCORE_EPSILON / 4);
+
+    // `rankLessons` (via the real pipeline elsewhere) would order [hi, lo]: same
+    // bucket, then scope precedence puts `global` first. Feed that order in.
+    const result = selectDiverse([hi, lo], 2);
+    const scopes = result.map((r) => r.entry.scope);
+
+    // Quantised: hi seeds first (tie → input order), lo follows → [global, repo].
+    // With the RAW score bug, lo (0.5 + ε/4 > 0.5) would seed first → [repo, global].
+    expect(scopes).toEqual(['global', 'repo']);
+  });
+
+  it('preserves rankLessons scope-precedence order end-to-end through MMR', () => {
+    // Two rows scored identically by every factor EXCEPT scope; near-identical
+    // timestamps put their raw scores within SCORE_EPSILON. `rankLessons` orders
+    // them by the explicit scopeOrder; MMR must not reshuffle that.
+    const fixtures = [
+      { scope: 'repo', key: 'k', updatedAt: daysAgo(1), seenCount: 0, relevance: 1, outcome: 1, value: 'network latency bandwidth throughput' },
+      { scope: 'global', key: 'k', updatedAt: daysAgo(1), seenCount: 0, relevance: 1, outcome: 1, value: 'authentication token session refresh' },
+    ];
+    // global outranks repo despite repo appearing first in the input.
+    const rankedRows = rankLessons(fixtures, { now: NOW, scopeOrder: ['global', 'repo'] });
+    expect(rankedRows.map((r) => r.entry.scope)).toEqual(['global', 'repo']);
+
+    const diverse = selectDiverse(rankedRows, 2);
+    expect(diverse.map((r) => r.entry.scope)).toEqual(['global', 'repo']);
   });
 });

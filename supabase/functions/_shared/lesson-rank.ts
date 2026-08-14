@@ -229,20 +229,31 @@ export interface RankedLesson<T extends RankableLesson> {
 export const MMR_LAMBDA = 0.7;
 
 /**
- * Word/token Jaccard similarity on the lesson `value`.
+ * Tokenise a lesson `value` into a deduplicated Set: case-fold, split on
+ * non-alphanumeric characters, drop empties. Dependency-free and deterministic
+ * so it mirrors byte-identically across TS, Deno, and the `.mjs` twin.
  *
- * Tokenises by case-folding and splitting on non-alphanumeric characters,
- * deduplicating into a Set, then returning |A∩B| / |A∪B|. Both-empty → 0.
- * Dependency-free and deterministic so it mirrors byte-identically across
- * TS, Deno, and the `.mjs` twin.
+ * PERF: `selectDiverse` calls this ONCE per candidate before the MMR loop and
+ * caches the result — see the `tokens` field it builds. `jaccardSimilarity`
+ * takes the cached Sets, so the O(k²) pairwise comparisons inside the loop cost
+ * no tokenisation. Do NOT re-introduce a `tokenize(value)` call inside the loop:
+ * that regresses the hot path to O(n·k²) tokenisations (measured 34s CPU at
+ * n=200/k=100, `tools.ts` max with 1.5KB values).
  */
-function jaccardSimilarity(a: unknown, b: unknown): number {
-  const tokenize = (v: unknown): Set<string> => {
-    const tokens = String(v ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-    return new Set(tokens);
-  };
-  const setA = tokenize(a);
-  const setB = tokenize(b);
+function tokenizeValue(v: unknown): Set<string> {
+  const tokens = String(v ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return new Set(tokens);
+}
+
+/**
+ * Word/token Jaccard similarity between two PRE-TOKENISED value Sets:
+ * |A∩B| / |A∪B|. Both-empty → 0.
+ *
+ * Takes Sets rather than raw values on purpose — the caller tokenises each
+ * candidate once (see `tokenizeValue`) so this stays allocation-free on the
+ * O(k²) hot path.
+ */
+function jaccardSimilarity(setA: Set<string>, setB: Set<string>): number {
   if (setA.size === 0 && setB.size === 0) return 0;
   let intersection = 0;
   for (const t of setA) if (setB.has(t)) intersection += 1;
@@ -260,9 +271,21 @@ export interface SelectDiverseOptions {
  *
  * Greedy MMR: seed with the highest-ranked candidate, then at each step pick
  * the unselected candidate that maximises
- *   λ·score(i) − (1−λ)·max_{j∈selected} jaccardSimilarity(value_i, value_j)
+ *   λ·quantise(score(i)) − (1−λ)·max_{j∈selected} jaccardSimilarity(value_i, value_j)
  * Ties in the MMR objective break by input order (first-wins) so the result
  * is deterministic over the already-rank-ordered input.
+ *
+ * SCORE QUANTISATION: the relevance term uses the score SNAPPED onto the
+ * `SCORE_EPSILON` grid — the exact grid `rankLessons` buckets on for its
+ * scope-precedence tie-break. Two scores within `SCORE_EPSILON` land in the same
+ * bucket, so the MMR objective sees them as equal and the input order (which
+ * `rankLessons` already sorted by scope precedence, then key) decides between
+ * them. Comparing the RAW score here would let a 1e-10 float difference override
+ * scope precedence — the lower-precedence scope could win a near-tie MMR pick.
+ *
+ * PERF: each candidate's `value` is tokenised ONCE up front (the `tokens` field)
+ * so the O(k²) pairwise Jaccard comparisons inside the loop do no tokenisation —
+ * O(n) tokenisations total, not O(n·k²). See `tokenizeValue`.
  *
  * Always-on for ranked mode — no optional param needed. The recency wire path is
  * never affected.
@@ -276,23 +299,32 @@ export function selectDiverse<T extends RankableLesson>(
     ? options.lambda
     : MMR_LAMBDA;
   if (!Array.isArray(ranked) || ranked.length === 0 || k <= 0) return [];
-  const selected: RankedLesson<T>[] = [];
-  const remaining = ranked.slice();
+  const selected: { ranked: RankedLesson<T>; tokens: Set<string>; qScore: number }[] = [];
+  // Pre-tokenise every candidate ONCE and snap its score onto the SCORE_EPSILON
+  // grid up front. The loop below reads these caches — it never tokenises or
+  // re-quantises. See the docblock (PERF + SCORE QUANTISATION).
+  const remaining = ranked.map((r) => ({
+    ranked: r,
+    tokens: tokenizeValue(r.entry.value),
+    qScore: Math.round(r.score / SCORE_EPSILON) * SCORE_EPSILON,
+  }));
   while (selected.length < k && remaining.length > 0) {
     let bestIdx = 0;
     let bestMmr = -Infinity;
     for (let i = 0; i < remaining.length; i++) {
       const candidate = remaining[i];
-      const maxSim = selected.length === 0
-        ? 0
-        : Math.max(...selected.map((s) => jaccardSimilarity(candidate.entry.value, s.entry.value)));
-      const mmr = lambda * candidate.score - (1 - lambda) * maxSim;
+      let maxSim = 0;
+      for (const s of selected) {
+        const sim = jaccardSimilarity(candidate.tokens, s.tokens);
+        if (sim > maxSim) maxSim = sim;
+      }
+      const mmr = lambda * candidate.qScore - (1 - lambda) * maxSim;
       if (mmr > bestMmr) { bestMmr = mmr; bestIdx = i; }
     }
     selected.push(remaining[bestIdx]);
     remaining.splice(bestIdx, 1);
   }
-  return selected;
+  return selected.map((s) => s.ranked);
 }
 
 /**
