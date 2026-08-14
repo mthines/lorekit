@@ -452,9 +452,11 @@ export function failureQuery(toolName, toolResponse) {
   return distilTerms(`${toolName ? String(toolName) : ''} ${errorText(toolResponse)}`);
 }
 
-// The tokenizer both query builders share. Lowercased `[a-z0-9]+` runs, longer
-// than `MIN_TERM_LEN`, stopword-filtered, de-duplicated, capped at
-// `MAX_TERMS`, over at most `MAX_SCAN_CHARS` of input.
+// The tokenizer both query builders share. Lowercased `[a-z0-9]+` runs of at
+// least `MIN_TERM_LEN` characters, stopword-filtered, de-duplicated, capped at
+// `MAX_TERMS`, over at most `MAX_SCAN_CHARS` of input. The floor is INCLUSIVE:
+// the filter is `raw.length < MIN_TERM_LEN`, so a term exactly `MIN_TERM_LEN`
+// characters long is kept.
 //
 // The bound is applied to the TEXT before splitting, not to the token array
 // after: a multi-megabyte stderr blob (or a pasted file) would otherwise
