@@ -289,11 +289,94 @@ exactly what the relevance work will change; a harness that hard-coded it would
 be blind to the only change it exists to detect. Re-running the suite before and
 after that change is the intended measurement.
 
+## Retrieval relevance (precision@k / recall@k / MRR)
+
+A second, complementary measurement lives beside the `claude -p` arms: **does the
+retriever surface the _right_ lessons for a query in the first place?** The live
+arms measure whether an injected lesson changes the agent's output — the
+_downstream_ half. This measures the _upstream_ half — the ranking — as pure,
+deterministic **precision@k / recall@k / MRR** against a ground-truth set.
+
+> **This complements the live eval; it never gates it.** These metrics run under
+> `node --test` in milliseconds against fixtures, with no model, no network and
+> no sandbox. Nothing here is added to a CI gate, and the live `claude -p` path
+> is untouched.
+
+### Ground truth is pinned to the real outcome signal, in code
+
+The set of lessons that _should_ surface for a query is **not** a hand-authored
+label list — it is computed (`src/ground-truth.mjs`) from the memories the loop
+machinery itself treats as outcome/relevance signal:
+
+- a row qualifies iff the shipped `inferKindHost` (from `@lorekit/schemas`)
+  resolves its tags to an outcome/relevance bucket —
+  `loop::review-outcomes` (`host: review`) or
+  `loop::reviewer-comment-relevance` (`host: reviewer`); **and**
+- it matches the query repo (by scope, falling back to `origin_repo`; an
+  `origin_pr` pin narrows but is never required — the spec's match is
+  "`origin_pr` / repo scope matches", a disjunction); with
+- `seen_count` as the relevance **weight**, and `seen_count >= 3` marking a row
+  **recurrence-confirmed**.
+
+`ground-truth.mjs` imports `inferKindHost` and **never re-encodes** the literal
+`loop::…` strings — a local copy would keep passing while the product's bucket
+set moved underneath it (the recurring "mock that reimplements the thing under
+test" trap). A grep guard (`AC-1-reuse`) fails if the literals reappear.
+
+### The committed baseline is a 2-row BOOTSTRAP PLACEHOLDER
+
+`fixtures/ground-truth.seed.json` is a **BOOTSTRAP PLACEHOLDER**, not a real
+baseline. It holds the only two outcome/relevance-tagged rows that already exist
+in-repo — `audit::one-vocabulary` (`loop::reviewer-comment-relevance`, PR 311)
+and `rls::service-role-user-filter` (`loop::review-outcomes`) — lifted
+**metadata-only** from `packages/web/src/mocks/memories.ts` (rows m05, m06). Its
+`seenCount` is `0` because the mock carries no `seen_count` (that lives only in
+the hosted projection) — itself a tell that this is a seed, not a mined baseline.
+
+Every metrics object built on this seed carries a loud `baseline.warning`:
+
+> **The numbers this seed produces MUST NOT be used to gate downstream PRs
+> (e.g. A1/A4)** until `bin/mine-ground-truth.mjs` has been run against the
+> hosted store and a real `fixtures/ground-truth.real.json` snapshot has been
+> committed.
+
+### Making the baseline real: the `mine` runbook
+
+`bin/mine-ground-truth.mjs` is a **manual, one-shot** step. It is wired into no
+CI job, npm script, nx target or `node --test` file (`AC-7-nowire` keeps it that
+way), and it refuses to touch the network without `--confirm` **and** a usable
+remote connection. Running it — and committing its output — is the step, and the
+only step, that turns the placeholder baseline into a real one.
+
+```bash
+cd packages/evals
+# Requires a usable remote connection (run `lorekit install`, or set
+# LOREKIT_MCP_URL + LOREKIT_TOKEN). A bare run just prints usage + the
+# placeholder→real explanation and exits non-zero.
+node bin/mine-ground-truth.mjs --confirm --scope repo::mthines/lorekit
+# → writes fixtures/ground-truth.real.json (metadata only: scope, key, tags,
+#   origin_pr, seenCount — NEVER the lesson body), after a privacy pre-flight.
+git add fixtures/ground-truth.real.json && git commit -m "chore(evals): real relevance baseline"
+```
+
+The CLI token is **user-scoped**. A maintainer who needs a **cross-tenant**
+(service-role) read can set `LOREKIT_GROUND_TRUTH_SERVICE_ROLE=1` to acknowledge
+that intent and wire in `@lorekit/mcp-core`'s `createHostedAdapter`
+(`SUPABASE_SERVICE_ROLE_KEY`) — kept off the happy path because a service-role
+read can surface other users' rows, which must be an explicit choice.
+
+The **privacy pre-flight** (`privacyPreflight`) runs on the entries about to be
+written and aborts the whole write if any still carries a `value`/`body`, any
+non-metadata field, or a secret/PII-shaped string — the backstop behind
+`redactToMetadata`, which is where bodies are dropped.
+
 ## Docs applicability
 
 **User-facing docs, `llms.txt`, MDX and dashboard copy do not apply.**
 `@lorekit/evals` is a private internal research tool: it ships no MCP tool, REST
 route, CLI command or flag, config key, env var, scope rule, error contract or
-dashboard surface, and only consumes the existing CLI and store. Per
-`CLAUDE.md` → "User-facing docs", the rule fires on a user-observable capability
-change; there is none. This README is the documentation surface that applies.
+dashboard surface, and only consumes the existing CLI and store. The
+retrieval-relevance harness and its `mine` script are the same — a private
+maintenance tool with no user-observable surface. Per `CLAUDE.md` →
+"User-facing docs", the rule fires on a user-observable capability change; there
+is none. This README is the documentation surface that applies.

@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "@lorekit/cli": "workspace:*",
-    "@lorekit/core": "workspace:*"
+    "@lorekit/core": "workspace:*",
+    "@lorekit/schemas": "workspace:*"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
