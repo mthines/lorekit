@@ -118,6 +118,9 @@ test("preflight refuses the flags it cannot honour, before spawning anything", a
   );
   await assert.rejects(() => main(["preflight", "--reps", "3"]), /--reps/);
   await assert.rejects(() => main(["preflight", "--out", "x"]), /--out/);
+  // The expensive one: spawning IS the check, so `--dry-run` cannot be honoured
+  // — and accepting it would have billed a call while promising not to.
+  await assert.rejects(() => main(["preflight", "--dry-run"]), /--dry-run/);
 });
 
 test("parseArgs records which flags were actually typed", () => {

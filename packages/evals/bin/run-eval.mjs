@@ -47,9 +47,10 @@ Subcommands:
                        report what the session actually loaded. Exits non-zero
                        when the environment is contaminated. It is a single
                        call in a fixed empty-store arm and writes no run
-                       directory, so it REFUSES --seed, --lesson, --scope,
-                       --scope-mode, --git/--no-git, --reps and --out rather
-                       than ignoring them.
+                       directory, and the model call IS the check, so it
+                       REFUSES --seed, --lesson, --scope, --scope-mode,
+                       --git/--no-git, --reps, --out and --dry-run rather than
+                       ignoring them.
   probe                Seed the store, install the real SessionStart hook and
                        print what it injects. Spawns no model.
 
@@ -369,6 +370,12 @@ async function runPreflight(options) {
   // is what is being measured, and it does not vary with the seed, the scope, or
   // whether the sandbox has a git identity. Every one of those flags would have
   // been accepted and dropped on the floor.
+  //
+  // `--dry-run` is the one that costs money to ignore: spawning is the entire
+  // point of preflight, so there is no plan to print without it, and accepting
+  // the flag would bill a call while promising not to. It is refused rather
+  // than honoured because a dry preflight would exit 0 having checked nothing —
+  // and `preflight && arm0` reads that as "the environment is clean".
   refuseUnhonourableFlags(
     options,
     [
@@ -380,8 +387,9 @@ async function runPreflight(options) {
       "--no-git",
       "--reps",
       "--out",
+      "--dry-run",
     ],
-    "preflight is a single call in a fixed empty-store arm, and writes no run directory",
+    "preflight is a single call in a fixed empty-store arm, it writes no run directory, and the model call IS the check",
   );
 
   const sandbox = await createSandbox({ keep: options.keep });
