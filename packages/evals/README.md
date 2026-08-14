@@ -21,10 +21,12 @@ the mock.
 
 ## Status
 
-PR3 of six. Shipped: the package and per-run isolation, the `claude -p` spawner,
+PR5 of six. Shipped: the package and per-run isolation, the `claude -p` spawner,
 the memory arms, scope control, and the golden task with its deterministic
-grader. Still to come: metrics and reporting (PR4), the scale/position sweep
-(PR5), and the code-review domain (PR6).
+grader (PR3); metrics and reporting — precision@k / recall@k / MRR, the
+`ground-truth.mjs` predicate, the BOOTSTRAP seed, the `mine` runbook (PR4); the
+`order=rank` ranked mode in the hosted edge `memory.list` (PR5-A1); and the
+**scale/position sweep** (PR5). Still to come: the code-review domain (PR6).
 
 ## The golden task
 
@@ -385,6 +387,97 @@ The **privacy pre-flight** (`privacyPreflight`) runs on the entries about to be
 written and aborts the whole write if any still carries a `value`/`body`, any
 non-metadata field, or a secret/PII-shaped string — the backstop behind
 `redactToMetadata`, which is where bodies are dropped.
+
+## Scale/position sweep (PR5)
+
+The sweep answers the project's founding question: **does a genuinely-relevant
+lesson still surface once a repo accumulates a lot of memories, and at what pool
+size does relevance degrade?**
+
+### How it works
+
+`src/sweep.mjs` injects **synthetic decoys** at increasing pool sizes around a
+**fixed real-signal-defined target** and measures, for each size, whether the
+target surfaces in the top-50 page (the hard-coded `limit = 50`, not `k`) — in
+two ways:
+
+| Arm | Model |
+| --- | ----- |
+| **recency** | Sort the full pool by `updated_at desc`, take top-`limit` (k = 50). No ranking. The "no ranking" baseline. |
+| **ranked** | Take the `CANDIDATE_LIMIT = 200` most-recent candidates first (recency window), then rank within that window using the REAL `rankLessons` from `@lorekit/cli/src/lessons-pure.mjs`, take top-`limit`. This reproduces the product's actual `order=rank` path. |
+
+The ranked arm calls the **real** ranker — the zero-import parity twin of the
+edge function — never a reimplementation. A grep guard (`AC-1` in
+`test/sweep.test.mjs`) fails if a local scoring formula appears in `sweep.mjs`.
+
+### The cliff finding
+
+The sweep seats the target as **OLD** (400 days before the reference timestamp)
+and synthetic decoys as **MORE RECENT**. Pool sizes tested:
+`[10, 50, 100, 200, 300, 500]`, `CANDIDATE_LIMIT = 200`, `k = 5`.
+
+| Pool size | recency arm: targetRank | recency: in window | ranked arm: targetRank | ranked: in window |
+| --------- | ----------------------- | ------------------ | ---------------------- | ----------------- |
+| 10        | 10                      | true               | 2                      | true              |
+| 50        | 50                      | true               | 9                      | true              |
+| 100       | null (cliff)            | false              | 22                     | true              |
+| 200       | null                    | false              | 33                     | true              |
+| 300       | null                    | false              | null (cliff)           | false             |
+| 500       | null                    | false              | null                   | false             |
+
+**Recency cliff: pool size 100.** The old target is buried under 50 decoys in
+the top-50 window. Pure recency ordering cannot rescue it.
+
+**Ranked cliff: pool size 300 (> `CANDIDATE_LIMIT` = 200).** Once the pool
+exceeds 200, the recency window evicts the old target before `rankLessons` ever
+sees it. The cliff is **window eviction, not score decay**: the target's salience
+is high (seen_count = 98), but it cannot be ranked if it does not enter the
+candidate window. The ranked arm holds the target ~3× longer than the recency arm
+(cliff at 300 vs 100) — that is what ranking buys at scale.
+
+This confirms the mechanism documented in `relevant.ts`:
+
+> _"On a store with more than `CANDIDATE_LIMIT` active rows … an old lesson with
+> a high `seen_count` never enters the set, so salience cannot surface the very
+> row it exists for. … Widening the cap only moves the cliff."_
+
+### Running the sweep
+
+The sweep is a deterministic `node --test` suite — no model, no network, no
+sandbox. It runs under the existing `test` target on every PR:
+
+```bash
+cd packages/evals
+node --test test/sweep.test.mjs      # just the sweep suite (~100ms)
+node --test test/*.test.mjs          # full evals suite
+pnpm nx test evals                   # via Nx
+```
+
+To reproduce the cliff curve shown above:
+
+```js
+import { runSweep, summarizeCliff, CANDIDATE_LIMIT } from './src/sweep.mjs';
+const curve = runSweep({ targetRows, query, poolSizes: [10, 50, 100, 200, 300, 500], k: 5, now, seed: 123, targetAgeDays: 400 });
+console.log(summarizeCliff(curve));
+// → { recency: { cliffAt: 100 }, ranked: { cliffAt: 300 } }
+```
+
+### Synthetic decoys — BOOTSTRAP PLACEHOLDER
+
+The 299–499 decoys injected per pool size are **synthetic placeholders**.
+They carry no outcome/relevance tags (`shouldSurface` returns `false` for every
+decoy), are loudly marked `SYNTHETIC DECOY` in key and value, and are generated
+by a seeded PRNG (reproducible, no randomness). At real volume — a hosted repo
+with hundreds of stored lessons — the sweep should be re-run against a corpus
+mined via `bin/mine-ground-truth.mjs`. The synthetic decoys are the upgrade path
+documented in R8; they tell you the shape of the cliff but not its exact position
+for your specific data distribution.
+
+The cliff-ordering result (`ranked.cliffAt > recency.cliffAt`, with the
+`ranked.cliffAt > CANDIDATE_LIMIT` window-eviction property) is asserted by
+deterministic tests and holds regardless of decoy content, because the cliff is
+structural: it is determined by the `CANDIDATE_LIMIT` window size and the
+target's position in `updated_at` order, not by what the decoys say.
 
 ## Docs applicability
 

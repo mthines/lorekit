@@ -7,6 +7,52 @@ import { test } from "node:test";
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
+// ── AC-7 (sweep): README documents the scale/position sweep (PR5) ────────────
+
+test("AC-7-sweep: README Status line names the sweep as shipped, not still-to-come", () => {
+  const readme = read("README.md");
+
+  // Isolate the Status section (from "## Status" up to the next "## " heading) so
+  // the assertion cannot be satisfied by the "## Scale/position sweep" heading
+  // further down the file.
+  const statusMatch = readme.match(/^## Status\b([\s\S]*?)(?=^## )/m);
+  assert.ok(statusMatch, "README must have a ## Status section");
+  const status = statusMatch[1];
+
+  // The Status must list the scale/position sweep in its SHIPPED clause — i.e.
+  // before the "Still to come" boundary. If the sweep were still-to-come this
+  // fails, which the previous heading-only match could not detect.
+  const shipped = status.split(/Still to come/i)[0];
+  assert.match(
+    shipped,
+    /scale\/position sweep\*\*\s*\(PR5\)/i,
+    "Status must name the scale/position sweep (PR5) as shipped, before 'Still to come'",
+  );
+});
+
+test("AC-7-sweep: README documents the sweep, both arms (recency vs rank), and the cliff", () => {
+  const readme = read("README.md");
+  // The sweep section must mention both arms.
+  assert.match(readme, /recency/i);
+  assert.match(readme, /rank/i);
+  // The cliff must be documented.
+  assert.match(readme, /cliff/i);
+  // CANDIDATE_LIMIT must be named (it is the structural cause of the cliff).
+  assert.match(readme, /CANDIDATE_LIMIT/);
+  // The sweep headline section must be present.
+  assert.match(readme, /Scale\/position sweep/i);
+});
+
+test("AC-7-sweep: README documents synthetic decoys and the mine upgrade path", () => {
+  const readme = read("README.md");
+  assert.match(readme, /synthetic/i);
+  assert.match(readme, /decoy/i);
+  assert.match(readme, /mine-ground-truth/);
+  assert.match(readme, /placeholder|upgrade|real (volume|corpus)/i);
+});
+
+// ── Existing relevance-docs tests ─────────────────────────────────────────────
+
 test("AC-8: README documents the definition, the placeholder seed, and the mine runbook", () => {
   const readme = read("README.md");
   // The loud placeholder caveat.
