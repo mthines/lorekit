@@ -11,11 +11,15 @@ import { rankLessons } from './lesson-rank.js';
  * It does NOT re-encode an expected list — the assertion is structural:
  * "ranked order != recency order on this fixture".
  *
- * MENTAL REVERT CHECK: if you remove the rankLessons call and return candidates
- * in their original updated_at desc order, the first key would be 'newer-low'
- * (index 0 in the recency list), but the ranked first key should be
- * 'older-high' (high seen_count wins despite being older). The test below
- * verifies exactly this divergence — a revert to recency order flips it red.
+ * SCOPE — read this before trusting the spec as a gate. It exercises
+ * `rankLessons` only, which this PR does not modify. It therefore proves the
+ * PREMISE the ranked `toolList` branch rests on — that ranked order really
+ * does diverge from recency order on a realistic fixture — and it goes red if
+ * `rankLessons` ever loses that property or the fixture stops creating the
+ * divergence. It does NOT execute the edge `toolList` ranked branch, so
+ * reverting that branch (dropping `order=rank` from `supabase/functions/mcp/
+ * tools.ts`) would leave this spec green. Coverage of the branch itself lives
+ * with the edge function, not here.
  */
 
 describe('toolList order=rank: ranked order diverges from recency order', () => {
@@ -62,8 +66,8 @@ describe('toolList order=rank: ranked order diverges from recency order', () => 
     const rankedKeys = rankLessons(candidates, { now: NOW }).map((r) => r.entry.key);
 
     // This is the central AC-3 assertion: the two orderings must NOT be
-    // identical. A mental revert (returning candidates in recency order)
-    // would yield ['newer-low', 'older-high'] for both, making this fail.
+    // identical. If `rankLessons` were reduced to a pass-through of its input,
+    // both lists would read ['newer-low', 'older-high'] and this would fail.
     expect(rankedKeys).not.toEqual(recencyKeys);
   });
 });
