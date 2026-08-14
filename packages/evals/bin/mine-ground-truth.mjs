@@ -42,6 +42,10 @@ export const OUTCOME_TAGS = [
   "loop::reviewer-comment-relevance",
 ];
 
+/** Rows per `remote.list` page, and the page ceiling the cursor walk refuses past. */
+export const PAGE_LIMIT = 100;
+export const MAX_PAGES = 100;
+
 /** The ONLY fields a mined entry may carry. A lesson body is never among them. */
 export const METADATA_FIELDS = ["scope", "key", "tags", "origin_pr", "seenCount"];
 
@@ -221,15 +225,51 @@ export async function main(
 
   // Query each outcome tag and union the rows (server-side ANY match would also
   // work; querying per-tag keeps the intent explicit and the round-trips small).
+  //
+  // PAGINATED. `remote.list` caps a page at `limit` and reports `hasMore` +
+  // `nextCursor`; reading only the first page would freeze a SILENTLY TRUNCATED
+  // snapshot whose header calls it safe to gate PRs on. The cursor walk mirrors
+  // `gatherStream` in `@lorekit/cli/src/lessons-view.mjs` — the same
+  // `!hasMore || !nextCursor → stop` termination the read commands use, so a
+  // local store (which returns everything in one page and no cursor) still ends
+  // after one iteration.
   const byKey = new Map();
   for (const tag of OUTCOME_TAGS) {
-    const res = await remote.list({ scope: args.scope, tags: [tag], limit: 100 });
-    if (!res || res.ok === false) {
-      err(`remote.list failed for tag ${tag}: ${res?.error ?? "unknown error"}`);
-      return 4;
-    }
-    for (const row of res.entries ?? []) {
-      byKey.set(`${row.scope}::${row.key}`, row);
+    let cursor;
+    let pages = 0;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const res = await remote.list({
+        scope: args.scope,
+        tags: [tag],
+        limit: PAGE_LIMIT,
+        ...(cursor ? { cursor } : {}),
+      });
+      if (!res || res.ok === false) {
+        err(`remote.list failed for tag ${tag}: ${res?.error ?? "unknown error"}`);
+        return 4;
+      }
+      for (const row of res.entries ?? []) {
+        byKey.set(`${row.scope}::${row.key}`, row);
+      }
+      pages += 1;
+      if (!res.hasMore || !res.nextCursor) break;
+      // A server that repeats a cursor would spin forever; refuse rather than
+      // hang, and refuse rather than write a snapshot we know is partial.
+      if (res.nextCursor === cursor) {
+        err(
+          `remote.list returned a repeating cursor for tag ${tag}; refusing to write a possibly partial snapshot.`,
+        );
+        return 4;
+      }
+      if (pages >= MAX_PAGES) {
+        err(
+          `remote.list still reports more rows for tag ${tag} after ${MAX_PAGES} pages (${PAGE_LIMIT}/page). ` +
+            "Refusing to write a TRUNCATED snapshot — narrow --scope and re-run.",
+        );
+        return 4;
+      }
+      cursor = res.nextCursor;
     }
   }
 

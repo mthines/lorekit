@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import fsp from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 
 import {
@@ -8,6 +12,7 @@ import {
   main,
   METADATA_FIELDS,
   OUTCOME_TAGS,
+  PAGE_LIMIT,
 } from "../bin/mine-ground-truth.mjs";
 
 test("AC-5: redactToMetadata drops the lesson body and keeps only metadata", () => {
@@ -128,4 +133,87 @@ test("the outcome tags are exactly the two the spec names", () => {
     new Set(OUTCOME_TAGS),
     new Set(["loop::review-outcomes", "loop::reviewer-comment-relevance"]),
   );
+});
+
+// A remote whose `list` serves `rows` in pages of `PAGE_LIMIT`, reporting
+// `hasMore`/`nextCursor` exactly as the hosted store does.
+function pagingRemote(rowsByTag, { repeatCursor = false } = {}) {
+  const calls = [];
+  return {
+    calls,
+    remote: {
+      usable: () => true,
+      list: ({ tags, cursor }) => {
+        const tag = tags[0];
+        const rows = rowsByTag[tag] ?? [];
+        const offset = cursor ? Number(cursor) : 0;
+        const page = rows.slice(offset, offset + PAGE_LIMIT);
+        const next = offset + page.length;
+        calls.push({ tag, cursor: cursor ?? null });
+        return {
+          ok: true,
+          entries: page,
+          hasMore: next < rows.length,
+          nextCursor:
+            next < rows.length ? String(repeatCursor ? offset : next) : null,
+        };
+      },
+    },
+    connection: { endpoint: "https://example.test" },
+  };
+}
+
+const rowsFor = (tag, n, prefix) =>
+  Array.from({ length: n }, (_, i) => ({
+    scope: "repo::mthines/lorekit",
+    key: `${prefix}::${i}`,
+    tags: [tag],
+    origin_pr: null,
+    seenCount: i,
+    value: "a lesson body that must never be emitted",
+  }));
+
+test("AC-5: the mine walks EVERY page — a >PAGE_LIMIT tag is not silently truncated", async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "mine-gt-"));
+  const out = path.join(dir, "ground-truth.real.json");
+  const { remote, connection, calls } = pagingRemote({
+    [OUTCOME_TAGS[0]]: rowsFor(OUTCOME_TAGS[0], PAGE_LIMIT + 42, "a"),
+    [OUTCOME_TAGS[1]]: rowsFor(OUTCOME_TAGS[1], 3, "b"),
+  });
+
+  const code = await main(["--confirm", "--out", out], {
+    log: () => {},
+    err: () => {},
+    deps: { resolveStores: () => ({ remote, connection }) },
+  });
+
+  assert.equal(code, 0);
+  const snapshot = JSON.parse(await fsp.readFile(out, "utf8"));
+  assert.equal(snapshot.entries.length, PAGE_LIMIT + 42 + 3);
+  // Two pages for the first tag, one for the second — the cursor was followed.
+  assert.equal(calls.filter((c) => c.tag === OUTCOME_TAGS[0]).length, 2);
+  assert.equal(calls.filter((c) => c.tag === OUTCOME_TAGS[1]).length, 1);
+  // Still metadata-only after paging.
+  for (const entry of snapshot.entries) assert.equal("value" in entry, false);
+});
+
+test("AC-5: a repeating cursor is refused rather than spun on", async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "mine-gt-"));
+  const out = path.join(dir, "ground-truth.real.json");
+  const errs = [];
+  const { remote, connection } = pagingRemote(
+    { [OUTCOME_TAGS[0]]: rowsFor(OUTCOME_TAGS[0], PAGE_LIMIT + 1, "a") },
+    { repeatCursor: true },
+  );
+
+  const code = await main(["--confirm", "--out", out], {
+    log: () => {},
+    err: (m) => errs.push(String(m)),
+    deps: { resolveStores: () => ({ remote, connection }) },
+  });
+
+  assert.equal(code, 4);
+  assert.match(errs.join("\n"), /repeating cursor/);
+  // Nothing was written.
+  assert.equal(fs.existsSync(out), false);
 });
