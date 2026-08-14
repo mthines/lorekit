@@ -194,3 +194,36 @@ test("AC-1(d): a plain lessons bucket sharing an outcome HOST is not ground trut
   const gt = buildGroundTruth([M05, M06, reviewerLesson, reviewLesson], QUERY);
   assert.deepEqual(new Set(gt.keys), new Set([M05.key, M06.key]));
 });
+
+test("repo match is a real disjunction: scope OR origin_repo", () => {
+  // Documented as "the row's scope names the query repo, OR its origin_repo
+  // does". A `??` chain only consulted origin_repo when the scope named NO repo,
+  // so a row scoped elsewhere but originating here was dropped.
+  const scopedElsewhere = {
+    scope: "repo::someone/else",
+    key: "audit::from-here",
+    tags: ["loop::review-outcomes"],
+    origin_repo: "mthines/lorekit",
+    origin_pr: null,
+  };
+  assert.equal(shouldSurface(scopedElsewhere, QUERY), true);
+
+  // A global-scoped row still matches on origin_repo (the `??` case, unchanged).
+  assert.equal(
+    shouldSurface(
+      { scope: "global", key: "g", tags: ["loop::review-outcomes"], origin_repo: "mthines/lorekit" },
+      QUERY,
+    ),
+    true,
+  );
+
+  // And a row matching on NEITHER is still rejected.
+  assert.equal(
+    shouldSurface(
+      { scope: "repo::someone/else", key: "x", tags: ["loop::review-outcomes"], origin_repo: "third/party" },
+      QUERY,
+    ),
+    false,
+  );
+  assert.equal(shouldSurface({ ...scopedElsewhere, origin_repo: undefined }, QUERY), false);
+});

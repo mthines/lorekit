@@ -109,8 +109,13 @@ export function shouldSurface(row, query = {}) {
 
   const wantRepo = repoOfQuery(query);
   if (wantRepo) {
-    const rowRepo = repoOfScope(row.scope) ?? row.origin_repo ?? null;
-    if (rowRepo !== wantRepo) return false;
+    // A real disjunction, as documented: `??` would consult `origin_repo` ONLY
+    // when the scope names no repo, so a row scoped to another repo but
+    // ORIGINATING in this one was dropped outright — the opposite of "scope
+    // matches OR origin_repo matches".
+    const scopeRepo = repoOfScope(row.scope);
+    const originRepo = typeof row.origin_repo === "string" ? row.origin_repo : null;
+    if (scopeRepo !== wantRepo && originRepo !== wantRepo) return false;
   }
 
   // A PR pin narrows only when the row actually declares one; a null-PR row is
