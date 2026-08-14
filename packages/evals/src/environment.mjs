@@ -45,6 +45,7 @@ export const FINDING_PLUGINS = "plugins-loaded";
 export const FINDING_MCP_SERVERS = "unexpected-mcp-servers";
 export const FINDING_SLASH_COMMANDS = "slash-commands-loaded";
 export const FINDING_FOREIGN_HOOKS = "foreign-hooks-fired";
+export const FINDING_MISSING_HOOKS = "expected-hooks-missing";
 export const FINDING_CWD = "ran-outside-the-sandbox";
 export const FINDING_NO_INIT = "no-init-event";
 
@@ -82,7 +83,9 @@ export function summarizeEnvironment({ init = null, hookEvents = [] } = {}) {
  * @param {object} [options]
  * @param {string} [options.sandboxRoot]      the run's sandbox, to verify cwd
  * @param {string[]} [options.expectedMcpServers]
- * @param {number} [options.expectedHooks]    how many hooks should have fired
+ * @param {number} [options.expectedHooks]    how many hooks should have fired,
+ *                                            exactly — more is a foreign hook,
+ *                                            fewer means ours never fired
  */
 export function assertCleanEnvironment(
   summary,
@@ -141,10 +144,23 @@ export function assertCleanEnvironment(
     });
   }
 
+  // Both directions are contamination, and they are opposite failures, so they
+  // get their own kinds. TOO MANY hooks means the developer's user settings
+  // fired alongside ours. TOO FEW means the harness's own SessionStart never
+  // fired — no lesson was injected, arm B silently ran as arm A, and the rep
+  // would otherwise have been scored as a clean measurement of memory's value.
+  // That is the exact failure the settings override omits `hooks: {}` to avoid,
+  // and omitting the flag only prevents one cause of it, not the outcome.
   if (summary.hooks.length > expectedHooks) {
     findings.push({
       kind: FINDING_FOREIGN_HOOKS,
       detail: `${summary.hooks.length} hooks fired, expected ${expectedHooks}: ${summary.hooks.join(", ")}`,
+      values: summary.hooks,
+    });
+  } else if (summary.hooks.length < expectedHooks) {
+    findings.push({
+      kind: FINDING_MISSING_HOOKS,
+      detail: `${summary.hooks.length} hooks fired, expected ${expectedHooks}: the harness's own hook did not fire${summary.hooks.length > 0 ? `; saw ${summary.hooks.join(", ")}` : ""}`,
       values: summary.hooks,
     });
   }

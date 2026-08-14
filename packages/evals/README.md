@@ -260,7 +260,11 @@ Deliberately absent: `hooks: {}` in the settings override. `--settings`
 overrides the same key in _every_ settings file for the session, including the
 sandbox's own project `.claude/settings.json` — it would switch off the
 harness's SessionStart hook and silently turn arm B into arm A. Foreign hooks
-are therefore detected rather than prevented, which is the safe direction.
+are therefore detected rather than prevented, which is the safe direction — and
+the count is checked in _both_ directions: more hooks than expected is a foreign
+hook (`foreign-hooks-fired`), fewer is the harness's own hook failing to fire
+(`expected-hooks-missing`), which is that same arm-B-as-arm-A silent failure
+arriving by another route.
 
 Check before spending a batch — one throwaway call, non-zero exit when dirty:
 
