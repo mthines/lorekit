@@ -31,10 +31,25 @@ function keyList(value) {
   return (Array.isArray(value) ? value : []).filter((k) => typeof k === "string");
 }
 
-/** A normalized positive integer `k`, defaulting when absent/invalid. */
+/**
+ * A normalized positive integer `k`.
+ *
+ * ABSENT (`undefined`/`null`) means "the caller did not pick a k" and takes the
+ * fallback. A PRESENT but unusable `k` — `"x"`, `0`, `-1`, `NaN` — is a caller
+ * MISTAKE and throws: silently rewriting it to the fallback made `ks: [1, "x"]`
+ * collapse to a single entry in `precisionAtK` instead of surfacing the bad
+ * input. A safe default makes an OMITTED input safe; it never makes a MALFORMED
+ * one correct.
+ */
 function normalizeK(k, fallback) {
+  if (k === undefined || k === null) return fallback;
   const n = Math.floor(Number(k));
-  return Number.isFinite(n) && n > 0 ? n : fallback;
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new TypeError(
+      `k must be a positive integer (or omitted); received ${JSON.stringify(k)}`,
+    );
+  }
+  return n;
 }
 
 /**

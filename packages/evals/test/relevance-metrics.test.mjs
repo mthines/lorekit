@@ -103,3 +103,24 @@ test("scoreRanking on a real snapshot carries NO placeholder warning", () => {
   assert.equal(score.baseline.source, BASELINE_REAL);
   assert.equal(score.baseline.warning, null);
 });
+
+test("a MALFORMED k is surfaced, not silently rewritten to a default", () => {
+  // `ks: [1, "x"]` used to collapse to a single entry — the bad input vanished
+  // into the fallback instead of failing loudly.
+  assert.throws(
+    () => scoreRanking({ ranked: RANKED, groundTruth: { keys: TRUTH }, ks: [1, "x"] }),
+    /k must be a positive integer/,
+  );
+  assert.throws(() => precisionAtK(RANKED, TRUTH, "x"), /k must be a positive integer/);
+  assert.throws(() => precisionAtK(RANKED, TRUTH, 0), /k must be a positive integer/);
+  assert.throws(() => recallAtK(RANKED, TRUTH, -1), /k must be a positive integer/);
+  assert.throws(() => recallAtK(RANKED, TRUTH, NaN), /k must be a positive integer/);
+});
+
+test("an OMITTED k still takes the documented default", () => {
+  // Absent is not malformed: precision with no k scores the whole retrieval.
+  assert.equal(precisionAtK(RANKED, TRUTH), 0.25);
+  assert.equal(recallAtK(RANKED, TRUTH, null), 1);
+  const score = scoreRanking({ ranked: RANKED, groundTruth: { keys: TRUTH } });
+  assert.deepEqual(Object.keys(score.precisionAtK), ["1", "3", "5"]);
+});
