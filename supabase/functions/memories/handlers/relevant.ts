@@ -14,6 +14,7 @@ import {
 import { parseTagsParam } from '../../_shared/schemas/tags.ts';
 import {
   rankLessons,
+  selectDiverse,
   recencyFactor,
   salienceFactor,
   normalizeRelevance,
@@ -160,9 +161,14 @@ export async function handleRelevant(
   let maxSeenCount = 0;
   for (const c of candidates) maxSeenCount = Math.max(maxSeenCount, seenCountFrom(c));
 
-  const entries = ranked
-    .filter((r) => r.score >= params.min_score)
-    .slice(0, params.limit)
+  const filtered = ranked.filter((r) => r.score >= params.min_score);
+  // MMR diversification (same as `order=rank` in the MCP `tools.ts` path): the
+  // returned `entries` are ranked-then-diversified, so they are NOT strictly
+  // score-descending — a more diverse lower-scored lesson can precede a
+  // higher-scored near-duplicate. Clients must not assume score-monotonic order.
+  const diverse = selectDiverse(filtered, params.limit);
+
+  const entries = diverse
     .map(({ entry, score }) => ({
       scope: entry.scope,
       key: entry.key,

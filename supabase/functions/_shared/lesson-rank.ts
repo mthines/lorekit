@@ -221,6 +221,128 @@ export interface RankedLesson<T extends RankableLesson> {
 }
 
 /**
+ * MMR λ (lambda) — weight given to relevance vs diversity in the MMR objective.
+ * At 0.7 the selector favours relevance, with 0.3 of the budget for diversity.
+ * Anchored to Carbonell & Goldstein (1998), the original MMR paper.
+ * Mirrored byte-identically in the edge twin and `packages/cli/src/lessons-pure.mjs`.
+ */
+export const MMR_LAMBDA = 0.7;
+
+/**
+ * Tokenise a lesson `value` into a deduplicated Set: case-fold, split on
+ * non-alphanumeric characters, drop empties. Dependency-free and deterministic
+ * so it mirrors byte-identically across TS, Deno, and the `.mjs` twin.
+ *
+ * PERF: `selectDiverse` calls this ONCE per candidate before the MMR loop and
+ * caches the result — see the `tokens` field it builds. `jaccardSimilarity`
+ * takes the cached Sets, so the O(k²) pairwise comparisons inside the loop cost
+ * no tokenisation. Do NOT re-introduce a `tokenize(value)` call inside the loop:
+ * that regresses the hot path to O(n·k²) tokenisations (measured 34s CPU at
+ * n=200/k=100, `tools.ts` max with 1.5KB values).
+ */
+function tokenizeValue(v: unknown): Set<string> {
+  const tokens = String(v ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return new Set(tokens);
+}
+
+/**
+ * Word/token Jaccard similarity between two PRE-TOKENISED value Sets:
+ * |A∩B| / |A∪B|. Both-empty → 0.
+ *
+ * Takes Sets rather than raw values on purpose — the caller tokenises each
+ * candidate once (see `tokenizeValue`) so this stays allocation-free on the
+ * O(k²) hot path.
+ */
+function jaccardSimilarity(setA: Set<string>, setB: Set<string>): number {
+  if (setA.size === 0 && setB.size === 0) return 0;
+  let intersection = 0;
+  for (const t of setA) if (setB.has(t)) intersection += 1;
+  const union = setA.size + setB.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+export interface SelectDiverseOptions {
+  lambda?: number;
+}
+
+/**
+ * Select the top-K lessons from a ranked list using Maximal Marginal Relevance
+ * (Carbonell & Goldstein, 1998).
+ *
+ * Greedy MMR: seed with the highest-ranked candidate, then at each step pick
+ * the unselected candidate that maximises
+ *   λ·quantise(score(i)) − (1−λ)·max_{j∈selected} jaccardSimilarity(value_i, value_j)
+ * Ties in the MMR objective break by input order (first-wins) so the result
+ * is deterministic over the already-rank-ordered input.
+ *
+ * SCORE QUANTISATION: the relevance term uses the score SNAPPED onto the
+ * `SCORE_EPSILON` grid — the exact grid `rankLessons` buckets on for its
+ * scope-precedence tie-break. Two scores within `SCORE_EPSILON` land in the same
+ * bucket, so the MMR objective sees them as equal and the input order (which
+ * `rankLessons` already sorted by scope precedence, then key) decides between
+ * them. Comparing the RAW score here would let a 1e-10 float difference override
+ * scope precedence — the lower-precedence scope could win a near-tie MMR pick.
+ *
+ * PERF — the algorithm is O(n·k), and BOTH factors that could regress it to
+ * O(n·k²) are held down explicitly:
+ *   1. TOKENISE axis: each candidate's `value` is tokenised ONCE up front (the
+ *      `tokens` field) so the pairwise Jaccard comparisons never tokenise —
+ *      O(n) tokenisations total. See `tokenizeValue`.
+ *   2. INTERSECTION axis: each remaining candidate carries a RUNNING `maxSim`
+ *      (its greatest Jaccard similarity to anything selected so far). The
+ *      objective reads that cached scalar — it does NOT loop over `selected`.
+ *      After each pick we update `maxSim` for the still-remaining candidates
+ *      against the ONE just-selected entry only. That is k picks × n candidates
+ *      = O(n·k) Jaccard intersections total, not O(n·k²).
+ * Re-introducing either an in-loop `tokenizeValue` call OR an inner
+ * `for (… of selected)` maxSim recomputation silently restores O(n·k²) —
+ * measured 2.6s CPU at n=200/k=100 vs 58ms for the running form. Don't.
+ *
+ * Always-on for ranked mode — no optional param needed. The recency wire path is
+ * never affected.
+ */
+export function selectDiverse<T extends RankableLesson>(
+  ranked: readonly RankedLesson<T>[],
+  k: number,
+  options: SelectDiverseOptions = {},
+): RankedLesson<T>[] {
+  const lambda = typeof options.lambda === 'number' && Number.isFinite(options.lambda)
+    ? options.lambda
+    : MMR_LAMBDA;
+  if (!Array.isArray(ranked) || ranked.length === 0 || k <= 0) return [];
+  const selected: RankedLesson<T>[] = [];
+  // Pre-tokenise every candidate ONCE and snap its score onto the SCORE_EPSILON
+  // grid up front. `maxSim` is the running greatest Jaccard similarity to any
+  // already-selected entry — 0 while nothing is selected. The loop below reads
+  // these caches; it never tokenises, re-quantises, or rescans `selected`.
+  const remaining = ranked.map((r) => ({
+    ranked: r,
+    tokens: tokenizeValue(r.entry.value),
+    qScore: Math.round(r.score / SCORE_EPSILON) * SCORE_EPSILON,
+    maxSim: 0,
+  }));
+  while (selected.length < k && remaining.length > 0) {
+    let bestIdx = 0;
+    let bestMmr = -Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const candidate = remaining[i];
+      // Reads the cached running maxSim — no inner scan over `selected`.
+      const mmr = lambda * candidate.qScore - (1 - lambda) * candidate.maxSim;
+      if (mmr > bestMmr) { bestMmr = mmr; bestIdx = i; }
+    }
+    const [justSelected] = remaining.splice(bestIdx, 1);
+    selected.push(justSelected.ranked);
+    // Fold the just-selected entry into every remaining candidate's running
+    // maxSim — one Jaccard per remaining candidate per pick, so O(n·k) total.
+    for (const candidate of remaining) {
+      const sim = jaccardSimilarity(candidate.tokens, justSelected.tokens);
+      if (sim > candidate.maxSim) candidate.maxSim = sim;
+    }
+  }
+  return selected;
+}
+
+/**
  * Rank rows best-first, returning `{ entry, score }` pairs in a NEW array.
  *
  * The score is returned rather than discarded because this one feeds an API
