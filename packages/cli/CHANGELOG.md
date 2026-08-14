@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.41.0](https://github.com/mthines/lorekit/compare/cli-v1.40.0...cli-v1.41.0) (2026-08-14)
+
+
+### Features
+
+* **rank:** add outcome factor + cold-start prior to lesson scorer ([d521b9f](https://github.com/mthines/lorekit/commit/d521b9f45f9150ee92feaf120716f31afaf9be3c))
+* **rank:** outcome factor + cold-start prior in lesson scorer ([d8711a2](https://github.com/mthines/lorekit/commit/d8711a2ee77f6145653a6e2ee216102a12db4c40))
+
+
+### Bug Fixes
+
+* **rank:** report outcome factor + hoist the outcome-signal ladder ([f7e9c4e](https://github.com/mthines/lorekit/commit/f7e9c4e2a347b574221f4bfbbfe8819eceee3380))
+
 ## [1.40.0](https://github.com/mthines/lorekit/compare/cli-v1.39.2...cli-v1.40.0) (2026-08-13)
 
 
