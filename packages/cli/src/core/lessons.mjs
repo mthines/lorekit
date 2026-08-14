@@ -12,7 +12,7 @@ import { deriveScope } from '../scope.mjs';
 // the injected set is chosen by ONE scorer, and a future `memory.relevant` verb
 // must be able to reuse it rather than grow a second ranking with its own idea
 // of what "most useful" means.
-import { resolvePrecedence, rankLessons } from '../lessons-pure.mjs';
+import { resolvePrecedence, rankLessons, diversifyRankedLessons } from '../lessons-pure.mjs';
 // The store's own scope inventory, normalised — the SAME helper `memory.scopes`
 // uses, so the map and the MCP tool cannot disagree about what a scope holds or
 // about what a failed enumeration looks like.
@@ -219,12 +219,29 @@ export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
     ? scopeInventoryFromStore(inventory.scopes, scope.readOrder, derivedCounts)
     : derivedCounts;
 
+  // DIVERSIFY before the ceiling, so the budget is not spent on near-identical
+  // lessons. Ranking answers "which lessons score highest"; on an active repo
+  // the highest cluster is often one task's iteration log — a dozen
+  // `review-outcomes::pr395-it{3,4,5}` rows that score alike AND read alike, so
+  // a plain top-N hands the reader the same lesson several times and evicts the
+  // variety underneath. `diversifyRankedLessons` applies the SAME MMR
+  // (`selectDiverse`, λ=0.7 lexical Jaccard) the hosted `order=rank` path
+  // already uses, which was defined and exported here but never wired into the
+  // session-start read. It seeds with the top-ranked lesson (score is still
+  // 0.7 of the objective) and only spends the remaining 0.3 pushing down a
+  // lesson that repeats one already shown — so the best lesson stays first and
+  // the set stops being a wall of duplicates. `terms: []` matches the
+  // `rankLessons` call above (relevance contributes nothing at session start),
+  // which the scores MUST agree with. The scope map and `applicable` still read
+  // from `ranked` — the map is a pointer to what EXISTS per scope, a question
+  // diversification does not change.
+  //
   // `applicable` is the honest denominator for the header — how many the reader
   // has, as opposed to how many fitted. It is counted BEFORE the ceiling, so
   // "8 of 50" stays true no matter how the render is bounded.
   return {
     scope,
-    lessons: ranked.slice(0, HARD_LESSON_CEILING),
+    lessons: diversifyRankedLessons(ranked, { terms: [], now, k: HARD_LESSON_CEILING }),
     scopeCounts,
     applicable: ranked.length,
   };

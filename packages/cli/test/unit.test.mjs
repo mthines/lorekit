@@ -15,6 +15,7 @@ import {
 import {
   rankLessons, scoreLesson, recencyFactor, salienceFactor, relevanceFactor,
   normalizeOutcome, RECENCY_HALF_LIFE_DAYS, DEFAULT_RANK_WEIGHTS, COLD_START_OUTCOME_PRIOR,
+  diversifyRankedLessons, selectDiverse,
 } from '../src/lessons-pure.mjs';
 import { MEMORY_TOOL_DEFS } from '../src/mcp-server.mjs';
 
@@ -1502,6 +1503,72 @@ describe('rankLessons', () => {
     // second, and the key tiebreak would never be consulted — which is what
     // makes this assertion discriminate rather than merely restate the input.
     assert.deepEqual(ranked.map((e) => e.key), ['a-raw', 'z-projected']);
+  });
+});
+
+// ── diversifyRankedLessons: MMR on the SessionStart injection ─────────────────
+// Ranking answers "which score highest"; on a busy repo the highest cluster is
+// one task's iteration log — several rows that score alike AND read alike — so a
+// plain top-N hands the reader the same lesson several times. This is the helper
+// that wires the SAME MMR the hosted `order=rank` path uses into the session
+// read, and these tests pin the diversity property and the alignment guarantee
+// (its recomputed scores must equal the ones the list was ranked on).
+describe('diversifyRankedLessons', () => {
+  const DAY = 86400000;
+  const NOW = Date.parse('2026-08-01T00:00:00.000Z');
+  const at = (daysAgo) => new Date(NOW - daysAgo * DAY).toISOString();
+  const lesson = (key, { days = 1, seen = 1, value = '' } = {}) => ({
+    scope: 'global', key, value, seenCount: seen, updatedAt: at(days),
+  });
+
+  // Two near-identical iteration logs (high token overlap) that both outscore a
+  // distinct lesson — the exact `review-outcomes::pr-it{3,4}` shape.
+  const dupText = 'database migration rollback failed on staging retry the deploy';
+  const A1 = lesson('pr-it4', { seen: 5, value: `${dupText} at iteration four` });
+  const A2 = lesson('pr-it3', { seen: 4, value: `${dupText} at iteration three` });
+  const B = lesson('functional-core', { seen: 3, value: 'prefer a functional core with an imperative shell' });
+
+  test('diversify — separates the near-duplicate a plain rank keeps adjacent', () => {
+    const ranked = rankLessons([A1, A2, B], { now: NOW });
+    // Plain ranking: the two dups sit together, the distinct lesson last.
+    assert.deepEqual(ranked.map((e) => e.key), ['pr-it4', 'pr-it3', 'functional-core']);
+    const diverse = diversifyRankedLessons(ranked, { now: NOW, k: 3 });
+    // MMR keeps the top lesson, then promotes the DISTINCT one over the dup.
+    assert.equal(diverse[0].key, 'pr-it4', 'the highest-ranked lesson still seeds the set');
+    assert.ok(
+      diverse.findIndex((e) => e.key === 'functional-core') <
+        diverse.findIndex((e) => e.key === 'pr-it3'),
+      'the distinct lesson is pulled ahead of the near-duplicate',
+    );
+  });
+
+  test('diversify — recomputed scores align with the rank the list carries', () => {
+    const ranked = rankLessons([A1, A2, B], { now: NOW });
+    // The helper must score over the SAME set (set-relative salience), so its
+    // result equals selectDiverse fed scores computed with that population's max.
+    const maxSeen = Math.max(...ranked.map((e) => e.seenCount));
+    const scores = ranked.map((e) => scoreLesson(e, { now: NOW, maxSeenCount: maxSeen }));
+    assert.deepEqual(
+      diversifyRankedLessons(ranked, { now: NOW, k: 3 }).map((e) => e.key),
+      selectDiverse(ranked, 3, { scores }).map((e) => e.key),
+    );
+  });
+
+  test('diversify — k caps the returned count', () => {
+    const ranked = rankLessons([A1, A2, B], { now: NOW });
+    assert.equal(diversifyRankedLessons(ranked, { now: NOW, k: 2 }).length, 2);
+    assert.equal(diversifyRankedLessons(ranked, { now: NOW }).length, 3, 'no k → all');
+  });
+
+  test('diversify — empty or non-array input is an empty result, never a throw', () => {
+    for (const bad of [[], null, undefined, 'nope', 7, {}]) {
+      assert.deepEqual(diversifyRankedLessons(bad, { now: NOW }), [], `input ${String(bad)}`);
+    }
+    // Non-object members are dropped, exactly as rankLessons drops them.
+    assert.deepEqual(
+      diversifyRankedLessons([null, A1, 'x'], { now: NOW }).map((e) => e.key),
+      ['pr-it4'],
+    );
   });
 });
 
