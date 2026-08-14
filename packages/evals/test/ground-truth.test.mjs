@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   shouldSurface,
@@ -130,4 +133,35 @@ test("buildGroundTruth returns metadata-only entries — never a lesson body", (
       ["key", "origin_pr", "recurrenceConfirmed", "scope", "seenCount", "tags", "weight"],
     );
   }
+});
+
+test("AC-1-reuse: ground-truth.mjs re-encodes NO `loop::` literal and imports the shipped resolver", () => {
+  // The structural half of AC-1(c). That test proves the BEHAVIOUR (a non-outcome
+  // bucket is not ground truth); this one proves the MECHANISM — that membership
+  // is still decided by `@lorekit/schemas`' `inferKindHost` and not by a local
+  // copy of the `loop::…` → bucket mapping, which would keep passing against
+  // these fixtures while drifting from the product the day a bucket is added or
+  // renamed.
+  //
+  // The comparison runs on CODE, not on prose: the module's header comment
+  // legitimately names both loop tags while explaining why it must not encode
+  // them, so comments are stripped before the grep.
+  const source = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "ground-truth.mjs"),
+    "utf8",
+  );
+  const code = source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+  assert.equal(
+    /loop::/.test(code),
+    false,
+    "ground-truth.mjs must not re-encode a `loop::` tag literal — the tag → bucket mapping is owned by @lorekit/schemas",
+  );
+  assert.match(
+    code,
+    /import\s*\{[^}]*\binferKindHost\b[^}]*\}\s*from\s*["']@lorekit\/schemas\/tags["']/,
+    "ground-truth.mjs must import inferKindHost from @lorekit/schemas/tags",
+  );
 });
