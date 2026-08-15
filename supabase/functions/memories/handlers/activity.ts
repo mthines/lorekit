@@ -6,6 +6,7 @@ import type { Span } from '../../_shared/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Database } from '../../_shared/database.types.ts';
 import { ActivityQuerySchema } from '../../_shared/schemas/memory.ts';
+import { parseTagsParam } from '../../_shared/schemas/tags.ts';
 
 type ActivityRow = Database['public']['Functions']['lorekit_memory_activity']['Returns'][number];
 
@@ -52,7 +53,18 @@ export async function handleActivity(
   span.setAttributes({
     'lorekit.operation': 'memories.activity',
     'lorekit.bucket': params.bucket,
+    ...(params.scope ? { 'lorekit.scope': params.scope } : {}),
   });
+
+  // Parse the caller's active filters — same names/shapes as GET /memories and
+  // /facets — so the RPC narrows the written/scopes counts to the list's set.
+  // Empty → null = "not filtered". `origin_pr` is digits-only (a non-numeric
+  // entry narrows the filter, never 400s the page), matching the facets handler.
+  const list = (v?: string) => { const a = parseTagsParam(v); return a.length ? a : null; };
+  const prList = (() => {
+    const a = parseTagsParam(params.origin_pr).filter((v) => /^\d+$/.test(v));
+    return a.length ? a : null;
+  })();
 
   const tracedDb = createTracedClient(db, span);
   const { data, error } = await tracedDb.rpc<ActivityRow>('lorekit_memory_activity', {
@@ -60,6 +72,23 @@ export async function handleActivity(
     p_bucket: params.bucket,
     p_since: since,
     p_until: until,
+    p_scope: params.scope ?? null,
+    p_tags: list(params.tags),
+    p_tags_mode: params.tags_mode,
+    p_source_agent: list(params.source_agent),
+    p_source_agent_mode: params.source_agent_mode,
+    p_trigger: list(params.trigger),
+    p_trigger_mode: params.trigger_mode,
+    p_kind: list(params.kind),
+    p_kind_mode: params.kind_mode,
+    p_host: list(params.host),
+    p_host_mode: params.host_mode,
+    p_origin_repo: list(params.origin_repo),
+    p_origin_repo_mode: params.origin_repo_mode,
+    p_origin_branch: list(params.origin_branch),
+    p_origin_branch_mode: params.origin_branch_mode,
+    p_origin_pr: prList,
+    p_origin_pr_mode: params.origin_pr_mode,
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 

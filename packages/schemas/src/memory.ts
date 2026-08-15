@@ -429,11 +429,44 @@ export type ActivityBucketUnit = z.infer<typeof ActivityBucketUnitSchema>;
  * The window is half-open `[since, until)`, matching `GET /memories/usage`.
  * Both bounds are optional; `until` defaults to now and `since` to the start
  * of the retention window the handler picks, so a bare call is still bounded.
+ *
+ * `scope` + the DIMENSION filters (`tags`, `source_agent`, `trigger`, `kind`,
+ * `host`, `origin_repo/branch/pr`, each with its `*_mode`) are the SAME params
+ * `GET /memories` and `GET /memories/facets` take, named identically so the
+ * Explorer's stat header can pass its filter bar verbatim (`filtersToQueryParams`
+ * ← the one translation the list uses). They narrow the written/scopes counts so
+ * the header agrees with the list beneath it (migration 00062, applying the same
+ * predicate as `lorekit_memory_facets`). Absent → unfiltered, byte-for-byte the
+ * pre-00062 aggregate.
+ *
+ * Like `ListFacetsQuery`, the NON-dimension filters — `q`, `key`,
+ * `created_since/until`, `expiring_within_days` — are deliberately NOT mirrored:
+ * a filter value is encoded exactly one way in this repo, and mirroring `q`
+ * would mean a second `likeNeedle` inside plpgsql. So under an active SEARCH the
+ * counts are an upper bound on the yield, not the exact figure — the same
+ * documented caveat the facets menu carries.
  */
 export const ActivityQuerySchema = z.object({
   bucket: ActivityBucketUnitSchema.optional().default('day'),
   since: TimestampFilterSchema.optional(),
   until: TimestampFilterSchema.optional(),
+  scope: RawScopeSchema.optional(),
+  tags: z.string().optional(),
+  tags_mode: TagsModeSchema.optional().default('any'),
+  source_agent: ValueListSchema.optional(),
+  source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
+  trigger: ValueListSchema.optional(),
+  trigger_mode: ScalarFilterModeSchema.optional().default('in'),
+  kind: ValueListSchema.optional(),
+  kind_mode: ScalarFilterModeSchema.optional().default('in'),
+  host: ValueListSchema.optional(),
+  host_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_repo: ValueListSchema.optional(),
+  origin_repo_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_branch: ValueListSchema.optional(),
+  origin_branch_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_pr: ValueListSchema.optional(),
+  origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
 });
 export type ActivityQuery = z.infer<typeof ActivityQuerySchema>;
 

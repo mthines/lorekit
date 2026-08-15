@@ -652,7 +652,24 @@ export type Database = {
       lorekit_memory_activity: {
         Args: {
           p_bucket?: string
+          p_host?: string[]
+          p_host_mode?: string
+          p_kind?: string[]
+          p_kind_mode?: string
+          p_origin_branch?: string[]
+          p_origin_branch_mode?: string
+          p_origin_pr?: string[]
+          p_origin_pr_mode?: string
+          p_origin_repo?: string[]
+          p_origin_repo_mode?: string
+          p_scope?: string
           p_since?: string
+          p_source_agent?: string[]
+          p_source_agent_mode?: string
+          p_tags?: string[]
+          p_tags_mode?: string
+          p_trigger?: string[]
+          p_trigger_mode?: string
           p_until?: string
           p_user_id: string
         }
