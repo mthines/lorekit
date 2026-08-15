@@ -109,6 +109,9 @@ export const MEMORY_TOOL_DEFS = [
         tags: { type: 'array', items: { type: 'string' } },
         limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
         cursor: { type: 'string', description: 'Opaque cursor from a previous response\'s nextCursor. Omit to start from the first page.' },
+        kind: { type: 'string', enum: ['lesson', 'bus', 'signal'], description: 'Filter to one bucket family. Remote store only — the local store has no kind/host columns.' },
+        host: { type: 'string', description: 'Filter to the owning skill or agent, e.g. `reviewer`. Remote store only.' },
+        view: { type: 'string', enum: ['full', 'summary'], default: 'full', description: 'summary omits each entry\'s value and returns value_bytes + a 200-character preview instead.' },
       },
     },
   },
@@ -213,6 +216,34 @@ export const ORG_TOOL_DEFS = [
 // Legacy alias kept so existing code that imports TOOL_DEFS still compiles.
 export const TOOL_DEFS = [...MEMORY_TOOL_DEFS, ...ORG_TOOL_DEFS];
 
+/** Characters of `value` echoed in a `view: "summary"` entry's `preview`. */
+export const LIST_PREVIEW_CHARS = 200;
+
+/**
+ * Apply the `view` projection to a store's list result.
+ *
+ * `full` (and any absent/unknown value) passes the result through untouched.
+ * `summary` swaps each entry's `value` for its byte size and a bounded prefix,
+ * so a discovery read costs an index instead of every body.
+ *
+ * The slice is over `[...value]`, NOT `value.slice()`: JS string indices are
+ * UTF-16 code units, so a naive cut can land between a surrogate pair and emit
+ * a lone half. Spreading iterates code points, so an emoji or CJK character is
+ * never split. `value_bytes` is the UTF-8 byte length so it stays comparable
+ * with the 65,536-byte value cap.
+ */
+export function projectListView(result, view) {
+  if (view !== 'summary' || !result?.ok || !Array.isArray(result.entries)) return result;
+  return {
+    ...result,
+    entries: result.entries.map(({ value, ...rest }) => ({
+      ...rest,
+      value_bytes: Buffer.byteLength(value ?? '', 'utf8'),
+      preview: [...(value ?? '')].slice(0, LIST_PREVIEW_CHARS).join(''),
+    })),
+  };
+}
+
 // tool name → (store, args, ctx) → store result. The store destructures the
 // args it needs, so the raw `arguments` object is passed straight through.
 // `ctx.root` is the resolved project root (`--dir`), NOT the process cwd — an
@@ -223,7 +254,12 @@ const MEMORY_DISPATCH = {
   // with anything the caller DID pass taking precedence.
   'memory.write': (store, a, ctx) => store.write({ ...a, ...withDerivedOrigin(a, ctx) }),
   'memory.read': (store, a) => store.read(a),
-  'memory.list': (store, a) => store.list(a),
+  // `view` is projected client-side rather than forwarded. The remote store
+  // reads `GET /memories`, which has no `view` parameter — only the MCP tool
+  // does — and the local store has no server to ask. Projecting here keeps the
+  // stdio server's contract identical to the hosted one either way, which is
+  // the whole point of `MEMORY_TOOL_DEFS` mirroring the catalog.
+  'memory.list': async (store, a) => projectListView(await store.list(a), a?.view),
   'memory.search': (store, a) => store.search(a),
   'memory.delete': (store, a) => store.delete(a),
   'memory.archive': (store, a) => store.archive(a),

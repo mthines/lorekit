@@ -42,16 +42,23 @@ export interface ListSummaryEntry {
 }
 
 /**
- * Project a row for the wire. `value_bytes` is the BYTE length so it is
- * comparable with `MAX_VALUE_BYTES`; `String.length` would under-report a
- * multi-byte body.
+ * Project a row for the wire.
+ *
+ * `value_bytes` is the BYTE length so it is comparable with `MAX_VALUE_BYTES`;
+ * `String.length` would under-report a multi-byte body.
+ *
+ * `preview` slices `[...value]`, NOT `value.slice()`. String indices are UTF-16
+ * code units, so cutting at a fixed index can land between a surrogate pair and
+ * emit a lone half — an unpaired surrogate is not valid UTF-8 and survives a
+ * JSON round-trip as U+FFFD. Spreading iterates code points, so an emoji or a
+ * non-BMP character is either whole or absent.
  */
 function summarizeEntry(entry: ListEntry): ListSummaryEntry {
   const { value, ...rest } = entry;
   return {
     ...rest,
     value_bytes: Buffer.byteLength(value ?? '', 'utf8'),
-    preview: (value ?? '').slice(0, LIST_PREVIEW_CHARS),
+    preview: [...(value ?? '')].slice(0, LIST_PREVIEW_CHARS).join(''),
   };
 }
 

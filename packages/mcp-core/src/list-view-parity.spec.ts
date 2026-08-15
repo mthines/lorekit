@@ -14,6 +14,8 @@ import { LIST_PREVIEW_CHARS as CORE_PREVIEW_CHARS } from './tools/list.js';
  *      production path. It cannot cross-import a package, the same constraint
  *      that already forces `MAX_VALUE_BYTES` and `PURGE_RETENTION_DAYS_DEFAULT`
  *      to be redeclared locally in that file.
+ *   4. `packages/cli/src/mcp-server.mjs`     — the `lorekit mcp` stdio server,
+ *      which is zero-dependency by design and cannot import `@lorekit/schemas`.
  *
  * A drift here is silent and asymmetric: the same call against the hosted edge
  * function and against a BYOD Fly deployment would return previews of different
@@ -23,11 +25,12 @@ import { LIST_PREVIEW_CHARS as CORE_PREVIEW_CHARS } from './tools/list.js';
 
 const repoRoot = join(import.meta.dirname, '../../..');
 const edgeSource = readFileSync(join(repoRoot, 'supabase/functions/mcp/tools.ts'), 'utf8');
+const cliSource = readFileSync(join(repoRoot, 'packages/cli/src/mcp-server.mjs'), 'utf8');
 
-/** The numeric literal the edge function declares for the preview cap. */
-function edgePreviewChars(): number {
-  const m = /const LIST_PREVIEW_CHARS = (\d+);/.exec(edgeSource);
-  if (!m) throw new Error('LIST_PREVIEW_CHARS not found in supabase/functions/mcp/tools.ts — has it been renamed?');
+/** The numeric literal a source file declares for the preview cap. */
+function declaredPreviewChars(source: string, where: string): number {
+  const m = /LIST_PREVIEW_CHARS = (\d+);/.exec(source);
+  if (!m) throw new Error(`LIST_PREVIEW_CHARS not found in ${where} — has it been renamed?`);
   return Number(m[1]);
 }
 
@@ -37,7 +40,11 @@ describe('memory.list summary preview length parity', () => {
   });
 
   it('the edge function agrees with the schema declaration', () => {
-    expect(edgePreviewChars()).toBe(SCHEMA_PREVIEW_CHARS);
+    expect(declaredPreviewChars(edgeSource, 'supabase/functions/mcp/tools.ts')).toBe(SCHEMA_PREVIEW_CHARS);
+  });
+
+  it('the CLI stdio server agrees with the schema declaration', () => {
+    expect(declaredPreviewChars(cliSource, 'packages/cli/src/mcp-server.mjs')).toBe(SCHEMA_PREVIEW_CHARS);
   });
 
   it('the documented cap in the tool catalog matches the implementation', () => {
@@ -55,5 +62,21 @@ describe('memory.list summary projection drops the body on every path', () => {
     const fn = /function projectListEntry\([\s\S]*?\n}/.exec(edgeSource)?.[0] ?? '';
     expect(fn).toContain('const { value, ...rest } = row;');
     expect(fn).not.toMatch(/value:\s*''/);
+  });
+});
+
+describe('memory.list summary preview is code-point-safe everywhere', () => {
+  // A `.slice(0, N)` on a raw string cuts UTF-16 code units and can emit a lone
+  // surrogate. Every implementation must spread to code points first. This is
+  // asserted behaviourally in each package's own suite; here we guard the
+  // SHAPE across all three, because a future edit to one file is exactly how
+  // the three drift apart again.
+  it.each([
+    ['the edge function', edgeSource],
+    ['the CLI stdio server', cliSource],
+  ])('%s spreads before slicing', (_name, source) => {
+    expect(source).toMatch(/\[\.\.\.\(?value/);
+    // The naive form must not survive anywhere near the preview cap.
+    expect(source).not.toMatch(/value\s*\?\?\s*''\)\.slice\(0, LIST_PREVIEW_CHARS\)/);
   });
 });

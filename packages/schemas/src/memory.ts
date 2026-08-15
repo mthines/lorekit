@@ -69,7 +69,7 @@ export type MemoryListView = z.infer<typeof MemoryListViewSchema>;
 /** Characters of `value` echoed in a `summary` entry's `preview`. */
 export const LIST_PREVIEW_CHARS = 200;
 
-export const MemoryListSchema = z.object({ scope: ScopeSchema, tags: z.array(z.string()).optional(), limit: z.number().int().min(1).max(100).optional().default(50), cursor: z.string().optional(), order: z.enum(['recency', 'rank']).optional().default('recency'), kind: MemoryKindSchema.optional(), host: z.string().max(64).optional(), view: MemoryListViewSchema.optional().default('full') });
+export const MemoryListSchema = z.object({ scope: ScopeSchema, tags: z.array(z.string()).optional(), limit: z.number().int().min(1).max(100).optional().default(50), cursor: z.string().optional(), order: z.enum(['recency', 'rank']).optional().default('recency'), kind: MemoryKindSchema.optional(), host: z.string().min(1).max(64).optional(), view: MemoryListViewSchema.optional().default('full') });
 export const MemoryDeleteSchema = z.object({ scope: ScopeSchema, key: z.string().min(1).max(512), force: z.boolean().optional().default(false) });
 export const MemorySearchSchema = z.object({ q: z.string().min(1), scopes: z.array(RawScopeSchema).optional(), tags: z.array(z.string()).optional(), limit: z.number().int().min(1).max(100).optional().default(20), cursor: z.string().optional() });
 export const MemoryArchiveSchema = z.object({ scope: ScopeSchema, key: z.string().min(1).max(512) });

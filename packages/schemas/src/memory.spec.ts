@@ -312,3 +312,12 @@ describe('LIST_PREVIEW_CHARS', () => {
     expect(LIST_PREVIEW_CHARS).toBeLessThan(MAX_VALUE_BYTES);
   });
 });
+
+describe('MemoryListSchema host rejects the empty string', () => {
+  // An empty host previously parsed, then fell through the handlers' `if (host)`
+  // guard as a silently UNFILTERED read — the caller asked to narrow and got
+  // everything. Reject it at the schema, matching ListInputSchema and the edge.
+  it('rejects an empty host', () => {
+    expect(MemoryListSchema.safeParse({ scope: 'global', host: '' }).success).toBe(false);
+  });
+});

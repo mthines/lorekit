@@ -38,7 +38,7 @@ export const PURGE_RETENTION_DAYS_DEFAULT = 30;
  * `PURGE_RETENTION_DAYS_DEFAULT` precedent directly above: this file is
  * self-contained Deno and the authoritative declaration is
  * `packages/schemas/src/memory.ts` (`LIST_PREVIEW_CHARS`), kept honest by
- * `list-view.spec.ts`.
+ * `packages/mcp-core/src/list-view-parity.spec.ts`.
  */
 const LIST_PREVIEW_CHARS = 200;
 
@@ -63,6 +63,12 @@ interface ListRow {
  * `value_bytes` is the BYTE length (via TextEncoder), not `String.length` —
  * the number is meant to be comparable with `MAX_VALUE_BYTES`, which is also
  * bytes, and a multi-byte body would otherwise under-report.
+ *
+ * `preview` slices `[...value]`, NOT `value.slice()`. String indices are UTF-16
+ * code units, so cutting at a fixed index can land between a surrogate pair and
+ * emit a lone half — an unpaired surrogate is not valid UTF-8 and survives a
+ * JSON round-trip as U+FFFD. Spreading iterates code points, so an emoji or a
+ * non-BMP character is either whole or absent.
  */
 function projectListEntry(row: ListRow, summarize: boolean) {
   if (!summarize) return row;
@@ -70,7 +76,7 @@ function projectListEntry(row: ListRow, summarize: boolean) {
   return {
     ...rest,
     value_bytes: new TextEncoder().encode(value ?? '').length,
-    preview: (value ?? '').slice(0, LIST_PREVIEW_CHARS),
+    preview: [...(value ?? '')].slice(0, LIST_PREVIEW_CHARS).join(''),
   };
 }
 

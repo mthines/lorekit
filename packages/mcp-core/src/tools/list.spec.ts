@@ -262,3 +262,38 @@ describe('list view projection', () => {
     await expect(list(db, { scope: 'global', view: 'brief' })).rejects.toThrow();
   });
 });
+
+// ── preview slicing is code-point-safe ───────────────────────────────────────
+// String indices are UTF-16 code units. A naive `.slice(0, 200)` can cut
+// between a surrogate pair and emit a lone half, which is not valid UTF-8 and
+// round-trips through JSON as U+FFFD.
+
+describe('list summary preview never splits a surrogate pair', () => {
+  it('does not emit a lone surrogate when the cut lands mid-pair', async () => {
+    // Each 😀 is two UTF-16 code units, so a 200-unit cut of 150 emoji lands
+    // exactly on a pair boundary under the naive slice; offset it by one BMP
+    // char so the naive cut would split the 100th emoji.
+    const value = 'x' + '😀'.repeat(150);
+    const db = makeDb([{ ...fakeEntry, value }]);
+    const result = await list(db, { scope: 'global', view: 'summary' });
+    const { preview } = result.entries[0] as { preview: string };
+    for (const unit of preview) {
+      const code = unit.codePointAt(0) as number;
+      expect(code >= 0xd800 && code <= 0xdfff).toBe(false);
+    }
+  });
+
+  it('counts the cap in code points, so the preview is 200 characters', async () => {
+    const db = makeDb([{ ...fakeEntry, value: '😀'.repeat(400) }]);
+    const result = await list(db, { scope: 'global', view: 'summary' });
+    const { preview } = result.entries[0] as { preview: string };
+    expect([...preview]).toHaveLength(LIST_PREVIEW_CHARS);
+  });
+
+  it('still reports value_bytes over the whole body, not the preview', async () => {
+    const db = makeDb([{ ...fakeEntry, value: '😀'.repeat(400) }]);
+    const result = await list(db, { scope: 'global', view: 'summary' });
+    // 4 UTF-8 bytes per emoji.
+    expect(result.entries[0]).toMatchObject({ value_bytes: 1600 });
+  });
+});

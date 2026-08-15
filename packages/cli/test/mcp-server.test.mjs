@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { listScopes } from '../src/mcp-server.mjs';
+import { listScopes, projectListView, LIST_PREVIEW_CHARS } from '../src/mcp-server.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 
@@ -387,5 +387,52 @@ describe('memory.scopes dispatch', () => {
     // enumeration that found nothing, and must not read as an error.
     const out = await listScopes({ async listScopes() { return []; } });
     assert.deepEqual(out, { ok: true, scopes: [] });
+  });
+});
+
+// ── memory.list view projection ──────────────────────────────────────────────
+// The stdio server mirrors the hosted MCP contract, so `view: "summary"` must
+// behave identically here even though the REST route it reads has no such
+// parameter — the projection is applied client-side in the dispatcher.
+
+describe('projectListView', () => {
+  test('passes a full view through untouched', () => {
+    const result = { ok: true, entries: [{ key: 'k', value: 'body', tags: [] }] };
+    assert.deepEqual(projectListView(result, 'full'), result);
+  });
+
+  test('passes an absent view through untouched', () => {
+    const result = { ok: true, entries: [{ key: 'k', value: 'body', tags: [] }] };
+    assert.deepEqual(projectListView(result, undefined), result);
+  });
+
+  test('omits value and adds value_bytes + preview in summary view', () => {
+    const result = { ok: true, entries: [{ key: 'k', value: 'body', tags: ['t'] }] };
+    const projected = projectListView(result, 'summary');
+    assert.equal('value' in projected.entries[0], false);
+    assert.equal(projected.entries[0].value_bytes, 4);
+    assert.equal(projected.entries[0].preview, 'body');
+    assert.deepEqual(projected.entries[0].tags, ['t']);
+  });
+
+  test('reports value_bytes in UTF-8 bytes, not UTF-16 units', () => {
+    const result = { ok: true, entries: [{ key: 'k', value: 'é', tags: [] }] };
+    assert.equal(projectListView(result, 'summary').entries[0].value_bytes, 2);
+  });
+
+  test('never splits a surrogate pair at the preview cap', () => {
+    const value = 'x' + '\u{1F600}'.repeat(300);
+    const result = { ok: true, entries: [{ key: 'k', value, tags: [] }] };
+    const { preview } = projectListView(result, 'summary').entries[0];
+    for (const unit of preview) {
+      const code = unit.codePointAt(0);
+      assert.equal(code >= 0xd800 && code <= 0xdfff, false);
+    }
+    assert.equal([...preview].length, LIST_PREVIEW_CHARS);
+  });
+
+  test('leaves a failed store result alone', () => {
+    const failed = { ok: false, error: 'nope' };
+    assert.deepEqual(projectListView(failed, 'summary'), failed);
   });
 });
