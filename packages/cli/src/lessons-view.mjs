@@ -40,7 +40,7 @@ export function scopeList({ projectScope, branchScope, repoScope } = {}) {
 // deliberately small and in lockstep with that source, including the 64-char
 // host clamp. Lets the offline store, whose rows carry no kind/host column,
 // still be filtered and badged by taxonomy from the tags it does store.
-function inferKindHostFromTags(tags) {
+export function inferKindHostFromTags(tags) {
   if (!Array.isArray(tags)) return {};
   for (const tag of tags) {
     if (tag === 'loop::review-outcomes') return { kind: 'bus', host: 'review' };

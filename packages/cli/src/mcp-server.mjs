@@ -30,6 +30,7 @@ import { createStore } from './store/index.mjs';
 import { createRemoteStore } from './store/remote.mjs';
 import { deriveOrigin, mergeOrigin } from './origin.mjs';
 import { readScopeInventory } from './store/scope-inventory.mjs';
+import { inferKindHostFromTags } from './lessons-view.mjs';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_INFO = { name: 'lorekit-local', version: '1.0.0' };
@@ -109,8 +110,8 @@ export const MEMORY_TOOL_DEFS = [
         tags: { type: 'array', items: { type: 'string' } },
         limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
         cursor: { type: 'string', description: 'Opaque cursor from a previous response\'s nextCursor. Omit to start from the first page.' },
-        kind: { type: 'string', enum: ['lesson', 'bus', 'signal'], description: 'Filter to one bucket family. Remote store only — the local store has no kind/host columns.' },
-        host: { type: 'string', description: 'Filter to the owning skill or agent, e.g. `reviewer`. Remote store only.' },
+        kind: { type: 'string', enum: ['lesson', 'bus', 'signal'], description: 'Filter to one bucket family. Narrowed server-side against the remote store; post-filtered client-side against the local store, whose rows carry no kind/host columns and are classified from their loop:: tag.' },
+        host: { type: 'string', description: 'Filter to the owning skill or agent, e.g. `reviewer`. Same server-side/client-side split as kind.' },
         view: { type: 'string', enum: ['full', 'summary'], default: 'full', description: 'summary omits each entry\'s value and returns value_bytes + a 200-character preview instead.' },
       },
     },
@@ -219,12 +220,65 @@ export const TOOL_DEFS = [...MEMORY_TOOL_DEFS, ...ORG_TOOL_DEFS];
 /** Characters of `value` echoed in a `view: "summary"` entry's `preview`. */
 export const LIST_PREVIEW_CHARS = 200;
 
+/** The closed `view` vocabulary, mirroring `MemoryListViewSchema`. */
+const LIST_VIEWS = ['full', 'summary'];
+
+/** The closed `kind` vocabulary, mirroring `MemoryKindSchema`. */
+const MEMORY_KINDS = ['lesson', 'bus', 'signal'];
+
+/**
+ * Validate the taxonomy/projection arguments of a `memory.list` call.
+ *
+ * Every other surface REJECTS an out-of-vocabulary value — the edge throws
+ * `UserInputError`, `ListInputSchema` fails the parse. Letting a typo fall
+ * through to the default here would make `lorekit mcp` the one path where
+ * `view: "sumary"` silently returns full bodies, or `kind: "lessons"` silently
+ * returns every bucket. Throwing keeps the contract uniform.
+ */
+function validateListArgs(a = {}) {
+  if (a.view !== undefined && !LIST_VIEWS.includes(a.view)) {
+    throw new Error(`Invalid view "${a.view}": expected "full" or "summary"`);
+  }
+  if (a.kind !== undefined && !MEMORY_KINDS.includes(a.kind)) {
+    throw new Error(`Invalid kind "${a.kind}": expected "lesson", "bus" or "signal"`);
+  }
+  if (a.host !== undefined && (typeof a.host !== 'string' || a.host.length === 0 || a.host.length > 64)) {
+    throw new Error('Invalid host: expected a non-empty string of at most 64 characters');
+  }
+}
+
+/**
+ * Post-filter a list result by `kind` / `host`.
+ *
+ * The remote store forwards both to `GET /memories` and they are narrowed
+ * server-side; the LOCAL store has no kind/host columns and ignores them
+ * entirely, so without this a local call that asked to narrow would get the
+ * whole scope back and look filtered. This is the same post-filter the read
+ * commands already apply in `gather()`, for the same reason — and it is
+ * idempotent over already-narrowed remote rows.
+ *
+ * Taxonomy is taken from the stored columns when present, else inferred from
+ * the `loop::…` tag, so an offline row and a pre-`00056` remote row both filter
+ * the way a caller expects.
+ */
+function filterListTaxonomy(result, { kind, host } = {}) {
+  if ((!kind && !host) || !result?.ok || !Array.isArray(result.entries)) return result;
+  const entries = result.entries.filter((e) => {
+    const inferred = inferKindHostFromTags(e?.tags);
+    const k = e?.kind ?? inferred.kind ?? null;
+    const h = e?.host ?? inferred.host ?? null;
+    return (!kind || k === kind) && (!host || h === host);
+  });
+  return { ...result, entries };
+}
+
 /**
  * Apply the `view` projection to a store's list result.
  *
- * `full` (and any absent/unknown value) passes the result through untouched.
- * `summary` swaps each entry's `value` for its byte size and a bounded prefix,
- * so a discovery read costs an index instead of every body.
+ * `full` (and an absent value) passes the result through untouched. `summary`
+ * swaps each entry's `value` for its byte size and a bounded prefix, so a
+ * discovery read costs an index instead of every body. An out-of-vocabulary
+ * value never reaches here — `validateListArgs` rejects it first.
  *
  * The slice is over `[...value]`, NOT `value.slice()`: JS string indices are
  * UTF-16 code units, so a naive cut can land between a surrogate pair and emit
@@ -244,6 +298,12 @@ export function projectListView(result, view) {
   };
 }
 
+/** The full `memory.list` post-processing chain: validate → filter → project. */
+export async function listWithFilters(store, a = {}) {
+  validateListArgs(a);
+  return projectListView(filterListTaxonomy(await store.list(a), a), a.view);
+}
+
 // tool name → (store, args, ctx) → store result. The store destructures the
 // args it needs, so the raw `arguments` object is passed straight through.
 // `ctx.root` is the resolved project root (`--dir`), NOT the process cwd — an
@@ -254,12 +314,13 @@ const MEMORY_DISPATCH = {
   // with anything the caller DID pass taking precedence.
   'memory.write': (store, a, ctx) => store.write({ ...a, ...withDerivedOrigin(a, ctx) }),
   'memory.read': (store, a) => store.read(a),
-  // `view` is projected client-side rather than forwarded. The remote store
-  // reads `GET /memories`, which has no `view` parameter — only the MCP tool
-  // does — and the local store has no server to ask. Projecting here keeps the
-  // stdio server's contract identical to the hosted one either way, which is
-  // the whole point of `MEMORY_TOOL_DEFS` mirroring the catalog.
-  'memory.list': async (store, a) => projectListView(await store.list(a), a?.view),
+  // `view` is projected and `kind`/`host` post-filtered client-side rather than
+  // forwarded. The remote store reads `GET /memories`, which has no `view`
+  // parameter — only the MCP tool does — and the local store has neither the
+  // parameter nor the columns. Doing the work here keeps the stdio server's
+  // contract identical to the hosted one on both store backends, which is the
+  // whole point of `MEMORY_TOOL_DEFS` mirroring the catalog.
+  'memory.list': (store, a) => listWithFilters(store, a),
   'memory.search': (store, a) => store.search(a),
   'memory.delete': (store, a) => store.delete(a),
   'memory.archive': (store, a) => store.archive(a),

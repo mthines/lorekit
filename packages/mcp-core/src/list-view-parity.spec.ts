@@ -5,7 +5,7 @@ import { LIST_PREVIEW_CHARS as SCHEMA_PREVIEW_CHARS } from '@lorekit/schemas/mem
 import { LIST_PREVIEW_CHARS as CORE_PREVIEW_CHARS } from './tools/list.js';
 
 /**
- * `memory.list`'s `view: "summary"` preview length is declared in THREE places
+ * `memory.list`'s `view: "summary"` preview length is declared in FOUR places
  * that cannot import each other:
  *
  *   1. `packages/schemas/src/memory.ts`      — the authoritative declaration.
@@ -26,6 +26,7 @@ import { LIST_PREVIEW_CHARS as CORE_PREVIEW_CHARS } from './tools/list.js';
 const repoRoot = join(import.meta.dirname, '../../..');
 const edgeSource = readFileSync(join(repoRoot, 'supabase/functions/mcp/tools.ts'), 'utf8');
 const cliSource = readFileSync(join(repoRoot, 'packages/cli/src/mcp-server.mjs'), 'utf8');
+const coreListSource = readFileSync(join(repoRoot, 'packages/mcp-core/src/tools/list.ts'), 'utf8');
 
 /** The numeric literal a source file declares for the preview cap. */
 function declaredPreviewChars(source: string, where: string): number {
@@ -69,11 +70,12 @@ describe('memory.list summary preview is code-point-safe everywhere', () => {
   // A `.slice(0, N)` on a raw string cuts UTF-16 code units and can emit a lone
   // surrogate. Every implementation must spread to code points first. This is
   // asserted behaviourally in each package's own suite; here we guard the
-  // SHAPE across all three, because a future edit to one file is exactly how
-  // the three drift apart again.
+  // SHAPE across all three implementations, because a future edit to one file
+  // is exactly how they drift apart again.
   it.each([
     ['the edge function', edgeSource],
     ['the CLI stdio server', cliSource],
+    ['mcp-core', coreListSource],
   ])('%s spreads before slicing', (_name, source) => {
     expect(source).toMatch(/\[\.\.\.\(?value/);
     // The naive form must not survive anywhere near the preview cap.

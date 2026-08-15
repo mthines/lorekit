@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { listScopes, projectListView, LIST_PREVIEW_CHARS } from '../src/mcp-server.mjs';
+import { listScopes, projectListView, listWithFilters, LIST_PREVIEW_CHARS } from '../src/mcp-server.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 
@@ -434,5 +434,58 @@ describe('projectListView', () => {
   test('leaves a failed store result alone', () => {
     const failed = { ok: false, error: 'nope' };
     assert.deepEqual(projectListView(failed, 'summary'), failed);
+  });
+});
+
+describe('memory.list argument validation and taxonomy post-filter', () => {
+  const store = (entries) => ({ list: async () => ({ ok: true, entries }) });
+
+  test('rejects an out-of-vocabulary view instead of defaulting to full', async () => {
+    await assert.rejects(() => listWithFilters(store([]), { scope: 'global', view: 'sumary' }), /Invalid view/);
+  });
+
+  test('rejects an out-of-vocabulary kind', async () => {
+    await assert.rejects(() => listWithFilters(store([]), { scope: 'global', kind: 'lessons' }), /Invalid kind/);
+  });
+
+  test('rejects an empty host', async () => {
+    await assert.rejects(() => listWithFilters(store([]), { scope: 'global', host: '' }), /Invalid host/);
+  });
+
+  test('accepts the documented vocabulary', async () => {
+    const r = await listWithFilters(store([]), { scope: 'global', view: 'summary', kind: 'lesson', host: 'reviewer' });
+    assert.equal(r.ok, true);
+  });
+
+  test('post-filters local rows by host inferred from the loop:: tag', async () => {
+    // Local rows carry no kind/host columns — without the post-filter the whole
+    // scope comes back and looks narrowed.
+    const entries = [
+      { key: 'a', value: 'x', tags: ['loop::reviewer-lessons'] },
+      { key: 'b', value: 'y', tags: ['loop::aw-lessons'] },
+    ];
+    const r = await listWithFilters(store(entries), { scope: 'global', host: 'reviewer' });
+    assert.deepEqual(r.entries.map((e) => e.key), ['a']);
+  });
+
+  test('post-filters by kind inferred from the loop:: tag', async () => {
+    const entries = [
+      { key: 'a', value: 'x', tags: ['loop::reviewer-comment-relevance'] },
+      { key: 'b', value: 'y', tags: ['loop::aw-lessons'] },
+    ];
+    const r = await listWithFilters(store(entries), { scope: 'global', kind: 'signal' });
+    assert.deepEqual(r.entries.map((e) => e.key), ['a']);
+  });
+
+  test('prefers an explicit column over the inferred tag', async () => {
+    const entries = [{ key: 'a', value: 'x', tags: ['loop::aw-lessons'], host: 'reviewer' }];
+    const r = await listWithFilters(store(entries), { scope: 'global', host: 'reviewer' });
+    assert.equal(r.entries.length, 1);
+  });
+
+  test('leaves the result untouched when neither filter is given', async () => {
+    const entries = [{ key: 'a', value: 'x', tags: [] }];
+    const r = await listWithFilters(store(entries), { scope: 'global' });
+    assert.deepEqual(r.entries, entries);
   });
 });
