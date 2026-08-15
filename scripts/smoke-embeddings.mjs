@@ -171,7 +171,12 @@ async function main() {
     // returns confident nonsense across the boundary. This is the guard that
     // stops a future writer doing it, so it is worth proving on the real
     // database — a migration can be applied and a constraint still be absent.
-    let refused = false;
+    // The refusal must be THE pairing constraint, not merely "something went
+    // wrong". A bare `catch` here passed on an expired key, a network blip or a
+    // 404 — so the one check that proves the guard is live was the one that
+    // could report OK having proved nothing at all.
+    const PAIRING_CONSTRAINT = 'memories_embedding_model_pairing';
+    let refusedBy = null;
     try {
       await rest(base, key, '/memories', {
         method: 'POST',
@@ -180,10 +185,21 @@ async function main() {
           embedding: `[${Array.from({ length: EMBEDDING_DIMENSIONS }, () => 0).join(',')}]`,
         }),
       });
-    } catch {
-      refused = true;
+    } catch (e) {
+      refusedBy = String(e?.message ?? e);
     }
-    check(refused, 'a vector with no model is refused by the database');
+    const pairingHeld = refusedBy !== null && refusedBy.includes(PAIRING_CONSTRAINT);
+    check(
+      pairingHeld,
+      'a vector with no model is refused by the database',
+      // Only on failure — `check` prints the detail either way, and a reason
+      // beside a passing line reads as a warning that is not there.
+      pairingHeld
+        ? ''
+        : refusedBy === null
+          ? `the insert SUCCEEDED — ${PAIRING_CONSTRAINT} is missing from this database`
+          : `refused, but not by ${PAIRING_CONSTRAINT}: ${refusedBy.slice(0, 200)}`,
+    );
 
     log('');
     log(failures === 0 ? `PASS (probe latency ${latencyMs}ms)` : `FAIL — ${failures} check(s) failed`);

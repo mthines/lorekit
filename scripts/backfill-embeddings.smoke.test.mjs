@@ -301,4 +301,42 @@ describe('backfill resilience', () => {
     // above, which is the path a real outage takes.
     assert.match(stdout, /rows:\s+2/);
   });
+
+  test('passing the skip cap stops the run BEFORE it pays for another page', async () => {
+    // The cap used to be checked only between pages, while `skipIds` grows
+    // INSIDE one — so a page whose unembeddable rows carried the set past the
+    // cap still had its embeddable rows sent to the provider, and only then did
+    // the run stop. That is a paid call on a page already abandoned.
+    //
+    // Three pages of 90 unembeddable + 6 usable rows. The set reaches 90, 180,
+    // then 270 — so the cap is passed while reading page THREE, and page
+    // three's six usable rows must never reach the provider. Two embed calls,
+    // not three; the third is the regression.
+    const rows = [];
+    for (let block = 0; block < 3; block++) {
+      for (let i = 0; i < 90; i++) {
+        rows.push({ id: `00000000-0000-0000-0000-e${block}${String(i).padStart(11, '0')}`,
+                    key: '', value: '   ', embedding: null, embedding_model: null });
+      }
+      for (let i = 0; i < 6; i++) {
+        rows.push({ id: `00000000-0000-0000-0000-u${block}${String(i).padStart(11, '0')}`,
+                    key: `k${block}${i}`, value: `lesson ${block}${i}`, embedding: null, embedding_model: null });
+      }
+    }
+
+    const { stdout, calls } = await withUpstreams({ rows, embed: okEmbed }, async ({ base, calls }) => {
+      const res = await runBackfill(base);
+      return { ...res, calls };
+    });
+
+    assert.equal(
+      calls.embed, 2,
+      `the provider must be called twice, not once per page: the run passes the skip cap while `
+      + `reading page three and must stop before embedding it (saw ${calls.embed})`,
+    );
+    assert.match(
+      stdout, /work remains/,
+      'a run that stops with rows still unprocessed must not claim completion',
+    );
+  });
 });

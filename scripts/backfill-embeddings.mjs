@@ -327,15 +327,31 @@ async function main() {
   // page is the same page — see the properties block above.
   const skipIds = new Set();
 
+  // Checked wherever `skipIds` GROWS, not only between pages. The exclusion
+  // list travels in the URL, and the growth sites are inside a page — a page of
+  // unembeddable rows, then one add per failed batch — so a between-pages-only
+  // check let the set reach the cap PLUS a whole page before anything fired,
+  // overshooting the URL budget this cap exists to protect.
+  //
+  // Stopping early also stops SPENDING: without this the run kept embedding the
+  // remainder of a page it had already decided to abandon.
+  //
+  // The residual overshoot is one batch group, and it is irreducible — a failed
+  // group must be excluded whole or its rows are served again forever, which is
+  // the livelock this set exists to prevent. So the honest bound is
+  // `MAX_SKIP_IDS + args.batchSize`, and that is what the URL must accommodate.
+  const overSkipCap = () => skipIds.size > MAX_SKIP_IDS;
+
   for (;;) {
     if (args.limit != null && done >= args.limit) break;
     const want = args.limit != null ? Math.min(args.batchSize, args.limit - done) : args.batchSize;
 
-    // The exclusion list travels in the URL, so it cannot grow without bound.
     // Stopping is the honest outcome: what is left is what this run has already
     // proven it cannot process, and the counts below tell the operator what to
-    // fix before rerunning.
-    if (skipIds.size > MAX_SKIP_IDS) {
+    // fix before rerunning. `overSkipCap` is also checked at each growth site
+    // inside the page below — this one catches a run that arrives here already
+    // over, so the two together bound the URL.
+    if (overSkipCap()) {
       stoppedEarly = true;
       log(`  stopping: ${skipIds.size} row(s) could not be processed this run (see counts below)`);
       break;
@@ -366,8 +382,15 @@ async function main() {
       log(`  skipped ${empty} row(s) with no embeddable text`);
     }
     // `continue`, not `break`: the embeddable rows further down the ordering are
-    // still work this run should do.
+    // still work this run should do. The outer check at the top of the loop is
+    // what sees an oversized set — that is why this returns there rather than
+    // falling through.
     if (usable.length === 0) continue;
+
+    // A page of unembeddable rows can pass the cap on its own. Go back to the
+    // outer check rather than paying a provider for a page this run is about to
+    // abandon — the old code embedded the whole page first and stopped after.
+    if (overSkipCap()) continue;
 
     for (const group of batchInputs(usable, (u) => u.text, { maxItems: args.batchSize })) {
       batches += 1;
@@ -409,6 +432,10 @@ async function main() {
         failed += group.length;
         for (const u of group) skipIds.add(u.row.id);
         log(`  batch failed (${group.length} rows), continuing: ${String(e?.message ?? e).slice(0, 200)}`);
+        // Leave the PAGE, not just this group, once the cap is passed. A run
+        // failing every batch would otherwise keep calling a provider that is
+        // rejecting it — paying for each attempt — until the page ran out.
+        if (overSkipCap()) break;
         if (args.sleepMs) await sleep(args.sleepMs);
         continue;
       }

@@ -281,7 +281,12 @@ Five properties worth knowing before you run it on a large store:
   null would otherwise be served forever. That exclusion list travels in the
   URL, so it is capped at 200 rows; past the cap the run stops and prints
   `── backfill stopped early (work remains) ──` with a `stopped:` count instead
-  of `── backfill complete ──`. Fix what the failure lines name, then rerun —
+  of `── backfill complete ──`. The cap is checked wherever the list GROWS, not
+  only between pages — so passing it also stops the run **before** it pays a
+  provider for a page it has already decided to abandon. The set can still
+  overshoot by at most one batch (`200 + --batch-size`, so 296 by default):
+  a failed batch has to be excluded whole or its rows are served again forever,
+  which is the livelock the list exists to prevent. Fix what the failure lines name, then rerun —
   the next run starts from a clean exclusion list. The three headlines are
   therefore `complete` (nothing retryable left), `incomplete (work remains)`
   (the walk finished, some rows failed), and `stopped early (work remains)`
@@ -379,7 +384,11 @@ node scripts/smoke-embeddings.mjs --keep   # leave the artefacts for inspection
 It checks that the provider answers at the declared width (reporting latency),
 that a real vector round-trips through the column with its model, and that the
 both-or-neither CHECK is live on the real database rather than merely present in
-a migration file.
+a migration file. That last check requires the refusal to name
+`memories_embedding_model_pairing`: it previously accepted *any* thrown error,
+so an expired key or a network blip reported the constraint as live having
+proved nothing — the one check whose entire job is "do not trust the migration
+file" was itself trusting a bare `catch`.
 
 **It writes to a live tenant, so cleanup is the point.** Every artefact is
 minted through the same namespace contract the other live suites use — the name
