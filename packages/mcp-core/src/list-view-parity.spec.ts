@@ -72,13 +72,24 @@ describe('memory.list summary preview is code-point-safe everywhere', () => {
   // asserted behaviourally in each package's own suite; here we guard the
   // SHAPE across all three implementations, because a future edit to one file
   // is exactly how they drift apart again.
+  // Scope the assertion to the projection function itself. Grepping the whole
+  // file would pass on a `[...value` anywhere in it — including one in an
+  // unrelated helper — which is not evidence the preview is safe.
+  const PROJECTION_FN: Record<string, RegExp> = {
+    'the edge function': /function projectListEntry\([\s\S]*?\n}/,
+    'the CLI stdio server': /export function projectListView\([\s\S]*?\n}/,
+    'mcp-core': /function summarizeEntry\([\s\S]*?\n}/,
+  };
+
   it.each([
     ['the edge function', edgeSource],
     ['the CLI stdio server', cliSource],
     ['mcp-core', coreListSource],
-  ])('%s spreads before slicing', (_name, source) => {
-    expect(source).toMatch(/\[\.\.\.\(?value/);
-    // The naive form must not survive anywhere near the preview cap.
-    expect(source).not.toMatch(/value\s*\?\?\s*''\)\.slice\(0, LIST_PREVIEW_CHARS\)/);
+  ])('%s spreads before slicing', (name, source) => {
+    const fn = (PROJECTION_FN[name] as RegExp).exec(source)?.[0];
+    expect(fn, `projection function not found in ${name} — has it been renamed?`).toBeTruthy();
+    expect(fn).toMatch(/\[\.\.\.\(?value/);
+    // The naive form must not survive inside the projection.
+    expect(fn).not.toMatch(/value\s*\?\?\s*''\)\.slice\(0, LIST_PREVIEW_CHARS\)/);
   });
 });

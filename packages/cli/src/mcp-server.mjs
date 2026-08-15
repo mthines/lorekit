@@ -298,10 +298,60 @@ export function projectListView(result, view) {
   };
 }
 
-/** The full `memory.list` post-processing chain: validate → filter → project. */
+/**
+ * How many rows to ask the store for per requested row when a taxonomy filter
+ * is active, and the floor that over-fetch is never allowed to drop below.
+ *
+ * Both stores apply `limit` BEFORE this module can post-filter — `LocalStore`
+ * and `TwoTierStore` slice in `list()`, and the remote route pages server-side.
+ * Without an over-fetch, `{ limit: 5, host: 'reviewer' }` over a scope holding
+ * 5 `aw` rows then 5 `reviewer` rows asks for 5, gets the 5 `aw` rows, filters
+ * them all away, and answers with zero entries — a silently empty read that
+ * looks like "no reviewer lessons exist".
+ *
+ * Over-fetching cannot be exact (only the server knows the true distribution),
+ * so this is a heuristic with a hard ceiling to keep a pathological scope from
+ * dragging the whole store into memory. When the widened fetch still comes back
+ * saturated, the result carries `hasMore: true` so the caller knows the page
+ * was cut rather than exhausted.
+ */
+const TAXONOMY_OVERFETCH_FACTOR = 10;
+const TAXONOMY_OVERFETCH_MIN = 100;
+const TAXONOMY_OVERFETCH_MAX = 1000;
+
+/**
+ * The full `memory.list` post-processing chain: validate → fetch → filter →
+ * slice → project.
+ *
+ * The slice happens HERE rather than in the store whenever a taxonomy filter is
+ * active, because the store cannot honour both `limit` and a filter it does not
+ * implement. See `TAXONOMY_OVERFETCH_FACTOR` for why the fetch is widened.
+ */
 export async function listWithFilters(store, a = {}) {
   validateListArgs(a);
-  return projectListView(filterListTaxonomy(await store.list(a), a), a.view);
+  const filtering = Boolean(a.kind || a.host);
+  if (!filtering) return projectListView(await store.list(a), a.view);
+
+  const requested = a.limit ?? 50;
+  const widened = Math.min(
+    TAXONOMY_OVERFETCH_MAX,
+    Math.max(TAXONOMY_OVERFETCH_MIN, requested * TAXONOMY_OVERFETCH_FACTOR),
+  );
+  const raw = await store.list({ ...a, limit: widened });
+  const filtered = filterListTaxonomy(raw, a);
+  if (!filtered?.ok || !Array.isArray(filtered.entries)) return projectListView(filtered, a.view);
+
+  const page = filtered.entries.slice(0, requested);
+  // `hasMore` is true when this page was cut — either by our own slice, or
+  // because the widened fetch itself saturated and rows beyond it were never
+  // examined. Preserve an upstream `hasMore` too; the remote store sets it.
+  const truncated =
+    filtered.entries.length > requested ||
+    (Array.isArray(raw?.entries) && raw.entries.length >= widened);
+  return projectListView(
+    { ...filtered, entries: page, hasMore: Boolean(raw?.hasMore) || truncated },
+    a.view,
+  );
 }
 
 // tool name → (store, args, ctx) → store result. The store destructures the
@@ -508,7 +558,19 @@ export function createHandler(control, { root = process.cwd() } = {}) {
       const fn = MEMORY_DISPATCH[name];
       if (!fn) return errorReply(id, -32601, `Unknown tool: ${name}`);
 
-      const result = await fn(store, args, { root });
+      // A rejected ARGUMENT is a tool-level failure, not a broken transport.
+      // Letting the throw escape would answer JSON-RPC -32603 "Internal error",
+      // which tells the model nothing and contradicts what `toolResult`
+      // documents; the edge returns a `UserInputError` payload for the same
+      // typo. Surface it as `{ ok: false, error }` so the model can correct
+      // itself. Only argument validation is caught here — a store failure
+      // already comes back as `ok: false` rather than throwing.
+      let result;
+      try {
+        result = await fn(store, args, { root });
+      } catch (e) {
+        return toolResult(id, { ok: false, error: (e && e.message) || 'invalid arguments' });
+      }
       return toolResult(id, result);
     }
 

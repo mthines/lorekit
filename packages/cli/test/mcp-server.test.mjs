@@ -489,3 +489,58 @@ describe('memory.list argument validation and taxonomy post-filter', () => {
     assert.deepEqual(r.entries, entries);
   });
 });
+
+describe('memory.list over-fetches before post-filtering', () => {
+  // The stores slice to `limit` before this module can post-filter, so a naive
+  // implementation returns an empty page when the first `limit` rows all belong
+  // to a different bucket — a silently empty read that reads as "none exist".
+  const rows = (n, tag, prefix) =>
+    Array.from({ length: n }, (_, i) => ({ key: `${prefix}${i}`, value: 'x', tags: [tag] }));
+
+  // Honours `limit` the way LocalStore does: slice AFTER tag filtering, before
+  // returning. Records the limit it was asked for so the over-fetch is visible.
+  const slicingStore = (all) => {
+    const seen = {};
+    return {
+      seen,
+      list: async ({ limit }) => {
+        seen.limit = limit;
+        return { ok: true, entries: limit ? all.slice(0, limit) : all };
+      },
+    };
+  };
+
+  test('finds rows that sit beyond the requested limit', async () => {
+    const all = [...rows(5, 'loop::aw-lessons', 'aw'), ...rows(5, 'loop::reviewer-lessons', 'rv')];
+    const store = slicingStore(all);
+    const r = await listWithFilters(store, { scope: 'global', limit: 5, host: 'reviewer' });
+    assert.equal(r.entries.length, 5);
+    assert.deepEqual(r.entries.map((e) => e.key), ['rv0', 'rv1', 'rv2', 'rv3', 'rv4']);
+  });
+
+  test('widens the fetch it asks the store for', async () => {
+    const store = slicingStore(rows(10, 'loop::reviewer-lessons', 'rv'));
+    await listWithFilters(store, { scope: 'global', limit: 5, host: 'reviewer' });
+    assert.ok(store.seen.limit > 5, `expected an over-fetch, got limit=${store.seen.limit}`);
+  });
+
+  test('still honours the requested limit after filtering', async () => {
+    const store = slicingStore(rows(40, 'loop::reviewer-lessons', 'rv'));
+    const r = await listWithFilters(store, { scope: 'global', limit: 3, host: 'reviewer' });
+    assert.equal(r.entries.length, 3);
+    assert.equal(r.hasMore, true);
+  });
+
+  test('reports hasMore false when the filtered set fits the page', async () => {
+    const store = slicingStore(rows(2, 'loop::reviewer-lessons', 'rv'));
+    const r = await listWithFilters(store, { scope: 'global', limit: 10, host: 'reviewer' });
+    assert.equal(r.entries.length, 2);
+    assert.equal(r.hasMore, false);
+  });
+
+  test('does not widen the fetch when no taxonomy filter is given', async () => {
+    const store = slicingStore(rows(10, 'loop::reviewer-lessons', 'rv'));
+    await listWithFilters(store, { scope: 'global', limit: 5 });
+    assert.equal(store.seen.limit, 5);
+  });
+});

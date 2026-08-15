@@ -166,7 +166,7 @@ List all lessons for a scope — newest first by default, or best-first with `or
 | `host` | | Filter to the owning skill/agent, e.g. `reviewer`, `aw`, `ci-auto-fix` |
 | `view` | `full` | `full` returns each entry's complete `value`. `summary` omits `value` and returns `value_bytes` + a 200-character `preview` instead |
 
-**Returns:** `{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }`
+**Returns:** `{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — with `view: "summary"` each entry is `{ "key", "tags", "updated_at", "value_bytes", "preview" }` instead, and `value` is omitted entirely.
 
 - `recency` (default): pass `nextCursor` back as `cursor` to read the next page.
 - `rank`: a single bounded top-N page — `hasMore` is always `false` and `nextCursor` always `null`.
