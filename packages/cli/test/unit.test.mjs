@@ -1542,22 +1542,33 @@ describe('diversifyRankedLessons', () => {
     );
   });
 
-  test('diversify — recomputed scores align with the rank the list carries', () => {
-    const ranked = rankLessons([A1, A2, B], { now: NOW });
-    // The helper must score over the SAME set (set-relative salience), so its
-    // result equals selectDiverse fed scores computed with that population's max.
-    const maxSeen = Math.max(...ranked.map((e) => e.seenCount));
-    const scores = ranked.map((e) => scoreLesson(e, { now: NOW, maxSeenCount: maxSeen }));
-    assert.deepEqual(
-      diversifyRankedLessons(ranked, { now: NOW, k: 3 }).map((e) => e.key),
-      selectDiverse(ranked, 3, { scores }).map((e) => e.key),
-    );
+  test('diversify — the seed scores track the ranking clock, at ANY `now`', () => {
+    // The helper recomputes each entry's score to seed MMR, over the SAME set
+    // (set-relative salience), so its result equals selectDiverse fed scores
+    // computed at that clock with that population's max. Checked at TWO clocks:
+    // the recompute must use the caller's `now`, which is exactly why
+    // fetchLessons feeds ONE options object to both rankLessons and this — a
+    // `now` that differed from the ranking's would seed MMR off the wrong scores.
+    for (const clock of [NOW, NOW + 90 * DAY]) {
+      const ranked = rankLessons([A1, A2, B], { now: clock });
+      const maxSeen = Math.max(...ranked.map((e) => e.seenCount));
+      const scores = ranked.map((e) => scoreLesson(e, { now: clock, maxSeenCount: maxSeen }));
+      assert.deepEqual(
+        diversifyRankedLessons(ranked, { now: clock, k: 3 }).map((e) => e.key),
+        selectDiverse(ranked, 3, { scores }).map((e) => e.key),
+        `aligned at now=${clock}`,
+      );
+    }
   });
 
-  test('diversify — k caps the returned count', () => {
+  test('diversify — k caps the count, coercing the shapes a caller passes', () => {
     const ranked = rankLessons([A1, A2, B], { now: NOW });
     assert.equal(diversifyRankedLessons(ranked, { now: NOW, k: 2 }).length, 2);
-    assert.equal(diversifyRankedLessons(ranked, { now: NOW }).length, 3, 'no k → all');
+    assert.equal(diversifyRankedLessons(ranked, { now: NOW }).length, 3, 'no k (Infinity) → all');
+    // `numberOr` coercion: a stringy count caps, a non-finite/absent one is all.
+    assert.equal(diversifyRankedLessons(ranked, { now: NOW, k: '2' }).length, 2, "'2' → 2");
+    assert.equal(diversifyRankedLessons(ranked, { now: NOW, k: null }).length, 3, 'null → all');
+    assert.equal(diversifyRankedLessons(ranked, { now: NOW, k: 0 }).length, 0, '0 → none');
   });
 
   test('diversify — empty or non-array input is an empty result, never a throw', () => {

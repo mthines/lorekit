@@ -167,7 +167,16 @@ export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
   // first-appearance default — they agree today, but the hierarchy is
   // `readOrder`'s to state, not an artefact of how this function happens to
   // build its array.
-  const ranked = rankLessons(winners, { terms: [], now, scopeOrder: scope.readOrder });
+  // ONE options object feeds both the ranking and the diversification below, so
+  // the two can never drift: `diversifyRankedLessons` recomputes each entry's
+  // score to seed the MMR objective, and if its `terms`/`now`/`weights` differed
+  // from what `rankLessons` sorted on, those scores would not line up with the
+  // order — the near-identical `now` clock especially. Sharing the object makes
+  // that agreement structural rather than a thing two call sites have to keep in
+  // step by hand. `k` is diversification-only; `scopeOrder` is ranking-only and
+  // simply ignored by the diversifier's destructuring.
+  const rankOpts = { terms: [], now, scopeOrder: scope.readOrder };
+  const ranked = rankLessons(winners, rankOpts);
 
   // ── the scope map: EXACT counts when the store can enumerate ───────────────
   //
@@ -241,7 +250,7 @@ export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
   // "8 of 50" stays true no matter how the render is bounded.
   return {
     scope,
-    lessons: diversifyRankedLessons(ranked, { terms: [], now, k: HARD_LESSON_CEILING }),
+    lessons: diversifyRankedLessons(ranked, { ...rankOpts, k: HARD_LESSON_CEILING }),
     scopeCounts,
     applicable: ranked.length,
   };

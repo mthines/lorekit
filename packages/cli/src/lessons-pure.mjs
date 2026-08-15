@@ -738,7 +738,10 @@ export function diversifyRankedLessons(entries = [], {
   let maxSeenCount = 0;
   for (const e of list) maxSeenCount = Math.max(maxSeenCount, seenCountFrom(e));
   const scores = list.map((e) => scoreWithTerms(e, termSet, { now, weights, maxSeenCount, halfLifeDays }));
-  const limit = Number.isFinite(k) ? k : list.length;
+  // `numberOr` is the module's coercion convention: a non-finite `k` (the
+  // `Infinity` default, `null`, or a stringy `'40'`) resolves to a real cap —
+  // the default falls through to the whole list, `'40'` becomes 40 — rather than
+  // silently returning everything on a shape a caller plausibly passes.
+  const limit = numberOr(k, list.length);
   return selectDiverse(list, limit, { scores, lambda });
 }
-
