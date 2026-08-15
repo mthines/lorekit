@@ -1994,21 +1994,23 @@ test('RemoteStore.getEntry returns the entry for scope+key', async () => {
   assert.match(calls[0].url, /\/memories\?scope=global&key=k&limit=1$/);
 });
 
-test('RemoteStore.getEntry returns null for a missing key and for a failed read', async () => {
+test('RemoteStore.getEntry returns null for a miss but throws on a failed read', async () => {
   const missing = await captureRestCalls(
     (store) => store.getEntry({ scope: 'global', key: 'nope' }),
     { status: 200, body: JSON.stringify({ entries: [] }) },
   );
   assert.equal(missing.result, null);
 
-  // A failed read must not be reported as "absent" — but it must not throw
-  // either; migrate turns a null into an ADD and the write then surfaces the
-  // real error, rather than the read failing the whole run.
-  const failed = await captureRestCalls(
-    (store) => store.getEntry({ scope: 'global', key: 'k' }),
-    { status: 500, body: JSON.stringify({ error: 'boom' }) },
+  // A failed read is NOT an absence. Answering null would let a caller
+  // classifying ADD / UPDATE / NOOP treat an existing hosted lesson as new and
+  // overwrite it on the strength of a transient 500.
+  await assert.rejects(
+    () => captureRestCalls(
+      (store) => store.getEntry({ scope: 'global', key: 'k' }),
+      { status: 500, body: JSON.stringify({ error: 'boom' }) },
+    ),
+    (e) => e.name === 'StoreReadError' && /global::k/.test(e.message),
   );
-  assert.equal(failed.result, null);
 });
 
 test('RemoteStore.putEntry preserves created via created_at and sends the entry verbatim', async () => {
@@ -2039,6 +2041,10 @@ test('RemoteStore.putEntry preserves created via created_at and sends the entry 
     trigger: 'stuck-loop',
     created_at: '2024-01-02T03:04:05.000Z',
     origin_repo: 'mthines/lorekit',
+    // A permanent entry says so EXPLICITLY. Omitting the TTL fields is the
+    // RPC's 'keep' branch (migration 00031), which would leave an existing
+    // remote expiry in place and quietly keep a permanent lesson dying.
+    clear_ttl: true,
   });
   // The fidelity contract, asserted as an ABSENCE: the hosted write owns both
   // of these, so shipping them would be a client claiming a server-derived
@@ -2057,6 +2063,7 @@ test('RemoteStore.putEntry converts a live expires_at into remaining ttl_days', 
     { status: 201, body: '{}' },
   );
   assert.equal(calls[0].body.ttl_days, 10);
+  assert.equal('clear_ttl' in calls[0].body, false); // a TTL'd entry must not clear it
 });
 
 test('RemoteStore.putEntry clamps a TTL beyond the schema maximum instead of dropping it', async () => {
@@ -2079,6 +2086,10 @@ test('RemoteStore.putEntry refuses archived and expired entries without issuing 
   assert.equal(archived.result.ok, false);
   assert.equal(archived.result.unsupported, 'archived');
   assert.equal(archived.calls.length, 0);
+  // A refusal answers with the same envelope shape as a real write, so a
+  // caller never reads an undefined from one branch and a null from another.
+  assert.equal(archived.result.retryAfter, null);
+  assert.equal(archived.result.httpStatus, null);
 
   const expired = await captureRestCalls(
     (store) => store.putEntry(

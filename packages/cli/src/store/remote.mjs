@@ -29,6 +29,22 @@ function stripUndefined(obj) {
   return out;
 }
 
+/**
+ * A read that could not be answered — a transport failure or a non-2xx status,
+ * as opposed to "the lesson is not there".
+ *
+ * Exported so a caller can tell it from a programming error and degrade
+ * per-entry (report this one, keep going) instead of aborting a whole run.
+ * `result` carries the raw store envelope for the message the caller shows.
+ */
+export class StoreReadError extends Error {
+  constructor(message, result) {
+    super(message);
+    this.name = 'StoreReadError';
+    this.result = result;
+  }
+}
+
 // An absolute `expires_at` expressed as the hosted write's relative `ttl_days`.
 //
 // Returns `undefined` for "no expiry" (the field is then omitted, leaving the
@@ -238,6 +254,11 @@ class RemoteStore {
   //   converted  `expires_at` → `ttl_days`, the remaining whole days, clamped
   //              to the schema's 1–365 (a longer-lived TTL is clamped, not
   //              dropped — the alternative is silently making it permanent).
+  //              A PERMANENT entry sends `clear_ttl: true` rather than simply
+  //              omitting `ttl_days`: omission is the RPC's `'keep'` branch
+  //              (migration 00031), which leaves an existing remote
+  //              `expires_at` in place, so a permanent local lesson would
+  //              land on an expiring remote row and still die.
   //
   // Two states have no remote representation at all and are REFUSED rather
   // than silently rewritten, because writing them would resurrect a lesson the
@@ -255,30 +276,43 @@ class RemoteStore {
   // a remote destination classifies an archived counterpart as ADD, and the
   // write then revives it. That is the same thing the hosted `memory_write`
   // does for any write against an archived key, not a migrate-specific quirk.
+  //
+  // A FAILED read THROWS rather than answering null. Null is the answer to "no
+  // such lesson", and a caller that classifies ADD / UPDATE / NOOP acts on it:
+  // returning null for a transient 500 or a dropped connection would quietly
+  // reclassify an existing hosted lesson as new and overwrite it. The local
+  // store never throws here (a file read that fails is genuinely a miss), so
+  // this widens the contract only where the failure mode exists.
   async getEntry({ scope, key } = {}) {
     const res = await this.read({ scope, key });
-    return res.ok ? (res.entry ?? null) : null;
+    if (!res.ok) {
+      const reason = res.networkError || res.error?.message || 'read failed';
+      throw new StoreReadError(`remote read failed for ${scope}::${key}: ${reason}`, res);
+    }
+    return res.entry ?? null;
   }
 
   // Upsert one entry, as close to verbatim as the hosted write allows. See the
-  // fidelity table above for exactly which fields survive. Returns the same
-  // `{ ok, error, httpStatus, retryAfter, networkError }` envelope as `write`,
-  // plus `unsupported` on a refusal.
+  // fidelity table above for exactly which fields survive. Always returns the
+  // full `{ ok, error, httpStatus, retryAfter, networkError }` envelope `write`
+  // returns — a refusal fills the transport fields with null rather than
+  // omitting them, so a caller reading `retryAfter` never gets `undefined` from
+  // one branch and `null` from another — plus `unsupported` on a refusal.
   async putEntry(entry = {}, { now = new Date() } = {}) {
+    const refuse = (unsupported, message) => ({
+      ok: false,
+      unsupported,
+      error: { message },
+      httpStatus: null,
+      retryAfter: null,
+      networkError: null,
+    });
     if (entry?.archived_at) {
-      return {
-        ok: false,
-        unsupported: 'archived',
-        error: { message: 'archived entries cannot be written remotely — the hosted write revives them' },
-      };
+      return refuse('archived', 'archived entries cannot be written remotely — the hosted write revives them');
     }
     const ttl = remoteTtlDays(entry?.expires_at, now);
     if (ttl === 'expired') {
-      return {
-        ok: false,
-        unsupported: 'expired',
-        error: { message: 'expired entries cannot be written remotely — any TTL would re-date them into the future' },
-      };
+      return refuse('expired', 'expired entries cannot be written remotely — any TTL would re-date them into the future');
     }
     return this.write(stripUndefined({
       scope: entry.scope,
@@ -289,6 +323,9 @@ class RemoteStore {
       trigger: entry.trigger,
       created_at: entry.created,
       ttl_days: ttl,
+      // Explicit, not omitted — see the fidelity note above. `stripUndefined`
+      // keeps a `false`, so this reaches the body only as an intentional true.
+      clear_ttl: ttl === undefined ? true : undefined,
       origin_repo: entry.origin_repo,
       origin_branch: entry.origin_branch,
       origin_commit: entry.origin_commit,
