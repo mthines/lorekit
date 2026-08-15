@@ -11,6 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MIN_SESSION_START_MAX_CHARS } from '../src/control.mjs';
+import { createTwoTierStore } from '../src/store/index.mjs';
+import { deriveScope } from '../src/scope.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const REPO = fileURLToPath(new URL('../../../', import.meta.url));
@@ -343,6 +345,93 @@ test('SessionStart reads lessons from the MCP server and injects them', async ()
   } finally {
     server.close();
   }
+});
+
+// `hooks.sessionStart.maxLessons` end-to-end, through a REAL `.lorekit.json`.
+//
+// The unit tests in `hooks.test.mjs` hand `maxLessons` straight to
+// `fetchLessons`/`formatLessons`, so they would stay green in a build where
+// `control.mjs` resolved the key perfectly and `hook.mjs` simply never passed it
+// on. This is the test that goes red in that world: the only input is a config
+// file on disk, and the assertion is on the block the real binary emitted.
+//
+// LOCAL mode, not the mock REST server the tests above use, because this
+// assertion only needs a store the binary can read — and an on-disk one has no
+// socket to fail on.
+//
+// HOW THE FETCH IS OBSERVED, since a local store's `list` reports no limit back:
+// by ARITHMETIC on the candidate pool, which is the same thing the user
+// experiences. Two scopes are seeded (`project::<tmpdir>` and `global`) with 90
+// lessons each. At the default the read takes 25 per scope, so only 50
+// candidates exist — the 40-line ceiling binds and 40 lines are injected. At
+// `maxLessons: 80` an unchanged 25-row read could offer at most 50 candidates,
+// so 80 injected lines are UNREACHABLE unless the fetch grew too. The second
+// assertion therefore pins both halves of the change at once.
+test('SessionStart: hooks.sessionStart.maxLessons raises the injected line count AND the fetch', async () => {
+  const tmpProject = fs.mkdtempSync(path.join(os.tmpdir(), 'lk-maxlessons-'));
+  const tmpHome = freshStateDir();
+  const scope = deriveScope(tmpProject);
+  const store = createTwoTierStore({ home: tmpHome, project: path.join(tmpProject, '.lorekit') });
+
+  // Seeded across BOTH readOrder scopes so the default 40-line ceiling has more
+  // than 25 candidates to bind against, and keyed per scope so cross-scope
+  // precedence (first-seen wins) never collapses the pool.
+  for (const [n, s] of scope.readOrder.entries()) {
+    for (let i = 0; i < 90; i += 1) {
+      // The `s${n}` prefix is load-bearing: identity is `scope::key`, and the
+      // read resolves cross-scope precedence first-seen-wins, so reusing one key
+      // set across both scopes would collapse the pool to a single scope's worth.
+      // eslint-disable-next-line no-await-in-loop
+      await store.write({ scope: s, key: `s${n}-seeded-${i}`, value: `lesson body ${i}` });
+    }
+  }
+
+  const env = { LOREKIT_HOME: tmpHome, LOREKIT_MODE: 'local', LOREKIT_MCP_URL: '', LOREKIT_TOKEN: '' };
+  const lessonLines = (stdout) => JSON.parse(stdout).hookSpecificOutput.additionalContext
+    .split('\n').filter((l) => l.startsWith('- ')).length;
+  const runWith = (config, sessionId) => {
+    fs.writeFileSync(path.join(tmpProject, '.lorekit.json'), JSON.stringify(config));
+    return runHookAsync({
+      adapter: 'claude',
+      dir: tmpProject,
+      input: { hook_event_name: 'SessionStart', session_id: sessionId, cwd: tmpProject },
+      env,
+    });
+  };
+
+  assert.ok(scope.readOrder.length >= 2, 'precondition — a temp dir reads at least project + global');
+
+  // BASELINE. A budget big enough that only the LINE ceiling can bind, and no
+  // `maxLessons` — so this pins the unconfigured behaviour exactly, and makes
+  // the second run's difference attributable to the one key that changed.
+  const base = await runWith({ 'hooks.sessionStart.maxChars': 20000 }, 'ml-default');
+  assert.equal(base.code, 0);
+  assert.equal(
+    lessonLines(base.stdout),
+    40,
+    'unconfigured: the historic 40-line ceiling binds, from a 25-row-per-scope read',
+  );
+
+  // RAISED. Same store, same budget, one extra key.
+  const raised = await runWith(
+    { 'hooks.sessionStart.maxChars': 20000, 'hooks.sessionStart.maxLessons': 80 },
+    'ml-raised',
+  );
+  assert.equal(raised.code, 0);
+  assert.equal(
+    lessonLines(raised.stdout),
+    80,
+    'raised: 80 lines is only reachable if the per-scope fetch grew past 25 as well',
+  );
+
+  // CLAMPED. An out-of-range value is honoured at the bound rather than
+  // rejected, exactly as `maxChars`/`loopCap` behave.
+  const clamped = await runWith(
+    { 'hooks.sessionStart.maxChars': 20000, 'hooks.sessionStart.maxLessons': 4000 },
+    'ml-clamped',
+  );
+  assert.equal(clamped.code, 0);
+  assert.equal(lessonLines(clamped.stdout), 180, 'clamped to 200; the 2×90 seeded pool is what is left');
 });
 
 // ── UserPromptSubmit: the per-turn relevance pull, as a PROCESS ──────────────

@@ -76,14 +76,25 @@ import { FRICTION_FAILURE, FRICTION_STUCK_LOOP } from './friction.mjs';
 // that normaliser.
 const HARD_LESSON_CEILING = MAX_SESSION_START_MAX_LESSONS;
 
-// The line ceiling a caller actually gets: their `maxLessons` rounded into
+// The line ceiling a caller actually gets: their `maxLessons` rounded down into
 // [1, HARD_LESSON_CEILING], or the default when the value is unusable. `1` and
 // not the config floor of 3 — this is the last-resort clamp on an already
 // normalised number, and a caller that deliberately asks for one line should get
 // one, not three. Pure.
+//
+// UNUSABLE INCLUDES ZERO AND NEGATIVES, not just NaN, and that is the whole
+// reason this reads as it does rather than as a bare `Math.max(1, …)`.
+// `Number(null)` is `0` and `Number('')` is `0`, so a caller passing an explicit
+// `maxLessons: null` — which the option default does NOT catch, since only
+// `undefined` triggers a destructuring default — would clamp UP to a ONE-LINE
+// block: a near-total, silent loss of the injection dressed up as a valid
+// ceiling. A zero or negative ceiling is not a request for a short block, it is
+// a value that has no reading, so it falls back to the default exactly like
+// `normalizeSessionStartMaxLessons` returning `null` does. An explicit `1` is a
+// reading, and still gets one line.
 function resolveLessonCeiling(maxLessons) {
   const n = Number(maxLessons);
-  if (!Number.isFinite(n)) return DEFAULT_SESSION_START_MAX_LESSONS;
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_SESSION_START_MAX_LESSONS;
   return Math.min(HARD_LESSON_CEILING, Math.max(1, Math.round(n)));
 }
 
