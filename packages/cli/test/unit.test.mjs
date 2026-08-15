@@ -2171,3 +2171,19 @@ test('RemoteStore.write coalesces every envelope field on a network failure', as
   assert.equal(result.error, null);
   assert.match(result.networkError, /socket hang up/);
 });
+
+test('RemoteStore.write reports an unconfigured store as unusable, not as a blank failure', async () => {
+  let called = false;
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => { called = true; throw new Error('should not be reached'); };
+  try {
+    const res = await createRemoteStore({ endpoint: null, token: null })
+      .write({ scope: 'global', key: 'k', value: 'v' });
+    assert.equal(res.ok, false);
+    assert.equal(res.unusable, true); // the reason, not just "it failed"
+    assert.equal(res.httpStatus, null);
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = original;
+  }
+});

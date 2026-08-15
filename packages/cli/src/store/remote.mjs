@@ -238,6 +238,11 @@ class RemoteStore {
       httpStatus: res.httpStatus ?? null,
       retryAfter: res.retryAfter ?? null,
       networkError: res.networkError ?? null,
+      // `_rest` short-circuits an unconfigured store with `{ ok:false,
+      // unusable:true }` and no error at all, so without this the caller sees
+      // a failure with every field null and no reason. Passed through the way
+      // `listScopes` already does.
+      unusable: res.unusable ?? false,
     };
   }
 
@@ -271,6 +276,15 @@ class RemoteStore {
   //              (migration 00031), which leaves an existing remote
   //              `expires_at` in place, so a permanent local lesson would
   //              land on an expiring remote row and still die.
+  //   sticky     `origin_*`. The RPC's conflict clause coalesces provenance
+  //              (`coalesce(excluded.origin_repo, memories.origin_repo)`, and
+  //              likewise for branch/commit/pr) so a write that does not know
+  //              a field cannot erase what an earlier one recorded. A migrated
+  //              entry with NO provenance therefore leaves whatever the hosted
+  //              row already had; it cannot clear it, by design, and there is
+  //              no parameter that would. `source_agent` and `trigger` are NOT
+  //              coalesced (`= excluded.*`), so those two do land verbatim,
+  //              including a null.
   //
   // Two states have no remote representation at all and are REFUSED rather
   // than silently rewritten, because writing them would resurrect a lesson the
