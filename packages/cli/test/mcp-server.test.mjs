@@ -356,7 +356,8 @@ describe('memory.scopes dispatch', () => {
     const out = await listScopes({
       async listScopes() { return [{ scope: 'global' }, { scope: 'x', count: 'lots' }, {}]; },
     });
-    // Sorted by scope ascending, so the empty-scope row leads.
+    // All counts coerce to 0, so the scope-asc tiebreak decides and the
+    // empty-scope row leads.
     assert.deepEqual(out.scopes, [
       { scope: '', count: 0 },
       { scope: 'global', count: 0 },
@@ -364,16 +365,20 @@ describe('memory.scopes dispatch', () => {
     ]);
   });
 
-  test('sorts by scope ascending regardless of the store shape', async () => {
+  test('sorts by count desc then scope asc regardless of the store shape', async () => {
     // The documented contract (docs/mcp-tools.md, the tool catalog, llms.txt).
-    // The hosted RPC already orders by scope asc; the local/two-tier stores
-    // return walk order, so the normaliser is what makes the two agree.
+    // The hosted RPC already orders by count desc then scope asc (00065); the
+    // local/two-tier stores return walk order, so the normaliser is what makes
+    // the two agree. The counts are chosen so count-desc does NOT coincide with
+    // scope-asc (the busiest scope, repo::acme/api, sorts alphabetically last),
+    // and global/project::z tie at 2 so the scope-asc tiebreak is exercised too.
     const unsorted = [
-      { scope: 'repo::acme/api', count: 1 },
+      { scope: 'repo::acme/api', count: 5 },
       { scope: 'global', count: 2 },
       { scope: 'branch::acme/api::main', count: 3 },
+      { scope: 'project::z', count: 2 },
     ];
-    const expected = ['branch::acme/api::main', 'global', 'repo::acme/api'];
+    const expected = ['repo::acme/api', 'branch::acme/api::main', 'global', 'project::z'];
 
     const local = await listScopes({ async listScopes() { return unsorted; } });
     assert.deepEqual(local.scopes.map((s) => s.scope), expected);

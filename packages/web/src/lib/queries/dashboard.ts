@@ -72,8 +72,8 @@ async function fetchDashboardData(signal?: AbortSignal): Promise<DashboardData> 
       type: scopeType(scope),
       label: scope.split('::').pop() ?? scope,
       total: count,
-      // The endpoint sorts by scope; the cards are ordered by recency, which
-      // is what `aggregateByScope` used to do client-side.
+      // The endpoint sorts by count desc; the cards are ordered by recency,
+      // which is what `aggregateByScope` used to do client-side.
       lastActivity: last_activity ?? '',
     }))
     .sort((a, b) => b.lastActivity.localeCompare(a.lastActivity));

@@ -300,7 +300,7 @@ It is **store-wide**, not limited to any working directory — unlike the `lorek
 }
 ```
 
-**Returns:** `{ "scopes": [{ "scope", "count", "last_activity" }] }`, sorted by scope ascending.
+**Returns:** `{ "scopes": [{ "scope", "count", "last_activity" }] }`, sorted by count desc then scope asc (busiest scope first).
 
 ```json
 {
