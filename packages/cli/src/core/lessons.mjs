@@ -111,8 +111,12 @@ const MAX_SCAN_CHARS = 4096;
 // is the follow-up that replaces this.
 export const SCOPE_READ_LIMIT = 25;
 
-export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
-  const scope = deriveScope(cwd);
+// `scope` may be injected instead of derived from `cwd` — a seam for callers
+// that already hold a resolved scope and for tests that need a deterministic
+// branch (deriveScope shells out to git, so the ambient branch — often a
+// detached `HEAD` in CI — cannot exercise the branch-seeded read otherwise).
+export async function fetchLessons(store, cwd, { now = Date.now(), scope: scopeOverride = null } = {}) {
+  const scope = scopeOverride || deriveScope(cwd);
   // Issued BEFORE the per-scope read loop and awaited after it. Nothing in the
   // inventory depends on the loop, so awaiting it afterwards would cost a
   // remote store one extra SERIAL round-trip on the session-start path; started
@@ -177,21 +181,23 @@ export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
   // narrow scope should instead be guaranteed floor space, that is a weighting
   // change in `rankLessons`, not something to re-derive here.
   //
-  // `terms: []` is the SessionStart case: nothing has been asked yet, so the
-  // relevance factor contributes nothing and the order is recency + salience.
-  // `scopeOrder` is passed explicitly rather than left to the scorer's
-  // first-appearance default — they agree today, but the hierarchy is
-  // `readOrder`'s to state, not an artefact of how this function happens to
-  // build its array.
+  // The rank options (see `sessionRankOpts`): a relevance query distilled from
+  // the branch NAME, at the DEFAULT weight, so a session on `feat/embedding-…`
+  // nudges embedding lessons up. Relevance only ever LIFTS an on-topic lesson —
+  // a non-matching lesson scores relevance 0, so a branch that matches nothing
+  // does not reorder the read — which is why it need not (and must not, per the
+  // Σweights normalisation) be damped by a smaller weight. A trunk branch or
+  // detached HEAD yields no terms, and the read is recency + salience exactly as
+  // before. `scopeOrder` is passed explicitly rather than left to the scorer's
+  // first-appearance default — the hierarchy is `readOrder`'s to state, not an
+  // artefact of how this function happens to build its array.
   // ONE options object feeds both the ranking and the diversification below, so
-  // the two can never drift: `diversifyRankedLessons` recomputes each entry's
-  // score to seed the MMR objective, and if its `terms`/`now`/`weights` differed
-  // from what `rankLessons` sorted on, those scores would not line up with the
-  // order — the near-identical `now` clock especially. Sharing the object makes
-  // that agreement structural rather than a thing two call sites have to keep in
-  // step by hand. `k` is diversification-only; `scopeOrder` is ranking-only and
+  // the two can never drift on terms, weights OR the `now` clock:
+  // `diversifyRankedLessons` recomputes each entry's score to seed the MMR
+  // objective, and scored with different options those would not line up with the
+  // sorted order. `k` is diversification-only; `scopeOrder` is ranking-only and
   // simply ignored by the diversifier's destructuring.
-  const rankOpts = { terms: [], now, scopeOrder: scope.readOrder };
+  const rankOpts = sessionRankOpts(scope, now);
   const ranked = rankLessons(winners, rankOpts);
 
   // AUDIENCE CAP before diversification: no single self-improvement loop may
@@ -274,11 +280,12 @@ export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
   // session-start read. It seeds with the top-ranked lesson (score is still
   // 0.7 of the objective) and only spends the remaining 0.3 pushing down a
   // lesson that repeats one already shown — so the best lesson stays first and
-  // the set stops being a wall of duplicates. `terms: []` matches the
-  // `rankLessons` call above (relevance contributes nothing at session start),
-  // which the scores MUST agree with. The scope map and `applicable` still read
-  // from `ranked` — the map is a pointer to what EXISTS per scope, a question
-  // diversification does not change.
+  // the set stops being a wall of duplicates. Spreading `rankOpts` here (rather
+  // than restating terms/weights) is what keeps the diversifier's recomputed
+  // scores in agreement with the `rankLessons` sort above — same terms, same
+  // branch-relevance weight, same `now`. The scope map and `applicable` still
+  // read from `ranked` — the map is a pointer to what EXISTS per scope, a
+  // question diversification does not change.
   //
   // `applicable` is the honest denominator for the header — how many the reader
   // has, as opposed to how many fitted. It is counted BEFORE the ceiling, so
@@ -539,6 +546,53 @@ export function distilTerms(text) {
     if (terms.length >= MAX_TERMS) break;
   }
   return terms;
+}
+
+// Single-segment branch names that carry no topic: the trunk names a session is
+// most often on. A `<segment>/…` branch always has a leading type/author segment
+// (`feat`, `fix`, `claude`, `dependabot`, a username) that is never the topic —
+// see `branchQueryTerms` — so those words don't need listing here; this set is
+// only consulted for a branch with NO `/`.
+const TRUNK_BRANCHES = new Set(['main', 'master', 'develop', 'trunk', 'head']);
+
+// Distil a relevance query from the branch NAME only — owner/repo never enters,
+// because `deriveScope` keeps the raw branch in `scope.branch`. The leading
+// `/`-segment of a branch is a type or author by convention (`feat/…`,
+// `dependabot/…`, `alice/…`) and never the topic, so it is dropped WHOLESALE when
+// a `/` is present; the DESCRIPTION is then tokenised by the shared `distilTerms`
+// (so `MIN_TERM_LEN`, dedupe and the FTS-safe shape apply). A word like `release`
+// survives when it is in the description (`feat/release-notes`), because only the
+// FIRST segment is removed. Empty for a bare trunk name, a detached `HEAD`, or no
+// git — the read then behaves exactly as before. Pure and total.
+export function branchQueryTerms(scope) {
+  const branch = scope && typeof scope.branch === 'string' ? scope.branch : '';
+  if (!branch || branch === 'HEAD') return [];
+  const slash = branch.indexOf('/');
+  if (slash === -1) {
+    // No prefix segment: a bare trunk name carries no topic; anything else is
+    // its own description.
+    return TRUNK_BRANCHES.has(branch.toLowerCase()) ? [] : distilTerms(branch);
+  }
+  return distilTerms(branch.slice(slash + 1));
+}
+
+// The rank options for a session-start read of `scope` at `now` — THE wiring
+// seam, so the branch-seeding is unit-testable without a git checkout. The branch
+// query rides at the DEFAULT relevance weight, exactly like the prompt/failure
+// paths: it only ever LIFTS an on-topic lesson (a non-matching lesson scores
+// relevance 0, so a branch that matches nothing is byte-for-byte the old read),
+// and it is deliberately NOT damped by a smaller weight — reducing one factor's
+// weight shrinks the normaliser (Σweights) and rescales every score, which then
+// distorts the unscaled Jaccard term in `selectDiverse`'s MMR even for lessons
+// the branch never matched. `fetchLessons` feeds the ONE object this returns to
+// both `rankLessons` and (spread) the diversifier, so their scores agree on
+// terms and the clock.
+export function sessionRankOpts(scope, now) {
+  return {
+    terms: branchQueryTerms(scope),
+    now,
+    scopeOrder: scope && scope.readOrder ? scope.readOrder : null,
+  };
 }
 
 // De-duplicate store-search hits by `scope::key` and cap them, PRESERVING the

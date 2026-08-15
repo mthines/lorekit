@@ -20,6 +20,8 @@ import {
   SCOPE_READ_LIMIT,
   PROMPT_FETCH_TIMEOUT_MS,
   PROMPT_LOCAL_SEARCH_LIMIT,
+  branchQueryTerms,
+  sessionRankOpts,
 } from '../src/core/lessons.mjs';
 import { resolvePrecedence, matchesQuery } from '../src/lessons-pure.mjs';
 import { deriveScope } from '../src/scope.mjs';
@@ -347,6 +349,69 @@ test('fetchLessons caps each loop bucket in the injected set (wires capPerBucket
   assert.equal(withTag('loop::impl-lessons'), 2, 'impl-lessons bucket capped at 2');
   const generals = lessons.filter((l) => !(l.tags || []).some((t) => String(t).startsWith('loop::'))).length;
   assert.equal(generals, 2, 'both general lessons survive the cap');
+});
+
+test('branchQueryTerms — distils the branch name, drops generic prefixes and trunk names', () => {
+  assert.deepEqual(
+    branchQueryTerms({ branch: 'claude/read-quality-c3-branch-query' }),
+    ['read', 'quality', 'branch', 'query'],
+    'the claude/ prefix and the 2-char `c3` are dropped; the topic words remain',
+  );
+  assert.deepEqual(branchQueryTerms({ branch: 'feat/embedding-pipeline' }), ['embedding', 'pipeline']);
+  assert.deepEqual(branchQueryTerms({ branch: 'fix/User-LIST' }), ['user', 'list'], 'lower-cased');
+  // A prefix word is stripped ONLY as the prefix — kept when it is a topic word.
+  assert.deepEqual(
+    branchQueryTerms({ branch: 'feat/release-notes-export' }),
+    ['release', 'notes', 'export'],
+    '`release` in the description survives; only the `feat` prefix is dropped',
+  );
+  assert.deepEqual(branchQueryTerms({ branch: 'claude/head-parser-rewrite' }), ['head', 'parser', 'rewrite']);
+  // The leading segment is always a type/author — dropped whichever it is, so a
+  // username or a bot name never becomes a query term.
+  assert.deepEqual(branchQueryTerms({ branch: 'mthines/embedding-pipeline' }), ['embedding', 'pipeline']);
+  assert.deepEqual(branchQueryTerms({ branch: 'dependabot/lodash-bump' }), ['lodash', 'bump']);
+  // Trunk branches, detached HEAD, and no-git yield NO query — the read is unchanged.
+  for (const branch of ['main', 'master', 'HEAD']) {
+    assert.deepEqual(branchQueryTerms({ branch }), [], `${branch} → no query`);
+  }
+  assert.deepEqual(branchQueryTerms({}), [], 'a scope with no branch never throws');
+  assert.deepEqual(branchQueryTerms(null), []);
+});
+
+test('sessionRankOpts — seeds branch terms at DEFAULT weight (no damping), else the prior read', () => {
+  const readOrder = ['repo::a/b', 'global'];
+  // No `weights` override: damping relevance with a smaller weight would shrink
+  // the normaliser (Σweights) and rescale every score, distorting MMR even for
+  // non-matching lessons — so the branch query rides at default weight and only
+  // ever lifts an on-topic lesson.
+  assert.deepEqual(
+    sessionRankOpts({ branch: 'feat/embedding-pipeline', readOrder }, 1000),
+    { terms: ['embedding', 'pipeline'], now: 1000, scopeOrder: readOrder },
+  );
+  // A trunk branch yields no terms — byte-for-byte the old read.
+  assert.deepEqual(
+    sessionRankOpts({ branch: 'main', readOrder }, 1000),
+    { terms: [], now: 1000, scopeOrder: readOrder },
+  );
+});
+
+test('fetchLessons seeds the branch-name query into the ranking (wires sessionRankOpts)', async () => {
+  // Two lessons equal on recency + salience; one matches a branch term. On a
+  // topical branch the branch-seeded relevance lifts the match above its peer.
+  // Reverting fetchLessons to the old `terms: []` literal ties them, and the
+  // key-order tiebreak then puts the NON-matching 'a-plain' first — so this
+  // fails. The scope is injected so the assertion does not depend on the ambient
+  // git branch (a detached HEAD in CI would seed nothing).
+  const scope = { branch: 'feat/embedding-pipeline', readOrder: ['repo::a/b', 'global'] };
+  const at = '2026-08-01T00:00:00.000Z';
+  const byScope = {
+    'repo::a/b': [
+      { scope: 'repo::a/b', key: 'a-plain', value: 'general notes with no topic', seenCount: 1, updatedAt: at },
+      { scope: 'repo::a/b', key: 'z-match', value: 'notes about the embedding pipeline', seenCount: 1, updatedAt: at },
+    ],
+  };
+  const { lessons } = await fetchLessons(fakeStore(byScope), process.cwd(), { now: Date.parse(at), scope });
+  assert.equal(lessons[0].key, 'z-match', 'the branch-relevant lesson is lifted above its peer');
 });
 
 test('fetchLessons is best-effort: a failed scope read is skipped, not thrown', async () => {
