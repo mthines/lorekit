@@ -283,7 +283,7 @@ class RemoteStore {
   // archived rows included). The remote pair CANNOT be, because the hosted
   // write is an RPC with a fixed parameter list, not a file write:
   //
-  //   preserved  scope, key, tags, source_agent, trigger, and `created` —
+  //   preserved  scope, key, source_agent, trigger, and `created` —
   //              sent as `created_at`, which memory_write honours on INSERT
   //              only, so a migrated lesson keeps its original creation date
   //              and its ranking recency with it. `value` survives too but is
@@ -293,9 +293,10 @@ class RemoteStore {
   //              no parameter for it, and inventing one would let a client
   //              backdate an edit it did not make.
   //   derived    `seen_count` — the RPC owns the tally (migration 00059: a
-  //              write against an existing key IS the next sighting). A
-  //              migrated lesson therefore lands at 1 and counts up from
-  //              there; its local history does not transfer.
+  //              write against an existing key IS the next sighting). A lesson
+  //              the hosted store has never seen lands at 1; one it already
+  //              holds lands at ITS count plus one, not the local one. Either
+  //              way the local history does not transfer.
   //   converted  `expires_at` → `ttl_days`, the remaining whole days, clamped
   //              to the schema's 1–365 (a longer-lived TTL is clamped, not
   //              dropped — the alternative is silently making it permanent).
@@ -307,6 +308,14 @@ class RemoteStore {
   //              (migration 00031), which leaves an existing remote
   //              `expires_at` in place, so a permanent local lesson would
   //              land on an expiring remote row and still die.
+  //   authoritative
+  //              `tags`. The conflict clause is `tags = excluded.tags`, so the
+  //              source entry's list REPLACES the hosted one — an untagged
+  //              local entry sends `[]` and clears whatever labels the hosted
+  //              row carried. That is what a verbatim upsert means here (the
+  //              local file is the thing being migrated), but it is the one
+  //              field where "verbatim" can remove hosted data, so it is
+  //              called out rather than filed under preserved.
   //   sticky     `origin_*`. The RPC's conflict clause coalesces provenance
   //              (`coalesce(excluded.origin_repo, memories.origin_repo)`, and
   //              likewise for branch/commit/pr) so a write that does not know
