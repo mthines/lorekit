@@ -755,7 +755,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
         scopeLabel={selectedScopeLabel}
         range={range}
         onRangeChange={setRange}
-        hasActiveFilters={filters.length > 0}
+        filters={filters}
         heatmapData={heatmapData}
         highlightRange={highlightRange}
         onSelectDate={handleHeatmapDayClick}

@@ -40,7 +40,7 @@ const meta: Meta<typeof ExplorerInsights> = {
   // different instants.
   args: {
     onRangeChange: () => undefined,
-    hasActiveFilters: false,
+    filters: [],
     heatmapData: HEATMAP,
     highlightRange: null,
     onSelectDate: () => undefined,
@@ -85,13 +85,15 @@ export const ScopeSelected: Story = {
 /**
  * A filter bar is active.
  *
- * The header gains one line of copy stating that the filters narrow the list
- * below and not these numbers — the only moment the discrepancy can mislead,
- * and therefore the only moment it is spelled out.
+ * The Written and Scopes cards now NARROW to the filtered set (migration 00062)
+ * — the header agrees with the list, so there is no disclaimer. Read stays
+ * scope-level (usage_events has no per-memory dimension) and Expired stays
+ * account-wide.
  */
 export const WithActiveFilters: Story = {
   args: {
     scope: 'repo::mthines/lorekit',
+    filters: [{ field: 'label', operator: 'in', values: ['perf-regression'] }],
     range: { preset: '7d' },
     scopeLabel: 'mthines/lorekit',
   },

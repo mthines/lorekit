@@ -48,6 +48,7 @@ import {
   rangeLabel,
   type TimeRange,
 } from '@/lib/time-range';
+import { filtersToQueryParams, type Filter } from '@/lib/filters';
 
 /**
  * Shorter labels for the collapsed strip.
@@ -80,9 +81,15 @@ const FALLBACK_PLAN = RANGE_BUCKETS['30d'];
 interface ExplorerStatsProps {
   /** The selected scope, or null for all scopes. */
   scope: string | null;
+  /**
+   * The Explorer's active dimension filters. Forwarded to `/activity` so the
+   * Written and Scopes cards narrow to the same set the list shows (migration
+   * 00062). Read stays scope-level — usage_events has no per-memory dimension —
+   * so these do NOT narrow the Read card.
+   */
+  filters: Filter[];
   /** The Explorer's shared time range. */
   range: TimeRange;
-  /** Whether the filter bar currently narrows the list but not these numbers. */
   /** Human label for the selected scope, for captions. */
   scopeLabel: string;
   /**
@@ -95,6 +102,7 @@ interface ExplorerStatsProps {
 
 export function ExplorerStats({
   scope,
+  filters,
   range,
   scopeLabel,
   variant,
@@ -110,8 +118,14 @@ export function ExplorerStats({
   const plan = useMemo(() => bucketPlanForRange(shown, nowIso) ?? FALLBACK_PLAN, [shown, nowIso]);
   const queryWindow = useMemo(() => statsWindow(shown, nowIso), [shown, nowIso]);
 
+  // The dimension filters as `/activity` query params — the SAME translation the
+  // list uses (`filtersToQueryParams`), so the header counts the list's set. Read
+  // ignores them (scope-level), applied inside the query for Written/Scopes only.
+  const activityFilters = useMemo(() => filtersToQueryParams(filters), [filters]);
+
   const { data, isLoading, isError, isFetching } = useExplorerStats(
     scope,
+    activityFilters,
     plan.unit,
     queryWindow.since,
     queryWindow.until,

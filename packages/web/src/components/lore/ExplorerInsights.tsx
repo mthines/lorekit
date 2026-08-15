@@ -46,6 +46,7 @@ import { ExplorerStats } from '@/components/lore/ExplorerStats';
 import { RangePicker } from '@/components/ui/RangePicker';
 import type { DateRange } from '@/components/ui/DateRangePicker';
 import type { RangePreset, TimeRange } from '@/lib/time-range';
+import type { Filter } from '@/lib/filters';
 
 /**
  * The Explorer's presets.
@@ -62,7 +63,12 @@ interface ExplorerInsightsProps {
   scopeLabel: string;
   range: TimeRange;
   onRangeChange: (range: TimeRange) => void;
-  hasActiveFilters: boolean;
+  /**
+   * The active dimension filters. Forwarded to the stat cards so Written +
+   * Scopes narrow to the list's set (migration 00062) — which is why there is no
+   * "filters don't count" disclaimer any more.
+   */
+  filters: Filter[];
   /** Per-day write counts for the heatmap. */
   heatmapData: { date: string; count: number }[];
   /** The selection to highlight on the heatmap, as inclusive day strings. */
@@ -77,7 +83,7 @@ export function ExplorerInsights({
   scopeLabel,
   range,
   onRangeChange,
-  hasActiveFilters,
+  filters,
   heatmapData,
   highlightRange,
   onSelectDate,
@@ -117,6 +123,7 @@ export function ExplorerInsights({
             >
               <ExplorerStats
                 scope={scope}
+                filters={filters}
                 range={range}
                 scopeLabel={scopeLabel}
                 variant="strip"
@@ -168,15 +175,9 @@ export function ExplorerInsights({
             style={{ overflow: 'hidden' }}
           >
             <div className="flex flex-col gap-4 px-4 pb-4">
-              {hasActiveFilters && (
-                <p className="text-[10px] text-[var(--color-content-tertiary)] opacity-70">
-                  Counts the selected scope and range — filters narrow the list below, not these
-                  numbers.
-                </p>
-              )}
-
               <ExplorerStats
                 scope={scope}
+                filters={filters}
                 range={range}
                 scopeLabel={scopeLabel}
                 variant="cards"

@@ -47,7 +47,7 @@ function Harness({ initialScope = null as string | null }) {
         scopeLabel={scope ? 'mthines/lorekit' : 'All scopes'}
         range={range}
         onRangeChange={setRange}
-        hasActiveFilters={false}
+        filters={[]}
         heatmapData={HEATMAP}
         highlightRange={null}
         onSelectDate={() => undefined}

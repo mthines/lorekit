@@ -37,6 +37,7 @@ import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { browserAccessToken } from '@/lib/api/session-browser';
 import { activityRequest, readActivityRequest, usageRequest } from '@/lib/api/memories';
 import { trendRowsFromActivity, type CountBucketRow, type TrendRow } from '@/lib/aggregations';
+import type { ActivityQuery } from '@lorekit/schemas/memory';
 import { resolveRange, type BucketUnit, type TimeRange } from '@/lib/time-range';
 
 export interface ExplorerStatsData {
@@ -107,6 +108,7 @@ export function statsWindow(
 
 async function fetchExplorerStats(
   scope: string | null,
+  filters: Partial<ActivityQuery>,
   bucket: BucketUnit,
   since: string,
   until: string,
@@ -116,17 +118,24 @@ async function fetchExplorerStats(
   if (!token) return EMPTY;
 
   const [activity, readActivity, usage] = await Promise.all([
-    activityRequest(token, { bucket, since, until }, signal),
-    // `scope` goes to the SERVER here (00058) rather than being filtered after,
-    // because the read series carries a NULL-scope remainder for reads whose
-    // scope could not be resolved — filtering client-side would silently fold
-    // that remainder in or out depending on how the predicate was written.
+    // Scope AND the dimension filters go to the SERVER now (migration 00062):
+    // the response is aggregated per (bucket, scope) and carries no per-memory
+    // tag/agent/repo, so a dimension filter CANNOT be applied client-side — the
+    // written/scopes counts have to be narrowed in the RPC to agree with the list.
+    activityRequest(token, { bucket, since, until, ...(scope ? { scope } : {}), ...filters }, signal),
+    // Read follows scope + range ONLY: usage_events has no per-memory dimension,
+    // so a label/repo filter is unanswerable for reads (the Read card is
+    // scope-level by design). `scope` still goes server-side (00058) because the
+    // read series carries a NULL-scope remainder that client filtering would fold
+    // in or out depending on how the predicate was written.
     readActivityRequest(token, { bucket, since, until, ...(scope ? { scope } : {}) }, signal),
     usageRequest(token, { since, until }, signal),
   ]);
 
   return {
-    rows: trendRowsFromActivity(activity.buckets, scope),
+    // No client-side scope filter: the server already returns exactly the scope
+    // (and dimension) selection, so re-filtering here would double-apply it.
+    rows: trendRowsFromActivity(activity.buckets),
     readBuckets: readActivity.buckets,
     expired: usage.summary.expired,
   };
@@ -143,13 +152,17 @@ async function fetchExplorerStats(
  */
 export function useExplorerStats(
   scope: string | null,
+  filters: Partial<ActivityQuery>,
   bucket: BucketUnit,
   since: string,
   until: string,
 ) {
   return useQuery<ExplorerStatsData>({
-    queryKey: ['explorer-stats', scope, bucket, since, until],
-    queryFn: ({ signal }) => fetchExplorerStats(scope, bucket, since, until, signal),
+    // `filters` is a plain object; React Query's default hash sorts its keys, so
+    // the same filter set always produces the same key regardless of insertion
+    // order — the header refetches when (and only when) the predicate changes.
+    queryKey: ['explorer-stats', scope, filters, bucket, since, until],
+    queryFn: ({ signal }) => fetchExplorerStats(scope, filters, bucket, since, until, signal),
     placeholderData: keepPreviousData,
     // Matches the lesson list's staleTime: the two are read together and a
     // header that refreshed on a different cadence than the list under it would
