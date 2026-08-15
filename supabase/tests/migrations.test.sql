@@ -3627,6 +3627,57 @@ begin
 end;
 $$;
 
+-- ── 68b. lorekit_memory_activity — scope + dimension filters (00062) ────────
+-- The Explorer's stat header follows the filter bar, so the activity RPC gained
+-- the same predicate GET /memories and lorekit_memory_facets apply. It is the
+-- copy of §69's proven filter logic, so this proves the plumbing, not the
+-- operator matrix again.
+-- AC-1: a dimension filter narrows the counts to the list's set.
+-- AC-2: scope is a hard filter.
+-- AC-3: a NO-MATCH filter yields ZERO — never a fallback to the account total,
+--       which would show account numbers under an empty scope's name.
+do $$
+declare
+  v_sum bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- AC-1: both ACTIVE agg-a rows carry 'perf' (the archived/expired siblings do
+  -- not count), so a perf filter over agg-a sums to 2.
+  select coalesce(sum(count), 0) into v_sum
+    from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day', null, null,
+      'project::agg-a', array['perf']);
+  assert v_sum = 2, format('activity filter AC-1: perf under agg-a must sum to 2, got %s', v_sum);
+
+  -- Only agg-1 carries 'auth'.
+  select coalesce(sum(count), 0) into v_sum
+    from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day', null, null,
+      'project::agg-a', array['auth']);
+  assert v_sum = 1, format('activity filter AC-1b: auth under agg-a must sum to 1, got %s', v_sum);
+
+  -- AC-3: a no-match filter must yield nothing, not the account-wide total.
+  select coalesce(sum(count), 0) into v_sum
+    from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day', null, null,
+      'project::agg-a', array['does-not-exist']);
+  assert v_sum = 0, format('activity filter AC-3: a no-match filter must yield 0, got %s', v_sum);
+
+  -- AC-2: p_scope is a hard filter — no other scope's rows leak into the result.
+  select coalesce(sum(count), 0) into v_sum
+    from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000a1', 'day', null, null,
+      'project::agg-a')
+   where scope <> 'project::agg-a';
+  assert v_sum = 0, 'activity filter AC-2: p_scope must exclude every other scope';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 -- ── 69. lorekit_memory_facets — the multi-dimension value catalog (00052) ───
 -- AC-1: every dimension is enumerated with its per-value count, including the
 --       text[] `tags` unnest and the integer `origin_pr` cast to text.
