@@ -1993,7 +1993,8 @@ $$;
 -- AC-5: A scope whose every row is archived disappears from the result entirely.
 -- AC-6: An org co-member sees the org's scopes (via lorekit_member_org_ids).
 -- AC-7: A non-member does not see that org's scopes.
--- AC-8: Rows come back sorted by scope ascending.
+-- AC-8: Rows come back sorted by count DESC, then scope asc (00065, matching
+--       lorekit_memory_tags) — the busiest scope leads regardless of name.
 
 -- Fresh 'scopes-org' (fa) with owner A + member B, isolated from the phase-3
 -- and safe-org-deletion fixtures above (f3 has unrelated membership churn, f9
@@ -2015,6 +2016,14 @@ insert into memories (user_id, scope, key, value, archived_at) values
   ('00000000-0000-0000-0000-0000000000a1', 'project::scopes-gone', 'sc-gone', 'v', now());
 insert into memories (user_id, scope, key, value, expires_at) values
   ('00000000-0000-0000-0000-0000000000a1', 'project::scopes-a', 'sc-a-expired', 'v', now() - interval '1 minute');
+
+-- A busier scope for A (3 active rows) whose name sorts AFTER project::scopes-a.
+-- Under the old `scope asc` order it would come last; under 00065's `count desc`
+-- it must come FIRST — so A's result distinguishes the two orderings (AC-8).
+insert into memories (user_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000000a1', 'repo::acme/scopes-top', 'sc-top-1', 'v'),
+  ('00000000-0000-0000-0000-0000000000a1', 'repo::acme/scopes-top', 'sc-top-2', 'v'),
+  ('00000000-0000-0000-0000-0000000000a1', 'repo::acme/scopes-top', 'sc-top-3', 'v');
 
 -- User B: one active row in a scope of their own.
 insert into memories (user_id, scope, key, value) values
@@ -2084,11 +2093,25 @@ begin
   assert v_rows = 0,
     'memory scopes AC-7: a non-member/non-owner must see none of these scopes';
 
-  -- AC-8: results are ordered by scope ascending.
-  select array_agg(scope) into v_scopes from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000a1');
-  select array_agg(s order by s) into v_sorted from unnest(v_scopes) as s;
+  -- AC-8: the function returns rows already ordered by count desc, then scope
+  -- asc. `array_agg` with no ORDER BY preserves the function-scan row order, so
+  -- comparing it against the same rows re-sorted by the intended key asserts the
+  -- function itself did the ordering.
+  select array_agg(scope) into v_scopes
+    from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000a1');
+  select array_agg(scope order by count desc, scope asc) into v_sorted
+    from lorekit_memory_scopes('00000000-0000-0000-0000-0000000000a1');
   assert v_scopes = v_sorted,
-    format('memory scopes AC-8: results must be sorted by scope asc, got %s', v_scopes);
+    format('memory scopes AC-8: results must be ordered by count desc then scope asc, got %s', v_scopes);
+  -- Concretely, over the three scopes A owns with known counts: they must appear
+  -- busiest-first — top(3) before scopes-a(2) before scopes-org(1) — regardless
+  -- of the other scopes A carries from earlier fixtures. Under the old `scope
+  -- asc` this order was top LAST, so this only holds once count drives it.
+  assert array_position(v_scopes, 'repo::acme/scopes-top')
+           < array_position(v_scopes, 'project::scopes-a')
+     and array_position(v_scopes, 'project::scopes-a')
+           < array_position(v_scopes, 'repo::acme/scopes-org'),
+    format('memory scopes AC-8: known scopes must be count-desc top(3)<scopes-a(2)<scopes-org(1), got %s', v_scopes);
 
   reset role;
   perform set_config('request.jwt.claims', '', true);

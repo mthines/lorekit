@@ -419,7 +419,7 @@ const MEMORY_DISPATCH = {
 // networkError, unusable }`. A tool that passed either through verbatim would
 // hand the model two different contracts for one tool name depending on a
 // config value it cannot see. What is left here is what only the MCP surface
-// owns: the ascending sort and the exit-clean degradation below.
+// owns: the count-desc-then-scope-asc sort and the exit-clean degradation below.
 //
 // DEGRADATION IS EXIT-CLEAN, mirroring the `scopes` command, which reports an
 // unreachable remote as a short note at exit 0 rather than failing the run. An
@@ -441,31 +441,31 @@ export async function listScopes(store) {
   return ok ? { ok: true, scopes: sortScopes(scopes) } : { ok: true, scopes: [], note: reason };
 }
 
-// Sorted by scope ascending, which is the contract `docs/mcp-tools.md`, the
-// tool catalog and `llms.txt` all state for `memory.scopes`. The HOSTED surface
-// gets that ordering from `lorekit_memory_scopes` (`order by m.scope asc`,
-// migration 00039/00049), but `LocalStore`/`TwoTierStore.listScopes()` both
-// return their `Map` insertion order — a walk order, not an ordering — so the
-// stdio server owns it here rather than the two surfaces answering differently.
-// Sorting BOTH shapes (not just the local one) makes the guarantee a property
-// of this function instead of an assumption about the store it was handed.
-// Codepoint comparison, deliberately not `localeCompare`: the ordering must not
-// depend on the HOST's locale.
+// Sorted by count DESC then scope asc, which is the contract `docs/mcp-tools.md`,
+// the tool catalog and `llms.txt` all state for `memory.scopes`. The HOSTED
+// surface gets that ordering from `lorekit_memory_scopes` (`order by count(*)
+// desc, m.scope asc`, migration 00065), but `LocalStore`/`TwoTierStore.
+// listScopes()` both return their `Map` insertion order — a walk order, not an
+// ordering — so the stdio server owns it here rather than the two surfaces
+// answering differently. Sorting BOTH shapes (not just the local one) makes the
+// guarantee a property of this function instead of an assumption about the store
+// it was handed.
 //
-// That is ascending-by-scope, not byte-identical parity with the hosted path,
-// and the difference is worth being precise about. `order by m.scope asc` sorts
-// under the DATABASE's collation (`en_US.UTF-8` on a default Supabase project),
-// which does not order like codepoint around punctuation — and a scope string
-// is mostly punctuation (`::`, `/`, `-`), so `repo::a-b` and `repo::ab` can come
-// out in the opposite relative order on the two surfaces. Case cannot differ
-// (every scope segment is lowercased, see docs/scope-format.md). Closing the
-// remaining gap means `collate "C"` on the RPC's `order by`, which changes the
-// order `GET /memories/scopes` has always returned — a public contract change
-// that belongs in its own migration, not here. Until then: both surfaces are
-// sorted ascending, neither is unordered, and nothing should depend on the two
-// agreeing on the exact position of a punctuated neighbour.
+// The primary key is `count` (a number), which orders identically on both
+// surfaces. Only the scope-asc TIEBREAK between equal-count scopes carries the
+// old caveat: it is a codepoint comparison here (deliberately not
+// `localeCompare`, so the ordering never depends on the HOST's locale), while
+// `order by m.scope asc` sorts under the DATABASE's collation (`en_US.UTF-8` on a
+// default Supabase project), which does not order like codepoint around
+// punctuation — and a scope string is mostly punctuation (`::`, `/`, `-`), so
+// two equal-count scopes like `repo::a-b` and `repo::ab` can come out in the
+// opposite relative order on the two surfaces. Case cannot differ (every scope
+// segment is lowercased, see docs/scope-format.md). Nothing should depend on the
+// two agreeing on the exact position of a punctuated equal-count neighbour.
 function sortScopes(rows) {
-  return rows.sort((a, b) => (a.scope < b.scope ? -1 : a.scope > b.scope ? 1 : 0));
+  return rows.sort(
+    (a, b) => b.count - a.count || (a.scope < b.scope ? -1 : a.scope > b.scope ? 1 : 0),
+  );
 }
 
 // Provenance for a tool call: the caller's explicit values win, the working

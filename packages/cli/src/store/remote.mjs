@@ -257,7 +257,7 @@ class RemoteStore {
   // The `scopes` array is the SAME `[{ scope, count }]` inventory shape
   // `LocalStore.listScopes()` returns, so `scopes.mjs` feeds both through the
   // same pure `filterScopeInventory`/`summarizeScopeInventory` helpers. Ordering
-  // is not relied upon (the server sorts by scope asc; the view re-sorts by
+  // is not relied upon (the server sorts by count desc; the view re-sorts by
   // scope type). Failures use this store's standard `{ ok:false, error,
   // networkError }` envelope so the caller can degrade gracefully.
   //

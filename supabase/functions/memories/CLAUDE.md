@@ -374,7 +374,10 @@ collapsing them would make it impossible to tell whether agents actually reach f
 ## `GET /scopes`
 
 Returns every distinct scope the caller can see with its count of active (non-archived,
-non-expired) memories, sorted by scope ascending:
+non-expired) memories, ordered by **count desc then scope asc** (migration 00065, the same
+frequency-first order `/tags` uses) — so the busiest scope leads. The dashboard's scope chip
+strip renders this order directly (`fetchScopes` never re-sorts), which is why the order lives
+in the RPC:
 
 ```json
 {

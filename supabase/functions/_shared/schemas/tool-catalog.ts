@@ -262,7 +262,7 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
     permission: 'read',
     auth: 'token-or-jwt',
     inputSchema: { type: 'object', properties: {} },
-    returns: '`{ "scopes": [{ "scope", "count", "last_activity" }] }`, sorted by scope ascending. `count` is active (non-archived, non-expired) memories; `last_activity` is the newest `created_at` among them, or `null`.',
+    returns: '`{ "scopes": [{ "scope", "count", "last_activity" }] }`, sorted by count desc then scope asc (busiest scope first). `count` is active (non-archived, non-expired) memories; `last_activity` is the newest `created_at` among them, or `null`.',
   },
   {
     name: 'memory.list_archived',

@@ -127,8 +127,10 @@ async function requireBrowserToken(): Promise<string> {
 // ---------------------------------------------------------------------------
 // Scope-tree-only fetch (used by the Lore Explorer sidebar).
 // One row per scope from `GET /memories/scopes`, already counted and sorted by
-// the database — this stays its own lightweight query so the tree renders
-// immediately while the paginated lesson list streams in separately.
+// the database (count desc, scope asc — 00065), which is the order the chip
+// strip renders since this maps but never re-sorts. Stays its own lightweight
+// query so the tree renders immediately while the paginated lesson list streams
+// in separately.
 // ---------------------------------------------------------------------------
 
 async function fetchScopes(signal?: AbortSignal): Promise<ScopeNode[]> {
