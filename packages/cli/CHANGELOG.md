@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.47.0](https://github.com/mthines/lorekit/compare/cli-v1.46.0...cli-v1.47.0) (2026-08-15)
+
+
+### Features
+
+* **explorer:** filtered-stats drill-down — stats follow the full selection + chip scope selector ([#460](https://github.com/mthines/lorekit/issues/460)) ([1621d03](https://github.com/mthines/lorekit/commit/1621d03f93e6ae0c8e1f29ba63842620d0e99c47))
+
 ## [1.46.0](https://github.com/mthines/lorekit/compare/cli-v1.45.0...cli-v1.46.0) (2026-08-15)
 
 
