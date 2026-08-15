@@ -706,9 +706,9 @@ Both files share this schema — all fields optional:
                            // next layer is tried, so a mistyped repo value falls through to
                            // the user layer before defaulting to hybrid
 
-  "hooks.sessionStart.maxChars": 1500,
-                           // character budget for that block (default 1500, ~375 tokens)
-                           // bounded to 200–20000; an out-of-range value is CLAMPED, not
+  "hooks.sessionStart.maxChars": 3000,
+                           // character budget for that block (default 3000, ~750 tokens,
+                           // ~25 index lines); bounded 200–20000, out-of-range CLAMPED not
                            // rejected — a small number means "keep it short", and honouring
                            // the floor is closer to that intent than restoring the default
                            // repo wins over user, and a declared-but-unparseable repo value
@@ -717,11 +717,34 @@ Both files share this schema — all fields optional:
                            // memories are RANKED before the budget is spent, so what
                            // survives is the most-recurring and most-recent, not the newest
 
-  "hooks.sessionStart.loopCap": 2,
+  "hooks.sessionStart.maxLessons": 100,
+                           // how many memory LINES that block may hold, where
+                           // maxChars bounds its characters — whichever binds
+                           // first decides the block, so raising this alone does
+                           // nothing unless maxChars comes up with it
+                           // (default 100, bounded 3–200). Clamped, not
+                           // rejected; repo wins over user with the same
+                           // declared-value-owns-the-layer rule as maxChars.
+                           // In practice this is a READ-DEPTH dial, not a size
+                           // one: maxChars runs out around line 25, so what
+                           // this really sets is the per-scope candidate fetch
+                           // (100/scope by default) the ranker chooses from —
+                           // 400 candidates across a four-scope hierarchy
+                           // instead of the newest handful. It never exceeds
+                           // 100/scope, the largest page GET /memories will
+                           // return, so a ceiling above 100 fills its remaining
+                           // lines from the other scopes instead. Below 25 the
+                           // read does not shrink; you just see fewer lines.
+
+  "hooks.sessionStart.loopCap": 1,
                            // how many memories one self-improvement loop (a
                            // "loop::<bucket>" tag) may contribute to that block
-                           // (default 2, bounded 0–40; 0 excludes loop buckets
-                           // entirely so only general memories are read). Clamped,
+                           // (default 1, bounded 0–40; 0 excludes loop buckets
+                           // entirely so only general memories are read). One per
+                           // bucket keeps a loop's best lesson without letting its
+                           // bookkeeping take a second slot from your codebase's
+                           // memories, which are read by a different audience.
+                           // Clamped,
                            // not rejected; repo wins over user with the same
                            // declared-value-owns-the-layer rule as maxChars
 
