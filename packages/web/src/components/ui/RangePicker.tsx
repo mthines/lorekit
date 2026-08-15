@@ -58,7 +58,11 @@ export function RangePicker({
   // none of them IS what the user is looking at.
   const active = isPresetRange(value) ? value.preset : null;
   // `range === null` means unbounded, which IS the `all` preset semantically.
-  const selected = active ?? (value === null ? 'all' : null);
+  const resolved = active ?? (value === null ? 'all' : null);
+  // …but only if THIS surface offers that preset. The Overview omits `all`, so a
+  // shared `?range=null` link resolving to `all` would check no radio here; fall
+  // back to the custom-window chip instead of leaving the control looking unset.
+  const selected = resolved && presets.includes(resolved) ? resolved : null;
 
   return (
     <div

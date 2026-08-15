@@ -191,10 +191,13 @@ export function ExplorerInsights({
                   range SELECTOR, not a reading of the selected range, so
                   shrinking it to the current window would remove the very
                   context you use to pick a different one. It highlights the
-                  selection instead. */}
+                  selection instead. It is also ACCOUNT-WIDE and unfiltered
+                  (`heatmapData` comes from `useLoreData`, not the scoped stats
+                  query), so its caption says so rather than implying the cards'
+                  selection narrows it. */}
               <div className="overflow-x-auto border-t border-[var(--color-border)] pt-4">
                 <p className="mb-3 text-xs font-medium text-[var(--color-content-tertiary)]">
-                  Memories written — last 26 weeks
+                  Memories written — last 26 weeks · across every scope
                 </p>
                 <ContributionHeatmap
                   data={heatmapData}

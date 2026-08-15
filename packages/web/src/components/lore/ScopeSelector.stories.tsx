@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react';
+import { userEvent, within } from 'storybook/test';
 
 import { ScopeSelector } from './ScopeSelector';
 import type { ScopeNode } from './ScopeTree';
@@ -42,3 +43,17 @@ export const Default: Story = { args: { selected: null } };
 
 /** A scope selected — its chip is lit, the row is otherwise unchanged. */
 export const Selected: Story = { args: { selected: 'repo::mthines/lorekit' } };
+
+/**
+ * The searchable chip list opened via `Browse all`. The open state is internal,
+ * so the play function clicks the toggle before the screenshot is taken — this
+ * is the only baseline that covers the long-tail browse surface.
+ */
+export const Expanded: Story = {
+  args: { selected: null },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByRole('button', { name: /browse all/i }));
+    await canvas.findByPlaceholderText(/filter scopes/i);
+  },
+};

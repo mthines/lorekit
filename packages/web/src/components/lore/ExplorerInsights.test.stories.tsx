@@ -284,7 +284,11 @@ export const RangePickerDrivesThePanel: Story = {
     });
 
     await step('changing it re-queries the numbers', async () => {
-      const before = canvas.getByText('written').previousElementSibling?.textContent;
+      // The value `dd` is the label `dt`'s NEXT sibling (valid dl ordering renders
+      // `dt` before `dd`; CSS `order` keeps the number visually first). Reading
+      // `previousElementSibling` here would grab the metric ICON and compare
+      // `Number('')` to `Number('')`, so the assertion could never fail.
+      const before = canvas.getByText('written').nextElementSibling?.textContent;
       await userEvent.click(group.getByRole('radio', { name: /All/i }));
       await waitFor(async () => {
         await expect(group.getByRole('radio', { name: /All/i })).toHaveAttribute(
@@ -293,7 +297,7 @@ export const RangePickerDrivesThePanel: Story = {
         );
       });
       // All time is a superset of the seeded window, so the figure cannot fall.
-      const after = canvas.getByText('written').previousElementSibling?.textContent;
+      const after = canvas.getByText('written').nextElementSibling?.textContent;
       await expect(Number(after)).toBeGreaterThanOrEqual(Number(before));
     });
   },

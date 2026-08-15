@@ -98,21 +98,19 @@ const NO_TAGS: string[] = [];
 const NO_FILTERS: Filter[] = [];
 
 /**
- * The Explorer opens on the last 24 hours, matching the Overview.
+ * The Explorer opens on ALL time — a list's job is to show everything, and that
+ * is the horizon every existing `/lore` deep link (and `lorekit link` URL) has
+ * always meant by an absent `range`. The stat header does NOT need the list
+ * narrowed to stay legible: an unbounded selection charts the last 90 days on
+ * its own (`effectiveStatsRange`), so the two can share one range param without
+ * a 24h default that would silently re-scope every shared link.
  *
- * Module-level for the reference-stability reason `useUrlState` documents: the
- * default sits in the setter's `useCallback` deps, so a fresh literal each
- * render reminted it.
- *
- * This narrows the LIST as well as the cards — one range drives the whole page,
- * which is the point of the shared model, so there is no version of this that
- * scopes the picker to the header only without reintroducing two time concepts.
- * The cost is that an account with months of lore opens showing a day of it, so
- * the narrowing is made recoverable rather than quiet: the picker shows `24h`
- * selected, `All` sits beside it, and an empty list caused by the window says
- * so and offers the way out.
+ * Module-level `null` for the reference-stability reason `useUrlState` documents:
+ * the default sits in the setter's `useCallback` deps, so a fresh literal each
+ * render reminted it. `null` is a constant, so this is moot — kept named for the
+ * one-line rationale above.
  */
-const DEFAULT_EXPLORER_RANGE: TimeRange = { preset: '24h' };
+const DEFAULT_EXPLORER_RANGE: TimeRange = null;
 
 // ── Ownership filter bar ──────────────────────────────────────────────────────
 // "Owner: All · Personal · {org}" per ux-design §4 — only rendered when at least

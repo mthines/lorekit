@@ -3426,12 +3426,9 @@ $$;
 -- Fixtures: user A (a1) gets labelled rows in both partitions plus two rows with
 -- pinned created_at values in distinct UTC days/hours. User B (b2) gets a
 -- labelled row of their own so the tenant predicate has something to exclude.
--- The two active rows also carry a source_agent and an origin_pr so §68b can
--- exercise a `nin` arm and the origin_pr digits-only coercion — neither column
--- affects the plain bucket counts §68 asserts.
-insert into memories (user_id, scope, key, value, tags, source_agent, origin_pr) values
-  ('00000000-0000-0000-0000-0000000000a1', 'project::agg-a', 'agg-1', 'v', array['perf','auth'], 'aw', 311),
-  ('00000000-0000-0000-0000-0000000000a1', 'project::agg-a', 'agg-2', 'v', array['perf'], 'cursor', 312);
+insert into memories (user_id, scope, key, value, tags) values
+  ('00000000-0000-0000-0000-0000000000a1', 'project::agg-a', 'agg-1', 'v', array['perf','auth']),
+  ('00000000-0000-0000-0000-0000000000a1', 'project::agg-a', 'agg-2', 'v', array['perf']);
 insert into memories (user_id, scope, key, value, tags, archived_at) values
   ('00000000-0000-0000-0000-0000000000a1', 'project::agg-a', 'agg-archived', 'v', array['retired'], now());
 insert into memories (user_id, scope, key, value, tags, expires_at) values
@@ -3633,17 +3630,14 @@ $$;
 -- ── 68b. lorekit_memory_activity — scope + dimension filters (00062) ────────
 -- The Explorer's stat header follows the filter bar, so the activity RPC gained
 -- the same predicate GET /memories and lorekit_memory_facets apply. Most of the
--- operator matrix is §69's proven logic, so §68b proves the plumbing — but the
--- arms that are fresh plpgsql HERE (an exclusion mode, and origin_pr's numeric
--- coercion) get their own assertions rather than riding on §69's coverage.
+-- operator matrix is §69's proven logic, so §68b proves the plumbing — and the
+-- `nin` / origin_pr-coercion arms that are fresh plpgsql in 00062 get their own
+-- assertions in §69b, once the facet-a fixtures that carry an agent and a PR exist.
 -- AC-1: a dimension filter narrows the counts to the list's set.
 -- AC-2: scope is a hard filter.
 -- AC-3: a NO-MATCH filter yields ZERO — never a fallback to the account total,
 --       which would show account numbers under an empty scope's name.
 -- AC-4: tags 'none' is an EXCLUSION arm — it drops overlapping rows.
--- AC-5: a scalar dimension's `nin` arm excludes the named value.
--- AC-6/7: origin_pr's digits-only coercion drops non-numeric input, and a list
---       that coerces to empty applies no filter rather than matching nothing.
 do $$
 declare
   v_sum bigint;
@@ -3688,32 +3682,6 @@ begin
       '00000000-0000-0000-0000-0000000000a1', 'day', null, null,
       'project::agg-a', array['auth'], 'none');
   assert v_sum = 1, format('activity filter AC-4: tags none [auth] must leave 1, got %s', v_sum);
-
-  -- AC-5: the `nin` arm on a scalar dimension. agg-1 is 'aw', agg-2 is 'cursor',
-  -- so source_agent nin [aw] excludes agg-1 → 1.
-  select coalesce(sum(count), 0) into v_sum
-    from lorekit_memory_activity(
-      '00000000-0000-0000-0000-0000000000a1', 'day', null, null,
-      'project::agg-a', null, null, array['aw'], 'nin');
-  assert v_sum = 1, format('activity filter AC-5: source_agent nin [aw] must leave 1, got %s', v_sum);
-
-  -- AC-6: origin_pr is an INTEGER column — the digits-only coercion must drop the
-  -- non-numeric decoy and match on 311 alone (agg-1) → 1.
-  select coalesce(sum(count), 0) into v_sum
-    from lorekit_memory_activity(
-      '00000000-0000-0000-0000-0000000000a1', 'day', null, null,
-      'project::agg-a', null, null, null, null, null, null, null, null,
-      null, null, null, null, null, null, array['abc', '311']);
-  assert v_sum = 1, format('activity filter AC-6: origin_pr [abc,311] must coerce to 311 → 1, got %s', v_sum);
-
-  -- AC-7: an all-non-numeric origin_pr list reduces to empty, which applies NO
-  -- filter (per 00062's rationale) rather than matching nothing → both active → 2.
-  select coalesce(sum(count), 0) into v_sum
-    from lorekit_memory_activity(
-      '00000000-0000-0000-0000-0000000000a1', 'day', null, null,
-      'project::agg-a', null, null, null, null, null, null, null, null,
-      null, null, null, null, null, null, array['not-a-pr']);
-  assert v_sum = 2, format('activity filter AC-7: an empty coerced origin_pr must not filter → 2, got %s', v_sum);
 
   reset role;
   perform set_config('request.jwt.claims', '', true);
@@ -3836,6 +3804,44 @@ begin
       where f.facet = 'tag')
   ) d;
   assert v_rows = 0, 'memory facets AC-7: the tag facet must equal the lorekit_memory_tags catalog';
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
+-- ── 68c. lorekit_memory_activity — `nin` + origin_pr coercion (00062) ────────
+-- The arms of the activity predicate that are fresh plpgsql in 00062 — a scalar
+-- `nin` and the integer origin_pr coercion — asserted here (not in §68b) because
+-- they need a fixture carrying a source_agent and a PR, which §69's facet-a rows
+-- already do: facet-1/facet-2 are agent `aw` / PR 311, facet-3 has a blank agent
+-- and no PR. All three are active, so a bare facet-a scope sums to 3.
+-- AC-1: source_agent `nin [aw]` excludes the two `aw` rows → facet-3 alone → 1.
+-- AC-2: origin_pr's digits-only coercion drops the non-numeric decoy and matches
+--       311 alone → facet-1 + facet-2 → 2.
+-- AC-3: an all-non-numeric origin_pr list coerces to empty and applies NO filter
+--       (00062's rationale), not a match-nothing → all three active rows → 3.
+do $$
+declare
+  v_sum bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  select coalesce(sum(count), 0) into v_sum
+    from lorekit_memory_activity('00000000-0000-0000-0000-0000000000a1', 'day',
+      p_scope => 'project::facet-a', p_source_agent => array['aw'], p_source_agent_mode => 'nin');
+  assert v_sum = 1, format('activity AC-1: source_agent nin [aw] under facet-a must leave 1, got %s', v_sum);
+
+  select coalesce(sum(count), 0) into v_sum
+    from lorekit_memory_activity('00000000-0000-0000-0000-0000000000a1', 'day',
+      p_scope => 'project::facet-a', p_origin_pr => array['abc', '311']);
+  assert v_sum = 2, format('activity AC-2: origin_pr [abc,311] must coerce to 311 → 2, got %s', v_sum);
+
+  select coalesce(sum(count), 0) into v_sum
+    from lorekit_memory_activity('00000000-0000-0000-0000-0000000000a1', 'day',
+      p_scope => 'project::facet-a', p_origin_pr => array['not-a-pr']);
+  assert v_sum = 3, format('activity AC-3: an empty coerced origin_pr must not filter → 3, got %s', v_sum);
 
   reset role;
   perform set_config('request.jwt.claims', '', true);
