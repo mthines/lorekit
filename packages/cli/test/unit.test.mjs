@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRemoteStore } from '../src/store/remote.mjs';
+import { createPacer, withRetry, isRateLimited, isMemoryCap } from '../src/store/rate-limit.mjs';
 import { createLocalStore } from '../src/store/local.mjs';
 import {
   gatherStream, gather, clusterDuplicates, clusterDuplicatesBlocked, DEFAULT_MAX,
@@ -2284,4 +2285,62 @@ test('RemoteStore.putEntry reports nothing as having happened when the write fai
   // inputs would have caused had it landed.
   assert.equal(result.ttlClamped, false);
   assert.equal(result.createdAtDropped, false);
+});
+
+// ── Rate-limit guards (src/store/rate-limit.mjs) ────────────────────────────
+
+test('createPacer lets a run under the ceiling through without waiting', async () => {
+  const slept = [];
+  const pace = createPacer({ maxPerWindow: 3, now: () => 1000, sleepFn: async (ms) => slept.push(ms) });
+  await pace(); await pace(); await pace();
+  assert.deepEqual(slept, []);
+});
+
+test('createPacer waits out the oldest request once the window is full', async () => {
+  const slept = [];
+  let clock = 1000;
+  const pace = createPacer({
+    maxPerWindow: 2,
+    windowMs: 60_000,
+    now: () => clock,
+    // Advancing the clock inside the sleep is what a real wait does; without
+    // it the pacer would spin forever, which is exactly the bug this asserts
+    // against.
+    sleepFn: async (ms) => { slept.push(ms); clock += ms; },
+  });
+  await pace(); await pace();
+  await pace();
+  assert.equal(slept.length, 1);
+  assert.equal(slept[0], 60_001); // the first request's slot, plus a millisecond
+});
+
+test('isRateLimited separates a retryable 429 from the terminal memory cap', () => {
+  assert.equal(isRateLimited({ httpStatus: 429, error: { code: 'rate_limited' } }), true);
+  assert.equal(isRateLimited({ httpStatus: 429, error: { code: 'memory_cap' } }), false);
+  assert.equal(isRateLimited({ httpStatus: 500, error: { code: 'internal_error' } }), false);
+  assert.equal(isRateLimited(null), false);
+  assert.equal(isMemoryCap({ httpStatus: 429, error: { code: 'memory_cap' } }), true);
+});
+
+test('withRetry honours the server hint, then gives up with the real error', async () => {
+  const slept = [];
+  let attempts = 0;
+  const ok = await withRetry(
+    async () => (++attempts < 3
+      ? { ok: false, httpStatus: 429, retryAfter: 2, error: { code: 'rate_limited' } }
+      : { ok: true }),
+    { sleepFn: async (ms) => slept.push(ms) },
+  );
+  assert.deepEqual(ok, { ok: true });
+  assert.deepEqual(slept, [2000, 2000]);
+
+  // Exhausted attempts return the LAST result, not a synthesised failure, so
+  // the caller reports what the server actually said.
+  const slept2 = [];
+  const gaveUp = await withRetry(
+    async () => ({ ok: false, httpStatus: 429, error: { code: 'rate_limited', message: 'Too many requests' } }),
+    { maxAttempts: 3, baseDelayMs: 10, sleepFn: async (ms) => slept2.push(ms) },
+  );
+  assert.equal(gaveUp.error.message, 'Too many requests');
+  assert.deepEqual(slept2, [10, 20]); // exponential when no hint was given
 });

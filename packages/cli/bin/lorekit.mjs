@@ -94,7 +94,8 @@ ${c.bold('Commands')}
   bootstrap   Apply the BYOD schema to a user-supplied Supabase database.
               Only needed when using LOREKIT_STORAGE_URL / LOREKIT_STORAGE_ANON_KEY.
               See docs/byod.md for setup instructions.
-  migrate     Relocate a LoreKit-format local store into the current layout.
+  migrate     Relocate a LoreKit-format local store into the current layout,
+              or push it up to the hosted store with --to remote.
               Dry-run by default; pass --yes to apply. Idempotent.
   hook        Hook engine for Claude Code / Cursor / Codex. Reads the host's
               JSON on stdin and injects memories or a retrospective nudge.
@@ -121,8 +122,8 @@ ${c.bold('Options')}
       --base <url>        Dashboard base URL for deep links (link / --link; else LOREKIT_APP_URL, default https://lorekit.io)
       --threshold <0..1>  Duplicate-similarity cutoff (dedupe; default 0.8)
       --from <path>       Source store to migrate from (migrate)
-      --to <tier>         Migration destination tier: home | project (migrate;
-                          default routes each entry by scope)
+      --to <dest>         Migration destination: home | project | remote (migrate;
+                          default routes each entry by scope across the local tiers)
       --apply             Apply the migration (alias of --yes) (migrate)
   -y, --yes               Non-interactive / apply; never prompt
       --hooks <mode>      Lifecycle hooks to wire: all | read-only | none (install)
@@ -158,6 +159,7 @@ ${c.bold('Examples')}
   npx @lorekit/cli doctor --deep
   npx @lorekit/cli migrate --from .lore                 # preview a rename
   npx @lorekit/cli migrate --from .lore --to project --yes
+  npx @lorekit/cli migrate --from .lorekit --to remote --yes  # push local lore up
 
 Run ${c.cyan('lorekit <command> --help')} for command-specific options.
 `;
@@ -603,7 +605,7 @@ ${c.bold('Examples')}
   npx @lorekit/cli url --q "flaky test" --owner personal # search + ownership filter
   npx @lorekit/cli link global --tags "perf,ci"          # Explorer filtered to labels
 `,
-  migrate: `${c.bold('lorekit migrate')} — relocate a LoreKit-format local store into the current layout
+  migrate: `${c.bold('lorekit migrate')} — relocate a LoreKit-format local store, or push it to the hosted store
 
 ${c.bold('Usage')}
   npx @lorekit/cli migrate --from <path> [options]
@@ -613,13 +615,24 @@ Dry-run by default; pass --yes (or --apply) to write. Idempotent.
 ${c.bold('Options')}
   -d, --dir <path>        Target project root (default: current directory)
       --from <path>       Source store to migrate from (required)
-      --to <tier>         Destination tier: home | project (default routes by scope)
+      --to <dest>         Destination: home | project | remote (default routes by
+                          scope across the local tiers)
       --apply             Apply the migration (alias of --yes)
   -y, --yes               Apply the migration; never prompt
+
+${c.bold('--to remote')}
+Pushes every entry in the source store up to the hosted store, over the
+connection and token \`lorekit install\` configured. Requires a write-capable
+token (\`lk_rw_*\` / \`lk_wo_*\`); a read-only one is rejected before anything is
+written. Archived and expired entries are skipped — the hosted write cannot
+represent them. Original creation dates are preserved; \`updated\` and the
+\`seen_count\` tally are re-derived by the server.
 
 ${c.bold('Examples')}
   npx @lorekit/cli migrate --from .lore                 # preview a rename
   npx @lorekit/cli migrate --from .lore --to project --yes
+  npx @lorekit/cli migrate --from .lorekit --to remote        # preview the push
+  npx @lorekit/cli migrate --from .lorekit --to remote --yes  # push local lore up
 `,
   hook: `${c.bold('lorekit hook')} — hook engine for Claude Code / Cursor / Codex
 
