@@ -5230,7 +5230,11 @@ insert into memories (id, user_id, scope, key, value, updated_at) values
   -- AC-3 needs its own row: see the note there for why resetting the first one
   -- cannot work now that the trigger preserves a lone `updated_at` write.
   ('00000000-0000-0000-0000-0000000e6221', '00000000-0000-0000-0000-0000000000a1',
-   'global', 'embed-stamp-row-2', 'original value', '2020-01-01T00:00:00Z');
+   'global', 'embed-stamp-row-2', 'original value', '2020-01-01T00:00:00Z'),
+  -- AC-6 likewise: it asserts a no-op re-write STILL bumps, which needs a row
+  -- whose stamp is unambiguously old.
+  ('00000000-0000-0000-0000-0000000e6222', '00000000-0000-0000-0000-0000000000a1',
+   'global', 'embed-stamp-row-3', 'original value', '2020-01-01T00:00:00Z');
 
 do $$
 declare
@@ -5293,6 +5297,24 @@ begin
   assert v_after > '2020-01-01T00:00:00Z'::timestamptz,
     format('00062 AC-3: a change touching both the value and the embedding columns is an edit '
            'and must bump updated_at, stayed at %s', v_after);
+
+  -- AC-6 — a plain NO-OP re-write still bumps, i.e. this migration did not
+  -- quietly change the recency contract for everything else.
+  --
+  -- `memory_write` UPSERTS, so an agent re-saving an identical lesson lands here
+  -- with every column unchanged. Preserving `updated_at` for that case would
+  -- silently stop re-saves from refreshing recency — a behaviour change reaching
+  -- far beyond embeddings, in a migration whose entire claim is that a DERIVED
+  -- column must not disturb the row. The trigger therefore requires a vector to
+  -- have actually moved, and this is what holds it to that.
+  update memories
+     set updated_at = updated_at   -- no-op: rewrites the row, changes nothing
+   where id = '00000000-0000-0000-0000-0000000e6222';
+  select updated_at into v_after from memories where id = '00000000-0000-0000-0000-0000000e6222';
+  assert v_after > '2020-01-01T00:00:00Z'::timestamptz,
+    format('00062 AC-6: a no-op re-write must STILL bump updated_at — only a write that moves '
+           'the embedding columns may preserve it. An upsert of an unchanged lesson is the '
+           'common case here, and it must keep refreshing recency. Stayed at %s', v_after);
 end;
 $$;
 

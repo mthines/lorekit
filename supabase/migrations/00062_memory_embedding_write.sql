@@ -113,7 +113,21 @@ as $$
 declare
   v_new memories := new;
   v_old memories := old;
+  v_embedding_changed boolean;
 begin
+  -- The embedding columns must ACTUALLY have changed for this to be an embedding
+  -- write. Without this precondition the rule reads "nothing meaningful changed
+  -- → preserve", which also catches a plain NO-OP re-write — and `memory_write`
+  -- upserts, so an agent re-saving an identical lesson would silently stop
+  -- refreshing `updated_at`. That is a recency-contract change reaching well
+  -- beyond embeddings, in a migration whose whole point is that a DERIVED column
+  -- must not disturb the row. Preserve only when a vector actually moved;
+  -- everything else, including a no-op, keeps the behaviour `set_updated_at`
+  -- always had.
+  v_embedding_changed :=
+       new.embedding is distinct from old.embedding
+    or new.embedding_model is distinct from old.embedding_model;
+
   -- Mask the derived columns and the one being decided.
   --
   -- `fts` MUST be masked too, and for a reason that is easy to get wrong:
@@ -128,9 +142,9 @@ begin
   v_new.embedding := null; v_new.embedding_model := null; v_new.updated_at := null; v_new.fts := null;
   v_old.embedding := null; v_old.embedding_model := null; v_old.updated_at := null; v_old.fts := null;
 
-  if v_new is not distinct from v_old then
-    -- Nothing the user can see changed: an embedding-only write (or a no-op).
-    -- Preserve the row's real recency rather than restamping it.
+  if v_embedding_changed and v_new is not distinct from v_old then
+    -- A vector moved and nothing else did: an embedding write. Preserve the
+    -- row's real recency rather than restamping it.
     new.updated_at := old.updated_at;
   else
     new.updated_at := now();

@@ -518,6 +518,11 @@ async function main() {
         for (let i = 0; i < group.length; i += 1) if (!writes[i].ok) skipIds.add(group[i].row.id);
         failed += group.length - written;
         log(`  ${group.length - written} of ${group.length} row write(s) failed, continuing: ${String(firstError?.message ?? firstError).slice(0, 200)}`);
+        // The THIRD growth site, and the docblock promises a check at every one.
+        // Without it a page whose writes all fail keeps embedding its remaining
+        // groups — paying the provider each time — for rows it is about to
+        // exclude anyway. Same reasoning as the embed-failure break above.
+        if (overSkipCap()) break;
       }
 
       if (args.sleepMs) await sleep(args.sleepMs);

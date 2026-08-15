@@ -186,9 +186,17 @@ does not land); the edge module is held to the RPC by
 
 `memories_updated_at` (`00001`) is a `BEFORE UPDATE` trigger that stamps
 `updated_at = now()`. A vector is a **derived artefact, not an edit**, so
-`00062` retargets that trigger at `lorekit_memories_set_updated_at`, which
-preserves `updated_at` when the only change is the embedding columns and stamps
-it as before for anything else.
+`00062` retargets that trigger at `lorekit_memories_set_updated_at`.
+
+The rule is deliberately narrow: `updated_at` is preserved only when the
+embedding columns **actually moved** *and* nothing else changed. Everything else
+keeps the behaviour `set_updated_at` always had — including a plain **no-op
+re-write**, which matters because `memory_write` upserts, so an agent re-saving
+an identical lesson lands on this trigger with every column unchanged. Treating
+that as "nothing meaningful changed" would silently stop re-saves from
+refreshing recency: a behaviour change reaching well beyond embeddings, in a
+migration whose entire claim is that a derived column must not disturb the row.
+Asserted by §62b AC-6.
 
 This is enforced at the storage layer rather than at each caller, so the edge
 RPC, the backfill's PATCH and any future writer all inherit it. It matters most
