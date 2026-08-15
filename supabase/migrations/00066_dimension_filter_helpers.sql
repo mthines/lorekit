@@ -2,12 +2,13 @@
 -- Reusable dimension-filter predicates — one definition of what each mode
 -- means, composed by every aggregate that narrows memories by dimension.
 --
--- WHY: three functions now apply the SAME per-dimension predicate — GET /memories
--- (00057 facets), the write series (00063 activity) and the owner dimension
--- (00064) — and each spelled it out INLINE, once per dimension. `lorekit_memory_facets`
--- carried eight `case` flags in its base CTE; `lorekit_memory_activity` carried
--- the same eight again in a flat WHERE. Sixteen near-identical copies of a rule
--- that is easy to get subtly wrong:
+-- WHY: two aggregate functions apply the SAME per-dimension predicate — the
+-- facet catalog `lorekit_memory_facets` (00057) and the write series
+-- `lorekit_memory_activity` (00063), both later extended with the owner
+-- dimension in 00064 — and each spelled it out INLINE, once per dimension.
+-- `lorekit_memory_facets` carried eight `case` flags in its base CTE;
+-- `lorekit_memory_activity` carried the same eight again in a flat WHERE.
+-- Sixteen near-identical copies of a rule that is easy to get subtly wrong:
 --
 --     `nin` means `value is not null and value <> all(filter)`
 --
@@ -141,6 +142,18 @@ $$;
 comment on function lorekit_match_int(integer, integer[], text) is
   'Integer counterpart of lorekit_match_text, for memories.origin_pr. Numeric
    comparison so `007` matches PR 7, exactly as GET /memories does. Inlinable.';
+
+-- These are pure predicates that touch no data, so the default PUBLIC EXECUTE is
+-- harmless — but this repo revokes PUBLIC/anon on every function it ships rather
+-- than relying on the default, so match that pattern here too. It does not
+-- affect inlining (which depends on the sql/immutable/single-expression shape,
+-- not on the grant), and the SECURITY DEFINER callers reach them as their owner.
+revoke execute on function lorekit_match_text(text, text[], text)        from public, anon;
+revoke execute on function lorekit_match_tags(text[], text[], text)      from public, anon;
+revoke execute on function lorekit_match_int(integer, integer[], text)   from public, anon;
+grant  execute on function lorekit_match_text(text, text[], text)        to authenticated, service_role;
+grant  execute on function lorekit_match_tags(text[], text[], text)      to authenticated, service_role;
+grant  execute on function lorekit_match_int(integer, integer[], text)   to authenticated, service_role;
 
 -- ── 2. lorekit_memory_facets — composes the helpers ─────────────────────────
 --

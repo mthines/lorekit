@@ -222,10 +222,15 @@ consequences to know before reading a number:
 
 The eight text/tags/int dimension predicates are the shared inlinable SQL helpers
 `lorekit_match_text` / `lorekit_match_tags` / `lorekit_match_int` (migration 00066), so the
-catalog's per-dimension flags cannot drift from the predicate `GET /activity` and `GET /`
-apply — the load-bearing `nin` null test (an unattributed row is EXCLUDED from a negated
-filter, not silently dropped) lives in ONE place. `owner` is the one dimension that stays
-inline: it is a LEFT JOIN-computed identity (`personal` / org slug), not a scalar column.
+catalog's per-dimension flags cannot drift from the series `GET /activity` counts: **both
+`lorekit_memory_facets` and `lorekit_memory_activity` compose the same helpers**, so the
+load-bearing `nin` null test (an unattributed row is EXCLUDED from a negated filter, not
+silently dropped) lives in ONE place for the two RPCs. `GET /` (`list.ts`) is a **separate**
+implementation — it builds a PostgREST `not.in` predicate (`inListLiteral`), not these SQL
+helpers; it agrees by construction (Postgres `NOT (col IN (…))` is also NULL, hence excludes,
+for a null column) but is not unified with them. `owner` is the one dimension that stays
+inline in the RPCs: it is a LEFT JOIN-computed identity (`personal` / org slug), not a scalar
+column.
 
 ## `seen_count` — recurrence, counted by the writer
 
