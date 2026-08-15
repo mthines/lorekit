@@ -142,7 +142,7 @@ The header reads `9 of 50` whenever the block is truncated, so an agent can tell
 
 The read stops at **100 per scope**, the largest page `GET /memories` will return, so a ceiling above 100 still reads 100 from each scope and fills its remaining lines from the others. Below 25 the read does *not* shrink: the ranker keeps a full pool and you simply see fewer lines.
 
-That read happens on **every session start**, against files on disk in local mode or over the network in remote mode, and the diversity pass that de-duplicates the results scales with the ceiling too. Both are cheap in absolute terms — a few hundred rows and a sub-millisecond similarity pass — but they are the cost side of the trade.
+That read happens on **every session start**, against files on disk in local mode or over the network in remote mode, and the diversity pass that de-duplicates the results scales with the ceiling too. Neither is free: the de-duplication pass is `O(n·k)` in candidates × rendered lines, measured at roughly **25–105 ms** for the 400-candidate pool this default creates (it depends on how long your memories are), against ~15 ms for the old 100-candidate one. That is once per session start, not per turn — but if you raise the ceiling to 200 on a large store, expect closer to 170 ms.
 
 To actually *see* a wider index, raise the budget as well; the ceiling alone will not do it, because `maxChars` runs out first:
 

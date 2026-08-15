@@ -707,8 +707,8 @@ Both files share this schema — all fields optional:
                            // the user layer before defaulting to hybrid
 
   "hooks.sessionStart.maxChars": 3000,
-                           // character budget for that block (default 1500, ~375 tokens)
-                           // bounded to 200–20000; an out-of-range value is CLAMPED, not
+                           // character budget for that block (default 3000, ~750 tokens,
+                           // ~25 index lines); bounded 200–20000, out-of-range CLAMPED not
                            // rejected — a small number means "keep it short", and honouring
                            // the floor is closer to that intent than restoring the default
                            // repo wins over user, and a declared-but-unparseable repo value
@@ -739,8 +739,12 @@ Both files share this schema — all fields optional:
   "hooks.sessionStart.loopCap": 1,
                            // how many memories one self-improvement loop (a
                            // "loop::<bucket>" tag) may contribute to that block
-                           // (default 2, bounded 0–40; 0 excludes loop buckets
-                           // entirely so only general memories are read). Clamped,
+                           // (default 1, bounded 0–40; 0 excludes loop buckets
+                           // entirely so only general memories are read). One per
+                           // bucket keeps a loop's best lesson without letting its
+                           // bookkeeping take a second slot from your codebase's
+                           // memories, which are read by a different audience.
+                           // Clamped,
                            // not rejected; repo wins over user with the same
                            // declared-value-owns-the-layer rule as maxChars
 

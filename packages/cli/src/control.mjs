@@ -147,7 +147,19 @@ export function normalizeSessionStartMaxChars(v) {
 }
 
 // The default per-loop-bucket cap for the SessionStart read, and the bounds a
-// configured one is held to. ONE lesson per bucket: a self-improvement loop's
+// configured one is held to.
+//
+// WHAT A BUCKET IS AND WHY IT NEEDS CAPPING. A prolific self-improvement loop —
+// the pr-reviewer's `loop::review-outcomes` / `loop::reviewer-comment-relevance`,
+// or `loop::implement-suggestion-lessons` — writes constantly and recently, so it
+// wins recency AND (being built to recur) salience, and a whole scope's read can
+// collapse to one bot's private bookkeeping (observed: 13 of 15 slots before any
+// cap existed). Ranking and MMR cannot fix that — the flood is real, varied and
+// genuinely high-scoring — but it is not what a GENERAL coding session needs.
+// General, non-loop lessons are never capped; they are what the cap frees room
+// for. Bounded, not shaped: on a store with no loop lessons it never binds.
+//
+// ONE lesson per bucket: a self-improvement loop's
 // single best lesson still surfaces, but its private bookkeeping cannot take a
 // second slot from the codebase lore a general session actually needs. It was 2,
 // which on a store with several active loops still spent a visible share of the

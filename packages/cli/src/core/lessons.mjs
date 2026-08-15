@@ -101,26 +101,6 @@ function resolveLessonCeiling(maxLessons) {
   return Math.min(HARD_LESSON_CEILING, Math.max(1, Math.round(n)));
 }
 
-// How many lessons any ONE self-improvement loop (`loop::<bucket>` tag) may
-// contribute to a session-start injection. A prolific loop — the pr-reviewer's
-// `loop::review-outcomes` / `loop::reviewer-comment-relevance`, or
-// `loop::implement-suggestion-lessons` — writes constantly and recently, so it
-// wins recency AND (being built to recur) salience, and a whole scope's read
-// can collapse to one bot's private bookkeeping (observed: 13 of 15 slots).
-// Ranking and MMR cannot fix that — the flood is real, varied, and high-scoring
-// — but it is not what a GENERAL coding session needs; those lessons are read
-// back by their own host through a tag filter. One per bucket keeps the signal
-// (a loop's best lesson still surfaces) without the flood; general, non-loop
-// lessons are never capped. Bounded, not shaped: on a store with no loop lessons
-// it never binds. A repo/user can override it with `hooks.sessionStart.loopCap`
-// (0 excludes loop buckets entirely), which `fetchLessons` receives as its
-// `loopCap` option.
-//
-// The NUMBER lives in `control.mjs` with the rest of the config vocabulary, and
-// is imported rather than restated: a second literal here was a default that
-// could silently disagree with the one the resolver hands the hook, so a direct
-// caller and a real session would cap differently.
-
 // How many lessons ride along with the scope map in `map` mode. Small on
 // purpose: the point of that shape is the inventory, and a "map" that is mostly
 // lessons is just `index` with extra steps.
@@ -145,19 +125,25 @@ const MAX_SCAN_CHARS = 4096;
 // precedence via the shared pure `resolvePrecedence` (the SAME first-seen /
 // more-specific-wins merge `tree` renders) — so the hook and `tree` provably
 // can't drift. Any per-scope failure is skipped (memory is best-effort).
-// Per-scope read cap — the DEFAULT one. It bounds the FETCH, which is a
-// different question from how much gets injected, and raising it makes every
-// session start pay for rows the budget was never going to show. Its one visible
-// consequence is that a scope holding more than this many lessons reports a
-// lower-bound count in the scope map — rendered `25+` rather than a number that
-// looks exact. `memory.scopes` answers it exactly and is the follow-up that
-// replaces this.
+// The FLOOR on the per-scope read — not the default, which is the higher
+// `scopeReadLimit(DEFAULT_SESSION_START_MAX_LESSONS)`. It exists so a LOWERED
+// ceiling cannot starve the ranker: asking for five lines is a statement about
+// the render, not permission to rank them out of five candidates.
+//
+// The visible consequence of whatever limit applies is that a scope holding more
+// than that many lessons reports a lower-bound count in the scope map — rendered
+// with a trailing `+` (`100+` at the default) rather than a number that looks
+// exact. `memory.scopes` answers it exactly and is the follow-up that replaces
+// this.
 export const SCOPE_READ_LIMIT = 25;
 
 // The largest `limit` the hosted route will ACCEPT on one `GET /memories` call.
 //
-// Mirrored from `MemoryListSchema` / the REST list query schema in
-// `@lorekit/schemas` (`limit: …min(1).max(100)`), self-contained here for the
+// Mirrored from `ListMemoriesQuerySchema` in `@lorekit/schemas` — the schema
+// that validates `GET /memories`, which is the door `RemoteStore.list` actually
+// knocks on. NOT `MemoryListSchema`: that is the MCP *tool* schema, a different
+// entrance to the same data that happens to agree on 100 today. Self-contained
+// here for the
 // same reason `limits.ts` is mirrored into the edge function: this package takes
 // no dependencies, and the number is a CONTRACT with the other side rather than
 // a preference of ours. Keep the two in step — if the route's cap moves, this

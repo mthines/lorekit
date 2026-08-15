@@ -366,12 +366,16 @@ test('SessionStart reads lessons from the MCP server and injects them', async ()
 //
 // HOW THE FETCH IS OBSERVED, since a local store's `list` reports no limit back:
 // by ARITHMETIC on the candidate pool, which is the same thing the user
-// experiences. Two scopes are seeded (`project::<tmpdir>` and `global`) with 90
-// lessons each. At the default the read takes 25 per scope, so only 50
-// candidates exist — the 40-line ceiling binds and 40 lines are injected. At
-// `maxLessons: 80` an unchanged 25-row read could offer at most 50 candidates,
-// so 80 injected lines are UNREACHABLE unless the fetch grew too. The second
-// assertion therefore pins both halves of the change at once.
+// experiences. Two scopes are seeded with `SEEDED_PER_SCOPE` lessons each, and
+// the three runs bracket the ceiling from both sides:
+//   - UNCONFIGURED — the default ceiling (100) binds the render.
+//   - LOWERED to 12 — below anything the fetch could fail to supply, so it is a
+//     clean test of the RENDER bound on its own.
+//   - RAISED to 150 — unreachable unless the FETCH grew with the ceiling: two
+//     scopes at the default depth can offer at most 200 candidates, and the read
+//     is itself capped per scope, so the expectation is derived rather than
+//     written as a literal.
+// Together they pin both halves of the dial: what is rendered and what is read.
 const SEEDED_PER_SCOPE = 90;
 
 test('SessionStart: hooks.sessionStart.maxLessons raises the injected line count AND the fetch', async () => {
