@@ -657,7 +657,12 @@ const KNOWN_FLAGS = [
   'from', 'to', 'apply', 'yes', 'hooks', 'no-hooks', 'mcp-json', 'force', 'deep', 'adapter',
   'event', 'json', 'scope', 'key', 'threshold', 'help', 'version', 'telemetry',
   'value', 'tags', 'source-agent', 'trigger', 'kind', 'host', 'ttl-days', 'clear-ttl', 'org', 'remote', 'local',
-  'link', 'base', 'q', 'owner', 'range', 'archived',
+  // `view` is accepted-and-IGNORED, not documented: the Explorer dropped the
+  // scope/time tab so the flag is a no-op, but `link` is a HUMAN_COMMAND that
+  // rejects unknown options, so KEEPING it here for a release stops an existing
+  // `lorekit link --view time` from hard-failing — the same courtesy `archived`
+  // gets. Remove it once 1.x links have aged out.
+  'link', 'base', 'q', 'owner', 'range', 'archived', 'view',
   'origin-repo', 'origin-branch', 'origin-commit', 'origin-pr', 'no-origin',
   // Scale-aware survey flags
   'all', 'max', 'since', 'until', 'key-prefix', 'cluster-by-key',

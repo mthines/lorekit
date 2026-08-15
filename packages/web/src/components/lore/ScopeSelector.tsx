@@ -31,7 +31,7 @@
  * same shape as `OwnershipFilterBar`.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, ChevronDown, LayoutList } from 'lucide-react';
 import { scopeIcon } from '@/components/memory/scope-meta';
 import { BottomSheet } from '@/components/ui/BottomSheet';
@@ -72,16 +72,19 @@ interface ScopeChipProps {
   count: number;
   selected: boolean;
   onSelect: () => void;
+  /** Set on the selected chip so the strip can scroll it into view. */
+  chipRef?: React.Ref<HTMLButtonElement>;
 }
 
 /**
  * One scope chip — a SINGLE compact pill: a type-tinted icon, the scope label,
  * and the count in a small circle. One pill, not a badge-inside-a-chip.
  */
-function ScopeChip({ type, label, count, selected, onSelect }: ScopeChipProps) {
+function ScopeChip({ type, label, count, selected, onSelect, chipRef }: ScopeChipProps) {
   const Icon = scopeIcon(type);
   return (
     <button
+      ref={chipRef}
       type="button"
       role="radio"
       aria-checked={selected}
@@ -137,6 +140,15 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
       (n) => n.scope.toLowerCase().includes(q) || n.label.toLowerCase().includes(q),
     );
   }, [allScopes, query]);
+
+  // A scope chosen from Browse all can be appended to the END of the strip (see
+  // `stripNodes`), which on a narrow row is off-screen — so scroll the lit chip
+  // into view when the selection changes. `nearest` never moves the page when
+  // the chip is already visible, so a click on a visible chip is a no-op.
+  const selectedChipRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (selected) selectedChipRef.current?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  }, [selected]);
 
   // Selecting anything collapses the browse surface — the choice is made.
   function choose(scope: string | null) {
@@ -236,6 +248,7 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
               label={node.label}
               count={node.count}
               selected={selected === node.scope}
+              chipRef={selected === node.scope ? selectedChipRef : undefined}
               onSelect={() => choose(node.scope)}
             />
           ))}
@@ -246,7 +259,9 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
             type="button"
             onClick={() => setOpen((v) => !v)}
             aria-expanded={open}
-            aria-controls="scope-browse-all"
+            // Only the DESKTOP inline expander carries this id; on mobile the
+            // same body renders in a `BottomSheet`, so the reference would dangle.
+            {...(isMobile ? {} : { 'aria-controls': 'scope-browse-all' })}
             className={[
               'flex min-h-7 shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors duration-150',
               open

@@ -3632,7 +3632,8 @@ $$;
 -- the same predicate GET /memories and lorekit_memory_facets apply. Most of the
 -- operator matrix is §69's proven logic, so §68b proves the plumbing — and the
 -- `nin` / origin_pr-coercion arms that are fresh plpgsql in 00062 get their own
--- assertions in §69b, once the facet-a fixtures that carry an agent and a PR exist.
+-- assertions in §68c (just below §69), once the facet-a fixtures that carry an
+-- agent and a PR exist.
 -- AC-1: a dimension filter narrows the counts to the list's set.
 -- AC-2: scope is a hard filter.
 -- AC-3: a NO-MATCH filter yields ZERO — never a fallback to the account total,
