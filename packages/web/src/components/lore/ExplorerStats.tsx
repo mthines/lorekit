@@ -251,11 +251,14 @@ export function ExplorerStats({
   if (variant === 'strip') {
     return (
       <dl
-        className={`flex flex-wrap items-baseline gap-x-5 gap-y-1 transition-opacity duration-150 ${dim}`}
+        className={`flex flex-wrap items-center gap-x-4 gap-y-1 transition-opacity duration-150 ${dim}`}
         aria-busy={isFetching || isLoading}
       >
-        {cards.map(({ id, label, value }) => (
-          <div key={id} className="flex items-baseline gap-1.5">
+        {cards.map(({ id, label, value, icon: Icon }) => (
+          <div key={id} className="flex items-center gap-1.5">
+            {/* A subtle icon per metric makes the strip scannable — the eye
+                finds "written" by its glyph before reading the word. */}
+            <Icon className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
             <dd className="text-sm font-semibold tabular-nums text-[var(--color-content-primary)]">
               {value}
             </dd>

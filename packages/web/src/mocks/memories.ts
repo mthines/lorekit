@@ -303,13 +303,20 @@ function readActivityFrom(rows: MemoryRow[], unit: 'hour' | 'day') {
  * Keep the semantics here roughly faithful so stories stay realistic, but never
  * treat this as the check.
  */
-function listFrom(rows: MemoryRow[], url: URL) {
+/**
+ * The shared row predicate — scope + label + the scalar dimensions — that both
+ * `GET /memories` and (since migration 00062) `GET /memories/activity` apply. It
+ * lives here once so the stat header's numbers narrow the same way the list does
+ * in a story. Any param that is absent is a no-op, so the activity handler — which
+ * sends `scope` + the dimension filters but never `key`/`q`/`archived` — reuses it
+ * unchanged.
+ */
+function filterRows(rows: MemoryRow[], url: URL): MemoryRow[] {
   const scope = url.searchParams.get('scope');
   const key = url.searchParams.get('key');
   const q = url.searchParams.get('q')?.toLowerCase();
   const tags = url.searchParams.get('tags')?.split(',').filter(Boolean) ?? [];
   const tagsMode = url.searchParams.get('tags_mode') ?? 'any';
-  const limit = Number(url.searchParams.get('limit') ?? 50);
 
   /** One scalar dimension: `in` (default) or `nin`, both over the raw column. */
   const scalar = (param: string, read: (r: MemoryRow) => string | number | null) => {
@@ -323,7 +330,7 @@ function listFrom(rows: MemoryRow[], url: URL) {
     };
   };
 
-  const matched = activeRows(rows, url.searchParams.get('archived') === 'true')
+  return activeRows(rows, url.searchParams.get('archived') === 'true')
     .filter((r) => (scope ? r.scope === scope : true))
     .filter((r) => (key ? r.key === key : true))
     .filter((r) => (q ? `${r.key} ${r.value}`.toLowerCase().includes(q) : true))
@@ -340,9 +347,12 @@ function listFrom(rows: MemoryRow[], url: URL) {
     .filter(scalar('host', (r) => r.host))
     .filter(scalar('origin_repo', (r) => r.origin_repo))
     .filter(scalar('origin_branch', (r) => r.origin_branch))
-    .filter(scalar('origin_pr', (r) => r.origin_pr))
-    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    .filter(scalar('origin_pr', (r) => r.origin_pr));
+}
 
+function listFrom(rows: MemoryRow[], url: URL) {
+  const limit = Number(url.searchParams.get('limit') ?? 50);
+  const matched = filterRows(rows, url).sort((a, b) => b.created_at.localeCompare(a.created_at));
   // No cursor emulation: every story fits in one page, and a fake cursor would
   // encode a pagination contract the fixtures do not actually implement.
   return { entries: matched.slice(0, limit), hasMore: false, nextCursor: null };
@@ -378,7 +388,10 @@ export function memoryHandlers(rows: MemoryRow[] = MEMORY_ROWS) {
         bucket,
         since: url.searchParams.get('since') ?? FROZEN_NOW,
         until: url.searchParams.get('until') ?? FROZEN_NOW,
-        buckets: activityFrom(rows, bucket),
+        // Scope + dimension filters narrow the aggregate server-side (00062), so
+        // the mock applies the SAME predicate the list uses — else a scoped header
+        // would show the account total.
+        buckets: activityFrom(filterRows(rows, url), bucket),
       });
     }),
     http.get('*/functions/v1/memories/read-activity', ({ request }) => {

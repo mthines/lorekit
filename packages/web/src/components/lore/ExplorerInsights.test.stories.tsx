@@ -84,6 +84,10 @@ export const CardsReflectTheActiveSelection: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
 
+    // The cards are the EXPANDED rendering; the panel opens collapsed, so open it
+    // before reading card headlines.
+    await userEvent.click(await canvas.findByRole('button', { name: /show activity detail/i }));
+
     let accountWritten = 0;
     await step('all scopes: the Written card counts every fixture memory', async () => {
       await waitFor(async () => {
@@ -130,6 +134,9 @@ export const ReadCardUsesTheScopedReadSeries: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
 
+    // Open the panel — the Read card is part of the expanded rendering.
+    await userEvent.click(await canvas.findByRole('button', { name: /show activity detail/i }));
+
     let accountRead = 0;
     await step('all scopes: the Read card totals the whole ledger', async () => {
       await waitFor(async () => {
@@ -161,6 +168,9 @@ export const ReadCardUsesTheScopedReadSeries: Story = {
 export const ExpiredTileShowsTheUsageLedger: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
+
+    // Open the panel — the Expired tile is part of the expanded rendering.
+    await userEvent.click(await canvas.findByRole('button', { name: /show activity detail/i }));
 
     await step('it renders GET /memories/usage summary.expired', async () => {
       await waitFor(async () => {

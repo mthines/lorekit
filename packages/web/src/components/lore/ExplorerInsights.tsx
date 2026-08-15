@@ -101,21 +101,51 @@ export function ExplorerInsights({
       aria-label="Activity for the current selection"
       className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
     >
-      {/* One header row carries the whole panel: what is being counted, over
-          what window, and the single control that opens it. */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
-        <p className="text-xs font-medium text-[var(--color-content-tertiary)]">
-          {scope ? `Activity · ${scopeLabel}` : 'Activity · all scopes'}
-        </p>
+      {/* Two rows: the title + controls, then the collapsed strip on its own
+          full-width line. Keeping the strip out of the control row is what stops
+          the numbers and the range picker colliding on a phone — the old single
+          wrapping row overlapped them. */}
+      <div className="flex flex-col gap-2 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <p className="text-xs font-medium text-[var(--color-content-tertiary)]">
+            {scope ? `Activity · ${scopeLabel}` : 'Activity · all scopes'}
+          </p>
+          <div className="ml-auto flex items-center gap-2">
+            <RangePicker
+              value={range}
+              onChange={onRangeChange}
+              presets={EXPLORER_PRESETS}
+              nowIso={nowIso}
+            />
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              aria-expanded={open}
+              aria-controls="explorer-insights-detail"
+              aria-label={open ? 'Hide activity detail' : 'Show activity detail'}
+              className="flex min-h-9 min-w-9 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors duration-150 hover:text-[var(--color-content-secondary)]"
+            >
+              {/* One chevron that ROTATES rather than two swapped icons: the
+                  rotation is the affordance, and it survives reduced motion as a
+                  static direction. */}
+              <motion.span
+                animate={{ rotate: open ? 180 : 0 }}
+                transition={{ duration: reduceMotion ? 0 : 0.15 }}
+                className="flex"
+              >
+                <ChevronDown className="size-4" aria-hidden />
+              </motion.span>
+            </button>
+          </div>
+        </div>
 
-        {/* The collapsed summary lives in the HEADER, not under it, so the
-            panel is one row tall when closed. Cross-fading it against the cards
-            is what makes the numbers appear to survive the transition. */}
+        {/* The collapsed summary — the four numbers on their own line. Cross-fades
+            against the cards so the numbers appear to survive the expand. */}
         <AnimatePresence initial={false} mode="wait">
           {!open && (
             <motion.div
               key="strip"
-              className="min-w-0 flex-1"
+              className="min-w-0"
               initial={reduceMotion ? false : { opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={reduceMotion ? { opacity: 0 } : { opacity: 0 }}
@@ -132,34 +162,6 @@ export function ExplorerInsights({
             </motion.div>
           )}
         </AnimatePresence>
-
-        <div className="ml-auto flex items-center gap-2">
-          <RangePicker
-            value={range}
-            onChange={onRangeChange}
-            presets={EXPLORER_PRESETS}
-            nowIso={nowIso}
-          />
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            aria-expanded={open}
-            aria-controls="explorer-insights-detail"
-            aria-label={open ? 'Hide activity detail' : 'Show activity detail'}
-            className="flex min-h-9 min-w-9 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors duration-150 hover:text-[var(--color-content-secondary)]"
-          >
-            {/* One chevron that ROTATES rather than two swapped icons: the
-                rotation is the affordance, and it survives reduced motion as a
-                static direction. */}
-            <motion.span
-              animate={{ rotate: open ? 180 : 0 }}
-              transition={{ duration: reduceMotion ? 0 : 0.15 }}
-              className="flex"
-            >
-              <ChevronDown className="size-4" aria-hidden />
-            </motion.span>
-          </button>
-        </div>
       </div>
 
       <AnimatePresence initial={false}>

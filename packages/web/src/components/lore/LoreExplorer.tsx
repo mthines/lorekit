@@ -3,9 +3,8 @@
 /**
  * LoreExplorer
  *
- * Two-panel layout (scope tree + paginated lesson list) for the Lore page.
- * Includes a collapsible heatmap panel at the top and a "Browse by time" tab
- * that surfaces the ActivityFeed view, replacing the old /activity route.
+ * The Lore page: a scope chip selector + a collapsible insights panel (stats +
+ * heatmap) above a paginated, filterable lesson list.
  *
  * ## Key changes from the previous client-filtered version
  * - Default view is "all scopes" (no scope selected). The scope selector's first
@@ -25,15 +24,13 @@
  *   them. Server-side, shareable — "every perf regression we've learned" is a
  *   link you can paste to a teammate.
  * - `range` param:    time range, shareable. Scoped to /lore. Shared by the
- *   heatmap click, scope view, and feed view — one param drives all three, and
+ *   heatmap click and the list — one param drives both, and
  *   as of the shared time model it is the SAME param the Overview writes, so a
  *   selection means the same thing on both pages. It holds either a relative
  *   preset (`{preset:'7d'}`, which stays live in a shared link) or an absolute
  *   window (`{from,to}`, ISO instants or the legacy `YYYY-MM-DD` day strings).
  *   `resolveRange` turns whichever arrived into instants; nothing downstream
  *   sees a relative value. See `lib/time-range.ts`.
- * - `view` param:     'scope' | 'time'. Persisted in URL so a shared link
- *   lands on the correct tab.
  * - `status` param:   'active' | 'archived' | 'expiring'. The population being
  *   viewed, as opposed to the filters that narrow it. Absent means "fall back
  *   to the legacy `archived` flag", which is why its default is `null` rather
@@ -49,7 +46,7 @@
  */
 
 import { useCallback, useMemo, useTransition, useState } from 'react';
-import { Search, Loader2, List, LayoutGrid, User, Building2, Users } from 'lucide-react';
+import { Search, Loader2, User, Building2, Users } from 'lucide-react';
 import { type ScopeNode } from './ScopeTree';
 import { ScopeSelector } from './ScopeSelector';
 import { ExplorerInsights } from './ExplorerInsights';
@@ -92,10 +89,8 @@ import {
 import { FilterMenuTrigger, FilterPillRow } from './FilterBar';
 import { useReducedMotion } from 'motion/react';
 import type { LessonEntry } from './LessonCard';
-import { ActivityFeed } from '@/components/activity/ActivityFeed';
 import { filterByOwnership, type OwnerFilter } from '@/lib/org-ui';
 
-type ViewMode = 'scope' | 'time';
 
 // Module-scoped so the reference is stable across renders — `useUrlState`
 // documents that mutable defaults must be memoized at the call site.
@@ -410,8 +405,6 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // `useMediaQuery` documents — a `md:` class cannot gate a prop.
   const isMobile = useIsMobile();
 
-  // URL-backed view mode so a shared link lands on the right tab.
-  const [view, setView] = useUrlState<ViewMode>('view', 'scope');
 
   // URL-backed Status — scoped to /lore. Defaults to `null` (param absent), not
   // to 'active', for the reason `filters` defaults to null: absent has to be
@@ -695,19 +688,6 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
       );
     }
 
-    if (view === 'time') {
-      return (
-        <div className="flex flex-col gap-1">
-          <ActivityFeed
-            lessons={filteredLessons}
-            isSelected={isLessonSelected}
-            onSelect={handleLessonClick}
-          />
-          {loadMore}
-        </div>
-      );
-    }
-
     return (
       <div className="flex flex-col gap-2" role="list" aria-label="Memories">
         {filteredLessons.map((lesson, i) => (
@@ -767,39 +747,9 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
         nowIso={insightsNowIso}
       />
 
-      {/* ── View-mode tabs ───────────────────────────────────────────────── */}
-      <div
-        className="flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-1"
-        role="tablist"
-        aria-label="Explorer view"
-      >
-        {([
-          { id: 'scope' as ViewMode, label: 'Browse by scope', icon: LayoutGrid },
-          { id: 'time' as ViewMode, label: 'Browse by time', icon: List },
-        ] as const).map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={view === id}
-            onClick={() => setView(id)}
-            className={[
-              'flex flex-1 min-h-9 items-center justify-center gap-2 rounded-md text-xs font-medium transition-all duration-150',
-              view === id
-                ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
-                : 'text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]',
-            ].join(' ')}
-          >
-            <Icon className="size-3.5 shrink-0" aria-hidden />
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* ── Results (shared chrome for both tabs) ───────────────────────────
-          The filter bar (search / filters / date / status) + owner bar are the
-          SAME for "Browse by scope" and "Browse by time"; only the body inside
-          `renderResults()` differs (card list vs date-grouped feed). Scope now
+      {/* ── Results ─────────────────────────────────────────────────────────
+          The filter bar (search / filters / date / status) + owner bar sit above
+          the memory list. Scope now
           lives in the chip row at the top of the page, so the list is a single
           full-width column — no more left scope rail. Both breakpoints are still
           mounted and CSS-toggled (not a JS conditional render) so each keeps a

@@ -26,8 +26,20 @@
 
 import { useMemo, useState } from 'react';
 import { Search, ChevronDown, LayoutList } from 'lucide-react';
-import { ScopeBadge } from '@/components/memory/ScopeBadge';
+import { scopeIcon } from '@/components/memory/scope-meta';
 import type { ScopeNode } from './ScopeTree';
+
+/**
+ * The scope-type accent, applied to the chip's icon only — the same hues the
+ * `ScopeBadge` pills use, but as a single tint on a single pill rather than a
+ * bordered badge nested inside the chip (which read as two stacked labels).
+ */
+const TYPE_COLOR: Record<ScopeNode['type'], string> = {
+  repo: 'text-[#6b8afd]',
+  project: 'text-[#4bbf87]',
+  global: 'text-[#a679f0]',
+  branch: 'text-[#d98a3d]',
+};
 
 /**
  * How many scope chips the collapsed row shows before `Browse all` takes over.
@@ -51,15 +63,19 @@ function flattenScopes(nodes: ScopeNode[]): ScopeNode[] {
 }
 
 interface ScopeChipProps {
-  scope: string;
   type: ScopeNode['type'];
+  label: string;
   count: number;
   selected: boolean;
   onSelect: () => void;
 }
 
-/** One scope chip — the coloured type badge + friendly label + count. */
-function ScopeChip({ scope, type, count, selected, onSelect }: ScopeChipProps) {
+/**
+ * One scope chip — a SINGLE compact pill: a type-tinted icon, the scope label,
+ * and the count in a small circle. One pill, not a badge-inside-a-chip.
+ */
+function ScopeChip({ type, label, count, selected, onSelect }: ScopeChipProps) {
+  const Icon = scopeIcon(type);
   return (
     <button
       type="button"
@@ -67,14 +83,17 @@ function ScopeChip({ scope, type, count, selected, onSelect }: ScopeChipProps) {
       aria-checked={selected}
       onClick={onSelect}
       className={[
-        'flex min-h-9 items-center gap-2 rounded-full border px-3 text-xs transition-colors duration-150',
+        'flex min-h-7 items-center gap-1.5 rounded-full border py-0.5 pl-2 pr-1 text-xs transition-colors duration-150',
         selected
-          ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)]'
-          : 'border-[var(--color-border)] hover:bg-[var(--color-bg-elevated)]',
+          ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)] text-[var(--color-content-primary)]'
+          : 'border-[var(--color-border)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
       ].join(' ')}
     >
-      <ScopeBadge scope={scope} type={type} label showType={false} className="pointer-events-none" />
-      <span className="shrink-0 tabular-nums text-[var(--color-content-tertiary)]">{count}</span>
+      <Icon className={`size-3 shrink-0 ${TYPE_COLOR[type]}`} aria-hidden />
+      <span className="truncate font-mono">{label}</span>
+      <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-[var(--color-bg-elevated)] px-1 text-[10px] tabular-nums text-[var(--color-content-tertiary)]">
+        {count}
+      </span>
     </button>
   );
 }
@@ -123,16 +142,11 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
   }
 
   return (
-    <section
-      aria-label="Scope"
-      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
-    >
-      <div
-        role="radiogroup"
-        aria-label="Filter by scope"
-        className="flex flex-wrap items-center gap-2 p-3"
-      >
-        <span className="mr-0.5 text-[11px] font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
+    <div aria-label="Scope" className="flex flex-col gap-2">
+      {/* No card — a bare, compact row so the selector reads as a control, not a
+          panel competing with the stats below it. */}
+      <div role="radiogroup" aria-label="Filter by scope" className="flex flex-wrap items-center gap-1.5">
+        <span className="mr-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
           Scope
         </span>
 
@@ -143,22 +157,24 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
           aria-checked={selected === null}
           onClick={() => choose(null)}
           className={[
-            'flex min-h-9 items-center gap-2 rounded-full border border-dashed px-3 text-xs transition-colors duration-150',
+            'flex min-h-7 items-center gap-1.5 rounded-full border border-dashed py-0.5 pl-2 pr-1 text-xs transition-colors duration-150',
             selected === null
               ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
               : 'border-[var(--color-border)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
           ].join(' ')}
         >
-          <LayoutList className="size-3.5 shrink-0" aria-hidden />
+          <LayoutList className="size-3 shrink-0" aria-hidden />
           All scopes
-          <span className="shrink-0 tabular-nums text-[var(--color-content-tertiary)]">{totalCount}</span>
+          <span className="flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-[var(--color-bg-elevated)] px-1 text-[10px] tabular-nums text-[var(--color-content-tertiary)]">
+            {totalCount}
+          </span>
         </button>
 
         {visible.map((node) => (
           <ScopeChip
             key={node.scope}
-            scope={node.scope}
             type={node.type}
+            label={node.label}
             count={node.count}
             selected={selected === node.scope}
             onSelect={() => choose(node.scope)}
@@ -172,15 +188,15 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
             aria-expanded={open}
             aria-controls="scope-browse-all"
             className={[
-              'flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors duration-150',
+              'flex min-h-7 items-center gap-1 rounded-full border py-0.5 px-2 text-xs transition-colors duration-150',
               open
                 ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
-                : 'border-[var(--color-border)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
+                : 'border-[var(--color-border)] text-[var(--color-content-tertiary)] hover:bg-[var(--color-bg-elevated)]',
             ].join(' ')}
           >
             {open ? 'Hide' : `Browse all ${allScopes.length}`}
             <ChevronDown
-              className={['size-3.5 shrink-0 transition-transform duration-150', open ? 'rotate-180' : ''].join(' ')}
+              className={['size-3 shrink-0 transition-transform duration-150', open ? 'rotate-180' : ''].join(' ')}
               aria-hidden
             />
           </button>
@@ -188,8 +204,11 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
       </div>
 
       {open && (
-        <div id="scope-browse-all" className="border-t border-[var(--color-border)] p-3">
-          <div className="relative mb-3">
+        <div
+          id="scope-browse-all"
+          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-2.5"
+        >
+          <div className="relative mb-2.5">
             <Search
               className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-content-tertiary)]"
               aria-hidden
@@ -201,16 +220,16 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Filter scopes…"
               aria-label="Filter scopes"
-              className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] py-2 pl-8 pr-3 text-xs text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none"
+              className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] py-1.5 pl-8 pr-3 text-xs text-[var(--color-content-primary)] placeholder:text-[var(--color-content-tertiary)] focus:border-[var(--color-accent)] focus:outline-none"
             />
           </div>
           {filtered.length > 0 ? (
-            <div role="radiogroup" aria-label="All scopes" className="flex max-h-64 flex-wrap gap-2 overflow-y-auto">
+            <div role="radiogroup" aria-label="All scopes" className="flex max-h-64 flex-wrap gap-1.5 overflow-y-auto">
               {filtered.map((node) => (
                 <ScopeChip
                   key={node.scope}
-                  scope={node.scope}
                   type={node.type}
+                  label={node.label}
                   count={node.count}
                   selected={selected === node.scope}
                   onSelect={() => choose(node.scope)}
@@ -224,6 +243,6 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
           )}
         </div>
       )}
-    </section>
+    </div>
   );
 }
