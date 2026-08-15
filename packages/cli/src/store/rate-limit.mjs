@@ -71,13 +71,33 @@ export function isRateLimited(res) {
   return Boolean(res && res.httpStatus === 429 && res.error?.code !== 'memory_cap');
 }
 
+/**
+ * Whether a store result is worth trying again at all.
+ *
+ * Wider than `isRateLimited` on purpose. This module exists for a BULK push of
+ * potentially thousands of requests, which is precisely the shape of run where
+ * a single transient 5xx or a dropped connection is likeliest — and failing
+ * one entry out of two thousand for a blip the next attempt would sail through
+ * is a bad trade. So a 5xx and a transport error retry too.
+ *
+ * What does NOT retry is anything the server has decided: a 4xx is a rejection
+ * (bad scope, denied permission), and `memory_cap` is terminal even though it
+ * arrives as a 429. Retrying either just burns the user's rate budget.
+ */
+export function isRetryable(res) {
+  if (!res || isMemoryCap(res)) return false;
+  if (res.networkError) return true;
+  if (isRateLimited(res)) return true;
+  return typeof res.httpStatus === 'number' && res.httpStatus >= 500;
+}
+
 /** Whether a store result is the terminal memory-cap rejection. */
 export function isMemoryCap(res) {
   return Boolean(res && res.error?.code === 'memory_cap');
 }
 
 /**
- * Run `fn` and retry it while it comes back rate-limited.
+ * Run `fn` and retry it while it comes back retryable (see `isRetryable`).
  *
  * Honours the server's own `Retry-After` when it sent one — it knows when its
  * window rolls over and the client does not — and falls back to exponential
@@ -101,11 +121,11 @@ export async function withRetry(fn, {
     try {
       res = await fn();
     } catch (e) {
-      if (!isRateLimited(e?.result) || attempt === maxAttempts) throw e;
+      if (!isRetryable(e?.result) || attempt === maxAttempts) throw e;
       await sleepFn(retryDelay(e.result, attempt, baseDelayMs, onRetry));
       continue;
     }
-    if (!isRateLimited(res) || attempt === maxAttempts) return res;
+    if (!isRetryable(res) || attempt === maxAttempts) return res;
     await sleepFn(retryDelay(res, attempt, baseDelayMs, onRetry));
   }
   return res;

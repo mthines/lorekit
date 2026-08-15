@@ -6,22 +6,25 @@ import os from 'node:os';
 import path from 'node:path';
 import { migrate } from '../src/migrate.mjs';
 import { createLocalStore } from '../src/store/local.mjs';
+import { setWriters } from '../src/util.mjs';
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'lk-mig-'));
 }
 
-// Silence migrate's stdout/stderr for the duration of `fn`.
+// Silence migrate's output for the duration of `fn`.
+//
+// Redirects the CLI's own writers rather than hijacking `process.stdout.write`.
+// That distinction is load-bearing: `node --test` runs this file in a child
+// process and reports results over stdout, so a global hijack swallows the
+// runner's result lines — the suite then reports a fraction of its tests and a
+// failure can disappear entirely.
 async function quiet(fn) {
-  const out = process.stdout.write.bind(process.stdout);
-  const errw = process.stderr.write.bind(process.stderr);
-  process.stdout.write = () => true;
-  process.stderr.write = () => true;
+  const restore = setWriters({ out: () => {}, err: () => {} });
   try {
     return await fn();
   } finally {
-    process.stdout.write = out;
-    process.stderr.write = errw;
+    restore();
   }
 }
 
@@ -164,20 +167,18 @@ async function withRemote(fn, { respond = null, token = 'lk_rw_test' } = {}) {
 
 const writes = (calls) => calls.filter((c) => c.method === 'POST');
 
-// Capture migrate's stdout/stderr instead of discarding it, for the reports
-// whose whole job is to tell the user what happened.
+// Capture migrate's output instead of discarding it, for the reports whose
+// whole job is to tell the user what happened. Same seam as `quiet`, and for
+// the same reason.
 async function captured(fn) {
-  const out = process.stdout.write.bind(process.stdout);
-  const errw = process.stderr.write.bind(process.stderr);
   let text = '';
-  process.stdout.write = (s) => { text += s; return true; };
-  process.stderr.write = (s) => { text += s; return true; };
+  const collect = (s) => { text += s; };
+  const restore = setWriters({ out: collect, err: collect });
   try {
     const result = await fn();
     return { result, text };
   } finally {
-    process.stdout.write = out;
-    process.stderr.write = errw;
+    restore();
   }
 }
 
@@ -393,21 +394,23 @@ test('migrate rejects an unknown --to destination', async () => {
   });
 });
 
-test('migrate --to remote reports an unreadable entry and never overwrites it', async () => {
+test('migrate --to remote reports a persistently unreadable entry and never overwrites it', async () => {
   const src = await seedSource();
   const home = tmpDir();
   const root = tmpDir();
 
   await withHome(home, async () => {
-    let reads = 0;
     const { result, calls } = await withRemote(
-      () => captured(() => migrate({ from: src, to: 'remote', yes: true, dir: root })),
+      () => captured(() => migrate(
+        { from: src, to: 'remote', yes: true, dir: root },
+        { sleepFn: async () => {} },
+      )),
       {
         respond: (call) => {
-          // Fail the first classifying read. A failed read is not an absence,
-          // so the entry must be reported — never written over on the
-          // assumption that it is new.
-          if (call.method === 'GET' && reads++ === 0) {
+          // Every read of `g1` fails, so the retries are exhausted. A failed
+          // read is not an absence: the entry must be reported, never written
+          // over on the assumption that it is new.
+          if (call.method === 'GET' && new URL(call.url).searchParams.get('key') === 'g1') {
             return { status: 500, body: JSON.stringify({ error: 'upstream boom' }) };
           }
           return null;
@@ -416,8 +419,36 @@ test('migrate --to remote reports an unreadable entry and never overwrites it', 
     );
     assert.equal(result.result, 1);
     assert.match(result.text, /upstream boom/);
-    assert.equal(writes(calls).length, 1); // only the entry that could be classified
+    // Only the entry that could be classified was written; `g1` never was.
+    assert.deepEqual(writes(calls).map((w) => w.body.key), ['r1']);
     assert.match(result.text, /1 entry failed \(listed above\)/);
+  });
+});
+
+test('migrate --to remote retries a transient 5xx read rather than failing the entry', async () => {
+  const src = await seedSource();
+  const home = tmpDir();
+  const root = tmpDir();
+  const slept = [];
+
+  await withHome(home, async () => {
+    let failures = 0;
+    const { result, calls } = await withRemote(
+      () => captured(() => migrate(
+        { from: src, to: 'remote', yes: true, dir: root },
+        { sleepFn: async (ms) => { slept.push(ms); } },
+      )),
+      {
+        respond: (call) => (call.method === 'GET' && failures++ === 0
+          ? { status: 503, body: JSON.stringify({ error: 'upstream restarting' }) }
+          : null),
+      },
+    );
+    // A blip on a bulk push must not cost an entry — this is the run shape
+    // where a single transient failure is likeliest.
+    assert.equal(result.result, 0);
+    assert.equal(writes(calls).length, 2);
+    assert.deepEqual(slept, [1000]); // exponential backoff, no server hint on a 503
   });
 });
 
@@ -460,6 +491,230 @@ test('migrate --to remote retries a rate-limited READ, and reports a clamped TTL
     assert.deepEqual(slept, [1000]);
     assert.equal(calls.filter((c) => c.method === 'GET').length, 2); // rejected read + its retry
     assert.equal(writes(calls)[0].body.ttl_days, 365);
-    assert.match(result.text, /1 entry had a TTL longer than the hosted maximum/);
+    assert.match(result.text, /global::long — TTL shortened to the hosted maximum/);
+    assert.match(result.text, /1 entry: TTL shortened to the hosted maximum/);
+  });
+});
+
+test('migrate --to remote re-pushes an entry whose hosted copy differs', async () => {
+  const src = await seedSource();
+  const home = tmpDir();
+  const root = tmpDir();
+
+  await withHome(home, async () => {
+    // The hosted rows exist but say something else, so the plan must be UPDATE
+    // and the writes must happen. Without this the whole suite passes with
+    // `sameRemoteEntry` hard-wired to true.
+    const { result, calls } = await withRemote(
+      () => captured(() => migrate({ from: src, to: 'remote', yes: true, dir: root })),
+      {
+        respond: (call) => {
+          if (call.method !== 'GET') return null;
+          const p = new URL(call.url).searchParams;
+          return {
+            status: 200,
+            body: JSON.stringify({
+              entries: [{
+                id: '00000000-0000-0000-0000-000000000000',
+                scope: p.get('scope'), key: p.get('key'),
+                value: 'something else entirely',
+                tags: [], source_agent: null, trigger: null,
+                created_at: '2020-01-01T00:00:00.000Z', updated_at: '2020-01-01T00:00:00.000Z',
+                expires_at: null, archived_at: null,
+              }],
+            }),
+          };
+        },
+      },
+    );
+    assert.equal(result.result, 0);
+    assert.equal(writes(calls).length, 2);
+    assert.match(result.text, /global — 0 add, 1 update/);
+    assert.match(result.text, /repo::o\/r — 0 add, 1 update/);
+  });
+});
+
+test('migrate --to remote is idempotent for padded values and absent provenance', async () => {
+  // Two shapes that a naive field-by-field comparison reports as UPDATE on
+  // every single run, re-pushing the whole store forever: the hosted write
+  // TRIMS `value`, and it COALESCES `origin_*` so a local entry with none can
+  // never make the hosted row match it.
+  const src = tmpDir();
+  const store = createLocalStore(src);
+  await store.write({ scope: 'global', key: 'padded', value: '  padded value  ' });
+
+  const home = tmpDir();
+  const root = tmpDir();
+  await withHome(home, async () => {
+    const { result, calls } = await withRemote(
+      () => quiet(() => migrate({ from: src, to: 'remote', yes: true, dir: root })),
+      {
+        respond: (call) => (call.method === 'GET' ? {
+          status: 200,
+          body: JSON.stringify({
+            entries: [{
+              id: '00000000-0000-0000-0000-000000000000',
+              scope: 'global', key: 'padded',
+              value: 'padded value',           // trimmed by the server
+              tags: [], source_agent: null, trigger: null,
+              origin_repo: 'mthines/lorekit',  // recorded by an earlier write, coalesced
+              created_at: '2020-01-01T00:00:00.000Z', updated_at: '2020-01-01T00:00:00.000Z',
+              expires_at: null, archived_at: null,
+            }],
+          }),
+        } : null),
+      },
+    );
+    assert.equal(result, 0);
+    assert.equal(writes(calls).length, 0);
+  });
+});
+
+test('migrate --to remote re-pushes when the hosted expiry is shorter than the local one', async () => {
+  const src = tmpDir();
+  const store = createLocalStore(src);
+  await store.write({ scope: 'global', key: 'longlived', value: 'v', ttl_days: 300 });
+
+  const home = tmpDir();
+  const root = tmpDir();
+  await withHome(home, async () => {
+    const hosted = (expiresAt) => ({
+      status: 200,
+      body: JSON.stringify({
+        entries: [{
+          id: '00000000-0000-0000-0000-000000000000',
+          scope: 'global', key: 'longlived', value: 'v',
+          tags: [], source_agent: null, trigger: null,
+          created_at: '2020-01-01T00:00:00.000Z', updated_at: '2020-01-01T00:00:00.000Z',
+          expires_at: expiresAt, archived_at: null,
+        }],
+      }),
+    });
+    const soon = new Date(Date.now() + 7 * 86_400_000).toISOString();
+    const later = new Date(Date.now() + 400 * 86_400_000).toISOString();
+
+    // A hosted lesson that dies in a week does not satisfy a 300-day one.
+    const shorter = await withRemote(
+      () => quiet(() => migrate({ from: src, to: 'remote', yes: true, dir: root })),
+      { respond: (c) => (c.method === 'GET' ? hosted(soon) : null) },
+    );
+    assert.equal(writes(shorter.calls).length, 1);
+
+    // One that outlives it does, so a re-run after a push stays NOOP even
+    // though the local copy keeps ageing and the instants never match.
+    const longer = await withRemote(
+      () => quiet(() => migrate({ from: src, to: 'remote', yes: true, dir: root })),
+      { respond: (c) => (c.method === 'GET' ? hosted(later) : null) },
+    );
+    assert.equal(writes(longer.calls).length, 0);
+  });
+});
+
+test('migrate --to remote with a write-only token pushes without reading', async () => {
+  const src = await seedSource();
+  const home = tmpDir();
+  const root = tmpDir();
+
+  await withHome(home, async () => {
+    const { result, calls } = await withRemote(
+      () => captured(() => migrate({ from: src, to: 'remote', yes: true, dir: root })),
+      {
+        token: 'lk_wo_writeonly',
+        // Any read would 403. The run must not issue one — the preflight
+        // promised the writes still land, and they have to.
+        respond: (call) => (call.method === 'GET'
+          ? { status: 403, body: JSON.stringify({ error: 'permission denied', code: 'permission_denied' }) }
+          : null),
+      },
+    );
+    assert.equal(result.result, 0);
+    assert.equal(calls.filter((c) => c.method === 'GET').length, 0);
+    assert.equal(writes(calls).length, 2);
+    assert.match(result.text, /write-only/);
+    assert.match(result.text, /global — 1 add, 0 update/);
+  });
+});
+
+test('migrate --to remote warns on an unrecognized token prefix but proceeds', async () => {
+  const src = await seedSource();
+  const home = tmpDir();
+  const root = tmpDir();
+
+  await withHome(home, async () => {
+    const { result, calls } = await withRemote(
+      () => captured(() => migrate({ from: src, to: 'remote', yes: true, dir: root })),
+      { token: 'custom_token_from_a_self_host' },
+    );
+    assert.equal(result.result, 0);
+    assert.match(result.text, /unrecognized prefix/);
+    assert.equal(writes(calls).length, 2);
+  });
+});
+
+test('migrate --to remote honours the global --token and --endpoint flags', async () => {
+  const src = await seedSource();
+  const home = tmpDir();
+  const root = tmpDir();
+
+  await withHome(home, async () => {
+    // No configured connection at all — the flags are the only source.
+    const { result, calls } = await withRemote(
+      () => captured(() => migrate({
+        from: src, to: 'remote', yes: true, dir: root,
+        endpoint: 'https://flagged.supabase.co/functions/v1/mcp', token: 'lk_rw_flag',
+      })),
+      { token: null, endpoint: null },
+    );
+    assert.equal(result.result, 0);
+    assert.match(calls[0].url, /^https:\/\/flagged\.supabase\.co\/functions\/v1\//);
+  });
+});
+
+test('migrate --to remote previews the same losses in a dry run as it reports on apply', async () => {
+  const src = tmpDir();
+  const store = createLocalStore(src);
+  await store.write({ scope: 'global', key: 'longttl', value: 'v', ttl_days: 365 });
+  const file = fs.readdirSync(path.join(src, 'global')).map((n) => path.join(src, 'global', n))[0];
+  fs.writeFileSync(
+    file,
+    fs.readFileSync(file, 'utf8')
+      .replace(/expires_at: .*/, 'expires_at: 2099-01-01T00:00:00.000Z')
+      .replace(/created: .*/, 'created: "3000-01-01T00:00:00.000Z"'),
+  );
+
+  const home = tmpDir();
+  const root = tmpDir();
+  await withHome(home, async () => {
+    // A preview that omits "this will be shortened and re-dated" is a preview
+    // of a different operation.
+    const { result, calls } = await withRemote(() =>
+      captured(() => migrate({ from: src, to: 'remote', dir: root })));
+    assert.equal(result.result, 0);
+    assert.equal(writes(calls).length, 0);
+    assert.match(result.text, /would have TTL shortened/);
+    assert.match(result.text, /would have unusable created date dropped/);
+  });
+});
+
+test('migrate --to remote paces itself once the request window fills', async () => {
+  const src = await seedSource();
+  const home = tmpDir();
+  const root = tmpDir();
+
+  await withHome(home, async () => {
+    const started = Date.now();
+    const { result } = await withRemote(() => captured(() => migrate(
+      { from: src, to: 'remote', yes: true, dir: root },
+      // One request per 20ms window, so every call after the first must wait.
+      // The pacer sleeps in REAL time by design (a fake sleep that never
+      // advances the clock would spin its window forever), hence a tiny window
+      // rather than an injected clock.
+      { maxPerWindow: 1, windowMs: 20 },
+    )));
+    assert.equal(result.result, 0);
+    assert.match(result.text, /staying under the hosted rate limit/);
+    // Four requests (2 reads + 2 writes) at one per 20ms window — the run
+    // cannot have finished instantly. Without the pacer this is ~0ms.
+    assert.ok(Date.now() - started >= 40, 'expected the pacer to slow the run down');
   });
 });

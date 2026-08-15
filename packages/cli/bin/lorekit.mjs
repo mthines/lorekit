@@ -622,11 +622,21 @@ ${c.bold('Options')}
 
 ${c.bold('--to remote')}
 Pushes every entry in the source store up to the hosted store, over the
-connection and token \`lorekit install\` configured. Requires a write-capable
-token (\`lk_rw_*\` / \`lk_wo_*\`); a read-only one is rejected before anything is
-written. Archived and expired entries are skipped — the hosted write cannot
-represent them. Original creation dates are preserved; \`updated\` and the
-\`seen_count\` tally are re-derived by the server.
+connection and token \`lorekit install\` configured (\`--endpoint\` / \`--token\`
+override both). A read-only \`lk_ro_*\` token is rejected before anything is
+written; an unrecognized prefix only warns and proceeds, so a self-hosted or
+custom token still works.
+
+What the hosted store does NOT take verbatim:
+  - archived and expired entries are skipped — a write would insert a second,
+    live row beside the archived one, and any TTL would re-date an expired one
+  - \`tags\` REPLACE the hosted row's labels, so an untagged local entry clears
+    them
+  - a creation date is honoured only when the lesson is new to the hosted
+    store, and an unusable one is dropped for the write instant
+  - \`updated\` and the \`seen_count\` tally are re-derived by the server, and a
+    TTL beyond 365 days is shortened
+Every one of those is reported per entry, in the dry run as well as the apply.
 
 ${c.bold('Examples')}
   npx @lorekit/cli migrate --from .lore                 # preview a rename

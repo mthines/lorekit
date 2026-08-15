@@ -27,7 +27,8 @@ import { localStoreDirs, loadControl } from './control.mjs';
 import { createLocalStore, createTwoTierStore, createRemoteStore } from './store/index.mjs';
 import { parseEntry } from './store/format.mjs';
 import { isLive } from './store/ttl.mjs';
-import { createPacer, withRetry, isMemoryCap } from './store/rate-limit.mjs';
+import { remoteWriteLosses } from './store/remote.mjs';
+import { createPacer, withRetry, isMemoryCap, sleep } from './store/rate-limit.mjs';
 import { log, heading, status, err, c } from './util.mjs';
 
 // Recursively collect every parseable LoreKit entry under a base dir. The
@@ -93,22 +94,91 @@ function sameEntry(a, b) {
 // A remote NOOP therefore means "the hosted lesson already says this", not
 // "the two rows are byte-identical". That is the honest guarantee, and it is
 // the one that makes a second `--yes` a no-op.
-function sameRemoteEntry(current, entry) {
+function sameRemoteEntry(current, entry, now = new Date()) {
   if (!current || !entry) return false;
-  const norm = (e, expires) =>
+  // The hosted write TRIMS `value` (`MemoryWriteSchema`), so comparing the
+  // untrimmed local text against the trimmed hosted one would report UPDATE
+  // for a padded entry on every single run and re-push it forever.
+  const value = (e) => (e.value == null ? '' : String(e.value)).trim();
+  const scalar = (e) =>
     JSON.stringify({
       tags: [...(e.tags || [])].sort(),
       source_agent: e.source_agent ?? null,
       trigger: e.trigger ?? null,
-      origin_repo: e.origin_repo ?? null,
-      origin_branch: e.origin_branch ?? null,
-      origin_commit: e.origin_commit ?? null,
-      origin_pr: e.origin_pr ?? null,
-      expires: Boolean(expires),
-      value: e.value == null ? '' : String(e.value),
+      value: value(e),
     });
-  return norm(current, current.expires_at) === norm(entry, entry.expires_at);
+  if (scalar(current) !== scalar(entry)) return false;
+
+  // Provenance is COALESCED server-side, so a local entry that knows nothing
+  // about a field can never make the hosted row forget it. Comparing the two
+  // directly would report UPDATE forever; the honest question is whether the
+  // fields this entry DOES carry already match.
+  for (const f of ['origin_repo', 'origin_branch', 'origin_commit', 'origin_pr']) {
+    if (entry[f] == null) continue;
+    if (String(current[f] ?? '') !== String(entry[f])) return false;
+  }
+
+  return sameRemoteTtl(current.expires_at, entry.expires_at, now);
 }
+
+// Whether the hosted row's expiry already satisfies the local entry's.
+//
+// The instants cannot be compared: a push recomputes `expires_at` from
+// `ttl_days` at the write instant, while the local one was fixed when the
+// lesson was written, so the two drift apart the moment they agree. What is
+// comparable is the QUESTION the TTL answers — does the hosted lesson live at
+// least as long as this one asks it to?
+//
+//   both permanent          → satisfied.
+//   one permanent, one not  → different intent, re-push.
+//   both expiring           → satisfied when the hosted row outlives the local
+//                             one. Right after a push they are equal; the local
+//                             copy then ages while the hosted one does not, so
+//                             the answer stays "satisfied" and a re-run is
+//                             NOOP. A hosted expiry that is genuinely SHORTER
+//                             (the reviewer's 7-day row against a 300-day
+//                             lesson) is not satisfied, and does re-push.
+function sameRemoteTtl(currentExpiry, entryExpiry, now = new Date()) {
+  if (!currentExpiry && !entryExpiry) return true;
+  if (!currentExpiry || !entryExpiry) return false;
+  const a = Date.parse(currentExpiry);
+  const b = Date.parse(entryExpiry);
+  // An unparseable value on either side is not a difference we can act on —
+  // `putEntry` leaves the hosted expiry alone in that case, so re-pushing
+  // would change nothing.
+  if (Number.isNaN(a) || Number.isNaN(b)) return true;
+  // A day of slack: both sides are converted through WHOLE days, so a few
+  // hours of rounding is not a real divergence.
+  return a >= b - 86_400_000;
+}
+
+// The global connection flags, folded into the environment the resolver reads.
+// A COPY of the shim `doctor.mjs` and `mcp-server.mjs` use (kept local for the
+// same reason theirs are: `resolveControl` is a pure resolver that takes an
+// env object, and threading flags through it is each command's own business).
+function withOverrides(args) {
+  const env = { ...process.env };
+  if (args.endpoint) env.LOREKIT_MCP_URL = args.endpoint;
+  if (args.token) env.LOREKIT_TOKEN = args.token;
+  if (args.store) env.LOREKIT_STORE = args.store;
+  return env;
+}
+
+// Name the entries a remote write altered, then tally them. A bare count tells
+// a user something was changed without telling them what — and these are
+// silent changes, so they are the ones most worth naming.
+function reportAltered(keys, apply, what) {
+  if (!keys.length) return;
+  for (const key of keys.slice(0, ALTERED_LIST_CAP)) status('warn', key, what);
+  if (keys.length > ALTERED_LIST_CAP) {
+    log(`  ${c.dim(`… and ${keys.length - ALTERED_LIST_CAP} more`)}`);
+  }
+  log(`  ${keys.length} entr${keys.length === 1 ? 'y' : 'ies'}: ${apply ? '' : 'would have '}${what}.`);
+}
+
+// How many altered entries to name before summarising the rest. A migration
+// can carry thousands; naming every one would bury the summary it belongs to.
+const ALTERED_LIST_CAP = 10;
 
 // Resolve the hosted store to push to, or the reason we cannot.
 //
@@ -116,13 +186,27 @@ function sameRemoteEntry(current, entry) {
 // misconfigured run fails in one line instead of halfway through a push with
 // an unknown amount already written. Returns `{ store, warnings }` on success
 // and `{ error }` otherwise.
-export function resolveRemoteDestination(control) {
+export function resolveRemoteDestination(control, args = {}) {
   const denied = (control.denies || []).find((d) => d.mode === 'remote');
+  // Returns `{ store, warnings, classify }` on success — `classify` is false
+  // when the token cannot read, so the caller must not try.
   if (denied) {
     return { error: `remote mode is denied by ${denied.source} — a migration cannot override a deny` };
   }
 
-  const conn = control.connection || {};
+  // The global `-e/--endpoint` and `-t/--token` outrank the resolved
+  // connection. `withOverrides` alone is not enough for these two:
+  // `resolveProjectConnection` reads `process.env` directly rather than the
+  // injected env, so a flag that never touches `process.env` would be silently
+  // ignored — which is exactly what happened before.
+  const resolved = control.connection || {};
+  const endpoint = (typeof args.endpoint === 'string' && args.endpoint.trim()) || resolved.endpoint || null;
+  const token = (typeof args.token === 'string' && args.token.trim()) || resolved.token || null;
+  const conn = {
+    endpoint,
+    token,
+    usable: Boolean(endpoint && token && !String(endpoint).includes('<project-ref>')),
+  };
   if (!conn.usable) {
     return {
       error: 'no usable remote connection is configured.\n'
@@ -143,19 +227,32 @@ export function resolveRemoteDestination(control) {
   }
 
   const warnings = [];
+  // Whether the destination can be READ to classify ADD / UPDATE / NOOP. A
+  // write-only token's reads are denied outright, so asking would 403 every
+  // entry — see `classify: false` below.
+  let classify = true;
   if (kind === 'write-only') {
     // A write-only token is legitimate here — the writes will succeed — but the
     // classifying READ will 403, so every entry looks new. Say so up front
     // rather than presenting a plan that silently overstates the work.
+    classify = false;
     warnings.push(
-      'token is write-only (lk_wo_*) — reads are denied, so every entry is reported as "add". '
-      + 'The writes are still idempotent server-side.',
+      'token is write-only (lk_wo_*) — reads are denied, so the destination is not read at all: '
+      + 'every entry is reported as "add" and pushed. The writes are still idempotent server-side.',
     );
   } else if (kind === 'unknown') {
-    warnings.push('token has an unrecognized prefix (expected lk_rw_* / lk_ro_* / lk_wo_*) — proceeding anyway.');
+    warnings.push(
+      'token has an unrecognized prefix (expected lk_rw_* / lk_ro_* / lk_wo_*) — proceeding anyway; '
+      + 'a token without write permission will fail on the first write.',
+    );
   }
 
-  return { store: createRemoteStore({ endpoint: conn.endpoint, token: conn.token }), warnings };
+  return {
+    store: createRemoteStore({ endpoint: conn.endpoint, token: conn.token }),
+    endpoint: conn.endpoint,
+    warnings,
+    classify,
+  };
 }
 
 // `options` is a test seam, not a user-facing surface: `sleepFn` lets the
@@ -190,16 +287,21 @@ export async function migrate(args, options = {}) {
   let destLabel;
   const remote = to === 'remote';
   let remoteWarnings = [];
+  let classifyRemote = true;
   if (remote) {
-    const control = loadControl(root);
-    const resolved = resolveRemoteDestination(control);
-    if (resolved.error) {
-      err(`${c.red('migrate:')} ${resolved.error}`);
+    // `withOverrides` so the global `-t/--token` and `-e/--endpoint` reach the
+    // resolver, exactly as `doctor` and the stdio MCP server do. Without it a
+    // user who passed both on the command line still failed the preflight.
+    const control = loadControl(root, { env: withOverrides(args) });
+    const dest = resolveRemoteDestination(control, args);
+    if (dest.error) {
+      err(`${c.red('migrate:')} ${dest.error}`);
       return 1;
     }
-    remoteWarnings = resolved.warnings;
-    targetFor = () => resolved.store;
-    destLabel = `remote (${control.connection.endpoint})`;
+    remoteWarnings = dest.warnings;
+    classifyRemote = dest.classify !== false;
+    targetFor = () => dest.store;
+    destLabel = `remote (${dest.endpoint})`;
   } else if (to === 'home') {
     const store = createLocalStore(dirs.home);
     targetFor = () => store;
@@ -214,6 +316,10 @@ export async function migrate(args, options = {}) {
     targetFor = (scope) => two.tierFor(scope);
     destLabel = 'resolved layout (global→home, repo/branch→project-if-opted-in)';
   }
+
+  // ONE clock for the run: the TTL comparison, the lossiness preview and the
+  // conversion inside `putEntry` must not disagree about what "now" is.
+  const now = options.now instanceof Date ? options.now : new Date();
 
   const collected = collectEntries(src);
   // A remote destination cannot represent an archived or an expired entry
@@ -238,14 +344,35 @@ export async function migrate(args, options = {}) {
   // reactively. Both are no-ops for a local destination, which issues no
   // requests at all — `pace()` never fills its window and `withRetry` never
   // sees a rate-limited result.
-  const pace = remote ? createPacer({ sleepFn: options.sleepFn }) : async () => {};
+  let pacedOnce = false;
+  const pace = remote
+    ? createPacer({
+      // The pacer's wait is deliberately NOT `options.sleepFn`. That seam
+      // exists so a retry test does not wait out a backoff, and a sleep that
+      // returns without the clock advancing would spin this window forever.
+      // Pacing is bounded by real time, always.
+      sleepFn: async (ms) => {
+        // Say it once. A few-thousand-entry store otherwise sits silent for
+        // minutes after the header and looks hung.
+        if (!pacedOnce) {
+          pacedOnce = true;
+          status('info', 'pacing', 'staying under the hosted rate limit — this run will take longer');
+        }
+        return sleep(ms);
+      },
+      ...(options.maxPerWindow ? { maxPerWindow: options.maxPerWindow } : {}),
+      ...(options.windowMs ? { windowMs: options.windowMs } : {}),
+    })
+    : async () => {};
   const call = async (fn) => {
-    await pace();
     if (!remote) return fn();
-    return withRetry(fn, {
+    // `pace()` is INSIDE the retried function, so every attempt is counted
+    // against the window. Pacing only the first one would leave the ceiling
+    // unenforced during exactly the 429 episodes it exists to prevent.
+    return withRetry(async () => { await pace(); return fn(); }, {
       sleepFn: options.sleepFn,
       onRetry: ({ attempt, delayMs }) =>
-        status('warn', 'rate limit', `429 — retrying in ${Math.round(delayMs / 1000)}s (attempt ${attempt})`),
+        status('warn', 'rate limit', `retrying in ${Math.round(delayMs / 1000)}s (attempt ${attempt})`),
     });
   };
 
@@ -253,7 +380,10 @@ export async function migrate(args, options = {}) {
   const byScope = new Map();
   let capped = null;
   let failed = 0;
-  let ttlClamped = 0;
+  // Named, not merely counted — the same courtesy the failure list gets, so a
+  // user knows WHICH lessons were altered rather than how many.
+  const clamped = [];
+  const redated = [];
   for (const entry of entries) {
     const store = targetFor(entry.scope);
     // Awaited so the loop is destination-agnostic: LocalStore.getEntry is
@@ -267,7 +397,12 @@ export async function migrate(args, options = {}) {
     // migrated either. The local store never throws here.
     let current;
     try {
-      current = await call(() => store.getEntry({ scope: entry.scope, key: entry.key }));
+      // A write-only token's reads are denied, so asking would 403 every entry
+      // and fail a run the preflight just promised would work. Skip straight
+      // to the write; the hosted upsert is idempotent either way.
+      current = classifyRemote
+        ? await call(() => store.getEntry({ scope: entry.scope, key: entry.key }))
+        : null;
     } catch (e) {
       failed++;
       status('fail', entry.scope, `${entry.key}: ${e?.message || 'read failed'}`);
@@ -275,15 +410,20 @@ export async function migrate(args, options = {}) {
     }
     let verdict;
     if (!current) verdict = 'add';
-    else if (remote ? sameRemoteEntry(current, entry) : sameEntry(current, entry)) verdict = 'noop';
+    else if (remote ? sameRemoteEntry(current, entry, now) : sameEntry(current, entry)) verdict = 'noop';
     else verdict = 'update';
 
+    if (remote && verdict !== 'noop') {
+      // Computed from the entry, so a DRY RUN warns about exactly what an
+      // apply would do. Reporting these only on the write made the preview
+      // quietly less informative than the thing it previews.
+      const losses = remoteWriteLosses(entry, now);
+      if (losses.ttlClamped) clamped.push(`${entry.scope}::${entry.key}`);
+      if (losses.createdAtDropped) redated.push(`${entry.scope}::${entry.key}`);
+    }
+
     if (apply && verdict !== 'noop') {
-      const res = await call(() => store.putEntry(entry));
-      // The entry landed, but with a shorter life than it had: the hosted TTL
-      // maxes out at 365 days. Counted so the summary can say so — a silently
-      // shortened expiry is the kind of loss a user finds out about later.
-      if (res && res.ttlClamped) ttlClamped++;
+      const res = await call(() => store.putEntry(entry, { now }));
       if (res && res.ok === false) {
         // The memory cap is terminal for the whole run, not just this entry:
         // every remaining write would hit the same ceiling. Stop, and report
@@ -316,19 +456,28 @@ export async function migrate(args, options = {}) {
       `(${totals.add} new, ${totals.update} updated), ${totals.noop} unchanged.`,
   );
   if (skipped > 0) log(`  ${skipped} skipped (archived or expired).`);
-  if (ttlClamped > 0) {
-    log(`  ${ttlClamped} entr${ttlClamped === 1 ? 'y' : 'ies'} had a TTL longer than the hosted maximum — shortened to 365 days.`);
-  }
+  reportAltered(clamped, apply, 'TTL shortened to the hosted maximum of 365 days');
+  reportAltered(redated, apply, 'unusable created date dropped — the server stamps the write instant');
+
+  // A cap can fire after an entry has already failed, so the failure count is
+  // reported on BOTH exits — it used to be lost whenever the cap won the race.
+  const reportFailures = () => {
+    if (failed > 0) {
+      // "failed", not "failed to write" — an entry lands here from an
+      // unreadable classification as well as from a rejected write.
+      err(`${c.red('migrate:')} ${failed} entr${failed === 1 ? 'y' : 'ies'} failed (listed above).`);
+    }
+  };
   if (capped) {
     err(`\n${c.red('migrate:')} ${capped}`);
     log(`  ${moved} entr${moved === 1 ? 'y' : 'ies'} migrated before the cap was reached.`);
     log(`  ${c.dim('Archive unused memories or raise the plan limit, then re-run — the migration resumes where it stopped.')}`);
+    reportFailures();
     return 1;
   }
   if (failed > 0) {
-    // "failed", not "failed to write" — an entry lands here from an unreadable
-    // classification as well as from a rejected write.
-    err(`\n${c.red('migrate:')} ${failed} entr${failed === 1 ? 'y' : 'ies'} failed (listed above).`);
+    err('');
+    reportFailures();
     return 1;
   }
   if (!apply && moved > 0) log(`  ${c.dim('Re-run with --yes to apply.')}`);
