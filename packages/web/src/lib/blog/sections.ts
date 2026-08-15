@@ -21,9 +21,9 @@ export interface BlogSection {
 export const BLOG_SECTIONS: readonly BlogSection[] = [
   {
     id: 'agent-memory-working-set',
-    label: "Your agent's memory is a ranked working set, not a dump",
+    label: "Your agent's memory should scale from 6 lessons to 60,000",
     summary:
-      "\"Cap it at 15\" was the wrong answer. LoreKit now spends a character budget on the highest-signal lessons — ranked by recurrence, de-duplicated with MMR, warmed by your branch, and never flooded by one bot — then tells you what it left out. Here's the read pipeline, and the honest limits.",
+      "The obvious answer to agent memory — inject the lessons — breaks the moment your store gets interesting. LoreKit spends a fixed slice of your context window on the highest-signal, de-duplicated lessons, so the read costs the same at 50 lessons or 50,000 — and always tells you what it left out. Here's how it scales, and the honest limits.",
   },
   {
     id: 'self-healing-agents',
