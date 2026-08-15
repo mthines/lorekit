@@ -571,6 +571,17 @@ test('control hooks.sessionStart.branchHint: defaults on, on/off vocabulary, rep
   );
   // A nonsense value falls through to the default rather than blanking anything.
   assert.equal(at({ repoConfig: { 'hooks.sessionStart.branchHint': 'maybe' } }), 'on');
+  // Unlike loopCap (declaresScalar layer-lock), branchHint follows the
+  // hooks.userPrompt vocabulary: a declared-but-unparseable REPO value falls
+  // THROUGH to a valid user value rather than owning the layer.
+  assert.equal(
+    at({
+      repoConfig: { 'hooks.sessionStart.branchHint': 'maybe' },
+      userConfig: { 'hooks.sessionStart.branchHint': 'off' },
+    }),
+    'off',
+    'a garbage repo value yields to a valid user value',
+  );
 });
 
 test('control hooks.sessionStart: a declared-but-garbage repo budget still beats the user layer', () => {

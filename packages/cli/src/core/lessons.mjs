@@ -207,7 +207,8 @@ export async function fetchLessons(
   const ranked = rankLessons(winners, rankOpts);
 
   // AUDIENCE CAP before diversification: no single self-improvement loop may
-  // take more than `SESSION_START_LOOP_CAP` of the injected slots, so a general
+  // take more than `loopCap` (the `hooks.sessionStart.loopCap` option, default
+  // `SESSION_START_LOOP_CAP`) of the injected slots, so a general
   // session is not flooded with one bot's private `loop::<bucket>` bookkeeping.
   // General (non-loop) lessons pass through uncapped — they are what the cap
   // frees room for. Applied to the ranked list so the survivors are each

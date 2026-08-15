@@ -145,9 +145,11 @@ export function normalizeSessionStartMaxChars(v) {
 // The default per-loop-bucket cap for the SessionStart read, and the bounds a
 // configured one is held to. 2 keeps each self-improvement loop's top couple of
 // lessons without letting one bucket flood a general session; 0 is a meaningful
-// setting — exclude loop buckets entirely and read only general codebase lessons;
-// the ceiling matches the hard lesson ceiling in `core/lessons.mjs`, above which
-// the cap can never bind anyway.
+// setting — exclude loop buckets entirely and read only general codebase lessons.
+// The ceiling is a generous backstop against a typo'd cap, not a shared constant:
+// `core/lessons.mjs` bounds the whole read at its own hard lesson ceiling
+// downstream, so any loopCap at or above that never binds regardless of the exact
+// number here — they are deliberately independent, not kept in lockstep.
 export const DEFAULT_SESSION_START_LOOP_CAP = 2;
 export const MIN_SESSION_START_LOOP_CAP = 0;
 export const MAX_SESSION_START_LOOP_CAP = 40;

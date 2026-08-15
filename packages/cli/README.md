@@ -717,6 +717,22 @@ Both files share this schema — all fields optional:
                            // memories are RANKED before the budget is spent, so what
                            // survives is the most-recurring and most-recent, not the newest
 
+  "hooks.sessionStart.loopCap": 2,
+                           // how many memories one self-improvement loop (a
+                           // "loop::<bucket>" tag) may contribute to that block
+                           // (default 2, bounded 0–40; 0 excludes loop buckets
+                           // entirely so only general memories are read). Clamped,
+                           // not rejected; repo wins over user with the same
+                           // declared-value-owns-the-layer rule as maxChars
+
+  "hooks.sessionStart.branchHint": "on",
+                           // whether the block is nudged toward the current git
+                           // branch's topic — on "feat/embedding-pipeline",
+                           // embedding memories are lifted (the leading type/author
+                           // segment is ignored). Default "on"; it only ever lifts
+                           // an on-topic memory, never buries one. "off" restores
+                           // the plain most-recurring / most-recent read. Repo wins
+
   "hooks.adapter": "claude",
                            // explicit adapter when auto-detection is ambiguous
                            // values: "claude" | "cursor" | "codex"
