@@ -23,7 +23,7 @@ export const BLOG_SECTIONS: readonly BlogSection[] = [
     id: 'give-your-agent-a-memory',
     label: 'Give your coding agent a memory in one command — no signup, just a folder',
     summary:
-      "Your agent re-solves yesterday's problem because nothing wrote it down. The fix isn't a platform you adopt — it's one command, a folder you own, and a loop that closes on your own disk. And when you're ready for a team, the same read path merges in a hosted store. No migration.",
+      "Your agent re-solves yesterday's problem because nothing wrote it down. The fix isn't a platform you adopt — it's one command, a folder you own, and a loop that closes on your own disk. And when a team needs the same lore, it's two environment variables and one word of config: the same read path, handed a hosted store instead of a folder. Nothing to export, nothing to migrate.",
   },
   {
     id: 'agent-memory-working-set',

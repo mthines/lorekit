@@ -1,6 +1,6 @@
 ---
 title: "Give your coding agent a memory in one command — no signup, just a folder"
-description: "Your agent re-solves yesterday's problem because nothing wrote it down. The fix isn't a platform you adopt — it's one command, a folder you own, and a loop that closes on your own disk. And when you're ready for a team, the same read path merges in a hosted store. No migration."
+description: "Your agent re-solves yesterday's problem because nothing wrote it down. The fix isn't a platform you adopt — it's one command, a folder you own, and a loop that closes on your own disk. And when a team needs the same lore, it's two environment variables and one word of config: the same read path, handed a hosted store instead of a folder. Nothing to export, nothing to migrate."
 date: "2026-08-15"
 author: "Mads Thines"
 readingMinutes: 6
@@ -15,7 +15,7 @@ Yesterday your agent worked out that the integration tests need a Postgres conta
 
 The usual pitch here is a platform you adopt. It isn't one. It's one command and a folder you own — plain files on your disk, no account, no network, nothing to sign up for.
 
-And here's the part that makes it more than a starter toy: **the same read path runs over a local directory or a hosted Postgres — scaling local→remote is additive, a *merge* rather than a migration.** You start with a folder. You never have to leave it behind.
+And here's the part that makes it more than a starter toy: **the same read path runs over a local directory or a hosted Postgres — scaling local→remote is additive, a *merge* rather than a migration.** Your files stay where they are, `lorekit list` reads both stores side by side, and nothing is ever exported. You start with a folder. You never have to leave it behind.
 
 ## Two minutes to memory
 
@@ -146,8 +146,8 @@ From then on `npx @lorekit/cli list` reads **both** stores and prints them side 
 That's the load-bearing bit, so let me be exact about it: the read *path* — precedence across scopes, ranking, de-duplication, the character budget — is one piece of code that takes a store as an argument. Point it at a directory of markdown files or at a hosted Postgres and nothing above the store changes. So `remote` isn't a different product you graduate to. It's the same read, handed a bigger pile.
 
 <figure>
-  <img src="/blog/local-to-shared.svg" alt="A scaling strip in three stages. Today: a local store of plain markdown files in a folder you own. Then: you add a connection — the LOREKIT_MCP_URL and LOREKIT_TOKEN environment variables, and mode set to remote in .lorekit.json. Result: the local folder and a hosted Postgres store both feed one unchanged read path, and the CLI reads both side by side. No export, no import, no sync process." width="720" height="300" />
-  <figcaption>The read path never changed — it just has more inputs. Local was never a toy; it's the base layer everything else stacks on.</figcaption>
+  <img src="/blog/local-to-shared.svg" alt="A scaling strip in three stages. Today: a local store of plain markdown files in a folder you own. Then: you add a connection — the LOREKIT_MCP_URL and LOREKIT_TOKEN environment variables, and mode set to remote in .lorekit.json. Result: one unchanged read path that can be handed either store — the local folder in local mode, a hosted Postgres in remote mode — with lorekit list showing both side by side. No export, no import, no sync process." width="720" height="300" />
+  <figcaption>The read path never changed — only which store it's handed. Local was never a toy; it's the base layer everything else stacks on.</figcaption>
 </figure>
 
 What that buys you, once a team is on it: an org-shared playbook, where an admin writes the deploy checklist or the incident runbook once and every member's agent reads it during planning. And the same lore in CI — a read-only `lk_ro_` token in your GitHub Actions secrets, one `memory.list` call, and the AI step in your pipeline has the context your laptop has.
