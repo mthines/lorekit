@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { Span, ExportBatch } from '../../../supabase/functions/_shared/otel.ts';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import path from 'node:path';
 
 /**
  * EXECUTING cover for `Span.detachedChild()` + `ExportBatch.flushAsync()`.
@@ -21,7 +22,35 @@ import { Span, ExportBatch } from '../../../supabase/functions/_shared/otel.ts';
  * The module is Deno-flavoured but loads under vitest: its only `npm:` import is
  * type-only, and `Deno` is touched at call time rather than at module scope —
  * which is what lets this run in `nx test mcp-core` with no Deno toolchain.
+ *
+ * It is reached by a DYNAMIC import over a computed path, not a static relative
+ * one. `supabase/` is a separate NX project, so a static
+ * `../../../supabase/...` specifier is an `@nx/enforce-module-boundaries` error
+ * — correctly, since mcp-core must not depend on the edge tree at build time.
+ * Nothing here does: this is a test reaching ACROSS the repo to execute a file
+ * it does not own, the same shape `scripts/backfill-embeddings.mjs` uses to load
+ * the pure module. The sibling guards (`edge-parity`, `otel-conventions`) read
+ * these files with `readFileSync` for the same boundary reason; they can only
+ * assert on source text, which is precisely the gap this spec exists to close.
  */
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+const { Span, ExportBatch } = await import(
+  pathToFileURL(path.join(repoRoot, 'supabase', 'functions', '_shared', 'otel.ts')).href
+) as {
+  Span: new (
+    name: string,
+    ctx: { traceId: string; spanId: string; parentSpanId?: string; sampled: boolean },
+    batch: InstanceType<typeof ExportBatch>,
+    kind?: number,
+  ) => {
+    detachedChild(n: string, a?: Record<string, string | number | boolean>): {
+      span: { error(m: string): unknown; end(): unknown };
+      flush: () => Promise<void>;
+    };
+  };
+  ExportBatch: new () => { environmentOverride?: string; drain(): unknown[] };
+};
 
 const TRACE_ID = 'a'.repeat(32);
 const ROOT_SPAN_ID = 'b'.repeat(16);
