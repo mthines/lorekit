@@ -75,7 +75,9 @@ const HARD_LESSON_CEILING = 40;
 // back by their own host through a tag filter. Two per bucket keeps the signal
 // (a loop's top couple of lessons still surface) without the flood; general,
 // non-loop lessons are never capped. Bounded, not shaped: on a store with no
-// loop lessons it never binds.
+// loop lessons it never binds. This is the DEFAULT — a repo/user can override it
+// with `hooks.sessionStart.loopCap` (0 excludes loop buckets entirely), which
+// `fetchLessons` receives as its `loopCap` option.
 const SESSION_START_LOOP_CAP = 2;
 
 // How many lessons ride along with the scope map in `map` mode. Small on
@@ -115,7 +117,11 @@ export const SCOPE_READ_LIMIT = 25;
 // that already hold a resolved scope and for tests that need a deterministic
 // branch (deriveScope shells out to git, so the ambient branch — often a
 // detached `HEAD` in CI — cannot exercise the branch-seeded read otherwise).
-export async function fetchLessons(store, cwd, { now = Date.now(), scope: scopeOverride = null } = {}) {
+export async function fetchLessons(
+  store,
+  cwd,
+  { now = Date.now(), scope: scopeOverride = null, loopCap = SESSION_START_LOOP_CAP, branchHint = true } = {},
+) {
   const scope = scopeOverride || deriveScope(cwd);
   // Issued BEFORE the per-scope read loop and awaited after it. Nothing in the
   // inventory depends on the loop, so awaiting it afterwards would cost a
@@ -197,11 +203,12 @@ export async function fetchLessons(store, cwd, { now = Date.now(), scope: scopeO
   // objective, and scored with different options those would not line up with the
   // sorted order. `k` is diversification-only; `scopeOrder` is ranking-only and
   // simply ignored by the diversifier's destructuring.
-  const rankOpts = sessionRankOpts(scope, now);
+  const rankOpts = sessionRankOpts(scope, now, { branchHint });
   const ranked = rankLessons(winners, rankOpts);
 
   // AUDIENCE CAP before diversification: no single self-improvement loop may
-  // take more than `SESSION_START_LOOP_CAP` of the injected slots, so a general
+  // take more than `loopCap` (the `hooks.sessionStart.loopCap` option, default
+  // `SESSION_START_LOOP_CAP`) of the injected slots, so a general
   // session is not flooded with one bot's private `loop::<bucket>` bookkeeping.
   // General (non-loop) lessons pass through uncapped — they are what the cap
   // frees room for. Applied to the ranked list so the survivors are each
@@ -217,7 +224,7 @@ export async function fetchLessons(store, cwd, { now = Date.now(), scope: scopeO
   // which the bounded read never fetched. Reaching those is the recency-window
   // limit (the `order=rank` CANDIDATE_LIMIT problem, one scope down), not this
   // cap's to solve; the cap still does its job of unflooding across scopes.
-  const capped = capPerBucket(ranked, { cap: SESSION_START_LOOP_CAP, bucketOf: loopBucketOf });
+  const capped = capPerBucket(ranked, { cap: loopCap, bucketOf: loopBucketOf });
 
   // ── the scope map: EXACT counts when the store can enumerate ───────────────
   //
@@ -587,9 +594,12 @@ export function branchQueryTerms(scope) {
 // the branch never matched. `fetchLessons` feeds the ONE object this returns to
 // both `rankLessons` and (spread) the diversifier, so their scores agree on
 // terms and the clock.
-export function sessionRankOpts(scope, now) {
+export function sessionRankOpts(scope, now, { branchHint = true } = {}) {
   return {
-    terms: branchQueryTerms(scope),
+    // `branchHint: false` (config `hooks.sessionStart.branchHint: off`) restores
+    // the pre-branch-query read — no terms, so relevance contributes nothing and
+    // the order is recency + salience.
+    terms: branchHint ? branchQueryTerms(scope) : [],
     now,
     scopeOrder: scope && scope.readOrder ? scope.readOrder : null,
   };

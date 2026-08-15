@@ -414,6 +414,43 @@ test('fetchLessons seeds the branch-name query into the ranking (wires sessionRa
   assert.equal(lessons[0].key, 'z-match', 'the branch-relevant lesson is lifted above its peer');
 });
 
+test('fetchLessons honours the loopCap option (0 excludes loop buckets)', async () => {
+  const scope = { branch: 'main', readOrder: ['repo::a/b'] };
+  const at = '2026-08-01T00:00:00.000Z';
+  const mk = (key, tag) => ({ scope: 'repo::a/b', key, value: `body ${key}`, tags: tag ? [tag] : [], updatedAt: at });
+  const byScope = {
+    'repo::a/b': [
+      mk('r1', 'loop::review-outcomes'), mk('r2', 'loop::review-outcomes'), mk('r3', 'loop::review-outcomes'),
+      mk('gen', null),
+    ],
+  };
+  const store = fakeStore(byScope);
+  const loops = (ls) => ls.filter((l) => (l.tags || []).includes('loop::review-outcomes')).length;
+  const cap1 = await fetchLessons(store, process.cwd(), { now: Date.parse(at), scope, loopCap: 1 });
+  assert.equal(loops(cap1.lessons), 1, 'loopCap 1 keeps one per bucket');
+  const cap0 = await fetchLessons(store, process.cwd(), { now: Date.parse(at), scope, loopCap: 0 });
+  assert.equal(loops(cap0.lessons), 0, 'loopCap 0 excludes loop buckets entirely');
+  assert.ok(cap0.lessons.some((l) => l.key === 'gen'), 'the general lesson survives loopCap 0');
+});
+
+test('fetchLessons honours branchHint:false (restores the no-branch read)', async () => {
+  // Same setup as the branch-wiring test; with the hint off the relevance lift
+  // disappears and the equal-scored peer wins on the key-order tiebreak.
+  const scope = { branch: 'feat/embedding-pipeline', readOrder: ['repo::a/b'] };
+  const at = '2026-08-01T00:00:00.000Z';
+  const byScope = {
+    'repo::a/b': [
+      { scope: 'repo::a/b', key: 'a-plain', value: 'general notes with no topic', seenCount: 1, updatedAt: at },
+      { scope: 'repo::a/b', key: 'z-match', value: 'notes about the embedding pipeline', seenCount: 1, updatedAt: at },
+    ],
+  };
+  const store = fakeStore(byScope);
+  const on = await fetchLessons(store, process.cwd(), { now: Date.parse(at), scope, branchHint: true });
+  assert.equal(on.lessons[0].key, 'z-match', 'branchHint on lifts the match');
+  const off = await fetchLessons(store, process.cwd(), { now: Date.parse(at), scope, branchHint: false });
+  assert.equal(off.lessons[0].key, 'a-plain', 'branchHint off: no query, so no lift');
+});
+
 test('fetchLessons is best-effort: a failed scope read is skipped, not thrown', async () => {
   const scope = REAL_SCOPE;
   const first = scope.readOrder[0];
