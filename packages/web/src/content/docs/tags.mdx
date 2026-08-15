@@ -101,24 +101,23 @@ The last three dimensions come from **provenance** — the repo, branch and PR a
 
 <TutorialStep number={5} title="Read the stats header above the list">
 
-The Explorer opens with four cards above the memory list, describing **the scope and time range you have selected** rather than your whole account:
+The Explorer opens with four cards above the memory list, describing **the scope, filters, and time range you have selected** rather than your whole account:
 
 | Card | Counts |
 | --- | --- |
-| Memories written | New memories in the range, under the selected scope |
+| Memories written | New memories in the range, under the selected scope **and filters** |
 | Memories read | Memory *records* read — one list call returning 20 memories counts as 20 |
-| Scopes active | Distinct scopes with at least one memory written in the range |
+| Scopes active | Distinct scopes with at least one memory written in the range, **under your filters** |
 | Memories expired | Records deleted because their TTL ran out |
 
 The panel opens **collapsed**, showing the four numbers on one line. Expand it with the chevron to see the trends behind them and the 26-week heatmap; collapse it again and the numbers stay. Every card with bars is **additive** — summing the bars reproduces the number above them, so the chart and the total can never tell different stories.
 
 The **time range** picker sits in the same header and offers the same presets as the Overview (24h / 7d / 30d) plus **All**. It drives the whole page: the cards, the heatmap highlight, and the list below. The Explorer opens on the last 24 hours, so if a scope looks emptier than you expect, widen the range — an empty list caused by the window says so and offers a one-click way out.
 
-Three things the cards deliberately do *not* do, each stated in its own tooltip:
+**Memories written** and **Scopes active** follow your full selection — scope, time range, and every filter in the bar — so they always agree with the list beneath them. The other two cards can only go part-way, each stated in its own tooltip:
 
-- **Memories read counts only your own reads,** and only those LoreKit could attribute to a scope — so per-scope totals can be smaller than the account total. Reads from this dashboard are excluded: browsing your lore is visualisation, not consumption.
+- **Memories read follows the scope and range, but not the filter bar.** A read is a query, not a per-memory event, so a label or repo filter cannot narrow it — the card stays scope-level. It also counts only your own reads, and only those LoreKit could attribute to a scope, so per-scope totals can be smaller than the account total. Reads from this dashboard are excluded: browsing your lore is visualisation, not consumption.
 - **Memories expired is account-wide** even with a scope selected. Expiry is recorded when the nightly purge removes a row, and that purge runs per user across every scope, so there is no scope on the event to filter by.
-- **Filters narrow the list, not the cards.** With a filter bar active the header says so in a line under its title.
 
 </TutorialStep>
 

@@ -48,7 +48,7 @@ import {
   rangeLabel,
   type TimeRange,
 } from '@/lib/time-range';
-import { filtersToQueryParams, type Filter } from '@/lib/filters';
+import { filtersToQueryParams, requireField, type Filter } from '@/lib/filters';
 
 /**
  * Shorter labels for the collapsed strip.
@@ -150,6 +150,20 @@ export function ExplorerStats({
   const scopeText = scope ? ` in ${scopeLabel}` : '';
   const trendTitle = `${rangeTitle} vs. the preceding period of the same length`;
 
+  // A terse naming of the active filters, appended to the captions of the cards
+  // that ACTUALLY follow them (Written, Scopes) so the reader can see what the
+  // number counts. Read and Expired omit it deliberately — Read is scope-level
+  // and Expired account-wide, so showing a filter there would be a lie.
+  const filterText = filters.length
+    ? ` · ${filters
+        .map((f) => {
+          const name = requireField(f.field).label.toLowerCase();
+          const vals = f.values.join(', ');
+          return f.operator === 'nin' ? `${name} not ${vals}` : `${name} ${vals}`;
+        })
+        .join(' · ')}`
+    : '';
+
   const cards: ({ id: string } & Omit<
     Parameters<typeof StatCard>[0],
     'trendTitle' | 'rangeTitle'
@@ -161,7 +175,7 @@ export function ExplorerStats({
       tag: 'Memory writes',
       tooltip: `Memories written${scope ? ` under ${scopeLabel}` : ' across every scope'} in the selected range. The bars sum to the number: each bar is the memories written in that hour or day.`,
       value: sumPoints(memoryTrends.lessons.points),
-      description: `in ${rangeText}${scopeText}`,
+      description: `in ${rangeText}${scopeText}${filterText}`,
       trend: memoryTrends.lessons,
       unit: 'memories',
     },
@@ -187,7 +201,7 @@ export function ExplorerStats({
       tooltip:
         'Distinct scopes with at least one memory written in the selected range. Each bar is the scopes seen for the FIRST time in that hour or day, so the bars sum to the distinct total rather than counting a long-running scope once per bucket.',
       value: memoryTrends.activeScopes,
-      description: `distinct scopes active in ${rangeText}`,
+      description: `distinct scopes active in ${rangeText}${filterText}`,
       trend: memoryTrends.newScopes,
       unit: 'scopes',
     },
