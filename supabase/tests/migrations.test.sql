@@ -5276,6 +5276,33 @@ begin
 end;
 $$;
 
+-- AC-5: the generated-column list this trigger masks is still exactly `fts`.
+--
+-- This is the guard for the trap that broke the first attempt. Postgres computes
+-- GENERATED columns AFTER before-row triggers, so inside the trigger `new.<gen>`
+-- is NULL while `old.<gen>` holds a value — an unmasked generated column makes
+-- EVERY update compare as changed and quietly turns the function back into
+-- `set_updated_at`. It fails in the safe direction, so nothing else would catch
+-- it. Adding a generated column to `memories` must therefore trip this and be
+-- masked in `lorekit_memories_set_updated_at` too.
+do $$
+declare
+  v_generated text[];
+begin
+  select coalesce(array_agg(column_name order by column_name), '{}')
+    into v_generated
+    from information_schema.columns
+   where table_schema = 'public' and table_name = 'memories' and is_generated = 'ALWAYS';
+
+  assert v_generated = array['fts'],
+    format('00062 AC-5: memories now has generated columns %s, but '
+           'lorekit_memories_set_updated_at only masks `fts`. An unmasked generated column is '
+           'NULL in a BEFORE trigger while OLD holds a value, so every update compares as '
+           'changed and updated_at is restamped on embedding-only writes again. Mask it there '
+           'and update this assertion.', v_generated);
+end;
+$$;
+
 -- AC-4: the five OTHER tables on the shared `set_updated_at` are untouched —
 -- only the memories trigger was retargeted. Retargeting all of them would be a
 -- behaviour change to tables that have no embedding column and no such problem.

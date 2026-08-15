@@ -115,8 +115,18 @@ declare
   v_old memories := old;
 begin
   -- Mask the derived columns and the one being decided.
-  v_new.embedding := null; v_new.embedding_model := null; v_new.updated_at := null;
-  v_old.embedding := null; v_old.embedding_model := null; v_old.updated_at := null;
+  --
+  -- `fts` MUST be masked too, and for a reason that is easy to get wrong:
+  -- it is a GENERATED column, and Postgres computes generated columns AFTER
+  -- BEFORE-row triggers run. So `new.fts` is NULL here while `old.fts` holds
+  -- the stored value, and an unmasked comparison finds every update "changed"
+  -- — which silently turns this whole function back into `set_updated_at`.
+  -- It fails in the safe direction (a bump that should not happen, never a
+  -- missing bump), which is exactly why it needs a test rather than a reading.
+  -- `fts` is derived from `key || ' ' || value`, so masking it loses nothing:
+  -- a real edit is already visible in those columns.
+  v_new.embedding := null; v_new.embedding_model := null; v_new.updated_at := null; v_new.fts := null;
+  v_old.embedding := null; v_old.embedding_model := null; v_old.updated_at := null; v_old.fts := null;
 
   if v_new is not distinct from v_old then
     -- Nothing the user can see changed: an embedding-only write (or a no-op).
