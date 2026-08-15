@@ -381,6 +381,9 @@ test('SessionStart: hooks.sessionStart.maxLessons raises the injected line count
       // The `s${n}` prefix is load-bearing: identity is `scope::key`, and the
       // read resolves cross-scope precedence first-seen-wins, so reusing one key
       // set across both scopes would collapse the pool to a single scope's worth.
+      // Written SEQUENTIALLY, not with a Promise.all, so `updated` is strictly
+      // increasing — the store slices the newest N, and a batch that ties on
+      // the timestamp would make "the newest 25" an arbitrary 25.
       // eslint-disable-next-line no-await-in-loop
       await store.write({ scope: s, key: `s${n}-seeded-${i}`, value: `lesson body ${i}` });
     }
