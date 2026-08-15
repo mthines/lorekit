@@ -2187,3 +2187,27 @@ test('RemoteStore.write reports an unconfigured store as unusable, not as a blan
     globalThis.fetch = original;
   }
 });
+
+test('an unconfigured store names itself on both halves of the migrate pair', async () => {
+  const original = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async () => { called = true; throw new Error('should not be reached'); };
+  try {
+    const store = createRemoteStore({ endpoint: null, token: null });
+
+    // getEntry throws, and the message says WHY rather than falling back to
+    // the generic read-failed text an unconfigured store has no error for.
+    await assert.rejects(
+      () => store.getEntry({ scope: 'global', key: 'k' }),
+      (e) => e.name === 'StoreReadError' && /not configured/.test(e.message),
+    );
+
+    // A refusal carries the same keys a write does, `unusable` included.
+    const refused = await store.putEntry({ scope: 'global', key: 'k', value: 'v', archived_at: '2024-01-01T00:00:00.000Z' });
+    assert.equal(refused.unusable, false);
+    assert.equal(refused.retryAfter, null);
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = original;
+  }
+});

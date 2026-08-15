@@ -192,7 +192,19 @@ class RemoteStore {
     // scope+key is unique, so one row is all there can be — don't pull the default page of 50.
     p.set('limit', '1');
     const res = await this._rest(`/memories?${p}`);
-    if (!res.ok) return { ok: false, error: res.error, networkError: res.networkError };
+    // `unusable` is passed through: `_rest` short-circuits an unconfigured
+    // store with that flag and NOTHING else, so a caller that drops it is left
+    // with a failure carrying no error and no networkError — a blank failure it
+    // can only report generically. Additive; every existing caller branches on
+    // `ok` and ignores the extra key.
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: res.error ?? null,
+        networkError: res.networkError ?? null,
+        unusable: res.unusable ?? false,
+      };
+    }
     const entries = res.data?.entries ?? [];
     // Same projection as list/search — a single read must not answer with a
     // different shape than the listing the caller found the key in.
@@ -312,7 +324,11 @@ class RemoteStore {
   async getEntry({ scope, key } = {}) {
     const res = await this.read({ scope, key });
     if (!res.ok) {
-      const reason = res.networkError || res.error?.message || 'read failed';
+      // An unconfigured store carries no error at all, so name that case
+      // rather than reporting the generic failure text for it.
+      const reason = res.unusable
+        ? 'the remote store is not configured (missing endpoint or token)'
+        : (res.networkError || res.error?.message || 'read failed');
       throw new StoreReadError(`remote read failed for ${scope}::${key}: ${reason}`, res);
     }
     return res.entry ?? null;
@@ -332,6 +348,9 @@ class RemoteStore {
       httpStatus: null,
       retryAfter: null,
       networkError: null,
+      // Every key `write` answers with, so a caller reading one never gets a
+      // value from one branch and `undefined` from another.
+      unusable: false,
     });
     if (entry?.archived_at) {
       return refuse('archived', 'archived entries cannot be written remotely — the hosted write revives them');
