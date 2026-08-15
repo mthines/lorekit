@@ -40,7 +40,7 @@
 
   <rect x="486" y="62" width="210" height="86" rx="10" fill="#13151a" stroke="#7c8cf8" stroke-opacity="0.45"/>
   <text x="498" y="82" class="k" font-size="10.5" fill="#aeb9ff">the loop reads its own bucket</text>
-  <text x="498" y="99" class="lbl" font-size="9.5">by tag · uncapped → all 3,900</text>
+  <text x="498" y="99" class="lbl" font-size="9.5">by tag · all of it, paged</text>
   <rect x="498" y="108" width="186" height="9" rx="2" fill="#7c8cf8" fill-opacity="0.22" stroke="#7c8cf8" stroke-opacity="0.4"/>
   <rect x="498" y="121" width="186" height="9" rx="2" fill="#7c8cf8" fill-opacity="0.22" stroke="#7c8cf8" stroke-opacity="0.4"/>
   <rect x="498" y="134" width="150" height="9" rx="2" fill="#7c8cf8" fill-opacity="0.22" stroke="#7c8cf8" stroke-opacity="0.4"/>

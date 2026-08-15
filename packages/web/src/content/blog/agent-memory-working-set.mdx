@@ -98,14 +98,14 @@ I'll be honest about *why* those three: the matcher is lexical, not semantic. Th
 
 ## Built for the loops that never stop
 
-The heaviest writers to a real store aren't people — they're loops. LoreKit's own `aw` agent (plan → build → test → PR) and its `pr-reviewer` run this loop on every task: they read their ranked `loop::aw-lessons` and `loop::reviewer-lessons` before they act, and write a new lesson the moment something bites. Over a busy month that's thousands of entries — most of them one bot's private bookkeeping.
+The heaviest writers to a real store aren't people — they're loops. The `aw` agent (plan → build → test → PR) and `pr-reviewer` we build LoreKit with run this loop on every task: they read their ranked `loop::aw-lessons` and `loop::reviewer-lessons` before they act, and write a new lesson the moment something bites. Over a busy month that's thousands of entries — most of them one bot's private bookkeeping.
 
 Those thousands of entries are exactly what the ranking and the per-bucket cap are for. When a loop reads its *own* bucket by tag it gets everything, uncapped — that's its working memory. When *you* open a coding session, the same store's read ranks across all of it and caps each `loop::` bucket at two, so your window fills with the general, human-written lessons a task needs, not a review bot's iteration log. One store, two very different reads — and neither starves the other.
 
 And it isn't only LoreKit's loops. The same wiring is a skill: `lorekit-setup` scaffolds the read-fail-write loop into your own skill, agent, or workflow — the bucket, the scopes, the read-before-you-act and write-on-friction — so your automation gets better across runs the way the `aw` agent does, and the ranked read keeps its growing memory out of everyone else's way.
 
 <figure>
-  <img src="/blog/read-loops.svg" alt="The aw agent and pr-reviewer write constantly into loop buckets in one shared store. The loop reads its own bucket uncapped by tag; a coding session's SessionStart read is ranked and capped at two per bucket, so it stays mostly general lessons. The lorekit-setup skill wires the same loop into your own workflow." width="720" height="420" />
+  <img src="/blog/read-loops.svg" alt="Diagram: two heavy-writing loops feed one shared store; a coding session's read stays capped per bucket, and lorekit-setup wires the loop into your own workflow." width="720" height="420" />
   <figcaption>The aw agent and pr-reviewer write constantly; each loop reads its own bucket in full, while a coding session's read caps every loop bucket at two — so your window stays the human-written lessons a task needs. Wire the same loop into your own workflow with lorekit-setup.</figcaption>
 </figure>
 
