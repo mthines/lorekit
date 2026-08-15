@@ -36,7 +36,7 @@ export const LORE_PARAM_DEFAULTS = {
   // accepts ISO instants in that arm and a relative { preset: '7d' } arm
   // (packages/web/src/lib/time-range.ts); neither has a CLI flag yet.
   range: null,
-  owner: 'all', // 'all' | 'personal' | { orgId }
+  owner: 'all', // 'all' | 'personal' | '<org-slug>' — folds into an owner filter (00063)
   // Filter[] | null — the Explorer's multi-dimension filter bar (label / agent /
   // trigger / repo / branch / pr). `null`, NOT `[]`, is the default on purpose:
   // the app has to tell "the param is absent" from "the bar is explicitly

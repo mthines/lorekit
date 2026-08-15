@@ -671,6 +671,14 @@ describe('filtersFromLegacyOwner', () => {
     ]);
   });
 
+  it('folds any other string (an org slug) into a one-value owner filter', () => {
+    // The CLI's `--owner <slug>` and the accept-invite deep link write a slug
+    // here, so every non-`all` string becomes that owner facet value.
+    expect(filtersFromLegacyOwner('acme')).toEqual([
+      { field: 'owner', operator: 'in', values: ['acme'] },
+    ]);
+  });
+
   it('produces nothing for `all`, an unresolvable `{orgId}`, or junk', () => {
     // `all` was "no constraint"; the `{orgId}` form keyed on a uuid this pure
     // function cannot map to the facet's slug, so it degrades to no filter.

@@ -66,16 +66,19 @@ function applyScalarFilter(
  */
 async function resolveOwnerOrgIds(
   db: DbClient,
-  auth: AuthContext,
+  memberOrgIds: readonly string[] | null,
   slugs: readonly string[],
   span: Span,
 ): Promise<string[]> {
   const tracedDb = createTracedClient(db, span);
   let q = tracedDb.from<{ id: string; slug: string }>('orgs').select('id,slug').in('slug', slugs as string[]);
-  if (auth.type === 'api_key' && auth.userId) {
-    const memberIds = await getMemberOrgIds(db, auth.userId, span);
-    if (memberIds.length === 0) return [];
-    q = q.in('id', memberIds);
+  // api_key is service-role (no RLS), so restrict to the caller's member orgs —
+  // resolved ONCE by the handler and passed in (the tenant-scope step below reuses
+  // the same list). JWT auth is RLS-scoped, so a plain `orgs` select already hides
+  // non-member orgs and `memberOrgIds` is null (no restriction needed).
+  if (memberOrgIds !== null) {
+    if (memberOrgIds.length === 0) return [];
+    q = q.in('id', memberOrgIds as string[]);
   }
   const { data, error } = await q;
   if (error) { span.error(`DB: ${error.message}`); throw error; }
@@ -219,6 +222,13 @@ export async function handleList(
   // DIFFERENT columns (`org_id is null` vs `org_id in (<resolved ids>)`) — the
   // slugs are resolved to the org ids the caller can see, so an unknown or
   // non-member slug narrows to nothing rather than widening.
+  // api_key auth is service-role (bypasses RLS), so tenant visibility is applied
+  // explicitly (below) AND owner-slug resolution must restrict to member orgs.
+  // Resolve the member org ids ONCE here so an owner-filtered api_key request pays
+  // ONE round-trip, not two. JWT auth is RLS-scoped and needs neither → null.
+  const memberOrgIds =
+    auth.type === 'api_key' && auth.userId ? await getMemberOrgIds(db, auth.userId, span) : null;
+
   const ownerValues = parseTagsParam(params.owner);
   if (ownerValues.length > 0) {
     const wantsPersonal = ownerValues.includes('personal');
@@ -228,7 +238,7 @@ export async function handleList(
     // so resolving it here keeps the list, the facet counts and the stat header
     // in agreement; `wantsPersonal` ADDITIONALLY admits the personal (org_id
     // null) partition.
-    const orgIds = await resolveOwnerOrgIds(db, auth, ownerValues, span);
+    const orgIds = await resolveOwnerOrgIds(db, memberOrgIds, ownerValues, span);
     q = applyOwnerFilter(q, params.owner_mode, wantsPersonal, orgIds);
   }
 
@@ -266,11 +276,11 @@ export async function handleList(
     span.setAttributes({ 'lorekit.expiring_within_days': params.expiring_within_days });
   }
 
-  // api_key auth uses service-role client (bypasses RLS) — apply tenant filter.
-  // JWT auth uses RLS-scoped client — RLS handles visibility automatically.
+  // api_key auth uses service-role client (bypasses RLS) — apply tenant filter,
+  // reusing the member org ids resolved once above. JWT auth uses an RLS-scoped
+  // client — RLS handles visibility automatically (memberOrgIds stays null).
   if (auth.type === 'api_key' && auth.userId) {
-    const orgIds = await getMemberOrgIds(db, auth.userId, span);
-    q = applyRestTenantScope(q, auth.userId, orgIds);
+    q = applyRestTenantScope(q, auth.userId, memberOrgIds ?? []);
   }
 
   if (params.cursor) {

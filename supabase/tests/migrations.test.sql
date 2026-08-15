@@ -3965,10 +3965,14 @@ begin
 end;
 $$;
 
--- ── 69c. owner as a facet DIMENSION + list/activity predicate (00063) ────────
+-- ── 69c. owner as a facet DIMENSION + the RPC owner predicate (00063) ────────
 -- Ownership was the ONE Explorer filter narrowed client-side; 00063 folds it
 -- into the same drill-down machinery as every other dimension. Owner identity is
--- `personal` (org_id null) or the owning org's SLUG.
+-- `personal` (org_id null) or the owning org's SLUG. This covers the two RPCs
+-- (`lorekit_memory_facets` and `lorekit_memory_activity`); the equivalent
+-- `GET /memories` handler predicate (`applyOwnerFilter`) shares the SAME identity
+-- rule but runs at the PostgREST layer, so it is exercised by the live-stack
+-- integration suite (`memories-api.integration.spec.ts`), not here.
 -- AC-1: the owner facet enumerates `personal` and the org slug with counts.
 -- AC-2: DRILL-DOWN — an owner filter narrows the OTHER dimensions' counts.
 -- AC-3: SELF-EXCLUSION — the owner filter does not collapse the owner dimension,

@@ -287,13 +287,13 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // The pre-facet `?owner=` param. Ownership is a server-side filter DIMENSION
   // now (migration 00063), folded into the bar below like every other
   // dimension, so this legacy param is READ (never written) purely to keep old
-  // links landing: the accept-invite deep link and any shared owner view from
-  // before this change. `resolveFilters` translates a `'personal'` value into an
-  // owner filter (`'all'` and the `{orgId}` form degrade to no filter — the
-  // accept-invite flow writes a slug-keyed owner filter directly now). Same
-  // "absent-only" fallback rule as legacy `?tags=`. The default stays `'all'`
-  // (its historical value, mirrored in the CLI's `LORE_PARAM_DEFAULTS`) — the
-  // param is simply never written any more.
+  // links landing: the accept-invite deep link, `lorekit link --owner`, and any
+  // shared owner view from before this change. `resolveFilters` translates ANY
+  // non-`all` string — a `'personal'` marker OR an org slug — into an owner
+  // filter; only the pre-00063 `{orgId}` OBJECT degrades to no filter (its uuid
+  // cannot be resolved to the slug the facet keys on). Same "absent-only"
+  // fallback rule as legacy `?tags=`. The default stays `'all'` (its historical
+  // value, mirrored in the CLI's `LORE_PARAM_DEFAULTS`).
   const [legacyOwner] = useUrlState<unknown>('owner', 'all', {
     cleanOnPathname: '/lore',
   });
@@ -525,11 +525,11 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     </div>
   );
 
-  // Shared results renderer for BOTH tabs. Loading / error / empty are handled
-  // once here; only the populated body differs — a flat card list ("scope") vs
-  // date-grouped feed rows ("time"). Both consume the SAME server-filtered
-  // `lessons` (scope / search / range / archived / every bar dimension), so
-  // every filter applies identically across tabs.
+  // The results renderer: one flat card list. Loading / error / empty are
+  // handled once here; the populated body is the lesson cards. It consumes the
+  // server-filtered `lessons` (scope / search / range / archived / every bar
+  // dimension) — there is a single renderer now that the scope/time view tabs
+  // and the date-grouped `ActivityFeed` body are gone.
   //
   // This is a plain function that is CALLED, not a nested component rendered as
   // `<Results />`. A nested component would get a fresh type identity on every

@@ -585,7 +585,7 @@ ${c.bold('Options')}
       --key <key>         Name the key explicitly — the way to link to a key
                           that itself contains \`::\`
       --q <text>          Pre-fill the Explorer search box
-      --owner <o>         Ownership filter: all | personal | <orgId>
+      --owner <o>         Ownership filter: all | personal | <org-slug>
       --tags <a,b,c>      Label filter (AND across labels); comma-separated or a JSON array
       --range <json>      Date range as {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}
       --from <date>       Range start (shorthand for --range)
