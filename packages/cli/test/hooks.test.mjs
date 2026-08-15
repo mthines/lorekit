@@ -321,6 +321,34 @@ test('fetchLessons keeps the most-specific value per key — same as resolvePrec
   assert.equal(sharedWinners[0].scope, scope.readOrder[0]);
 });
 
+test('fetchLessons caps each loop bucket in the injected set (wires capPerBucket)', async () => {
+  // A scope flooded by two self-improvement loops plus two general lessons.
+  // Without the cap the loops take every slot; with it each bucket contributes
+  // at most SESSION_START_LOOP_CAP (2) and the generals survive. This asserts
+  // the WIRING, not the pure helper: reverting `capped` → `ranked` in
+  // fetchLessons makes it fail (5 and 4 per bucket, not 2).
+  const scope = REAL_SCOPE;
+  const s = scope.readOrder[0];
+  const at = '2026-08-01T00:00:00.000Z';
+  const mk = (key, tag) => ({ scope: s, key, value: `body of ${key}`, tags: tag ? [tag] : [], updatedAt: at });
+  const byScope = {
+    [s]: [
+      mk('rev1', 'loop::review-outcomes'), mk('rev2', 'loop::review-outcomes'),
+      mk('rev3', 'loop::review-outcomes'), mk('rev4', 'loop::review-outcomes'),
+      mk('rev5', 'loop::review-outcomes'),
+      mk('imp1', 'loop::impl-lessons'), mk('imp2', 'loop::impl-lessons'),
+      mk('imp3', 'loop::impl-lessons'), mk('imp4', 'loop::impl-lessons'),
+      mk('gen1', null), mk('gen2', null),
+    ],
+  };
+  const { lessons } = await fetchLessons(fakeStore(byScope), process.cwd());
+  const withTag = (t) => lessons.filter((l) => (l.tags || []).includes(t)).length;
+  assert.equal(withTag('loop::review-outcomes'), 2, 'review-outcomes bucket capped at 2');
+  assert.equal(withTag('loop::impl-lessons'), 2, 'impl-lessons bucket capped at 2');
+  const generals = lessons.filter((l) => !(l.tags || []).some((t) => String(t).startsWith('loop::'))).length;
+  assert.equal(generals, 2, 'both general lessons survive the cap');
+});
+
 test('fetchLessons is best-effort: a failed scope read is skipped, not thrown', async () => {
   const scope = REAL_SCOPE;
   const first = scope.readOrder[0];

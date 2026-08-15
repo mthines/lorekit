@@ -202,6 +202,15 @@ export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
   // bucket's HIGHEST-ranked few, then diversified below. The scope map and
   // `applicable` still read from the full `ranked` set — the cap governs what is
   // shown, not the honest count of what exists per scope.
+  //
+  // WHERE THE FREED SLOTS FILL FROM, stated so the cap is not oversold. Each
+  // scope is read only to its newest `SCOPE_READ_LIMIT`, so on a scope whose
+  // recent writes are ALL one loop's, the general lessons that fill the freed
+  // slots come from the OTHER scopes in `readOrder` (a repo's loop churn makes
+  // room for `global` principles) — not from that same scope's older generals,
+  // which the bounded read never fetched. Reaching those is the recency-window
+  // limit (the `order=rank` CANDIDATE_LIMIT problem, one scope down), not this
+  // cap's to solve; the cap still does its job of unflooding across scopes.
   const capped = capPerBucket(ranked, { cap: SESSION_START_LOOP_CAP, bucketOf: loopBucketOf });
 
   // ── the scope map: EXACT counts when the store can enumerate ───────────────

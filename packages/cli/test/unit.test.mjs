@@ -1625,6 +1625,13 @@ describe('loopBucketOf + capPerBucket', () => {
     ];
     assert.deepEqual(capPerBucket(entries, { cap: 0, bucketOf: loopBucketOf }).map((e) => e.key), ['gen']);
     assert.deepEqual(capPerBucket(entries, { cap: 2 }).map((e) => e.key), ['r1', 'gen', 'i1'], 'no bucketOf → nothing is bucketed → all kept');
+    // `numberOr` coercion: a NaN/absent cap is "no cap" (never drops silently); a stringy cap still caps.
+    assert.deepEqual(capPerBucket(entries, { cap: NaN, bucketOf: loopBucketOf }).map((e) => e.key), ['r1', 'gen', 'i1'], 'NaN → no cap');
+    assert.deepEqual(
+      capPerBucket([...entries, withTags('i2', ['loop::impl-lessons'])], { cap: '1', bucketOf: loopBucketOf }).map((e) => e.key),
+      ['r1', 'gen', 'i1'],
+      "'1' coerces to a cap of 1",
+    );
   });
 
   test('capPerBucket — total on junk input, never throws', () => {

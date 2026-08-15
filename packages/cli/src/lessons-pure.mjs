@@ -780,11 +780,15 @@ export function loopBucketOf(entry) {
  * of them survive and the freed slots go to the next-ranked variety. Pure and
  * total: a non-array input is []; `cap <= 0` drops every bucketed lesson (read
  * ONLY general knowledge) while still keeping the null-bucket ones; a missing
- * `bucketOf` treats everything as general (a no-op cap).
+ * `bucketOf` treats everything as general (a no-op cap). `cap` is coerced with
+ * the module's `numberOr` convention (as `diversifyRankedLessons` does for `k`),
+ * so a `NaN`/absent cap falls back to "no cap" rather than silently dropping
+ * every bucketed lesson, while a stringy `'2'` still caps.
  */
 export function capPerBucket(entries, { cap = Infinity, bucketOf } = {}) {
   if (!Array.isArray(entries)) return [];
   const of = typeof bucketOf === 'function' ? bucketOf : () => null;
+  const limit = numberOr(cap, Infinity);
   const counts = new Map();
   const out = [];
   for (const e of entries) {
@@ -794,7 +798,7 @@ export function capPerBucket(entries, { cap = Infinity, bucketOf } = {}) {
       continue;
     }
     const n = counts.get(bucket) ?? 0;
-    if (n < cap) {
+    if (n < limit) {
       counts.set(bucket, n + 1);
       out.push(e);
     }
