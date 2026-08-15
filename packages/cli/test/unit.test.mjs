@@ -2144,3 +2144,30 @@ test('retryAfterFrom reads the body hint, falls back to the header, and rejects 
   assert.equal(retryAfterFrom(null, null), null);
   assert.equal(retryAfterFrom(undefined, {}), null);
 });
+
+test('RemoteStore.putEntry leaves the remote TTL alone when expires_at is unparseable', async () => {
+  const { result, calls } = await captureRestCalls(
+    (store) => store.putEntry({ scope: 'global', key: 'k', value: 'v', expires_at: 'not-a-date' }),
+    { status: 201, body: '{}' },
+  );
+  assert.equal(result.ok, true);
+  // Neither TTL field: the RPC's 'keep' branch. Sending `clear_ttl` here would
+  // let one corrupt frontmatter character wipe a live hosted expiry, and
+  // sending a `ttl_days` would invent one.
+  assert.equal('ttl_days' in calls[0].body, false);
+  assert.equal('clear_ttl' in calls[0].body, false);
+});
+
+test('RemoteStore.write coalesces every envelope field on a network failure', async () => {
+  const { result } = await captureRestCalls(
+    (store) => store.write({ scope: 'global', key: 'k', value: 'v' }),
+    { throws: 'socket hang up' },
+  );
+  assert.equal(result.ok, false);
+  // Null, never undefined — a caller must not have to know which branch
+  // produced the failure to read the same key.
+  assert.equal(result.httpStatus, null);
+  assert.equal(result.retryAfter, null);
+  assert.equal(result.error, null);
+  assert.match(result.networkError, /socket hang up/);
+});

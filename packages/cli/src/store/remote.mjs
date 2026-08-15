@@ -47,16 +47,24 @@ export class StoreReadError extends Error {
 
 // An absolute `expires_at` expressed as the hosted write's relative `ttl_days`.
 //
-// Returns `undefined` for "no expiry" (the field is then omitted, leaving the
-// memory permanent), `'expired'` for an expiry already in the past (the caller
-// must refuse — see `putEntry`), else the remaining WHOLE days clamped to the
-// schema's 1–365. An unparseable value is treated as no expiry, matching
-// `isExpired`'s fail-safe posture: a corrupt frontmatter field must not decide
-// that a lesson dies.
+// Three outcomes, and the third exists because "no expiry" and "I cannot tell"
+// must not collapse into one answer:
+//
+//   `undefined`  no expiry — the caller states that positively with
+//                `clear_ttl: true`, so a permanent lesson stops being expiring.
+//   `'expired'`  already elapsed; the caller must refuse (see `putEntry`).
+//   `'unknown'`  an unparseable value. The caller then sends NEITHER TTL field,
+//                leaving the RPC on its `'keep'` branch, because the safe
+//                reading of a corrupt frontmatter field is "do not touch the
+//                expiry" — the same fail-safe posture as `isExpired`. Treating
+//                it as no expiry would let one bad character wipe a live remote
+//                TTL.
+//
+//   else         the remaining WHOLE days, clamped to the schema's 1–365.
 function remoteTtlDays(expiresAt, now = new Date()) {
   if (!expiresAt) return undefined;
   const ms = Date.parse(expiresAt);
-  if (Number.isNaN(ms)) return undefined;
+  if (Number.isNaN(ms)) return 'unknown';
   const remaining = ms - now.getTime();
   if (remaining <= 0) return 'expired';
   return Math.min(365, Math.max(1, Math.ceil(remaining / 86_400_000)));
@@ -220,12 +228,16 @@ class RemoteStore {
     // must be retried, `code: 'memory_cap'` is terminal (translateDbError maps
     // the LK001 cap trigger to 429 as well) and must not be. Additive — the
     // existing `{ ok, error, networkError }` keys are unchanged.
+    // Every field is coalesced, not just the retry hint: a caller comparing
+    // `httpStatus` must not get `null` from a refusal and `undefined` from the
+    // network-error or `unusable` branch, which is the exact split the shape
+    // exists to remove.
     return {
       ok: res.ok,
-      error: res.error,
-      httpStatus: res.httpStatus,
+      error: res.error ?? null,
+      httpStatus: res.httpStatus ?? null,
       retryAfter: res.retryAfter ?? null,
-      networkError: res.networkError,
+      networkError: res.networkError ?? null,
     };
   }
 
@@ -247,7 +259,7 @@ class RemoteStore {
   //   re-stamped `updated` — the server sets it to the write instant. There is
   //              no parameter for it, and inventing one would let a client
   //              backdate an edit it did not make.
-  //   derived    `seen_count` — the RPC owns the tally (migration 00058: a
+  //   derived    `seen_count` — the RPC owns the tally (migration 00059: a
   //              write against an existing key IS the next sighting). A
   //              migrated lesson therefore lands at 1 and counts up from
   //              there; its local history does not transfer.
@@ -322,9 +334,10 @@ class RemoteStore {
       source_agent: entry.source_agent,
       trigger: entry.trigger,
       created_at: entry.created,
-      ttl_days: ttl,
-      // Explicit, not omitted — see the fidelity note above. `stripUndefined`
-      // keeps a `false`, so this reaches the body only as an intentional true.
+      // `'unknown'` sends neither field, leaving the RPC on its `'keep'`
+      // branch. A real TTL sends only `ttl_days`; no TTL says so explicitly
+      // with `clear_ttl` rather than by omission — see the fidelity note above.
+      ttl_days: typeof ttl === 'number' ? ttl : undefined,
       clear_ttl: ttl === undefined ? true : undefined,
       origin_repo: entry.origin_repo,
       origin_branch: entry.origin_branch,

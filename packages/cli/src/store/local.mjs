@@ -134,7 +134,7 @@ class LocalStore {
       archived_at: null,
       expires_at,
       // Recurrence, counted the way the hosted `memory_write` RPC counts it
-      // (migration 00058): a write against a key this store already holds IS
+      // (migration 00059): a write against a key this store already holds IS
       // the next sighting. `seenCountOf` floors an absent/hand-edited value to
       // 0, so a file written before this column existed resumes at 1 on its
       // next write rather than throwing or restarting the tally at 2.

@@ -29,7 +29,7 @@ export const FIELDS = [
   // columns: a file written before this existed simply decodes it as absent.
   'expires_at',
   // Recurrence — how many times this lesson has been written, mirroring the
-  // hosted `memories.seen_count` column (migration 00058) so an offline store
+  // hosted `memories.seen_count` column (migration 00059) so an offline store
   // carries the same salience signal a remote one does. Appended like the
   // columns above: a file written before this existed decodes it as absent,
   // which the read projection reports as 0 rather than inventing a count.
