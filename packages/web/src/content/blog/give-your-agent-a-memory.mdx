@@ -1,6 +1,6 @@
 ---
 title: "Give your coding agent a memory in one command — no signup, just a folder"
-description: "Your agent re-solves yesterday's problem because nothing wrote it down. The fix isn't a platform you adopt — it's one command, a folder you own, and a loop that closes on your own disk. And when a team needs the same lore, it's two environment variables and one word of config: the same read path, handed a hosted store instead of a folder. Nothing to export, nothing to migrate."
+description: "Your agent re-solves yesterday's problem because nothing wrote it down. The fix isn't a platform you adopt — it's one command, a folder you own, and a loop that closes on your own disk. And when a team needs the same lore, it's a free account and one install with your key: the same read path, handed a hosted store instead of a folder. Nothing to export, nothing to migrate."
 date: "2026-08-15"
 author: "Mads Thines"
 readingMinutes: 6
@@ -129,27 +129,34 @@ No cleanup task, no stale note steering your agent in November.
 
 ## When you're ready to share
 
-Nothing above needed an account. When you want the same lore on your laptop, your desktop, and your teammate's machine, you don't move anything. You add a connection:
+Nothing above needed an account. When you want the same lore on your laptop, your desktop, and a teammate's machine, you don't move anything — you point the CLI at the hosted store. Three steps.
+
+Create a free account at [lorekit.io](https://lorekit.io), open **Settings → API keys**, and generate a read-write key (`lk_rw_…`). It's shown once, so copy it. Then hand it to the same installer you already ran:
 
 ```bash
-export LOREKIT_MCP_URL=https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp
-export LOREKIT_TOKEN=lk_rw_…
+npx @lorekit/cli install --force
 ```
 
-Two variables, and one word in the `.lorekit.json` you already committed: `"mode": "remote"`. That's the whole migration, and it isn't one. Your files stay exactly where they are. Your `.mcp.json` doesn't change either — the same local server passes the calls through. Nothing is exported. Nothing is imported. There's no sync process, and no moment where your lore is in two places and you have to pick.
+Paste the key when it asks. That's the whole switch. `install` repoints the `lorekit` entry in your `.mcp.json` at the hosted endpoint with your token, and **remote is the default mode** — so there's nothing else to set. (If you pinned `"mode": "local"` back in the local setup, delete that one line and the default takes over.)
 
-From then on `npx @lorekit/cli list` reads **both** stores and prints them side by side — an **Offline** section from your local files, a **Remote** section from the hosted one — so nothing you wrote before the switch falls off the edge.
+Your files never move. `npx @lorekit/cli list` now reads **both** stores and prints them side by side — an **Offline** section from your local files, a **Remote** section from the hosted one — so nothing you wrote before the switch falls off the edge.
 
 That's the load-bearing bit, so let me be exact about it: the read *path* — precedence across scopes, ranking, de-duplication, the character budget — is one piece of code that takes a store as an argument. Point it at a directory of markdown files or at a hosted Postgres and nothing above the store changes. So `remote` isn't a different product you graduate to. It's the same read, handed a bigger pile.
 
 <figure>
-  <img src="/blog/local-to-shared.svg" alt="A scaling strip in three stages. Today: a local store of plain markdown files in a folder you own. Then: you add a connection — the LOREKIT_MCP_URL and LOREKIT_TOKEN environment variables, and mode set to remote in .lorekit.json. Result: one unchanged read path that can be handed either store — the local folder in local mode, a hosted Postgres in remote mode — with lorekit list showing both side by side. No export, no import, no sync process." width="720" height="300" />
+  <img src="/blog/local-to-shared.svg" alt="A scaling strip in three stages. Today: a local store of plain markdown files in a folder you own. Then: you connect the hosted store by running lorekit install and pasting your read-write API key; remote is the default mode, so there's nothing else to set. Result: one unchanged read path that can be handed either store — the local folder in local mode, a hosted Postgres in remote mode — with lorekit list showing both side by side. No export, no import, no sync process." width="720" height="300" />
   <figcaption>The read path never changed — only which store it's handed. Local was never a toy; it's the base layer everything else stacks on.</figcaption>
 </figure>
 
-What that buys you, once a team is on it: an org-shared playbook, where an admin writes the deploy checklist or the incident runbook once and every member's agent reads it during planning. And the same lore in CI — a read-only `lk_ro_` token in your GitHub Actions secrets, one `memory.list` call, and the AI step in your pipeline has the context your laptop has.
+## Share a scope with your team
 
-The token prefix tells you what it can do before you paste it anywhere: `lk_rw_` read and write, `lk_ro_` read only, `lk_wo_` write only. Free up to 5,000 stored memories, at 120 requests per minute.
+A key gets the same lore onto your own machines. A team needs one more thing: an organization. In **Settings → Organization** you create one — you're the owner — and invite teammates by GitHub handle or email, each with a role: `viewer` reads, `member` writes, `admin` manages people, `owner` runs the place.
+
+Then you pick what's shared, by scope. An admin binds a scope — say `repo::myteam/api` — under **Shared scopes**. From then on, every write under it by a write-capable member routes to the org. The deploy checklist one person writes is the checklist every teammate's agent reads during planning. A non-member who writes under a bound scope isn't rejected — their write quietly falls back to their own personal lore. (Prefer to be explicit? Pass `org: "my-team"` on a single `memory.write` instead of binding the scope.)
+
+The same lore reaches CI. Drop a read-only `lk_ro_` token into your GitHub Actions secrets, make one `memory.list` call, and the AI step in your pipeline opens with the context your laptop has.
+
+The token prefix tells you what a key can do before you paste it anywhere: `lk_rw_` read and write, `lk_ro_` read only, `lk_wo_` write only. Free up to 5,000 stored memories, at 120 requests per minute.
 
 Honest boundary while you're deciding: there's no semantic search here, and nothing is learning or fine-tuning. Matching is lexical — recurrence, recency, and word overlap. A genuine paraphrase can miss. What you get is a scoped note your agent leaves for its future self, read at the start and written on failure. That's a smaller claim than most memory pitches make, and it's the one that actually holds.
 
@@ -157,7 +164,7 @@ Honest boundary while you're deciding: there's no semantic search here, and noth
 
 The obvious worry about a store that only grows: it gets worse the more it learns. A folder with six lessons injects six lines. A year-old team store with sixty thousand can't inject sixty thousand.
 
-It doesn't. The read spends a fixed slice of your context window — not a fixed number of lessons — on the highest-signal, de-duplicated ones, and tells you exactly what it left out. Same code, both ends of the range. That's the next post: [Your agent's memory should scale from 6 lessons to 60,000](/blog/agent-memory-working-set).
+It doesn't. The read spends a fixed slice of your context window — not a fixed number of lessons — on the highest-signal, de-duplicated ones, and tells you exactly what it left out. Same code, both ends of the range. A follow-up post digs into exactly how that scales.
 
 ## Start local today
 

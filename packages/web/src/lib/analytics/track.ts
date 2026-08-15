@@ -47,7 +47,7 @@ export type CommandSource = 'palette' | 'shortcut';
 export type InstallCommandId = 'cli-install';
 
 /** Where the copy affordance was rendered. Bounded for the same reason. */
-export type CopySurface = 'login-get-started';
+export type CopySurface = 'login-get-started' | 'blog-cta';
 
 /** Discriminated union of every tracked event. Add new events here. */
 export type AnalyticsEvent =

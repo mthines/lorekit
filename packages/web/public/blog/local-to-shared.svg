@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 300" role="img" aria-label="A scaling strip in three stages. Left: today, a local store of plain markdown files in a folder you own. Middle: you add a connection — the LOREKIT_MCP_URL and LOREKIT_TOKEN environment variables, and mode set to remote in .lorekit.json. Right: one unchanged read path that can be handed either store — the local folder in local mode, or a hosted Postgres in remote mode — with the lorekit list command showing both side by side. A label underneath notes there is no export, no import, and no sync process: the read path never changed, only which store it is handed.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 300" role="img" aria-label="A scaling strip in three stages. Left: today, a local store of plain markdown files in a folder you own. Middle: you connect the hosted store by running lorekit install and pasting your read-write API key; remote is the default mode, so there is nothing else to set. Right: one unchanged read path that can be handed either store — the local folder in local mode, or a hosted Postgres in remote mode — with the lorekit list command showing both side by side. A label underneath notes there is no export, no import, and no sync process: the read path never changed, only which store it is handed.">
   <style>
     text{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;fill:#e7ebf2}
     .lbl{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;fill:#8892a4;letter-spacing:.02em}
@@ -27,11 +27,11 @@
   <text x="230" y="58" class="lbl" font-size="10.5" fill="#f5a623">YOU ADD A CONNECTION</text>
   <rect x="230" y="68" width="176" height="112" rx="10" fill="#13151a" stroke="#f5a623" stroke-opacity="0.55"/>
   <rect x="244" y="80" width="148" height="18" rx="4" fill="#1a1d24" stroke="#2a2d38"/>
-  <text x="252" y="93" class="k" font-size="8.5" fill="#f5a623">LOREKIT_MCP_URL</text>
+  <text x="252" y="93" class="k" font-size="8.5" fill="#f5a623">lorekit install</text>
   <rect x="244" y="102" width="148" height="18" rx="4" fill="#1a1d24" stroke="#2a2d38"/>
-  <text x="252" y="115" class="k" font-size="8.5" fill="#f5a623">LOREKIT_TOKEN</text>
+  <text x="252" y="115" class="k" font-size="8.5" fill="#f5a623">paste lk_rw_ key</text>
   <rect x="244" y="124" width="148" height="18" rx="4" fill="#1a1d24" stroke="#2a2d38"/>
-  <text x="252" y="137" class="k" font-size="8.5" fill="#f5a623">"mode": "remote"</text>
+  <text x="252" y="137" class="k" font-size="8.5" fill="#f5a623">remote = default</text>
   <text x="244" y="160" class="lbl" font-size="9.5">no export. no import.</text>
   <text x="244" y="172" class="lbl" font-size="9.5">no sync process.</text>
 

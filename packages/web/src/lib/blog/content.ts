@@ -5,6 +5,7 @@ import { cache } from 'react';
 import matter from 'gray-matter';
 import { BLOG_SLUGS } from './sections';
 import { extractToc, type TocItem } from './toc';
+import { isPublished } from './publish';
 
 /**
  * Server-only blog content layer. Reads the MDX files under
@@ -64,8 +65,16 @@ export const getPost = cache((slug: string): Post | null => {
   }
 });
 
+/**
+ * Every PUBLISHED post, newest first. Future-dated posts are omitted (see
+ * {@link isPublished}) — which also removes them from `generateStaticParams`, so
+ * with `dynamicParams = false` their URL 404s until the date lands. This is the
+ * single seam that gates draft visibility; the detail route relies on it rather
+ * than re-checking, so the rule lives in one place.
+ */
 export const getAllPosts = cache((): Post[] =>
   BLOG_SLUGS.map((slug) => getPost(slug))
     .filter((p): p is Post => p !== null)
+    .filter((p) => isPublished(p.date))
     .sort((a, b) => a.order - b.order),
 );
