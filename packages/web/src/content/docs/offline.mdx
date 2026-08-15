@@ -7,7 +7,7 @@ keywords: ["offline", "local store", "cli", "install", "doctor", "mcp", "memory.
 
 <TutorialCallout variant="tip">
 
-Offline storage is the fastest way to start. You can migrate to remote storage later by adding a `LOREKIT_MCP_URL` and `LOREKIT_TOKEN` — the CLI reads both stores and merges them automatically.
+Offline storage is the fastest way to start, and moving to the hosted store later is additive rather than a migration: add a `LOREKIT_MCP_URL` and `LOREKIT_TOKEN`, then switch `mode` to `remote` (Step 6 — the committed `.lorekit.json` outranks those variables, so it has to agree). Nothing is exported and your local files stay exactly where they are; `npx @lorekit/cli list` keeps showing both stores, side by side.
 
 </TutorialCallout>
 
