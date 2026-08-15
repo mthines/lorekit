@@ -172,7 +172,8 @@ function activeRows(rows: MemoryRow[], archived: boolean): MemoryRow[] {
   return rows.filter((r) => (archived ? r.archived_at !== null : r.archived_at === null));
 }
 
-/** `GET /memories/scopes` — one row per scope, sorted by scope. */
+/** `GET /memories/scopes` — one row per scope, count desc then scope asc
+ *  (mirrors `lorekit_memory_scopes` since 00065, the same order as `/tags`). */
 function scopesFrom(rows: MemoryRow[]) {
   const byScope = new Map<string, { count: number; last: string }>();
   for (const r of activeRows(rows, false)) {
@@ -181,7 +182,7 @@ function scopesFrom(rows: MemoryRow[]) {
     else byScope.set(r.scope, { count: prev.count + 1, last: r.created_at > prev.last ? r.created_at : prev.last });
   }
   return Array.from(byScope.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a, av], [b, bv]) => bv.count - av.count || a.localeCompare(b))
     .map(([scope, { count, last }]) => ({ scope, count, last_activity: last }));
 }
 

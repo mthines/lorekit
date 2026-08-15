@@ -9,7 +9,8 @@ type ScopeRow = Database['public']['Functions']['lorekit_memory_scopes']['Return
 
 /**
  * GET /memories/scopes — every distinct scope the caller can see, with its
- * count of active (non-archived, non-expired) memories, sorted by scope asc.
+ * count of active (non-archived, non-expired) memories, sorted by count desc
+ * then scope asc (matching /tags) — the busiest scope leads.
  *
  * This is the REST answer to the CLI's `listScopes()`, which used to return an
  * "unsupported" sentinel because no MCP tool can enumerate scopes (every read
