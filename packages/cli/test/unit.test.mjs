@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { ownerRepoFromRemote } from '../src/scope.mjs';
-import { splitEndpoint, buildRemoteUrl, mcpCall } from '../src/mcp.mjs';
+import { splitEndpoint, buildRemoteUrl, mcpCall, retryAfterFrom } from '../src/mcp.mjs';
 import { tokenKind } from '../src/config.mjs';
 import { parseArgs, selectAction, select } from '../src/util.mjs';
 import fs from 'node:fs';
@@ -2110,4 +2110,26 @@ test('RemoteStore.write surfaces httpStatus and the retry hint so 429s can be to
   );
   assert.equal(capped.result.error.code, 'memory_cap');
   assert.equal(capped.result.retryAfter, null);
+});
+
+// The retry hint has two sources and several ways to be unusable. The store
+// tests above only reach the body path — `captureRestCalls`'s response double
+// exposes no `headers` — so the header fallback and the rejections are pinned
+// here, directly on the exported total function.
+test('retryAfterFrom reads the body hint, falls back to the header, and rejects the rest', () => {
+  assert.equal(retryAfterFrom({ retryAfterSeconds: 30 }, null), 30);
+  // Body wins over header: it is the number the rate-limit RPC returned, while
+  // the header is a stringified copy an intermediary may rewrite.
+  assert.equal(retryAfterFrom({ retryAfterSeconds: 30 }, { get: () => '99' }), 30);
+  assert.equal(retryAfterFrom(null, { get: (h) => (h === 'retry-after' ? '5' : null) }), 5);
+  assert.equal(retryAfterFrom(null, { get: () => '2.4' }), 3); // whole seconds, rounded up
+
+  // An HTTP-date Retry-After is valid HTTP and unusable as a delay — reported
+  // as "no hint" so the caller falls back to its own backoff, never NaN.
+  assert.equal(retryAfterFrom(null, { get: () => 'Wed, 21 Oct 2026 07:28:00 GMT' }), null);
+  assert.equal(retryAfterFrom(null, { get: () => '-1' }), null);
+  assert.equal(retryAfterFrom(null, { get: () => '' }), null);
+  // A response double with no Headers interface must not throw on an error path.
+  assert.equal(retryAfterFrom(null, null), null);
+  assert.equal(retryAfterFrom(undefined, {}), null);
 });
