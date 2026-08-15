@@ -27,6 +27,11 @@ import {
   runAgent,
 } from "../src/agent.mjs";
 import { SCOPE_MODES, SEED_SOURCES, prepareArm } from "../src/arm.mjs";
+import {
+  assertCleanEnvironment,
+  describeEnvironment,
+  summarizeEnvironment,
+} from "../src/environment.mjs";
 import { gradeSandbox } from "../src/grade.mjs";
 import { readInjectedLessons } from "../src/hook-install.mjs";
 import { classifyRetrieval } from "../src/retrieval.mjs";
@@ -38,8 +43,18 @@ const USAGE = `Usage: node bin/run-eval.mjs <subcommand> [options]
 
 Subcommands:
   arm0                 The golden task against an empty store, then graded.
+  preflight            One throwaway model call in a prepared sandbox, then
+                       report what the session actually loaded. Exits non-zero
+                       when the environment is contaminated. It is a single
+                       call in a fixed empty-store arm and writes no run
+                       directory, and the model call IS the check, so it
+                       REFUSES --seed, --lesson, --scope, --scope-mode,
+                       --git/--no-git, --reps, --out and --dry-run rather than
+                       ignoring them.
   probe                Seed the store, install the real SessionStart hook and
-                       print what it injects. Spawns no model.
+                       print what it injects. Spawns no model, so it REFUSES
+                       --reps, --out, --timeout, --command and --dry-run rather
+                       than ignoring them.
 
 Options:
   --reps <n>           Repetitions (default 3; N=3 is a low-power INDICATOR).
@@ -165,20 +180,39 @@ export function runId(now = new Date()) {
   return now.toISOString().replace(/[:.]/g, "-");
 }
 
+/**
+ * Refuse flags a subcommand would silently ignore.
+ *
+ * Pure ARGUMENT validation, meant to be hoisted above every sandbox: refusing
+ * here costs nothing, where refusing inside the loop would first git-initialise,
+ * strip and MCP-configure a sandbox only to throw it away. Silently ignoring is
+ * the failure worth preventing — a caller who typed `--scope-mode repo` and got
+ * a `branch::` run reads the result as a finding about the model.
+ *
+ * @param {object} options    from `parseArgs`
+ * @param {string[]} flags    the flags this subcommand cannot honour
+ * @param {string} because    why, phrased to complete "…, so <flags> cannot be
+ *                            honoured here."
+ * @param {string} [hint]     what to do instead, appended to the refusal
+ */
+function refuseUnhonourableFlags(options, flags, because, hint = "") {
+  const ignored = flags.filter((f) => options.provided.has(f));
+  if (ignored.length === 0) return;
+  throw new Error(
+    `${because}, so ${ignored.join(" and ")} cannot be honoured here. ` +
+      `Drop ${ignored.length > 1 ? "them" : "it"}${hint ? `, ${hint}` : ""}.`,
+  );
+}
+
 async function runArm0(options) {
-  // Pure ARGUMENT validation, hoisted above every sandbox: arm 0 is the
-  // empty-store arm by definition — its job is to produce the organic lesson
-  // the seeded arms are later given — so it cannot honour a seed. Refusing here
-  // costs nothing, where refusing inside the loop would first git-initialise,
-  // strip and MCP-configure a sandbox only to throw it away.
-  const ignored = ["--seed", "--lesson"].filter((f) => options.provided.has(f));
-  if (ignored.length > 0) {
-    throw new Error(
-      `arm0 always runs against an EMPTY store, so ${ignored.join(" and ")} ` +
-        `cannot be honoured here. Drop ${ignored.length > 1 ? "them" : "it"}, ` +
-        `or use the "probe" subcommand, which seeds.`,
-    );
-  }
+  // Arm 0 is the empty-store arm by definition — its job is to produce the
+  // organic lesson the seeded arms are later given — so it cannot honour a seed.
+  refuseUnhonourableFlags(
+    options,
+    ["--seed", "--lesson"],
+    "arm0 always runs against an EMPTY store",
+    'or use the "probe" subcommand, which seeds',
+  );
 
   const id = runId();
   const outDir = path.resolve(options.out, `arm0-${id}`);
@@ -244,8 +278,15 @@ async function runArm0(options) {
           transcriptPath: path.join(repDir, "transcript.jsonl"),
           command: options.command,
           timeoutMs: options.timeoutMs,
-          mcpConfigPath: arm.mcp.path,
-          allowedTools: arm.mcp.allowedTools,
+          ...arm.agentOptions,
+        });
+        // What the session really loaded. A rep that ran with the developer's
+        // skills or plugins in context is not a data point — the lorekit-memory
+        // skill alone states the golden task's answer — so the verdict is
+        // recorded on the rep and the summary counts it as discarded.
+        const environment = assertCleanEnvironment(summarizeEnvironment(run), {
+          sandboxRoot: sandbox.root,
+          expectedHooks: arm.hookInstall ? 1 : 0,
         });
         // Grade BEFORE the sandbox is torn down — the store is the evidence.
         const graded = await gradeSandbox(sandbox, {
@@ -260,6 +301,10 @@ async function runArm0(options) {
           path.join(repDir, "grade.json"),
           JSON.stringify(graded, null, 2),
         );
+        await fsp.writeFile(
+          path.join(repDir, "environment.json"),
+          JSON.stringify(environment, null, 2),
+        );
         if (run.stderr)
           await fsp.writeFile(path.join(repDir, "stderr.log"), run.stderr);
         reps.push({
@@ -270,6 +315,11 @@ async function runArm0(options) {
           repeatedMistake: graded.repeatedMistake,
           storedScopes: graded.storedScopes,
           attemptedScopes: graded.attemptedScopes,
+          environmentClean: environment.clean,
+          environmentFindings: environment.findings.map((f) => f.kind),
+          // A contaminated rep is DISCARDED, not counted as a failure — the
+          // same rule `retrieval.mjs` applies to a harness fault.
+          discarded: !environment.clean,
           wallMs: run.wallMs,
           exitCode: run.exitCode,
           timedOut: run.timedOut,
@@ -293,6 +343,10 @@ async function runArm0(options) {
     // Restated in every artifact on purpose: whoever reads a result file months
     // from now must see the caveat without going back to the README.
     caveat: `N=${options.reps} is a low-power INDICATOR, not proof. Treat differences as directional.`,
+    // Surfaced at the top level so a contaminated batch is impossible to read
+    // past. `usableReps` — not `reps` — is the N any conclusion may cite.
+    discardedReps: reps.filter((r) => r.discarded).length,
+    usableReps: reps.filter((r) => !r.dryRun && !r.discarded).length,
     results: reps,
   };
   await fsp.writeFile(
@@ -302,7 +356,86 @@ async function runArm0(options) {
   return { outDir, summary };
 }
 
+/**
+ * The cheapest possible check that a real run would be measuring the model and
+ * not the machine: one throwaway prompt in a fully-prepared sandbox, then read
+ * the init event back.
+ *
+ * It costs one trivial model call, and it is the only way to know. On the
+ * machine this was written for, the unisolated equivalent loaded ~130 skills
+ * and 5 plugins for $1.13 — including the skill that states the golden task's
+ * answer. Exits non-zero when the environment is dirty, so it can gate a
+ * batch: `node bin/run-eval.mjs preflight && node bin/run-eval.mjs arm0 …`.
+ */
+async function runPreflight(options) {
+  // One throwaway call in a fixed, empty-store arm: the information environment
+  // is what is being measured, and it does not vary with the seed, the scope, or
+  // whether the sandbox has a git identity. Every one of those flags would have
+  // been accepted and dropped on the floor.
+  //
+  // `--dry-run` is the one that costs money to ignore: spawning is the entire
+  // point of preflight, so there is no plan to print without it, and accepting
+  // the flag would bill a call while promising not to. It is refused rather
+  // than honoured because a dry preflight would exit 0 having checked nothing —
+  // and `preflight && arm0` reads that as "the environment is clean".
+  refuseUnhonourableFlags(
+    options,
+    [
+      "--seed",
+      "--lesson",
+      "--scope",
+      "--scope-mode",
+      "--git",
+      "--no-git",
+      "--reps",
+      "--out",
+      "--dry-run",
+    ],
+    "preflight is a single call in a fixed empty-store arm, it writes no run directory, and the model call IS the check",
+  );
+
+  const sandbox = await createSandbox({ keep: options.keep });
+  try {
+    const arm = await prepareArm(sandbox, { seed: "empty" });
+    const run = await runAgent({
+      prompt: "Reply with exactly the word READY and nothing else.",
+      cwd: sandbox.cwd,
+      env: sandbox.childEnv(),
+      transcriptPath: path.join(sandbox.artifacts, "preflight.jsonl"),
+      command: options.command,
+      timeoutMs: options.timeoutMs,
+      ...arm.agentOptions,
+    });
+    const verdict = assertCleanEnvironment(summarizeEnvironment(run), {
+      sandboxRoot: sandbox.root,
+      expectedHooks: 1,
+    });
+    return {
+      subcommand: "preflight",
+      clean: verdict.clean,
+      verifiable: verdict.verifiable,
+      verdict: describeEnvironment(verdict),
+      findings: verdict.findings,
+      environment: verdict.summary,
+      costUsd: run.summary.costUsd,
+      argv: run.argv,
+    };
+  } finally {
+    await sandbox.dispose();
+  }
+}
+
 async function runProbe(options) {
+  // probe builds ONE arm and reads the hook's injection back; it spawns no
+  // model and writes no run directory. Everything to do with running the agent
+  // or collecting artifacts would therefore be accepted and dropped —
+  // `--dry-run` most misleadingly of all, since probe is already dry.
+  refuseUnhonourableFlags(
+    options,
+    ["--reps", "--out", "--timeout", "--command", "--dry-run"],
+    "probe builds one arm, spawns no model, writes no run directory and is already dry",
+  );
+
   const sandbox = await createSandbox({ keep: options.keep });
   try {
     const arm = await prepareArm(sandbox, {
@@ -353,6 +486,11 @@ export async function main(argv = process.argv.slice(2)) {
   if (options.help || !options.subcommand) {
     process.stdout.write(USAGE);
     return 0;
+  }
+  if (options.subcommand === "preflight") {
+    const result = await runPreflight(options);
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return result.clean ? 0 : 1;
   }
   if (options.subcommand === "probe") {
     const result = await runProbe(options);

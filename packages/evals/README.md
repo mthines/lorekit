@@ -25,8 +25,10 @@ PR5 of six. Shipped: the package and per-run isolation, the `claude -p` spawner,
 the memory arms, scope control, and the golden task with its deterministic
 grader (PR3); metrics and reporting — precision@k / recall@k / MRR, the
 `ground-truth.mjs` predicate, the BOOTSTRAP seed, the `mine` runbook (PR4); the
-`order=rank` ranked mode in the hosted edge `memory.list` (PR5-A1); and the
-**scale/position sweep** (PR5). Still to come: the code-review domain (PR6).
+`order=rank` ranked mode in the hosted edge `memory.list` (PR5-A1); the
+**scale/position sweep** (PR5); and the information-environment verification
+that keeps a run from measuring the machine instead of the model. Still to come:
+the code-review domain (PR6).
 
 ## The golden task
 
@@ -180,12 +182,19 @@ Live runs are manual and spend real tokens:
 ```bash
 cd packages/evals
 node bin/run-eval.mjs arm0 --dry-run          # plan + artifact tree, no model call
+node bin/run-eval.mjs preflight               # one call; is the environment clean?
 node bin/run-eval.mjs arm0 --reps 1 --out ./.eval-out
 ```
 
 Requires the `claude` CLI on `PATH` and an authenticated Claude Code install.
-Cost scales with reps × arms; the PR1 placeholder prompt is a few cents per
-attempt, but the golden task in PR3 will be materially more, so start at
+Run `preflight` first — it exits non-zero when the session loaded skills,
+plugins or foreign MCP servers, which would invalidate every rep that followed
+(see [Isolating the agent's own
+configuration](#isolating-the-agents-own-configuration)).
+
+Cost scales with reps × arms, and the preamble dominates: an unisolated run on
+a well-equipped machine cost $1.13 to say one word. `preflight` reports its own
+`costUsd`, which is the honest per-rep floor to plan a batch against. Start at
 `--reps 1` when validating plumbing.
 
 | Flag              | Meaning                                                  |
@@ -215,6 +224,56 @@ That is not a convention the harness politely follows — it is how
 path from a sandboxed run to `~/.lorekit`. A guard throws if a scratch home ever
 resolves inside the real one, `dispose()` is idempotent and runs in a `finally`,
 and `withSandbox` tears down even when the body throws.
+
+### Isolating the agent's own configuration
+
+Store isolation is not enough. `claude -p` auto-discovers skills, plugins, MCP
+servers, hooks and `CLAUDE.md` from `~/.claude`, so by default a run measures
+the developer's machine as much as the model.
+
+On this repo that is not hypothetical. The first live run loaded ~130 skills, 5
+plugins, 35 MCP servers and five `SessionStart` hooks — 101k tokens of preamble,
+$1.13 for a one-word prompt — and among those skills was `lorekit-memory`, whose
+`SKILL.md` says:
+
+```
+branch::{owner}/{repo}::{branch}       short-lived, this branch only
+```
+
+That is the golden task's answer, in context, before any memory is read. Arm A
+would have scored 100 with an empty store, and the harness would have reported
+"memory does not help" having measured nothing. `findSpoilers` could not catch
+it: it scans the sandbox working directory, and the leak was in `~/.claude`.
+
+Two mechanisms now stand against that, and only the second is trusted:
+
+1. **Ask.** `--disable-slash-commands` drops skills and commands,
+   `--strict-mcp-config` admits only the harness's own server, and a
+   session-scoped `--settings` file sets `enabledPlugins: {}`.
+2. **Verify.** `src/environment.mjs` reads the run's own
+   `{"type":"system","subtype":"init"}` event and its `hook_started` events, and
+   reports what _actually_ loaded. A rep whose environment is dirty is
+   **discarded**, not scored — `summary.json` carries `usableReps` alongside
+   `reps`, and `usableReps` is the only N a conclusion may cite.
+
+Flags express intent; the init event is the outcome. A `claude` version that
+ignores a flag, or a user-level hook that fires regardless, is caught by (2).
+
+Deliberately absent: `hooks: {}` in the settings override. `--settings`
+overrides the same key in _every_ settings file for the session, including the
+sandbox's own project `.claude/settings.json` — it would switch off the
+harness's SessionStart hook and silently turn arm B into arm A. Foreign hooks
+are therefore detected rather than prevented, which is the safe direction — and
+the count is checked in _both_ directions: more hooks than expected is a foreign
+hook (`foreign-hooks-fired`), fewer is the harness's own hook failing to fire
+(`expected-hooks-missing`), which is that same arm-B-as-arm-A silent failure
+arriving by another route.
+
+Check before spending a batch — one throwaway call, non-zero exit when dirty:
+
+```bash
+node bin/run-eval.mjs preflight && node bin/run-eval.mjs arm0 --reps 3
+```
 
 ## Design notes settled in this PR
 

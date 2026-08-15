@@ -15,6 +15,7 @@ import {
 import {
   rankLessons, scoreLesson, recencyFactor, salienceFactor, relevanceFactor,
   normalizeOutcome, RECENCY_HALF_LIFE_DAYS, DEFAULT_RANK_WEIGHTS, COLD_START_OUTCOME_PRIOR,
+  diversifyRankedLessons, selectDiverse, capPerBucket, loopBucketOf,
 } from '../src/lessons-pure.mjs';
 import { MEMORY_TOOL_DEFS } from '../src/mcp-server.mjs';
 
@@ -1502,6 +1503,141 @@ describe('rankLessons', () => {
     // second, and the key tiebreak would never be consulted — which is what
     // makes this assertion discriminate rather than merely restate the input.
     assert.deepEqual(ranked.map((e) => e.key), ['a-raw', 'z-projected']);
+  });
+});
+
+// ── diversifyRankedLessons: MMR on the SessionStart injection ─────────────────
+// Ranking answers "which score highest"; on a busy repo the highest cluster is
+// one task's iteration log — several rows that score alike AND read alike — so a
+// plain top-N hands the reader the same lesson several times. This is the helper
+// that wires the SAME MMR the hosted `order=rank` path uses into the session
+// read, and these tests pin the diversity property and the alignment guarantee
+// (its recomputed scores must equal the ones the list was ranked on).
+describe('diversifyRankedLessons', () => {
+  const DAY = 86400000;
+  const NOW = Date.parse('2026-08-01T00:00:00.000Z');
+  const at = (daysAgo) => new Date(NOW - daysAgo * DAY).toISOString();
+  const lesson = (key, { days = 1, seen = 1, value = '' } = {}) => ({
+    scope: 'global', key, value, seenCount: seen, updatedAt: at(days),
+  });
+
+  // Two near-identical iteration logs (high token overlap) that both outscore a
+  // distinct lesson — the exact `review-outcomes::pr-it{3,4}` shape.
+  const dupText = 'database migration rollback failed on staging retry the deploy';
+  const A1 = lesson('pr-it4', { seen: 5, value: `${dupText} at iteration four` });
+  const A2 = lesson('pr-it3', { seen: 4, value: `${dupText} at iteration three` });
+  const B = lesson('functional-core', { seen: 3, value: 'prefer a functional core with an imperative shell' });
+
+  test('diversify — separates the near-duplicate a plain rank keeps adjacent', () => {
+    const ranked = rankLessons([A1, A2, B], { now: NOW });
+    // Plain ranking: the two dups sit together, the distinct lesson last.
+    assert.deepEqual(ranked.map((e) => e.key), ['pr-it4', 'pr-it3', 'functional-core']);
+    const diverse = diversifyRankedLessons(ranked, { now: NOW, k: 3 });
+    // MMR keeps the top lesson, then promotes the DISTINCT one over the dup.
+    assert.equal(diverse[0].key, 'pr-it4', 'the highest-ranked lesson still seeds the set');
+    assert.ok(
+      diverse.findIndex((e) => e.key === 'functional-core') <
+        diverse.findIndex((e) => e.key === 'pr-it3'),
+      'the distinct lesson is pulled ahead of the near-duplicate',
+    );
+  });
+
+  test('diversify — the seed scores track the ranking clock, at ANY `now`', () => {
+    // The helper recomputes each entry's score to seed MMR, over the SAME set
+    // (set-relative salience), so its result equals selectDiverse fed scores
+    // computed at that clock with that population's max. Checked at TWO clocks:
+    // the recompute must use the caller's `now`, which is exactly why
+    // fetchLessons feeds ONE options object to both rankLessons and this — a
+    // `now` that differed from the ranking's would seed MMR off the wrong scores.
+    for (const clock of [NOW, NOW + 90 * DAY]) {
+      const ranked = rankLessons([A1, A2, B], { now: clock });
+      const maxSeen = Math.max(...ranked.map((e) => e.seenCount));
+      const scores = ranked.map((e) => scoreLesson(e, { now: clock, maxSeenCount: maxSeen }));
+      assert.deepEqual(
+        diversifyRankedLessons(ranked, { now: clock, k: 3 }).map((e) => e.key),
+        selectDiverse(ranked, 3, { scores }).map((e) => e.key),
+        `aligned at now=${clock}`,
+      );
+    }
+  });
+
+  test('diversify — k caps the count, coercing the shapes a caller passes', () => {
+    const ranked = rankLessons([A1, A2, B], { now: NOW });
+    assert.equal(diversifyRankedLessons(ranked, { now: NOW, k: 2 }).length, 2);
+    assert.equal(diversifyRankedLessons(ranked, { now: NOW }).length, 3, 'no k (Infinity) → all');
+    // `numberOr` coercion: a stringy count caps, a non-finite/absent one is all.
+    assert.equal(diversifyRankedLessons(ranked, { now: NOW, k: '2' }).length, 2, "'2' → 2");
+    assert.equal(diversifyRankedLessons(ranked, { now: NOW, k: null }).length, 3, 'null → all');
+    assert.equal(diversifyRankedLessons(ranked, { now: NOW, k: 0 }).length, 0, '0 → none');
+  });
+
+  test('diversify — empty or non-array input is an empty result, never a throw', () => {
+    for (const bad of [[], null, undefined, 'nope', 7, {}]) {
+      assert.deepEqual(diversifyRankedLessons(bad, { now: NOW }), [], `input ${String(bad)}`);
+    }
+    // Non-object members are dropped, exactly as rankLessons drops them.
+    assert.deepEqual(
+      diversifyRankedLessons([null, A1, 'x'], { now: NOW }).map((e) => e.key),
+      ['pr-it4'],
+    );
+  });
+});
+
+// ── loopBucketOf + capPerBucket: keep one loop's bookkeeping from flooding ────
+// A prolific self-improvement loop writes recent, high-salience `loop::<bucket>`
+// rows that win ranking on merit — but they are that host's private memory, not
+// what a general session needs. These pin the audience cap that stops one bucket
+// taking every slot while leaving general (non-loop) lessons untouched.
+describe('loopBucketOf + capPerBucket', () => {
+  const withTags = (key, tags) => ({ scope: 'repo::a/b', key, value: key, tags });
+
+  test('loopBucketOf — first loop:: tag wins; general lessons are null', () => {
+    assert.equal(loopBucketOf(withTags('a', ['x', 'loop::review-outcomes', 'y'])), 'loop::review-outcomes');
+    assert.equal(loopBucketOf(withTags('b', ['loop::impl-lessons', 'loop::review-outcomes'])), 'loop::impl-lessons');
+    assert.equal(loopBucketOf(withTags('c', ['skill::lorekit-memory'])), null, 'a non-loop lesson has no bucket');
+    assert.equal(loopBucketOf(withTags('d', [])), null);
+    assert.equal(loopBucketOf({ key: 'e' }), null, 'no tags → null, never a throw');
+    // Non-strings and whitespace are tolerated the way the tag normaliser does.
+    assert.equal(loopBucketOf(withTags('f', [42, '  loop::review-outcomes  '])), 'loop::review-outcomes');
+    assert.equal(loopBucketOf(withTags('g', ['loop::'])), null, 'a bare prefix is not a bucket');
+  });
+
+  test('capPerBucket — caps each bucket, leaves general lessons uncapped, keeps order', () => {
+    const entries = [
+      withTags('r1', ['loop::review-outcomes']),
+      withTags('r2', ['loop::review-outcomes']),
+      withTags('gen1', ['skill::x']),
+      withTags('r3', ['loop::review-outcomes']), // 3rd of its bucket → dropped at cap 2
+      withTags('i1', ['loop::impl-lessons']),
+      withTags('gen2', []),                       // general → always kept
+      withTags('i2', ['loop::impl-lessons']),
+      withTags('i3', ['loop::impl-lessons']),     // 3rd of its bucket → dropped
+    ];
+    const kept = capPerBucket(entries, { cap: 2, bucketOf: loopBucketOf }).map((e) => e.key);
+    assert.deepEqual(kept, ['r1', 'r2', 'gen1', 'i1', 'gen2', 'i2'], 'each loop bucket capped at 2, generals intact, order preserved');
+  });
+
+  test('capPerBucket — cap 0 keeps only general lessons; a no-op bucketOf keeps all', () => {
+    const entries = [
+      withTags('r1', ['loop::review-outcomes']),
+      withTags('gen', ['skill::x']),
+      withTags('i1', ['loop::impl-lessons']),
+    ];
+    assert.deepEqual(capPerBucket(entries, { cap: 0, bucketOf: loopBucketOf }).map((e) => e.key), ['gen']);
+    assert.deepEqual(capPerBucket(entries, { cap: 2 }).map((e) => e.key), ['r1', 'gen', 'i1'], 'no bucketOf → nothing is bucketed → all kept');
+    // `numberOr` coercion: a NaN/absent cap is "no cap" (never drops silently); a stringy cap still caps.
+    assert.deepEqual(capPerBucket(entries, { cap: NaN, bucketOf: loopBucketOf }).map((e) => e.key), ['r1', 'gen', 'i1'], 'NaN → no cap');
+    assert.deepEqual(
+      capPerBucket([...entries, withTags('i2', ['loop::impl-lessons'])], { cap: '1', bucketOf: loopBucketOf }).map((e) => e.key),
+      ['r1', 'gen', 'i1'],
+      "'1' coerces to a cap of 1",
+    );
+  });
+
+  test('capPerBucket — total on junk input, never throws', () => {
+    for (const bad of [null, undefined, 'nope', 7, {}]) {
+      assert.deepEqual(capPerBucket(bad, { cap: 2, bucketOf: loopBucketOf }), [], `input ${String(bad)}`);
+    }
   });
 });
 

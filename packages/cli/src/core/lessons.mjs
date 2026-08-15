@@ -12,7 +12,9 @@ import { deriveScope } from '../scope.mjs';
 // the injected set is chosen by ONE scorer, and a future `memory.relevant` verb
 // must be able to reuse it rather than grow a second ranking with its own idea
 // of what "most useful" means.
-import { resolvePrecedence, rankLessons } from '../lessons-pure.mjs';
+import {
+  resolvePrecedence, rankLessons, diversifyRankedLessons, capPerBucket, loopBucketOf,
+} from '../lessons-pure.mjs';
 // The store's own scope inventory, normalised — the SAME helper `memory.scopes`
 // uses, so the map and the MCP tool cannot disagree about what a scope holds or
 // about what a failed enumeration looks like.
@@ -61,6 +63,20 @@ import { FRICTION_FAILURE, FRICTION_STUCK_LOOP } from './friction.mjs';
 // operation it never binds — it exists so the worst case is bounded, not to
 // shape the common one.
 const HARD_LESSON_CEILING = 40;
+
+// How many lessons any ONE self-improvement loop (`loop::<bucket>` tag) may
+// contribute to a session-start injection. A prolific loop — the pr-reviewer's
+// `loop::review-outcomes` / `loop::reviewer-comment-relevance`, or
+// `loop::implement-suggestion-lessons` — writes constantly and recently, so it
+// wins recency AND (being built to recur) salience, and a whole scope's read
+// can collapse to one bot's private bookkeeping (observed: 13 of 15 slots).
+// Ranking and MMR cannot fix that — the flood is real, varied, and high-scoring
+// — but it is not what a GENERAL coding session needs; those lessons are read
+// back by their own host through a tag filter. Two per bucket keeps the signal
+// (a loop's top couple of lessons still surface) without the flood; general,
+// non-loop lessons are never capped. Bounded, not shaped: on a store with no
+// loop lessons it never binds.
+const SESSION_START_LOOP_CAP = 2;
 
 // How many lessons ride along with the scope map in `map` mode. Small on
 // purpose: the point of that shape is the inventory, and a "map" that is mostly
@@ -167,7 +183,35 @@ export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
   // first-appearance default — they agree today, but the hierarchy is
   // `readOrder`'s to state, not an artefact of how this function happens to
   // build its array.
-  const ranked = rankLessons(winners, { terms: [], now, scopeOrder: scope.readOrder });
+  // ONE options object feeds both the ranking and the diversification below, so
+  // the two can never drift: `diversifyRankedLessons` recomputes each entry's
+  // score to seed the MMR objective, and if its `terms`/`now`/`weights` differed
+  // from what `rankLessons` sorted on, those scores would not line up with the
+  // order — the near-identical `now` clock especially. Sharing the object makes
+  // that agreement structural rather than a thing two call sites have to keep in
+  // step by hand. `k` is diversification-only; `scopeOrder` is ranking-only and
+  // simply ignored by the diversifier's destructuring.
+  const rankOpts = { terms: [], now, scopeOrder: scope.readOrder };
+  const ranked = rankLessons(winners, rankOpts);
+
+  // AUDIENCE CAP before diversification: no single self-improvement loop may
+  // take more than `SESSION_START_LOOP_CAP` of the injected slots, so a general
+  // session is not flooded with one bot's private `loop::<bucket>` bookkeeping.
+  // General (non-loop) lessons pass through uncapped — they are what the cap
+  // frees room for. Applied to the ranked list so the survivors are each
+  // bucket's HIGHEST-ranked few, then diversified below. The scope map and
+  // `applicable` still read from the full `ranked` set — the cap governs what is
+  // shown, not the honest count of what exists per scope.
+  //
+  // WHERE THE FREED SLOTS FILL FROM, stated so the cap is not oversold. Each
+  // scope is read only to its newest `SCOPE_READ_LIMIT`, so on a scope whose
+  // recent writes are ALL one loop's, the general lessons that fill the freed
+  // slots come from the OTHER scopes in `readOrder` (a repo's loop churn makes
+  // room for `global` principles) — not from that same scope's older generals,
+  // which the bounded read never fetched. Reaching those is the recency-window
+  // limit (the `order=rank` CANDIDATE_LIMIT problem, one scope down), not this
+  // cap's to solve; the cap still does its job of unflooding across scopes.
+  const capped = capPerBucket(ranked, { cap: SESSION_START_LOOP_CAP, bucketOf: loopBucketOf });
 
   // ── the scope map: EXACT counts when the store can enumerate ───────────────
   //
@@ -219,12 +263,29 @@ export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
     ? scopeInventoryFromStore(inventory.scopes, scope.readOrder, derivedCounts)
     : derivedCounts;
 
+  // DIVERSIFY before the ceiling, so the budget is not spent on near-identical
+  // lessons. Ranking answers "which lessons score highest"; on an active repo
+  // the highest cluster is often one task's iteration log — a dozen
+  // `review-outcomes::pr395-it{3,4,5}` rows that score alike AND read alike, so
+  // a plain top-N hands the reader the same lesson several times and evicts the
+  // variety underneath. `diversifyRankedLessons` applies the SAME MMR
+  // (`selectDiverse`, λ=0.7 lexical Jaccard) the hosted `order=rank` path
+  // already uses, which was defined and exported here but never wired into the
+  // session-start read. It seeds with the top-ranked lesson (score is still
+  // 0.7 of the objective) and only spends the remaining 0.3 pushing down a
+  // lesson that repeats one already shown — so the best lesson stays first and
+  // the set stops being a wall of duplicates. `terms: []` matches the
+  // `rankLessons` call above (relevance contributes nothing at session start),
+  // which the scores MUST agree with. The scope map and `applicable` still read
+  // from `ranked` — the map is a pointer to what EXISTS per scope, a question
+  // diversification does not change.
+  //
   // `applicable` is the honest denominator for the header — how many the reader
   // has, as opposed to how many fitted. It is counted BEFORE the ceiling, so
   // "8 of 50" stays true no matter how the render is bounded.
   return {
     scope,
-    lessons: ranked.slice(0, HARD_LESSON_CEILING),
+    lessons: diversifyRankedLessons(capped, { ...rankOpts, k: HARD_LESSON_CEILING }),
     scopeCounts,
     applicable: ranked.length,
   };

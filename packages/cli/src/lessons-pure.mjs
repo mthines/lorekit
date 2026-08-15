@@ -706,3 +706,104 @@ export function rankLessons(entries = [], {
   return scored.map((s) => s.entry);
 }
 
+/**
+ * Rank-then-diversify in one call — the `.mjs` twin's convenience for what the
+ * TS twin gets for free by carrying `{ entry, score }` pairs into `selectDiverse`.
+ *
+ * `selectDiverse` needs a parallel `scores` array, and those scores MUST be the
+ * same set-relative values the list was sorted on: the salience factor is
+ * normalised against the max `seen_count` in the candidate SET, so a score
+ * recomputed over a different population would not line up with the order. This
+ * helper recomputes the scores over exactly the list it diversifies, beside the
+ * unexported `seenCountFrom`/`scoreWithTerms`, so callers can apply MMR without
+ * reconstructing that alignment (and without `seenCountFrom` leaking out).
+ *
+ * `entries` is expected to be `rankLessons` output (best-first) so the seed of
+ * the greedy MMR is the top-ranked lesson; the pass-through
+ * `terms`/`weights`/`halfLifeDays`/`now` MUST match the `rankLessons` call that
+ * produced it, or the recomputed scores diverge from the sort. `k` caps the
+ * returned count (default: all). Empty/degenerate input returns `[]`.
+ */
+export function diversifyRankedLessons(entries = [], {
+  terms = [],
+  now = Date.now(),
+  weights = DEFAULT_RANK_WEIGHTS,
+  halfLifeDays = RECENCY_HALF_LIFE_DAYS,
+  k = Infinity,
+  lambda,
+} = {}) {
+  const list = Array.isArray(entries) ? entries.filter((e) => e && typeof e === 'object') : [];
+  if (list.length === 0) return [];
+  const termSet = distinctTerms(terms);
+  let maxSeenCount = 0;
+  for (const e of list) maxSeenCount = Math.max(maxSeenCount, seenCountFrom(e));
+  const scores = list.map((e) => scoreWithTerms(e, termSet, { now, weights, maxSeenCount, halfLifeDays }));
+  // `numberOr` is the module's coercion convention: a non-finite `k` (the
+  // `Infinity` default, `null`, or a stringy `'40'`) resolves to a real cap —
+  // the default falls through to the whole list, `'40'` becomes 40 — rather than
+  // silently returning everything on a shape a caller plausibly passes.
+  const limit = numberOr(k, list.length);
+  return selectDiverse(list, limit, { scores, lambda });
+}
+
+/**
+ * The loop BUCKET a lesson belongs to, or null for a general (non-loop) lesson.
+ *
+ * A self-improvement loop writes into a `loop::<bucket>` tag namespace
+ * (`loop::review-outcomes`, `loop::implement-suggestion-lessons`, …) — the
+ * bucket convention `lorekit-setup` installs. Those lessons are a host's PRIVATE
+ * working memory, read back by that host through a tag filter; a general session
+ * reading a whole scope should not let one prolific loop's bookkeeping take
+ * every slot. Returns the first `loop::`-prefixed tag — the group key a cap
+ * counts against, matching `inferKindHost`'s first-recognised-wins order — or
+ * null when the lesson carries no loop tag (general knowledge, never capped).
+ * Keys on the `loop::` PREFIX convention ONLY; it re-encodes no specific bucket
+ * name, so a new loop bucket groups correctly without a code change here.
+ */
+export function loopBucketOf(entry) {
+  const tags = Array.isArray(entry?.tags) ? entry.tags : [];
+  for (const t of tags) {
+    if (typeof t !== 'string') continue;
+    const tag = t.trim();
+    if (tag.startsWith('loop::') && tag.length > 'loop::'.length) return tag;
+  }
+  return null;
+}
+
+/**
+ * Cap how many lessons any one bucket may contribute, preserving input order.
+ *
+ * Walks the (already-ranked) list once: a lesson whose `bucketOf` is null is
+ * ALWAYS kept — those are the general lessons the cap exists to protect — and a
+ * bucketed lesson is kept only while its bucket is still under `cap`. So one
+ * loop's dozen recent rows no longer evict every general lesson; at most `cap`
+ * of them survive and the freed slots go to the next-ranked variety. Pure and
+ * total: a non-array input is []; `cap: 0` drops every bucketed lesson (read
+ * ONLY general knowledge) while still keeping the null-bucket ones — a negative
+ * cap is not finite-and-non-negative, so `numberOr` reads it as "no cap", not as
+ * a stricter zero; a missing
+ * `bucketOf` treats everything as general (a no-op cap). `cap` is coerced with
+ * the module's `numberOr` convention (as `diversifyRankedLessons` does for `k`),
+ * so a `NaN`/absent cap falls back to "no cap" rather than silently dropping
+ * every bucketed lesson, while a stringy `'2'` still caps.
+ */
+export function capPerBucket(entries, { cap = Infinity, bucketOf } = {}) {
+  if (!Array.isArray(entries)) return [];
+  const of = typeof bucketOf === 'function' ? bucketOf : () => null;
+  const limit = numberOr(cap, Infinity);
+  const counts = new Map();
+  const out = [];
+  for (const e of entries) {
+    const bucket = of(e);
+    if (bucket == null) {
+      out.push(e);
+      continue;
+    }
+    const n = counts.get(bucket) ?? 0;
+    if (n < limit) {
+      counts.set(bucket, n + 1);
+      out.push(e);
+    }
+  }
+  return out;
+}

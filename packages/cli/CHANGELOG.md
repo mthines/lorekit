@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.44.0](https://github.com/mthines/lorekit/compare/cli-v1.43.0...cli-v1.44.0) (2026-08-15)
+
+
+### Features
+
+* **cli:** cap each self-improvement loop's share of the SessionStart read ([#458](https://github.com/mthines/lorekit/issues/458)) ([b16a104](https://github.com/mthines/lorekit/commit/b16a104b17b6694159c9f7acb7cc4b66ccf2d761))
+
+## [1.43.0](https://github.com/mthines/lorekit/compare/cli-v1.42.0...cli-v1.43.0) (2026-08-15)
+
+
+### Features
+
+* **cli:** diversify the SessionStart injection with MMR ([#456](https://github.com/mthines/lorekit/issues/456)) ([e81511e](https://github.com/mthines/lorekit/commit/e81511e9c511f09dca4923191e107f04860ea4b9))
+
 ## [1.42.0](https://github.com/mthines/lorekit/compare/cli-v1.41.0...cli-v1.42.0) (2026-08-14)
 
 
