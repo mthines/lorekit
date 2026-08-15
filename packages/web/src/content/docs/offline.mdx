@@ -2,12 +2,12 @@
 title: "Offline storage"
 description: "Store lore locally on your machine using the LoreKit CLI — no account, no network, full privacy. Memories live in a plain directory you own and control."
 order: 2
-keywords: ["offline", "local store", "cli", "install", "doctor", "mcp", "memory.write", "scope", ".lorekit.json", "deny", "mode", "search"]
+keywords: ["offline", "local store", "cli", "install", "doctor", "mcp", "memory.write", "scope", ".lorekit.json", "deny", "mode", "search", "migrate"]
 ---
 
 <TutorialCallout variant="tip">
 
-Offline storage is the fastest way to start. You can migrate to remote storage later by adding a `LOREKIT_MCP_URL` and `LOREKIT_API_KEY` — the CLI reads both stores and merges them automatically.
+Offline storage is the fastest way to start. You can move to remote storage later by adding a `LOREKIT_MCP_URL` and `LOREKIT_TOKEN` — the CLI then reads both stores, showing each in its own **Offline** and **Remote** section — and bring everything you learned along with `npx @lorekit/cli migrate --from ~/.lorekit --to remote`, which previews the plan before you add `--yes`.
 
 </TutorialCallout>
 
@@ -122,6 +122,6 @@ Run `npx @lorekit/cli doctor` to see the resolved mode and which config source d
 
 <TutorialCallout variant="info">
 
-**Next steps:** once you have offline lore working, you can add the remote hosted store for cross-machine access. See the [Remote storage tutorial](/docs/remote) to continue.
+**Next steps:** once you have offline lore working, you can add the remote hosted store for cross-machine access — and push the lessons you already accumulated up to it with one `migrate` command. See the [Remote storage tutorial](/docs/remote) to continue.
 
 </TutorialCallout>

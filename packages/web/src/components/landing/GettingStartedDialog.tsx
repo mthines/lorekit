@@ -143,9 +143,11 @@ function OfflineContent() {
         </p>
       </div>
       <TutorialCallout variant="tip">
-        Offline storage is the fastest way to start. You can migrate to remote storage later by adding
-        a <code>LOREKIT_MCP_URL</code> and <code>LOREKIT_TOKEN</code> — the CLI reads both stores and
-        merges them automatically.
+        Offline storage is the fastest way to start. You can move to remote storage later by adding
+        a <code>LOREKIT_MCP_URL</code> and <code>LOREKIT_TOKEN</code> — the CLI then reads both stores,
+        showing each in its own Offline and Remote section — and bring everything you learned along
+        with <code>npx @lorekit/cli migrate --from ~/.lorekit --to remote</code>, which previews the
+        plan before you add <code>--yes</code>.
       </TutorialCallout>
       <div className="flex flex-col">
         <TutorialStep number={1} title="Install the CLI">

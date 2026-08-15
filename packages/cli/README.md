@@ -597,7 +597,7 @@ erases your cross-repo home lesson.
 > sharing comes from the account/token, so remote needs no second location.
 > Different mechanism, same concept.
 
-### `lorekit migrate` — relocation / rename tool
+### `lorekit migrate` — relocate a store, or push one to the hosted store
 
 Moved or renamed a local store (e.g. an old `.lore/`)? `migrate` re-writes its
 entries into the current two-tier layout so lessons are never stranded:
@@ -611,6 +611,80 @@ lorekit migrate --from .lore --to project --yes   # force all entries into the p
 Dry-run (preview) by default; `--yes` (or `--apply`) applies. Idempotent — a
 re-run is a no-op. It reads LoreKit's own on-disk format only (it does **not**
 import persistent-memory's `~/.agent-memory/<bucket>/` format).
+
+#### `--to remote` — bring your local lessons up
+
+Started offline and later connected a token? `--to remote` pushes the whole
+local store to the hosted one in a single command, instead of the agent
+re-writing lessons one at a time in remote mode:
+
+```bash
+lorekit migrate --from .lorekit --to remote         # dry-run: the plan, per scope
+lorekit migrate --from .lorekit --to remote --yes   # push it
+```
+
+The connection and token come from the same place every other command reads
+them (`.mcp.json` / `.lorekit.json` / `LOREKIT_MCP_URL` + `LOREKIT_TOKEN`), so
+a `deny: remote` constraint still wins. Everything is checked **before** the
+first request rather than mid-push:
+
+| Condition | Result |
+|---|---|
+| No usable connection | Fails with the `lorekit install` command to run |
+| Read-only `lk_ro_*` token | Fails — a migration writes |
+| Write-only `lk_wo_*` token | Warns, then pushes without reading: its reads are denied, so the destination is not classified at all and every entry reports as `add` (the hosted upsert is idempotent either way) |
+| Unrecognized token prefix | Warns and proceeds, so a self-hosted or custom token still works |
+| `deny: remote` | Fails, naming the config source that denied it |
+
+**What transfers, and what the server owns.** `scope`, `key`, `value`,
+`source_agent` and `trigger` travel as the source states them (`value` is
+trimmed server-side), and the original creation date travels as `created_at` —
+so a migrated lesson keeps the recency its ranking depends on. The rest is not
+verbatim, and every departure is reported per entry, in the dry run as well as
+the apply:
+
+| Field | What happens |
+|---|---|
+| `updated` | Re-stamped at the write instant — there is no parameter for it |
+| `seen_count` | Starts at 1 for a key the hosted store has never seen; one it already holds lands at ITS count plus one (the RPC treats a write as a sighting, migration 00059). A local tally of 12 never transfers |
+| `tags` | **Replace** the hosted row's labels, so an untagged local entry clears them |
+| `origin_*` | **Sticky** — the RPC coalesces provenance, so an entry carrying none leaves whatever the hosted row already had |
+| `created` | Honoured only when the lesson is new to the hosted store (the RPC's update clause omits it, so one already there keeps its hosted date); an unusable or future-dated value is dropped for the write instant, and the entry is named |
+| `expires_at` | Converted to the remaining whole `ttl_days`; anything beyond the API's 365-day cap lands shortened |
+
+**Archived and expired entries are skipped** and reported as such. Neither can
+be represented: a write against an archived key inserts a second, live row
+beside it rather than reviving it, and any TTL would re-date an expired row
+into the future — so pushing them would resurrect lore you retired.
+
+Idempotent, with one nuance: a re-run compares only what a hosted write can
+change, and compares it the way the server stores it — trimmed `value`, only
+the provenance the source carries, and an expiry that still honours the local
+intent (the hosted one is fixed at push time while the local one is measured
+from now, so it is judged on whether at least half the intended life remains —
+matching them instant-for-instant could never converge). Comparing the server-owned fields
+directly would report a change forever and re-push the whole store on every
+run. A remote `unchanged` therefore means "the hosted lesson already says
+this", not "byte-identical row".
+
+Rate limits and transient failures are handled rather than surfaced as
+failures. The run paces itself under the hosted 120 req/min limit (and says so
+the first time it has to wait), and retries a `429` on the server's own
+`Retry-After` — plus a 5xx or a dropped connection, which on a push of
+thousands of requests is the likeliest failure and the least worth losing an
+entry to. Any other 4xx is a decision, not a blip, and is never retried.
+
+Retrying is bounded, so none of this should be read as "it never fails": an
+entry that exhausts its attempts is reported and the run exits non-zero, and
+five CONSECUTIVE failures of any kind stop the run early with a
+partial-progress report — an outage is not worth grinding a whole store through
+the retry budget for. Every one of those exits is safe to re-run. The memory cap ([5,000 active memories on the
+free plan](../../docs/limits.md)) is returned as a `429` too but is terminal —
+the run stops, reports how many entries landed, and exits non-zero, so you can
+archive or upgrade and re-run to resume.
+
+Not in v1: `--org <slug>` org-owned writes (a migration lands as your personal
+lore) and the reverse remote → local direction.
 
 ### The control model — two layers, deny-wins
 
@@ -870,7 +944,7 @@ also returns their headroom against the plan's memory cap.
 | `--mode <mode>` | Memory mode override for `doctor`: `off` / `local` / `remote` |
 | `--store <path>` | Local project-tier store directory (default `.lorekit`) |
 | `--from <path>` | Source store to migrate from (`migrate`) |
-| `--to <tier>` | Migration destination tier: `home` / `project` (`migrate`; default routes by scope) |
+| `--to <dest>` | Migration destination: `home` / `project` / `remote` (`migrate`; default routes by scope across the local tiers) |
 | `--apply` | Apply the migration — alias of `--yes` (`migrate`) |
 | `-y, --yes` | Non-interactive / apply; never prompt |
 | `--hooks <mode>` | Lifecycle hooks to wire: `all` / `read-only` / `none` (`install`; `none` removes any already wired) |
