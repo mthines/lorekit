@@ -71,7 +71,16 @@ export async function createSandbox({
   prefix = "lorekit-eval-",
   keep = false,
 } = {}) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  // REALPATH, not the raw `mkdtemp` result. `os.tmpdir()` is a symlink on macOS
+  // (`/var` → `/private/var`), and the agent reports the resolved form as its
+  // `cwd`. Comparing that against an unresolved root would make every rep look
+  // like it ran outside the sandbox and discard the whole batch. Resolving here
+  // rather than at each comparison keeps every derived path — the working
+  // directory handed to the agent, the store roots, the teardown target — in
+  // one namespace.
+  const root = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), prefix)),
+  );
   const cwd = path.join(root, "cwd");
   const lorekitHome = path.join(root, "lorekit-home");
   const lorekitStore = path.join(root, "lorekit-store");

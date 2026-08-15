@@ -25,6 +25,9 @@
 // So the scope is a first-class knob, and a `global`-scoped arm (which injects
 // in ANY directory, git or not) is available as the control that isolates
 // scope resolution from memory utility.
+import fsp from "node:fs/promises";
+import path from "node:path";
+
 import { deriveScope } from "@lorekit/cli/src/scope.mjs";
 
 import {
@@ -184,6 +187,7 @@ export async function prepareArm(
 
   const mcp = await writeMcpConfig(sandbox, { allowWrite });
   const hookInstall = hook ? installSessionStartHook(sandbox) : null;
+  const settingsPath = await writeSettingsOverride(sandbox);
 
   return {
     derived,
@@ -194,7 +198,45 @@ export async function prepareArm(
     seeded,
     mcp,
     hookInstall,
+    settingsPath,
+    // Everything `runAgent` needs to launch this arm, assembled once. Hand
+    // -assembling it per call site is how arm A and arm B drift apart.
+    agentOptions: {
+      mcpConfigPath: mcp.path,
+      allowedTools: mcp.allowedTools,
+      settingsPath,
+      disableSlashCommands: true,
+    },
   };
+}
+
+/**
+ * A session-scoped settings override that switches OFF the developer's enabled
+ * plugins. Plugins are auto-discovered from user settings and carry skills,
+ * agents and hooks of their own, so they are a second route by which the
+ * machine's configuration leaks into a measurement.
+ *
+ * `--disable-slash-commands` covers skills and commands; this covers plugins.
+ * Neither is trusted — `environment.mjs` verifies the result from the run's own
+ * init event, because a flag is a request and the init event is the answer.
+ *
+ * It deliberately does NOT set `hooks: {}` to suppress the developer's global
+ * hooks. `--settings` overrides the same key in EVERY settings file for the
+ * session, including the sandbox's project `.claude/settings.json` — so that
+ * would switch off the harness's own SessionStart hook and silently turn arm B
+ * into arm A. Foreign hooks are therefore DETECTED (a `foreign-hooks-fired`
+ * finding) rather than prevented, which is the safe direction to be wrong in.
+ *
+ * Written to the sandbox ROOT, not the working directory: it is harness wiring,
+ * not something the agent should be able to read as project context.
+ */
+export async function writeSettingsOverride(sandbox) {
+  const file = path.join(sandbox.root, "claude-settings.json");
+  await fsp.writeFile(
+    file,
+    JSON.stringify({ enabledPlugins: {} }, null, 2) + "\n",
+  );
+  return file;
 }
 
 /**

@@ -48,6 +48,17 @@ export function buildClaudeArgs({
   strictMcpConfig = true,
   allowedTools = [],
   permissionMode = "bypassPermissions",
+  // Skills and slash commands are auto-discovered from `~/.claude/skills`, so a
+  // developer's own installs load into every run. On this repo that is not a
+  // hypothetical: `lorekit-memory` is a globally installed skill whose SKILL.md
+  // states the canonical scope format — the literal answer to the golden task —
+  // so arm A would score full marks with an empty store and the experiment
+  // would measure nothing. Disabled by default; the arms have no use for
+  // skills anyway.
+  disableSlashCommands = true,
+  // An inline/overriding settings file. Used to switch off enabled plugins,
+  // which are another auto-discovered source of instructions.
+  settingsPath = null,
   extraArgs = [],
 } = {}) {
   if (typeof prompt !== "string" || prompt.length === 0) {
@@ -72,7 +83,65 @@ export function buildClaudeArgs({
   if (allowedTools.length > 0)
     args.push("--allowed-tools", allowedTools.join(","));
   if (permissionMode) args.push("--permission-mode", permissionMode);
+  if (disableSlashCommands) args.push("--disable-slash-commands");
+  if (settingsPath) args.push("--settings", settingsPath);
   return [...args, ...extraArgs];
+}
+
+/**
+ * The `{"type":"system","subtype":"init"}` event, which every stream-json run
+ * emits first. It enumerates what the session actually loaded — `skills`,
+ * `plugins`, `mcp_servers`, `tools`, `slash_commands`, `cwd`, `model` — and is
+ * therefore the ONLY trustworthy account of the environment a rep ran in.
+ * Flags express intent; this records the outcome.
+ */
+export function parseInitEvent(transcriptText) {
+  if (typeof transcriptText !== "string" || transcriptText === "") return null;
+  for (const line of transcriptText.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let entry;
+    try {
+      entry = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (entry && entry.type === "system" && entry.subtype === "init") {
+      return entry;
+    }
+  }
+  return null;
+}
+
+/**
+ * Every hook the session fired, from the `hook_started` events in the stream.
+ *
+ * Hooks are not listed in the init event, and a developer's user-level
+ * `~/.claude/settings.json` hooks fire alongside the sandbox's own — five of
+ * them did on the machine that first ran this harness. Counting them is how an
+ * arm proves that exactly one hook (ours) injected anything.
+ */
+export function collectHookEvents(transcriptText) {
+  if (typeof transcriptText !== "string" || transcriptText === "") return [];
+  const hooks = [];
+  for (const line of transcriptText.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let entry;
+    try {
+      entry = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (entry && entry.type === "system" && entry.subtype === "hook_started") {
+      hooks.push({
+        id: entry.hook_id || null,
+        name: entry.hook_name || null,
+        event: entry.hook_event || null,
+      });
+    }
+  }
+  return hooks;
 }
 
 /**
@@ -197,6 +266,9 @@ export async function runAgent({
   return {
     resultJson,
     summary: summarizeResult(resultJson),
+    // What the session ACTUALLY loaded, as opposed to what the flags asked for.
+    init: parseInitEvent(transcriptText),
+    hookEvents: collectHookEvents(transcriptText),
     transcriptPath,
     transcriptText,
     stderr,

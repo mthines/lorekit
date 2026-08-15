@@ -1,0 +1,37 @@
+{
+  "note": "Trimmed from a REAL `claude -p` run on a developer machine, outside the sandbox. Kept as a fixture because the contamination it records is the exact failure the environment check exists to catch: `lorekit-memory` is a globally installed skill whose SKILL.md states the golden task's answer verbatim.",
+  "type": "system",
+  "subtype": "init",
+  "cwd": "/Users/someone/Workspace/lorekit.git/feat/memory-evals-golden-task",
+  "session_id": "47bbf92c-10bf-46c2-9202-5e4ffe6fa202",
+  "model": "claude-opus-4-8",
+  "permissionMode": "auto",
+  "tools": ["Task", "Bash", "Edit", "Read", "Write", "WebFetch", "Skill"],
+  "mcp_servers": [
+    { "name": "plugin:vercel:vercel", "status": "connected" },
+    { "name": "argent", "status": "connected" },
+    { "name": "reaper", "status": "connected" },
+    { "name": "lorekit", "status": "pending" },
+    { "name": "dash0", "status": "pending" },
+    { "name": "claude.ai Linear", "status": "connected" }
+  ],
+  "slash_commands": [
+    "polish",
+    "create-pr",
+    "lorekit-memory",
+    "implement-suggestion"
+  ],
+  "skills": [
+    "lorekit-memory",
+    "lorekit-setup",
+    "lorekit-groom",
+    "polish",
+    "create-pr",
+    "tdd"
+  ],
+  "plugins": [
+    { "name": "slack", "source": "slack@claude-plugins-official" },
+    { "name": "vercel", "source": "vercel@claude-plugins-official" },
+    { "name": "dash0-agent-plugin", "source": "dash0-agent-plugin@dash0" }
+  ]
+}
