@@ -15,7 +15,7 @@ import {
 import {
   rankLessons, scoreLesson, recencyFactor, salienceFactor, relevanceFactor,
   normalizeOutcome, RECENCY_HALF_LIFE_DAYS, DEFAULT_RANK_WEIGHTS, COLD_START_OUTCOME_PRIOR,
-  diversifyRankedLessons, selectDiverse,
+  diversifyRankedLessons, selectDiverse, capPerBucket, loopBucketOf,
 } from '../src/lessons-pure.mjs';
 import { MEMORY_TOOL_DEFS } from '../src/mcp-server.mjs';
 
@@ -1580,6 +1580,64 @@ describe('diversifyRankedLessons', () => {
       diversifyRankedLessons([null, A1, 'x'], { now: NOW }).map((e) => e.key),
       ['pr-it4'],
     );
+  });
+});
+
+// ── loopBucketOf + capPerBucket: keep one loop's bookkeeping from flooding ────
+// A prolific self-improvement loop writes recent, high-salience `loop::<bucket>`
+// rows that win ranking on merit — but they are that host's private memory, not
+// what a general session needs. These pin the audience cap that stops one bucket
+// taking every slot while leaving general (non-loop) lessons untouched.
+describe('loopBucketOf + capPerBucket', () => {
+  const withTags = (key, tags) => ({ scope: 'repo::a/b', key, value: key, tags });
+
+  test('loopBucketOf — first loop:: tag wins; general lessons are null', () => {
+    assert.equal(loopBucketOf(withTags('a', ['x', 'loop::review-outcomes', 'y'])), 'loop::review-outcomes');
+    assert.equal(loopBucketOf(withTags('b', ['loop::impl-lessons', 'loop::review-outcomes'])), 'loop::impl-lessons');
+    assert.equal(loopBucketOf(withTags('c', ['skill::lorekit-memory'])), null, 'a non-loop lesson has no bucket');
+    assert.equal(loopBucketOf(withTags('d', [])), null);
+    assert.equal(loopBucketOf({ key: 'e' }), null, 'no tags → null, never a throw');
+    // Non-strings and whitespace are tolerated the way the tag normaliser does.
+    assert.equal(loopBucketOf(withTags('f', [42, '  loop::review-outcomes  '])), 'loop::review-outcomes');
+    assert.equal(loopBucketOf(withTags('g', ['loop::'])), null, 'a bare prefix is not a bucket');
+  });
+
+  test('capPerBucket — caps each bucket, leaves general lessons uncapped, keeps order', () => {
+    const entries = [
+      withTags('r1', ['loop::review-outcomes']),
+      withTags('r2', ['loop::review-outcomes']),
+      withTags('gen1', ['skill::x']),
+      withTags('r3', ['loop::review-outcomes']), // 3rd of its bucket → dropped at cap 2
+      withTags('i1', ['loop::impl-lessons']),
+      withTags('gen2', []),                       // general → always kept
+      withTags('i2', ['loop::impl-lessons']),
+      withTags('i3', ['loop::impl-lessons']),     // 3rd of its bucket → dropped
+    ];
+    const kept = capPerBucket(entries, { cap: 2, bucketOf: loopBucketOf }).map((e) => e.key);
+    assert.deepEqual(kept, ['r1', 'r2', 'gen1', 'i1', 'gen2', 'i2'], 'each loop bucket capped at 2, generals intact, order preserved');
+  });
+
+  test('capPerBucket — cap 0 keeps only general lessons; a no-op bucketOf keeps all', () => {
+    const entries = [
+      withTags('r1', ['loop::review-outcomes']),
+      withTags('gen', ['skill::x']),
+      withTags('i1', ['loop::impl-lessons']),
+    ];
+    assert.deepEqual(capPerBucket(entries, { cap: 0, bucketOf: loopBucketOf }).map((e) => e.key), ['gen']);
+    assert.deepEqual(capPerBucket(entries, { cap: 2 }).map((e) => e.key), ['r1', 'gen', 'i1'], 'no bucketOf → nothing is bucketed → all kept');
+    // `numberOr` coercion: a NaN/absent cap is "no cap" (never drops silently); a stringy cap still caps.
+    assert.deepEqual(capPerBucket(entries, { cap: NaN, bucketOf: loopBucketOf }).map((e) => e.key), ['r1', 'gen', 'i1'], 'NaN → no cap');
+    assert.deepEqual(
+      capPerBucket([...entries, withTags('i2', ['loop::impl-lessons'])], { cap: '1', bucketOf: loopBucketOf }).map((e) => e.key),
+      ['r1', 'gen', 'i1'],
+      "'1' coerces to a cap of 1",
+    );
+  });
+
+  test('capPerBucket — total on junk input, never throws', () => {
+    for (const bad of [null, undefined, 'nope', 7, {}]) {
+      assert.deepEqual(capPerBucket(bad, { cap: 2, bucketOf: loopBucketOf }), [], `input ${String(bad)}`);
+    }
   });
 });
 
