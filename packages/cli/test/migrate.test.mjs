@@ -803,11 +803,51 @@ test('migrate --to remote is idempotent for an entry whose TTL exceeds the hoste
       expires_at: new Date(Date.now() + 365 * 86_400_000).toISOString(),
       archived_at: null,
     };
-    const { result, calls } = await withRemote(
+    // Re-run it at several points in the FUTURE. The hosted expiry is fixed at
+    // push time while the local intent is measured from now, so a comparison
+    // that drifts with the clock would be NOOP today and re-push forever
+    // after — which is exactly the bug this pins.
+    for (const daysLater of [0, 2, 100]) {
+      const { result, calls } = await withRemote(
+        () => quiet(() => migrate(
+          { from: src, to: 'remote', yes: true, dir: root },
+          { now: new Date(Date.now() + daysLater * 86_400_000) },
+        )),
+        { respond: (c) => (c.method === 'GET' ? { status: 200, body: JSON.stringify({ entries: [hostedRow] }) } : null) },
+      );
+      assert.equal(result, 0, `day +${daysLater}`);
+      assert.equal(writes(calls).length, 0, `day +${daysLater} should not re-push`);
+    }
+  });
+});
+
+test('migrate --to remote re-pushes once the hosted expiry has lost half the intended life', async () => {
+  const src = tmpDir();
+  const store = createLocalStore(src);
+  await store.write({ scope: 'global', key: 'ttl10', value: 'v', ttl_days: 10 });
+
+  const home = tmpDir();
+  const root = tmpDir();
+  await withHome(home, async () => {
+    const hostedRow = (expiresAt) => ({
+      id: '00000000-0000-0000-0000-000000000000',
+      scope: 'global', key: 'ttl10', value: 'v',
+      tags: [], source_agent: null, trigger: null,
+      created_at: '2024-01-01T00:00:00.000Z', updated_at: '2024-01-01T00:00:00.000Z',
+      expires_at: expiresAt, archived_at: null,
+    });
+    const run = (expiresAt) => withRemote(
       () => quiet(() => migrate({ from: src, to: 'remote', yes: true, dir: root })),
-      { respond: (c) => (c.method === 'GET' ? { status: 200, body: JSON.stringify({ entries: [hostedRow] }) } : null) },
+      { respond: (c) => (c.method === 'GET' ? { status: 200, body: JSON.stringify({ entries: [hostedRow(expiresAt)] }) } : null) },
     );
-    assert.equal(result, 0);
-    assert.equal(writes(calls).length, 0);
+
+    // Most of the intended life left — leave it alone.
+    const fresh = await run(new Date(Date.now() + 9 * 86_400_000).toISOString());
+    assert.equal(writes(fresh.calls).length, 0);
+
+    // Nearly gone — refresh it. An hour of remaining life does not honour a
+    // ten-day lesson, and the same holds at the one-day scale.
+    const stale = await run(new Date(Date.now() + 3_600_000).toISOString());
+    assert.equal(writes(stale.calls).length, 1);
   });
 });

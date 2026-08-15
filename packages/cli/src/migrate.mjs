@@ -126,32 +126,35 @@ function sameRemoteEntry(current, entry, now = new Date()) {
   return sameRemoteTtl(current.expires_at, entry.expires_at, now);
 }
 
-// Whether the hosted row's expiry already satisfies the local entry's.
+// Whether the hosted row's expiry still honours the local entry's intent.
 //
-// The instants cannot be compared: a push recomputes `expires_at` from
-// `ttl_days` at the write instant, while the local one was fixed when the
-// lesson was written, so the two drift apart the moment they agree. What is
-// comparable is the QUESTION the TTL answers — does the hosted lesson live at
-// least as long as this one asks it to?
+// The instants cannot be compared. A push recomputes `expires_at` from
+// `ttl_days` at the write instant and it then stays fixed, while the local
+// intent is always measured from NOW — so the two drift apart the moment they
+// agree, and any test for equality (or for "hosted >= what I would write
+// today") re-pushes the entry on every run forever. An over-365-day entry is
+// the worst case: its hosted row is capped at the API maximum and can never
+// catch up with the local date at all.
 //
-//   both permanent          → satisfied.
+// So the question is not "do these match" but "has the hosted lesson lost
+// enough of its intended life to be worth rewriting":
+//
+//   both permanent          → honoured.
 //   one permanent, one not  → different intent, re-push.
-//   both expiring           → satisfied when the hosted row outlives what a
-//                             write could ACTUALLY ask for. Right after a push
-//                             the two are equal; the local copy then ages
-//                             while the hosted one does not, so the answer
-//                             stays "satisfied" and a re-run is NOOP. A hosted
-//                             expiry that is genuinely SHORTER (a 7-day row
-//                             against a 300-day lesson) is not satisfied, and
-//                             does re-push.
+//   both expiring           → honoured while the hosted row still has at least
+//                             HALF the life the local entry asks for (the ask
+//                             itself capped at the API maximum, since that is
+//                             the longest a write can request). A fresh push
+//                             leaves the two equal and the entry then coasts
+//                             for half its TTL before one re-push refreshes
+//                             it — bounded and convergent, never a loop.
 //
-//                             The local intent is CAPPED at the API's 365-day
-//                             maximum first, because that is the longest life a
-//                             write can request. Without the cap an entry
-//                             expiring in 2099 lands at now+365d and then
-//                             disagrees with itself forever — a permanent
-//                             UPDATE loop for exactly the entries the clamp
-//                             already warned about.
+// The threshold is what makes it converge, and it is deliberately generous in
+// both directions: a hosted row expiring in 7 days does NOT honour a 300-day
+// lesson, and one expiring within the hour does NOT honour a one-day lesson,
+// so a genuinely shortened TTL still migrates.
+const TTL_HONOURED_FRACTION = 0.5;
+
 function sameRemoteTtl(currentExpiry, entryExpiry, now = new Date()) {
   if (!currentExpiry && !entryExpiry) return true;
   if (!currentExpiry || !entryExpiry) return false;
@@ -161,10 +164,12 @@ function sameRemoteTtl(currentExpiry, entryExpiry, now = new Date()) {
   // `putEntry` leaves the hosted expiry alone in that case, so re-pushing
   // would change nothing.
   if (Number.isNaN(hosted) || Number.isNaN(local)) return true;
-  const asked = Math.min(local, now.getTime() + TTL_MAX_DAYS * 86_400_000);
-  // A day of slack: both sides are converted through WHOLE days, so a few
-  // hours of rounding is not a real divergence.
-  return hosted >= asked - 86_400_000;
+  const at = now.getTime();
+  // What a write could actually ask for, from now: the local intent, capped at
+  // the API's maximum.
+  const asked = Math.min(local - at, TTL_MAX_DAYS * 86_400_000);
+  if (asked <= 0) return true; // the local entry is expiring anyway
+  return hosted - at >= asked * TTL_HONOURED_FRACTION;
 }
 
 // The global connection flags, folded into the environment the resolver reads.
