@@ -35,14 +35,11 @@ Two small files finish the job. First a `.lorekit.json` at your repo root — sa
 }
 ```
 
-Then point the MCP server at your own machine instead of the hosted one. `install` writes the hosted entry by default, so swap it for the CLI's local stdio server:
+Then point the MCP server at your own machine instead of the hosted one. `install` merges a `lorekit` entry into your `.mcp.json` — leaving any other servers alone — and by default that entry points at the hosted endpoint. Replace **that entry only** with the CLI's local stdio server:
 
 ```json
-{
-  "mcpServers": {
-    "lorekit": { "command": "npx", "args": ["-y", "@lorekit/cli", "mcp"] }
-  }
-}
+// .mcp.json → mcpServers — edit this entry, leave your others alone
+"lorekit": { "command": "npx", "args": ["-y", "@lorekit/cli", "mcp"] }
 ```
 
 That's the whole setup, and `npx @lorekit/cli doctor` will tell you the resolved mode and which file decided it.

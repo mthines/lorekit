@@ -51,15 +51,12 @@ This checks connectivity, token permissions, and scope health. In offline-only m
 npx @lorekit/cli mcp
 ```
 
-This starts the local stdio MCP server. Point your agent at it instead of the hosted endpoint — this is the entry that makes an offline setup actually offline:
+This starts the local stdio MCP server. Point your agent at it instead of the hosted endpoint — this is the entry that makes an offline setup actually offline. `install` merges its `lorekit` entry into `.mcp.json` alongside any other servers you have, so edit **that entry only** rather than replacing the file:
 
 ```json
-// .mcp.json — the local store, no endpoint and no token
-{
-  "mcpServers": {
-    "lorekit": { "command": "npx", "args": ["-y", "@lorekit/cli", "mcp"] }
-  }
-}
+// .mcp.json → mcpServers — the local store, no endpoint and no token.
+// Edit this entry in place; your other servers stay as they are.
+"lorekit": { "command": "npx", "args": ["-y", "@lorekit/cli", "mcp"] }
 ```
 
 Your agent can then call `memory.write` to store a memory:
