@@ -423,3 +423,85 @@ describe('computeCountTrend', () => {
     expect(sum(t.points)).toBe(4);
   });
 });
+
+/**
+ * AC-4 for the Explorer's stats header: **every card with a series is additive
+ * — summing its bars reproduces its headline.**
+ *
+ * The property is what makes the header trustworthy: the bars sit directly
+ * under the number so the eye can check the claim, and a card whose chart and
+ * total disagreed would be worse than no chart. It already held for the
+ * Overview; these pin it for the header's exact composition, including the
+ * scope-filtered rows the header feeds in.
+ */
+describe('stats-header additivity', () => {
+  const NOW_H = '2026-07-24T12:00:00.000Z';
+  const sumOf = (points: { value: number }[]) => points.reduce((t, p) => t + p.value, 0);
+
+  const ACTIVITY = [
+    { bucket: '2026-07-24T09:00:00.000Z', scope: 'repo::a/b', count: 3 },
+    { bucket: '2026-07-24T10:00:00.000Z', scope: 'repo::a/b', count: 2 },
+    { bucket: '2026-07-24T10:00:00.000Z', scope: 'global', count: 5 },
+    { bucket: '2026-07-24T11:00:00.000Z', scope: 'project::x', count: 1 },
+  ];
+
+  it('Written: the bars sum to the headline', () => {
+    const rows = trendRowsFromActivity(ACTIVITY);
+    const trends = computeRangeTrends(rows, NOW_H, RANGE_BUCKETS['24h']);
+    expect(sumOf(trends.lessons.points)).toBe(11);
+  });
+
+  it('Scopes: the NEW-scope bars sum to the distinct total, not to a per-bucket count', () => {
+    // The reason the Scopes card charts first-seen scopes: `repo::a/b` is
+    // active in two buckets but is ONE unit of breadth. A distinct-per-bucket
+    // series would sum to 4 against a headline of 3.
+    const rows = trendRowsFromActivity(ACTIVITY);
+    const trends = computeRangeTrends(rows, NOW_H, RANGE_BUCKETS['24h']);
+    expect(trends.activeScopes).toBe(3);
+    expect(sumOf(trends.newScopes.points)).toBe(trends.activeScopes);
+  });
+
+  it('Read: the bars sum to the headline', () => {
+    const readBuckets = [
+      { bucket: '2026-07-24T09:00:00.000Z', scope: 'repo::a/b', count: 7 },
+      { bucket: '2026-07-24T10:00:00.000Z', scope: null, count: 4 },
+    ];
+    expect(sumOf(computeCountTrend(readBuckets, NOW_H, RANGE_BUCKETS['24h']).points)).toBe(11);
+  });
+
+  it('stays additive when the header narrows the rows to one scope', () => {
+    const rows = trendRowsFromActivity(ACTIVITY, 'repo::a/b');
+    const trends = computeRangeTrends(rows, NOW_H, RANGE_BUCKETS['24h']);
+    expect(sumOf(trends.lessons.points)).toBe(5);
+    expect(trends.activeScopes).toBe(1);
+    expect(sumOf(trends.newScopes.points)).toBe(trends.activeScopes);
+  });
+});
+
+describe('trendRowsFromActivity scope filter', () => {
+  const CELLS = [
+    { bucket: '2026-07-24T09:00:00.000Z', scope: 'repo::a/b', count: 2 },
+    { bucket: '2026-07-24T09:00:00.000Z', scope: 'branch::a/b::main', count: 3 },
+    { bucket: '2026-07-24T10:00:00.000Z', scope: 'global', count: 1 },
+  ];
+
+  it('keeps every cell when no scope is given', () => {
+    expect(trendRowsFromActivity(CELLS)).toHaveLength(6);
+    expect(trendRowsFromActivity(CELLS, null)).toHaveLength(6);
+    expect(trendRowsFromActivity(CELLS, undefined)).toHaveLength(6);
+  });
+
+  it('matches the scope EXACTLY — a repo does not include its branches', () => {
+    // Must agree with what selecting a scope filters the LIST to; a prefix match
+    // here would make the header count memories the list below does not show.
+    const rows = trendRowsFromActivity(CELLS, 'repo::a/b');
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.scope === 'repo::a/b')).toBe(true);
+  });
+
+  it('yields nothing for a scope with no activity, rather than falling back to all', () => {
+    // The dangerous failure: a no-match filter that degrades to "everything"
+    // shows the account's numbers under an empty scope's name.
+    expect(trendRowsFromActivity(CELLS, 'repo::nope/nope')).toEqual([]);
+  });
+});

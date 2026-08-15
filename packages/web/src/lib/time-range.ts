@@ -317,3 +317,33 @@ export function rangeCaption(range: TimeRange, nowIso: string): string {
   const label = rangeLabel(range, nowIso);
   return label === 'All time' ? 'all time' : label;
 }
+
+/**
+ * Where a bucket grid should be ANCHORED for a range — the newest instant its
+ * chart describes.
+ *
+ * A {@link BucketPlan} says how WIDE a grid is and never where it sits, while
+ * `computeRangeTrends` / `computeCountTrend` lay their buckets backwards from an
+ * injected clock. For a preset that is exactly right — "the last 7 days" ends
+ * now — but for an ABSOLUTE window it charted the most recent `count` buckets
+ * while the caption named the selected dates: pick last July and you got this
+ * week's bars under a "Jul 1 – Jul 3" label.
+ *
+ * So an absolute arm anchors at its OWN end. The stored `to` is EXCLUSIVE,
+ * hence the step back to the last instant inside the window — anchoring at `to`
+ * itself would shift the whole chart one bucket into the future and drop the
+ * window's first bucket.
+ *
+ * A preset and an unbounded range return the clock unchanged, which is what
+ * they mean.
+ *
+ * Lives here rather than in a component because there is now more than one
+ * surface charting a shared range (the Overview's stat row and the Explorer's
+ * stats header), and the rule is invisible when wrong: both charts still render,
+ * they just describe a period nobody selected.
+ */
+export function gridAnchor(range: TimeRange, nowIso: string): string {
+  if (range === null || isPresetRange(range)) return nowIso;
+  const window = resolveRange(range, nowIso);
+  return window === null ? nowIso : new Date(Date.parse(window.to) - 1).toISOString();
+}

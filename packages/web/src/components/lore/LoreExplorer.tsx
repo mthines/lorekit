@@ -41,15 +41,18 @@
  *   resolving; never written. Same treatment as the legacy `tags` shorthand.
  * - `scopePanelOpen`: local useState — ephemeral mobile accordion, NOT in URL.
  *   Defaults to closed so the phone layout leads with the memories.
- * - `heatmapOpen`:    local useState — ephemeral panel collapse, NOT in URL.
+ * - `insightsOpen`:  local useState inside `ExplorerInsights` — ephemeral panel
+ *   collapse, NOT in URL. A shared link carries what you are looking at, not
+ *   how tall you left a panel.
  *
  * ## SSR note
  * Uses `useSearchParams()` via `useUrlState`. Must be wrapped in <Suspense>.
  */
 
 import { useCallback, useMemo, useTransition, useState } from 'react';
-import { Search, BookOpen, ChevronDown, ChevronUp, Loader2, List, LayoutGrid, User, Building2, Users } from 'lucide-react';
+import { Search, BookOpen, ChevronDown, Loader2, List, LayoutGrid, User, Building2, Users } from 'lucide-react';
 import { ScopeTree, type ScopeNode } from './ScopeTree';
+import { ExplorerInsights } from './ExplorerInsights';
 import { LessonCard } from './LessonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useUrlState } from '@/lib/hooks/useUrlState';
@@ -69,6 +72,7 @@ import {
 } from '@/lib/status-filter';
 import {
   isPresetRange,
+  rangeCaption,
   resolveRange,
   toDayRange,
   type TimeRange,
@@ -88,7 +92,6 @@ import {
 import { FilterMenuTrigger, FilterPillRow } from './FilterBar';
 import { useReducedMotion } from 'motion/react';
 import type { LessonEntry } from './LessonCard';
-import { ContributionHeatmap } from '@/components/activity/ContributionHeatmap';
 import { ActivityFeed } from '@/components/activity/ActivityFeed';
 import { filterByOwnership, type OwnerFilter } from '@/lib/org-ui';
 
@@ -98,6 +101,23 @@ type ViewMode = 'scope' | 'time';
 // documents that mutable defaults must be memoized at the call site.
 const NO_TAGS: string[] = [];
 const NO_FILTERS: Filter[] = [];
+
+/**
+ * The Explorer opens on the last 24 hours, matching the Overview.
+ *
+ * Module-level for the reference-stability reason `useUrlState` documents: the
+ * default sits in the setter's `useCallback` deps, so a fresh literal each
+ * render reminted it.
+ *
+ * This narrows the LIST as well as the cards — one range drives the whole page,
+ * which is the point of the shared model, so there is no version of this that
+ * scopes the picker to the header only without reintroducing two time concepts.
+ * The cost is that an account with months of lore opens showing a day of it, so
+ * the narrowing is made recoverable rather than quiet: the picker shows `24h`
+ * selected, `All` sits beside it, and an empty list caused by the window says
+ * so and offers the way out.
+ */
+const DEFAULT_EXPLORER_RANGE: TimeRange = { preset: '24h' };
 
 // ── Ownership filter bar ──────────────────────────────────────────────────────
 // "Owner: All · Personal · {org}" per ux-design §4 — only rendered when at least
@@ -287,7 +307,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // The widening is backward-compatible by construction — a `{from,to}` pair of
   // day strings, the only shape this param has ever held, is still one of the
   // arms, so every existing `?range=` link decodes exactly as before.
-  const [range, setRange] = useUrlState<TimeRange>('range', null, {
+  const [range, setRange] = useUrlState<TimeRange>('range', DEFAULT_EXPLORER_RANGE, {
     cleanOnPathname: '/lore',
   });
 
@@ -301,6 +321,11 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // param edit — flipping the archived toggle would otherwise re-resolve
   // `{preset:'7d'}` against a newer clock and remint the `useMemories` key for a
   // range the user never touched.
+  // One clock for everything the insights panel derives — the picker's custom
+  // label, the stat window and the captions must all describe the same instant,
+  // or a render can straddle a bucket boundary and caption a chart it did not
+  // draw. Re-read only when the range changes, for the reason below.
+  const insightsNowIso = useMemo(() => new Date().toISOString(), []);
   const rangeKey = JSON.stringify(range);
   const resolvedRange = useMemo(
     () => resolveRange(range, new Date().toISOString()),
@@ -394,9 +419,6 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // collapsed header still shows the active scope, so nothing is hidden.
   const [scopePanelOpen, setScopePanelOpen] = useState(false);
 
-  // Local-only: heatmap panel collapse. Ephemeral UI — not shareable.
-  const [heatmapOpen, setHeatmapOpen] = useState(true);
-
   // URL-backed Status — scoped to /lore. Defaults to `null` (param absent), not
   // to 'active', for the reason `filters` defaults to null: absent has to be
   // distinguishable from an explicit choice, because an absent `status` falls
@@ -466,14 +488,23 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     [lessons, ownerFilter],
   );
 
+  // A range is "narrowing" only when it actually bounds something: an
+  // unbounded selection cannot be the reason a list is empty, so offering to
+  // widen it would be a button that does nothing.
+  const rangeIsNarrowing = range !== null && resolvedRange !== null;
+
   // Has the user narrowed WITHIN the current view? `status` is deliberately not
   // one of these: it selects which population is listed, not a predicate over
   // it, so "Archived" or "Expiring" being selected must not read as "you
-  // filtered something out". That distinction is what the empty state turns on
-  // — a status view with nothing narrowing it gets its own copy, the same view
-  // with a search that matched nothing gets "no matches".
+  // filtered something out". `range` is excluded for a related reason — the
+  // Explorer now opens on a 24h default, so a non-null range is the norm, not a
+  // narrowing the user chose; the time window has its own empty-state branch
+  // (`rangeIsNarrowing`) with a "View all time" way out. That distinction is
+  // what the empty state turns on — a status view with nothing narrowing it
+  // gets its own copy, the same view with a search that matched nothing gets
+  // "no matches".
   const isNarrowedWithinView =
-    search.trim() !== '' || range !== null || ownerFilter !== 'all' || filters.length > 0;
+    search.trim() !== '' || ownerFilter !== 'all' || filters.length > 0;
 
   // Every filter mutation closes the lesson sidebar for one reason: the open
   // lesson may not survive the new predicate, and a detail panel describing a
@@ -619,22 +650,37 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
       return (
         <EmptyState
           icon={STATUS_ICONS[status]}
+          // The time window gets its own state and its own "View all time" way
+          // out. The Explorer now OPENS on the last 24 hours, so an empty list
+          // is most often answered by widening the range — and a reader who did
+          // not choose the window has no reason to suspect it. The action is
+          // offered whenever the range actually bounds something, regardless of
+          // which title branch wins below.
+          {...(rangeIsNarrowing
+            ? { action: { label: 'View all time', onClick: () => setRange(null) } }
+            : {})}
           title={
-            // Narrowing is checked FIRST, and only then the status. A search or
-            // a filter that matched nothing is a failed search in every view —
+            // Within-view narrowing is checked FIRST — a search or filter that
+            // matched nothing is a failed search in every status view, and
             // reading "Nothing expiring soon" (or "No archived memories") when
             // the honest answer is "your query matched nothing here" hides the
-            // control the user needs to undo.
+            // control the user needs to undo. Then the range window (named, with
+            // the widen action above). The status-specific copy shows only when
+            // neither a filter NOR the range is narrowing — i.e. the "All time"
+            // view of that population is genuinely empty, which is exactly when
+            // "No archived memories" is the truthful answer rather than "nothing
+            // in the last 24 hours".
             isNarrowedWithinView
               ? 'No matching memories'
-              : status === 'archived'
-                ? 'No archived memories'
-                : // An unnarrowed EXPIRING view is good news, not a failed
-                  // search, so it gets its own copy. That is only true once the
-                  // narrowed case above has been taken.
-                  status === 'expiring'
-                  ? 'Nothing expiring soon'
-                  : 'No memories in this scope'
+              : rangeIsNarrowing
+                ? `No memories in ${rangeCaption(range, insightsNowIso)}`
+                : status === 'archived'
+                  ? 'No archived memories'
+                  : // An unnarrowed EXPIRING view is good news, not a failed
+                    // search, so it gets its own copy.
+                    status === 'expiring'
+                    ? 'Nothing expiring soon'
+                    : 'No memories in this scope'
           }
           description={
             isNarrowedWithinView
@@ -644,11 +690,13 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
                 filters.length > 1
                 ? 'No memory satisfies every filter — try removing one.'
                 : 'Try a different search term, filter, or date range.'
-              : status === 'archived'
-                ? 'Archive a memory from its detail panel to see it here.'
-                : status === 'expiring'
-                  ? `No live memory in this view runs out within ${EXPIRING_WITHIN_DAYS} days.`
-                  : 'Memories will appear here once your agents start writing.'
+              : rangeIsNarrowing
+                ? 'Nothing was written in this window. Widen the range, or pick another from the Activity panel above.'
+                : status === 'archived'
+                  ? 'Archive a memory from its detail panel to see it here.'
+                  : status === 'expiring'
+                    ? `No live memory in this view runs out within ${EXPIRING_WITHIN_DAYS} days.`
+                    : 'Memories will appear here once your agents start writing.'
           }
         />
       );
@@ -696,34 +744,23 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             : `${filteredLessons.length} memor${filteredLessons.length === 1 ? 'y' : 'ies'} loaded`}
       </p>
 
-      {/* ── Heatmap panel (collapsible) ─────────────────────────────────── */}
-      <div className="overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]">
-        <button
-          type="button"
-          onClick={() => setHeatmapOpen((v) => !v)}
-          aria-expanded={heatmapOpen}
-          className="flex w-full min-h-11 items-center justify-between gap-4 px-5 py-3"
-        >
-          <p className="text-xs font-medium text-[var(--color-content-tertiary)]">
-            Memories written — last 26 weeks
-          </p>
-          {heatmapOpen ? (
-            <ChevronUp className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-          ) : (
-            <ChevronDown className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-          )}
-        </button>
-        {heatmapOpen && (
-          <div className="px-5 pb-5">
-            <ContributionHeatmap
-              data={heatmapData}
-              weeks={26}
-              selectedRange={highlightRange}
-              onSelectDate={handleHeatmapDayClick}
-            />
-          </div>
-        )}
-      </div>
+      {/* ── Insights ────────────────────────────────────────────────────────
+          ONE panel for everything the page says ABOUT the memories — the stat
+          cards, the range picker and the heatmap — above the list of the
+          memories themselves. It replaced two separate bordered panels with two
+          independent chevrons; see ExplorerInsights for why it opens collapsed
+          and why the collapsed state still shows the numbers. */}
+      <ExplorerInsights
+        scope={selectedScope}
+        scopeLabel={selectedScopeLabel}
+        range={range}
+        onRangeChange={setRange}
+        hasActiveFilters={filters.length > 0}
+        heatmapData={heatmapData}
+        highlightRange={highlightRange}
+        onSelectDate={handleHeatmapDayClick}
+        nowIso={insightsNowIso}
+      />
 
       {/* ── View-mode tabs ───────────────────────────────────────────────── */}
       <div
