@@ -57,7 +57,7 @@ export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerPro
       await queryClient.invalidateQueries({ queryKey: PENDING_INVITES_QUERY_KEY });
       const orgName = target.org?.name ?? 'the organization';
       showToast(`You joined ${orgName}. Their shared lore now appears in your Explorer.`, 'success');
-      // Ownership is a server-side filter DIMENSION now (migration 00063), keyed
+      // Ownership is a server-side filter DIMENSION now (migration 00064), keyed
       // by the org SLUG. Deep-link straight into the Explorer's `?filters=` bar
       // with an owner filter, so the freshly-joined org is pre-selected. The
       // legacy `?owner=` param is gone: the Explorer still READS it for old

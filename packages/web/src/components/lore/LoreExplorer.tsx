@@ -38,7 +38,7 @@
  * - `filters` param:  the unified filter bar (JSON array of committed
  *   conditions) — one dimension per pill, OR within a dimension and AND across.
  *   Ownership (Personal / an org) is one of those dimensions now, filtered
- *   server-side like every other (migration 00063).
+ *   server-side like every other (migration 00064).
  * - `owner` param:    the superseded ownership shorthand from the old
  *   client-side owner bar. Still READ so old links (and pre-change accept-invite
  *   deep links) land; never written. `resolveFilters` folds a `'personal'` value
@@ -285,12 +285,12 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   const pickerRange: DateRange | null = isPresetRange(range) ? null : highlightRange;
 
   // The pre-facet `?owner=` param. Ownership is a server-side filter DIMENSION
-  // now (migration 00063), folded into the bar below like every other
+  // now (migration 00064), folded into the bar below like every other
   // dimension, so this legacy param is READ (never written) purely to keep old
   // links landing: the accept-invite deep link, `lorekit link --owner`, and any
   // shared owner view from before this change. `resolveFilters` translates ANY
   // non-`all` string — a `'personal'` marker OR an org slug — into an owner
-  // filter; only the pre-00063 `{orgId}` OBJECT degrades to no filter (its uuid
+  // filter; only the pre-00064 `{orgId}` OBJECT degrades to no filter (its uuid
   // cannot be resolved to the slug the facet keys on). Same "absent-only"
   // fallback rule as legacy `?tags=`. The default stays `'all'` (its historical
   // value, mirrored in the CLI's `LORE_PARAM_DEFAULTS`).
@@ -397,7 +397,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   const { data: facets } = useFacetCatalog(showArchived, filters, selectedScope);
 
   // The list is entirely server-filtered now — scope / search / range / status
-  // AND every dimension in the filter bar, ownership included (migration 00063
+  // AND every dimension in the filter bar, ownership included (migration 00064
   // folded the old client-side owner narrowing into the bar). So the loaded
   // pages ARE the result; there is no post-filter pass.
   const lessons = useMemo(

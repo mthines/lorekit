@@ -85,7 +85,7 @@ export const ScopeSelected: Story = {
 /**
  * A filter bar is active.
  *
- * The Written and Scopes cards now NARROW to the filtered set (migration 00062)
+ * The Written and Scopes cards now NARROW to the filtered set (migration 00063)
  * — the header agrees with the list, so there is no disclaimer. Read stays
  * scope-level (usage_events has no per-memory dimension) and Expired stays
  * account-wide.

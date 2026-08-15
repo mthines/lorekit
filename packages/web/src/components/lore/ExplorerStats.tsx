@@ -16,7 +16,7 @@
  *
  * **Written and Scopes follow the scope, range, and every DIMENSION filter** —
  * `ExplorerStats` sends the filter bar to `/activity` via `filtersToQueryParams`
- * (the same translation the list uses), and migration 00062 applies it in the
+ * (the same translation the list uses), and migration 00063 applies it in the
  * RPC, so these two cards count exactly the list's set for that slice.
  *
  * Two page-level controls are deliberately NOT forwarded, so under either the
@@ -94,7 +94,7 @@ interface ExplorerStatsProps {
   /**
    * The Explorer's active dimension filters. Forwarded to `/activity` so the
    * Written and Scopes cards narrow to the same set the list shows (migration
-   * 00062). Read stays scope-level — usage_events has no per-memory dimension —
+   * 00063). Read stays scope-level — usage_events has no per-memory dimension —
    * so these do NOT narrow the Read card.
    */
   filters: Filter[];

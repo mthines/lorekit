@@ -54,9 +54,11 @@ const EMPTY: ExplorerStatsData = { rows: [], readBuckets: [], expired: 0 };
  * "All time" is a legitimate selection for a LIST and not one for a chart:
  * `/activity` would return every bucket the account has ever produced to draw
  * something a few hundred pixels wide, and the cost lands on exactly the
- * accounts that can least afford it. 90 days is the widest preset the picker
- * offers, so an unbounded selection charts the same span the widest bounded one
- * does.
+ * accounts that can least afford it. 90 days is a deliberate bounded horizon —
+ * wide enough to read as "recent history" yet a fixed cost regardless of account
+ * age. It is intentionally WIDER than any preset the picker offers (24h/7d/30d),
+ * so switching off "All" to the widest bounded preset visibly narrows the chart
+ * rather than leaving it unchanged.
  *
  * **It substitutes the RANGE, not just the query window**, and that distinction
  * is the point: the cards must caption what they actually counted. Capping the

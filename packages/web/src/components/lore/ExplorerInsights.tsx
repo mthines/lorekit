@@ -65,7 +65,7 @@ interface ExplorerInsightsProps {
   onRangeChange: (range: TimeRange) => void;
   /**
    * The active dimension filters. Forwarded to the stat cards so Written +
-   * Scopes narrow to the list's set (migration 00062) — which is why there is no
+   * Scopes narrow to the list's set (migration 00063) — which is why there is no
    * "filters don't count" disclaimer any more.
    */
   filters: Filter[];
