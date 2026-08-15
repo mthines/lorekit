@@ -21,9 +21,9 @@ export interface BlogSection {
 export const BLOG_SECTIONS: readonly BlogSection[] = [
   {
     id: 'agent-memory-working-set',
-    label: "Your agent's memory has a 15-item working set — on purpose",
+    label: "Your agent's memory is a ranked working set, not a dump",
     summary:
-      "The first fear everyone has about agent memory is that it'll bloat every prompt. It won't. LoreKit injects a bounded 15-line index at session start and runs the real relevance search only when your agent hits a wall — here's the code, and the honest limits.",
+      "\"Cap it at 15\" was the wrong answer. LoreKit now spends a character budget on the highest-signal lessons — ranked by recurrence, de-duplicated with MMR, warmed by your branch, and never flooded by one bot — then tells you what it left out. Here's the read pipeline, and the honest limits.",
   },
   {
     id: 'self-healing-agents',

@@ -1,88 +1,99 @@
 ---
-title: "Your agent's memory has a 15-item working set — on purpose"
-description: "The first fear everyone has about agent memory is that it'll bloat every prompt. It won't. LoreKit injects a bounded 15-line index at session start and runs the real relevance search only when your agent hits a wall — here's the code, and the honest limits."
+title: "Your agent's memory is a ranked working set, not a dump"
+description: "\"Cap it at 15\" was the wrong answer. LoreKit now spends a character budget on the highest-signal lessons — ranked by recurrence, de-duplicated with MMR, warmed by your branch, and never flooded by one bot — then tells you what it left out. Here's the read pipeline, and the honest limits."
 date: "2026-08-08"
 author: "Mads Thines"
-readingMinutes: 7
-tags: ["agent-memory", "context-window", "retrieval", "hooks", "lorekit"]
+readingMinutes: 8
+tags: ["agent-memory", "context-window", "retrieval", "ranking", "lorekit"]
 order: 1
-keywords: ["agent memory", "context window", "working set", "lorekit", "retrieval", "scope precedence", "session start hook", "no embeddings", "bounded injection"]
+keywords: ["agent memory", "context window", "working set", "lorekit", "retrieval", "ranking", "MMR", "diversification", "scope precedence", "session start hook", "no embeddings"]
 ---
 
-## The first question is always the same
+## We watched one bot eat 13 of 15 slots
 
-Show an engineer a tool that gives their coding agent persistent memory and the first question is never "does it work?" It's "so you're going to dump all of that into every prompt?"
+Here's the moment the old design died.
 
-It's the right question. A memory that grows forever, injected into a context window that doesn't, is a countdown. The day your store hits a few thousand lessons is the day your agent spends more tokens remembering than working — and buries the one line that mattered under five hundred that didn't 😂.
+LoreKit injects the lessons your agent has learned at the start of a session. The first version capped that at 15 — a clean number, and completely wrong. On an active repo we watched a single self-improvement loop — the PR-review bot writing its own `loop::review-outcomes` bookkeeping — take **13 of the 15 slots**. The other two? The same lesson three times: `review-outcomes::pr395-it3`, `…it4`, `…it5`. One task's iteration log, injected as if it were three lessons.
 
-So here's LoreKit's answer, and it's a design choice, not a promise: what lands in your context at the start of a session is a **bounded working set** — an index of at most 15 one-line hooks — no matter how big your store gets. The real relevance search happens later, and only when your agent hits a wall. Your corpus grows without bound. Your prompt doesn't.
+The agent didn't get 15 lessons. It got one bot's diary and a stutter 😂
 
-## What actually lands in your context
+The bug wasn't the number. It was treating injection as *how many* instead of *which ones*. Cap-at-15 answered the wrong question, and it answered it twice badly: it was a **floor** as much as a ceiling, so a repo with six lessons got padded and a repo with six hundred got truncated — silently, with no way to tell which had happened.
 
-Here's the block LoreKit injected at the start of *this* writing session — the first three of fifteen lines (the keys run long, so they're clipped):
+So we rebuilt the read. What lands in your context now is a **ranked working set**: a slice of your window, spent on the highest-signal lessons, de-duplicated, warmed by what you're working on, and honest about what it left behind.
+
+## "15 of what?" — spend a budget, not a count
+
+Start with the number that replaced the number. There is no `MAX_LESSONS` anymore. The block spends a **character budget** — `hooks.sessionStart.maxChars`, default **1500** — because that's the thing that actually matters: how much of the window the block occupies. Fifteen terse keys and fifteen paragraph-long ones differ by an order of magnitude in cost, and "15" said nothing about either.
+
+Characters, not tokens, on purpose — a real tokenizer is a dependency this package won't take, and ~4-chars-per-token is accurate enough to bound an order of magnitude. A second bound, `HARD_LESSON_CEILING = 40` lines, sits well above any sane budget so it never binds in normal use — it just stops a store of 500 one-word keys from rendering an unreadable wall.
+
+The count falls out of the budget. That's the inversion: you decide how much window to spend, and the ranking decides what to spend it on.
+
+## The read is ranked, not recent
+
+Precedence still runs first — a `project::` lesson shadows the `global::` one of the same name, because that's a correctness rule, not a preference. But among the survivors, the old code took whatever order the read happened to hand it, which is *recency within a scope*. On an active repo the newest cluster is one task's iteration log — which is exactly how a dozen near-identical one-offs took the whole budget and evicted the lessons you'd re-learned all month.
+
+Now we score the survivors. The score is a normalized blend of four factors, not a timestamp:
+
+```js
+// packages/cli/src/lessons-pure.mjs (shape of scoreWithTerms) — every factor in [0,1], weights normalized (default: all equal)
+const score =
+  (w.recency   * recencyFactor(entry.updatedAt, now, 14 /* -day half-life */) +
+   w.salience  * salienceFactor(seenCount, maxSeenCount) +  // how often it recurred
+   w.relevance * relevanceFromTerms(entry, branchTerms) +   // does it match what you're on?
+   w.outcome   * normalizeOutcome(entry.outcome))           // did applying it help? (0.5 when unknown)
+  / total;
+```
+
+Recency is one factor now, decaying on a two-week half-life — not the sort order. **Salience** is recurrence: a lesson you've re-learned five times outranks a fresh one-off, which is the whole point of writing lessons down. **Outcome** nudges toward lessons that actually helped, with a cold-start prior of `0.5` so a brand-new lesson isn't buried for lacking a track record. The budget goes to what's been *earned*, wherever it lives.
+
+## It's warmed by what you're working on
+
+Here's the part the first version couldn't do, and the objection it used to concede. At session start there's no task yet — so how can the read be relevant to anything?
+
+It reads your **branch name**. A session on `feat/embedding-pipeline` distills the terms `embedding`, `pipeline` and lifts on-topic lessons up the ranking:
+
+```js
+// A relevance query from the branch NAME — owner/repo stripped, trunk names ignored.
+const rankOpts = sessionRankOpts(scope, now, { branchHint: true });
+```
+
+It's a nudge, and a safe one: relevance only ever *lifts* an on-topic lesson — a non-match scores zero, so a branch that matches nothing (a bare `main`, a detached `HEAD`) doesn't reorder anything and you're back to recency-plus-salience. Cheap, deterministic, and it means the opening set already leans toward the thing you opened the editor to do. `hooks.sessionStart.branchHint` turns it off if you'd rather it didn't.
+
+## No wall of duplicates
+
+Ranking answers "which score highest." It does not answer "are these the same lesson." On an active repo the top-scoring cluster is often one task's `it3/it4/it5` rows — they score alike *and read alike*, so a plain top-N hands the reader the same thing several times and evicts the variety underneath.
+
+So after ranking, we diversify the set with **MMR** — Maximal Marginal Relevance, Carbonell & Goldstein 1998 — at λ=0.7:
+
+```js
+// packages/cli/src/core/lessons.mjs — rank, un-flood, de-duplicate.
+const ranked  = rankLessons(winners, rankOpts);
+const capped  = capPerBucket(ranked, { cap: loopCap, bucketOf: loopBucketOf });          // loopCap=2 · the 13-of-15 fix
+const lessons = diversifyRankedLessons(capped, { ...rankOpts, k: HARD_LESSON_CEILING });  // 40 · the stutter fix
+```
+
+MMR seeds with the top-ranked lesson (it's still 70% of the objective, so the best lesson stays first) and spends the other 30% pushing down anything that repeats what's already shown. The `it3/it4/it5` stutter collapses to one line, and the slot it freed goes to the next distinct thing.
+
+That `capPerBucket` line is the 13-of-15 fix: no single self-improvement loop may take more than **2** slots. Those lessons are a bot's private working memory — read back by that bot through a tag filter — so two of its best surface and the rest step aside. General, human-written lessons are **never** capped; they're what the freed slots are for. (`hooks.sessionStart.loopCap`, default 2; set it to 0 to exclude bot buckets entirely.)
+
+## It tells you what it left out
+
+The old header reported only what it rendered, so a truncated block was indistinguishable from a complete one — the agent had no idea whether reaching for `memory.search` was worth it. The new header says `8 of 50`, and in the default `hybrid` shape it appends a scope map of where the other 42 live:
 
 ```text
-LoreKit: 15 memories loaded · repo::mthines/lorekit — considerations, not rules; read any in full with memory.read.
-- (repo::mthines/lorekit) reviewer-comment-relevance::pr395-run-summary… — fingerprint: reviewer=dash0-dev[bot] on mthines/lorekit…
-- (repo::mthines/lorekit) review-outcomes::pr395-it5-converged-all-gates-green… — outcome batch: iteration 5 (final)…
-- (repo::mthines/lorekit) implement-suggestion-lessons::dash0-dev-non-blocking-suffix… — trust dash0-dev's own suggestion:/question: prefix over the heading…
-- … 12 more, one lesson each
+LoreKit: 8 of 50 memories loaded · repo::mthines/lorekit — considerations, not rules; read any in full with memory.read.
+- (repo::mthines/lorekit) supabase-rls::empty-array-is-not-no-rows — RLS returns 200 + [], not a 4xx…
+- (global) always-typecheck-before-done — run the typecheck before you claim it's done
+- … 6 more, ranked and de-duplicated, inside the budget …
+More lore: branch::…/feat/x 3 · repo::mthines/lorekit 34 · global 13 — memory.search or memory.read to drill in.
 ```
 
-One line per lesson: the scope, the key, and a short hook. Not the bodies. It's a table of contents, not the book — the full text of any lesson is one `memory.read` away, and the agent fetches it only if the hook looks worth it.
+(That block is illustrative — the shape `formatLessons` produces, not a single capture.) The counts are exact even on a huge store: they come from the store's own scope inventory — a Postgres aggregate on the hosted side, a tree walk locally — not from the bounded read, so a scope holding 400 lessons reports `400`, not a hand-wavy `25+`. Truncation is now self-describing: the agent can see there's more and go get it.
 
-The code that builds it is the whole argument:
+## The second gear: relevance when you fail
 
-```js
-// packages/cli/src/core/lessons.mjs — simplified: collect()/winners()
-// stand in for the inlined entry-mapping and winner pick.
-const MAX_LESSONS = 15;
-
-export async function fetchLessons(store, cwd) {
-  const scope = deriveScope(cwd);
-  const groups = [];
-  for (const s of scope.readOrder) {              // project → branch → repo → global
-    const res = await store.list({ scope: s, limit: 25 });
-    if (!res || !res.ok) continue;                // best-effort: a bad scope contributes nothing
-    groups.push({ scope: s, entries: collect(res) });
-  }
-  const { groups: resolved } = resolvePrecedence({ groups }); // most-specific scope wins
-  const lessons = winners(resolved);                          // one per key, precedence order
-  return { scope, lessons: lessons.slice(0, MAX_LESSONS) };   // ← the entire story
-}
-```
-
-That last line is the answer to the first question. A 50-lesson store and a 10,000-lesson store produce the same-sized block, because the block is `slice(0, 15)` of one-line hooks. Roughly a kilobyte, bounded by construction, before store size is ever consulted. The rendering does the same — an index, one capped line per lesson:
-
-```js
-const HOOK_LEN = 80; // one line per lesson, never the whole body
-const body = lessons
-  .map((l) => `- (${l.scope}) ${l.key} — ${lessonHook(l.value)}`)
-  .join('\n');
-```
-
-## "So it injects 15 random lessons?"
-
-No — but I want to be precise about what "15" means, because this is where a lazy pitch would wave its hands.
-
-At the start of a session there is no task yet. Your agent hasn't touched a file. So the 15 can't be chosen by relevance to what you're about to do — there's nothing to be relevant to. They're chosen by **scope precedence**: most-specific scope first, `branch` beating `repo` beating `global`, first value per key winning. It's "what's most local to where you're standing," not "what you'll need in the next keystroke."
-
-That's a deliberate split, and naming it honestly is the point. Start-of-session injection is a cheap, bounded, always-on index. Relevance is a separate job, and LoreKit does it somewhere smarter.
-
-## Relevance is lazy — it fires when you fail
-
-The real relevance lookup happens at the exact moment it earns its cost: a tool call fails. That's when your agent knows precisely what to search for — the error is the query.
-
-On a failure, LoreKit distils search terms from the tool name plus the words that actually matter in the error, runs **one** query across your scope hierarchy, lets the store do the matching (literal substring locally, Postgres full-text search with stemming when hosted), dedupes, caps at three, and drops them in before the retry:
-
-```js
-// On a tool failure — the error text is the query.
-const terms = failureQuery(toolName, toolResponse); // tool name + salient error words, capped
-const res = await store.search({ q: terms, scopes: scope.readOrder });
-return dedupeRelevant(res.entries, 3);              // matching is the store's job; capped, best-effort
-```
-
-I don't have to hand-wave this one either. While I was writing this post, a `git clone` in my session failed, and the failure hook fired on its own — real, unedited:
+The ranked working set is the always-on gear. There's a sharper one that only engages when your agent hits a wall — a tool call fails — because that's the one moment it knows *exactly* what to search for. LoreKit distills terms from the error, runs one query across your scopes, and drops in up to three prior lessons before the retry. This one's real, unedited — a `git clone` failed while I was writing this post:
 
 ```text
 LoreKit: 3 related memories — you've hit something like this before (considerations, not rules; read in full with memory.read):
@@ -91,33 +102,28 @@ LoreKit: 3 related memories — you've hit something like this before (considera
 - (global) reviewer-lessons::rebased-branch-makes-prior-sha-compare-useless-as-an-incremental-delta — A rebased PR branch makes `compare/PRIOR_SHA...HEAD_SHA` meaningless, and the harvest heuristic reads the resulting garbage as if it were…
 ```
 
-Three, not fifteen. Searched, not dumped. Fired at the wall, not at the door.
-
-And let me be honest about *why* those three, because it's the whole trade: the matcher is lexical, not semantic. That error said "could not read Username" — and two of those lessons literally contain "read." It matched on the shared word, not the meaning. No bullseye, no magic. That's the division of labour: a bounded index up front for "here's roughly what this repo has taught us," and a targeted, capped search the moment your agent trips — imperfect, deterministic, and honest about which it is.
-
-## Why bounded beats big
-
-The token cost of 15 short lines was never the real fear — that's a rounding error in a 200k window. The real fear is the two failure modes a naive "inject everything" design walks straight into: your prompt grows with your corpus, and the one relevant lesson drowns in the five hundred that aren't. A bigger memory makes both worse.
-
-LoreKit refuses both by construction. The working set is a fixed-size window onto an unbounded store — the same instinct as a CPU cache or a `LIMIT` on a query, applied to the one budget an agent can't grow. Your store gets everything you ever teach it. Your context sees a window.
+And I'll be honest about *why* those three: the matcher is lexical, not semantic. That error said "could not read Username" — and two of those lessons literally contain "read." It matched on the shared word, not the meaning. No bullseye, no magic — a bounded ranked set up front, a targeted search the moment you trip.
 
 ## What it doesn't do
 
 Let me be straight about the edges, because the design has them.
 
-- **Below saturation, the block isn't magic.** With 8 lessons you get 8, not 15. It fills from 0 to 15 as you accumulate, then holds. The flat line is the ceiling, not a guarantee at every size.
-- **The session-start index is precedence, not relevance.** If a single scope holds more than 15 lessons, the ones past the cap don't appear at session start. They're not lost — the failure search reaches them, and `memory.read` reaches any of them by key — but the opening index is "most-local," not "most-relevant." If you want relevance up front, you're asking the wrong stage for it.
-- **No embeddings — the matcher is lexical.** Locally it's literal substring; hosted, it's Postgres full-text search with stemming (so `connect` finds `connection`). Either way: no vector index, no re-embedding bill, no drift — and a genuine paraphrase can still miss, exactly like the match-on-the-word-`read` above. You get out roughly the discipline you put into your keys and tags.
-- **15 is a working-set size, not a store limit.** It caps what the prompt sees per session, never what you can keep. The store holds all of it.
+- **The ranking is lexical, not semantic — no embeddings on the read path.** Recurrence, recency, outcome, and word-overlap with your branch. There *is* a dormant embedding pipeline in the repo now, but it's off by default and semantic search isn't built — so a genuine paraphrase can still miss, the same trade as before. The read stays deterministic: no vector index, no re-embedding bill, no drift.
+- **"Relevant" means your branch name, not your task.** It's a coarse hint — `feat/embedding-…` lifts embedding lessons — not your actual prompt or the file you just opened. A well-named branch helps; a branch called `wip` does nothing.
+- **The budget is characters, not tokens.** A ~4-chars-per-token heuristic, deliberately. It bounds an order of magnitude, not a precise token count.
+- **Precedence still owns correctness; ranking only orders the survivors.** A shadowed lesson can't score its way back into the set — so if the wrong copy is winning, that's a scope problem, not a ranking one.
 
 None of these are things I'd rather you found at 2am.
 
 ## See it for yourself
 
-You don't have to take the number on faith. Wire up the loop and run:
+Wire up the loop and start a session. The first thing you'll see is the header telling you how much of your lore it spent the budget on — `8 of 50` — and a scope map pointing at the rest. That one line is the whole philosophy: a ranked slice, and an honest pointer to everything it didn't show you.
+
+Want a bigger or smaller slice? There's a single dial:
 
 ```bash
-lorekit tree
+# ~/.lorekit.json or the repo's config
+{ "hooks.sessionStart.maxChars": 2500 }
 ```
 
-It prints every lesson that wins its scope, in the exact precedence the session-start hook resolves over — the set the hook draws from. `tree` is deliberately uncapped, so this list grows as you teach it more. The block your next session actually receives doesn't: the hook takes the top 15 of that list and stops. Add your fiftieth lesson and watch the gap open — the resolved list gets longer, the injected window stays put. That's the whole idea. 🙂
+Spend more window, get more lessons — still ranked, still de-duplicated, still never flooded by one bot. That's the whole idea. 🙂
