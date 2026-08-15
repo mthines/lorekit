@@ -1,5 +1,40 @@
 # Changelog
 
+## [1.43.0](https://github.com/mthines/lorekit/compare/cli-v1.42.0...cli-v1.43.0) (2026-08-15)
+
+
+### Features
+
+* **cli:** diversify the SessionStart injection with MMR ([#456](https://github.com/mthines/lorekit/issues/456)) ([e81511e](https://github.com/mthines/lorekit/commit/e81511e9c511f09dca4923191e107f04860ea4b9))
+
+## [1.42.0](https://github.com/mthines/lorekit/compare/cli-v1.41.0...cli-v1.42.0) (2026-08-14)
+
+
+### Features
+
+* **cli:** inject relevant memories on each substantive prompt ([eeb1e4b](https://github.com/mthines/lorekit/commit/eeb1e4be826fa3259fbaa2a8f43c7ff5927abc07))
+* MMR read-time diversification of ranked lesson reads ([43faec9](https://github.com/mthines/lorekit/commit/43faec96ca0cd10348f89438ee72d4747dad5a2b))
+* MMR read-time diversification of ranked lesson reads ([0539110](https://github.com/mthines/lorekit/commit/05391103ea955cc020275ba2dbd4fd9d9680112d))
+
+
+### Bug Fixes
+
+* **rank:** cache MMR tokenisation + quantise score to scope-precedence grid ([f2f0b85](https://github.com/mthines/lorekit/commit/f2f0b85be6ee4f054a5bb22120fdc006a23f59e3))
+* **rank:** O(n·k) MMR via running maxSim + doc/lambda parity nits ([e655590](https://github.com/mthines/lorekit/commit/e6555907225064af123d7ee89990e8f39aeb6b9f))
+
+## [1.41.0](https://github.com/mthines/lorekit/compare/cli-v1.40.0...cli-v1.41.0) (2026-08-14)
+
+
+### Features
+
+* **rank:** add outcome factor + cold-start prior to lesson scorer ([d521b9f](https://github.com/mthines/lorekit/commit/d521b9f45f9150ee92feaf120716f31afaf9be3c))
+* **rank:** outcome factor + cold-start prior in lesson scorer ([d8711a2](https://github.com/mthines/lorekit/commit/d8711a2ee77f6145653a6e2ee216102a12db4c40))
+
+
+### Bug Fixes
+
+* **rank:** report outcome factor + hoist the outcome-signal ladder ([f7e9c4e](https://github.com/mthines/lorekit/commit/f7e9c4e2a347b574221f4bfbbfe8819eceee3380))
+
 ## [1.40.0](https://github.com/mthines/lorekit/compare/cli-v1.39.2...cli-v1.40.0) (2026-08-13)
 
 

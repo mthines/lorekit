@@ -10,6 +10,7 @@
 //   hooks.stop      — Stop-hook gating ("friction" default | "always" | "off")
 //   hooks.sessionStart          — injected-block shape ("hybrid" default | "index" | "map")
 //   hooks.sessionStart.maxChars — character budget for that block (default 1500)
+//   hooks.userPrompt — the per-turn relevance pull ("on" default | "off")
 //   hooks.adapter   — explicit adapter override ("claude" | "cursor" | "codex")
 //
 // Two layers of config, two kinds of statement:
@@ -57,6 +58,26 @@ export function normalizeStopMode(v) {
   return null;
 }
 
+// `hooks.userPrompt` — the per-turn relevance pull, on or off.
+//
+// A BOOLEAN, not a mode, and that is a deliberate limit on the surface. The
+// interesting knobs a mode would expose (how many lessons, how strict the
+// match) are the two things this hook must never let a user turn up: it fires
+// on EVERY prompt, so a generous setting is not a preference, it is a way to
+// make the assistant unusable. The gates are fixed in code and reviewed here.
+//
+// Same forgiving vocabulary as `hooks.stop`, so a config that says `false`,
+// `none` or `disabled` means what it looks like.
+export const USER_PROMPT_MODES = ['on', 'off'];
+export function normalizeUserPromptMode(v) {
+  if (typeof v === 'boolean') return v ? 'on' : 'off';
+  if (typeof v !== 'string') return null;
+  const s = v.trim().toLowerCase();
+  if (['off', 'none', 'false', 'disabled', 'never', 'no'].includes(s)) return 'off';
+  if (['on', 'true', 'enabled', 'always', 'yes'].includes(s)) return 'on';
+  return null;
+}
+
 // SessionStart shape: what the injected block LOOKS like once the budget is
 // spent. All three spend the same character budget; they differ in what they do
 // with the lessons that did not fit.
@@ -92,6 +113,18 @@ export function normalizeSessionStartMode(v) {
 export const DEFAULT_SESSION_START_MAX_CHARS = 1500;
 export const MIN_SESSION_START_MAX_CHARS = 200;
 export const MAX_SESSION_START_MAX_CHARS = 20000;
+
+// The events `hooks.instructions` can carry text for — every lifecycle event
+// that emits something a project instruction could ride along with. Exported so
+// `doctor` reports the same set the resolver reads: they were separate literals
+// and drifted, which is how `UserPromptSubmit` ended up documented, accepted in
+// config, and silently dropped by both.
+export const HOOK_INSTRUCTION_EVENTS = [
+  'SessionStart',
+  'UserPromptSubmit',
+  'PostToolUseFailure',
+  'Stop',
+];
 
 // Clamp a configured budget into the supported range, or null when the value is
 // not a usable number at all (absent, a bare string, NaN). Total: the caller
@@ -256,6 +289,21 @@ export function resolveControl({
     normalizeStopMode(userConfig['hooks.stop']) ||
     'friction';
 
+  // `hooks.userPrompt` — repo layer wins over user layer, default `on`.
+  //
+  // Default-on is safe because for an `install` the WIRING is the real switch:
+  // the event is installed by hook mode `all` alone, so a user who chose
+  // `read-only` or `none` never reaches this resolution at all, and someone who
+  // chose `all` opted into per-turn relevance — making them opt in twice would
+  // leave it dark for everyone who never read the config reference. A
+  // marketplace-plugin install has no mode and wires the event unconditionally,
+  // so there this key is the whole opt-out; that is why it stays a real config
+  // key rather than being folded into the hook mode.
+  const hooksUserPrompt =
+    normalizeUserPromptMode(repoConfig['hooks.userPrompt']) ||
+    normalizeUserPromptMode(userConfig['hooks.userPrompt']) ||
+    'on';
+
   // `hooks.sessionStart` — repo layer wins over user layer, default `hybrid`.
   // Chooses the SHAPE of the injected block (see SESSION_START_MODES). An
   // unrecognised value falls through to the next layer and finally to the
@@ -291,7 +339,6 @@ export function resolveControl({
   // Both layers contribute: repo instructions come first, user instructions follow
   // (same direction as `tags.default` — repo supplements, user personalises).
   // null for a given event means "no custom instruction for that event".
-  const HOOK_EVENTS = ['SessionStart', 'PostToolUseFailure', 'Stop'];
   const hooksInstructions = {};
   {
     const repoInstr =
@@ -300,7 +347,7 @@ export function resolveControl({
     const userInstr =
       (userConfig['hooks.instructions'] && typeof userConfig['hooks.instructions'] === 'object')
         ? userConfig['hooks.instructions'] : {};
-    for (const ev of HOOK_EVENTS) {
+    for (const ev of HOOK_INSTRUCTION_EVENTS) {
       const parts = [repoInstr[ev], userInstr[ev]]
         .filter((v) => typeof v === 'string' && v.trim().length > 0);
       hooksInstructions[ev] = parts.length > 0 ? parts.join('\n') : null;
@@ -318,6 +365,7 @@ export function resolveControl({
     scopeDefaults,
     hooksDisabled,
     hooksStop,
+    hooksUserPrompt,
     hooksSessionStart,
     hooksSessionStartMaxChars,
     hooksAdapter,

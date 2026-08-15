@@ -80,6 +80,11 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   // cross-LANGUAGE twin that no byte comparison can cover — the CLI's
   // `lessons-pure.mjs` — guarded behaviourally by `lesson-rank-parity.spec.ts`.
   ['lesson-rank.ts', '_shared/lesson-rank.ts'],
+  // The tags/origin_pr → outcome-factor mapping the ranked reads feed the
+  // scorer. Mirrored because BOTH ranked edge paths derive it —
+  // memories/handlers/relevant.ts and mcp/tools.ts (order=rank) — and neither
+  // can cross-import mcp-core; hoisted out of both so the two cannot drift.
+  ['outcome-signal.ts', '_shared/outcome-signal.ts'],
   // Two rules lifted OUT of Deno-only files so vitest can assert them:
   // rest-audit-actor.ts is `auditUserId` (was inline in _shared/api/auth.ts),
   // rest-response-outcome.ts is the status→usage_events.outcome

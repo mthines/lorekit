@@ -12,7 +12,14 @@ import {
   formatRelevantLessons,
   writeConfirmation,
   renderScopeMap,
+  promptQuery,
+  isSubstantivePrompt,
+  promptLessonsFromStore,
+  formatPromptLessons,
+  lessonId,
   SCOPE_READ_LIMIT,
+  PROMPT_FETCH_TIMEOUT_MS,
+  PROMPT_LOCAL_SEARCH_LIMIT,
 } from '../src/core/lessons.mjs';
 import { resolvePrecedence, matchesQuery } from '../src/lessons-pure.mjs';
 import { deriveScope } from '../src/scope.mjs';
@@ -60,6 +67,55 @@ test('formatLessons returns null when empty and a block otherwise', () => {
   assert.match(out, /repo::a\/b/);
   assert.match(out, /considerations, not rules/);
   assert.doesNotMatch(out, /second/); // only the first line is included
+});
+
+test('formatLessons reports only the lessons it RENDERED to onShown', () => {
+  const lessons = Array.from({ length: 8 }, (_, i) => ({
+    key: `k${i}`,
+    value: `lesson number ${i}`,
+    scope: 'repo::a/b',
+  }));
+  const seen = [];
+  const out = formatLessons(lessons, { repoScope: 'repo::a/b' }, {
+    maxChars: 120,
+    onShown: (rendered) => seen.push(...rendered.map((l) => l.key)),
+  });
+  // The budget binds, so the block is a strict subset — and `onShown` must
+  // describe that subset, never the whole candidate set.
+  assert.ok(seen.length > 0);
+  assert.ok(seen.length < lessons.length);
+  for (const key of seen) assert.match(out, new RegExp(key));
+  for (const l of lessons) {
+    if (!seen.includes(l.key)) assert.doesNotMatch(out, new RegExp(`${l.key} —`));
+  }
+});
+
+test('formatLessons reports every lesson to onShown when the budget fits them all', () => {
+  const lessons = [
+    { key: 'k1', value: 'one', scope: 'repo::a/b' },
+    { key: 'k2', value: 'two', scope: 'repo::a/b' },
+  ];
+  const seen = [];
+  formatLessons(lessons, { repoScope: 'repo::a/b' }, {
+    maxChars: 20000,
+    onShown: (rendered) => seen.push(...rendered.map((l) => l.key)),
+  });
+  assert.deepEqual(seen, ['k1', 'k2']);
+});
+
+test('formatLessons reports an empty set when there is nothing to show, and survives a throwing onShown', () => {
+  const seen = [];
+  assert.equal(
+    formatLessons([], { repoScope: 'repo::a/b' }, { onShown: (r) => seen.push(r) }),
+    null,
+  );
+  assert.deepEqual(seen, [[]]);
+  const out = formatLessons(
+    [{ key: 'k1', value: 'v', scope: 'repo::a/b' }],
+    { repoScope: 'repo::a/b' },
+    { onShown: () => { throw new Error('bookkeeping blew up'); } },
+  );
+  assert.match(out, /k1/);
 });
 
 test('nudges name the write scope', () => {
@@ -434,6 +490,25 @@ test('formatLessons with no instruction still returns null for empty lessons', (
   assert.equal(formatLessons([], { repoScope: 'repo::a/b' }), null);
   assert.equal(formatLessons([], { repoScope: 'repo::a/b' }, {}), null);
   assert.equal(formatLessons([], { repoScope: 'repo::a/b' }, { instruction: null }), null);
+});
+
+test('formatPromptLessons appends the UserPromptSubmit instruction to an existing block', () => {
+  const lessons = [{ key: 'k1', value: 'some lesson', scope: 'repo::a/b' }];
+  const out = formatPromptLessons(lessons, { instruction: 'Prefer a memory naming the file.' });
+  assert.match(out, /Project instruction:/);
+  assert.match(out, /Prefer a memory naming the file/);
+  // Absent / blank / non-string instructions leave the block byte-unchanged.
+  const bare = formatPromptLessons(lessons);
+  assert.equal(formatPromptLessons(lessons, {}), bare);
+  assert.equal(formatPromptLessons(lessons, { instruction: null }), bare);
+  assert.equal(formatPromptLessons(lessons, { instruction: '   ' }), bare);
+});
+
+test('formatPromptLessons never emits an instruction on its own', () => {
+  // The per-prompt hook fires every turn, so an instruction that could emit
+  // without a relevance hit would be a line on every single prompt.
+  assert.equal(formatPromptLessons([], { instruction: 'Always cite the file.' }), null);
+  assert.equal(formatPromptLessons(null, { instruction: 'Always cite the file.' }), null);
 });
 
 test('retrospectiveNudge appends instruction from control.hooksInstructions.Stop', () => {
@@ -1341,4 +1416,183 @@ test('fetchLessons scope map — enumeration never changes the injected lessons'
     without.lessons.map((l) => l.key),
   );
   assert.equal(withInventory.applicable, without.applicable);
+});
+
+// ── the per-prompt relevance pull ────────────────────────────────────────────
+// SessionStart injects before the user has said what they are doing, so its set
+// is necessarily a guess. This hook fires once there IS something to rank on.
+// Because it fires on EVERY turn, every test below is really about when it
+// stays QUIET — silence is the default answer, not the failure case.
+
+test('promptQuery — the length gate skips the acknowledgements a session is full of', () => {
+  for (const trivial of ['', '   ', 'yes', 'ok', 'continue', 'do it', 'next', 'go on']) {
+    assert.deepEqual(promptQuery(trivial), [], `"${trivial}" must not become a query`);
+  }
+});
+
+test('promptQuery — a substantive prompt distils to searchable terms', () => {
+  const terms = promptQuery('the migration keeps deadlocking when the backfill runs concurrently');
+  assert.ok(terms.includes('migration'));
+  assert.ok(terms.includes('deadlocking'));
+  assert.ok(terms.includes('backfill'));
+  // Short words are dropped by MIN_TERM_LEN, so the query stays meaningful.
+  assert.ok(!terms.includes('the'));
+  // And the shared STOPWORDS list applies — the SAME list the failure lookup
+  // uses, so "why did the failure hook find this and my prompt not?" has an
+  // answer that is not "they tokenize differently".
+  assert.ok(!promptQuery('this error failed with that response status code').includes('error'));
+});
+
+test('promptQuery — a long prompt carrying no usable term yields no terms', () => {
+  // Passes the length gate, caught by the term gate. Two cheap checks in
+  // series rather than one clever one: short words go by length, the rest by
+  // the shared stopword list.
+  assert.deepEqual(promptQuery('and the of it is to be for on with that this'), []);
+  assert.deepEqual(promptQuery('the tool call failed with this error code status'), []);
+});
+
+test('promptQuery — terms are FTS-safe, so no caller has to escape one', () => {
+  // They are joined into a single `websearch` query by the remote store. A
+  // metacharacter surviving the tokenizer would corrupt that query.
+  const terms = promptQuery('why does "SELECT * FROM x" fail with error(42) & timeout?');
+  assert.ok(terms.length > 0);
+  for (const t of terms) assert.match(t, /^[a-z0-9]+$/, `"${t}" is not FTS-safe`);
+});
+
+test('isSubstantivePrompt — the boundary is on the trimmed length', () => {
+  assert.equal(isSubstantivePrompt('x'.repeat(23)), false);
+  assert.equal(isSubstantivePrompt('x'.repeat(24)), true);
+  assert.equal(isSubstantivePrompt(`   ${'x'.repeat(24)}   `), true, 'whitespace is not content');
+  assert.equal(isSubstantivePrompt(null), false);
+  assert.equal(isSubstantivePrompt(undefined), false);
+});
+
+// A store whose `search` returns a FIXED set, so these tests are about the
+// hook's selection rules rather than about matching — which is the store's job
+// and is already covered by the corpus-backed `searchStore` above.
+function fixedHitsStore(entries) {
+  return { async search() { return { ok: true, entries }; } };
+}
+
+const PROMPT_SCOPE = { readOrder: ['repo::acme/widget', 'global'] };
+const PROMPT_NOW = Date.parse('2026-08-01T00:00:00.000Z');
+const pDaysAgo = (n) => new Date(PROMPT_NOW - n * 86400000).toISOString();
+
+test('promptLessonsFromStore — queries under the tight per-prompt budget, not restFetch default', async () => {
+  // This runs before the user's turn is handed to the assistant, so a wedged
+  // store must cost a fraction of a second rather than restFetch's 10s.
+  let seen;
+  const store = { async search(args) { seen = args; return { ok: true, entries: [] }; } };
+  await promptLessonsFromStore(store, PROMPT_SCOPE, ['migration'], { now: PROMPT_NOW });
+  assert.equal(seen.timeoutMs, PROMPT_FETCH_TIMEOUT_MS);
+  assert.ok(PROMPT_FETCH_TIMEOUT_MS < 10000, 'and it is tighter than the store default');
+});
+
+test('promptLessonsFromStore — bounds the local walk as `walkLimit`, never as `limit`', async () => {
+  // The sibling of the `timeoutMs` assertion above, and the reason the option
+  // is not called `limit`: `RemoteStore.search` destructures `limit` and maps
+  // it to `body.limit`, so a name collision on this store-agnostic seam would
+  // silently truncate the REMOTE hit set before `rankLessons` ever ran. Both
+  // halves are asserted deliberately — the presence of `walkLimit` alone would
+  // still pass if a second, wire-visible `limit` were added alongside it, and
+  // the absence of `limit` alone would pass if the bound were dropped entirely.
+  let seen;
+  const store = { async search(args) { seen = args; return { ok: true, entries: [] }; } };
+  await promptLessonsFromStore(store, PROMPT_SCOPE, ['migration'], { now: PROMPT_NOW });
+  assert.equal(seen.walkLimit, PROMPT_LOCAL_SEARCH_LIMIT, 'the local walk is bounded');
+  assert.equal(seen.limit, undefined, 'and the bound never reaches the remote store as `limit`');
+});
+
+test('promptLessonsFromStore — a timed-out lookup is silence, not an error', async () => {
+  // What an aborted restFetch looks like from here. The hook's default answer
+  // is nothing, so the budget can never cost the user their prompt.
+  const store = { async search() { throw Object.assign(new Error('aborted'), { name: 'AbortError' }); } };
+  const out = await promptLessonsFromStore(store, PROMPT_SCOPE, ['migration'], { now: PROMPT_NOW });
+  assert.deepEqual(out, []);
+});
+
+test('promptLessonsFromStore — ranks the hits rather than trusting the store order', async () => {
+  // The store's own ordering is not relevance: the remote route answers
+  // `updated_at desc` and the local two-tier store answers project-tier-first.
+  const entries = [
+    { scope: 'global', key: 'fresh-oneoff', value: 'migration note', seenCount: 1, updatedAt: pDaysAgo(0) },
+    { scope: 'global', key: 'recurring', value: 'migration note', seenCount: 20, updatedAt: pDaysAgo(4) },
+  ];
+  const out = await promptLessonsFromStore(fixedHitsStore(entries), PROMPT_SCOPE, ['migration'], { now: PROMPT_NOW });
+  assert.deepEqual(out.map((e) => e.key), ['recurring', 'fresh-oneoff']);
+});
+
+test('promptLessonsFromStore — caps at three, because this interrupts the user', async () => {
+  const entries = Array.from({ length: 10 }, (_, i) => ({
+    scope: 'global', key: `k${i}`, value: 'migration', seenCount: 10 - i, updatedAt: pDaysAgo(1),
+  }));
+  const out = await promptLessonsFromStore(fixedHitsStore(entries), PROMPT_SCOPE, ['migration'], { now: PROMPT_NOW });
+  assert.equal(out.length, 3);
+  assert.deepEqual(out.map((e) => e.key), ['k0', 'k1', 'k2'], 'and they are the top three by score');
+});
+
+test('promptLessonsFromStore — a lesson already shown this session is dropped', async () => {
+  // The delta rule. Re-injecting the same lesson every turn of a conversation
+  // that stays on one topic is exactly how an injection becomes wallpaper.
+  const entries = [
+    { scope: 'global', key: 'seen-already', value: 'migration', seenCount: 20, updatedAt: pDaysAgo(1) },
+    { scope: 'global', key: 'genuinely-new', value: 'migration', seenCount: 1, updatedAt: pDaysAgo(9) },
+  ];
+  const out = await promptLessonsFromStore(fixedHitsStore(entries), PROMPT_SCOPE, ['migration'], {
+    now: PROMPT_NOW,
+    alreadyShown: new Set(['global::seen-already']),
+  });
+  assert.deepEqual(out.map((e) => e.key), ['genuinely-new'], 'the higher-scoring hit is skipped as old news');
+});
+
+test('promptLessonsFromStore — everything already shown means silence, not a filler pick', async () => {
+  const entries = [{ scope: 'global', key: 'a', value: 'migration', seenCount: 3, updatedAt: pDaysAgo(1) }];
+  const out = await promptLessonsFromStore(fixedHitsStore(entries), PROMPT_SCOPE, ['migration'], {
+    now: PROMPT_NOW,
+    alreadyShown: new Set(['global::a']),
+  });
+  assert.deepEqual(out, []);
+});
+
+test('promptLessonsFromStore — filters AFTER ranking, so the cap keeps its meaning', async () => {
+  // Filtering first would let three weak lessons take the slots a strong but
+  // already-shown one vacated. Showing two good ones beats padding to three.
+  const entries = [
+    { scope: 'global', key: 'shown-strong', value: 'migration', seenCount: 50, updatedAt: pDaysAgo(0) },
+    { scope: 'global', key: 'b', value: 'migration', seenCount: 5, updatedAt: pDaysAgo(1) },
+    { scope: 'global', key: 'c', value: 'migration', seenCount: 4, updatedAt: pDaysAgo(2) },
+    { scope: 'global', key: 'd', value: 'migration', seenCount: 3, updatedAt: pDaysAgo(3) },
+  ];
+  const out = await promptLessonsFromStore(fixedHitsStore(entries), PROMPT_SCOPE, ['migration'], {
+    now: PROMPT_NOW,
+    alreadyShown: new Set(['global::shown-strong']),
+  });
+  assert.deepEqual(out.map((e) => e.key), ['b', 'c', 'd']);
+});
+
+test('promptLessonsFromStore — no terms, no store, or a throwing store all yield silence', async () => {
+  assert.deepEqual(await promptLessonsFromStore(fixedHitsStore([]), PROMPT_SCOPE, []), []);
+  assert.deepEqual(await promptLessonsFromStore(null, PROMPT_SCOPE, ['x']), []);
+  assert.deepEqual(await promptLessonsFromStore({}, PROMPT_SCOPE, ['x']), []);
+  const throwing = { async search() { throw new Error('offline'); } };
+  assert.deepEqual(await promptLessonsFromStore(throwing, PROMPT_SCOPE, ['x']), []);
+  const notOk = { async search() { return { ok: false }; } };
+  assert.deepEqual(await promptLessonsFromStore(notOk, PROMPT_SCOPE, ['x']), []);
+});
+
+test('formatPromptLessons — an index block, never a body, and null when empty', () => {
+  assert.equal(formatPromptLessons([]), null);
+  assert.equal(formatPromptLessons(null), null);
+  const text = formatPromptLessons([
+    { scope: 'global', key: 'k', value: 'Always add the column before the backfill runs.\nMore detail here.' },
+  ]);
+  assert.match(text, /^LoreKit: 1 memory related to this — considerations, not rules/);
+  assert.match(text, /^- \(global\) k — Always add the column before the backfill runs\.$/m);
+  assert.ok(!text.includes('More detail here'), 'the body stays one memory.read away');
+});
+
+test('lessonId — one spelling of identity, shared by both sides of the shown-set', () => {
+  assert.equal(lessonId({ scope: 'global', key: 'k' }), 'global::k');
+  assert.equal(lessonId({}), '::');
+  assert.equal(lessonId(null), '::');
 });

@@ -22,11 +22,12 @@ keywords: ["configuration", ".lorekit.json", "config.json", "mode", "store", "de
 | `mcp.endpoint` | `string` | Repo | Committable MCP URL without a token, so the connection can live in VCS. The token still comes from .mcp.json or LOREKIT_TOKEN. |
 | `tags.default` | `string[]` | Both | Tags appended to every memory.write. Both layers are merged: repo tags first, then user tags. |
 | `scope.defaults` | `Record<string, { tags: string[] }>` | Repo | Per-scope tag defaults, applied to writes whose scope starts with the key (prefix match, no wildcards). A team-level write policy. |
-| `hooks.disabled` | `("SessionStart" \| "PostToolUseFailure" \| "Stop")[]` | Both | Suppress specific lifecycle hook events. Union across layers — either layer can turn an event off. |
+| `hooks.disabled` | `("SessionStart" \| "UserPromptSubmit" \| "PostToolUseFailure" \| "Stop")[]` | Both | Suppress specific lifecycle hook events. Union across layers — either layer can turn an event off. |
 | `hooks.sessionStart` | `"hybrid" \| "index" \| "map"` | Both | Shape of the block injected at session start. hybrid (default) fills the budget with the highest-ranked memories and then names whatever was left out in a one-line scope map; index fills the budget and truncates silently; map leads with the scope map plus the three most salient memories. Repo wins over user; an unrecognised value is ignored and the next layer is tried, so a mistyped repo value falls through to the user layer before defaulting to hybrid. |
 | `hooks.sessionStart.maxChars` | `number (200–20000)` | Both | Character budget for that block. Defaults to 1500 (~375 tokens). Out-of-range values are clamped rather than rejected. Repo wins over user — a repo that declared a budget owns the decision even when the value is unparseable, so a typo degrades to the default instead of silently handing the choice to a personal config. |
+| `hooks.userPrompt` | `"on" \| "off"` | Both | Whether the per-turn relevance pull runs. On each substantive prompt it queries the store for memories matching what you just typed and injects at most three you have not already been shown this session. Defaults to on. It is a switch rather than a mode on purpose: the knobs a mode would expose (how many, how strict) are the two things that must not be turned up on a hook that fires every turn. Two install paths reach it: `lorekit install --hooks all` (read-only and none do not wire the event at all, so they never reach this setting), and the Claude marketplace plugin, whose `hooks.json` wires the event unconditionally — there is no mode involved there, so `hooks.userPrompt` is the mode-independent off switch a plugin user has — and `hooks.disabled: ["UserPromptSubmit"]` switches the event off one gate earlier, so it is not the only opt-out. Repo wins over user. |
 | `hooks.adapter` | `"claude" \| "cursor" \| "codex"` | Both | Explicit host adapter when auto-detection is ambiguous. Repo wins over user. |
-| `hooks.instructions` | `Record<"SessionStart" \| "PostToolUseFailure" \| "Stop", string \| null>` | Both | Per-event custom text appended to the hook output. Lets teams embed project-specific guidance (e.g. "focus on migration safety") into the injected agent context. Both layers are merged: repo instructions first, then user. null or an absent key means no instruction for that event. |
+| `hooks.instructions` | `Record<"SessionStart" \| "UserPromptSubmit" \| "PostToolUseFailure" \| "Stop", string \| null>` | Both | Per-event custom text appended to the hook output. Lets teams embed project-specific guidance (e.g. "focus on migration safety") into the injected agent context. Both layers are merged: repo instructions first, then user. null or an absent key means no instruction for that event. |
 | `telemetry.disabled` | `boolean` | Repo | Team-level opt-out of anonymous CLI usage telemetry, read from .lorekit.json only. The env var LOREKIT_TELEMETRY=0 always wins if set. |
 | `dedupe.threshold` | `number (0–1)` | Repo | Jaccard similarity cutoff for lorekit dedupe value-overlap clustering. The --threshold flag wins when passed explicitly. Defaults to 0.8. Key-shape clustering (lorekit dedupe --cluster-by-key) applies no cutoff, so this key is ignored there and passing --threshold alongside --cluster-by-key is a usage error. |
 
@@ -77,7 +78,7 @@ Machine-local preferences live in `~/.lorekit/config.json`. This is where a priv
 
 <TutorialStep number={3} title="Add project-specific hook instructions">
 
-Use `hooks.instructions` to inject custom guidance into the three hook events. The agent sees your text appended to each event's output — your default LoreKit messages stay unchanged:
+Use `hooks.instructions` to inject custom guidance into the four hook events. The agent sees your text appended to each event's output — your default LoreKit messages stay unchanged:
 
 ```json
 // .lorekit.json
@@ -85,6 +86,9 @@ Use `hooks.instructions` to inject custom guidance into the three hook events. T
   "hooks.instructions": {
     // Injected at session start, after the memory index.
     "SessionStart":       "Focus on migration safety. Any lesson tagged 'migration' is high-priority.",
+    // Injected with the per-turn relevance block — only on a turn that already
+    // has one, so it never adds a line to every prompt.
+    "UserPromptSubmit":   "Prefer a memory that names the file you are editing.",
     // Injected alongside the failure nudge when a tool call fails.
     "PostToolUseFailure": "When recording a failure, include the exact command and exit code.",
     // Injected with the retrospective nudge at end-of-turn (null = disabled for this event).
@@ -104,12 +108,13 @@ At session start LoreKit injects a compact index of the memories that apply to y
 ```json
 // .lorekit.json
 {
+  "hooks.userPrompt": "on",
   "hooks.sessionStart": "hybrid",
   "hooks.sessionStart.maxChars": 1500
 }
 ```
 
-Memories are ranked before the budget is spent, so the ones that survive are the most-recurring and most-recent, not merely the newest. When the budget runs out, the shape decides what happens to the rest:
+Memories are ranked before the budget is spent, so the ones that survive are the most-recurring and most-recent, not merely the newest. They are also **diversified** — when several highly-ranked memories read almost the same (one task's iteration log, say), the near-duplicates are pushed down so the budget shows variety instead of the same lesson three times. When the budget runs out, the shape decides what happens to the rest:
 
 - **`hybrid`** (default) — fill the budget, then add one line naming what was left out and where it lives:
 

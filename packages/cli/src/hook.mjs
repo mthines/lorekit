@@ -13,13 +13,22 @@ import {
   retrospectiveNudge,
   failureNudge,
   failureQuery,
+  promptQuery,
+  promptLessonsFromStore,
+  formatPromptLessons,
+  lessonId,
   relevantLessonsFromStore,
   formatRelevantLessons,
   writeConfirmation,
 } from './core/lessons.mjs';
 import { isFailure } from './core/failure.mjs';
 import { readSessionFriction, shouldRetrospect, FRICTION_FAILURE } from './core/friction.mjs';
-import { firstTimeThisSession, sessionMarkerExists } from './core/state.mjs';
+import {
+  firstTimeThisSession,
+  sessionMarkerExists,
+  shownLessons,
+  recordShownLessons,
+} from './core/state.mjs';
 import { recordFixture } from './core/record.mjs';
 import { claude } from './adapters/claude.mjs';
 import { cursor } from './adapters/cursor.mjs';
@@ -113,7 +122,61 @@ async function run(args) {
       maxChars: control.hooksSessionStartMaxChars,
       scopeCounts,
       applicable,
+      // Record what this injection RENDERED, so the per-prompt hook treats it as
+      // already seen. It must be the rendered subset, not the fetched set: the
+      // budget and the hard ceiling routinely drop lessons, and marking those
+      // shown would let the delta gate suppress — for the whole session —
+      // exactly the lessons the reader never saw. Bookkeeping only:
+      // `recordShownLessons` never throws, and a failure costs at most one
+      // repeated lesson later in the session.
+      onShown: (rendered) => recordShownLessons(parsed.sessionId, rendered.map(lessonId)),
     }));
+    return 0;
+  }
+
+  if (intent === 'relevant-read') {
+    // The per-turn relevance pull. Fires on EVERY prompt, so every branch below
+    // is a reason to stay silent — the hook's default answer is nothing.
+    //
+    // Config gate, and the ONLY off switch some users have. Via `install` the
+    // event is wired by hook mode `all` alone, so reaching here means the user
+    // opted into the full lifecycle and `hooks.userPrompt` lets them keep it
+    // while switching off just this one. Via the Claude marketplace plugin
+    // there is no mode at all — `plugins/lorekit-claude/hooks/hooks.json` wires
+    // the event unconditionally — so for a plugin install this setting is the
+    // whole opt-out.
+    if ((control.hooksUserPrompt || 'on') === 'off') return 0;
+
+    // Length gate. "yes" / "continue" / "do it" carry nothing worth querying,
+    // and a store lookup per acknowledgement is pure overhead on the user's
+    // critical path.
+    const terms = promptQuery(parsed.prompt);
+    if (terms.length === 0) return 0;
+
+    try {
+      const store = createStore(control);
+      if (!store) return 0;
+      const lessons = await promptLessonsFromStore(store, scope, terms, {
+        // Delta only. Includes the SessionStart set, because "already shown"
+        // has to mean shown by anything — a hook that only remembered its own
+        // output would resurface the session's opening injection one lesson at
+        // a time.
+        alreadyShown: shownLessons(parsed.sessionId),
+      });
+      // Relevance gate: nothing matched, or everything that matched was already
+      // on screen. Either way there is no news, and an "in case it helps" block
+      // attached to an unrelated prompt is how a reader learns to skip the
+      // block entirely — which would cost the SessionStart injection its
+      // credibility too.
+      if (lessons.length === 0) return 0;
+      recordShownLessons(parsed.sessionId, lessons.map(lessonId));
+      emit(formatPromptLessons(lessons, {
+        instruction: (control.hooksInstructions && control.hooksInstructions.UserPromptSubmit) || null,
+      }));
+    } catch {
+      // Best-effort, like every other branch: the user's turn proceeds either
+      // way, and a store hiccup must never cost them their prompt.
+    }
     return 0;
   }
 

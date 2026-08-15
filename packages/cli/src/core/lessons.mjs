@@ -12,7 +12,7 @@ import { deriveScope } from '../scope.mjs';
 // the injected set is chosen by ONE scorer, and a future `memory.relevant` verb
 // must be able to reuse it rather than grow a second ranking with its own idea
 // of what "most useful" means.
-import { resolvePrecedence, rankLessons } from '../lessons-pure.mjs';
+import { resolvePrecedence, rankLessons, diversifyRankedLessons } from '../lessons-pure.mjs';
 // The store's own scope inventory, normalised — the SAME helper `memory.scopes`
 // uses, so the map and the MCP tool cannot disagree about what a scope holds or
 // about what a failed enumeration looks like.
@@ -167,7 +167,16 @@ export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
   // first-appearance default — they agree today, but the hierarchy is
   // `readOrder`'s to state, not an artefact of how this function happens to
   // build its array.
-  const ranked = rankLessons(winners, { terms: [], now, scopeOrder: scope.readOrder });
+  // ONE options object feeds both the ranking and the diversification below, so
+  // the two can never drift: `diversifyRankedLessons` recomputes each entry's
+  // score to seed the MMR objective, and if its `terms`/`now`/`weights` differed
+  // from what `rankLessons` sorted on, those scores would not line up with the
+  // order — the near-identical `now` clock especially. Sharing the object makes
+  // that agreement structural rather than a thing two call sites have to keep in
+  // step by hand. `k` is diversification-only; `scopeOrder` is ranking-only and
+  // simply ignored by the diversifier's destructuring.
+  const rankOpts = { terms: [], now, scopeOrder: scope.readOrder };
+  const ranked = rankLessons(winners, rankOpts);
 
   // ── the scope map: EXACT counts when the store can enumerate ───────────────
   //
@@ -219,12 +228,29 @@ export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
     ? scopeInventoryFromStore(inventory.scopes, scope.readOrder, derivedCounts)
     : derivedCounts;
 
+  // DIVERSIFY before the ceiling, so the budget is not spent on near-identical
+  // lessons. Ranking answers "which lessons score highest"; on an active repo
+  // the highest cluster is often one task's iteration log — a dozen
+  // `review-outcomes::pr395-it{3,4,5}` rows that score alike AND read alike, so
+  // a plain top-N hands the reader the same lesson several times and evicts the
+  // variety underneath. `diversifyRankedLessons` applies the SAME MMR
+  // (`selectDiverse`, λ=0.7 lexical Jaccard) the hosted `order=rank` path
+  // already uses, which was defined and exported here but never wired into the
+  // session-start read. It seeds with the top-ranked lesson (score is still
+  // 0.7 of the objective) and only spends the remaining 0.3 pushing down a
+  // lesson that repeats one already shown — so the best lesson stays first and
+  // the set stops being a wall of duplicates. `terms: []` matches the
+  // `rankLessons` call above (relevance contributes nothing at session start),
+  // which the scores MUST agree with. The scope map and `applicable` still read
+  // from `ranked` — the map is a pointer to what EXISTS per scope, a question
+  // diversification does not change.
+  //
   // `applicable` is the honest denominator for the header — how many the reader
   // has, as opposed to how many fitted. It is counted BEFORE the ceiling, so
   // "8 of 50" stays true no matter how the render is bounded.
   return {
     scope,
-    lessons: ranked.slice(0, HARD_LESSON_CEILING),
+    lessons: diversifyRankedLessons(ranked, { ...rankOpts, k: HARD_LESSON_CEILING }),
     scopeCounts,
     applicable: ranked.length,
   };
@@ -327,15 +353,29 @@ function lessonHook(value, max = HOOK_LEN) {
 // `hooks.instructions.SessionStart` in the control config. Lets teams inject
 // project-specific guidance (e.g. "focus on migration safety") without touching
 // the hook internals. Visible even when there are no lessons.
+// `onShown` — an optional callback receiving the lessons this call actually
+// RENDERED, which is a subset of `lessons` whenever the budget or the ceiling
+// binds. The selection happens in here and nowhere else, so a caller that needs
+// to know what the reader saw (the shown-set bookkeeping) has to be told rather
+// than re-deriving it — a second copy of the fit maths would drift the moment
+// either bound changes.
 export function formatLessons(lessons, scope, {
   instruction = null,
   mode = 'hybrid',
   maxChars = DEFAULT_SESSION_START_MAX_CHARS,
   scopeCounts = null,
   applicable = null,
+  onShown = null,
 } = {}) {
+  // Never let bookkeeping break the render: this function's contract is to
+  // return a block, and a throwing callback must not cost the reader theirs.
+  const report = (rendered) => {
+    if (typeof onShown !== 'function') return;
+    try { onShown(rendered); } catch { /* best-effort */ }
+  };
   const all = Array.isArray(lessons) ? lessons : [];
   if (all.length === 0) {
+    report([]);
     // No lessons — only emit if there is a custom instruction to show.
     if (!instruction) return null;
     return (
@@ -360,6 +400,7 @@ export function formatLessons(lessons, scope, {
 
   const ceiling = shape === 'map' ? Math.min(MAP_TOP_K, HARD_LESSON_CEILING) : HARD_LESSON_CEILING;
   const { shown } = fitLines(all, budget - reserve, ceiling);
+  report(shown.map((s) => s.lesson));
 
   // `map` always shows the inventory; `hybrid` shows it only when something was
   // actually left out — otherwise the reader is looking at the complete set and
@@ -434,10 +475,29 @@ export function renderScopeMap(scopeCounts) {
 // stays meaningful, and the count is capped (`MAX_TERMS`) so a huge error blob
 // can't blow up the downstream scan.
 export function failureQuery(toolName, toolResponse) {
-  const text = `${toolName ? String(toolName) : ''} ${errorText(toolResponse)}`.slice(0, MAX_SCAN_CHARS);
+  return distilTerms(`${toolName ? String(toolName) : ''} ${errorText(toolResponse)}`);
+}
+
+// The tokenizer both query builders share. Lowercased `[a-z0-9]+` runs of at
+// least `MIN_TERM_LEN` characters, stopword-filtered, de-duplicated, capped at
+// `MAX_TERMS`, over at most `MAX_SCAN_CHARS` of input. The floor is INCLUSIVE:
+// the filter is `raw.length < MIN_TERM_LEN`, so a term exactly `MIN_TERM_LEN`
+// characters long is kept.
+//
+// The bound is applied to the TEXT before splitting, not to the token array
+// after: a multi-megabyte stderr blob (or a pasted file) would otherwise
+// materialise a giant token array on the way to being capped — a CPU and memory
+// spike for a result that was always going to be twelve words.
+//
+// Producing `[a-z0-9]+` runs is also what keeps the terms safe to hand to the
+// remote store, whose `search` joins them into ONE `websearch` FTS query: no
+// FTS metacharacter can survive this filter, so no caller has to escape one.
+// Pure and total.
+export function distilTerms(text) {
+  const scanned = String(text ?? '').slice(0, MAX_SCAN_CHARS).toLowerCase();
   const seen = new Set();
   const terms = [];
-  for (const raw of text.toLowerCase().split(/[^a-z0-9]+/)) {
+  for (const raw of scanned.split(/[^a-z0-9]+/)) {
     if (raw.length < MIN_TERM_LEN || STOPWORDS.has(raw) || seen.has(raw)) continue;
     seen.add(raw);
     terms.push(raw);
@@ -484,12 +544,19 @@ export function dedupeRelevant(entries, cap = MAX_RELEVANT) {
 // capped by the pure `dedupeRelevant`, keeping the store's own ordering (see its
 // docblock). Best-effort: an unusable/throwing store returns [] so the
 // caller falls back to the write-nudge alone.
-export async function relevantLessonsFromStore(store, scope, terms, { cap = MAX_RELEVANT } = {}) {
+export async function relevantLessonsFromStore(store, scope, terms, { cap = MAX_RELEVANT, timeoutMs, walkLimit } = {}) {
   if (!store || typeof store.search !== 'function') return [];
   if (!scope || !Array.isArray(scope.readOrder) || scope.readOrder.length === 0) return [];
   if (!Array.isArray(terms) || terms.length === 0) return [];
   try {
-    const res = await store.search({ q: terms, scopes: scope.readOrder });
+    // `timeoutMs` bounds the REMOTE route (a network fetch); `walkLimit` bounds
+    // the OFFLINE one (a synchronous file walk `timeoutMs` cannot interrupt).
+    // They are deliberately separate names: `RemoteStore.search` reads `limit`
+    // (→ `body.limit`), so a shared name would truncate the remote hit set
+    // BEFORE `rankLessons` runs — exactly what a hot-path caller must avoid.
+    // `walkLimit` is honoured only by the local stores; the remote ignores it
+    // and stays bounded by `timeoutMs` alone, as it was before this budget.
+    const res = await store.search({ q: terms, scopes: scope.readOrder, timeoutMs, walkLimit });
     if (!res || !res.ok || !Array.isArray(res.entries)) return [];
     return dedupeRelevant(res.entries, cap);
   } catch {
@@ -673,3 +740,165 @@ const STOPWORDS = new Set([
   'response',
   'status',
 ]);
+
+// ── the per-prompt relevance pull (UserPromptSubmit) ─────────────────────────
+//
+// SessionStart injects once, at the top of a session, before the user has said
+// what they are doing. That set is necessarily a guess: it is ranked on recency
+// and recurrence because there is nothing else to rank on yet. The moment the
+// user types "the migration keeps deadlocking", there IS something to rank on —
+// and until this hook, nothing used it. The only mid-session trigger was a tool
+// FAILURE, which means the loop could only ever tell you about a mistake after
+// you had already made it.
+//
+// The whole design problem is that this fires on EVERY turn, so the cost of
+// being wrong is paid over and over. Three gates keep it quiet, and each one
+// exists because the failure mode without it is worse than showing nothing:
+//
+//   LENGTH    — "yes", "continue", "go on" carry no terms worth querying, and a
+//               store lookup per keystroke-sized prompt is pure overhead.
+//   RELEVANCE — no match means silence. An "in case it helps" lesson attached
+//               to an unrelated prompt trains the reader to skim past the
+//               block, which costs the SessionStart injection its credibility
+//               too.
+//   DELTA     — a lesson already shown this session is not news. Re-injecting
+//               it is the specific way a per-turn hook becomes wallpaper.
+
+// Shortest prompt worth a store lookup. Tuned to skip the acknowledgements that
+// dominate a real session ("yes", "ok", "continue", "do it", "next") while
+// keeping anything that states an intent. Deliberately generous: the relevance
+// gate is the real filter, and this one only exists to avoid paying for a query
+// whose terms would be discarded anyway.
+const MIN_PROMPT_CHARS = 24;
+
+// Cap on lessons injected per prompt. Smaller than the SessionStart budget by an
+// order of magnitude, because this competes with the user's own turn: three
+// index lines is a glance, and anything more is an interruption.
+const MAX_PROMPT_LESSONS = 3;
+
+// Fetch budget for the per-prompt pull, deliberately far below `restFetch`'s
+// 10s default. This is the ONE lookup that sits on the user's critical path —
+// it runs before their turn is handed to the assistant — so a slow or wedged
+// store must cost them a fraction of a second, not ten. Timing out is not a
+// failure mode here: the abort surfaces as no hits, and no hits is already this
+// hook's most common and entirely valid answer. Same reasoning as
+// `telemetry.mjs`'s 1500 ms export budget; a touch more generous because a
+// missed lesson is worth slightly more than a missed metric.
+export const PROMPT_FETCH_TIMEOUT_MS = 2000;
+
+// The offline-store counterpart to the fetch budget above. `timeoutMs` bounds
+// the remote route, but the local store walks every scope's files synchronously
+// on every prompt — an unbounded walk a wall-clock budget cannot interrupt. The
+// per-prompt pull forwards this as `walkLimit` (NOT `limit`, which the remote
+// store maps to `body.limit` and would truncate its hit set pre-ranking), so it
+// bounds only the offline walk: the block ranks then keeps MAX_PROMPT_LESSONS,
+// so a few hundred nearest-scope hits is far more than the ranker needs to
+// surface the best three. Only the hot-path caller passes it; the failure hook
+// stays unbounded, as it was.
+export const PROMPT_LOCAL_SEARCH_LIMIT = 200;
+
+/**
+ * Is this prompt worth a relevance lookup?
+ *
+ * Length is measured AFTER trimming, on the raw prompt. A long prompt made
+ * entirely of stopwords still passes here and is caught by the term gate below
+ * — two cheap checks in series rather than one clever one.
+ */
+export function isSubstantivePrompt(prompt, min = MIN_PROMPT_CHARS) {
+  return String(prompt ?? '').trim().length >= min;
+}
+
+/**
+ * Distil search terms from a user prompt.
+ *
+ * The same tokenizer the failure lookup uses, for the same reason: whatever
+ * reaches the store must be `[a-z0-9]+` runs, and the two callers must agree on
+ * what counts as a term or "why did the failure hook find this and my prompt
+ * not?" becomes unanswerable.
+ *
+ * Returns `[]` for a prompt that is too short or carries nothing but stopwords,
+ * which the caller reads as "stay silent".
+ */
+export function promptQuery(prompt) {
+  if (!isSubstantivePrompt(prompt)) return [];
+  return distilTerms(prompt);
+}
+
+/**
+ * Render the per-turn block, or null when there is nothing to say.
+ *
+ * INDEX ONLY, and shorter than the failure block's lines. This arrives while
+ * the user is mid-thought, so it has to be scannable in a glance and cost as
+ * little context as possible; the body is always one `memory.read` away. The
+ * framing is "you have notes on this", never an instruction — the same
+ * considerations-not-rules posture as every other injection.
+ */
+export function formatPromptLessons(lessons, { instruction = null } = {}) {
+  if (!lessons || lessons.length === 0) return null;
+  const noun = lessons.length === 1 ? 'memory' : 'memories';
+  const header =
+    `LoreKit: ${lessons.length} ${noun} related to this — `
+    + `considerations, not rules; read in full with memory.read:`;
+  const body = lessons.map((l) => `- (${l.scope}) ${l.key} — ${lessonHook(l.value)}`).join('\n');
+  // `hooks.instructions.UserPromptSubmit`, appended the same way the other
+  // events append theirs. It rides an EXISTING block and never creates one:
+  // this hook fires on every turn, so an instruction that could emit on its own
+  // would be a line on every prompt — the noise the relevance gate exists to
+  // prevent.
+  const extra = typeof instruction === 'string' && instruction.trim()
+    ? `\n\nProject instruction: ${instruction}` : '';
+  return `${header}\n${body}${extra}`;
+}
+
+/**
+ * The per-prompt pull: query the store for this prompt's terms, rank, drop
+ * anything already shown, cap.
+ *
+ * QUERYING rather than filtering the injected set is the same call the failure
+ * hook makes, and for the same reason: a post-filter can only ever resurface a
+ * lesson that was already on screen, so a paraphrased match or one that lost
+ * the SessionStart ranking would be permanently unreachable — which is exactly
+ * the lore this hook exists to surface.
+ *
+ * RANKING runs after the store returns, because the store's own ordering is not
+ * relevance: the remote route answers `updated_at desc` and the local two-tier
+ * store answers project-tier-first. `rankLessons` with the prompt's terms
+ * applies the same scorer the SessionStart block uses, so a recurring lesson
+ * beats a fresher one-off here too.
+ *
+ * `alreadyShown` is a Set of `scope::key`. Filtering AFTER ranking rather than
+ * before is deliberate: it keeps the cap meaningful. Filtering first would let
+ * three weak lessons take the slots a strong-but-already-shown one vacated,
+ * which is worse than showing two.
+ *
+ * Best-effort and total — any failure yields `[]`, and the hook stays silent.
+ * That includes the fetch budget: the lookup runs under
+ * `PROMPT_FETCH_TIMEOUT_MS` rather than `restFetch`'s 10s default, and an abort
+ * arrives here as no hits, the same as a store that simply had nothing.
+ */
+export async function promptLessonsFromStore(store, scope, terms, {
+  alreadyShown = new Set(),
+  cap = MAX_PROMPT_LESSONS,
+  now = Date.now(),
+  timeoutMs = PROMPT_FETCH_TIMEOUT_MS,
+} = {}) {
+  if (!Array.isArray(terms) || terms.length === 0) return [];
+  const hits = await relevantLessonsFromStore(store, scope, terms, {
+    cap: Number.MAX_SAFE_INTEGER,
+    timeoutMs,
+    walkLimit: PROMPT_LOCAL_SEARCH_LIMIT,
+  });
+  if (hits.length === 0) return [];
+  const ranked = rankLessons(hits, {
+    terms,
+    now,
+    scopeOrder: Array.isArray(scope?.readOrder) ? scope.readOrder : null,
+  });
+  const fresh = ranked.filter((e) => !alreadyShown.has(lessonId(e)));
+  return dedupeRelevant(fresh, cap);
+}
+
+/** The identity a shown-set is keyed on. One spelling, used by both sides. */
+export function lessonId(entry) {
+  return `${entry?.scope ?? ''}::${entry?.key ?? ''}`;
+}

@@ -110,6 +110,13 @@ importers:
       '@lorekit/core':
         specifier: workspace:*
         version: link:../mcp-core
+      '@lorekit/schemas':
+        specifier: workspace:*
+        version: link:../schemas
+    devDependencies:
+      '@lorekit/web':
+        specifier: workspace:*
+        version: link:../web
 
   packages/mcp-core:
     dependencies:

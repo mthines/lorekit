@@ -6,7 +6,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { install, defaultHookMode, HOOK_PROMPT_OPTIONS, tokenPlan, maskToken } from '../src/install.mjs';
-import { skillInstallDir, mcpConfigPath, homeDir, installedHookEvents, HOOK_MODES } from '../src/config.mjs';
+import {
+  skillInstallDir, mcpConfigPath, homeDir, installedHookEvents, HOOK_MODES, CLAUDE_HOOK_EVENTS,
+} from '../src/config.mjs';
 import { withHome } from './helpers.mjs';
 
 function tmp(prefix) {
@@ -269,12 +271,14 @@ test('install --mcp-json reaches the write step even on an already-complete inst
   });
 });
 
-test('install wires the three lifecycle hooks into project settings.json', async () => {
+test('install wires every lifecycle hook into project settings.json', async () => {
   const root = tmp('lk-hooks-');
   await install({ dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true });
 
   const settings = JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8'));
-  for (const event of ['SessionStart', 'PostToolUseFailure', 'Stop']) {
+  // Derived from the constant, never a hardcoded list: a literal triple passed
+  // unchanged whether or not a newly-wired event reached settings.json.
+  for (const event of CLAUDE_HOOK_EVENTS) {
     assert.ok(settings.hooks[event]?.length, `${event} hook group present`);
     const cmd = settings.hooks[event][0].hooks[0].command;
     assert.match(cmd, /lorekit(\/cli)? hook --adapter claude --event /);
@@ -289,7 +293,7 @@ test('install hook wiring is idempotent (no duplicate entries on re-run)', async
   await install(opts);
 
   const settings = JSON.parse(fs.readFileSync(path.join(root, '.claude', 'settings.json'), 'utf8'));
-  for (const event of ['SessionStart', 'PostToolUseFailure', 'Stop']) {
+  for (const event of CLAUDE_HOOK_EVENTS) {
     assert.equal(settings.hooks[event].length, 1, `${event} not duplicated on re-run`);
   }
 });
@@ -493,8 +497,11 @@ test('a non-interactive re-install leaves a hand-wired custom hook set alone', a
     // Hand-wire a subset no preset matches: keep Stop, drop the other two.
     const file = path.join(root, '.claude', 'settings.json');
     const seeded = JSON.parse(fs.readFileSync(file, 'utf8'));
-    delete seeded.hooks.SessionStart;
-    delete seeded.hooks.PostToolUseFailure;
+    // Keep Stop, drop every other lorekit event. DERIVED rather than naming
+    // them: hand-listing the events means a newly-added one survives the
+    // deletion and the "custom" set quietly becomes a preset, so the test would
+    // pass while asserting nothing.
+    for (const e of CLAUDE_HOOK_EVENTS) if (e !== 'Stop') delete seeded.hooks[e];
     fs.writeFileSync(file, JSON.stringify(seeded));
     assert.deepEqual(installedHookEvents(root, 'project'), ['Stop'], `${label}: custom set seeded`);
     mutate(root);
@@ -519,8 +526,7 @@ test('preserving a hand-wired custom set still refreshes a stale hook command', 
   // Hand-wire a subset no preset matches AND rot its command string.
   const file = path.join(root, '.claude', 'settings.json');
   const seeded = JSON.parse(fs.readFileSync(file, 'utf8'));
-  delete seeded.hooks.SessionStart;
-  delete seeded.hooks.PostToolUseFailure;
+  for (const e of CLAUDE_HOOK_EVENTS) if (e !== 'Stop') delete seeded.hooks[e];
   const stale = 'lorekit hook --adapter claude --event Stop --stale-flag';
   seeded.hooks.Stop[0].hooks[0].command = stale;
   fs.writeFileSync(file, JSON.stringify(seeded));
@@ -542,7 +548,11 @@ test('install --hooks none removes hooks that are already wired', async () => {
   const root = tmp('lk-hooks-none-');
   const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
   await install(base);
-  assert.ok(installedHookEvents(root, 'project').length === 3, 'hooks wired by the first run');
+  assert.equal(
+    installedHookEvents(root, 'project').length,
+    CLAUDE_HOOK_EVENTS.length,
+    'hooks wired by the first run',
+  );
 
   await install({ ...base, hooks: 'none' });
   assert.deepEqual(installedHookEvents(root, 'project'), [], 'declining removes them');
@@ -572,7 +582,11 @@ test('install --no-hooks is skip-only and leaves already-wired hooks in place', 
   // --no-hooks has always meant "do not wire", never "take away" — changing
   // that silently would be a breaking change for anyone scripting it.
   await install({ ...base, 'no-hooks': true });
-  assert.equal(installedHookEvents(root, 'project').length, 3, 'existing hooks untouched');
+  assert.equal(
+    installedHookEvents(root, 'project').length,
+    CLAUDE_HOOK_EVENTS.length,
+    'existing hooks untouched',
+  );
 });
 
 test('install --hooks with an invalid mode exits non-zero and names the valid modes', async () => {
@@ -621,7 +635,7 @@ test('an explicit --hooks reaches the hook step even on a complete install', asy
   // Without the bypass this run would hit the already-installed short-circuit
   // and the user would have to --force a full reinstall to flip one setting.
   await install({ ...base, hooks: 'all' });
-  assert.equal(installedHookEvents(root, 'project').length, 3);
+  assert.deepEqual(installedHookEvents(root, 'project').sort(), [...CLAUDE_HOOK_EVENTS].sort());
 });
 
 // ── Duplicate repair is a HOOK-STEP repair, so it inherits the short-circuit ──
@@ -663,6 +677,38 @@ function lorekitHookCount(root, event = 'SessionStart') {
     .length;
 }
 
+// Strip a lorekit hook entry for one event, leaving the pre-UserPromptSubmit
+// wiring an install from an older version would have left behind.
+function unwireHookEvent(root, event) {
+  const file = path.join(root, '.claude', 'settings.json');
+  const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
+  delete settings.hooks[event];
+  fs.writeFileSync(file, JSON.stringify(settings, null, 2) + '\n');
+}
+
+test('the already-installed summary names an available hook upgrade', async () => {
+  const root = tmp('lk-hook-upgrade-');
+  const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
+  assert.equal(exitOf(await install(base)), 0, 'first install succeeds');
+
+  // A current install has nothing to upgrade, so the hint must stay silent —
+  // a permanent "upgrade available" is noise nobody can act on.
+  const current = await captureStdout(() => install(base));
+  assert.doesNotMatch(current, /Hook upgrade available/);
+
+  // Drop back to the legacy three-event set. It still reads as `all`, but the
+  // short-circuit returns before the hook step, so nothing rewires it.
+  unwireHookEvent(root, 'UserPromptSubmit');
+  const legacy = await captureStdout(() => install(base));
+  assert.match(legacy, /Hook upgrade available: UserPromptSubmit/);
+  assert.match(legacy, /--hooks all/);
+  assert.deepEqual(
+    installedHookEvents(root, 'project').includes('UserPromptSubmit'),
+    false,
+    'the hint is a hint: a bare re-run still does not rewire',
+  );
+});
+
 test('a plain install does NOT repair duplicated hook entries on a complete install', async () => {
   const root = tmp('lk-dupe-shortcircuit-');
   const base = { dir: root, endpoint: ENDPOINT, token: TOKEN, yes: true, project: true };
@@ -689,7 +735,11 @@ test('install --force repairs duplicated hook entries on a complete install', as
 
   assert.equal(exitOf(await install({ ...base, force: true })), 0);
   assert.equal(lorekitHookCount(root), 1, '--force collapses the duplicate');
-  assert.equal(installedHookEvents(root, 'project').length, 3, 'the other events survive');
+  assert.equal(
+    installedHookEvents(root, 'project').length,
+    CLAUDE_HOOK_EVENTS.length,
+    'the other events survive',
+  );
 });
 
 test('install --hooks all repairs duplicated hook entries on a complete install', async () => {

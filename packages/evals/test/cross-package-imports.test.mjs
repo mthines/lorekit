@@ -72,11 +72,16 @@ test("the canonical SessionStart hook wiring is reusable (OQ-3, seam for AC-2.2)
   );
 
   assert.equal(typeof upsertClaudeHooks, "function");
-  assert.deepEqual(CLAUDE_HOOK_EVENTS, [
-    "SessionStart",
-    "PostToolUseFailure",
-    "Stop",
-  ]);
+  // Derive the invariant instead of pinning the frozen roster: a hardcoded
+  // deep-equal restales every time a lifecycle event lands (as UserPromptSubmit
+  // did), the same reason the eight CLI tests derive from CLAUDE_HOOK_EVENTS. A
+  // successful `includes` already implies a non-empty array holding a non-empty
+  // string, so this single assert is the load-bearing one: the constant is
+  // importable and carries the SessionStart wiring this seam is named for.
+  assert.ok(
+    CLAUDE_HOOK_EVENTS.includes("SessionStart"),
+    "CLAUDE_HOOK_EVENTS is importable and carries the SessionStart wiring",
+  );
   assert.match(
     settingsPath("/tmp/root"),
     /\/tmp\/root\/\.claude\/settings\.json$/,

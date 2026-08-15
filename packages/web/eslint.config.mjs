@@ -126,11 +126,24 @@ export default [
   {
     // `storybook-static/**` is the Storybook build artifact (gitignored); the
     // MSW worker is a generated vendor file — neither should be linted.
+    // `**/next-env.d.ts` is a NEW ignore, not a re-scoping: it is a Next.js
+    // *generated* declaration file (rewritten on every build, gitignored), so
+    // linting it only ever reports on code nobody edits.
+    //
+    // Globs are `**/`-prefixed because `@nx/eslint:lint` runs ESLint from the
+    // workspace root and passes this config via `--config`; flat-config global
+    // `ignores` resolve relative to that cwd, so a bare `.next/**` matches the
+    // repo-root `.next`, never `packages/web/.next`. The `**/` prefix makes the
+    // ignore match the package's build output regardless of the base directory,
+    // which is what keeps Next.js-generated `.next/types/*.d.ts` (whose `{}`
+    // ParamMap entries trip `@typescript-eslint/no-empty-object-type`) out of
+    // the lint set.
     ignores: [
-      '.next/**',
-      'node_modules/**',
-      'storybook-static/**',
-      'public/mockServiceWorker.js',
+      '**/.next/**',
+      '**/next-env.d.ts',
+      '**/node_modules/**',
+      '**/storybook-static/**',
+      '**/public/mockServiceWorker.js',
     ],
   },
 ];

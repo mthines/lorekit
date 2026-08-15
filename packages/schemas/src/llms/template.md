@@ -22,10 +22,17 @@ context into the agent — none of them writes memory (the write is still the
 model calling `memory.write`). Three modes, selectable non-interactively with
 `--hooks <mode>`:
 
-- `all` — `SessionStart` (inject lessons) + `PostToolUseFailure` and `Stop`
+- `all` — `SessionStart` (inject lessons), `UserPromptSubmit` (inject the few
+  that match what you just typed, if any), `PostToolUseFailure` and `Stop`
   (nudge to record one). Preselected on a fresh install.
-- `read-only` — `SessionStart` only: lessons are injected, nothing ever nudges.
+- `read-only` — `SessionStart` only: lessons are injected ONCE, nothing ever
+  nudges, and nothing runs per turn.
 - `none` — skills + MCP only; memory stays model-invoked.
+
+`UserPromptSubmit` fires on every prompt, so it is deliberately quiet: it skips
+trivial prompts, stays silent when nothing matches, and never re-shows a memory
+already injected this session. `hooks.userPrompt: "off"` disables just that
+event while keeping the rest of `all`.
 
 An interactive re-run preselects whatever is already wired, so it never
 resurrects hooks you declined. `--yes` / a non-TTY run takes that same
@@ -200,7 +207,9 @@ that difference is the whole game — the newest writes are usually one task's i
 
 `GET /memories/relevant` is the ranked shortlist. It scores each candidate on **recency**
 (exponential decay, 14-day half-life), **salience** (`log1p(seen_count)`, normalised across the
-candidates) and **relevance** (full-text match on `q`), and returns a compact index:
+candidates), **relevance** (full-text match on `q`) and **outcome** (applied/resolution history —
+`1` on an outcome bus, `0.75` carried to a PR, `0.5` cold-start prior when unproven), and returns a
+compact index:
 
 ```bash
 curl -H "Authorization: Bearer lk_ro_…" \
@@ -213,7 +222,7 @@ q=migration+backfill&scopes=repo::acme/app,global&limit=5"
   "entries": [
     { "scope": "repo::acme/app", "key": "migration-order",
       "hook": "Always add the column before the backfill runs.",
-      "score": 0.72, "factors": { "recency": 0.61, "salience": 0.85, "relevance": 1 },
+      "score": 0.74, "factors": { "recency": 0.61, "salience": 0.85, "relevance": 1, "outcome": 0.5 },
       "seen_count": 9, "updated_at": "2026-07-30T09:12:00.000Z" }
   ],
   "candidates": 47
@@ -225,7 +234,7 @@ q=migration+backfill&scopes=repo::acme/app,global&limit=5"
 | `q` | — | Free-text query. **Optional** — omit it and the ranking is recency + salience, i.e. "what matters generally". |
 | `scopes` | all visible | Comma-separated, **most-specific first**; the order breaks ties, so a project lesson wins over the global one it ties with. |
 | `limit` | `10` | 1–50. |
-| `min_score` | `0` | Drop weak hits when injecting automatically — an irrelevant lesson every turn is worse than none. Note: with `q` set, matched hits floor at ~`0.33` (relevance is binary today), so a value ≤ `1/3` is a no-op; finer gating arrives with graded relevance. |
+| `min_score` | `0` | Drop weak hits when injecting automatically — an irrelevant lesson every turn is worse than none. Note: with `q` set, matched hits floor at `(1 + 0.5) / 4 = 0.375` (relevance is binary and outcome never sinks below its `0.5` prior today), so a value ≤ `0.375` is a no-op; finer gating arrives with graded relevance. |
 
 Bodies are not returned — fetch the ones you want with `memory.read`. `candidates` is how many
 matched before ranking, so you can tell a shortlist from the whole set.

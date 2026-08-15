@@ -212,7 +212,7 @@ export function resolveScopeKeyArgs(positionals = [], options = {}) {
 // takes every slot, evicting the durable lessons that have been re-learned a
 // dozen times. Recency is a signal, not the ranking.
 //
-// The score is a weighted sum of three factors, each normalised to [0,1]:
+// The score is a weighted sum of four factors, each normalised to [0,1]:
 //
 //   recency   — exponential decay on age. Half-life, not a cliff: a lesson does
 //               not stop mattering on a particular day.
@@ -225,6 +225,12 @@ export function resolveScopeKeyArgs(positionals = [], options = {}) {
 //               when no terms are supplied, which is the SessionStart case: it
 //               then contributes the same constant to every candidate and the
 //               ordering is recency + salience alone.
+//   outcome   — applied/resolution history in [0,1]. The factor only ever
+//               LIFTS: a lesson tagged on an outcome bus scores 1.0 and one
+//               carried to a PR 0.75, while a lesson with no history gets the
+//               COLD_START_OUTCOME_PRIOR (0.5) — the neutral floor, never 0.
+//               So a proven lesson ranks up; an unproven one is not penalised
+//               for lacking history and rides on recency and relevance.
 //
 // PURE AND TOTAL, with one scoped exception. `now` is a PARAMETER: the
 // arithmetic never reads the clock, every factor is a function of the value
@@ -243,7 +249,7 @@ export function resolveScopeKeyArgs(positionals = [], options = {}) {
 // nothing — a year-old lesson that has recurred 30 times still deserves a slot.
 export const RECENCY_HALF_LIFE_DAYS = 14;
 
-// Equal thirds. Deliberately not tuned: with no corpus to tune against, an
+// Equal quarters. Deliberately not tuned: with no corpus to tune against, an
 // invented weighting is a guess wearing a decimal point. They are a parameter
 // so a caller can experiment, and so a future PR can change them with evidence.
 //
@@ -253,7 +259,21 @@ export const RECENCY_HALF_LIFE_DAYS = 14;
 // recursion (a real `RangeError`, raised inside a hook the header promises will
 // never throw). Freezing makes the corruption a `TypeError` at the assignment,
 // in the caller's own frame, instead of a stack overflow three layers down.
-export const DEFAULT_RANK_WEIGHTS = Object.freeze({ recency: 1, salience: 1, relevance: 1 });
+export const DEFAULT_RANK_WEIGHTS = Object.freeze({ recency: 1, salience: 1, relevance: 1, outcome: 1 });
+
+/**
+ * The cold-start prior for the outcome factor. A new lesson with no applied /
+ * resolution history gets this value rather than 0. The rationale: scoring
+ * absent outcome at 0 would sink every new lesson below stale ones purely for
+ * lacking outcome history (outcome-lag). 0.5 is the neutral midpoint of [0,1]
+ * — a cold lesson contributes an average outcome term, so it ranks on
+ * recency and relevance instead of being penalised for being new.
+ *
+ * This is the ONE deliberate asymmetry vs `normalizeRelevance` (which returns
+ * 0 for absent / unreadable input). Mirrored byte-identically in
+ * `packages/mcp-core/src/lesson-rank.ts` and its edge twin.
+ */
+export const COLD_START_OUTCOME_PRIOR = 0.5;
 
 // Two scores closer than this are the same score. Sized well below any
 // difference the factors can produce meaningfully (a one-second age gap moves a
@@ -380,6 +400,21 @@ function distinctTerms(terms) {
 }
 
 /**
+ * Normalize an outcome value into [0,1]. Absent or unreadable input returns
+ * `COLD_START_OUTCOME_PRIOR` — the deliberate asymmetry vs `normalizeRelevance`
+ * (which returns 0 for absent input). A present value is clamped to [0,1].
+ *
+ * The cold-start prior ensures a new lesson with no outcome history is not
+ * penalised during outcome-lag — it contributes an average outcome term and
+ * ranks on recency + relevance instead.
+ */
+export function normalizeOutcome(value) {
+  const n = typeof value === 'string' ? Number(value) : value;
+  if (typeof n !== 'number' || !Number.isFinite(n)) return COLD_START_OUTCOME_PRIOR;
+  return Math.min(1, Math.max(0, n));
+}
+
+/**
  * Score one lesson in [0,1].
  *
  * `maxSeenCount` belongs to the candidate SET, so this is normally reached
@@ -415,21 +450,24 @@ function scoreWithTerms(entry, termSet, { now, weights, maxSeenCount, halfLifeDa
     recency: numberOr(weights?.recency, DEFAULT_RANK_WEIGHTS.recency),
     salience: numberOr(weights?.salience, DEFAULT_RANK_WEIGHTS.salience),
     relevance: numberOr(weights?.relevance, DEFAULT_RANK_WEIGHTS.relevance),
+    outcome: numberOr(weights?.outcome, DEFAULT_RANK_WEIGHTS.outcome),
   };
-  let total = w.recency + w.salience + w.relevance;
+  let total = w.recency + w.salience + w.relevance + w.outcome;
   if (!(total > 0)) {
     w = {
       recency: numberOr(DEFAULT_RANK_WEIGHTS.recency, 0),
       salience: numberOr(DEFAULT_RANK_WEIGHTS.salience, 0),
       relevance: numberOr(DEFAULT_RANK_WEIGHTS.relevance, 0),
+      outcome: numberOr(DEFAULT_RANK_WEIGHTS.outcome, 0),
     };
-    total = w.recency + w.salience + w.relevance;
+    total = w.recency + w.salience + w.relevance + w.outcome;
   }
   if (!(total > 0)) return 0;
   const recency = recencyFactor(entry?.updatedAt ?? entry?.updated_at ?? entry?.updated, now, halfLifeDays);
   const salience = salienceFactor(seenCountFrom(entry), maxSeenCount);
   const relevance = relevanceFromTerms(entry, termSet);
-  return (w.recency * recency + w.salience * salience + w.relevance * relevance) / total;
+  const outcome = normalizeOutcome(entry?.outcome);
+  return (w.recency * recency + w.salience * salience + w.relevance * relevance + w.outcome * outcome) / total;
 }
 
 // A non-negative finite number, or the fallback. Guards a caller passing a
@@ -447,6 +485,134 @@ function seenCountFrom(entry) {
   const raw = entry?.seenCount ?? entry?.seen_count;
   const n = typeof raw === 'string' ? Number(raw) : raw;
   return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * MMR λ (lambda) — weight given to relevance vs diversity in the MMR objective.
+ * At 0.7 the selector favours relevance, with 0.3 of the budget for diversity.
+ * Anchored to Carbonell & Goldstein (1998), the original MMR paper.
+ * Mirrored byte-identically in the edge twin and `packages/mcp-core/src/lesson-rank.ts`.
+ */
+export const MMR_LAMBDA = 0.7;
+
+/**
+ * Tokenise a lesson `value` into a deduplicated Set: case-fold, split on
+ * non-alphanumeric characters, drop empties. Dependency-free and deterministic
+ * so it mirrors the TS/Deno twin's `tokenizeValue`.
+ *
+ * PERF: `selectDiverse` calls this ONCE per candidate before the MMR loop and
+ * caches the result. `jaccardSimilarity` takes the cached Sets, so the O(k²)
+ * pairwise comparisons inside the loop cost no tokenisation. Do NOT re-introduce
+ * a `tokenize(value)` call inside the loop: that regresses the hot path to
+ * O(n·k²) tokenisations (measured 34s CPU at n=200/k=100 with 1.5KB values).
+ */
+function tokenizeValue(v) {
+  const tokens = String(v ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return new Set(tokens);
+}
+
+/**
+ * Word/token Jaccard similarity between two PRE-TOKENISED value Sets:
+ * |A∩B| / |A∪B|. Both-empty → 0.
+ *
+ * Takes Sets rather than raw values on purpose — the caller tokenises each
+ * candidate once (see `tokenizeValue`) so this stays allocation-free on the
+ * O(k²) hot path.
+ */
+function jaccardSimilarity(setA, setB) {
+  if (setA.size === 0 && setB.size === 0) return 0;
+  let intersection = 0;
+  for (const t of setA) if (setB.has(t)) intersection += 1;
+  const union = setA.size + setB.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+/**
+ * Select the top-K lessons from a ranked list using Maximal Marginal Relevance
+ * (Carbonell & Goldstein, 1998).
+ *
+ * Accepts bare entries (the shape `rankLessons` returns in the `.mjs` twin)
+ * plus a parallel `scores` array — REQUIRED, one score per entry. This is the
+ * MMR relevance term; there is no meaningful default. A missing `scores`, a
+ * non-array, or a length that does not match `entries` throws rather than
+ * silently defaulting to 0 for every entry (which would degrade selection to
+ * pure diversity and quietly discard the ranking). The TS twin cannot hit this
+ * footgun — it reads the score off each `{ entry, score }` input.
+ *
+ * Greedy MMR: seed with index 0 (highest-ranked), then at each step pick
+ * the unselected candidate that maximises
+ *   λ·quantise(score(i)) − (1−λ)·max_{j∈selected} jaccardSimilarity(value_i, value_j)
+ * Ties break by input order (first-wins) for determinism.
+ *
+ * SCORE QUANTISATION: the relevance term uses the score SNAPPED onto the
+ * `SCORE_EPSILON` grid — the exact grid `rankLessons` buckets on for its
+ * scope-precedence tie-break. Two scores within `SCORE_EPSILON` land in the same
+ * bucket, so the MMR objective sees them as equal and the input order (which
+ * `rankLessons` already sorted by scope precedence, then key) decides. Comparing
+ * the RAW score would let a 1e-10 float difference override scope precedence.
+ *
+ * PERF — the algorithm is O(n·k), and BOTH factors that could regress it to
+ * O(n·k²) are held down explicitly:
+ *   1. TOKENISE axis: each candidate's `value` is tokenised ONCE up front (the
+ *      `tokens` field) so the pairwise Jaccard comparisons never tokenise —
+ *      O(n) tokenisations total. See `tokenizeValue`.
+ *   2. INTERSECTION axis: each remaining candidate carries a RUNNING `maxSim`
+ *      (its greatest Jaccard similarity to anything selected so far). The
+ *      objective reads that cached scalar — it does NOT loop over `selected`.
+ *      After each pick we update `maxSim` for the still-remaining candidates
+ *      against the ONE just-selected entry only. That is k picks × n candidates
+ *      = O(n·k) Jaccard intersections total, not O(n·k²).
+ * Re-introducing either an in-loop `tokenizeValue` call OR an inner
+ * `for (… of selected)` maxSim recomputation silently restores O(n·k²) —
+ * measured 2.6s CPU at n=200/k=100 vs 58ms for the running form. Don't.
+ *
+ * Always-on for ranked mode — no optional param needed. The recency wire path is
+ * never affected.
+ */
+export function selectDiverse(entries, k, { lambda: lambdaOpt, scores } = {}) {
+  // Match the TS twin: fall back to MMR_LAMBDA unless `lambda` is a FINITE
+  // number. A bare destructuring default only catches `undefined`, so
+  // `{ lambda: NaN }` would otherwise poison every MMR objective here while the
+  // TS twin quietly used MMR_LAMBDA — a silent cross-twin divergence.
+  const lambda = typeof lambdaOpt === 'number' && Number.isFinite(lambdaOpt) ? lambdaOpt : MMR_LAMBDA;
+  if (!Array.isArray(entries) || entries.length === 0 || k <= 0) return [];
+  if (!Array.isArray(scores) || scores.length !== entries.length) {
+    throw new TypeError(
+      `selectDiverse: \`scores\` must be an array with one score per entry `
+        + `(got ${Array.isArray(scores) ? `length ${scores.length}` : typeof scores} `
+        + `for ${entries.length} entries)`,
+    );
+  }
+  const selected = [];
+  // Pre-tokenise every candidate ONCE and snap its score onto the SCORE_EPSILON
+  // grid up front. `maxSim` is the running greatest Jaccard similarity to any
+  // already-selected entry — 0 while nothing is selected. The loop below reads
+  // these caches; it never tokenises, re-quantises, or rescans `selected`.
+  const remaining = entries.map((e, i) => ({
+    entry: e,
+    tokens: tokenizeValue(e?.value),
+    qScore: Math.round((scores[i] ?? 0) / SCORE_EPSILON) * SCORE_EPSILON,
+    maxSim: 0,
+  }));
+  while (selected.length < k && remaining.length > 0) {
+    let bestIdx = 0;
+    let bestMmr = -Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const candidate = remaining[i];
+      // Reads the cached running maxSim — no inner scan over `selected`.
+      const mmr = lambda * candidate.qScore - (1 - lambda) * candidate.maxSim;
+      if (mmr > bestMmr) { bestMmr = mmr; bestIdx = i; }
+    }
+    const [justSelected] = remaining.splice(bestIdx, 1);
+    selected.push(justSelected.entry);
+    // Fold the just-selected entry into every remaining candidate's running
+    // maxSim — one Jaccard per remaining candidate per pick, so O(n·k) total.
+    for (const candidate of remaining) {
+      const sim = jaccardSimilarity(candidate.tokens, justSelected.tokens);
+      if (sim > candidate.maxSim) candidate.maxSim = sim;
+    }
+  }
+  return selected;
 }
 
 /**
@@ -540,3 +706,42 @@ export function rankLessons(entries = [], {
   return scored.map((s) => s.entry);
 }
 
+/**
+ * Rank-then-diversify in one call — the `.mjs` twin's convenience for what the
+ * TS twin gets for free by carrying `{ entry, score }` pairs into `selectDiverse`.
+ *
+ * `selectDiverse` needs a parallel `scores` array, and those scores MUST be the
+ * same set-relative values the list was sorted on: the salience factor is
+ * normalised against the max `seen_count` in the candidate SET, so a score
+ * recomputed over a different population would not line up with the order. This
+ * helper recomputes the scores over exactly the list it diversifies, beside the
+ * unexported `seenCountFrom`/`scoreWithTerms`, so callers can apply MMR without
+ * reconstructing that alignment (and without `seenCountFrom` leaking out).
+ *
+ * `entries` is expected to be `rankLessons` output (best-first) so the seed of
+ * the greedy MMR is the top-ranked lesson; the pass-through
+ * `terms`/`weights`/`halfLifeDays`/`now` MUST match the `rankLessons` call that
+ * produced it, or the recomputed scores diverge from the sort. `k` caps the
+ * returned count (default: all). Empty/degenerate input returns `[]`.
+ */
+export function diversifyRankedLessons(entries = [], {
+  terms = [],
+  now = Date.now(),
+  weights = DEFAULT_RANK_WEIGHTS,
+  halfLifeDays = RECENCY_HALF_LIFE_DAYS,
+  k = Infinity,
+  lambda,
+} = {}) {
+  const list = Array.isArray(entries) ? entries.filter((e) => e && typeof e === 'object') : [];
+  if (list.length === 0) return [];
+  const termSet = distinctTerms(terms);
+  let maxSeenCount = 0;
+  for (const e of list) maxSeenCount = Math.max(maxSeenCount, seenCountFrom(e));
+  const scores = list.map((e) => scoreWithTerms(e, termSet, { now, weights, maxSeenCount, halfLifeDays }));
+  // `numberOr` is the module's coercion convention: a non-finite `k` (the
+  // `Infinity` default, `null`, or a stringy `'40'`) resolves to a real cap —
+  // the default falls through to the whole list, `'40'` becomes 40 — rather than
+  // silently returning everything on a shape a caller plausibly passes.
+  const limit = numberOr(k, list.length);
+  return selectDiverse(list, limit, { scores, lambda });
+}
