@@ -115,7 +115,10 @@ async function run(args) {
       }
       return 0;
     }
-    const { scope: readScope, lessons, scopeCounts, applicable } = await fetchLessons(store, root);
+    const { scope: readScope, lessons, scopeCounts, applicable } = await fetchLessons(store, root, {
+      loopCap: control.hooksSessionStartLoopCap,
+      branchHint: control.hooksSessionStartBranchHint !== 'off',
+    });
     emit(formatLessons(lessons, readScope, {
       instruction: sessionInstruction,
       mode: control.hooksSessionStart,

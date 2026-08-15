@@ -9,6 +9,7 @@ import {
   normalizeUserPromptMode, USER_PROMPT_MODES,
   normalizeSessionStartMode, DEFAULT_SESSION_START_MAX_CHARS,
   MIN_SESSION_START_MAX_CHARS, MAX_SESSION_START_MAX_CHARS,
+  DEFAULT_SESSION_START_LOOP_CAP, MAX_SESSION_START_LOOP_CAP, normalizeSessionStartLoopCap,
   HOOK_INSTRUCTION_EVENTS,
 } from '../src/control.mjs';
 import { CLAUDE_HOOK_EVENTS } from '../src/config.mjs';
@@ -525,6 +526,51 @@ test('control hooks.sessionStart: maxChars is clamped, not rejected', () => {
   for (const bad of [null, undefined, '', 'lots', {}, []]) {
     assert.equal(at({ 'hooks.sessionStart.maxChars': bad }), DEFAULT_SESSION_START_MAX_CHARS, `${JSON.stringify(bad)}`);
   }
+});
+
+test('control hooks.sessionStart.loopCap: defaults to 2, clamps, and honours 0', () => {
+  const at = (cfg) => resolveControl({ repoConfig: cfg, connection: NO_CONN }).hooksSessionStartLoopCap;
+  assert.equal(resolveControl({ connection: NO_CONN }).hooksSessionStartLoopCap, DEFAULT_SESSION_START_LOOP_CAP);
+  assert.equal(at({ 'hooks.sessionStart.loopCap': 5 }), 5);
+  assert.equal(at({ 'hooks.sessionStart.loopCap': '3' }), 3, 'hand-edited JSON strings are read');
+  assert.equal(at({ 'hooks.sessionStart.loopCap': 0 }), 0, '0 is a real value — exclude loop buckets');
+  assert.equal(at({ 'hooks.sessionStart.loopCap': -4 }), 0, 'a negative clamps up to 0');
+  assert.equal(at({ 'hooks.sessionStart.loopCap': 9999 }), MAX_SESSION_START_LOOP_CAP, 'a typo clamps down');
+  // Unusable values fall back to the default (the resolver runs on every read).
+  for (const bad of [null, undefined, '', 'many', {}, []]) {
+    assert.equal(at({ 'hooks.sessionStart.loopCap': bad }), DEFAULT_SESSION_START_LOOP_CAP, `${JSON.stringify(bad)}`);
+  }
+  // The layer is chosen before the value is parsed (same rule as maxChars): a
+  // declared-but-garbage repo cap beats the user layer and degrades to default.
+  assert.equal(
+    resolveControl({
+      repoConfig: { 'hooks.sessionStart.loopCap': 'lots' },
+      userConfig: { 'hooks.sessionStart.loopCap': 5 },
+      connection: NO_CONN,
+    }).hooksSessionStartLoopCap,
+    DEFAULT_SESSION_START_LOOP_CAP,
+  );
+  // Pure normaliser edges.
+  assert.equal(normalizeSessionStartLoopCap('x'), null);
+  assert.equal(normalizeSessionStartLoopCap(2.6), 3, 'rounds');
+});
+
+test('control hooks.sessionStart.branchHint: defaults on, on/off vocabulary, repo wins', () => {
+  const at = (cfg) => resolveControl({ ...cfg, connection: NO_CONN }).hooksSessionStartBranchHint;
+  assert.equal(resolveControl({ connection: NO_CONN }).hooksSessionStartBranchHint, 'on');
+  assert.equal(at({ repoConfig: { 'hooks.sessionStart.branchHint': false } }), 'off', 'a boolean is read');
+  assert.equal(at({ repoConfig: { 'hooks.sessionStart.branchHint': 'disabled' } }), 'off');
+  assert.equal(at({ userConfig: { 'hooks.sessionStart.branchHint': 'off' } }), 'off', 'user layer applies');
+  assert.equal(
+    at({
+      repoConfig: { 'hooks.sessionStart.branchHint': 'on' },
+      userConfig: { 'hooks.sessionStart.branchHint': 'off' },
+    }),
+    'on',
+    'repo layer wins',
+  );
+  // A nonsense value falls through to the default rather than blanking anything.
+  assert.equal(at({ repoConfig: { 'hooks.sessionStart.branchHint': 'maybe' } }), 'on');
 });
 
 test('control hooks.sessionStart: a declared-but-garbage repo budget still beats the user layer', () => {
