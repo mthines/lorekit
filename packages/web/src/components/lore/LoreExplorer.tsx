@@ -8,14 +8,15 @@
  * that surfaces the ActivityFeed view, replacing the old /activity route.
  *
  * ## Key changes from the previous client-filtered version
- * - Default view is "all scopes" (no scope selected). The scope tree has an
- *   "all" row at the top that clears the scope filter.
+ * - Default view is "all scopes" (no scope selected). The scope selector's first
+ *   chip is "All scopes", which clears the scope filter.
  * - Filtering (scope / search / date) is server-side, not client-side.
  *   `useMemories` (`useInfiniteQuery` over `listMemories`) is the data source.
  * - Pagination: "Load more" button appends the next keyset page, identical to
  *   the audit log feed (`AuditLogFeed.tsx`).
- * - The scope sidebar still reads a lightweight `useScopeTree()` query so the
- *   tree renders immediately without waiting for the lesson list.
+ * - Scope is a persistent chip row (`ScopeSelector`) at the top of the page,
+ *   above the stats it drives — not a left-hand tree. It shares the `ScopeBadge`
+ *   language with the Overview cards and the stat captions.
  *
  * ## URL state
  * - `scope` param:    selected scope (null → all scopes). Shareable.
@@ -39,8 +40,6 @@
  *   than `'active'`.
  * - `archived` param: the superseded boolean. Still READ so existing links keep
  *   resolving; never written. Same treatment as the legacy `tags` shorthand.
- * - `scopePanelOpen`: local useState — ephemeral mobile accordion, NOT in URL.
- *   Defaults to closed so the phone layout leads with the memories.
  * - `insightsOpen`:  local useState inside `ExplorerInsights` — ephemeral panel
  *   collapse, NOT in URL. A shared link carries what you are looking at, not
  *   how tall you left a panel.
@@ -50,8 +49,9 @@
  */
 
 import { useCallback, useMemo, useTransition, useState } from 'react';
-import { Search, BookOpen, ChevronDown, Loader2, List, LayoutGrid, User, Building2, Users } from 'lucide-react';
-import { ScopeTree, type ScopeNode } from './ScopeTree';
+import { Search, Loader2, List, LayoutGrid, User, Building2, Users } from 'lucide-react';
+import { type ScopeNode } from './ScopeTree';
+import { ScopeSelector } from './ScopeSelector';
 import { ExplorerInsights } from './ExplorerInsights';
 import { LessonCard } from './LessonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -411,14 +411,6 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // URL-backed view mode so a shared link lands on the right tab.
   const [view, setView] = useUrlState<ViewMode>('view', 'scope');
 
-  // Local-only: mobile accordion state. Ephemeral UI — not shareable, not
-  // persisted. Putting this in URL state would pollute every share link and
-  // fire a router.replace on every tap. Starts CLOSED so the phone layout opens
-  // on the memories themselves — the scope tree is a filter, not the content,
-  // and expanding it by default pushed the first card below the fold. The
-  // collapsed header still shows the active scope, so nothing is hidden.
-  const [scopePanelOpen, setScopePanelOpen] = useState(false);
-
   // URL-backed Status — scoped to /lore. Defaults to `null` (param absent), not
   // to 'active', for the reason `filters` defaults to null: absent has to be
   // distinguishable from an explicit choice, because an absent `status` falls
@@ -546,7 +538,6 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
       // Close the sidebar when switching scope — the previous lesson may not
       // be present in the new scope.
       closeLesson();
-      setScopePanelOpen(false);
     });
   }
 
@@ -744,6 +735,18 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             : `${filteredLessons.length} memor${filteredLessons.length === 1 ? 'y' : 'ies'} loaded`}
       </p>
 
+      {/* ── Scope selector ──────────────────────────────────────────────────
+          A persistent chip row at the TOP of the page, above the stats it
+          drives. Selecting a scope only lights a different chip — it never
+          reflows the layout — and the numbers below update in step, so the
+          selection's effect on the stats is legible. See ScopeSelector. */}
+      <ScopeSelector
+        nodes={scopes}
+        selected={selectedScope}
+        onSelect={handleScopeSelect}
+        totalCount={totalCount}
+      />
+
       {/* ── Insights ────────────────────────────────────────────────────────
           ONE panel for everything the page says ABOUT the memories — the stat
           cards, the range picker and the heatmap — above the list of the
@@ -792,94 +795,48 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
       </div>
 
       {/* ── Results (shared chrome for both tabs) ───────────────────────────
-          Scope tree + filter bar (search / date / archived) + owner bar are the
+          The filter bar (search / filters / date / status) + owner bar are the
           SAME for "Browse by scope" and "Browse by time"; only the body inside
-          `renderResults()` differs (card list vs date-grouped feed). Lifting
-          the chrome out of the two views is what makes the tabs read as one
-          page and keeps every filter — including Owner — active across both. */}
+          `renderResults()` differs (card list vs date-grouped feed). Scope now
+          lives in the chip row at the top of the page, so the list is a single
+          full-width column — no more left scope rail. Both breakpoints are still
+          mounted and CSS-toggled (not a JS conditional render) so each keeps a
+          live FilterMenu, exactly as before; `variant` carries the only styling
+          difference between them. */}
 
-      {/* Desktop: side-by-side panels */}
-      <div className="hidden md:flex h-full gap-0 overflow-hidden rounded-xl border border-[var(--color-border)]">
-        <div className="flex w-56 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-bg-raised)]">
-          <div className="border-b border-[var(--color-border)] px-3 py-2.5">
-            <p className="text-xs font-medium text-[var(--color-content-tertiary)]">Scopes</p>
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            {scopes.length > 0 ? (
-              <ScopeTree
-                nodes={scopes}
-                selected={selectedScope}
-                onSelect={handleScopeSelect}
-                totalCount={totalCount}
-              />
-            ) : (
-              <EmptyState icon={BookOpen} title="No scopes yet" description="Run an agent to create your first memory." />
-            )}
-          </div>
-        </div>
+      {/* Desktop */}
+      <div className="hidden md:flex h-full flex-col overflow-hidden rounded-xl border border-[var(--color-border)]">
+        <ControlRow
+          variant="desktop"
+          search={search}
+          onSearchChange={setSearch}
+          facets={facets ?? []}
+          filters={filters}
+          onToggleFilterValue={handleToggleFilterValue}
+          editingField={isMobile ? null : editingField}
+          onEditField={setEditingField}
+          range={pickerRange}
+          onRangeChange={setRange}
+          status={status}
+          onStatusChange={handleStatusChange}
+        />
 
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <ControlRow
-            variant="desktop"
-            search={search}
-            onSearchChange={setSearch}
-            facets={facets ?? []}
-            filters={filters}
-            onToggleFilterValue={handleToggleFilterValue}
-            editingField={isMobile ? null : editingField}
-            onEditField={setEditingField}
-            range={pickerRange}
-            onRangeChange={setRange}
-            status={status}
-            onStatusChange={handleStatusChange}
-          />
+        <FilterPillRow
+          filters={filters}
+          onOperatorChange={handleOperatorChange}
+          onRemove={handleRemoveFilter}
+          onClearAll={handleClearFilters}
+          onEditField={setEditingField}
+        />
 
-          <FilterPillRow
-            filters={filters}
-            onOperatorChange={handleOperatorChange}
-            onRemove={handleRemoveFilter}
-            onClearAll={handleClearFilters}
-            onEditField={setEditingField}
-          />
+        <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
 
-          <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
-
-          <div className="flex-1 overflow-y-auto p-3">
-            {renderResults()}
-          </div>
-        </div>
+        <div className="flex-1 overflow-y-auto p-3">{renderResults()}</div>
       </div>
 
       {/* Mobile: stacked layout — pb-6 so the last card and "Load more" button
           clear the bottom edge of the scroll container. */}
       <div className="flex md:hidden flex-col gap-3 pb-6">
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] overflow-hidden">
-          <button
-            type="button"
-            onClick={() => setScopePanelOpen((v) => !v)}
-            aria-expanded={scopePanelOpen}
-            className="flex w-full min-h-11 items-center justify-between gap-2 px-4 py-2.5 text-sm text-[var(--color-content-primary)]"
-          >
-            <span className="font-medium">
-              Scope: <span className="text-[var(--color-accent)] font-mono text-xs">{selectedScopeLabel}</span>
-            </span>
-            <ChevronDown
-              className={['size-4 shrink-0 text-[var(--color-content-tertiary)] transition-transform duration-200', scopePanelOpen ? 'rotate-180' : ''].join(' ')}
-              aria-hidden
-            />
-          </button>
-          {scopePanelOpen && (
-            <div className="border-t border-[var(--color-border)] max-h-52 overflow-y-auto">
-              <ScopeTree
-                nodes={scopes}
-                selected={selectedScope}
-                onSelect={handleScopeSelect}
-                totalCount={totalCount}
-              />
-            </div>
-          )}
-        </div>
-
         <ControlRow
           variant="mobile"
           search={search}
@@ -907,9 +864,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
 
         <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
 
-        <div>
-          {renderResults()}
-        </div>
+        <div>{renderResults()}</div>
       </div>
     </div>
   );

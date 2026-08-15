@@ -29,7 +29,7 @@ const meta: Meta<typeof LorePage> = {
 export default meta;
 type Story = StoryObj<typeof LorePage>;
 
-export const RendersScopeTree: Story = {
+export const RendersScopeSelector: Story = {
   play: async ({ canvasElement, step }) => {
     const canvas = within(canvasElement);
 
@@ -39,14 +39,14 @@ export const RendersScopeTree: Story = {
       ).toBeInTheDocument();
     });
 
-    await step('The MSW-mocked scope tree resolves', async () => {
-      // The tree itself, not the "All scopes" label beside it: that label is a
-      // constant an EMPTY scopes response would still render, so it proves the
-      // query settled and nothing about what it returned. `ScopeTree` renders
-      // this list only when it has at least one mocked scope row.
-      await expect(
-        await canvas.findByRole('tree', { name: /memory scopes/i }),
-      ).toBeInTheDocument();
+    await step('The MSW-mocked scopes resolve into selector chips', async () => {
+      // The scope selector is a radiogroup of chips. "All scopes" is a constant
+      // an EMPTY scopes response would still render, so its presence proves
+      // nothing about what the query returned — assert MORE than one radio, i.e.
+      // at least one real mocked scope chip beside "All scopes", which only
+      // appears once the /memories/scopes query has settled with rows.
+      const group = within(await canvas.findByRole('radiogroup', { name: /filter by scope/i }));
+      await expect(group.getAllByRole('radio').length).toBeGreaterThan(1);
     });
   },
 };
