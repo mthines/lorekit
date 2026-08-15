@@ -30,6 +30,7 @@ import { createStore } from './store/index.mjs';
 import { createRemoteStore } from './store/remote.mjs';
 import { deriveOrigin, mergeOrigin } from './origin.mjs';
 import { readScopeInventory } from './store/scope-inventory.mjs';
+import { inferKindHostFromTags } from './lessons-view.mjs';
 
 const PROTOCOL_VERSION = '2024-11-05';
 const SERVER_INFO = { name: 'lorekit-local', version: '1.0.0' };
@@ -108,7 +109,10 @@ export const MEMORY_TOOL_DEFS = [
         scope: { type: 'string' },
         tags: { type: 'array', items: { type: 'string' } },
         limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
-        cursor: { type: 'string', description: 'Opaque cursor from a previous response\'s nextCursor. Omit to start from the first page.' },
+        cursor: { type: 'string', description: 'Opaque cursor from a previous response\'s nextCursor. Omit to start from the first page. Ignored when kind or host is set — a taxonomy-filtered list is a single bounded page (nextCursor is always null); raise limit rather than paginating.' },
+        kind: { type: 'string', enum: ['lesson', 'bus', 'signal'], description: 'Filter to one bucket family. Narrowed server-side against the remote store; post-filtered client-side against the local store, whose rows carry no kind/host columns and are classified from their loop:: tag.' },
+        host: { type: 'string', description: 'Filter to the owning skill or agent, e.g. `reviewer`. Same server-side/client-side split as kind.' },
+        view: { type: 'string', enum: ['full', 'summary'], default: 'full', description: 'summary omits each entry\'s value and returns value_bytes + a 200-character preview instead.' },
       },
     },
   },
@@ -213,6 +217,167 @@ export const ORG_TOOL_DEFS = [
 // Legacy alias kept so existing code that imports TOOL_DEFS still compiles.
 export const TOOL_DEFS = [...MEMORY_TOOL_DEFS, ...ORG_TOOL_DEFS];
 
+/** Characters of `value` echoed in a `view: "summary"` entry's `preview`. */
+export const LIST_PREVIEW_CHARS = 200;
+
+/** The closed `view` vocabulary, mirroring `MemoryListViewSchema`. */
+const LIST_VIEWS = ['full', 'summary'];
+
+/** The closed `kind` vocabulary, mirroring `MemoryKindSchema`. */
+const MEMORY_KINDS = ['lesson', 'bus', 'signal'];
+
+/**
+ * Validate the taxonomy/projection arguments of a `memory.list` call.
+ *
+ * Every other surface REJECTS an out-of-vocabulary value — the edge throws
+ * `UserInputError`, `ListInputSchema` fails the parse. Letting a typo fall
+ * through to the default here would make `lorekit mcp` the one path where
+ * `view: "sumary"` silently returns full bodies, or `kind: "lessons"` silently
+ * returns every bucket. Throwing keeps the contract uniform.
+ */
+function validateListArgs(a = {}) {
+  if (a.view !== undefined && !LIST_VIEWS.includes(a.view)) {
+    throw new Error(`Invalid view "${a.view}": expected "full" or "summary"`);
+  }
+  if (a.kind !== undefined && !MEMORY_KINDS.includes(a.kind)) {
+    throw new Error(`Invalid kind "${a.kind}": expected "lesson", "bus" or "signal"`);
+  }
+  if (a.host !== undefined && (typeof a.host !== 'string' || a.host.length === 0 || a.host.length > 64)) {
+    throw new Error('Invalid host: expected a non-empty string of at most 64 characters');
+  }
+}
+
+/**
+ * Post-filter a list result by `kind` / `host`.
+ *
+ * The remote store forwards both to `GET /memories` and they are narrowed
+ * server-side; the LOCAL store has no kind/host columns and ignores them
+ * entirely, so without this a local call that asked to narrow would get the
+ * whole scope back and look filtered. This is the same post-filter the read
+ * commands already apply in `gather()`, for the same reason — and it is
+ * idempotent over already-narrowed remote rows.
+ *
+ * Taxonomy is taken from the stored columns when present, else inferred from
+ * the `loop::…` tag, so an offline row and a pre-`00056` remote row both filter
+ * the way a caller expects.
+ */
+function filterListTaxonomy(result, { kind, host } = {}) {
+  if ((!kind && !host) || !result?.ok || !Array.isArray(result.entries)) return result;
+  const entries = result.entries.filter((e) => {
+    const inferred = inferKindHostFromTags(e?.tags);
+    const k = e?.kind ?? inferred.kind ?? null;
+    const h = e?.host ?? inferred.host ?? null;
+    return (!kind || k === kind) && (!host || h === host);
+  });
+  return { ...result, entries };
+}
+
+/**
+ * Apply the `view` projection to a store's list result.
+ *
+ * `full` (and an absent value) passes the result through untouched. `summary`
+ * swaps each entry's `value` for its byte size and a bounded prefix, so a
+ * discovery read costs an index instead of every body. An out-of-vocabulary
+ * value never reaches here — `validateListArgs` rejects it first.
+ *
+ * The slice is over `[...value]`, NOT `value.slice()`: JS string indices are
+ * UTF-16 code units, so a naive cut can land between a surrogate pair and emit
+ * a lone half. Spreading iterates code points, so an emoji or CJK character is
+ * never split. `value_bytes` is the UTF-8 byte length so it stays comparable
+ * with the 65,536-byte value cap.
+ */
+export function projectListView(result, view) {
+  if (view !== 'summary' || !result?.ok || !Array.isArray(result.entries)) return result;
+  return {
+    ...result,
+    entries: result.entries.map(({ value, ...rest }) => ({
+      ...rest,
+      value_bytes: Buffer.byteLength(value ?? '', 'utf8'),
+      preview: [...(value ?? '')].slice(0, LIST_PREVIEW_CHARS).join(''),
+    })),
+  };
+}
+
+/**
+ * How many rows to ask the store for when a taxonomy filter is active.
+ *
+ * Both stores apply `limit` BEFORE this module can post-filter — `LocalStore`
+ * and `TwoTierStore` slice in `list()`, and the remote route pages server-side.
+ * Without an over-fetch, `{ limit: 5, host: 'reviewer' }` over a scope holding
+ * 5 `aw` rows then 5 `reviewer` rows asks for 5, gets the 5 `aw` rows, filters
+ * them all away, and answers with zero entries — a silently empty read that
+ * looks like "no reviewer lessons exist".
+ *
+ * Over-fetching cannot be exact — only the server knows the true distribution —
+ * so the widened fetch is simply the largest page the backend will serve, and
+ * when it still comes back saturated the result carries `hasMore: true` so the
+ * caller knows the page was cut rather than exhausted.
+ *
+ * That maximum is **100**, and it is the route's constraint rather than a
+ * tuning choice: `ListMemoriesQuerySchema` caps `GET /memories`'s `limit` at
+ * 100, so asking for more is a 400 from the remote store — which would break
+ * `kind`/`host` for every request above `limit: 10` rather than merely
+ * under-filling it. Since the floor a scaled over-fetch would want is already
+ * at or above that cap for every supported `limit`, there is nothing to scale:
+ * one constant is the honest expression of the rule.
+ */
+const TAXONOMY_FETCH_LIMIT = 100;
+
+/**
+ * The full `memory.list` post-processing chain: validate → fetch → filter →
+ * slice → project.
+ *
+ * The slice happens HERE rather than in the store whenever a taxonomy filter is
+ * active, because the store cannot honour both `limit` and a filter it does not
+ * implement. See `TAXONOMY_FETCH_LIMIT` for why the fetch is widened.
+ */
+export async function listWithFilters(store, a = {}) {
+  validateListArgs(a);
+  const filtering = Boolean(a.kind || a.host);
+  if (!filtering) return projectListView(await store.list(a), a.view);
+
+  const requested = a.limit ?? 50;
+  const widened = TAXONOMY_FETCH_LIMIT;
+  // Drop `cursor` as well as widening `limit`. A cursor is a keyset position in
+  // the UNFILTERED row order; resuming a client-side-filtered read from one
+  // would start mid-way through a sequence this call never produced. The tool
+  // schema says `cursor` is ignored when `kind`/`host` is set, and this is what
+  // makes that true rather than merely aspirational.
+  const { cursor: _ignoredCursor, ...rest } = a;
+  const raw = await store.list({ ...rest, limit: widened });
+  const filtered = filterListTaxonomy(raw, a);
+  if (!filtered?.ok || !Array.isArray(filtered.entries)) return projectListView(filtered, a.view);
+
+  const page = filtered.entries.slice(0, requested);
+  // `hasMore` is true when this page was cut — either by our own slice, or
+  // because the widened fetch itself saturated and rows beyond it were never
+  // examined. Preserve an upstream `hasMore` too; the remote store sets it.
+  const truncated =
+    filtered.entries.length > requested ||
+    (Array.isArray(raw?.entries) && raw.entries.length >= widened);
+
+  // `nextCursor` MUST be null on a taxonomy-filtered read, never the upstream
+  // cursor. That cursor is a keyset position in the UNFILTERED row order, taken
+  // from the end of the WIDENED fetch — so handing it back after returning only
+  // `requested` post-filter rows would make the next page resume past every row
+  // between the slice and the widened window, silently skipping matches.
+  //
+  // There is no correct cursor to synthesise here: the filter is applied client
+  // side, so no server-side keyset describes "the next filtered row". A filtered
+  // list is therefore a single bounded page, exactly as `order: "rank"` is on
+  // the edge — `hasMore` reports that it was cut, and the remedy is a larger
+  // `limit`, not pagination.
+  return projectListView(
+    {
+      ...filtered,
+      entries: page,
+      hasMore: Boolean(raw?.hasMore) || truncated,
+      nextCursor: null,
+    },
+    a.view,
+  );
+}
+
 // tool name → (store, args, ctx) → store result. The store destructures the
 // args it needs, so the raw `arguments` object is passed straight through.
 // `ctx.root` is the resolved project root (`--dir`), NOT the process cwd — an
@@ -223,7 +388,13 @@ const MEMORY_DISPATCH = {
   // with anything the caller DID pass taking precedence.
   'memory.write': (store, a, ctx) => store.write({ ...a, ...withDerivedOrigin(a, ctx) }),
   'memory.read': (store, a) => store.read(a),
-  'memory.list': (store, a) => store.list(a),
+  // `view` is projected and `kind`/`host` post-filtered client-side rather than
+  // forwarded. The remote store reads `GET /memories`, which has no `view`
+  // parameter — only the MCP tool does — and the local store has neither the
+  // parameter nor the columns. Doing the work here keeps the stdio server's
+  // contract identical to the hosted one on both store backends, which is the
+  // whole point of `MEMORY_TOOL_DEFS` mirroring the catalog.
+  'memory.list': (store, a) => listWithFilters(store, a),
   'memory.search': (store, a) => store.search(a),
   'memory.delete': (store, a) => store.delete(a),
   'memory.archive': (store, a) => store.archive(a),
@@ -411,7 +582,19 @@ export function createHandler(control, { root = process.cwd() } = {}) {
       const fn = MEMORY_DISPATCH[name];
       if (!fn) return errorReply(id, -32601, `Unknown tool: ${name}`);
 
-      const result = await fn(store, args, { root });
+      // A rejected ARGUMENT is a tool-level failure, not a broken transport.
+      // Letting the throw escape would answer JSON-RPC -32603 "Internal error",
+      // which tells the model nothing and contradicts what `toolResult`
+      // documents; the edge returns a `UserInputError` payload for the same
+      // typo. Surface it as `{ ok: false, error }` so the model can correct
+      // itself. Only argument validation is caught here — a store failure
+      // already comes back as `ok: false` rather than throwing.
+      let result;
+      try {
+        result = await fn(store, args, { root });
+      } catch (e) {
+        return toolResult(id, { ok: false, error: (e && e.message) || 'invalid arguments' });
+      }
       return toolResult(id, result);
     }
 

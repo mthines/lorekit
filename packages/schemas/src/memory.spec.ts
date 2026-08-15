@@ -12,6 +12,8 @@ import { describe, it, expect } from 'vitest';
 import {
   DeleteMemoryQuerySchema,
   MemoryListSchema,
+  LIST_PREVIEW_CHARS,
+  MAX_VALUE_BYTES,
   MemoryWriteSchema,
   ListMemoriesQuerySchema,
   PurgeMemoriesBodySchema,
@@ -250,5 +252,72 @@ describe('MemoryListSchema order', () => {
     expect(parsed.limit).toBe(50);
     expect(parsed.cursor).toBeUndefined();
     expect(parsed.tags).toBeUndefined();
+  });
+});
+
+// ── MemoryListSchema.kind / .host / .view ────────────────────────────────────
+
+describe('MemoryListSchema taxonomy filters', () => {
+  it('leaves kind and host undefined when omitted', () => {
+    const parsed = MemoryListSchema.parse({ scope: 'global' });
+    expect(parsed.kind).toBeUndefined();
+    expect(parsed.host).toBeUndefined();
+  });
+
+  it.each(['lesson', 'bus', 'signal'])('accepts kind: %s', (kind) => {
+    expect(MemoryListSchema.parse({ scope: 'global', kind }).kind).toBe(kind);
+  });
+
+  it.each(['lessons', 'Lesson', 'note', ''])('rejects an invalid kind: %j', (kind) => {
+    expect(MemoryListSchema.safeParse({ scope: 'global', kind }).success).toBe(false);
+  });
+
+  it('accepts a host slug', () => {
+    expect(MemoryListSchema.parse({ scope: 'global', host: 'reviewer' }).host).toBe('reviewer');
+  });
+
+  it('rejects a host longer than the 64-character column backstop', () => {
+    expect(MemoryListSchema.safeParse({ scope: 'global', host: 'h'.repeat(65) }).success).toBe(false);
+  });
+
+  it('accepts kind and host together — the one-bucket read', () => {
+    const parsed = MemoryListSchema.parse({ scope: 'global', kind: 'signal', host: 'reviewer' });
+    expect(parsed).toMatchObject({ kind: 'signal', host: 'reviewer' });
+  });
+});
+
+describe('MemoryListSchema view', () => {
+  it('defaults to full so no existing caller changes shape', () => {
+    expect(MemoryListSchema.parse({ scope: 'global' }).view).toBe('full');
+  });
+
+  it('accepts view: summary', () => {
+    expect(MemoryListSchema.parse({ scope: 'global', view: 'summary' }).view).toBe('summary');
+  });
+
+  it.each(['brief', 'Summary', 'keys', ''])('rejects an invalid view: %j', (view) => {
+    expect(MemoryListSchema.safeParse({ scope: 'global', view }).success).toBe(false);
+  });
+
+  it('does not disturb the other defaults', () => {
+    const parsed = MemoryListSchema.parse({ scope: 'global', view: 'summary' });
+    expect(parsed.limit).toBe(50);
+    expect(parsed.order).toBe('recency');
+  });
+});
+
+describe('LIST_PREVIEW_CHARS', () => {
+  it('is a positive bound well under the value cap', () => {
+    expect(LIST_PREVIEW_CHARS).toBeGreaterThan(0);
+    expect(LIST_PREVIEW_CHARS).toBeLessThan(MAX_VALUE_BYTES);
+  });
+});
+
+describe('MemoryListSchema host rejects the empty string', () => {
+  // An empty host previously parsed, then fell through the handlers' `if (host)`
+  // guard as a silently UNFILTERED read — the caller asked to narrow and got
+  // everything. Reject it at the schema, matching ListInputSchema and the edge.
+  it('rejects an empty host', () => {
+    expect(MemoryListSchema.safeParse({ scope: 'global', host: '' }).success).toBe(false);
   });
 });

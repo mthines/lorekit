@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { listScopes } from '../src/mcp-server.mjs';
+import { listScopes, projectListView, listWithFilters, LIST_PREVIEW_CHARS } from '../src/mcp-server.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 
@@ -387,5 +387,226 @@ describe('memory.scopes dispatch', () => {
     // enumeration that found nothing, and must not read as an error.
     const out = await listScopes({ async listScopes() { return []; } });
     assert.deepEqual(out, { ok: true, scopes: [] });
+  });
+});
+
+// ── memory.list view projection ──────────────────────────────────────────────
+// The stdio server mirrors the hosted MCP contract, so `view: "summary"` must
+// behave identically here even though the REST route it reads has no such
+// parameter — the projection is applied client-side in the dispatcher.
+
+describe('projectListView', () => {
+  test('passes a full view through untouched', () => {
+    const result = { ok: true, entries: [{ key: 'k', value: 'body', tags: [] }] };
+    assert.deepEqual(projectListView(result, 'full'), result);
+  });
+
+  test('passes an absent view through untouched', () => {
+    const result = { ok: true, entries: [{ key: 'k', value: 'body', tags: [] }] };
+    assert.deepEqual(projectListView(result, undefined), result);
+  });
+
+  test('omits value and adds value_bytes + preview in summary view', () => {
+    const result = { ok: true, entries: [{ key: 'k', value: 'body', tags: ['t'] }] };
+    const projected = projectListView(result, 'summary');
+    assert.equal('value' in projected.entries[0], false);
+    assert.equal(projected.entries[0].value_bytes, 4);
+    assert.equal(projected.entries[0].preview, 'body');
+    assert.deepEqual(projected.entries[0].tags, ['t']);
+  });
+
+  test('reports value_bytes in UTF-8 bytes, not UTF-16 units', () => {
+    const result = { ok: true, entries: [{ key: 'k', value: 'é', tags: [] }] };
+    assert.equal(projectListView(result, 'summary').entries[0].value_bytes, 2);
+  });
+
+  test('never splits a surrogate pair at the preview cap', () => {
+    const value = 'x' + '\u{1F600}'.repeat(300);
+    const result = { ok: true, entries: [{ key: 'k', value, tags: [] }] };
+    const { preview } = projectListView(result, 'summary').entries[0];
+    for (const unit of preview) {
+      const code = unit.codePointAt(0);
+      assert.equal(code >= 0xd800 && code <= 0xdfff, false);
+    }
+    assert.equal([...preview].length, LIST_PREVIEW_CHARS);
+  });
+
+  test('leaves a failed store result alone', () => {
+    const failed = { ok: false, error: 'nope' };
+    assert.deepEqual(projectListView(failed, 'summary'), failed);
+  });
+});
+
+describe('memory.list argument validation and taxonomy post-filter', () => {
+  const store = (entries) => ({ list: async () => ({ ok: true, entries }) });
+
+  test('rejects an out-of-vocabulary view instead of defaulting to full', async () => {
+    await assert.rejects(() => listWithFilters(store([]), { scope: 'global', view: 'sumary' }), /Invalid view/);
+  });
+
+  test('rejects an out-of-vocabulary kind', async () => {
+    await assert.rejects(() => listWithFilters(store([]), { scope: 'global', kind: 'lessons' }), /Invalid kind/);
+  });
+
+  test('rejects an empty host', async () => {
+    await assert.rejects(() => listWithFilters(store([]), { scope: 'global', host: '' }), /Invalid host/);
+  });
+
+  test('accepts the documented vocabulary', async () => {
+    const r = await listWithFilters(store([]), { scope: 'global', view: 'summary', kind: 'lesson', host: 'reviewer' });
+    assert.equal(r.ok, true);
+  });
+
+  test('post-filters local rows by host inferred from the loop:: tag', async () => {
+    // Local rows carry no kind/host columns — without the post-filter the whole
+    // scope comes back and looks narrowed.
+    const entries = [
+      { key: 'a', value: 'x', tags: ['loop::reviewer-lessons'] },
+      { key: 'b', value: 'y', tags: ['loop::aw-lessons'] },
+    ];
+    const r = await listWithFilters(store(entries), { scope: 'global', host: 'reviewer' });
+    assert.deepEqual(r.entries.map((e) => e.key), ['a']);
+  });
+
+  test('post-filters by kind inferred from the loop:: tag', async () => {
+    const entries = [
+      { key: 'a', value: 'x', tags: ['loop::reviewer-comment-relevance'] },
+      { key: 'b', value: 'y', tags: ['loop::aw-lessons'] },
+    ];
+    const r = await listWithFilters(store(entries), { scope: 'global', kind: 'signal' });
+    assert.deepEqual(r.entries.map((e) => e.key), ['a']);
+  });
+
+  test('prefers an explicit column over the inferred tag', async () => {
+    const entries = [{ key: 'a', value: 'x', tags: ['loop::aw-lessons'], host: 'reviewer' }];
+    const r = await listWithFilters(store(entries), { scope: 'global', host: 'reviewer' });
+    assert.equal(r.entries.length, 1);
+  });
+
+  test('leaves the result untouched when neither filter is given', async () => {
+    const entries = [{ key: 'a', value: 'x', tags: [] }];
+    const r = await listWithFilters(store(entries), { scope: 'global' });
+    assert.deepEqual(r.entries, entries);
+  });
+});
+
+describe('memory.list over-fetches before post-filtering', () => {
+  // The stores slice to `limit` before this module can post-filter, so a naive
+  // implementation returns an empty page when the first `limit` rows all belong
+  // to a different bucket — a silently empty read that reads as "none exist".
+  const rows = (n, tag, prefix) =>
+    Array.from({ length: n }, (_, i) => ({ key: `${prefix}${i}`, value: 'x', tags: [tag] }));
+
+  // Honours `limit` the way LocalStore does: slice AFTER tag filtering, before
+  // returning. Records the limit it was asked for so the over-fetch is visible.
+  const slicingStore = (all) => {
+    const seen = {};
+    return {
+      seen,
+      list: async ({ limit }) => {
+        seen.limit = limit;
+        return { ok: true, entries: limit ? all.slice(0, limit) : all };
+      },
+    };
+  };
+
+  test('finds rows that sit beyond the requested limit', async () => {
+    const all = [...rows(5, 'loop::aw-lessons', 'aw'), ...rows(5, 'loop::reviewer-lessons', 'rv')];
+    const store = slicingStore(all);
+    const r = await listWithFilters(store, { scope: 'global', limit: 5, host: 'reviewer' });
+    assert.equal(r.entries.length, 5);
+    assert.deepEqual(r.entries.map((e) => e.key), ['rv0', 'rv1', 'rv2', 'rv3', 'rv4']);
+  });
+
+  test('widens the fetch it asks the store for', async () => {
+    const store = slicingStore(rows(10, 'loop::reviewer-lessons', 'rv'));
+    await listWithFilters(store, { scope: 'global', limit: 5, host: 'reviewer' });
+    assert.ok(store.seen.limit > 5, `expected an over-fetch, got limit=${store.seen.limit}`);
+  });
+
+  test('still honours the requested limit after filtering', async () => {
+    const store = slicingStore(rows(40, 'loop::reviewer-lessons', 'rv'));
+    const r = await listWithFilters(store, { scope: 'global', limit: 3, host: 'reviewer' });
+    assert.equal(r.entries.length, 3);
+    assert.equal(r.hasMore, true);
+  });
+
+  test('reports hasMore false when the filtered set fits the page', async () => {
+    const store = slicingStore(rows(2, 'loop::reviewer-lessons', 'rv'));
+    const r = await listWithFilters(store, { scope: 'global', limit: 10, host: 'reviewer' });
+    assert.equal(r.entries.length, 2);
+    assert.equal(r.hasMore, false);
+  });
+
+  test('does not widen the fetch when no taxonomy filter is given', async () => {
+    const store = slicingStore(rows(10, 'loop::reviewer-lessons', 'rv'));
+    await listWithFilters(store, { scope: 'global', limit: 5 });
+    assert.equal(store.seen.limit, 5);
+  });
+});
+
+describe('memory.list taxonomy filter respects the remote limit cap and cursor contract', () => {
+  const rows = (n, tag, prefix) =>
+    Array.from({ length: n }, (_, i) => ({ key: `${prefix}${i}`, value: 'x', tags: [tag] }));
+
+  test('never asks the store for more than the route cap of 100', async () => {
+    // ListMemoriesQuerySchema caps GET /memories limit at 100; a widened fetch
+    // above that is a 400 from RemoteStore, not a bigger page.
+    const seen = {};
+    const store = { list: async ({ limit }) => { seen.limit = limit; return { ok: true, entries: [] }; } };
+    await listWithFilters(store, { scope: 'global', limit: 50, host: 'reviewer' });
+    assert.ok(seen.limit <= 100, `widened to ${seen.limit}, above the route cap`);
+  });
+
+  test('caps the widened fetch even at the maximum requested limit', async () => {
+    const seen = {};
+    const store = { list: async ({ limit }) => { seen.limit = limit; return { ok: true, entries: [] }; } };
+    await listWithFilters(store, { scope: 'global', limit: 100, host: 'reviewer' });
+    assert.ok(seen.limit <= 100, `widened to ${seen.limit}, above the route cap`);
+  });
+
+  test('returns nextCursor null rather than the upstream cursor', async () => {
+    // The upstream cursor is a keyset position in the UNFILTERED order taken
+    // from the end of the widened fetch — resuming from it would skip every row
+    // between the slice and the widened window.
+    const store = {
+      list: async () => ({
+        ok: true,
+        entries: rows(40, 'loop::reviewer-lessons', 'rv'),
+        hasMore: true,
+        nextCursor: 'UPSTREAM_CURSOR',
+      }),
+    };
+    const r = await listWithFilters(store, { scope: 'global', limit: 5, host: 'reviewer' });
+    assert.equal(r.nextCursor, null);
+    assert.equal(r.hasMore, true);
+    assert.equal(r.entries.length, 5);
+  });
+
+  test('leaves the cursor untouched on an unfiltered read', async () => {
+    const store = {
+      list: async () => ({ ok: true, entries: rows(2, 'loop::reviewer-lessons', 'rv'), hasMore: true, nextCursor: 'C' }),
+    };
+    const r = await listWithFilters(store, { scope: 'global', limit: 5 });
+    assert.equal(r.nextCursor, 'C');
+  });
+});
+
+describe('memory.list ignores an inbound cursor when a taxonomy filter is set', () => {
+  test('does not forward cursor to the store', async () => {
+    // A cursor is a keyset position in the UNFILTERED order; honouring it inside
+    // a client-side-filtered read resumes mid-way through a sequence this call
+    // never produced. The tool schema promises it is ignored.
+    const seen = {};
+    const store = { list: async (args) => { Object.assign(seen, args); return { ok: true, entries: [] }; } };
+    await listWithFilters(store, { scope: 'global', host: 'reviewer', cursor: 'ABC' });
+    assert.equal(seen.cursor, undefined);
+  });
+
+  test('still forwards cursor on an unfiltered read', async () => {
+    const seen = {};
+    const store = { list: async (args) => { Object.assign(seen, args); return { ok: true, entries: [] }; } };
+    await listWithFilters(store, { scope: 'global', cursor: 'ABC' });
+    assert.equal(seen.cursor, 'ABC');
   });
 });

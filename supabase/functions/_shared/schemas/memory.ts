@@ -51,7 +51,30 @@ export const MemoryWriteSchema = z.object({
 export type MemoryWrite = z.infer<typeof MemoryWriteSchema>;
 
 export const MemoryReadSchema = z.object({ scope: ScopeSchema, key: z.string().min(1).max(512) });
-export const MemoryListSchema = z.object({ scope: ScopeSchema, tags: z.array(z.string()).optional(), limit: z.number().int().min(1).max(100).optional().default(50), cursor: z.string().optional(), order: z.enum(['recency', 'rank']).optional().default('recency') });
+
+/**
+ * How much of each entry a list read puts on the wire.
+ *
+ * `full`    — every entry carries its complete `value` (the historical shape).
+ * `summary` — `value` is REPLACED by `value_bytes` + a bounded `preview`.
+ *
+ * The split exists because the two reads answer different questions. An agent
+ * deciding WHICH lessons apply to the change in front of it needs the index —
+ * keys, tags, freshness — not 50 full bodies; it can then `memory.read` the
+ * handful it matched. At the observed ~1.9 KB median body, a 50-entry
+ * `full` list is ~95 KB of caller context, the overwhelming majority of which
+ * is never consulted. `summary` is the cheap discovery half of that read.
+ *
+ * `full` remains the default: the parameter is additive and no existing caller
+ * changes shape.
+ */
+export const MemoryListViewSchema = z.enum(['full', 'summary']);
+export type MemoryListView = z.infer<typeof MemoryListViewSchema>;
+
+/** Characters of `value` echoed in a `summary` entry's `preview`. */
+export const LIST_PREVIEW_CHARS = 200;
+
+export const MemoryListSchema = z.object({ scope: ScopeSchema, tags: z.array(z.string()).optional(), limit: z.number().int().min(1).max(100).optional().default(50), cursor: z.string().optional(), order: z.enum(['recency', 'rank']).optional().default('recency'), kind: MemoryKindSchema.optional(), host: z.string().min(1).max(64).optional(), view: MemoryListViewSchema.optional().default('full') });
 export const MemoryDeleteSchema = z.object({ scope: ScopeSchema, key: z.string().min(1).max(512), force: z.boolean().optional().default(false) });
 export const MemorySearchSchema = z.object({ q: z.string().min(1), scopes: z.array(RawScopeSchema).optional(), tags: z.array(z.string()).optional(), limit: z.number().int().min(1).max(100).optional().default(20), cursor: z.string().optional() });
 export const MemoryArchiveSchema = z.object({ scope: ScopeSchema, key: z.string().min(1).max(512) });
