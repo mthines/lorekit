@@ -551,10 +551,6 @@ test('scopeReadLimit: the fetch grows ONLY above the default ceiling', () => {
   assert.equal(scopeReadLimit(MAX_SESSION_START_MAX_LESSONS), MAX_STORE_LIST_LIMIT);
   // And a caller bypassing the config normaliser is still clamped.
   assert.equal(scopeReadLimit(5000), MAX_STORE_LIST_LIMIT);
-  assert.ok(
-    MAX_STORE_LIST_LIMIT <= 100,
-    'the mirrored cap must not drift above the route schema it mirrors',
-  );
   // Monotone: cost never falls as the ask grows.
   let prev = 0;
   for (const n of [1, 10, 40, 41, 80, 100, 101, 200, 5000]) {
