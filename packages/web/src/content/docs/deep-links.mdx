@@ -30,8 +30,8 @@ The Explorer reads each parameter with `useUrlState`, which does `JSON.parse(sea
 | `scope` | `null` | Filter to one scope. `null` means all scopes. |
 | `q` | `""` | Search query (pre-fills the search box). |
 | `range` | `null` | Time range. Either a **relative** preset — `{ "preset": "24h" \| "7d" \| "30d" \| "90d" \| "all" }` — or an **absolute** window `{ "from", "to" }`. `null` means all time. See below. |
-| `owner` | `"all"` | Ownership filter: `"all"`, `"personal"`, or `{ "orgId": "…" }`. |
-| `filters` | `null` | The Explorer filter bar: an array of `{ "field", "operator", "values" }` conditions over `label`, `agent`, `trigger`, `repo`, `branch` and `pr` (OR within a field, AND across fields). `null` means the param is absent and the legacy `tags` shorthand still applies; `[]` means the bar was explicitly emptied. |
+| `owner` | `"all"` | **Superseded.** Ownership is a dimension inside `filters` now (`owner`, keyed by org slug). This legacy param is still *read* so old links land — `"personal"` maps to an `owner` filter; `"all"` and the legacy `{ "orgId": "…" }` form resolve to no owner filter — but it is never written. |
+| `filters` | `null` | The Explorer filter bar: an array of `{ "field", "operator", "values" }` conditions over `label`, `kind`, `host`, `owner`, `agent`, `trigger`, `repo`, `branch` and `pr` (OR within a field, AND across fields). `owner` values are `personal` or an org **slug**. `null` means the param is absent and the legacy `tags` / `owner` shorthands still apply; `[]` means the bar was explicitly emptied. |
 | `tags` | `[]` | Legacy label filter, AND across labels (e.g. `["perf","ci"]`). Superseded by `filters`, still read so older links keep working. |
 | `status` | `null` | Explorer Status: `"active"` (default), `"archived"`, or `"expiring"` (live memories whose TTL runs out within 7 days). `null` means the param is absent and the legacy `archived` flag still applies. |
 | `archived` | `false` | Legacy archived toggle. Superseded by `status`, still read so older links keep working. |

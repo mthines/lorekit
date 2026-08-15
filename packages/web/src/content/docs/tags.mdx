@@ -75,18 +75,21 @@ memory.list {
 
 <TutorialStep number={4} title="Filter the Explorer by more than tags">
 
-The [Explorer](/lore) filters on eight dimensions, not just tags. Press the **Filter** button, pick a dimension, then pick values:
+The [Explorer](/lore) filters on nine dimensions, not just tags. Press the **Filter** button, pick a dimension, then pick values:
 
 | Dimension | Comes from | Example |
 | --- | --- | --- |
 | Label | `tags` | `loop::aw-lessons` |
 | Kind | `kind` | `lesson` (also `bus`, `signal`) |
 | Host | `host` | `reviewer` |
+| Owner | `org_id` | `Personal` (or an org you belong to) |
 | Agent | `source_agent` | `aw-executor` |
 | Trigger | `trigger` | `stuck-loop` |
 | Repository | `origin_repo` | `mthines/lorekit` |
 | Branch | `origin_branch` | `feat/new-auth` |
 | Pull request | `origin_pr` | `311` |
+
+**Owner** partitions lore by who it belongs to — your own `Personal` lore, or one of the organizations you are a member of (shown by its slug). It filters server-side like every other dimension, so the list, the filter-menu counts and the stats header all agree.
 
 Values inside one dimension combine with **OR**; dimensions combine with **AND**. So "Agent is either of `aw`, `claude`" **and** "Branch is `main`" is one filter set, and every filter is in the URL — copy the address to share the exact view.
 
