@@ -2245,5 +2245,5 @@ test('RemoteStore.putEntry reports a clamped TTL as lossy rather than silently s
     (store) => store.putEntry({ scope: 'global', key: 'k', value: 'v', expires_at: '2025-01-11T00:00:00.000Z' }, { now }),
     { status: 201, body: '{}' },
   );
-  assert.equal(fits.result.ttlClamped, undefined);
+  assert.equal(fits.result.ttlClamped, false); // present and false, never undefined
 });

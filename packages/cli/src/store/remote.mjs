@@ -364,9 +364,10 @@ class RemoteStore {
       httpStatus: null,
       retryAfter: null,
       networkError: null,
-      // Every key `write` answers with, so a caller reading one never gets a
-      // value from one branch and `undefined` from another.
+      // Every key any putEntry branch answers with, so a caller reading one
+      // never gets a value from one branch and `undefined` from another.
       unusable: false,
+      ttlClamped: false,
     });
     if (entry?.archived_at) {
       return refuse('archived', 'archived entries cannot be written remotely — the hosted write revives them');
@@ -393,10 +394,13 @@ class RemoteStore {
       origin_commit: entry.origin_commit,
       origin_pr: entry.origin_pr,
     }));
-    // Additive, and only on the path where it can be true.
-    return ttl === 365 && remoteTtlDaysExact(entry?.expires_at, now) > 365
-      ? { ...result, ttlClamped: true }
-      : result;
+    // Always present, like every other key in this envelope — a caller must
+    // not have to know which branch produced the result to read it.
+    return {
+      ...result,
+      unsupported: null,
+      ttlClamped: ttl === 365 && remoteTtlDaysExact(entry?.expires_at, now) > 365,
+    };
   }
 
   // Natural-key DELETE. Without `force` the server soft-archives (stamps
