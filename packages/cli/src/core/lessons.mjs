@@ -181,11 +181,14 @@ export async function fetchLessons(store, cwd, { now = Date.now(), scope: scopeO
   // narrow scope should instead be guaranteed floor space, that is a weighting
   // change in `rankLessons`, not something to re-derive here.
   //
-  // The rank options (see `sessionRankOpts`): a WEAK relevance query distilled
-  // from the branch NAME, at half weight, so a session on `feat/embedding-…`
-  // nudges embedding lessons up without a noisy branch name reordering the read
-  // out from under recency and salience. A trunk branch or detached HEAD yields
-  // no terms, and the read is recency + salience exactly as before. `scopeOrder`
+  // The rank options (see `sessionRankOpts`): a relevance query distilled from
+  // the branch NAME, at the DEFAULT weight, so a session on `feat/embedding-…`
+  // nudges embedding lessons up. Relevance only ever LIFTS an on-topic lesson —
+  // a non-matching lesson scores relevance 0, so a branch that matches nothing
+  // does not reorder the read — which is why it need not (and must not, per the
+  // Σweights normalisation) be damped by a smaller weight. A trunk branch or
+  // detached HEAD yields no terms, and the read is recency + salience exactly as
+  // before. `scopeOrder`
   // is passed explicitly rather than left to the scorer's first-appearance
   // default — the hierarchy is `readOrder`'s to state, not an artefact of how
   // this function happens to build its array.
