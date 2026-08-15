@@ -5226,7 +5226,11 @@ $$;
 -- pins that an edit arriving together with an embedding still counts as an edit.
 insert into memories (id, user_id, scope, key, value, updated_at) values
   ('00000000-0000-0000-0000-0000000e6220', '00000000-0000-0000-0000-0000000000a1',
-   'global', 'embed-stamp-row', 'original value', '2020-01-01T00:00:00Z');
+   'global', 'embed-stamp-row', 'original value', '2020-01-01T00:00:00Z'),
+  -- AC-3 needs its own row: see the note there for why resetting the first one
+  -- cannot work now that the trigger preserves a lone `updated_at` write.
+  ('00000000-0000-0000-0000-0000000e6221', '00000000-0000-0000-0000-0000000000a1',
+   'global', 'embed-stamp-row-2', 'original value', '2020-01-01T00:00:00Z');
 
 do $$
 declare
@@ -5264,15 +5268,31 @@ begin
     format('00062 AC-2: editing a memory must still bump updated_at, stayed at %s', v_after);
 
   -- AC-3 — an edit that ALSO rewrites the vector is still an edit.
+  --
+  -- On a SECOND row seeded at 2020, not by resetting the first one. Two reasons,
+  -- and both would have made this assertion vacuous:
+  --
+  --   * an `update … set updated_at = …` that touches nothing else is exactly
+  --     the case the new trigger PRESERVES, so the reset silently no-ops and the
+  --     row keeps its AC-2 timestamp;
+  --   * `now()` is the transaction timestamp and does not advance inside one, so
+  --     comparing two stamps taken in this transaction can never show an increase.
+  --
+  -- Seeding through INSERT sidesteps both: there is no BEFORE INSERT trigger on
+  -- `updated_at`, so the 2020 value survives and a real bump is unmistakable.
+  --
+  -- Both embedding columns move together — the 00060 CHECK is both-or-neither,
+  -- so setting `embedding_model` alone would fail on the constraint rather than
+  -- testing the trigger.
   update memories
-     set updated_at = '2020-01-01T00:00:00Z'
-   where id = '00000000-0000-0000-0000-0000000e6220';
-  update memories
-     set value = 'edited again', embedding_model = 'text-embedding-3-large'
-   where id = '00000000-0000-0000-0000-0000000e6220';
-  select updated_at into v_after from memories where id = '00000000-0000-0000-0000-0000000e6220';
+     set value = 'edited again',
+         embedding = v_vec::vector,
+         embedding_model = 'text-embedding-3-large'
+   where id = '00000000-0000-0000-0000-0000000e6221';
+  select updated_at into v_after from memories where id = '00000000-0000-0000-0000-0000000e6221';
   assert v_after > '2020-01-01T00:00:00Z'::timestamptz,
-    '00062 AC-3: a change touching both the value and the embedding columns is an edit and must bump';
+    format('00062 AC-3: a change touching both the value and the embedding columns is an edit '
+           'and must bump updated_at, stayed at %s', v_after);
 end;
 $$;
 

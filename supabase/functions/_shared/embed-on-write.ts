@@ -36,10 +36,18 @@ function background(): WaitUntilHost | null {
 /**
  * Queue an embedding for a memory that was just written.
  *
- * Returns synchronously. `enqueued` is reported on the span so a run can be
- * told from a skip without reading provider logs — "no embeddings appeared" has
- * three very different causes (disabled, unavailable runtime hook, provider
- * failing) and they should not look alike.
+ * Returns synchronously. `enqueued` is reported on the span so a skip can be
+ * told from a failure without reading provider logs — "no embeddings appeared"
+ * has several very different causes and they should not look alike.
+ *
+ * The PER-REQUEST causes each carry their own signal: an unavailable runtime
+ * hook, a memory with no embeddable text, a provider fault, and a write that
+ * matched no row. `disabled` deliberately does NOT: it is a deployment-wide
+ * constant (the flag and the key), it is the DEFAULT state, and stamping every
+ * `POST /memories` on every project with an attribute recording a value that is
+ * already in the configuration is noise on the busiest span in the system. An
+ * operator asking "why are there no embeddings" reads the flag first; the span
+ * is for the causes the flag cannot explain.
  */
 export function embedOnWrite(
   db: DbClient,
@@ -51,8 +59,15 @@ export function embedOnWrite(
   const config = resolveEmbeddingConfig(env);
   if (!config.enabled) return;
 
+  // This one IS per-row and was silent: a memory whose key and value are empty
+  // or whitespace can never be embedded, and without a signal it looked the same
+  // as embedding being switched off. Rare enough to cost nothing, and it is the
+  // difference between "this project embeds nothing" and "this lesson is empty".
   const text = embeddingInput(memory);
-  if (!isEmbeddable(text)) return;
+  if (!isEmbeddable(text)) {
+    span.setAttributes({ 'lorekit.embedding.skipped': 'no_embeddable_text' });
+    return;
+  }
 
   const host = background();
   if (!host) {

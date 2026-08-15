@@ -124,12 +124,19 @@ by reading provider logs — but they are on **two** spans, and which one matter
 |------|--------|---------|
 | the **request** span | `lorekit.embedding.enqueued` | the call was handed to the background runtime |
 | the **request** span | `lorekit.embedding.skipped = no_background_runtime` | no `waitUntil` on this runtime; the row stays null for the backfill |
+| the **request** span | `lorekit.embedding.skipped = no_embeddable_text` | the memory's key and value are empty or whitespace; no rerun will ever fill it |
 | `lorekit.embedding.write` (detached) | an `embedding update:` / `embedding failed:` error | the write or the provider call failed |
 | `lorekit.embedding.write` (detached) | `embedding update matched no row` | the vector arrived but no row was written — see [Who may write a vector](#who-may-write-a-vector) |
 
 There is no `no_vector` signal: response validation is strict and throws, so a
 provider that answers without a usable vector arrives as an `embedding failed:`
 error on the same span rather than as a separate skip reason.
+
+There is deliberately no `disabled` signal either. That is a deployment-wide
+constant — the flag and the key — and the **default** state, so recording it
+would stamp an attribute on every `POST /memories` on every project to report
+something already in the configuration. Check the flag first; the span is for the
+causes the flag cannot explain.
 
 ### Who may write a vector
 
