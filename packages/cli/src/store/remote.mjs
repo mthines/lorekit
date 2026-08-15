@@ -323,8 +323,12 @@ class RemoteStore {
   //              entry with NO provenance therefore leaves whatever the hosted
   //              row already had; it cannot clear it, by design, and there is
   //              no parameter that would. `source_agent` and `trigger` are NOT
-  //              coalesced (`= excluded.*`), so those two do land verbatim,
-  //              including a null. `kind` and `host` are coalesced the same
+  //              coalesced (`= excluded.*`), so an absent one still CLEARS the
+  //              hosted value — not because a null is sent (`stripUndefined`
+  //              drops nulls before the request) but because the REST handler
+  //              substitutes `?? null` for the missing field and the RPC
+  //              writes that. Omitted and null are the same instruction here,
+  //              which is the opposite of what they mean for `origin_*`. `kind` and `host` are coalesced the same
   //              way, and this store never sends them at all — the server
   //              infers both from the `loop::` tag (`resolveKindHost`), which
   //              the tags carry, so a migrated lesson classifies itself.
