@@ -1,0 +1,297 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Deploy the dashboard preview for a PR ON DEMAND.
+#
+# Two ways in:
+#   1. Comment `/web-preview` on the PR (optionally `/web-preview --if-changed`).
+#   2. Actions ▸ Deploy web preview ▸ Run workflow, with the PR number.
+#
+# Both run the SAME flow ci.yml runs (.github/workflows/web-preview-deploy.yml),
+# so the preview and its sticky comment are identical to the automatic one — this
+# workflow only decides WHICH PR and WHETHER to force.
+#
+# Why force by default: ci.yml's preview is deliberately quota-frugal — it skips
+# when no web file changed since the last preview, and no-ops at an unchanged
+# head (so "Re-run jobs" cannot produce a new deployment). That is right for the
+# automatic path and useless for a manual one: you reach for `/web-preview`
+# precisely when the automatic decision was wrong, a deployment expired, the
+# stable alias broke, or a run was cancelled mid-deploy. Pass `--if-changed` to
+# opt back into the incremental behaviour.
+#
+# Security:
+#   - `issue_comment` always runs the workflow file from the DEFAULT branch, so a
+#     PR cannot edit this gate to authorize itself. (It also means changes to
+#     this file only take effect once merged to `main`.)
+#   - The command is gated to OWNER/MEMBER/COLLABORATOR BEFORE anything else
+#     happens, matching preview.yml's `/preview` and rebuild-preview.yml's
+#     `/reset-preview`.
+#   - The comment body is only ever read through an env var, never interpolated
+#     into a shell command — `${{ github.event.comment.body }}` inside a `run:`
+#     is a script-injection vector.
+#   - The deploy job checks out the PR head and then runs the repo-local
+#     composite action from that checkout, so a PR's own version of
+#     .github/actions/vercel-preview-deploy runs with the Vercel token. This is
+#     the same exposure preview.yml's `/preview` already carries; the
+#     maintainer-only gate above is what contains it. Review that directory's
+#     diff before running this on an untrusted PR.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Deploy web preview
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to deploy the dashboard preview for (e.g. 421).
+        required: true
+        type: string
+      if-changed:
+        description: Respect the incremental skip instead of forcing a redeploy.
+        required: false
+        default: false
+        type: boolean
+
+# One on-demand preview per PR at a time. `cancel-in-progress: false` because
+# this is a deploy — let an in-flight one finish rather than abandoning a
+# half-uploaded deployment. (web-preview-deploy.yml carries its own per-PR group
+# that additionally serializes this against ci.yml's automatic preview.)
+concurrency:
+  group: web-preview-cmd-pr-${{ github.event.issue.number || inputs.pr }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  # ── Gate, acknowledge, and resolve which commit to deploy ────────────────────
+  guard:
+    name: Check trigger conditions
+    runs-on: ubuntu-latest
+    # Cheap pre-filter so an unrelated comment never spins up a runner. The
+    # STRICT command match happens in the parse step below — `contains` would
+    # also fire on a bot quoting the command back ("> /web-preview") or on prose
+    # that merely mentions it.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.issue.pull_request != null &&
+       contains(github.event.comment.body, '/web-preview'))
+    permissions:
+      pull-requests: write
+    outputs:
+      authorized: ${{ steps.parse.outputs.authorized }}
+      force: ${{ steps.parse.outputs.force }}
+      pr_number: ${{ steps.pr.outputs.number }}
+      pr_sha: ${{ steps.pr.outputs.sha }}
+      pr_branch: ${{ steps.pr.outputs.branch }}
+    steps:
+      # Authorize AND parse before acknowledging — reacting first would let any
+      # user make the bot respond, and would ack commands we then ignore.
+      - name: Authorize the caller and parse the command
+        id: parse
+        env:
+          EVENT: ${{ github.event_name }}
+          ASSOCIATION: ${{ github.event.comment.author_association }}
+          # Never interpolated into the script — read as data only.
+          BODY: ${{ github.event.comment.body }}
+          DISPATCH_IF_CHANGED: ${{ inputs.if-changed }}
+        run: |
+          set -euo pipefail
+
+          # A manual dispatch is already authorized by repo permissions — only
+          # someone with write access can start a workflow run from the UI.
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            echo "Manual dispatch — authorized."
+            echo "authorized=true" >> "$GITHUB_OUTPUT"
+            if [ "$DISPATCH_IF_CHANGED" = "true" ]; then
+              echo "force=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "force=true" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+
+          # Strict command match: the FIRST non-empty line must be exactly the
+          # command, with an optional --if-changed flag. Anything else (a quote,
+          # a mention inside prose, a bot echoing the thread) is not a command.
+          first_line="$(printf '%s\n' "$BODY" | sed -e 's/\r$//' | grep -v '^[[:space:]]*$' | head -1 || true)"
+          # Trim surrounding whitespace.
+          first_line="$(printf '%s' "$first_line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          echo "First line: '${first_line}'"
+
+          case "$first_line" in
+            "/web-preview")
+              force=true ;;
+            "/web-preview --if-changed")
+              force=false ;;
+            *)
+              echo "::notice::'/web-preview' was mentioned but is not the command on the first line — ignoring. Usage: '/web-preview' or '/web-preview --if-changed'."
+              echo "authorized=false" >> "$GITHUB_OUTPUT"
+              exit 0 ;;
+          esac
+
+          case "$ASSOCIATION" in
+            OWNER|MEMBER|COLLABORATOR)
+              echo "Commenter association '${ASSOCIATION}' — authorized."
+              echo "authorized=true" >> "$GITHUB_OUTPUT"
+              echo "force=${force}" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::notice::Commenter association '${ASSOCIATION}' is not OWNER/MEMBER/COLLABORATOR — ignoring '/web-preview'."
+              echo "authorized=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      # Acknowledge as soon as (and only if) we have accepted the command, so the
+      # commenter can tell the bot heard them. No reactable comment exists on the
+      # dispatch path, so it is skipped there.
+      - name: Add 👀 reaction
+        if: github.event_name == 'issue_comment' && steps.parse.outputs.authorized == 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes',
+            });
+
+      # Resolve the head to deploy from the API — never from a user-supplied ref.
+      # Both paths converge here, so the deploy job below sees one shape.
+      - name: Resolve the PR head
+        id: pr
+        if: steps.parse.outputs.authorized == 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          DISPATCH_PR: ${{ inputs.pr }}
+        with:
+          script: |
+            const raw = context.eventName === 'workflow_dispatch'
+              ? (process.env.DISPATCH_PR ?? '').trim()
+              : String(context.payload.issue.number);
+            if (!/^[0-9]+$/.test(raw)) {
+              core.setFailed(`'${raw}' is not a PR number. Pass a bare number, e.g. 421.`);
+              return;
+            }
+            const pull_number = Number(raw);
+            let pr;
+            try {
+              pr = (await github.rest.pulls.get({ ...context.repo, pull_number })).data;
+            } catch (e) {
+              core.setFailed(`Could not read PR #${pull_number}: ${e.message}`);
+              return;
+            }
+            if (pr.state !== 'open') {
+              core.setFailed(`PR #${pull_number} is ${pr.state} — refusing to deploy a preview for it.`);
+              return;
+            }
+            core.info(`Deploying preview for PR #${pull_number} @ ${pr.head.sha} (${pr.head.ref})`);
+            core.setOutput('number', String(pull_number));
+            core.setOutput('sha', pr.head.sha);
+            core.setOutput('branch', pr.head.ref);
+
+  # ── The deploy itself — the same reusable flow ci.yml runs ───────────────────
+  deploy:
+    name: Deploy
+    needs: guard
+    if: needs.guard.outputs.authorized == 'true'
+    uses: ./.github/workflows/web-preview-deploy.yml
+    permissions:
+      contents: read
+      pull-requests: write
+    with:
+      pr-number: ${{ fromJSON(needs.guard.outputs.pr_number) }}
+      head-sha: ${{ needs.guard.outputs.pr_sha }}
+      head-ref: ${{ needs.guard.outputs.pr_branch }}
+      force: ${{ needs.guard.outputs.force == 'true' }}
+    secrets:
+      vercel-token: ${{ secrets.VERCEL_TOKEN }}
+      vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+      vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+
+  # ── Report back — a comment-triggered run has no PR status check ─────────────
+  #    Without this the commenter sees a 👀 and then silence forever. Reports on
+  #    BOTH paths: 🚀 when a deployment was created, 👍 when the run succeeded but
+  #    deliberately deployed nothing (--if-changed decided it was current), 👎
+  #    plus a comment linking the run when it failed.
+  report:
+    name: Report outcome
+    runs-on: ubuntu-latest
+    needs: [guard, deploy]
+    if: always() && needs.guard.outputs.authorized == 'true'
+    permissions:
+      pull-requests: write
+    steps:
+      - name: React and, on failure, comment with the run link
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RESULT: ${{ needs.deploy.result }}
+          DEPLOYED: ${{ needs.deploy.outputs.deployed }}
+          SKIP_REASON: ${{ needs.deploy.outputs.skip-reason }}
+          PR_NUMBER: ${{ needs.guard.outputs.pr_number }}
+          PR_SHA: ${{ needs.guard.outputs.pr_sha }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const result = process.env.RESULT;
+            const deployed = process.env.DEPLOYED === 'true';
+            const skipReason = process.env.SKIP_REASON || '';
+            const rawPr = (process.env.PR_NUMBER || '').trim();
+            const sha = (process.env.PR_SHA || '').slice(0, 7);
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const ok = result === 'success';
+
+            // The guard can authorize the command and still fail while resolving
+            // the PR (bad number, closed PR, API error). There is then no PR to
+            // comment on — fail loudly in the log rather than posting to #0.
+            if (!/^[0-9]+$/.test(rawPr)) {
+              core.setFailed(`Could not resolve a PR number — the guard job ended '${result}'. See ${runUrl}`);
+              return;
+            }
+            const issue_number = Number(rawPr);
+
+            // The dispatch path has no comment to react to.
+            const commentId = context.eventName === 'issue_comment'
+              ? context.payload.comment.id
+              : null;
+            const react = async (content) => {
+              if (!commentId) return;
+              try {
+                await github.rest.reactions.createForIssueComment({ owner, repo, comment_id: commentId, content });
+              } catch (e) {
+                core.warning(`Could not add the '${content}' reaction: ${e.message}`);
+              }
+            };
+
+            if (ok) {
+              // 🚀 deployed something, 👍 ran fine but had nothing to do.
+              await react(deployed ? 'rocket' : '+1');
+              if (deployed) {
+                core.info(`Deployed ${sha} — the preview comment on the PR carries the URLs.`);
+                return;
+              }
+              core.notice(`No deployment was needed — ${skipReason || 'nothing to deploy'}.`);
+              // Nothing deployed ⇒ no sticky comment was written this run, so the
+              // 👍 is the whole answer on the comment path. The dispatch path has
+              // no reaction at all, so there it needs a comment to say anything.
+              if (!commentId) {
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number,
+                  body: [
+                    `No new dashboard preview was deployed for \`${sha}\` — ${skipReason || 'nothing to deploy'}.`,
+                    '',
+                    `Comment \`/web-preview\` (without \`--if-changed\`) to force a redeploy. · [Workflow logs](${runUrl})`,
+                  ].join('\n'),
+                });
+              }
+              return;
+            }
+
+            await react('-1');
+            await github.rest.issues.createComment({
+              owner, repo, issue_number,
+              body: [
+                `❌ The dashboard preview for \`${sha}\` failed to deploy (\`${result}\`).`,
+                '',
+                `[Open the run logs](${runUrl}) for the failure. Comment \`/web-preview\` to retry once it is fixed.`,
+              ].join('\n'),
+            });
+            core.setFailed(`Web preview deploy ${result} — see ${runUrl}`);
