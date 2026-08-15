@@ -777,3 +777,37 @@ test('migrate --to remote does not report a loss for a write that failed', async
     assert.doesNotMatch(result.text, /TTL shortened/);
   });
 });
+
+test('migrate --to remote is idempotent for an entry whose TTL exceeds the hosted maximum', async () => {
+  const src = tmpDir();
+  const store = createLocalStore(src);
+  await store.write({ scope: 'global', key: 'forever', value: 'v', ttl_days: 365 });
+  const file = fs.readdirSync(path.join(src, 'global')).map((n) => path.join(src, 'global', n))[0];
+  fs.writeFileSync(
+    file,
+    fs.readFileSync(file, 'utf8').replace(/expires_at: .*/, 'expires_at: 2099-01-01T00:00:00.000Z'),
+  );
+
+  const home = tmpDir();
+  const root = tmpDir();
+  await withHome(home, async () => {
+    // The row a previous push produced: clamped to the API maximum, which is
+    // the longest life a write can ask for. Comparing it against the local
+    // 2099 would disagree forever and re-push on every single run — for
+    // exactly the entries the clamp already warned about.
+    const hostedRow = {
+      id: '00000000-0000-0000-0000-000000000000',
+      scope: 'global', key: 'forever', value: 'v',
+      tags: [], source_agent: null, trigger: null,
+      created_at: '2024-01-01T00:00:00.000Z', updated_at: '2024-01-01T00:00:00.000Z',
+      expires_at: new Date(Date.now() + 365 * 86_400_000).toISOString(),
+      archived_at: null,
+    };
+    const { result, calls } = await withRemote(
+      () => quiet(() => migrate({ from: src, to: 'remote', yes: true, dir: root })),
+      { respond: (c) => (c.method === 'GET' ? { status: 200, body: JSON.stringify({ entries: [hostedRow] }) } : null) },
+    );
+    assert.equal(result, 0);
+    assert.equal(writes(calls).length, 0);
+  });
+});

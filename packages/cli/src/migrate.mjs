@@ -26,7 +26,7 @@ import { resolveProjectRoot, tokenKind } from './config.mjs';
 import { localStoreDirs, loadControl } from './control.mjs';
 import { createLocalStore, createTwoTierStore, createRemoteStore } from './store/index.mjs';
 import { parseEntry } from './store/format.mjs';
-import { isLive } from './store/ttl.mjs';
+import { isLive, TTL_MAX_DAYS } from './store/ttl.mjs';
 import { remoteWriteLosses } from './store/remote.mjs';
 import {
   createPacer, withRetry, isMemoryCap, sleep, DEFAULT_CONSECUTIVE_FAILURE_LIMIT,
@@ -136,25 +136,35 @@ function sameRemoteEntry(current, entry, now = new Date()) {
 //
 //   both permanent          → satisfied.
 //   one permanent, one not  → different intent, re-push.
-//   both expiring           → satisfied when the hosted row outlives the local
-//                             one. Right after a push they are equal; the local
-//                             copy then ages while the hosted one does not, so
-//                             the answer stays "satisfied" and a re-run is
-//                             NOOP. A hosted expiry that is genuinely SHORTER
-//                             (the reviewer's 7-day row against a 300-day
-//                             lesson) is not satisfied, and does re-push.
+//   both expiring           → satisfied when the hosted row outlives what a
+//                             write could ACTUALLY ask for. Right after a push
+//                             the two are equal; the local copy then ages
+//                             while the hosted one does not, so the answer
+//                             stays "satisfied" and a re-run is NOOP. A hosted
+//                             expiry that is genuinely SHORTER (a 7-day row
+//                             against a 300-day lesson) is not satisfied, and
+//                             does re-push.
+//
+//                             The local intent is CAPPED at the API's 365-day
+//                             maximum first, because that is the longest life a
+//                             write can request. Without the cap an entry
+//                             expiring in 2099 lands at now+365d and then
+//                             disagrees with itself forever — a permanent
+//                             UPDATE loop for exactly the entries the clamp
+//                             already warned about.
 function sameRemoteTtl(currentExpiry, entryExpiry, now = new Date()) {
   if (!currentExpiry && !entryExpiry) return true;
   if (!currentExpiry || !entryExpiry) return false;
-  const a = Date.parse(currentExpiry);
-  const b = Date.parse(entryExpiry);
+  const hosted = Date.parse(currentExpiry);
+  const local = Date.parse(entryExpiry);
   // An unparseable value on either side is not a difference we can act on —
   // `putEntry` leaves the hosted expiry alone in that case, so re-pushing
   // would change nothing.
-  if (Number.isNaN(a) || Number.isNaN(b)) return true;
+  if (Number.isNaN(hosted) || Number.isNaN(local)) return true;
+  const asked = Math.min(local, now.getTime() + TTL_MAX_DAYS * 86_400_000);
   // A day of slack: both sides are converted through WHOLE days, so a few
   // hours of rounding is not a real divergence.
-  return a >= b - 86_400_000;
+  return hosted >= asked - 86_400_000;
 }
 
 // The global connection flags, folded into the environment the resolver reads.
@@ -189,12 +199,13 @@ const ALTERED_LIST_CAP = 10;
 //
 // Every check here is a PREFLIGHT: it runs once, before the first entry, so a
 // misconfigured run fails in one line instead of halfway through a push with
-// an unknown amount already written. Returns `{ store, warnings }` on success
-// and `{ error }` otherwise.
+// an unknown amount already written.
+//
+// Returns `{ error }` when the destination is unusable, else
+// `{ store, endpoint, warnings, classify }` — where `classify` is false when
+// the token cannot READ, so the caller must not try to.
 export function resolveRemoteDestination(control, args = {}) {
   const denied = (control.denies || []).find((d) => d.mode === 'remote');
-  // Returns `{ store, warnings, classify }` on success — `classify` is false
-  // when the token cannot read, so the caller must not try.
   if (denied) {
     return { error: `remote mode is denied by ${denied.source} — a migration cannot override a deny` };
   }
