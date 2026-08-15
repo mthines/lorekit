@@ -248,7 +248,7 @@ const MEMORY_DISPATCH = {
 // networkError, unusable }`. A tool that passed either through verbatim would
 // hand the model two different contracts for one tool name depending on a
 // config value it cannot see. What is left here is what only the MCP surface
-// owns: the ascending sort and the exit-clean degradation below.
+// owns: the count-desc-then-scope-asc sort and the exit-clean degradation below.
 //
 // DEGRADATION IS EXIT-CLEAN, mirroring the `scopes` command, which reports an
 // unreachable remote as a short note at exit 0 rather than failing the run. An
