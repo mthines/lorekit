@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.49.0](https://github.com/mthines/lorekit/compare/cli-v1.48.0...cli-v1.49.0) (2026-08-15)
+
+
+### Features
+
+* **memories:** order GET /memories/scopes by count, not scope name ([4338387](https://github.com/mthines/lorekit/commit/4338387143f1825495b108ca3d972f95439fe5d6))
+
+
+### Bug Fixes
+
+* **memories:** propagate the count-desc scope order to the MCP contract + stdio ([aadca03](https://github.com/mthines/lorekit/commit/aadca030554d41fec3dd805fb09004e7c716177f))
+
+
+### Documentation
+
+* **cli:** correct the listScopes docblock — count-desc, not ascending ([020a197](https://github.com/mthines/lorekit/commit/020a197dff351528d1a587cc28ace789b742095f))
+
 ## [1.48.0](https://github.com/mthines/lorekit/compare/cli-v1.47.0...cli-v1.48.0) (2026-08-15)
 
 
