@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.51.0](https://github.com/mthines/lorekit/compare/cli-v1.50.0...cli-v1.51.0) (2026-08-15)
+
+
+### Features
+
+* **cli:** give RemoteStore the migrate-destination write interface ([#476](https://github.com/mthines/lorekit/issues/476)) ([fd2e214](https://github.com/mthines/lorekit/commit/fd2e214560457d43ea10fca16a35d33c80032f87))
+
 ## [1.50.0](https://github.com/mthines/lorekit/compare/cli-v1.49.0...cli-v1.50.0) (2026-08-15)
 
 
