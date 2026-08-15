@@ -490,10 +490,9 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // filtered something out". `range` is excluded for a related reason — a time
   // window is a bound, not a within-view predicate, and it has its own
   // empty-state branch (`rangeIsNarrowing`) with a "View all time" way out. That
-  // distinction is
-  // what the empty state turns on — a status view with nothing narrowing it
-  // gets its own copy, the same view with a search that matched nothing gets
-  // "no matches".
+  // distinction is what the empty state turns on — a status view with nothing
+  // narrowing it gets its own copy, the same view with a search that matched
+  // nothing gets "no matches".
   const isNarrowedWithinView =
     search.trim() !== '' || ownerFilter !== 'all' || filters.length > 0;
 

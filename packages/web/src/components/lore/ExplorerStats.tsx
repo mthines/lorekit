@@ -23,9 +23,9 @@
  * header describes the ACTIVE, unsearched set while the list may show more or
  * less: the `status` control (Archived / Expiring selects a different
  * population, and the activity RPC only ever counts active, non-expired rows),
- * and the free-text `q` search (the RPC has no full-text arm). Both are tracked
- * as follow-ups rather than silently implied to be counted — see the PR's
- * limitations note. The dimension filters, which is what people reach for to
+ * and the free-text `q` search (the RPC has no full-text arm). Both are stated
+ * here rather than silently implied to be counted; forwarding them to the RPC is
+ * a tracked follow-up. The dimension filters, which is what people reach for to
  * narrow a scope, ARE reflected, so there is no per-card disclaimer for them.
  *
  * Two cards can only go part-way, and each says so in its own caption/tooltip:
