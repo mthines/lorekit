@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.50.0](https://github.com/mthines/lorekit/compare/cli-v1.49.0...cli-v1.50.0) (2026-08-15)
+
+
+### Features
+
+* **cli:** make the SessionStart lesson ceiling configurable ([b98882f](https://github.com/mthines/lorekit/commit/b98882fa699040dd7ade24c2ee59c7be7b8b4695))
+* **cli:** make the SessionStart lesson ceiling configurable ([0d54045](https://github.com/mthines/lorekit/commit/0d54045a3c0a220bbed7d4f7bc7cfe463f2a5c68))
+* **cli:** optimize the SessionStart defaults for relevance per token ([7327960](https://github.com/mthines/lorekit/commit/73279607091eeaff5b8341171ea043d8b044c83b))
+
+
+### Bug Fixes
+
+* **cli:** an unusable maxLessons must fall back, not collapse to one line ([7fa6ae7](https://github.com/mthines/lorekit/commit/7fa6ae7b868a994ad3c972de335e7dbc2e19266e))
+* **cli:** never request a per-scope limit the route will reject ([23c08a0](https://github.com/mthines/lorekit/commit/23c08a0b08db23ab0d1f72eb51cd1706a8626863))
+
+
+### Documentation
+
+* **cli:** name the 100/scope route cap in the README config block ([1f66383](https://github.com/mthines/lorekit/commit/1f6638391dfb98ad5a6427d419b09311e3d66bfa))
+* **cli:** resolve the comment drift the retuned defaults left behind ([868738a](https://github.com/mthines/lorekit/commit/868738a407319a8c69ca0aa33e8c3ef650edfd98))
+* **cli:** three more stale-default references the last sweep missed ([7257797](https://github.com/mthines/lorekit/commit/72577972c5dc1a81f7ef0c3f6c669d813b88408d))
+* document hooks.sessionStart.maxLessons on every surface it belongs to ([8b773db](https://github.com/mthines/lorekit/commit/8b773db245057da2577353c9595f40180080525c))
+
 ## [1.49.0](https://github.com/mthines/lorekit/compare/cli-v1.48.0...cli-v1.49.0) (2026-08-15)
 
 
