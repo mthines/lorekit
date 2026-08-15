@@ -85,6 +85,9 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   // memories/handlers/relevant.ts and mcp/tools.ts (order=rank) — and neither
   // can cross-import mcp-core; hoisted out of both so the two cannot drift.
   ['outcome-signal.ts', '_shared/outcome-signal.ts'],
+  // The pure half of the embedding pipeline. The impure half (`fetch`, the API
+  // key) is `_shared/embedding-client.ts`, which is Deno-only and not mirrored.
+  ['embedding.ts', '_shared/embedding.ts'],
   // Two rules lifted OUT of Deno-only files so vitest can assert them:
   // rest-audit-actor.ts is `auditUserId` (was inline in _shared/api/auth.ts),
   // rest-response-outcome.ts is the status→usage_events.outcome

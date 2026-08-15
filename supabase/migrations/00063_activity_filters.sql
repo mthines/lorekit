@@ -149,6 +149,6 @@ comment on function lorekit_memory_activity(
 ) is
   'Memories created per UTC hour/day per scope over the half-open
    [p_since, p_until) window, visible to the EFFECTIVE caller, narrowed by the
-   optional scope + dimension filters (00062) — the SAME predicate as
+   optional scope + dimension filters (00063) — the SAME predicate as
    GET /memories and lorekit_memory_facets, so the stat header agrees with the
    list. With no filters supplied the result is byte-for-byte 00051''s.';

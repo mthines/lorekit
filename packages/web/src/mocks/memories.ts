@@ -222,7 +222,7 @@ function facetsFrom(rows: MemoryRow[], archived: boolean) {
     bump('origin_repo', r.origin_repo);
     bump('origin_branch', r.origin_branch);
     bump('origin_pr', r.origin_pr);
-    // Owner (migration 00063): `personal` for org-less rows, else the org slug.
+    // Owner (migration 00064): `personal` for org-less rows, else the org slug.
     bump('owner', r.org ? r.org.slug : 'personal');
   }
 
@@ -307,7 +307,7 @@ function readActivityFrom(rows: MemoryRow[], unit: 'hour' | 'day') {
  */
 /**
  * The shared row predicate — scope + label + the scalar dimensions — that both
- * `GET /memories` and (since migration 00062) `GET /memories/activity` apply. It
+ * `GET /memories` and (since migration 00063) `GET /memories/activity` apply. It
  * lives here once so the stat header's numbers narrow the same way the list does
  * in a story. Any param that is absent is a no-op, so the activity handler — which
  * sends `scope` + the dimension filters but never `key`/`q`/`archived` — reuses it
@@ -350,7 +350,7 @@ function filterRows(rows: MemoryRow[], url: URL): MemoryRow[] {
     .filter(scalar('origin_repo', (r) => r.origin_repo))
     .filter(scalar('origin_branch', (r) => r.origin_branch))
     .filter(scalar('origin_pr', (r) => r.origin_pr))
-    // Owner (00063) — the computed identity `personal` / org slug, not a raw
+    // Owner (00064) — the computed identity `personal` / org slug, not a raw
     // column, so it cannot reuse `scalar`. `in` (default) or `nin`.
     .filter((r) => {
       const values = url.searchParams.get('owner')?.split(',').filter(Boolean) ?? [];
@@ -399,7 +399,7 @@ export function memoryHandlers(rows: MemoryRow[] = MEMORY_ROWS) {
         bucket,
         since: url.searchParams.get('since') ?? FROZEN_NOW,
         until: url.searchParams.get('until') ?? FROZEN_NOW,
-        // Scope + dimension filters narrow the aggregate server-side (00062), so
+        // Scope + dimension filters narrow the aggregate server-side (00063), so
         // the mock applies the SAME predicate the list uses — else a scoped header
         // would show the account total.
         buckets: activityFrom(filterRows(rows, url), bucket),

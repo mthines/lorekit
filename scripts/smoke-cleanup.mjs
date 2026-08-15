@@ -59,7 +59,7 @@
 // This script is intentionally zero-dependency and standalone (it must run from
 // a bare checkout with no build step), so the pattern is copied rather than
 // imported. `smoke-cleanup.spec.ts` fails if the two ever diverge.
-const SMOKE_ARTEFACT_PATTERN = /^(?:memories-|byod-)?smoke-(\d{10,})(?:-[a-z0-9-]*)?$/;
+const SMOKE_ARTEFACT_PATTERN = /^(?:memories-|byod-|embed-)?smoke-(\d{10,})(?:-[a-z0-9-]*)?$/;
 
 /** The mint time encoded in a smoke artefact name, or null when unrecognised. */
 function smokeArtefactTimestamp(name) {

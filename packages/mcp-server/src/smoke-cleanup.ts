@@ -37,12 +37,12 @@
  * `smoke-1717171717171-a`, `memories-smoke-1717171717171-restore`,
  * `byod-smoke-1717171717171-global`, `smoke-1717171717171-tok` (an org slug).
  *
- * The label alternation is a CLOSED SET (`memories-` / `byod-` / bare), not a
- * generic `[a-z0-9-]*` prefix. A permissive prefix also matches real lore such
- * as `how-to-debug-a-smoke-1717171717171-failure`, and the consumer of this
- * pattern DELETES what it matches — so the set of recognised labels is
- * enumerated here and `createSmokeNamespace` refuses to mint outside it. Adding
- * a suite is a deliberate edit in one place, not an accident.
+ * The label alternation is a CLOSED SET (`memories-` / `byod-` / `embed-` /
+ * bare), not a generic `[a-z0-9-]*` prefix. A permissive prefix also matches
+ * real lore such as `how-to-debug-a-smoke-1717171717171-failure`, and the
+ * consumer of this pattern DELETES what it matches — so the set of recognised
+ * labels is enumerated here and `createSmokeNamespace` refuses to mint outside
+ * it. Adding a suite is a deliberate edit in one place, not an accident.
  *
  * The `\d{10,}` group is `Date.now()` — a millisecond epoch, so it is 13 digits
  * today and stays matched when it grows. It is a CAPTURE group because the
@@ -53,7 +53,7 @@
  * standalone script and cannot import this module). `smoke-cleanup.spec.ts`
  * fails if the two diverge.
  */
-export const SMOKE_ARTEFACT_PATTERN = /^(?:memories-|byod-)?smoke-(\d{10,})(?:-[a-z0-9-]*)?$/;
+export const SMOKE_ARTEFACT_PATTERN = /^(?:memories-|byod-|embed-)?smoke-(\d{10,})(?:-[a-z0-9-]*)?$/;
 
 /**
  * The mint time encoded in a smoke artefact name, or `null` when the name was

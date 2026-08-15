@@ -181,14 +181,33 @@ describe('AlwaysOn: the sampled flag is recorded, never an export gate', () => {
     expect(otel).toMatch(/flags:\s*s\.ctx\.sampled\s*\?\s*1\s*:\s*0/);
   });
 
-  it('the export flush path does not branch on the sampled flag', () => {
-    // Extract the ExportBatch.flush() body and assert export is unconditional
-    // on `sampled` — turning the flag into a drop condition is the regression
-    // this guards (root CLAUDE.md: "never turn this into a drop condition").
-    const flush = otel.match(/flush\(\):\s*void\s*\{([\s\S]*?)\n {2}\}/);
-    expect(flush, 'could not locate ExportBatch.flush()').not.toBeNull();
-    expect(flush![1]).toMatch(/fetch\(/); // it does export
-    expect(flush![1]).not.toMatch(/sampled/); // but never consults the flag
+  // The export POST lives in `ExportBatch.post()`, which BOTH `flush()` (the
+  // fire-and-forget request-path flush) and `flushAsync()` (the awaitable one a
+  // background task needs) delegate to. The guard is anchored on the method
+  // that actually holds the `fetch`, and each caller is checked separately —
+  // grepping only `flush()` made the `not.toMatch(/sampled/)` half VACUOUS the
+  // moment the POST moved out of it, and left `flushAsync` unguarded entirely.
+  const exportMethodBody = (signature: RegExp): string => {
+    const m = otel.match(new RegExp(`${signature.source}\\s*\\{([\\s\\S]*?)\\n {2}\\}`));
+    expect(m, `could not locate ExportBatch.${signature.source}`).not.toBeNull();
+    return m![1] as string;
+  };
+
+  it('the export POST is unconditional on the sampled flag', () => {
+    // Turning the flag into a drop condition is the regression this guards
+    // (root CLAUDE.md: "never turn this into a drop condition").
+    const post = exportMethodBody(/private post\(\): Promise<void> \| null/);
+    expect(post).toMatch(/fetch\(/); // it does export
+    expect(post).not.toMatch(/sampled/); // but never consults the flag
+  });
+
+  it.each([
+    ['flush', /flush\(\): void/],
+    ['flushAsync', /async flushAsync\(\): Promise<void>/],
+  ])('%s routes through post() and does not branch on the sampled flag', (_name, signature) => {
+    const body = exportMethodBody(signature);
+    expect(body).toMatch(/post\(\)/); // it reaches the one export path
+    expect(body).not.toMatch(/sampled/); // and adds no gate of its own
   });
 });
 

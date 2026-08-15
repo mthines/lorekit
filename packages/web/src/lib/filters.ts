@@ -85,7 +85,7 @@ export type FacetName =
   | 'origin_repo'
   | 'origin_branch'
   | 'origin_pr'
-  // Ownership (migration 00063) — `personal` plus one value per org the caller
+  // Ownership (migration 00064) — `personal` plus one value per org the caller
   // belongs to, keyed by slug. Folded in from the old client-side owner bar.
   | 'owner';
 
@@ -164,7 +164,7 @@ export const FILTER_FIELDS: readonly FilterFieldDescriptor[] = [
     // the other identity dimensions. Its value space is CLOSED-ish: `personal`
     // plus one value per org the caller belongs to, keyed by the org SLUG
     // (stable across renames). This used to be a separate client-side bar; it is
-    // a server-side facet now (migration 00063), mechanically identical to the
+    // a server-side facet now (migration 00064), mechanically identical to the
     // scalar dimensions. `format` renders the literal `personal` as `Personal`;
     // an org value is shown by its slug (a follow-up can map it to the org name).
     field: 'owner',
@@ -300,7 +300,7 @@ export function filtersFromLegacyTags(tags: unknown): Filter[] {
 /**
  * Translate a legacy `?owner=` selection into an owner filter.
  *
- * Ownership is a server-side facet dimension now (migration 00063), keyed by the
+ * Ownership is a server-side facet dimension now (migration 00064), keyed by the
  * `personal` partition or an org SLUG. The legacy `?owner=` param folds into an
  * `owner` filter — the CLI (`lorekit link --owner …`) and the accept-invite deep
  * link write a string here (`personal` or a slug), so any string BUT `all`
@@ -308,7 +308,7 @@ export function filtersFromLegacyTags(tags: unknown): Filter[] {
  *
  * - `'all'` (or absent) was "no constraint", so it produces no filter.
  * - `'personal'` / a slug string maps straight to that owner facet value.
- * - `{ orgId }` — the pre-00063 OBJECT form — carried the org UUID, and the facet
+ * - `{ orgId }` — the pre-00064 OBJECT form — carried the org UUID, and the facet
  *   keys on the stable SLUG, not the id; resolving one to the other needs an org
  *   lookup this pure function has no access to, so it degrades to NO filter
  *   rather than a wrong one. Nothing writes that form any more (the CLI and the
@@ -735,7 +735,7 @@ export function filtersToQueryParams(
         params.host = joined;
         params.host_mode = scalarModeFor(filter.operator);
         break;
-      // Ownership (00063). `personal` plus org slugs; the handler resolves the
+      // Ownership (00064). `personal` plus org slugs; the handler resolves the
       // slugs against the caller's member orgs. Same conjunct-of-disjunction
       // shape as the scalar dimensions.
       case 'owner':

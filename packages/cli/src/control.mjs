@@ -10,6 +10,8 @@
 //   hooks.stop      — Stop-hook gating ("friction" default | "always" | "off")
 //   hooks.sessionStart          — injected-block shape ("hybrid" default | "index" | "map")
 //   hooks.sessionStart.maxChars — character budget for that block (default 1500)
+//   hooks.sessionStart.loopCap  — max lessons per self-improvement loop bucket (default 2; 0 excludes them)
+//   hooks.sessionStart.branchHint — nudge the read toward the git branch topic ("on" default | "off")
 //   hooks.userPrompt — the per-turn relevance pull ("on" default | "off")
 //   hooks.adapter   — explicit adapter override ("claude" | "cursor" | "codex")
 //
@@ -137,6 +139,31 @@ export function normalizeSessionStartMaxChars(v) {
   const i = Math.round(n);
   if (i < MIN_SESSION_START_MAX_CHARS) return MIN_SESSION_START_MAX_CHARS;
   if (i > MAX_SESSION_START_MAX_CHARS) return MAX_SESSION_START_MAX_CHARS;
+  return i;
+}
+
+// The default per-loop-bucket cap for the SessionStart read, and the bounds a
+// configured one is held to. 2 keeps each self-improvement loop's top couple of
+// lessons without letting one bucket flood a general session; 0 is a meaningful
+// setting — exclude loop buckets entirely and read only general codebase lessons.
+// The ceiling is a generous backstop against a typo'd cap, not a shared constant:
+// `core/lessons.mjs` bounds the whole read at its own hard lesson ceiling
+// downstream, so any loopCap at or above that never binds regardless of the exact
+// number here — they are deliberately independent, not kept in lockstep.
+export const DEFAULT_SESSION_START_LOOP_CAP = 2;
+export const MIN_SESSION_START_LOOP_CAP = 0;
+export const MAX_SESSION_START_LOOP_CAP = 40;
+
+// Clamp a configured loop cap into range, or null when it is not a usable number
+// (absent, a bare string, NaN). Total: the caller substitutes the default for
+// null. Out-of-range CLAMPS rather than rejecting, like the maxChars budget — and
+// `0` is honoured, not floored away, because "exclude loop buckets" is a real ask.
+export function normalizeSessionStartLoopCap(v) {
+  const n = firstNumber(v);
+  if (n === null) return null;
+  const i = Math.round(n);
+  if (i < MIN_SESSION_START_LOOP_CAP) return MIN_SESSION_START_LOOP_CAP;
+  if (i > MAX_SESSION_START_LOOP_CAP) return MAX_SESSION_START_LOOP_CAP;
   return i;
 }
 
@@ -328,6 +355,26 @@ export function resolveControl({
   const hooksSessionStartMaxChars =
     normalizeSessionStartMaxChars(sessionStartMaxCharsRaw) ?? DEFAULT_SESSION_START_MAX_CHARS;
 
+  // `hooks.sessionStart.loopCap` — how many lessons one `loop::<bucket>` may
+  // contribute. Same layer-before-parse rule as maxChars (declaresScalar): a repo
+  // that declared a cap owns it even when the value is garbage, so two people on
+  // the same commit get the same read. `0` is a valid, deliberate value, so the
+  // default is only substituted when NOTHING usable was declared.
+  const sessionStartLoopCapRaw = declaresScalar(repoConfig['hooks.sessionStart.loopCap'])
+    ? repoConfig['hooks.sessionStart.loopCap']
+    : userConfig['hooks.sessionStart.loopCap'];
+  const normalizedLoopCap = normalizeSessionStartLoopCap(sessionStartLoopCapRaw);
+  const hooksSessionStartLoopCap =
+    normalizedLoopCap === null ? DEFAULT_SESSION_START_LOOP_CAP : normalizedLoopCap;
+
+  // `hooks.sessionStart.branchHint` — whether the read is nudged toward the git
+  // branch topic. On/off (the `hooks.userPrompt` vocabulary), default `on`, repo
+  // layer wins. Off restores the pre-branch-query read: recency + salience only.
+  const hooksSessionStartBranchHint =
+    normalizeUserPromptMode(repoConfig['hooks.sessionStart.branchHint']) ||
+    normalizeUserPromptMode(userConfig['hooks.sessionStart.branchHint']) ||
+    'on';
+
   // `hooks.adapter` — repo layer wins over user layer (explicit project override).
   const hooksAdapter =
     (typeof repoConfig['hooks.adapter'] === 'string' && repoConfig['hooks.adapter'].trim()) ||
@@ -368,6 +415,8 @@ export function resolveControl({
     hooksUserPrompt,
     hooksSessionStart,
     hooksSessionStartMaxChars,
+    hooksSessionStartLoopCap,
+    hooksSessionStartBranchHint,
     hooksAdapter,
     hooksInstructions,
   };

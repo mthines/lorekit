@@ -36,7 +36,7 @@ export const LORE_PARAM_DEFAULTS = {
   // accepts ISO instants in that arm and a relative { preset: '7d' } arm
   // (packages/web/src/lib/time-range.ts); neither has a CLI flag yet.
   range: null,
-  owner: 'all', // 'all' | 'personal' | '<org-slug>' — folds into an owner filter (00063)
+  owner: 'all', // 'all' | 'personal' | '<org-slug>' — folds into an owner filter (00064)
   // Filter[] | null — the Explorer's multi-dimension filter bar (label / agent /
   // trigger / repo / branch / pr). `null`, NOT `[]`, is the default on purpose:
   // the app has to tell "the param is absent" from "the bar is explicitly
@@ -155,7 +155,7 @@ export { resolveScopeArg, resolveScopeKeyArgs, isScopeString, scopeIssue } from 
 // perf` yields BOTH, whereas a `filters` param would make the app ignore the
 // legacy tags. NOT the old `{orgId}` OBJECT: the owner facet keys on the SLUG,
 // and the app cannot resolve a uuid to a slug in this pure path, so the object
-// form silently dropped the filter it named (00063). A slug lands verbatim. Pure.
+// form silently dropped the filter it named (00064). A slug lands verbatim. Pure.
 export function parseOwnerArg(owner) {
   if (typeof owner !== 'string' || !owner) return 'all';
   return owner;

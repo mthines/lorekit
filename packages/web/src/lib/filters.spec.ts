@@ -606,7 +606,7 @@ describe('kind & host dimensions', () => {
 });
 
 /**
- * The owner dimension (migration 00063).
+ * The owner dimension (migration 00064).
  *
  * Ownership was the ONE Explorer filter narrowed client-side, in a separate bar.
  * It is a server-side facet dimension now, mechanically identical to the scalar

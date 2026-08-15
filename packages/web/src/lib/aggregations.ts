@@ -69,7 +69,7 @@ export function trendRowsFromActivity(
   /**
    * Keep only cells under this EXACT scope. `null`/absent means every scope.
    *
-   * The Explorer no longer passes this: since migration 00062 `/activity` takes
+   * The Explorer no longer passes this: since migration 00063 `/activity` takes
    * `scope` (and the dimension filters) server-side, so the header narrows in the
    * RPC and hands us an already-scoped response. This parameter is retained as a
    * pure, unit-tested utility for callers that hold a full per-`(bucket, scope)`

@@ -1,5 +1,5 @@
 -- ═════════════════════════════════════════════════════════════════════════
--- Owner as a first-class filter DIMENSION (00063).
+-- Owner as a first-class filter DIMENSION (00064).
 --
 -- WHAT CHANGES: ownership (personal vs a shared org) was the ONE Explorer
 -- filter narrowed CLIENT-side — a separate `OwnershipFilterBar` over the loaded
@@ -7,7 +7,7 @@
 -- facet counts, or the stat header, and it silently missed rows past the page
 -- the browser happened to hold. This folds it into the SAME "OR within a
 -- dimension, AND across dimensions" machinery every other dimension already
--- uses (00057 facets, 00062 activity, GET /memories), as a new `owner` facet.
+-- uses (00057 facets, 00063 activity, GET /memories), as a new `owner` facet.
 --
 -- THE OWNER IDENTITY of a row is `personal` when `org_id is null`, else the
 -- owning org's SLUG (stable, unlike its uuid or its display name). It is
@@ -33,7 +33,7 @@
 -- dimension's cell now additionally requires `ok_owner`, so picking an owner
 -- narrows their counts to the list's set.
 --
--- Forward-only. Both functions are DROPped at their 00057 / 00062 signatures
+-- Forward-only. Both functions are DROPped at their 00057 / 00063 signatures
 -- and recreated with `p_owner text[]` / `p_owner_mode text` APPENDED at the end
 -- (defaulted, so a positional caller passing only the earlier args is
 -- unaffected, and a bare call is byte-for-byte the prior behaviour). The DROP of
@@ -68,7 +68,7 @@ create or replace function lorekit_memory_facets(
   p_origin_branch_mode text    default 'in',
   p_origin_pr          text[]  default null,
   p_origin_pr_mode     text    default 'in',
-  -- Owner dimension (00063). `personal` plus one slug per member org with
+  -- Owner dimension (00064). `personal` plus one slug per member org with
   -- visible rows. All optional: null/absent = not filtered.
   p_owner              text[]  default null,
   p_owner_mode         text    default 'in'
@@ -226,7 +226,7 @@ comment on function lorekit_memory_facets(
   'Value catalog with counts for every filterable memory dimension (tag,
    source_agent, trigger, kind, host, origin_repo, origin_branch, origin_pr,
    owner) over the partition selected by p_archived, visible to the EFFECTIVE
-   caller. `owner` (00063) is `personal` for org_id-null rows, else the org
+   caller. `owner` (00064) is `personal` for org_id-null rows, else the org
    slug. Counts are DRILL-DOWN (00057): each dimension is counted with every
    OTHER active filter applied but not its own (self-exclusion), so the numbers
    match what adding that value would yield. With no filters supplied the result
@@ -262,7 +262,7 @@ create or replace function lorekit_memory_activity(
   p_origin_branch_mode text   default 'in',
   p_origin_pr          text[] default null,
   p_origin_pr_mode     text   default 'in',
-  -- Owner dimension (00063) — the SAME predicate as lorekit_memory_facets and
+  -- Owner dimension (00064) — the SAME predicate as lorekit_memory_facets and
   -- GET /memories, so the stat header agrees with the list under an owner pill.
   p_owner              text[] default null,
   p_owner_mode         text   default 'in'
@@ -295,7 +295,7 @@ begin
            m.scope,
            count(*) as count
       from memories m
-      -- LEFT join for the owner predicate — a personal row has no org (00063).
+      -- LEFT join for the owner predicate — a personal row has no org (00064).
       left join orgs o on o.id = m.org_id
      where (
              (v_actor is null and auth.role() = 'service_role')
@@ -340,7 +340,7 @@ begin
              when 'nin' then (m.origin_pr is not null and m.origin_pr <> all(v_origin_pr))
              else m.origin_pr = any(v_origin_pr)
            end)
-       -- Owner: `personal` for org_id-null rows, else the org slug (00063).
+       -- Owner: `personal` for org_id-null rows, else the org slug (00064).
        and (p_owner is null or case coalesce(p_owner_mode, 'in')
              when 'nin' then (
                (case when m.org_id is null then 'personal' else o.slug end) is not null
@@ -371,7 +371,7 @@ comment on function lorekit_memory_activity(
 ) is
   'Memories created per UTC hour/day per scope over the half-open
    [p_since, p_until) window, visible to the EFFECTIVE caller, narrowed by the
-   optional scope + dimension filters (00062) plus the owner dimension (00063,
+   optional scope + dimension filters (00063) plus the owner dimension (00064,
    `personal` / org slug) — the SAME predicate as GET /memories and
    lorekit_memory_facets, so the stat header agrees with the list. With no
    filters supplied the result is byte-for-byte 00051''s.';

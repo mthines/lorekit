@@ -89,7 +89,7 @@ export async function handleActivity(
     p_origin_branch_mode: params.origin_branch_mode,
     p_origin_pr: prList,
     p_origin_pr_mode: params.origin_pr_mode,
-    // Owner (00063): `personal` plus org slugs; the RPC resolves the slugs
+    // Owner (00064): `personal` plus org slugs; the RPC resolves the slugs
     // against the caller's member orgs, so the header narrows with the list.
     p_owner: list(params.owner),
     p_owner_mode: params.owner_mode,

@@ -87,7 +87,7 @@ async function resolveOwnerOrgIds(
 
 /**
  * Apply the owner predicate at the PostgREST level, mirroring the SQL in
- * `lorekit_memory_facets` / `lorekit_memory_activity` (00063).
+ * `lorekit_memory_facets` / `lorekit_memory_activity` (00064).
  *
  * `in`  → keep a row whose owner identity is one of the selected values:
  *         personal rows (`org_id is null`) when `personal` was picked, OR rows in
@@ -215,7 +215,7 @@ export async function handleList(
     { quote: false },
   );
 
-  // Owner (00063) — the ownership dimension, `personal` (org_id is null) plus
+  // Owner (00064) — the ownership dimension, `personal` (org_id is null) plus
   // org SLUGS. This was the ONE filter the dashboard narrowed CLIENT-side; it is
   // server-side now, so the list, the facet counts and the stat header agree.
   // It cannot go through `applyScalarFilter` because `personal` and a slug map to
@@ -234,7 +234,7 @@ export async function handleList(
     const wantsPersonal = ownerValues.includes('personal');
     // Resolve EVERY value as a slug — INCLUDING the literal `personal`, which an
     // org may legally use (00014 only lowercases the slug, it does not reserve
-    // the word). 00063's SQL matches such a slug too (`o.slug = any(p_owner)`),
+    // the word). 00064's SQL matches such a slug too (`o.slug = any(p_owner)`),
     // so resolving it here keeps the list, the facet counts and the stat header
     // in agreement; `wantsPersonal` ADDITIONALLY admits the personal (org_id
     // null) partition.

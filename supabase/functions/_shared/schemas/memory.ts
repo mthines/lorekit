@@ -190,7 +190,7 @@ export const ListMemoriesQuerySchema = z.object({
    * dimensions above, so `?owner=personal,acme` reads "my personal lore or
    * acme's". A slug the caller is not a member of matches nothing. This was the
    * one dimension the dashboard used to narrow CLIENT-side; it is server-side
-   * now (migration 00063) so the list, the facet counts and the stat header
+   * now (migration 00064) so the list, the facet counts and the stat header
    * agree.
    */
   owner: ValueListSchema.optional(),
@@ -356,7 +356,7 @@ export const MemoryFacetSchema = z.enum([
   'origin_repo',
   'origin_branch',
   'origin_pr',
-  // Ownership (migration 00063): `personal` for org_id-null rows, else the
+  // Ownership (migration 00064): `personal` for org_id-null rows, else the
   // owning org's slug. Enumerated with per-value counts like every other
   // dimension, so the filter menu offers Personal / {org} with drill-down.
   'owner',
@@ -458,9 +458,9 @@ export type ActivityBucketUnit = z.infer<typeof ActivityBucketUnitSchema>;
  * `GET /memories` and `GET /memories/facets` take, named identically so the
  * Explorer's stat header can pass its filter bar verbatim (`filtersToQueryParams`
  * ← the one translation the list uses). They narrow the written/scopes counts so
- * the header agrees with the list beneath it (migration 00062, applying the same
+ * the header agrees with the list beneath it (migration 00063, applying the same
  * predicate as `lorekit_memory_facets`). Absent → unfiltered, byte-for-byte the
- * pre-00062 aggregate.
+ * pre-00063 aggregate.
  *
  * Like `ListFacetsQuery`, the NON-dimension filters — `q`, `key`,
  * `created_since/until`, `expiring_within_days` — are deliberately NOT mirrored:

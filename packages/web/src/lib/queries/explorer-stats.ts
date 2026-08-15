@@ -13,7 +13,7 @@
  *
  * | Card    | Endpoint                        | Follows |
  * |---------|---------------------------------|---------|
- * | Written | `GET /memories/activity`        | range + scope + dimension filters, all SERVER-side (migration 00062) |
+ * | Written | `GET /memories/activity`        | range + scope + dimension filters, all SERVER-side (migration 00063) |
  * | Scopes  | the same response               | the same — it counts the returned `rows`, so a selected scope collapses it to 1 |
  * | Read    | `GET /memories/read-activity`   | range + scope SERVER-side (`?scope=`, migration 00058) — NOT the dimension filters |
  * | Expired | `GET /memories/usage`           | range only — **never scope, never filters** |
@@ -115,7 +115,7 @@ async function fetchExplorerStats(
   if (!token) return EMPTY;
 
   const [activity, readActivity, usage] = await Promise.all([
-    // Scope AND the dimension filters go to the SERVER now (migration 00062):
+    // Scope AND the dimension filters go to the SERVER now (migration 00063):
     // the response is aggregated per (bucket, scope) and carries no per-memory
     // tag/agent/repo, so a dimension filter CANNOT be applied client-side — the
     // written/scopes counts have to be narrowed in the RPC to agree with the list.
