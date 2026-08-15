@@ -7,7 +7,7 @@ keywords: ["offline", "local store", "cli", "install", "doctor", "mcp", "memory.
 
 <TutorialCallout variant="tip">
 
-Offline storage is the fastest way to start, and moving to the hosted store later is additive rather than a migration: add a `LOREKIT_MCP_URL` and `LOREKIT_TOKEN`, then switch `mode` to `remote` (Step 6 — the committed `.lorekit.json` outranks those variables, so it has to agree). Nothing is exported and your local files stay exactly where they are; `npx @lorekit/cli list` keeps showing both stores, side by side.
+Offline storage is the fastest way to start, and moving to the hosted store later is additive rather than a migration: add a `LOREKIT_MCP_URL` and `LOREKIT_TOKEN` — those are connection settings, not a mode — and then switch `mode` to `remote` in the `.lorekit.json` from Step 6, which is what actually selects it. Nothing is exported and your local files stay exactly where they are; `npx @lorekit/cli list` keeps showing both stores, side by side.
 
 </TutorialCallout>
 
@@ -51,7 +51,7 @@ This checks connectivity, token permissions, and scope health, and names the res
 npx @lorekit/cli mcp
 ```
 
-This starts the local stdio MCP server. Point your agent at it instead of the hosted endpoint — this is the entry that makes an offline setup actually offline. `install` merges its `lorekit` entry into `.mcp.json` alongside any other servers you have, so edit **that entry only** rather than replacing the file:
+This starts the local stdio MCP server. Point your agent at it instead of the hosted endpoint. This is half of an offline setup — it decides *which server* your agent talks to; Step 6 decides *which store* that server resolves, and you need both. `install` merges its `lorekit` entry into `.mcp.json` alongside any other servers you have, so edit **that entry only** rather than replacing the file:
 
 ```json
 // .mcp.json → mcpServers — the local store, no endpoint and no token.
