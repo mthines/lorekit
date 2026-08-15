@@ -706,3 +706,42 @@ export function rankLessons(entries = [], {
   return scored.map((s) => s.entry);
 }
 
+/**
+ * Rank-then-diversify in one call — the `.mjs` twin's convenience for what the
+ * TS twin gets for free by carrying `{ entry, score }` pairs into `selectDiverse`.
+ *
+ * `selectDiverse` needs a parallel `scores` array, and those scores MUST be the
+ * same set-relative values the list was sorted on: the salience factor is
+ * normalised against the max `seen_count` in the candidate SET, so a score
+ * recomputed over a different population would not line up with the order. This
+ * helper recomputes the scores over exactly the list it diversifies, beside the
+ * unexported `seenCountFrom`/`scoreWithTerms`, so callers can apply MMR without
+ * reconstructing that alignment (and without `seenCountFrom` leaking out).
+ *
+ * `entries` is expected to be `rankLessons` output (best-first) so the seed of
+ * the greedy MMR is the top-ranked lesson; the pass-through
+ * `terms`/`weights`/`halfLifeDays`/`now` MUST match the `rankLessons` call that
+ * produced it, or the recomputed scores diverge from the sort. `k` caps the
+ * returned count (default: all). Empty/degenerate input returns `[]`.
+ */
+export function diversifyRankedLessons(entries = [], {
+  terms = [],
+  now = Date.now(),
+  weights = DEFAULT_RANK_WEIGHTS,
+  halfLifeDays = RECENCY_HALF_LIFE_DAYS,
+  k = Infinity,
+  lambda,
+} = {}) {
+  const list = Array.isArray(entries) ? entries.filter((e) => e && typeof e === 'object') : [];
+  if (list.length === 0) return [];
+  const termSet = distinctTerms(terms);
+  let maxSeenCount = 0;
+  for (const e of list) maxSeenCount = Math.max(maxSeenCount, seenCountFrom(e));
+  const scores = list.map((e) => scoreWithTerms(e, termSet, { now, weights, maxSeenCount, halfLifeDays }));
+  // `numberOr` is the module's coercion convention: a non-finite `k` (the
+  // `Infinity` default, `null`, or a stringy `'40'`) resolves to a real cap —
+  // the default falls through to the whole list, `'40'` becomes 40 — rather than
+  // silently returning everything on a shape a caller plausibly passes.
+  const limit = numberOr(k, list.length);
+  return selectDiverse(list, limit, { scores, lambda });
+}
