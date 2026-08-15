@@ -19,7 +19,7 @@ And here's the part that makes it more than a starter toy: **the same read path 
 
 ## Two minutes to memory
 
-One command scaffolds the `lorekit-memory`, `lorekit-setup` and `lorekit-groom` skills, an MCP server entry, and the lifecycle hooks into your `.claude/` (project) or `~/.claude/` (global):
+One command scaffolds the `lorekit-memory`, `lorekit-setup` and `lorekit-groom` skills plus the lifecycle hooks into your `.claude/` (project) or `~/.claude/` (global), and writes an MCP server entry — into `.mcp.json` at your repo root for a project install, or `~/.claude.json` for a global one:
 
 ```bash
 npx @lorekit/cli install
@@ -35,10 +35,10 @@ Two small files finish the job. First a `.lorekit.json` at your repo root — sa
 }
 ```
 
-Then point the MCP server at your own machine instead of the hosted one. `install` merges a `lorekit` entry into your `.mcp.json` — leaving any other servers alone — and by default that entry points at the hosted endpoint. Replace **that entry only** with the CLI's local stdio server:
+Then point the MCP server at your own machine instead of the hosted one. `install` merges a `lorekit` entry into that config — leaving any other servers alone — and by default it points at the hosted endpoint. Replace **that entry only** with the CLI's local stdio server:
 
 ```json
-// .mcp.json → mcpServers — edit this entry, leave your others alone
+// mcpServers → edit this entry, leave your others alone
 "lorekit": { "command": "npx", "args": ["-y", "@lorekit/cli", "mcp"] }
 ```
 
@@ -101,7 +101,7 @@ Which is exactly why this doesn't compete with your `CLAUDE.md`. `CLAUDE.md` is 
 
 **The gotcha it keeps rediscovering.** The Postgres one above is real, and it's the entire solo case. Any recurring environmental fact — a service that must be running, a flag the build needs, a package manager that isn't the one in the README — gets written once and read every task after. `seen_count` goes up each time the same lesson is re-learned, and recurring lessons rank higher in the block.
 
-**Spike lessons that stay on the spike.** Scopes are `global`, `project::{name}`, `repo::{owner}/{repo}` and `branch::{owner}/{repo}::{branch}`, read most-specific first. Write an experiment's findings to the branch scope and they surface on that branch and nowhere else:
+**Spike lessons that stay on the spike.** Scopes are `global`, `project::{name}`, `repo::{owner}/{repo}` and `branch::{owner}/{repo}::{branch}`, read in a fixed order: project first, then branch, then repo, then global. Project wins outright; below it, the more specific scope beats the broader one. Write an experiment's findings to the branch scope and they surface on that branch and nowhere else:
 
 ```json
 memory.write {
@@ -112,7 +112,7 @@ memory.write {
 }
 ```
 
-If the branch dies, so does the lesson. If it merges, you rewrite the key at `repo::acme/checkout` and delete the branch copy. `main` never sees the mess. Run `npx @lorekit/cli tree` to see which scope wins a duplicated key before a task starts.
+Delete the branch and the lesson stops being read — nothing prunes it for you, so the file sits under `~/.lorekit/branch/…` until you `rm` it or call `memory.delete`. If the branch merges instead, you rewrite the key at `repo::acme/checkout` and delete the branch copy. `main` never sees the mess. Run `npx @lorekit/cli tree` to see which scope wins a duplicated key before a task starts.
 
 **Notes with an expiry date.** Some facts are true for a week. Pass `ttl_days` and the entry goes invisible on its own:
 

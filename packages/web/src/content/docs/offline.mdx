@@ -17,7 +17,7 @@ Offline storage is the fastest way to start, and moving to the hosted store late
 npx @lorekit/cli install
 ```
 
-This scaffolds the `lorekit-memory`, `lorekit-setup`, and `lorekit-groom` skills and an MCP server entry into your `.claude/` (project) or `~/.claude/` (global) directory, then asks whether to wire the lifecycle hooks.
+This scaffolds the `lorekit-memory`, `lorekit-setup`, and `lorekit-groom` skills into your `.claude/` (project) or `~/.claude/` (global) directory and writes an MCP server entry — into `.mcp.json` at the repo root for a project install, or `~/.claude.json` for a global one — then asks whether to wire the lifecycle hooks.
 
 The MCP entry it writes points at the **hosted** server. For an offline-only setup, replace it with the CLI's local stdio server (Step 3) — leave the token prompt blank, since local mode needs none.
 
@@ -51,10 +51,10 @@ This checks connectivity, token permissions, and scope health, and names the res
 npx @lorekit/cli mcp
 ```
 
-This starts the local stdio MCP server. Point your agent at it instead of the hosted endpoint. This is half of an offline setup — it decides *which server* your agent talks to; Step 6 decides *which store* that server resolves, and you need both. `install` merges its `lorekit` entry into `.mcp.json` alongside any other servers you have, so edit **that entry only** rather than replacing the file:
+This starts the local stdio MCP server. Point your agent at it instead of the hosted endpoint. This is half of an offline setup — it decides *which server* your agent talks to; Step 6 decides *which store* that server resolves, and you need both. `install` merges its `lorekit` entry into that config — `.mcp.json` at the repo root for a project install, `~/.claude.json` for a global one — alongside any other servers you have, so edit **that entry only** rather than replacing the file:
 
 ```json
-// .mcp.json → mcpServers — the local store, no endpoint and no token.
+// mcpServers → the local store, no endpoint and no token.
 // Edit this entry in place; your other servers stay as they are.
 "lorekit": { "command": "npx", "args": ["-y", "@lorekit/cli", "mcp"] }
 ```
