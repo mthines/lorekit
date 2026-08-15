@@ -239,13 +239,22 @@ signal; the outcome is on the child span, which carries `lorekit.memory_id` and
 >
 > **MCP `memory.write` does not embed at all.** Only the REST create path calls
 > `embedOnWrite`, so a lesson saved through the MCP tool — which is how most
-> agents write — stays `embedding is null` until the backfill runs. This is not
-> the staleness problem above: the wiring simply is not there yet, because the
-> MCP server is the self-contained Deno function in `supabase/functions/mcp/` and
-> giving it the embed path means mirroring `embed-on-write.ts` into that tree
-> under the no-cross-import rule. Until then the backfill is the only thing that
-> embeds MCP-written lore, which is worth knowing before reading coverage numbers
-> off a store that is mostly agent-written.
+> agents write — stays `embedding is null` until the backfill runs. Until then
+> the backfill is the only thing that embeds MCP-written lore, which is worth
+> knowing before reading coverage numbers off a store that is mostly
+> agent-written.
+>
+> This is not the staleness problem above, and it is **not** a mirroring problem
+> either: `supabase/functions/mcp/` already imports `../_shared/*.ts` directly in
+> seven files (`otel.ts`, `scope.ts`, `audit.ts`, `lesson-rank.ts` and others), so
+> `embed-on-write.ts` is reachable from there as-is. The self-contained rule that
+> forbids cross-package imports is about `packages/`, not about the `_shared/`
+> tree beside it. The one place `embed-on-write.ts` reaches into `_shared/api/` —
+> the tree `mcp/` does deliberately mirror rather than import, see `mcp/cursor.ts`
+> — is a **type-only** `DbClient` import, which is erased at runtime and can be a
+> local alias if that boundary should hold for types too. So the remaining work is
+> calling `embedOnWrite` from the MCP write tool with its client and actor, which
+> is small; it simply has not been done.
 
 ---
 
