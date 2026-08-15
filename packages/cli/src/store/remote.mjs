@@ -282,10 +282,12 @@ class RemoteStore {
   // archived rows included). The remote pair CANNOT be, because the hosted
   // write is an RPC with a fixed parameter list, not a file write:
   //
-  //   preserved  scope, key, value, tags, source_agent, trigger, origin_*,
-  //              and `created` — sent as `created_at`, which memory_write
-  //              honours on INSERT only, so a migrated lesson keeps its
-  //              original creation date and its ranking recency with it.
+  //   preserved  scope, key, tags, source_agent, trigger, and `created` —
+  //              sent as `created_at`, which memory_write honours on INSERT
+  //              only, so a migrated lesson keeps its original creation date
+  //              and its ranking recency with it. `value` survives too but is
+  //              TRIMMED: `MemoryWriteSchema` applies `.transform(s =>
+  //              s.trim())`, so surrounding whitespace does not make the trip.
   //   re-stamped `updated` — the server sets it to the write instant. There is
   //              no parameter for it, and inventing one would let a client
   //              backdate an edit it did not make.
@@ -312,7 +314,10 @@ class RemoteStore {
   //              row already had; it cannot clear it, by design, and there is
   //              no parameter that would. `source_agent` and `trigger` are NOT
   //              coalesced (`= excluded.*`), so those two do land verbatim,
-  //              including a null.
+  //              including a null. `kind` and `host` are coalesced the same
+  //              way, and this store never sends them at all — the server
+  //              infers both from the `loop::` tag (`resolveKindHost`), which
+  //              the tags carry, so a migrated lesson classifies itself.
   //
   // Two states have no remote representation at all and are REFUSED rather
   // than silently rewritten, because writing them would resurrect a lesson the
@@ -363,7 +368,9 @@ class RemoteStore {
     const refuse = (unsupported, message) => ({
       ok: false,
       unsupported,
-      error: { message },
+      // Carries a `code` like every real failure, so a caller can branch on
+      // one field instead of matching prose.
+      error: { message, code: 'unsupported' },
       httpStatus: null,
       retryAfter: null,
       networkError: null,
