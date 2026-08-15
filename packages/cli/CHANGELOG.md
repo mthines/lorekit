@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.46.0](https://github.com/mthines/lorekit/compare/cli-v1.45.0...cli-v1.46.0) (2026-08-15)
+
+
+### Features
+
+* **cli:** make the SessionStart read knobs configurable ([#463](https://github.com/mthines/lorekit/issues/463)) ([129129f](https://github.com/mthines/lorekit/commit/129129f7b231c2c8e523bd66530b6397d081294d))
+
 ## [1.45.0](https://github.com/mthines/lorekit/compare/cli-v1.44.0...cli-v1.45.0) (2026-08-15)
 
 
