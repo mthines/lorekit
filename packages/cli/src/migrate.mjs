@@ -120,10 +120,7 @@ export async function migrate(args) {
   const byScope = new Map();
   for (const entry of entries) {
     const store = targetFor(entry.scope);
-    // Awaited so the loop is destination-agnostic: LocalStore.getEntry is
-    // synchronous and awaiting its plain return value is a no-op, while a
-    // remote destination's is a REST round-trip. One code path, both stores.
-    const current = await store.getEntry({ scope: entry.scope, key: entry.key });
+    const current = store.getEntry({ scope: entry.scope, key: entry.key });
     let verdict;
     if (!current) verdict = 'add';
     else if (sameEntry(current, entry)) verdict = 'noop';
