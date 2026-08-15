@@ -544,3 +544,50 @@ describe('memory.list over-fetches before post-filtering', () => {
     assert.equal(store.seen.limit, 5);
   });
 });
+
+describe('memory.list taxonomy filter respects the remote limit cap and cursor contract', () => {
+  const rows = (n, tag, prefix) =>
+    Array.from({ length: n }, (_, i) => ({ key: `${prefix}${i}`, value: 'x', tags: [tag] }));
+
+  test('never asks the store for more than the route cap of 100', async () => {
+    // ListMemoriesQuerySchema caps GET /memories limit at 100; a widened fetch
+    // above that is a 400 from RemoteStore, not a bigger page.
+    const seen = {};
+    const store = { list: async ({ limit }) => { seen.limit = limit; return { ok: true, entries: [] }; } };
+    await listWithFilters(store, { scope: 'global', limit: 50, host: 'reviewer' });
+    assert.ok(seen.limit <= 100, `widened to ${seen.limit}, above the route cap`);
+  });
+
+  test('caps the widened fetch even at the maximum requested limit', async () => {
+    const seen = {};
+    const store = { list: async ({ limit }) => { seen.limit = limit; return { ok: true, entries: [] }; } };
+    await listWithFilters(store, { scope: 'global', limit: 100, host: 'reviewer' });
+    assert.ok(seen.limit <= 100, `widened to ${seen.limit}, above the route cap`);
+  });
+
+  test('returns nextCursor null rather than the upstream cursor', async () => {
+    // The upstream cursor is a keyset position in the UNFILTERED order taken
+    // from the end of the widened fetch — resuming from it would skip every row
+    // between the slice and the widened window.
+    const store = {
+      list: async () => ({
+        ok: true,
+        entries: rows(40, 'loop::reviewer-lessons', 'rv'),
+        hasMore: true,
+        nextCursor: 'UPSTREAM_CURSOR',
+      }),
+    };
+    const r = await listWithFilters(store, { scope: 'global', limit: 5, host: 'reviewer' });
+    assert.equal(r.nextCursor, null);
+    assert.equal(r.hasMore, true);
+    assert.equal(r.entries.length, 5);
+  });
+
+  test('leaves the cursor untouched on an unfiltered read', async () => {
+    const store = {
+      list: async () => ({ ok: true, entries: rows(2, 'loop::reviewer-lessons', 'rv'), hasMore: true, nextCursor: 'C' }),
+    };
+    const r = await listWithFilters(store, { scope: 'global', limit: 5 });
+    assert.equal(r.nextCursor, 'C');
+  });
+});

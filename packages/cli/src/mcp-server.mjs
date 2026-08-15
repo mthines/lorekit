@@ -109,7 +109,7 @@ export const MEMORY_TOOL_DEFS = [
         scope: { type: 'string' },
         tags: { type: 'array', items: { type: 'string' } },
         limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
-        cursor: { type: 'string', description: 'Opaque cursor from a previous response\'s nextCursor. Omit to start from the first page.' },
+        cursor: { type: 'string', description: 'Opaque cursor from a previous response\'s nextCursor. Omit to start from the first page. Ignored when kind or host is set — a taxonomy-filtered list is a single bounded page (nextCursor is always null); raise limit rather than paginating.' },
         kind: { type: 'string', enum: ['lesson', 'bus', 'signal'], description: 'Filter to one bucket family. Narrowed server-side against the remote store; post-filtered client-side against the local store, whose rows carry no kind/host columns and are classified from their loop:: tag.' },
         host: { type: 'string', description: 'Filter to the owning skill or agent, e.g. `reviewer`. Same server-side/client-side split as kind.' },
         view: { type: 'string', enum: ['full', 'summary'], default: 'full', description: 'summary omits each entry\'s value and returns value_bytes + a 200-character preview instead.' },
@@ -310,14 +310,18 @@ export function projectListView(result, view) {
  * looks like "no reviewer lessons exist".
  *
  * Over-fetching cannot be exact (only the server knows the true distribution),
- * so this is a heuristic with a hard ceiling to keep a pathological scope from
- * dragging the whole store into memory. When the widened fetch still comes back
- * saturated, the result carries `hasMore: true` so the caller knows the page
- * was cut rather than exhausted.
+ * so this is a heuristic with a hard ceiling. When the widened fetch still comes
+ * back saturated, the result carries `hasMore: true` so the caller knows the
+ * page was cut rather than exhausted.
+ *
+ * The ceiling is **100** and is not a tuning choice: `ListMemoriesQuerySchema`
+ * caps `GET /memories`'s `limit` at 100, so a widened fetch above that is a 400
+ * from the remote store — which would break `kind`/`host` for every request
+ * above `limit: 10` rather than merely under-filling it.
  */
 const TAXONOMY_OVERFETCH_FACTOR = 10;
 const TAXONOMY_OVERFETCH_MIN = 100;
-const TAXONOMY_OVERFETCH_MAX = 1000;
+const TAXONOMY_OVERFETCH_MAX = 100;
 
 /**
  * The full `memory.list` post-processing chain: validate → fetch → filter →
@@ -348,8 +352,25 @@ export async function listWithFilters(store, a = {}) {
   const truncated =
     filtered.entries.length > requested ||
     (Array.isArray(raw?.entries) && raw.entries.length >= widened);
+
+  // `nextCursor` MUST be null on a taxonomy-filtered read, never the upstream
+  // cursor. That cursor is a keyset position in the UNFILTERED row order, taken
+  // from the end of the WIDENED fetch — so handing it back after returning only
+  // `requested` post-filter rows would make the next page resume past every row
+  // between the slice and the widened window, silently skipping matches.
+  //
+  // There is no correct cursor to synthesise here: the filter is applied client
+  // side, so no server-side keyset describes "the next filtered row". A filtered
+  // list is therefore a single bounded page, exactly as `order: "rank"` is on
+  // the edge — `hasMore` reports that it was cut, and the remedy is a larger
+  // `limit`, not pagination.
   return projectListView(
-    { ...filtered, entries: page, hasMore: Boolean(raw?.hasMore) || truncated },
+    {
+      ...filtered,
+      entries: page,
+      hasMore: Boolean(raw?.hasMore) || truncated,
+      nextCursor: null,
+    },
     a.view,
   );
 }

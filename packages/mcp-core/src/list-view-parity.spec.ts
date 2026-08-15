@@ -19,7 +19,7 @@ import { LIST_PREVIEW_CHARS as CORE_PREVIEW_CHARS } from './tools/list.js';
  *
  * A drift here is silent and asymmetric: the same call against the hosted edge
  * function and against a BYOD Fly deployment would return previews of different
- * lengths, and nothing would fail. Assert the three agree, following the
+ * lengths, and nothing would fail. Assert all four agree, following the
  * `usage-client-parity.spec.ts` precedent for exactly this shape of problem.
  */
 
