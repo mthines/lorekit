@@ -147,12 +147,18 @@ export { resolveScopeArg, resolveScopeKeyArgs, isScopeString, scopeIssue } from 
 
 // ── Flag → param coercion (pure, shared by the `link` command) ────────────────
 
-// Coerce the `--owner` flag to an `OwnerFilter`: 'all' (default) / 'personal' /
-// any other non-empty string → `{ orgId }`. Pure.
+// Coerce the `--owner` flag to the legacy `owner` param value: `personal`, an
+// org SLUG, or `all` (default → omitted). Returns the STRING the app folds into
+// an owner filter (`filtersFromLegacyOwner`) when the `filters` param is absent
+// — which is why the CLI keeps writing the legacy param rather than `filters`:
+// `owner` and the legacy `tags` param fold together, so `--owner acme --tags
+// perf` yields BOTH, whereas a `filters` param would make the app ignore the
+// legacy tags. NOT the old `{orgId}` OBJECT: the owner facet keys on the SLUG,
+// and the app cannot resolve a uuid to a slug in this pure path, so the object
+// form silently dropped the filter it named (00063). A slug lands verbatim. Pure.
 export function parseOwnerArg(owner) {
-  if (typeof owner !== 'string' || !owner || owner === 'all') return 'all';
-  if (owner === 'personal') return 'personal';
-  return { orgId: owner };
+  if (typeof owner !== 'string' || !owner) return 'all';
+  return owner;
 }
 
 // Coerce the `--tags` flag to a normalized `string[]` label filter, mirroring the

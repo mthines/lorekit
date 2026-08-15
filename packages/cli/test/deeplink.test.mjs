@@ -75,7 +75,7 @@ test('buildLoreQuery encodes each non-default param and honours PARAM_ORDER', ()
   assert.equal(buildLoreQuery({ scope: 'global' }), 'scope=%22global%22');
   assert.equal(buildLoreQuery({ q: 'flaky test' }), 'q=%22flaky%20test%22');
   assert.equal(buildLoreQuery({ owner: 'personal' }), 'owner=%22personal%22');
-  assert.equal(buildLoreQuery({ owner: { orgId: 'org_123' } }), 'owner=%7B%22orgId%22%3A%22org_123%22%7D');
+  assert.equal(buildLoreQuery({ owner: 'acme' }), 'owner=%22acme%22');
   assert.equal(buildLoreQuery({ archived: true }), 'archived=true');
   assert.equal(
     buildLoreQuery({ range: { from: '2026-01-01', to: '2026-02-01' } }),
@@ -111,11 +111,14 @@ test('buildLessonUrl sets BOTH scope and lesson so the sheet is not blank', () =
 
 // ── unit: flag coercion ───────────────────────────────────────────────────────
 
-test('parseOwnerArg maps to the OwnerFilter shape', () => {
+test('parseOwnerArg passes through personal / a slug, and defaults to all', () => {
   assert.equal(parseOwnerArg(undefined), 'all');
+  assert.equal(parseOwnerArg(''), 'all');
   assert.equal(parseOwnerArg('all'), 'all');
   assert.equal(parseOwnerArg('personal'), 'personal');
-  assert.deepEqual(parseOwnerArg('org_abc'), { orgId: 'org_abc' });
+  // A slug is written verbatim (NOT the old `{ orgId }` object, which the app
+  // could not resolve to the slug the owner facet keys on).
+  assert.equal(parseOwnerArg('acme'), 'acme');
 });
 
 test('parseRangeArg: JSON --range wins, else --from/--to shorthand, else null', () => {
@@ -319,13 +322,16 @@ test('link --from/--to shorthand flows through the command into the range param'
   assert.deepEqual(out.params.range, { from: '2026-01-01', to: '2026-02-01' });
 });
 
-test('link --owner <orgId> flows through the command as the { orgId } object form', () => {
+test('link --owner <slug> writes the slug string the app folds into an owner filter', () => {
   const root = tmp('lk-link-proj-');
-  const res = run(['link', 'global', '--owner', 'org_abc', '--json'], { dir: root });
+  const res = run(['link', 'global', '--owner', 'acme', '--json'], { dir: root });
   assert.equal(res.status, 0, res.stderr);
   const out = JSON.parse(res.stdout);
-  assert.deepEqual(out.params.owner, { orgId: 'org_abc' });
-  assert.deepEqual(decodeParams(out.url).owner, { orgId: 'org_abc' });
+  // A slug is written verbatim to the legacy `owner` param (NOT the old
+  // `{ orgId }` object, whose uuid the app could not resolve to the slug the
+  // owner facet keys on). `filtersFromLegacyOwner` folds it into an owner filter.
+  assert.equal(out.params.owner, 'acme');
+  assert.equal(decodeParams(out.url).owner, 'acme');
 });
 
 test('bare link (no args) links to the cwd project scope', () => {

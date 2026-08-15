@@ -100,22 +100,27 @@ function applyOwnerFilter(
   wantsPersonal: boolean,
   orgIds: readonly string[],
 ): TracedQuery<MemoryRow> {
-  const ids = orgIds.join(',');
+  // Route the id list through the SAME `inListLiteral` (→ `quoteFilterValue`)
+  // encoding every other `in.()` operand in this file uses, per the memories
+  // edge's single-encoding rule. Uuids carry no reserved character today, so
+  // this is consistency, not a live fix — but hand-joining is exactly how a
+  // future non-uuid identifier would slip past the quoting.
+  const inList = orgIds.length > 0 ? inListLiteral(orgIds) : null;
   if (mode === 'nin') {
     if (wantsPersonal) {
       // Drop the personal partition; also drop rows in any named org.
       q = q.not('org_id', 'is', null);
-      if (orgIds.length > 0) q = q.or(`org_id.not.in.(${ids})`);
-    } else if (orgIds.length > 0) {
+      if (inList) q = q.or(`org_id.not.in.${inList}`);
+    } else if (inList) {
       // Keep personal rows and org rows outside the named set. `org_id.not.in`
       // is NULL for a personal row, so it is ORed with the explicit null test.
-      q = q.or(`org_id.is.null,org_id.not.in.(${ids})`);
+      q = q.or(`org_id.is.null,org_id.not.in.${inList}`);
     }
     return q;
   }
   const disjuncts: string[] = [];
   if (wantsPersonal) disjuncts.push('org_id.is.null');
-  if (orgIds.length > 0) disjuncts.push(`org_id.in.(${ids})`);
+  if (inList) disjuncts.push(`org_id.in.${inList}`);
   if (disjuncts.length === 0) {
     // `id` is a NOT NULL primary key, so this is a total contradiction — no row.
     return q.is('id', null);
@@ -217,8 +222,13 @@ export async function handleList(
   const ownerValues = parseTagsParam(params.owner);
   if (ownerValues.length > 0) {
     const wantsPersonal = ownerValues.includes('personal');
-    const slugs = ownerValues.filter((v) => v !== 'personal');
-    const orgIds = slugs.length > 0 ? await resolveOwnerOrgIds(db, auth, slugs, span) : [];
+    // Resolve EVERY value as a slug — INCLUDING the literal `personal`, which an
+    // org may legally use (00014 only lowercases the slug, it does not reserve
+    // the word). 00063's SQL matches such a slug too (`o.slug = any(p_owner)`),
+    // so resolving it here keeps the list, the facet counts and the stat header
+    // in agreement; `wantsPersonal` ADDITIONALLY admits the personal (org_id
+    // null) partition.
+    const orgIds = await resolveOwnerOrgIds(db, auth, ownerValues, span);
     q = applyOwnerFilter(q, params.owner_mode, wantsPersonal, orgIds);
   }
 

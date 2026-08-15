@@ -300,24 +300,24 @@ export function filtersFromLegacyTags(tags: unknown): Filter[] {
 /**
  * Translate a legacy `?owner=` selection into an owner filter.
  *
- * The Explorer used to narrow ownership CLIENT-side with a separate bar whose
- * URL param serialised an `OwnerFilter` (`'all' | 'personal' | { orgId }`).
- * Ownership is a server-side facet dimension now (migration 00063), so those
- * links translate into an `owner` filter — but only the two forms that survive
- * without a lookup:
+ * Ownership is a server-side facet dimension now (migration 00063), keyed by the
+ * `personal` partition or an org SLUG. The legacy `?owner=` param folds into an
+ * `owner` filter — the CLI (`lorekit link --owner …`) and the accept-invite deep
+ * link write a string here (`personal` or a slug), so any string BUT `all`
+ * becomes a one-value owner filter:
  *
- * - `'all'` was "no constraint", so it produces no filter.
- * - `'personal'` maps directly to the owner facet's `personal` value.
- * - `{ orgId }` carried the org UUID, and the facet keys on the stable SLUG, not
- *   the id — resolving one to the other needs an org lookup this pure function
- *   has no access to, so it degrades to NO filter rather than a wrong one. The
- *   only writer of that form (the accept-invite deep link) now emits a
- *   slug-keyed owner filter directly, so a fresh join still lands filtered; only
- *   links shared before this change lose the org pre-selection.
+ * - `'all'` (or absent) was "no constraint", so it produces no filter.
+ * - `'personal'` / a slug string maps straight to that owner facet value.
+ * - `{ orgId }` — the pre-00063 OBJECT form — carried the org UUID, and the facet
+ *   keys on the stable SLUG, not the id; resolving one to the other needs an org
+ *   lookup this pure function has no access to, so it degrades to NO filter
+ *   rather than a wrong one. Nothing writes that form any more (the CLI and the
+ *   invite link both emit a slug), so only links shared before this change lose
+ *   the org pre-selection.
  */
 export function filtersFromLegacyOwner(owner: unknown): Filter[] {
-  if (owner === 'personal') return [{ field: 'owner', operator: 'in', values: ['personal'] }];
-  return [];
+  if (typeof owner !== 'string' || !owner || owner === 'all') return [];
+  return [{ field: 'owner', operator: 'in', values: [owner] }];
 }
 
 /**
