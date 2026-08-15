@@ -42,14 +42,14 @@ agent ─traceparent→ mcp-node ─traceparent→ api (edge) ─→ Postgres
 | File | Proves |
 |------|--------|
 | `packages/mcp-core/src/otel-correlation.spec.ts` | CLI→api and MCP→api join one trace with correct parent/child linkage; N REST calls become siblings under the command span; the echoed header points back at the server span; a 3-service chain preserves one `trace_id`; invalid inbound → fresh root; the sampled flag is data, not an export gate; the zero-dep CLI header — source-scanned from the shipped `getActiveTraceparent` — renders byte-identically to `formatTraceparent`. |
-| `packages/mcp-core/src/otel-conventions.spec.ts` | Drift guards: the four components declare **distinct** `service.name` values (`cli`/`api`/`mcp-node`/`web`); `service.namespace=lorekit` everywhere; edge span kinds SERVER(root)/CLIENT(db)/INTERNAL(child) with OTLP wire values; `faas.name` distinguishes the five edge functions; the edge (`extractTraceContext`/`withTraceparent`) and CLI (`getActiveTraceparent`) source keeps routing propagation through the shared `parseTraceparent`/`formatTraceparent` seam; export never branches on `sampled`; every tool span carries `lorekit.tool.name` and feeds the `lorekit.tool.duration` histogram with low-cardinality attributes. Plus unit coverage of the histogram accessor (name, memoization, no-throw record). |
+| `packages/mcp-core/src/otel-conventions.spec.ts` | Drift guards: the emitting components declare **distinct** `service.name` values (`cli`/`api`/`web`; `mcp` was retired with the undeployed Node MCP server); `service.namespace=lorekit` everywhere; edge span kinds SERVER(root)/CLIENT(db)/INTERNAL(child) with OTLP wire values; `faas.name` distinguishes the five edge functions; the edge (`extractTraceContext`/`withTraceparent`) and CLI (`getActiveTraceparent`) source keeps routing propagation through the shared `parseTraceparent`/`formatTraceparent` seam; export never branches on `sampled`; every tool span carries `lorekit.tool.name` and feeds the `lorekit.tool.duration` histogram with low-cardinality attributes. Plus unit coverage of the histogram accessor (name, memoization, no-throw record). |
 | `packages/mcp-core/src/otel-harness.spec.ts` | The correlated-trace harness's pure builder emits three service blocks (`cli`/`api`/`mcp-node`) under ONE `trace_id`, each resource stamped `deployment.environment.name=test`; correct span kinds; and the real parentage — CLI→api, MCP→api, and every DB CLIENT span under an api SERVER span — all off the CLI root. |
 | `packages/cli/test/telemetry.test.mjs` (extended) | `os.type` / `host.arch` emit OTel-registry values, incl. `ppc`→`ppc32` (see bug below); `deployment.environment.name` is omitted by default and emitted only under an explicit `DEPLOYMENT_ENVIRONMENT` override. |
 
 These complement the pre-existing suites: `trace-context.spec.ts` (strict W3C
 parse/format), `edge-parity.spec.ts` (the CLI/edge mirror can't drift),
-`packages/mcp-server/src/otel-propagation.spec.ts` (OTel context API), and the
-existing `telemetry.test.mjs` (config, opt-out, payload shape, PII posture).
+`packages/mcp-server/src/otel-propagation.spec.ts` (OTel context API — removed with the
+undeployed Node MCP server; see docs/decisions.md), and the existing `telemetry.test.mjs` (config, opt-out, payload shape, PII posture).
 
 ---
 

@@ -16,7 +16,7 @@
  *
  * Run standalone:
  *   LOREKIT_BYOD_URL=<url> LOREKIT_BYOD_TOKEN=<token> \
- *     pnpm nx test mcp-server -- --reporter=verbose --testPathPattern=byod-smoke.integration
+ *     pnpm nx test supabase -- --reporter=verbose --testPathPattern=byod-smoke.integration
  */
 
 import { describe, it, expect, afterAll } from 'vitest';

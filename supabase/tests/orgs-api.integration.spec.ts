@@ -25,7 +25,7 @@
  *
  * Run standalone:
  *   LOREKIT_SMOKE_JWT=<jwt> LOREKIT_REST_BASE_URL=<url> \
- *     pnpm nx test mcp-server -- --reporter=verbose --testPathPattern=orgs-api.integration
+ *     pnpm nx test supabase -- --reporter=verbose --testPathPattern=orgs-api.integration
  */
 
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';

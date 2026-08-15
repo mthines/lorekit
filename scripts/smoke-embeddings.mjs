@@ -27,7 +27,7 @@
  *
  * CLEANUP IS THE POINT, not an afterthought. This writes to a live tenant, so
  * every artefact is minted through the same namespace contract the other live
- * suites use (`packages/mcp-server/src/smoke-cleanup.ts`): the name is
+ * suites use (`supabase/tests/smoke-cleanup.ts`): the name is
  * registered AT MINT TIME, carries a timestamp, and matches
  * `SMOKE_ARTEFACT_PATTERN` — so even a run that crashes before cleanup is
  * recognisable to `scripts/smoke-cleanup.mjs`, which sweeps orphans by name.

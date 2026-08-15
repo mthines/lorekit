@@ -302,7 +302,7 @@ function readActivityFrom(rows: MemoryRow[], unit: 'hour' | 'day') {
  * a whole commit with this suite passing.
  *
  * The filters themselves are covered against a live stack in
- * `packages/mcp-server/src/memories-api.integration.spec.ts` → "list filters".
+ * `supabase/tests/memories-api.integration.spec.ts` → "list filters".
  * Keep the semantics here roughly faithful so stories stay realistic, but never
  * treat this as the check.
  */

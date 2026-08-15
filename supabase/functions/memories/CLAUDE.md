@@ -116,7 +116,7 @@ OpenAPI example (`packages/schemas/src/openapi/spec.ts:75`): both advertise more
 code delivers.
 
 Both filters are covered end-to-end in
-`packages/mcp-server/src/memories-api.integration.spec.ts` → "list filters", against a live
+`supabase/tests/memories-api.integration.spec.ts` → "list filters", against a live
 stack. That is deliberate: the Storybook MSW handler reimplements both, so it can only ever
 confirm itself — `handleList` threw on every `?tags=` request for a whole commit while that
 suite was green.

@@ -12,7 +12,7 @@
  *
  * Run standalone:
  *   LOREKIT_SMOKE_TOKEN=<token> LOREKIT_REST_BASE_URL=<url> \
- *     pnpm nx test mcp-server -- --reporter=verbose --testPathPattern=memories-api.integration
+ *     pnpm nx test supabase -- --reporter=verbose --testPathPattern=memories-api.integration
  */
 
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';

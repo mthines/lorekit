@@ -26,14 +26,21 @@ const here = path.dirname(fileURLToPath(import.meta.url)); // packages/mcp-core/
 const repoRoot = path.resolve(here, '../../..');
 const read = (rel: string) => readFileSync(path.join(repoRoot, rel), 'utf8');
 
-// The four LoreKit components that emit telemetry and where each declares its
+// The three LoreKit components that emit telemetry and where each declares its
 // `service.name` default. A collision here collapses two components into one
 // indistinguishable node in the Dash0 service map (root CLAUDE.md, "service.name
 // inventory").
+//
+// There used to be a fourth, `mcp` — the Node MCP server in
+// `packages/mcp-server/`. It was never deployed anywhere (no fly.toml, no
+// Dockerfile, no deploy step) and is gone. The `mcp` service that briefly
+// appeared in Dash0 was never it: a project-wide `SERVICE_NAME=mcp` Supabase
+// secret renamed the EDGE functions for a few minutes, the very failure mode
+// docs/otel.md warns about under "Do not reintroduce a per-function
+// SERVICE_NAME secret". Do not re-add an `mcp` row here to explain that data.
 const SERVICE_NAME_SITES: ReadonlyArray<readonly [string, string, RegExp, string]> = [
   ['cli', 'packages/cli/src/telemetry.mjs', /service\.name',\s*value:\s*\{\s*stringValue:\s*'([^']+)'/, 'cli'],
   ['api (edge)', 'supabase/functions/_shared/otel.ts', /SERVICE_NAME'\)\s*\?\?\s*'([^']+)'/, 'api'],
-  ['mcp (Node MCP server)', 'packages/mcp-server/src/instrumentation.ts', /OTEL_SERVICE_NAME'\]\s*\?\?\s*'([^']+)'/, 'mcp'],
   ['web', 'packages/web/src/instrumentation.ts', /SERVICE_NAME = '([^']+)'/, 'web'],
 ];
 
@@ -47,7 +54,6 @@ const WEB_BROWSER_SERVICE_NAME_SITE = ['packages/web/src/lib/dash0-rum.ts', /SER
 const NAMESPACE_SITES = [
   'packages/cli/src/telemetry.mjs',
   'supabase/functions/_shared/otel.ts',
-  'packages/mcp-server/src/instrumentation.ts',
   'packages/web/src/instrumentation.ts',
   // The browser bundle's single init path. `instrumentation-client.ts` and
   // `Dash0Provider.tsx` used to each declare their own copy of the attributes
@@ -65,7 +71,7 @@ describe('service.name inventory', () => {
 
   it('every component reports a DISTINCT service.name (no service-map collision)', () => {
     const names = SERVICE_NAME_SITES.map(([, file, pattern]) => read(file).match(pattern)?.[1]);
-    expect(names).toEqual(['cli', 'api', 'mcp', 'web']);
+    expect(names).toEqual(['cli', 'api', 'web']);
     expect(new Set(names).size).toBe(SERVICE_NAME_SITES.length);
   });
 
@@ -78,7 +84,10 @@ describe('service.name inventory', () => {
     const browser = read(file).match(pattern);
     expect(browser, `no service.name declaration found in ${file}`).not.toBeNull();
 
-    const [, serverFile, serverPattern] = SERVICE_NAME_SITES[3]!;
+    // Looked up by label, not by index: the inventory shrank when the
+    // undeployed Node MCP server was removed, and a positional read silently
+    // starts comparing the browser bundle against the wrong component.
+    const [, serverFile, serverPattern] = SERVICE_NAME_SITES.find(([label]) => label === 'web')!;
     expect(browser![1]).toBe(read(serverFile).match(serverPattern)![1]);
   });
 
@@ -267,7 +276,7 @@ describe('smoke test-run marker — the deployment-environment charset/bound sta
   const CHARSET = '[A-Za-z0-9_.\\-:]';
   const sites: Array<[string, string]> = [
     ['CLI restFetch (normalizeRunEnvironment)', 'packages/cli/src/mcp.mjs'],
-    ['REST/MCP smoke specs (testRunHeaders)', 'packages/mcp-server/src/smoke-telemetry.ts'],
+    ['REST/MCP smoke specs (testRunHeaders)', 'supabase/tests/smoke-telemetry.ts'],
     ['orphan sweeper (runEnvHeaders)', 'scripts/smoke-cleanup.mjs'],
   ];
 

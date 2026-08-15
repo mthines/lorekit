@@ -253,7 +253,7 @@ describe('describeSweepFailures', () => {
 
 describe('mirror parity with scripts/smoke-cleanup.mjs', () => {
   const sweeperSource = readFileSync(
-    fileURLToPath(new URL('../../../scripts/smoke-cleanup.mjs', import.meta.url)),
+    fileURLToPath(new URL('../../scripts/smoke-cleanup.mjs', import.meta.url)),
     'utf8',
   );
 

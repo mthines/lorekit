@@ -444,7 +444,7 @@ All signals carry these resource attributes:
 | Attribute | Value |
 |-----------|-------|
 | `service.namespace` | `lorekit` |
-| `service.name` | `api` (Edge Functions), `web` (Next.js), `mcp` (Node MCP server), or `cli` (CLI) |
+| `service.name` | `api` (Edge Functions), `web` (Next.js), or `cli` (CLI) |
 | `service.version` | Git SHA (`VERCEL_GIT_COMMIT_SHA`) or `unknown`; the package version for the CLI |
 | `deployment.environment.name` | `production` / `preview` / `development` / `local`; the CLI omits it unless overridden. An explicit `DEPLOYMENT_ENVIRONMENT` env var overrides the ambient value on every component (used by `scripts/emit-correlated-trace.mts` and the smoke jobs to stamp `test` — see below). |
 
@@ -461,7 +461,7 @@ three emitters through one knob:
 - **Edge** (`api` — every REST/MCP request a smoke makes): the client forwards
   the value as the `X-LoreKit-Deployment-Environment` request header — the CLI's
   `restFetch` does it automatically from the same env var, and the REST/MCP smoke
-  specs send it via `testRunHeaders` (`packages/mcp-server/src/smoke-telemetry.ts`).
+  specs send it via `testRunHeaders` (`supabase/tests/smoke-telemetry.ts`).
   `traceRequest` applies it to that request's span batch as
   `deployment.environment.name`. The edge's own `deployment.environment.name` is a
   per-deployment resource attribute it cannot change per request, so the header is
@@ -693,7 +693,6 @@ unique.
 | `service.name` | Component | Set in |
 |---|---|---|
 | `api` | **All** Supabase Edge Functions (`memories`, `orgs`, `openapi`, `mcp`, `health`, `blog`) | Hard-coded in `supabase/functions/_shared/otel.ts`. No configuration required. |
-| `mcp` | Node MCP server (Fly.io) | `OTEL_SERVICE_NAME`, default in `packages/mcp-server/src/instrumentation.ts` |
 | `web` | Next.js (server + browser) | `packages/web/src/instrumentation.ts` (server), `packages/web/src/lib/dash0-rum.ts` (browser). Both pin the literal `web`; `otel-conventions.spec.ts` asserts the two agree, because server and browser are ONE service told apart by `telemetry.sdk.language`, not by name |
 | `cli` | CLI | `packages/cli/src/telemetry.mjs` |
 
@@ -708,12 +707,17 @@ unique.
   project-wide, not per-function, so one value can never name five functions — the previous
   attempt left `mcp` and `health` silently sharing a fallback name. The `SERVICE_NAME` env var
   is still honoured as an escape hatch, but nothing needs to set it and `config.toml` sets none.
-- `service.namespace` is **`lorekit`** everywhere — hard-coded in each component's resource
-  (including `packages/mcp-server/src/instrumentation.ts`, which no longer delegates it to
-  `OTEL_RESOURCE_ATTRIBUTES`), never env-dependent.
-- The Node MCP server is `mcp`: the `lorekit` namespace already carries the product, and the
-  edge functions report `api` (told apart by `faas.name`), so `mcp` names this Fly.io
-  deployment cleanly with no service-map collision. It stays its own service, distinct from the
-  edge `api`, because it is a separate deployment (Fly.io) with its own lifecycle.
+- `service.namespace` is **`lorekit`** everywhere — hard-coded in each component's resource,
+  never env-dependent.
+- **`mcp` is NOT a service — if you see it in Dash0, it is this bug.** There is one MCP server
+  and it is the edge function, reporting `service.name=api` with `faas.name=mcp`. A Node MCP
+  server (`packages/mcp-server/`, nominally destined for Fly.io) once claimed the `mcp` name in
+  this inventory, but it was never deployed and has been removed. The `mcp` service that showed
+  up in Dash0 on 2026-07-30 was the EDGE functions renaming themselves for a few minutes under a
+  project-wide `SERVICE_NAME=mcp` secret — the exact failure mode the bullet above warns about.
+  Same story for the other stray names in the service map: `lorekit` (a stray
+  `OTEL_SERVICE_NAME` on web), `lorekit-cli` (the pre-rename CLI, see the note above), and
+  `mcp-node` (emitted only by `scripts/emit-correlated-trace.mts`). To query the MCP server,
+  filter `service.name = api` AND `faas.name = mcp`.
 - The Supabase origin pattern used for browser + server trace-context propagation lives in one
   place: `packages/web/src/lib/otel-origins.ts`.

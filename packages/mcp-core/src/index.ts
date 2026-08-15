@@ -54,6 +54,11 @@ export {
   type WebhookSignalTier,
 } from './ttl-defaults.js';
 export {
+  classifyWebhookAction,
+  isSignalWorthy,
+  type WebhookTier,
+} from './signal-filter.js';
+export {
   parseOrigin,
   sanitizeOrigin,
   OriginError,

@@ -16,8 +16,13 @@
  * unit-testable and can be inlined verbatim into self-contained environments
  * (e.g. the Supabase Deno edge function) without importing this module.
  *
- * The Deno mirror in supabase/functions/mcp/webhook.ts MUST be kept in sync
- * with this file. Update both in the same commit.
+ * This module is the REFERENCE implementation and the only one with unit
+ * tests; the sole RUNTIME consumer is the Deno mirror inlined in
+ * supabase/functions/mcp/webhook.ts, which MUST be kept in sync with this file
+ * — update both in the same commit. (It lived in the Node MCP server's
+ * `webhooks/` directory until that undeployed server was removed; the mirror
+ * outlived it, so the reference + its tests moved here rather than dying with
+ * it.)
  */
 
 export type WebhookTier = 'WRITE' | 'SKIP';

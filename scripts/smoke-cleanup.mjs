@@ -3,7 +3,7 @@
  * Smoke-artefact sweeper — removes what a PREVIOUS smoke run left behind.
  * ------------------------------------------------------------------------
  * The live smoke suites clean up after themselves in `afterAll` (see
- * `packages/mcp-server/src/smoke-cleanup.ts`). That covers a suite that FAILED;
+ * `supabase/tests/smoke-cleanup.ts`). That covers a suite that FAILED;
  * it cannot cover a run that never reached the hook at all — a crashed vitest
  * worker, an OOM-killed runner, a cancelled workflow, a job timeout. Those runs
  * leave rows in a real tenant forever.
@@ -55,7 +55,7 @@
  */
 
 // ── the artefact pattern ──────────────────────────────────────────────────────
-// MIRROR of SMOKE_ARTEFACT_PATTERN in packages/mcp-server/src/smoke-cleanup.ts.
+// MIRROR of SMOKE_ARTEFACT_PATTERN in supabase/tests/smoke-cleanup.ts.
 // This script is intentionally zero-dependency and standalone (it must run from
 // a bare checkout with no build step), so the pattern is copied rather than
 // imported. `smoke-cleanup.spec.ts` fails if the two ever diverge.
@@ -74,7 +74,7 @@ function smokeArtefactTimestamp(name) {
  * carries no server timestamp. `-Infinity` for an unrecognised name, so it can
  * never clear an age threshold.
  *
- * Mirrors `smokeArtefactAgeMs` in packages/mcp-server/src/smoke-cleanup.ts.
+ * Mirrors `smokeArtefactAgeMs` in supabase/tests/smoke-cleanup.ts.
  * A future-dated name yields a negative age and so is never swept: a runner
  * whose clock ran fast must not have its live rows treated as orphans.
  */
