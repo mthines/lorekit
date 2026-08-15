@@ -147,6 +147,27 @@ const MAX_SCAN_CHARS = 4096;
 // replaces this.
 export const SCOPE_READ_LIMIT = 25;
 
+// The largest `limit` the hosted route will ACCEPT on one `GET /memories` call.
+//
+// Mirrored from `MemoryListSchema` / the REST list query schema in
+// `@lorekit/schemas` (`limit: …min(1).max(100)`), self-contained here for the
+// same reason `limits.ts` is mirrored into the edge function: this package takes
+// no dependencies, and the number is a CONTRACT with the other side rather than
+// a preference of ours. Keep the two in step — if the route's cap moves, this
+// moves with it.
+//
+// It is a HARD bound on the read, not a soft one, because the failure it
+// prevents is silent and total. Zod REJECTS an over-cap `limit` with a 400, so
+// `RemoteStore.list` returns `{ ok: false }`, and `fetchLessons` — best-effort by
+// design — skips that scope. Every scope fails the same way, so a remote user
+// who set `maxLessons` above 100 would get an EMPTY block with no error
+// anywhere: the exact shape of bug that survives for months because the hook
+// swallows everything by contract. The local store has no such cap, but the
+// bound is applied uniformly rather than per-store — one code path, and a
+// ceiling above 100 still fills from the several scopes in `readOrder`
+// (4 × 100 = 400 candidates for a 200-line ceiling).
+export const MAX_STORE_LIST_LIMIT = 100;
+
 // The per-scope read cap for a given line ceiling.
 //
 // THE FETCH ONLY GROWS WHEN THE CEILING IS RAISED ABOVE ITS DEFAULT, and that
@@ -168,9 +189,16 @@ export const SCOPE_READ_LIMIT = 25;
 // would mean the ranking picks its handful from a worse pool, which is a quality
 // regression dressed up as a saving. Monotone in `maxLessons`, so the cost never
 // falls as the ask grows. Pure.
+//
+// AND IT NEVER EXCEEDS WHAT THE TRANSPORT ACCEPTS (`MAX_STORE_LIST_LIMIT`). A
+// ceiling of 200 is a legal config value, but a 200-row `limit` is not a legal
+// request — so the growth stops at 100 and the remaining lines fill from the
+// other scopes in `readOrder`. Without this the dial's own top half silently
+// emptied the block on a remote store.
 export function scopeReadLimit(maxLessons) {
   const ceiling = resolveLessonCeiling(maxLessons);
-  return ceiling > DEFAULT_SESSION_START_MAX_LESSONS ? ceiling : SCOPE_READ_LIMIT;
+  const wanted = ceiling > DEFAULT_SESSION_START_MAX_LESSONS ? ceiling : SCOPE_READ_LIMIT;
+  return Math.min(wanted, MAX_STORE_LIST_LIMIT);
 }
 
 // `scope` may be injected instead of derived from `cwd` — a seam for callers

@@ -19,6 +19,7 @@ import {
   lessonId,
   SCOPE_READ_LIMIT,
   scopeReadLimit,
+  MAX_STORE_LIST_LIMIT,
   PROMPT_FETCH_TIMEOUT_MS,
   PROMPT_LOCAL_SEARCH_LIMIT,
   branchQueryTerms,
@@ -538,12 +539,25 @@ test('scopeReadLimit: the fetch grows ONLY above the default ceiling', () => {
   // inert on a workspace whose lore all lives in one scope.
   assert.equal(scopeReadLimit(41), 41);
   assert.equal(scopeReadLimit(80), 80);
-  assert.equal(scopeReadLimit(MAX_SESSION_START_MAX_LESSONS), MAX_SESSION_START_MAX_LESSONS);
+
+  // BUT NEVER PAST WHAT THE ROUTE ACCEPTS. `GET /memories` validates
+  // `limit` at `max(100)`, so an over-cap request is a 400 — which
+  // `RemoteStore.list` reports as `{ ok: false }` and `fetchLessons`, best-effort
+  // by contract, SKIPS. Every scope fails identically, so the whole block would
+  // come back empty with no error surfaced anywhere. The top half of the config's
+  // own 3–200 range is exactly where that bites, which is why these are asserted
+  // at the bound rather than at the ceiling.
+  assert.equal(scopeReadLimit(101), MAX_STORE_LIST_LIMIT);
+  assert.equal(scopeReadLimit(MAX_SESSION_START_MAX_LESSONS), MAX_STORE_LIST_LIMIT);
   // And a caller bypassing the config normaliser is still clamped.
-  assert.equal(scopeReadLimit(5000), MAX_SESSION_START_MAX_LESSONS);
+  assert.equal(scopeReadLimit(5000), MAX_STORE_LIST_LIMIT);
+  assert.ok(
+    MAX_STORE_LIST_LIMIT <= 100,
+    'the mirrored cap must not drift above the route schema it mirrors',
+  );
   // Monotone: cost never falls as the ask grows.
   let prev = 0;
-  for (const n of [1, 10, 40, 41, 80, 200, 5000]) {
+  for (const n of [1, 10, 40, 41, 80, 100, 101, 200, 5000]) {
     const got = scopeReadLimit(n);
     assert.ok(got >= prev, `not monotone at ${n}`);
     prev = got;
@@ -609,8 +623,18 @@ test('fetchLessons: an out-of-range maxLessons is clamped, and an unusable one f
   // typo'd 4000 from materialising a 4000-line read.
   const over = recordingStore(seeded);
   const big = await fetchLessons(over, process.cwd(), { maxLessons: 4000 });
-  assert.equal(over.limits[0].limit, MAX_SESSION_START_MAX_LESSONS, 'the read is clamped to 200');
-  assert.equal(big.lessons.length, MAX_SESSION_START_MAX_LESSONS, 'and so is the injected set');
+  // The READ is clamped to what the route accepts (100), NOT to the 200-line
+  // ceiling: an over-cap `limit` is a 400, which this hook would swallow into an
+  // empty block. The two bounds are different questions and this assertion is
+  // the one that tells them apart.
+  assert.equal(over.limits[0].limit, MAX_STORE_LIST_LIMIT, 'the read is clamped to the route cap');
+  // The injected set still reaches the 200-line ceiling, because a capped read
+  // per scope still pools across `readOrder` (2 scopes × 100 ≥ 200).
+  assert.equal(
+    big.lessons.length,
+    Math.min(MAX_SESSION_START_MAX_LESSONS, MAX_STORE_LIST_LIMIT * scope.readOrder.length),
+    'and the injected set fills to the ceiling from the pooled scopes',
+  );
 
   // `Number(null) === 0`, and only `undefined` triggers a destructuring
   // default — so an explicit null must NOT clamp UP to a one-line block.
