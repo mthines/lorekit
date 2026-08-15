@@ -335,7 +335,10 @@ class RemoteStore {
   //
   // Two states have no remote representation at all and are REFUSED rather
   // than silently rewritten, because writing them would resurrect a lesson the
-  // user retired: an archived entry (the REST write revives on conflict) and
+  // user retired: an archived entry (every conflict predicate on `memories` is
+  // partial on `archived_at is null`, so the hosted write does not revive the
+  // archived row — it INSERTS a second, live one beside it, leaving the store
+  // with both) and
   // an already-expired one (any `ttl_days` re-dates it into the future). Both
   // come back as `{ ok:false, unsupported }` so the caller can report them as
   // skipped. `migrate` does NOT filter them today — adding that filter is the
@@ -350,8 +353,11 @@ class RemoteStore {
   // One semantic difference the caller has to know about: LocalStore.getEntry
   // sees archived rows and this cannot — `GET /memories` filters them out — so
   // a remote destination classifies an archived counterpart as ADD, and the
-  // write then revives it. That is the same thing the hosted `memory_write`
-  // does for any write against an archived key, not a migrate-specific quirk.
+  // write then lands as a NEW live row beside the archived one (the conflict
+  // predicates are partial on `archived_at is null`). That is what the hosted
+  // `memory_write` does for any write against an archived key, not a
+  // migrate-specific quirk — and it is why `putEntry` refuses an archived
+  // source entry outright rather than relying on this classification.
   //
   // A FAILED read THROWS rather than answering null. Null is the answer to "no
   // such lesson", and a caller that classifies ADD / UPDATE / NOOP acts on it:
@@ -400,7 +406,7 @@ class RemoteStore {
       createdAtDropped: false,
     });
     if (entry?.archived_at) {
-      return refuse('archived', 'archived entries cannot be written remotely — the hosted write revives them');
+      return refuse('archived', 'archived entries cannot be written remotely — the hosted write would insert a second, live row beside the archived one');
     }
     const ttl = remoteTtlDays(entry?.expires_at, now);
     if (ttl === 'expired') {
