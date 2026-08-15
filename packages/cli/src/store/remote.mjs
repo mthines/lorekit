@@ -21,6 +21,7 @@
 import { restFetch, mcpToRestBase } from '../mcp.mjs';
 import { getActiveTraceparent } from '../telemetry.mjs';
 import { withReadFields } from './entry-fields.mjs';
+import { normalizeCreatedAt } from './created-at.mjs';
 
 // Drop undefined/null args so JSON payloads stay tidy.
 function stripUndefined(obj) {
@@ -360,8 +361,10 @@ class RemoteStore {
   //
   // EVERY branch answers with the SAME key set — `write`'s
   // `{ ok, error, httpStatus, retryAfter, networkError, unusable }` plus
-  // `unsupported` (the refusal reason, else null) and `ttlClamped` (whether the
-  // entry landed with a shortened life). A refusal fills the transport fields
+  // `unsupported` (the refusal reason, else null), `ttlClamped` (the entry
+  // landed with a shortened life) and `createdAtDropped` (its `created` was
+  // unusable, so the server stamped the write instant instead). The last two
+  // report what HAPPENED, so both are false when the write did not succeed. A refusal fills the transport fields
   // with null rather than omitting them, so a caller reading any one key never
   // gets a value from one branch and `undefined` from another.
   async putEntry(entry = {}, { now = new Date() } = {}) {
@@ -378,6 +381,7 @@ class RemoteStore {
       // never gets a value from one branch and `undefined` from another.
       unusable: false,
       ttlClamped: false,
+      createdAtDropped: false,
     });
     if (entry?.archived_at) {
       return refuse('archived', 'archived entries cannot be written remotely — the hosted write revives them');
@@ -386,6 +390,20 @@ class RemoteStore {
     if (ttl === 'expired') {
       return refuse('expired', 'expired entries cannot be written remotely — any TTL would re-date them into the future');
     }
+    // The same validation the server applies (`_shared/created-at.ts`, mirrored
+    // here), run BEFORE the request rather than discovered as a 400. A local
+    // file can hold a hand-edited or clock-skewed `created`, and losing the
+    // whole lesson over its creation date is the wrong trade: drop the
+    // override, let the server stamp now, and report the loss so the caller
+    // can say which entries were re-dated.
+    let createdAt;
+    let createdAtDropped = false;
+    try {
+      createdAt = normalizeCreatedAt(entry?.created ?? null) ?? undefined;
+    } catch {
+      createdAt = undefined;
+      createdAtDropped = Boolean(entry?.created);
+    }
     const result = await this.write(stripUndefined({
       scope: entry.scope,
       key: entry.key,
@@ -393,7 +411,7 @@ class RemoteStore {
       tags: Array.isArray(entry.tags) ? entry.tags : [],
       source_agent: entry.source_agent,
       trigger: entry.trigger,
-      created_at: entry.created,
+      created_at: createdAt,
       // `'unknown'` sends neither field, leaving the RPC on its `'keep'`
       // branch. A real TTL sends only `ttl_days`; no TTL says so explicitly
       // with `clear_ttl` rather than by omission — see the fidelity note above.
@@ -406,10 +424,13 @@ class RemoteStore {
     }));
     // Always present, like every other key in this envelope — a caller must
     // not have to know which branch produced the result to read it.
+    // Both flags describe what HAPPENED, so they are false on a write that did
+    // not happen — a failed request shortened nothing and re-dated nothing.
     return {
       ...result,
       unsupported: null,
-      ttlClamped: ttl === 365 && remoteTtlDaysExact(entry?.expires_at, now) > 365,
+      ttlClamped: Boolean(result.ok) && ttl === 365 && remoteTtlDaysExact(entry?.expires_at, now) > 365,
+      createdAtDropped: Boolean(result.ok) && createdAtDropped,
     };
   }
 

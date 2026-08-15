@@ -2247,3 +2247,41 @@ test('RemoteStore.putEntry reports a clamped TTL as lossy rather than silently s
   );
   assert.equal(fits.result.ttlClamped, false); // present and false, never undefined
 });
+
+test('RemoteStore.putEntry drops an unusable created rather than letting it 400 the entry', async () => {
+  for (const created of ['not-a-date', '2999-01-01T00:00:00.000Z']) {
+    const { result, calls } = await captureRestCalls(
+      (store) => store.putEntry({ scope: 'global', key: 'k', value: 'v', created }),
+      { status: 201, body: '{}' },
+    );
+    assert.equal(result.ok, true);
+    // The write still happens; only the override is dropped, and the loss is
+    // reported so a caller can name the re-dated entries.
+    assert.equal('created_at' in calls[0].body, false, `created=${created}`);
+    assert.equal(result.createdAtDropped, true, `created=${created}`);
+  }
+
+  // A usable date is sent, and nothing is reported.
+  const good = await captureRestCalls(
+    (store) => store.putEntry({ scope: 'global', key: 'k', value: 'v', created: '2024-03-04T05:06:07.000Z' }),
+    { status: 201, body: '{}' },
+  );
+  assert.equal(good.calls[0].body.created_at, '2024-03-04T05:06:07.000Z');
+  assert.equal(good.result.createdAtDropped, false);
+});
+
+test('RemoteStore.putEntry reports nothing as having happened when the write failed', async () => {
+  const now = new Date('2025-01-01T00:00:00.000Z');
+  const { result } = await captureRestCalls(
+    (store) => store.putEntry(
+      { scope: 'global', key: 'k', value: 'v', created: 'not-a-date', expires_at: '2030-01-01T00:00:00.000Z' },
+      { now },
+    ),
+    { status: 500, body: JSON.stringify({ error: 'boom' }) },
+  );
+  assert.equal(result.ok, false);
+  // A request that failed shortened no TTL and re-dated nothing, whatever its
+  // inputs would have caused had it landed.
+  assert.equal(result.ttlClamped, false);
+  assert.equal(result.createdAtDropped, false);
+});
