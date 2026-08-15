@@ -479,8 +479,11 @@ test('migrate --to remote retries a rate-limited READ, and reports a clamped TTL
           // pins that the retry path covers reads and not only writes.
           if (call.method === 'GET' && reads++ === 0) {
             return {
+              // 7 seconds — deliberately NOT a value the default backoff can
+              // produce (that is 1s on the first attempt), so deleting this
+              // hint from the stub fails the assertion below.
               status: 429,
-              body: JSON.stringify({ error: 'Too many requests', code: 'rate_limited', retryAfterSeconds: 1 }),
+              body: JSON.stringify({ error: 'Too many requests', code: 'rate_limited', retryAfterSeconds: 7 }),
             };
           }
           return null;
@@ -488,7 +491,7 @@ test('migrate --to remote retries a rate-limited READ, and reports a clamped TTL
       },
     );
     assert.equal(result.result, 0);
-    assert.deepEqual(slept, [1000]);
+    assert.deepEqual(slept, [7000]); // the server's hint, not the 1s default backoff
     assert.equal(calls.filter((c) => c.method === 'GET').length, 2); // rejected read + its retry
     assert.equal(writes(calls)[0].body.ttl_days, 365);
     assert.match(result.text, /global::long — TTL shortened to the hosted maximum/);
@@ -716,5 +719,61 @@ test('migrate --to remote paces itself once the request window fills', async () 
     // Four requests (2 reads + 2 writes) at one per 20ms window — the run
     // cannot have finished instantly. Without the pacer this is ~0ms.
     assert.ok(Date.now() - started >= 40, 'expected the pacer to slow the run down');
+  });
+});
+
+
+test('migrate --to remote gives up on a destination that is systematically down', async () => {
+  const src = await seedSource();
+  const home = tmpDir();
+  const root = tmpDir();
+
+  await withHome(home, async () => {
+    const { result, calls } = await withRemote(
+      () => captured(() => migrate(
+        { from: src, to: 'remote', yes: true, dir: root },
+        { sleepFn: async () => {}, consecutiveFailureLimit: 1 },
+      )),
+      { respond: () => ({ status: 503, body: JSON.stringify({ error: 'everything is on fire' }) }) },
+    );
+    // Retrying is worth it for a blip. An outage is not: without a breaker,
+    // every remaining entry pays the full retry budget before failing anyway.
+    assert.equal(result.result, 1);
+    assert.match(result.text, /stopped after 1 consecutive failures/);
+    assert.match(result.text, /0 entries migrated before it gave up/);
+    // The first entry's read exhausted its attempts; the second was never
+    // reached, so the run stopped rather than grinding through the store.
+    assert.equal(calls.filter((c) => new URL(c.url).searchParams.get('key') === 'r1').length, 0);
+  });
+});
+
+test('migrate --to remote does not report a loss for a write that failed', async () => {
+  const src = tmpDir();
+  const store = createLocalStore(src);
+  await store.write({ scope: 'global', key: 'longttl', value: 'v', ttl_days: 365 });
+  const file = fs.readdirSync(path.join(src, 'global')).map((n) => path.join(src, 'global', n))[0];
+  fs.writeFileSync(
+    file,
+    fs.readFileSync(file, 'utf8').replace(/expires_at: .*/, 'expires_at: 2099-01-01T00:00:00.000Z'),
+  );
+
+  const home = tmpDir();
+  const root = tmpDir();
+  await withHome(home, async () => {
+    const { result } = await withRemote(
+      () => captured(() => migrate(
+        { from: src, to: 'remote', yes: true, dir: root },
+        { sleepFn: async () => {} },
+      )),
+      {
+        respond: (call) => (call.method === 'POST'
+          ? { status: 400, body: JSON.stringify({ error: 'bad request' }) }
+          : null),
+      },
+    );
+    assert.equal(result.result, 1);
+    // The entry never landed, so nothing about it was shortened. Claiming the
+    // loss next to "migrated 0 entries" is worse than saying nothing.
+    assert.doesNotMatch(result.text, /TTL shortened/);
   });
 });

@@ -22,6 +22,10 @@
 export const DEFAULT_MAX_PER_WINDOW = 100; // under the 120/min server limit
 export const WINDOW_MS = 60_000;
 export const DEFAULT_MAX_ATTEMPTS = 5;
+// After this many entries fail in a row, stop retrying and let the caller
+// abort. Retrying is worth it for a blip; a systematic outage just turns a
+// 2,000-entry push into hours of backoff before failing anyway.
+export const DEFAULT_CONSECUTIVE_FAILURE_LIMIT = 5;
 export const DEFAULT_RETRY_DELAY_MS = 1_000;
 export const MAX_RETRY_DELAY_MS = 60_000;
 

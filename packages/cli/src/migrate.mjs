@@ -28,7 +28,9 @@ import { createLocalStore, createTwoTierStore, createRemoteStore } from './store
 import { parseEntry } from './store/format.mjs';
 import { isLive } from './store/ttl.mjs';
 import { remoteWriteLosses } from './store/remote.mjs';
-import { createPacer, withRetry, isMemoryCap, sleep } from './store/rate-limit.mjs';
+import {
+  createPacer, withRetry, isMemoryCap, sleep, DEFAULT_CONSECUTIVE_FAILURE_LIMIT,
+} from './store/rate-limit.mjs';
 import { log, heading, status, err, c } from './util.mjs';
 
 // Recursively collect every parseable LoreKit entry under a base dir. The
@@ -77,7 +79,8 @@ function sameEntry(a, b) {
   return norm(a) === norm(b);
 }
 
-// The remote counterpart of `sameEntry`, and deliberately a WEAKER comparison.
+// The remote counterpart of `sameEntry`, and deliberately a DIFFERENT one —
+// not weaker, but mirrored against what the hosted write actually stores.
 //
 // It compares only the fields a hosted write can actually change. Everything
 // else the row carries is server-owned, and including any of it would make the
@@ -88,8 +91,10 @@ function sameEntry(a, b) {
 //                 re-run would report UPDATE and re-push the whole store.
 //   `updated_at`  is stamped at the write instant, so it differs by definition
 //                 the moment the comparison runs.
-//   `expires_at`  is recomputed from `ttl_days` at write time, so only the
-//                 PRESENCE of an expiry is comparable, not its instant.
+//   `expires_at`  is recomputed from `ttl_days` at write time, so the two
+//                 instants drift apart the moment they agree. What is
+//                 comparable is whether the hosted expiry SATISFIES the local
+//                 one — see `sameRemoteTtl`.
 //
 // A remote NOOP therefore means "the hosted lesson already says this", not
 // "the two rows are byte-identical". That is the honest guarantee, and it is
@@ -384,6 +389,13 @@ export async function migrate(args, options = {}) {
   // user knows WHICH lessons were altered rather than how many.
   const clamped = [];
   const redated = [];
+  // A blip is worth retrying; an outage is not. Once this many entries fail
+  // back to back the destination is not having a bad moment, it is down — and
+  // continuing means every remaining entry pays the full retry budget before
+  // failing anyway. Reset by any entry that succeeds.
+  const failureLimit = options.consecutiveFailureLimit ?? DEFAULT_CONSECUTIVE_FAILURE_LIMIT;
+  let consecutiveFailures = 0;
+  let abandoned = false;
   for (const entry of entries) {
     const store = targetFor(entry.scope);
     // Awaited so the loop is destination-agnostic: LocalStore.getEntry is
@@ -406,6 +418,7 @@ export async function migrate(args, options = {}) {
     } catch (e) {
       failed++;
       status('fail', entry.scope, `${entry.key}: ${e?.message || 'read failed'}`);
+      if (++consecutiveFailures >= failureLimit) { abandoned = true; break; }
       continue;
     }
     let verdict;
@@ -413,14 +426,19 @@ export async function migrate(args, options = {}) {
     else if (remote ? sameRemoteEntry(current, entry, now) : sameEntry(current, entry)) verdict = 'noop';
     else verdict = 'update';
 
-    if (remote && verdict !== 'noop') {
-      // Computed from the entry, so a DRY RUN warns about exactly what an
-      // apply would do. Reporting these only on the write made the preview
-      // quietly less informative than the thing it previews.
-      const losses = remoteWriteLosses(entry, now);
+    // What this entry WOULD lose, computed from the entry itself so a DRY RUN
+    // warns about exactly what an apply would do — reporting it only on the
+    // write made the preview quietly less informative than the thing it
+    // previews. Recorded only once the outcome is known, though: a write that
+    // failed shortened nothing.
+    const losses = remote && verdict !== 'noop'
+      ? remoteWriteLosses(entry, now)
+      : { ttlClamped: false, createdAtDropped: false };
+    const recordLosses = () => {
       if (losses.ttlClamped) clamped.push(`${entry.scope}::${entry.key}`);
       if (losses.createdAtDropped) redated.push(`${entry.scope}::${entry.key}`);
-    }
+    };
+    if (!apply) recordLosses();
 
     if (apply && verdict !== 'noop') {
       const res = await call(() => store.putEntry(entry, { now }));
@@ -435,9 +453,12 @@ export async function migrate(args, options = {}) {
         }
         failed++;
         status('fail', entry.scope, `${entry.key}: ${res.error?.message || res.networkError || 'write failed'}`);
+        if (++consecutiveFailures >= failureLimit) { abandoned = true; break; }
         continue; // not counted as migrated — the report must not claim it
       }
+      recordLosses(); // the write landed, so the loss actually happened
     }
+    consecutiveFailures = 0;
 
     totals[verdict]++;
     const s = byScope.get(entry.scope) || { add: 0, update: 0, noop: 0 };
@@ -468,6 +489,13 @@ export async function migrate(args, options = {}) {
       err(`${c.red('migrate:')} ${failed} entr${failed === 1 ? 'y' : 'ies'} failed (listed above).`);
     }
   };
+  if (abandoned) {
+    err(`\n${c.red('migrate:')} stopped after ${failureLimit} consecutive failures — the destination looks unavailable.`);
+    log(`  ${moved} entr${moved === 1 ? 'y' : 'ies'} migrated before it gave up.`);
+    log(`  ${c.dim('Re-run when it is healthy — the migration resumes where it stopped.')}`);
+    reportFailures();
+    return 1;
+  }
   if (capped) {
     err(`\n${c.red('migrate:')} ${capped}`);
     log(`  ${moved} entr${moved === 1 ? 'y' : 'ies'} migrated before the cap was reached.`);
