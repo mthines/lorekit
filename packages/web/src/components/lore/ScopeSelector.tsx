@@ -30,15 +30,16 @@ import { scopeIcon } from '@/components/memory/scope-meta';
 import type { ScopeNode } from './ScopeTree';
 
 /**
- * The scope-type accent, applied to the chip's icon only — the same hues the
- * `ScopeBadge` pills use, but as a single tint on a single pill rather than a
+ * The scope-type accent, applied to the chip's icon only — the same
+ * `--color-scope-*` tokens the `ScopeBadge` pills use (never a raw hex, per the
+ * package theme rule), but as a single tint on a single pill rather than a
  * bordered badge nested inside the chip (which read as two stacked labels).
  */
 const TYPE_COLOR: Record<ScopeNode['type'], string> = {
-  repo: 'text-[#6b8afd]',
-  project: 'text-[#4bbf87]',
-  global: 'text-[#a679f0]',
-  branch: 'text-[#d98a3d]',
+  repo: 'text-[var(--color-scope-repo)]',
+  project: 'text-[var(--color-scope-project)]',
+  global: 'text-[var(--color-scope-global)]',
+  branch: 'text-[var(--color-scope-branch)]',
 };
 
 /**

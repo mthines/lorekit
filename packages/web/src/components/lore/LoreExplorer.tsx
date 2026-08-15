@@ -487,10 +487,10 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // Has the user narrowed WITHIN the current view? `status` is deliberately not
   // one of these: it selects which population is listed, not a predicate over
   // it, so "Archived" or "Expiring" being selected must not read as "you
-  // filtered something out". `range` is excluded for a related reason — the
-  // Explorer now opens on a 24h default, so a non-null range is the norm, not a
-  // narrowing the user chose; the time window has its own empty-state branch
-  // (`rangeIsNarrowing`) with a "View all time" way out. That distinction is
+  // filtered something out". `range` is excluded for a related reason — a time
+  // window is a bound, not a within-view predicate, and it has its own
+  // empty-state branch (`rangeIsNarrowing`) with a "View all time" way out. That
+  // distinction is
   // what the empty state turns on — a status view with nothing narrowing it
   // gets its own copy, the same view with a search that matched nothing gets
   // "no matches".
@@ -641,11 +641,11 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
         <EmptyState
           icon={STATUS_ICONS[status]}
           // The time window gets its own state and its own "View all time" way
-          // out. The Explorer now OPENS on the last 24 hours, so an empty list
-          // is most often answered by widening the range — and a reader who did
-          // not choose the window has no reason to suspect it. The action is
-          // offered whenever the range actually bounds something, regardless of
-          // which title branch wins below.
+          // out. The Explorer opens on ALL time, so an empty list is rarely the
+          // window's fault — but once a reader HAS narrowed the range, widening
+          // it is the most likely fix, so the action is offered whenever the
+          // range actually bounds something, regardless of which title branch
+          // wins below.
           {...(rangeIsNarrowing
             ? { action: { label: 'View all time', onClick: () => setRange(null) } }
             : {})}
@@ -658,8 +658,8 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             // the widen action above). The status-specific copy shows only when
             // neither a filter NOR the range is narrowing — i.e. the "All time"
             // view of that population is genuinely empty, which is exactly when
-            // "No archived memories" is the truthful answer rather than "nothing
-            // in the last 24 hours".
+            // "No archived memories" is the truthful answer rather than a
+            // range-specific "No memories in the last 7 days".
             isNarrowedWithinView
               ? 'No matching memories'
               : rangeIsNarrowing

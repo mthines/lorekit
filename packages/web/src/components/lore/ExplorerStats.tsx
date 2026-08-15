@@ -14,11 +14,19 @@
  *
  * ## What follows the filter, and what cannot
  *
- * **Written and Scopes follow the FULL selection** — scope + range + every
- * dimension filter. `ExplorerStats` sends the filter bar to `/activity` via
- * `filtersToQueryParams` (the same translation the list uses), and migration
- * 00062 applies it in the RPC, so these two cards count exactly the list's set.
- * There is no disclaimer, because there is nothing to disclaim.
+ * **Written and Scopes follow the scope, range, and every DIMENSION filter** —
+ * `ExplorerStats` sends the filter bar to `/activity` via `filtersToQueryParams`
+ * (the same translation the list uses), and migration 00062 applies it in the
+ * RPC, so these two cards count exactly the list's set for that slice.
+ *
+ * Two page-level controls are deliberately NOT forwarded, so under either the
+ * header describes the ACTIVE, unsearched set while the list may show more or
+ * less: the `status` control (Archived / Expiring selects a different
+ * population, and the activity RPC only ever counts active, non-expired rows),
+ * and the free-text `q` search (the RPC has no full-text arm). Both are tracked
+ * as follow-ups rather than silently implied to be counted — see the PR's
+ * limitations note. The dimension filters, which is what people reach for to
+ * narrow a scope, ARE reflected, so there is no per-card disclaimer for them.
  *
  * Two cards can only go part-way, and each says so in its own caption/tooltip:
  *
