@@ -23,7 +23,7 @@ import {
   branchQueryTerms,
   sessionRankOpts,
 } from '../src/core/lessons.mjs';
-import { resolvePrecedence, matchesQuery, DEFAULT_RANK_WEIGHTS } from '../src/lessons-pure.mjs';
+import { resolvePrecedence, matchesQuery } from '../src/lessons-pure.mjs';
 import { deriveScope } from '../src/scope.mjs';
 import { claude } from '../src/adapters/claude.mjs';
 import { cursor } from '../src/adapters/cursor.mjs';
@@ -366,6 +366,10 @@ test('branchQueryTerms — distils the branch name, drops generic prefixes and t
     '`release` in the description survives; only the `feat` prefix is dropped',
   );
   assert.deepEqual(branchQueryTerms({ branch: 'claude/head-parser-rewrite' }), ['head', 'parser', 'rewrite']);
+  // The leading segment is always a type/author — dropped whichever it is, so a
+  // username or a bot name never becomes a query term.
+  assert.deepEqual(branchQueryTerms({ branch: 'mthines/embedding-pipeline' }), ['embedding', 'pipeline']);
+  assert.deepEqual(branchQueryTerms({ branch: 'dependabot/lodash-bump' }), ['lodash', 'bump']);
   // Trunk branches, detached HEAD, and no-git yield NO query — the read is unchanged.
   for (const branch of ['main', 'master', 'HEAD']) {
     assert.deepEqual(branchQueryTerms({ branch }), [], `${branch} → no query`);
@@ -374,23 +378,21 @@ test('branchQueryTerms — distils the branch name, drops generic prefixes and t
   assert.deepEqual(branchQueryTerms(null), []);
 });
 
-test('sessionRankOpts — seeds branch terms at reduced relevance weight, else the prior read', () => {
+test('sessionRankOpts — seeds branch terms at DEFAULT weight (no damping), else the prior read', () => {
   const readOrder = ['repo::a/b', 'global'];
-  // A topical branch: terms are seeded and relevance runs at LESS than full weight.
-  const seeded = sessionRankOpts({ branch: 'feat/embedding-pipeline', readOrder }, 1000);
-  assert.deepEqual(seeded.terms, ['embedding', 'pipeline']);
-  assert.equal(seeded.now, 1000);
-  assert.deepEqual(seeded.scopeOrder, readOrder);
-  assert.ok(seeded.weights, 'weights are set when a query is seeded');
-  assert.ok(
-    seeded.weights.relevance < DEFAULT_RANK_WEIGHTS.relevance,
-    'a branch is a weaker signal than a prompt, so relevance is damped',
+  // No `weights` override: damping relevance with a smaller weight would shrink
+  // the normaliser (Σweights) and rescale every score, distorting MMR even for
+  // non-matching lessons — so the branch query rides at default weight and only
+  // ever lifts an on-topic lesson.
+  assert.deepEqual(
+    sessionRankOpts({ branch: 'feat/embedding-pipeline', readOrder }, 1000),
+    { terms: ['embedding', 'pipeline'], now: 1000, scopeOrder: readOrder },
   );
-  assert.equal(seeded.weights.recency, DEFAULT_RANK_WEIGHTS.recency, 'the other factors keep default weight');
-  assert.equal(seeded.weights.salience, DEFAULT_RANK_WEIGHTS.salience);
-  // A trunk branch: no terms, and NO weights override — byte-for-byte the old read.
-  const trunk = sessionRankOpts({ branch: 'main', readOrder }, 1000);
-  assert.deepEqual(trunk, { terms: [], now: 1000, scopeOrder: readOrder });
+  // A trunk branch yields no terms — byte-for-byte the old read.
+  assert.deepEqual(
+    sessionRankOpts({ branch: 'main', readOrder }, 1000),
+    { terms: [], now: 1000, scopeOrder: readOrder },
+  );
 });
 
 test('fetchLessons seeds the branch-name query into the ranking (wires sessionRankOpts)', async () => {

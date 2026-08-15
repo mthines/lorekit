@@ -14,7 +14,6 @@ import { deriveScope } from '../scope.mjs';
 // of what "most useful" means.
 import {
   resolvePrecedence, rankLessons, diversifyRankedLessons, capPerBucket, loopBucketOf,
-  DEFAULT_RANK_WEIGHTS,
 } from '../lessons-pure.mjs';
 // The store's own scope inventory, normalised — the SAME helper `memory.scopes`
 // uses, so the map and the MCP tool cannot disagree about what a scope holds or
@@ -547,60 +546,51 @@ export function distilTerms(text) {
   return terms;
 }
 
-// Generic branch PREFIXES: the leading `type/` segment (and the bare trunk
-// names) nearly every branch carries. Stripped only where they appear — as the
-// prefix — so a word like `release` or `head` is dropped as the branch TYPE
-// (`release/…`) but KEPT when it is a topic in the description
-// (`feat/release-notes`, `claude/head-parser`). Small and hand-picked, the same
-// posture as `STOPWORDS`. Short entries like `fix`/`wip` belong here: matched as
-// a whole segment they are NOT subject to `distilTerms`' `MIN_TERM_LEN` floor.
-const BRANCH_PREFIXES = new Set([
-  'main', 'master', 'develop', 'trunk', 'head',
-  'feat', 'feature', 'fix', 'bugfix', 'hotfix', 'chore', 'refactor', 'refac',
-  'docs', 'test', 'tests', 'wip', 'release', 'perf', 'style', 'build', 'revert', 'claude',
-]);
+// Single-segment branch names that carry no topic: the trunk names a session is
+// most often on. A `<segment>/…` branch always has a leading type/author segment
+// (`feat`, `fix`, `claude`, `dependabot`, a username) that is never the topic —
+// see `branchQueryTerms` — so those words don't need listing here; this set is
+// only consulted for a branch with NO `/`.
+const TRUNK_BRANCHES = new Set(['main', 'master', 'develop', 'trunk', 'head']);
 
-// The relevance weight for the SessionStart cold read. A branch NAME is a weak,
-// inferred signal — not the explicit ask a `UserPromptSubmit` or a failure is —
-// so it gets HALF the default weight: enough to nudge on-topic lessons up, not
-// enough for a noisy branch name to reorder the read out from under recency and
-// salience. The prompt/failure paths keep the full default weight, because there
-// the user (or the error) named the topic outright.
-const BRANCH_RELEVANCE_WEIGHT = 0.5;
-
-// Distil a weak relevance query from the branch NAME only — owner/repo never
-// enters, because `deriveScope` keeps the raw branch in `scope.branch`. Drops
-// the leading `type/` segment when it is a generic prefix, then reuses the shared
-// `distilTerms` on the DESCRIPTION (so `MIN_TERM_LEN`, dedupe and the FTS-safe
-// token shape all apply). A prefix word is stripped ONLY as the prefix, so
-// `feat/release-notes` keeps `release`. Empty for a bare trunk name, a detached
-// `HEAD`, or no git — the read then behaves exactly as before. Pure and total.
+// Distil a relevance query from the branch NAME only — owner/repo never enters,
+// because `deriveScope` keeps the raw branch in `scope.branch`. The leading
+// `/`-segment of a branch is a type or author by convention (`feat/…`,
+// `dependabot/…`, `alice/…`) and never the topic, so it is dropped WHOLESALE when
+// a `/` is present; the DESCRIPTION is then tokenised by the shared `distilTerms`
+// (so `MIN_TERM_LEN`, dedupe and the FTS-safe shape apply). A word like `release`
+// survives when it is in the description (`feat/release-notes`), because only the
+// FIRST segment is removed. Empty for a bare trunk name, a detached `HEAD`, or no
+// git — the read then behaves exactly as before. Pure and total.
 export function branchQueryTerms(scope) {
   const branch = scope && typeof scope.branch === 'string' ? scope.branch : '';
   if (!branch || branch === 'HEAD') return [];
   const slash = branch.indexOf('/');
   if (slash === -1) {
-    // Single segment: a bare trunk name carries no topic; anything else is its
-    // own description (a prefix word here is compared whole, not length-floored).
-    return BRANCH_PREFIXES.has(branch.toLowerCase()) ? [] : distilTerms(branch);
+    // No prefix segment: a bare trunk name carries no topic; anything else is
+    // its own description.
+    return TRUNK_BRANCHES.has(branch.toLowerCase()) ? [] : distilTerms(branch);
   }
-  const prefix = branch.slice(0, slash).toLowerCase();
-  const description = BRANCH_PREFIXES.has(prefix) ? branch.slice(slash + 1) : branch;
-  return distilTerms(description);
+  return distilTerms(branch.slice(slash + 1));
 }
 
 // The rank options for a session-start read of `scope` at `now` — THE wiring
-// seam, so the branch-seeding is unit-testable without a git checkout. When the
-// branch yields query terms they ride at `BRANCH_RELEVANCE_WEIGHT`; when it does
-// not, this is exactly the prior `terms: []` / default-weights read, so a
-// trunk-branch or detached-HEAD session is byte-for-byte unchanged. `fetchLessons`
-// feeds the ONE object it returns to both `rankLessons` and (spread) the
-// diversifier, so their scores cannot disagree on terms OR weights.
+// seam, so the branch-seeding is unit-testable without a git checkout. The branch
+// query rides at the DEFAULT relevance weight, exactly like the prompt/failure
+// paths: it only ever LIFTS an on-topic lesson (a non-matching lesson scores
+// relevance 0, so a branch that matches nothing is byte-for-byte the old read),
+// and it is deliberately NOT damped by a smaller weight — reducing one factor's
+// weight shrinks the normaliser (Σweights) and rescales every score, which then
+// distorts the unscaled Jaccard term in `selectDiverse`'s MMR even for lessons
+// the branch never matched. `fetchLessons` feeds the ONE object this returns to
+// both `rankLessons` and (spread) the diversifier, so their scores agree on
+// terms and the clock.
 export function sessionRankOpts(scope, now) {
-  const terms = branchQueryTerms(scope);
-  const base = { terms, now, scopeOrder: scope && scope.readOrder ? scope.readOrder : null };
-  if (terms.length === 0) return base;
-  return { ...base, weights: { ...DEFAULT_RANK_WEIGHTS, relevance: BRANCH_RELEVANCE_WEIGHT } };
+  return {
+    terms: branchQueryTerms(scope),
+    now,
+    scopeOrder: scope && scope.readOrder ? scope.readOrder : null,
+  };
 }
 
 // De-duplicate store-search hits by `scope::key` and cap them, PRESERVING the
