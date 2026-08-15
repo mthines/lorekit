@@ -158,6 +158,30 @@ export function normalizeRunEnvironment(raw) {
   return /^[A-Za-z0-9_.\-:]+$/.test(t) ? t : null;
 }
 
+/**
+ * The retry delay a failed response advertised, in whole seconds, or null.
+ *
+ * Prefers the JSON body's `retryAfterSeconds` over the `Retry-After` header:
+ * both are set by the same `tooManyRequests()` helper, and the body value is
+ * the number the rate-limit RPC actually returned, while the header is its
+ * stringified copy that an intermediary may rewrite.
+ *
+ * TOTAL over any input. `headers` is read through optional calls because a
+ * test double (and a hand-rolled Response-alike) may not implement the Headers
+ * interface, and a missing retry hint must never be able to throw on an error
+ * path — the caller is already handling a failure.
+ */
+export function retryAfterFrom(data, headers) {
+  const raw = data?.retryAfterSeconds ?? (typeof headers?.get === 'function' ? headers.get('retry-after') : null);
+  if (raw == null || raw === '') return null;
+  const n = Number(raw);
+  // A `Retry-After` may also be an HTTP-date; a non-numeric value is reported
+  // as "no hint" so the caller falls back to its own backoff rather than
+  // waiting on NaN.
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.ceil(n);
+}
+
 export async function restFetch(baseUrl, token, path, { method = 'GET', body, timeoutMs = 10000, traceparent } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -203,6 +227,12 @@ export async function restFetch(baseUrl, token, path, { method = 'GET', body, ti
       return {
         ok: false,
         httpStatus: res.status,
+        // How long the server asked the caller to wait, in seconds, or null when
+        // it did not say. Only a 429 carries one today (`tooManyRequests` sets
+        // BOTH a `retryAfterSeconds` body field and the `Retry-After` header),
+        // but this is read on every failure so a future 503 needs no change
+        // here. Additive: existing callers ignore the extra key.
+        retryAfter: retryAfterFrom(data, res.headers),
         error: data?.error ? { message: data.error, code: data.code } : { code: res.status, message: text.slice(0, 200) || res.statusText },
       };
     }

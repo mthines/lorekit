@@ -29,6 +29,23 @@ function stripUndefined(obj) {
   return out;
 }
 
+// An absolute `expires_at` expressed as the hosted write's relative `ttl_days`.
+//
+// Returns `undefined` for "no expiry" (the field is then omitted, leaving the
+// memory permanent), `'expired'` for an expiry already in the past (the caller
+// must refuse — see `putEntry`), else the remaining WHOLE days clamped to the
+// schema's 1–365. An unparseable value is treated as no expiry, matching
+// `isExpired`'s fail-safe posture: a corrupt frontmatter field must not decide
+// that a lesson dies.
+function remoteTtlDays(expiresAt, now = new Date()) {
+  if (!expiresAt) return undefined;
+  const ms = Date.parse(expiresAt);
+  if (Number.isNaN(ms)) return undefined;
+  const remaining = ms - now.getTime();
+  if (remaining <= 0) return 'expired';
+  return Math.min(365, Math.max(1, Math.ceil(remaining / 86_400_000)));
+}
+
 export function createRemoteStore({ endpoint, token } = {}) {
   return new RemoteStore(endpoint, token);
 }
@@ -181,7 +198,102 @@ class RemoteStore {
     if (origin_commit !== undefined) body.origin_commit = origin_commit;
     if (origin_pr !== undefined) body.origin_pr = origin_pr;
     const res = await this._rest('/memories', { method: 'POST', body });
-    return { ok: res.ok, error: res.error, networkError: res.networkError };
+    // `httpStatus` and `retryAfter` are passed through so a caller can tell the
+    // two 429s apart and honour the server's own backoff. They are DIFFERENT
+    // failures wearing one status code: `code: 'rate_limited'` is transient and
+    // must be retried, `code: 'memory_cap'` is terminal (translateDbError maps
+    // the LK001 cap trigger to 429 as well) and must not be. Additive — the
+    // existing `{ ok, error, networkError }` keys are unchanged.
+    return {
+      ok: res.ok,
+      error: res.error,
+      httpStatus: res.httpStatus,
+      retryAfter: res.retryAfter ?? null,
+      networkError: res.networkError,
+    };
+  }
+
+  // ── Migrate-destination parity with LocalStore ────────────────────────────
+  //
+  // `migrate` classifies each source entry ADD / UPDATE / NOOP with a read and
+  // then upserts it, against whatever store it was handed. LocalStore answers
+  // that with `getEntry` + `putEntry`; these are the remote halves, so the
+  // migrate loop stays ONE code path instead of branching per destination.
+  //
+  // The local pair is lossless (`putEntry` writes every field verbatim,
+  // archived rows included). The remote pair CANNOT be, because the hosted
+  // write is an RPC with a fixed parameter list, not a file write:
+  //
+  //   preserved  scope, key, value, tags, source_agent, trigger, origin_*,
+  //              and `created` — sent as `created_at`, which memory_write
+  //              honours on INSERT only, so a migrated lesson keeps its
+  //              original creation date and its ranking recency with it.
+  //   re-stamped `updated` — the server sets it to the write instant. There is
+  //              no parameter for it, and inventing one would let a client
+  //              backdate an edit it did not make.
+  //   derived    `seen_count` — the RPC owns the tally (migration 00058: a
+  //              write against an existing key IS the next sighting). A
+  //              migrated lesson therefore lands at 1 and counts up from
+  //              there; its local history does not transfer.
+  //   converted  `expires_at` → `ttl_days`, the remaining whole days, clamped
+  //              to the schema's 1–365 (a longer-lived TTL is clamped, not
+  //              dropped — the alternative is silently making it permanent).
+  //
+  // Two states have no remote representation at all and are REFUSED rather
+  // than silently rewritten, because writing them would resurrect a lesson the
+  // user retired: an archived entry (the REST write revives on conflict) and
+  // an already-expired one (any `ttl_days` re-dates it into the future). Both
+  // come back as `{ ok:false, unsupported }` so the caller can report them as
+  // skipped; `migrate` filters them out before ever calling this.
+
+  // Raw lookup by scope+key, mirroring `LocalStore.getEntry` — the entry or
+  // null. LocalStore's is synchronous and this one cannot be, so callers must
+  // `await` it; awaiting the local store's plain return value is a no-op.
+  //
+  // One semantic difference the caller has to know about: LocalStore.getEntry
+  // sees archived rows and this cannot — `GET /memories` filters them out — so
+  // a remote destination classifies an archived counterpart as ADD, and the
+  // write then revives it. That is the same thing the hosted `memory_write`
+  // does for any write against an archived key, not a migrate-specific quirk.
+  async getEntry({ scope, key } = {}) {
+    const res = await this.read({ scope, key });
+    return res.ok ? (res.entry ?? null) : null;
+  }
+
+  // Upsert one entry, as close to verbatim as the hosted write allows. See the
+  // fidelity table above for exactly which fields survive. Returns the same
+  // `{ ok, error, httpStatus, retryAfter, networkError }` envelope as `write`,
+  // plus `unsupported` on a refusal.
+  async putEntry(entry = {}, { now = new Date() } = {}) {
+    if (entry?.archived_at) {
+      return {
+        ok: false,
+        unsupported: 'archived',
+        error: { message: 'archived entries cannot be written remotely — the hosted write revives them' },
+      };
+    }
+    const ttl = remoteTtlDays(entry?.expires_at, now);
+    if (ttl === 'expired') {
+      return {
+        ok: false,
+        unsupported: 'expired',
+        error: { message: 'expired entries cannot be written remotely — any TTL would re-date them into the future' },
+      };
+    }
+    return this.write(stripUndefined({
+      scope: entry.scope,
+      key: entry.key,
+      value: entry.value == null ? '' : String(entry.value),
+      tags: Array.isArray(entry.tags) ? entry.tags : [],
+      source_agent: entry.source_agent,
+      trigger: entry.trigger,
+      created_at: entry.created,
+      ttl_days: ttl,
+      origin_repo: entry.origin_repo,
+      origin_branch: entry.origin_branch,
+      origin_commit: entry.origin_commit,
+      origin_pr: entry.origin_pr,
+    }));
   }
 
   // Natural-key DELETE. Without `force` the server soft-archives (stamps

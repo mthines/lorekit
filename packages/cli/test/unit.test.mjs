@@ -1975,3 +1975,139 @@ describe('RemoteStore.relevant', () => {
     assert.deepEqual(result, { ok: true, entries: [], candidates: 0 });
   });
 });
+
+// ── RemoteStore migrate-destination parity (getEntry / putEntry) ────────────
+//
+// `migrate` classifies each entry with a read and then upserts it. These cover
+// the remote halves of that pair: the read that answers "does it already
+// exist", the write that carries the fidelity contract (created preserved,
+// updated/seen_count server-owned, expires_at → ttl_days), and the two states
+// the hosted write cannot represent and must refuse rather than resurrect.
+
+test('RemoteStore.getEntry returns the entry for scope+key', async () => {
+  const { result, calls } = await captureRestCalls(
+    (store) => store.getEntry({ scope: 'global', key: 'k' }),
+    { status: 200, body: JSON.stringify({ entries: [{ scope: 'global', key: 'k', value: 'v' }] }) },
+  );
+  assert.equal(result.value, 'v');
+  assert.equal(calls[0].method, 'GET');
+  assert.match(calls[0].url, /\/memories\?scope=global&key=k&limit=1$/);
+});
+
+test('RemoteStore.getEntry returns null for a missing key and for a failed read', async () => {
+  const missing = await captureRestCalls(
+    (store) => store.getEntry({ scope: 'global', key: 'nope' }),
+    { status: 200, body: JSON.stringify({ entries: [] }) },
+  );
+  assert.equal(missing.result, null);
+
+  // A failed read must not be reported as "absent" — but it must not throw
+  // either; migrate turns a null into an ADD and the write then surfaces the
+  // real error, rather than the read failing the whole run.
+  const failed = await captureRestCalls(
+    (store) => store.getEntry({ scope: 'global', key: 'k' }),
+    { status: 500, body: JSON.stringify({ error: 'boom' }) },
+  );
+  assert.equal(failed.result, null);
+});
+
+test('RemoteStore.putEntry preserves created via created_at and sends the entry verbatim', async () => {
+  const { result, calls } = await captureRestCalls(
+    (store) => store.putEntry({
+      scope: 'repo::o/r',
+      key: 'k',
+      value: 'body',
+      tags: ['loop::aw-lessons'],
+      source_agent: 'aw',
+      trigger: 'stuck-loop',
+      created: '2024-01-02T03:04:05.000Z',
+      updated: '2025-06-01T00:00:00.000Z',
+      seen_count: 7,
+      origin_repo: 'mthines/lorekit',
+    }),
+    { status: 201, body: JSON.stringify({ id: 'x' }) },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(calls[0].url, `${REMOTE_REST_BASE}/memories`);
+  assert.deepEqual(calls[0].body, {
+    scope: 'repo::o/r',
+    key: 'k',
+    value: 'body',
+    tags: ['loop::aw-lessons'],
+    source_agent: 'aw',
+    trigger: 'stuck-loop',
+    created_at: '2024-01-02T03:04:05.000Z',
+    origin_repo: 'mthines/lorekit',
+  });
+  // The fidelity contract, asserted as an ABSENCE: the hosted write owns both
+  // of these, so shipping them would be a client claiming a server-derived
+  // field. `updated` is re-stamped, `seen_count` counts up from 1.
+  assert.equal('updated' in calls[0].body, false);
+  assert.equal('seen_count' in calls[0].body, false);
+});
+
+test('RemoteStore.putEntry converts a live expires_at into remaining ttl_days', async () => {
+  const now = new Date('2025-01-01T00:00:00.000Z');
+  const { calls } = await captureRestCalls(
+    (store) => store.putEntry(
+      { scope: 'global', key: 'k', value: 'v', expires_at: '2025-01-11T00:00:00.000Z' },
+      { now },
+    ),
+    { status: 201, body: '{}' },
+  );
+  assert.equal(calls[0].body.ttl_days, 10);
+});
+
+test('RemoteStore.putEntry clamps a TTL beyond the schema maximum instead of dropping it', async () => {
+  const now = new Date('2025-01-01T00:00:00.000Z');
+  const { calls } = await captureRestCalls(
+    (store) => store.putEntry(
+      { scope: 'global', key: 'k', value: 'v', expires_at: '2030-01-01T00:00:00.000Z' },
+      { now },
+    ),
+    { status: 201, body: '{}' },
+  );
+  assert.equal(calls[0].body.ttl_days, 365);
+});
+
+test('RemoteStore.putEntry refuses archived and expired entries without issuing a request', async () => {
+  const archived = await captureRestCalls(
+    (store) => store.putEntry({ scope: 'global', key: 'k', value: 'v', archived_at: '2024-05-05T00:00:00.000Z' }),
+    { status: 201, body: '{}' },
+  );
+  assert.equal(archived.result.ok, false);
+  assert.equal(archived.result.unsupported, 'archived');
+  assert.equal(archived.calls.length, 0);
+
+  const expired = await captureRestCalls(
+    (store) => store.putEntry(
+      { scope: 'global', key: 'k', value: 'v', expires_at: '2024-01-01T00:00:00.000Z' },
+      { now: new Date('2025-01-01T00:00:00.000Z') },
+    ),
+    { status: 201, body: '{}' },
+  );
+  assert.equal(expired.result.ok, false);
+  assert.equal(expired.result.unsupported, 'expired');
+  assert.equal(expired.calls.length, 0);
+});
+
+test('RemoteStore.write surfaces httpStatus and the retry hint so 429s can be told apart', async () => {
+  const limited = await captureRestCalls(
+    (store) => store.write({ scope: 'global', key: 'k', value: 'v' }),
+    { status: 429, body: JSON.stringify({ error: 'Too many requests', code: 'rate_limited', retryAfterSeconds: 3 }) },
+  );
+  assert.equal(limited.result.ok, false);
+  assert.equal(limited.result.httpStatus, 429);
+  assert.equal(limited.result.retryAfter, 3);
+  assert.equal(limited.result.error.code, 'rate_limited');
+
+  // Same status, terminal cause: the memory-cap trigger (LK001) is translated
+  // to a 429 too, and only `code` distinguishes it from a retryable one.
+  const capped = await captureRestCalls(
+    (store) => store.write({ scope: 'global', key: 'k', value: 'v' }),
+    { status: 429, body: JSON.stringify({ error: 'Memory limit exceeded.', code: 'memory_cap' }) },
+  );
+  assert.equal(capped.result.error.code, 'memory_cap');
+  assert.equal(capped.result.retryAfter, null);
+});
