@@ -10,6 +10,8 @@ import {
   normalizeSessionStartMode, DEFAULT_SESSION_START_MAX_CHARS,
   MIN_SESSION_START_MAX_CHARS, MAX_SESSION_START_MAX_CHARS,
   DEFAULT_SESSION_START_LOOP_CAP, MAX_SESSION_START_LOOP_CAP, normalizeSessionStartLoopCap,
+  DEFAULT_SESSION_START_MAX_LESSONS, MIN_SESSION_START_MAX_LESSONS,
+  MAX_SESSION_START_MAX_LESSONS, normalizeSessionStartMaxLessons,
   HOOK_INSTRUCTION_EVENTS,
 } from '../src/control.mjs';
 import { CLAUDE_HOOK_EVENTS } from '../src/config.mjs';
@@ -553,6 +555,61 @@ test('control hooks.sessionStart.loopCap: defaults to 2, clamps, and honours 0',
   // Pure normaliser edges.
   assert.equal(normalizeSessionStartLoopCap('x'), null);
   assert.equal(normalizeSessionStartLoopCap(2.6), 3, 'rounds');
+});
+
+test('control hooks.sessionStart.maxLessons: defaults to 40 and clamps into 3–200', () => {
+  const at = (cfg) => resolveControl({ repoConfig: cfg, connection: NO_CONN }).hooksSessionStartMaxLessons;
+  // The default IS the ceiling `core/lessons.mjs` has always applied, so an
+  // unconfigured workspace reads exactly the block it read before this key.
+  assert.equal(
+    resolveControl({ connection: NO_CONN }).hooksSessionStartMaxLessons,
+    DEFAULT_SESSION_START_MAX_LESSONS,
+  );
+  assert.equal(DEFAULT_SESSION_START_MAX_LESSONS, 40, 'the default preserves the historic ceiling');
+  assert.equal(at({ 'hooks.sessionStart.maxLessons': 80 }), 80);
+  assert.equal(at({ 'hooks.sessionStart.maxLessons': '80' }), 80, 'hand-edited JSON strings are read');
+  assert.equal(
+    at({ 'hooks.sessionStart.maxLessons': 1 }),
+    MIN_SESSION_START_MAX_LESSONS,
+    'below the floor clamps up',
+  );
+  assert.equal(
+    at({ 'hooks.sessionStart.maxLessons': 4000 }),
+    MAX_SESSION_START_MAX_LESSONS,
+    'a typo clamps down',
+  );
+  // Unusable values fall back to the default (the resolver runs on every read).
+  for (const bad of [null, undefined, '', 'lots', {}, []]) {
+    assert.equal(
+      at({ 'hooks.sessionStart.maxLessons': bad }),
+      DEFAULT_SESSION_START_MAX_LESSONS,
+      `${JSON.stringify(bad)}`,
+    );
+  }
+  // The layer is chosen before the value is parsed (the maxChars/loopCap rule):
+  // a declared-but-garbage repo ceiling beats the user layer and degrades to the
+  // default, so two developers on the same commit read the same block.
+  assert.equal(
+    resolveControl({
+      repoConfig: { 'hooks.sessionStart.maxLessons': 'loads' },
+      userConfig: { 'hooks.sessionStart.maxLessons': 80 },
+      connection: NO_CONN,
+    }).hooksSessionStartMaxLessons,
+    DEFAULT_SESSION_START_MAX_LESSONS,
+  );
+  // An ABSENT repo key does fall through — only a declared one claims the layer.
+  assert.equal(
+    resolveControl({
+      userConfig: { 'hooks.sessionStart.maxLessons': 80 },
+      connection: NO_CONN,
+    }).hooksSessionStartMaxLessons,
+    80,
+  );
+  // Pure normaliser edges — absent is null (the caller substitutes), not a guess.
+  assert.equal(normalizeSessionStartMaxLessons('x'), null);
+  assert.equal(normalizeSessionStartMaxLessons(undefined), null);
+  assert.equal(normalizeSessionStartMaxLessons(40.4), 40, 'rounds');
+  assert.equal(normalizeSessionStartMaxLessons(-10), MIN_SESSION_START_MAX_LESSONS);
 });
 
 test('control hooks.sessionStart.branchHint: defaults on, on/off vocabulary, repo wins', () => {

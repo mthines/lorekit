@@ -35,7 +35,12 @@ import { resolveDefaultTtlDays, matchesScopePrefix } from '../store/ttl.mjs';
 // unconfigured workspace gets. `formatLessons` is called directly by tests and
 // by the no-store path in `hook.mjs`, so it needs its own fallback rather than
 // relying on every caller to pass one.
-import { DEFAULT_SESSION_START_MAX_CHARS, SESSION_START_MODES } from '../control.mjs';
+import {
+  DEFAULT_SESSION_START_MAX_CHARS,
+  DEFAULT_SESSION_START_MAX_LESSONS,
+  MAX_SESSION_START_MAX_LESSONS,
+  SESSION_START_MODES,
+} from '../control.mjs';
 import { FRICTION_FAILURE, FRICTION_STUCK_LOOP } from './friction.mjs';
 
 // THE INJECTED SET IS BOUNDED BY A CHARACTER BUDGET, NOT BY A COUNT.
@@ -56,13 +61,31 @@ import { FRICTION_FAILURE, FRICTION_STUCK_LOOP } from './friction.mjs';
 // the ~4-chars-per-token heuristic is accurate enough for a budget whose job is
 // to bound an order of magnitude.
 //
-// `HARD_LESSON_CEILING` is the second bound, from the other direction. A budget
-// alone cannot stop a store of 500 one-word keys from rendering 400 lines inside
-// it, and a 400-line index is unreadable however few characters it costs. It is
-// deliberately well above any budget a sane `maxChars` can fill, so in normal
-// operation it never binds — it exists so the worst case is bounded, not to
-// shape the common one.
-const HARD_LESSON_CEILING = 40;
+// The LINE ceiling is the second bound, from the other direction. A budget alone
+// cannot stop a store of 500 one-word keys from rendering 400 lines inside it,
+// and a 400-line index is unreadable however few characters it costs. At its
+// default (`DEFAULT_SESSION_START_MAX_LESSONS`, 40) it sits well above any block
+// a sane `maxChars` can fill, so in normal operation it never binds — it exists
+// so the worst case is bounded, not to shape the common one.
+//
+// It is CONFIGURABLE (`hooks.sessionStart.maxLessons`), which is why the two
+// numbers are separate: the config is a preference, and `HARD_LESSON_CEILING` is
+// the absolute clamp no caller can exceed — the same 200 the config normaliser
+// clamps to, applied a second time here because `fetchLessons`/`formatLessons`
+// take `maxLessons` as a plain option and a direct caller never passes through
+// that normaliser.
+const HARD_LESSON_CEILING = MAX_SESSION_START_MAX_LESSONS;
+
+// The line ceiling a caller actually gets: their `maxLessons` rounded into
+// [1, HARD_LESSON_CEILING], or the default when the value is unusable. `1` and
+// not the config floor of 3 — this is the last-resort clamp on an already
+// normalised number, and a caller that deliberately asks for one line should get
+// one, not three. Pure.
+function resolveLessonCeiling(maxLessons) {
+  const n = Number(maxLessons);
+  if (!Number.isFinite(n)) return DEFAULT_SESSION_START_MAX_LESSONS;
+  return Math.min(HARD_LESSON_CEILING, Math.max(1, Math.round(n)));
+}
 
 // How many lessons any ONE self-improvement loop (`loop::<bucket>` tag) may
 // contribute to a session-start injection. A prolific loop — the pr-reviewer's
@@ -104,14 +127,40 @@ const MAX_SCAN_CHARS = 4096;
 // precedence via the shared pure `resolvePrecedence` (the SAME first-seen /
 // more-specific-wins merge `tree` renders) — so the hook and `tree` provably
 // can't drift. Any per-scope failure is skipped (memory is best-effort).
-// Per-scope read cap. Unchanged from the count-capped era: it bounds the FETCH,
-// which is a different question from how much gets injected, and raising it
-// would make every session start pay for rows the budget was never going to
-// show. Its one visible consequence is that a scope holding more than this
-// many lessons reports a lower-bound count in the scope map — rendered `25+`
-// rather than a number that looks exact. `memory.scopes` answers it exactly and
-// is the follow-up that replaces this.
+// Per-scope read cap — the DEFAULT one. It bounds the FETCH, which is a
+// different question from how much gets injected, and raising it makes every
+// session start pay for rows the budget was never going to show. Its one visible
+// consequence is that a scope holding more than this many lessons reports a
+// lower-bound count in the scope map — rendered `25+` rather than a number that
+// looks exact. `memory.scopes` answers it exactly and is the follow-up that
+// replaces this.
 export const SCOPE_READ_LIMIT = 25;
+
+// The per-scope read cap for a given line ceiling.
+//
+// THE FETCH ONLY GROWS WHEN THE CEILING IS RAISED ABOVE ITS DEFAULT, and that
+// asymmetry is the whole point. 25 rows per scope is a tuned cost every session
+// start pays; the default ceiling of 40 is filled comfortably from the several
+// scopes in `readOrder` (4 × 25 = 100 candidates), so an unconfigured workspace
+// must not pay one extra row for a knob it never set — and it doesn't: at or
+// below the default this returns exactly the 25 it always did, so the fetch, the
+// ranking it feeds, and therefore the block itself are unchanged.
+//
+// Above the default, the raise is the user's explicit statement that they want
+// more lines than the default fetch was sized for, and a ceiling the fetch cannot
+// feed would be a dial that visibly does nothing on a workspace whose lore lives
+// in one scope. So the read tracks it: `maxLessons: 80` reads 80 per scope. That
+// is the latency trade the config reference states — a bigger index costs a
+// bigger read, every session start.
+//
+// LOWERING the ceiling deliberately does NOT shrink the fetch: fewer candidates
+// would mean the ranking picks its handful from a worse pool, which is a quality
+// regression dressed up as a saving. Monotone in `maxLessons`, so the cost never
+// falls as the ask grows. Pure.
+export function scopeReadLimit(maxLessons) {
+  const ceiling = resolveLessonCeiling(maxLessons);
+  return ceiling > DEFAULT_SESSION_START_MAX_LESSONS ? ceiling : SCOPE_READ_LIMIT;
+}
 
 // `scope` may be injected instead of derived from `cwd` — a seam for callers
 // that already hold a resolved scope and for tests that need a deterministic
@@ -120,9 +169,21 @@ export const SCOPE_READ_LIMIT = 25;
 export async function fetchLessons(
   store,
   cwd,
-  { now = Date.now(), scope: scopeOverride = null, loopCap = SESSION_START_LOOP_CAP, branchHint = true } = {},
+  {
+    now = Date.now(),
+    scope: scopeOverride = null,
+    loopCap = SESSION_START_LOOP_CAP,
+    branchHint = true,
+    maxLessons = DEFAULT_SESSION_START_MAX_LESSONS,
+  } = {},
 ) {
   const scope = scopeOverride || deriveScope(cwd);
+  // ONE ceiling, derived once, spent on both the fetch and the diversifier — the
+  // two must agree or a raised ceiling asks for lines the read never fetched.
+  // `formatLessons` derives the same number from the same config key, so the
+  // render bound matches too.
+  const ceiling = resolveLessonCeiling(maxLessons);
+  const readLimit = scopeReadLimit(ceiling);
   // Issued BEFORE the per-scope read loop and awaited after it. Nothing in the
   // inventory depends on the loop, so awaiting it afterwards would cost a
   // remote store one extra SERIAL round-trip on the session-start path; started
@@ -141,10 +202,10 @@ export async function fetchLessons(
   // not a total, and the map must say so rather than quietly under-report.
   const truncatedScopes = new Set();
   for (const s of scope.readOrder) {
-    const res = await store.list({ scope: s, limit: SCOPE_READ_LIMIT });
+    const res = await store.list({ scope: s, limit: readLimit });
     if (!res || !res.ok) continue; // best-effort: a failed scope contributes nothing
     const raw = Array.isArray(res.entries) ? res.entries : [];
-    if (raw.length >= SCOPE_READ_LIMIT) truncatedScopes.add(s);
+    if (raw.length >= readLimit) truncatedScopes.add(s);
     const entries = raw
       .filter((e) => e && e.key)
       .map((e) => ({ ...e, scope: s }));
@@ -217,7 +278,7 @@ export async function fetchLessons(
   // shown, not the honest count of what exists per scope.
   //
   // WHERE THE FREED SLOTS FILL FROM, stated so the cap is not oversold. Each
-  // scope is read only to its newest `SCOPE_READ_LIMIT`, so on a scope whose
+  // scope is read only to its newest `readLimit` rows, so on a scope whose
   // recent writes are ALL one loop's, the general lessons that fill the freed
   // slots come from the OTHER scopes in `readOrder` (a repo's loop churn makes
   // room for `global` principles) — not from that same scope's older generals,
@@ -231,7 +292,7 @@ export async function fetchLessons(
   // The map's job is to tell a reader how much lore is sitting in each scope
   // that this injection did not show them, so its numbers should be the store's
   // real totals. Deriving them from the bounded read above cannot do that: the
-  // read stops at `SCOPE_READ_LIMIT`, so a scope holding 400 lessons reported
+  // read stops at `readLimit`, so a scope holding 400 lessons reported
   // `25+` — technically honest, useless as a quantity, and the `+` was doing a
   // lot of work.
   //
@@ -299,7 +360,7 @@ export async function fetchLessons(
   // "8 of 50" stays true no matter how the render is bounded.
   return {
     scope,
-    lessons: diversifyRankedLessons(capped, { ...rankOpts, k: HARD_LESSON_CEILING }),
+    lessons: diversifyRankedLessons(capped, { ...rankOpts, k: ceiling }),
     scopeCounts,
     applicable: ranked.length,
   };
@@ -408,10 +469,17 @@ function lessonHook(value, max = HOOK_LEN) {
 // to know what the reader saw (the shown-set bookkeeping) has to be told rather
 // than re-deriving it — a second copy of the fit maths would drift the moment
 // either bound changes.
+// `maxLessons` — the LINE ceiling (`hooks.sessionStart.maxLessons`), the second
+// bound alongside `maxChars`: whichever binds first decides the block. It is
+// passed rather than re-read from config for the same reason `maxChars` is, and
+// it must be the SAME number `fetchLessons` was given — a render bound above the
+// fetch bound asks for lines that were never fetched, and one below it silently
+// discards lessons the read paid for.
 export function formatLessons(lessons, scope, {
   instruction = null,
   mode = 'hybrid',
   maxChars = DEFAULT_SESSION_START_MAX_CHARS,
+  maxLessons = DEFAULT_SESSION_START_MAX_LESSONS,
   scopeCounts = null,
   applicable = null,
   onShown = null,
@@ -447,7 +515,11 @@ export function formatLessons(lessons, scope, {
   const map = renderScopeMap(scopeCounts);
   const reserve = shape === 'index' || !map ? 0 : map.length + 1;
 
-  const ceiling = shape === 'map' ? Math.min(MAP_TOP_K, HARD_LESSON_CEILING) : HARD_LESSON_CEILING;
+  // `map` shows a handful of lessons whatever the ceiling says — the point of
+  // that shape is the inventory. `Math.min` rather than a flat `MAP_TOP_K` so a
+  // ceiling BELOW three still binds: a reader who asked for one line gets one.
+  const lineCeiling = resolveLessonCeiling(maxLessons);
+  const ceiling = shape === 'map' ? Math.min(MAP_TOP_K, lineCeiling) : lineCeiling;
   const { shown } = fitLines(all, budget - reserve, ceiling);
   report(shown.map((s) => s.lesson));
 
@@ -503,8 +575,8 @@ function fitLines(lessons, budget, ceiling) {
 
 // The scope map: one line naming every scope that holds lessons and how many,
 // so a truncated block still tells the reader WHERE the rest live and which verb
-// reaches them. `25+` marks a scope whose read hit `SCOPE_READ_LIMIT`, so a
-// lower bound never reads as an exact total. Null when there is nothing to
+// reaches them. A trailing `+` (`25+`) marks a scope whose read hit the per-scope
+// limit, so a lower bound never reads as an exact total. Null when there is nothing to
 // describe. Pure.
 export function renderScopeMap(scopeCounts) {
   const rows = (Array.isArray(scopeCounts) ? scopeCounts : [])

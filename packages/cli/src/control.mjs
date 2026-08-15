@@ -11,6 +11,7 @@
 //   hooks.sessionStart          — injected-block shape ("hybrid" default | "index" | "map")
 //   hooks.sessionStart.maxChars — character budget for that block (default 1500)
 //   hooks.sessionStart.loopCap  — max lessons per self-improvement loop bucket (default 2; 0 excludes them)
+//   hooks.sessionStart.maxLessons — max LINES that block may hold (default 40, range 3–200)
 //   hooks.sessionStart.branchHint — nudge the read toward the git branch topic ("on" default | "off")
 //   hooks.userPrompt — the per-turn relevance pull ("on" default | "off")
 //   hooks.adapter   — explicit adapter override ("claude" | "cursor" | "codex")
@@ -164,6 +165,46 @@ export function normalizeSessionStartLoopCap(v) {
   const i = Math.round(n);
   if (i < MIN_SESSION_START_LOOP_CAP) return MIN_SESSION_START_LOOP_CAP;
   if (i > MAX_SESSION_START_LOOP_CAP) return MAX_SESSION_START_LOOP_CAP;
+  return i;
+}
+
+// The default SessionStart LINE ceiling, and the bounds a configured one is held
+// to. 40 is exactly the hard ceiling `core/lessons.mjs` has always applied, so an
+// unconfigured workspace gets byte-for-byte the block it got before this key
+// existed.
+//
+// TWO BOUNDS, TWO QUESTIONS. `maxChars` bounds what the block COSTS; this bounds
+// what it LOOKS LIKE. A budget alone cannot stop a store of 500 one-word keys
+// from rendering 400 lines inside it, and a 400-line index is unreadable however
+// few characters it costs. Whichever binds first wins, so raising this alone
+// changes nothing on a store whose lines are long — `maxChars` has to come up
+// with it.
+//
+// The floor is three: below that the block stops being an index and becomes a
+// sample, and the `map` shape already shows three. The ceiling is a backstop
+// against a typo'd `"maxLessons": 4000` — `core/lessons.mjs` clamps to the same
+// number a second time, from the other direction, so a caller passing the option
+// directly is bounded too.
+//
+// KEPT SMALL ON PURPOSE. The injected set is meant to be a working set, with
+// `memory.search` for the tail; this is an opt-in dial for a reader who wants a
+// wider index, not an invitation to raise the default.
+export const DEFAULT_SESSION_START_MAX_LESSONS = 40;
+export const MIN_SESSION_START_MAX_LESSONS = 3;
+export const MAX_SESSION_START_MAX_LESSONS = 200;
+
+// Clamp a configured line ceiling into range, or null when it is not a usable
+// number (absent, a bare string, NaN). Total: the caller substitutes the default
+// for null. Out-of-range CLAMPS rather than rejecting, exactly like the maxChars
+// budget and the loop cap — a user who wrote `"maxLessons": 1` wants a short
+// block, and honouring the floor is closer to that intent than silently
+// restoring the 40 default.
+export function normalizeSessionStartMaxLessons(v) {
+  const n = firstNumber(v);
+  if (n === null) return null;
+  const i = Math.round(n);
+  if (i < MIN_SESSION_START_MAX_LESSONS) return MIN_SESSION_START_MAX_LESSONS;
+  if (i > MAX_SESSION_START_MAX_LESSONS) return MAX_SESSION_START_MAX_LESSONS;
   return i;
 }
 
@@ -367,6 +408,16 @@ export function resolveControl({
   const hooksSessionStartLoopCap =
     normalizedLoopCap === null ? DEFAULT_SESSION_START_LOOP_CAP : normalizedLoopCap;
 
+  // `hooks.sessionStart.maxLessons` — how many LINES that block may hold. Same
+  // layer-before-parse rule as maxChars/loopCap (declaresScalar), for the same
+  // reason: a repo that declared a ceiling owns it even when the value is
+  // garbage, so two people on the same commit read the same block.
+  const sessionStartMaxLessonsRaw = declaresScalar(repoConfig['hooks.sessionStart.maxLessons'])
+    ? repoConfig['hooks.sessionStart.maxLessons']
+    : userConfig['hooks.sessionStart.maxLessons'];
+  const hooksSessionStartMaxLessons =
+    normalizeSessionStartMaxLessons(sessionStartMaxLessonsRaw) ?? DEFAULT_SESSION_START_MAX_LESSONS;
+
   // `hooks.sessionStart.branchHint` — whether the read is nudged toward the git
   // branch topic. On/off (the `hooks.userPrompt` vocabulary), default `on`, repo
   // layer wins. Off restores the pre-branch-query read: recency + salience only.
@@ -416,6 +467,7 @@ export function resolveControl({
     hooksSessionStart,
     hooksSessionStartMaxChars,
     hooksSessionStartLoopCap,
+    hooksSessionStartMaxLessons,
     hooksSessionStartBranchHint,
     hooksAdapter,
     hooksInstructions,
