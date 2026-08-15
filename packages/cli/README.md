@@ -732,6 +732,10 @@ Both files share this schema — all fields optional:
                            // segment is ignored). Default "on"; it only ever lifts
                            // an on-topic memory, never buries one. "off" restores
                            // the plain most-recurring / most-recent read. Repo wins
+                           // over user, but — following hooks.userPrompt, not the
+                           // maxChars layer-lock — a declared-but-unparseable repo
+                           // value FALLS THROUGH to a valid user value rather than
+                           // owning the layer
 
   "hooks.adapter": "claude",
                            // explicit adapter when auto-detection is ambiguous
