@@ -1,5 +1,5 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { auditUserId } from '../../_shared/api/auth.ts';
+import { actorUserId, auditUserId } from '../../_shared/api/auth.ts';
 import { created, tooManyRequests, badRequest, dryRun } from '../../_shared/api/respond.ts';
 import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
 import { validateBody } from '../../_shared/api/validate.ts';
@@ -148,7 +148,11 @@ export async function handleCreate(
   // is explicitly enabled AND a key is configured — see `embed-on-write.ts` for
   // why it backgrounds rather than awaits, and why it SKIPS rather than falling
   // back to awaiting when the runtime has no background hook.
-  embedOnWrite(db, span, { id: row.id, key: body.key, value: body.value }, ENV);
+  // `actorUserId(auth)` for the same reason every org RPC takes it: the api_key
+  // tier reaches Postgres over a service-role connection where `auth.uid()` is
+  // NULL, so the RPC's capability check would deny every call without an
+  // explicit actor. The value is never taken from the request.
+  embedOnWrite(db, span, { id: row.id, key: body.key, value: body.value }, ENV, actorUserId(auth));
 
   // Audit AFTER the write succeeded. Same action/resource/target/metadata
   // shape as toolWrite, so the MCP and REST surfaces produce comparable rows.

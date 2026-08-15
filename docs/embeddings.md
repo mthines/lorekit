@@ -125,10 +125,51 @@ by reading provider logs — but they are on **two** spans, and which one matter
 | the **request** span | `lorekit.embedding.enqueued` | the call was handed to the background runtime |
 | the **request** span | `lorekit.embedding.skipped = no_background_runtime` | no `waitUntil` on this runtime; the row stays null for the backfill |
 | `lorekit.embedding.write` (detached) | an `embedding update:` / `embedding failed:` error | the write or the provider call failed |
+| `lorekit.embedding.write` (detached) | `embedding update matched no row` | the vector arrived but no row was written — see [Who may write a vector](#who-may-write-a-vector) |
 
 There is no `no_vector` signal: response validation is strict and throws, so a
 provider that answers without a usable vector arrives as an `embedding failed:`
 error on the same span rather than as a separate skip reason.
+
+### Who may write a vector
+
+The vector is written through the `lorekit_memory_set_embedding` RPC
+(migration `00062`), never by a direct `UPDATE` on `memories`. That is not
+ceremony — the direct update was **silently wrong for org-owned memories**:
+
+- the READ policies were widened for orgs in `00015`
+  (`org_id in (select lorekit_member_org_ids(auth.uid()))`);
+- `rls_update` from `00001` never was, and still admits only
+  `user_id = auth.uid()` or a service-role connection;
+- an org-owned memory carries `user_id is null` (`00019`).
+
+So under a Supabase JWT the update matched **zero rows**, and a zero-row update
+is not an error in PostgREST. Every org memory went unembedded with no signal
+anywhere, waiting for a backfill nobody had a reason to run. The `api_key` and
+`service` tiers were unaffected, because both hold a service-role client — which
+is exactly why the gap survived: it is invisible on the tiers most likely to be
+exercised.
+
+Widening `rls_update` to match `rls_read` would have fixed the embed and opened
+a hole: every org **member** could then rewrite any column of any org memory
+through PostgREST, with no role check. Org writes are gated on
+`lorekit_org_can(…, 'write')` — a **viewer** must not write — and RLS cannot
+express that. So the write moved into an RPC that authorises inside itself,
+composing the predicates the schema already owns (`lorekit_org_actor`,
+`lorekit_org_can`, `lorekit_member_org_ids`) rather than restating `00019`'s
+ownership branching in TypeScript where no migration test would ever run it.
+
+The RPC returns whether a row was written, and a `false` becomes the
+`embedding update matched no row` error above. **A miss is reported, never
+assumed benign** — if a future ownership model escapes those predicates it
+surfaces as a span signal rather than as an empty column discovered months later
+when a semantic search comes back thin. The row stays null and the backfill
+collects it, exactly as on a provider fault.
+
+Behaviour is asserted in `supabase/tests/migrations.test.sql` (section 62,
+including that an org viewer is refused and that the old direct update still
+does not land); the edge module is held to the RPC by
+`packages/mcp-core/src/embed-write-authz.spec.ts`.
 
 Everything after the enqueue lands on the **detached** `lorekit.embedding.write`
 span, not on the request span. It has to: `traceRequest` ends the request span
@@ -363,6 +404,8 @@ reports success is worse than no run.
 | `supabase/functions/_shared/embedding.ts` | Verbatim mirror (`edge-parity.spec.ts`). |
 | `supabase/functions/_shared/embedding-client.ts` | **Impure**: the `fetch`, the key, the timeout. Deno-only, not mirrored. |
 | `supabase/functions/_shared/embed-on-write.ts` | The background-and-swallow write path. |
+| `supabase/migrations/00062_memory_embedding_write.sql` | `lorekit_memory_set_embedding` — the ONE authorised path for writing a vector. Authorises inside the function so an org-owned row is embeddable by a write-capable member and refused for a viewer. |
+| `packages/mcp-core/src/embed-write-authz.spec.ts` | Drift guard: holds the edge module to the RPC and off a direct `UPDATE`. Mutation-verified — restoring the direct update fails three of its cases. |
 | `scripts/backfill-embeddings.mjs` | The manual backfill. Imports the pure module rather than re-implementing it. Exports `parseArgs` behind an `invokedDirectly` seam so importing it never starts a run. |
 | `scripts/backfill-embeddings.test.mjs` | `node --test` cover for `parseArgs` — the guard on what a paid run touches. CI wiring is a one-time human step, above. |
 

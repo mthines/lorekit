@@ -46,6 +46,7 @@ export function embedOnWrite(
   span: Span,
   memory: { id: string; key: string; value: string },
   env: Record<string, string | undefined>,
+  actor: string | null,
 ): void {
   const config = resolveEmbeddingConfig(env);
   if (!config.enabled) return;
@@ -80,14 +81,40 @@ export function embedOnWrite(
       // input, so a `!vector` guard here could never fire. It is caught below
       // as an `embedding failed:` error like every other provider fault.
       const [vector] = await embedTexts([text], config);
-      // `embedding_model` is written in the SAME statement as the vector. The
-      // 00060 CHECK requires both-or-neither, so splitting them would not merely
-      // be untidy — it would be rejected.
-      const { error } = await createTracedClient(db, bg)
-        .from('memories')
-        .update({ embedding: toVectorLiteral(vector), embedding_model: config.model })
-        .eq('id', memory.id);
+      // Written through `lorekit_memory_set_embedding` (00062) rather than a
+      // direct `.update()`, and the reason is an asymmetry in the policies: the
+      // READ policies were widened for orgs in 00015, `rls_update` (00001) was
+      // not. An org-owned memory carries `user_id is null` (00019), so under a
+      // JWT client the direct update matched ZERO ROWS — and PostgREST does not
+      // call that an error. Every org memory silently went unembedded.
+      //
+      // The RPC authorises inside itself from the schema's own predicates
+      // (`lorekit_org_actor` + `lorekit_org_can`, or actor identity for a
+      // personal row), so this call site does not restate an ownership rule it
+      // would then have to keep in step with 00019 by review alone.
+      //
+      // `embedding_model` goes in the SAME statement as the vector: the 00060
+      // CHECK requires both-or-neither, so splitting them would be rejected.
+      //
+      // `.single()` because the RPC RETURNS TABLE, the same shape (and the same
+      // reason) as `memory_delete` in `handlers/remove.ts`.
+      const { data, error } = await createTracedClient(db, bg)
+        .rpc<{ written: boolean }>('lorekit_memory_set_embedding', {
+          p_memory_id: memory.id,
+          p_actor_user_id: actor,
+          p_embedding: toVectorLiteral(vector),
+          p_model: config.model,
+        })
+        .single();
       if (error) bg.error(`embedding update: ${error.message}`);
+      // A miss is REPORTED, never assumed benign. This is the half of the fix
+      // that outlives the specific bug: if a future ownership model escapes the
+      // RPC's predicates, it shows up here as a signal instead of an empty
+      // column nobody notices until a semantic search comes back thin. The row
+      // stays null and the backfill collects it, exactly as on a provider fault.
+      else if (data?.written === false) {
+        bg.error(`embedding update matched no row: memory ${memory.id} not writable by this caller`);
+      }
     } catch (e) {
       // Swallowed on purpose. The memory is already saved; the backfill will
       // find this row again because its embedding is still null.

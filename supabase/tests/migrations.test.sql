@@ -5052,6 +5052,168 @@ begin
 end;
 $$;
 
+-- ── 62. lorekit_memory_set_embedding: org-owned rows are embeddable, and the
+--        role gate survives (00062) ──────────────────────────────────────────
+-- The regression this pins: `rls_read` was widened for orgs in 00015,
+-- `rls_update` (00001) never was. An org-owned memory has `user_id is null`
+-- (00019), so a JWT client's direct UPDATE matched zero rows and PostgREST
+-- called that success — every org memory silently went unembedded.
+--
+-- AC-1 asserts the OLD path is still broken (a direct update matches nothing),
+-- because that is the only way this test can prove the RPC is load-bearing
+-- rather than decorative. AC-2 asserts the new path works for the same caller.
+-- AC-3 is the reason this is an RPC and not a widened policy: a VIEWER must be
+-- refused, which RLS cannot express.
+insert into orgs (id, slug, name, created_by) values
+  ('00000000-0000-0000-0000-0000000e6201', 'embed-org', 'Embed Org',
+   '00000000-0000-0000-0000-0000000000a1');
+
+insert into org_members (org_id, user_id, role) values
+  ('00000000-0000-0000-0000-0000000e6201', '00000000-0000-0000-0000-0000000000a1', 'member'),
+  ('00000000-0000-0000-0000-0000000e6201', '00000000-0000-0000-0000-0000000000b2', 'viewer');
+
+-- An org-owned memory as 00019 writes one: org_id set, user_id NULL.
+insert into memories (id, user_id, org_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000e6210', null, '00000000-0000-0000-0000-0000000e6201',
+   'global', 'embed-org-row', 'org owned value'),
+  ('00000000-0000-0000-0000-0000000e6211', '00000000-0000-0000-0000-0000000000a1', null,
+   'global', 'embed-personal-row', 'personal value');
+
+do $$
+declare
+  -- Built rather than typed, matching the 00060 section above.
+  v_vec      text := '[' || array_to_string(array_fill(0.001::real, array[1536]), ',') || ']';
+  v_direct   int := 0;
+  v_ok       boolean;
+  v_model    text;
+  v_denied   boolean;
+  v_gone     boolean;
+  v_paired   boolean := false;
+begin
+  -- ── AC-1: the old direct-update path does NOT land for a JWT caller ───────
+  -- Either it matches zero rows (rls_update's USING excludes the org-owned row)
+  -- or the role lacks table UPDATE entirely. Both prove the same thing — a JWT
+  -- client cannot write this row directly — and which one applies depends on
+  -- Supabase's default table grants rather than on anything this repo declares.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
+  begin
+    with upd as (
+      update memories set embedding = v_vec::vector, embedding_model = 'probe'
+       where id = '00000000-0000-0000-0000-0000000e6210'
+      returning 1
+    )
+    select count(*) into v_direct from upd;
+  exception when insufficient_privilege then
+    v_direct := 0;
+  end;
+
+  reset role;
+
+  assert v_direct = 0,
+    format('00062 AC-1: a JWT-scoped direct UPDATE on an org-owned memory must not land '
+           '(that asymmetry between rls_read and rls_update is the bug 00062 routes around), '
+           'but it matched %s row(s). If this now succeeds, rls_update was widened — check '
+           'that the org ROLE gate did not go with it', v_direct);
+
+  -- ── AC-2: the RPC writes the same row for the same caller ─────────────────
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
+  select written into v_ok
+    from lorekit_memory_set_embedding(
+           '00000000-0000-0000-0000-0000000e6210', null, v_vec, 'text-embedding-3-small');
+
+  reset role;
+
+  assert v_ok,
+    '00062 AC-2: a write-capable org member must be able to embed an org-owned memory';
+
+  select embedding_model into v_model
+    from memories where id = '00000000-0000-0000-0000-0000000e6210';
+  assert v_model = 'text-embedding-3-small',
+    format('00062 AC-2: embedding_model should be written alongside the vector, got %s', v_model);
+
+  -- ── AC-3: a VIEWER is refused — the role gate RLS cannot express ──────────
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}', true);
+
+  select written into v_denied
+    from lorekit_memory_set_embedding(
+           '00000000-0000-0000-0000-0000000e6210', null, v_vec, 'sneaky-model');
+
+  reset role;
+
+  assert not v_denied,
+    '00062 AC-3: an org VIEWER must NOT be able to write an embedding — this is exactly what '
+    'widening rls_update instead of adding this RPC would have permitted';
+
+  select embedding_model into v_model
+    from memories where id = '00000000-0000-0000-0000-0000000e6210';
+  assert v_model = 'text-embedding-3-small',
+    format('00062 AC-3: the viewer''s denied call must not have altered the row, model is now %s', v_model);
+
+  -- ── AC-4: personal rows — owner writes, a stranger does not ───────────────
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  select written into v_ok
+    from lorekit_memory_set_embedding(
+           '00000000-0000-0000-0000-0000000e6211', null, v_vec, 'text-embedding-3-small');
+  reset role;
+  assert v_ok, '00062 AC-4: the owner of a personal memory must be able to embed it';
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000c3","role":"authenticated"}', true);
+  select written into v_denied
+    from lorekit_memory_set_embedding(
+           '00000000-0000-0000-0000-0000000e6211', null, v_vec, 'stranger-model');
+  reset role;
+  assert not v_denied,
+    '00062 AC-4: a user who does not own a personal memory must not be able to embed it';
+
+  -- ── AC-5: a row that no longer exists is false, not an exception ──────────
+  -- The caller is a backgrounded task whose contract is "never fail a write".
+  select written into v_gone
+    from lorekit_memory_set_embedding(
+           '00000000-0000-0000-0000-0000000e62ff', null, v_vec, 'text-embedding-3-small');
+  assert not v_gone,
+    '00062 AC-5: a missing memory id must return false rather than raising';
+
+  -- ── AC-6: the 00060 both-or-neither pairing is refused by NAME ────────────
+  begin
+    perform lorekit_memory_set_embedding(
+              '00000000-0000-0000-0000-0000000e6211', null, v_vec, null);
+  exception when others then
+    v_paired := sqlerrm like '%must be set together%';
+  end;
+  assert v_paired,
+    '00062 AC-6: supplying a vector without a model must be refused with a named reason, '
+    'not left to surface as an opaque CHECK violation inside a background task';
+end;
+$$;
+
+-- AC-7: grant surface. Postgres grants EXECUTE to PUBLIC by default and `anon`
+-- inherits it, so the migration's explicit REVOKE is what makes this pass —
+-- the same trap 00041 documents and this assertion is why it stays caught.
+do $$
+declare
+  v_sig text := 'lorekit_memory_set_embedding(uuid, uuid, text, text)';
+begin
+  assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
+    '00062 AC-7: lorekit_memory_set_embedding must NOT be executable by anon';
+  assert has_function_privilege('authenticated', v_sig, 'EXECUTE'),
+    '00062 AC-7: lorekit_memory_set_embedding must be executable by authenticated';
+  assert has_function_privilege('service_role', v_sig, 'EXECUTE'),
+    '00062 AC-7: lorekit_memory_set_embedding must be executable by service_role';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
