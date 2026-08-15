@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { MIN_SESSION_START_MAX_CHARS } from '../src/control.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const REPO = fileURLToPath(new URL('../../../', import.meta.url));
@@ -339,6 +340,218 @@ test('SessionStart reads lessons from the MCP server and injects them', async ()
     assert.match(ctx, /lorekit-memory::demo/);
     assert.match(ctx, /Demo lesson first line/);
     assert.doesNotMatch(ctx, /second/); // only the first line is summarized
+  } finally {
+    server.close();
+  }
+});
+
+// ── UserPromptSubmit: the per-turn relevance pull, as a PROCESS ──────────────
+//
+// `frameworks.test.mjs` covers this hook's SILENT cases and `hooks.test.mjs`
+// covers its pure decisions against fake stores. Neither runs the real binary
+// and asserts it EMITS, and for this hook that gap is worse than it sounds:
+// silence is both the correct answer on a normal turn and the symptom of total
+// failure. A build where the adapter stopped reading `input.prompt`, or where
+// `createStore` came back null under the real control path, is silent forever
+// and passes every existing assertion. These three tests are the ones that go
+// red in that world.
+//
+// The mock is scope-AWARE, unlike `mockLessonServer` above: it filters the list
+// route by the `?scope=` the store asks for and preserves each entry's own
+// scope, exactly as `MEMORY_SELECT` does. That fidelity is load-bearing for the
+// delta test — identity is `scope::key` (`lessonId`), so a mock that answered
+// every scope with the same rows would hand SessionStart a lesson tagged with
+// the most-specific scope and the search hit a different one, and the two would
+// fail to match for a reason that exists only in the fixture.
+function mockScopedLessonServer(entries) {
+  return http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      res.setHeader('content-type', 'application/json');
+      let out;
+      if (req.url && req.url.includes('/memories/search')) {
+        let q = '';
+        let scopes = [];
+        try {
+          const parsed = JSON.parse(body || '{}');
+          q = String(parsed.q || '').toLowerCase();
+          scopes = Array.isArray(parsed.scopes) ? parsed.scopes : [];
+        } catch { /* an unparseable body matches nothing, as the server would */ }
+        const needles = q.split(/\s+or\s+/).filter(Boolean);
+        out = entries.filter(
+          (e) => (scopes.length === 0 || scopes.includes(e.scope))
+            && needles.some((n) => `${e.key} ${e.value}`.toLowerCase().includes(n)),
+        );
+      } else {
+        const asked = new URL(req.url, 'http://x').searchParams.get('scope');
+        out = entries.filter((e) => e.scope === asked);
+      }
+      res.end(JSON.stringify({ entries: out, hasMore: false, nextCursor: null }));
+    });
+  });
+}
+
+test('UserPromptSubmit injects a lesson matching the prompt, in the host contract', async () => {
+  // Seeded under `global`, which is always in `readOrder`, so the assertion does
+  // not depend on what git says about the temp directory.
+  const server = mockScopedLessonServer([
+    { scope: 'global', key: 'eslint-flat-config', value: 'use eslint.config.js; .eslintrc is ignored', tags: [] },
+    { scope: 'global', key: 'unrelated', value: 'the sky is blue', tags: [] },
+  ]);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  const tmpProject = freshStateDir();
+  try {
+    const { stdout, code } = await runHookAsync({
+      adapter: 'claude',
+      dir: tmpProject,
+      input: {
+        hook_event_name: 'UserPromptSubmit',
+        session_id: 'ups-emit',
+        cwd: tmpProject,
+        prompt: 'the eslint flat config keeps rejecting my rules',
+      },
+      env: { LOREKIT_MCP_URL: `http://127.0.0.1:${port}/mcp`, LOREKIT_TOKEN: 'lk_ro_test' },
+    });
+    assert.equal(code, 0);
+    assert.notEqual(stdout, '', 'a substantive prompt with a matching lesson must emit');
+
+    // The ENVELOPE, not just the text. The generic fixture loop in
+    // frameworks.test.mjs early-returns on empty output, so no test that runs
+    // the binary has ever checked this event's contract.
+    const out = JSON.parse(stdout);
+    assert.equal(out.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
+    const ctx = out.hookSpecificOutput.additionalContext;
+    assert.match(ctx, /related to this/);          // the per-turn block, not SessionStart's
+    assert.match(ctx, /eslint-flat-config/);       // matched on the prompt's own terms
+    assert.doesNotMatch(ctx, /the sky is blue/);   // the relevance gate holds
+  } finally {
+    server.close();
+  }
+});
+
+test('UserPromptSubmit never repeats a lesson SessionStart already injected', async () => {
+  // The delta guarantee, and the ONLY test that can prove it: the shown-set is
+  // written by one process and read by another, so an in-process test cannot
+  // reach the part that breaks — `CLAUDE_PLUGIN_DATA` resolution and the
+  // `session_id` threaded from stdin. Get either wrong and the hook re-injects
+  // the session's opening set one lesson at a time, every turn, which is the
+  // exact noise failure the design exists to prevent.
+  // Long values on purpose: a rendered line costs its hook (capped at 80 chars),
+  // so two short lessons would both fit any legal budget and the test could not
+  // create the unseen-lesson state it depends on.
+  const recent = new Date(Date.now() - 60_000).toISOString();
+  const older = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const server = mockScopedLessonServer([
+    {
+      scope: 'global',
+      key: 'migration-order',
+      value: 'Always add the column before the backfill runs, or the backfill writes into a column that does not exist yet.',
+      tags: [],
+      // Explicit ranking inputs, because the injected ORDER decides which lesson
+      // this test leaves unseen. Left to the defaults both entries tie and the
+      // tiebreak is alphabetical — which would silently invert the fixture.
+      updated_at: recent,
+      seen_count: 12,
+    },
+    {
+      scope: 'global',
+      key: 'migration-locking',
+      value: 'A backfill takes a table lock for its whole run, so batch it rather than issuing one statement.',
+      tags: [],
+      updated_at: older,
+      seen_count: 1,
+    },
+  ]);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  const tmpProject = freshStateDir();
+  const stateDir = freshStateDir(); // SHARED across both runs — that is the point
+  const env = {
+    LOREKIT_MCP_URL: `http://127.0.0.1:${port}/mcp`,
+    LOREKIT_TOKEN: 'lk_ro_test',
+    CLAUDE_PLUGIN_DATA: stateDir,
+  };
+  // Budget for one lesson line, so SessionStart renders the top-ranked lesson
+  // alone and leaves the other genuinely unseen. Without it both are shown and
+  // the second run is silent for the wrong reason — the test would pass while
+  // proving nothing about the delta. There is no env override for this key, so
+  // it goes on disk the way a user would set it.
+  fs.writeFileSync(
+    path.join(tmpProject, '.lorekit.json'),
+    JSON.stringify({ 'hooks.sessionStart.maxChars': MIN_SESSION_START_MAX_CHARS }),
+  );
+  try {
+    const first = await runHookAsync({
+      adapter: 'claude',
+      dir: tmpProject,
+      input: { hook_event_name: 'SessionStart', session_id: 'ups-delta', cwd: tmpProject },
+      env,
+    });
+    assert.equal(first.code, 0);
+    const shown = JSON.parse(first.stdout).hookSpecificOutput.additionalContext;
+    assert.match(shown, /migration-order/, 'precondition — SessionStart rendered this one');
+    assert.doesNotMatch(shown, /migration-locking/, 'precondition — and left this one unseen');
+
+    // Same session, same state dir: a prompt that matches BOTH lessons.
+    const second = await runHookAsync({
+      adapter: 'claude',
+      dir: tmpProject,
+      input: {
+        hook_event_name: 'UserPromptSubmit',
+        session_id: 'ups-delta',
+        cwd: tmpProject,
+        prompt: 'why does this migration backfill keep timing out',
+      },
+      env,
+    });
+    assert.equal(second.code, 0);
+    assert.notEqual(second.stdout, '', 'the unseen lesson is news and must still surface');
+    const ctx = JSON.parse(second.stdout).hookSpecificOutput.additionalContext;
+    assert.match(ctx, /migration-locking/, 'the unseen match is injected');
+    assert.doesNotMatch(ctx, /migration-order/, 'the already-shown one is not repeated');
+  } finally {
+    server.close();
+  }
+});
+
+test('hooks.userPrompt: off silences the per-turn pull, store and match notwithstanding', async () => {
+  // For a marketplace-plugin install this setting is the ONLY opt-out — the
+  // plugin wires the event unconditionally, with no hook mode to downgrade — so
+  // it is asserted through a real `.lorekit.json` on disk rather than through
+  // `resolveControl` in isolation.
+  const server = mockScopedLessonServer([
+    { scope: 'global', key: 'eslint-flat-config', value: 'use eslint.config.js; .eslintrc is ignored', tags: [] },
+  ]);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  const tmpProject = freshStateDir();
+  const input = {
+    hook_event_name: 'UserPromptSubmit',
+    session_id: 'ups-off',
+    cwd: tmpProject,
+    prompt: 'the eslint flat config keeps rejecting my rules',
+  };
+  const env = { LOREKIT_MCP_URL: `http://127.0.0.1:${port}/mcp`, LOREKIT_TOKEN: 'lk_ro_test' };
+  try {
+    // Anti-vacuity: prove this exact input DOES emit before switching it off,
+    // or "silent" would only be evidence that the fixture never matched.
+    const on = await runHookAsync({ adapter: 'claude', dir: tmpProject, input, env });
+    assert.notEqual(on.stdout, '', 'precondition — this prompt emits while the hook is on');
+
+    fs.writeFileSync(
+      path.join(tmpProject, '.lorekit.json'),
+      JSON.stringify({ 'hooks.userPrompt': 'off' }),
+    );
+    const off = await runHookAsync({
+      adapter: 'claude',
+      dir: tmpProject,
+      input: { ...input, session_id: 'ups-off-2' }, // fresh session: not a delta skip
+      env,
+    });
+    assert.equal(off.code, 0);
+    assert.equal(off.stdout, '', 'hooks.userPrompt=off must silence it entirely');
   } finally {
     server.close();
   }

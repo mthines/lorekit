@@ -6,9 +6,12 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   resolveControl, normalizeMode, loadControl, resolveDenies,
+  normalizeUserPromptMode, USER_PROMPT_MODES,
   normalizeSessionStartMode, DEFAULT_SESSION_START_MAX_CHARS,
   MIN_SESSION_START_MAX_CHARS, MAX_SESSION_START_MAX_CHARS,
+  HOOK_INSTRUCTION_EVENTS,
 } from '../src/control.mjs';
+import { CLAUDE_HOOK_EVENTS } from '../src/config.mjs';
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'lk-ctl-'));
@@ -16,6 +19,29 @@ function tmpDir() {
 
 const USABLE = { usable: true, endpoint: 'https://ref.supabase.co/functions/v1/mcp', token: 'lk_rw_x' };
 const NO_CONN = { usable: false, endpoint: null, token: null };
+
+test('hooks.instructions resolves every lifecycle event, UserPromptSubmit included', () => {
+  // The resolver used to iterate a private three-event literal, so a
+  // `UserPromptSubmit` instruction was accepted in config and silently dropped.
+  // Assert PARITY with CLAUDE_HOOK_EVENTS rather than re-pinning the roster: a
+  // hardcoded copy here is a third hand-maintained list that can drift from the
+  // wiring the same way the original literal did — this catches the next event
+  // that lands in only one of them (the mirror guard frameworks.test.mjs has).
+  assert.deepEqual([...HOOK_INSTRUCTION_EVENTS].sort(), [...CLAUDE_HOOK_EVENTS].sort());
+  const r = resolveControl({
+    connection: NO_CONN,
+    repoConfig: {
+      'hooks.instructions': {
+        SessionStart: 'a',
+        UserPromptSubmit: 'b',
+        PostToolUseFailure: 'c',
+        Stop: 'd',
+      },
+    },
+  });
+  assert.deepEqual(Object.keys(r.hooksInstructions), HOOK_INSTRUCTION_EVENTS);
+  assert.equal(r.hooksInstructions.UserPromptSubmit, 'b');
+});
 
 test('normalizeMode accepts friendly spellings incl. persistent-memory backends', () => {
   assert.equal(normalizeMode('REMOTE'), 'remote');
@@ -395,6 +421,64 @@ test('hooks.stop: user fallback when repo is unset; invalid falls through to def
     resolveControl({ repoConfig: { 'hooks.stop': 'nonsense' }, connection: NO_CONN }).hooksStop,
     'friction',
   );
+});
+
+// ── hooks.userPrompt — the per-turn switch, mirroring the hooks.stop trio ─────
+//
+// Default-ON and fires every turn, so the resolution matters more here than for
+// the other keys: a regression that loses an `off` is an injection on every
+// prompt the user explicitly declined.
+
+test('hooks.userPrompt: defaults to on when unset', () => {
+  const r = resolveControl({ connection: NO_CONN });
+  assert.equal(r.hooksUserPrompt, 'on');
+});
+
+test('hooks.userPrompt: repo wins over user, friendly spellings normalized', () => {
+  const r = resolveControl({
+    repoConfig: { 'hooks.userPrompt': 'off' },
+    userConfig: { 'hooks.userPrompt': 'on' },
+    connection: NO_CONN,
+  });
+  assert.equal(r.hooksUserPrompt, 'off', 'a repo turning it off is not overridden by a personal on');
+});
+
+test('hooks.userPrompt: user fallback when repo is unset; invalid falls through', () => {
+  assert.equal(
+    resolveControl({ userConfig: { 'hooks.userPrompt': 'never' }, connection: NO_CONN }).hooksUserPrompt,
+    'off',
+  );
+  // An unrecognised repo value falls through to the USER layer (not straight to
+  // the default) — the `hooks.stop` rule, deliberately unlike
+  // `hooks.sessionStart.maxChars`, where a repo that declared a budget owns it.
+  assert.equal(
+    resolveControl({
+      repoConfig: { 'hooks.userPrompt': 'nonsense' },
+      userConfig: { 'hooks.userPrompt': 'off' },
+      connection: NO_CONN,
+    }).hooksUserPrompt,
+    'off',
+  );
+  assert.equal(
+    resolveControl({ repoConfig: { 'hooks.userPrompt': 'nonsense' }, connection: NO_CONN }).hooksUserPrompt,
+    'on',
+    'and finally to the default when no layer says anything usable',
+  );
+});
+
+test('normalizeUserPromptMode accepts the forgiving vocabulary, and only it', () => {
+  for (const v of ['on', 'ON', ' true ', 'enabled', 'always', 'yes', true]) {
+    assert.equal(normalizeUserPromptMode(v), 'on', `${JSON.stringify(v)} reads as on`);
+  }
+  for (const v of ['off', 'OFF', ' none ', 'false', 'disabled', 'never', 'no', false]) {
+    assert.equal(normalizeUserPromptMode(v), 'off', `${JSON.stringify(v)} reads as off`);
+  }
+  // null, not a guess: an unrecognised value must fall through a layer rather
+  // than silently picking a side of a switch that fires every turn.
+  for (const v of ['maybe', '', 'onn', 0, 1, null, undefined, {}]) {
+    assert.equal(normalizeUserPromptMode(v), null, `${JSON.stringify(v)} is not a verdict`);
+  }
+  assert.deepEqual(USER_PROMPT_MODES, ['on', 'off']);
 });
 
 // ── hooks.sessionStart — the shape and the budget of the injected block ───────

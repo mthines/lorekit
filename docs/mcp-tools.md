@@ -139,7 +139,7 @@ Read a single lesson by scope + key.
 
 ## memory.list
 
-List all lessons for a scope, newest first.
+List all lessons for a scope — newest first by default, or best-first with `order: "rank"`.
 
 ```json
 {
@@ -148,7 +148,8 @@ List all lessons for a scope, newest first.
     "arguments": {
       "scope": "global",
       "tags": ["skill::aw"],
-      "limit": 20
+      "limit": 20,
+      "order": "rank"
     }
   }
 }
@@ -159,8 +160,17 @@ List all lessons for a scope, newest first.
 | `scope` | required | Scope to list |
 | `tags` | `[]` | Filter — only return lessons with at least one of these tags |
 | `limit` | `50` | Max results (cap: 100) |
+| `cursor` | | Opaque cursor from a previous response's `nextCursor`. Omit to start from the first page. Ignored when `order` is `rank` |
+| `order` | `recency` | `recency` — `updated_at` desc with cursor pagination. `rank` — scores recency, salience, and outcome over a bounded candidate window, returned as a single top-N page. (The scorer's fourth factor, relevance, needs a query string; `memory.list` supplies none, so relevance is a constant 0 here and only contributes on the search/`q` path.) |
 
-**Returns:** `{ "entries": [{ "key", "value", "tags", "updated_at" }] }`
+**Returns:** `{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }`
+
+- `recency` (default): pass `nextCursor` back as `cursor` to read the next page.
+- `rank`: a single bounded top-N page — `hasMore` is always `false` and `nextCursor` always `null`.
+  Raise `limit` (cap 100) rather than paginating.
+  Ranking scores at most the **200 most recently updated** rows in the scope (a bounded candidate
+  window); in a scope with more than 200 active lessons the ranking is over that recency window,
+  not the whole scope, and `hasMore: false` reflects the page — not that the scope is exhausted.
 
 ---
 

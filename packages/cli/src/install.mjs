@@ -17,6 +17,7 @@ import {
   HOOK_MODES,
   hookEventsForMode,
   hookModeFromEvents,
+  missingHookEvents,
   installedHookEvents,
   resolveConnection,
   tokenKind,
@@ -120,7 +121,7 @@ export const HOOK_PROMPT_OPTIONS = [
   {
     label: 'Yes, all of them',
     value: 'all',
-    hint: 'inject lessons at session start; nudge on a tool failure and at end of turn',
+    hint: 'inject lessons at session start and as each prompt matches them; nudge on a tool failure and at end of turn',
   },
   {
     label: 'Read-only',
@@ -274,6 +275,22 @@ export async function install(args) {
         ? `  ${c.dim(`Hooks: ${wiredEvents.join(', ')}`)}`
         : `  ${c.dim('Hooks: none wired — the skills work, but only when the model invokes them')}`,
     );
+
+    // An install predating a lifecycle event still reads as its mode (see
+    // LEGACY_ALL_EVENT_SETS in config.mjs), but this branch returns before the
+    // hook step — so the upgrade is available and will not happen on its own.
+    // Say so here rather than leaving the user to infer it: silently keeping a
+    // stale event set is how a wired install stops firing the hooks it says it
+    // has. Only ever a HINT — rewiring stays an explicit `--hooks` / `--force`.
+    const wiredMode = hookModeFromEvents(wiredEvents);
+    // `missingHookEvents` owns the derivation (incl. why `custom` is excluded)
+    // so `doctor`'s hooks line reports the same upgrade this summary does.
+    const missingEvents = missingHookEvents(wiredEvents);
+    if (missingEvents.length > 0) {
+      log(
+        `  ${c.yellow(`Hook upgrade available: ${missingEvents.join(', ')} — run lorekit install --${scope} --hooks ${wiredMode} to wire ${missingEvents.length === 1 ? 'it' : 'them'}.`)}`,
+      );
+    }
 
     log('');
     log(`  Run ${c.cyan('npx @lorekit/cli doctor')} to verify the connection.`);

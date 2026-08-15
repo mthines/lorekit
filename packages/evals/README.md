@@ -21,10 +21,12 @@ the mock.
 
 ## Status
 
-PR3 of six. Shipped: the package and per-run isolation, the `claude -p` spawner,
+PR5 of six. Shipped: the package and per-run isolation, the `claude -p` spawner,
 the memory arms, scope control, and the golden task with its deterministic
-grader. Still to come: metrics and reporting (PR4), the scale/position sweep
-(PR5), and the code-review domain (PR6).
+grader (PR3); metrics and reporting — precision@k / recall@k / MRR, the
+`ground-truth.mjs` predicate, the BOOTSTRAP seed, the `mine` runbook (PR4); the
+`order=rank` ranked mode in the hosted edge `memory.list` (PR5-A1); and the
+**scale/position sweep** (PR5). Still to come: the code-review domain (PR6).
 
 ## The golden task
 
@@ -289,11 +291,201 @@ exactly what the relevance work will change; a harness that hard-coded it would
 be blind to the only change it exists to detect. Re-running the suite before and
 after that change is the intended measurement.
 
+## Retrieval relevance (precision@k / recall@k / MRR)
+
+A second, complementary measurement lives beside the `claude -p` arms: **does the
+retriever surface the _right_ lessons for a query in the first place?** The live
+arms measure whether an injected lesson changes the agent's output — the
+_downstream_ half. This measures the _upstream_ half — the ranking — as pure,
+deterministic **precision@k / recall@k / MRR** against a ground-truth set.
+
+> **This complements the live eval; it never gates it.** These metrics run under
+> `node --test` in milliseconds against fixtures, with no model, no network and
+> no sandbox. Nothing here is added to a CI gate, and the live `claude -p` path
+> is untouched.
+
+### Ground truth is pinned to the real outcome signal, in code
+
+The set of lessons that _should_ surface for a query is **not** a hand-authored
+label list — it is computed (`src/ground-truth.mjs`) from the memories the loop
+machinery itself treats as outcome/relevance signal:
+
+- a row qualifies iff the shipped `inferKindHost` (from `@lorekit/schemas`)
+  resolves its tags to an outcome/relevance bucket —
+  `loop::review-outcomes` (`host: review`) or
+  `loop::reviewer-comment-relevance` (`host: reviewer`); **and**
+- it matches the query repo (by scope, falling back to `origin_repo`; an
+  `origin_pr` pin narrows but is never required — the spec's match is
+  "`origin_pr` / repo scope matches", a disjunction); with
+- `seen_count` as the relevance **weight**, and `seen_count >= 3` marking a row
+  **recurrence-confirmed**.
+
+`ground-truth.mjs` imports `inferKindHost` and **never re-encodes** the literal
+`loop::…` strings — a local copy would keep passing while the product's bucket
+set moved underneath it (the recurring "mock that reimplements the thing under
+test" trap). A grep guard (`AC-1-reuse`) fails if the literals reappear.
+
+### The committed baseline is a 2-row BOOTSTRAP PLACEHOLDER
+
+`fixtures/ground-truth.seed.json` is a **BOOTSTRAP PLACEHOLDER**, not a real
+baseline. It holds the only two outcome/relevance-tagged rows that already exist
+in-repo — `audit::one-vocabulary` (`loop::reviewer-comment-relevance`, PR 311)
+and `rls::service-role-user-filter` (`loop::review-outcomes`) — lifted
+**metadata-only** from `packages/web/src/mocks/memories.ts` (rows m05, m06). Its
+`seenCount` is `0` because the mock carries no `seen_count` (that lives only in
+the hosted projection) — itself a tell that this is a seed, not a mined baseline.
+
+Every metrics object built on this seed carries a loud `baseline.warning`:
+
+> **The numbers this seed produces MUST NOT be used to gate downstream PRs
+> (e.g. A1/A4)** until `bin/mine-ground-truth.mjs` has been run against the
+> hosted store and a real `fixtures/ground-truth.real.json` snapshot has been
+> committed.
+
+### Making the baseline real: the `mine` runbook
+
+`bin/mine-ground-truth.mjs` is a **manual, one-shot** step. It is wired into no
+CI job, npm script, nx target or `node --test` file (`AC-7-nowire` keeps it that
+way), and it refuses to touch the network without `--confirm` **and** a usable
+remote connection. Running it — and committing its output — is the step, and the
+only step, that turns the placeholder baseline into a real one.
+
+```bash
+cd packages/evals
+# Requires a usable remote connection (run `lorekit install`, or set
+# LOREKIT_MCP_URL + LOREKIT_TOKEN). A bare run just prints usage + the
+# placeholder→real explanation and exits non-zero.
+node bin/mine-ground-truth.mjs --confirm --scope repo::mthines/lorekit
+# → writes fixtures/ground-truth.real.json (metadata only: scope, key, tags,
+#   origin_pr, seenCount — NEVER the lesson body), after a privacy pre-flight.
+git add fixtures/ground-truth.real.json && git commit -m "chore(evals): real relevance baseline"
+```
+
+The mine **walks every page** of `remote.list` (`hasMore` / `nextCursor`, the
+same termination `gatherStream` uses), so a tag with more than one page of rows
+is never frozen as a silently truncated snapshot; a repeating cursor or a walk
+past `MAX_PAGES` aborts with exit 4 and writes nothing. A **zero-row** mine is
+refused too (exit 5): an empty ground truth scores `recallAtK = 1` by design
+("nothing to miss"), so an empty `real-hosted-snapshot` would look perfect while
+measuring nothing. Its flags are strict:
+`--scope` and `--out` each require a present, non-empty value — `--confirm
+--scope` is a usage error rather than a run that quietly mines *every* scope —
+and an unrecognised flag is refused rather than ignored.
+
+The CLI token is **user-scoped**, and so is every mine this script performs — it
+does **not** implement a cross-tenant read. A maintainer who needs one wires
+`@lorekit/mcp-core`'s `createHostedAdapter` (`SUPABASE_SERVICE_ROLE_KEY`) in by
+hand; it is kept off the happy path because a service-role read can surface other
+users' rows, which must be an explicit choice.
+
+`LOREKIT_GROUND_TRUTH_SERVICE_ROLE=1` is an **acknowledgement flag, not a
+switch**: setting it does not widen the read, and the script prints a notice
+saying exactly that, so a user-scoped mine is never mistaken for a cross-tenant
+one.
+
+The **privacy pre-flight** (`privacyPreflight`) runs on the entries about to be
+written and aborts the whole write if any still carries a `value`/`body`, any
+non-metadata field, or a secret/PII-shaped string — the backstop behind
+`redactToMetadata`, which is where bodies are dropped.
+
+## Scale/position sweep (PR5)
+
+The sweep answers the project's founding question: **does a genuinely-relevant
+lesson still surface once a repo accumulates a lot of memories, and at what pool
+size does relevance degrade?**
+
+### How it works
+
+`src/sweep.mjs` injects **synthetic decoys** at increasing pool sizes around a
+**fixed real-signal-defined target** and measures, for each size, whether the
+target surfaces in the top-50 page (the hard-coded `limit = 50`, not `k`) — in
+two ways:
+
+| Arm | Model |
+| --- | ----- |
+| **recency** | Sort the full pool by `updated_at desc`, take top-`limit` (k = 50). No ranking. The "no ranking" baseline. |
+| **ranked** | Take the `CANDIDATE_LIMIT = 200` most-recent candidates first (recency window), then rank within that window using the REAL `rankLessons` from `@lorekit/cli/src/lessons-pure.mjs`, take top-`limit`. This reproduces the product's actual `order=rank` path. |
+
+The ranked arm calls the **real** ranker — the zero-import parity twin of the
+edge function — never a reimplementation. A grep guard (`AC-1` in
+`test/sweep.test.mjs`) fails if a local scoring formula appears in `sweep.mjs`.
+
+### The cliff finding
+
+The sweep seats the target as **OLD** (400 days before the reference timestamp)
+and synthetic decoys as **MORE RECENT**. Pool sizes tested:
+`[10, 50, 100, 200, 300, 500]`, `CANDIDATE_LIMIT = 200`, `k = 5`.
+
+| Pool size | recency arm: targetRank | recency: in window | ranked arm: targetRank | ranked: in window |
+| --------- | ----------------------- | ------------------ | ---------------------- | ----------------- |
+| 10        | 10                      | true               | 2                      | true              |
+| 50        | 50                      | true               | 9                      | true              |
+| 100       | null (cliff)            | false              | 22                     | true              |
+| 200       | null                    | false              | 33                     | true              |
+| 300       | null                    | false              | null (cliff)           | false             |
+| 500       | null                    | false              | null                   | false             |
+
+**Recency cliff: pool size 100.** The old target is buried under 50 decoys in
+the top-50 window. Pure recency ordering cannot rescue it.
+
+**Ranked cliff: pool size 300 (> `CANDIDATE_LIMIT` = 200).** Once the pool
+exceeds 200, the recency window evicts the old target before `rankLessons` ever
+sees it. The cliff is **window eviction, not score decay**: the target's salience
+is high (seen_count = 98), but it cannot be ranked if it does not enter the
+candidate window. The ranked arm holds the target ~3× longer than the recency arm
+(cliff at 300 vs 100) — that is what ranking buys at scale.
+
+This confirms the mechanism documented in `relevant.ts`:
+
+> _"On a store with more than `CANDIDATE_LIMIT` active rows … an old lesson with
+> a high `seen_count` never enters the set, so salience cannot surface the very
+> row it exists for. … Widening the cap only moves the cliff."_
+
+### Running the sweep
+
+The sweep is a deterministic `node --test` suite — no model, no network, no
+sandbox. It runs under the existing `test` target on every PR:
+
+```bash
+cd packages/evals
+node --test test/sweep.test.mjs      # just the sweep suite (~100ms)
+node --test test/*.test.mjs          # full evals suite
+pnpm nx test evals                   # via Nx
+```
+
+To reproduce the cliff curve shown above:
+
+```js
+import { runSweep, summarizeCliff, CANDIDATE_LIMIT } from './src/sweep.mjs';
+const curve = runSweep({ targetRows, query, poolSizes: [10, 50, 100, 200, 300, 500], k: 5, now, seed: 123, targetAgeDays: 400 });
+console.log(summarizeCliff(curve));
+// → { recency: { cliffAt: 100 }, ranked: { cliffAt: 300 } }
+```
+
+### Synthetic decoys — BOOTSTRAP PLACEHOLDER
+
+The 299–499 decoys injected per pool size are **synthetic placeholders**.
+They carry no outcome/relevance tags (`shouldSurface` returns `false` for every
+decoy), are loudly marked `SYNTHETIC DECOY` in key and value, and are generated
+by a seeded PRNG (reproducible, no randomness). At real volume — a hosted repo
+with hundreds of stored lessons — the sweep should be re-run against a corpus
+mined via `bin/mine-ground-truth.mjs`. The synthetic decoys are the upgrade path
+documented in R8; they tell you the shape of the cliff but not its exact position
+for your specific data distribution.
+
+The cliff-ordering result (`ranked.cliffAt > recency.cliffAt`, with the
+`ranked.cliffAt > CANDIDATE_LIMIT` window-eviction property) is asserted by
+deterministic tests and holds regardless of decoy content, because the cliff is
+structural: it is determined by the `CANDIDATE_LIMIT` window size and the
+target's position in `updated_at` order, not by what the decoys say.
+
 ## Docs applicability
 
 **User-facing docs, `llms.txt`, MDX and dashboard copy do not apply.**
 `@lorekit/evals` is a private internal research tool: it ships no MCP tool, REST
 route, CLI command or flag, config key, env var, scope rule, error contract or
-dashboard surface, and only consumes the existing CLI and store. Per
-`CLAUDE.md` → "User-facing docs", the rule fires on a user-observable capability
-change; there is none. This README is the documentation surface that applies.
+dashboard surface, and only consumes the existing CLI and store. The
+retrieval-relevance harness and its `mine` script are the same — a private
+maintenance tool with no user-observable surface. Per `CLAUDE.md` →
+"User-facing docs", the rule fires on a user-observable capability change; there
+is none. This README is the documentation surface that applies.

@@ -51,7 +51,9 @@ without needing a marketplace:
 2. **MCP server** (`lorekit`) — the connection to your lessons, merged into the
    MCP config (preserving any other servers).
 3. **Hooks** — the *deterministic* layer: lessons injected on every
-   `SessionStart`, and on a tool failure (`PostToolUseFailure`) any lessons that
+   `SessionStart`, the few that match what you just typed on every substantive
+   prompt (`UserPromptSubmit`, `hooks.userPrompt`), and on a tool failure
+   (`PostToolUseFailure`) any lessons that
    look **relevant to that failure** ("you've hit this before") plus a nudge to
    record the fix, and a retrospective nudge on `Stop` — by default only when the
    session actually hit friction (`hooks.stop`). These fire the shared
@@ -133,8 +135,8 @@ and the write is still the model calling `memory.write`.
 
 | Mode | Wires | What you get |
 |------|-------|--------------|
-| `all` | `SessionStart`, `PostToolUseFailure`, `Stop` | Lessons injected at session start, plus a nudge on a tool failure and a friction-gated one at end of turn |
-| `read-only` | `SessionStart` | Lessons injected; nothing ever nudges |
+| `all` | `SessionStart`, `UserPromptSubmit`, `PostToolUseFailure`, `Stop` | Lessons injected at session start, the ones matching each substantive prompt injected as you go, plus a nudge on a tool failure and a friction-gated one at end of turn |
+| `read-only` | `SessionStart` | Lessons injected ONCE at session start; nothing nudges and nothing runs per turn |
 | `none` | — | Skills + MCP only; memory stays model-invoked |
 
 ```bash
@@ -489,9 +491,9 @@ links now back the hooks' write-confirmation and retrospective nudges.)
 The **shared hook engine** behind the Claude Code / Cursor / Codex plugins.
 It is not run by hand — the plugins wire it into their hook config. It reads
 the host framework's JSON on stdin and prints that host's injection format on
-stdout (lessons at session start; relevant lessons plus a write-nudge on a tool
-failure; a retrospective nudge at end of turn), always exiting 0 so it can never
-block the host agent.
+stdout (lessons at session start; the ones matching each substantive prompt as
+you go; relevant lessons plus a write-nudge on a tool failure; a retrospective
+nudge at end of turn), always exiting 0 so it can never block the host agent.
 
 ```bash
 lorekit hook --adapter <claude|cursor|codex> --event <SessionStart|Stop|…>
@@ -659,7 +661,25 @@ Both files share this schema — all fields optional:
   // ── Hook behaviour ─────────────────────────────────────────────────────────
   "hooks.disabled": ["Stop"],
                            // suppress specific hook events; union across layers
-                           // values: "SessionStart" | "PostToolUseFailure" | "Stop"
+                           // values: "SessionStart" | "UserPromptSubmit" | "PostToolUseFailure" | "Stop"
+
+  "hooks.userPrompt": "on",
+                           // the per-turn relevance pull (UserPromptSubmit):
+                           //   "on"  (default) — on each substantive prompt, query the
+                           //     store for memories matching what you typed and inject
+                           //     at most 3 you have NOT already been shown this session
+                           //   "off"           — keep the rest of hook mode "all", drop
+                           //     just this event's output
+                           // a switch, not a mode: the knobs a mode would expose (how
+                           // many, how strict) are the two things that must not be
+                           // turned up on a hook that fires every single turn.
+                           // two install paths reach it: hook mode "all" ("read-only"
+                           // and "none" never wire the event), and the Claude
+                           // marketplace plugin, whose hooks.json wires it
+                           // unconditionally — no mode involved, so hooks.userPrompt is
+                           // the mode-independent opt-out there. (hooks.disabled:
+                           // ["UserPromptSubmit"] also switches it off, one gate
+                           // earlier, so it is not the only opt-out.) repo wins over user
 
   "hooks.stop": "friction",
                            // gate the end-of-turn retrospective nudge:
@@ -704,13 +724,14 @@ Both files share this schema — all fields optional:
 
   "hooks.instructions": {
     "SessionStart":        "Focus on migration safety. Treat any lesson tagged 'migration' as high-priority.",
+    "UserPromptSubmit":    "Prefer a memory that names the file you are editing.",
     "PostToolUseFailure":  "When recording a failure, always include the exact command and exit code.",
     "Stop":                null
   },
                            // per-event custom text appended to the hook output.
                            // both layers merged: repo instructions first, then user.
                            // null (or absent key) means no extra instruction for that event.
-                           // values: string | null  (keys: "SessionStart" | "PostToolUseFailure" | "Stop")
+                           // values: string | null  (keys: "SessionStart" | "UserPromptSubmit" | "PostToolUseFailure" | "Stop")
 
   // ── Telemetry ──────────────────────────────────────────────────────────────
   "telemetry.disabled": true,

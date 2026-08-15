@@ -14,7 +14,8 @@ import {
 } from '../src/lessons-view.mjs';
 import {
   rankLessons, scoreLesson, recencyFactor, salienceFactor, relevanceFactor,
-  RECENCY_HALF_LIFE_DAYS, DEFAULT_RANK_WEIGHTS,
+  normalizeOutcome, RECENCY_HALF_LIFE_DAYS, DEFAULT_RANK_WEIGHTS, COLD_START_OUTCOME_PRIOR,
+  diversifyRankedLessons, selectDiverse,
 } from '../src/lessons-pure.mjs';
 import { MEMORY_TOOL_DEFS } from '../src/mcp-server.mjs';
 
@@ -1505,6 +1506,83 @@ describe('rankLessons', () => {
   });
 });
 
+// ── diversifyRankedLessons: MMR on the SessionStart injection ─────────────────
+// Ranking answers "which score highest"; on a busy repo the highest cluster is
+// one task's iteration log — several rows that score alike AND read alike — so a
+// plain top-N hands the reader the same lesson several times. This is the helper
+// that wires the SAME MMR the hosted `order=rank` path uses into the session
+// read, and these tests pin the diversity property and the alignment guarantee
+// (its recomputed scores must equal the ones the list was ranked on).
+describe('diversifyRankedLessons', () => {
+  const DAY = 86400000;
+  const NOW = Date.parse('2026-08-01T00:00:00.000Z');
+  const at = (daysAgo) => new Date(NOW - daysAgo * DAY).toISOString();
+  const lesson = (key, { days = 1, seen = 1, value = '' } = {}) => ({
+    scope: 'global', key, value, seenCount: seen, updatedAt: at(days),
+  });
+
+  // Two near-identical iteration logs (high token overlap) that both outscore a
+  // distinct lesson — the exact `review-outcomes::pr-it{3,4}` shape.
+  const dupText = 'database migration rollback failed on staging retry the deploy';
+  const A1 = lesson('pr-it4', { seen: 5, value: `${dupText} at iteration four` });
+  const A2 = lesson('pr-it3', { seen: 4, value: `${dupText} at iteration three` });
+  const B = lesson('functional-core', { seen: 3, value: 'prefer a functional core with an imperative shell' });
+
+  test('diversify — separates the near-duplicate a plain rank keeps adjacent', () => {
+    const ranked = rankLessons([A1, A2, B], { now: NOW });
+    // Plain ranking: the two dups sit together, the distinct lesson last.
+    assert.deepEqual(ranked.map((e) => e.key), ['pr-it4', 'pr-it3', 'functional-core']);
+    const diverse = diversifyRankedLessons(ranked, { now: NOW, k: 3 });
+    // MMR keeps the top lesson, then promotes the DISTINCT one over the dup.
+    assert.equal(diverse[0].key, 'pr-it4', 'the highest-ranked lesson still seeds the set');
+    assert.ok(
+      diverse.findIndex((e) => e.key === 'functional-core') <
+        diverse.findIndex((e) => e.key === 'pr-it3'),
+      'the distinct lesson is pulled ahead of the near-duplicate',
+    );
+  });
+
+  test('diversify — the seed scores track the ranking clock, at ANY `now`', () => {
+    // The helper recomputes each entry's score to seed MMR, over the SAME set
+    // (set-relative salience), so its result equals selectDiverse fed scores
+    // computed at that clock with that population's max. Checked at TWO clocks:
+    // the recompute must use the caller's `now`, which is exactly why
+    // fetchLessons feeds ONE options object to both rankLessons and this — a
+    // `now` that differed from the ranking's would seed MMR off the wrong scores.
+    for (const clock of [NOW, NOW + 90 * DAY]) {
+      const ranked = rankLessons([A1, A2, B], { now: clock });
+      const maxSeen = Math.max(...ranked.map((e) => e.seenCount));
+      const scores = ranked.map((e) => scoreLesson(e, { now: clock, maxSeenCount: maxSeen }));
+      assert.deepEqual(
+        diversifyRankedLessons(ranked, { now: clock, k: 3 }).map((e) => e.key),
+        selectDiverse(ranked, 3, { scores }).map((e) => e.key),
+        `aligned at now=${clock}`,
+      );
+    }
+  });
+
+  test('diversify — k caps the count, coercing the shapes a caller passes', () => {
+    const ranked = rankLessons([A1, A2, B], { now: NOW });
+    assert.equal(diversifyRankedLessons(ranked, { now: NOW, k: 2 }).length, 2);
+    assert.equal(diversifyRankedLessons(ranked, { now: NOW }).length, 3, 'no k (Infinity) → all');
+    // `numberOr` coercion: a stringy count caps, a non-finite/absent one is all.
+    assert.equal(diversifyRankedLessons(ranked, { now: NOW, k: '2' }).length, 2, "'2' → 2");
+    assert.equal(diversifyRankedLessons(ranked, { now: NOW, k: null }).length, 3, 'null → all');
+    assert.equal(diversifyRankedLessons(ranked, { now: NOW, k: 0 }).length, 0, '0 → none');
+  });
+
+  test('diversify — empty or non-array input is an empty result, never a throw', () => {
+    for (const bad of [[], null, undefined, 'nope', 7, {}]) {
+      assert.deepEqual(diversifyRankedLessons(bad, { now: NOW }), [], `input ${String(bad)}`);
+    }
+    // Non-object members are dropped, exactly as rankLessons drops them.
+    assert.deepEqual(
+      diversifyRankedLessons([null, A1, 'x'], { now: NOW }).map((e) => e.key),
+      ['pr-it4'],
+    );
+  });
+});
+
 describe('scoreLesson factors', () => {
   const NOW = Date.parse('2026-08-01T00:00:00.000Z');
   const daysAgo = (n) => new Date(NOW - n * 86400000).toISOString();
@@ -1674,12 +1752,12 @@ describe('scoreLesson factors', () => {
       TypeError,
       'a write must fail in the caller frame, not three layers down the stack',
     );
-    assert.deepEqual({ ...DEFAULT_RANK_WEIGHTS }, { recency: 1, salience: 1, relevance: 1 });
+    assert.deepEqual({ ...DEFAULT_RANK_WEIGHTS }, { recency: 1, salience: 1, relevance: 1, outcome: 1 });
 
     // Belt and braces: the fallback substitutes once instead of recursing, so
     // totality no longer depends on the export having gone unmutated.
     const entry = { key: 'k', value: '', seenCount: 1, updatedAt: daysAgo(1) };
-    const zeroed = { recency: 0, salience: 0, relevance: 0 };
+    const zeroed = { recency: 0, salience: 0, relevance: 0, outcome: 0 };
     assert.equal(
       scoreLesson(entry, { now: NOW, weights: zeroed }),
       scoreLesson(entry, { now: NOW }),
@@ -1696,6 +1774,83 @@ describe('scoreLesson factors', () => {
       const s = scoreLesson(entry, { now: NOW, terms: ['timeout'], maxSeenCount });
       assert.ok(s >= 0 && s <= 1, `score ${s} out of range for maxSeenCount ${String(maxSeenCount)}`);
     }
+  });
+
+  // ── AC-3: normalizeOutcome cold-start prior ──────────────────────────────
+  test('normalizeOutcome returns COLD_START_OUTCOME_PRIOR for absent/unreadable input', () => {
+    // The deliberate asymmetry vs normalizeRelevance (which returns 0 for absent
+    // input). A cold lesson should rank on recency + relevance, not be penalised.
+    for (const absent of [null, undefined, NaN, 'nope', {}]) {
+      assert.equal(
+        normalizeOutcome(absent),
+        COLD_START_OUTCOME_PRIOR,
+        `normalizeOutcome(${String(absent)}) should return COLD_START_OUTCOME_PRIOR`,
+      );
+    }
+  });
+
+  test('normalizeOutcome clamps a present value into [0,1]', () => {
+    assert.equal(normalizeOutcome(2), 1, 'clamped to 1');
+    assert.equal(normalizeOutcome(-1), 0, 'clamped to 0');
+    assert.ok(Math.abs(normalizeOutcome(0.5) - 0.5) < 1e-15, 'identity at midpoint');
+    assert.ok(Math.abs(normalizeOutcome('0.5') - 0.5) < 1e-15, 'string coercion');
+  });
+
+  // ── AC-1: outcome-positive outranks outcome-negative ────────────────────
+  test('outcome-positive row outranks outcome-negative row at equal recency+salience (real rankLessons)', () => {
+    // Two rows identical in everything except outcome. The outcome factor must
+    // be load-bearing: dropping it (setting outcome:0 weight) removes the
+    // ordering (both score identically).
+    const shared = { seenCount: 5, updatedAt: daysAgo(3) };
+    const positive = { ...shared, key: 'positive', outcome: 1.0 };
+    const negative = { ...shared, key: 'negative', outcome: 0.0 };
+    const ranked = rankLessons([negative, positive], { now: NOW });
+    const keys = ranked.map((e) => e.key);
+    assert.equal(keys.indexOf('positive'), 0, 'outcome-positive must rank first');
+    assert.equal(keys.indexOf('negative'), 1, 'outcome-negative must rank second');
+
+    // Mental revert: without the outcome weight the rows tie (same recency+salience),
+    // meaning outcome IS the load-bearing differentiator.
+    const rankNoOutcome = rankLessons([negative, positive], { now: NOW, weights: { recency: 1, salience: 1, relevance: 1, outcome: 0 } });
+    const bucketsNoOutcome = rankNoOutcome.map((r) => Math.round(r.score / 1e-9));
+    assert.equal(bucketsNoOutcome[0], bucketsNoOutcome[1], 'without outcome weight, the rows tie');
+  });
+
+  // ── AC-2: cold-start prior — cold new row outranks old low-relevance row ─
+  test('cold new row outranks old low-relevance row (cold-start prior not zero, real rankLessons)', () => {
+    // A cold recent row (no outcome data, recent, relevance match) versus an old
+    // low-relevance stale row. The cold row should still win via recency and the
+    // non-zero cold-start prior.
+    const coldNew = { key: 'cold-new', updatedAt: daysAgo(1), seenCount: 1, terms: ['timeout'] };
+    const oldStale = { key: 'old-stale', updatedAt: daysAgo(90), seenCount: 1, outcome: 0.0, terms: ['timeout'] };
+    const ranked = rankLessons([oldStale, coldNew], { now: NOW });
+    const keys = ranked.map((e) => e.key);
+    assert.equal(keys[0], 'cold-new', 'cold new row must rank first — prior is not 0');
+
+    // The load-bearing check: hold recency, salience and relevance EQUAL between
+    // the two rows so the ONLY difference is outcome. The cold row (absent
+    // outcome → prior) must still outrank an explicit `outcome: 0` row — that
+    // ordering can only come from the prior being > 0. Zeroing the prior would
+    // tie the two, so this assertion fails the moment the prior degrades.
+    const coldSameAge = { key: 'cold', updatedAt: daysAgo(3), seenCount: 5 };
+    const zeroSameAge = { key: 'zero', updatedAt: daysAgo(3), seenCount: 5, outcome: 0.0 };
+    const tieRank = rankLessons([zeroSameAge, coldSameAge], { now: NOW });
+    assert.equal(tieRank[0].key, 'cold', 'cold (prior) must outrank an equally-recent outcome:0 row');
+
+    // Score the pair against the same population (maxSeenCount) rankLessons uses,
+    // so the strict-greater is on the ranking's own arithmetic, not a re-derived
+    // one. The gap is exactly the prior contribution: COLD_START_OUTCOME_PRIOR/4.
+    const opts = { now: NOW, maxSeenCount: 5 };
+    const coldScore = scoreLesson(coldSameAge, opts);
+    const zeroScore = scoreLesson(zeroSameAge, opts);
+    assert.ok(
+      coldScore > zeroScore,
+      'the prior must produce a strictly higher score, not a tie broken by key order',
+    );
+    assert.ok(
+      Math.abs((coldScore - zeroScore) - COLD_START_OUTCOME_PRIOR / 4) < 1e-9,
+      'the score gap is exactly the prior spread over the four equal weights',
+    );
   });
 });
 
