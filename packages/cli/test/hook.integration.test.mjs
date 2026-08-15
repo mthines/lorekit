@@ -10,7 +10,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MIN_SESSION_START_MAX_CHARS } from '../src/control.mjs';
+import {
+  MIN_SESSION_START_MAX_CHARS,
+  MAX_SESSION_START_MAX_LESSONS,
+  DEFAULT_SESSION_START_MAX_LESSONS,
+} from '../src/control.mjs';
+import { MAX_STORE_LIST_LIMIT } from '../src/core/lessons.mjs';
+import { createTwoTierStore } from '../src/store/index.mjs';
+import { deriveScope } from '../src/scope.mjs';
 
 const BIN = fileURLToPath(new URL('../bin/lorekit.mjs', import.meta.url));
 const REPO = fileURLToPath(new URL('../../../', import.meta.url));
@@ -343,6 +350,125 @@ test('SessionStart reads lessons from the MCP server and injects them', async ()
   } finally {
     server.close();
   }
+});
+
+// `hooks.sessionStart.maxLessons` end-to-end, through a REAL `.lorekit.json`.
+//
+// The unit tests in `hooks.test.mjs` hand `maxLessons` straight to
+// `fetchLessons`/`formatLessons`, so they would stay green in a build where
+// `control.mjs` resolved the key perfectly and `hook.mjs` simply never passed it
+// on. This is the test that goes red in that world: the only input is a config
+// file on disk, and the assertion is on the block the real binary emitted.
+//
+// LOCAL mode, not the mock REST server the tests above use, because this
+// assertion only needs a store the binary can read — and an on-disk one has no
+// socket to fail on.
+//
+// HOW THE FETCH IS OBSERVED, since a local store's `list` reports no limit back:
+// by ARITHMETIC on the candidate pool, which is the same thing the user
+// experiences. Two scopes are seeded with `SEEDED_PER_SCOPE` lessons each, and
+// the three runs bracket the ceiling from both sides:
+//   - UNCONFIGURED — the default ceiling (100) binds the render.
+//   - LOWERED to 12 — below anything the fetch could fail to supply, so it is a
+//     clean test of the RENDER bound on its own.
+//   - RAISED to 150 — unreachable unless the FETCH grew with the ceiling: two
+//     scopes at the default depth can offer at most 200 candidates, and the read
+//     is itself capped per scope, so the expectation is derived rather than
+//     written as a literal.
+// Together they pin both halves of the dial: what is rendered and what is read.
+const SEEDED_PER_SCOPE = 90;
+
+test('SessionStart: hooks.sessionStart.maxLessons raises the injected line count AND the fetch', async () => {
+  const tmpProject = fs.mkdtempSync(path.join(os.tmpdir(), 'lk-maxlessons-'));
+  const tmpHome = freshStateDir();
+  const scope = deriveScope(tmpProject);
+  const store = createTwoTierStore({ home: tmpHome, project: path.join(tmpProject, '.lorekit') });
+
+  // Seeded across BOTH readOrder scopes so the default ceiling has more
+  // candidates than one scope's read can supply, and keyed per scope so
+  // cross-scope precedence (first-seen wins) never collapses the pool.
+  for (const [n, s] of scope.readOrder.entries()) {
+    for (let i = 0; i < SEEDED_PER_SCOPE; i += 1) {
+      // The `s${n}` prefix is load-bearing: identity is `scope::key`, and the
+      // read resolves cross-scope precedence first-seen-wins, so reusing one key
+      // set across both scopes would collapse the pool to a single scope's worth.
+      // Written SEQUENTIALLY, not with a Promise.all, so `updated` is strictly
+      // increasing — the store slices the newest N, and a batch that ties on
+      // the timestamp would make "the newest 25" an arbitrary 25.
+      // eslint-disable-next-line no-await-in-loop
+      await store.write({ scope: s, key: `s${n}-seeded-${i}`, value: `lesson body ${i}` });
+    }
+  }
+
+  const env = { LOREKIT_HOME: tmpHome, LOREKIT_MODE: 'local', LOREKIT_MCP_URL: '', LOREKIT_TOKEN: '' };
+  const lessonLines = (stdout) => JSON.parse(stdout).hookSpecificOutput.additionalContext
+    .split('\n').filter((l) => l.startsWith('- ')).length;
+  const runWith = (config, sessionId) => {
+    fs.writeFileSync(path.join(tmpProject, '.lorekit.json'), JSON.stringify(config));
+    return runHookAsync({
+      adapter: 'claude',
+      dir: tmpProject,
+      input: { hook_event_name: 'SessionStart', session_id: sessionId, cwd: tmpProject },
+      env,
+    });
+  };
+
+  assert.ok(scope.readOrder.length >= 2, 'precondition — a temp dir reads at least project + global');
+
+  // BASELINE. A budget big enough that only the LINE ceiling can bind, and no
+  // `maxLessons` — so this pins the unconfigured behaviour exactly, and makes
+  // the other runs' differences attributable to the one key that changed.
+  const base = await runWith({ 'hooks.sessionStart.maxChars': 20000 }, 'ml-default');
+  assert.equal(base.code, 0);
+  assert.equal(
+    lessonLines(base.stdout),
+    DEFAULT_SESSION_START_MAX_LESSONS,
+    'unconfigured: the default ceiling binds, fed by a read at the default depth',
+  );
+
+  // LOWERED. Below the default, so the ceiling is what binds — and it binds at
+  // a number the fetch could always have supplied, which is what makes this the
+  // clean test of the RENDER bound.
+  const lowered = await runWith(
+    { 'hooks.sessionStart.maxChars': 20000, 'hooks.sessionStart.maxLessons': 12 },
+    'ml-lowered',
+  );
+  assert.equal(lowered.code, 0);
+  assert.equal(lessonLines(lowered.stdout), 12, 'lowered: the configured ceiling binds');
+
+  // RAISED past the default, which is only reachable if the per-scope fetch grew
+  // with it: two scopes at the default depth cannot offer 150 candidates.
+  const raised = await runWith(
+    { 'hooks.sessionStart.maxChars': 20000, 'hooks.sessionStart.maxLessons': 150 },
+    'ml-raised',
+  );
+  assert.equal(raised.code, 0);
+  assert.equal(
+    lessonLines(raised.stdout),
+    Math.min(150, Math.min(SEEDED_PER_SCOPE, MAX_STORE_LIST_LIMIT) * scope.readOrder.length),
+    'raised: reachable only because the fetch grew to the route cap too',
+  );
+
+  // CLAMPED. An out-of-range value is honoured at the bound rather than
+  // rejected, exactly as `maxChars`/`loopCap` behave.
+  const clamped = await runWith(
+    { 'hooks.sessionStart.maxChars': 20000, 'hooks.sessionStart.maxLessons': 4000 },
+    'ml-clamped',
+  );
+  assert.equal(clamped.code, 0);
+  // DERIVED from the scopes actually seeded, not the 180 that assumed exactly
+  // two. The seed loop writes 90 to EVERY `readOrder` entry while the
+  // precondition only requires two, so a checkout that resolves a third (a temp
+  // dir inside a git repo picks up repo/branch) makes the pool 270, the ceiling
+  // clamps at 200, and a hardcoded 180 reds for a reason that has nothing to do
+  // with this feature. The read is also capped per scope, so the pool is bounded
+  // by that, not by the 90 seeded.
+  const pool = Math.min(SEEDED_PER_SCOPE, MAX_STORE_LIST_LIMIT) * scope.readOrder.length;
+  assert.equal(
+    lessonLines(clamped.stdout),
+    Math.min(MAX_SESSION_START_MAX_LESSONS, pool),
+    'clamped to the 200 ceiling, or to the seeded pool when that is smaller',
+  );
 });
 
 // ── UserPromptSubmit: the per-turn relevance pull, as a PROCESS ──────────────

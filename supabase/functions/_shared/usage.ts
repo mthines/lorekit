@@ -86,6 +86,14 @@ export function recordUsageEvent(
     p_correlation_id: params.correlationId ?? null,
     p_client:      params.client ?? null,
     p_scope:       params.scope ?? null,
+    // `kind`/`host` have been on `UsageEventParams` and on the writer RPC since
+    // 00056, and the MCP handler has been resolving and passing them all along —
+    // but they were never in this payload, so the RPC used its defaults and
+    // every `usage_events.kind` / `.host` in the table is NULL. The columns were
+    // dead the whole time, silently, because a telemetry write that drops a
+    // dimension looks exactly like a telemetry write that succeeds.
+    p_kind:        params.kind ?? null,
+    p_host:        params.host ?? null,
   }).then(() => { /* fire-and-forget */ }).catch(() => { /* swallow */ });
 
   const edgeRuntime = (globalThis as {

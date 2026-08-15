@@ -5619,6 +5619,87 @@ begin
 end;
 $$;
 
+-- ── 80. lorekit_match_text / _tags / _int — the shared predicates (00066) ────
+-- Three inlinable helpers replace eight hand-written `case` blocks per caller.
+-- The rule most likely to be lost in a copy — and the reason they exist — is
+-- that `nin` requires the value to be NON-NULL, so an unattributed row is
+-- EXCLUDED from a negated filter rather than silently dropped by NULL logic.
+--
+-- AC-1: a null filter is "not filtered" and matches everything.
+-- AC-2: `in` is membership; `nin` its negation.
+-- AC-3: a NULL column value satisfies neither `in` NOR `nin` — the load-bearing
+--       asymmetry. `x <> all(...)` alone is NULL for a null x, which reads as
+--       false, so "agent is not aw" would drop every unattributed memory.
+-- AC-4: the helpers are TOTAL — they return a boolean, never NULL, for every
+--       combination including a null value and a null mode.
+-- AC-5: tags modes — `all` is containment, `any` overlap, `none` the negation
+--       of `any` (never of `all`, which would admit "all but one").
+-- AC-6: the integer helper compares NUMERICALLY, so `007` matches PR 7 exactly
+--       as the list route does.
+do $$
+begin
+  -- AC-1: null filter matches everything, whatever the mode says.
+  assert lorekit_match_text('aw', null, 'in'),      'match_text AC-1: null filter must match';
+  assert lorekit_match_text('aw', null, 'nin'),     'match_text AC-1: null filter must match under nin';
+  assert lorekit_match_text(null, null, 'in'),      'match_text AC-1: null value + null filter must match';
+  assert lorekit_match_tags(array['a'], null, 'all'), 'match_tags AC-1: null filter must match';
+  assert lorekit_match_int(7, null, 'in'),          'match_int AC-1: null filter must match';
+
+  -- AC-2: membership and its negation.
+  assert lorekit_match_text('aw', array['aw','claude'], 'in'),
+    'match_text AC-2: a listed value must match under in';
+  assert not lorekit_match_text('other', array['aw'], 'in'),
+    'match_text AC-2: an unlisted value must not match under in';
+  assert lorekit_match_text('other', array['aw'], 'nin'),
+    'match_text AC-2: an unlisted value must match under nin';
+  assert not lorekit_match_text('aw', array['aw'], 'nin'),
+    'match_text AC-2: a listed value must not match under nin';
+
+  -- AC-3: THE asymmetry. A row with no value is excluded either way.
+  assert not lorekit_match_text(null, array['aw'], 'in'),
+    'match_text AC-3: a null value must not match a positive filter';
+  assert not lorekit_match_text(null, array['aw'], 'nin'),
+    'match_text AC-3: a null value must NOT satisfy a negated filter — that is the '
+    'null test the helper exists to centralise';
+  assert not lorekit_match_int(null, array[7], 'nin'),
+    'match_int AC-3: the integer helper must share the null rule';
+
+  -- AC-4: total — never NULL, so a caller can AND the result directly.
+  assert lorekit_match_text(null, array['aw'], 'in') is not null,
+    'match_text AC-4: must return a boolean, never NULL';
+  assert lorekit_match_text('aw', array['aw'], null) is not null,
+    'match_text AC-4: a null mode must default, not propagate NULL';
+  assert lorekit_match_text('aw', array['aw'], null),
+    'match_text AC-4: a null mode must default to `in`';
+  assert lorekit_match_tags(array['a'], array['a'], null),
+    'match_tags AC-4: a null mode must default to `any`';
+
+  -- AC-5: the three tag modes.
+  assert lorekit_match_tags(array['a','b'], array['a','b'], 'all'),
+    'match_tags AC-5: containment holds when every label is present';
+  assert not lorekit_match_tags(array['a'], array['a','b'], 'all'),
+    'match_tags AC-5: containment fails when one label is missing';
+  assert lorekit_match_tags(array['a'], array['a','b'], 'any'),
+    'match_tags AC-5: overlap holds on one shared label';
+  assert not lorekit_match_tags(array['a'], array['a','b'], 'none'),
+    'match_tags AC-5: `none` must reject a row sharing ANY label';
+  -- The discriminating case for `none` being NOT(any) rather than NOT(all):
+  -- a row carrying every named label must be rejected, and so must one
+  -- carrying just one of them (asserted above).
+  assert not lorekit_match_tags(array['a','b'], array['a','b'], 'none'),
+    'match_tags AC-5: `none` must reject a row carrying all named labels';
+  assert lorekit_match_tags(array['c'], array['a','b'], 'none'),
+    'match_tags AC-5: `none` must accept a row sharing no label';
+  assert lorekit_match_tags('{}'::text[], array['a'], 'none'),
+    'match_tags AC-5: a row with no labels shares none, so `none` accepts it';
+
+  -- AC-6: numeric comparison, so a zero-padded entry still matches.
+  assert lorekit_match_int(7, array[7], 'in'), 'match_int AC-6: 7 must match 7';
+  assert lorekit_match_int(7, (select array_agg(x::integer) from unnest(array['007']) as x), 'in'),
+    'match_int AC-6: `007` must resolve to 7 and match, exactly as GET /memories does';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

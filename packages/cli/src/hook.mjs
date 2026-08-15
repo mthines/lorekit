@@ -118,11 +118,16 @@ async function run(args) {
     const { scope: readScope, lessons, scopeCounts, applicable } = await fetchLessons(store, root, {
       loopCap: control.hooksSessionStartLoopCap,
       branchHint: control.hooksSessionStartBranchHint !== 'off',
+      maxLessons: control.hooksSessionStartMaxLessons,
     });
     emit(formatLessons(lessons, readScope, {
       instruction: sessionInstruction,
       mode: control.hooksSessionStart,
       maxChars: control.hooksSessionStartMaxChars,
+      // The SAME ceiling the fetch was given: the render bound and the fetch
+      // bound are one config key, and letting them diverge would either ask for
+      // lines that were never fetched or discard ones the read paid for.
+      maxLessons: control.hooksSessionStartMaxLessons,
       scopeCounts,
       applicable,
       // Record what this injection RENDERED, so the per-prompt hook treats it as
