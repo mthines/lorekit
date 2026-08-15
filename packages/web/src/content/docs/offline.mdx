@@ -41,7 +41,7 @@ npx @lorekit/cli install --no-hooks
 npx @lorekit/cli doctor
 ```
 
-This checks connectivity, token permissions, and scope health. In offline-only mode it confirms that the local MCP server is reachable and the store directory is writable.
+This checks connectivity, token permissions, and scope health, and names the resolved mode plus the config source that decided it. In offline-only mode it confirms that the local MCP server is reachable and the store directory is writable. If it reports `remote` here, that is the built-in default and expected until you pin the mode in Step 6.
 
 </TutorialStep>
 
@@ -99,9 +99,9 @@ Matches a literal, case-insensitive substring against the memory key or value. W
 
 </TutorialStep>
 
-<TutorialStep number={6} title="(Optional) Commit a project config file">
+<TutorialStep number={6} title="Pin the mode with a project config file">
 
-Drop a `.lorekit.json` at the repo root to set the default memory mode for everyone on the team — no per-machine env var needed:
+**This is what makes the setup offline.** The built-in default mode is `remote`, so until something selects `local`, the CLI, the hooks and `lorekit mcp` all resolve to the hosted path — the local MCP entry from Step 3 included. Drop a `.lorekit.json` at the repo root and every machine on the team is offline, with no per-machine env var:
 
 ```json
 // .lorekit.json  (safe to commit)
