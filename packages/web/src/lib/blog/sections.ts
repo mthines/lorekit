@@ -23,7 +23,7 @@ export const BLOG_SECTIONS: readonly BlogSection[] = [
     id: 'agent-memory-working-set',
     label: "Your agent's memory should scale from 6 lessons to 60,000",
     summary:
-      "The obvious answer to agent memory — inject the lessons — breaks the moment your store gets interesting. LoreKit spends a fixed slice of your context window on the highest-signal, de-duplicated lessons, so the read costs the same at 50 lessons or 50,000 — and always tells you what it left out. Here's how it scales, and the honest limits.",
+      "The obvious answer to agent memory — inject the lessons — breaks the moment your store gets interesting. LoreKit spends a fixed slice of your context window on the highest-signal, de-duplicated lessons, so the read costs the same at 6 lessons or 60,000 — and always tells you what it left out. Here's how it scales, and the honest limits.",
   },
   {
     id: 'self-healing-agents',

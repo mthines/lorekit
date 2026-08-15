@@ -1,6 +1,6 @@
 ---
 title: "Your agent's memory should scale from 6 lessons to 60,000"
-description: "The obvious answer to agent memory — inject the lessons — breaks the moment your store gets interesting. LoreKit spends a fixed slice of your context window on the highest-signal, de-duplicated lessons, so the read costs the same at 50 lessons or 50,000 — and always tells you what it left out. Here's how it scales, and the honest limits."
+description: "The obvious answer to agent memory — inject the lessons — breaks the moment your store gets interesting. LoreKit spends a fixed slice of your context window on the highest-signal, de-duplicated lessons, so the read costs the same at 6 lessons or 60,000 — and always tells you what it left out. Here's how it scales, and the honest limits."
 date: "2026-08-08"
 author: "Mads Thines"
 readingMinutes: 8
@@ -23,7 +23,7 @@ Start with the thing that scales: what bounds the block. It's a **character budg
 
 A budget does neither. Six lessons render six lines and stop. Sixty thousand render however many fit in 1500 characters, ranked best-first. The window cost is flat; the count adapts to the store.
 
-```text
+```js
 // packages/cli/src/control.mjs — two dials, both defaulting small.
 const DEFAULT_SESSION_START_MAX_CHARS   = 1500;  // characters — a small slice of the window
 const DEFAULT_SESSION_START_MAX_LESSONS = 40;    // lines — raise with hooks.sessionStart.maxLessons
@@ -81,7 +81,7 @@ LoreKit: 8 of 6,000 memories loaded · repo::mthines/lorekit — considerations,
 More lore: branch::…/feat/x 12 · repo::mthines/lorekit 4,180 · global 1,808 — memory.search or memory.read to drill in.
 ```
 
-(That block is illustrative — the shape `formatLessons` produces, not a single capture.) The counts are exact at any size: they come from the store's own inventory — a Postgres aggregate on the hosted side — not from the bounded read, so a scope holding four thousand lessons reports `4,180`, not a hand-wavy `25+`. A truncated read is never mistaken for a complete one: the agent can see there's more and reach for `memory.search` to pull the exact lesson it needs. The working set stays small; the store behind it can be enormous.
+(That block is illustrative — the shape `formatLessons` produces, not a single capture.) The counts are exact at any size: they come from the store's own inventory — a Postgres aggregate on the hosted side — not from the bounded read, so a scope holding four thousand lessons reports `4,180`, not a hand-wavy `25+` — and when the store can't enumerate (an unreachable remote, no inventory), it falls back to the approximate `+`-suffixed count rather than inventing a total. A truncated read is never mistaken for a complete one: the agent can see there's more and reach for `memory.search` to pull the exact lesson it needs. The working set stays small; the store behind it can be enormous.
 
 ## The second gear: relevance when you fail
 
