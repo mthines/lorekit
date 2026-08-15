@@ -183,19 +183,26 @@ test('no fixed lesson count cap survives in the SessionStart path', () => {
 // dependencies, so it cannot import the schema and compare at runtime. That is
 // the `limits.ts` mirroring pattern, and its standing risk is drift.
 //
-// Drift is not symmetrical here, which is why this guard reads the OTHER side
-// rather than restating our own literal (a `MAX_STORE_LIST_LIMIT <= 100` check
-// is tautological — it can only re-assert the number the constant declares two
-// lines away). If the ROUTE lowers its cap and we do not, every per-scope read
-// at a raised `maxLessons` becomes a 400; `fetchLessons` is best-effort, so it
-// skips the scope and the SessionStart block silently empties — the exact bug
-// this constant was introduced to fix. A test that cannot see the route's
-// number cannot catch that.
+// IT IS `ListMemoriesQuerySchema` THAT GOVERNS, not `MemoryListSchema`. The CLI
+// reaches the store over REST (`RemoteStore.list` → `GET /memories?limit=…`), so
+// the query schema is what rejects an over-cap request; `MemoryListSchema` is the
+// MCP *tool* schema, a different door into the same data. They happen to agree on
+// 100 today, which is exactly why reading the wrong one is easy to miss — the
+// guard would stay green while the route it actually calls moved underneath it.
+//
+// Drift is not symmetrical here, which is why this reads the OTHER side rather
+// than restating our own literal (a `MAX_STORE_LIST_LIMIT <= 100` check is
+// tautological — it can only re-assert the number the constant declares two lines
+// away). If the ROUTE lowers its cap and we do not, every per-scope read at a
+// raised `maxLessons` becomes a 400; `fetchLessons` is best-effort, so it skips
+// the scope and the SessionStart block silently empties — the exact bug this
+// constant was introduced to fix. A test that cannot see the route's number
+// cannot catch that.
 const SCHEMAS_MEMORY = join(
   dirname(fileURLToPath(import.meta.url)), '..', '..', 'schemas', 'src', 'memory.ts',
 );
 
-test('MAX_STORE_LIST_LIMIT matches the limit cap MemoryListSchema enforces', () => {
+test('MAX_STORE_LIST_LIMIT matches the limit cap GET /memories enforces', () => {
   const cliSrc = readFileSync(LESSONS_CORE, 'utf8');
   const schemaSrc = readFileSync(SCHEMAS_MEMORY, 'utf8');
 
@@ -204,15 +211,17 @@ test('MAX_STORE_LIST_LIMIT matches the limit cap MemoryListSchema enforces', () 
   const mirrored = cliSrc.match(/MAX_STORE_LIST_LIMIT\s*=\s*(\d+)/);
   assert.ok(mirrored, 'MAX_STORE_LIST_LIMIT is gone from core/lessons.mjs');
 
-  const route = schemaSrc.match(
-    /MemoryListSchema[\s\S]*?limit:\s*z\.number\(\)\.int\(\)\.min\(1\)\.max\((\d+)\)/,
-  );
-  assert.ok(route, "MemoryListSchema's limit shape changed — re-derive this guard");
+  // Scoped to the query schema's own body, so the `.max()` picked up is the one
+  // on ITS `limit` and not some later schema's that happens to parse first.
+  const queryBody = schemaSrc.match(/ListMemoriesQuerySchema = z\.object\(\{([\s\S]*?)\n\}\)/);
+  assert.ok(queryBody, 'ListMemoriesQuerySchema is gone — re-derive this guard');
+  const route = queryBody[1].match(/limit:\s*z\.coerce\.number\(\)\.int\(\)\.min\(1\)\.max\((\d+)\)/);
+  assert.ok(route, "ListMemoriesQuerySchema's limit shape changed — re-derive this guard");
 
   assert.equal(
     Number(mirrored[1]),
     Number(route[1]),
-    'the CLI mirrors a limit cap the route no longer enforces — an over-cap read '
-      + '400s, and the best-effort hook turns that into a silently empty block',
+    'the CLI mirrors a limit cap GET /memories no longer enforces — an over-cap '
+      + 'read 400s, and the best-effort hook turns that into a silently empty block',
   );
 });

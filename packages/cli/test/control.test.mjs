@@ -557,15 +557,16 @@ test('control hooks.sessionStart.loopCap: defaults to 2, clamps, and honours 0',
   assert.equal(normalizeSessionStartLoopCap(2.6), 3, 'rounds');
 });
 
-test('control hooks.sessionStart.maxLessons: defaults to 40 and clamps into 3–200', () => {
+test('control hooks.sessionStart.maxLessons: defaults to the read depth and clamps into 3–200', () => {
   const at = (cfg) => resolveControl({ repoConfig: cfg, connection: NO_CONN }).hooksSessionStartMaxLessons;
-  // The default IS the ceiling `core/lessons.mjs` has always applied, so an
-  // unconfigured workspace reads exactly the block it read before this key.
+  // The default is a DEPTH, not a size: `maxChars` runs out long before line
+  // 100, so this number's working job is to set the per-scope candidate fetch
+  // (see `scopeReadLimit`), which is where relevance actually comes from.
   assert.equal(
     resolveControl({ connection: NO_CONN }).hooksSessionStartMaxLessons,
     DEFAULT_SESSION_START_MAX_LESSONS,
   );
-  assert.equal(DEFAULT_SESSION_START_MAX_LESSONS, 40, 'the default preserves the historic ceiling');
+  assert.equal(DEFAULT_SESSION_START_MAX_LESSONS, 100, 'the default is the route-cap read depth');
   assert.equal(at({ 'hooks.sessionStart.maxLessons': 80 }), 80);
   assert.equal(at({ 'hooks.sessionStart.maxLessons': '80' }), 80, 'hand-edited JSON strings are read');
   assert.equal(

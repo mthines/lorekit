@@ -36,6 +36,7 @@ import { resolveDefaultTtlDays, matchesScopePrefix } from '../store/ttl.mjs';
 // by the no-store path in `hook.mjs`, so it needs its own fallback rather than
 // relying on every caller to pass one.
 import {
+  DEFAULT_SESSION_START_LOOP_CAP,
   DEFAULT_SESSION_START_MAX_CHARS,
   DEFAULT_SESSION_START_MAX_LESSONS,
   MAX_SESSION_START_MAX_LESSONS,
@@ -64,9 +65,10 @@ import { FRICTION_FAILURE, FRICTION_STUCK_LOOP } from './friction.mjs';
 // The LINE ceiling is the second bound, from the other direction. A budget alone
 // cannot stop a store of 500 one-word keys from rendering 400 lines inside it,
 // and a 400-line index is unreadable however few characters it costs. At its
-// default (`DEFAULT_SESSION_START_MAX_LESSONS`, 40) it sits well above any block
-// a sane `maxChars` can fill, so in normal operation it never binds — it exists
-// so the worst case is bounded, not to shape the common one.
+// default (`DEFAULT_SESSION_START_MAX_LESSONS`, 100) it sits well above any block
+// a default `maxChars` can fill, so in normal operation it never binds as a
+// RENDER bound — its working job is to set the depth of the fetch (see
+// `scopeReadLimit`), and bounding the worst-case line count is the backstop.
 //
 // It is CONFIGURABLE (`hooks.sessionStart.maxLessons`), which is why the two
 // numbers are separate: the config is a preference, and `HARD_LESSON_CEILING` is
@@ -76,7 +78,8 @@ import { FRICTION_FAILURE, FRICTION_STUCK_LOOP } from './friction.mjs';
 // that normaliser.
 const HARD_LESSON_CEILING = MAX_SESSION_START_MAX_LESSONS;
 
-// The line ceiling a caller actually gets: their `maxLessons` rounded down into
+// The line ceiling a caller actually gets: their `maxLessons` ROUNDED (not
+// truncated — `Math.round`, so 40.6 becomes 41) and clamped into
 // [1, HARD_LESSON_CEILING], or the default when the value is unusable. `1` and
 // not the config floor of 3 — this is the last-resort clamp on an already
 // normalised number, and a caller that deliberately asks for one line should get
@@ -106,13 +109,17 @@ function resolveLessonCeiling(maxLessons) {
 // can collapse to one bot's private bookkeeping (observed: 13 of 15 slots).
 // Ranking and MMR cannot fix that — the flood is real, varied, and high-scoring
 // — but it is not what a GENERAL coding session needs; those lessons are read
-// back by their own host through a tag filter. Two per bucket keeps the signal
-// (a loop's top couple of lessons still surface) without the flood; general,
-// non-loop lessons are never capped. Bounded, not shaped: on a store with no
-// loop lessons it never binds. This is the DEFAULT — a repo/user can override it
-// with `hooks.sessionStart.loopCap` (0 excludes loop buckets entirely), which
-// `fetchLessons` receives as its `loopCap` option.
-const SESSION_START_LOOP_CAP = 2;
+// back by their own host through a tag filter. One per bucket keeps the signal
+// (a loop's best lesson still surfaces) without the flood; general, non-loop
+// lessons are never capped. Bounded, not shaped: on a store with no loop lessons
+// it never binds. A repo/user can override it with `hooks.sessionStart.loopCap`
+// (0 excludes loop buckets entirely), which `fetchLessons` receives as its
+// `loopCap` option.
+//
+// The NUMBER lives in `control.mjs` with the rest of the config vocabulary, and
+// is imported rather than restated: a second literal here was a default that
+// could silently disagree with the one the resolver hands the hook, so a direct
+// caller and a real session would cap differently.
 
 // How many lessons ride along with the scope map in `map` mode. Small on
 // purpose: the point of that shape is the inventory, and a "map" that is mostly
@@ -168,37 +175,36 @@ export const SCOPE_READ_LIMIT = 25;
 // (4 × 100 = 400 candidates for a 200-line ceiling).
 export const MAX_STORE_LIST_LIMIT = 100;
 
-// The per-scope read cap for a given line ceiling.
+// The per-scope read cap for a given line ceiling: the ceiling, held between the
+// `SCOPE_READ_LIMIT` floor and the `MAX_STORE_LIST_LIMIT` transport cap.
 //
-// THE FETCH ONLY GROWS WHEN THE CEILING IS RAISED ABOVE ITS DEFAULT, and that
-// asymmetry is the whole point. 25 rows per scope is a tuned cost every session
-// start pays; the default ceiling of 40 is filled comfortably from the several
-// scopes in `readOrder` (4 × 25 = 100 candidates), so an unconfigured workspace
-// must not pay one extra row for a knob it never set — and it doesn't: at or
-// below the default this returns exactly the 25 it always did, so the fetch, the
-// ranking it feeds, and therefore the block itself are unchanged.
+// THE FETCH IS WHAT THIS DIAL IS ACTUALLY FOR. `maxChars` runs out around line 25
+// at the default budget, so the ceiling almost never decides how many lines are
+// RENDERED — it decides how many rows are FETCHED, and therefore how good the
+// ~25 that render are. At the default of 100 the ranker chooses from up to 100
+// rows per scope (400 across a four-scope hierarchy) rather than the newest 25.
+// On a store of any size that is the difference between ranking a slice of this
+// week's churn and ranking a real corpus.
 //
-// Above the default, the raise is the user's explicit statement that they want
-// more lines than the default fetch was sized for, and a ceiling the fetch cannot
-// feed would be a dial that visibly does nothing on a workspace whose lore lives
-// in one scope. So the read tracks it: `maxLessons: 80` reads 80 per scope. That
-// is the latency trade the config reference states — a bigger index costs a
-// bigger read, every session start.
+// It was previously gated to grow ONLY above the default, so an unconfigured
+// workspace kept a 25-row read. That gate died with the default it keyed on: once
+// the default IS the depth we want, `ceiling > DEFAULT` can never fire inside the
+// config's own 3–200 range, and the fetch would have been pinned at 25 forever
+// while the ceiling asked for 100 — a dial that silently could not be fed.
 //
-// LOWERING the ceiling deliberately does NOT shrink the fetch: fewer candidates
-// would mean the ranking picks its handful from a worse pool, which is a quality
-// regression dressed up as a saving. Monotone in `maxLessons`, so the cost never
-// falls as the ask grows. Pure.
+// LOWERING the ceiling still does NOT shrink the fetch below `SCOPE_READ_LIMIT`:
+// fewer candidates would mean the ranking picks its handful from a worse pool,
+// which is a quality regression dressed up as a saving. Monotone in `maxLessons`,
+// so the cost never falls as the ask grows.
 //
 // AND IT NEVER EXCEEDS WHAT THE TRANSPORT ACCEPTS (`MAX_STORE_LIST_LIMIT`). A
 // ceiling of 200 is a legal config value, but a 200-row `limit` is not a legal
-// request — so the growth stops at 100 and the remaining lines fill from the
-// other scopes in `readOrder`. Without this the dial's own top half silently
-// emptied the block on a remote store.
+// request — so the read stops at 100 and the remaining lines fill from the other
+// scopes in `readOrder`. Without this the dial's own top half silently emptied
+// the block on a remote store. Pure.
 export function scopeReadLimit(maxLessons) {
   const ceiling = resolveLessonCeiling(maxLessons);
-  const wanted = ceiling > DEFAULT_SESSION_START_MAX_LESSONS ? ceiling : SCOPE_READ_LIMIT;
-  return Math.min(wanted, MAX_STORE_LIST_LIMIT);
+  return Math.min(Math.max(ceiling, SCOPE_READ_LIMIT), MAX_STORE_LIST_LIMIT);
 }
 
 // `scope` may be injected instead of derived from `cwd` — a seam for callers
@@ -211,7 +217,7 @@ export async function fetchLessons(
   {
     now = Date.now(),
     scope: scopeOverride = null,
-    loopCap = SESSION_START_LOOP_CAP,
+    loopCap = DEFAULT_SESSION_START_LOOP_CAP,
     branchHint = true,
     maxLessons = DEFAULT_SESSION_START_MAX_LESSONS,
   } = {},
@@ -308,7 +314,7 @@ export async function fetchLessons(
 
   // AUDIENCE CAP before diversification: no single self-improvement loop may
   // take more than `loopCap` (the `hooks.sessionStart.loopCap` option, default
-  // `SESSION_START_LOOP_CAP`) of the injected slots, so a general
+  // `DEFAULT_SESSION_START_LOOP_CAP`) of the injected slots, so a general
   // session is not flooded with one bot's private `loop::<bucket>` bookkeeping.
   // General (non-loop) lessons pass through uncapped — they are what the cap
   // frees room for. Applied to the ranked list so the survivors are each

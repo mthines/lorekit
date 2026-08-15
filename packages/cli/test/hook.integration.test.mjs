@@ -10,7 +10,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MIN_SESSION_START_MAX_CHARS, MAX_SESSION_START_MAX_LESSONS } from '../src/control.mjs';
+import {
+  MIN_SESSION_START_MAX_CHARS,
+  MAX_SESSION_START_MAX_LESSONS,
+  DEFAULT_SESSION_START_MAX_LESSONS,
+} from '../src/control.mjs';
 import { MAX_STORE_LIST_LIMIT } from '../src/core/lessons.mjs';
 import { createTwoTierStore } from '../src/store/index.mjs';
 import { deriveScope } from '../src/scope.mjs';
@@ -409,25 +413,36 @@ test('SessionStart: hooks.sessionStart.maxLessons raises the injected line count
 
   // BASELINE. A budget big enough that only the LINE ceiling can bind, and no
   // `maxLessons` — so this pins the unconfigured behaviour exactly, and makes
-  // the second run's difference attributable to the one key that changed.
+  // the other runs' differences attributable to the one key that changed.
   const base = await runWith({ 'hooks.sessionStart.maxChars': 20000 }, 'ml-default');
   assert.equal(base.code, 0);
   assert.equal(
     lessonLines(base.stdout),
-    40,
-    'unconfigured: the historic 40-line ceiling binds, from a 25-row-per-scope read',
+    DEFAULT_SESSION_START_MAX_LESSONS,
+    'unconfigured: the default ceiling binds, fed by a read at the default depth',
   );
 
-  // RAISED. Same store, same budget, one extra key.
+  // LOWERED. Below the default, so the ceiling is what binds — and it binds at
+  // a number the fetch could always have supplied, which is what makes this the
+  // clean test of the RENDER bound.
+  const lowered = await runWith(
+    { 'hooks.sessionStart.maxChars': 20000, 'hooks.sessionStart.maxLessons': 12 },
+    'ml-lowered',
+  );
+  assert.equal(lowered.code, 0);
+  assert.equal(lessonLines(lowered.stdout), 12, 'lowered: the configured ceiling binds');
+
+  // RAISED past the default, which is only reachable if the per-scope fetch grew
+  // with it: two scopes at the default depth cannot offer 150 candidates.
   const raised = await runWith(
-    { 'hooks.sessionStart.maxChars': 20000, 'hooks.sessionStart.maxLessons': 80 },
+    { 'hooks.sessionStart.maxChars': 20000, 'hooks.sessionStart.maxLessons': 150 },
     'ml-raised',
   );
   assert.equal(raised.code, 0);
   assert.equal(
     lessonLines(raised.stdout),
-    80,
-    'raised: 80 lines is only reachable if the per-scope fetch grew past 25 as well',
+    Math.min(150, Math.min(SEEDED_PER_SCOPE, MAX_STORE_LIST_LIMIT) * scope.readOrder.length),
+    'raised: reachable only because the fetch grew to the route cap too',
   );
 
   // CLAMPED. An out-of-range value is honoured at the bound rather than

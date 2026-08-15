@@ -26,6 +26,8 @@ import {
   sessionRankOpts,
 } from '../src/core/lessons.mjs';
 import {
+  DEFAULT_SESSION_START_LOOP_CAP,
+  DEFAULT_SESSION_START_MAX_CHARS,
   DEFAULT_SESSION_START_MAX_LESSONS,
   MAX_SESSION_START_MAX_LESSONS,
 } from '../src/control.mjs';
@@ -47,6 +49,11 @@ import { codex } from '../src/adapters/codex.mjs';
 // appends to it. Frozen so that stays an enforced invariant rather than a
 // promise in a comment — `readOrder` too, since `Object.freeze` is shallow and
 // the array is the thing a test could reorder or append to.
+// The per-scope limit an UNCONFIGURED read uses. Not `SCOPE_READ_LIMIT` — that
+// is only the floor now; the default ceiling sets the depth, so a test that
+// wants "a scope saturated by the default read" has to seed this many.
+const DEFAULT_SCOPE_READ = scopeReadLimit();
+
 const REAL_SCOPE = (() => {
   const scope = deriveScope(process.cwd());
   Object.freeze(scope.readOrder);
@@ -332,9 +339,9 @@ test('fetchLessons keeps the most-specific value per key — same as resolvePrec
 test('fetchLessons caps each loop bucket in the injected set (wires capPerBucket)', async () => {
   // A scope flooded by two self-improvement loops plus two general lessons.
   // Without the cap the loops take every slot; with it each bucket contributes
-  // at most SESSION_START_LOOP_CAP (2) and the generals survive. This asserts
-  // the WIRING, not the pure helper: reverting `capped` → `ranked` in
-  // fetchLessons makes it fail (5 and 4 per bucket, not 2).
+  // at most `DEFAULT_SESSION_START_LOOP_CAP` and the generals survive. This
+  // asserts the WIRING, not the pure helper: reverting `capped` → `ranked` in
+  // fetchLessons makes it fail (5 and 4 per bucket, not the cap).
   const scope = REAL_SCOPE;
   const s = scope.readOrder[0];
   const at = '2026-08-01T00:00:00.000Z';
@@ -351,8 +358,9 @@ test('fetchLessons caps each loop bucket in the injected set (wires capPerBucket
   };
   const { lessons } = await fetchLessons(fakeStore(byScope), process.cwd());
   const withTag = (t) => lessons.filter((l) => (l.tags || []).includes(t)).length;
-  assert.equal(withTag('loop::review-outcomes'), 2, 'review-outcomes bucket capped at 2');
-  assert.equal(withTag('loop::impl-lessons'), 2, 'impl-lessons bucket capped at 2');
+  const cap = DEFAULT_SESSION_START_LOOP_CAP;
+  assert.equal(withTag('loop::review-outcomes'), cap, 'review-outcomes bucket capped');
+  assert.equal(withTag('loop::impl-lessons'), cap, 'impl-lessons bucket capped');
   const generals = lessons.filter((l) => !(l.tags || []).some((t) => String(t).startsWith('loop::'))).length;
   assert.equal(generals, 2, 'both general lessons survive the cap');
 });
@@ -492,15 +500,19 @@ test('fetchLessons has no fixed count cap — only the hard safety ceiling', asy
   assert.equal(lessons.length, 24, 'not truncated to a magic number');
   assert.equal(applicable, 24);
 
-  // Every scope read to its limit overruns the documented worst-case ceiling
-  // (40), so a huge store can never materialise an unbounded index.
+  // Every scope read to its limit overruns the documented worst-case ceiling,
+  // so a huge store can never materialise an unbounded index.
   const huge = Object.fromEntries(scope.readOrder.map((s) => [
     s,
-    Array.from({ length: 25 }, (_, i) => ({ scope: s, key: `${s}-h${i}`, value: 'v' })),
+    Array.from({ length: scopeReadLimit() }, (_, i) => ({ scope: s, key: `${s}-h${i}`, value: 'v' })),
   ]));
-  const seeded = 25 * scope.readOrder.length;
+  const seeded = scopeReadLimit() * scope.readOrder.length;
   const big = await fetchLessons(fakeStore(huge), process.cwd());
-  assert.equal(big.lessons.length, 40, 'hard ceiling still bounds the worst case');
+  assert.equal(
+    big.lessons.length,
+    Math.min(DEFAULT_SESSION_START_MAX_LESSONS, seeded),
+    'the default ceiling still bounds the worst case',
+  );
   assert.equal(big.applicable, seeded, 'but the applicable total is counted before it');
 });
 
@@ -527,17 +539,26 @@ function recordingStore(byScope, opts) {
   };
 }
 
-test('scopeReadLimit: the fetch grows ONLY above the default ceiling', () => {
-  // The load-bearing half. `Math.max(SCOPE_READ_LIMIT, maxLessons)` would pass
-  // every raised case below and still be wrong, because it lifts the DEFAULT
-  // fetch 25 → 40 for every workspace that never set the key. So the at-and-
-  // below-default cases are asserted as hard `25`s, not as "something small".
-  for (const quiet of [undefined, null, 0, -5, 3, 10, 25, 39, 40, 'lots', {}, NaN]) {
-    assert.equal(scopeReadLimit(quiet), SCOPE_READ_LIMIT, `${JSON.stringify(quiet)} keeps the default fetch`);
+test('scopeReadLimit: the fetch is the ceiling, floored at 25 and capped at the route limit', () => {
+  // THE DEFAULT IS THE DEPTH. `maxChars` runs out around line 25, so the ceiling
+  // is not really a size setting — it sets how many rows the ranker gets to
+  // choose from. An unconfigured caller must therefore read the FULL default
+  // depth, not the old 25: pinning this at `SCOPE_READ_LIMIT` would reinstate
+  // the shallow pool the default exists to widen.
+  for (const dflt of [undefined, null, 0, -5, 'lots', {}, NaN]) {
+    assert.equal(
+      scopeReadLimit(dflt),
+      Math.min(DEFAULT_SESSION_START_MAX_LESSONS, MAX_STORE_LIST_LIMIT),
+      `${JSON.stringify(dflt)} reads the default depth`,
+    );
   }
-  // Above the default the read tracks the ask, or the dial would be visibly
-  // inert on a workspace whose lore all lives in one scope.
-  assert.equal(scopeReadLimit(41), 41);
+
+  // A LOWERED ceiling never shrinks the fetch below the floor: ranking a handful
+  // of lines from a handful of candidates is a worse block, not a cheaper one.
+  for (const small of [3, 10, 25]) {
+    assert.equal(scopeReadLimit(small), SCOPE_READ_LIMIT, `${small} still reads the ${SCOPE_READ_LIMIT}-row floor`);
+  }
+  assert.equal(scopeReadLimit(41), 41, 'between the floor and the cap the read tracks the ask');
   assert.equal(scopeReadLimit(80), 80);
 
   // BUT NEVER PAST WHAT THE ROUTE ACCEPTS. `GET /memories` validates
@@ -560,9 +581,11 @@ test('scopeReadLimit: the fetch grows ONLY above the default ceiling', () => {
   }
 });
 
-test('fetchLessons: no maxLessons is byte-for-byte the pre-config read (25/scope, 40 lines)', async () => {
-  // The regression that matters most. An unconfigured workspace must not pay
-  // one extra row, nor see one extra line, for a knob it never set.
+test('fetchLessons: no maxLessons reads the full default depth', async () => {
+  // An unconfigured workspace gets the DEEP read, because the default ceiling is
+  // the depth setting. The old assertion here pinned 25/scope as "unchanged";
+  // that was correct while this was an opt-in dial and is exactly what the new
+  // default reverses.
   const scope = REAL_SCOPE;
   const huge = Object.fromEntries(scope.readOrder.map((s) => [
     s,
@@ -573,13 +596,15 @@ test('fetchLessons: no maxLessons is byte-for-byte the pre-config read (25/scope
 
   assert.deepEqual(
     store.limits.map((l) => l.limit),
-    scope.readOrder.map(() => SCOPE_READ_LIMIT),
-    'every scope is read at exactly 25 — the default fetch is unchanged',
+    scope.readOrder.map(() => scopeReadLimit()),
+    'every scope is read at the default depth',
   );
-  assert.equal(lessons.length, DEFAULT_SESSION_START_MAX_LESSONS, 'and the default ceiling still binds at 40');
+  // The ceiling still bounds the SET the fetch produced — `formatLessons` is what
+  // trims it to what `maxChars` affords.
+  assert.equal(lessons.length, DEFAULT_SESSION_START_MAX_LESSONS, 'the default ceiling bounds the fetched set');
 });
 
-test('fetchLessons: maxLessons raises BOTH the per-scope fetch and the injected count', async () => {
+test('fetchLessons: maxLessons moves BOTH the per-scope fetch and the injected count', async () => {
   const scope = REAL_SCOPE;
   const seeded = Object.fromEntries(scope.readOrder.map((s) => [
     s,
@@ -591,11 +616,14 @@ test('fetchLessons: maxLessons raises BOTH the per-scope fetch and the injected 
   assert.deepEqual(
     store.limits.map((l) => l.limit),
     scope.readOrder.map(() => 80),
-    'the candidate fetch tracks the raised ceiling',
+    'the candidate fetch tracks the configured ceiling',
   );
-  assert.ok(
-    lessons.length > DEFAULT_SESSION_START_MAX_LESSONS,
-    `the injected set exceeds the old fixed 40 (got ${lessons.length})`,
+  // 80 is BELOW the new default of 100, so this pins the dial moving the bounds
+  // at all — the old assertion compared against a fixed 40 that no longer exists.
+  assert.equal(
+    lessons.length,
+    80,
+    `the injected set is bounded by the configured ceiling (got ${lessons.length})`,
   );
   assert.equal(lessons.length, 80, 'and is bounded by the new ceiling, not by 40');
   // The `+` marker is a claim about THIS read's cap, so it has to move with it:
@@ -637,7 +665,11 @@ test('fetchLessons: an out-of-range maxLessons is clamped, and an unusable one f
   for (const unusable of [null, 0, -5, 'lots']) {
     const quiet = recordingStore(seeded);
     const got = await fetchLessons(quiet, process.cwd(), { maxLessons: unusable });
-    assert.equal(quiet.limits[0].limit, SCOPE_READ_LIMIT, `${JSON.stringify(unusable)} reads the default 25`);
+        assert.equal(
+        quiet.limits[0].limit,
+        scopeReadLimit(),
+        `${JSON.stringify(unusable)} reads the default depth`,
+      );
     assert.equal(
       got.lessons.length,
       DEFAULT_SESSION_START_MAX_LESSONS,
@@ -647,7 +679,9 @@ test('fetchLessons: an out-of-range maxLessons is clamped, and an unusable one f
 });
 
 test('formatLessons: maxLessons bounds the LINES, and maxChars still binds first when it is smaller', () => {
-  const lessons = Array.from({ length: 90 }, (_, i) => ({
+  // Seeded ABOVE the default ceiling, so the ceiling is what binds the
+  // unconfigured render rather than the fixture running out.
+  const lessons = Array.from({ length: DEFAULT_SESSION_START_MAX_LESSONS + 30 }, (_, i) => ({
     key: `k${i}`,
     value: `lesson number ${i}`,
     scope: 'repo::a/b',
@@ -657,19 +691,21 @@ test('formatLessons: maxLessons bounds the LINES, and maxChars still binds first
     ...opts,
   }).split('\n').filter((l) => l.startsWith('- ')).length;
 
-  // A raised ceiling is only reachable when the budget can pay for it — which
-  // is exactly why the two keys are documented as "whichever binds first".
-  const roomy = lines({ maxChars: 20000, maxLessons: 80 });
-  assert.ok(roomy > DEFAULT_SESSION_START_MAX_LESSONS, `renders past 40 (got ${roomy})`);
-  assert.equal(roomy, 80, 'up to the raised ceiling');
+  // The ceiling is only reachable when the budget can pay for it — which is
+  // exactly why the two keys are documented as "whichever binds first".
+  assert.equal(lines({ maxChars: 20000, maxLessons: 80 }), 80, 'up to the configured ceiling');
 
-  // Same ceiling, small budget: the budget wins. Raising `maxLessons` alone on
-  // a default `maxChars` changes nothing, and the docs say so.
+  // Same ceiling, small budget: the budget wins. This is the common case at the
+  // default `maxChars`, which is why the ceiling is really a fetch-depth dial.
   const tight = lines({ maxChars: 400, maxLessons: 80 });
-  assert.ok(tight < DEFAULT_SESSION_START_MAX_LESSONS, `the character budget binds first (got ${tight})`);
+  assert.ok(tight < 80, `the character budget binds first (got ${tight})`);
 
-  // Default ceiling, huge budget: 40, exactly as before this key existed.
-  assert.equal(lines({ maxChars: 20000 }), DEFAULT_SESSION_START_MAX_LESSONS, 'the unconfigured render is unchanged');
+  // Default ceiling, huge budget: the default ceiling, nothing larger.
+  assert.equal(
+    lines({ maxChars: 20000 }),
+    DEFAULT_SESSION_START_MAX_LESSONS,
+    'the unconfigured render is bounded by the default ceiling',
+  );
   // And an unusable ceiling degrades to that same default rather than to one line.
   for (const unusable of [null, 0, -5, 'lots']) {
     assert.equal(
@@ -1415,7 +1451,7 @@ test('sessionStart default — an unconfigured caller gets hybrid at the default
   // No mode, no maxChars — exactly what a repo with no `.lorekit.json` gets.
   const bare = formatLessons(lessons, BUDGET_SCOPE, { scopeCounts, applicable: 40 });
   const explicit = formatLessons(lessons, BUDGET_SCOPE, {
-    scopeCounts, applicable: 40, mode: 'hybrid', maxChars: 1500,
+    scopeCounts, applicable: 40, mode: 'hybrid', maxChars: DEFAULT_SESSION_START_MAX_CHARS,
   });
   assert.equal(bare, explicit, 'the defaults are the documented ones');
 
@@ -1462,7 +1498,7 @@ test('fetchLessons scope map — counts come from the winners, per scope, in rea
 // The `+` suffix is the only thing that stops a capped count from reading as an
 // exact total, and until now nothing drove it through `fetchLessons` — the true
 // case was hand-built straight into `renderScopeMap`, so the `raw.length >=
-// SCOPE_READ_LIMIT` detection in the fetch itself was never exercised. The
+// the per-scope read limit` detection in the fetch itself was never exercised. The
 // threshold is imported, not retyped: an assertion that restates a production
 // constant goes vacuous the moment the constant moves.
 test('fetchLessons scope map — a scope read to the cap reports a lower bound, not a total', async () => {
@@ -1473,20 +1509,20 @@ test('fetchLessons scope map — a scope read to the cap reports a lower bound, 
 
   const byScope = {
     // Exactly the cap: what a real store returns when there is more behind it.
-    [capped]: Array.from({ length: SCOPE_READ_LIMIT }, (_, i) => ({ key: `k${i}`, value: `v${i}` })),
+    [capped]: Array.from({ length: DEFAULT_SCOPE_READ }, (_, i) => ({ key: `k${i}`, value: `v${i}` })),
   };
   if (under) byScope[under] = [{ key: 'lonely', value: 'v' }];
 
   const { scopeCounts } = await fetchLessons(fakeStore(byScope), process.cwd());
   const rows = Object.fromEntries(scopeCounts.map((s) => [s.scope, s]));
 
-  assert.equal(rows[capped].count, SCOPE_READ_LIMIT, 'precondition — the capped scope really is saturated');
+  assert.equal(rows[capped].count, DEFAULT_SCOPE_READ, 'precondition — the capped scope really is saturated');
   assert.equal(rows[capped].atReadLimit, true, 'a read that came back full is a floor, not a total');
   if (under) assert.equal(rows[under].atReadLimit, false, 'a scope under the cap is an exact count');
 
   const map = renderScopeMap(scopeCounts);
   assert.ok(
-    map.includes(`${capped} ${SCOPE_READ_LIMIT}+`),
+    map.includes(`${capped} ${DEFAULT_SCOPE_READ}+`),
     'the capped scope renders with the + suffix',
   );
   if (under) assert.doesNotMatch(map, /lonely/, 'the map names scopes and counts, not keys');
@@ -1504,7 +1540,7 @@ function indexLines(text) {
 // ── the scope map's counts come from the store, not from the bounded read ────
 // The map tells a reader how much lore sits in each scope that this injection
 // did not show them, so the numbers have to be the store's real totals. Derived
-// from the bounded read they could only ever be `SCOPE_READ_LIMIT+`, which is a
+// from the bounded read they could only ever be `DEFAULT_SCOPE_READ+`, which is a
 // floor rather than a quantity.
 
 // A store that can enumerate. `inventory` is returned verbatim so a test can
@@ -1657,7 +1693,7 @@ test('fetchLessons scope map — falls back to the derived counts when enumerati
   const scope = deriveScope(process.cwd());
   const [capped] = scope.readOrder;
   const byScope = {
-    [capped]: Array.from({ length: SCOPE_READ_LIMIT }, (_, i) => ({ key: `k${i}`, value: `v${i}` })),
+    [capped]: Array.from({ length: DEFAULT_SCOPE_READ }, (_, i) => ({ key: `k${i}`, value: `v${i}` })),
   };
 
   const failures = [
@@ -1668,7 +1704,7 @@ test('fetchLessons scope map — falls back to the derived counts when enumerati
   for (const [label, inventory] of failures) {
     const { scopeCounts } = await fetchLessons(enumerableStore(byScope, inventory), process.cwd());
     const row = scopeCounts.find((s) => s.scope === capped);
-    assert.equal(row.count, SCOPE_READ_LIMIT, `${label}: falls back to the bounded count`);
+    assert.equal(row.count, DEFAULT_SCOPE_READ, `${label}: falls back to the bounded count`);
     assert.equal(row.atReadLimit, true, `${label}: and says so with the + suffix`);
   }
 
@@ -1696,7 +1732,7 @@ test('fetchLessons scope map — a successful enumeration that omits a scope fal
   const broad = scope.readOrder[scope.readOrder.length - 1];
 
   const byScope = {
-    [narrow]: Array.from({ length: SCOPE_READ_LIMIT }, (_, i) => ({ key: `n${i}`, value: 'v' })),
+    [narrow]: Array.from({ length: DEFAULT_SCOPE_READ }, (_, i) => ({ key: `n${i}`, value: 'v' })),
     [broad]: [{ key: 'b1', value: 'v' }, { key: 'b2', value: 'v' }],
   };
 
@@ -1711,7 +1747,7 @@ test('fetchLessons scope map — a successful enumeration that omits a scope fal
   assert.equal(rows[broad].count, 9, 'the enumerated scope keeps its exact count');
   assert.equal(rows[broad].atReadLimit, false);
   assert.ok(rows[narrow], 'the omitted scope is not silently dropped from the map');
-  assert.equal(rows[narrow].count, SCOPE_READ_LIMIT, 'it falls back to the derived count');
+  assert.equal(rows[narrow].count, DEFAULT_SCOPE_READ, 'it falls back to the derived count');
   assert.equal(rows[narrow].atReadLimit, true, 'and the derived count still admits it is a floor');
   assert.deepEqual(scopeCounts.map((s) => s.scope), [narrow, broad], 'still ordered by the hierarchy');
 });

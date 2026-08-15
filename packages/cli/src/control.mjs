@@ -9,9 +9,9 @@
 //   hooks.disabled  — array of hook event names to suppress (e.g. ["Stop"])
 //   hooks.stop      — Stop-hook gating ("friction" default | "always" | "off")
 //   hooks.sessionStart          — injected-block shape ("hybrid" default | "index" | "map")
-//   hooks.sessionStart.maxChars — character budget for that block (default 1500)
-//   hooks.sessionStart.loopCap  — max lessons per self-improvement loop bucket (default 2; 0 excludes them)
-//   hooks.sessionStart.maxLessons — max LINES that block may hold (default 40, range 3–200)
+//   hooks.sessionStart.maxChars — character budget for that block (default 3000)
+//   hooks.sessionStart.loopCap  — max lessons per self-improvement loop bucket (default 1; 0 excludes them)
+//   hooks.sessionStart.maxLessons — max LINES that block may hold (default 100, range 3–200)
 //   hooks.sessionStart.branchHint — nudge the read toward the git branch topic ("on" default | "off")
 //   hooks.userPrompt — the per-turn relevance pull ("on" default | "off")
 //   hooks.adapter   — explicit adapter override ("claude" | "cursor" | "codex")
@@ -104,16 +104,19 @@ export function normalizeSessionStartMode(v) {
 }
 
 // The default SessionStart character budget, and the bounds a configured one is
-// held to. ~1500 chars is roughly 375 tokens on the 4-chars-per-token heuristic
-// — enough for a dozen index lines plus the frame, and small enough that it
-// stays a footnote in a context window rather than a section of it.
+// held to. ~3000 chars is roughly 750 tokens on the 4-chars-per-token heuristic
+// — around 25 index lines plus the frame. That is the number that decides how
+// much of the agent's window this costs, so it is the one tuned for value per
+// token rather than for smallness: a dozen lines (the old 1500) routinely showed
+// a store's newest churn and nothing that had been re-learned, which reads as
+// noise and trains the reader to skim the block.
 //
 // The floor is what one header plus one lesson line needs; below it the block
 // would be a header and nothing else, which is worse than not firing. The
 // ceiling is a backstop against a typo'd `"maxChars": 1500000` turning every
 // session start into a wall of text — the hard lesson ceiling in
 // `core/lessons.mjs` bounds it a second time, from the other direction.
-export const DEFAULT_SESSION_START_MAX_CHARS = 1500;
+export const DEFAULT_SESSION_START_MAX_CHARS = 3000;
 export const MIN_SESSION_START_MAX_CHARS = 200;
 export const MAX_SESSION_START_MAX_CHARS = 20000;
 
@@ -133,7 +136,7 @@ export const HOOK_INSTRUCTION_EVENTS = [
 // not a usable number at all (absent, a bare string, NaN). Total: the caller
 // substitutes the default for null. Out-of-range CLAMPS rather than rejecting —
 // a user who wrote `"maxChars": 50` wants a small block, and honouring the floor
-// is closer to that intent than silently restoring the 1500 default.
+// is closer to that intent than silently restoring the default.
 export function normalizeSessionStartMaxChars(v) {
   const n = firstNumber(v);
   if (n === null) return null;
@@ -144,14 +147,19 @@ export function normalizeSessionStartMaxChars(v) {
 }
 
 // The default per-loop-bucket cap for the SessionStart read, and the bounds a
-// configured one is held to. 2 keeps each self-improvement loop's top couple of
-// lessons without letting one bucket flood a general session; 0 is a meaningful
-// setting — exclude loop buckets entirely and read only general codebase lessons.
+// configured one is held to. ONE lesson per bucket: a self-improvement loop's
+// single best lesson still surfaces, but its private bookkeeping cannot take a
+// second slot from the codebase lore a general session actually needs. It was 2,
+// which on a store with several active loops still spent a visible share of the
+// block on bot ledgers — the measured case was 4 of 7 rendered lines. Loops read
+// their own lessons back through a tag filter, so a slot spent here is a slot
+// spent on the wrong audience. `0` is a meaningful setting — exclude loop buckets
+// entirely and read only general codebase lessons.
 // The ceiling is a generous backstop against a typo'd cap, not a shared constant:
 // `core/lessons.mjs` bounds the whole read at its own hard lesson ceiling
 // downstream, so any loopCap at or above that never binds regardless of the exact
 // number here — they are deliberately independent, not kept in lockstep.
-export const DEFAULT_SESSION_START_LOOP_CAP = 2;
+export const DEFAULT_SESSION_START_LOOP_CAP = 1;
 export const MIN_SESSION_START_LOOP_CAP = 0;
 export const MAX_SESSION_START_LOOP_CAP = 40;
 
@@ -169,27 +177,35 @@ export function normalizeSessionStartLoopCap(v) {
 }
 
 // The default SessionStart LINE ceiling, and the bounds a configured one is held
-// to. 40 is exactly the hard ceiling `core/lessons.mjs` has always applied, so an
-// unconfigured workspace gets byte-for-byte the block it got before this key
-// existed.
+// to.
 //
 // TWO BOUNDS, TWO QUESTIONS. `maxChars` bounds what the block COSTS; this bounds
 // what it LOOKS LIKE. A budget alone cannot stop a store of 500 one-word keys
 // from rendering 400 lines inside it, and a 400-line index is unreadable however
-// few characters it costs. Whichever binds first wins, so raising this alone
-// changes nothing on a store whose lines are long — `maxChars` has to come up
-// with it.
+// few characters it costs. Whichever binds first wins.
+//
+// AND IN PRACTICE THAT IS ALWAYS `maxChars`, WHICH IS THE POINT OF THIS NUMBER.
+// At the default budget a block runs out of characters around line 25, so a
+// ceiling of 100 does not render 100 lines — it is not a size setting at all. It
+// is the DEPTH OF THE READ: `scopeReadLimit` derives the per-scope fetch from it,
+// so 100 means the ranker chooses its ~25 rendered lines from up to 100 rows per
+// scope (400 across a four-scope hierarchy) instead of from 25 (100 across four).
+//
+// That is where relevance actually comes from. The old default of 40 read the
+// newest 25 rows per scope, so on a store of any size the candidate pool was the
+// most RECENT few percent — a lesson re-learned five times last quarter could not
+// be ranked because it was never fetched. Widening the pool costs one bigger read
+// per session start and changes what the same ~25 lines are chosen from, which is
+// a far better trade than rendering more lines from a shallow pool.
 //
 // The floor is three: below that the block stops being an index and becomes a
-// sample, and the `map` shape already shows three. The ceiling is a backstop
-// against a typo'd `"maxLessons": 4000` — `core/lessons.mjs` clamps to the same
-// number a second time, from the other direction, so a caller passing the option
-// directly is bounded too.
-//
-// KEPT SMALL ON PURPOSE. The injected set is meant to be a working set, with
-// `memory.search` for the tail; this is an opt-in dial for a reader who wants a
-// wider index, not an invitation to raise the default.
-export const DEFAULT_SESSION_START_MAX_LESSONS = 40;
+// sample, and the `map` shape already shows three. The ceiling is 200 because
+// that is roughly where `MAX_SESSION_START_MAX_CHARS` runs out at ~120 chars a
+// line — past it the ceiling could never bind, so a higher number would be inert
+// rather than generous. `core/lessons.mjs` clamps to the same 200 a second time,
+// from the other direction, so a caller passing the option directly is bounded
+// too, and `MAX_STORE_LIST_LIMIT` caps the derived READ at what the route accepts.
+export const DEFAULT_SESSION_START_MAX_LESSONS = 100;
 export const MIN_SESSION_START_MAX_LESSONS = 3;
 export const MAX_SESSION_START_MAX_LESSONS = 200;
 
