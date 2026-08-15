@@ -351,11 +351,14 @@ class RemoteStore {
   }
 
   // Upsert one entry, as close to verbatim as the hosted write allows. See the
-  // fidelity table above for exactly which fields survive. Always returns the
-  // full `{ ok, error, httpStatus, retryAfter, networkError }` envelope `write`
-  // returns — a refusal fills the transport fields with null rather than
-  // omitting them, so a caller reading `retryAfter` never gets `undefined` from
-  // one branch and `null` from another — plus `unsupported` on a refusal.
+  // fidelity table above for exactly which fields survive.
+  //
+  // EVERY branch answers with the SAME key set — `write`'s
+  // `{ ok, error, httpStatus, retryAfter, networkError, unusable }` plus
+  // `unsupported` (the refusal reason, else null) and `ttlClamped` (whether the
+  // entry landed with a shortened life). A refusal fills the transport fields
+  // with null rather than omitting them, so a caller reading any one key never
+  // gets a value from one branch and `undefined` from another.
   async putEntry(entry = {}, { now = new Date() } = {}) {
     const refuse = (unsupported, message) => ({
       ok: false,
