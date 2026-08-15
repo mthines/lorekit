@@ -96,7 +96,7 @@ https://lorekit.io/lore?q=%22flaky%20test%22&owner=%22personal%22
 # global scope, filtered to the "perf" and "ci" labels
 https://lorekit.io/lore?scope=%22global%22&tags=%5B%22perf%22%2C%22ci%22%5D
 
-# global scope, time view, including archived
+# global scope, including archived memories
 https://lorekit.io/lore?scope=%22global%22&archived=true
 ```
 
@@ -116,7 +116,7 @@ lorekit url --q "flaky test" --owner personal  # search + ownership filter
 lorekit link global::prefer-guards --json      # { url, surface, base, params }
 ```
 
-With no arguments it links to the current directory's most-specific scope — "share what I'm looking at". A single argument is treated as a scope (a valid `repo::…` / `branch::…::…` scope is a scope, not a memory key); the `scope::key` shorthand — or a scope **and** a key as two arguments, or `--scope` / `--key` — links to that memory's detail sheet. `show`, `write` and `link` all address a memory this same way. The filter flags mirror the Explorer: `--q`, `--owner`, `--tags`, `--range` (or `--from` / `--to`), `--view`, `--archived`.
+With no arguments it links to the current directory's most-specific scope — "share what I'm looking at". A single argument is treated as a scope (a valid `repo::…` / `branch::…::…` scope is a scope, not a memory key); the `scope::key` shorthand — or a scope **and** a key as two arguments, or `--scope` / `--key` — links to that memory's detail sheet. `show`, `write` and `link` all address a memory this same way. The filter flags mirror the Explorer: `--q`, `--owner`, `--tags`, `--range` (or `--from` / `--to`), `--archived`.
 
 **The `--link` flag** short-circuits a read command to the deep link for the view you just ran — same builder, no query:
 

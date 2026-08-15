@@ -88,7 +88,7 @@ ${c.bold('Commands')}
   link (url)  Print a shareable dashboard deep-link URL for the current context,
               a scope, or a specific lesson (opens its detail sheet). No args
               links to the cwd's most-specific scope. Filter flags mirror the
-              Explorer (--q / --owner / --tags / --range / --archived / --view);
+              Explorer (--q / --owner / --tags / --range / --archived);
               --base or LOREKIT_APP_URL override the dashboard host. --json. Pipe it:
               lorekit link | pbcopy.
   bootstrap   Apply the BYOD schema to a user-supplied Supabase database.
@@ -591,7 +591,6 @@ ${c.bold('Options')}
       --from <date>       Range start (shorthand for --range)
       --to <date>         Range end (shorthand for --range)
       --archived          Include archived memories
-      --view <mode>       Explorer view: scope | time
       --base <url>        Dashboard base URL (else LOREKIT_APP_URL, default https://lorekit.io)
       --json              Machine-readable { url, surface, base, params }
 
@@ -658,7 +657,7 @@ const KNOWN_FLAGS = [
   'from', 'to', 'apply', 'yes', 'hooks', 'no-hooks', 'mcp-json', 'force', 'deep', 'adapter',
   'event', 'json', 'scope', 'key', 'threshold', 'help', 'version', 'telemetry',
   'value', 'tags', 'source-agent', 'trigger', 'kind', 'host', 'ttl-days', 'clear-ttl', 'org', 'remote', 'local',
-  'link', 'base', 'q', 'owner', 'range', 'view', 'archived',
+  'link', 'base', 'q', 'owner', 'range', 'archived',
   'origin-repo', 'origin-branch', 'origin-commit', 'origin-pr', 'no-origin',
   // Scale-aware survey flags
   'all', 'max', 'since', 'until', 'key-prefix', 'cluster-by-key',
