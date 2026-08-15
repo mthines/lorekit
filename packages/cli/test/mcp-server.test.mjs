@@ -591,3 +591,22 @@ describe('memory.list taxonomy filter respects the remote limit cap and cursor c
     assert.equal(r.nextCursor, 'C');
   });
 });
+
+describe('memory.list ignores an inbound cursor when a taxonomy filter is set', () => {
+  test('does not forward cursor to the store', async () => {
+    // A cursor is a keyset position in the UNFILTERED order; honouring it inside
+    // a client-side-filtered read resumes mid-way through a sequence this call
+    // never produced. The tool schema promises it is ignored.
+    const seen = {};
+    const store = { list: async (args) => { Object.assign(seen, args); return { ok: true, entries: [] }; } };
+    await listWithFilters(store, { scope: 'global', host: 'reviewer', cursor: 'ABC' });
+    assert.equal(seen.cursor, undefined);
+  });
+
+  test('still forwards cursor on an unfiltered read', async () => {
+    const seen = {};
+    const store = { list: async (args) => { Object.assign(seen, args); return { ok: true, entries: [] }; } };
+    await listWithFilters(store, { scope: 'global', cursor: 'ABC' });
+    assert.equal(seen.cursor, 'ABC');
+  });
+});

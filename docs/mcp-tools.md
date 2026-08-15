@@ -186,6 +186,14 @@ scores the bucket you asked for rather than whatever filled the 200-row candidat
 { "scope": "repo::mthines/lorekit", "kind": "lesson", "host": "reviewer", "limit": 20 }
 ```
 
+**Pagination caveat on the `lorekit mcp` stdio server.** The hosted edge function narrows kind/host
+in SQL, so cursor pagination behaves normally there. The local stdio server cannot: `GET /memories`
+is its remote backend and the local file store has no kind/host columns, so it fetches the largest
+page the route allows (100), filters client-side, and slices. A taxonomy-filtered list is therefore
+a **single bounded page** on that surface — an inbound `cursor` is ignored and `nextCursor` is
+always `null`, because no server-side keyset describes "the next filtered row". `hasMore` still
+reports whether the page was cut; raise `limit` rather than paginating.
+
 ### Discovery reads: `view: "summary"`
 
 A `full` list returns every body. At a ~1.9 KB median lesson that is ~95 KB of caller context for a

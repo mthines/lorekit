@@ -309,19 +309,20 @@ export function projectListView(result, view) {
  * them all away, and answers with zero entries — a silently empty read that
  * looks like "no reviewer lessons exist".
  *
- * Over-fetching cannot be exact (only the server knows the true distribution),
- * so this is a heuristic with a hard ceiling. When the widened fetch still comes
- * back saturated, the result carries `hasMore: true` so the caller knows the
- * page was cut rather than exhausted.
+ * Over-fetching cannot be exact — only the server knows the true distribution —
+ * so the widened fetch is simply the largest page the backend will serve, and
+ * when it still comes back saturated the result carries `hasMore: true` so the
+ * caller knows the page was cut rather than exhausted.
  *
- * The ceiling is **100** and is not a tuning choice: `ListMemoriesQuerySchema`
- * caps `GET /memories`'s `limit` at 100, so a widened fetch above that is a 400
- * from the remote store — which would break `kind`/`host` for every request
- * above `limit: 10` rather than merely under-filling it.
+ * That maximum is **100**, and it is the route's constraint rather than a
+ * tuning choice: `ListMemoriesQuerySchema` caps `GET /memories`'s `limit` at
+ * 100, so asking for more is a 400 from the remote store — which would break
+ * `kind`/`host` for every request above `limit: 10` rather than merely
+ * under-filling it. Since the floor a scaled over-fetch would want is already
+ * at or above that cap for every supported `limit`, there is nothing to scale:
+ * one constant is the honest expression of the rule.
  */
-const TAXONOMY_OVERFETCH_FACTOR = 10;
-const TAXONOMY_OVERFETCH_MIN = 100;
-const TAXONOMY_OVERFETCH_MAX = 100;
+const TAXONOMY_FETCH_LIMIT = 100;
 
 /**
  * The full `memory.list` post-processing chain: validate → fetch → filter →
@@ -337,11 +338,14 @@ export async function listWithFilters(store, a = {}) {
   if (!filtering) return projectListView(await store.list(a), a.view);
 
   const requested = a.limit ?? 50;
-  const widened = Math.min(
-    TAXONOMY_OVERFETCH_MAX,
-    Math.max(TAXONOMY_OVERFETCH_MIN, requested * TAXONOMY_OVERFETCH_FACTOR),
-  );
-  const raw = await store.list({ ...a, limit: widened });
+  const widened = TAXONOMY_FETCH_LIMIT;
+  // Drop `cursor` as well as widening `limit`. A cursor is a keyset position in
+  // the UNFILTERED row order; resuming a client-side-filtered read from one
+  // would start mid-way through a sequence this call never produced. The tool
+  // schema says `cursor` is ignored when `kind`/`host` is set, and this is what
+  // makes that true rather than merely aspirational.
+  const { cursor: _ignoredCursor, ...rest } = a;
+  const raw = await store.list({ ...rest, limit: widened });
   const filtered = filterListTaxonomy(raw, a);
   if (!filtered?.ok || !Array.isArray(filtered.entries)) return projectListView(filtered, a.view);
 
