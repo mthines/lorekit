@@ -98,7 +98,7 @@ I'll be honest about *why* those three: the matcher is lexical, not semantic. Th
 
 ## Built for the loops that never stop
 
-The heaviest writers to a real store aren't people — they're loops. LoreKit's own `aw` agent (plan → build → test → PR) and its `pr-reviewer` run this loop on every task: they read their ranked `loop::aw-lessons` and `loop::review-outcomes` before they act, and write a new lesson the moment something bites. Over a busy month that's thousands of entries — most of them one bot's private bookkeeping.
+The heaviest writers to a real store aren't people — they're loops. LoreKit's own `aw` agent (plan → build → test → PR) and its `pr-reviewer` run this loop on every task: they read their ranked `loop::aw-lessons` and `loop::reviewer-lessons` before they act, and write a new lesson the moment something bites. Over a busy month that's thousands of entries — most of them one bot's private bookkeeping.
 
 Those thousands of entries are exactly what the ranking and the per-bucket cap are for. When a loop reads its *own* bucket by tag it gets everything, uncapped — that's its working memory. When *you* open a coding session, the same store's read ranks across all of it and caps each `loop::` bucket at two, so your window fills with the general, human-written lessons a task needs, not a review bot's iteration log. One store, two very different reads — and neither starves the other.
 
@@ -135,7 +135,7 @@ Two dials govern the read, and they're the same whether your store holds six les
 }
 ```
 
-`maxChars` is the character budget (200–20,000); `maxLessons` is the line count (default 40, up to 200). Whichever binds first wins, so you raise both to read more. The honest trade: a bigger `maxLessons` reads more candidates from every scope at session start, so you're spending a little startup latency for a wider working set — the knob for a big monorepo where you want more context up front. Leave it and the default stays lean. `loopCap: 0` drops the self-improvement `loop::` buckets entirely and reads only human-written lessons.
+`maxChars` is the character budget (200–20,000); `maxLessons` is how many ranked lines the block may render (default 40). Whichever binds first wins, so you raise both to read more — and raising `maxLessons` is cheap: it shows more of the winners the read already ranked, not more that it fetches, so the per-scope read stays bounded and your session start doesn't slow down as you turn it up. It's the knob for a big monorepo where you want more context up front; leave it and the default stays lean. `loopCap: 0` drops the self-improvement `loop::` buckets entirely and reads only human-written lessons.
 
 And past whatever slice you pick, the rest of the store is one `memory.search` away. You tune the working set, not the ceiling on what your agent can reach.
 
@@ -143,7 +143,7 @@ And past whatever slice you pick, the rest of the store is one `memory.search` a
 
 Let me be straight about the edges, because scale has them.
 
-- **Ranking sees each scope's newest window, not all of it.** A scope is read up to its most recent window (25 by default, wider when you raise `maxLessons`) before ranking — so on a huge scope, an old-but-high-salience lesson outside that window won't surface in the session-start block. It's still there, and `memory.search` reaches it by content; the opening read is bounded on purpose so a big store never slows your session start.
+- **Ranking sees each scope's newest window, not all of it.** A scope is read up to its most recent 25 lessons — a fixed bound, so a big store never slows your session start — and ranked within that window, so an old-but-high-salience lesson past it won't surface in the session-start block. It's still there, and `memory.search` reaches it by content; the opening read is bounded on purpose so a big store never slows your session start.
 - **The ranking is lexical, not semantic — no embeddings on the read path.** Recurrence, recency, outcome, word-overlap with your branch. There *is* an embedding pipeline in the repo now, but it's dormant, off by default, and semantic search isn't built — so a genuine paraphrase can still miss. The read stays deterministic: no vector index, no re-embedding bill, no drift.
 - **"Relevant" means your branch name, not your task.** A coarse hint — a well-named branch helps, a branch called `wip` does nothing.
 - **The exact scope map isn't free on a local store.** Counting every scope means walking the local files; the hosted store aggregates in Postgres instead. On a large local-only store that walk is the one place size shows up — the fix is the hosted store, not a smaller count.

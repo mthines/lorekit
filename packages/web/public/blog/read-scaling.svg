@@ -27,12 +27,13 @@
   <rect x="472" y="40" width="220" height="128" rx="10" fill="#2a2010" stroke="#f5a623"/>
   <text x="484" y="60" class="k" font-size="11.5" font-weight="700" fill="#f5a623">6 of 6 loaded</text>
   <line x1="484" y1="68" x2="680" y2="68" stroke="#f5a623" stroke-opacity="0.22"/>
-  <text x="484" y="84" class="k" font-size="10" fill="#7ce6bf">- supabase-rls::empty-array…</text>
-  <text x="484" y="99" class="k" font-size="10" fill="#7ce6bf">- typecheck-before-done</text>
-  <text x="484" y="114" class="k" font-size="10" fill="#7ce6bf">- deno-edge::no-bare-imports</text>
-  <text x="484" y="129" class="k" font-size="10" fill="#aeb9ff">- loop::review-outcomes::pr12…</text>
-  <text x="484" y="144" class="k" font-size="10" fill="#7ce6bf">- rls-write::filter-user-id</text>
-  <text x="484" y="159" class="lbl" font-size="10">no map — nothing left to point at</text>
+  <text x="484" y="82" class="k" font-size="10" fill="#7ce6bf">- supabase-rls::empty-array…</text>
+  <text x="484" y="95" class="k" font-size="10" fill="#7ce6bf">- typecheck-before-done</text>
+  <text x="484" y="108" class="k" font-size="10" fill="#7ce6bf">- deno-edge::no-bare-imports</text>
+  <text x="484" y="121" class="k" font-size="10" fill="#aeb9ff">- loop::reviewer-lessons::pr12…</text>
+  <text x="484" y="134" class="k" font-size="10" fill="#7ce6bf">- rls-write::filter-user-id</text>
+  <text x="484" y="147" class="k" font-size="10" fill="#7ce6bf">- branch-name-seeds-the-read</text>
+  <text x="484" y="160" class="lbl" font-size="10">no map — nothing left to point at</text>
 
   <text x="30" y="278" class="lbl" font-size="12" fill="#f5a623">B · LARGE — 60,000 lessons</text>
   <rect x="30" y="292" width="150" height="120" rx="10" fill="#13151a" stroke="#2a2d38"/>
