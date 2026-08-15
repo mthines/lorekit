@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.48.0](https://github.com/mthines/lorekit/compare/cli-v1.47.0...cli-v1.48.0) (2026-08-15)
+
+
+### Features
+
+* **mcp:** add kind/host filters and a summary view to memory.list ([fb421fa](https://github.com/mthines/lorekit/commit/fb421faa39d1e7bca13ceb1966fccc8dae453d2b))
+
 ## [1.47.0](https://github.com/mthines/lorekit/compare/cli-v1.46.0...cli-v1.47.0) (2026-08-15)
 
 
