@@ -12,20 +12,22 @@
  * sit together (written, then read) so like compares with like, then the
  * breadth card, then the one that is a warning rather than a measurement.
  *
- * ## The two things it cannot scope, and says so
+ * ## What follows the filter, and what cannot
  *
+ * **Written and Scopes follow the FULL selection** — scope + range + every
+ * dimension filter. `ExplorerStats` sends the filter bar to `/activity` via
+ * `filtersToQueryParams` (the same translation the list uses), and migration
+ * 00062 applies it in the RPC, so these two cards count exactly the list's set.
+ * There is no disclaimer, because there is nothing to disclaim.
+ *
+ * Two cards can only go part-way, and each says so in its own caption/tooltip:
+ *
+ * - **Read follows scope + range, not the filter bar.** `usage_events` records a
+ *   read's scope (00058) but not the tags/repo of the memories it returned, so a
+ *   dimension filter is unanswerable for reads — the Read card stays scope-level.
  * - **Expired is account-wide.** `usage_events` carries no scope on the expiry
  *   event, because the purge is per-user and spans scopes. Its tooltip says so
  *   and its caption drops the scope name.
- * - **The filter bar does not narrow any of it.** `/activity`,
- *   `/read-activity` and `/usage` take a window (and the read series a scope);
- *   none takes the Explorer's dimension filters. Rather than let four numbers
- *   quietly disagree with the list under them, the header states the mismatch
- *   inline the moment a filter is active.
- *
- * Both are the honest rendering of what the API can answer today. Neither is
- * papered over, because a stat header that is subtly wrong is worse than one
- * that admits its scope.
  */
 
 import { useMemo } from 'react';
@@ -98,6 +100,14 @@ interface ExplorerStatsProps {
    * disclosure control) belongs to `ExplorerInsights`, which owns both states.
    */
   variant: 'cards' | 'strip';
+  /**
+   * ONE clock for the whole panel, owned by `ExplorerInsights` and shared by the
+   * strip and the cards. Passed in rather than minted per instance so both
+   * renderings resolve the SAME window (and the SAME query key): a per-mount
+   * clock would let the strip and the cards fetch different periods, and would
+   * remint the key every time the cards mount on expand.
+   */
+  nowIso: string;
 }
 
 export function ExplorerStats({
@@ -106,11 +116,8 @@ export function ExplorerStats({
   range,
   scopeLabel,
   variant,
+  nowIso,
 }: ExplorerStatsProps) {
-  // One clock per mount, so the window, the grid anchor and the captions all
-  // describe the same instant. Re-reading `Date.now()` at each site would let a
-  // render straddle a bucket boundary and caption a chart it did not draw.
-  const nowIso = useMemo(() => new Date().toISOString(), []);
   // Every derivation below hangs off the EFFECTIVE range, never the raw
   // selection: an unbounded selection charts 90 days, so it must also be
   // captioned as 90 days. See `effectiveStatsRange`.

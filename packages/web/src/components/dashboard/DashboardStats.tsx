@@ -101,18 +101,6 @@ function rangeTrendTitle(range: TimeRange, nowIso: string): string {
 
 const sumPoints = (points: { value: number }[]) => points.reduce((total, p) => total + p.value, 0);
 
-/**
- * The unit a card's number and bars are counted in — "Memory writes",
- * "Memory reads", "Scopes writes".
- *
- * Two of the three cards count memories and one counts scopes, and the
- * difference used to be invisible: the old "Active" card showed a scope count
- * over a chart of memories. A muted pill next to the icon makes the unit
- * unmissable without competing with the metric. Each tag names BOTH the thing
- * counted and the verb, because "writes" alone does not say writes of what —
- * and the Scopes card counts scopes written to, not memories.
- */
-
 /** Skeleton that matches the real layout to prevent CLS while the query loads. */
 export function DashboardStatsSkeleton() {
   return (
@@ -145,8 +133,6 @@ export function DashboardStatsSkeleton() {
     </>
   );
 }
-
-/** Period-over-period percentage-change chip. */
 
 /**
  * Client component — fetches scope health, write activity and read activity via

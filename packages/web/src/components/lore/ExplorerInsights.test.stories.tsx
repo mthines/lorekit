@@ -221,9 +221,14 @@ export const CollapsedStillShowsTheNumbers: Story = {
 
     let stripWritten = '';
     await step('and they are real values, not placeholders', async () => {
-      const written = canvas.getByText('written').previousElementSibling;
-      stripWritten = written?.textContent?.trim() ?? '';
-      await expect(Number(stripWritten)).toBeGreaterThan(0);
+      // Wait for the stats query to resolve — the strip renders its labels
+      // immediately (even at 0), so reading the value synchronously races the
+      // fetch. The neighbouring label step above uses the same `waitFor`.
+      await waitFor(async () => {
+        const written = canvas.getByText('written').previousElementSibling;
+        stripWritten = written?.textContent?.trim() ?? '';
+        await expect(Number(stripWritten)).toBeGreaterThan(0);
+      });
     });
 
     await step('expanding reveals the evidence behind them', async () => {

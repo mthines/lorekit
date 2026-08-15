@@ -93,8 +93,17 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
   const [query, setQuery] = useState('');
 
   const allScopes = useMemo(() => flattenScopes(nodes), [nodes]);
-  const visible = nodes.slice(0, VISIBLE_CHIPS);
-  const hasMore = allScopes.length > visible.length;
+  // The collapsed row shows the top-count scopes — PLUS the selected one if it is
+  // not already among them (a branch, or a low-count scope, chosen from Browse
+  // all). Otherwise selecting it would light no chip, and the row would claim
+  // "All scopes" is active when it is not.
+  const visible = useMemo(() => {
+    const top = nodes.slice(0, VISIBLE_CHIPS);
+    if (!selected || top.some((n) => n.scope === selected)) return top;
+    const selectedNode = allScopes.find((n) => n.scope === selected);
+    return selectedNode ? [...top, selectedNode] : top;
+  }, [nodes, allScopes, selected]);
+  const hasMore = allScopes.length > nodes.slice(0, VISIBLE_CHIPS).length;
 
   // The searchable list matches on the canonical scope OR its label, so both
   // `mthines/lorekit` and `lorekit` find the same chip.

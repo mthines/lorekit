@@ -127,6 +127,7 @@ export function ExplorerInsights({
                 range={range}
                 scopeLabel={scopeLabel}
                 variant="strip"
+                nowIso={nowIso}
               />
             </motion.div>
           )}
@@ -181,6 +182,7 @@ export function ExplorerInsights({
                 range={range}
                 scopeLabel={scopeLabel}
                 variant="cards"
+                nowIso={nowIso}
               />
 
               {/* The heatmap keeps its own 26-week span deliberately: it is a

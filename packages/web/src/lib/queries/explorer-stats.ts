@@ -9,28 +9,25 @@
  * a range that can be any absolute window, so the window itself is the query.
  * It therefore fetches per selection and leans on TanStack's cache instead.
  *
- * ## What is and is not scoped
+ * ## What each card follows
  *
- * | Card    | Endpoint                        | Scoped by |
- * |---------|---------------------------------|-----------|
- * | Written | `GET /memories/activity`        | range, and scope CLIENT-side (the response is per `(bucket, scope)`) |
- * | Scopes  | the same response               | range, and scope CLIENT-side — it counts the same `rows`, so a selected scope collapses it to 1 |
- * | Read    | `GET /memories/read-activity`   | range, and scope SERVER-side (`?scope=`, migration 00058) |
- * | Expired | `GET /memories/usage`           | range only — **never scope** |
+ * | Card    | Endpoint                        | Follows |
+ * |---------|---------------------------------|---------|
+ * | Written | `GET /memories/activity`        | range + scope + dimension filters, all SERVER-side (migration 00062) |
+ * | Scopes  | the same response               | the same — it counts the returned `rows`, so a selected scope collapses it to 1 |
+ * | Read    | `GET /memories/read-activity`   | range + scope SERVER-side (`?scope=`, migration 00058) — NOT the dimension filters |
+ * | Expired | `GET /memories/usage`           | range only — **never scope, never filters** |
  *
- * Two honest limitations follow, and both are surfaced in the UI rather than
- * hidden here:
+ * Written and Scopes carry the FULL predicate the list applies (via
+ * `filtersToQueryParams`), so the header agrees with the list beneath it. Two
+ * honest limitations remain, both surfaced in the UI rather than hidden here:
  *
- * 1. **Expiry has no scope dimension.** The purge is per-user and spans scopes,
- *    so `usage_events` records no scope on `memory.expired` (PR-1 deferred it
- *    deliberately). The Expired figure is account-wide for the window even with
- *    a scope selected.
- * 2. **The filter bar does not narrow these numbers.** `/activity`,
- *    `/read-activity` and `/usage` accept a window (and `/read-activity` a
- *    scope); none accepts the Explorer's dimension filters. Making the header
- *    follow the bar needs those params server-side — a backend change, not a
- *    frontend one. Until then the header describes the SCOPE and the RANGE, and
- *    says so when a filter bar is active.
+ * 1. **Read cannot follow the dimension filters.** `usage_events` records a
+ *    read's scope (00058) but not the tags/repo of the memories it returned, so a
+ *    label/repo filter is unanswerable for reads — the Read card is scope-level.
+ * 2. **Expiry has no scope dimension at all.** The purge is per-user and spans
+ *    scopes, so `usage_events` records no scope on `memory.expired`. The Expired
+ *    figure is account-wide for the window even with a scope selected.
  */
 
 import { useQuery, keepPreviousData } from '@tanstack/react-query';

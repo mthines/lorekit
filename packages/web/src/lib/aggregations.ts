@@ -69,14 +69,14 @@ export function trendRowsFromActivity(
   /**
    * Keep only cells under this EXACT scope. `null`/absent means every scope.
    *
-   * Filtered here rather than server-side because `GET /memories/activity` has
-   * no `scope` parameter — it returns one cell per `(bucket, scope)`, so the
-   * narrowing is a property of the response the client already has, and asking
-   * the server for it would be a round trip for a filter over data in hand.
+   * The Explorer no longer passes this: since migration 00062 `/activity` takes
+   * `scope` (and the dimension filters) server-side, so the header narrows in the
+   * RPC and hands us an already-scoped response. This parameter is retained as a
+   * pure, unit-tested utility for callers that hold a full per-`(bucket, scope)`
+   * response and want to narrow it in hand rather than refetch.
    *
-   * EXACT, not prefix: `repo::owner/name` does not include its branches. That
-   * matches what selecting a scope in the Explorer's tree filters the LIST to,
-   * and the header has to agree with the list beneath it.
+   * EXACT, not prefix: `repo::owner/name` does not include its branches — the
+   * same containment the server-side scope filter and the LIST both apply.
    */
   scope?: string | null,
 ): TrendRow[] {

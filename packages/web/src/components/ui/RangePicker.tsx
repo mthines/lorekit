@@ -77,7 +77,7 @@ export function RangePicker({
             type="button"
             role="radio"
             aria-checked={isActive}
-            aria-label={`Last ${PRESET_LABELS[preset]}`}
+            aria-label={preset === 'all' ? 'All time' : `Last ${PRESET_LABELS[preset]}`}
             onClick={() => onChange(preset === 'all' ? null : { preset })}
             className={[
               'min-h-6 rounded px-2 py-0.5 text-[10px] font-medium tabular-nums transition-colors duration-150',

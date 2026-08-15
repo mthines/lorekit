@@ -322,9 +322,11 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // `{preset:'7d'}` against a newer clock and remint the `useMemories` key for a
   // range the user never touched.
   // One clock for everything the insights panel derives — the picker's custom
-  // label, the stat window and the captions must all describe the same instant,
-  // or a render can straddle a bucket boundary and caption a chart it did not
-  // draw. Re-read only when the range changes, for the reason below.
+  // label, the stat window (it is handed down to ExplorerStats so the strip and
+  // the cards share it) and the captions must all describe the same instant, or a
+  // render can straddle a bucket boundary and caption a chart it did not draw.
+  // Minted ONCE per mount (empty deps): a stable instant is the point, so it must
+  // not be re-read on range changes or every render would chase the clock.
   const insightsNowIso = useMemo(() => new Date().toISOString(), []);
   const rangeKey = JSON.stringify(range);
   const resolvedRange = useMemo(
