@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { ownerRepoFromRemote } from '../src/scope.mjs';
-import { splitEndpoint, buildRemoteUrl, mcpCall } from '../src/mcp.mjs';
+import { splitEndpoint, buildRemoteUrl, mcpCall, retryAfterFrom } from '../src/mcp.mjs';
 import { tokenKind } from '../src/config.mjs';
 import { parseArgs, selectAction, select } from '../src/util.mjs';
 import fs from 'node:fs';
@@ -1974,4 +1974,314 @@ describe('RemoteStore.relevant', () => {
     );
     assert.deepEqual(result, { ok: true, entries: [], candidates: 0 });
   });
+});
+
+// ── RemoteStore migrate-destination parity (getEntry / putEntry) ────────────
+//
+// `migrate` classifies each entry with a read and then upserts it. These cover
+// the remote halves of that pair: the read that answers "does it already
+// exist", the write that carries the fidelity contract (created preserved,
+// updated/seen_count server-owned, expires_at → ttl_days), and the two states
+// the hosted write cannot represent and must refuse rather than resurrect.
+
+test('RemoteStore.getEntry returns the entry for scope+key', async () => {
+  const { result, calls } = await captureRestCalls(
+    (store) => store.getEntry({ scope: 'global', key: 'k' }),
+    { status: 200, body: JSON.stringify({ entries: [{ scope: 'global', key: 'k', value: 'v' }] }) },
+  );
+  assert.equal(result.value, 'v');
+  assert.equal(calls[0].method, 'GET');
+  assert.match(calls[0].url, /\/memories\?scope=global&key=k&limit=1$/);
+});
+
+test('RemoteStore.getEntry returns null for a miss but throws on a failed read', async () => {
+  const missing = await captureRestCalls(
+    (store) => store.getEntry({ scope: 'global', key: 'nope' }),
+    { status: 200, body: JSON.stringify({ entries: [] }) },
+  );
+  assert.equal(missing.result, null);
+
+  // A failed read is NOT an absence. Answering null would let a caller
+  // classifying ADD / UPDATE / NOOP treat an existing hosted lesson as new and
+  // overwrite it on the strength of a transient 500.
+  await assert.rejects(
+    () => captureRestCalls(
+      (store) => store.getEntry({ scope: 'global', key: 'k' }),
+      { status: 500, body: JSON.stringify({ error: 'boom' }) },
+    ),
+    (e) => e.name === 'StoreReadError' && /global::k/.test(e.message),
+  );
+});
+
+test('RemoteStore.putEntry preserves created via created_at and sends the entry verbatim', async () => {
+  const { result, calls } = await captureRestCalls(
+    (store) => store.putEntry({
+      scope: 'repo::o/r',
+      key: 'k',
+      value: 'body',
+      tags: ['loop::aw-lessons'],
+      source_agent: 'aw',
+      trigger: 'stuck-loop',
+      created: '2024-01-02T03:04:05.000Z',
+      updated: '2025-06-01T00:00:00.000Z',
+      seen_count: 7,
+      origin_repo: 'mthines/lorekit',
+    }),
+    { status: 201, body: JSON.stringify({ id: 'x' }) },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(calls[0].method, 'POST');
+  assert.equal(calls[0].url, `${REMOTE_REST_BASE}/memories`);
+  assert.deepEqual(calls[0].body, {
+    scope: 'repo::o/r',
+    key: 'k',
+    value: 'body',
+    tags: ['loop::aw-lessons'],
+    source_agent: 'aw',
+    trigger: 'stuck-loop',
+    created_at: '2024-01-02T03:04:05.000Z',
+    origin_repo: 'mthines/lorekit',
+    // A permanent entry says so EXPLICITLY. Omitting the TTL fields is the
+    // RPC's 'keep' branch (migration 00031), which would leave an existing
+    // remote expiry in place and quietly keep a permanent lesson dying.
+    clear_ttl: true,
+  });
+  // The fidelity contract, asserted as an ABSENCE: the hosted write owns both
+  // of these, so shipping them would be a client claiming a server-derived
+  // field. `updated` is re-stamped, `seen_count` counts up from 1.
+  assert.equal('updated' in calls[0].body, false);
+  assert.equal('seen_count' in calls[0].body, false);
+});
+
+test('RemoteStore.putEntry converts a live expires_at into remaining ttl_days', async () => {
+  const now = new Date('2025-01-01T00:00:00.000Z');
+  const { calls } = await captureRestCalls(
+    (store) => store.putEntry(
+      { scope: 'global', key: 'k', value: 'v', expires_at: '2025-01-11T00:00:00.000Z' },
+      { now },
+    ),
+    { status: 201, body: '{}' },
+  );
+  assert.equal(calls[0].body.ttl_days, 10);
+  assert.equal('clear_ttl' in calls[0].body, false); // a TTL'd entry must not clear it
+});
+
+test('RemoteStore.putEntry clamps a TTL beyond the schema maximum instead of dropping it', async () => {
+  const now = new Date('2025-01-01T00:00:00.000Z');
+  const { calls } = await captureRestCalls(
+    (store) => store.putEntry(
+      { scope: 'global', key: 'k', value: 'v', expires_at: '2030-01-01T00:00:00.000Z' },
+      { now },
+    ),
+    { status: 201, body: '{}' },
+  );
+  assert.equal(calls[0].body.ttl_days, 365);
+});
+
+test('RemoteStore.putEntry refuses archived and expired entries without issuing a request', async () => {
+  const archived = await captureRestCalls(
+    (store) => store.putEntry({ scope: 'global', key: 'k', value: 'v', archived_at: '2024-05-05T00:00:00.000Z' }),
+    { status: 201, body: '{}' },
+  );
+  assert.equal(archived.result.ok, false);
+  assert.equal(archived.result.unsupported, 'archived');
+  assert.equal(archived.calls.length, 0);
+  // A refusal answers with the same envelope shape as a real write, so a
+  // caller never reads an undefined from one branch and a null from another.
+  assert.equal(archived.result.retryAfter, null);
+  assert.equal(archived.result.httpStatus, null);
+
+  const expired = await captureRestCalls(
+    (store) => store.putEntry(
+      { scope: 'global', key: 'k', value: 'v', expires_at: '2024-01-01T00:00:00.000Z' },
+      { now: new Date('2025-01-01T00:00:00.000Z') },
+    ),
+    { status: 201, body: '{}' },
+  );
+  assert.equal(expired.result.ok, false);
+  assert.equal(expired.result.unsupported, 'expired');
+  assert.equal(expired.calls.length, 0);
+});
+
+test('RemoteStore.write surfaces httpStatus and the retry hint so 429s can be told apart', async () => {
+  const limited = await captureRestCalls(
+    (store) => store.write({ scope: 'global', key: 'k', value: 'v' }),
+    { status: 429, body: JSON.stringify({ error: 'Too many requests', code: 'rate_limited', retryAfterSeconds: 3 }) },
+  );
+  assert.equal(limited.result.ok, false);
+  assert.equal(limited.result.httpStatus, 429);
+  assert.equal(limited.result.retryAfter, 3);
+  assert.equal(limited.result.error.code, 'rate_limited');
+
+  // Same status, terminal cause: the memory-cap trigger (LK001) is translated
+  // to a 429 too, and only `code` distinguishes it from a retryable one.
+  const capped = await captureRestCalls(
+    (store) => store.write({ scope: 'global', key: 'k', value: 'v' }),
+    { status: 429, body: JSON.stringify({ error: 'Memory limit exceeded.', code: 'memory_cap' }) },
+  );
+  assert.equal(capped.result.error.code, 'memory_cap');
+  assert.equal(capped.result.retryAfter, null);
+});
+
+// The retry hint has two sources and several ways to be unusable. The store
+// tests above only reach the body path — `captureRestCalls`'s response double
+// exposes no `headers` — so the header fallback and the rejections are pinned
+// here, directly on the exported total function.
+test('retryAfterFrom reads the body hint, falls back to the header, and rejects the rest', () => {
+  assert.equal(retryAfterFrom({ retryAfterSeconds: 30 }, null), 30);
+  // Body wins over header: it is the number the rate-limit RPC returned, while
+  // the header is a stringified copy an intermediary may rewrite.
+  assert.equal(retryAfterFrom({ retryAfterSeconds: 30 }, { get: () => '99' }), 30);
+  assert.equal(retryAfterFrom(null, { get: (h) => (h === 'retry-after' ? '5' : null) }), 5);
+  assert.equal(retryAfterFrom(null, { get: () => '2.4' }), 3); // whole seconds, rounded up
+
+  // An HTTP-date Retry-After is valid HTTP and unusable as a delay — reported
+  // as "no hint" so the caller falls back to its own backoff, never NaN.
+  assert.equal(retryAfterFrom(null, { get: () => 'Wed, 21 Oct 2026 07:28:00 GMT' }), null);
+  assert.equal(retryAfterFrom(null, { get: () => '-1' }), null);
+  assert.equal(retryAfterFrom(null, { get: () => '' }), null);
+  // A response double with no Headers interface must not throw on an error path.
+  assert.equal(retryAfterFrom(null, null), null);
+  assert.equal(retryAfterFrom(undefined, {}), null);
+});
+
+test('RemoteStore.putEntry leaves the remote TTL alone when expires_at is unparseable', async () => {
+  const { result, calls } = await captureRestCalls(
+    (store) => store.putEntry({ scope: 'global', key: 'k', value: 'v', expires_at: 'not-a-date' }),
+    { status: 201, body: '{}' },
+  );
+  assert.equal(result.ok, true);
+  // Neither TTL field: the RPC's 'keep' branch. Sending `clear_ttl` here would
+  // let one corrupt frontmatter character wipe a live hosted expiry, and
+  // sending a `ttl_days` would invent one.
+  assert.equal('ttl_days' in calls[0].body, false);
+  assert.equal('clear_ttl' in calls[0].body, false);
+});
+
+test('RemoteStore.write coalesces every envelope field on a network failure', async () => {
+  const { result } = await captureRestCalls(
+    (store) => store.write({ scope: 'global', key: 'k', value: 'v' }),
+    { throws: 'socket hang up' },
+  );
+  assert.equal(result.ok, false);
+  // Null, never undefined — a caller must not have to know which branch
+  // produced the failure to read the same key.
+  assert.equal(result.httpStatus, null);
+  assert.equal(result.retryAfter, null);
+  assert.equal(result.error, null);
+  assert.match(result.networkError, /socket hang up/);
+});
+
+test('RemoteStore.write reports an unconfigured store as unusable, not as a blank failure', async () => {
+  let called = false;
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => { called = true; throw new Error('should not be reached'); };
+  try {
+    const res = await createRemoteStore({ endpoint: null, token: null })
+      .write({ scope: 'global', key: 'k', value: 'v' });
+    assert.equal(res.ok, false);
+    assert.equal(res.unusable, true); // the reason, not just "it failed"
+    assert.equal(res.httpStatus, null);
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('an unconfigured store names itself on both halves of the migrate pair', async () => {
+  const original = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async () => { called = true; throw new Error('should not be reached'); };
+  try {
+    const store = createRemoteStore({ endpoint: null, token: null });
+
+    // getEntry throws, and the message says WHY rather than falling back to
+    // the generic read-failed text an unconfigured store has no error for.
+    await assert.rejects(
+      () => store.getEntry({ scope: 'global', key: 'k' }),
+      (e) => e.name === 'StoreReadError' && /not configured/.test(e.message),
+    );
+
+    // A refusal carries the same keys a write does, `unusable` included.
+    const refused = await store.putEntry({ scope: 'global', key: 'k', value: 'v', archived_at: '2024-01-01T00:00:00.000Z' });
+    assert.equal(refused.unusable, false);
+    assert.equal(refused.retryAfter, null);
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('RemoteStore.read carries the 429 fields so a rate-limited read is retryable', async () => {
+  const { result } = await captureRestCalls(
+    (store) => store.read({ scope: 'global', key: 'k' }),
+    { status: 429, body: JSON.stringify({ error: 'Too many requests', code: 'rate_limited', retryAfterSeconds: 4 }) },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.httpStatus, 429);
+  assert.equal(result.retryAfter, 4);
+  // The thrown read carries the same envelope, so a caller can classify it.
+  const thrown = await captureRestCalls(
+    (store) => store.getEntry({ scope: 'global', key: 'k' }).then(() => null, (e) => e),
+    { status: 429, body: JSON.stringify({ error: 'Too many requests', code: 'rate_limited', retryAfterSeconds: 4 }) },
+  );
+  assert.equal(thrown.result.name, 'StoreReadError');
+  assert.equal(thrown.result.result.httpStatus, 429);
+  assert.equal(thrown.result.result.retryAfter, 4);
+});
+
+test('RemoteStore.putEntry reports a clamped TTL as lossy rather than silently shortening', async () => {
+  const now = new Date('2025-01-01T00:00:00.000Z');
+  const clamped = await captureRestCalls(
+    (store) => store.putEntry({ scope: 'global', key: 'k', value: 'v', expires_at: '2030-01-01T00:00:00.000Z' }, { now }),
+    { status: 201, body: '{}' },
+  );
+  assert.equal(clamped.result.ok, true);
+  assert.equal(clamped.result.ttlClamped, true);
+  assert.equal(clamped.calls[0].body.ttl_days, 365);
+
+  // A TTL that fits is not flagged — the field only appears where it is true.
+  const fits = await captureRestCalls(
+    (store) => store.putEntry({ scope: 'global', key: 'k', value: 'v', expires_at: '2025-01-11T00:00:00.000Z' }, { now }),
+    { status: 201, body: '{}' },
+  );
+  assert.equal(fits.result.ttlClamped, false); // present and false, never undefined
+});
+
+test('RemoteStore.putEntry drops an unusable created rather than letting it 400 the entry', async () => {
+  for (const created of ['not-a-date', '2999-01-01T00:00:00.000Z']) {
+    const { result, calls } = await captureRestCalls(
+      (store) => store.putEntry({ scope: 'global', key: 'k', value: 'v', created }),
+      { status: 201, body: '{}' },
+    );
+    assert.equal(result.ok, true);
+    // The write still happens; only the override is dropped, and the loss is
+    // reported so a caller can name the re-dated entries.
+    assert.equal('created_at' in calls[0].body, false, `created=${created}`);
+    assert.equal(result.createdAtDropped, true, `created=${created}`);
+  }
+
+  // A usable date is sent, and nothing is reported.
+  const good = await captureRestCalls(
+    (store) => store.putEntry({ scope: 'global', key: 'k', value: 'v', created: '2024-03-04T05:06:07.000Z' }),
+    { status: 201, body: '{}' },
+  );
+  assert.equal(good.calls[0].body.created_at, '2024-03-04T05:06:07.000Z');
+  assert.equal(good.result.createdAtDropped, false);
+});
+
+test('RemoteStore.putEntry reports nothing as having happened when the write failed', async () => {
+  const now = new Date('2025-01-01T00:00:00.000Z');
+  const { result } = await captureRestCalls(
+    (store) => store.putEntry(
+      { scope: 'global', key: 'k', value: 'v', created: 'not-a-date', expires_at: '2030-01-01T00:00:00.000Z' },
+      { now },
+    ),
+    { status: 500, body: JSON.stringify({ error: 'boom' }) },
+  );
+  assert.equal(result.ok, false);
+  // A request that failed shortened no TTL and re-dated nothing, whatever its
+  // inputs would have caused had it landed.
+  assert.equal(result.ttlClamped, false);
+  assert.equal(result.createdAtDropped, false);
 });
