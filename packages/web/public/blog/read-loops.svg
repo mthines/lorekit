@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" role="img" aria-label="The aw agent and the pr-reviewer write constantly into loop buckets in one shared store. The loop can read its own bucket in full by tag, while a human coding session's SessionStart read is ranked and capped at two per bucket, so it stays mostly general knowledge. The lorekit-setup skill wires the same loop into your own workflow.">
+  <style>
+    text{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;fill:#e7ebf2}
+    .lbl{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;fill:#8892a4;letter-spacing:.02em}
+    .k{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace}
+  </style>
+  <defs>
+    <marker id="ar3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8892a4"/></marker>
+  </defs>
+  <rect x="0" y="0" width="720" height="420" fill="#0d0e11"/>
+
+  <!-- writers -->
+  <rect x="24" y="60" width="176" height="56" rx="10" fill="#1a1d24" stroke="#2a2d38"/>
+  <text x="112" y="84" text-anchor="middle" font-size="13.5" font-weight="600">aw agent</text>
+  <text x="112" y="102" text-anchor="middle" class="lbl" font-size="10">plan → build → test → PR</text>
+
+  <rect x="24" y="132" width="176" height="56" rx="10" fill="#1a1d24" stroke="#2a2d38"/>
+  <text x="112" y="156" text-anchor="middle" font-size="13.5" font-weight="600">pr-reviewer</text>
+  <text x="112" y="174" text-anchor="middle" class="lbl" font-size="10">reviews every PR</text>
+
+  <line x1="200" y1="88" x2="256" y2="120" stroke="#8892a4" stroke-width="1.5" marker-end="url(#ar3)"/>
+  <line x1="200" y1="160" x2="256" y2="130" stroke="#8892a4" stroke-width="1.5" marker-end="url(#ar3)"/>
+  <text x="150" y="210" class="lbl" font-size="10.5">write loop:: lessons, constantly</text>
+
+  <!-- shared store -->
+  <rect x="258" y="62" width="176" height="180" rx="11" fill="#13151a" stroke="#2a2d38"/>
+  <text x="346" y="84" text-anchor="middle" font-size="12" font-weight="600">one shared store</text>
+
+  <text x="272" y="108" class="k" font-size="9.5" fill="#aeb9ff">loop::review-outcomes</text>
+  <rect x="272" y="112" width="148" height="10" rx="3" fill="#7c8cf8" fill-opacity="0.28" stroke="#7c8cf8" stroke-opacity="0.5"/>
+  <text x="272" y="140" class="k" font-size="9.5" fill="#aeb9ff">loop::aw-lessons</text>
+  <rect x="272" y="144" width="104" height="10" rx="3" fill="#7c8cf8" fill-opacity="0.28" stroke="#7c8cf8" stroke-opacity="0.5"/>
+  <text x="272" y="172" class="k" font-size="9.5" fill="#7ce6bf">general (human)</text>
+  <rect x="272" y="176" width="38" height="10" rx="3" fill="#34d399" fill-opacity="0.28" stroke="#34d399" stroke-opacity="0.5"/>
+  <text x="346" y="214" text-anchor="middle" class="lbl" font-size="10">the loops write most of it</text>
+
+  <!-- reads -->
+  <line x1="434" y1="120" x2="484" y2="104" stroke="#8892a4" stroke-width="1.5" marker-end="url(#ar3)"/>
+  <line x1="434" y1="180" x2="484" y2="216" stroke="#8892a4" stroke-width="1.5" marker-end="url(#ar3)"/>
+
+  <rect x="486" y="62" width="210" height="86" rx="10" fill="#13151a" stroke="#7c8cf8" stroke-opacity="0.45"/>
+  <text x="498" y="82" class="k" font-size="10.5" fill="#aeb9ff">the loop reads its own bucket</text>
+  <text x="498" y="99" class="lbl" font-size="9.5">by tag · uncapped → all 3,900</text>
+  <rect x="498" y="108" width="186" height="9" rx="2" fill="#7c8cf8" fill-opacity="0.22" stroke="#7c8cf8" stroke-opacity="0.4"/>
+  <rect x="498" y="121" width="186" height="9" rx="2" fill="#7c8cf8" fill-opacity="0.22" stroke="#7c8cf8" stroke-opacity="0.4"/>
+  <rect x="498" y="134" width="150" height="9" rx="2" fill="#7c8cf8" fill-opacity="0.22" stroke="#7c8cf8" stroke-opacity="0.4"/>
+
+  <rect x="486" y="160" width="210" height="120" rx="10" fill="#13151a" stroke="#34d399" stroke-opacity="0.45"/>
+  <text x="498" y="180" class="k" font-size="10.5" fill="#7ce6bf">your coding session</text>
+  <text x="498" y="197" class="lbl" font-size="9.5">SessionStart · ranked · ≤ 2 / bucket</text>
+  <rect x="498" y="206" width="186" height="9" rx="2" fill="#34d399" fill-opacity="0.22" stroke="#34d399" stroke-opacity="0.45"/>
+  <rect x="498" y="219" width="186" height="9" rx="2" fill="#34d399" fill-opacity="0.22" stroke="#34d399" stroke-opacity="0.45"/>
+  <rect x="498" y="232" width="186" height="9" rx="2" fill="#34d399" fill-opacity="0.22" stroke="#34d399" stroke-opacity="0.45"/>
+  <rect x="498" y="245" width="186" height="9" rx="2" fill="#7c8cf8" fill-opacity="0.22" stroke="#7c8cf8" stroke-opacity="0.4"/>
+  <text x="656" y="253" text-anchor="end" class="k" font-size="8" fill="#aeb9ff">≤2</text>
+  <rect x="498" y="258" width="186" height="9" rx="2" fill="#34d399" fill-opacity="0.22" stroke="#34d399" stroke-opacity="0.45"/>
+
+  <!-- lorekit-setup CTA band -->
+  <rect x="24" y="330" width="672" height="60" rx="11" fill="#2a2010" stroke="#f5a623"/>
+  <text x="360" y="357" text-anchor="middle" font-size="13">Your own skill, agent, or workflow can run the same read-fail-write loop.</text>
+  <text x="360" y="378" text-anchor="middle" class="k" font-size="13" font-weight="700" fill="#f5a623">lorekit-setup scaffolds it.</text>
+</svg>
