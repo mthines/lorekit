@@ -222,6 +222,8 @@ function facetsFrom(rows: MemoryRow[], archived: boolean) {
     bump('origin_repo', r.origin_repo);
     bump('origin_branch', r.origin_branch);
     bump('origin_pr', r.origin_pr);
+    // Owner (migration 00063): `personal` for org-less rows, else the org slug.
+    bump('owner', r.org ? r.org.slug : 'personal');
   }
 
   return Array.from(counts.entries())
@@ -347,7 +349,16 @@ function filterRows(rows: MemoryRow[], url: URL): MemoryRow[] {
     .filter(scalar('host', (r) => r.host))
     .filter(scalar('origin_repo', (r) => r.origin_repo))
     .filter(scalar('origin_branch', (r) => r.origin_branch))
-    .filter(scalar('origin_pr', (r) => r.origin_pr));
+    .filter(scalar('origin_pr', (r) => r.origin_pr))
+    // Owner (00063) — the computed identity `personal` / org slug, not a raw
+    // column, so it cannot reuse `scalar`. `in` (default) or `nin`.
+    .filter((r) => {
+      const values = url.searchParams.get('owner')?.split(',').filter(Boolean) ?? [];
+      if (values.length === 0) return true;
+      const identity = r.org ? r.org.slug : 'personal';
+      const hit = values.includes(identity);
+      return url.searchParams.get('owner_mode') === 'nin' ? !hit : hit;
+    });
 }
 
 function listFrom(rows: MemoryRow[], url: URL) {

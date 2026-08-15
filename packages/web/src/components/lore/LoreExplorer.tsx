@@ -35,6 +35,14 @@
  *   viewed, as opposed to the filters that narrow it. Absent means "fall back
  *   to the legacy `archived` flag", which is why its default is `null` rather
  *   than `'active'`.
+ * - `filters` param:  the unified filter bar (JSON array of committed
+ *   conditions) — one dimension per pill, OR within a dimension and AND across.
+ *   Ownership (Personal / an org) is one of those dimensions now, filtered
+ *   server-side like every other (migration 00063).
+ * - `owner` param:    the superseded ownership shorthand from the old
+ *   client-side owner bar. Still READ so old links (and pre-change accept-invite
+ *   deep links) land; never written. `resolveFilters` folds a `'personal'` value
+ *   into an `owner` filter — same absent-only fallback rule as legacy `tags`.
  * - `archived` param: the superseded boolean. Still READ so existing links keep
  *   resolving; never written. Same treatment as the legacy `tags` shorthand.
  * - `insightsOpen`:  local useState inside `ExplorerInsights` — ephemeral panel
@@ -46,7 +54,7 @@
  */
 
 import { useCallback, useMemo, useTransition, useState } from 'react';
-import { Search, Loader2, User, Building2, Users } from 'lucide-react';
+import { Search, Loader2 } from 'lucide-react';
 import { type ScopeNode } from './ScopeTree';
 import { ScopeSelector } from './ScopeSelector';
 import { ExplorerInsights } from './ExplorerInsights';
@@ -89,7 +97,6 @@ import {
 import { FilterMenuTrigger, FilterPillRow } from './FilterBar';
 import { useReducedMotion } from 'motion/react';
 import type { LessonEntry } from './LessonCard';
-import { filterByOwnership, type OwnerFilter } from '@/lib/org-ui';
 
 
 // Module-scoped so the reference is stable across renders — `useUrlState`
@@ -111,81 +118,6 @@ const NO_FILTERS: Filter[] = [];
  * one-line rationale above.
  */
 const DEFAULT_EXPLORER_RANGE: TimeRange = null;
-
-// ── Ownership filter bar ──────────────────────────────────────────────────────
-// "Owner: All · Personal · {org}" per ux-design §4 — only rendered when at least
-// one org-owned memory is in view (nothing to filter by ownership otherwise).
-// A leading "Owner" label + per-chip icons make the dimension self-explanatory:
-// without them the bare "Personal / {org}" chips read as unlabelled mystery
-// filters. Single-select, so it uses radiogroup/radio semantics (aria-checked),
-// not the toggle-button aria-pressed shape.
-
-function OwnershipFilterBar({
-  orgs,
-  value,
-  onChange,
-}: {
-  orgs: { id: string; name: string }[];
-  value: OwnerFilter;
-  onChange: (next: OwnerFilter) => void;
-}) {
-  if (orgs.length === 0) return null;
-
-  function isActive(candidate: OwnerFilter): boolean {
-    if (candidate === 'all') return value === 'all';
-    if (candidate === 'personal') return value === 'personal';
-    return typeof value === 'object' && value.orgId === candidate.orgId;
-  }
-
-  const chips: {
-    key: string;
-    label: string;
-    filter: OwnerFilter;
-    icon: typeof User;
-    title: string;
-  }[] = [
-    { key: 'all', label: 'All', filter: 'all', icon: Users, title: 'Show memories from every owner' },
-    { key: 'personal', label: 'Personal', filter: 'personal', icon: User, title: 'Only your personal memories' },
-    ...orgs.map((org) => ({
-      key: org.id,
-      label: org.name,
-      filter: { orgId: org.id } as OwnerFilter,
-      icon: Building2,
-      title: `Only memories shared with ${org.name}`,
-    })),
-  ];
-
-  return (
-    <div
-      role="radiogroup"
-      aria-label="Filter by owner"
-      className="flex flex-wrap items-center gap-1.5 border-b border-[var(--color-border)] px-3 py-2"
-    >
-      <span className="mr-0.5 flex items-center text-xs font-medium text-[var(--color-content-tertiary)]">
-        Owner
-      </span>
-      {chips.map((chip) => (
-        <button
-          key={chip.key}
-          type="button"
-          role="radio"
-          onClick={() => onChange(chip.filter)}
-          aria-checked={isActive(chip.filter)}
-          title={chip.title}
-          className={[
-            'flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors duration-150',
-            isActive(chip.filter)
-              ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
-              : 'border-[var(--color-border)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
-          ].join(' ')}
-        >
-          <chip.icon className="size-3 shrink-0" aria-hidden />
-          {chip.label}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 // ── Filter bar (search + filters + date + status) ─────────────────────────────
 // Shared by both tabs and both breakpoints. `variant` carries the only two
@@ -352,16 +284,22 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // param has always held.
   const pickerRange: DateRange | null = isPresetRange(range) ? null : highlightRange;
 
-  // URL-backed ownership filter (plan.md Decision D9) — shareable, and the
-  // accept-invite flow deep-links here (`/lore?owner=<serialised OwnerFilter>`)
-  // so a freshly-joined org is pre-filtered on arrival.
-  const [ownerFilter, setOwnerFilter] = useUrlState<OwnerFilter>('owner', 'all', {
+  // The pre-facet `?owner=` param. Ownership is a server-side filter DIMENSION
+  // now (migration 00063), folded into the bar below like every other
+  // dimension, so this legacy param is READ (never written) purely to keep old
+  // links landing: the accept-invite deep link and any shared owner view from
+  // before this change. `resolveFilters` translates a `'personal'` value into an
+  // owner filter (`'all'` and the `{orgId}` form degrade to no filter — the
+  // accept-invite flow writes a slug-keyed owner filter directly now). Same
+  // "absent-only" fallback rule as legacy `?tags=`. The default stays `'all'`
+  // (its historical value, mirrored in the CLI's `LORE_PARAM_DEFAULTS`) — the
+  // param is simply never written any more.
+  const [legacyOwner] = useUrlState<unknown>('owner', 'all', {
     cleanOnPathname: '/lore',
   });
 
   // URL-backed filter bar — server-side filtered (OR within a dimension, AND
-  // across dimensions), so it belongs in the query, not in a client-side
-  // narrowing like `owner`. Shareable: "every perf regression we learned on the
+  // across dimensions). Shareable: "every perf regression we learned on the
   // release branch" is a link you can paste to a teammate.
   // `null` — not `[]` — is the default, so "the param is absent" and "the bar
   // is explicitly empty" stay distinguishable. `useUrlState` drops a param whose
@@ -384,13 +322,16 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // pills, the empty-state copy) reads a real `Filter[]`. An explicit
   // `?filters=` wins over the legacy shorthand — including when it is empty,
   // which is what makes removing the last pill on a `?tags=` link stick.
-  const filters = useMemo(() => resolveFilters(rawFilters, legacyTags), [rawFilters, legacyTags]);
+  const filters = useMemo(
+    () => resolveFilters(rawFilters, legacyTags, legacyOwner),
+    [rawFilters, legacyTags, legacyOwner],
+  );
 
   // Every write goes through here so the "explicitly empty" marker is applied
   // in one place rather than at each of the four call sites below.
   const setFilters = useCallback(
-    (next: Filter[]) => setRawFilters(filtersParamValue(next, legacyTags)),
-    [setRawFilters, legacyTags],
+    (next: Filter[]) => setRawFilters(filtersParamValue(next, legacyTags, legacyOwner)),
+    [setRawFilters, legacyTags, legacyOwner],
   );
 
   // Which dimension the menu should open at, set by a pill's value segment.
@@ -455,28 +396,13 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // Archived-aware — the archived view is a different population with its own counts.
   const { data: facets } = useFacetCatalog(showArchived, filters, selectedScope);
 
+  // The list is entirely server-filtered now — scope / search / range / status
+  // AND every dimension in the filter bar, ownership included (migration 00063
+  // folded the old client-side owner narrowing into the bar). So the loaded
+  // pages ARE the result; there is no post-filter pass.
   const lessons = useMemo(
     () => data?.pages.flatMap((page) => page.rows) ?? [],
     [data],
-  );
-
-  // Unique orgs present in the loaded lesson pages, for the ownership filter
-  // chips — recomputed only when the underlying lessons change.
-  const orgsInView = useMemo(() => {
-    const seen = new Map<string, { id: string; name: string }>();
-    for (const l of lessons) {
-      if (l.org && !seen.has(l.org.id)) seen.set(l.org.id, l.org);
-    }
-    return Array.from(seen.values());
-  }, [lessons]);
-
-  // Ownership is the one filter with no server-side param — scope / search /
-  // range / archived are already applied by `useMemories`, so this is a pure
-  // client-side narrowing of the loaded pages by owner (Personal vs a given
-  // org). `filterByOwnership` is the shared, unit-tested predicate.
-  const filteredLessons = useMemo(
-    () => filterByOwnership(lessons, ownerFilter),
-    [lessons, ownerFilter],
   );
 
   // A range is "narrowing" only when it actually bounds something: an
@@ -493,8 +419,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // distinction is what the empty state turns on — a status view with nothing
   // narrowing it gets its own copy, the same view with a search that matched
   // nothing gets "no matches".
-  const isNarrowedWithinView =
-    search.trim() !== '' || ownerFilter !== 'all' || filters.length > 0;
+  const isNarrowedWithinView = search.trim() !== '' || filters.length > 0;
 
   // Every filter mutation closes the lesson sidebar for one reason: the open
   // lesson may not survive the new predicate, and a detail panel describing a
@@ -602,9 +527,9 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
 
   // Shared results renderer for BOTH tabs. Loading / error / empty are handled
   // once here; only the populated body differs — a flat card list ("scope") vs
-  // date-grouped feed rows ("time"). Both consume the SAME `filteredLessons`
-  // (server-filtered by scope/search/range/archived, then owner-narrowed
-  // client-side), so every filter applies identically across tabs.
+  // date-grouped feed rows ("time"). Both consume the SAME server-filtered
+  // `lessons` (scope / search / range / archived / every bar dimension), so
+  // every filter applies identically across tabs.
   //
   // This is a plain function that is CALLED, not a nested component rendered as
   // `<Results />`. A nested component would get a fresh type identity on every
@@ -631,11 +556,10 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
       );
     }
 
-    // Empty state only when nothing is left to show AND nothing more to load —
-    // the ownership filter is client-side over the loaded pages, so an empty
-    // `filteredLessons` with `hasNextPage` still true means "keep loading",
-    // not "no matches".
-    if (filteredLessons.length === 0 && !hasNextPage) {
+    // Empty state only when nothing is left to show AND nothing more to load.
+    // Every filter is server-side now, so an empty page with `hasNextPage` still
+    // true genuinely means "keep loading", not "no matches".
+    if (lessons.length === 0 && !hasNextPage) {
       return (
         <EmptyState
           icon={STATUS_ICONS[status]}
@@ -693,7 +617,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
 
     return (
       <div className="flex flex-col gap-2" role="list" aria-label="Memories">
-        {filteredLessons.map((lesson, i) => (
+        {lessons.map((lesson, i) => (
           <div key={`${lesson.scope}::${lesson.key}`} role="listitem">
             <LessonCard
               lesson={lesson}
@@ -717,7 +641,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           ? 'Loading memories'
           : isFetchingNextPage
             ? 'Loading more memories'
-            : `${filteredLessons.length} memor${filteredLessons.length === 1 ? 'y' : 'ies'} loaded`}
+            : `${lessons.length} memor${lessons.length === 1 ? 'y' : 'ies'} loaded`}
       </p>
 
       {/* ── Scope selector ──────────────────────────────────────────────────
@@ -751,8 +675,9 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
       />
 
       {/* ── Results ─────────────────────────────────────────────────────────
-          The filter bar (search / filters / date / status) + owner bar sit above
-          the memory list. Scope now
+          The filter bar (search / filters / date / status) sits above the memory
+          list — ownership is a dimension INSIDE the filter menu now, not a
+          separate bar. Scope now
           lives in the chip row at the top of the page, so the list is a single
           full-width column — no more left scope rail. Both breakpoints are still
           mounted and CSS-toggled (not a JS conditional render) so each keeps a
@@ -784,8 +709,6 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           onEditField={setEditingField}
         />
 
-        <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
-
         <div className="flex-1 overflow-y-auto p-3">{renderResults()}</div>
       </div>
 
@@ -816,8 +739,6 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
             onEditField={setEditingField}
           />
         </div>
-
-        <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
 
         <div>{renderResults()}</div>
       </div>

@@ -20,6 +20,7 @@ import {
   fieldDescriptor,
   filterCount,
   filterPhrase,
+  filtersFromLegacyOwner,
   filtersFromLegacyTags,
   filtersPhrase,
   filtersToFacetParams,
@@ -52,6 +53,8 @@ const FACETS: FacetValue[] = [
   { facet: 'origin_branch', value: 'main', count: 14 },
   { facet: 'origin_branch', value: 'feat/maintenance', count: 2 },
   { facet: 'origin_pr', value: '482', count: 3 },
+  { facet: 'owner', value: 'personal', count: 33 },
+  { facet: 'owner', value: 'acme', count: 8 },
 ];
 
 describe('normalizeFilters', () => {
@@ -599,6 +602,104 @@ describe('kind & host dimensions', () => {
       value: 'reviewer',
       count: 4,
     });
+  });
+});
+
+/**
+ * The owner dimension (migration 00063).
+ *
+ * Ownership was the ONE Explorer filter narrowed client-side, in a separate bar.
+ * It is a server-side facet dimension now, mechanically identical to the scalar
+ * ones — so the shared guards below (facet one-to-one, the param cast, menu
+ * ordering) cover it automatically because they iterate `FILTER_FIELDS`. These
+ * pin the owner-specific behaviour: the `personal`/slug value formatting, the
+ * wire params, and the legacy `?owner=` translation.
+ */
+describe('owner dimension', () => {
+  it('is offered as a dimension with the owner facet and in/nin operators', () => {
+    const owner = fieldDescriptor('owner');
+    expect(owner?.facet).toBe('owner');
+    // A scalar identity per row (personal or one org), so no `all` containment.
+    expect(owner?.operators).toEqual(['in', 'nin']);
+  });
+
+  it('renders the literal `personal` as `Personal` and a slug as itself', () => {
+    expect(valueSummary('owner', ['personal'])).toBe('Personal');
+    expect(valueSummary('owner', ['acme'])).toBe('acme');
+    expect(filterPhrase({ field: 'owner', operator: 'in', values: ['personal', 'acme'] })).toBe(
+      'Owner is either of Personal, acme',
+    );
+    expect(filterPhrase({ field: 'owner', operator: 'nin', values: ['acme'] })).toBe(
+      'Owner is not acme',
+    );
+  });
+
+  it('emits the GET /memories owner params the handler resolves', () => {
+    expect(
+      filtersToQueryParams([{ field: 'owner', operator: 'in', values: ['personal', 'acme'] }]),
+    ).toEqual({ owner: 'personal,acme', owner_mode: 'in' });
+    expect(filtersToQueryParams([{ field: 'owner', operator: 'nin', values: ['acme'] }])).toEqual({
+      owner: 'acme',
+      owner_mode: 'nin',
+    });
+  });
+
+  it('round-trips through the ?filters= param, so an owner view is a link', () => {
+    const bar: Filter[] = [{ field: 'owner', operator: 'in', values: ['acme'] }];
+    const encoded = filtersParamValue(bar, undefined);
+    expect(resolveFilters(JSON.parse(JSON.stringify(encoded)), undefined)).toEqual(bar);
+  });
+
+  it('is reachable from the cross-dimension type-ahead', () => {
+    expect(rootSuggestions(FACETS, 'acme')).toContainEqual({
+      kind: 'value',
+      field: 'owner',
+      value: 'acme',
+      count: 8,
+    });
+  });
+});
+
+/**
+ * Back-compat for the legacy `?owner=` param — the pre-facet client-side bar
+ * serialised an `OwnerFilter` (`'all' | 'personal' | { orgId }`).
+ */
+describe('filtersFromLegacyOwner', () => {
+  it('translates the legacy `personal` selection into an owner filter', () => {
+    expect(filtersFromLegacyOwner('personal')).toEqual([
+      { field: 'owner', operator: 'in', values: ['personal'] },
+    ]);
+  });
+
+  it('produces nothing for `all`, an unresolvable `{orgId}`, or junk', () => {
+    // `all` was "no constraint"; the `{orgId}` form keyed on a uuid this pure
+    // function cannot map to the facet's slug, so it degrades to no filter.
+    expect(filtersFromLegacyOwner('all')).toEqual([]);
+    expect(filtersFromLegacyOwner({ orgId: 'abc' })).toEqual([]);
+    expect(filtersFromLegacyOwner(undefined)).toEqual([]);
+    expect(filtersFromLegacyOwner(null)).toEqual([]);
+  });
+
+  it('feeds resolveFilters only while ?filters= is absent, like legacy ?tags=', () => {
+    // Untouched bar: a legacy `?owner=personal` link seeds the owner pill.
+    expect(resolveFilters(null, undefined, 'personal')).toEqual([
+      { field: 'owner', operator: 'in', values: ['personal'] },
+    ]);
+    // Once the bar is touched (even to empty), the legacy owner is ignored — so
+    // an owner pill the user removed cannot resurrect itself.
+    expect(resolveFilters([], undefined, 'personal')).toEqual([]);
+    // It combines with legacy tags in the untouched branch.
+    expect(resolveFilters(null, ['perf'], 'personal')).toEqual([
+      { field: 'label', operator: 'all', values: ['perf'] },
+      { field: 'owner', operator: 'in', values: ['personal'] },
+    ]);
+  });
+
+  it('keeps the explicit-empty marker so a legacy owner link stays clearable', () => {
+    // Mirrors the legacy `?tags=` treatment: an empty bar with a legacy owner in
+    // play is written as `[]` (explicit empty), not dropped, so the removal sticks.
+    expect(filtersParamValue([], undefined, 'personal')).toEqual([]);
+    expect(filtersParamValue([], undefined, 'all')).toBeNull();
   });
 });
 

@@ -38,6 +38,7 @@ export type FilterField =
   | 'label'
   | 'kind'
   | 'host'
+  | 'owner'
   | 'agent'
   | 'trigger'
   | 'repo'
@@ -83,7 +84,10 @@ export type FacetName =
   | 'host'
   | 'origin_repo'
   | 'origin_branch'
-  | 'origin_pr';
+  | 'origin_pr'
+  // Ownership (migration 00063) — `personal` plus one value per org the caller
+  // belongs to, keyed by slug. Folded in from the old client-side owner bar.
+  | 'owner';
 
 export interface FilterFieldDescriptor {
   field: FilterField;
@@ -154,6 +158,21 @@ export const FILTER_FIELDS: readonly FilterFieldDescriptor[] = [
     facet: 'host',
     operators: ['in', 'nin'],
     format: (v) => v,
+  },
+  {
+    // Ownership — the coarse "whose lore is this" partition, so it sits beside
+    // the other identity dimensions. Its value space is CLOSED-ish: `personal`
+    // plus one value per org the caller belongs to, keyed by the org SLUG
+    // (stable across renames). This used to be a separate client-side bar; it is
+    // a server-side facet now (migration 00063), mechanically identical to the
+    // scalar dimensions. `format` renders the literal `personal` as `Personal`;
+    // an org value is shown by its slug (a follow-up can map it to the org name).
+    field: 'owner',
+    label: 'Owner',
+    searchPlaceholder: 'Search owners…',
+    facet: 'owner',
+    operators: ['in', 'nin'],
+    format: (v) => (v === 'personal' ? 'Personal' : v),
   },
   {
     field: 'agent',
@@ -279,19 +298,53 @@ export function filtersFromLegacyTags(tags: unknown): Filter[] {
 }
 
 /**
- * The bar's filters, given both URL params.
+ * Translate a legacy `?owner=` selection into an owner filter.
+ *
+ * The Explorer used to narrow ownership CLIENT-side with a separate bar whose
+ * URL param serialised an `OwnerFilter` (`'all' | 'personal' | { orgId }`).
+ * Ownership is a server-side facet dimension now (migration 00063), so those
+ * links translate into an `owner` filter — but only the two forms that survive
+ * without a lookup:
+ *
+ * - `'all'` was "no constraint", so it produces no filter.
+ * - `'personal'` maps directly to the owner facet's `personal` value.
+ * - `{ orgId }` carried the org UUID, and the facet keys on the stable SLUG, not
+ *   the id — resolving one to the other needs an org lookup this pure function
+ *   has no access to, so it degrades to NO filter rather than a wrong one. The
+ *   only writer of that form (the accept-invite deep link) now emits a
+ *   slug-keyed owner filter directly, so a fresh join still lands filtered; only
+ *   links shared before this change lose the org pre-selection.
+ */
+export function filtersFromLegacyOwner(owner: unknown): Filter[] {
+  if (owner === 'personal') return [{ field: 'owner', operator: 'in', values: ['personal'] }];
+  return [];
+}
+
+/**
+ * The bar's filters, given the `?filters=` param and the legacy shorthands.
  *
  * `rawFilters` is `null` when `?filters=` is ABSENT from the URL and an array
  * (possibly empty) when it is present. That distinction is the whole point:
- * "absent" means the user has never touched the bar, so a legacy `?tags=` link
- * may still speak for it; "present but empty" means the user emptied the bar,
- * and the legacy shorthand must NOT speak over that. Collapsing the two — the
- * bar's first shape — made the last pill on a `?tags=` link unremovable: the
- * write dropped the param, the fallback re-derived the label filter, and the ×
- * the user had just clicked did nothing.
+ * "absent" means the user has never touched the bar, so a legacy `?tags=` /
+ * `?owner=` link may still speak for it; "present but empty" means the user
+ * emptied the bar, and the legacy shorthands must NOT speak over that.
+ * Collapsing the two — the bar's first shape — made the last pill on a `?tags=`
+ * link unremovable: the write dropped the param, the fallback re-derived the
+ * filter, and the × the user had just clicked did nothing. The legacy `?owner=`
+ * param rides the same "absent only" rule, so it cannot resurrect an owner pill
+ * the user removed once the bar has been touched.
  */
-export function resolveFilters(rawFilters: unknown, legacyTags: unknown): Filter[] {
-  if (rawFilters === null || rawFilters === undefined) return filtersFromLegacyTags(legacyTags);
+export function resolveFilters(
+  rawFilters: unknown,
+  legacyTags: unknown,
+  legacyOwner: unknown = null,
+): Filter[] {
+  if (rawFilters === null || rawFilters === undefined) {
+    return normalizeFilters([
+      ...filtersFromLegacyTags(legacyTags),
+      ...filtersFromLegacyOwner(legacyOwner),
+    ]);
+  }
   return normalizeFilters(rawFilters);
 }
 
@@ -308,9 +361,13 @@ export function resolveFilters(rawFilters: unknown, legacyTags: unknown): Filter
 export function filtersParamValue(
   next: readonly Filter[],
   legacyTags: unknown,
+  legacyOwner: unknown = null,
 ): Filter[] | null {
   if (next.length > 0) return [...next];
-  return filtersFromLegacyTags(legacyTags).length > 0 ? [] : null;
+  return filtersFromLegacyTags(legacyTags).length > 0 ||
+    filtersFromLegacyOwner(legacyOwner).length > 0
+    ? []
+    : null;
 }
 
 // ── Reading ──────────────────────────────────────────────────────────────────
@@ -677,6 +734,13 @@ export function filtersToQueryParams(
       case 'host':
         params.host = joined;
         params.host_mode = scalarModeFor(filter.operator);
+        break;
+      // Ownership (00063). `personal` plus org slugs; the handler resolves the
+      // slugs against the caller's member orgs. Same conjunct-of-disjunction
+      // shape as the scalar dimensions.
+      case 'owner':
+        params.owner = joined;
+        params.owner_mode = scalarModeFor(filter.operator);
         break;
       case 'repo':
         params.origin_repo = joined;

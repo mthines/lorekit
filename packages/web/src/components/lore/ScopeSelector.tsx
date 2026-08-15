@@ -27,8 +27,7 @@
  * is the shared `BottomSheet`, per the repo-wide rule for transient selection
  * surfaces; on the desktop it expands inline beneath the row.
  *
- * Single-select, so it uses radiogroup / radio semantics (`aria-checked`), the
- * same shape as `OwnershipFilterBar`.
+ * Single-select, so it uses radiogroup / radio semantics (`aria-checked`).
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
