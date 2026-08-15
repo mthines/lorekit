@@ -226,7 +226,7 @@ export const MAX_SESSION_START_MAX_LESSONS = 200;
 // for null. Out-of-range CLAMPS rather than rejecting, exactly like the maxChars
 // budget and the loop cap — a user who wrote `"maxLessons": 1` wants a short
 // block, and honouring the floor is closer to that intent than silently
-// restoring the 40 default.
+// restoring the default.
 export function normalizeSessionStartMaxLessons(v) {
   const n = firstNumber(v);
   if (n === null) return null;

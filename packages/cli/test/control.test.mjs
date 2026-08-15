@@ -530,7 +530,7 @@ test('control hooks.sessionStart: maxChars is clamped, not rejected', () => {
   }
 });
 
-test('control hooks.sessionStart.loopCap: defaults to 2, clamps, and honours 0', () => {
+test('control hooks.sessionStart.loopCap: defaults to one per bucket, clamps, and honours 0', () => {
   const at = (cfg) => resolveControl({ repoConfig: cfg, connection: NO_CONN }).hooksSessionStartLoopCap;
   assert.equal(resolveControl({ connection: NO_CONN }).hooksSessionStartLoopCap, DEFAULT_SESSION_START_LOOP_CAP);
   assert.equal(at({ 'hooks.sessionStart.loopCap': 5 }), 5);

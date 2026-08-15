@@ -384,9 +384,9 @@ test('SessionStart: hooks.sessionStart.maxLessons raises the injected line count
   const scope = deriveScope(tmpProject);
   const store = createTwoTierStore({ home: tmpHome, project: path.join(tmpProject, '.lorekit') });
 
-  // Seeded across BOTH readOrder scopes so the default 40-line ceiling has more
-  // than 25 candidates to bind against, and keyed per scope so cross-scope
-  // precedence (first-seen wins) never collapses the pool.
+  // Seeded across BOTH readOrder scopes so the default ceiling has more
+  // candidates than one scope's read can supply, and keyed per scope so
+  // cross-scope precedence (first-seen wins) never collapses the pool.
   for (const [n, s] of scope.readOrder.entries()) {
     for (let i = 0; i < SEEDED_PER_SCOPE; i += 1) {
       // The `s${n}` prefix is load-bearing: identity is `scope::key`, and the
