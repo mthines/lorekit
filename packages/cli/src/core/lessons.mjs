@@ -188,10 +188,9 @@ export async function fetchLessons(store, cwd, { now = Date.now(), scope: scopeO
   // does not reorder the read — which is why it need not (and must not, per the
   // Σweights normalisation) be damped by a smaller weight. A trunk branch or
   // detached HEAD yields no terms, and the read is recency + salience exactly as
-  // before. `scopeOrder`
-  // is passed explicitly rather than left to the scorer's first-appearance
-  // default — the hierarchy is `readOrder`'s to state, not an artefact of how
-  // this function happens to build its array.
+  // before. `scopeOrder` is passed explicitly rather than left to the scorer's
+  // first-appearance default — the hierarchy is `readOrder`'s to state, not an
+  // artefact of how this function happens to build its array.
   // ONE options object feeds both the ranking and the diversification below, so
   // the two can never drift on terms, weights OR the `now` clock:
   // `diversifyRankedLessons` recomputes each entry's score to seed the MMR
