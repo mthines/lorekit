@@ -25,6 +25,7 @@
  */
 
 import {
+  forwardRef,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -43,14 +44,22 @@ interface FadeScrollerProps extends HTMLAttributes<HTMLDivElement> {
   fadePx?: number;
 }
 
-export function FadeScroller({
-  children,
-  fadePx = DEFAULT_FADE_PX,
-  className = '',
-  style,
-  ...rest
-}: FadeScrollerProps) {
+export const FadeScroller = forwardRef<HTMLDivElement, FadeScrollerProps>(function FadeScroller(
+  { children, fadePx = DEFAULT_FADE_PX, className = '', style, ...rest },
+  forwardedRef,
+) {
   const ref = useRef<HTMLDivElement>(null);
+  // Merge the internal measurement ref with the forwarded one, so a consumer can
+  // hold the scroll element (e.g. to scroll a child into horizontal view) while
+  // this component keeps measuring it.
+  const setRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      ref.current = node;
+      if (typeof forwardedRef === 'function') forwardedRef(node);
+      else if (forwardedRef) forwardedRef.current = node;
+    },
+    [forwardedRef],
+  );
   const [fade, setFade] = useState({ start: false, end: false });
 
   const measure = useCallback(() => {
@@ -92,7 +101,7 @@ export function FadeScroller({
 
   return (
     <div
-      ref={ref}
+      ref={setRef}
       data-fade-start={fade.start ? 'true' : 'false'}
       data-fade-end={fade.end ? 'true' : 'false'}
       className={`flex overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className}`}
@@ -102,4 +111,4 @@ export function FadeScroller({
       {children}
     </div>
   );
-}
+});

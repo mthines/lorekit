@@ -141,12 +141,24 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
   }, [allScopes, query]);
 
   // A scope chosen from Browse all can be appended to the END of the strip (see
-  // `stripNodes`), which on a narrow row is off-screen — so scroll the lit chip
-  // into view when the selection changes. `nearest` never moves the page when
-  // the chip is already visible, so a click on a visible chip is a no-op.
+  // `stripNodes`), which on a narrow row is off-screen — so bring the lit chip
+  // into view when the selection changes. We scroll the strip's OWN element
+  // horizontally (never `scrollIntoView`, which walks every scrollable ancestor
+  // and would yank the whole page up to the strip after a pick from the mobile
+  // sheet). Nearest-edge only, so an already-visible chip is left untouched.
+  const scrollerRef = useRef<HTMLDivElement>(null);
   const selectedChipRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    if (selected) selectedChipRef.current?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    if (!selected) return;
+    const scroller = scrollerRef.current;
+    const chip = selectedChipRef.current;
+    if (!scroller || !chip) return;
+    const relLeft = chip.getBoundingClientRect().left - scroller.getBoundingClientRect().left;
+    if (relLeft < 0) {
+      scroller.scrollLeft += relLeft;
+    } else if (relLeft + chip.clientWidth > scroller.clientWidth) {
+      scroller.scrollLeft += relLeft + chip.clientWidth - scroller.clientWidth;
+    }
   }, [selected]);
 
   // Selecting anything collapses the browse surface — the choice is made.
@@ -216,6 +228,7 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
         </span>
 
         <FadeScroller
+          ref={scrollerRef}
           role="radiogroup"
           aria-label="Filter by scope"
           className="min-w-0 flex-1 items-center gap-1.5"

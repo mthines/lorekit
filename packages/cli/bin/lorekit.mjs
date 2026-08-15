@@ -659,9 +659,10 @@ const KNOWN_FLAGS = [
   'value', 'tags', 'source-agent', 'trigger', 'kind', 'host', 'ttl-days', 'clear-ttl', 'org', 'remote', 'local',
   // `view` is accepted-and-IGNORED, not documented: the Explorer dropped the
   // scope/time tab so the flag is a no-op, but `link` is a HUMAN_COMMAND that
-  // rejects unknown options, so KEEPING it here for a release stops an existing
-  // `lorekit link --view time` from hard-failing — the same courtesy `archived`
-  // gets. Remove it once 1.x links have aged out.
+  // rejects UNKNOWN options — so keeping `view` listed for a release stops an
+  // existing `lorekit link --view time` from hard-failing on an unknown-option
+  // error. It is parsed and discarded (nothing reads `args.view`). Remove it once
+  // 1.x links have aged out.
   'link', 'base', 'q', 'owner', 'range', 'archived', 'view',
   'origin-repo', 'origin-branch', 'origin-commit', 'origin-pr', 'no-origin',
   // Scale-aware survey flags
