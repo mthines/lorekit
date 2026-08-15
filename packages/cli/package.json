@@ -15,7 +15,9 @@
     "bin",
     "src",
     "skill",
-    "README.md"
+    "README.md",
+    "!src/**/*.test.mjs",
+    "!src/**/*.spec.mjs"
   ],
   "engines": {
     "node": ">=18"
