@@ -20,8 +20,10 @@ import {
   SCOPE_READ_LIMIT,
   PROMPT_FETCH_TIMEOUT_MS,
   PROMPT_LOCAL_SEARCH_LIMIT,
+  branchQueryTerms,
+  sessionRankOpts,
 } from '../src/core/lessons.mjs';
-import { resolvePrecedence, matchesQuery } from '../src/lessons-pure.mjs';
+import { resolvePrecedence, matchesQuery, DEFAULT_RANK_WEIGHTS } from '../src/lessons-pure.mjs';
 import { deriveScope } from '../src/scope.mjs';
 import { claude } from '../src/adapters/claude.mjs';
 import { cursor } from '../src/adapters/cursor.mjs';
@@ -347,6 +349,41 @@ test('fetchLessons caps each loop bucket in the injected set (wires capPerBucket
   assert.equal(withTag('loop::impl-lessons'), 2, 'impl-lessons bucket capped at 2');
   const generals = lessons.filter((l) => !(l.tags || []).some((t) => String(t).startsWith('loop::'))).length;
   assert.equal(generals, 2, 'both general lessons survive the cap');
+});
+
+test('branchQueryTerms — distils the branch name, drops generic prefixes and trunk names', () => {
+  assert.deepEqual(
+    branchQueryTerms({ branch: 'claude/read-quality-c3-branch-query' }),
+    ['read', 'quality', 'branch', 'query'],
+    'the claude/ prefix and the 2-char `c3` are dropped; the topic words remain',
+  );
+  assert.deepEqual(branchQueryTerms({ branch: 'feat/embedding-pipeline' }), ['embedding', 'pipeline']);
+  assert.deepEqual(branchQueryTerms({ branch: 'fix/User-LIST' }), ['user', 'list'], 'lower-cased');
+  // Trunk branches, detached HEAD, and no-git yield NO query — the read is unchanged.
+  for (const branch of ['main', 'master', 'HEAD']) {
+    assert.deepEqual(branchQueryTerms({ branch }), [], `${branch} → no query`);
+  }
+  assert.deepEqual(branchQueryTerms({}), [], 'a scope with no branch never throws');
+  assert.deepEqual(branchQueryTerms(null), []);
+});
+
+test('sessionRankOpts — seeds branch terms at reduced relevance weight, else the prior read', () => {
+  const readOrder = ['repo::a/b', 'global'];
+  // A topical branch: terms are seeded and relevance runs at LESS than full weight.
+  const seeded = sessionRankOpts({ branch: 'feat/embedding-pipeline', readOrder }, 1000);
+  assert.deepEqual(seeded.terms, ['embedding', 'pipeline']);
+  assert.equal(seeded.now, 1000);
+  assert.deepEqual(seeded.scopeOrder, readOrder);
+  assert.ok(seeded.weights, 'weights are set when a query is seeded');
+  assert.ok(
+    seeded.weights.relevance < DEFAULT_RANK_WEIGHTS.relevance,
+    'a branch is a weaker signal than a prompt, so relevance is damped',
+  );
+  assert.equal(seeded.weights.recency, DEFAULT_RANK_WEIGHTS.recency, 'the other factors keep default weight');
+  assert.equal(seeded.weights.salience, DEFAULT_RANK_WEIGHTS.salience);
+  // A trunk branch: no terms, and NO weights override — byte-for-byte the old read.
+  const trunk = sessionRankOpts({ branch: 'main', readOrder }, 1000);
+  assert.deepEqual(trunk, { terms: [], now: 1000, scopeOrder: readOrder });
 });
 
 test('fetchLessons is best-effort: a failed scope read is skipped, not thrown', async () => {
