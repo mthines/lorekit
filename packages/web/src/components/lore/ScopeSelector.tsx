@@ -31,10 +31,11 @@
  * same shape as `OwnershipFilterBar`.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Search, ChevronDown, LayoutList } from 'lucide-react';
 import { scopeIcon } from '@/components/memory/scope-meta';
 import { BottomSheet } from '@/components/ui/BottomSheet';
+import { FadeScroller } from '@/components/ui/FadeScroller';
 import { useIsMobile } from '@/lib/hooks/useMediaQuery';
 import type { ScopeNode } from './ScopeTree';
 
@@ -50,9 +51,6 @@ const TYPE_COLOR: Record<ScopeNode['type'], string> = {
   global: 'text-[var(--color-scope-global)]',
   branch: 'text-[var(--color-scope-branch)]',
 };
-
-/** Width of each edge fade, in px — enough to read as "more here", not a vignette. */
-const FADE_PX = 24;
 
 /**
  * Flatten the tree into a single list of selectable scopes — top-level nodes
@@ -140,35 +138,6 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
     );
   }, [allScopes, query]);
 
-  // Edge fades track which side of the strip still has content to scroll to —
-  // shown, not assumed, because a static fade would vignette a row that already
-  // fits. Measured from the scroll position and re-measured on scroll / resize.
-  const stripRef = useRef<HTMLDivElement>(null);
-  const [fade, setFade] = useState({ left: false, right: false });
-  useEffect(() => {
-    const el = stripRef.current;
-    if (!el) return;
-    const update = () => {
-      setFade({
-        left: el.scrollLeft > 1,
-        right: Math.ceil(el.scrollLeft + el.clientWidth) < el.scrollWidth - 1,
-      });
-    };
-    update();
-    el.addEventListener('scroll', update, { passive: true });
-    window.addEventListener('resize', update);
-    return () => {
-      el.removeEventListener('scroll', update);
-      window.removeEventListener('resize', update);
-    };
-  }, [nodes]);
-
-  const maskImage = `linear-gradient(to right, ${
-    fade.left ? 'transparent' : 'black'
-  } 0, black ${FADE_PX}px, black calc(100% - ${FADE_PX}px), ${
-    fade.right ? 'transparent' : 'black'
-  } 100%)`;
-
   // Selecting anything collapses the browse surface — the choice is made.
   function choose(scope: string | null) {
     onSelect(scope);
@@ -235,12 +204,10 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
           Scope
         </span>
 
-        <div
-          ref={stripRef}
+        <FadeScroller
           role="radiogroup"
           aria-label="Filter by scope"
-          className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-          style={{ maskImage, WebkitMaskImage: maskImage }}
+          className="min-w-0 flex-1 items-center gap-1.5"
         >
           {/* All scopes — always first, clears the filter. */}
           <button
@@ -272,7 +239,7 @@ export function ScopeSelector({ nodes, selected, onSelect, totalCount }: ScopeSe
               onSelect={() => choose(node.scope)}
             />
           ))}
-        </div>
+        </FadeScroller>
 
         {allScopes.length > 0 && (
           <button
