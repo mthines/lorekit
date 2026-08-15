@@ -109,6 +109,12 @@ export function RangePicker({
           role="radio"
           aria-checked={true}
           aria-disabled={true}
+          // Focusable even though it is inert: it is the group's CHECKED arm, and
+          // the preset arms are native buttons, so without this the one selected
+          // item is the one a keyboard user cannot reach. `aria-disabled` (not the
+          // `disabled` attribute, which a span can't take anyway) keeps it in the
+          // tab order while marking it inactive — you leave it by focusing a preset.
+          tabIndex={0}
           aria-label={`Custom range — ${rangeLabel(value, nowIso)}`}
           className="min-h-6 rounded bg-[var(--color-bg-raised)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-content-primary)] shadow-sm"
           title="Custom range — pick a preset to leave it"
