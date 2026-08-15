@@ -734,7 +734,10 @@ Both files share this schema — all fields optional:
                            // workspace whose lore lives in one scope. That read
                            // runs on every session start, so a wider index costs
                            // a slower start. At or below the default the fetch
-                           // stays at exactly 25/scope.
+                           // stays at exactly 25/scope, and it never exceeds
+                           // 100/scope — the largest page GET /memories will
+                           // return — so a ceiling above 100 fills its
+                           // remaining lines from the other scopes instead.
 
   "hooks.sessionStart.loopCap": 2,
                            // how many memories one self-improvement loop (a
