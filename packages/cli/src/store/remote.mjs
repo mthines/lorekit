@@ -347,7 +347,13 @@ class RemoteStore {
   // resurrection, which is why it lives in the store and not in the caller.
 
   // Raw lookup by scope+key, mirroring `LocalStore.getEntry` — the entry or
-  // null. LocalStore's is synchronous and this one cannot be, so callers must
+  // null. The ROW is each store's own: this answers a REST `MemoryEntry`
+  // (`created_at`/`updated_at`) and the local one answers parsed frontmatter
+  // (`created`/`updated`), both through `withReadFields`. That is deliberate —
+  // the pair exists so a caller can ASK either store whether a key is there,
+  // not so it can compare two rows field-by-field without knowing which store
+  // produced them. A caller that compares has to speak the destination's
+  // spelling; that is what the remote comparison in the migrate loop does. LocalStore's is synchronous and this one cannot be, so callers must
   // `await` it; awaiting the local store's plain return value is a no-op.
   //
   // One semantic difference the caller has to know about: LocalStore.getEntry
@@ -383,6 +389,11 @@ class RemoteStore {
   //
   // EVERY branch answers with the SAME key set — `write`'s
   // `{ ok, error, httpStatus, retryAfter, networkError, unusable }` plus
+  // Unlike `LocalStore.putEntry`, no `entry` comes back: the hosted write
+  // returns an id and derives the rest server-side, so echoing the request as
+  // if it were the stored row would be a fabrication. A caller that needs the
+  // stored row reads it back.
+  //
   // `unsupported` (the refusal reason, else null), `ttlClamped` (the entry
   // landed with a shortened life) and `createdAtDropped` (its `created` was
   // unusable, so the server stamped the write instant instead). The last two
