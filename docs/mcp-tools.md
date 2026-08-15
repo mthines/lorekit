@@ -162,6 +162,9 @@ List all lessons for a scope — newest first by default, or best-first with `or
 | `limit` | `50` | Max results (cap: 100) |
 | `cursor` | | Opaque cursor from a previous response's `nextCursor`. Omit to start from the first page. Ignored when `order` is `rank` |
 | `order` | `recency` | `recency` — `updated_at` desc with cursor pagination. `rank` — scores recency, salience, and outcome over a bounded candidate window, returned as a single top-N page. (The scorer's fourth factor, relevance, needs a query string; `memory.list` supplies none, so relevance is a constant 0 here and only contributes on the search/`q` path.) |
+| `kind` | | Filter to one bucket family — `lesson`, `bus`, or `signal`. Rows written before migration 00056 have a `NULL` kind and are excluded when this is set |
+| `host` | | Filter to the owning skill/agent, e.g. `reviewer`, `aw`, `ci-auto-fix` |
+| `view` | `full` | `full` returns each entry's complete `value`. `summary` omits `value` and returns `value_bytes` + a 200-character `preview` instead |
 
 **Returns:** `{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }`
 
@@ -171,6 +174,47 @@ List all lessons for a scope — newest first by default, or best-first with `or
   Ranking scores at most the **200 most recently updated** rows in the scope (a bounded candidate
   window); in a scope with more than 200 active lessons the ranking is over that recency window,
   not the whole scope, and `hasMore: false` reflects the page — not that the scope is exhausted.
+
+### Filtering by bucket
+
+`kind` and `host` are the taxonomy columns added in migration 00056. Until they were accepted here,
+kind/host filtering was reachable only over REST — an MCP client had to list a whole scope and
+discard the wrong buckets itself. Both filters are applied **before** ranking, so `order: "rank"`
+scores the bucket you asked for rather than whatever filled the 200-row candidate window first.
+
+```json
+{ "scope": "repo::mthines/lorekit", "kind": "lesson", "host": "reviewer", "limit": 20 }
+```
+
+### Discovery reads: `view: "summary"`
+
+A `full` list returns every body. At a ~1.9 KB median lesson that is ~95 KB of caller context for a
+50-entry read, most of which an agent never consults — it is deciding *which* lessons apply, not
+reading them all. `summary` answers that question directly:
+
+```json
+{ "scope": "repo::mthines/lorekit", "tags": ["loop::reviewer-lessons"], "view": "summary" }
+```
+
+```json
+{
+  "entries": [
+    {
+      "key": "reviewer-lessons::prefer-explicit-null-checks",
+      "tags": ["loop::reviewer-lessons"],
+      "updated_at": "2026-08-14T09:12:04.221Z",
+      "value_bytes": 1873,
+      "preview": "## Prefer an explicit null check over a truthiness guard when the value can legitimately be 0…"
+    }
+  ],
+  "hasMore": false,
+  "nextCursor": null
+}
+```
+
+`value` is **omitted**, not emptied — a summary entry is structurally distinguishable from a lesson
+with an empty body. Follow up with `memory.read` for the handful of keys that matched.
+`value_bytes` is the UTF-8 byte length, comparable with the 65,536-byte `value` cap.
 
 ---
 

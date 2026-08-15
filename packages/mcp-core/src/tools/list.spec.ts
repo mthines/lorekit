@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { list } from './list.js';
+import { list, LIST_PREVIEW_CHARS } from './list.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 vi.mock('../telemetry.js', () => ({
@@ -142,5 +142,123 @@ describe('list excludes archived and expired rows', () => {
     const { db, calls } = makeCapturingDb();
     await list(db, { scope: 'global' });
     expect(calls.or).toContainEqual(['expires_at.is.null,expires_at.gt.now()']);
+  });
+});
+
+// ── taxonomy filters: kind / host ────────────────────────────────────────────
+// The `kind`/`host` columns exist since migration 00056 and the REST route has
+// always been able to filter on them. Until now the MCP tool could not, so an
+// MCP client had to over-fetch a whole scope and discard the wrong buckets
+// client-side — the gap agent-skills' `memory-buckets.md` documents.
+
+function makeEqCapturingDb() {
+  const eqCalls: unknown[][] = [];
+  const chain: Record<string, ReturnType<typeof vi.fn>> = {};
+  for (const m of ['is', 'or', 'limit', 'overlaps']) {
+    chain[m] = vi.fn(() => chain);
+  }
+  chain['eq'] = vi.fn((...args: unknown[]) => {
+    eqCalls.push(args);
+    return chain;
+  });
+  chain['order'] = vi.fn().mockResolvedValue({ data: [], error: null });
+  const db = {
+    from: vi.fn().mockReturnValue({ select: vi.fn().mockReturnValue(chain) }),
+  } as unknown as SupabaseClient;
+  return { db, eqCalls };
+}
+
+describe('list taxonomy filters', () => {
+  it('applies a kind filter when supplied', async () => {
+    const { db, eqCalls } = makeEqCapturingDb();
+    await list(db, { scope: 'global', kind: 'lesson' });
+    expect(eqCalls).toContainEqual(['kind', 'lesson']);
+  });
+
+  it('applies a host filter when supplied', async () => {
+    const { db, eqCalls } = makeEqCapturingDb();
+    await list(db, { scope: 'global', host: 'reviewer' });
+    expect(eqCalls).toContainEqual(['host', 'reviewer']);
+  });
+
+  it('combines kind and host into the one-bucket read', async () => {
+    const { db, eqCalls } = makeEqCapturingDb();
+    await list(db, { scope: 'global', kind: 'signal', host: 'reviewer' });
+    expect(eqCalls).toContainEqual(['kind', 'signal']);
+    expect(eqCalls).toContainEqual(['host', 'reviewer']);
+  });
+
+  it('applies neither filter when both are omitted — the historical read', async () => {
+    const { db, eqCalls } = makeEqCapturingDb();
+    await list(db, { scope: 'global' });
+    expect(eqCalls.map(([col]) => col)).not.toContain('kind');
+    expect(eqCalls.map(([col]) => col)).not.toContain('host');
+  });
+
+  it('rejects a kind outside the closed vocabulary', async () => {
+    const { db } = makeEqCapturingDb();
+    await expect(list(db, { scope: 'global', kind: 'lessons' })).rejects.toThrow();
+  });
+
+  it('rejects an empty host rather than filtering on the empty string', async () => {
+    const { db } = makeEqCapturingDb();
+    await expect(list(db, { scope: 'global', host: '' })).rejects.toThrow();
+  });
+});
+
+// ── view: summary ────────────────────────────────────────────────────────────
+// The discovery half of a read. A 50-entry `full` list at the observed ~1.9 KB
+// median body is ~95 KB of caller context; `summary` makes the same read an
+// index the caller resolves with targeted `memory.read` calls.
+
+describe('list view projection', () => {
+  it('returns the full value by default — the historical shape is unchanged', async () => {
+    const db = makeDb([fakeEntry]);
+    const result = await list(db, { scope: 'global' });
+    expect(result.entries[0]).toEqual(fakeEntry);
+  });
+
+  it('omits value entirely in summary mode', async () => {
+    const db = makeDb([fakeEntry]);
+    const result = await list(db, { scope: 'global', view: 'summary' });
+    expect(result.entries[0]).not.toHaveProperty('value');
+  });
+
+  it('keeps the identifying fields in summary mode', async () => {
+    const db = makeDb([fakeEntry]);
+    const result = await list(db, { scope: 'global', view: 'summary' });
+    expect(result.entries[0]).toMatchObject({
+      key: 'lesson-a',
+      tags: ['skill::aw'],
+      updated_at: '2026-01-01T00:00:00Z',
+    });
+  });
+
+  it('reports value_bytes as the BYTE length, not the character count', async () => {
+    // "é" is two bytes in UTF-8 — String.length would report 1 and under-count.
+    const db = makeDb([{ ...fakeEntry, value: 'é' }]);
+    const result = await list(db, { scope: 'global', view: 'summary' });
+    expect(result.entries[0]).toMatchObject({ value_bytes: 2 });
+  });
+
+  it('truncates preview to LIST_PREVIEW_CHARS', async () => {
+    const long = 'x'.repeat(500);
+    const db = makeDb([{ ...fakeEntry, value: long }]);
+    const result = await list(db, { scope: 'global', view: 'summary' });
+    const entry = result.entries[0] as { preview: string; value_bytes: number };
+    expect(entry.preview).toHaveLength(LIST_PREVIEW_CHARS);
+    // The full size is still reported, so the caller knows what it did not get.
+    expect(entry.value_bytes).toBe(500);
+  });
+
+  it('leaves a body shorter than the cap intact', async () => {
+    const db = makeDb([fakeEntry]);
+    const result = await list(db, { scope: 'global', view: 'summary' });
+    expect(result.entries[0]).toMatchObject({ preview: 'Always use worktree isolation' });
+  });
+
+  it('rejects a view outside the closed vocabulary', async () => {
+    const db = makeDb([fakeEntry]);
+    await expect(list(db, { scope: 'global', view: 'brief' })).rejects.toThrow();
   });
 });
