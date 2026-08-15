@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   resolveEmbeddingConfig, embeddingInput, isEmbeddable, buildEmbeddingRequest, redactKey,
   parseEmbeddingResponse, toVectorLiteral, batchInputs, estimateCost, estimateCostFromChars, supportsDimensions,
-  acceptsDimensionsParam,
+  acceptsDimensionsParam, parseSuppliedVector, parseSuppliedEmbedding,
   EmbeddingError, EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL, MAX_EMBED_CHARS,
 } from './embedding.js';
 
@@ -320,5 +320,80 @@ describe('redactKey', () => {
     expect(redactKey(null, key)).toBe('');
     expect(redactKey(undefined, key)).toBe('');
     expect(redactKey(42, key)).toBe('42');
+  });
+});
+
+describe('parseSuppliedVector', () => {
+  it('accepts a well-formed vector of exactly the column width', () => {
+    const v = vec();
+    expect(parseSuppliedVector(v)).toBe(v);
+  });
+
+  it('rejects the wrong width, and names both widths', () => {
+    // The check that matters most. `vector(1536)` would refuse a 384-wide
+    // gte-small vector anyway — but as an opaque Postgres error inside a
+    // backgrounded task whose failures are swallowed, so the caller would see a
+    // successful write and silently get no embedding. The message has to carry
+    // enough for them to fix it without reading the schema.
+    expect(() => parseSuppliedVector(vec(384))).toThrow(EmbeddingError);
+    expect(() => parseSuppliedVector(vec(384))).toThrow(/384/);
+    expect(() => parseSuppliedVector(vec(384))).toThrow(new RegExp(String(EMBEDDING_DIMENSIONS)));
+    expect(() => parseSuppliedVector(vec(EMBEDDING_DIMENSIONS + 1))).toThrow(EmbeddingError);
+  });
+
+  it('rejects a non-finite element', () => {
+    // Same rule parseEmbeddingResponse applies to a provider's answer: NaN and
+    // Infinity render as `null` through JSON.stringify and would reach Postgres
+    // as an unparseable literal.
+    const withNaN = vec();
+    withNaN[7] = Number.NaN;
+    expect(() => parseSuppliedVector(withNaN)).toThrow(/non-finite/);
+    const withInf = vec();
+    withInf[7] = Number.POSITIVE_INFINITY;
+    expect(() => parseSuppliedVector(withInf)).toThrow(/non-finite/);
+  });
+
+  it('rejects a non-number element and anything that is not an array', () => {
+    const withString = vec() as unknown[];
+    withString[0] = '0.01';
+    expect(() => parseSuppliedVector(withString)).toThrow(EmbeddingError);
+    for (const bad of [undefined, null, 'x', 42, {}, { length: EMBEDDING_DIMENSIONS }]) {
+      expect(() => parseSuppliedVector(bad)).toThrow(/must be an array/);
+    }
+  });
+});
+
+describe('parseSuppliedEmbedding', () => {
+  it('returns null when neither field is supplied — the ordinary write', () => {
+    // Not an error: the overwhelming majority of writes do not opt in, and this
+    // is the path that must stay free.
+    expect(parseSuppliedEmbedding(undefined, undefined)).toBe(null);
+  });
+
+  it('returns the pair when both are supplied', () => {
+    const v = vec();
+    expect(parseSuppliedEmbedding(v, 'text-embedding-3-small')).toEqual({
+      vector: v, model: 'text-embedding-3-small',
+    });
+  });
+
+  it('rejects either half on its own', () => {
+    // `memories_embedding_model_pairing` (00060) refuses an unattributed vector
+    // at the database, and defaulting the model here would satisfy that
+    // constraint while destroying the property it protects: two models produce
+    // incomparable vectors, so a placeholder name makes a selective re-embed
+    // (`where embedding_model <> $current`) impossible.
+    expect(() => parseSuppliedEmbedding(vec(), undefined)).toThrow(/together/);
+    expect(() => parseSuppliedEmbedding(undefined, 'text-embedding-3-small')).toThrow(/together/);
+  });
+
+  it('validates the vector through parseSuppliedVector', () => {
+    expect(() => parseSuppliedEmbedding(vec(384), 'gte-small')).toThrow(/384/);
+  });
+
+  it('rejects a model name that is empty or over the 00060 length bound', () => {
+    expect(() => parseSuppliedEmbedding(vec(), '')).toThrow(EmbeddingError);
+    expect(() => parseSuppliedEmbedding(vec(), 'm'.repeat(129))).toThrow(EmbeddingError);
+    expect(parseSuppliedEmbedding(vec(), 'm'.repeat(128))?.model).toHaveLength(128);
   });
 });

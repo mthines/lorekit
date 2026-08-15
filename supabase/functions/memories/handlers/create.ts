@@ -12,6 +12,7 @@ import { parseOrigin, OriginError } from '../../_shared/origin.ts';
 import { resolveKindHost } from '../../_shared/schemas/tags.ts';
 import { recordAudit } from '../../_shared/audit.ts';
 import { embedOnWrite } from '../../_shared/embed-on-write.ts';
+import { parseSuppliedEmbedding, EmbeddingError } from '../../_shared/embedding.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Database } from '../../_shared/database.types.ts';
 
@@ -52,6 +53,21 @@ export async function handleCreate(
     throw err;
   }
   if (createdAtOverride) span.setAttributes({ 'lorekit.created_at': createdAtOverride });
+
+  // Bring-your-own embedding. Parsed HERE, before the row is written, because
+  // the alternative is a 201 followed by a rejection nobody sees: storing the
+  // vector happens in a backgrounded task whose failures are swallowed by
+  // design, so a malformed pair would look exactly like a successful opt-in.
+  // Same shape as `created_at` above and for the same reason — one shared
+  // validator (`_shared/embedding.ts`) owns the rule for both surfaces, and an
+  // invalid value is a 400 naming the problem rather than a silent drop.
+  let supplied;
+  try {
+    supplied = parseSuppliedEmbedding(body.embedding, body.embedding_model);
+  } catch (err) {
+    if (err instanceof EmbeddingError) return badRequest(err.message, undefined, cors);
+    throw err;
+  }
 
   // Taxonomy: explicit kind/host from the body, else inferred from the loop
   // tag — the same resolution the MCP surface applies, so REST and MCP writes
@@ -144,15 +160,17 @@ export async function handleCreate(
   if (fetchErr) { span.error(`DB: ${fetchErr.message}`); throw fetchErr; }
   span.setAttributes({ 'lorekit.memory_id': row.id, 'lorekit.write.inserted': row.inserted !== false });
 
-  // Queue the embedding. Returns synchronously and is a no-op unless embedding
-  // is explicitly enabled AND a key is configured — see `embed-on-write.ts` for
-  // why it backgrounds rather than awaits, and why it SKIPS rather than falling
-  // back to awaiting when the runtime has no background hook.
+  // Queue the embedding. Returns synchronously. With no `supplied` vector it is
+  // a no-op unless embedding is explicitly enabled AND a key is configured; a
+  // supplied vector is stored regardless, because it costs this deployment
+  // nothing. See `embed-on-write.ts` for why it backgrounds rather than awaits,
+  // and why it SKIPS rather than falling back to awaiting when the runtime has
+  // no background hook.
   // `actorUserId(auth)` for the same reason every org RPC takes it: the api_key
   // tier reaches Postgres over a service-role connection where `auth.uid()` is
   // NULL, so the RPC's capability check would deny every call without an
   // explicit actor. The value is never taken from the request.
-  embedOnWrite(db, span, { id: row.id, key: body.key, value: body.value }, ENV, actorUserId(auth));
+  embedOnWrite(db, span, { id: row.id, key: body.key, value: body.value }, ENV, actorUserId(auth), supplied);
 
   // Audit AFTER the write succeeded. Same action/resource/target/metadata
   // shape as toolWrite, so the MCP and REST surfaces produce comparable rows.

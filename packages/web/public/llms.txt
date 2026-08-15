@@ -177,6 +177,8 @@ Store or update a lesson.
 | `origin_branch` |  | string | Provenance: the git branch this memory was recorded from. Stored verbatim (case-sensitive) so its GitHub link resolves. |
 | `origin_commit` |  | string | Provenance: the commit SHA (7-40 hex characters) checked out when this memory was recorded. |
 | `origin_pr` |  | integer | Provenance: the pull request number this memory was recorded from. Combined with origin_repo it renders as a link to the PR. _(min 1)_ |
+| `embedding` |  | array | Optional pre-computed embedding vector, exactly 1536 numbers. Supply it to store an embedding you generated yourself; the server does not call any provider. Must be sent together with `embedding_model`. _(array of number)_ |
+| `embedding_model` |  | string | The model that produced `embedding`, e.g. `text-embedding-3-small`. Required whenever `embedding` is supplied, and rejected on its own. |
 
 Requires **write** permission.
 
@@ -185,6 +187,8 @@ Returns: `{ "id": "<uuid>", "created_at": "<iso>" }` — plus optional `"expires
 **Provenance (`origin_*`):** `scope` says where a lesson *applies*; the four `origin_*` fields say where it was *recorded from*. Each is independently optional and the last KNOWN value wins — on an update, a field you omit keeps whatever a previous write recorded rather than being erased. A malformed value is rejected, never silently dropped.
 
 **Scope→org binding:** An org admin can bind a scope (e.g. a repo) to an org. A write under a bound scope with no explicit `org` auto-routes to that org for write-capable members. A non-member’s write falls back to personal (never rejected) with a `notice`.
+
+**Bring-your-own embedding (`embedding` + `embedding_model`):** Embedding is off by default because it costs money per write. Supplying a vector you computed yourself opts that write in at no cost to the server — there is no separate flag, and it works even on a deployment with no embedding provider configured. Both fields are required together (a vector with no model name cannot be compared against others or selectively re-embedded), and the vector must be exactly 1536 finite numbers. Storing it is best-effort and never fails or slows the write; an invalid pair is rejected up front rather than silently dropped.
 
 ---
 

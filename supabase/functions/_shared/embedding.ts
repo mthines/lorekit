@@ -243,6 +243,83 @@ export function parseEmbeddingResponse(json: unknown, expectedCount: number): nu
 }
 
 /**
+ * Validate a vector the CLIENT computed and sent with its write.
+ *
+ * WHY A CLIENT MAY SUPPLY ONE AT ALL. Embedding costs money per call, and the
+ * hosted deployment cannot carry that for every user of a free service. A
+ * caller that already has a vector — from its own key, or a model on its own
+ * machine — can hand it over and pay nothing here. That is the whole opt-in:
+ * there is no server-side switch, because sending a vector IS the switch.
+ *
+ * WHY IT IS SAFE TO TRUST. The vector lands in the caller's own tenant, gated
+ * by the same `lorekit_memory_set_embedding` authorisation as any other write
+ * (00062). A caller who supplies a nonsense vector degrades only their own
+ * search results. What is NOT safe is a malformed one reaching the column, so
+ * the checks `parseEmbeddingResponse` applies to a provider's answer are
+ * applied here to a caller's: exact width, every element finite.
+ *
+ * WIDTH IS THE ONE THAT MATTERS. `vector(1536)` would reject a wrong-width
+ * value anyway, but as an opaque Postgres error inside a background task whose
+ * failures are swallowed by design — so the caller would see a successful write
+ * and silently get no embedding. Refusing here turns that into a 400 that names
+ * the width it got and the width it needs.
+ *
+ * It deliberately does NOT check that the numbers look like a real embedding
+ * (normalised, plausible magnitudes). There is no honest test for that, and
+ * pretending otherwise would only reject unusual-but-valid models.
+ */
+export function parseSuppliedVector(vector: unknown): number[] {
+  if (!Array.isArray(vector)) {
+    throw new EmbeddingError('embedding must be an array of numbers');
+  }
+  if (vector.length !== EMBEDDING_DIMENSIONS) {
+    throw new EmbeddingError(
+      `embedding has ${vector.length} dimensions, expected ${EMBEDDING_DIMENSIONS} — `
+      + 'this column stores one width, so a model of another size cannot be mixed in',
+    );
+  }
+  for (const n of vector) {
+    if (typeof n !== 'number' || !Number.isFinite(n)) {
+      throw new EmbeddingError('embedding contains a non-finite value');
+    }
+  }
+  return vector as number[];
+}
+
+/**
+ * The pair a caller supplies on a write: the vector and the model that made it.
+ *
+ * Returns `null` when the caller supplied NEITHER — the overwhelmingly common
+ * case, and not an error: an ordinary write simply does not opt in.
+ *
+ * BOTH OR NEITHER, and the asymmetric case is a hard 400 rather than a quiet
+ * default. `memories_embedding_model_pairing` (00060) already refuses a vector
+ * with no model name, and for a good reason: two models produce vectors that
+ * are not comparable, so an unattributed one can never be selectively
+ * re-embedded (`where embedding_model <> $current`) nor trusted at search time.
+ * Inventing a placeholder model name here would satisfy the constraint and
+ * destroy exactly the property it exists to protect. Failing at the edge also
+ * puts the message where the caller can read it: the database constraint would
+ * fire inside a background task whose errors are swallowed by design, so the
+ * write would look successful and the embedding would just never appear.
+ */
+export interface SuppliedEmbedding { vector: number[]; model: string }
+
+export function parseSuppliedEmbedding(embedding: unknown, model: unknown): SuppliedEmbedding | null {
+  if (embedding === undefined && model === undefined) return null;
+  if (embedding === undefined || model === undefined) {
+    throw new EmbeddingError(
+      'embedding and embedding_model must be supplied together — a vector with no model name '
+      + 'cannot be compared against others, re-embedded selectively, or superseded later',
+    );
+  }
+  if (typeof model !== 'string' || model.length < 1 || model.length > 128) {
+    throw new EmbeddingError('embedding_model must be a string of 1 to 128 characters');
+  }
+  return { vector: parseSuppliedVector(embedding), model };
+}
+
+/**
  * A pgvector literal. Postgres accepts `[1,2,3]` as text for a `vector`.
  *
  * Built here rather than by JSON.stringify so the numeric formatting is ours:

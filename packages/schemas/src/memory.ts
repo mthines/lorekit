@@ -42,6 +42,25 @@ export const MemoryWriteSchema = z.object({
   // `parseOrigin` validator (mcp-core / _shared/origin.ts) owns the shape rules.
   origin_repo: z.string().optional(), origin_branch: z.string().optional(),
   origin_commit: z.string().optional(), origin_pr: z.union([z.number(), z.string()]).optional(),
+  // OPT-IN EMBEDDING — the caller brings its own vector.
+  //
+  // Server-side embedding costs money per write, so the hosted deployment
+  // leaves it off. A caller that already has a vector (its own provider key, a
+  // model on its own machine) can send it and the server just stores it: no
+  // provider call, no key, no cost, and it works on a deployment where
+  // server-side embedding is switched off entirely. Sending a vector IS the
+  // opt-in; there is no separate flag.
+  //
+  // Both fields, or neither, and the WIDTH must be 1536 — but neither rule is
+  // expressed here. `@lorekit/schemas` deliberately depends on nothing, while
+  // `EMBEDDING_DIMENSIONS` and the pairing rule's twin (`00060`'s
+  // `memories_embedding_model_pairing`) belong to the embedding module in
+  // `@lorekit/mcp-core`, which depends on THIS package — so the import cannot
+  // run the other way. `parseSuppliedEmbedding` (embedding.ts, mirrored to
+  // `_shared/`) owns both checks for both surfaces; these fields exist here
+  // only so zod does not strip them before it gets them.
+  embedding: z.array(z.number()).optional(),
+  embedding_model: z.string().min(1).max(128).optional(),
 });
 export type MemoryWrite = z.infer<typeof MemoryWriteSchema>;
 

@@ -53,6 +53,8 @@ Store or update a lesson. Requires a token with write permission (`lk_rw_*` or `
 | `origin_branch` | | Provenance: the git branch the lesson was recorded from. Stored **verbatim** (case-sensitive) so the dashboard's `/tree/` link resolves. |
 | `origin_commit` | | Provenance: the commit SHA (7–40 hex characters) checked out when the lesson was recorded. |
 | `origin_pr` | | Provenance: the pull request number the lesson came out of. Rendered as a link to the PR when combined with `origin_repo`. |
+| `embedding` | | A pre-computed embedding vector: exactly 1536 finite numbers. Stored as-is; the server calls no provider. Must be sent with `embedding_model`. See [embeddings.md → Bring your own embedding](./embeddings.md#bring-your-own-embedding). |
+| `embedding_model` | | The model that produced `embedding` (e.g. `text-embedding-3-small`, max 128 chars). Required whenever `embedding` is supplied, and rejected on its own. |
 
 **Provenance (`origin_*`).** `scope` says where a lesson **applies**; the four
 `origin_*` fields say where it was **recorded from**, and the dashboard turns

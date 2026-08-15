@@ -5,7 +5,8 @@ Semantic search for lore, in three deliberately separate pieces:
 | Piece | Where | State |
 |-------|-------|-------|
 | Schema | `supabase/migrations/00060_memory_embeddings.sql` | Landed, dormant |
-| Pipeline | `_shared/embed-on-write.ts` + `scripts/backfill-embeddings.mjs` | Landed, **off by default** |
+| Pipeline (server-side) | `_shared/embed-on-write.ts` + `scripts/backfill-embeddings.mjs` | Landed, **off by default** |
+| Pipeline (caller-supplied) | `embedding` + `embedding_model` on `memory.write` / `POST /memories` | Landed, **always available** |
 | Search | `POST /memories/search?mode=semantic\|hybrid` | Not built |
 
 They are separate because they fail differently. The schema is a migration; the
@@ -17,6 +18,92 @@ abandon. Split, any of them can be stopped without unpicking the others.
 endpoint, so every run is manual and on demand — the same posture
 `packages/evals` takes for live agent runs. There is no scheduled backfill and
 no deploy step that embeds anything.
+
+---
+
+## Bring your own embedding
+
+Everything in "Turning it on" below configures the server to *generate* vectors,
+which costs money per write. That is why the hosted deployment leaves it off,
+and why there is no plan tier that switches it on: LoreKit is free and open
+source, and a per-write provider bill for every user is not a cost it can carry.
+
+The way a user gets embeddings anyway is to compute the vector themselves and
+send it with the write. Both public write surfaces accept an optional pair:
+
+| Field | Rule |
+|-------|------|
+| `embedding` | Exactly `EMBEDDING_DIMENSIONS` (1536) numbers, every one finite. |
+| `embedding_model` | 1–128 characters naming the model that produced it. |
+
+```json
+memory.write {
+  scope:           "repo::acme/widget",
+  key:             "migration-order",
+  value:           "Always add the column before the backfill.",
+  embedding:       [0.0123, -0.0456, "… 1536 numbers …"],
+  embedding_model: "text-embedding-3-small"
+}
+```
+
+`POST /memories` takes the same two fields in its JSON body.
+
+**Sending a vector IS the opt-in.** There is no flag, no per-user setting and no
+stored credential — deliberately. The alternative design (LoreKit holds each
+user's provider key and embeds on their behalf) needs encrypted credential
+storage, a per-user config surface, and an outbound request to a user-controlled
+endpoint on the write path; none of that is required to deliver the value, so
+none of it was built. Layering it on later takes nothing here back.
+
+### Three rules, and why each is enforced at the edge
+
+**Both fields or neither.** `memories_embedding_model_pairing` (00060) already
+refuses a vector with no model name, and defaulting the name to a placeholder
+would satisfy the constraint while destroying the property it protects: two
+models produce vectors that are not comparable, so an unattributed vector can
+never be re-embedded selectively (`where embedding_model <> $current`) nor
+trusted at search time.
+
+**Exactly 1536 numbers, all finite.** `vector(1536)` would refuse a wrong-width
+value anyway — but as an opaque Postgres error *inside a backgrounded task whose
+failures are swallowed by design*. The caller would see a successful write and
+silently get no embedding. Refusing at the edge turns that into a 400 naming the
+width it got and the width it needs. The same reasoning applies to `NaN` and
+`Infinity`, which `JSON.stringify` renders as `null` and Postgres cannot parse.
+
+**Validated before the row is written.** Both handlers call
+`parseSuppliedEmbedding` ahead of the `memory_write` RPC, for the same reason as
+`parseCreatedAt`: a rejection *after* the write is indistinguishable, from the
+caller's side, from a successful opt-in.
+
+### What it bypasses, and what it does not
+
+A supplied vector **skips** `LOREKIT_EMBEDDING_ENABLED`. That flag guards the
+server *spending*, and a vector the caller already computed costs the deployment
+nothing — gating it there would disable the feature on precisely the deployments
+it exists for. It also skips the embeddable-text check, because the caller's
+vector is the evidence; what text it was computed over is theirs to decide.
+
+It bypasses **nothing else**. Same background task, same detached span, same
+`lorekit_memory_set_embedding` authorisation (00062), same actor. A supplied
+vector gets no privileged path into the column, and an org viewer cannot write
+one any more than they can trigger a server-side embed.
+
+`lorekit.embedding.source` on the request span reads `client` or `provider`, so
+"is anyone actually using this" is answerable without reconciling row counts
+against a provider bill.
+
+### Caveat: nothing reads the column yet
+
+Semantic search is still the unbuilt third piece. Attaching vectors today means
+a user's history is embedded as it lands rather than needing a bulk re-embed —
+which, since they are paying for it, is the difference that matters — but it
+does not make anything searchable in the meantime. Say so plainly wherever this
+is documented; a feature that looks like search and is not is worse than none.
+
+Nothing stops a caller mixing models across writes. `embedding_model` is
+recorded per row precisely so that stays recoverable, but the results would only
+ever be comparable within each group.
 
 ---
 
@@ -98,7 +185,8 @@ much larger change.
 
 ## The write path
 
-`embedOnWrite` runs after a successful `POST /memories`. **A memory write is
+`embedOnWrite` runs after a successful `POST /memories` **and** after the MCP
+`memory.write` tool. **A memory write is
 never slower, and never fails, because of an embedding** — the lesson the agent
 asked to save is the thing being paid for; the vector is an optimisation for a
 search that may never happen.
@@ -123,6 +211,7 @@ by reading provider logs — but they are on **two** spans, and which one matter
 | Span | Signal | Meaning |
 |------|--------|---------|
 | the **request** span | `lorekit.embedding.enqueued` | the call was handed to the background runtime |
+| the **request** span | `lorekit.embedding.source` | `provider` (the server embedded it) or `client` (the caller supplied the vector) |
 | the **request** span | `lorekit.embedding.skipped = no_background_runtime` | no `waitUntil` on this runtime; the row stays null for the backfill |
 | the **request** span | `lorekit.embedding.skipped = no_embeddable_text` | the memory's key and value are empty or whitespace; no rerun will ever fill it |
 | `lorekit.embedding.write` (detached) | an `embedding update:` / `embedding failed:` error | the write or the provider call failed |
@@ -494,6 +583,7 @@ reports success is worse than no run.
 | `supabase/functions/_shared/embed-on-write.ts` | The background-and-swallow write path. |
 | `supabase/migrations/00062_memory_embedding_write.sql` | `lorekit_memory_set_embedding` — the ONE authorised path for writing a vector. Authorises inside the function so an org-owned row is embeddable by a write-capable member and refused for a viewer. |
 | `packages/mcp-core/src/embed-write-authz.spec.ts` | Drift guard: holds the edge module to the RPC and off a direct `UPDATE`. Mutation-verified — restoring the direct update fails three of its cases. |
+| `packages/mcp-core/src/embed-opt-in.spec.ts` | Drift guard for bring-your-own embedding: the `config.enabled` gate stays inside the `!supplied` branch, both surfaces validate before the write, and the catalog documents the pair. Mutation-verified. |
 | `scripts/backfill-embeddings.mjs` | The manual backfill. Imports the pure module rather than re-implementing it. Exports `parseArgs` behind an `invokedDirectly` seam so importing it never starts a run. |
 | `scripts/backfill-embeddings.test.mjs` | `node --test` cover for `parseArgs` — the guard on what a paid run touches. CI wiring is a one-time human step, above. |
 

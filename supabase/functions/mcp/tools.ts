@@ -27,6 +27,18 @@ import { resolveKindHost } from '../_shared/schemas/tags.ts';
 import { rankLessons, selectDiverse } from '../_shared/lesson-rank.ts';
 import type { RankableLesson } from '../_shared/lesson-rank.ts';
 import { outcomeFromTags } from '../_shared/outcome-signal.ts';
+import { embedOnWrite } from '../_shared/embed-on-write.ts';
+import { parseSuppliedEmbedding, EmbeddingError } from '../_shared/embedding.ts';
+
+/**
+ * The environment, snapshotted once per isolate.
+ *
+ * Same reasoning as `memories/handlers/create.ts` — `Deno.env.toObject()` copies
+ * the whole secret environment, and doing that per write would tax the disabled
+ * path, which is the one that has to stay free. Secrets are fixed for an
+ * isolate's lifetime, so a boot-time snapshot is the same value.
+ */
+const ENV = Deno.env.toObject();
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
@@ -84,7 +96,7 @@ export async function toolWrite(
   userId: string | null,
   span: Span,
 ) {
-  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr, kind, host } = params;
+  const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr, kind, host, embedding, embedding_model } = params;
   if (!rawScope || !key || !value) throw new Error('scope, key, and value are required');
   if (value.length > MAX_VALUE_BYTES) throw new Error(`value exceeds ${MAX_VALUE_BYTES} bytes`);
   const scope = validateScope(rawScope);
@@ -100,6 +112,21 @@ export async function toolWrite(
   // The shared resolver is the one place the closed-vocabulary check and the
   // host-length clamp live, so storage and usage tracking classify identically.
   const { kind: resolvedKind, host: resolvedHost } = resolveKindHost({ kind, host, tags });
+  // Bring-your-own embedding — the same optional pair the REST create handler
+  // accepts, validated by the same shared parser so the two surfaces cannot
+  // diverge on what a valid vector is. Parsed BEFORE the write: storing it
+  // happens in a backgrounded task whose failures are swallowed by design, so a
+  // malformed pair rejected later would be indistinguishable from a successful
+  // opt-in. Re-thrown as `UserInputError` because a bad vector is the caller's
+  // mistake, and `mcp-handler` uses that type to keep server spans out of ERROR
+  // for 4xx-shaped failures.
+  let supplied;
+  try {
+    supplied = parseSuppliedEmbedding(embedding, embedding_model);
+  } catch (err) {
+    if (err instanceof EmbeddingError) throw new UserInputError(err.message);
+    throw err;
+  }
 
   span.setAttributes({
     'lorekit.scope': scope,
@@ -162,6 +189,19 @@ export async function toolWrite(
   // dashboards can distinguish new memory creation from updates without reading
   // the audit_log table.
   span.setAttributes({ 'lorekit.write.inserted': row.inserted !== false });
+
+  // Queue the embedding, exactly as `POST /memories` does — the MCP surface is
+  // the one agents actually write through, so leaving it unwired meant an
+  // embedding-enabled deployment embedded only its dashboard/REST writes. With
+  // no `supplied` vector this is a no-op unless embedding is explicitly enabled
+  // AND a key is configured; a supplied vector is stored either way, because it
+  // costs this deployment nothing.
+  //
+  // `userId` is the actor for the same reason the REST handler passes
+  // `actorUserId(auth)`: the api_key tier reaches Postgres over a service-role
+  // connection where `auth.uid()` is NULL, so the RPC's capability check would
+  // deny every call without an explicit actor. It is never taken from `params`.
+  embedOnWrite(db, span, { id: row.id, key, value }, ENV, userId, supplied);
 
   await recordAudit(
     db,
