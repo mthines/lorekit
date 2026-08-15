@@ -778,8 +778,10 @@ export function loopBucketOf(entry) {
  * bucketed lesson is kept only while its bucket is still under `cap`. So one
  * loop's dozen recent rows no longer evict every general lesson; at most `cap`
  * of them survive and the freed slots go to the next-ranked variety. Pure and
- * total: a non-array input is []; `cap <= 0` drops every bucketed lesson (read
- * ONLY general knowledge) while still keeping the null-bucket ones; a missing
+ * total: a non-array input is []; `cap: 0` drops every bucketed lesson (read
+ * ONLY general knowledge) while still keeping the null-bucket ones — a negative
+ * cap is not finite-and-non-negative, so `numberOr` reads it as "no cap", not as
+ * a stricter zero; a missing
  * `bucketOf` treats everything as general (a no-op cap). `cap` is coerced with
  * the module's `numberOr` convention (as `diversifyRankedLessons` does for `k`),
  * so a `NaN`/absent cap falls back to "no cap" rather than silently dropping
