@@ -334,7 +334,10 @@ class RemoteStore {
   // user retired: an archived entry (the REST write revives on conflict) and
   // an already-expired one (any `ttl_days` re-dates it into the future). Both
   // come back as `{ ok:false, unsupported }` so the caller can report them as
-  // skipped; `migrate` filters them out before ever calling this.
+  // skipped. `migrate` does NOT filter them today — adding that filter is the
+  // job of the PR that makes a remote destination reachable — so until then
+  // this refusal is the only thing standing between an archived lesson and
+  // resurrection, which is why it lives in the store and not in the caller.
 
   // Raw lookup by scope+key, mirroring `LocalStore.getEntry` — the entry or
   // null. LocalStore's is synchronous and this one cannot be, so callers must
@@ -408,7 +411,7 @@ class RemoteStore {
     let createdAt;
     let createdAtDropped = false;
     try {
-      createdAt = normalizeCreatedAt(entry?.created ?? null) ?? undefined;
+      createdAt = normalizeCreatedAt(entry?.created ?? null, now) ?? undefined;
     } catch {
       createdAt = undefined;
       createdAtDropped = Boolean(entry?.created);
