@@ -662,6 +662,8 @@ export type Database = {
           p_origin_pr_mode?: string
           p_origin_repo?: string[]
           p_origin_repo_mode?: string
+          p_owner?: string[]
+          p_owner_mode?: string
           p_scope?: string
           p_since?: string
           p_source_agent?: string[]
@@ -692,6 +694,8 @@ export type Database = {
           p_origin_pr_mode?: string
           p_origin_repo?: string[]
           p_origin_repo_mode?: string
+          p_owner?: string[]
+          p_owner_mode?: string
           p_scope?: string
           p_source_agent?: string[]
           p_source_agent_mode?: string

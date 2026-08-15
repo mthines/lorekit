@@ -178,6 +178,18 @@ export const ListMemoriesQuerySchema = z.object({
    */
   origin_pr: ValueListSchema.optional(),
   origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
+  /**
+   * Ownership filter — the literal `personal` (rows with no org) plus one value
+   * per org the caller belongs to, keyed by the org SLUG (stable, unlike its
+   * uuid or display name). Same comma-list + `*_mode` shape as the scalar
+   * dimensions above, so `?owner=personal,acme` reads "my personal lore or
+   * acme's". A slug the caller is not a member of matches nothing. This was the
+   * one dimension the dashboard used to narrow CLIENT-side; it is server-side
+   * now (migration 00063) so the list, the facet counts and the stat header
+   * agree.
+   */
+  owner: ValueListSchema.optional(),
+  owner_mode: ScalarFilterModeSchema.optional().default('in'),
   sort: MemorySortSchema.optional().default('updated_at'),
   archived: z.enum(['true','false']).optional().default('false'),
   /**
@@ -339,6 +351,10 @@ export const MemoryFacetSchema = z.enum([
   'origin_repo',
   'origin_branch',
   'origin_pr',
+  // Ownership (migration 00063): `personal` for org_id-null rows, else the
+  // owning org's slug. Enumerated with per-value counts like every other
+  // dimension, so the filter menu offers Personal / {org} with drill-down.
+  'owner',
 ]);
 export type MemoryFacet = z.infer<typeof MemoryFacetSchema>;
 
@@ -403,6 +419,8 @@ export const ListFacetsQuerySchema = z.object({
   origin_branch_mode: ScalarFilterModeSchema.optional().default('in'),
   origin_pr: ValueListSchema.optional(),
   origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
+  owner: ValueListSchema.optional(),
+  owner_mode: ScalarFilterModeSchema.optional().default('in'),
 });
 export type ListFacetsQuery = z.infer<typeof ListFacetsQuerySchema>;
 
@@ -467,6 +485,8 @@ export const ActivityQuerySchema = z.object({
   origin_branch_mode: ScalarFilterModeSchema.optional().default('in'),
   origin_pr: ValueListSchema.optional(),
   origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
+  owner: ValueListSchema.optional(),
+  owner_mode: ScalarFilterModeSchema.optional().default('in'),
 });
 export type ActivityQuery = z.infer<typeof ActivityQuerySchema>;
 

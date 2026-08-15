@@ -108,6 +108,10 @@ export async function handleFacets(
     p_origin_branch_mode: q.origin_branch_mode,
     p_origin_pr: prList,
     p_origin_pr_mode: q.origin_pr_mode,
+    // Owner (00063): `personal` plus org slugs, resolved against member orgs
+    // inside the RPC. A plain value list like the other dimensions.
+    p_owner: list(q.owner),
+    p_owner_mode: q.owner_mode,
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 

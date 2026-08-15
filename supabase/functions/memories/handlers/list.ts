@@ -54,6 +54,75 @@ function applyScalarFilter(
   return q.or(`${column}.${operator}.${operand}`);
 }
 
+/**
+ * Resolve owner-filter SLUGS to the org ids the caller can actually see.
+ *
+ * JWT callers run on an RLS-scoped client, so a plain `orgs` select already
+ * hides orgs they are not in. The api_key tier is service-role (no RLS), so the
+ * result is restricted to the caller's member org ids explicitly — the same
+ * fail-closed treatment `applyRestTenantScope` gives the memories read. A slug
+ * that does not resolve to a visible org contributes no id, so the filter
+ * narrows to nothing rather than widening past the tenant boundary.
+ */
+async function resolveOwnerOrgIds(
+  db: DbClient,
+  auth: AuthContext,
+  slugs: readonly string[],
+  span: Span,
+): Promise<string[]> {
+  const tracedDb = createTracedClient(db, span);
+  let q = tracedDb.from<{ id: string; slug: string }>('orgs').select('id,slug').in('slug', slugs as string[]);
+  if (auth.type === 'api_key' && auth.userId) {
+    const memberIds = await getMemberOrgIds(db, auth.userId, span);
+    if (memberIds.length === 0) return [];
+    q = q.in('id', memberIds);
+  }
+  const { data, error } = await q;
+  if (error) { span.error(`DB: ${error.message}`); throw error; }
+  return ((data ?? []) as { id: string }[]).map((r) => r.id);
+}
+
+/**
+ * Apply the owner predicate at the PostgREST level, mirroring the SQL in
+ * `lorekit_memory_facets` / `lorekit_memory_activity` (00063).
+ *
+ * `in`  → keep a row whose owner identity is one of the selected values:
+ *         personal rows (`org_id is null`) when `personal` was picked, OR rows in
+ *         a selected org. When nothing selected resolves to a visible owner the
+ *         page is empty — the honest answer to `owner=in[<unknown slug>]`.
+ * `nin` → keep a row whose identity is NONE of them: drop personal rows when
+ *         `personal` was picked, and drop rows in a selected org. A `nin` over
+ *         only unresolvable slugs excludes nothing, which is a no-op.
+ */
+function applyOwnerFilter(
+  q: TracedQuery<MemoryRow>,
+  mode: ScalarFilterMode,
+  wantsPersonal: boolean,
+  orgIds: readonly string[],
+): TracedQuery<MemoryRow> {
+  const ids = orgIds.join(',');
+  if (mode === 'nin') {
+    if (wantsPersonal) {
+      // Drop the personal partition; also drop rows in any named org.
+      q = q.not('org_id', 'is', null);
+      if (orgIds.length > 0) q = q.or(`org_id.not.in.(${ids})`);
+    } else if (orgIds.length > 0) {
+      // Keep personal rows and org rows outside the named set. `org_id.not.in`
+      // is NULL for a personal row, so it is ORed with the explicit null test.
+      q = q.or(`org_id.is.null,org_id.not.in.(${ids})`);
+    }
+    return q;
+  }
+  const disjuncts: string[] = [];
+  if (wantsPersonal) disjuncts.push('org_id.is.null');
+  if (orgIds.length > 0) disjuncts.push(`org_id.in.(${ids})`);
+  if (disjuncts.length === 0) {
+    // `id` is a NOT NULL primary key, so this is a total contradiction — no row.
+    return q.is('id', null);
+  }
+  return q.or(disjuncts.join(','));
+}
+
 export async function handleList(
   req: Request, auth: AuthContext, db: DbClient, span: Span,
   _params: Record<string, string>, cors: Record<string, string>,
@@ -137,6 +206,21 @@ export async function handleList(
     params.origin_pr_mode,
     { quote: false },
   );
+
+  // Owner (00063) — the ownership dimension, `personal` (org_id is null) plus
+  // org SLUGS. This was the ONE filter the dashboard narrowed CLIENT-side; it is
+  // server-side now, so the list, the facet counts and the stat header agree.
+  // It cannot go through `applyScalarFilter` because `personal` and a slug map to
+  // DIFFERENT columns (`org_id is null` vs `org_id in (<resolved ids>)`) — the
+  // slugs are resolved to the org ids the caller can see, so an unknown or
+  // non-member slug narrows to nothing rather than widening.
+  const ownerValues = parseTagsParam(params.owner);
+  if (ownerValues.length > 0) {
+    const wantsPersonal = ownerValues.includes('personal');
+    const slugs = ownerValues.filter((v) => v !== 'personal');
+    const orgIds = slugs.length > 0 ? await resolveOwnerOrgIds(db, auth, slugs, span) : [];
+    q = applyOwnerFilter(q, params.owner_mode, wantsPersonal, orgIds);
+  }
 
   // Substring filter over key OR value. `likeNeedle` escapes the LIKE
   // metacharacters (so a `%` the user typed is data, not a wildcard) and

@@ -3965,13 +3965,129 @@ begin
 end;
 $$;
 
+-- ── 69c. owner as a facet DIMENSION + list/activity predicate (00063) ────────
+-- Ownership was the ONE Explorer filter narrowed client-side; 00063 folds it
+-- into the same drill-down machinery as every other dimension. Owner identity is
+-- `personal` (org_id null) or the owning org's SLUG.
+-- AC-1: the owner facet enumerates `personal` and the org slug with counts.
+-- AC-2: DRILL-DOWN — an owner filter narrows the OTHER dimensions' counts.
+-- AC-3: SELF-EXCLUSION — the owner filter does not collapse the owner dimension,
+--       so both owner values stay switchable from a drilled-in menu.
+-- AC-4: `nin` excludes the named identity (personal → org rows only).
+-- AC-5: activity applies the SAME predicate (personal-only / org-only / a
+--       no-match yielding zero), so the stat header agrees with the list.
+-- Fresh user `…ec` + org `…fc` (slug `owner-org`): the user owns 2 personal rows
+-- and, as a member of `…fc`, sees 1 org-owned row — so every count is exact and
+-- isolated from the rest of the file.
+insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
+values
+  ('00000000-0000-0000-0000-000000000000', '00000000-0000-0000-0000-0000000000ec', 'authenticated', 'authenticated', 'lk-mig-ec@test.local', now(), now());
+
+insert into orgs (id, slug, name, created_by) values
+  ('00000000-0000-0000-0000-0000000000fc', 'owner-org', 'Owner Org', '00000000-0000-0000-0000-0000000000ec');
+insert into org_members (org_id, user_id, role) values
+  ('00000000-0000-0000-0000-0000000000fc', '00000000-0000-0000-0000-0000000000ec', 'owner');
+
+-- Two personal rows (org_id null) with a shared agent, and one org-owned row
+-- (user_id null, org_id set) with a different agent — so a drill-down over the
+-- owner filter has an OTHER dimension to narrow.
+insert into memories (user_id, org_id, scope, key, value, source_agent) values
+  ('00000000-0000-0000-0000-0000000000ec', null,                                     'project::owner-p',        'op-1', 'v', 'ec-agent'),
+  ('00000000-0000-0000-0000-0000000000ec', null,                                     'project::owner-p',        'op-2', 'v', 'ec-agent'),
+  (null,                                    '00000000-0000-0000-0000-0000000000fc', 'repo::acme/owner-org',    'oo-1', 'v', 'org-agent');
+
+do $$
+declare
+  v_count bigint;
+  v_sum   bigint;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
+  -- AC-1: the owner facet enumerates `personal` (2 rows) and the org slug (1).
+  select count into v_count from lorekit_memory_facets(p_user_id => '00000000-0000-0000-0000-0000000000ec')
+   where facet = 'owner' and value = 'personal';
+  assert v_count = 2, format('owner facet AC-1: owner personal must count 2, got %s', v_count);
+  select count into v_count from lorekit_memory_facets(p_user_id => '00000000-0000-0000-0000-0000000000ec')
+   where facet = 'owner' and value = 'owner-org';
+  assert v_count = 1, format('owner facet AC-1b: owner owner-org (slug) must count 1, got %s', v_count);
+
+  -- AC-2: filter owner=personal → source_agent narrows to the personal rows'
+  -- agent (ec-agent = 2) and the org agent disappears.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000ec',
+      p_owner => array['personal'], p_owner_mode => 'in') f
+   where f.facet = 'source_agent' and f.value = 'ec-agent';
+  assert v_count = 2, format('owner facet AC-2: source_agent ec-agent under owner=personal must be 2, got %s', v_count);
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000ec',
+      p_owner => array['personal'], p_owner_mode => 'in') f
+   where f.facet = 'source_agent' and f.value = 'org-agent';
+  assert v_count = 0, format('owner facet AC-2b: org-agent must not survive owner=personal, got %s', v_count);
+
+  -- Filter owner=owner-org (by SLUG) → only the org row's agent survives.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000ec',
+      p_owner => array['owner-org'], p_owner_mode => 'in') f
+   where f.facet = 'source_agent' and f.value = 'org-agent';
+  assert v_count = 1, format('owner facet AC-2c: source_agent org-agent under owner=owner-org must be 1, got %s', v_count);
+
+  -- AC-3: SELF-EXCLUSION — the owner filter must NOT collapse the owner
+  -- dimension's own values, so the other owner stays switchable.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000ec',
+      p_owner => array['personal'], p_owner_mode => 'in') f
+   where f.facet = 'owner' and f.value = 'owner-org';
+  assert v_count = 1, format('owner facet AC-3: self-exclusion must keep owner owner-org=1 under owner=personal, got %s', v_count);
+
+  -- AC-4: `nin` excludes the personal partition → only the org row's agent.
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000ec',
+      p_owner => array['personal'], p_owner_mode => 'nin') f
+   where f.facet = 'source_agent' and f.value = 'org-agent';
+  assert v_count = 1, format('owner facet AC-4: source_agent org-agent under owner nin personal must be 1, got %s', v_count);
+  select coalesce(sum(f.count), 0) into v_count from lorekit_memory_facets(
+      p_user_id => '00000000-0000-0000-0000-0000000000ec',
+      p_owner => array['personal'], p_owner_mode => 'nin') f
+   where f.facet = 'source_agent' and f.value = 'ec-agent';
+  assert v_count = 0, format('owner facet AC-4b: ec-agent must not survive owner nin personal, got %s', v_count);
+
+  -- AC-5: activity applies the SAME predicate, so the stat header agrees.
+  select coalesce(sum(count), 0) into v_sum from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000ec', 'day', null, null,
+      p_owner => array['personal']);
+  assert v_sum = 2, format('owner activity AC-5: owner=personal must sum to 2, got %s', v_sum);
+
+  select coalesce(sum(count), 0) into v_sum from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000ec', 'day', null, null,
+      p_owner => array['owner-org']);
+  assert v_sum = 1, format('owner activity AC-5b: owner=owner-org must sum to 1, got %s', v_sum);
+
+  select coalesce(sum(count), 0) into v_sum from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000ec', 'day', null, null,
+      p_owner => array['personal'], p_owner_mode => 'nin');
+  assert v_sum = 1, format('owner activity AC-5c: owner nin personal must sum to 1, got %s', v_sum);
+
+  -- A slug the caller cannot resolve (not a member org) matches NOTHING, never a
+  -- fallback to the account total.
+  select coalesce(sum(count), 0) into v_sum from lorekit_memory_activity(
+      '00000000-0000-0000-0000-0000000000ec', 'day', null, null,
+      p_owner => array['no-such-org']);
+  assert v_sum = 0, format('owner activity AC-5d: an unresolvable owner slug must yield 0, got %s', v_sum);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+end;
+$$;
+
 -- ── 70. lorekit_memory_facets grant surface — PII-adjacent, so no anon ──────
 -- Branch names, repo names and agent names are at least as sensitive as the
 -- scope names 00039 withholds, so the grant set is that function's verbatim.
 do $$
 declare
-  -- 00057 widened the signature with the drill-down filter params (19 args).
-  v_sig text := 'lorekit_memory_facets(uuid, boolean, text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text)';
+  -- 00057 widened the signature with the drill-down filter params (19 args);
+  -- 00063 appended the owner dimension (p_owner, p_owner_mode → 21 args).
+  v_sig text := 'lorekit_memory_facets(uuid, boolean, text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text)';
 begin
   assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
     'memory facets: anon must NOT have EXECUTE';
