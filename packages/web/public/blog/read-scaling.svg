@@ -11,8 +11,8 @@
 
   <rect x="250" y="176" width="150" height="78" rx="10" fill="#1a1d24" stroke="#f5a623" stroke-opacity="0.6"/>
   <text x="325" y="200" text-anchor="middle" class="k" font-size="12" font-weight="700" fill="#f5a623">one read path</text>
-  <text x="325" y="220" text-anchor="middle" class="lbl" font-size="10.5">budget 1500 · rank</text>
-  <text x="325" y="234" text-anchor="middle" class="lbl" font-size="10.5">cap 2 · MMR λ0.7</text>
+  <text x="325" y="220" text-anchor="middle" class="lbl" font-size="10.5">budget 3000 · rank</text>
+  <text x="325" y="234" text-anchor="middle" class="lbl" font-size="10.5">cap 1 · MMR λ0.7</text>
 
   <text x="30" y="30" class="lbl" font-size="12" fill="#34d399">A · SMALL — 6 lessons</text>
   <rect x="30" y="44" width="150" height="120" rx="10" fill="#13151a" stroke="#2a2d38"/>
@@ -52,7 +52,7 @@
   <text x="484" y="308" class="k" font-size="11.5" font-weight="700" fill="#f5a623">8 of 60,000 loaded</text>
   <line x1="484" y1="316" x2="680" y2="316" stroke="#f5a623" stroke-opacity="0.22"/>
   <text x="484" y="332" class="k" font-size="10" fill="#7ce6bf">- supabase-rls::empty-array…</text>
-  <text x="484" y="347" class="k" font-size="10" fill="#aeb9ff">- loop::review-outcomes (≤2)</text>
+  <text x="484" y="347" class="k" font-size="10" fill="#aeb9ff">- loop::reviewer-lessons (≤1)</text>
   <text x="484" y="362" class="k" font-size="10" fill="#7ce6bf">- branch-name-seeds-the-read</text>
   <text x="484" y="377" class="lbl" font-size="10">…5 more, ranked &amp; de-duplicated</text>
   <text x="484" y="399" class="k" font-size="9.5" fill="#f5a623">More lore: 59,992 more → memory.search</text>

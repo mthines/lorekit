@@ -19,14 +19,14 @@ So LoreKit reads both stores the same way: it spends a fixed slice of your conte
 
 ## A budget, not a count
 
-Start with the thing that scales: what bounds the block. It's a **character budget** — `hooks.sessionStart.maxChars`, default **1500** — because that's what actually costs you. "15 lessons" is meaningless across scale: fifteen terse keys and fifteen paragraph-long ones differ by an order of magnitude in what they take from the window, and a fixed *count* fails at both ends of the range — it pads a six-lesson store up to a number it doesn't have, and truncates a sixty-thousand-lesson store down to one, silently, with no way to tell which happened.
+Start with the thing that scales: what bounds the block. It's a **character budget** — `hooks.sessionStart.maxChars`, default **3000** (about 25 index lines) — because that's what actually costs you. "15 lessons" is meaningless across scale: fifteen terse keys and fifteen paragraph-long ones differ by an order of magnitude in what they take from the window, and a fixed *count* fails at both ends of the range — it pads a six-lesson store up to a number it doesn't have, and truncates a sixty-thousand-lesson store down to one, silently, with no way to tell which happened.
 
-A budget does neither. Six lessons render six lines and stop. Sixty thousand render however many fit in 1500 characters, ranked best-first. The window cost is flat; the count adapts to the store.
+A budget does neither. Six lessons render six lines and stop. Sixty thousand render however many fit in 3000 characters, ranked best-first. The window cost is flat; the count adapts to the store.
 
 ```js
 // packages/cli/src/control.mjs — two dials, both defaulting small.
-const DEFAULT_SESSION_START_MAX_CHARS   = 1500;  // characters — a small slice of the window
-const DEFAULT_SESSION_START_MAX_LESSONS = 40;    // lines — raise with hooks.sessionStart.maxLessons
+const DEFAULT_SESSION_START_MAX_CHARS   = 3000;  // characters you SEE — a slice of the window
+const DEFAULT_SESSION_START_MAX_LESSONS = 100;   // read DEPTH — candidates the ranker chooses from
 ```
 
 Characters rather than tokens on purpose — a real tokenizer is a dependency this package won't take, and ~4-chars-per-token is accurate enough to bound an order of magnitude. That's the number you turn up or down if you want a bigger or smaller slice; nothing else changes.
@@ -56,16 +56,16 @@ Ranking answers "which score highest." At scale, two things still go wrong, and 
 ```js
 // packages/cli/src/core/lessons.mjs — the two guards that keep a large read readable.
 const ranked  = rankLessons(winners, rankOpts);
-const capped  = capPerBucket(ranked, { cap: loopCap, bucketOf: loopBucketOf });          // loopCap=2
-const lessons = diversifyRankedLessons(capped, { ...rankOpts, k: maxLessons });           // MMR, λ 0.7
+const capped  = capPerBucket(ranked, { cap: loopCap, bucketOf: loopBucketOf });   // loopCap=1
+const lessons = diversifyRankedLessons(capped, { ...rankOpts, k: ceiling });      // MMR, λ 0.7 — ceiling = maxLessons
 ```
 
-A **per-bucket cap** keeps any single self-improvement loop — a bot writing its own `loop::` bookkeeping, which recurs constantly and scores high — from taking the read. Two per bucket, and general, human-written lessons are never capped; they're what the room is for. As a store accumulates more automated writers, this is what stops them from crowding out the knowledge a coding session actually needs.
+A **per-bucket cap** keeps any single self-improvement loop — a bot writing its own `loop::` bookkeeping, which recurs constantly and scores high — from taking the read. One per bucket, and general, human-written lessons are never capped; they're what the room is for. As a store accumulates more automated writers, this is what stops them from crowding out the knowledge a coding session actually needs.
 
 Then **MMR** — Maximal Marginal Relevance, Carbonell & Goldstein 1998, at λ=0.7 — removes near-duplicates. A dense store has clusters that score alike *and read alike* (`pr395-it3`, `it4`, `it5` — the same lesson three times); MMR keeps the best and pushes the echoes down, so the budget buys variety instead of repetition. The bigger the store, the more this earns its keep.
 
 <figure>
-  <img src="/blog/read-pipeline.svg" alt="A vertical pipeline: lessons across scopes pass through precedence, ranking by signal, a per-loop cap that drops extra loop rows, MMR that drops near-duplicates, and a 1500-character budget, into a bounded block that reports 8 of 6,000 plus a scope map." width="620" height="680" />
+  <img src="/blog/read-pipeline.svg" alt="A vertical pipeline: lessons across scopes pass through precedence, ranking by signal, a per-loop cap that drops extra loop rows, MMR that drops near-duplicates, and a 3000-character budget, into a bounded block that reports 8 of 6,000 plus a scope map." width="620" height="680" />
   <figcaption>Precedence decides which copy of a key survives; ranking, the per-bucket cap, MMR, and the character budget decide which survivors you see. Nothing about the read grows with the store except the number it honestly cites.</figcaption>
 </figure>
 
@@ -81,7 +81,7 @@ LoreKit: 8 of 6,000 memories loaded · repo::mthines/lorekit — considerations,
 More lore: branch::…/feat/x 12 · repo::mthines/lorekit 4,180 · global 1,808 — memory.search or memory.read to drill in.
 ```
 
-(That block is illustrative — the shape `formatLessons` produces, not a single capture.) The counts are exact at any size: they come from the store's own inventory — a Postgres aggregate on the hosted side — not from the bounded read, so a scope holding four thousand lessons reports `4,180`, not a hand-wavy `25+` — and when the store can't enumerate (an unreachable remote, no inventory), it falls back to the approximate `+`-suffixed count rather than inventing a total. A truncated read is never mistaken for a complete one: the agent can see there's more and reach for `memory.search` to pull the exact lesson it needs. The working set stays small; the store behind it can be enormous.
+(That block is illustrative — the shape `formatLessons` produces, not a single capture.) The counts are exact at any size: they come from the store's own inventory — a Postgres aggregate on the hosted side — not from the bounded read, so a scope holding four thousand lessons reports `4,180`, not a hand-wavy `100+` — and when the store can't enumerate (an unreachable remote, no inventory), it falls back to the approximate `+`-suffixed count rather than inventing a total. A truncated read is never mistaken for a complete one: the agent can see there's more and reach for `memory.search` to pull the exact lesson it needs. The working set stays small; the store behind it can be enormous.
 
 ## The second gear: relevance when you fail
 
@@ -100,13 +100,13 @@ I'll be honest about *why* those three: the matcher is lexical, not semantic. Th
 
 The heaviest writers to a real store aren't people — they're loops. The `aw` agent (plan → build → test → PR) and `pr-reviewer` we build LoreKit with run this loop on every task: they read their ranked `loop::aw-lessons` and `loop::reviewer-lessons` before they act, and write a new lesson the moment something bites. Over a busy month that's thousands of entries — most of them one bot's private bookkeeping.
 
-Those thousands of entries are exactly what the ranking and the per-bucket cap are for. When a loop reads its *own* bucket by tag it gets everything, uncapped — that's its working memory. When *you* open a coding session, the same store's read ranks across all of it and caps each `loop::` bucket at two, so your window fills with the general, human-written lessons a task needs, not a review bot's iteration log. One store, two very different reads — and neither starves the other.
+Those thousands of entries are exactly what the ranking and the per-bucket cap are for. When a loop reads its *own* bucket by tag it gets everything, uncapped — that's its working memory. When *you* open a coding session, the same store's read ranks across all of it and caps each `loop::` bucket at one — its single best lesson still surfaces — so your window fills with the general, human-written lessons a task needs, not a review bot's iteration log. One store, two very different reads — and neither starves the other.
 
 And it isn't only LoreKit's loops. The same wiring is a skill: `lorekit-setup` scaffolds the read-fail-write loop into your own skill, agent, or workflow — the bucket, the scopes, the read-before-you-act and write-on-friction — so your automation gets better across runs the way the `aw` agent does, and the ranked read keeps its growing memory out of everyone else's way.
 
 <figure>
   <img src="/blog/read-loops.svg" alt="Diagram: two heavy-writing loops feed one shared store; a coding session's read stays capped per bucket, and lorekit-setup wires the loop into your own workflow." width="720" height="420" />
-  <figcaption>The aw agent and pr-reviewer write constantly; each loop reads its own bucket in full, while a coding session's read caps every loop bucket at two — so your window stays the human-written lessons a task needs. Wire the same loop into your own workflow with lorekit-setup.</figcaption>
+  <figcaption>The aw agent and pr-reviewer write constantly; each loop reads its own bucket in full, while a coding session's read caps every loop bucket at one — so your window stays the human-written lessons a task needs. Wire the same loop into your own workflow with lorekit-setup.</figcaption>
 </figure>
 
 ## Small and large, one read path
@@ -114,13 +114,13 @@ And it isn't only LoreKit's loops. The same wiring is a skill: `lorekit-setup` s
 Nothing above is a mode you switch on. The same code runs against every store:
 
 - **Six lessons:** you get six lines, ranked, and no scope map — there's nothing left to point at. No padding to a magic number.
-- **Sixty thousand:** you get a 1500-character slice of the highest-signal, de-duplicated, branch-warmed lessons, plus a map of the four scopes holding the rest and a one-call path (`memory.search`) to any of them.
+- **Sixty thousand:** you get a 3000-character slice of the highest-signal, de-duplicated, branch-warmed lessons — chosen from up to 100 candidates per scope — plus a map of the four scopes holding the rest and a one-call path (`memory.search`) to any of them.
 
 Start local with a handful and it's useful on day one; point it at a shared, org-wide store a year later and the read that worked at six still works at sixty thousand — and when you want a fatter or leaner read, it's a dial, not a rewrite.
 
 <figure>
   <img src="/blog/read-scaling.svg" alt="The same read at six lessons and at sixty thousand. A six-lesson store injects all six with no scope map; a sixty-thousand-lesson store injects a same-sized bounded block plus a denominator and a memory.search pointer." width="720" height="430" />
-  <figcaption>Same code, same 1500-character budget, same gates. A small store injects everything it has; a store ten thousand times larger injects a same-sized block plus an honest denominator and a path to the rest. The working set is a fixed window; the store behind it is unbounded.</figcaption>
+  <figcaption>Same code, same 3000-character budget, same gates. A small store injects everything it has; a store ten thousand times larger injects a same-sized block plus an honest denominator and a path to the rest. The working set is a fixed window; the store behind it is unbounded.</figcaption>
 </figure>
 
 ## Turn it up, or off
@@ -129,13 +129,13 @@ Two dials govern the read, and they're the same whether your store holds six les
 
 ```json
 {
-  "hooks.sessionStart.maxChars": 4000,
-  "hooks.sessionStart.maxLessons": 60,
+  "hooks.sessionStart.maxChars": 5000,
+  "hooks.sessionStart.maxLessons": 150,
   "hooks.sessionStart.loopCap": 0
 }
 ```
 
-`maxChars` is the character budget (200–20,000); `maxLessons` is how many ranked lines the block may render (default 40). Whichever binds first wins, so you raise both to read more — and raising `maxLessons` is cheap: it shows more of the winners the read already ranked, not more that it fetches, so the per-scope read stays bounded and your session start doesn't slow down as you turn it up. It's the knob for a big monorepo where you want more context up front; leave it and the default stays lean. `loopCap: 0` drops the self-improvement `loop::` buckets entirely and reads only human-written lessons.
+`maxChars` is the character budget (200–20,000) — how many lines you actually *see* (about 25 at the default 3000). `maxLessons` is the subtler one: it's the **read depth** — how many candidate memories per scope the ranker gets to choose those lines from (default 100, up to the API's 100-per-page max). That's where relevance comes from: at depth 100 the ranker picks its ~25 lines from up to 400 candidates across a four-scope hierarchy; at 25 it'd be choosing from the newest handful, so a lesson you re-learned five times last quarter never even enters the running. Raising it reads deeper and diversifies wider — a little more work per session start, which is the trade. `loopCap: 0` drops the self-improvement `loop::` buckets entirely and reads only human-written memories.
 
 And past whatever slice you pick, the rest of the store is one `memory.search` away. You tune the working set, not the ceiling on what your agent can reach.
 
@@ -143,7 +143,7 @@ And past whatever slice you pick, the rest of the store is one `memory.search` a
 
 Let me be straight about the edges, because scale has them.
 
-- **Ranking sees each scope's newest window, not all of it.** A scope is read up to its most recent 25 lessons — a fixed bound, so a big store never slows your session start — and ranked within that window, so an old-but-high-salience lesson past it won't surface in the session-start block. It's still there, and `memory.search` reaches it by content; the opening read is bounded on purpose so a big store never slows your session start.
+- **Ranking sees each scope's newest window, not all of it.** A scope is read to its newest `maxLessons` memories (100 by default, and never more than the API's 100 per page) and ranked within that window — so on a huge scope, an old-but-high-salience lesson past that depth won't surface in the session-start block. It's still there, and `memory.search` reaches it by content; the read is depth-bounded on purpose so a big store never stalls your session start.
 - **The ranking is lexical, not semantic — no embeddings on the read path.** Recurrence, recency, outcome, word-overlap with your branch. There *is* an embedding pipeline in the repo now, but it's dormant, off by default, and semantic search isn't built — so a genuine paraphrase can still miss. The read stays deterministic: no vector index, no re-embedding bill, no drift.
 - **"Relevant" means your branch name, not your task.** A coarse hint — a well-named branch helps, a branch called `wip` does nothing.
 - **The exact scope map isn't free on a local store.** Counting every scope means walking the local files; the hosted store aggregates in Postgres instead. On a large local-only store that walk is the one place size shows up — the fix is the hosted store, not a smaller count.

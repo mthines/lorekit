@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" role="img" aria-label="The aw agent and the pr-reviewer write constantly into loop buckets in one shared store. The loop can read its own bucket in full by tag, while a human coding session's SessionStart read is ranked and capped at two per bucket, so it stays mostly general knowledge. The lorekit-setup skill wires the same loop into your own workflow.">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" role="img" aria-label="The aw agent and the pr-reviewer write constantly into loop buckets in one shared store. The loop can read its own bucket in full by tag, while a human coding session's SessionStart read is ranked and capped at one per bucket, so it stays mostly general knowledge. The lorekit-setup skill wires the same loop into your own workflow.">
   <style>
     text{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;fill:#e7ebf2}
     .lbl{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;fill:#8892a4;letter-spacing:.02em}
@@ -26,7 +26,7 @@
   <rect x="258" y="62" width="176" height="180" rx="11" fill="#13151a" stroke="#2a2d38"/>
   <text x="346" y="84" text-anchor="middle" font-size="12" font-weight="600">one shared store</text>
 
-  <text x="272" y="108" class="k" font-size="9.5" fill="#aeb9ff">loop::review-outcomes</text>
+  <text x="272" y="108" class="k" font-size="9.5" fill="#aeb9ff">loop::reviewer-lessons</text>
   <rect x="272" y="112" width="148" height="10" rx="3" fill="#7c8cf8" fill-opacity="0.28" stroke="#7c8cf8" stroke-opacity="0.5"/>
   <text x="272" y="140" class="k" font-size="9.5" fill="#aeb9ff">loop::aw-lessons</text>
   <rect x="272" y="144" width="104" height="10" rx="3" fill="#7c8cf8" fill-opacity="0.28" stroke="#7c8cf8" stroke-opacity="0.5"/>
@@ -47,12 +47,12 @@
 
   <rect x="486" y="160" width="210" height="120" rx="10" fill="#13151a" stroke="#34d399" stroke-opacity="0.45"/>
   <text x="498" y="180" class="k" font-size="10.5" fill="#7ce6bf">your coding session</text>
-  <text x="498" y="197" class="lbl" font-size="9.5">SessionStart · ranked · ≤ 2 / bucket</text>
+  <text x="498" y="197" class="lbl" font-size="9.5">SessionStart · ranked · ≤ 1 / bucket</text>
   <rect x="498" y="206" width="186" height="9" rx="2" fill="#34d399" fill-opacity="0.22" stroke="#34d399" stroke-opacity="0.45"/>
   <rect x="498" y="219" width="186" height="9" rx="2" fill="#34d399" fill-opacity="0.22" stroke="#34d399" stroke-opacity="0.45"/>
   <rect x="498" y="232" width="186" height="9" rx="2" fill="#34d399" fill-opacity="0.22" stroke="#34d399" stroke-opacity="0.45"/>
   <rect x="498" y="245" width="186" height="9" rx="2" fill="#7c8cf8" fill-opacity="0.22" stroke="#7c8cf8" stroke-opacity="0.4"/>
-  <text x="656" y="253" text-anchor="end" class="k" font-size="8" fill="#aeb9ff">≤2</text>
+  <text x="656" y="253" text-anchor="end" class="k" font-size="8" fill="#aeb9ff">≤1</text>
   <rect x="498" y="258" width="186" height="9" rx="2" fill="#34d399" fill-opacity="0.22" stroke="#34d399" stroke-opacity="0.45"/>
 
   <!-- lorekit-setup CTA band -->
