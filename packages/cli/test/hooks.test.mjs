@@ -359,6 +359,13 @@ test('branchQueryTerms — distils the branch name, drops generic prefixes and t
   );
   assert.deepEqual(branchQueryTerms({ branch: 'feat/embedding-pipeline' }), ['embedding', 'pipeline']);
   assert.deepEqual(branchQueryTerms({ branch: 'fix/User-LIST' }), ['user', 'list'], 'lower-cased');
+  // A prefix word is stripped ONLY as the prefix — kept when it is a topic word.
+  assert.deepEqual(
+    branchQueryTerms({ branch: 'feat/release-notes-export' }),
+    ['release', 'notes', 'export'],
+    '`release` in the description survives; only the `feat` prefix is dropped',
+  );
+  assert.deepEqual(branchQueryTerms({ branch: 'claude/head-parser-rewrite' }), ['head', 'parser', 'rewrite']);
   // Trunk branches, detached HEAD, and no-git yield NO query — the read is unchanged.
   for (const branch of ['main', 'master', 'HEAD']) {
     assert.deepEqual(branchQueryTerms({ branch }), [], `${branch} → no query`);
@@ -384,6 +391,25 @@ test('sessionRankOpts — seeds branch terms at reduced relevance weight, else t
   // A trunk branch: no terms, and NO weights override — byte-for-byte the old read.
   const trunk = sessionRankOpts({ branch: 'main', readOrder }, 1000);
   assert.deepEqual(trunk, { terms: [], now: 1000, scopeOrder: readOrder });
+});
+
+test('fetchLessons seeds the branch-name query into the ranking (wires sessionRankOpts)', async () => {
+  // Two lessons equal on recency + salience; one matches a branch term. On a
+  // topical branch the branch-seeded relevance lifts the match above its peer.
+  // Reverting fetchLessons to the old `terms: []` literal ties them, and the
+  // key-order tiebreak then puts the NON-matching 'a-plain' first — so this
+  // fails. The scope is injected so the assertion does not depend on the ambient
+  // git branch (a detached HEAD in CI would seed nothing).
+  const scope = { branch: 'feat/embedding-pipeline', readOrder: ['repo::a/b', 'global'] };
+  const at = '2026-08-01T00:00:00.000Z';
+  const byScope = {
+    'repo::a/b': [
+      { scope: 'repo::a/b', key: 'a-plain', value: 'general notes with no topic', seenCount: 1, updatedAt: at },
+      { scope: 'repo::a/b', key: 'z-match', value: 'notes about the embedding pipeline', seenCount: 1, updatedAt: at },
+    ],
+  };
+  const { lessons } = await fetchLessons(fakeStore(byScope), process.cwd(), { now: Date.parse(at), scope });
+  assert.equal(lessons[0].key, 'z-match', 'the branch-relevant lesson is lifted above its peer');
 });
 
 test('fetchLessons is best-effort: a failed scope read is skipped, not thrown', async () => {

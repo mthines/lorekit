@@ -112,8 +112,12 @@ const MAX_SCAN_CHARS = 4096;
 // is the follow-up that replaces this.
 export const SCOPE_READ_LIMIT = 25;
 
-export async function fetchLessons(store, cwd, { now = Date.now() } = {}) {
-  const scope = deriveScope(cwd);
+// `scope` may be injected instead of derived from `cwd` — a seam for callers
+// that already hold a resolved scope and for tests that need a deterministic
+// branch (deriveScope shells out to git, so the ambient branch — often a
+// detached `HEAD` in CI — cannot exercise the branch-seeded read otherwise).
+export async function fetchLessons(store, cwd, { now = Date.now(), scope: scopeOverride = null } = {}) {
+  const scope = scopeOverride || deriveScope(cwd);
   // Issued BEFORE the per-scope read loop and awaited after it. Nothing in the
   // inventory depends on the loop, so awaiting it afterwards would cost a
   // remote store one extra SERIAL round-trip on the session-start path; started
@@ -543,11 +547,14 @@ export function distilTerms(text) {
   return terms;
 }
 
-// Generic branch words dropped from a branch-derived query: the prefixes and
-// trunk names nearly every branch carries, which would otherwise lift lessons on
-// the words `claude`/`feat`/`fix` rather than on what the branch is ABOUT. Small
-// and hand-picked, the same posture as `STOPWORDS`.
-const BRANCH_STOPWORDS = new Set([
+// Generic branch PREFIXES: the leading `type/` segment (and the bare trunk
+// names) nearly every branch carries. Stripped only where they appear — as the
+// prefix — so a word like `release` or `head` is dropped as the branch TYPE
+// (`release/…`) but KEPT when it is a topic in the description
+// (`feat/release-notes`, `claude/head-parser`). Small and hand-picked, the same
+// posture as `STOPWORDS`. Short entries like `fix`/`wip` belong here: matched as
+// a whole segment they are NOT subject to `distilTerms`' `MIN_TERM_LEN` floor.
+const BRANCH_PREFIXES = new Set([
   'main', 'master', 'develop', 'trunk', 'head',
   'feat', 'feature', 'fix', 'bugfix', 'hotfix', 'chore', 'refactor', 'refac',
   'docs', 'test', 'tests', 'wip', 'release', 'perf', 'style', 'build', 'revert', 'claude',
@@ -562,15 +569,24 @@ const BRANCH_STOPWORDS = new Set([
 const BRANCH_RELEVANCE_WEIGHT = 0.5;
 
 // Distil a weak relevance query from the branch NAME only — owner/repo never
-// enters, because `deriveScope` keeps the raw branch in `scope.branch`. Reuses
-// the shared `distilTerms` (so `MIN_TERM_LEN`, dedupe and the FTS-safe token
-// shape all apply), then drops the generic branch prefixes. Empty for a trunk
-// branch, a detached `HEAD`, or no git — the read then behaves exactly as before.
-// Pure and total.
+// enters, because `deriveScope` keeps the raw branch in `scope.branch`. Drops
+// the leading `type/` segment when it is a generic prefix, then reuses the shared
+// `distilTerms` on the DESCRIPTION (so `MIN_TERM_LEN`, dedupe and the FTS-safe
+// token shape all apply). A prefix word is stripped ONLY as the prefix, so
+// `feat/release-notes` keeps `release`. Empty for a bare trunk name, a detached
+// `HEAD`, or no git — the read then behaves exactly as before. Pure and total.
 export function branchQueryTerms(scope) {
   const branch = scope && typeof scope.branch === 'string' ? scope.branch : '';
   if (!branch || branch === 'HEAD') return [];
-  return distilTerms(branch).filter((t) => !BRANCH_STOPWORDS.has(t));
+  const slash = branch.indexOf('/');
+  if (slash === -1) {
+    // Single segment: a bare trunk name carries no topic; anything else is its
+    // own description (a prefix word here is compared whole, not length-floored).
+    return BRANCH_PREFIXES.has(branch.toLowerCase()) ? [] : distilTerms(branch);
+  }
+  const prefix = branch.slice(0, slash).toLowerCase();
+  const description = BRANCH_PREFIXES.has(prefix) ? branch.slice(slash + 1) : branch;
+  return distilTerms(description);
 }
 
 // The rank options for a session-start read of `scope` at `now` — THE wiring
