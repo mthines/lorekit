@@ -5052,6 +5052,327 @@ begin
 end;
 $$;
 
+-- ── 62. lorekit_memory_set_embedding: org-owned rows are embeddable, and the
+--        role gate survives (00062) ──────────────────────────────────────────
+-- The regression this pins: `rls_read` was widened for orgs in 00015,
+-- `rls_update` (00001) never was. An org-owned memory has `user_id is null`
+-- (00019), so a JWT client's direct UPDATE matched zero rows and PostgREST
+-- called that success — every org memory silently went unembedded.
+--
+-- AC-1 asserts the OLD path is still broken (a direct update matches nothing),
+-- because that is the only way this test can prove the RPC is load-bearing
+-- rather than decorative. AC-2 asserts the new path works for the same caller.
+-- AC-3 is the reason this is an RPC and not a widened policy: a VIEWER must be
+-- refused, which RLS cannot express.
+insert into orgs (id, slug, name, created_by) values
+  ('00000000-0000-0000-0000-0000000e6201', 'embed-org', 'Embed Org',
+   '00000000-0000-0000-0000-0000000000a1');
+
+insert into org_members (org_id, user_id, role) values
+  ('00000000-0000-0000-0000-0000000e6201', '00000000-0000-0000-0000-0000000000a1', 'member'),
+  ('00000000-0000-0000-0000-0000000e6201', '00000000-0000-0000-0000-0000000000b2', 'viewer');
+
+-- An org-owned memory as 00019 writes one: org_id set, user_id NULL.
+insert into memories (id, user_id, org_id, scope, key, value) values
+  ('00000000-0000-0000-0000-0000000e6210', null, '00000000-0000-0000-0000-0000000e6201',
+   'global', 'embed-org-row', 'org owned value'),
+  ('00000000-0000-0000-0000-0000000e6211', '00000000-0000-0000-0000-0000000000a1', null,
+   'global', 'embed-personal-row', 'personal value');
+
+do $$
+declare
+  -- Built rather than typed, matching the 00060 section above.
+  v_vec      text := '[' || array_to_string(array_fill(0.001::real, array[1536]), ',') || ']';
+  v_direct   int := 0;
+  v_ok       boolean;
+  v_model    text;
+  v_denied   boolean;
+  v_gone     boolean;
+  v_paired   boolean := false;
+begin
+  -- ── AC-1: the old direct-update path does NOT land for a JWT caller ───────
+  -- Either it matches zero rows (rls_update's USING excludes the org-owned row)
+  -- or the role lacks table UPDATE entirely. Both prove the same thing — a JWT
+  -- client cannot write this row directly — and which one applies depends on
+  -- Supabase's default table grants rather than on anything this repo declares.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
+  begin
+    with upd as (
+      update memories set embedding = v_vec::vector, embedding_model = 'probe'
+       where id = '00000000-0000-0000-0000-0000000e6210'
+      returning 1
+    )
+    select count(*) into v_direct from upd;
+  exception when insufficient_privilege then
+    v_direct := 0;
+  end;
+
+  reset role;
+
+  assert v_direct = 0,
+    format('00062 AC-1: a JWT-scoped direct UPDATE on an org-owned memory must not land '
+           '(that asymmetry between rls_read and rls_update is the bug 00062 routes around), '
+           'but it matched %s row(s). If this now succeeds, rls_update was widened — check '
+           'that the org ROLE gate did not go with it', v_direct);
+
+  -- ── AC-2: the RPC writes the same row for the same caller ─────────────────
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+
+  select written into v_ok
+    from lorekit_memory_set_embedding(
+           '00000000-0000-0000-0000-0000000e6210', null, v_vec, 'text-embedding-3-small');
+
+  reset role;
+
+  assert v_ok,
+    '00062 AC-2: a write-capable org member must be able to embed an org-owned memory';
+
+  select embedding_model into v_model
+    from memories where id = '00000000-0000-0000-0000-0000000e6210';
+  assert v_model = 'text-embedding-3-small',
+    format('00062 AC-2: embedding_model should be written alongside the vector, got %s', v_model);
+
+  -- ── AC-3: a VIEWER is refused — the role gate RLS cannot express ──────────
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated"}', true);
+
+  select written into v_denied
+    from lorekit_memory_set_embedding(
+           '00000000-0000-0000-0000-0000000e6210', null, v_vec, 'sneaky-model');
+
+  reset role;
+
+  assert not v_denied,
+    '00062 AC-3: an org VIEWER must NOT be able to write an embedding — this is exactly what '
+    'widening rls_update instead of adding this RPC would have permitted';
+
+  select embedding_model into v_model
+    from memories where id = '00000000-0000-0000-0000-0000000e6210';
+  assert v_model = 'text-embedding-3-small',
+    format('00062 AC-3: the viewer''s denied call must not have altered the row, model is now %s', v_model);
+
+  -- ── AC-4: personal rows — owner writes, a stranger does not ───────────────
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  select written into v_ok
+    from lorekit_memory_set_embedding(
+           '00000000-0000-0000-0000-0000000e6211', null, v_vec, 'text-embedding-3-small');
+  reset role;
+  assert v_ok, '00062 AC-4: the owner of a personal memory must be able to embed it';
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000c3","role":"authenticated"}', true);
+  select written into v_denied
+    from lorekit_memory_set_embedding(
+           '00000000-0000-0000-0000-0000000e6211', null, v_vec, 'stranger-model');
+  reset role;
+  assert not v_denied,
+    '00062 AC-4: a user who does not own a personal memory must not be able to embed it';
+
+  -- ── AC-5: a row that no longer exists is false, not an exception ──────────
+  -- The caller is a backgrounded task whose contract is "never fail a write".
+  select written into v_gone
+    from lorekit_memory_set_embedding(
+           '00000000-0000-0000-0000-0000000e62ff', null, v_vec, 'text-embedding-3-small');
+  assert not v_gone,
+    '00062 AC-5: a missing memory id must return false rather than raising';
+
+  -- ── AC-6: the 00060 both-or-neither pairing is refused by NAME ────────────
+  begin
+    perform lorekit_memory_set_embedding(
+              '00000000-0000-0000-0000-0000000e6211', null, v_vec, null);
+  exception when others then
+    v_paired := sqlerrm like '%must be set together%';
+  end;
+  assert v_paired,
+    '00062 AC-6: supplying a vector without a model must be refused with a named reason, '
+    'not left to surface as an opaque CHECK violation inside a background task';
+end;
+$$;
+
+-- AC-7: grant surface. Postgres grants EXECUTE to PUBLIC by default and `anon`
+-- inherits it, so the migration's explicit REVOKE is what makes this pass —
+-- the same trap 00041 documents and this assertion is why it stays caught.
+do $$
+declare
+  v_sig text := 'lorekit_memory_set_embedding(uuid, uuid, text, text)';
+begin
+  assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
+    '00062 AC-7: lorekit_memory_set_embedding must NOT be executable by anon';
+  assert has_function_privilege('authenticated', v_sig, 'EXECUTE'),
+    '00062 AC-7: lorekit_memory_set_embedding must be executable by authenticated';
+  assert has_function_privilege('service_role', v_sig, 'EXECUTE'),
+    '00062 AC-7: lorekit_memory_set_embedding must be executable by service_role';
+end;
+$$;
+
+-- ── 62b. An embedding write must not restamp `updated_at` (00062) ───────────
+-- `updated_at` is the recency signal search/relevant order by, memory.list
+-- keysets on, and lesson-rank scores. The vector is a DERIVED artefact, so
+-- writing one is not an edit. A whole-store backfill would otherwise restamp
+-- every row in `created_at desc` order and destroy the real ordering, with no
+-- way to recover the old values.
+--
+-- AC-1 pins the preservation, AC-2 pins that a REAL edit still bumps (a trigger
+-- that never stamps would pass AC-1 while breaking every consumer), and AC-3
+-- pins that an edit arriving together with an embedding still counts as an edit.
+insert into memories (id, user_id, scope, key, value, updated_at) values
+  ('00000000-0000-0000-0000-0000000e6220', '00000000-0000-0000-0000-0000000000a1',
+   'global', 'embed-stamp-row', 'original value', '2020-01-01T00:00:00Z'),
+  -- AC-3 needs its own row: `now()` does not advance within a transaction, so a
+  -- reset-then-compare on the first row could never show a bump. See the note there.
+  ('00000000-0000-0000-0000-0000000e6221', '00000000-0000-0000-0000-0000000000a1',
+   'global', 'embed-stamp-row-2', 'original value', '2020-01-01T00:00:00Z'),
+  -- AC-6 likewise: it asserts a no-op re-write STILL bumps, which needs a row
+  -- whose stamp is unambiguously old.
+  ('00000000-0000-0000-0000-0000000e6222', '00000000-0000-0000-0000-0000000000a1',
+   'global', 'embed-stamp-row-3', 'original value', '2020-01-01T00:00:00Z');
+
+do $$
+declare
+  v_vec     text := '[' || array_to_string(array_fill(0.001::real, array[1536]), ',') || ']';
+  v_before  timestamptz;
+  v_after   timestamptz;
+  v_ok      boolean;
+begin
+  select updated_at into v_before from memories where id = '00000000-0000-0000-0000-0000000e6220';
+  assert v_before = '2020-01-01T00:00:00Z'::timestamptz,
+    format('00062b AC-1 setup: the seeded updated_at should be untouched, got %s', v_before);
+
+  -- AC-1 — an embedding-only write preserves it.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  select written into v_ok
+    from lorekit_memory_set_embedding(
+           '00000000-0000-0000-0000-0000000e6220', null, v_vec, 'text-embedding-3-small');
+  reset role;
+
+  assert v_ok, '00062b AC-1 setup: the embedding write should have landed';
+
+  select updated_at into v_after from memories where id = '00000000-0000-0000-0000-0000000e6220';
+  assert v_after = v_before,
+    format('00062b AC-1: an embedding-only write must NOT restamp updated_at — was %s, now %s. '
+           'A backfill doing this to every row rewrites the store''s recency ordering irrecoverably',
+           v_before, v_after);
+
+  -- AC-2 — a real edit still bumps it. Without this, a trigger that simply
+  -- never stamped would satisfy AC-1 while silently breaking every consumer.
+  update memories set value = 'edited value' where id = '00000000-0000-0000-0000-0000000e6220';
+  select updated_at into v_after from memories where id = '00000000-0000-0000-0000-0000000e6220';
+  assert v_after > v_before,
+    format('00062b AC-2: editing a memory must still bump updated_at, stayed at %s', v_after);
+
+  -- AC-3 — an edit that ALSO rewrites the vector is still an edit.
+  --
+  -- On a SECOND row seeded at 2020, not by resetting the first one, because
+  -- `now()` is the TRANSACTION timestamp and does not advance inside one — so
+  -- comparing two stamps taken in this transaction could never show an increase,
+  -- and the assertion would be vacuous however the reset behaved.
+  --
+  -- (An earlier revision of the trigger gave a second reason: a lone
+  -- `update … set updated_at = …` was preserved, so the reset silently no-oped.
+  -- That is no longer true — AC-6 below asserts such a write BUMPS, because the
+  -- trigger now requires the embedding columns to have actually moved. The
+  -- separate row is still the right shape for the timestamp reason above.)
+  --
+  -- Seeding through INSERT is what makes it work: there is no BEFORE INSERT
+  -- trigger on `updated_at`, so the 2020 value survives and a bump is
+  -- unmistakable.
+  --
+  -- Both embedding columns move together — the 00060 CHECK is both-or-neither,
+  -- so setting `embedding_model` alone would fail on the constraint rather than
+  -- testing the trigger.
+  update memories
+     set value = 'edited again',
+         embedding = v_vec::vector,
+         embedding_model = 'text-embedding-3-large'
+   where id = '00000000-0000-0000-0000-0000000e6221';
+  select updated_at into v_after from memories where id = '00000000-0000-0000-0000-0000000e6221';
+  assert v_after > '2020-01-01T00:00:00Z'::timestamptz,
+    format('00062b AC-3: a change touching both the value and the embedding columns is an edit '
+           'and must bump updated_at, stayed at %s', v_after);
+
+  -- AC-6 — a plain NO-OP re-write still bumps, i.e. this migration did not
+  -- quietly change the recency contract for everything else.
+  --
+  -- `memory_write` UPSERTS, so an agent re-saving an identical lesson lands here
+  -- with every column unchanged. Preserving `updated_at` for that case would
+  -- silently stop re-saves from refreshing recency — a behaviour change reaching
+  -- far beyond embeddings, in a migration whose entire claim is that a DERIVED
+  -- column must not disturb the row. The trigger therefore requires a vector to
+  -- have actually moved, and this is what holds it to that.
+  update memories
+     set updated_at = updated_at   -- no-op: rewrites the row, changes nothing
+   where id = '00000000-0000-0000-0000-0000000e6222';
+  select updated_at into v_after from memories where id = '00000000-0000-0000-0000-0000000e6222';
+  assert v_after > '2020-01-01T00:00:00Z'::timestamptz,
+    format('00062b AC-6: a no-op re-write must STILL bump updated_at — only a write that moves '
+           'the embedding columns may preserve it. An upsert of an unchanged lesson is the '
+           'common case here, and it must keep refreshing recency. Stayed at %s', v_after);
+end;
+$$;
+
+-- AC-5: the generated-column list this trigger masks is still exactly `fts`.
+--
+-- This is the guard for the trap that broke the first attempt. Postgres computes
+-- GENERATED columns AFTER before-row triggers, so inside the trigger `new.<gen>`
+-- is NULL while `old.<gen>` holds a value — an unmasked generated column makes
+-- EVERY update compare as changed and quietly turns the function back into
+-- `set_updated_at`. It fails in the safe direction, so nothing else would catch
+-- it. Adding a generated column to `memories` must therefore trip this and be
+-- masked in `lorekit_memories_set_updated_at` too.
+do $$
+declare
+  v_generated text[];
+begin
+  select coalesce(array_agg(column_name order by column_name), '{}')
+    into v_generated
+    from information_schema.columns
+   where table_schema = 'public' and table_name = 'memories' and is_generated = 'ALWAYS';
+
+  assert v_generated = array['fts'],
+    format('00062b AC-5: memories now has generated columns %s, but '
+           'lorekit_memories_set_updated_at only masks `fts`. An unmasked generated column is '
+           'NULL in a BEFORE trigger while OLD holds a value, so every update compares as '
+           'changed and updated_at is restamped on embedding-only writes again. Mask it there '
+           'and update this assertion.', v_generated);
+end;
+$$;
+
+-- AC-4: the five OTHER tables on the shared `set_updated_at` are untouched —
+-- only the memories trigger was retargeted. Retargeting all of them would be a
+-- behaviour change to tables that have no embedding column and no such problem.
+do $$
+declare
+  v_fn text;
+begin
+  select p.proname into v_fn
+    from pg_trigger t
+    join pg_proc p on p.oid = t.tgfoid
+    join pg_class c on c.oid = t.tgrelid
+   where c.relname = 'memories' and t.tgname = 'memories_updated_at';
+  assert v_fn = 'lorekit_memories_set_updated_at',
+    format('00062b AC-4: the memories trigger must use lorekit_memories_set_updated_at, uses %s', v_fn);
+
+  select p.proname into v_fn
+    from pg_trigger t
+    join pg_proc p on p.oid = t.tgfoid
+    join pg_class c on c.oid = t.tgrelid
+   where c.relname = 'orgs' and t.tgname = 'orgs_updated_at';
+  assert v_fn = 'set_updated_at',
+    format('00062b AC-4: orgs must still use the shared set_updated_at, uses %s', v_fn);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

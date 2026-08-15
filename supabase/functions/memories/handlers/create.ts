@@ -1,5 +1,5 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { auditUserId } from '../../_shared/api/auth.ts';
+import { actorUserId, auditUserId } from '../../_shared/api/auth.ts';
 import { created, tooManyRequests, badRequest, dryRun } from '../../_shared/api/respond.ts';
 import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
 import { validateBody } from '../../_shared/api/validate.ts';
@@ -11,10 +11,22 @@ import { parseCreatedAt, CreatedAtError } from '../../_shared/created-at.ts';
 import { parseOrigin, OriginError } from '../../_shared/origin.ts';
 import { resolveKindHost } from '../../_shared/schemas/tags.ts';
 import { recordAudit } from '../../_shared/audit.ts';
+import { embedOnWrite } from '../../_shared/embed-on-write.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Database } from '../../_shared/database.types.ts';
 
 type RateLimitRow = Database['public']['Functions']['lorekit_check_rate_limit']['Returns'][number];
+
+/**
+ * The environment, snapshotted once per isolate.
+ *
+ * `Deno.env.toObject()` copies the WHOLE secret environment, and reading five
+ * embedding variables did that on every `POST /memories` — including the
+ * disabled path, which is the one that has to stay free. Secrets are fixed for
+ * an isolate's lifetime, so a boot-time snapshot is the same value. `embedOnWrite`
+ * keeps taking `env` as a parameter so it stays testable with an injected one.
+ */
+const ENV = Deno.env.toObject();
 
 export async function handleCreate(
   req: Request, auth: AuthContext, db: DbClient, span: Span,
@@ -131,6 +143,16 @@ export async function handleCreate(
 
   if (fetchErr) { span.error(`DB: ${fetchErr.message}`); throw fetchErr; }
   span.setAttributes({ 'lorekit.memory_id': row.id, 'lorekit.write.inserted': row.inserted !== false });
+
+  // Queue the embedding. Returns synchronously and is a no-op unless embedding
+  // is explicitly enabled AND a key is configured — see `embed-on-write.ts` for
+  // why it backgrounds rather than awaits, and why it SKIPS rather than falling
+  // back to awaiting when the runtime has no background hook.
+  // `actorUserId(auth)` for the same reason every org RPC takes it: the api_key
+  // tier reaches Postgres over a service-role connection where `auth.uid()` is
+  // NULL, so the RPC's capability check would deny every call without an
+  // explicit actor. The value is never taken from the request.
+  embedOnWrite(db, span, { id: row.id, key: body.key, value: body.value }, ENV, actorUserId(auth));
 
   // Audit AFTER the write succeeded. Same action/resource/target/metadata
   // shape as toolWrite, so the MCP and REST surfaces produce comparable rows.
