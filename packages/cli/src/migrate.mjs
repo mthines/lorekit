@@ -253,6 +253,7 @@ export async function migrate(args, options = {}) {
   const byScope = new Map();
   let capped = null;
   let failed = 0;
+  let ttlClamped = 0;
   for (const entry of entries) {
     const store = targetFor(entry.scope);
     // Awaited so the loop is destination-agnostic: LocalStore.getEntry is
@@ -279,6 +280,10 @@ export async function migrate(args, options = {}) {
 
     if (apply && verdict !== 'noop') {
       const res = await call(() => store.putEntry(entry));
+      // The entry landed, but with a shorter life than it had: the hosted TTL
+      // maxes out at 365 days. Counted so the summary can say so — a silently
+      // shortened expiry is the kind of loss a user finds out about later.
+      if (res && res.ttlClamped) ttlClamped++;
       if (res && res.ok === false) {
         // The memory cap is terminal for the whole run, not just this entry:
         // every remaining write would hit the same ceiling. Stop, and report
@@ -311,6 +316,9 @@ export async function migrate(args, options = {}) {
       `(${totals.add} new, ${totals.update} updated), ${totals.noop} unchanged.`,
   );
   if (skipped > 0) log(`  ${skipped} skipped (archived or expired).`);
+  if (ttlClamped > 0) {
+    log(`  ${ttlClamped} entr${ttlClamped === 1 ? 'y' : 'ies'} had a TTL longer than the hosted maximum — shortened to 365 days.`);
+  }
   if (capped) {
     err(`\n${c.red('migrate:')} ${capped}`);
     log(`  ${moved} entr${moved === 1 ? 'y' : 'ies'} migrated before the cap was reached.`);

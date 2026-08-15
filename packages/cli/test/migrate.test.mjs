@@ -420,3 +420,46 @@ test('migrate --to remote reports an unreadable entry and never overwrites it', 
     assert.match(result.text, /1 entry failed \(listed above\)/);
   });
 });
+
+test('migrate --to remote retries a rate-limited READ, and reports a clamped TTL', async () => {
+  const src = tmpDir();
+  const store = createLocalStore(src);
+  await store.write({ scope: 'global', key: 'long', value: 'v', ttl_days: 365 });
+  // Push the expiry well past the hosted 365-day maximum.
+  const file = fs.readdirSync(path.join(src, 'global')).map((n) => path.join(src, 'global', n))[0];
+  fs.writeFileSync(
+    file,
+    fs.readFileSync(file, 'utf8').replace(/expires_at: .*/, 'expires_at: 2099-01-01T00:00:00.000Z'),
+  );
+
+  const home = tmpDir();
+  const root = tmpDir();
+  const slept = [];
+  await withHome(home, async () => {
+    let reads = 0;
+    const { result, calls } = await withRemote(
+      () => captured(() => migrate(
+        { from: src, to: 'remote', yes: true, dir: root },
+        { sleepFn: async (ms) => { slept.push(ms); } },
+      )),
+      {
+        respond: (call) => {
+          // A read reports a rate limit by throwing out of `getEntry`, so this
+          // pins that the retry path covers reads and not only writes.
+          if (call.method === 'GET' && reads++ === 0) {
+            return {
+              status: 429,
+              body: JSON.stringify({ error: 'Too many requests', code: 'rate_limited', retryAfterSeconds: 1 }),
+            };
+          }
+          return null;
+        },
+      },
+    );
+    assert.equal(result.result, 0);
+    assert.deepEqual(slept, [1000]);
+    assert.equal(calls.filter((c) => c.method === 'GET').length, 2); // rejected read + its retry
+    assert.equal(writes(calls)[0].body.ttl_days, 365);
+    assert.match(result.text, /1 entry had a TTL longer than the hosted maximum/);
+  });
+});

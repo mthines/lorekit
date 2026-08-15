@@ -2344,3 +2344,31 @@ test('withRetry honours the server hint, then gives up with the real error', asy
   assert.equal(gaveUp.error.message, 'Too many requests');
   assert.deepEqual(slept2, [10, 20]); // exponential when no hint was given
 });
+
+test('withRetry classifies a THROWN rate limit too, and rethrows anything else', async () => {
+  const slept = [];
+  let attempts = 0;
+  // A read reports a 429 by throwing; without this the classifying read would
+  // fail an entry that only needed to wait.
+  const ok = await withRetry(
+    async () => {
+      if (++attempts < 3) {
+        const e = new Error('rate limited');
+        e.result = { httpStatus: 429, retryAfter: 1, error: { code: 'rate_limited' } };
+        throw e;
+      }
+      return { ok: true };
+    },
+    { sleepFn: async (ms) => slept.push(ms) },
+  );
+  assert.deepEqual(ok, { ok: true });
+  assert.deepEqual(slept, [1000, 1000]);
+
+  // A non-rate-limit rejection is not swallowed or retried.
+  let calls = 0;
+  await assert.rejects(
+    () => withRetry(async () => { calls++; throw new Error('upstream boom'); }, { sleepFn: async () => {} }),
+    /upstream boom/,
+  );
+  assert.equal(calls, 1);
+});

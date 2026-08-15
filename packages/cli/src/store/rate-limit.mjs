@@ -93,14 +93,33 @@ export async function withRetry(fn, {
 } = {}) {
   let res;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    res = await fn();
+    // A read reports a rate limit by THROWING (`RemoteStore.getEntry` refuses
+    // to let a failed read look like an absence), so the rejection has to be
+    // classified here too — otherwise only writes would ever be retried and a
+    // 429 on the classifying read would fail the entry outright. Anything that
+    // is not a rate limit propagates untouched.
+    try {
+      res = await fn();
+    } catch (e) {
+      if (!isRateLimited(e?.result) || attempt === maxAttempts) throw e;
+      await sleepFn(retryDelay(e.result, attempt, baseDelayMs, onRetry));
+      continue;
+    }
     if (!isRateLimited(res) || attempt === maxAttempts) return res;
-    const hinted = Number(res.retryAfter);
-    const delay = Number.isFinite(hinted) && hinted > 0
-      ? Math.min(hinted * 1000, MAX_RETRY_DELAY_MS)
-      : Math.min(baseDelayMs * 2 ** (attempt - 1), MAX_RETRY_DELAY_MS);
-    if (onRetry) onRetry({ attempt, delayMs: delay });
-    await sleepFn(delay);
+    await sleepFn(retryDelay(res, attempt, baseDelayMs, onRetry));
   }
   return res;
+}
+
+// How long to wait before the next attempt: the server's own hint when it sent
+// one — it knows when its window rolls over and the client does not — else
+// exponential backoff. Shared by the resolved and the thrown path so the two
+// cannot drift.
+function retryDelay(res, attempt, baseDelayMs, onRetry) {
+  const hinted = Number(res?.retryAfter);
+  const delayMs = Number.isFinite(hinted) && hinted > 0
+    ? Math.min(hinted * 1000, MAX_RETRY_DELAY_MS)
+    : Math.min(baseDelayMs * 2 ** (attempt - 1), MAX_RETRY_DELAY_MS);
+  if (onRetry) onRetry({ attempt, delayMs });
+  return delayMs;
 }
