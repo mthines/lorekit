@@ -1,11 +1,10 @@
 'use client';
 
 import { useMemo } from 'react';
-import { BookOpen, BookOpenCheck, Info, Layers, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { BookOpen, BookOpenCheck, Layers } from 'lucide-react';
 import { ScopeHealthGrid } from '@/components/dashboard/ScopeHealthCard';
-import { Sparkbar } from '@/components/dashboard/Sparkbar';
-import { Tooltip } from '@/components/ui/Tooltip';
-import { Combobox, type ComboboxItem } from '@/components/ui/Combobox';
+import { StatCard } from '@/components/dashboard/StatCard';
+import { RangePicker } from '@/components/ui/RangePicker';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDashboardData } from '@/lib/queries/dashboard';
 import {
@@ -16,10 +15,9 @@ import {
 } from '@/lib/aggregations';
 import {
   bucketPlanForRange,
-  isPresetRange,
+  gridAnchor,
   rangeCaption,
   rangeLabel,
-  resolveRange,
   type RangePreset,
   type TimeRange,
 } from '@/lib/time-range';
@@ -32,28 +30,26 @@ import {
  * to compare against — and "all time" has no preceding window. The Explorer,
  * which lists rather than trends, does offer it (`?range` absent).
  *
- * `90d` is absent for a DATA reason, and it survives this control becoming a
- * combobox — a list has room for a fourth row where the old segmented group did
- * not, so the constraint is worth restating rather than assuming it was about
- * width. `useDashboardData` fetches `TREND_WINDOW_DAYS = 62` days
+ * The set is deliberately UNCHANGED by this PR, even though the shared model now
+ * understands `90d` too (`RANGE_PRESETS`). This is a refactor of what the
+ * selection MEANS, not of what the control offers, and the committed visual
+ * baselines (`__screenshots__/DashboardStats.stories.tsx`) pin this row pixel for
+ * pixel — a fourth button is a baseline regeneration, which belongs with the
+ * stats-header work that redesigns this control rather than smuggled in here.
+ *
+ * The MODEL does not block a fourth button — `{ preset: '90d' }` already
+ * resolves — but the DATA would, and that is the larger of the two reasons.
+ * `useDashboardData` fetches `TREND_WINDOW_DAYS = 62` days
  * (`lib/queries/dashboard.ts`), sized as the widest preset here plus the equal
  * preceding window every card compares against, plus slack. A `90d` selection
  * charts 90 daily buckets over 62 days of data, and its comparison half is
- * entirely outside the fetch — so the trend chip would read `+100%` by
- * construction. Offering it means widening that fetch to ~182 days, tripling the
- * activity payload on every Overview load; widen-vs-clamp-vs-drop is a product
- * call to make deliberately. Until it is made, a hand-edited
+ * entirely outside the fetch — so the trend chip reads `+100%` by construction.
+ * Offering `90d` means widening that fetch to ~182 days, tripling the activity
+ * payload on every Overview load; widen-vs-clamp-vs-drop is a product call this
+ * refactor deliberately does not make. Until it is made, a hand-edited
  * `?range={"preset":"90d"}` on this page is bounded by the same 62 days.
- *
- * The short `label` keeps the trigger as narrow as the buttons it replaced; the
- * `hint` says the same thing in words, which is what the segmented group had
- * nowhere to put.
  */
-const RANGE_OPTIONS: ComboboxItem<RangePreset>[] = [
-  { value: '24h', label: '24h', hint: 'Last 24 hours' },
-  { value: '7d', label: '7d', hint: 'Last 7 days' },
-  { value: '30d', label: '30d', hint: 'Last 30 days' },
-];
+const OVERVIEW_PRESETS: readonly RangePreset[] = ['24h', '7d', '30d'];
 
 /**
  * Module-level so the reference is stable across renders.
@@ -105,62 +101,6 @@ function rangeTrendTitle(range: TimeRange, nowIso: string): string {
 
 const sumPoints = (points: { value: number }[]) => points.reduce((total, p) => total + p.value, 0);
 
-/**
- * Small, subtle segmented control for picking the stat row's time range. A
- * single-select radiogroup (aria-checked), sized to sit quietly above the cards
- * without competing with the metrics.
- *
- * There is ONE of these for all three cards: three independent pickers let the
- * row show three different windows at once, which made the cards impossible to
- * read against each other.
- */
-function StatRangeSelect({
-  value,
-  onChange,
-  nowIso,
-}: {
-  value: TimeRange;
-  onChange: (range: TimeRange) => void;
-  /** Injected so the custom-range label describes the same instant the cards do. */
-  nowIso: string;
-}) {
-  // The value is a discriminated union and the options are presets, so the two
-  // do not line up one-to-one. An ABSOLUTE arm — a window drilled in from a
-  // chart, or a deep link — matches no option, which is the honest rendering:
-  // none of these presets IS what the user is looking at. `triggerLabel` is
-  // what stops that reading as "nothing selected"; it names the actual window.
-  const preset = isPresetRange(value) ? value.preset : null;
-
-  return (
-    <Combobox
-      options={RANGE_OPTIONS}
-      value={preset}
-      onChange={(next) => onChange({ preset: next })}
-      label="Time range"
-      {...(preset === null ? { triggerLabel: rangeLabel(value, nowIso) } : {})}
-    />
-  );
-}
-
-/**
- * The unit a card's number and bars are counted in — "Memory writes",
- * "Memory reads", "Scopes writes".
- *
- * Two of the three cards count memories and one counts scopes, and the
- * difference used to be invisible: the old "Active" card showed a scope count
- * over a chart of memories. A muted pill next to the icon makes the unit
- * unmissable without competing with the metric. Each tag names BOTH the thing
- * counted and the verb, because "writes" alone does not say writes of what —
- * and the Scopes card counts scopes written to, not memories.
- */
-function UnitTag({ label }: { label: string }) {
-  return (
-    <span className="rounded border border-[var(--color-border)] bg-[var(--color-bg-elevated)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
-      {label}
-    </span>
-  );
-}
-
 /** Skeleton that matches the real layout to prevent CLS while the query loads. */
 export function DashboardStatsSkeleton() {
   return (
@@ -168,13 +108,7 @@ export function DashboardStatsSkeleton() {
       <div>
         <div className="mb-3 flex items-center justify-between gap-2">
           <div className="h-3 w-16 animate-pulse rounded bg-[var(--color-bg-elevated)]" />
-          {/* The range picker's slot. `h-9 w-16` tracks the Combobox trigger
-              (`min-h-9`, a short label plus a chevron), not the three-segment
-              group it replaced — that was `h-6 w-28`, so the row would have
-              grown 12px taller and shrunk 48px narrower the moment the query
-              settled. Sizing a skeleton to the control it no longer renders is
-              the whole failure mode this placeholder exists to avoid. */}
-          <div className="h-9 w-16 animate-pulse rounded-lg bg-[var(--color-bg-elevated)]" />
+          <div className="h-6 w-28 animate-pulse rounded-md bg-[var(--color-bg-elevated)]" />
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {Array.from({ length: 3 }).map((_, i) => (
@@ -197,28 +131,6 @@ export function DashboardStatsSkeleton() {
         </div>
       </div>
     </>
-  );
-}
-
-/** Period-over-period percentage-change chip. */
-function TrendChip({ changePct, title }: { changePct: number; title: string }) {
-  const dir = changePct > 0 ? 'up' : changePct < 0 ? 'down' : 'flat';
-  const Icon = dir === 'up' ? TrendingUp : dir === 'down' ? TrendingDown : Minus;
-  const color =
-    dir === 'up'
-      ? 'text-[var(--color-success)]'
-      : dir === 'down'
-        ? 'text-[var(--color-error)]'
-        : 'text-[var(--color-content-tertiary)]';
-
-  return (
-    <span
-      className={`flex items-center gap-1 text-xs font-medium tabular-nums ${color}`}
-      title={title}
-    >
-      <Icon className="size-3.5" aria-hidden />
-      {changePct > 0 ? `+${changePct}` : changePct}%
-    </span>
   );
 }
 
@@ -267,11 +179,11 @@ export function DashboardStats() {
   //
   // A preset and an unbounded range still anchor at `nowIso`, unchanged: that
   // is what they mean, and it keeps every existing render identical.
-  const gridNowIso = useMemo(() => {
-    if (range === null || isPresetRange(range)) return nowIso;
-    const window = resolveRange(range, nowIso);
-    return window === null ? nowIso : new Date(Date.parse(window.to) - 1).toISOString();
-  }, [range, nowIso]);
+  // Extracted to `lib/time-range.ts` now that the Explorer's stats header needs
+  // the identical rule — the rule is invisible when wrong (both charts still
+  // render, they just describe a period nobody selected), which is the worst
+  // kind of thing to keep two copies of.
+  const gridNowIso = useMemo(() => gridAnchor(range, nowIso), [range, nowIso]);
   const memoryTrends = useMemo(
     () => computeRangeTrends(rows, gridNowIso, plan),
     [rows, gridNowIso, plan],
@@ -361,50 +273,23 @@ export function DashboardStats() {
       <div>
         <div className="mb-3 flex items-center justify-between gap-2">
           <p className="text-xs font-medium text-[var(--color-content-tertiary)]">Activity</p>
-          <StatRangeSelect value={range} onChange={setRange} nowIso={nowIso} />
+          {/* The SHARED picker — the Explorer renders the same component, so
+              the two pages cannot drift into two ways of choosing a range. */}
+          <RangePicker
+            value={range}
+            onChange={setRange}
+            presets={OVERVIEW_PRESETS}
+            nowIso={nowIso}
+          />
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {cards.map(({ id, icon: Icon, label, tag, tooltip, value, description, trend, unit }) => (
-            <div
+          {cards.map(({ id, ...card }) => (
+            <StatCard
               key={id}
-              className="flex flex-col gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-5"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <div className="flex size-9 items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
-                    <Icon className="size-4 text-[var(--color-accent)]" aria-hidden />
-                  </div>
-                  <UnitTag label={tag} />
-                </div>
-                {trend.points.length >= 2 && (
-                  <TrendChip changePct={trend.changePct} title={rangeTrendTitle(range, nowIso)} />
-                )}
-              </div>
-              <div>
-                <p className="text-2xl font-bold tabular-nums text-[var(--color-content-primary)]">
-                  {value}
-                </p>
-                <p className="flex items-center gap-1 text-xs text-[var(--color-content-tertiary)]">
-                  {label}
-                  <Tooltip content={tooltip} side="top" align="center">
-                    <Info
-                      className="size-3 shrink-0 text-[var(--color-content-tertiary)] opacity-60"
-                      aria-hidden
-                    />
-                  </Tooltip>
-                </p>
-                <p className="mt-0.5 text-[10px] text-[var(--color-content-tertiary)] opacity-70">
-                  {description}
-                </p>
-              </div>
-              {/* Per-metric trend — hover (desktop) or tap (mobile) a bar for values. */}
-              <Sparkbar
-                points={trend.points}
-                unit={unit}
-                className="mt-auto h-7 w-full"
-                ariaLabel={`${label}: ${rangeTitle}`}
-              />
-            </div>
+              {...card}
+              trendTitle={rangeTrendTitle(range, nowIso)}
+              rangeTitle={rangeTitle}
+            />
           ))}
         </div>
       </div>

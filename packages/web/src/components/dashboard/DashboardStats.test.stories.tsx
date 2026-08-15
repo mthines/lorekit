@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react';
-import { expect, userEvent, waitFor, within } from 'storybook/test';
+import { expect, userEvent, within } from 'storybook/test';
 
 import { DashboardStats } from './DashboardStats';
 import { memoryHandlers, FROZEN_NOW } from '@/mocks/memories';
@@ -72,37 +72,30 @@ export const RangeSelectorSwitches: Story = {
     const canvas = within(canvasElement);
     await canvas.findByText('Memories written');
 
-    // The picker is the shared `Combobox` now, so its popup is PORTALED to
-    // document.body — the rows do not resolve inside the story canvas.
-    const openPicker = async () => {
-      const screen = within(document.body);
-      // The popup unmounts through an `AnimatePresence` exit, so a reopen right
-      // after a commit click would resolve against the OUTGOING listbox. Same
-      // race the Combobox and StatusControl stories wait out.
-      await waitFor(async () => {
-        await expect(screen.queryByRole('listbox', { name: /time range/i })).toBeNull();
-      });
-      await userEvent.click(canvas.getByRole('button', { name: /^Time range:/ }));
-      await screen.findByRole('listbox', { name: /time range/i });
-      return screen;
-    };
-
+    // The Overview uses the shared segmented `RangePicker` — a single `radiogroup`
+    // of preset radios ("Last 24h" / "Last 7d" / "Last 30d"), not a per-card
+    // control and not a portaled Combobox. One group drives all three cards.
     await step('There is exactly one shared range picker, not one per card', async () => {
-      await expect(canvas.getAllByRole('button', { name: /^Time range:/ })).toHaveLength(1);
+      await expect(canvas.getAllByRole('radiogroup', { name: /time range/i })).toHaveLength(1);
     });
 
-    await step('24h is the default, and the trigger says so before opening', async () => {
-      await expect(canvas.getByRole('button', { name: /^Time range: 24h/ })).toBeInTheDocument();
+    await step('24h is the default selection', async () => {
+      await expect(canvas.getByRole('radio', { name: /last 24h/i })).toHaveAttribute(
+        'aria-checked',
+        'true',
+      );
     });
 
     await step('Selecting 30d moves the selection', async () => {
-      const menu = await openPicker();
-      await expect(menu.getByRole('option', { name: /24h/ })).toHaveAttribute(
-        'aria-selected',
+      await userEvent.click(canvas.getByRole('radio', { name: /last 30d/i }));
+      await expect(canvas.getByRole('radio', { name: /last 30d/i })).toHaveAttribute(
+        'aria-checked',
         'true',
       );
-      await userEvent.click(menu.getByRole('option', { name: /30d/ }));
-      await expect(canvas.getByRole('button', { name: /^Time range: 30d/ })).toBeInTheDocument();
+      await expect(canvas.getByRole('radio', { name: /last 24h/i })).toHaveAttribute(
+        'aria-checked',
+        'false',
+      );
     });
 
     await step('The shared range re-labels every card', async () => {
@@ -111,15 +104,6 @@ export const RangeSelectorSwitches: Story = {
       await expect(
         canvas.getByText(/distinct scopes active in the last 30 days/i),
       ).toBeInTheDocument();
-    });
-
-    await step('Each row spells the preset out in words', async () => {
-      // The reason the terse labels survived the move: the trigger stays as
-      // narrow as the buttons it replaced, and the list carries the prose the
-      // segmented group had nowhere to put.
-      const menu = await openPicker();
-      await expect(menu.getByText('Last 30 days')).toBeInTheDocument();
-      await userEvent.keyboard('{Escape}');
     });
   },
 };

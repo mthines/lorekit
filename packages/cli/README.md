@@ -466,9 +466,9 @@ that lesson's detail sheet. It sets **both** the `lesson` param (which opens the
 sheet) and `scope` — not because scope is needed to find the lesson (the sidebar
 reads one unfiltered recent set), but so the Explorer list *behind* the sheet is
 filtered to the lesson's own scope. Filter flags mirror the Explorer: `--q`
-(search), `--owner <all|personal|orgId>`, `--tags <a,b,c>` (label filter, AND
+(search), `--owner <all|personal|org-slug>`, `--tags <a,b,c>` (label filter, AND
 across labels; comma-separated or a JSON array), `--range`/`--from`/`--to`,
-`--archived`, `--view <scope|time>`.
+`--archived`.
 
 Every param is `encodeURIComponent(JSON.stringify(value))` — the exact inverse of
 how the dashboard's `useUrlState` reads it back (`JSON.parse`, falling back to the

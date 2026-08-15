@@ -3,19 +3,19 @@
 /**
  * LoreExplorer
  *
- * Two-panel layout (scope tree + paginated lesson list) for the Lore page.
- * Includes a collapsible heatmap panel at the top and a "Browse by time" tab
- * that surfaces the ActivityFeed view, replacing the old /activity route.
+ * The Lore page: a scope chip selector + a collapsible insights panel (stats +
+ * heatmap) above a paginated, filterable lesson list.
  *
  * ## Key changes from the previous client-filtered version
- * - Default view is "all scopes" (no scope selected). The scope tree has an
- *   "all" row at the top that clears the scope filter.
+ * - Default view is "all scopes" (no scope selected). The scope selector's first
+ *   chip is "All scopes", which clears the scope filter.
  * - Filtering (scope / search / date) is server-side, not client-side.
  *   `useMemories` (`useInfiniteQuery` over `listMemories`) is the data source.
  * - Pagination: "Load more" button appends the next keyset page, identical to
  *   the audit log feed (`AuditLogFeed.tsx`).
- * - The scope sidebar still reads a lightweight `useScopeTree()` query so the
- *   tree renders immediately without waiting for the lesson list.
+ * - Scope is a persistent chip row (`ScopeSelector`) at the top of the page,
+ *   above the stats it drives — not a left-hand tree. It shares the `ScopeBadge`
+ *   language with the Overview cards and the stat captions.
  *
  * ## URL state
  * - `scope` param:    selected scope (null → all scopes). Shareable.
@@ -24,32 +24,40 @@
  *   them. Server-side, shareable — "every perf regression we've learned" is a
  *   link you can paste to a teammate.
  * - `range` param:    time range, shareable. Scoped to /lore. Shared by the
- *   heatmap click, scope view, and feed view — one param drives all three, and
+ *   heatmap click and the list — one param drives both, and
  *   as of the shared time model it is the SAME param the Overview writes, so a
  *   selection means the same thing on both pages. It holds either a relative
  *   preset (`{preset:'7d'}`, which stays live in a shared link) or an absolute
  *   window (`{from,to}`, ISO instants or the legacy `YYYY-MM-DD` day strings).
  *   `resolveRange` turns whichever arrived into instants; nothing downstream
  *   sees a relative value. See `lib/time-range.ts`.
- * - `view` param:     'scope' | 'time'. Persisted in URL so a shared link
- *   lands on the correct tab.
  * - `status` param:   'active' | 'archived' | 'expiring'. The population being
  *   viewed, as opposed to the filters that narrow it. Absent means "fall back
  *   to the legacy `archived` flag", which is why its default is `null` rather
  *   than `'active'`.
+ * - `filters` param:  the unified filter bar (JSON array of committed
+ *   conditions) — one dimension per pill, OR within a dimension and AND across.
+ *   Ownership (Personal / an org) is one of those dimensions now, filtered
+ *   server-side like every other (migration 00064).
+ * - `owner` param:    the superseded ownership shorthand from the old
+ *   client-side owner bar. Still READ so old links (and pre-change accept-invite
+ *   deep links) land; never written. `resolveFilters` folds a `'personal'` value
+ *   into an `owner` filter — same absent-only fallback rule as legacy `tags`.
  * - `archived` param: the superseded boolean. Still READ so existing links keep
  *   resolving; never written. Same treatment as the legacy `tags` shorthand.
- * - `scopePanelOpen`: local useState — ephemeral mobile accordion, NOT in URL.
- *   Defaults to closed so the phone layout leads with the memories.
- * - `heatmapOpen`:    local useState — ephemeral panel collapse, NOT in URL.
+ * - `insightsOpen`:  local useState inside `ExplorerInsights` — ephemeral panel
+ *   collapse, NOT in URL. A shared link carries what you are looking at, not
+ *   how tall you left a panel.
  *
  * ## SSR note
  * Uses `useSearchParams()` via `useUrlState`. Must be wrapped in <Suspense>.
  */
 
 import { useCallback, useMemo, useTransition, useState } from 'react';
-import { Search, BookOpen, ChevronDown, ChevronUp, Loader2, List, LayoutGrid, User, Building2, Users } from 'lucide-react';
-import { ScopeTree, type ScopeNode } from './ScopeTree';
+import { Search, Loader2 } from 'lucide-react';
+import { type ScopeNode } from './ScopeTree';
+import { ScopeSelector } from './ScopeSelector';
+import { ExplorerInsights } from './ExplorerInsights';
 import { LessonCard } from './LessonCard';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useUrlState } from '@/lib/hooks/useUrlState';
@@ -69,6 +77,7 @@ import {
 } from '@/lib/status-filter';
 import {
   isPresetRange,
+  rangeCaption,
   resolveRange,
   toDayRange,
   type TimeRange,
@@ -88,91 +97,27 @@ import {
 import { FilterMenuTrigger, FilterPillRow } from './FilterBar';
 import { useReducedMotion } from 'motion/react';
 import type { LessonEntry } from './LessonCard';
-import { ContributionHeatmap } from '@/components/activity/ContributionHeatmap';
-import { ActivityFeed } from '@/components/activity/ActivityFeed';
-import { filterByOwnership, type OwnerFilter } from '@/lib/org-ui';
 
-type ViewMode = 'scope' | 'time';
 
 // Module-scoped so the reference is stable across renders — `useUrlState`
 // documents that mutable defaults must be memoized at the call site.
 const NO_TAGS: string[] = [];
 const NO_FILTERS: Filter[] = [];
 
-// ── Ownership filter bar ──────────────────────────────────────────────────────
-// "Owner: All · Personal · {org}" per ux-design §4 — only rendered when at least
-// one org-owned memory is in view (nothing to filter by ownership otherwise).
-// A leading "Owner" label + per-chip icons make the dimension self-explanatory:
-// without them the bare "Personal / {org}" chips read as unlabelled mystery
-// filters. Single-select, so it uses radiogroup/radio semantics (aria-checked),
-// not the toggle-button aria-pressed shape.
-
-function OwnershipFilterBar({
-  orgs,
-  value,
-  onChange,
-}: {
-  orgs: { id: string; name: string }[];
-  value: OwnerFilter;
-  onChange: (next: OwnerFilter) => void;
-}) {
-  if (orgs.length === 0) return null;
-
-  function isActive(candidate: OwnerFilter): boolean {
-    if (candidate === 'all') return value === 'all';
-    if (candidate === 'personal') return value === 'personal';
-    return typeof value === 'object' && value.orgId === candidate.orgId;
-  }
-
-  const chips: {
-    key: string;
-    label: string;
-    filter: OwnerFilter;
-    icon: typeof User;
-    title: string;
-  }[] = [
-    { key: 'all', label: 'All', filter: 'all', icon: Users, title: 'Show memories from every owner' },
-    { key: 'personal', label: 'Personal', filter: 'personal', icon: User, title: 'Only your personal memories' },
-    ...orgs.map((org) => ({
-      key: org.id,
-      label: org.name,
-      filter: { orgId: org.id } as OwnerFilter,
-      icon: Building2,
-      title: `Only memories shared with ${org.name}`,
-    })),
-  ];
-
-  return (
-    <div
-      role="radiogroup"
-      aria-label="Filter by owner"
-      className="flex flex-wrap items-center gap-1.5 border-b border-[var(--color-border)] px-3 py-2"
-    >
-      <span className="mr-0.5 flex items-center text-xs font-medium text-[var(--color-content-tertiary)]">
-        Owner
-      </span>
-      {chips.map((chip) => (
-        <button
-          key={chip.key}
-          type="button"
-          role="radio"
-          onClick={() => onChange(chip.filter)}
-          aria-checked={isActive(chip.filter)}
-          title={chip.title}
-          className={[
-            'flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors duration-150',
-            isActive(chip.filter)
-              ? 'border-[var(--color-accent)] bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
-              : 'border-[var(--color-border)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)]',
-          ].join(' ')}
-        >
-          <chip.icon className="size-3 shrink-0" aria-hidden />
-          {chip.label}
-        </button>
-      ))}
-    </div>
-  );
-}
+/**
+ * The Explorer opens on ALL time — a list's job is to show everything, and that
+ * is the horizon every existing `/lore` deep link (and `lorekit link` URL) has
+ * always meant by an absent `range`. The stat header does NOT need the list
+ * narrowed to stay legible: an unbounded selection charts the last 90 days on
+ * its own (`effectiveStatsRange`), so the two can share one range param without
+ * a 24h default that would silently re-scope every shared link.
+ *
+ * Module-level `null` for the reference-stability reason `useUrlState` documents:
+ * the default sits in the setter's `useCallback` deps, so a fresh literal each
+ * render reminted it. `null` is a constant, so this is moot — kept named for the
+ * one-line rationale above.
+ */
+const DEFAULT_EXPLORER_RANGE: TimeRange = null;
 
 // ── Filter bar (search + filters + date + status) ─────────────────────────────
 // Shared by both tabs and both breakpoints. `variant` carries the only two
@@ -287,7 +232,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // The widening is backward-compatible by construction — a `{from,to}` pair of
   // day strings, the only shape this param has ever held, is still one of the
   // arms, so every existing `?range=` link decodes exactly as before.
-  const [range, setRange] = useUrlState<TimeRange>('range', null, {
+  const [range, setRange] = useUrlState<TimeRange>('range', DEFAULT_EXPLORER_RANGE, {
     cleanOnPathname: '/lore',
   });
 
@@ -301,11 +246,24 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // param edit — flipping the archived toggle would otherwise re-resolve
   // `{preset:'7d'}` against a newer clock and remint the `useMemories` key for a
   // range the user never touched.
+  // One clock for everything the insights panel derives — the picker's custom
+  // label, the stat window (it is handed down to ExplorerStats so the strip and
+  // the cards share it) and the captions must all describe the same instant, or a
+  // render can straddle a bucket boundary and caption a chart it did not draw.
+  // Minted ONCE per mount (empty deps): a stable instant is the point, so it must
+  // not be re-read on range changes or every render would chase the clock.
+  const insightsNowIso = useMemo(() => new Date().toISOString(), []);
   const rangeKey = JSON.stringify(range);
   const resolvedRange = useMemo(
-    () => resolveRange(range, new Date().toISOString()),
+    // Resolve the LIST's window against the SAME mount clock the insights panel
+    // uses (`insightsNowIso`), not a fresh `new Date()` — otherwise a relative
+    // preset like `24h` bounds the list and the stat header a few milliseconds
+    // apart, reintroducing exactly the header/list disagreement this feature
+    // removes. `insightsNowIso` is a mount-stable constant, so `rangeKey` is what
+    // actually drives re-resolution; it is listed as a dep for correctness.
+    () => resolveRange(range, insightsNowIso),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rangeKey],
+    [rangeKey, insightsNowIso],
   );
 
   // Day-cell highlighting for the heatmap. Derived from the RESOLVED window, so
@@ -326,16 +284,22 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // param has always held.
   const pickerRange: DateRange | null = isPresetRange(range) ? null : highlightRange;
 
-  // URL-backed ownership filter (plan.md Decision D9) — shareable, and the
-  // accept-invite flow deep-links here (`/lore?owner=<serialised OwnerFilter>`)
-  // so a freshly-joined org is pre-filtered on arrival.
-  const [ownerFilter, setOwnerFilter] = useUrlState<OwnerFilter>('owner', 'all', {
+  // The pre-facet `?owner=` param. Ownership is a server-side filter DIMENSION
+  // now (migration 00064), folded into the bar below like every other
+  // dimension, so this legacy param is READ (never written) purely to keep old
+  // links landing: the accept-invite deep link, `lorekit link --owner`, and any
+  // shared owner view from before this change. `resolveFilters` translates ANY
+  // non-`all` string — a `'personal'` marker OR an org slug — into an owner
+  // filter; only the pre-00064 `{orgId}` OBJECT degrades to no filter (its uuid
+  // cannot be resolved to the slug the facet keys on). Same "absent-only"
+  // fallback rule as legacy `?tags=`. The default stays `'all'` (its historical
+  // value, mirrored in the CLI's `LORE_PARAM_DEFAULTS`).
+  const [legacyOwner] = useUrlState<unknown>('owner', 'all', {
     cleanOnPathname: '/lore',
   });
 
   // URL-backed filter bar — server-side filtered (OR within a dimension, AND
-  // across dimensions), so it belongs in the query, not in a client-side
-  // narrowing like `owner`. Shareable: "every perf regression we learned on the
+  // across dimensions). Shareable: "every perf regression we learned on the
   // release branch" is a link you can paste to a teammate.
   // `null` — not `[]` — is the default, so "the param is absent" and "the bar
   // is explicitly empty" stay distinguishable. `useUrlState` drops a param whose
@@ -358,13 +322,16 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // pills, the empty-state copy) reads a real `Filter[]`. An explicit
   // `?filters=` wins over the legacy shorthand — including when it is empty,
   // which is what makes removing the last pill on a `?tags=` link stick.
-  const filters = useMemo(() => resolveFilters(rawFilters, legacyTags), [rawFilters, legacyTags]);
+  const filters = useMemo(
+    () => resolveFilters(rawFilters, legacyTags, legacyOwner),
+    [rawFilters, legacyTags, legacyOwner],
+  );
 
   // Every write goes through here so the "explicitly empty" marker is applied
   // in one place rather than at each of the four call sites below.
   const setFilters = useCallback(
-    (next: Filter[]) => setRawFilters(filtersParamValue(next, legacyTags)),
-    [setRawFilters, legacyTags],
+    (next: Filter[]) => setRawFilters(filtersParamValue(next, legacyTags, legacyOwner)),
+    [setRawFilters, legacyTags, legacyOwner],
   );
 
   // Which dimension the menu should open at, set by a pill's value segment.
@@ -383,19 +350,6 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // `useMediaQuery` documents — a `md:` class cannot gate a prop.
   const isMobile = useIsMobile();
 
-  // URL-backed view mode so a shared link lands on the right tab.
-  const [view, setView] = useUrlState<ViewMode>('view', 'scope');
-
-  // Local-only: mobile accordion state. Ephemeral UI — not shareable, not
-  // persisted. Putting this in URL state would pollute every share link and
-  // fire a router.replace on every tap. Starts CLOSED so the phone layout opens
-  // on the memories themselves — the scope tree is a filter, not the content,
-  // and expanding it by default pushed the first card below the fold. The
-  // collapsed header still shows the active scope, so nothing is hidden.
-  const [scopePanelOpen, setScopePanelOpen] = useState(false);
-
-  // Local-only: heatmap panel collapse. Ephemeral UI — not shareable.
-  const [heatmapOpen, setHeatmapOpen] = useState(true);
 
   // URL-backed Status — scoped to /lore. Defaults to `null` (param absent), not
   // to 'active', for the reason `filters` defaults to null: absent has to be
@@ -442,38 +396,30 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   // Archived-aware — the archived view is a different population with its own counts.
   const { data: facets } = useFacetCatalog(showArchived, filters, selectedScope);
 
+  // The list is entirely server-filtered now — scope / search / range / status
+  // AND every dimension in the filter bar, ownership included (migration 00064
+  // folded the old client-side owner narrowing into the bar). So the loaded
+  // pages ARE the result; there is no post-filter pass.
   const lessons = useMemo(
     () => data?.pages.flatMap((page) => page.rows) ?? [],
     [data],
   );
 
-  // Unique orgs present in the loaded lesson pages, for the ownership filter
-  // chips — recomputed only when the underlying lessons change.
-  const orgsInView = useMemo(() => {
-    const seen = new Map<string, { id: string; name: string }>();
-    for (const l of lessons) {
-      if (l.org && !seen.has(l.org.id)) seen.set(l.org.id, l.org);
-    }
-    return Array.from(seen.values());
-  }, [lessons]);
-
-  // Ownership is the one filter with no server-side param — scope / search /
-  // range / archived are already applied by `useMemories`, so this is a pure
-  // client-side narrowing of the loaded pages by owner (Personal vs a given
-  // org). `filterByOwnership` is the shared, unit-tested predicate.
-  const filteredLessons = useMemo(
-    () => filterByOwnership(lessons, ownerFilter),
-    [lessons, ownerFilter],
-  );
+  // A range is "narrowing" only when it actually bounds something: an
+  // unbounded selection cannot be the reason a list is empty, so offering to
+  // widen it would be a button that does nothing.
+  const rangeIsNarrowing = range !== null && resolvedRange !== null;
 
   // Has the user narrowed WITHIN the current view? `status` is deliberately not
   // one of these: it selects which population is listed, not a predicate over
   // it, so "Archived" or "Expiring" being selected must not read as "you
-  // filtered something out". That distinction is what the empty state turns on
-  // — a status view with nothing narrowing it gets its own copy, the same view
-  // with a search that matched nothing gets "no matches".
-  const isNarrowedWithinView =
-    search.trim() !== '' || range !== null || ownerFilter !== 'all' || filters.length > 0;
+  // filtered something out". `range` is excluded for a related reason — a time
+  // window is a bound, not a within-view predicate, and it has its own
+  // empty-state branch (`rangeIsNarrowing`) with a "View all time" way out. That
+  // distinction is what the empty state turns on — a status view with nothing
+  // narrowing it gets its own copy, the same view with a search that matched
+  // nothing gets "no matches".
+  const isNarrowedWithinView = search.trim() !== '' || filters.length > 0;
 
   // Every filter mutation closes the lesson sidebar for one reason: the open
   // lesson may not survive the new predicate, and a detail panel describing a
@@ -515,7 +461,6 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
       // Close the sidebar when switching scope — the previous lesson may not
       // be present in the new scope.
       closeLesson();
-      setScopePanelOpen(false);
     });
   }
 
@@ -580,11 +525,11 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     </div>
   );
 
-  // Shared results renderer for BOTH tabs. Loading / error / empty are handled
-  // once here; only the populated body differs — a flat card list ("scope") vs
-  // date-grouped feed rows ("time"). Both consume the SAME `filteredLessons`
-  // (server-filtered by scope/search/range/archived, then owner-narrowed
-  // client-side), so every filter applies identically across tabs.
+  // The results renderer: one flat card list. Loading / error / empty are
+  // handled once here; the populated body is the lesson cards. It consumes the
+  // server-filtered `lessons` (scope / search / range / archived / every bar
+  // dimension) — there is a single renderer now that the scope/time view tabs
+  // and the date-grouped `ActivityFeed` body are gone.
   //
   // This is a plain function that is CALLED, not a nested component rendered as
   // `<Results />`. A nested component would get a fresh type identity on every
@@ -611,30 +556,44 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
       );
     }
 
-    // Empty state only when nothing is left to show AND nothing more to load —
-    // the ownership filter is client-side over the loaded pages, so an empty
-    // `filteredLessons` with `hasNextPage` still true means "keep loading",
-    // not "no matches".
-    if (filteredLessons.length === 0 && !hasNextPage) {
+    // Empty state only when nothing is left to show AND nothing more to load.
+    // Every filter is server-side now, so an empty page with `hasNextPage` still
+    // true genuinely means "keep loading", not "no matches".
+    if (lessons.length === 0 && !hasNextPage) {
       return (
         <EmptyState
           icon={STATUS_ICONS[status]}
+          // The time window gets its own state and its own "View all time" way
+          // out. The Explorer opens on ALL time, so an empty list is rarely the
+          // window's fault — but once a reader HAS narrowed the range, widening
+          // it is the most likely fix, so the action is offered whenever the
+          // range actually bounds something, regardless of which title branch
+          // wins below.
+          {...(rangeIsNarrowing
+            ? { action: { label: 'View all time', onClick: () => setRange(null) } }
+            : {})}
           title={
-            // Narrowing is checked FIRST, and only then the status. A search or
-            // a filter that matched nothing is a failed search in every view —
+            // Within-view narrowing is checked FIRST — a search or filter that
+            // matched nothing is a failed search in every status view, and
             // reading "Nothing expiring soon" (or "No archived memories") when
             // the honest answer is "your query matched nothing here" hides the
-            // control the user needs to undo.
+            // control the user needs to undo. Then the range window (named, with
+            // the widen action above). The status-specific copy shows only when
+            // neither a filter NOR the range is narrowing — i.e. the "All time"
+            // view of that population is genuinely empty, which is exactly when
+            // "No archived memories" is the truthful answer rather than a
+            // range-specific "No memories in the last 7 days".
             isNarrowedWithinView
               ? 'No matching memories'
-              : status === 'archived'
-                ? 'No archived memories'
-                : // An unnarrowed EXPIRING view is good news, not a failed
-                  // search, so it gets its own copy. That is only true once the
-                  // narrowed case above has been taken.
-                  status === 'expiring'
-                  ? 'Nothing expiring soon'
-                  : 'No memories in this scope'
+              : rangeIsNarrowing
+                ? `No memories in ${rangeCaption(range, insightsNowIso)}`
+                : status === 'archived'
+                  ? 'No archived memories'
+                  : // An unnarrowed EXPIRING view is good news, not a failed
+                    // search, so it gets its own copy.
+                    status === 'expiring'
+                    ? 'Nothing expiring soon'
+                    : 'No memories in this scope'
           }
           description={
             isNarrowedWithinView
@@ -644,32 +603,21 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
                 filters.length > 1
                 ? 'No memory satisfies every filter — try removing one.'
                 : 'Try a different search term, filter, or date range.'
-              : status === 'archived'
-                ? 'Archive a memory from its detail panel to see it here.'
-                : status === 'expiring'
-                  ? `No live memory in this view runs out within ${EXPIRING_WITHIN_DAYS} days.`
-                  : 'Memories will appear here once your agents start writing.'
+              : rangeIsNarrowing
+                ? 'Nothing was written in this window. Widen the range, or pick another from the Activity panel above.'
+                : status === 'archived'
+                  ? 'Archive a memory from its detail panel to see it here.'
+                  : status === 'expiring'
+                    ? `No live memory in this view runs out within ${EXPIRING_WITHIN_DAYS} days.`
+                    : 'Memories will appear here once your agents start writing.'
           }
         />
       );
     }
 
-    if (view === 'time') {
-      return (
-        <div className="flex flex-col gap-1">
-          <ActivityFeed
-            lessons={filteredLessons}
-            isSelected={isLessonSelected}
-            onSelect={handleLessonClick}
-          />
-          {loadMore}
-        </div>
-      );
-    }
-
     return (
       <div className="flex flex-col gap-2" role="list" aria-label="Memories">
-        {filteredLessons.map((lesson, i) => (
+        {lessons.map((lesson, i) => (
           <div key={`${lesson.scope}::${lesson.key}`} role="listitem">
             <LessonCard
               lesson={lesson}
@@ -693,156 +641,80 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           ? 'Loading memories'
           : isFetchingNextPage
             ? 'Loading more memories'
-            : `${filteredLessons.length} memor${filteredLessons.length === 1 ? 'y' : 'ies'} loaded`}
+            : `${lessons.length} memor${lessons.length === 1 ? 'y' : 'ies'} loaded`}
       </p>
 
-      {/* ── Heatmap panel (collapsible) ─────────────────────────────────── */}
-      <div className="overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)]">
-        <button
-          type="button"
-          onClick={() => setHeatmapOpen((v) => !v)}
-          aria-expanded={heatmapOpen}
-          className="flex w-full min-h-11 items-center justify-between gap-4 px-5 py-3"
-        >
-          <p className="text-xs font-medium text-[var(--color-content-tertiary)]">
-            Memories written — last 26 weeks
-          </p>
-          {heatmapOpen ? (
-            <ChevronUp className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-          ) : (
-            <ChevronDown className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-          )}
-        </button>
-        {heatmapOpen && (
-          <div className="px-5 pb-5">
-            <ContributionHeatmap
-              data={heatmapData}
-              weeks={26}
-              selectedRange={highlightRange}
-              onSelectDate={handleHeatmapDayClick}
-            />
-          </div>
-        )}
-      </div>
+      {/* ── Scope selector ──────────────────────────────────────────────────
+          A persistent chip row at the TOP of the page, above the stats it
+          drives. Selecting a scope only lights a different chip — it never
+          reflows the layout — and the numbers below update in step, so the
+          selection's effect on the stats is legible. See ScopeSelector. */}
+      <ScopeSelector
+        nodes={scopes}
+        selected={selectedScope}
+        onSelect={handleScopeSelect}
+        totalCount={totalCount}
+      />
 
-      {/* ── View-mode tabs ───────────────────────────────────────────────── */}
-      <div
-        className="flex gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] p-1"
-        role="tablist"
-        aria-label="Explorer view"
-      >
-        {([
-          { id: 'scope' as ViewMode, label: 'Browse by scope', icon: LayoutGrid },
-          { id: 'time' as ViewMode, label: 'Browse by time', icon: List },
-        ] as const).map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={view === id}
-            onClick={() => setView(id)}
-            className={[
-              'flex flex-1 min-h-9 items-center justify-center gap-2 rounded-md text-xs font-medium transition-all duration-150',
-              view === id
-                ? 'bg-[var(--color-accent-subtle)] text-[var(--color-accent)]'
-                : 'text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]',
-            ].join(' ')}
-          >
-            <Icon className="size-3.5 shrink-0" aria-hidden />
-            {label}
-          </button>
-        ))}
-      </div>
+      {/* ── Insights ────────────────────────────────────────────────────────
+          ONE panel for everything the page says ABOUT the memories — the stat
+          cards, the range picker and the heatmap — above the list of the
+          memories themselves. It replaced two separate bordered panels with two
+          independent chevrons; see ExplorerInsights for why it opens collapsed
+          and why the collapsed state still shows the numbers. */}
+      <ExplorerInsights
+        scope={selectedScope}
+        scopeLabel={selectedScopeLabel}
+        range={range}
+        onRangeChange={setRange}
+        filters={filters}
+        heatmapData={heatmapData}
+        highlightRange={highlightRange}
+        onSelectDate={handleHeatmapDayClick}
+        nowIso={insightsNowIso}
+      />
 
-      {/* ── Results (shared chrome for both tabs) ───────────────────────────
-          Scope tree + filter bar (search / date / archived) + owner bar are the
-          SAME for "Browse by scope" and "Browse by time"; only the body inside
-          `renderResults()` differs (card list vs date-grouped feed). Lifting
-          the chrome out of the two views is what makes the tabs read as one
-          page and keeps every filter — including Owner — active across both. */}
+      {/* ── Results ─────────────────────────────────────────────────────────
+          The filter bar (search / filters / date / status) sits above the memory
+          list — ownership is a dimension INSIDE the filter menu now, not a
+          separate bar. Scope now
+          lives in the chip row at the top of the page, so the list is a single
+          full-width column — no more left scope rail. Both breakpoints are still
+          mounted and CSS-toggled (not a JS conditional render) so each keeps a
+          live FilterMenu, exactly as before; `variant` carries the only styling
+          difference between them. */}
 
-      {/* Desktop: side-by-side panels */}
-      <div className="hidden md:flex h-full gap-0 overflow-hidden rounded-xl border border-[var(--color-border)]">
-        <div className="flex w-56 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-bg-raised)]">
-          <div className="border-b border-[var(--color-border)] px-3 py-2.5">
-            <p className="text-xs font-medium text-[var(--color-content-tertiary)]">Scopes</p>
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            {scopes.length > 0 ? (
-              <ScopeTree
-                nodes={scopes}
-                selected={selectedScope}
-                onSelect={handleScopeSelect}
-                totalCount={totalCount}
-              />
-            ) : (
-              <EmptyState icon={BookOpen} title="No scopes yet" description="Run an agent to create your first memory." />
-            )}
-          </div>
-        </div>
+      {/* Desktop */}
+      <div className="hidden md:flex h-full flex-col overflow-hidden rounded-xl border border-[var(--color-border)]">
+        <ControlRow
+          variant="desktop"
+          search={search}
+          onSearchChange={setSearch}
+          facets={facets ?? []}
+          filters={filters}
+          onToggleFilterValue={handleToggleFilterValue}
+          editingField={isMobile ? null : editingField}
+          onEditField={setEditingField}
+          range={pickerRange}
+          onRangeChange={setRange}
+          status={status}
+          onStatusChange={handleStatusChange}
+        />
 
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <ControlRow
-            variant="desktop"
-            search={search}
-            onSearchChange={setSearch}
-            facets={facets ?? []}
-            filters={filters}
-            onToggleFilterValue={handleToggleFilterValue}
-            editingField={isMobile ? null : editingField}
-            onEditField={setEditingField}
-            range={pickerRange}
-            onRangeChange={setRange}
-            status={status}
-            onStatusChange={handleStatusChange}
-          />
+        <FilterPillRow
+          filters={filters}
+          onOperatorChange={handleOperatorChange}
+          onRemove={handleRemoveFilter}
+          onClearAll={handleClearFilters}
+          onEditField={setEditingField}
+        />
 
-          <FilterPillRow
-            filters={filters}
-            onOperatorChange={handleOperatorChange}
-            onRemove={handleRemoveFilter}
-            onClearAll={handleClearFilters}
-            onEditField={setEditingField}
-          />
-
-          <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
-
-          <div className="flex-1 overflow-y-auto p-3">
-            {renderResults()}
-          </div>
-        </div>
+        <div className="flex-1 overflow-y-auto p-3">{renderResults()}</div>
       </div>
 
       {/* Mobile: stacked layout — pb-6 so the last card and "Load more" button
           clear the bottom edge of the scroll container. */}
       <div className="flex md:hidden flex-col gap-3 pb-6">
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-raised)] overflow-hidden">
-          <button
-            type="button"
-            onClick={() => setScopePanelOpen((v) => !v)}
-            aria-expanded={scopePanelOpen}
-            className="flex w-full min-h-11 items-center justify-between gap-2 px-4 py-2.5 text-sm text-[var(--color-content-primary)]"
-          >
-            <span className="font-medium">
-              Scope: <span className="text-[var(--color-accent)] font-mono text-xs">{selectedScopeLabel}</span>
-            </span>
-            <ChevronDown
-              className={['size-4 shrink-0 text-[var(--color-content-tertiary)] transition-transform duration-200', scopePanelOpen ? 'rotate-180' : ''].join(' ')}
-              aria-hidden
-            />
-          </button>
-          {scopePanelOpen && (
-            <div className="border-t border-[var(--color-border)] max-h-52 overflow-y-auto">
-              <ScopeTree
-                nodes={scopes}
-                selected={selectedScope}
-                onSelect={handleScopeSelect}
-                totalCount={totalCount}
-              />
-            </div>
-          )}
-        </div>
-
         <ControlRow
           variant="mobile"
           search={search}
@@ -868,11 +740,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           />
         </div>
 
-        <OwnershipFilterBar orgs={orgsInView} value={ownerFilter} onChange={setOwnerFilter} />
-
-        <div>
-          {renderResults()}
-        </div>
+        <div>{renderResults()}</div>
       </div>
     </div>
   );

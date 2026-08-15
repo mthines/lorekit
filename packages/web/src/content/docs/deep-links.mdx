@@ -30,10 +30,9 @@ The Explorer reads each parameter with `useUrlState`, which does `JSON.parse(sea
 | `scope` | `null` | Filter to one scope. `null` means all scopes. |
 | `q` | `""` | Search query (pre-fills the search box). |
 | `range` | `null` | Time range. Either a **relative** preset — `{ "preset": "24h" \| "7d" \| "30d" \| "90d" \| "all" }` — or an **absolute** window `{ "from", "to" }`. `null` means all time. See below. |
-| `owner` | `"all"` | Ownership filter: `"all"`, `"personal"`, or `{ "orgId": "…" }`. |
-| `filters` | `null` | The Explorer filter bar: an array of `{ "field", "operator", "values" }` conditions over `label`, `agent`, `trigger`, `repo`, `branch` and `pr` (OR within a field, AND across fields). `null` means the param is absent and the legacy `tags` shorthand still applies; `[]` means the bar was explicitly emptied. |
+| `owner` | `"all"` | **Superseded.** Ownership is a dimension inside `filters` now (`owner`, keyed by org slug). This legacy param is still *read* so old links land — `"personal"` maps to an `owner` filter; `"all"` and the legacy `{ "orgId": "…" }` form resolve to no owner filter — but it is never written. |
+| `filters` | `null` | The Explorer filter bar: an array of `{ "field", "operator", "values" }` conditions over `label`, `kind`, `host`, `owner`, `agent`, `trigger`, `repo`, `branch` and `pr` (OR within a field, AND across fields). `owner` values are `personal` or an org **slug**. `null` means the param is absent and the legacy `tags` / `owner` shorthands still apply; `[]` means the bar was explicitly emptied. |
 | `tags` | `[]` | Legacy label filter, AND across labels (e.g. `["perf","ci"]`). Superseded by `filters`, still read so older links keep working. |
-| `view` | `"scope"` | Explorer view: `"scope"` or `"time"`. |
 | `status` | `null` | Explorer Status: `"active"` (default), `"archived"`, or `"expiring"` (live memories whose TTL runs out within 7 days). `null` means the param is absent and the legacy `archived` flag still applies. |
 | `archived` | `false` | Legacy archived toggle. Superseded by `status`, still read so older links keep working. |
 | `lesson` | `null` | `{ "scope", "key" }` — opens that memory's detail sheet. |
@@ -49,7 +48,7 @@ A time range is one of two different things, and the parameter keeps them apart 
 
 Both resolve to exact instants when the page loads; only the preset is re-resolved against the current clock. Windows are half-open — `from` is included, `to` is not.
 
-**The Overview reads the same `range`, over less data.** `range` is the one parameter the Explorer and the Overview share, so a link means the same window on both pages — but they do not fetch the same amount. The Explorer queries exactly the window you name, with no upper bound. The Overview's stat cards are re-bucketed in the browser from a single fetch covering the **last 62 days**, sized for its own widest picker preset (`30d`) plus the equal preceding window each card's trend chip compares against. A range that reaches outside those 62 days — `{"preset":"90d"}`, or an absolute window older than that — still resolves exactly as documented here and lists correctly in the Explorer, but charts partial or empty bars on the Overview. The Overview's own picker offers `24h` / `7d` / `30d` for this reason.
+**The Overview reads the same `range`, over less data.** `range` is the one parameter the Explorer and the Overview share, so a link means the same window on both pages — but they do not fetch the same amount. The Explorer's memory **list** queries exactly the window you name, with no upper bound; its **stats header** charts the last 90 days when the range is unbounded (`all`), because "all time" is a sensible thing to list and not a sensible thing to plot. When it substitutes, it says so — the cards are captioned "in the last 90 days", never "in all time". The Overview's stat cards are re-bucketed in the browser from a single fetch covering the **last 62 days**, sized for its own widest picker preset (`30d`) plus the equal preceding window each card's trend chip compares against. A range that reaches outside those 62 days — `{"preset":"90d"}`, or an absolute window older than that — still resolves exactly as documented here and lists correctly in the Explorer, but charts partial or empty bars on the Overview. The Overview's own picker offers `24h` / `7d` / `30d` for this reason.
 
 The `{ "from", "to" }` arm accepts **either** ISO timestamps (precise to the hour) **or** the `YYYY-MM-DD` day strings this parameter has always used. A bare day means the whole UTC day, and the `to` day is **inclusive**: `{"from":"2026-07-01","to":"2026-07-03"}` is three days. Every `?range=` link written before timestamps were supported therefore still resolves to exactly the window it always did.
 
@@ -97,8 +96,8 @@ https://lorekit.io/lore?q=%22flaky%20test%22&owner=%22personal%22
 # global scope, filtered to the "perf" and "ci" labels
 https://lorekit.io/lore?scope=%22global%22&tags=%5B%22perf%22%2C%22ci%22%5D
 
-# global scope, time view, including archived
-https://lorekit.io/lore?scope=%22global%22&view=%22time%22&archived=true
+# global scope, including archived memories
+https://lorekit.io/lore?scope=%22global%22&archived=true
 ```
 
 ## Generate links from the CLI
@@ -117,7 +116,7 @@ lorekit url --q "flaky test" --owner personal  # search + ownership filter
 lorekit link global::prefer-guards --json      # { url, surface, base, params }
 ```
 
-With no arguments it links to the current directory's most-specific scope — "share what I'm looking at". A single argument is treated as a scope (a valid `repo::…` / `branch::…::…` scope is a scope, not a memory key); the `scope::key` shorthand — or a scope **and** a key as two arguments, or `--scope` / `--key` — links to that memory's detail sheet. `show`, `write` and `link` all address a memory this same way. The filter flags mirror the Explorer: `--q`, `--owner`, `--tags`, `--range` (or `--from` / `--to`), `--view`, `--archived`.
+With no arguments it links to the current directory's most-specific scope — "share what I'm looking at". A single argument is treated as a scope (a valid `repo::…` / `branch::…::…` scope is a scope, not a memory key); the `scope::key` shorthand — or a scope **and** a key as two arguments, or `--scope` / `--key` — links to that memory's detail sheet. `show`, `write` and `link` all address a memory this same way. The filter flags mirror the Explorer: `--q`, `--owner`, `--tags`, `--range` (or `--from` / `--to`), `--archived`.
 
 **The `--link` flag** short-circuits a read command to the deep link for the view you just ran — same builder, no query:
 
