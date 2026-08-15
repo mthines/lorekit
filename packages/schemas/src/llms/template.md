@@ -45,8 +45,13 @@ only skips wiring new ones. `npx @lorekit/cli doctor` reports which events are
 wired and in which scope.
 
 The `SessionStart` block is bounded by a character budget
-(`hooks.sessionStart.maxChars`, default 1500), not by a memory count, and
-memories are ranked by recurrence and recency before it is spent. A header
+(`hooks.sessionStart.maxChars`, default 1500) and, from the other direction, by
+a line count (`hooks.sessionStart.maxLessons`, default 40, range 3–200) —
+whichever binds first, so raising one alone usually changes nothing. Memories
+are ranked by recurrence and recency before the budget is spent. Raising
+`maxLessons` above its default also raises the per-scope candidate fetch to
+match (25 memories per scope by default, 80 at `"maxLessons": 80`), which every
+session start pays for; at or below the default the fetch is unchanged. A header
 reading `9 of 50 memories loaded` means the block was truncated — the trailing
 `More lore: …` line names which scopes hold the rest, and `memory.search` /
 `memory.read` reach them. `hooks.sessionStart` picks the shape:

@@ -717,6 +717,25 @@ Both files share this schema — all fields optional:
                            // memories are RANKED before the budget is spent, so what
                            // survives is the most-recurring and most-recent, not the newest
 
+  "hooks.sessionStart.maxLessons": 40,
+                           // how many memory LINES that block may hold, where
+                           // maxChars bounds its characters — whichever binds
+                           // first decides the block, so raising this alone does
+                           // nothing unless maxChars comes up with it
+                           // (default 40 — the ceiling LoreKit has always
+                           // applied, so leaving it unset changes nothing —
+                           // bounded 3–200). Clamped, not rejected; repo wins
+                           // over user with the same declared-value-owns-the-
+                           // layer rule as maxChars.
+                           // Raising it ABOVE 40 also raises the per-scope
+                           // candidate fetch to match (25/scope by default,
+                           // 80/scope at 80), because a ceiling the read cannot
+                           // feed would be a dial that does nothing on a
+                           // workspace whose lore lives in one scope. That read
+                           // runs on every session start, so a wider index costs
+                           // a slower start. At or below the default the fetch
+                           // stays at exactly 25/scope.
+
   "hooks.sessionStart.loopCap": 2,
                            // how many memories one self-improvement loop (a
                            // "loop::<bucket>" tag) may contribute to that block

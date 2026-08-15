@@ -26,6 +26,7 @@ keywords: ["configuration", ".lorekit.json", "config.json", "mode", "store", "de
 | `hooks.sessionStart` | `"hybrid" \| "index" \| "map"` | Both | Shape of the block injected at session start. hybrid (default) fills the budget with the highest-ranked memories and then names whatever was left out in a one-line scope map; index fills the budget and truncates silently; map leads with the scope map plus the three most salient memories. Repo wins over user; an unrecognised value is ignored and the next layer is tried, so a mistyped repo value falls through to the user layer before defaulting to hybrid. |
 | `hooks.sessionStart.maxChars` | `number (200–20000)` | Both | Character budget for that block. Defaults to 1500 (~375 tokens). Out-of-range values are clamped rather than rejected. Repo wins over user — a repo that declared a budget owns the decision even when the value is unparseable, so a typo degrades to the default instead of silently handing the choice to a personal config. |
 | `hooks.sessionStart.loopCap` | `number (0–40)` | Both | How many memories one self-improvement loop (`loop::<bucket>` tag) may contribute to the block. Defaults to 2, so a prolific loop's own bookkeeping can't crowd out your codebase's memories; `0` excludes loop buckets entirely (read only general memories); values are clamped, not rejected. Repo wins over user with the same declared-value-owns-the-layer rule as `maxChars`. |
+| `hooks.sessionStart.maxLessons` | `number (3–200)` | Both | How many memory LINES that block may hold, where `maxChars` bounds its characters — whichever binds first decides the block, so raising this alone changes nothing unless `maxChars` comes up with it. Defaults to 40, which is the ceiling LoreKit has always applied, so leaving it unset is exactly the behaviour you had. Values are clamped, not rejected, with the same declared-value-owns-the-layer rule as `maxChars`. Raising it above 40 also raises the per-scope candidate fetch to match (25 memories per scope by default, 80 at `"maxLessons": 80`) — that read happens on every session start, so a bigger index costs a bigger read. Keep it small unless you specifically want a wider index: the block is meant to be a working set, with `memory.search` for the tail. |
 | `hooks.sessionStart.branchHint` | `"on" \| "off"` | Both | Whether the block is nudged toward your current git branch's topic — on `feat/embedding-pipeline`, embedding memories are lifted (the leading `type/`author segment is ignored). Defaults to on; it only ever lifts an on-topic memory, never buries one. Set to off to restore the plain most-recurring / most-recent read. Repo wins over user, but — following `hooks.userPrompt`, not the `maxChars` layer-lock — a declared-but-unparseable repo value falls through to a valid user value rather than owning the layer. |
 | `hooks.userPrompt` | `"on" \| "off"` | Both | Whether the per-turn relevance pull runs. On each substantive prompt it queries the store for memories matching what you just typed and injects at most three you have not already been shown this session. Defaults to on. It is a switch rather than a mode on purpose: the knobs a mode would expose (how many, how strict) are the two things that must not be turned up on a hook that fires every turn. Two install paths reach it: `lorekit install --hooks all` (read-only and none do not wire the event at all, so they never reach this setting), and the Claude marketplace plugin, whose `hooks.json` wires the event unconditionally — there is no mode involved there, so `hooks.userPrompt` is the mode-independent off switch a plugin user has — and `hooks.disabled: ["UserPromptSubmit"]` switches the event off one gate earlier, so it is not the only opt-out. Repo wins over user. |
 | `hooks.adapter` | `"claude" \| "cursor" \| "codex"` | Both | Explicit host adapter when auto-detection is ambiguous. Repo wins over user. |
@@ -107,12 +108,15 @@ Both config layers are merged — repo instructions come first, user instruction
 
 At session start LoreKit injects a compact index of the memories that apply to your working directory. How much of the agent's context that block may occupy is a **character budget**, not a memory count — a count says nothing about cost, and the same number is both padding for a small store and truncation for a large one.
 
+A second bound holds it from the other direction: `maxLessons`, the number of **lines** the block may hold, default 40. The budget alone cannot stop a store of 500 one-word keys from rendering 400 lines inside it, and a 400-line index is unreadable however few characters it costs. Whichever of the two binds first decides the block, so the two are raised together or not at all.
+
 ```json
 // .lorekit.json
 {
   "hooks.userPrompt": "on",
   "hooks.sessionStart": "hybrid",
   "hooks.sessionStart.maxChars": 1500,
+  "hooks.sessionStart.maxLessons": 40,
   "hooks.sessionStart.loopCap": 2,
   "hooks.sessionStart.branchHint": "on"
 }
@@ -133,6 +137,18 @@ Memories are ranked before the budget is spent, so the ones that survive are the
 - **`map`** — lead with the scope map and just three of the most salient memories. For a large store, where knowing the inventory matters more than any one memory.
 
 The header reads `9 of 50` whenever the block is truncated, so an agent can tell that reaching for `memory.search` is worth it. The denominator is what the fetch returned, not what the store holds: each scope is read to a cap of 25 memories, so a four-scope workspace tops out at 100 and the numbers above are two capped scopes. A count in the map ending in `+` (`25+`) is a scope that hit that cap — a lower bound, not a total. `memory.search` and `memory.read` reach past it.
+
+**Raising the line ceiling raises that fetch too.** A ceiling the read cannot feed would be a dial that visibly does nothing on a workspace whose lore lives in one scope, so setting `"hooks.sessionStart.maxLessons": 80` reads 80 memories per scope instead of 25 (and the map's marker moves with it — `80+`). That read happens on **every session start**, against files on disk in local mode or over the network in remote mode, which is the trade: a wider index costs a slower start. The fetch only ever grows — leaving `maxLessons` at its default, or lowering it, keeps the per-scope read at exactly 25, so an unconfigured workspace pays nothing for this setting existing and a lowered one still lets the ranking choose from a full pool.
+
+```json
+// .lorekit.json — a deliberately wide index, for a large store
+{
+  "hooks.sessionStart.maxChars": 12000,
+  "hooks.sessionStart.maxLessons": 80
+}
+```
+
+Both are needed: at the default `maxChars` of 1500 the budget runs out long before line 80, so raising `maxLessons` on its own would change nothing.
 
 </TutorialStep>
 
