@@ -10,7 +10,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MIN_SESSION_START_MAX_CHARS } from '../src/control.mjs';
+import { MIN_SESSION_START_MAX_CHARS, MAX_SESSION_START_MAX_LESSONS } from '../src/control.mjs';
+import { MAX_STORE_LIST_LIMIT } from '../src/core/lessons.mjs';
 import { createTwoTierStore } from '../src/store/index.mjs';
 import { deriveScope } from '../src/scope.mjs';
 
@@ -367,6 +368,8 @@ test('SessionStart reads lessons from the MCP server and injects them', async ()
 // `maxLessons: 80` an unchanged 25-row read could offer at most 50 candidates,
 // so 80 injected lines are UNREACHABLE unless the fetch grew too. The second
 // assertion therefore pins both halves of the change at once.
+const SEEDED_PER_SCOPE = 90;
+
 test('SessionStart: hooks.sessionStart.maxLessons raises the injected line count AND the fetch', async () => {
   const tmpProject = fs.mkdtempSync(path.join(os.tmpdir(), 'lk-maxlessons-'));
   const tmpHome = freshStateDir();
@@ -377,7 +380,7 @@ test('SessionStart: hooks.sessionStart.maxLessons raises the injected line count
   // than 25 candidates to bind against, and keyed per scope so cross-scope
   // precedence (first-seen wins) never collapses the pool.
   for (const [n, s] of scope.readOrder.entries()) {
-    for (let i = 0; i < 90; i += 1) {
+    for (let i = 0; i < SEEDED_PER_SCOPE; i += 1) {
       // The `s${n}` prefix is load-bearing: identity is `scope::key`, and the
       // read resolves cross-scope precedence first-seen-wins, so reusing one key
       // set across both scopes would collapse the pool to a single scope's worth.
@@ -434,7 +437,19 @@ test('SessionStart: hooks.sessionStart.maxLessons raises the injected line count
     'ml-clamped',
   );
   assert.equal(clamped.code, 0);
-  assert.equal(lessonLines(clamped.stdout), 180, 'clamped to 200; the 2×90 seeded pool is what is left');
+  // DERIVED from the scopes actually seeded, not the 180 that assumed exactly
+  // two. The seed loop writes 90 to EVERY `readOrder` entry while the
+  // precondition only requires two, so a checkout that resolves a third (a temp
+  // dir inside a git repo picks up repo/branch) makes the pool 270, the ceiling
+  // clamps at 200, and a hardcoded 180 reds for a reason that has nothing to do
+  // with this feature. The read is also capped per scope, so the pool is bounded
+  // by that, not by the 90 seeded.
+  const pool = Math.min(SEEDED_PER_SCOPE, MAX_STORE_LIST_LIMIT) * scope.readOrder.length;
+  assert.equal(
+    lessonLines(clamped.stdout),
+    Math.min(MAX_SESSION_START_MAX_LESSONS, pool),
+    'clamped to the 200 ceiling, or to the seeded pool when that is smaller',
+  );
 });
 
 // ── UserPromptSubmit: the per-turn relevance pull, as a PROCESS ──────────────
