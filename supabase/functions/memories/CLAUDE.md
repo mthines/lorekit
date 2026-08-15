@@ -220,6 +220,18 @@ consequences to know before reading a number:
   exact yield. Mirroring `q` would put a second implementation of `likeNeedle`'s LIKE escaping
   in plpgsql, which the repo-wide "a filter value is encoded ONE way" rule forbids.
 
+The eight text/tags/int dimension predicates are the shared inlinable SQL helpers
+`lorekit_match_text` / `lorekit_match_tags` / `lorekit_match_int` (migration 00066), so the
+catalog's per-dimension flags cannot drift from the series `GET /activity` counts: **both
+`lorekit_memory_facets` and `lorekit_memory_activity` compose the same helpers**, so the
+load-bearing `nin` null test (an unattributed row is EXCLUDED from a negated filter, not
+silently dropped) lives in ONE place for the two RPCs. `GET /` (`list.ts`) is a **separate**
+implementation — it builds a PostgREST `not.in` predicate (`inListLiteral`), not these SQL
+helpers; it agrees by construction (Postgres `NOT (col IN (…))` is also NULL, hence excludes,
+for a null column) but is not unified with them. `owner` is the one dimension that stays
+inline in the RPCs: it is a LEFT JOIN-computed identity (`personal` / org slug), not a scalar
+column.
+
 ## `seen_count` — recurrence, counted by the writer
 
 Every route that returns a memory returns `seen_count`: how many times the lesson has been
@@ -442,6 +454,14 @@ size is bounded by distinct active (hour, scope) pairs rather than by memory cou
 
 The window is bounded by default deliberately: an unbounded aggregate over `memories` grows
 with account age and no caller wants "all time".
+
+The series also takes `scope` + the same dimension filters `GET /` and `GET /facets` take
+(migration 00063) plus the `owner` dimension (00064), so the Explorer's stat header agrees
+with the list beneath it. The eight text/tags/int predicates are the shared helpers
+`lorekit_match_text` / `lorekit_match_tags` / `lorekit_match_int` (migration 00066) — the same
+predicates `lorekit_memory_facets` composes, so the chart and the facet menu narrow
+identically; `owner` stays inline. With no filters supplied the response is byte-for-byte the
+pre-00063 aggregate.
 
 ## `GET /read-activity`
 
