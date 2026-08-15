@@ -299,8 +299,7 @@ export function projectListView(result, view) {
 }
 
 /**
- * How many rows to ask the store for per requested row when a taxonomy filter
- * is active, and the floor that over-fetch is never allowed to drop below.
+ * How many rows to ask the store for when a taxonomy filter is active.
  *
  * Both stores apply `limit` BEFORE this module can post-filter — `LocalStore`
  * and `TwoTierStore` slice in `list()`, and the remote route pages server-side.
@@ -330,7 +329,7 @@ const TAXONOMY_FETCH_LIMIT = 100;
  *
  * The slice happens HERE rather than in the store whenever a taxonomy filter is
  * active, because the store cannot honour both `limit` and a filter it does not
- * implement. See `TAXONOMY_OVERFETCH_FACTOR` for why the fetch is widened.
+ * implement. See `TAXONOMY_FETCH_LIMIT` for why the fetch is widened.
  */
 export async function listWithFilters(store, a = {}) {
   validateListArgs(a);
