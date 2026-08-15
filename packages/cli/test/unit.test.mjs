@@ -2211,3 +2211,39 @@ test('an unconfigured store names itself on both halves of the migrate pair', as
     globalThis.fetch = original;
   }
 });
+
+test('RemoteStore.read carries the 429 fields so a rate-limited read is retryable', async () => {
+  const { result } = await captureRestCalls(
+    (store) => store.read({ scope: 'global', key: 'k' }),
+    { status: 429, body: JSON.stringify({ error: 'Too many requests', code: 'rate_limited', retryAfterSeconds: 4 }) },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.httpStatus, 429);
+  assert.equal(result.retryAfter, 4);
+  // The thrown read carries the same envelope, so a caller can classify it.
+  const thrown = await captureRestCalls(
+    (store) => store.getEntry({ scope: 'global', key: 'k' }).then(() => null, (e) => e),
+    { status: 429, body: JSON.stringify({ error: 'Too many requests', code: 'rate_limited', retryAfterSeconds: 4 }) },
+  );
+  assert.equal(thrown.result.name, 'StoreReadError');
+  assert.equal(thrown.result.result.httpStatus, 429);
+  assert.equal(thrown.result.result.retryAfter, 4);
+});
+
+test('RemoteStore.putEntry reports a clamped TTL as lossy rather than silently shortening', async () => {
+  const now = new Date('2025-01-01T00:00:00.000Z');
+  const clamped = await captureRestCalls(
+    (store) => store.putEntry({ scope: 'global', key: 'k', value: 'v', expires_at: '2030-01-01T00:00:00.000Z' }, { now }),
+    { status: 201, body: '{}' },
+  );
+  assert.equal(clamped.result.ok, true);
+  assert.equal(clamped.result.ttlClamped, true);
+  assert.equal(clamped.calls[0].body.ttl_days, 365);
+
+  // A TTL that fits is not flagged — the field only appears where it is true.
+  const fits = await captureRestCalls(
+    (store) => store.putEntry({ scope: 'global', key: 'k', value: 'v', expires_at: '2025-01-11T00:00:00.000Z' }, { now }),
+    { status: 201, body: '{}' },
+  );
+  assert.equal(fits.result.ttlClamped, undefined);
+});

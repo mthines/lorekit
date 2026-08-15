@@ -62,12 +62,20 @@ export class StoreReadError extends Error {
 //
 //   else         the remaining WHOLE days, clamped to the schema's 1–365.
 function remoteTtlDays(expiresAt, now = new Date()) {
+  const exact = remoteTtlDaysExact(expiresAt, now);
+  if (typeof exact !== 'number') return exact;
+  return Math.min(365, Math.max(1, exact));
+}
+
+// The same conversion WITHOUT the 1–365 clamp, so a caller can see that the
+// clamp bound and report the loss. Same three non-numeric outcomes.
+function remoteTtlDaysExact(expiresAt, now = new Date()) {
   if (!expiresAt) return undefined;
   const ms = Date.parse(expiresAt);
   if (Number.isNaN(ms)) return 'unknown';
   const remaining = ms - now.getTime();
   if (remaining <= 0) return 'expired';
-  return Math.min(365, Math.max(1, Math.ceil(remaining / 86_400_000)));
+  return Math.ceil(remaining / 86_400_000);
 }
 
 export function createRemoteStore({ endpoint, token } = {}) {
@@ -201,6 +209,11 @@ class RemoteStore {
       return {
         ok: false,
         error: res.error ?? null,
+        // Carried for the same reason `write` carries them: a read can be
+        // rate-limited too, and a caller that retries needs to tell a 429 it
+        // should wait out from one it must not.
+        httpStatus: res.httpStatus ?? null,
+        retryAfter: res.retryAfter ?? null,
         networkError: res.networkError ?? null,
         unusable: res.unusable ?? false,
       };
@@ -283,6 +296,9 @@ class RemoteStore {
   //   converted  `expires_at` → `ttl_days`, the remaining whole days, clamped
   //              to the schema's 1–365 (a longer-lived TTL is clamped, not
   //              dropped — the alternative is silently making it permanent).
+  //              A clamp IS lossy, so it is reported: the result carries
+  //              `ttlClamped: true` and the caller can list the entry as
+  //              shortened rather than leaving the user to discover it.
   //              A PERMANENT entry sends `clear_ttl: true` rather than simply
   //              omitting `ttl_days`: omission is the RPC's `'keep'` branch
   //              (migration 00031), which leaves an existing remote
@@ -359,7 +375,7 @@ class RemoteStore {
     if (ttl === 'expired') {
       return refuse('expired', 'expired entries cannot be written remotely — any TTL would re-date them into the future');
     }
-    return this.write(stripUndefined({
+    const result = await this.write(stripUndefined({
       scope: entry.scope,
       key: entry.key,
       value: entry.value == null ? '' : String(entry.value),
@@ -377,6 +393,10 @@ class RemoteStore {
       origin_commit: entry.origin_commit,
       origin_pr: entry.origin_pr,
     }));
+    // Additive, and only on the path where it can be true.
+    return ttl === 365 && remoteTtlDaysExact(entry?.expires_at, now) > 365
+      ? { ...result, ttlClamped: true }
+      : result;
   }
 
   // Natural-key DELETE. Without `force` the server soft-archives (stamps
