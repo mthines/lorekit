@@ -22,10 +22,17 @@ context into the agent — none of them writes memory (the write is still the
 model calling `memory.write`). Three modes, selectable non-interactively with
 `--hooks <mode>`:
 
-- `all` — `SessionStart` (inject lessons) + `PostToolUseFailure` and `Stop`
+- `all` — `SessionStart` (inject lessons), `UserPromptSubmit` (inject the few
+  that match what you just typed, if any), `PostToolUseFailure` and `Stop`
   (nudge to record one). Preselected on a fresh install.
-- `read-only` — `SessionStart` only: lessons are injected, nothing ever nudges.
+- `read-only` — `SessionStart` only: lessons are injected ONCE, nothing ever
+  nudges, and nothing runs per turn.
 - `none` — skills + MCP only; memory stays model-invoked.
+
+`UserPromptSubmit` fires on every prompt, so it is deliberately quiet: it skips
+trivial prompts, stays silent when nothing matches, and never re-shows a memory
+already injected this session. `hooks.userPrompt: "off"` disables just that
+event while keeping the rest of `all`.
 
 An interactive re-run preselects whatever is already wired, so it never
 resurrects hooks you declined. `--yes` / a non-TTY run takes that same
@@ -36,6 +43,15 @@ pass `--hooks <mode>` when you need a specific wiring.
 `--hooks none` removes hooks that are already there; the older `--no-hooks` flag
 only skips wiring new ones. `npx @lorekit/cli doctor` reports which events are
 wired and in which scope.
+
+The `SessionStart` block is bounded by a character budget
+(`hooks.sessionStart.maxChars`, default 1500), not by a memory count, and
+memories are ranked by recurrence and recency before it is spent. A header
+reading `9 of 50 memories loaded` means the block was truncated — the trailing
+`More lore: …` line names which scopes hold the rest, and `memory.search` /
+`memory.read` reach them. `hooks.sessionStart` picks the shape:
+`hybrid` (default, list + that map), `index` (list only) or `map`
+(map + the three most salient).
 
 Full self-hosting guide (your own Supabase + Vercel): https://github.com/mthines/lorekit/blob/main/docs/install.md
 
@@ -126,13 +142,15 @@ global                             # least specific
 
 ## Filtering lore (dashboard Explorer + REST)
 
-The Explorer at lorekit.io/lore filters on six dimensions. Values combine with **OR inside one
+The Explorer at lorekit.io/lore filters on eight dimensions. Values combine with **OR inside one
 dimension** and **AND across dimensions**, and the whole filter set is in the URL, so a filtered
 view is a shareable link.
 
 | Dimension | Memory field | Operators |
 |-----------|--------------|-----------|
 | Label | `tags` | includes all (default), includes any, includes none |
+| Kind | `kind` | is / is either of, is not |
+| Host | `host` | is / is either of, is not |
 | Agent | `source_agent` | is / is either of, is not |
 | Trigger | `trigger` | is / is either of, is not |
 | Repository | `origin_repo` | is / is either of, is not |
@@ -151,11 +169,75 @@ source_agent=aw&origin_branch=main&tags=flaky&tags_mode=none"
 Each dimension takes a comma-separated value list plus an optional `<dimension>_mode` of `in`
 (default) or `nin` (negate); labels use `tags_mode` of `any` (default), `all`, or `none`.
 
+`kind` and `host` are the memory TAXONOMY: `kind` is the bucket type — a closed vocabulary of
+`lesson`, `bus` and `signal` — and `host` is the skill or agent that owns the bucket. Together they
+read as the phrase they exist for: `?kind=lesson&host=reviewer` is "reviewer's lessons". Note that
+`host` is not `source_agent`: the host OWNS the bucket, the agent WROTE the row, and they can
+differ.
+
+### Finding lore that is about to expire
+
+`?expiring_within_days=N` (1–365) narrows the list to memories whose TTL runs out soon — those
+with an `expires_at` strictly after now and at or before now + N days. Memories with no TTL are
+never included, and neither are ones that have already expired.
+
+```bash
+# What am I about to lose this week?
+curl -H "Authorization: Bearer lk_ro_…" \
+  "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/memories?expiring_within_days=7"
+```
+
+It is a relative horizon on purpose: "expiring in the next 7 days" still asks the same question
+tomorrow, where a saved link with an absolute date would quietly become a view of the past. Use it
+to review what is about to lapse and either let it go or refresh the TTL with `memory.write`
+(`ttl_days`, or `clear_ttl` to make it permanent).
+
 `GET /memories/facets` returns every filterable value with its memory count
 (`{ "facets": [{ "facet": "origin_branch", "value": "main", "count": 27 }] }`), partitioned by
 `?archived=true|false` and narrowable with `?facets=tag,trigger`. Use it to discover what can be
 filtered on instead of listing memories and tallying them client-side — the tally is silently
 truncated past the row cap.
+
+## Which lore matters right now (`GET /memories/relevant`)
+
+Listing and searching tell you what EXISTS. They do not tell you what is worth reading:
+`GET /memories` orders by `updated_at`, `POST /memories/search` by full-text match, and neither
+knows that a lesson learned twelve times matters more than one written once. On an active repo
+that difference is the whole game — the newest writes are usually one task's iteration log.
+
+`GET /memories/relevant` is the ranked shortlist. It scores each candidate on **recency**
+(exponential decay, 14-day half-life), **salience** (`log1p(seen_count)`, normalised across the
+candidates), **relevance** (full-text match on `q`) and **outcome** (applied/resolution history —
+`1` on an outcome bus, `0.75` carried to a PR, `0.5` cold-start prior when unproven), and returns a
+compact index:
+
+```bash
+curl -H "Authorization: Bearer lk_ro_…" \
+  "https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/memories/relevant?\
+q=migration+backfill&scopes=repo::acme/app,global&limit=5"
+```
+
+```json
+{
+  "entries": [
+    { "scope": "repo::acme/app", "key": "migration-order",
+      "hook": "Always add the column before the backfill runs.",
+      "score": 0.74, "factors": { "recency": 0.61, "salience": 0.85, "relevance": 1, "outcome": 0.5 },
+      "seen_count": 9, "updated_at": "2026-07-30T09:12:00.000Z" }
+  ],
+  "candidates": 47
+}
+```
+
+| Param | Default | Meaning |
+|-------|---------|---------|
+| `q` | — | Free-text query. **Optional** — omit it and the ranking is recency + salience, i.e. "what matters generally". |
+| `scopes` | all visible | Comma-separated, **most-specific first**; the order breaks ties, so a project lesson wins over the global one it ties with. |
+| `limit` | `10` | 1–50. |
+| `min_score` | `0` | Drop weak hits when injecting automatically — an irrelevant lesson every turn is worse than none. Note: with `q` set, matched hits floor at `(1 + 0.5) / 4 = 0.375` (relevance is binary and outcome never sinks below its `0.5` prior today), so a value ≤ `0.375` is a no-op; finer gating arrives with graded relevance. |
+
+Bodies are not returned — fetch the ones you want with `memory.read`. `candidates` is how many
+matched before ranking, so you can tell a shortlist from the whole set.
 
 ## Limits
 

@@ -9,13 +9,18 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ListFacetsQuerySchema } from '@lorekit/schemas/memory';
+import {
+  ListFacetsQuerySchema,
+  ListMemoriesQuerySchema,
+  MemoryFacetSchema,
+} from '@lorekit/schemas/memory';
 import {
   FILTER_FIELDS,
   facetOptions,
   fieldDescriptor,
   filterCount,
   filterPhrase,
+  filtersFromLegacyOwner,
   filtersFromLegacyTags,
   filtersPhrase,
   filtersToFacetParams,
@@ -48,6 +53,8 @@ const FACETS: FacetValue[] = [
   { facet: 'origin_branch', value: 'main', count: 14 },
   { facet: 'origin_branch', value: 'feat/maintenance', count: 2 },
   { facet: 'origin_pr', value: '482', count: 3 },
+  { facet: 'owner', value: 'personal', count: 33 },
+  { facet: 'owner', value: 'acme', count: 8 },
 ];
 
 describe('normalizeFilters', () => {
@@ -490,7 +497,261 @@ describe('filtersToFacetParams', () => {
   });
 });
 
+/**
+ * The taxonomy pair (`kind` / `host`, migrations 00056 + 00057).
+ *
+ * `GET /memories` has accepted both params since 00056 and the handler has
+ * always filtered on them; `GET /memories/facets` has catalogued their values
+ * since 00057. The only missing piece was a `FILTER_FIELDS` row, so the facet
+ * rows arrived and were silently dropped. These assert the wiring the pills
+ * now depend on — the shared guards above (facet uniqueness, the facets-param
+ * cast, menu ordering) cover the two new rows automatically because they
+ * iterate `FILTER_FIELDS`.
+ */
+describe('kind & host dimensions', () => {
+  it('are offered as dimensions with their own facet catalogs', () => {
+    const kind = fieldDescriptor('kind');
+    const host = fieldDescriptor('host');
+    expect(kind?.facet).toBe('kind');
+    expect(host?.facet).toBe('host');
+    // Scalar columns: one value per row, so containment ("includes all") is not
+    // a question that can be asked of them — that is `label`'s alone.
+    expect(kind?.operators).toEqual(['in', 'nin']);
+    expect(host?.operators).toEqual(['in', 'nin']);
+  });
+
+  it('emit the GET /memories params the handler already understands', () => {
+    expect(
+      filtersToQueryParams([
+        { field: 'kind', operator: 'in', values: ['lesson', 'signal'] },
+        { field: 'host', operator: 'in', values: ['reviewer'] },
+      ]),
+    ).toEqual({
+      kind: 'lesson,signal',
+      kind_mode: 'in',
+      host: 'reviewer',
+      host_mode: 'in',
+    });
+  });
+
+  it('negate through *_mode=nin rather than a second param', () => {
+    expect(filtersToQueryParams([{ field: 'kind', operator: 'nin', values: ['bus'] }])).toEqual({
+      kind: 'bus',
+      kind_mode: 'nin',
+    });
+  });
+
+  it('read as the phrase the taxonomy exists for', () => {
+    // `?kind=lesson&host=reviewer` is "reviewer's lessons" — the example the
+    // schema docblock and the contributor docs both use.
+    expect(filterPhrase({ field: 'kind', operator: 'in', values: ['lesson'] })).toBe('Kind is lesson');
+    expect(filterPhrase({ field: 'host', operator: 'in', values: ['reviewer'] })).toBe(
+      'Host is reviewer',
+    );
+    expect(filterPhrase({ field: 'kind', operator: 'in', values: ['lesson', 'bus'] })).toBe(
+      'Kind is either of lesson, bus',
+    );
+  });
+
+  it('normalise like every other scalar dimension', () => {
+    // One pill per dimension: a duplicated field MERGES rather than half-dropping.
+    expect(
+      normalizeFilters([
+        { field: 'kind', operator: 'in', values: ['lesson'] },
+        { field: 'kind', operator: 'in', values: ['bus', 'lesson'] },
+      ]),
+    ).toEqual([{ field: 'kind', operator: 'in', values: ['lesson', 'bus'] }]);
+
+    // An operator the field does not offer falls back to its default, rather
+    // than emitting a `tags_mode`-shaped value on a scalar column.
+    expect(normalizeFilters([{ field: 'host', operator: 'all', values: ['aw'] }])).toEqual([
+      { field: 'host', operator: 'in', values: ['aw'] },
+    ]);
+
+    // A valueless pill cannot exist — it would be unclearable.
+    expect(normalizeFilters([{ field: 'kind', operator: 'in', values: [] }])).toEqual([]);
+  });
+
+  it('round-trip through the ?filters= param, so a taxonomy view is a link', () => {
+    // AC-3, asserted where the URL contract actually lives rather than in a
+    // browser: `filtersParamValue` is what `useUrlState` writes and
+    // `resolveFilters` is what a reload reads back. The two new fields take the
+    // same path as every other dimension — no field-specific branch — so the
+    // property to pin is that the path is lossless for them too.
+    const bar: Filter[] = [
+      { field: 'kind', operator: 'in', values: ['lesson'] },
+      { field: 'host', operator: 'nin', values: ['aw', 'reviewer'] },
+    ];
+    const encoded = filtersParamValue(bar, undefined);
+    expect(resolveFilters(JSON.parse(JSON.stringify(encoded)), undefined)).toEqual(bar);
+  });
+
+  it('are reachable from the cross-dimension type-ahead', () => {
+    // The value hit is what makes the two-level menu cost nothing: typing
+    // "reviewer" should offer Host → reviewer without first choosing Host.
+    const suggestions = rootSuggestions(
+      [
+        { facet: 'host', value: 'reviewer', count: 4 },
+        { facet: 'kind', value: 'lesson', count: 9 },
+      ],
+      'reviewer',
+    );
+    expect(suggestions).toContainEqual({
+      kind: 'value',
+      field: 'host',
+      value: 'reviewer',
+      count: 4,
+    });
+  });
+});
+
+/**
+ * The owner dimension (migration 00064).
+ *
+ * Ownership was the ONE Explorer filter narrowed client-side, in a separate bar.
+ * It is a server-side facet dimension now, mechanically identical to the scalar
+ * ones — so the shared guards below (facet one-to-one, the param cast, menu
+ * ordering) cover it automatically because they iterate `FILTER_FIELDS`. These
+ * pin the owner-specific behaviour: the `personal`/slug value formatting, the
+ * wire params, and the legacy `?owner=` translation.
+ */
+describe('owner dimension', () => {
+  it('is offered as a dimension with the owner facet and in/nin operators', () => {
+    const owner = fieldDescriptor('owner');
+    expect(owner?.facet).toBe('owner');
+    // A scalar identity per row (personal or one org), so no `all` containment.
+    expect(owner?.operators).toEqual(['in', 'nin']);
+  });
+
+  it('renders the literal `personal` as `Personal` and a slug as itself', () => {
+    expect(valueSummary('owner', ['personal'])).toBe('Personal');
+    expect(valueSummary('owner', ['acme'])).toBe('acme');
+    expect(filterPhrase({ field: 'owner', operator: 'in', values: ['personal', 'acme'] })).toBe(
+      'Owner is either of Personal, acme',
+    );
+    expect(filterPhrase({ field: 'owner', operator: 'nin', values: ['acme'] })).toBe(
+      'Owner is not acme',
+    );
+  });
+
+  it('emits the GET /memories owner params the handler resolves', () => {
+    expect(
+      filtersToQueryParams([{ field: 'owner', operator: 'in', values: ['personal', 'acme'] }]),
+    ).toEqual({ owner: 'personal,acme', owner_mode: 'in' });
+    expect(filtersToQueryParams([{ field: 'owner', operator: 'nin', values: ['acme'] }])).toEqual({
+      owner: 'acme',
+      owner_mode: 'nin',
+    });
+  });
+
+  it('round-trips through the ?filters= param, so an owner view is a link', () => {
+    const bar: Filter[] = [{ field: 'owner', operator: 'in', values: ['acme'] }];
+    const encoded = filtersParamValue(bar, undefined);
+    expect(resolveFilters(JSON.parse(JSON.stringify(encoded)), undefined)).toEqual(bar);
+  });
+
+  it('is reachable from the cross-dimension type-ahead', () => {
+    expect(rootSuggestions(FACETS, 'acme')).toContainEqual({
+      kind: 'value',
+      field: 'owner',
+      value: 'acme',
+      count: 8,
+    });
+  });
+});
+
+/**
+ * Back-compat for the legacy `?owner=` param — the pre-facet client-side bar
+ * serialised an `OwnerFilter` (`'all' | 'personal' | { orgId }`).
+ */
+describe('filtersFromLegacyOwner', () => {
+  it('translates the legacy `personal` selection into an owner filter', () => {
+    expect(filtersFromLegacyOwner('personal')).toEqual([
+      { field: 'owner', operator: 'in', values: ['personal'] },
+    ]);
+  });
+
+  it('folds any other string (an org slug) into a one-value owner filter', () => {
+    // The CLI's `--owner <slug>` and the accept-invite deep link write a slug
+    // here, so every non-`all` string becomes that owner facet value.
+    expect(filtersFromLegacyOwner('acme')).toEqual([
+      { field: 'owner', operator: 'in', values: ['acme'] },
+    ]);
+  });
+
+  it('produces nothing for `all`, an unresolvable `{orgId}`, or junk', () => {
+    // `all` was "no constraint"; the `{orgId}` form keyed on a uuid this pure
+    // function cannot map to the facet's slug, so it degrades to no filter.
+    expect(filtersFromLegacyOwner('all')).toEqual([]);
+    expect(filtersFromLegacyOwner({ orgId: 'abc' })).toEqual([]);
+    expect(filtersFromLegacyOwner(undefined)).toEqual([]);
+    expect(filtersFromLegacyOwner(null)).toEqual([]);
+  });
+
+  it('feeds resolveFilters only while ?filters= is absent, like legacy ?tags=', () => {
+    // Untouched bar: a legacy `?owner=personal` link seeds the owner pill.
+    expect(resolveFilters(null, undefined, 'personal')).toEqual([
+      { field: 'owner', operator: 'in', values: ['personal'] },
+    ]);
+    // Once the bar is touched (even to empty), the legacy owner is ignored — so
+    // an owner pill the user removed cannot resurrect itself.
+    expect(resolveFilters([], undefined, 'personal')).toEqual([]);
+    // It combines with legacy tags in the untouched branch.
+    expect(resolveFilters(null, ['perf'], 'personal')).toEqual([
+      { field: 'label', operator: 'all', values: ['perf'] },
+      { field: 'owner', operator: 'in', values: ['personal'] },
+    ]);
+  });
+
+  it('keeps the explicit-empty marker so a legacy owner link stays clearable', () => {
+    // Mirrors the legacy `?tags=` treatment: an empty bar with a legacy owner in
+    // play is written as `[]` (explicit empty), not dropped, so the removal sticks.
+    expect(filtersParamValue([], undefined, 'personal')).toEqual([]);
+    expect(filtersParamValue([], undefined, 'all')).toBeNull();
+  });
+});
+
 describe('FILTER_FIELDS', () => {
+  /**
+   * The `FacetName` docblock claims the union is one-to-one with `FilterField`
+   * now that `kind`/`host` have pills. That claim is load-bearing and invisible:
+   * a facet the server emits with no descriptor is NOT a type error, it is a
+   * dimension whose rows arrive and are silently ignored — which is exactly the
+   * state `kind` and `host` sat in between 00057 and this change. Executed
+   * against the server's own enum so adding a facet server-side fails here.
+   */
+  it('has a pill for every facet the server can emit', () => {
+    const mapped = new Set(FILTER_FIELDS.map((d) => d.facet));
+    const emitted = MemoryFacetSchema.options;
+    expect(emitted.length).toBeGreaterThan(0);
+    for (const facet of emitted) {
+      expect(mapped, `facet "${facet}" has no FILTER_FIELDS descriptor`).toContain(facet);
+    }
+    expect(mapped.size).toBe(emitted.length);
+  });
+
+  /**
+   * The `Partial<ListMemoriesQuery>` return of `filtersToQueryParams` is checked
+   * by the compiler for the keys it sets literally — but only the schema knows
+   * what the ROUTE accepts. The facets side already has this guard; the memories
+   * side did not, which is how a dimension could be mapped to a param the list
+   * route ignores and still typecheck.
+   */
+  it('maps every dimension to a param GET /memories accepts', () => {
+    const oneEach: Filter[] = FILTER_FIELDS.map((d) => ({
+      field: d.field,
+      operator: d.operators[0],
+      values: d.field === 'pr' ? ['1'] : ['x'],
+    }));
+    const params = filtersToQueryParams(oneEach);
+    const allowed = new Set(Object.keys(ListMemoriesQuerySchema.shape));
+
+    expect(Object.keys(params).length).toBeGreaterThanOrEqual(FILTER_FIELDS.length);
+    for (const key of Object.keys(params)) {
+      expect(allowed, `"${key}" is not a ListMemoriesQuery param`).toContain(key);
+    }
+  });
+
   it('gives every field a descriptor reachable by name', () => {
     for (const d of FILTER_FIELDS) {
       expect(fieldDescriptor(d.field)).toBe(d);

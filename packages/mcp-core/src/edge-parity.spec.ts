@@ -76,6 +76,18 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   ['github-app-jwt.ts', 'mcp/github-app-jwt.ts'],
   ['trace-context.ts', '_shared/trace-context.ts'],
   ['rest-tool-name.ts', '_shared/rest-tool-name.ts'],
+  // The ranking used by GET /memories/relevant. Note this file has a SECOND,
+  // cross-LANGUAGE twin that no byte comparison can cover — the CLI's
+  // `lessons-pure.mjs` — guarded behaviourally by `lesson-rank-parity.spec.ts`.
+  ['lesson-rank.ts', '_shared/lesson-rank.ts'],
+  // The tags/origin_pr → outcome-factor mapping the ranked reads feed the
+  // scorer. Mirrored because BOTH ranked edge paths derive it —
+  // memories/handlers/relevant.ts and mcp/tools.ts (order=rank) — and neither
+  // can cross-import mcp-core; hoisted out of both so the two cannot drift.
+  ['outcome-signal.ts', '_shared/outcome-signal.ts'],
+  // The pure half of the embedding pipeline. The impure half (`fetch`, the API
+  // key) is `_shared/embedding-client.ts`, which is Deno-only and not mirrored.
+  ['embedding.ts', '_shared/embedding.ts'],
   // Two rules lifted OUT of Deno-only files so vitest can assert them:
   // rest-audit-actor.ts is `auditUserId` (was inline in _shared/api/auth.ts),
   // rest-response-outcome.ts is the status→usage_events.outcome
@@ -87,9 +99,21 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   // Pure aggregation/window logic for GET /memories/usage — mirrored into the
   // _shared tree because the usage handler cannot cross-import mcp-core.
   ['usage-stats.ts', '_shared/usage-stats.ts'],
+  // The `(now, now + days]` bounds behind `GET /memories?expiring_within_days=`.
+  // Mirrored for the usage-stats reason (the list handler cannot cross-import
+  // mcp-core) and guarded here rather than left inline because the asymmetric
+  // boundary — exclusive lower so an already-expired row is never shown,
+  // inclusive upper so "within 7 days" includes day 7 — is the entire feature,
+  // and a drift between the tested copy and the deployed one is silent.
+  ['expiring-window.ts', '_shared/expiring-window.ts'],
   // CORS origin allowlist matching (www/apex sibling expansion) — mirrored into
   // the _shared/api tree because cors.ts (Deno) cannot cross-import mcp-core.
   ['cors-origins.ts', '_shared/api/cors-origins.ts'],
+  // The bounded value behind `lorekit.scope.type`. Mirrored because BOTH
+  // transports resolve it before validation — mcp-handler.ts from the tool
+  // arguments, api/router.ts from the query string — and neither can
+  // cross-import mcp-core.
+  ['scope-type-attribute.ts', '_shared/scope-type-attribute.ts'],
 ];
 
 describe('edge-function mirror parity', () => {

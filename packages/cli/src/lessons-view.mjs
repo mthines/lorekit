@@ -40,7 +40,7 @@ export function scopeList({ projectScope, branchScope, repoScope } = {}) {
 // deliberately small and in lockstep with that source, including the 64-char
 // host clamp. Lets the offline store, whose rows carry no kind/host column,
 // still be filtered and badged by taxonomy from the tags it does store.
-function inferKindHostFromTags(tags) {
+export function inferKindHostFromTags(tags) {
   if (!Array.isArray(tags)) return {};
   for (const tag of tags) {
     if (tag === 'loop::review-outcomes') return { kind: 'bus', host: 'review' };
@@ -427,6 +427,57 @@ export function clusterDuplicates(entries = [], threshold = 0.8) {
     });
   }
   clusters.sort((x, y) => y.size - x.size);
+  return clusters;
+}
+
+// Compile a `--cluster-by-key` pattern into a stateless RegExp, or null on bad
+// input (empty / non-string / unparseable) — never throws, mirroring
+// `parseThreshold`'s "never crash on bad input" contract. The source is always a
+// STRING, so `new RegExp(raw)` carries no flags and is stateless by construction
+// — flag stripping is only needed on the RegExp branch of `clusterByKeyPattern`,
+// which can be handed a caller-built `/…/g`. Pure.
+export function compileKeyPattern(raw) {
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  try {
+    return new RegExp(raw);
+  } catch {
+    return null;
+  }
+}
+
+// Cluster entries by a shared KEY capture rather than value overlap. Two entries
+// cluster iff their keys yield the SAME first capture group of `pattern` (or the
+// same full match when the pattern has no capture group). This catches
+// coordinate-key duplicate FAMILIES — many `bucket::pr{N}-{commentId}::slug` rows
+// recorded for one review comment, whose slugs (and thus values) differ enough
+// that `clusterDuplicates`'s Jaccard sweep never links them. Returns only 2+
+// clusters, each `{ members: [{ scope, key }], size, keyGroup }`, largest first
+// (ties broken by keyGroup for stable output). A key that doesn't match the
+// pattern is left unclustered. Pure — O(n), no threshold.
+export function clusterByKeyPattern(entries = [], pattern) {
+  const re =
+    pattern instanceof RegExp
+      ? new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, ''))
+      : compileKeyPattern(pattern);
+  if (!re) return [];
+  const byGroup = new Map();
+  for (const e of entries) {
+    const key = e.key == null ? '' : String(e.key);
+    re.lastIndex = 0;
+    const m = re.exec(key);
+    if (!m) continue;
+    const group = m[1] ?? m[0];
+    if (!byGroup.has(group)) byGroup.set(group, []);
+    byGroup.get(group).push({ scope: e.scope ?? null, key });
+  }
+  const clusters = [];
+  for (const [keyGroup, members] of byGroup) {
+    if (members.length < 2) continue;
+    clusters.push({ members, size: members.length, keyGroup });
+  }
+  clusters.sort(
+    (x, y) => y.size - x.size || String(x.keyGroup).localeCompare(String(y.keyGroup)),
+  );
   return clusters;
 }
 

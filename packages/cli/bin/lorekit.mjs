@@ -88,7 +88,7 @@ ${c.bold('Commands')}
   link (url)  Print a shareable dashboard deep-link URL for the current context,
               a scope, or a specific lesson (opens its detail sheet). No args
               links to the cwd's most-specific scope. Filter flags mirror the
-              Explorer (--q / --owner / --tags / --range / --archived / --view);
+              Explorer (--q / --owner / --tags / --range / --archived);
               --base or LOREKIT_APP_URL override the dashboard host. --json. Pipe it:
               lorekit link | pbcopy.
   bootstrap   Apply the BYOD schema to a user-supplied Supabase database.
@@ -542,18 +542,27 @@ HEURISTIC — Jaccard overlap of lowercased word tokens, not a semantic/embeddin
 measure — so it surfaces candidates for a human to review, and can both miss
 paraphrases and group coincidental overlaps. Tune the cutoff with --threshold.
 
+Pass --cluster-by-key <regex> to cluster by KEY shape instead of value overlap:
+entries whose keys share the same first capture group (or full match) form one
+family. This catches coordinate-key debt — e.g. many pr{N}-{commentId} rows for
+one review comment — that the value heuristic misses when the values differ.
+Key-shape mode has no similarity cutoff, so --threshold and --cluster-by-key are
+mutually exclusive: passing both is a usage error rather than a silent ignore.
+
 ${c.bold('Options')}
-  -d, --dir <path>        Target project root (default: current directory)
-      --scope <scope>     Restrict to a single scope (default: all applicable)
-      --threshold <0..1>  Similarity cutoff to cluster a pair (default: 0.8)
-      --json              Machine-readable output (clusters + similarity signal)
-  -e, --endpoint <url>    Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
-  -t, --token <token>     Remote token override (else .mcp.json / LOREKIT_TOKEN)
-      --store <path>      Local project-tier store directory (default: .lorekit)
+  -d, --dir <path>          Target project root (default: current directory)
+      --scope <scope>       Restrict to a single scope (default: all applicable)
+      --threshold <0..1>    Similarity cutoff to cluster a pair (default: 0.8)
+      --cluster-by-key <re> Cluster by shared key capture instead of value overlap
+      --json                Machine-readable output (clusters + signal)
+  -e, --endpoint <url>      Remote endpoint override (else .mcp.json / LOREKIT_MCP_URL)
+  -t, --token <token>       Remote token override (else .mcp.json / LOREKIT_TOKEN)
+      --store <path>        Local project-tier store directory (default: .lorekit)
 
 ${c.bold('Examples')}
   npx @lorekit/cli dedupe
   npx @lorekit/cli dedupe --threshold 0.6 --json
+  npx @lorekit/cli dedupe --cluster-by-key "(pr\\d+-\\d+)" --json
 `,
   link: `${c.bold('lorekit link')} — print a shareable dashboard deep-link URL ${c.dim('(alias: url)')}
 
@@ -576,13 +585,12 @@ ${c.bold('Options')}
       --key <key>         Name the key explicitly — the way to link to a key
                           that itself contains \`::\`
       --q <text>          Pre-fill the Explorer search box
-      --owner <o>         Ownership filter: all | personal | <orgId>
+      --owner <o>         Ownership filter: all | personal | <org-slug>
       --tags <a,b,c>      Label filter (AND across labels); comma-separated or a JSON array
       --range <json>      Date range as {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}
       --from <date>       Range start (shorthand for --range)
       --to <date>         Range end (shorthand for --range)
       --archived          Include archived memories
-      --view <mode>       Explorer view: scope | time
       --base <url>        Dashboard base URL (else LOREKIT_APP_URL, default https://lorekit.io)
       --json              Machine-readable { url, surface, base, params }
 
@@ -649,10 +657,16 @@ const KNOWN_FLAGS = [
   'from', 'to', 'apply', 'yes', 'hooks', 'no-hooks', 'mcp-json', 'force', 'deep', 'adapter',
   'event', 'json', 'scope', 'key', 'threshold', 'help', 'version', 'telemetry',
   'value', 'tags', 'source-agent', 'trigger', 'kind', 'host', 'ttl-days', 'clear-ttl', 'org', 'remote', 'local',
-  'link', 'base', 'q', 'owner', 'range', 'view', 'archived',
+  // `view` is accepted-and-IGNORED, not documented: the Explorer dropped the
+  // scope/time tab so the flag is a no-op, but `link` is a HUMAN_COMMAND that
+  // rejects UNKNOWN options — so keeping `view` listed for a release stops an
+  // existing `lorekit link --view time` from hard-failing on an unknown-option
+  // error. It is parsed and discarded (nothing reads `args.view`). Remove it once
+  // 1.x links have aged out.
+  'link', 'base', 'q', 'owner', 'range', 'archived', 'view',
   'origin-repo', 'origin-branch', 'origin-commit', 'origin-pr', 'no-origin',
   // Scale-aware survey flags
-  'all', 'max', 'since', 'until', 'key-prefix',
+  'all', 'max', 'since', 'until', 'key-prefix', 'cluster-by-key',
 ];
 
 // Commands that write to disk / talk to the network on a human's behalf. These

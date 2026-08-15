@@ -69,6 +69,15 @@ export interface EditableFieldProps
   className?: string;
   /** Whether the field is read-only (no edit toggle). @default false */
   readOnly?: boolean;
+  /**
+   * Hide the visual heading row (label + edit affordance) **and** the section's
+   * `aria-label`. Used when a parent supplies its own heading and already names
+   * the region — e.g. the memory detail sheet, whose own `aria-label="Content"`
+   * section holds the Preview/Edit tablist. Keeping the label here would nest
+   * two identically-named regions. `label` is still required: it names the
+   * textarea's id and the edit affordance. @default false
+   */
+  hideLabel?: boolean;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -85,6 +94,7 @@ export function EditableField({
   placeholder,
   className = '',
   readOnly = false,
+  hideLabel = false,
   ...textareaProps
 }: EditableFieldProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -122,24 +132,32 @@ export function EditableField({
   const errorId = error ? `${fieldId}-error` : undefined;
 
   return (
-    <section aria-label={label} className={['flex flex-col gap-2', className].join(' ')}>
-      {/* Section heading */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-xs font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
-          {label}
-        </h2>
-        {/* Edit affordance — only visible in read mode */}
-        {!isEditing && !readOnly && (
-          <button
-            type="button"
-            onClick={onEditStart}
-            aria-label={`Edit ${label}`}
-            className="flex size-6 items-center justify-center rounded text-[var(--color-content-tertiary)] opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:text-[var(--color-content-primary)] focus-visible:opacity-100"
-          >
-            <Pencil className="size-3" aria-hidden />
-          </button>
-        )}
-      </div>
+    // `aria-label` is dropped with the heading: the parent that sets
+    // `hideLabel` already names this region, and a nested section with the
+    // same accessible name would expose two identically-named landmarks.
+    <section
+      aria-label={hideLabel ? undefined : label}
+      className={['flex flex-col gap-2', className].join(' ')}
+    >
+      {/* Section heading — hidden when a parent supplies its own (e.g. tabs). */}
+      {!hideLabel && (
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-medium uppercase tracking-wide text-[var(--color-content-tertiary)]">
+            {label}
+          </h2>
+          {/* Edit affordance — only visible in read mode */}
+          {!isEditing && !readOnly && (
+            <button
+              type="button"
+              onClick={onEditStart}
+              aria-label={`Edit ${label}`}
+              className="flex size-6 items-center justify-center rounded text-[var(--color-content-tertiary)] opacity-0 transition-opacity duration-150 group-hover:opacity-100 hover:text-[var(--color-content-primary)] focus-visible:opacity-100"
+            >
+              <Pencil className="size-3" aria-hidden />
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Field body */}
       {isEditing && !readOnly ? (

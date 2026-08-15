@@ -7,6 +7,8 @@ import type { UsageEventParams } from '../usage.ts';
 import { restToolName } from '../rest-tool-name.ts';
 import { classifyResponseOutcome } from '../rest-response-outcome.ts';
 import { parseCorrelationId, parseResultCountHeader, parseUsageClient } from '../usage-stats.ts';
+import { safeValidateScope } from '../scope.ts';
+import { scopeTypeAttribute } from '../scope-type-attribute.ts';
 import type { Span } from '../otel.ts';
 
 /**
@@ -184,7 +186,23 @@ export function createRouter(routes: Route[], functionName: string) {
       // body to peek at a scope, so body-carried scopes report null. Same
       // bounded values as the MCP side (`global`/`project`/`repo`/`branch`).
       const rawScope = url.searchParams.get('scope');
-      const scopeType = rawScope ? (rawScope.split('::')[0] ?? 'unknown') : null;
+      // BOUNDED via the shared `scopeTypeAttribute`, which collapses an
+      // ungrammatical `?scope=` into a single `invalid` bucket. The previous
+      // inline `split('::')[0]` echoed the caller's own prefix straight into a
+      // dimension declared low-cardinality, so a typo'd query string was an
+      // unbounded attribute value. Absent scope still reports null, and the
+      // attribute is still omitted rather than placeholdered below.
+      const scopeType = scopeTypeAttribute(rawScope);
+      // The EXACT scope, for `usage_events.scope` (migration 00058) — what makes
+      // "records read from repo::owner/name" answerable, which the deliberately
+      // low-cardinality `scopeType` above cannot. Read from the SAME query
+      // string and for the same reason: the router must not consume the request
+      // body, so a body-carried scope records null here exactly as it records a
+      // null `scopeType` today. Normalised through the canonical validator but
+      // TOTAL — an ungrammatical `?scope=` records null rather than turning a
+      // telemetry dimension into a 4xx on the request it is measuring. Resolved
+      // ONCE, before the try, so the success and error paths cannot disagree.
+      const usageScope = safeValidateScope(rawScope);
       const toolName = restToolName({
         fn: functionName,
         method,
@@ -223,6 +241,7 @@ export function createRouter(routes: Route[], functionName: string) {
             planName,
             toolName,
             scopeType,
+            scope: usageScope,
             authType: usageAuthType(resolved.auth),
             outcome: await responseOutcome(res),
             durationMs,
@@ -241,6 +260,7 @@ export function createRouter(routes: Route[], functionName: string) {
             planName: null, // skip the plan lookup on the error path to keep it fast
             toolName,
             scopeType,
+            scope: usageScope,
             authType: usageAuthType(resolved.auth),
             // A handler that threw a raw cap rejection still counts as a cap
             // hit, not a generic fault — translateDbError is the single

@@ -13,7 +13,7 @@ import { dayCountsFromActivity } from '@/lib/aggregations';
 import type { ScopeNode } from '@/components/lore/ScopeTree';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { listMemories, archiveLesson, restoreLesson, type MemoryFilters, type MemoryPage } from '@/lib/lore';
-import type { DateRange } from '@/components/ui/DateRangePicker';
+import type { AbsoluteRange } from '@/lib/time-range';
 import { normalizeTags } from '@/lib/tag-filter';
 import { lessonFromMemoryEntry } from '@/lib/lesson-entry';
 import { browserAccessToken } from '@/lib/api/session-browser';
@@ -127,8 +127,10 @@ async function requireBrowserToken(): Promise<string> {
 // ---------------------------------------------------------------------------
 // Scope-tree-only fetch (used by the Lore Explorer sidebar).
 // One row per scope from `GET /memories/scopes`, already counted and sorted by
-// the database — this stays its own lightweight query so the tree renders
-// immediately while the paginated lesson list streams in separately.
+// the database (count desc, scope asc — 00065), which is the order the chip
+// strip renders since this maps but never re-sorts. Stays its own lightweight
+// query so the tree renders immediately while the paginated lesson list streams
+// in separately.
 // ---------------------------------------------------------------------------
 
 async function fetchScopes(signal?: AbortSignal): Promise<ScopeNode[]> {
@@ -333,8 +335,22 @@ export interface UseMemoriesFilters {
   scope: string | null;
   /** Substring search applied to key and value. */
   search: string;
-  /** Date range filter on created_at. */
-  range: DateRange | null;
+  /**
+   * Resolved window filter on `created_at`, half-open `[from, to)`, or `null`
+   * for unbounded.
+   *
+   * `AbsoluteRange` (`lib/time-range.ts`), NOT the calendar picker's
+   * `DateRange`. The two are structurally identical — both are `{from, to}`
+   * strings, which is why the wrong one type-checked — but they mean opposite
+   * things at the upper bound: `DateRange` is an INCLUSIVE pair of
+   * `YYYY-MM-DD` UTC days, while what the Explorer actually passes is
+   * `resolveRange`'s output, whose `to` is an EXCLUSIVE ISO instant (an hour
+   * drilled in from a chart bucket). `dateRangeBounds` already reads both
+   * shapes correctly, so this is the contract catching up with the value, not
+   * a behaviour change. `toDayRange` is the one conversion in the other
+   * direction, for the surfaces that only speak days.
+   */
+  range: AbsoluteRange | null;
   /**
    * Labels a memory must ALL carry. Empty means no label filter.
    *
@@ -352,6 +368,16 @@ export interface UseMemoriesFilters {
   filters?: Filter[];
   /** When true, fetches archived memories instead of active ones. */
   showArchived?: boolean;
+  /**
+   * "Expiring soon" horizon in days (`GET /memories?expiring_within_days=`).
+   * Absent means no expiry narrowing.
+   *
+   * Kept as its own field rather than folded into `showArchived` because the
+   * two are orthogonal on the wire, and because the archive mutations select
+   * their cache pages by the BOOLEAN at key index 4 — collapsing the two into
+   * one tri-state field would break that contract silently.
+   */
+  expiringWithinDays?: number;
 }
 
 /**
@@ -391,6 +417,12 @@ export function useMemories(filters: UseMemoriesFilters) {
       filters.range,
       filters.showArchived ?? false,
       bar,
+      // APPENDED, per the rule above: index 4 must stay the archived boolean the
+      // mutations match on. Present in the key because the active and the
+      // expiring views are different result sets over the same population — a
+      // key that ignored it would serve the unfiltered page when the user
+      // switched to Expiring and never refetch.
+      filters.expiringWithinDays ?? null,
     ],
     queryFn: ({ pageParam }) => {
       const args: MemoryFilters = {
@@ -400,6 +432,7 @@ export function useMemories(filters: UseMemoriesFilters) {
         filters: bar,
         cursor: pageParam as string | null,
         showArchived: filters.showArchived,
+        expiringWithinDays: filters.expiringWithinDays,
       };
       return listMemories(args);
     },

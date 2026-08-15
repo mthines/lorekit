@@ -11,11 +11,17 @@
 import { describe, it, expect } from 'vitest';
 import {
   DeleteMemoryQuerySchema,
+  MemoryListSchema,
+  LIST_PREVIEW_CHARS,
+  MAX_VALUE_BYTES,
   MemoryWriteSchema,
   ListMemoriesQuerySchema,
   PurgeMemoriesBodySchema,
   RestoreMemoryBodySchema,
   ScopesResponseSchema,
+  ReadActivityQuerySchema,
+  ReadActivityBucketSchema,
+  ReadActivityResponseSchema,
   PURGE_RETENTION_DAYS_DEFAULT,
 } from './memory.ts';
 
@@ -141,5 +147,177 @@ describe('ListMemoriesQuerySchema key filters', () => {
     const parsed = ListMemoriesQuerySchema.parse({ key_prefix: 'debug-' });
     expect(parsed.key_prefix).toBe('debug-');
     expect(parsed.key).toBeUndefined();
+  });
+});
+
+// ── GET /memories/read-activity, scope dimension (migration 00058) ──────────
+describe('ReadActivityQuerySchema scope filter', () => {
+  it('leaves scope undefined when the caller does not filter', () => {
+    const parsed = ReadActivityQuerySchema.parse({});
+    expect(parsed.scope).toBeUndefined();
+    expect(parsed.bucket).toBe('day');
+  });
+
+  it('accepts an exact scope to filter by', () => {
+    expect(ReadActivityQuerySchema.parse({ scope: 'repo::mthines/lorekit' }).scope)
+      .toBe('repo::mthines/lorekit');
+    expect(ReadActivityQuerySchema.parse({ scope: 'global' }).scope).toBe('global');
+  });
+
+  // Shape-only here BY DESIGN: `RawScopeSchema`, not `ScopeSchema`, so the
+  // canonical normalisation happens once in the handler, which is the layer
+  // that can turn a rejection into a 400. A schema-level transform would
+  // normalise silently and leave the handler unable to distinguish "the caller
+  // sent a typo" from "the caller sent it lowercase".
+  it('does not normalise here — the handler owns canonicalisation and the 400', () => {
+    const parsed = ReadActivityQuerySchema.parse({ scope: 'Repo::Mthines/LoreKit' });
+    expect(parsed.scope).toBe('Repo::Mthines/LoreKit');
+  });
+
+  it('still rejects a structurally impossible scope value', () => {
+    expect(ReadActivityQuerySchema.safeParse({ scope: '' }).success).toBe(false);
+    expect(ReadActivityQuerySchema.safeParse({ scope: 42 }).success).toBe(false);
+  });
+});
+
+describe('ReadActivityBucketSchema scope', () => {
+  it('accepts a named scope on a bucket', () => {
+    const parsed = ReadActivityBucketSchema.parse({
+      bucket: '2026-04-01T00:00:00.000Z', scope: 'repo::mthines/lorekit', count: 10,
+    });
+    expect(parsed.scope).toBe('repo::mthines/lorekit');
+  });
+
+  // NULLABLE, unlike the write series' scope: a read may carry no scope the
+  // server could resolve (body-carried or ungrammatical), and that read is
+  // recorded unattributed rather than dropped — so it still reaches a client.
+  it('accepts a NULL scope — unattributable reads are counted, not dropped', () => {
+    const parsed = ReadActivityBucketSchema.parse({
+      bucket: '2026-04-01T00:00:00.000Z', scope: null, count: 3,
+    });
+    expect(parsed.scope).toBeNull();
+  });
+
+  it('requires the key to be present — an absent scope is not the same as null', () => {
+    expect(ReadActivityBucketSchema.safeParse({ bucket: '2026-04-01T00:00:00.000Z', count: 3 }).success)
+      .toBe(false);
+  });
+
+  it('still rejects a non-integer or negative count', () => {
+    const base = { bucket: '2026-04-01T00:00:00.000Z', scope: null };
+    expect(ReadActivityBucketSchema.safeParse({ ...base, count: 1.5 }).success).toBe(false);
+    expect(ReadActivityBucketSchema.safeParse({ ...base, count: -1 }).success).toBe(false);
+  });
+});
+
+describe('ReadActivityResponseSchema', () => {
+  it('accepts a response mixing named and unattributed scopes in one bucket', () => {
+    const parsed = ReadActivityResponseSchema.parse({
+      bucket: 'day',
+      since: '2026-04-01T00:00:00.000Z',
+      until: '2026-04-02T00:00:00.000Z',
+      buckets: [
+        { bucket: '2026-04-01T00:00:00.000Z', scope: 'repo::mthines/lorekit', count: 7 },
+        { bucket: '2026-04-01T00:00:00.000Z', scope: null, count: 3 },
+      ],
+    });
+    // The metric is additive, which is the whole reason a per-scope filter can
+    // replace a companion "per-scope total" RPC: the cells sum to the headline.
+    expect(parsed.buckets.reduce((n, b) => n + b.count, 0)).toBe(10);
+  });
+});
+
+// ── MemoryListSchema.order (AC-2) ────────────────────────────────────────────
+
+describe('MemoryListSchema order', () => {
+  it('defaults to recency when order is omitted', () => {
+    const parsed = MemoryListSchema.parse({ scope: 'global' });
+    expect(parsed.order).toBe('recency');
+  });
+
+  it('accepts order: recency explicitly', () => {
+    expect(MemoryListSchema.parse({ scope: 'global', order: 'recency' }).order).toBe('recency');
+  });
+
+  it('accepts order: rank', () => {
+    expect(MemoryListSchema.parse({ scope: 'global', order: 'rank' }).order).toBe('rank');
+  });
+
+  it.each(['newest', 'desc', 'relevance', '', 'RANK'])('rejects an invalid order value: %j', (order) => {
+    expect(MemoryListSchema.safeParse({ scope: 'global', order }).success).toBe(false);
+  });
+
+  it('does not affect other fields — limit still defaults to 50', () => {
+    const parsed = MemoryListSchema.parse({ scope: 'global', order: 'rank' });
+    expect(parsed.limit).toBe(50);
+    expect(parsed.cursor).toBeUndefined();
+    expect(parsed.tags).toBeUndefined();
+  });
+});
+
+// ── MemoryListSchema.kind / .host / .view ────────────────────────────────────
+
+describe('MemoryListSchema taxonomy filters', () => {
+  it('leaves kind and host undefined when omitted', () => {
+    const parsed = MemoryListSchema.parse({ scope: 'global' });
+    expect(parsed.kind).toBeUndefined();
+    expect(parsed.host).toBeUndefined();
+  });
+
+  it.each(['lesson', 'bus', 'signal'])('accepts kind: %s', (kind) => {
+    expect(MemoryListSchema.parse({ scope: 'global', kind }).kind).toBe(kind);
+  });
+
+  it.each(['lessons', 'Lesson', 'note', ''])('rejects an invalid kind: %j', (kind) => {
+    expect(MemoryListSchema.safeParse({ scope: 'global', kind }).success).toBe(false);
+  });
+
+  it('accepts a host slug', () => {
+    expect(MemoryListSchema.parse({ scope: 'global', host: 'reviewer' }).host).toBe('reviewer');
+  });
+
+  it('rejects a host longer than the 64-character column backstop', () => {
+    expect(MemoryListSchema.safeParse({ scope: 'global', host: 'h'.repeat(65) }).success).toBe(false);
+  });
+
+  it('accepts kind and host together — the one-bucket read', () => {
+    const parsed = MemoryListSchema.parse({ scope: 'global', kind: 'signal', host: 'reviewer' });
+    expect(parsed).toMatchObject({ kind: 'signal', host: 'reviewer' });
+  });
+});
+
+describe('MemoryListSchema view', () => {
+  it('defaults to full so no existing caller changes shape', () => {
+    expect(MemoryListSchema.parse({ scope: 'global' }).view).toBe('full');
+  });
+
+  it('accepts view: summary', () => {
+    expect(MemoryListSchema.parse({ scope: 'global', view: 'summary' }).view).toBe('summary');
+  });
+
+  it.each(['brief', 'Summary', 'keys', ''])('rejects an invalid view: %j', (view) => {
+    expect(MemoryListSchema.safeParse({ scope: 'global', view }).success).toBe(false);
+  });
+
+  it('does not disturb the other defaults', () => {
+    const parsed = MemoryListSchema.parse({ scope: 'global', view: 'summary' });
+    expect(parsed.limit).toBe(50);
+    expect(parsed.order).toBe('recency');
+  });
+});
+
+describe('LIST_PREVIEW_CHARS', () => {
+  it('is a positive bound well under the value cap', () => {
+    expect(LIST_PREVIEW_CHARS).toBeGreaterThan(0);
+    expect(LIST_PREVIEW_CHARS).toBeLessThan(MAX_VALUE_BYTES);
+  });
+});
+
+describe('MemoryListSchema host rejects the empty string', () => {
+  // An empty host previously parsed, then fell through the handlers' `if (host)`
+  // guard as a silently UNFILTERED read — the caller asked to narrow and got
+  // everything. Reject it at the schema, matching ListInputSchema and the edge.
+  it('rejects an empty host', () => {
+    expect(MemoryListSchema.safeParse({ scope: 'global', host: '' }).success).toBe(false);
   });
 });

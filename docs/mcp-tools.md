@@ -139,7 +139,7 @@ Read a single lesson by scope + key.
 
 ## memory.list
 
-List all lessons for a scope, newest first.
+List all lessons for a scope — newest first by default, or best-first with `order: "rank"`.
 
 ```json
 {
@@ -148,7 +148,8 @@ List all lessons for a scope, newest first.
     "arguments": {
       "scope": "global",
       "tags": ["skill::aw"],
-      "limit": 20
+      "limit": 20,
+      "order": "rank"
     }
   }
 }
@@ -159,8 +160,69 @@ List all lessons for a scope, newest first.
 | `scope` | required | Scope to list |
 | `tags` | `[]` | Filter — only return lessons with at least one of these tags |
 | `limit` | `50` | Max results (cap: 100) |
+| `cursor` | | Opaque cursor from a previous response's `nextCursor`. Omit to start from the first page. Ignored when `order` is `rank` |
+| `order` | `recency` | `recency` — `updated_at` desc with cursor pagination. `rank` — scores recency, salience, and outcome over a bounded candidate window, returned as a single top-N page. (The scorer's fourth factor, relevance, needs a query string; `memory.list` supplies none, so relevance is a constant 0 here and only contributes on the search/`q` path.) |
+| `kind` | | Filter to one bucket family — `lesson`, `bus`, or `signal`. Rows written before migration 00056 have a `NULL` kind and are excluded when this is set |
+| `host` | | Filter to the owning skill/agent, e.g. `reviewer`, `aw`, `ci-auto-fix` |
+| `view` | `full` | `full` returns each entry's complete `value`. `summary` omits `value` and returns `value_bytes` + a 200-character `preview` instead |
 
-**Returns:** `{ "entries": [{ "key", "value", "tags", "updated_at" }] }`
+**Returns:** `{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — with `view: "summary"` each entry is `{ "key", "tags", "updated_at", "value_bytes", "preview" }` instead, and `value` is omitted entirely.
+
+- `recency` (default): pass `nextCursor` back as `cursor` to read the next page.
+- `rank`: a single bounded top-N page — `hasMore` is always `false` and `nextCursor` always `null`.
+  Raise `limit` (cap 100) rather than paginating.
+  Ranking scores at most the **200 most recently updated** rows in the scope (a bounded candidate
+  window); in a scope with more than 200 active lessons the ranking is over that recency window,
+  not the whole scope, and `hasMore: false` reflects the page — not that the scope is exhausted.
+
+### Filtering by bucket
+
+`kind` and `host` are the taxonomy columns added in migration 00056. Until they were accepted here,
+kind/host filtering was reachable only over REST — an MCP client had to list a whole scope and
+discard the wrong buckets itself. Both filters are applied **before** ranking, so `order: "rank"`
+scores the bucket you asked for rather than whatever filled the 200-row candidate window first.
+
+```json
+{ "scope": "repo::mthines/lorekit", "kind": "lesson", "host": "reviewer", "limit": 20 }
+```
+
+**Pagination caveat on the `lorekit mcp` stdio server.** The hosted edge function narrows kind/host
+in SQL, so cursor pagination behaves normally there. The local stdio server cannot: `GET /memories`
+is its remote backend and the local file store has no kind/host columns, so it fetches the largest
+page the route allows (100), filters client-side, and slices. A taxonomy-filtered list is therefore
+a **single bounded page** on that surface — an inbound `cursor` is ignored and `nextCursor` is
+always `null`, because no server-side keyset describes "the next filtered row". `hasMore` still
+reports whether the page was cut; raise `limit` rather than paginating.
+
+### Discovery reads: `view: "summary"`
+
+A `full` list returns every body. At a ~1.9 KB median lesson that is ~95 KB of caller context for a
+50-entry read, most of which an agent never consults — it is deciding *which* lessons apply, not
+reading them all. `summary` answers that question directly:
+
+```json
+{ "scope": "repo::mthines/lorekit", "tags": ["loop::reviewer-lessons"], "view": "summary" }
+```
+
+```json
+{
+  "entries": [
+    {
+      "key": "reviewer-lessons::prefer-explicit-null-checks",
+      "tags": ["loop::reviewer-lessons"],
+      "updated_at": "2026-08-14T09:12:04.221Z",
+      "value_bytes": 1873,
+      "preview": "## Prefer an explicit null check over a truthiness guard when the value can legitimately be 0…"
+    }
+  ],
+  "hasMore": false,
+  "nextCursor": null
+}
+```
+
+`value` is **omitted**, not emptied — a summary entry is structurally distinguishable from a lesson
+with an empty body. Follow up with `memory.read` for the handful of keys that matched.
+`value_bytes` is the UTF-8 byte length, comparable with the 65,536-byte `value` cap.
 
 ---
 
@@ -262,6 +324,58 @@ Restore a soft-archived lesson back to active. Requires a token with write permi
 ```
 
 **Returns:** `{ "restored": true }` if the row was found in the archive and cleared, `{ "restored": false }` if it was already active or not found.
+
+---
+
+## memory.scopes
+
+List every scope the caller can see, with how many active memories it holds and when it was
+last written to. Takes no arguments. Requires a token with read permission (`lk_rw_*` or
+`lk_ro_*`).
+
+This is the one read tool that takes **no scope**, and that is the point of it: every other
+read tool requires a scope up front (`memory.read` / `memory.list` take a `scope`,
+`memory.search` a `scopes` list), so without an inventory an agent can only reach lore whose
+scope it could already name. Reach for it before a `memory.list`/`memory.search` when you do
+not already know which scope to ask about.
+
+It is **store-wide**, not limited to any working directory — unlike the `lorekit list` /
+`search` / `stats` commands, which are scoped to the current repo. It is the same inventory
+`GET /memories/scopes` and the `lorekit scopes` command return.
+
+```json
+{
+  "params": {
+    "name": "memory.scopes",
+    "arguments": {}
+  }
+}
+```
+
+**Returns:** `{ "scopes": [{ "scope", "count", "last_activity" }] }`, sorted by count desc then scope asc (busiest scope first).
+
+```json
+{
+  "scopes": [
+    { "scope": "global", "count": 12, "last_activity": "2026-07-30T09:12:00.000Z" },
+    { "scope": "repo::acme/app", "count": 3, "last_activity": "2026-07-28T17:04:00.000Z" }
+  ]
+}
+```
+
+- `count` is **active** memories only — non-archived and non-expired.
+- `last_activity` is the newest `created_at` among exactly those counted rows, or `null`.
+  It lets you judge which scopes are live without listing their rows to find out.
+
+The aggregation runs in Postgres (`lorekit_memory_scopes`, migration 00039), not by listing
+rows and deduping client-side — a client-side count is silently truncated past the row cap,
+so whole scopes go missing for exactly the accounts with the most lore.
+
+> The local stdio server (`lorekit mcp`) exposes this tool too, over whichever store is
+> configured, and honours the same scope-ascending ordering — the offline store enumerates in
+> walk order, so the server sorts before answering. When a store cannot enumerate — an
+> unreachable or unconfigured remote — it answers `{ "scopes": [], "note": "<reason>" }`
+> rather than failing the call, matching how the `lorekit scopes` command degrades.
 
 ---
 

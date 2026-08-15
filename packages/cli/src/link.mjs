@@ -22,7 +22,6 @@ import {
   buildLoreUrl,
   mostSpecificScope,
   parseOwnerArg,
-  parseViewArg,
   parseRangeArg,
   parseTagsArg,
   resolveScopeKeyArgs,
@@ -55,7 +54,6 @@ export async function link(args) {
   // Filter flags (all optional; each JSON-encoded + default-omitted downstream).
   const q = typeof args.q === 'string' ? args.q : '';
   const owner = parseOwnerArg(args.owner);
-  const view = parseViewArg(args.view);
   const range = parseRangeArg(args);
   const tags = parseTagsArg(args.tags);
   const archived = Boolean(args.archived);
@@ -65,7 +63,6 @@ export async function link(args) {
     (typeof args.scope === 'string' && Boolean(args.scope)) ||
     Boolean(q) ||
     owner !== 'all' ||
-    view !== 'scope' ||
     range !== null ||
     tags.length > 0 ||
     archived;
@@ -84,7 +81,6 @@ export async function link(args) {
   if (q) params.q = q;
   if (owner !== 'all') params.owner = owner;
   if (tags.length) params.tags = tags;
-  if (view !== 'scope') params.view = view;
   if (range !== null) params.range = range;
   if (archived) params.archived = true;
 

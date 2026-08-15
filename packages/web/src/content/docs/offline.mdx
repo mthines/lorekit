@@ -19,7 +19,7 @@ npx @lorekit/cli install
 
 This scaffolds the `lorekit-memory`, `lorekit-setup`, and `lorekit-groom` skills and the local MCP server into your `.claude/` (project) or `~/.claude/` (global) directory, then asks whether to wire the lifecycle hooks.
 
-The hooks inject context into your agent — they never write memory themselves. Pick `all` (inject lessons at session start, nudge on a tool failure and at end of turn), `read-only` (inject lessons, never nudge), or `none`. Choose non-interactively with `--hooks`:
+The hooks inject context into your agent — they never write memory themselves. Pick `all` (inject lessons at session start and the ones matching each substantive prompt as you go, nudge on a tool failure and at end of turn), `read-only` (inject lessons at session start only, never nudge), or `none`. Choose non-interactively with `--hooks`:
 
 ```bash
 npx @lorekit/cli install --hooks read-only

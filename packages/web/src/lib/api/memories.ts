@@ -24,6 +24,7 @@ import type {
   ScopesResponse,
   UpdateMemoryBody,
 } from '@lorekit/schemas/memory';
+import type { UsageStatsQuery, UsageStatsResponse } from '@lorekit/schemas/usage';
 import { restFetch } from './rest';
 
 /** The `GET /memories` query, minus the params the schema defaults for us. */
@@ -106,10 +107,20 @@ export function activityRequest(
 }
 
 /**
- * `GET /memories/read-activity` — memory RECORDS read per UTC hour/day.
+ * `GET /memories/read-activity` — memory RECORDS read per UTC hour/day AND per
+ * scope.
  *
  * The read counterpart to {@link activityRequest}; same window parameters, so
  * the Overview can chart written and read volume over one selected range.
+ *
+ * Cells are `(bucket, scope)` as of migration 00058 — one row per scope within
+ * a bucket, mirroring the write series — and `scope` is NULLABLE here where the
+ * write series' is not: a read may carry none the server could resolve, and
+ * those rows are recorded unattributed rather than dropped. `params.scope`
+ * restricts the result to one EXACT scope; it is validated server-side and a
+ * malformed value is a 400, not an ignored filter. Because the unfiltered call
+ * includes the NULL-scope remainder, a per-scope total can legitimately be
+ * SMALLER than the account total — a UI showing both should say so.
  */
 export function readActivityRequest(
   accessToken: string,
@@ -199,5 +210,33 @@ export function purgeMemoriesRequest(
     accessToken,
     method: 'POST',
     body: { retention_days: retentionDays },
+  });
+}
+
+/**
+ * `GET /memories/usage` — aggregate usage statistics over a window.
+ *
+ * The Explorer's stats header reads exactly one figure from this:
+ * `summary.expired`, the number of memory RECORDS a purge deleted because their
+ * TTL had run out. That is the only place expiry is observable — a lazy read
+ * filters expired rows but never deletes them, so there is no discrete expiry
+ * moment on the read path; `purge_expired_memories` (migration 00045) records
+ * one event per run carrying the count it removed, and this sums those.
+ *
+ * **It takes no `scope`.** `usage_events` is a per-user ledger with no scope
+ * dimension on the expiry event (PR-1 deliberately deferred attributing one —
+ * the purge is per-user and spans scopes), so this figure is ACCOUNT-WIDE for
+ * the window even when the caller has a scope selected. Any UI showing it beside
+ * scoped numbers has to say so.
+ */
+export function usageRequest(
+  accessToken: string,
+  params: Partial<UsageStatsQuery>,
+  signal?: AbortSignal,
+): Promise<UsageStatsResponse> {
+  return restFetch<UsageStatsResponse>('/memories/usage', {
+    accessToken,
+    query: { ...params },
+    ...(signal ? { signal } : {}),
   });
 }

@@ -1,5 +1,167 @@
 # Changelog
 
+## [1.49.0](https://github.com/mthines/lorekit/compare/cli-v1.48.0...cli-v1.49.0) (2026-08-15)
+
+
+### Features
+
+* **memories:** order GET /memories/scopes by count, not scope name ([4338387](https://github.com/mthines/lorekit/commit/4338387143f1825495b108ca3d972f95439fe5d6))
+
+
+### Bug Fixes
+
+* **memories:** propagate the count-desc scope order to the MCP contract + stdio ([aadca03](https://github.com/mthines/lorekit/commit/aadca030554d41fec3dd805fb09004e7c716177f))
+
+
+### Documentation
+
+* **cli:** correct the listScopes docblock — count-desc, not ascending ([020a197](https://github.com/mthines/lorekit/commit/020a197dff351528d1a587cc28ace789b742095f))
+
+## [1.48.0](https://github.com/mthines/lorekit/compare/cli-v1.47.0...cli-v1.48.0) (2026-08-15)
+
+
+### Features
+
+* **mcp:** add kind/host filters and a summary view to memory.list ([fb421fa](https://github.com/mthines/lorekit/commit/fb421faa39d1e7bca13ceb1966fccc8dae453d2b))
+
+## [1.47.0](https://github.com/mthines/lorekit/compare/cli-v1.46.0...cli-v1.47.0) (2026-08-15)
+
+
+### Features
+
+* **explorer:** filtered-stats drill-down — stats follow the full selection + chip scope selector ([#460](https://github.com/mthines/lorekit/issues/460)) ([1621d03](https://github.com/mthines/lorekit/commit/1621d03f93e6ae0c8e1f29ba63842620d0e99c47))
+
+## [1.46.0](https://github.com/mthines/lorekit/compare/cli-v1.45.0...cli-v1.46.0) (2026-08-15)
+
+
+### Features
+
+* **cli:** make the SessionStart read knobs configurable ([#463](https://github.com/mthines/lorekit/issues/463)) ([129129f](https://github.com/mthines/lorekit/commit/129129f7b231c2c8e523bd66530b6397d081294d))
+
+## [1.45.0](https://github.com/mthines/lorekit/compare/cli-v1.44.0...cli-v1.45.0) (2026-08-15)
+
+
+### Features
+
+* **cli:** warm the SessionStart read with a branch-name relevance query ([#461](https://github.com/mthines/lorekit/issues/461)) ([437e17b](https://github.com/mthines/lorekit/commit/437e17be1f310815d86b1a7beee9eb0b3fa6c346))
+
+## [1.44.0](https://github.com/mthines/lorekit/compare/cli-v1.43.0...cli-v1.44.0) (2026-08-15)
+
+
+### Features
+
+* **cli:** cap each self-improvement loop's share of the SessionStart read ([#458](https://github.com/mthines/lorekit/issues/458)) ([b16a104](https://github.com/mthines/lorekit/commit/b16a104b17b6694159c9f7acb7cc4b66ccf2d761))
+
+## [1.43.0](https://github.com/mthines/lorekit/compare/cli-v1.42.0...cli-v1.43.0) (2026-08-15)
+
+
+### Features
+
+* **cli:** diversify the SessionStart injection with MMR ([#456](https://github.com/mthines/lorekit/issues/456)) ([e81511e](https://github.com/mthines/lorekit/commit/e81511e9c511f09dca4923191e107f04860ea4b9))
+
+## [1.42.0](https://github.com/mthines/lorekit/compare/cli-v1.41.0...cli-v1.42.0) (2026-08-14)
+
+
+### Features
+
+* **cli:** inject relevant memories on each substantive prompt ([eeb1e4b](https://github.com/mthines/lorekit/commit/eeb1e4be826fa3259fbaa2a8f43c7ff5927abc07))
+* MMR read-time diversification of ranked lesson reads ([43faec9](https://github.com/mthines/lorekit/commit/43faec96ca0cd10348f89438ee72d4747dad5a2b))
+* MMR read-time diversification of ranked lesson reads ([0539110](https://github.com/mthines/lorekit/commit/05391103ea955cc020275ba2dbd4fd9d9680112d))
+
+
+### Bug Fixes
+
+* **rank:** cache MMR tokenisation + quantise score to scope-precedence grid ([f2f0b85](https://github.com/mthines/lorekit/commit/f2f0b85be6ee4f054a5bb22120fdc006a23f59e3))
+* **rank:** O(n·k) MMR via running maxSim + doc/lambda parity nits ([e655590](https://github.com/mthines/lorekit/commit/e6555907225064af123d7ee89990e8f39aeb6b9f))
+
+## [1.41.0](https://github.com/mthines/lorekit/compare/cli-v1.40.0...cli-v1.41.0) (2026-08-14)
+
+
+### Features
+
+* **rank:** add outcome factor + cold-start prior to lesson scorer ([d521b9f](https://github.com/mthines/lorekit/commit/d521b9f45f9150ee92feaf120716f31afaf9be3c))
+* **rank:** outcome factor + cold-start prior in lesson scorer ([d8711a2](https://github.com/mthines/lorekit/commit/d8711a2ee77f6145653a6e2ee216102a12db4c40))
+
+
+### Bug Fixes
+
+* **rank:** report outcome factor + hoist the outcome-signal ladder ([f7e9c4e](https://github.com/mthines/lorekit/commit/f7e9c4e2a347b574221f4bfbbfe8819eceee3380))
+
+## [1.40.0](https://github.com/mthines/lorekit/compare/cli-v1.39.2...cli-v1.40.0) (2026-08-13)
+
+
+### Features
+
+* **cli:** add `dedupe --cluster-by-key` for coordinate-key families ([#446](https://github.com/mthines/lorekit/issues/446)) ([5576f44](https://github.com/mthines/lorekit/commit/5576f44942f03b7839d9733383e811888395bbe9))
+
+
+### Bug Fixes
+
+* **cli:** review follow-ups for install --mcp-json ([#399](https://github.com/mthines/lorekit/issues/399)) ([#415](https://github.com/mthines/lorekit/issues/415)) ([b19ceb3](https://github.com/mthines/lorekit/commit/b19ceb3d241736b12a4f4846641bf3dbb68c132b))
+
+## [1.39.2](https://github.com/mthines/lorekit/compare/cli-v1.39.1...cli-v1.39.2) (2026-08-10)
+
+
+### Bug Fixes
+
+* **cli:** let the frozen outcome win over a command's extraAttrs ([6235513](https://github.com/mthines/lorekit/commit/62355135da76bcc218b38678914ee70c05c991e8))
+* **cli:** reserve the whole owned attribute namespace from extraAttrs ([c17df73](https://github.com/mthines/lorekit/commit/c17df73dfe425d4e3ff9522c8ce5ded6ab45672d))
+
+## [1.39.1](https://github.com/mthines/lorekit/compare/cli-v1.39.0...cli-v1.39.1) (2026-08-09)
+
+
+### Documentation
+
+* **cli:** name the no-listScopes note as the second deliberate divergence ([8ddf8a1](https://github.com/mthines/lorekit/commit/8ddf8a130403f67c0394720b2fbd3c2ef0a1b8c8))
+* **cli:** restore the verb the shapeScope extraction dropped ([49a6c9a](https://github.com/mthines/lorekit/commit/49a6c9aa76860b4c570b345deb92e3ed0ef32bfd))
+* **cli:** stop claiming normalisation is listScopes' whole job here ([c60c3dd](https://github.com/mthines/lorekit/commit/c60c3dddba14b2f5b350d87138e9a02092aebc87))
+
+## [1.39.0](https://github.com/mthines/lorekit/compare/cli-v1.38.0...cli-v1.39.0) (2026-08-09)
+
+
+### Features
+
+* **web:** replace the archived toggle with a Status control ([875dbc9](https://github.com/mthines/lorekit/commit/875dbc98a1bfd9ffa8ffaa255fe05dc219b9c288))
+
+## [1.38.0](https://github.com/mthines/lorekit/compare/cli-v1.37.0...cli-v1.38.0) (2026-08-09)
+
+
+### Features
+
+* **cli:** budget the SessionStart block instead of counting it ([901f2f3](https://github.com/mthines/lorekit/commit/901f2f33ab95602386e48f46b86cc2cf6c64adba))
+* **cli:** budget the SessionStart block instead of counting it ([c953d5c](https://github.com/mthines/lorekit/commit/c953d5cbe4300d9af6f1d24f5e4d20399727fb5a))
+
+
+### Bug Fixes
+
+* **stack:** land PRs 407, 409, 411, 414 and 421 on main ([7bae960](https://github.com/mthines/lorekit/commit/7bae960b26b2241d3dd314d78f77987b2fc6ae3f))
+
+
+### Documentation
+
+* **cli:** make the docblock header sample reachable too ([acf734e](https://github.com/mthines/lorekit/commit/acf734e2611ef1d22de897dbe7d195c613752c14))
+* **config:** correct the hooks.sessionStart fall-through claim ([b32d06a](https://github.com/mthines/lorekit/commit/b32d06acd08e3c45f25045a1c7536725609e37ac))
+* retire the MAX_LESSONS cap from the prose that still described it ([15cf352](https://github.com/mthines/lorekit/commit/15cf352831d66c2a39129baa68cce9394ef42e66))
+
+## [1.37.0](https://github.com/mthines/lorekit/compare/cli-v1.36.0...cli-v1.37.0) (2026-08-09)
+
+
+### Features
+
+* **mcp:** add memory.scopes, the store-wide scope inventory ([5f285b3](https://github.com/mthines/lorekit/commit/5f285b361383832862168c59a09d8e3dd3e74fc7))
+* **mcp:** add memory.scopes, the store-wide scope inventory ([b2dce79](https://github.com/mthines/lorekit/commit/b2dce798efd644a24720172c69916786d716d047))
+
+
+### Bug Fixes
+
+* **cli:** carry httpStatus through RemoteStore.listScopes so the HTTP branch fires ([6aeaafd](https://github.com/mthines/lorekit/commit/6aeaafda299f382a5edb11731384a095fc801f48))
+* **cli:** sort memory.scopes by scope ascending on the stdio server ([321b4a1](https://github.com/mthines/lorekit/commit/321b4a102bc727dcc39ef9e669a5e46cdd33fe7e))
+
+
+### Documentation
+
+* **cli:** state the collation divergence in the memory.scopes sort ([5eb7f62](https://github.com/mthines/lorekit/commit/5eb7f6229c5595c7008433c53c51a06b1328131d))
+
 ## [1.36.0](https://github.com/mthines/lorekit/compare/cli-v1.35.0...cli-v1.36.0) (2026-08-08)
 
 

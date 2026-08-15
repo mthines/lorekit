@@ -10,6 +10,16 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @lorekit/cli hook --adapter claude --event UserPromptSubmit --dir \"${CLAUDE_PROJECT_DIR}\""
+          }
+        ]
+      }
+    ],
     "PostToolUseFailure": [
       {
         "hooks": [

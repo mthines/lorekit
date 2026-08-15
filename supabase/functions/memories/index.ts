@@ -18,6 +18,7 @@ import { handleTags } from './handlers/tags.ts';
 import { handleFacets } from './handlers/facets.ts';
 import { handleActivity } from './handlers/activity.ts';
 import { handleReadActivity } from './handlers/read-activity.ts';
+import { handleRelevant } from './handlers/relevant.ts';
 
 // ROUTE ORDER MATTERS. `matchPath` (../_shared/api/router.ts) matches purely on
 // segment COUNT plus literal equality, collects EVERY path match, then picks the
@@ -51,6 +52,7 @@ const router = createRouter([
   { method: 'GET',    path: '/facets',         handler: handleFacets,       requires: 'read'  },
   { method: 'GET',    path: '/activity',       handler: handleActivity,     requires: 'read'  },
   { method: 'GET',    path: '/read-activity',  handler: handleReadActivity, requires: 'read'  },
+  { method: 'GET',    path: '/relevant',       handler: handleRelevant,     requires: 'read'  },
   // ── parameterised routes ───────────────────────────────────────────────────
   { method: 'GET',    path: '/:id',            handler: handleGet,          requires: 'read'  },
   { method: 'PATCH',  path: '/:id',            handler: handleUpdate,       requires: 'write' },

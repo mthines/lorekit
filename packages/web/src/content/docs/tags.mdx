@@ -75,16 +75,21 @@ memory.list {
 
 <TutorialStep number={4} title="Filter the Explorer by more than tags">
 
-The [Explorer](/lore) filters on six dimensions, not just tags. Press the **Filter** button, pick a dimension, then pick values:
+The [Explorer](/lore) filters on nine dimensions, not just tags. Press the **Filter** button, pick a dimension, then pick values:
 
 | Dimension | Comes from | Example |
 | --- | --- | --- |
 | Label | `tags` | `loop::aw-lessons` |
+| Kind | `kind` | `lesson` (also `bus`, `signal`) |
+| Host | `host` | `reviewer` |
+| Owner | `org_id` | `Personal` (or an org you belong to) |
 | Agent | `source_agent` | `aw-executor` |
 | Trigger | `trigger` | `stuck-loop` |
 | Repository | `origin_repo` | `mthines/lorekit` |
 | Branch | `origin_branch` | `feat/new-auth` |
 | Pull request | `origin_pr` | `311` |
+
+**Owner** partitions lore by who it belongs to — your own `Personal` lore, or one of the organizations you are a member of (shown by its slug). It filters server-side like every other dimension, so the list, the filter-menu counts and the stats header all agree.
 
 Values inside one dimension combine with **OR**; dimensions combine with **AND**. So "Agent is either of `aw`, `claude`" **and** "Branch is `main`" is one filter set, and every filter is in the URL — copy the address to share the exact view.
 
@@ -97,7 +102,29 @@ The last three dimensions come from **provenance** — the repo, branch and PR a
 
 </TutorialStep>
 
-<TutorialStep number={5} title="Search across scopes with wildcards">
+<TutorialStep number={5} title="Read the stats header above the list">
+
+The Explorer opens with four cards above the memory list, describing **the scope, filters, and time range you have selected** rather than your whole account:
+
+| Card | Counts |
+| --- | --- |
+| Memories written | New memories in the range, under the selected scope **and filters** |
+| Memories read | Memory *records* read — one list call returning 20 memories counts as 20 |
+| Scopes active | Distinct scopes with at least one memory written in the range, **under your filters** |
+| Memories expired | Records deleted because their TTL ran out |
+
+The panel opens **collapsed**, showing the four numbers on one line. Expand it with the chevron to see the trends behind them and the 26-week heatmap; collapse it again and the numbers stay. Every card with bars is **additive** — summing the bars reproduces the number above them, so the chart and the total can never tell different stories.
+
+The **time range** picker sits in the same header and offers the same presets as the Overview (24h / 7d / 30d) plus **All**. It drives the whole page: the cards, the heatmap highlight, and the list below. The Explorer opens on **All** time, so nothing is hidden by default — but once you narrow the range, an empty list caused by the window says so and offers a one-click way back to all time.
+
+**Memories written** and **Scopes active** follow your full selection — scope, time range, and every filter in the bar — so they always agree with the list beneath them. The other two cards can only go part-way, each stated in its own tooltip:
+
+- **Memories read follows the scope and range, but not the filter bar.** A read is a query, not a per-memory event, so a label or repo filter cannot narrow it — the card stays scope-level. It also counts only your own reads, and only those LoreKit could attribute to a scope, so per-scope totals can be smaller than the account total. Reads from this dashboard are excluded: browsing your lore is visualisation, not consumption.
+- **Memories expired is account-wide** even with a scope selected. Expiry is recorded when the nightly purge removes a row, and that purge runs per user across every scope, so there is no scope on the event to filter by.
+
+</TutorialStep>
+
+<TutorialStep number={6} title="Search across scopes with wildcards">
 
 `memory.search` supports owner-level wildcards in the `scopes` parameter:
 
@@ -114,7 +141,7 @@ Wildcards only work in `memory.search` — not in `memory.read`, `memory.list`, 
 
 </TutorialStep>
 
-<TutorialStep number={6} title="Read narrow-to-broad before a task">
+<TutorialStep number={7} title="Read narrow-to-broad before a task">
 
 Agents should read from specific scopes first, then merge with broader ones. More-specific scopes win when the same key exists at multiple levels:
 
@@ -128,7 +155,7 @@ memory.list { scope: "global" }
 
 </TutorialStep>
 
-<TutorialStep number={7} title="Inspect with the CLI">
+<TutorialStep number={8} title="Inspect with the CLI">
 
 The CLI offers several commands that respect the same scope/tag logic. You can also browse memories visually in the [Explorer](/lore).
 

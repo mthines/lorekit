@@ -17,14 +17,47 @@ production** with smoke gates and automatic rollback of both the functions and
 the web deployment. The manual commands below are for first-time project setup
 and local operations.
 
-> **The web dashboard is deployed by `deploy.yml`, not by Vercel's Git
-> integration.** Vercel's native auto-deploy on `main` is turned off
-> (`packages/web/vercel.json` → `git.deploymentEnabled.main = false`), so the FE
-> and API flip to production together instead of skewing apart — Vercel used to
-> deploy the frontend the instant `main` was pushed, while the API crawled
-> through the preview→smoke→prod pipeline. If you fork this, mirror the flag (or
-> disable Git deployments for `main` in the Vercel dashboard) or you will
-> double-deploy.
+> **The web dashboard is deployed by `deploy.yml` / `ci.yml`, not by Vercel's
+> Git integration.** Vercel's native auto-deploy is turned off entirely
+> (`packages/web/vercel.json` → `git.deploymentEnabled = false`). Production is
+> promoted by `deploy.yml`, so the FE and API flip to production together
+> instead of skewing apart — Vercel used to deploy the frontend the instant
+> `main` was pushed, while the API crawled through the preview→smoke→prod
+> pipeline. PR **previews** are deployed by `ci.yml`'s `web-preview` job, gated
+> on the `web` path filter — so a PR with no web changes creates **no** Vercel
+> deployment (and spends no quota), where the Git integration used to deploy on
+> every push. It goes further: on a web PR it **skips redeploying between commits
+> when no web file changed since that PR's last preview** (`web-preview`'s
+> "Decide" step diffs the current head against the SHA recorded in the sticky
+> preview comment via the compare API, and fails safe to deploy on any doubt), so
+> a burst of non-web commits spends one deployment, not one per push. If you fork
+> this, mirror the flag (or disable Git deployments in the Vercel dashboard) or
+> you will double-deploy.
+>
+> The sticky comment is a Vercel-style status table exposing **both** URLs, like
+> the Git integration did: a **stable** `Preview` link (a `lorekit-pr-<n>-<scope>`
+> alias the job re-points to the newest deployment via `vercel alias set` — which
+> re-points, not deploys, so it costs no quota) and the **immutable** per-commit
+> `Deployment` link. The alias `<scope>` is derived from the deployment host so it
+> satisfies the CORS allowlist (`isVercelPreviewOrigin`); if aliasing isn't
+> permitted on the plan, the comment degrades to the per-commit link alone.
+>
+> The three preview jobs (`ci.yml` `web-preview`, `deploy.yml`
+> `deploy-web-preview`, `preview.yml` `deploy-web`) share one implementation:
+> the composite action **`.github/actions/vercel-preview-deploy`** (pull → build
+> on the runner → deploy prebuilt → return the URL; callers supply only the env
+> to pin and the git ref to attribute). It is a **local** action, so it must
+> exist at the checked-out ref: `ci.yml`/`deploy.yml` always have it (they check
+> out the PR merge ref / `main`), but a `/preview` on a branch that predates this
+> action will fail to resolve it until that branch merges `main`.
+>
+> **`deploy.yml`'s `deploy-web-preview` runs the composite in BUILD-ONLY mode**
+> (`deploy: 'false'`): it builds the FE against the preview Supabase project as a
+> gate but creates **no** deployment. That deployment was pure quota waste —
+> `smoke-preview` tests the API only (it never fetched the web URL) and
+> production is promoted from the separate `stage-web-production` build, so
+> nothing consumed the preview. The build still fails the pipeline if the FE
+> can't compile.
 
 ---
 
@@ -34,8 +67,10 @@ Two GitHub Actions workflows own the lifecycle:
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
-| `.github/workflows/ci.yml` | PRs to `main` | **Verify before merge.** `check` (affected typecheck/test/lint — unit tests, all mocked) and `integration` (boots a local Supabase → migrations apply → serves the real Edge Functions → asserts an authenticated MCP `tools/list` returns 200, plus schema lint). `integration` only runs when API/backend paths change (see [below](#only-runs-when-relevant)); the web build is verified by Vercel's own PR check (preview deploys on a PR are unaffected — the `deploymentEnabled` flag only turns off the `main` production auto-deploy). |
+| `.github/workflows/ci.yml` | PRs to `main` | **Verify before merge.** `check` (affected typecheck/test/lint — unit tests, all mocked) and `integration` (boots a local Supabase → migrations apply → serves the real Edge Functions → asserts an authenticated MCP `tools/list` returns 200, plus schema lint). `integration` only runs when API/backend paths change (see [below](#only-runs-when-relevant)); the web build is verified by the `web-test` (Storybook) and `web-preview` (Vercel preview deploy) jobs, both gated on the `web` path filter so a PR with no web changes deploys nothing and spends no Vercel quota. |
 | `.github/workflows/deploy.yml` | push to `main`, `workflow_dispatch` | **Deploy the already-verified commit** — Supabase (migrations + Edge Functions) **and** the Vercel web dashboard, in lockstep. No test re-run — preview-first promotion only. |
+| `.github/workflows/web-preview-deploy.yml` | `workflow_call` (reusable) | **The dashboard preview flow itself**, called by the two workflows below. Owns the fork-secret guard, the incremental "is a redeploy needed?" decision, the PR-head checkout, and the sticky preview comment. See [Dashboard previews](#dashboard-previews-on-a-pr). |
+| `.github/workflows/web-preview.yml` | `/web-preview` comment, `workflow_dispatch` | **Deploy a dashboard preview on demand** for one PR, forcing past the incremental skip. See [Forcing a preview](#forcing-a-preview-web-preview). |
 
 ### Tests run once, on the PR
 
@@ -66,6 +101,75 @@ docs- or web-only PR skips it. Unit typecheck/test/lint (`check`) is not gated
 this way — `nx affected` already scopes itself to the changed packages. A
 skipped required check is treated as passing by branch protection, so gating
 `integration` does not block unrelated PRs from merging.
+
+### Dashboard previews on a PR
+
+Every PR that touches the dashboard gets a Vercel preview and a single sticky
+comment holding two links: a **stable** `lorekit-pr-<n>-<scope>.vercel.app`
+alias that always points at the newest deployment, and the **immutable**
+per-commit URL. This replaces Vercel's native Git integration, which deployed on
+every push regardless of what changed.
+
+The flow lives in `.github/workflows/web-preview-deploy.yml`, a `workflow_call`
+reusable workflow. `ci.yml`'s `web-preview` job calls it with `force: false`;
+`/web-preview` calls it with `force: true`. Both produce the same deployment and
+the same comment — only the decision to deploy differs. The build itself is the
+`.github/actions/vercel-preview-deploy` composite action, shared with
+`deploy.yml` and `preview.yml`.
+
+**Two gates decide whether a push spends a deployment** (the Vercel Hobby plan
+allows 100/day):
+
+1. The `changes` job's `web` path filter — no web-relevant file in the PR at
+   all ⇒ the job never runs.
+2. The reusable workflow's *incremental* check — a web-relevant file changed in
+   the PR, but nothing web-relevant changed **since this PR's last preview**
+   (diffed against the SHA recorded in the sticky comment's marker) ⇒ skip. So a
+   burst of backend-only commits on a web PR spends one deployment, not one per
+   push. It fails safe to deploying on any doubt: no prior preview, a
+   rebase/force-push, a >300-file diff, or an API error.
+
+Both gates read the same path list. The canonical copy is the
+`web-path-filter` input default in `web-preview-deploy.yml`; the `changes` job
+in `ci.yml` carries a duplicate for its coarse gate, written as an extended
+regex so the one string works under both `grep -E` and a JS `RegExp`. **Keep
+the two in sync.** The list covers `packages/web/`, `packages/schemas/`
+(a `workspace:*` dependency the dashboard compiles in — omitting it silently
+skips both the preview *and* the Storybook visual tests), `package.json`,
+`pnpm-lock.yaml`, `nx.json`, the composite action, and these workflow files.
+
+### Forcing a preview (`/web-preview`)
+
+The incremental check means an unchanged head never redeploys — including via
+"Re-run jobs". When you need a deployment anyway (the preview expired, the
+stable alias broke, a run was cancelled mid-deploy, or the path filter was
+simply wrong), force one:
+
+```text
+/web-preview
+```
+
+Comment it on the PR as an OWNER, MEMBER, or COLLABORATOR. The command must be
+the first non-empty line of the comment, so quoting it in prose or in a bot
+summary does not fire it. To respect the incremental skip instead of forcing:
+
+```text
+/web-preview --if-changed
+```
+
+You can also run it from **Actions ▸ Deploy web preview ▸ Run workflow**, which
+takes the PR number — useful for a PR you would rather not comment on, or when
+the comment path itself is broken.
+
+Feedback on the comment path is a 👀 reaction when the command is accepted, then
+👍 (ran, nothing to deploy), 🚀 (deployed), or 👎 plus a comment linking the run
+(failed). The dispatch path has no comment to react to, so it reports by
+commenting on the PR.
+
+> `issue_comment` workflows always run the workflow file from the **default
+> branch**. Edits to `web-preview.yml` or `web-preview-deploy.yml` therefore
+> only take effect once merged to `main` — on the PR that introduces them,
+> `/web-preview` still runs `main`'s version.
 
 ### The deploy pipeline (on merge to `main`)
 
@@ -723,6 +827,11 @@ supabase secrets set \
 > cap/rate-limit messages. Optional — it defaults to `https://lorekit.io`;
 > override it only for a staging/custom deploy.
 
+> `LOREKIT_EMBEDDING_*` are not needed here either. Embedding is **off by
+> default** and is enabled separately, on demand — see
+> [embeddings.md](./embeddings.md). Setting only the API key does nothing; the
+> `LOREKIT_EMBEDDING_ENABLED` flag is the deliberate second half.
+
 > `GITHUB_WEBHOOK_SECRET` is not needed here — webhook secrets are
 > per-repository, generated by end users from the dashboard's webhook
 > onboarding step. The env var is a legacy fallback only.
@@ -755,14 +864,18 @@ In your Vercel project → Settings → General:
 | Output Directory | `.next` |
 | Install Command | `cd ../.. && pnpm install` |
 
-> **Production auto-deploy is off.** `packages/web/vercel.json` sets
-> `git.deploymentEnabled.main = false`, so Vercel no longer deploys the
-> production dashboard when `main` is pushed — `deploy.yml` promotes it instead
-> (see [FE ↔ API deploy in lockstep](#fe--api-deploy-in-lockstep-no-availability-skew)).
-> PR/branch preview deploys are unaffected. Create a **Vercel access token**
+> **Vercel Git auto-deploy is off.** `packages/web/vercel.json` sets
+> `git.deploymentEnabled = false`, so Vercel deploys nothing on a Git push —
+> `deploy.yml` promotes production (see [FE ↔ API deploy in lockstep](#fe--api-deploy-in-lockstep-no-availability-skew))
+> and `ci.yml`'s `web-preview` job deploys PR previews, gated on the `web` path
+> filter so unrelated PRs spend no quota. This also disables the dashboard's
+> Ignored Build Step approach, which still created (quota-counting) deployments
+> even when it skipped the build. Create a **Vercel access token**
 > (Account Settings → Tokens) and store it as the repo secret `VERCEL_TOKEN`,
 > alongside `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` (found in `.vercel/project.json`
-> after `vercel link`, or in the project's Settings).
+> after `vercel link`, or in the project's Settings). These three secrets are
+> repo-level, so `ci.yml`'s `web-preview` job reads them on PR runs (a fork PR
+> with no access self-skips green).
 
 Environment variables to add:
 

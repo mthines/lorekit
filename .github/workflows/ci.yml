@@ -84,10 +84,20 @@ jobs:
           else
             echo "plugin=false" >> "$GITHUB_OUTPUT"
           fi
-          # Web gate: the Next.js dashboard, plus the workspace files that change
-          # how it installs or is configured. Drives the Storybook interaction +
-          # visual-regression job so it never boots a browser on unrelated PRs.
-          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|package\.json|pnpm-lock\.yaml|nx\.json|\.github/workflows/ci\.yml)'; then
+          # Web gate: the Next.js dashboard, the workspace packages it compiles
+          # in, plus the workspace files that change how it installs or is
+          # configured. Drives the Storybook interaction + visual-regression job
+          # so it never boots a browser on unrelated PRs, and the Vercel preview.
+          #
+          # `packages/schemas/` belongs here because packages/web declares
+          # `@lorekit/schemas` as a `workspace:*` dependency and imports it
+          # throughout src/ — a schemas-only change alters the built dashboard,
+          # so omitting it silently skipped BOTH the visual tests and the preview.
+          #
+          # COPY of web-preview-deploy.yml's `web-path-filter` default (that is
+          # the canonical definition, and it must stay an ERE so it works both
+          # here under `grep -E` and there under a JS `RegExp`). Keep in sync.
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/web/|packages/schemas/|package\.json|pnpm-lock\.yaml|nx\.json|\.github/actions/vercel-preview-deploy/|\.github/workflows/(ci|web-preview|web-preview-deploy)\.yml)'; then
             echo "web=true" >> "$GITHUB_OUTPUT"
           else
             echo "web=false" >> "$GITHUB_OUTPUT"
@@ -127,7 +137,11 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # 22, not 20: `@lorekit/evals` imports `@lorekit/core`'s TypeScript
+          # source directly and relies on Node's native type stripping (stable
+          # since 22.18, which is the package's declared `engines` floor). On
+          # Node 20 `evals:test` dies with ERR_UNKNOWN_FILE_EXTENSION.
+          node-version: 22
           cache: pnpm
 
       - name: Install dependencies
@@ -249,6 +263,48 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: npx vitest run --config vitest.storybook.config.ts --changed="$BASE" --passWithNoTests
+
+  # ── Web preview — deploy a Vercel preview, ONLY when web paths changed ────────
+  #    Replaces Vercel's native Git integration for the dashboard project. That
+  #    integration deployed a preview on EVERY PR/branch push — even docs- or
+  #    backend-only ones — and each deployment counts against the Vercel Hobby
+  #    quota even when the dashboard's Ignored Build Step skips the actual build.
+  #    Here the preview is gated on the `web` path filter, so a PR with no web
+  #    changes creates no Vercel deployment at all. The reusable workflow ALSO
+  #    skips redeploying when a new commit changed no web file SINCE this PR's
+  #    last preview, so a burst of non-web commits on a web PR spends one
+  #    deployment, not one per push.
+  #
+  #    The whole job body now lives in .github/workflows/web-preview-deploy.yml
+  #    so the `/web-preview` command workflow can run the exact same flow. This
+  #    caller passes `force: false` — the quota-friendly, incremental behaviour.
+  #    `/web-preview` passes `force: true` to redeploy on demand.
+  #
+  #    `github.event.pull_request.head.*` (not `github.sha` / the default
+  #    checkout ref, which on a `pull_request` are the synthetic
+  #    `refs/pull/N/merge` merge commit) so the commit we build is the PR head.
+  #
+  #    Non-blocking by design: it is deliberately NOT in the `summary` gate's
+  #    `needs`, so a transient Vercel failure can never block a merge (the old
+  #    Vercel preview check wasn't a merge gate either). It self-skips green on a
+  #    fork PR where the Vercel secrets are unavailable.
+  web-preview:
+    name: Web — Vercel preview (changed)
+    needs: [changes]
+    if: needs.changes.outputs.web == 'true'
+    uses: ./.github/workflows/web-preview-deploy.yml
+    permissions:
+      contents: read
+      pull-requests: write
+    with:
+      pr-number: ${{ github.event.pull_request.number }}
+      head-sha: ${{ github.event.pull_request.head.sha }}
+      head-ref: ${{ github.head_ref }}
+      force: false
+    secrets:
+      vercel-token: ${{ secrets.VERCEL_TOKEN }}
+      vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+      vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
 
   # ── Migration-order guard — reject out-of-order migration prefixes ───────────
   #    Fails a PR that ADDS a migration numbered <= the highest already on the

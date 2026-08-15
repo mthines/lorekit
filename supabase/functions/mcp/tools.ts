@@ -13,7 +13,7 @@
  */
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { validateScope } from '../_shared/scope.ts';
+import { validateScope, UserInputError } from '../_shared/scope.ts';
 import { createTracedClient, type Span } from '../_shared/otel.ts';
 import { translateCapError } from './limits.ts';
 import { translateOrgPermissionError } from './org-permissions.ts';
@@ -24,9 +24,72 @@ import { recordAudit } from '../_shared/audit.ts';
 import { applyTenantScope } from './tenant-scope.ts';
 import { decodeCursor, buildPage } from './cursor.ts';
 import { resolveKindHost } from '../_shared/schemas/tags.ts';
+import { rankLessons, selectDiverse } from '../_shared/lesson-rank.ts';
+import type { RankableLesson } from '../_shared/lesson-rank.ts';
+import { outcomeFromTags } from '../_shared/outcome-signal.ts';
 
 export const MAX_VALUE_BYTES = 65_536;
 export const PURGE_RETENTION_DAYS_DEFAULT = 30;
+
+/**
+ * Characters of `value` echoed in a `view: "summary"` entry's `preview`.
+ *
+ * Declared locally rather than imported, following the `MAX_VALUE_BYTES` /
+ * `PURGE_RETENTION_DAYS_DEFAULT` precedent directly above: this file is
+ * self-contained Deno and the authoritative declaration is
+ * `packages/schemas/src/memory.ts` (`LIST_PREVIEW_CHARS`), kept honest by
+ * `packages/mcp-core/src/list-view-parity.spec.ts`.
+ */
+const LIST_PREVIEW_CHARS = 200;
+
+/** A list row as selected from Postgres, before the `view` projection. */
+interface ListRow {
+  id?: string;
+  key: string;
+  value: string;
+  tags: string[];
+  updated_at: string | null;
+}
+
+/**
+ * Project a list row for the wire.
+ *
+ * `full` passes the row through unchanged — the historical shape, so no
+ * existing caller sees a difference. `summary` swaps the body for its size and
+ * a bounded prefix, which is what makes a 50-entry discovery read affordable:
+ * an entry drops from ~1.9 KB to ~250 bytes, and the caller follows up with
+ * `memory.read` only for the keys it actually matched.
+ *
+ * `value_bytes` is the BYTE length (via TextEncoder), not `String.length` —
+ * the number is meant to be comparable with `MAX_VALUE_BYTES`, which is also
+ * bytes, and a multi-byte body would otherwise under-report.
+ *
+ * `preview` slices `[...value]`, NOT `value.slice()`. String indices are UTF-16
+ * code units, so cutting at a fixed index can land between a surrogate pair and
+ * emit a lone half — an unpaired surrogate is not valid UTF-8 and survives a
+ * JSON round-trip as U+FFFD. Spreading iterates code points, so an emoji or a
+ * non-BMP character is either whole or absent.
+ */
+function projectListEntry(row: ListRow, summarize: boolean) {
+  if (!summarize) return row;
+  const { value, ...rest } = row;
+  return {
+    ...rest,
+    value_bytes: new TextEncoder().encode(value ?? '').length,
+    preview: [...(value ?? '')].slice(0, LIST_PREVIEW_CHARS).join(''),
+  };
+}
+
+/**
+ * How many rows the ranked path fetches before scoring. Mirrors the same
+ * constant in `memories/handlers/relevant.ts` — see its docblock for the
+ * rationale and the honest "recency-windowed ranking" caveat.
+ *
+ * Bounded because the cost is real (every candidate is fetched and mostly
+ * discarded). 200 is well above any `limit` this tool accepts (max 100) while
+ * staying one cheap indexed read.
+ */
+const CANDIDATE_LIMIT = 200;
 
 // deno-lint-ignore no-explicit-any
 export type Params = Record<string, any>;
@@ -202,14 +265,126 @@ export async function toolList(
   userId: string | null,
   span: Span,
 ) {
-  const { scope: rawScope, tags, limit = 50, cursor: cursorParam } = params;
+  const { scope: rawScope, tags, limit = 50, cursor: cursorParam, kind, host } = params;
   if (!rawScope) throw new Error('scope is required');
   const scope = validateScope(rawScope);
   const pageLimit = Math.min(limit, 100);
 
+  // Validate `kind` against the same closed 3-value vocabulary the catalog
+  // `enum` and `MemoryKindSchema` accept, for the same reason `order` is
+  // validated below: a present-but-invalid value must be REJECTED, not
+  // silently ignored, or a caller typo turns into an unfiltered full-scope
+  // read that looks like it worked.
+  if (kind !== undefined && kind !== 'lesson' && kind !== 'bus' && kind !== 'signal') {
+    throw new UserInputError(`Invalid kind "${kind}": expected "lesson", "bus" or "signal"`);
+  }
+  if (host !== undefined && (typeof host !== 'string' || host.length === 0 || host.length > 64)) {
+    throw new UserInputError('Invalid host: expected a non-empty string of at most 64 characters');
+  }
+
+  // `view` decides how much of each entry reaches the wire, NOT what is read
+  // from Postgres. `value` is still selected in summary mode because the
+  // ranked path scores and MMR-diversifies on the body text — dropping it from
+  // the query would change WHICH rows come back, not just how fat they are.
+  if (params.view !== undefined && params.view !== 'full' && params.view !== 'summary') {
+    throw new UserInputError(`Invalid view "${params.view}": expected "full" or "summary"`);
+  }
+  const summarize = params.view === 'summary';
+
+  // Validate `order` against the same closed set the catalog `enum` and
+  // `MemoryListSchema` accept ('recency' | 'rank'). A present-but-invalid value
+  // (e.g. `"Rank"`) must be REJECTED, not silently coerced to recency — a quiet
+  // fallthrough would mask a caller typo and diverge from the schema contract.
+  // `undefined` means "unspecified" and defaults to recency (D3).
+  if (params.order !== undefined && params.order !== 'recency' && params.order !== 'rank') {
+    throw new UserInputError(`Invalid order "${params.order}": expected "recency" or "rank"`);
+  }
+  const ranked = params.order === 'rank';
+
   span.setAttributes({ 'lorekit.scope': scope });
 
   const tracedDb = createTracedClient(db, span);
+
+  if (ranked) {
+    // ── Ranked path (D1/D2/D4/D8) ─────────────────────────────────────────
+    // Mirrors `memories/handlers/relevant.ts`: fetch a bounded candidate window
+    // (updated_at desc), rank in TypeScript via the shared edge rankLessons,
+    // return a bounded top-N page. No cursor decode (D7 — cursor is ignored).
+    // seen_count is selected here and dropped from the wire response (D4).
+    let rankQuery = tracedDb
+      .from('memories')
+      .select('id,key,value,tags,updated_at,seen_count,origin_pr')
+      .eq('scope', scope)
+      .is('archived_at', null)
+      .or('expires_at.is.null,expires_at.gt.now()')
+      .order('updated_at', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(CANDIDATE_LIMIT);
+    if (userId) rankQuery = applyTenantScope(rankQuery, userId, await memberOrgIds(db, userId));
+    if (tags?.length) rankQuery = rankQuery.overlaps('tags', tags);
+    // Taxonomy filters are applied BEFORE ranking, not after: the candidate
+    // window is bounded at CANDIDATE_LIMIT, so filtering afterwards would rank
+    // over a window that a prolific other bucket could have already filled.
+    if (kind) rankQuery = rankQuery.eq('kind', kind);
+    if (host) rankQuery = rankQuery.eq('host', host);
+    const { data: rankData, error: rankError } = await rankQuery;
+    if (rankError) throw new Error(rankError.message);
+
+    const candidates: (RankableLesson & { id: string; key: string; value: string; tags: string[]; updated_at: string | null })[] = (rankData ?? []).map(
+      // deno-lint-ignore no-explicit-any
+      (r: any) => ({
+        id: r.id,
+        key: r.key,
+        value: r.value,
+        tags: r.tags,
+        updated_at: r.updated_at,
+        seen_count: r.seen_count,
+        outcome: outcomeFromTags(r.tags, r.origin_pr),
+      }),
+    );
+
+    const rankedLessons = rankLessons(candidates, { now: Date.now() });
+    // NOTE: `selectDiverse` applies MMR diversification, which REORDERS the page.
+    // The returned rows are therefore NO LONGER monotonically descending by
+    // score — a lower-scored but more diverse lesson can precede a higher-scored
+    // near-duplicate. Consumers of `order=rank` must not assume score-monotonic
+    // output; the tool-catalog `order` description (tool-catalog.ts) says so too.
+    const page = selectDiverse(rankedLessons, pageLimit);
+
+    const entries = page.map(({ entry }) =>
+      projectListEntry(
+        {
+          id: entry.id,
+          key: entry.key,
+          value: entry.value,
+          tags: entry.tags,
+          updated_at: entry.updated_at,
+        },
+        summarize,
+      ),
+    );
+
+    // `candidate_count` saturates at CANDIDATE_LIMIT — mirrors the observability
+    // `memories/handlers/relevant.ts` exposes so a truncated window is visible in
+    // telemetry (a `candidate_count === CANDIDATE_LIMIT` read may have ranked over
+    // a windowed subset). `result.count` is the post-`limit` page size.
+    span.setAttributes({
+      'lorekit.result.count': entries.length,
+      'lorekit.candidate_count': candidates.length,
+    });
+    // `hasMore` is FALSE here by contract, not by accident. Everywhere else in
+    // this codebase `hasMore: true` means "there is another page, and
+    // `nextCursor` is how you reach it" (`cursor.ts` buildPage,
+    // `_shared/api/paginate.ts`). Ranked mode has no cursor, so a `true` would
+    // promise a page no caller can ever fetch. A ranked read is a single
+    // bounded top-N over a CANDIDATE_LIMIT window — the same shape as
+    // `memories/handlers/relevant.ts`, which likewise never advertises
+    // pagination. Truncation is inherent to the mode and documented on the
+    // tool, not signalled per response.
+    return { entries, hasMore: false, nextCursor: null };
+  }
+
+  // ── Recency path (default) — UNCHANGED ──────────────────────────────────
   let query = tracedDb
     .from('memories')
     .select('id,key,value,tags,updated_at')
@@ -221,6 +396,8 @@ export async function toolList(
     .limit(pageLimit + 1);
   if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
   if (tags?.length) query = query.overlaps('tags', tags);
+  if (kind) query = query.eq('kind', kind);
+  if (host) query = query.eq('host', host);
   // Apply cursor keyset predicate when a valid cursor is supplied.
   const decoded = cursorParam ? decodeCursor(cursorParam) : null;
   if (decoded && decoded.sort === 'updated_at') {
@@ -229,9 +406,15 @@ export async function toolList(
   const { data, error } = await query;
   if (error) throw new Error(error.message);
   const rows = data ?? [];
+  // Page BEFORE projecting: `buildPage` decides `hasMore`/`nextCursor` from the
+  // pageLimit+1 sentinel row and keys the cursor off `updated_at`+`id`, both of
+  // which survive the projection — but it must see the raw row set to do it.
   const page = buildPage(rows, pageLimit, 'updated_at');
   span.setAttributes({ 'lorekit.result.count': page.entries.length });
-  return page;
+  return {
+    ...page,
+    entries: (page.entries as ListRow[]).map((row) => projectListEntry(row, summarize)),
+  };
 }
 
 /**
@@ -730,4 +913,57 @@ export async function toolPurgeExpired(
   }
 
   return { purged };
+}
+
+/**
+ * List every scope the caller can see, with its count of active (non-archived,
+ * non-expired) memories and when that scope was last written to.
+ *
+ * THE ONE READ TOOL THAT TAKES NO SCOPE, and the reason it exists: every other
+ * read tool REQUIRES one (`memory.read`/`memory.list` take a `scope`,
+ * `memory.search` a `scopes` list), so without this an agent can only reach
+ * lore whose scope it could already name. That made the store's contents a
+ * function of what the agent happened to guess. `GET /memories/scopes` and the
+ * `lorekit scopes` command have answered this since migration 00039; the MCP
+ * surface was the only caller that could not ask.
+ *
+ * The aggregation runs in Postgres (`lorekit_memory_scopes`), NOT as a
+ * `select('scope')` plus a client-side `Set`. The client-side form is silently
+ * wrong past PostgREST's row cap: the response is truncated with no error, so
+ * whole scopes go missing for exactly the accounts with the most lore — which
+ * are the accounts that need an inventory most.
+ *
+ * Tenant scoping lives INSIDE the RPC (it composes `lorekit_member_org_ids`
+ * exactly as the `memories` RLS read policies do), so there is deliberately no
+ * `applyTenantScope` call here — there is no query to scope, and a second
+ * predicate would be a place for the two to drift. This mirrors
+ * `memories/handlers/scopes.ts`, which makes the same call and the same
+ * argument; the two surfaces answer identically by construction.
+ */
+export async function toolScopes(
+  db: ReturnType<typeof createClient>,
+  _params: Params,
+  userId: string | null,
+  span: Span,
+) {
+  const tracedDb = createTracedClient(db, span);
+  // A service-role caller has no user id; the RPC reads a null `p_user_id` on a
+  // service_role connection as "no tenant filter", matching every other read.
+  const { data, error } = await tracedDb.rpc('lorekit_memory_scopes', {
+    p_user_id: userId ?? null,
+  });
+  if (error) throw new Error((error as { message: string }).message);
+
+  const rows = (data ?? []) as { scope: string; count: number | string; last_activity: string | null }[];
+  const scopes = rows.map((r) => ({
+    scope: r.scope,
+    count: Number(r.count),
+    // max(created_at) over exactly the counted rows (migration 00049) — per-scope
+    // freshness without listing rows to reduce them, which is the row-cap trap
+    // this tool exists to avoid. Null when the scope somehow counted nothing.
+    last_activity: r.last_activity ? new Date(r.last_activity).toISOString() : null,
+  }));
+
+  span.setAttributes({ 'lorekit.result_count': scopes.length });
+  return { scopes };
 }

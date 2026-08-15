@@ -26,6 +26,7 @@ test('serializeEntry / parseEntry round-trip', () => {
     origin_commit: null,
     origin_pr: null,
     expires_at: null,
+    seen_count: null,
     value: 'First line of the lesson.\nSecond line with details.',
   };
   const parsed = parseEntry(serializeEntry(entry));
@@ -167,6 +168,84 @@ test('search accepts a list of terms and OR-matches them in one pass', async () 
   assert.equal(none.entries.length, 3);
 });
 
+test('search honours walkLimit so the per-prompt walk stays bounded', async () => {
+  // The per-prompt hook walks the local store on the user's critical path; an
+  // unbounded walk a remote timeout cannot interrupt is the scalability hazard.
+  // walkLimit caps matches and stops the walk — later scopes are skipped once it
+  // is reached, so the retained hits are the nearest-scope (first-listed) ones.
+  // It is named walkLimit, not limit, so it never reaches the remote store's
+  // `body.limit` and truncates that hit set pre-ranking.
+  const store = createLocalStore(tmpDir());
+  for (let i = 0; i < 10; i++) {
+    await store.write({ scope: 'repo::o/r', key: `near-${i}`, value: 'deadlock on migrate' });
+  }
+  await store.write({ scope: 'global', key: 'far', value: 'deadlock on migrate' });
+
+  const capped = await store.search({ q: ['deadlock'], scopes: ['repo::o/r', 'global'], walkLimit: 3 });
+  assert.equal(capped.entries.length, 3, 'the walk stopped at walkLimit');
+  assert.ok(
+    capped.entries.every((e) => e.scope === 'repo::o/r'),
+    'the nearest scope filled the cap; the later scope was never walked',
+  );
+
+  const unbounded = await store.search({ q: ['deadlock'], scopes: ['repo::o/r', 'global'] });
+  assert.equal(unbounded.entries.length, 11, 'omitting walkLimit stays unbounded as before');
+});
+
+test('two-tier search honours walkLimit across both tiers', async () => {
+  const home = tmpDir();
+  const project = tmpDir();
+  for (let i = 0; i < 5; i++) {
+    await createLocalStore(home).write({ scope: 'global', key: `h${i}`, value: 'timeout retry' });
+    await createLocalStore(project).write({ scope: 'repo::o/r', key: `p${i}`, value: 'timeout retry' });
+  }
+  const store = createTwoTierStore({ home, project });
+  const capped = await store.search({ q: ['timeout'], scopes: ['repo::o/r', 'global'], walkLimit: 4 });
+  assert.equal(capped.entries.length, 4, 'the merged two-tier result honours the cap');
+});
+
+test('two-tier search splits the walkLimit budget so a full project tier cannot starve home', async () => {
+  // The per-prompt hot path caps BOTH tiers at walkLimit and then merges
+  // project-first. Slicing that merge to walkLimit would hand every slot to the
+  // project tier, and `rankLessons` would never see a home-tier lesson at all.
+  const home = tmpDir();
+  const project = tmpDir();
+  for (let i = 0; i < 10; i++) {
+    await createLocalStore(project).write({ scope: 'repo::o/r', key: `p${i}`, value: 'timeout retry' });
+  }
+  for (let i = 0; i < 10; i++) {
+    await createLocalStore(home).write({ scope: 'global', key: `h${i}`, value: 'timeout retry' });
+  }
+  const store = createTwoTierStore({ home, project });
+  const walkLimit = 6;
+
+  // PREMISE — the project tier alone over-fills the budget. Without this the
+  // assertions below are satisfiable by a project tier that was simply small,
+  // and the test would pass against the very slice it exists to rule out.
+  const projectOnly = await createLocalStore(project)
+    .search({ q: ['timeout'], scopes: ['repo::o/r', 'global'], walkLimit });
+  assert.equal(projectOnly.entries.length, walkLimit, 'the project tier fills the cap on its own');
+
+  const hits = await store.search({ q: ['timeout'], scopes: ['repo::o/r', 'global'], walkLimit });
+  assert.equal(hits.entries.length, walkLimit, 'the merged result still honours the cap');
+  assert.equal(
+    hits.entries.filter((e) => e.key.startsWith('h')).length,
+    walkLimit / 2,
+    'the home tier keeps its half of the budget',
+  );
+  assert.equal(
+    hits.entries.filter((e) => e.key.startsWith('p')).length,
+    walkLimit / 2,
+    'and the project tier keeps its own half rather than the whole slice',
+  );
+
+  // An unused half is handed back: with no home tier the project still fills
+  // the cap, so the split never costs a single-tier install any depth.
+  const projectHeavy = createTwoTierStore({ home: tmpDir(), project });
+  const alone = await projectHeavy.search({ q: ['timeout'], scopes: ['repo::o/r', 'global'], walkLimit });
+  assert.equal(alone.entries.length, walkLimit, 'an empty home tier gives its share back to project');
+});
+
 test('two-tier search accepts a term list and OR-matches across both tiers', async () => {
   const { home, project } = { home: tmpDir(), project: tmpDir() };
   await createLocalStore(home).write({ scope: 'global', key: 'g', value: 'econnrefused on connect' });
@@ -202,6 +281,7 @@ test('putEntry upserts verbatim by scope+key, preserving created/updated/archive
     origin_commit: null,
     origin_pr: null,
     expires_at: null,
+    seen_count: null,
     value: 'preserved body',
   };
   await store.putEntry(entry);
@@ -308,6 +388,7 @@ test('origin fields round-trip through the on-disk format', () => {
     origin_commit: 'a1b2c3d4e5f6',
     origin_pr: 482,
     expires_at: null,
+    seen_count: null,
     value: 'A lesson learned in a pull request.',
   };
   assert.deepEqual(parseEntry(serializeEntry(entry)), entry);

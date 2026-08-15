@@ -190,10 +190,14 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
         scope,
         tags: { type: 'array', items: { type: 'string' }, description: 'Filter to entries carrying ANY of these labels (OR).' },
         limit,
-        cursor: { type: 'string', description: 'Opaque cursor from a previous response\'s `nextCursor`. Omit to start from the first page.' },
+        cursor: { type: 'string', description: 'Opaque cursor from a previous response\'s `nextCursor`. Omit to start from the first page. Ignored when `order` is `rank` (ranked mode returns a single bounded page; `hasMore` is always false and `nextCursor` always null).' },
+        order: { type: 'string', enum: ['recency', 'rank'], default: 'recency', description: 'recency (default, updated_at desc + cursor pagination) or rank (salience+recency; bounded top-N, no cursor). Note: rank results are MMR-diversified, so they are NOT strictly score-descending — a more diverse lower-scored lesson can precede a higher-scored near-duplicate.' },
+        kind: { type: 'string', enum: ['lesson', 'bus', 'signal'], description: 'Filter to one bucket family: `lesson` (procedural, read every run), `bus` (transient outcome event), or `signal` (durable per-repo filter). Rows written before the taxonomy existed have no kind and are excluded when this is set.' },
+        host: { type: 'string', description: 'Filter to the owning skill or agent, e.g. `reviewer`, `aw`, `ci-auto-fix`. Combine with `kind` to read exactly one bucket ("lessons for host reviewer").' },
+        view: { type: 'string', enum: ['full', 'summary'], default: 'full', description: 'full (default) returns each entry\'s complete `value`. summary omits `value` and returns `value_bytes` + a 200-character `preview` instead — the cheap discovery read for deciding WHICH lessons to then fetch with `memory.read`.' },
       },
     },
-    returns: '`{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — newest first. Pass `nextCursor` back as `cursor` to retrieve the next page.',
+    returns: '`{ "entries": [{ "key", "value", "tags", "updated_at" }], "hasMore": boolean, "nextCursor": string | null }` — newest-first (recency mode) or ranked by salience+recency then MMR-diversified (rank mode). Because rank mode diversifies, entries are NOT strictly score-descending — a more diverse lower-scored lesson can precede a higher-scored near-duplicate. Pass `nextCursor` back as `cursor` to paginate — recency mode only. Rank mode is a single bounded top-N page: `hasMore` is always false and `nextCursor` always null. With `view: "summary"` each entry is `{ "key", "tags", "updated_at", "value_bytes", "preview" }` — `value` is omitted entirely.',
   },
   {
     name: 'memory.delete',
@@ -247,6 +251,18 @@ export const MCP_TOOLS: readonly McpToolDoc[] = [
     auth: 'token-or-jwt',
     inputSchema: { type: 'object', required: ['scope', 'key'], properties: { scope, key } },
     returns: '`{ "archived": true }` if found and archived, `{ "archived": false }` if already archived or not found.',
+  },
+  {
+    name: 'memory.scopes',
+    description:
+      'List every scope in the store with how many active memories it holds and when it was last '
+      + 'written to — the inventory to consult when you do not already know which scope to read. '
+      + 'Takes no arguments and is store-wide, NOT limited to any working directory. Every other '
+      + 'read tool requires a scope up front, so this is the one that answers "what is there?".',
+    permission: 'read',
+    auth: 'token-or-jwt',
+    inputSchema: { type: 'object', properties: {} },
+    returns: '`{ "scopes": [{ "scope", "count", "last_activity" }] }`, sorted by count desc then scope asc (busiest scope first). `count` is active (non-archived, non-expired) memories; `last_activity` is the newest `created_at` among them, or `null`.',
   },
   {
     name: 'memory.list_archived',

@@ -826,6 +826,80 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
     });
   });
 
+  // ── "Expiring soon" (?expiring_within_days=) ────────────────────────────────
+  // The half of the feature `migrations.test.sql` §75 cannot reach. That section
+  // asserts the PREDICATE over seeded rows (including boundary rows a live suite
+  // cannot produce without waiting); this one asserts the HANDLER — that the
+  // param survives schema coercion, reaches PostgREST as two comparisons, and
+  // composes with the live-row branch. Between them the feature is covered end
+  // to end; neither alone would have caught a param that was validated and then
+  // never applied.
+  describe('expiring-soon filter', () => {
+    const KEY_SOON = NS.name('exp-soon');
+    const KEY_LATER = NS.name('exp-later');
+    const KEY_PERMANENT = NS.name('exp-permanent');
+
+    beforeAll(async () => {
+      if (SKIP) return;
+      // Written through the public API with a real TTL, so `expires_at` is
+      // computed by `memory_write` exactly as it is in production — not injected.
+      await api('POST', '/', { scope: SCOPE, key: KEY_SOON, value: 'v', ttl_days: 1 });
+      await api('POST', '/', { scope: SCOPE, key: KEY_LATER, value: 'v', ttl_days: 365 });
+      await api('POST', '/', { scope: SCOPE, key: KEY_PERMANENT, value: 'v' });
+    }, REMOTE_TEST_TIMEOUT);
+
+    async function expiringKeys(days: number): Promise<string[]> {
+      const { status, data } = await api(
+        'GET',
+        `/?scope=${SCOPE}&limit=100&expiring_within_days=${days}`,
+      );
+      expect(status, `expiring_within_days=${days} → ${status}: ${JSON.stringify(data)}`).toBe(200);
+      return ((data as JsonObj).entries as JsonObj[]).map((e) => String(e.key));
+    }
+
+    it('returns only the memories whose TTL falls inside the window', async () => {
+      const keys = await expiringKeys(7);
+      expect(keys, 'a 1-day TTL is inside a 7-day horizon').toContain(KEY_SOON);
+      expect(keys, 'a 365-day TTL is outside it').not.toContain(KEY_LATER);
+      expect(keys, 'a memory with no TTL is never "expiring"').not.toContain(KEY_PERMANENT);
+    });
+
+    it('widening the horizon admits the further-out TTL, and still never the permanent one', async () => {
+      // The discriminating pair: if the upper bound were ignored the first test
+      // would still pass (everything comes back), and if the whole filter were
+      // ignored so would this one. Together they pin both edges — and the
+      // no-TTL row must stay absent at EVERY horizon, because its exclusion is
+      // NULL semantics, not a bound.
+      const keys = await expiringKeys(365);
+      expect(keys).toContain(KEY_SOON);
+      expect(keys).toContain(KEY_LATER);
+      expect(keys, 'no horizon is wide enough to make a permanent memory expiring').not.toContain(
+        KEY_PERMANENT,
+      );
+    });
+
+    it('composes with the other filters rather than replacing them', async () => {
+      const { status, data } = await api(
+        'GET',
+        `/?scope=${SCOPE}&limit=100&expiring_within_days=365&key=${encodeURIComponent(KEY_SOON)}`,
+      );
+      expect(status).toBe(200);
+      expect(((data as JsonObj).entries as JsonObj[]).map((e) => String(e.key))).toEqual([KEY_SOON]);
+    });
+
+    it.each([
+      ['zero — the empty window', '0'],
+      ['negative', '-1'],
+      ['past the 365-day ceiling', '366'],
+      ['fractional', '7.5'],
+      ['non-numeric', 'soon'],
+      ['empty', ''],
+    ])('rejects %s with a 400 rather than silently ignoring it', async (_label, value) => {
+      const { status } = await api('GET', `/?scope=${SCOPE}&expiring_within_days=${encodeURIComponent(value)}`);
+      expect(status, `expiring_within_days=${value} must be a 400`).toBe(400);
+    });
+  });
+
   // ── Usage statistics ─────────────────────────────────────────────────────────
   // GET /memories/usage aggregates usage_events through lorekit_usage_stats. Like
   // /scopes the concrete numbers depend on the credential (a service-role smoke
@@ -1137,5 +1211,190 @@ describe.skipIf(SKIP)('LoreKit memories API — audit trail read-back (integrati
       for (const r of usageRows) expect(['api_key', 'jwt']).toContain(r.auth_type);
       expect(usageRows.map((r) => r.tool_name)).toContain('memory.write');
     }
+  });
+});
+
+/**
+ * Per-scope read attribution — `usage_events.scope` + `GET
+ * /memories/read-activity?scope=` (migration 00058).
+ *
+ * Two layers, deliberately separated by how much of the stack each can prove:
+ *
+ *   1. The CONTRACT, asserted unconditionally: every returned bucket carries a
+ *      `scope` key (nullable), a `?scope=` filter returns only that scope, and
+ *      an ungrammatical `?scope=` is a 400 rather than a silently-ignored
+ *      filter. This is the half a caller depends on, and it holds on every
+ *      credential.
+ *
+ *   2. The live ROUND TRIP — write, read, and see that read attributed to the
+ *      minted scope — which only works when this credential actually causes a
+ *      usage event to be recorded. It does not always: the router records one
+ *      only for a resolved non-service user (`analyticsUserId`), so a
+ *      service-role smoke token writes NO usage row at all, by design. Rather
+ *      than assert something that is credential-dependent, a probe decides, and
+ *      an anti-vacuity test asserts the probe reached a DEFINITE result — so a
+ *      never-run probe cannot quietly turn the round trip into a green skip.
+ *
+ * The scope is minted, not borrowed: the rest of this file writes to `global`,
+ * where every other run's reads land too, so "count >= 1 for this scope" there
+ * would pass with the feature reverted.
+ */
+describe.skipIf(SKIP)('LoreKit memories API — per-scope read attribution (integration)', { timeout: REMOTE_TEST_TIMEOUT }, () => {
+  // Its own namespace, so this suite's hook sweeps only this suite's key —
+  // the same reasoning as the audit block above.
+  const RA_NS = createSmokeNamespace('memories');
+  const RA_KEY = RA_NS.name('readscope');
+  /**
+   * A scope no other run can be reading from. `project::` admits `[\w.-]+` and
+   * a minted name is `[a-z0-9-]+`, so the namespace prefix is a valid project
+   * scope as-is — and it is swept, because `GET /memories/scopes` reports any
+   * scope holding an active row and the orphan sweeper unions that list in.
+   */
+  const RA_SCOPE = `project::${RA_NS.prefix}-readscope`;
+  /** Everything in this block happens after this instant. */
+  const startedAt = new Date().toISOString();
+  /** Set by the capability probe in beforeAll. */
+  let attributionObservable = false;
+  let probeRan = false;
+  let probeReason = '';
+
+  /** Hard-delete this suite's key at ITS scope — the file-level helper is bound to `global`. */
+  async function hardDeleteInScope(key: string): Promise<void> {
+    const { status, data } = await api(
+      'DELETE',
+      `/?scope=${encodeURIComponent(RA_SCOPE)}&key=${encodeURIComponent(key)}&force=true`,
+    );
+    if (status !== 204 && status !== 404) {
+      throw new Error(`DELETE ${key} @ ${RA_SCOPE} → HTTP ${status}: ${JSON.stringify(data)}`);
+    }
+  }
+
+  /** Poll `usage_events` for a read attributed to this suite's scope. */
+  async function findAttributedRead(attempts = 12): Promise<JsonObj | undefined> {
+    for (let i = 0; i < attempts; i++) {
+      const { rows } = await pgRest(
+        `/usage_events?scope=eq.${encodeURIComponent(RA_SCOPE)}` +
+          `&created_at=gte.${startedAt}&order=created_at.desc&limit=5`,
+      );
+      const read = rows.find((r) => typeof r.tool_name === 'string' && String(r.tool_name).startsWith('memory.list'));
+      if (read) return read;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    return undefined;
+  }
+
+  beforeAll(async () => {
+    // Write one memory, then READ it back through the scope-filtered list — the
+    // call whose usage row should carry the scope. Both go through the public
+    // API, so this exercises the real recording site, not a seeded row.
+    const created = await api('POST', '/', { scope: RA_SCOPE, key: RA_KEY, value: 'read-scope-probe' });
+    if (created.status !== 201) {
+      probeRan = true;
+      probeReason = `create under ${RA_SCOPE} returned HTTP ${created.status}`;
+      return;
+    }
+    const listed = await api('GET', `/?scope=${encodeURIComponent(RA_SCOPE)}&limit=10`);
+    if (listed.status !== 200) {
+      probeRan = true;
+      probeReason = `list under ${RA_SCOPE} returned HTTP ${listed.status}`;
+      return;
+    }
+
+    const row = await findAttributedRead();
+    probeRan = true;
+    attributionObservable = row !== undefined;
+    if (!attributionObservable) {
+      probeReason = 'no usage_events row carrying this scope became visible';
+      console.warn(
+        '\n  ⚠ PER-SCOPE READ ROUND TRIP SKIPPED — no attributed usage event was observable.\n' +
+          `    Scope: ${RA_SCOPE}\n` +
+          '    Cause: either usage_events is not readable with this credential (an lk_* LoreKit\n' +
+          '    token is not a Postgres credential), or the credential is the service-role key,\n' +
+          '    for which the router records NO usage event at all (there is no human actor).\n' +
+          '    Effect: this run verified the read-activity CONTRACT but NOT the live\n' +
+          '    write→read→attribute round trip.\n' +
+          '    Fix: run with a non-service lk_rw_* token plus a service-role credential for\n' +
+          '    the read-back, as the staging smoke job does.\n',
+      );
+    }
+  }, REMOTE_TEST_TIMEOUT);
+
+  afterAll(async () => {
+    await runBestEffortCleanup(
+      async () => {
+        const report = await sweepSmokeArtefacts(RA_NS.minted(), hardDeleteInScope);
+        const warning = describeSweepFailures(report, 'memories REST per-scope read attribution');
+        if (warning) console.warn(warning);
+      },
+      { softTimeoutMs: CLEANUP_SOFT_TIMEOUT, context: 'memories REST per-scope read attribution' },
+    );
+  }, REMOTE_TEST_TIMEOUT);
+
+  it('the attribution probe ran and reported a definite result', () => {
+    // Anti-vacuity: proves beforeAll executed and decided, so a probe that
+    // never ran cannot leave the round-trip test permanently "skipped" by
+    // accident rather than by the documented reason.
+    expect(probeRan, 'the attribution probe never completed').toBe(true);
+    if (!attributionObservable) expect(probeReason.length).toBeGreaterThan(0);
+  });
+
+  it('GET /memories/read-activity — every bucket carries a (nullable) scope', async () => {
+    const { status, data } = await api('GET', '/read-activity?bucket=day');
+    expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    const buckets = (data as JsonObj).buckets as JsonObj[];
+    expect(Array.isArray(buckets)).toBe(true);
+    for (const b of buckets) {
+      // Present-and-nullable, not merely "sometimes a string": an absent key
+      // would mean the handler is still emitting the pre-00058 shape and the
+      // grouped rows were collapsed somewhere on the way out.
+      expect(Object.prototype.hasOwnProperty.call(b, 'scope'), `bucket missing scope: ${JSON.stringify(b)}`).toBe(true);
+      expect(b.scope === null || typeof b.scope === 'string').toBe(true);
+      expect(typeof b.count).toBe('number');
+    }
+  });
+
+  it('GET /memories/read-activity?scope= — an invalid scope is a 400, not an ignored filter', async () => {
+    // Fails LOUD, unlike the recording side. Silently dropping a typo'd filter
+    // would answer "reads everywhere" under the label the caller asked for.
+    //
+    // Every case here must be rejected by the EDGE `validateScope`
+    // (`supabase/functions/_shared/scope.ts`), which is the deliberately
+    // lighter mirror: it checks the `::` separator, the prefix vocabulary and
+    // the charset, but has NO per-prefix shape check. `repo::no-slash` is
+    // therefore accepted there and rejected only by the mcp-core copy — asserting
+    // a 400 for it would fail against a live instance while saying nothing about
+    // this endpoint. The charset guard stands in for it instead.
+    for (const bad of ['repo:mthines/x', 'nope::x', 'project::a b']) {
+      const { status } = await api('GET', `/read-activity?scope=${encodeURIComponent(bad)}`);
+      expect(status, `scope=${bad} should be rejected`).toBe(400);
+    }
+  });
+
+  it('GET /memories/read-activity?scope= — returns only that scope', async () => {
+    const { status, data } = await api(
+      'GET', `/read-activity?bucket=hour&scope=${encodeURIComponent(RA_SCOPE)}`,
+    );
+    expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    const buckets = (data as JsonObj).buckets as JsonObj[];
+    // Exactness holds whether or not any event landed: an empty result is fine,
+    // a FOREIGN scope in a filtered result never is.
+    for (const b of buckets) {
+      expect(b.scope, `filtered result leaked a foreign scope: ${JSON.stringify(b)}`).toBe(RA_SCOPE);
+    }
+  });
+
+  it('a live read under a minted scope is attributed to it', async ({ skip }) => {
+    if (!attributionObservable) skip();
+    const { status, data } = await api(
+      'GET', `/read-activity?bucket=hour&scope=${encodeURIComponent(RA_SCOPE)}`,
+    );
+    expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+    const buckets = (data as JsonObj).buckets as JsonObj[];
+    // The metric is additive, so the per-scope headline IS the sum of the
+    // filtered buckets — the property that makes a companion total RPC
+    // unnecessary. The probe's own list read returned at least the one memory
+    // it had just written.
+    const total = buckets.reduce((n, b) => n + Number(b.count), 0);
+    expect(total, `expected at least 1 attributed record read for ${RA_SCOPE}`).toBeGreaterThanOrEqual(1);
   });
 });

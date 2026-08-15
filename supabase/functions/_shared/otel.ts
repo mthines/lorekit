@@ -304,26 +304,51 @@ export class ExportBatch {
     return spans;
   }
 
-  /** Fire-and-forget flush — use EdgeRuntime.waitUntil when available. */
-  flush(): void {
-    if (this.spans.length === 0) return;
+  /**
+   * Build and POST the collected spans; `null` when there is nothing to send.
+   *
+   * Split out of `flush()` so the same body serves both the fire-and-forget
+   * request-path flush and the awaitable `flushAsync()` — two copies of the
+   * payload build would be two places for the environment override to drift.
+   */
+  private post(): Promise<void> | null {
+    if (this.spans.length === 0) return null;
     const cfg = getOtlpConfig();
-    if (!cfg) return;
+    if (!cfg) return null;
 
     const payload = buildOtlpPayload([...this.spans], { environmentOverride: this.environmentOverride });
     this.spans = [];
 
-    const p = fetch(`${cfg.endpoint}/v1/traces`, {
+    return fetch(`${cfg.endpoint}/v1/traces`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...cfg.headers },
       body: JSON.stringify(payload),
-    }).catch(() => { /* swallow */ });
+    }).then(() => { /* discard the response */ }, () => { /* swallow */ });
+  }
+
+  /** Fire-and-forget flush — use EdgeRuntime.waitUntil when available. */
+  flush(): void {
+    const p = this.post();
+    if (!p) return;
 
     if (typeof globalThis.EdgeRuntime?.waitUntil === 'function') {
       globalThis.EdgeRuntime.waitUntil(p);
     } else {
       void p;
     }
+  }
+
+  /**
+   * Flush and RESOLVE once the export request has settled.
+   *
+   * `flush()` is right on the request path: the isolate is held open by the
+   * runtime's own `waitUntil`. A BACKGROUND task has no such keep-alive to
+   * inherit — it IS the keep-alive — so it must be able to await its own
+   * export, or the isolate can be torn down with the POST in flight and the
+   * spans are lost exactly as if they had never been recorded.
+   */
+  async flushAsync(): Promise<void> {
+    await (this.post() ?? Promise.resolve());
   }
 }
 
@@ -364,6 +389,39 @@ export class Span {
     const s = new Span(childName, childCtx, this.batch, kind);
     if (Object.keys(initialAttrs).length) s.setAttributes(initialAttrs);
     return s;
+  }
+
+  /**
+   * A child span that exports on its OWN batch, for work that OUTLIVES the
+   * response.
+   *
+   * `traceRequest` ends the root span and calls `batch.flush()` in a `finally`,
+   * and `flush()` DRAINS the batch. A task backgrounded with
+   * `EdgeRuntime.waitUntil` resolves after that, so every span it records
+   * through `child()` — and every attribute it sets on the root span — lands in
+   * a batch that has already been posted and will never be posted again. The
+   * symptom is silent: the enqueue is visible and the outcome is not.
+   *
+   * The returned `flush` is the background task's own export and it MUST be
+   * awaited when the task finishes (see `ExportBatch.flushAsync`). In-request
+   * work keeps using `child()` so the whole trace still exports as one batch.
+   */
+  detachedChild(
+    childName: string,
+    initialAttrs: Record<string, string | number | boolean> = {},
+    kind: number = SPAN_KIND_INTERNAL,
+  ): { span: Span; flush: () => Promise<void> } {
+    const batch = new ExportBatch();
+    batch.environmentOverride = this.batch.environmentOverride;
+    const childCtx: TraceContext = {
+      traceId: this.ctx.traceId,
+      spanId: randHex(8),
+      parentSpanId: this.ctx.spanId,
+      sampled: this.ctx.sampled,
+    };
+    const s = new Span(childName, childCtx, batch, kind);
+    if (Object.keys(initialAttrs).length) s.setAttributes(initialAttrs);
+    return { span: s, flush: () => batch.flushAsync() };
   }
 
   setAttributes(attrs: Record<string, string | number | boolean>): this {

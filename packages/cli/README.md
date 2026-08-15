@@ -51,7 +51,9 @@ without needing a marketplace:
 2. **MCP server** (`lorekit`) — the connection to your lessons, merged into the
    MCP config (preserving any other servers).
 3. **Hooks** — the *deterministic* layer: lessons injected on every
-   `SessionStart`, and on a tool failure (`PostToolUseFailure`) any lessons that
+   `SessionStart`, the few that match what you just typed on every substantive
+   prompt (`UserPromptSubmit`, `hooks.userPrompt`), and on a tool failure
+   (`PostToolUseFailure`) any lessons that
    look **relevant to that failure** ("you've hit this before") plus a nudge to
    record the fix, and a retrospective nudge on `Stop` — by default only when the
    session actually hit friction (`hooks.stop`). These fire the shared
@@ -103,7 +105,8 @@ from `.gitignore`, negate it with `!.mcp.json`, or `git add -f .mcp.json` once);
 `install --mcp-json` **warns when the file it wrote is still git-ignored**, so a
 fresh web clone silently missing the config is not a mystery. Once `.mcp.json` is
 tracked, only run `install --mcp-json` in that repo — a plain `install --project`
-would embed a live token in the now-committed file. See the
+would embed a live token in the now-committed file (and the command warns before
+it does). See the
 [Claude Code on the web guide](https://lorekit.io/docs/claude-code-web).
 
 In a TTY it prompts for the scope (and for `--endpoint` / `--token` if missing).
@@ -132,8 +135,8 @@ and the write is still the model calling `memory.write`.
 
 | Mode | Wires | What you get |
 |------|-------|--------------|
-| `all` | `SessionStart`, `PostToolUseFailure`, `Stop` | Lessons injected at session start, plus a nudge on a tool failure and a friction-gated one at end of turn |
-| `read-only` | `SessionStart` | Lessons injected; nothing ever nudges |
+| `all` | `SessionStart`, `UserPromptSubmit`, `PostToolUseFailure`, `Stop` | Lessons injected at session start, the ones matching each substantive prompt injected as you go, plus a nudge on a tool failure and a friction-gated one at end of turn |
+| `read-only` | `SessionStart` | Lessons injected ONCE at session start; nothing nudges and nothing runs per turn |
 | `none` | — | Skills + MCP only; memory stays model-invoked |
 
 ```bash
@@ -463,9 +466,9 @@ that lesson's detail sheet. It sets **both** the `lesson` param (which opens the
 sheet) and `scope` — not because scope is needed to find the lesson (the sidebar
 reads one unfiltered recent set), but so the Explorer list *behind* the sheet is
 filtered to the lesson's own scope. Filter flags mirror the Explorer: `--q`
-(search), `--owner <all|personal|orgId>`, `--tags <a,b,c>` (label filter, AND
+(search), `--owner <all|personal|org-slug>`, `--tags <a,b,c>` (label filter, AND
 across labels; comma-separated or a JSON array), `--range`/`--from`/`--to`,
-`--archived`, `--view <scope|time>`.
+`--archived`.
 
 Every param is `encodeURIComponent(JSON.stringify(value))` — the exact inverse of
 how the dashboard's `useUrlState` reads it back (`JSON.parse`, falling back to the
@@ -488,9 +491,9 @@ links now back the hooks' write-confirmation and retrospective nudges.)
 The **shared hook engine** behind the Claude Code / Cursor / Codex plugins.
 It is not run by hand — the plugins wire it into their hook config. It reads
 the host framework's JSON on stdin and prints that host's injection format on
-stdout (lessons at session start; relevant lessons plus a write-nudge on a tool
-failure; a retrospective nudge at end of turn), always exiting 0 so it can never
-block the host agent.
+stdout (lessons at session start; the ones matching each substantive prompt as
+you go; relevant lessons plus a write-nudge on a tool failure; a retrospective
+nudge at end of turn), always exiting 0 so it can never block the host agent.
 
 ```bash
 lorekit hook --adapter <claude|cursor|codex> --event <SessionStart|Stop|…>
@@ -658,7 +661,25 @@ Both files share this schema — all fields optional:
   // ── Hook behaviour ─────────────────────────────────────────────────────────
   "hooks.disabled": ["Stop"],
                            // suppress specific hook events; union across layers
-                           // values: "SessionStart" | "PostToolUseFailure" | "Stop"
+                           // values: "SessionStart" | "UserPromptSubmit" | "PostToolUseFailure" | "Stop"
+
+  "hooks.userPrompt": "on",
+                           // the per-turn relevance pull (UserPromptSubmit):
+                           //   "on"  (default) — on each substantive prompt, query the
+                           //     store for memories matching what you typed and inject
+                           //     at most 3 you have NOT already been shown this session
+                           //   "off"           — keep the rest of hook mode "all", drop
+                           //     just this event's output
+                           // a switch, not a mode: the knobs a mode would expose (how
+                           // many, how strict) are the two things that must not be
+                           // turned up on a hook that fires every single turn.
+                           // two install paths reach it: hook mode "all" ("read-only"
+                           // and "none" never wire the event), and the Claude
+                           // marketplace plugin, whose hooks.json wires it
+                           // unconditionally — no mode involved, so hooks.userPrompt is
+                           // the mode-independent opt-out there. (hooks.disabled:
+                           // ["UserPromptSubmit"] also switches it off, one gate
+                           // earlier, so it is not the only opt-out.) repo wins over user
 
   "hooks.stop": "friction",
                            // gate the end-of-turn retrospective nudge:
@@ -672,6 +693,50 @@ Both files share this schema — all fields optional:
                            //  transcript; on Cursor/Codex there is none, so "friction"
                            //  falls back to firing so no lesson is silently lost)
 
+  "hooks.sessionStart": "hybrid",
+                           // shape of the block injected at session start:
+                           //   "hybrid" (default) — fill the character budget with the
+                           //     highest-ranked memories, then add one line naming what
+                           //     was left out and where it lives
+                           //   "index"            — the same list, no trailing map
+                           //                        (truncation is silent)
+                           //   "map"              — lead with the scope map plus the
+                           //                        three most salient memories
+                           // repo wins over user; an unrecognised value is ignored and the
+                           // next layer is tried, so a mistyped repo value falls through to
+                           // the user layer before defaulting to hybrid
+
+  "hooks.sessionStart.maxChars": 1500,
+                           // character budget for that block (default 1500, ~375 tokens)
+                           // bounded to 200–20000; an out-of-range value is CLAMPED, not
+                           // rejected — a small number means "keep it short", and honouring
+                           // the floor is closer to that intent than restoring the default
+                           // repo wins over user, and a declared-but-unparseable repo value
+                           // still claims the decision (a typo'd project policy degrades to
+                           // the default rather than silently becoming a per-machine one)
+                           // memories are RANKED before the budget is spent, so what
+                           // survives is the most-recurring and most-recent, not the newest
+
+  "hooks.sessionStart.loopCap": 2,
+                           // how many memories one self-improvement loop (a
+                           // "loop::<bucket>" tag) may contribute to that block
+                           // (default 2, bounded 0–40; 0 excludes loop buckets
+                           // entirely so only general memories are read). Clamped,
+                           // not rejected; repo wins over user with the same
+                           // declared-value-owns-the-layer rule as maxChars
+
+  "hooks.sessionStart.branchHint": "on",
+                           // whether the block is nudged toward the current git
+                           // branch's topic — on "feat/embedding-pipeline",
+                           // embedding memories are lifted (the leading type/author
+                           // segment is ignored). Default "on"; it only ever lifts
+                           // an on-topic memory, never buries one. "off" restores
+                           // the plain most-recurring / most-recent read. Repo wins
+                           // over user, but — following hooks.userPrompt, not the
+                           // maxChars layer-lock — a declared-but-unparseable repo
+                           // value FALLS THROUGH to a valid user value rather than
+                           // owning the layer
+
   "hooks.adapter": "claude",
                            // explicit adapter when auto-detection is ambiguous
                            // values: "claude" | "cursor" | "codex"
@@ -679,13 +744,14 @@ Both files share this schema — all fields optional:
 
   "hooks.instructions": {
     "SessionStart":        "Focus on migration safety. Treat any lesson tagged 'migration' as high-priority.",
+    "UserPromptSubmit":    "Prefer a memory that names the file you are editing.",
     "PostToolUseFailure":  "When recording a failure, always include the exact command and exit code.",
     "Stop":                null
   },
                            // per-event custom text appended to the hook output.
                            // both layers merged: repo instructions first, then user.
                            // null (or absent key) means no extra instruction for that event.
-                           // values: string | null  (keys: "SessionStart" | "PostToolUseFailure" | "Stop")
+                           // values: string | null  (keys: "SessionStart" | "UserPromptSubmit" | "PostToolUseFailure" | "Stop")
 
   // ── Telemetry ──────────────────────────────────────────────────────────────
   "telemetry.disabled": true,

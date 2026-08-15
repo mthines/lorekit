@@ -25,12 +25,24 @@
  * classic visual-regression flake source this module deliberately avoids.
  */
 import { http, HttpResponse } from 'msw';
+import { resolveKindHost } from '@lorekit/schemas/tags';
 
 /**
  * The instant the story clock is frozen to. Fixtures below are dated relative to
  * it; `withFrozenClock(FROZEN_NOW)` pins the renderer to the same instant.
  */
 export const FROZEN_NOW = '2026-06-15T12:00:00.000Z';
+
+/**
+ * Memory records the purge removed in the window — the Expired tile's number.
+ *
+ * A fixed constant rather than a value derived from `MEMORY_ROWS`, because
+ * expired rows are DELETED: there is nothing left in the table to derive it
+ * from, which is exactly why the figure comes from the usage ledger and not
+ * from a row count. Non-round so a story asserting it cannot pass against a
+ * placeholder zero or a coincidental total.
+ */
+export const EXPIRED_RECORDS = 17;
 
 const FROZEN_MS = new Date(FROZEN_NOW).getTime();
 const HOUR = 3_600_000;
@@ -63,6 +75,16 @@ export interface MemoryRow {
   origin_branch: string | null;
   origin_commit: string | null;
   origin_pr: number | null;
+  /**
+   * Taxonomy (migration 00056) — the bucket KIND and the owning HOST.
+   *
+   * Derived from the row's `loop::…` tags by the REAL `resolveKindHost`, not
+   * hand-written per fixture, because that is precisely what the write path
+   * does when a write carries no explicit values. A hand-maintained pair could
+   * disagree with the tags beside it and the fixture would still look right.
+   */
+  kind: string | null;
+  host: string | null;
 }
 
 /** The origin half of a fixture row. Every field independently optional. */
@@ -102,6 +124,9 @@ function row(
     origin_branch: origin.origin_branch ?? null,
     origin_commit: origin.origin_commit ?? null,
     origin_pr: origin.origin_pr ?? null,
+    // Inferred from the loop tags by the same function the write path calls, so
+    // a fixture's taxonomy can never contradict the tags rendered next to it.
+    ...resolveKindHost({ tags }),
   };
 }
 
@@ -115,8 +140,8 @@ export const MEMORY_ROWS: MemoryRow[] = [
   row('m02', 'global', 'aw-lessons::npx-over-pnpm-exec', 'Run browser-mode Vitest via npx — pnpm exec keeps the Playwright child stdio open and the run never returns.', ['loop::aw-lessons'], 30, 'aw', {}, 'tool-failure'),
   row('m03', 'repo::mthines/lorekit', 'edge-parity::mirror-pattern', 'Pure logic that both mcp-core and the Deno edge need lives once in mcp-core and is mirrored self-contained; a spec guards drift.', ['architecture'], 26, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'main' }, 'retrospective'),
   row('m04', 'repo::mthines/lorekit', 'scope-format::double-colon', 'The canonical scope separator is :: — a single colon is a 400. All segments lowercased.', ['scope', 'validation'], 50, 'claude'),
-  row('m05', 'repo::mthines/lorekit', 'audit::one-vocabulary', 'AUDIT_ACTIONS is the single list; the SQL CHECK, the web copy, and the edge mirror are all asserted equal by a drift spec.', ['audit'], 74, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'main', origin_pr: 311 }, 'review-comment'),
-  row('m06', 'repo::mthines/lorekit', 'rls::service-role-user-filter', 'api_key auth uses the service-role client — every query MUST .eq(user_id, userId) or it leaks across tenants.', ['security', 'rls'], 98, 'claude', {}, 'review-comment'),
+  row('m05', 'repo::mthines/lorekit', 'audit::one-vocabulary', 'AUDIT_ACTIONS is the single list; the SQL CHECK, the web copy, and the edge mirror are all asserted equal by a drift spec.', ['audit', 'loop::reviewer-comment-relevance'], 74, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'main', origin_pr: 311 }, 'review-comment'),
+  row('m06', 'repo::mthines/lorekit', 'rls::service-role-user-filter', 'api_key auth uses the service-role client — every query MUST .eq(user_id, userId) or it leaks across tenants.', ['security', 'rls', 'loop::review-outcomes'], 98, 'claude', {}, 'review-comment'),
   row('m07', 'branch::mthines/lorekit::feat/storybook', 'msw::wildcard-origin', 'Match the edge function with a */functions/v1 wildcard so the handler survives an unset NEXT_PUBLIC_SUPABASE_URL.', ['storybook', 'msw'], 5 * 24, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'feat/storybook', origin_pr: 311 }, 'tool-failure'),
   row('m08', 'branch::mthines/lorekit::feat/storybook', 'snapshot::freeze-the-clock', 'Freeze Date before rendering any time-relative UI, or "3d ago" and trend chips flake the baseline overnight.', ['storybook', 'flake'], 5 * 24 + 6, 'claude', { origin_repo: 'mthines/lorekit', origin_branch: 'feat/storybook' }, 'tool-failure'),
   row('m09', 'project::agent-skills', 'routing::tier-detection', 'When in doubt, route Full — an over-planned Micro wastes compute, but an under-planned architectural task ships wrong code.', ['aw', 'routing'], 10 * 24, 'aw', { origin_repo: 'mthines/agent-skills', origin_branch: 'main' }, 'retrospective'),
@@ -147,7 +172,8 @@ function activeRows(rows: MemoryRow[], archived: boolean): MemoryRow[] {
   return rows.filter((r) => (archived ? r.archived_at !== null : r.archived_at === null));
 }
 
-/** `GET /memories/scopes` — one row per scope, sorted by scope. */
+/** `GET /memories/scopes` — one row per scope, count desc then scope asc
+ *  (mirrors `lorekit_memory_scopes` since 00065, the same order as `/tags`). */
 function scopesFrom(rows: MemoryRow[]) {
   const byScope = new Map<string, { count: number; last: string }>();
   for (const r of activeRows(rows, false)) {
@@ -156,7 +182,7 @@ function scopesFrom(rows: MemoryRow[]) {
     else byScope.set(r.scope, { count: prev.count + 1, last: r.created_at > prev.last ? r.created_at : prev.last });
   }
   return Array.from(byScope.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a, av], [b, bv]) => bv.count - av.count || a.localeCompare(b))
     .map(([scope, { count, last }]) => ({ scope, count, last_activity: last }));
 }
 
@@ -192,9 +218,13 @@ function facetsFrom(rows: MemoryRow[], archived: boolean) {
     for (const tag of r.tags) bump('tag', tag);
     bump('source_agent', r.source_agent);
     bump('trigger', r.trigger);
+    bump('kind', r.kind);
+    bump('host', r.host);
     bump('origin_repo', r.origin_repo);
     bump('origin_branch', r.origin_branch);
     bump('origin_pr', r.origin_pr);
+    // Owner (migration 00064): `personal` for org-less rows, else the org slug.
+    bump('owner', r.org ? r.org.slug : 'personal');
   }
 
   return Array.from(counts.entries())
@@ -226,7 +256,7 @@ function activityFrom(rows: MemoryRow[], unit: 'hour' | 'day') {
 }
 
 /**
- * `GET /memories/read-activity` — records read per UTC hour/day.
+ * `GET /memories/read-activity` — records read per UTC hour/day AND per scope.
  *
  * Reads live in `usage_events`, which the fixtures do not model, so this is the
  * one handler that cannot derive its response from `MEMORY_ROWS`. It instead
@@ -234,19 +264,30 @@ function activityFrom(rows: MemoryRow[], unit: 'hour' | 'day') {
  * a memory that gets read back, so each fixture contributes a small, fixed
  * number of records in its own bucket. Fixed, not random — the same
  * determinism rule the timestamps follow (see the module docblock).
+ *
+ * Cells are `(bucket, scope)`, the shape `activityFrom` already emits and the
+ * one `ReadActivityBucketSchema` requires since migration 00058. `scope` is
+ * nullable on the wire (a read the server could not attribute), but a
+ * synthesised read always knows which memory it came from, so this fixture
+ * never emits null — the null case belongs in a schema/unit test, not in a
+ * story's baseline data.
  */
 function readActivityFrom(rows: MemoryRow[], unit: 'hour' | 'day') {
-  const buckets = new Map<string, number>();
+  const cells = new Map<string, { bucket: string; scope: string; count: number }>();
   for (const [i, r] of activeRows(rows, false).entries()) {
     const bucket = unit === 'hour'
       ? `${r.created_at.slice(0, 13)}:00:00.000Z`
       : `${r.created_at.slice(0, 10)}T00:00:00.000Z`;
     // 3, 5, 7, 3, … records — a stable spread, never a clock or a PRNG.
-    buckets.set(bucket, (buckets.get(bucket) ?? 0) + 3 + ((i * 2) % 6));
+    const records = 3 + ((i * 2) % 6);
+    const cellKey = `${bucket}|${r.scope}`;
+    const prev = cells.get(cellKey);
+    if (prev) prev.count += records;
+    else cells.set(cellKey, { bucket, scope: r.scope, count: records });
   }
-  return Array.from(buckets.entries())
-    .map(([bucket, count]) => ({ bucket, count }))
-    .sort((a, b) => a.bucket.localeCompare(b.bucket));
+  return Array.from(cells.values()).sort(
+    (a, b) => a.bucket.localeCompare(b.bucket) || a.scope.localeCompare(b.scope),
+  );
 }
 
 /**
@@ -265,13 +306,20 @@ function readActivityFrom(rows: MemoryRow[], unit: 'hour' | 'day') {
  * Keep the semantics here roughly faithful so stories stay realistic, but never
  * treat this as the check.
  */
-function listFrom(rows: MemoryRow[], url: URL) {
+/**
+ * The shared row predicate — scope + label + the scalar dimensions — that both
+ * `GET /memories` and (since migration 00063) `GET /memories/activity` apply. It
+ * lives here once so the stat header's numbers narrow the same way the list does
+ * in a story. Any param that is absent is a no-op, so the activity handler — which
+ * sends `scope` + the dimension filters but never `key`/`q`/`archived` — reuses it
+ * unchanged.
+ */
+function filterRows(rows: MemoryRow[], url: URL): MemoryRow[] {
   const scope = url.searchParams.get('scope');
   const key = url.searchParams.get('key');
   const q = url.searchParams.get('q')?.toLowerCase();
   const tags = url.searchParams.get('tags')?.split(',').filter(Boolean) ?? [];
   const tagsMode = url.searchParams.get('tags_mode') ?? 'any';
-  const limit = Number(url.searchParams.get('limit') ?? 50);
 
   /** One scalar dimension: `in` (default) or `nin`, both over the raw column. */
   const scalar = (param: string, read: (r: MemoryRow) => string | number | null) => {
@@ -285,7 +333,7 @@ function listFrom(rows: MemoryRow[], url: URL) {
     };
   };
 
-  const matched = activeRows(rows, url.searchParams.get('archived') === 'true')
+  return activeRows(rows, url.searchParams.get('archived') === 'true')
     .filter((r) => (scope ? r.scope === scope : true))
     .filter((r) => (key ? r.key === key : true))
     .filter((r) => (q ? `${r.key} ${r.value}`.toLowerCase().includes(q) : true))
@@ -298,11 +346,25 @@ function listFrom(rows: MemoryRow[], url: URL) {
           : tags.some((t) => r.tags.includes(t))))
     .filter(scalar('source_agent', (r) => r.source_agent))
     .filter(scalar('trigger', (r) => r.trigger))
+    .filter(scalar('kind', (r) => r.kind))
+    .filter(scalar('host', (r) => r.host))
     .filter(scalar('origin_repo', (r) => r.origin_repo))
     .filter(scalar('origin_branch', (r) => r.origin_branch))
     .filter(scalar('origin_pr', (r) => r.origin_pr))
-    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    // Owner (00064) — the computed identity `personal` / org slug, not a raw
+    // column, so it cannot reuse `scalar`. `in` (default) or `nin`.
+    .filter((r) => {
+      const values = url.searchParams.get('owner')?.split(',').filter(Boolean) ?? [];
+      if (values.length === 0) return true;
+      const identity = r.org ? r.org.slug : 'personal';
+      const hit = values.includes(identity);
+      return url.searchParams.get('owner_mode') === 'nin' ? !hit : hit;
+    });
+}
 
+function listFrom(rows: MemoryRow[], url: URL) {
+  const limit = Number(url.searchParams.get('limit') ?? 50);
+  const matched = filterRows(rows, url).sort((a, b) => b.created_at.localeCompare(a.created_at));
   // No cursor emulation: every story fits in one page, and a fake cursor would
   // encode a pagination contract the fixtures do not actually implement.
   return { entries: matched.slice(0, limit), hasMore: false, nextCursor: null };
@@ -338,17 +400,62 @@ export function memoryHandlers(rows: MemoryRow[] = MEMORY_ROWS) {
         bucket,
         since: url.searchParams.get('since') ?? FROZEN_NOW,
         until: url.searchParams.get('until') ?? FROZEN_NOW,
-        buckets: activityFrom(rows, bucket),
+        // Scope + dimension filters narrow the aggregate server-side (00063), so
+        // the mock applies the SAME predicate the list uses — else a scoped header
+        // would show the account total.
+        buckets: activityFrom(filterRows(rows, url), bucket),
       });
     }),
     http.get('*/functions/v1/memories/read-activity', ({ request }) => {
       const url = new URL(request.url);
       const bucket = url.searchParams.get('bucket') === 'hour' ? 'hour' : 'day';
+      // `?scope=` is an EXACT match on the real endpoint (`ue.scope = p_scope`,
+      // 00058), never a prefix or a wildcard — the unfiltered call is the one
+      // that also returns the unattributable NULL-scope remainder. Honour it
+      // here or a filtered story renders every scope and silently looks like
+      // the filter does nothing.
+      const scope = url.searchParams.get('scope');
+      const buckets = readActivityFrom(rows, bucket)
+        .filter((cell) => scope === null || cell.scope === scope);
       return HttpResponse.json({
         bucket,
         since: url.searchParams.get('since') ?? FROZEN_NOW,
         until: url.searchParams.get('until') ?? FROZEN_NOW,
-        buckets: readActivityFrom(rows, bucket),
+        buckets,
+      });
+    }),
+    http.get('*/functions/v1/memories/usage', ({ request }) => {
+      const url = new URL(request.url);
+      // The Explorer's stats header reads exactly one figure from this
+      // endpoint: `summary.expired`. Everything else is filled in to the real
+      // response's SHAPE rather than left out, so a consumer that starts
+      // reading another field gets a plausible number instead of `undefined`.
+      //
+      // Deliberately NOT derived from the fixture rows and deliberately NOT
+      // scope-aware: expiry is recorded per purge run, the purge spans scopes,
+      // and the real endpoint takes no `scope` at all. A mock that filtered by
+      // scope would let a story "prove" a per-scope expiry figure the API
+      // cannot produce.
+      const expired = EXPIRED_RECORDS;
+      return HttpResponse.json({
+        range: {
+          since: url.searchParams.get('since') ?? null,
+          until: url.searchParams.get('until') ?? null,
+        },
+        correlation_id: url.searchParams.get('correlation_id'),
+        summary: {
+          total_events: 128,
+          reads: 96,
+          writes: 24,
+          other: 8,
+          records_read: 1_284,
+          record_count: 1_284,
+          event_count: 128,
+          expired,
+          by_outcome: { ok: 126, error: 2 },
+        },
+        by_tool: [],
+        by_scope_type: [],
       });
     }),
     http.get('*/functions/v1/memories', ({ request }) =>

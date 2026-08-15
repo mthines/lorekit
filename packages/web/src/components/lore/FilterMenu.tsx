@@ -82,6 +82,7 @@ import { createPortal } from 'react-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import {
   Bot,
+  Boxes,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -89,7 +90,9 @@ import {
   GitPullRequest,
   ListFilter,
   Search,
+  Server,
   Tag,
+  Users,
   Zap,
   FolderGit2,
   type LucideIcon,
@@ -99,7 +102,7 @@ import {
   MAX_LIST_HEIGHT,
   anchoredPosition,
   type AnchoredPosition,
-} from '@/lib/filter-menu-position';
+} from '@/lib/anchored-position';
 import {
   FILTER_FIELDS,
   facetOptions,
@@ -116,6 +119,13 @@ import {
 /** One icon per dimension, so a row is recognisable before it is read. */
 export const FIELD_ICONS: Record<FilterField, LucideIcon> = {
   label: Tag,
+  // Kind is a bucket TYPE (lesson / bus / signal) — boxes, not a tag.
+  kind: Boxes,
+  // Host is the skill or agent that owns the bucket; Bot is already Agent, so
+  // the owner reads as the thing the agent runs on rather than a second robot.
+  host: Server,
+  // Ownership — personal vs a shared org, i.e. WHO the lore belongs to.
+  owner: Users,
   agent: Bot,
   trigger: Zap,
   repo: FolderGit2,

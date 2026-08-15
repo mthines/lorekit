@@ -30,8 +30,13 @@ export const DEFAULT_APP_BASE = 'https://lorekit.io';
 export const LORE_PARAM_DEFAULTS = {
   scope: null, // string | null — null means "all scopes"
   q: '', // string search query
-  range: null, // { from, to } | null (DateRange, "YYYY-MM-DD")
-  owner: 'all', // 'all' | 'personal' | { orgId }
+  // { from, to } | { preset } | null. The CLI emits only the { from, to } arm
+  // (day strings via --range/--from/--to), which the Explorer still reads as
+  // whole UTC days with an INCLUSIVE end day — unchanged. The web model also
+  // accepts ISO instants in that arm and a relative { preset: '7d' } arm
+  // (packages/web/src/lib/time-range.ts); neither has a CLI flag yet.
+  range: null,
+  owner: 'all', // 'all' | 'personal' | '<org-slug>' — folds into an owner filter (00064)
   // Filter[] | null — the Explorer's multi-dimension filter bar (label / agent /
   // trigger / repo / branch / pr). `null`, NOT `[]`, is the default on purpose:
   // the app has to tell "the param is absent" from "the bar is explicitly
@@ -41,16 +46,22 @@ export const LORE_PARAM_DEFAULTS = {
   // "unfiltered".
   filters: null,
   tags: [], // string[] — legacy label filter (AND across labels); [] means "no filter". Still READ by the app, superseded by `filters`
-  view: 'scope', // 'scope' | 'time'
-  archived: false, // boolean
+  // 'active' | 'archived' | 'expiring' | null — the Explorer's Status control.
+  // `null`, NOT 'active', is the default for `filters`' reason: the app has to
+  // tell "absent" from an explicit choice, because an absent `status` falls back
+  // to the legacy `archived` flag while an explicit `status=active` overrides it.
+  status: null,
+  // boolean — SUPERSEDED by `status`, still READ by the app so existing links
+  // (and `lorekit link --archived`) keep resolving to the archived view.
+  archived: false,
   lesson: null, // { scope, key } | null — opens the detail sheet
 };
 
 // A stable, readable param order (also makes URLs deterministic for tests).
 // Mirrors the `useUrlState` call order in `LoreExplorer.tsx` (+ the `lesson`
-// param last), so `filters` and `tags` sit between `owner` and `view`. `scope`
+// param last), so `filters` and `tags` sit between `owner` and `status`. `scope`
 // precedes `lesson` so a lesson link reads `?scope=…&lesson=…`.
-const PARAM_ORDER = ['scope', 'q', 'range', 'owner', 'filters', 'tags', 'view', 'archived', 'lesson'];
+const PARAM_ORDER = ['scope', 'q', 'range', 'owner', 'filters', 'tags', 'status', 'archived', 'lesson'];
 
 // Strip trailing slashes from a base URL, falling back to the default when the
 // input is empty/absent. Pure.
@@ -136,18 +147,18 @@ export { resolveScopeArg, resolveScopeKeyArgs, isScopeString, scopeIssue } from 
 
 // ── Flag → param coercion (pure, shared by the `link` command) ────────────────
 
-// Coerce the `--owner` flag to an `OwnerFilter`: 'all' (default) / 'personal' /
-// any other non-empty string → `{ orgId }`. Pure.
+// Coerce the `--owner` flag to the legacy `owner` param value: `personal`, an
+// org SLUG, or `all` (default → omitted). Returns the STRING the app folds into
+// an owner filter (`filtersFromLegacyOwner`) when the `filters` param is absent
+// — which is why the CLI keeps writing the legacy param rather than `filters`:
+// `owner` and the legacy `tags` param fold together, so `--owner acme --tags
+// perf` yields BOTH, whereas a `filters` param would make the app ignore the
+// legacy tags. NOT the old `{orgId}` OBJECT: the owner facet keys on the SLUG,
+// and the app cannot resolve a uuid to a slug in this pure path, so the object
+// form silently dropped the filter it named (00064). A slug lands verbatim. Pure.
 export function parseOwnerArg(owner) {
-  if (typeof owner !== 'string' || !owner || owner === 'all') return 'all';
-  if (owner === 'personal') return 'personal';
-  return { orgId: owner };
-}
-
-// Coerce the `--view` flag to a `ViewMode`: only 'time' is non-default; anything
-// else (incl. absent/invalid) → 'scope'. Pure.
-export function parseViewArg(view) {
-  return view === 'time' ? 'time' : 'scope';
+  if (typeof owner !== 'string' || !owner) return 'all';
+  return owner;
 }
 
 // Coerce the `--tags` flag to a normalized `string[]` label filter, mirroring the

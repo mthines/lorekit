@@ -4,7 +4,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveControl, normalizeMode, loadControl, resolveDenies } from '../src/control.mjs';
+import {
+  resolveControl, normalizeMode, loadControl, resolveDenies,
+  normalizeUserPromptMode, USER_PROMPT_MODES,
+  normalizeSessionStartMode, DEFAULT_SESSION_START_MAX_CHARS,
+  MIN_SESSION_START_MAX_CHARS, MAX_SESSION_START_MAX_CHARS,
+  DEFAULT_SESSION_START_LOOP_CAP, MAX_SESSION_START_LOOP_CAP, normalizeSessionStartLoopCap,
+  HOOK_INSTRUCTION_EVENTS,
+} from '../src/control.mjs';
+import { CLAUDE_HOOK_EVENTS } from '../src/config.mjs';
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'lk-ctl-'));
@@ -12,6 +20,29 @@ function tmpDir() {
 
 const USABLE = { usable: true, endpoint: 'https://ref.supabase.co/functions/v1/mcp', token: 'lk_rw_x' };
 const NO_CONN = { usable: false, endpoint: null, token: null };
+
+test('hooks.instructions resolves every lifecycle event, UserPromptSubmit included', () => {
+  // The resolver used to iterate a private three-event literal, so a
+  // `UserPromptSubmit` instruction was accepted in config and silently dropped.
+  // Assert PARITY with CLAUDE_HOOK_EVENTS rather than re-pinning the roster: a
+  // hardcoded copy here is a third hand-maintained list that can drift from the
+  // wiring the same way the original literal did — this catches the next event
+  // that lands in only one of them (the mirror guard frameworks.test.mjs has).
+  assert.deepEqual([...HOOK_INSTRUCTION_EVENTS].sort(), [...CLAUDE_HOOK_EVENTS].sort());
+  const r = resolveControl({
+    connection: NO_CONN,
+    repoConfig: {
+      'hooks.instructions': {
+        SessionStart: 'a',
+        UserPromptSubmit: 'b',
+        PostToolUseFailure: 'c',
+        Stop: 'd',
+      },
+    },
+  });
+  assert.deepEqual(Object.keys(r.hooksInstructions), HOOK_INSTRUCTION_EVENTS);
+  assert.equal(r.hooksInstructions.UserPromptSubmit, 'b');
+});
 
 test('normalizeMode accepts friendly spellings incl. persistent-memory backends', () => {
   assert.equal(normalizeMode('REMOTE'), 'remote');
@@ -391,4 +422,183 @@ test('hooks.stop: user fallback when repo is unset; invalid falls through to def
     resolveControl({ repoConfig: { 'hooks.stop': 'nonsense' }, connection: NO_CONN }).hooksStop,
     'friction',
   );
+});
+
+// ── hooks.userPrompt — the per-turn switch, mirroring the hooks.stop trio ─────
+//
+// Default-ON and fires every turn, so the resolution matters more here than for
+// the other keys: a regression that loses an `off` is an injection on every
+// prompt the user explicitly declined.
+
+test('hooks.userPrompt: defaults to on when unset', () => {
+  const r = resolveControl({ connection: NO_CONN });
+  assert.equal(r.hooksUserPrompt, 'on');
+});
+
+test('hooks.userPrompt: repo wins over user, friendly spellings normalized', () => {
+  const r = resolveControl({
+    repoConfig: { 'hooks.userPrompt': 'off' },
+    userConfig: { 'hooks.userPrompt': 'on' },
+    connection: NO_CONN,
+  });
+  assert.equal(r.hooksUserPrompt, 'off', 'a repo turning it off is not overridden by a personal on');
+});
+
+test('hooks.userPrompt: user fallback when repo is unset; invalid falls through', () => {
+  assert.equal(
+    resolveControl({ userConfig: { 'hooks.userPrompt': 'never' }, connection: NO_CONN }).hooksUserPrompt,
+    'off',
+  );
+  // An unrecognised repo value falls through to the USER layer (not straight to
+  // the default) — the `hooks.stop` rule, deliberately unlike
+  // `hooks.sessionStart.maxChars`, where a repo that declared a budget owns it.
+  assert.equal(
+    resolveControl({
+      repoConfig: { 'hooks.userPrompt': 'nonsense' },
+      userConfig: { 'hooks.userPrompt': 'off' },
+      connection: NO_CONN,
+    }).hooksUserPrompt,
+    'off',
+  );
+  assert.equal(
+    resolveControl({ repoConfig: { 'hooks.userPrompt': 'nonsense' }, connection: NO_CONN }).hooksUserPrompt,
+    'on',
+    'and finally to the default when no layer says anything usable',
+  );
+});
+
+test('normalizeUserPromptMode accepts the forgiving vocabulary, and only it', () => {
+  for (const v of ['on', 'ON', ' true ', 'enabled', 'always', 'yes', true]) {
+    assert.equal(normalizeUserPromptMode(v), 'on', `${JSON.stringify(v)} reads as on`);
+  }
+  for (const v of ['off', 'OFF', ' none ', 'false', 'disabled', 'never', 'no', false]) {
+    assert.equal(normalizeUserPromptMode(v), 'off', `${JSON.stringify(v)} reads as off`);
+  }
+  // null, not a guess: an unrecognised value must fall through a layer rather
+  // than silently picking a side of a switch that fires every turn.
+  for (const v of ['maybe', '', 'onn', 0, 1, null, undefined, {}]) {
+    assert.equal(normalizeUserPromptMode(v), null, `${JSON.stringify(v)} is not a verdict`);
+  }
+  assert.deepEqual(USER_PROMPT_MODES, ['on', 'off']);
+});
+
+// ── hooks.sessionStart — the shape and the budget of the injected block ───────
+
+test('control hooks.sessionStart: defaults to hybrid at the default budget', () => {
+  const r = resolveControl({ connection: NO_CONN });
+  assert.equal(r.hooksSessionStart, 'hybrid');
+  assert.equal(r.hooksSessionStartMaxChars, DEFAULT_SESSION_START_MAX_CHARS);
+});
+
+test('control hooks.sessionStart: repo wins over user, friendly spellings normalized', () => {
+  const r = resolveControl({
+    repoConfig: { 'hooks.sessionStart': 'MAP' },
+    userConfig: { 'hooks.sessionStart': 'index' },
+    connection: NO_CONN,
+  });
+  assert.equal(r.hooksSessionStart, 'map');
+  assert.equal(normalizeSessionStartMode('toc'), 'map');
+  assert.equal(normalizeSessionStartMode('list'), 'index');
+  assert.equal(normalizeSessionStartMode('both'), 'hybrid');
+  assert.equal(normalizeSessionStartMode('nonsense'), null);
+});
+
+test('control hooks.sessionStart: user fallback; an invalid mode degrades to hybrid', () => {
+  assert.equal(
+    resolveControl({ userConfig: { 'hooks.sessionStart': 'map' }, connection: NO_CONN }).hooksSessionStart,
+    'map',
+  );
+  // A mistyped shape must never blank the injection.
+  assert.equal(
+    resolveControl({ repoConfig: { 'hooks.sessionStart': 'nonsense' }, connection: NO_CONN }).hooksSessionStart,
+    'hybrid',
+  );
+});
+
+test('control hooks.sessionStart: maxChars is clamped, not rejected', () => {
+  const at = (cfg) => resolveControl({ repoConfig: cfg, connection: NO_CONN }).hooksSessionStartMaxChars;
+  assert.equal(at({ 'hooks.sessionStart.maxChars': 800 }), 800);
+  assert.equal(at({ 'hooks.sessionStart.maxChars': '800' }), 800, 'hand-edited JSON strings are read');
+  assert.equal(at({ 'hooks.sessionStart.maxChars': 12 }), MIN_SESSION_START_MAX_CHARS, 'a tiny budget clamps up');
+  assert.equal(at({ 'hooks.sessionStart.maxChars': 1500000 }), MAX_SESSION_START_MAX_CHARS, 'a typo clamps down');
+  // Unusable values fall back to the default rather than throwing — every read
+  // command calls this resolver, including ones that never inject anything.
+  for (const bad of [null, undefined, '', 'lots', {}, []]) {
+    assert.equal(at({ 'hooks.sessionStart.maxChars': bad }), DEFAULT_SESSION_START_MAX_CHARS, `${JSON.stringify(bad)}`);
+  }
+});
+
+test('control hooks.sessionStart.loopCap: defaults to 2, clamps, and honours 0', () => {
+  const at = (cfg) => resolveControl({ repoConfig: cfg, connection: NO_CONN }).hooksSessionStartLoopCap;
+  assert.equal(resolveControl({ connection: NO_CONN }).hooksSessionStartLoopCap, DEFAULT_SESSION_START_LOOP_CAP);
+  assert.equal(at({ 'hooks.sessionStart.loopCap': 5 }), 5);
+  assert.equal(at({ 'hooks.sessionStart.loopCap': '3' }), 3, 'hand-edited JSON strings are read');
+  assert.equal(at({ 'hooks.sessionStart.loopCap': 0 }), 0, '0 is a real value — exclude loop buckets');
+  assert.equal(at({ 'hooks.sessionStart.loopCap': -4 }), 0, 'a negative clamps up to 0');
+  assert.equal(at({ 'hooks.sessionStart.loopCap': 9999 }), MAX_SESSION_START_LOOP_CAP, 'a typo clamps down');
+  // Unusable values fall back to the default (the resolver runs on every read).
+  for (const bad of [null, undefined, '', 'many', {}, []]) {
+    assert.equal(at({ 'hooks.sessionStart.loopCap': bad }), DEFAULT_SESSION_START_LOOP_CAP, `${JSON.stringify(bad)}`);
+  }
+  // The layer is chosen before the value is parsed (same rule as maxChars): a
+  // declared-but-garbage repo cap beats the user layer and degrades to default.
+  assert.equal(
+    resolveControl({
+      repoConfig: { 'hooks.sessionStart.loopCap': 'lots' },
+      userConfig: { 'hooks.sessionStart.loopCap': 5 },
+      connection: NO_CONN,
+    }).hooksSessionStartLoopCap,
+    DEFAULT_SESSION_START_LOOP_CAP,
+  );
+  // Pure normaliser edges.
+  assert.equal(normalizeSessionStartLoopCap('x'), null);
+  assert.equal(normalizeSessionStartLoopCap(2.6), 3, 'rounds');
+});
+
+test('control hooks.sessionStart.branchHint: defaults on, on/off vocabulary, repo wins', () => {
+  const at = (cfg) => resolveControl({ ...cfg, connection: NO_CONN }).hooksSessionStartBranchHint;
+  assert.equal(resolveControl({ connection: NO_CONN }).hooksSessionStartBranchHint, 'on');
+  assert.equal(at({ repoConfig: { 'hooks.sessionStart.branchHint': false } }), 'off', 'a boolean is read');
+  assert.equal(at({ repoConfig: { 'hooks.sessionStart.branchHint': 'disabled' } }), 'off');
+  assert.equal(at({ userConfig: { 'hooks.sessionStart.branchHint': 'off' } }), 'off', 'user layer applies');
+  assert.equal(
+    at({
+      repoConfig: { 'hooks.sessionStart.branchHint': 'on' },
+      userConfig: { 'hooks.sessionStart.branchHint': 'off' },
+    }),
+    'on',
+    'repo layer wins',
+  );
+  // A nonsense value falls through to the default rather than blanking anything.
+  assert.equal(at({ repoConfig: { 'hooks.sessionStart.branchHint': 'maybe' } }), 'on');
+  // Unlike loopCap (declaresScalar layer-lock), branchHint follows the
+  // hooks.userPrompt vocabulary: a declared-but-unparseable REPO value falls
+  // THROUGH to a valid user value rather than owning the layer.
+  assert.equal(
+    at({
+      repoConfig: { 'hooks.sessionStart.branchHint': 'maybe' },
+      userConfig: { 'hooks.sessionStart.branchHint': 'off' },
+    }),
+    'off',
+    'a garbage repo value yields to a valid user value',
+  );
+});
+
+test('control hooks.sessionStart: a declared-but-garbage repo budget still beats the user layer', () => {
+  // The `ttl.default` rule. Choosing the layer on the PARSED value would let a
+  // typo'd project policy silently become a per-machine one, so two developers
+  // on the same commit would get different blocks and neither could tell why.
+  const r = resolveControl({
+    repoConfig: { 'hooks.sessionStart.maxChars': 'nine hundred' },
+    userConfig: { 'hooks.sessionStart.maxChars': 400 },
+    connection: NO_CONN,
+  });
+  assert.equal(r.hooksSessionStartMaxChars, DEFAULT_SESSION_START_MAX_CHARS);
+
+  // An ABSENT repo key does fall through — only a declared one claims it.
+  const fellThrough = resolveControl({
+    userConfig: { 'hooks.sessionStart.maxChars': 400 },
+    connection: NO_CONN,
+  });
+  assert.equal(fellThrough.hooksSessionStartMaxChars, 400);
 });

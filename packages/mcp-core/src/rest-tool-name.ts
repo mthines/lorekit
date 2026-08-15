@@ -55,6 +55,11 @@ export const REST_TOOL_NAMES: Readonly<Record<string, string>> = {
   'memories GET /facets': 'memory.facets',
   'memories GET /activity': 'memory.activity',
   'memories GET /read-activity': 'memory.read-activity',
+  // The ranked shortlist. Its own tool name rather than folding into
+  // `memory.search`: the two answer different questions (what matches vs what
+  // is worth reading) and collapsing them would make it impossible to tell
+  // whether agents actually reach for the ranking.
+  'memories GET /relevant': 'memory.relevant',
   'memories GET /:id': 'memory.read',
   'memories PATCH /:id': 'memory.write',
   'memories POST /:id/restore': 'memory.restore',

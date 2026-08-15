@@ -1,0 +1,22 @@
+{
+  "_README": "BOOTSTRAP PLACEHOLDER — do NOT treat as a real baseline. These are the only two outcome/relevance-tagged rows that already exist in-repo, lifted (metadata only) from packages/web/src/mocks/memories.ts (rows m05 and m06). They exist so the retrieval-relevance harness has SOMETHING to score against before the hosted store has been mined. The numbers this seed produces MUST NOT be used to gate downstream PRs (e.g. A1/A4). Run `node bin/mine-ground-truth.mjs --confirm` against the hosted store to produce the real fixtures/ground-truth.real.json snapshot; that run — not this file — is what turns the placeholder baseline into a real one. seenCount is 0 here because the mock rows carry no seen_count (it lives only in the hosted projection), which is itself a tell that this is a placeholder and not a mined baseline.",
+  "source": "bootstrap-seed",
+  "origin": "packages/web/src/mocks/memories.ts (rows m05, m06)",
+  "mustNotGate": "MUST NOT be used to gate downstream PRs (A1/A4) until mine-ground-truth has run against hosted and fixtures/ground-truth.real.json is committed.",
+  "entries": [
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "audit::one-vocabulary",
+      "tags": ["audit", "loop::reviewer-comment-relevance"],
+      "origin_pr": 311,
+      "seenCount": 0
+    },
+    {
+      "scope": "repo::mthines/lorekit",
+      "key": "rls::service-role-user-filter",
+      "tags": ["security", "rls", "loop::review-outcomes"],
+      "origin_pr": null,
+      "seenCount": 0
+    }
+  ]
+}

@@ -16,6 +16,7 @@ import {
   CLAUDE_HOOK_EVENTS,
   hookEventsForMode,
   hookModeFromEvents,
+  missingHookEvents,
   installedHookEvents,
   upsertClaudeHooks,
   isMcpJsonGitIgnored,
@@ -219,6 +220,21 @@ test('hookModeFromEvents is the inverse, and reports an unrecognised set as cust
   assert.equal(hookModeFromEvents([...CLAUDE_HOOK_EVENTS].reverse()), 'all');
 });
 
+test('missingHookEvents names the gap a legacy wiring still reports as its mode', () => {
+  // The whole point: hookModeFromEvents says `all` for the pre-UserPromptSubmit
+  // triple, so the mode alone cannot tell a current install from a stale one.
+  const legacy = ['SessionStart', 'PostToolUseFailure', 'Stop'];
+  assert.equal(hookModeFromEvents(legacy), 'all', 'precondition: it still reads as all');
+  assert.deepEqual(missingHookEvents(legacy), ['UserPromptSubmit']);
+
+  assert.deepEqual(missingHookEvents(CLAUDE_HOOK_EVENTS), [], 'a current install has no gap');
+  assert.deepEqual(missingHookEvents(['SessionStart']), [], 'read-only is complete for its mode');
+  assert.deepEqual(missingHookEvents([]), [], 'none is complete for its mode');
+  // custom means a human hand-wired it; there is no upgrade to advertise.
+  assert.deepEqual(missingHookEvents(['Stop']), []);
+  assert.deepEqual(missingHookEvents(undefined), []);
+});
+
 test('installedHookEvents reads only lorekit entries, and never throws', () => {
   const root = tmpRoot();
   assert.deepEqual(installedHookEvents(root, 'project'), [], 'absent settings file → none');
@@ -249,7 +265,9 @@ test('upsertClaudeHooks prunes lorekit entries for events outside the selected s
   // Downgrading must REMOVE, not just stop adding — otherwise the nudges keep
   // firing after the user asked for read-only.
   const result = upsertClaudeHooks(root, 'project', 'lorekit', hookEventsForMode('read-only'));
-  assert.equal(result.removed, 2);
+  // DERIVED, never a literal: an assertion that restates the size of
+  // CLAUDE_HOOK_EVENTS goes vacuous the moment a lifecycle event is added.
+  assert.equal(result.removed, CLAUDE_HOOK_EVENTS.length - hookEventsForMode('read-only').length);
   assert.deepEqual(installedHookEvents(root, 'project'), ['SessionStart']);
 });
 
@@ -343,7 +361,14 @@ test('a version-pinned or extension-suffixed runner is recognised as ours, not a
   });
 
   const result = upsertClaudeHooks(root, 'project', 'lorekit');
-  assert.equal(result.added, 1, 'only PostToolUseFailure is genuinely new');
+  // Two of the four events were already wired (in forms the matcher has to
+  // recognise), so only the remainder is genuinely new. Derived so adding a
+  // lifecycle event does not silently make this assertion about nothing.
+  assert.equal(
+    result.added,
+    CLAUDE_HOOK_EVENTS.length - 2,
+    'only the events not already wired are added',
+  );
   assert.equal(lorekitCommandsFor(root, 'SessionStart').length, 1, 'pinned runner updated in place');
   assert.equal(lorekitCommandsFor(root, 'Stop').length, 1, 'windows runner updated in place');
 });
@@ -388,6 +413,39 @@ test('resolveProjectConnection: a tokenless web .mcp.json does not shadow the gl
     const conn = resolveProjectConnection(root, splitEndpoint);
     assert.equal(conn.token, 'lk_rw_global', 'global token used, not shadowed by the tokenless web entry');
     assert.equal(conn.endpoint, WEB_ENDPOINT);
+  } finally {
+    for (const [k, v] of [['HOME', prev.HOME], ['USERPROFILE', prev.USERPROFILE], ['LOREKIT_TOKEN', prev.TOK]]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});
+
+test('resolveProjectConnection: the winning token brings its own endpoint, not the closer tokenless one', () => {
+  // A tokenless project source and a token-bearing global source with DISTINCT
+  // endpoints: the global token wins (project stored none) and MUST be paired
+  // with the global endpoint — a token authenticates one endpoint, so the closer
+  // tokenless project endpoint is not used when a later source carries a token.
+  const PROJECT_ENDPOINT = 'https://project.supabase.co/functions/v1/mcp';
+  const GLOBAL_ENDPOINT = 'https://global.supabase.co/functions/v1/mcp';
+  const home = tmpRoot();
+  const root = tmpRoot();
+  upsertWebMcpServer(root, PROJECT_ENDPOINT); // project: web form, no token
+  fs.writeFileSync(
+    path.join(home, '.claude.json'),
+    JSON.stringify({
+      mcpServers: { lorekit: { command: 'npx', args: ['-y', 'mcp-remote', `${GLOBAL_ENDPOINT}?token=lk_rw_global`] } },
+    }),
+  );
+
+  const prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, TOK: process.env.LOREKIT_TOKEN };
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  delete process.env.LOREKIT_TOKEN;
+  try {
+    const conn = resolveProjectConnection(root, splitEndpoint);
+    assert.equal(conn.token, 'lk_rw_global', 'global token wins — project stored none');
+    assert.equal(conn.endpoint, GLOBAL_ENDPOINT, 'endpoint travels with the winning token, not the closer tokenless one');
   } finally {
     for (const [k, v] of [['HOME', prev.HOME], ['USERPROFILE', prev.USERPROFILE], ['LOREKIT_TOKEN', prev.TOK]]) {
       if (v === undefined) delete process.env[k];

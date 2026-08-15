@@ -34,7 +34,16 @@ import type {
 // ── Model ────────────────────────────────────────────────────────────────────
 
 /** A filterable dimension, named for the user-facing word rather than the column. */
-export type FilterField = 'label' | 'agent' | 'trigger' | 'repo' | 'branch' | 'pr';
+export type FilterField =
+  | 'label'
+  | 'kind'
+  | 'host'
+  | 'owner'
+  | 'agent'
+  | 'trigger'
+  | 'repo'
+  | 'branch'
+  | 'pr';
 
 /**
  * How a dimension's values combine.
@@ -59,11 +68,13 @@ export interface Filter {
  * This mirrors `MemoryFacetSchema` (`@lorekit/schemas/memory`) exactly — the
  * endpoint's response is assigned to `FacetValue[]` in `queries/lore.ts`, so a
  * dimension the server can emit and this union cannot name is a type error, not
- * a silent narrowing. That is why it is WIDER than {@link FilterField}: `kind`
- * and `host` (migration 00056) are catalogued but have no `FILTER_FIELDS` row
- * yet, so their rows arrive and are ignored — `facetOptions` selects by
- * `requireField(field).facet` and {@link rootSuggestions} skips a facet no
- * descriptor maps. Giving them a filter pill is a separate change.
+ * a silent narrowing.
+ *
+ * It is now one-to-one with {@link FilterField}: `kind` and `host` (migration
+ * 00056, catalogued by 00057) were the last two facets the server emitted with
+ * no descriptor to map them, so their rows arrived and were silently ignored.
+ * They have pills now. Keep the two in step — a facet with no descriptor is not
+ * a type error, it is a dimension that quietly does nothing.
  */
 export type FacetName =
   | 'tag'
@@ -73,7 +84,10 @@ export type FacetName =
   | 'host'
   | 'origin_repo'
   | 'origin_branch'
-  | 'origin_pr';
+  | 'origin_pr'
+  // Ownership (migration 00064) — `personal` plus one value per org the caller
+  // belongs to, keyed by slug. Folded in from the old client-side owner bar.
+  | 'owner';
 
 export interface FilterFieldDescriptor {
   field: FilterField;
@@ -112,6 +126,53 @@ export const FILTER_FIELDS: readonly FilterFieldDescriptor[] = [
     facet: 'tag',
     operators: ['all', 'in', 'nin'],
     format: (v) => v,
+  },
+  {
+    // The coarsest partition of the store, so it sits high: `bus` events are
+    // transient outcome records and `signal`s are per-repo filters, and neither
+    // is what someone browsing lessons means to be reading. Its vocabulary is
+    // CLOSED (`MemoryKindSchema` — lesson / bus / signal), unlike every other
+    // dimension here, so the value list is short by construction and the search
+    // box is vestigial rather than load-bearing. That is not worth a second
+    // descriptor shape: the facet catalog still supplies the values (and their
+    // counts), so a kind nobody has written does not appear, which a hardcoded
+    // list of three would get wrong.
+    field: 'kind',
+    label: 'Kind',
+    searchPlaceholder: 'Search kinds…',
+    facet: 'kind',
+    operators: ['in', 'nin'],
+    format: (v) => v,
+  },
+  {
+    // Beside Kind because the two form the phrase the taxonomy exists for —
+    // `?kind=lesson&host=reviewer` reads "reviewer's lessons".
+    //
+    // Distinct from Agent, and deliberately not merged with it: `host` is the
+    // skill or agent that OWNS the bucket (`reviewer`, `aw`, `ci-auto-fix`),
+    // while `source_agent` is whoever WROTE the row. They usually agree and
+    // sometimes do not, which is exactly when you want to be able to ask.
+    field: 'host',
+    label: 'Host',
+    searchPlaceholder: 'Search hosts…',
+    facet: 'host',
+    operators: ['in', 'nin'],
+    format: (v) => v,
+  },
+  {
+    // Ownership — the coarse "whose lore is this" partition, so it sits beside
+    // the other identity dimensions. Its value space is CLOSED-ish: `personal`
+    // plus one value per org the caller belongs to, keyed by the org SLUG
+    // (stable across renames). This used to be a separate client-side bar; it is
+    // a server-side facet now (migration 00064), mechanically identical to the
+    // scalar dimensions. `format` renders the literal `personal` as `Personal`;
+    // an org value is shown by its slug (a follow-up can map it to the org name).
+    field: 'owner',
+    label: 'Owner',
+    searchPlaceholder: 'Search owners…',
+    facet: 'owner',
+    operators: ['in', 'nin'],
+    format: (v) => (v === 'personal' ? 'Personal' : v),
   },
   {
     field: 'agent',
@@ -237,19 +298,53 @@ export function filtersFromLegacyTags(tags: unknown): Filter[] {
 }
 
 /**
- * The bar's filters, given both URL params.
+ * Translate a legacy `?owner=` selection into an owner filter.
+ *
+ * Ownership is a server-side facet dimension now (migration 00064), keyed by the
+ * `personal` partition or an org SLUG. The legacy `?owner=` param folds into an
+ * `owner` filter — the CLI (`lorekit link --owner …`) and the accept-invite deep
+ * link write a string here (`personal` or a slug), so any string BUT `all`
+ * becomes a one-value owner filter:
+ *
+ * - `'all'` (or absent) was "no constraint", so it produces no filter.
+ * - `'personal'` / a slug string maps straight to that owner facet value.
+ * - `{ orgId }` — the pre-00064 OBJECT form — carried the org UUID, and the facet
+ *   keys on the stable SLUG, not the id; resolving one to the other needs an org
+ *   lookup this pure function has no access to, so it degrades to NO filter
+ *   rather than a wrong one. Nothing writes that form any more (the CLI and the
+ *   invite link both emit a slug), so only links shared before this change lose
+ *   the org pre-selection.
+ */
+export function filtersFromLegacyOwner(owner: unknown): Filter[] {
+  if (typeof owner !== 'string' || !owner || owner === 'all') return [];
+  return [{ field: 'owner', operator: 'in', values: [owner] }];
+}
+
+/**
+ * The bar's filters, given the `?filters=` param and the legacy shorthands.
  *
  * `rawFilters` is `null` when `?filters=` is ABSENT from the URL and an array
  * (possibly empty) when it is present. That distinction is the whole point:
- * "absent" means the user has never touched the bar, so a legacy `?tags=` link
- * may still speak for it; "present but empty" means the user emptied the bar,
- * and the legacy shorthand must NOT speak over that. Collapsing the two — the
- * bar's first shape — made the last pill on a `?tags=` link unremovable: the
- * write dropped the param, the fallback re-derived the label filter, and the ×
- * the user had just clicked did nothing.
+ * "absent" means the user has never touched the bar, so a legacy `?tags=` /
+ * `?owner=` link may still speak for it; "present but empty" means the user
+ * emptied the bar, and the legacy shorthands must NOT speak over that.
+ * Collapsing the two — the bar's first shape — made the last pill on a `?tags=`
+ * link unremovable: the write dropped the param, the fallback re-derived the
+ * filter, and the × the user had just clicked did nothing. The legacy `?owner=`
+ * param rides the same "absent only" rule, so it cannot resurrect an owner pill
+ * the user removed once the bar has been touched.
  */
-export function resolveFilters(rawFilters: unknown, legacyTags: unknown): Filter[] {
-  if (rawFilters === null || rawFilters === undefined) return filtersFromLegacyTags(legacyTags);
+export function resolveFilters(
+  rawFilters: unknown,
+  legacyTags: unknown,
+  legacyOwner: unknown = null,
+): Filter[] {
+  if (rawFilters === null || rawFilters === undefined) {
+    return normalizeFilters([
+      ...filtersFromLegacyTags(legacyTags),
+      ...filtersFromLegacyOwner(legacyOwner),
+    ]);
+  }
   return normalizeFilters(rawFilters);
 }
 
@@ -266,9 +361,13 @@ export function resolveFilters(rawFilters: unknown, legacyTags: unknown): Filter
 export function filtersParamValue(
   next: readonly Filter[],
   legacyTags: unknown,
+  legacyOwner: unknown = null,
 ): Filter[] | null {
   if (next.length > 0) return [...next];
-  return filtersFromLegacyTags(legacyTags).length > 0 ? [] : null;
+  return filtersFromLegacyTags(legacyTags).length > 0 ||
+    filtersFromLegacyOwner(legacyOwner).length > 0
+    ? []
+    : null;
 }
 
 // ── Reading ──────────────────────────────────────────────────────────────────
@@ -624,6 +723,24 @@ export function filtersToQueryParams(
       case 'trigger':
         params.trigger = joined;
         params.trigger_mode = scalarModeFor(filter.operator);
+        break;
+      // The taxonomy pair. `GET /memories` has accepted these since 00056 and
+      // the handler has always filtered on them — the only thing that was
+      // missing was a descriptor to turn a pill into the param.
+      case 'kind':
+        params.kind = joined;
+        params.kind_mode = scalarModeFor(filter.operator);
+        break;
+      case 'host':
+        params.host = joined;
+        params.host_mode = scalarModeFor(filter.operator);
+        break;
+      // Ownership (00064). `personal` plus org slugs; the handler resolves the
+      // slugs against the caller's member orgs. Same conjunct-of-disjunction
+      // shape as the scalar dimensions.
+      case 'owner':
+        params.owner = joined;
+        params.owner_mode = scalarModeFor(filter.operator);
         break;
       case 'repo':
         params.origin_repo = joined;

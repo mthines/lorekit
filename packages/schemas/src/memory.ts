@@ -46,7 +46,30 @@ export const MemoryWriteSchema = z.object({
 export type MemoryWrite = z.infer<typeof MemoryWriteSchema>;
 
 export const MemoryReadSchema = z.object({ scope: ScopeSchema, key: z.string().min(1).max(512) });
-export const MemoryListSchema = z.object({ scope: ScopeSchema, tags: z.array(z.string()).optional(), limit: z.number().int().min(1).max(100).optional().default(50), cursor: z.string().optional() });
+
+/**
+ * How much of each entry a list read puts on the wire.
+ *
+ * `full`    — every entry carries its complete `value` (the historical shape).
+ * `summary` — `value` is REPLACED by `value_bytes` + a bounded `preview`.
+ *
+ * The split exists because the two reads answer different questions. An agent
+ * deciding WHICH lessons apply to the change in front of it needs the index —
+ * keys, tags, freshness — not 50 full bodies; it can then `memory.read` the
+ * handful it matched. At the observed ~1.9 KB median body, a 50-entry
+ * `full` list is ~95 KB of caller context, the overwhelming majority of which
+ * is never consulted. `summary` is the cheap discovery half of that read.
+ *
+ * `full` remains the default: the parameter is additive and no existing caller
+ * changes shape.
+ */
+export const MemoryListViewSchema = z.enum(['full', 'summary']);
+export type MemoryListView = z.infer<typeof MemoryListViewSchema>;
+
+/** Characters of `value` echoed in a `summary` entry's `preview`. */
+export const LIST_PREVIEW_CHARS = 200;
+
+export const MemoryListSchema = z.object({ scope: ScopeSchema, tags: z.array(z.string()).optional(), limit: z.number().int().min(1).max(100).optional().default(50), cursor: z.string().optional(), order: z.enum(['recency', 'rank']).optional().default('recency'), kind: MemoryKindSchema.optional(), host: z.string().min(1).max(64).optional(), view: MemoryListViewSchema.optional().default('full') });
 export const MemoryDeleteSchema = z.object({ scope: ScopeSchema, key: z.string().min(1).max(512), force: z.boolean().optional().default(false) });
 export const MemorySearchSchema = z.object({ q: z.string().min(1), scopes: z.array(RawScopeSchema).optional(), tags: z.array(z.string()).optional(), limit: z.number().int().min(1).max(100).optional().default(20), cursor: z.string().optional() });
 export const MemoryArchiveSchema = z.object({ scope: ScopeSchema, key: z.string().min(1).max(512) });
@@ -178,8 +201,47 @@ export const ListMemoriesQuerySchema = z.object({
    */
   origin_pr: ValueListSchema.optional(),
   origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
+  /**
+   * Ownership filter — the literal `personal` (rows with no org) plus one value
+   * per org the caller belongs to, keyed by the org SLUG (stable, unlike its
+   * uuid or display name). Same comma-list + `*_mode` shape as the scalar
+   * dimensions above, so `?owner=personal,acme` reads "my personal lore or
+   * acme's". A slug the caller is not a member of matches nothing. This was the
+   * one dimension the dashboard used to narrow CLIENT-side; it is server-side
+   * now (migration 00064) so the list, the facet counts and the stat header
+   * agree.
+   */
+  owner: ValueListSchema.optional(),
+  owner_mode: ScalarFilterModeSchema.optional().default('in'),
   sort: MemorySortSchema.optional().default('updated_at'),
   archived: z.enum(['true','false']).optional().default('false'),
+  /**
+   * "Expiring soon": keep only memories whose TTL runs out within the next N
+   * days — `expires_at` in `(now, now + N days]`.
+   *
+   * A RELATIVE horizon rather than an absolute `expires_before` timestamp,
+   * because this parameter's job is to back a shareable, bookmarkable view.
+   * "Expiring in the next 7 days" stays true tomorrow; `expires_before=<a
+   * Tuesday>` silently becomes a view of the past. The bound is computed
+   * per-request by `expiringWindow`, which owns the boundary semantics.
+   *
+   * Composes with the other filters rather than overriding them: with the
+   * default `archived=false` it narrows the live rows (the only combination the
+   * Explorer's Status control produces), and `archived=true` alongside it reads
+   * as "archived AND expiring soon" instead of being rejected — a filter that
+   * 400s on a combination the grammar can express is a worse surprise than an
+   * empty page.
+   *
+   * Bounds mirror `TTL_MIN_DAYS`/`TTL_MAX_DAYS` (`@lorekit/mcp-core`'s `ttl.ts`)
+   * and `EXPIRING_WITHIN_DAYS_MIN`/`_MAX` (`expiring-window.ts`); the literals
+   * are repeated here because `@lorekit/schemas` deliberately depends on
+   * nothing, exactly as `ttl_days` above already does. `expiring-window.spec.ts`
+   * asserts the two agree, so the duplication cannot drift silently.
+   *
+   * `z.coerce` because every query param arrives as a string; `.int()` runs
+   * after coercion, so `7.5` and `abc` are a 400 rather than a silent floor.
+   */
+  expiring_within_days: z.coerce.number().int().min(1).max(365).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
   cursor: z.string().optional(),
 });
@@ -312,6 +374,10 @@ export const MemoryFacetSchema = z.enum([
   'origin_repo',
   'origin_branch',
   'origin_pr',
+  // Ownership (migration 00064): `personal` for org_id-null rows, else the
+  // owning org's slug. Enumerated with per-value counts like every other
+  // dimension, so the filter menu offers Personal / {org} with drill-down.
+  'owner',
 ]);
 export type MemoryFacet = z.infer<typeof MemoryFacetSchema>;
 
@@ -341,15 +407,19 @@ export const ListFacetsQuerySchema = z.object({
    * The dashboard's Explorer passes its active filter bar AND the selected
    * `scope` here (`listFacetsRequest` ← `filtersToFacetParams` plus
    * `useFacetCatalog`'s `scope`), so its filter-menu counts drill down and match
-   * the scoped list. `kind`/`host` still have no `FILTER_FIELDS` row, so those
-   * two dimensions are enumerated but not yet filterable from the menu.
+   * the scoped list. All eight dimensions — `kind` and `host` included — now
+   * have a filter pill, so every facet this route can emit is one the menu can
+   * act on.
    *
    * `ListMemoriesQuerySchema`'s NON-dimension filters — `q`, `key`,
-   * `created_since` and `created_until` — are deliberately NOT mirrored, so
-   * with a search or date window active a count is an upper bound on the yield
-   * rather than the exact figure. Mirroring `q` would mean a second
-   * implementation of `likeNeedle`'s LIKE escaping inside plpgsql, and a filter
-   * value is encoded exactly one way in this repo.
+   * `created_since`, `created_until` and `expiring_within_days` — are
+   * deliberately NOT mirrored, so with a search, a date window or an
+   * expiring-soon horizon active a count is an upper bound on the yield rather
+   * than the exact figure. Mirroring `q` would mean a second implementation of
+   * `likeNeedle`'s LIKE escaping inside plpgsql, and mirroring
+   * `expiring_within_days` a second implementation of `expiringWindow`'s
+   * `now`-relative boundary — a filter value is encoded exactly one way in this
+   * repo.
    *
    * A value whose count falls to zero under the other dimensions' filters emits
    * no row at all — the same omission a null column value has — so it leaves
@@ -372,6 +442,8 @@ export const ListFacetsQuerySchema = z.object({
   origin_branch_mode: ScalarFilterModeSchema.optional().default('in'),
   origin_pr: ValueListSchema.optional(),
   origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
+  owner: ValueListSchema.optional(),
+  owner_mode: ScalarFilterModeSchema.optional().default('in'),
 });
 export type ListFacetsQuery = z.infer<typeof ListFacetsQuerySchema>;
 
@@ -398,11 +470,46 @@ export type ActivityBucketUnit = z.infer<typeof ActivityBucketUnitSchema>;
  * The window is half-open `[since, until)`, matching `GET /memories/usage`.
  * Both bounds are optional; `until` defaults to now and `since` to the start
  * of the retention window the handler picks, so a bare call is still bounded.
+ *
+ * `scope` + the DIMENSION filters (`tags`, `source_agent`, `trigger`, `kind`,
+ * `host`, `origin_repo/branch/pr`, each with its `*_mode`) are the SAME params
+ * `GET /memories` and `GET /memories/facets` take, named identically so the
+ * Explorer's stat header can pass its filter bar verbatim (`filtersToQueryParams`
+ * ← the one translation the list uses). They narrow the written/scopes counts so
+ * the header agrees with the list beneath it (migration 00063, applying the same
+ * predicate as `lorekit_memory_facets`). Absent → unfiltered, byte-for-byte the
+ * pre-00063 aggregate.
+ *
+ * Like `ListFacetsQuery`, the NON-dimension filters — `q`, `key`,
+ * `created_since/until`, `expiring_within_days` — are deliberately NOT mirrored:
+ * a filter value is encoded exactly one way in this repo, and mirroring `q`
+ * would mean a second `likeNeedle` inside plpgsql. So under an active SEARCH the
+ * counts are an upper bound on the yield, not the exact figure — the same
+ * documented caveat the facets menu carries.
  */
 export const ActivityQuerySchema = z.object({
   bucket: ActivityBucketUnitSchema.optional().default('day'),
   since: TimestampFilterSchema.optional(),
   until: TimestampFilterSchema.optional(),
+  scope: RawScopeSchema.optional(),
+  tags: z.string().optional(),
+  tags_mode: TagsModeSchema.optional().default('any'),
+  source_agent: ValueListSchema.optional(),
+  source_agent_mode: ScalarFilterModeSchema.optional().default('in'),
+  trigger: ValueListSchema.optional(),
+  trigger_mode: ScalarFilterModeSchema.optional().default('in'),
+  kind: ValueListSchema.optional(),
+  kind_mode: ScalarFilterModeSchema.optional().default('in'),
+  host: ValueListSchema.optional(),
+  host_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_repo: ValueListSchema.optional(),
+  origin_repo_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_branch: ValueListSchema.optional(),
+  origin_branch_mode: ScalarFilterModeSchema.optional().default('in'),
+  origin_pr: ValueListSchema.optional(),
+  origin_pr_mode: ScalarFilterModeSchema.optional().default('in'),
+  owner: ValueListSchema.optional(),
+  owner_mode: ScalarFilterModeSchema.optional().default('in'),
 });
 export type ActivityQuery = z.infer<typeof ActivityQuerySchema>;
 
@@ -440,25 +547,43 @@ export type ActivityResponse = z.infer<typeof ActivityResponseSchema>;
  * so a caller charting both uses one set of parameters. The bucket enum is
  * REUSED rather than redeclared: a granularity admitted by one and not the
  * other would be a trap for exactly the caller rendering them side by side.
+ *
+ * `scope` is an optional exact-match FILTER (migration 00058). It is
+ * `RawScopeSchema` (shape-only) rather than `ScopeSchema` so the canonical
+ * normalisation happens once, in the handler, which can turn a rejection into a
+ * 400 — the `?correlation_id=` precedent. Because the metric is additive, the
+ * filtered buckets SUM to the per-scope headline; there is no separate total
+ * endpoint that could drift from the bars drawn above it.
  */
 export const ReadActivityQuerySchema = z.object({
   bucket: ActivityBucketUnitSchema.optional().default('day'),
   since: TimestampFilterSchema.optional(),
   until: TimestampFilterSchema.optional(),
+  scope: RawScopeSchema.optional(),
 });
 export type ReadActivityQuery = z.infer<typeof ReadActivityQuerySchema>;
 
 /**
- * One bucket of read volume: how many memory RECORDS were read in that UTC
- * hour/day.
+ * One `(bucket, scope)` cell of read volume: how many memory RECORDS were read
+ * in that UTC hour/day under that scope.
  *
  * Records, not calls — one `memory.list` returning 600 rows is one call and
  * 600 records, the same distinction `GET /memories/usage` draws between
  * `event_count` and `record_count`. Records is the additive figure a chart can
  * sum: the bars of a read sparkbar add up to "you read N memories".
+ *
+ * `scope` mirrors {@link ActivityBucketSchema}'s (migration 00058) but is
+ * NULLABLE where the write series' is not: a write always happens under a
+ * scope, while a read may carry none the server can resolve (a scope in a body
+ * the router must not consume, or an ungrammatical one, both recorded as
+ * unattributed rather than failing the call). Those rows are still counted in
+ * the unfiltered series, so summing every bucket still gives the account total
+ * — which is exactly why a per-scope total can be SMALLER than the account
+ * total, and why a UI showing both should say so.
  */
 export const ReadActivityBucketSchema = z.object({
   bucket: z.string(),
+  scope: z.string().nullable(),
   count: z.number().int().nonnegative(),
 });
 export type ReadActivityBucket = z.infer<typeof ReadActivityBucketSchema>;
@@ -527,6 +652,14 @@ export const MemoryEntrySchema = z.object({
   // Taxonomy. Optional/nullable so a row written before 00056 (NULL kind/host)
   // and an older client that reads neither are both unaffected.
   kind: z.string().nullable().optional(), host: z.string().nullable().optional(),
+  // Recurrence — how many times this lesson has been written (00059). The
+  // column is NOT NULL DEFAULT 1, so a live row always has >= 1; optional here
+  // for the same reason kind/host are, so a client reading a response from a
+  // backend deployed before 00059 is unaffected. Optional but NOT nullable,
+  // unlike the neighbours above: those mirror genuinely nullable columns,
+  // whereas a read of this one yields a number or omits the field entirely —
+  // there is no null for the schema to admit.
+  seen_count: z.number().int().optional(),
   // Ownership / authorship. Optional so an older client (and the CLI's
   // RemoteStore, which reads none of them) is unaffected by the addition.
   org_id: z.string().uuid().nullable().optional(),
@@ -547,7 +680,8 @@ export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
  */
 export const MEMORY_SELECT =
   'id,scope,key,value,tags,source_agent,trigger,created_at,updated_at,expires_at,archived_at,'
-  + 'origin_repo,origin_branch,origin_commit,origin_pr,kind,host,org_id,created_by,updated_by,orgs(id,name,slug)';
+  + 'origin_repo,origin_branch,origin_commit,origin_pr,kind,host,seen_count,'
+  + 'org_id,created_by,updated_by,orgs(id,name,slug)';
 
 /**
  * Collapse a selected row's `orgs` embed into the flat `org` field.

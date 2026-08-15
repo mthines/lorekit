@@ -20,7 +20,7 @@ import { usePendingInvitesForMe, PENDING_INVITES_QUERY_KEY } from '@/lib/queries
 import { useDismissedInviteIds } from '@/lib/hooks/useDismissedInviteIds';
 import { visibleInvites } from '@/lib/org-ui';
 import { serialise } from '@/lib/hooks/useUrlState';
-import type { OwnerFilter } from '@/lib/org-ui';
+import type { Filter } from '@/lib/filters';
 import { useToast } from '@/components/providers/ToastProvider';
 import { InviteDetailsDialog } from '@/components/dashboard/InviteDetailsDialog';
 
@@ -57,8 +57,19 @@ export function PendingInvitesBanner({ initialInvites }: PendingInvitesBannerPro
       await queryClient.invalidateQueries({ queryKey: PENDING_INVITES_QUERY_KEY });
       const orgName = target.org?.name ?? 'the organization';
       showToast(`You joined ${orgName}. Their shared lore now appears in your Explorer.`, 'success');
-      const ownerFilter: OwnerFilter = { orgId: target.org_id };
-      router.push(`/lore?owner=${encodeURIComponent(serialise(ownerFilter))}`);
+      // Ownership is a server-side filter DIMENSION now (migration 00064), keyed
+      // by the org SLUG. Deep-link straight into the Explorer's `?filters=` bar
+      // with an owner filter, so the freshly-joined org is pre-selected. The
+      // legacy `?owner=` param is gone: the Explorer still READS it for old
+      // links, but writing a slug-keyed filter here lands exactly, where the old
+      // uuid form could not be resolved to a slug on arrival.
+      const slug = target.org?.slug;
+      if (slug) {
+        const ownerFilter: Filter[] = [{ field: 'owner', operator: 'in', values: [slug] }];
+        router.push(`/lore?filters=${encodeURIComponent(serialise(ownerFilter))}`);
+      } else {
+        router.push('/lore');
+      }
     });
   }
 

@@ -76,10 +76,17 @@ export function createMcpServer(auth: AuthContext, adapter: StorageAdapter): Mcp
   server.tool(
     'memory.list',
     'List memory entries for a given scope, optionally filtered by tags.',
+    // This shape is what the MCP SDK validates against BEFORE the handler runs,
+    // and zod strips anything not declared here — so a parameter missing from
+    // this object is unreachable on Fly/BYOD no matter what `ListInputSchema`
+    // accepts. Keep it in step with `packages/mcp-core/src/tools/list.ts`.
     {
       scope: z.string(),
       tags: z.array(z.string()).optional(),
       limit: z.number().int().min(1).max(100).optional(),
+      kind: z.enum(['lesson', 'bus', 'signal']).optional(),
+      host: z.string().min(1).max(64).optional(),
+      view: z.enum(['full', 'summary']).optional(),
     },
     async (args) => {
       const result = await list(db, args);

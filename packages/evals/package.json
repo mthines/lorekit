@@ -1,0 +1,27 @@
+{
+  "name": "@lorekit/evals",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local eval harness measuring whether stored + loaded LoreKit lessons improve a headless Claude Code agent's task quality on a fresh-context retry.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mthines/lorekit"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "dependencies": {
+    "@lorekit/cli": "workspace:*",
+    "@lorekit/core": "workspace:*",
+    "@lorekit/schemas": "workspace:*"
+  },
+  "devDependencies": {
+    "@lorekit/web": "workspace:*"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "eval": "node bin/run-eval.mjs"
+  }
+}

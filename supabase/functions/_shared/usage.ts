@@ -42,6 +42,17 @@ export interface UsageEventParams {
    */
   client?: string | null;
   /**
+   * The EXACT scope the call touched (`repo::owner/name`, `global`, …),
+   * normalised by `safeValidateScope` at the recording site. Distinct from
+   * `scopeType`, which is the deliberately low-cardinality family
+   * (`repo`/`branch`/…) and cannot answer "reads for THIS repo".
+   *
+   * Null means unattributed — the scope was absent, carried in a body the
+   * router must not consume, or ungrammatical. Fail-safe by contract
+   * (migration 00058): a telemetry dimension never fails the call it measures.
+   */
+  scope?: string | null;
+  /**
    * Memory TAXONOMY — the bucket kind (`lesson`/`bus`/`signal`) and owning host
    * — so usage can be grouped by family and owner, not just tool name. Resolved
    * by `resolveKindHost` (schemas/tags) so it matches what the write STORED.
@@ -74,6 +85,7 @@ export function recordUsageEvent(
     p_result_count: params.resultCount ?? null,
     p_correlation_id: params.correlationId ?? null,
     p_client:      params.client ?? null,
+    p_scope:       params.scope ?? null,
   }).then(() => { /* fire-and-forget */ }).catch(() => { /* swallow */ });
 
   const edgeRuntime = (globalThis as {

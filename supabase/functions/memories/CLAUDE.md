@@ -150,6 +150,40 @@ its own `<column>_mode` of `in` (default) or `nin`.
   `not.cs`: "carries none of these" is NOT(carries any), while NOT(carries all) would also
   admit a row carrying all but one.
 
+## Filtering `GET /` — `?expiring_within_days=` ("expiring soon")
+
+`?expiring_within_days=N` (integer, 1–365) keeps only memories whose TTL runs out inside the
+window `(now, now + N days]`. The bounds come from the shared pure `expiringWindow`
+(`packages/mcp-core/src/expiring-window.ts` ↔ `_shared/expiring-window.ts`, drift-guarded by
+`edge-parity.spec.ts`), never computed inline — the boundary rules below ARE the feature, and an
+off-by-one here does not throw, it shows a row that already expired.
+
+- **The lower bound is EXCLUSIVE, the upper INCLUSIVE** — deliberately the opposite asymmetry
+  from this codebase's usual `[since, until)`. The lower is not a window edge at all: it is the
+  definition of "live" (`expires_at > now()`, the same predicate the live branch and
+  `lorekit_purge_all_expired_memories`'s complement use), so an inclusive one would surface rows
+  the next request refuses to return. The upper is inclusive because "within 7 days" plainly
+  includes something expiring at the 7-day mark.
+- **TWO predicates, not three.** There is no `expires_at is not null` clause: `null > x` and
+  `null <= x` are both SQL `NULL`, so a memory with no TTL fails the comparison and drops out on
+  its own. The reassuring-looking third clause would be dead weight the planner still carries.
+- **The `> now` bound is re-stated rather than inherited from the live branch**, which only runs
+  for `archived=false`. Without it, `?archived=true&expiring_within_days=7` would return
+  already-expired archived rows.
+- **It composes, it does not override.** With the default `archived=false` it narrows live rows
+  (the only combination the Explorer's Status control produces); combined with `archived=true` it
+  reads as "archived AND expiring soon" rather than 400ing — a filter that rejects a combination
+  its own grammar can express is a worse surprise than an empty page.
+- **No new index.** The two comparisons range-scan `memories_expires_at_idx` (00030), whose
+  partial predicate is exactly the row set they select. `migrations.test.sql` §75 asserts that
+  index still exists and is still partial, since this filter silently degrades to a seq scan on
+  the largest table if it is ever dropped or widened.
+- The 1–365 bound is spelled in BOTH `ListMemoriesQuerySchema` and `expiring-window.ts` —
+  `@lorekit/schemas` depends on nothing by design, the same arrangement `ttl_days` /
+  `TTL_MIN_DAYS` has. Unlike that one, the two are tied by an executable guard
+  (`expiring-window.spec.ts` → "agreement with ListMemoriesQuerySchema"), so a drift that would
+  turn a rejected value into a 500 fails a test instead.
+
 ## `GET /facets`
 
 `lorekit_memory_facets` (00052, widened by 00057) returns `{ facets: [{ facet, value, count }] }`
@@ -186,6 +220,69 @@ consequences to know before reading a number:
   exact yield. Mirroring `q` would put a second implementation of `likeNeedle`'s LIKE escaping
   in plpgsql, which the repo-wide "a filter value is encoded ONE way" rule forbids.
 
+## `seen_count` — recurrence, counted by the writer
+
+Every route that returns a memory returns `seen_count`: how many times the lesson has been
+written. It is part of `MEMORY_SELECT`, so `GET /`, `GET /:id`, `POST /search` **and the
+write route `PATCH /:id`** all carry it, and `POST /` carries it through its own explicit
+projection (`handlers/create.ts`). No route that hands back a memory omits the field.
+
+**It is derived, never supplied.** `memory_write` has no `p_seen_count` parameter and gained
+none in 00059 — the insert branches set `1` and each conflict-update branch sets
+`seen_count = memories.seen_count + 1`. A write whose `(tenant, scope, key)` already resolves
+to a live row *is* the second sighting, which is exactly the definition
+`lorekit-setup`'s self-improvement loop documents ("a recurrence resolves to an UPDATE that
+increments `seen_count` by 1"). Trusting a caller-supplied number would mean reading the row
+back first and would let two concurrent writers clobber each other's count.
+
+The increment reads `memories.seen_count`, not `excluded.seen_count`: `excluded` is the row
+the INSERT proposed, which always carries the literal `1`, so an `excluded`-based increment
+pins every recurrence at `2`.
+
+**Reviving an archived key is not a recurrence.** All three conflict predicates are partial
+on `archived_at is null` (00016), so writing an archived key inserts a fresh row starting at
+`1` — the lesson was retired and is being learned again. This matches the `created_at`
+semantics on that same path.
+
+**Re-writing an expired key IS a recurrence, and that asymmetry is deliberate.** The predicates
+exclude archived rows only, so an expired-but-unarchived row is still the row the conflict
+resolves to and its count keeps climbing. Expiry is a *visibility* state — `expires_at` filters
+the row out of every read (00030) but leaves it in the table until `purge_expired_memories`
+hard-deletes it — whereas archiving is a retirement. Same key, same row, one more sighting; the run
+ends when the row does, which for a **personal** row means either the purge hard-deleting it or an
+archive retiring it — the categorical rule above, not a second mechanism. Either way the next write
+starts a fresh row at `1`. Note the write does not by itself make the row readable again:
+with no `ttl_seconds` and no `clear_ttl` the update branch keeps the past `expires_at`, so the
+recurrence is counted on a row the reads still skip.
+
+**Expiry alone never ends that run for an org- or service-owned row, because the purge never reaches
+it.** `purge_expired_memories` deletes `where user_id = v_actor` (00046), and both the org branch and the
+service branch of `memory_write` insert `user_id null` — `null = <anything>` is never true, so no
+actor value can match and an expired org/service row is never hard-deleted. Its `seen_count`
+therefore keeps climbing on a row every read skips, for as long as the row is only *expired*.
+
+**Archiving still ends it, for every tenancy — the two paragraphs above are about expiry, not about
+the row class.** `memory_delete` stamps `archived_at` on a personal row through its personal branch
+and on an org row through its org branch (00020, actor-guarded in 00046), and the non-org path in
+`handlers/remove.ts` / `mcp/tools.ts` applies its tenant filter only for `api_key` auth (and only
+when it has a `userId`), so a service-role caller reaches a service-owned row. In every one of those
+cases the partial conflict predicates stop seeing the row and the next write inserts a fresh one at
+`1` — the archived-key rule above, which *is* categorical. `?force=true` deletes the row outright on
+all of these paths, with the same effect on the next write.
+
+The purge gap itself is in the actor guard and predates 00059; this column only makes it observable.
+Widening the purge is deliberately **not** done here: `user_id = v_actor` is the actor guard 00046
+added on purpose to a `security definer` RPC, so relaxing it is a tenancy change that needs its own
+migration and its own cross-tenant assertions.
+
+Rows written before 00059 read `1` (the column is `NOT NULL DEFAULT 1`, so the backfill is
+the default and no data migration ran). The field is optional in `MemoryEntrySchema` for the
+`kind`/`host` reason: a client reading from a backend deployed before 00059 sees it absent
+rather than wrong.
+
+Nothing filters or orders on it yet, so it carries no index — the same call 00048 made for
+the `origin_*` columns.
+
 ## `created_at` on `POST /`
 
 `created_at` is an **optional creation-date override** for the `lorekit migrate` backdating
@@ -203,10 +300,84 @@ Both purge endpoints are user-scoped: they call RPCs keyed on `p_user_id`, so a
 well-formed; it is the credential that cannot name a purge target. Both are also
 rate-limited on the same per-user window as `POST /` (a `429` carries `Retry-After`).
 
+## `GET /relevant`
+
+The one verb that **ranks**. Returns the top-K lessons for a query as a compact index:
+
+```json
+{
+  "entries": [
+    {
+      "scope": "repo::acme/app",
+      "key": "migration-order",
+      "hook": "Always add the column before the backfill runs.",
+      "score": 0.74,
+      "factors": { "recency": 0.61, "salience": 0.85, "relevance": 1, "outcome": 0.5 },
+      "seen_count": 9,
+      "updated_at": "2026-07-30T09:12:00.000Z"
+    }
+  ],
+  "candidates": 47
+}
+```
+
+| Param | Default | Meaning |
+|-------|---------|---------|
+| `q` | — | Free-text query, `websearch` FTS over `key \|\| value`. **Optional.** |
+| `scopes` | all visible | Comma-separated, **most-specific first** — the order breaks ties. |
+| `limit` | `10` | 1–50. A shortlist for a context window, not a page. |
+| `min_score` | `0` | Drop hits below this — how a caller says "stay silent rather than show me something weak". Note: with `q` set, matched hits floor at `(1 + 0.5) / 4 = 0.375` (relevance is binary and outcome never sinks below its `0.5` prior today), so `min_score ≤ 0.375` is a no-op until graded relevance. |
+
+**Why it exists.** Every other read hands the caller a single-signal ordering — `GET /memories`
+is `updated_at` desc, `POST /memories/search` is FTS rank — and neither knows that a lesson
+written twelve times is worth more than one written once. Each client that wanted a useful
+shortlist fetched a page and re-sorted it locally, which is three copies of a ranking and
+three chances to disagree about what matters.
+
+**Two phases, and the split is the design.** Postgres SELECTS the candidates (an index scan
+over `fts` is the difference between reading 40 rows and reading the whole store); the shared
+scorer ORDERS them in TypeScript. The ranking is deliberately *not* SQL: it is set-relative
+(salience normalises against the most-recurring candidate) and it must agree exactly with the
+CLI hook's ordering. A plpgsql copy could not be held to that agreement by any test, whereas
+`lesson-rank-parity.spec.ts` holds `_shared/lesson-rank.ts` to the CLI's `lessons-pure.mjs`
+behaviourally — same scores, same order, over shared fixtures.
+
+**`q` is optional on purpose.** With it, relevance participates and the answer is "what
+matters for this task". Without it, the ranking is recency + salience, which is "what matters
+generally" — the SessionStart question. Requiring `q` would have forced the hook to invent a
+query for a session that has not asked anything yet.
+
+**Relevance is currently binary, and that is an honest limit.** `ts_rank` is not projectable
+through PostgREST's query grammar, so a row that matched scores 1 and — since a non-matching
+row is never returned — nothing scores between. Ordering among matches is therefore decided by
+recency and salience, which is the useful half: *these all mention your terms; here are the
+ones that keep mattering.* A graded relevance needs an RPC returning `ts_rank`, which is where
+the semantic-search work has to go anyway.
+
+**`CANDIDATE_LIMIT = 200`** bounds the pre-ranking fetch. The ranking needs a population, not
+just the page it returns — salience is normalised across candidates, so a genuinely recurring
+lesson ranked 30th by FTS must still get the chance to come first. 200 is comfortably above
+the route's own `limit` cap of 50 while staying one cheap indexed read.
+
+The response carries `candidates` (how many the FTS matched before ranking) so a caller can
+say "3 of 47" instead of implying it saw everything — the same reason the SessionStart block
+reports its own truncation.
+
+Bodies are never returned. The point of the route is deciding *which* few lessons deserve
+attention; returning the full text of ten of them would spend the context it just saved. Fetch
+what you want with `GET /:id` or `memory.read`.
+
+There is **no MCP tool** for this yet. `usage_events.tool_name` is `memory.relevant` — its own
+name rather than folding into `memory.search`, because the two answer different questions and
+collapsing them would make it impossible to tell whether agents actually reach for the ranking.
+
 ## `GET /scopes`
 
 Returns every distinct scope the caller can see with its count of active (non-archived,
-non-expired) memories, sorted by scope ascending:
+non-expired) memories, ordered by **count desc then scope asc** (migration 00065, the same
+frequency-first order `/tags` uses) — so the busiest scope leads. The dashboard's scope chip
+strip renders this order directly (`fetchScopes` never re-sorts), which is why the order lives
+in the RPC:
 
 ```json
 {
@@ -282,7 +453,10 @@ read counterpart to `/activity`:
   "bucket": "day",
   "since": "2026-01-01T00:00:00.000Z",
   "until": "2026-07-19T00:00:00.000Z",
-  "buckets": [{ "bucket": "2026-07-18T00:00:00.000Z", "count": 214 }]
+  "buckets": [
+    { "bucket": "2026-07-18T00:00:00.000Z", "scope": "repo::mthines/lorekit", "count": 214 },
+    { "bucket": "2026-07-18T00:00:00.000Z", "scope": null, "count": 9 }
+  ]
 }
 ```
 
@@ -291,6 +465,41 @@ read counterpart to `/activity`:
 | `bucket` | `day` | `hour` or `day` granularity — the same enum `/activity` takes. |
 | `since` | `until` − 200 days | Inclusive lower bound. |
 | `until` | now | **Exclusive** upper bound. |
+| `scope` | — | Restrict to one **exact** scope. Invalid ⇒ `400`. |
+
+**One row per `(bucket, scope)`** (migration 00058), mirroring `/activity`. `scope` is
+**nullable** here where `/activity`'s is not: a write always happens under a scope, while a
+read may carry none the server can resolve — the router reads `?scope=` from the query
+string only (it must not consume the request body), and an ungrammatical value is recorded
+as unattributed rather than failing the call it is measuring. Those rows are still counted,
+so the unfiltered series remains the complete account total.
+
+Consequently a **per-scope total can be smaller than the account total**, and the
+difference is the unattributable reads. Any UI showing both should say so rather than let
+the numbers look like a bug.
+
+`?scope=` is an exact-match filter, and because the metric is additive its buckets **sum to
+the per-scope headline** — which is why there is no companion "per-scope total" RPC. A
+second function computing the same number would be free to drift from the bars drawn above
+it, the exact property this series exists to guarantee.
+
+**The two scope paths fail in opposite directions, on purpose.** Recording a scope
+(`safeValidateScope`, `_shared/scope.ts`) is a measurement taken alongside an operation the
+caller asked for, so a bad value degrades to `null` and never breaks it. Filtering by a
+scope is the question itself, so a bad value is a `400` — silently dropping a typo'd filter
+would answer "reads everywhere" under the label the caller asked for. Same call as
+`?correlation_id=`. Both sides go through the **canonical** `validateScope`; there is no
+second grammar.
+
+`safeValidateScope` is hand-mirrored between `packages/mcp-core/src/scope.ts` and
+`supabase/functions/_shared/scope.ts` and is **not** covered by `edge-parity.spec.ts` —
+that file is excluded from `MIRRORS` because the two `validateScope` bodies deliberately
+differ. The wrapper delegates every grammar decision to whichever one is in scope, so the
+difference propagates instead of being duplicated. Keep the two wrappers in step by hand.
+
+**Deferred (R10):** `purge_expired_memories` (00045) is untouched. Its `memory.expired`
+event is per-user and spans every scope that user owns, so there is no single scope to
+attribute it to — those events stay `scope IS NULL`, asserted in `migrations.test.sql` §74.
 
 **Records, not calls.** `count` is `sum(usage_events.result_count)` over the read tools
 (`memory.read`, `memory.list`, `memory.search`, `memory.list_archived` — `permissions.ts`'s
