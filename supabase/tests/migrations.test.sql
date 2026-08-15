@@ -5227,8 +5227,8 @@ $$;
 insert into memories (id, user_id, scope, key, value, updated_at) values
   ('00000000-0000-0000-0000-0000000e6220', '00000000-0000-0000-0000-0000000000a1',
    'global', 'embed-stamp-row', 'original value', '2020-01-01T00:00:00Z'),
-  -- AC-3 needs its own row: see the note there for why resetting the first one
-  -- cannot work now that the trigger preserves a lone `updated_at` write.
+  -- AC-3 needs its own row: `now()` does not advance within a transaction, so a
+  -- reset-then-compare on the first row could never show a bump. See the note there.
   ('00000000-0000-0000-0000-0000000e6221', '00000000-0000-0000-0000-0000000000a1',
    'global', 'embed-stamp-row-2', 'original value', '2020-01-01T00:00:00Z'),
   -- AC-6 likewise: it asserts a no-op re-write STILL bumps, which needs a row
@@ -5245,7 +5245,7 @@ declare
 begin
   select updated_at into v_before from memories where id = '00000000-0000-0000-0000-0000000e6220';
   assert v_before = '2020-01-01T00:00:00Z'::timestamptz,
-    format('00062 AC-1 setup: the seeded updated_at should be untouched, got %s', v_before);
+    format('00062b AC-1 setup: the seeded updated_at should be untouched, got %s', v_before);
 
   -- AC-1 — an embedding-only write preserves it.
   set local role authenticated;
@@ -5256,11 +5256,11 @@ begin
            '00000000-0000-0000-0000-0000000e6220', null, v_vec, 'text-embedding-3-small');
   reset role;
 
-  assert v_ok, '00062 AC-1 setup: the embedding write should have landed';
+  assert v_ok, '00062b AC-1 setup: the embedding write should have landed';
 
   select updated_at into v_after from memories where id = '00000000-0000-0000-0000-0000000e6220';
   assert v_after = v_before,
-    format('00062 AC-1: an embedding-only write must NOT restamp updated_at — was %s, now %s. '
+    format('00062b AC-1: an embedding-only write must NOT restamp updated_at — was %s, now %s. '
            'A backfill doing this to every row rewrites the store''s recency ordering irrecoverably',
            v_before, v_after);
 
@@ -5269,21 +5269,24 @@ begin
   update memories set value = 'edited value' where id = '00000000-0000-0000-0000-0000000e6220';
   select updated_at into v_after from memories where id = '00000000-0000-0000-0000-0000000e6220';
   assert v_after > v_before,
-    format('00062 AC-2: editing a memory must still bump updated_at, stayed at %s', v_after);
+    format('00062b AC-2: editing a memory must still bump updated_at, stayed at %s', v_after);
 
   -- AC-3 — an edit that ALSO rewrites the vector is still an edit.
   --
-  -- On a SECOND row seeded at 2020, not by resetting the first one. Two reasons,
-  -- and both would have made this assertion vacuous:
+  -- On a SECOND row seeded at 2020, not by resetting the first one, because
+  -- `now()` is the TRANSACTION timestamp and does not advance inside one — so
+  -- comparing two stamps taken in this transaction could never show an increase,
+  -- and the assertion would be vacuous however the reset behaved.
   --
-  --   * an `update … set updated_at = …` that touches nothing else is exactly
-  --     the case the new trigger PRESERVES, so the reset silently no-ops and the
-  --     row keeps its AC-2 timestamp;
-  --   * `now()` is the transaction timestamp and does not advance inside one, so
-  --     comparing two stamps taken in this transaction can never show an increase.
+  -- (An earlier revision of the trigger gave a second reason: a lone
+  -- `update … set updated_at = …` was preserved, so the reset silently no-oped.
+  -- That is no longer true — AC-6 below asserts such a write BUMPS, because the
+  -- trigger now requires the embedding columns to have actually moved. The
+  -- separate row is still the right shape for the timestamp reason above.)
   --
-  -- Seeding through INSERT sidesteps both: there is no BEFORE INSERT trigger on
-  -- `updated_at`, so the 2020 value survives and a real bump is unmistakable.
+  -- Seeding through INSERT is what makes it work: there is no BEFORE INSERT
+  -- trigger on `updated_at`, so the 2020 value survives and a bump is
+  -- unmistakable.
   --
   -- Both embedding columns move together — the 00060 CHECK is both-or-neither,
   -- so setting `embedding_model` alone would fail on the constraint rather than
@@ -5295,7 +5298,7 @@ begin
    where id = '00000000-0000-0000-0000-0000000e6221';
   select updated_at into v_after from memories where id = '00000000-0000-0000-0000-0000000e6221';
   assert v_after > '2020-01-01T00:00:00Z'::timestamptz,
-    format('00062 AC-3: a change touching both the value and the embedding columns is an edit '
+    format('00062b AC-3: a change touching both the value and the embedding columns is an edit '
            'and must bump updated_at, stayed at %s', v_after);
 
   -- AC-6 — a plain NO-OP re-write still bumps, i.e. this migration did not
@@ -5312,7 +5315,7 @@ begin
    where id = '00000000-0000-0000-0000-0000000e6222';
   select updated_at into v_after from memories where id = '00000000-0000-0000-0000-0000000e6222';
   assert v_after > '2020-01-01T00:00:00Z'::timestamptz,
-    format('00062 AC-6: a no-op re-write must STILL bump updated_at — only a write that moves '
+    format('00062b AC-6: a no-op re-write must STILL bump updated_at — only a write that moves '
            'the embedding columns may preserve it. An upsert of an unchanged lesson is the '
            'common case here, and it must keep refreshing recency. Stayed at %s', v_after);
 end;
@@ -5337,7 +5340,7 @@ begin
    where table_schema = 'public' and table_name = 'memories' and is_generated = 'ALWAYS';
 
   assert v_generated = array['fts'],
-    format('00062 AC-5: memories now has generated columns %s, but '
+    format('00062b AC-5: memories now has generated columns %s, but '
            'lorekit_memories_set_updated_at only masks `fts`. An unmasked generated column is '
            'NULL in a BEFORE trigger while OLD holds a value, so every update compares as '
            'changed and updated_at is restamped on embedding-only writes again. Mask it there '
@@ -5358,7 +5361,7 @@ begin
     join pg_class c on c.oid = t.tgrelid
    where c.relname = 'memories' and t.tgname = 'memories_updated_at';
   assert v_fn = 'lorekit_memories_set_updated_at',
-    format('00062 AC-4: the memories trigger must use lorekit_memories_set_updated_at, uses %s', v_fn);
+    format('00062b AC-4: the memories trigger must use lorekit_memories_set_updated_at, uses %s', v_fn);
 
   select p.proname into v_fn
     from pg_trigger t
@@ -5366,7 +5369,7 @@ begin
     join pg_class c on c.oid = t.tgrelid
    where c.relname = 'orgs' and t.tgname = 'orgs_updated_at';
   assert v_fn = 'set_updated_at',
-    format('00062 AC-4: orgs must still use the shared set_updated_at, uses %s', v_fn);
+    format('00062b AC-4: orgs must still use the shared set_updated_at, uses %s', v_fn);
 end;
 $$;
 

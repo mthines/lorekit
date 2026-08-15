@@ -236,6 +236,16 @@ signal; the outcome is on the child span, which carries `lorekit.memory_id` and
 > (or an embed timestamp) so "has this text already been embedded" becomes
 > answerable. Until then the write path errs toward paying twice rather than
 > serving a stale vector, and the two are tracked together.
+>
+> **MCP `memory.write` does not embed at all.** Only the REST create path calls
+> `embedOnWrite`, so a lesson saved through the MCP tool — which is how most
+> agents write — stays `embedding is null` until the backfill runs. This is not
+> the staleness problem above: the wiring simply is not there yet, because the
+> MCP server is the self-contained Deno function in `supabase/functions/mcp/` and
+> giving it the embed path means mirroring `embed-on-write.ts` into that tree
+> under the no-cross-import rule. Until then the backfill is the only thing that
+> embeds MCP-written lore, which is worth knowing before reading coverage numbers
+> off a store that is mostly agent-written.
 
 ---
 
