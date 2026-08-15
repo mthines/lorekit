@@ -74,7 +74,12 @@ function fakeUpstreams({ rows, embed }) {
           const patch = JSON.parse(body);
           const row = rows.find((r) => r.id === id);
           if (row) Object.assign(row, patch);
-          return json(200, []);
+          // Faithful to PostgREST: with `Prefer: return=representation` the
+          // affected rows come back, and a PATCH matching NOTHING returns an
+          // empty array rather than an error. Returning `[]` unconditionally (as
+          // this fake used to) made a zero-row write indistinguishable from a
+          // successful one — the very thing the script now checks for.
+          return json(200, row ? [{ id: row.id }] : []);
         }
       }
       json(404, { error: 'not found' });
@@ -302,37 +307,61 @@ describe('backfill resilience', () => {
     assert.match(stdout, /rows:\s+2/);
   });
 
+  test('a PATCH that matches no row is counted failed, not done', async () => {
+    // PostgREST answers a zero-row PATCH with success and an empty body, so the
+    // script used to count the row `done` and report it embedded while it was
+    // still null — the same silent zero-row shape 00062 removes from the edge
+    // path. The fake drops the row between the SELECT and the write, which is
+    // exactly what a concurrent delete does in production.
+    const rows = seed(1);
+    const { stdout } = await withUpstreams({
+      rows,
+      embed: (_n, inputs, json) => {
+        // Vanish the row after it has been served and embedded.
+        rows.length = 0;
+        return json(200, { data: inputs.map((_, index) => ({ index, embedding: vector() })) });
+      },
+    }, ({ base }) => runBackfill(base));
+
+    assert.match(
+      stdout, /rows:\s+0 \(1 failed/,
+      'a write that matched no row must be counted failed and NOT done — it is still null, and '
+      + 'a rerun must retry it rather than treat it as embedded',
+    );
+  });
+
   test('passing the skip cap stops the run BEFORE it pays for another page', async () => {
     // The cap used to be checked only between pages, while `skipIds` grows
     // INSIDE one — so a page whose unembeddable rows carried the set past the
     // cap still had its embeddable rows sent to the provider, and only then did
     // the run stop. That is a paid call on a page already abandoned.
     //
-    // Three pages of 90 unembeddable + 6 usable rows. The set reaches 90, 180,
-    // then 270 — so the cap is passed while reading page THREE, and page
-    // three's six usable rows must never reach the provider. Two embed calls,
-    // not three; the third is the regression.
+    // `--batch-size 20` so the arithmetic is legible and independent of the
+    // default: four pages of 18 unembeddable + 2 usable rows. The skip set
+    // reaches 18, 36, 54, then 72 — so it passes MAX_SKIP_IDS (70) while reading
+    // page FOUR, and page four's two usable rows must never reach the provider.
+    // Three embed calls, not four; the fourth is the regression.
     const rows = [];
-    for (let block = 0; block < 3; block++) {
-      for (let i = 0; i < 90; i++) {
+    for (let block = 0; block < 4; block++) {
+      for (let i = 0; i < 18; i++) {
         rows.push({ id: `00000000-0000-0000-0000-e${block}${String(i).padStart(11, '0')}`,
                     key: '', value: '   ', embedding: null, embedding_model: null });
       }
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < 2; i++) {
         rows.push({ id: `00000000-0000-0000-0000-u${block}${String(i).padStart(11, '0')}`,
                     key: `k${block}${i}`, value: `lesson ${block}${i}`, embedding: null, embedding_model: null });
       }
     }
 
     const { stdout, calls } = await withUpstreams({ rows, embed: okEmbed }, async ({ base, calls }) => {
-      const res = await runBackfill(base);
+      const res = await runBackfill(base, ['--batch-size', '20']);
       return { ...res, calls };
     });
 
     assert.equal(
-      calls.embed, 2,
-      `the provider must be called twice, not once per page: the run passes the skip cap while `
-      + `reading page three and must stop before embedding it (saw ${calls.embed})`,
+      calls.embed, 3,
+      `the provider must be called three times, not once per page: the run passes the skip cap `
+      + `while reading page four and must stop before embedding it (saw ${calls.embed})`,
     );
     assert.match(
       stdout, /work remains/,

@@ -97,11 +97,26 @@ const {
 /**
  * How many rows this run may carry in its exclusion list before it stops.
  *
- * The list travels in the query string, so it has to be bounded by something;
- * ~40 characters per uuid entry puts this comfortably inside every proxy's URL
- * limit.
+ * DERIVED FROM A BYTE BUDGET, not chosen. The list travels in the query string,
+ * and the binding constraint is the front proxy's request-LINE limit, which
+ * nginx defaults to 8 KB — the tightest hop in front of PostgREST. A uuid plus
+ * its comma is 37 bytes, so the arithmetic is:
+ *
+ *   6144 bytes for the id list        (8 KB, less headroom for the rest of the
+ *                                      query: select, filters, order, limit)
+ *   ÷ 37 bytes per id                 = 166 ids the URL can actually carry
+ *   − MAX_BATCH_ITEMS (96)            = 70
+ *
+ * The subtraction is the part that is easy to get wrong, and getting it wrong
+ * is how the previous value (200) was unsafe: the set can OVERSHOOT this cap by
+ * a whole batch before `overSkipCap` fires, because a failed group must be
+ * excluded whole or its rows are served again forever. So the cap has to be the
+ * budget MINUS the largest possible overshoot, not the budget itself. At 200 the
+ * worst case was 296 ids ≈ 11 KB, and a heavily-failing run would have started
+ * 414ing instead of stopping cleanly — the failure the cap exists to prevent,
+ * arriving by a different door.
  */
-const MAX_SKIP_IDS = 200;
+const MAX_SKIP_IDS = 70;
 
 /**
  * A numeric flag's value, or `null` when it is missing, non-numeric, or below
@@ -338,8 +353,9 @@ async function main() {
   //
   // The residual overshoot is one batch group, and it is irreducible — a failed
   // group must be excluded whole or its rows are served again forever, which is
-  // the livelock this set exists to prevent. So the honest bound is
-  // `MAX_SKIP_IDS + args.batchSize`, and that is what the URL must accommodate.
+  // the livelock this set exists to prevent. So the worst case the URL must
+  // carry is `MAX_SKIP_IDS + args.batchSize`, which is exactly what MAX_SKIP_IDS
+  // is derived to leave room for — see its docblock.
   const overSkipCap = () => skipIds.size > MAX_SKIP_IDS;
 
   for (;;) {
@@ -459,19 +475,38 @@ async function main() {
       // to carry every NOT NULL column, so a payload of just the two embedding
       // columns would clobber scope/key/value. A bounded pool buys the same
       // wall-clock win with the same statements.
-      const writes = await mapSettled(group, WRITE_CONCURRENCY, (u, i) => rest(
-        supabaseUrl, serviceKey,
-        `/memories?id=eq.${u.row.id}`,
-        {
-          method: 'PATCH',
-          // Both columns in ONE statement — the 00060 CHECK requires
-          // both-or-neither, so a split update would be rejected.
-          body: JSON.stringify({
-            embedding: toVectorLiteral(vectors[i]),
-            embedding_model: config.model,
-          }),
-        },
-      ));
+      const writes = await mapSettled(group, WRITE_CONCURRENCY, async (u, i) => {
+        const patched = await rest(
+          supabaseUrl, serviceKey,
+          // `select=id` shapes the returned representation down to one column.
+          // Without it `return=representation` echoes the whole row back —
+          // including the 1536-float vector just written, per row, for nothing.
+          `/memories?id=eq.${u.row.id}&select=id`,
+          {
+            method: 'PATCH',
+            // `return=representation` is not decoration: a PATCH that matches
+            // ZERO rows succeeds with 204 and an empty body, which `rest` reads
+            // as success — so a row that was never written was counted `done`
+            // and reported as embedded while still null. That is the same silent
+            // zero-row shape 00062 removes from the edge path, and it was
+            // sitting here too. Asking for the affected rows is what makes the
+            // difference observable at all.
+            headers: { prefer: 'return=representation' },
+            // Both columns in ONE statement — the 00060 CHECK requires
+            // both-or-neither, so a split update would be rejected.
+            body: JSON.stringify({
+              embedding: toVectorLiteral(vectors[i]),
+              embedding_model: config.model,
+            }),
+          },
+        );
+        // Thrown, not returned: `mapSettled` counts a throw as this row's
+        // failure, which puts it in `failed` and `skipIds` where it belongs —
+        // the row really is still null and really will be retried next run.
+        if (!Array.isArray(patched) || patched.length === 0) {
+          throw new Error(`write matched no row (id=${u.row.id})`);
+        }
+      });
 
       const written = writes.filter((w) => w.ok).length;
       done += written;

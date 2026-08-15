@@ -218,6 +218,16 @@ signal; the outcome is on the child span, which carries `lorekit.memory_id` and
 > vector until the backfill is next run — a known gap, not an oversight: it
 > needs a staleness signal (compare `updated_at` against an embed timestamp)
 > that the schema does not carry yet.
+>
+> The same missing signal has a cost-shaped twin on the other side.
+> `memory_write` **upserts**, so an agent re-saving an unchanged lesson reaches
+> `embedOnWrite` again and pays for another embedding of identical text. Gating
+> on `row.inserted` would stop that — and would also stop re-embedding a lesson
+> that genuinely *changed* on the same upsert, trading a correctness regression
+> for a cost saving. Both halves want the same fix: a hash of the embedded text
+> (or an embed timestamp) so "has this text already been embedded" becomes
+> answerable. Until then the write path errs toward paying twice rather than
+> serving a stale vector, and the two are tracked together.
 
 ---
 
@@ -313,14 +323,16 @@ Five properties worth knowing before you run it on a large store:
   (a rejected batch, a memory with no embeddable text) is excluded from the
   queue for the rest of the run, because the queue is a query and a row left
   null would otherwise be served forever. That exclusion list travels in the
-  URL, so it is capped at 200 rows; past the cap the run stops and prints
+  URL, so it is capped at **70** rows; past the cap the run stops and prints
   `── backfill stopped early (work remains) ──` with a `stopped:` count instead
   of `── backfill complete ──`. The cap is checked wherever the list GROWS, not
   only between pages — so passing it also stops the run **before** it pays a
   provider for a page it has already decided to abandon. The set can still
-  overshoot by at most one batch (`200 + --batch-size`, so 296 by default):
-  a failed batch has to be excluded whole or its rows are served again forever,
-  which is the livelock the list exists to prevent. Fix what the failure lines name, then rerun —
+  overshoot by at most one batch, and 70 is *derived* from that: nginx's default
+  request-line limit is 8 KB, a uuid plus its comma is 37 bytes, so the id list
+  gets a 6 KB budget = 166 ids, minus the 96-row maximum overshoot = 70. Capping
+  at the budget itself would let a heavily-failing run reach ~296 ids ≈ 11 KB and
+  start returning 414 instead of stopping cleanly. Fix what the failure lines name, then rerun —
   the next run starts from a clean exclusion list. The three headlines are
   therefore `complete` (nothing retryable left), `incomplete (work remains)`
   (the walk finished, some rows failed), and `stopped early (work remains)`
