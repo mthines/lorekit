@@ -99,9 +99,17 @@ export function RangePicker({
           looking unset. It is ACTIVE and inert: clicking a preset is how you
           leave it, so there is no extra concept to learn and no dead control —
           and without it, drilling into an hour from a chart would silently
-          deselect everything and read as a bug. */}
+          deselect everything and read as a bug. It is a CHECKED radio, not a
+          bare span: this arm is what the radiogroup has selected, so a screen
+          reader that found no checked preset must find the selection here
+          instead of reporting the whole group unset. `aria-disabled` says it
+          is inert without removing it from the group's checked count. */}
       {selected === null && (
         <span
+          role="radio"
+          aria-checked={true}
+          aria-disabled={true}
+          aria-label={`Custom range — ${rangeLabel(value, nowIso)}`}
           className="min-h-6 rounded bg-[var(--color-bg-raised)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-content-primary)] shadow-sm"
           title="Custom range — pick a preset to leave it"
         >

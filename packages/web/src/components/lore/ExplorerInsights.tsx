@@ -121,7 +121,10 @@ export function ExplorerInsights({
               type="button"
               onClick={() => setOpen((v) => !v)}
               aria-expanded={open}
-              aria-controls="explorer-insights-detail"
+              // Only reference the detail region while it EXISTS — AnimatePresence
+              // unmounts it when collapsed, so a static IDREF would dangle exactly
+              // in that state.
+              {...(open ? { 'aria-controls': 'explorer-insights-detail' } : {})}
               aria-label={open ? 'Hide activity detail' : 'Show activity detail'}
               className="flex min-h-9 min-w-9 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors duration-150 hover:text-[var(--color-content-secondary)]"
             >

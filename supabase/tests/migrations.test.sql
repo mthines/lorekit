@@ -3969,10 +3969,13 @@ $$;
 -- Ownership was the ONE Explorer filter narrowed client-side; 00063 folds it
 -- into the same drill-down machinery as every other dimension. Owner identity is
 -- `personal` (org_id null) or the owning org's SLUG. This covers the two RPCs
--- (`lorekit_memory_facets` and `lorekit_memory_activity`); the equivalent
--- `GET /memories` handler predicate (`applyOwnerFilter`) shares the SAME identity
--- rule but runs at the PostgREST layer, so it is exercised by the live-stack
--- integration suite (`memories-api.integration.spec.ts`), not here.
+-- (`lorekit_memory_facets` and `lorekit_memory_activity`). The equivalent
+-- `GET /memories` list predicate (`applyOwnerFilter`) shares the SAME identity
+-- rule but runs at the PostgREST layer, so this SQL suite cannot reach it — and
+-- it has NO automated coverage yet: `memories-api.integration.spec.ts` has a
+-- `list filters` block for the other dimensions but no `owner` case. Adding one
+-- is the open follow-up; until then the list predicate is verified by hand
+-- against the RPC identity rule these ACs pin.
 -- AC-1: the owner facet enumerates `personal` and the org slug with counts.
 -- AC-2: DRILL-DOWN — an owner filter narrows the OTHER dimensions' counts.
 -- AC-3: SELF-EXCLUSION — the owner filter does not collapse the owner dimension,
