@@ -7,7 +7,7 @@ keywords: ["offline", "local store", "cli", "install", "doctor", "mcp", "memory.
 
 <TutorialCallout variant="tip">
 
-Offline storage is the fastest way to start. You can migrate to remote storage later by adding a `LOREKIT_MCP_URL` and `LOREKIT_API_KEY` — the CLI reads both stores and merges them automatically.
+Offline storage is the fastest way to start. You can migrate to remote storage later by adding a `LOREKIT_MCP_URL` and `LOREKIT_TOKEN` — the CLI reads both stores and merges them automatically.
 
 </TutorialCallout>
 
@@ -17,7 +17,9 @@ Offline storage is the fastest way to start. You can migrate to remote storage l
 npx @lorekit/cli install
 ```
 
-This scaffolds the `lorekit-memory`, `lorekit-setup`, and `lorekit-groom` skills and the local MCP server into your `.claude/` (project) or `~/.claude/` (global) directory, then asks whether to wire the lifecycle hooks.
+This scaffolds the `lorekit-memory`, `lorekit-setup`, and `lorekit-groom` skills and an MCP server entry into your `.claude/` (project) or `~/.claude/` (global) directory, then asks whether to wire the lifecycle hooks.
+
+The MCP entry it writes points at the **hosted** server. For an offline-only setup, replace it with the CLI's local stdio server (Step 3) — leave the token prompt blank, since local mode needs none.
 
 The hooks inject context into your agent — they never write memory themselves. Pick `all` (inject lessons at session start and the ones matching each substantive prompt as you go, nudge on a tool failure and at end of turn), `read-only` (inject lessons at session start only, never nudge), or `none`. Choose non-interactively with `--hooks`:
 
@@ -49,7 +51,18 @@ This checks connectivity, token permissions, and scope health. In offline-only m
 npx @lorekit/cli mcp
 ```
 
-This starts the local stdio MCP server. Your agent can then call `memory.write` to store a memory:
+This starts the local stdio MCP server. Point your agent at it instead of the hosted endpoint — this is the entry that makes an offline setup actually offline:
+
+```json
+// .mcp.json — the local store, no endpoint and no token
+{
+  "mcpServers": {
+    "lorekit": { "command": "npx", "args": ["-y", "@lorekit/cli", "mcp"] }
+  }
+}
+```
+
+Your agent can then call `memory.write` to store a memory:
 
 ```json
 memory.write {
