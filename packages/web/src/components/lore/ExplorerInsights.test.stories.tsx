@@ -235,7 +235,9 @@ export const CollapsedStillShowsTheNumbers: Story = {
       // immediately (even at 0), so reading the value synchronously races the
       // fetch. The neighbouring label step above uses the same `waitFor`.
       await waitFor(async () => {
-        const written = canvas.getByText('written').previousElementSibling;
+        // The value `dd` is the label `dt`'s NEXT sibling now (valid dl ordering
+        // renders `dt` before `dd`; CSS `order` keeps the number visually first).
+        const written = canvas.getByText('written').nextElementSibling;
         stripWritten = written?.textContent?.trim() ?? '';
         await expect(Number(stripWritten)).toBeGreaterThan(0);
       });

@@ -46,7 +46,6 @@ export const LORE_PARAM_DEFAULTS = {
   // "unfiltered".
   filters: null,
   tags: [], // string[] — legacy label filter (AND across labels); [] means "no filter". Still READ by the app, superseded by `filters`
-  view: 'scope', // 'scope' | 'time'
   // 'active' | 'archived' | 'expiring' | null — the Explorer's Status control.
   // `null`, NOT 'active', is the default for `filters`' reason: the app has to
   // tell "absent" from an explicit choice, because an absent `status` falls back
@@ -60,9 +59,9 @@ export const LORE_PARAM_DEFAULTS = {
 
 // A stable, readable param order (also makes URLs deterministic for tests).
 // Mirrors the `useUrlState` call order in `LoreExplorer.tsx` (+ the `lesson`
-// param last), so `filters` and `tags` sit between `owner` and `view`. `scope`
+// param last), so `filters` and `tags` sit between `owner` and `status`. `scope`
 // precedes `lesson` so a lesson link reads `?scope=…&lesson=…`.
-const PARAM_ORDER = ['scope', 'q', 'range', 'owner', 'filters', 'tags', 'view', 'status', 'archived', 'lesson'];
+const PARAM_ORDER = ['scope', 'q', 'range', 'owner', 'filters', 'tags', 'status', 'archived', 'lesson'];
 
 // Strip trailing slashes from a base URL, falling back to the default when the
 // input is empty/absent. Pure.
@@ -154,12 +153,6 @@ export function parseOwnerArg(owner) {
   if (typeof owner !== 'string' || !owner || owner === 'all') return 'all';
   if (owner === 'personal') return 'personal';
   return { orgId: owner };
-}
-
-// Coerce the `--view` flag to a `ViewMode`: only 'time' is non-default; anything
-// else (incl. absent/invalid) → 'scope'. Pure.
-export function parseViewArg(view) {
-  return view === 'time' ? 'time' : 'scope';
 }
 
 // Coerce the `--tags` flag to a normalized `string[]` label filter, mirroring the

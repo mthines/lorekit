@@ -33,7 +33,6 @@ The Explorer reads each parameter with `useUrlState`, which does `JSON.parse(sea
 | `owner` | `"all"` | Ownership filter: `"all"`, `"personal"`, or `{ "orgId": "…" }`. |
 | `filters` | `null` | The Explorer filter bar: an array of `{ "field", "operator", "values" }` conditions over `label`, `agent`, `trigger`, `repo`, `branch` and `pr` (OR within a field, AND across fields). `null` means the param is absent and the legacy `tags` shorthand still applies; `[]` means the bar was explicitly emptied. |
 | `tags` | `[]` | Legacy label filter, AND across labels (e.g. `["perf","ci"]`). Superseded by `filters`, still read so older links keep working. |
-| `view` | `"scope"` | Explorer view: `"scope"` or `"time"`. |
 | `status` | `null` | Explorer Status: `"active"` (default), `"archived"`, or `"expiring"` (live memories whose TTL runs out within 7 days). `null` means the param is absent and the legacy `archived` flag still applies. |
 | `archived` | `false` | Legacy archived toggle. Superseded by `status`, still read so older links keep working. |
 | `lesson` | `null` | `{ "scope", "key" }` — opens that memory's detail sheet. |
@@ -98,7 +97,7 @@ https://lorekit.io/lore?q=%22flaky%20test%22&owner=%22personal%22
 https://lorekit.io/lore?scope=%22global%22&tags=%5B%22perf%22%2C%22ci%22%5D
 
 # global scope, time view, including archived
-https://lorekit.io/lore?scope=%22global%22&view=%22time%22&archived=true
+https://lorekit.io/lore?scope=%22global%22&archived=true
 ```
 
 ## Generate links from the CLI

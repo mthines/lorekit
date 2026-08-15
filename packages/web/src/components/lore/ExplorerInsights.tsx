@@ -148,7 +148,7 @@ export function ExplorerInsights({
               className="min-w-0"
               initial={reduceMotion ? false : { opacity: 0 }}
               animate={{ opacity: 1 }}
-              exit={reduceMotion ? { opacity: 0 } : { opacity: 0 }}
+              exit={{ opacity: 0 }}
               transition={{ duration: reduceMotion ? 0 : 0.12 }}
             >
               <ExplorerStats

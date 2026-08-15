@@ -259,12 +259,15 @@ export function ExplorerStats({
             {/* A subtle icon per metric makes the strip scannable — the eye
                 finds "written" by its glyph before reading the word. */}
             <Icon className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
-            <dd className="text-sm font-semibold tabular-nums text-[var(--color-content-primary)]">
-              {value}
-            </dd>
-            <dt className="text-[11px] text-[var(--color-content-tertiary)]">
+            {/* `dt` precedes `dd` in the DOM (valid description-list ordering, so
+                assistive tech pairs term→value); `order` keeps the number visually
+                first. */}
+            <dt className="order-3 text-[11px] text-[var(--color-content-tertiary)]">
               {STRIP_LABELS[id] ?? label}
             </dt>
+            <dd className="order-2 text-sm font-semibold tabular-nums text-[var(--color-content-primary)]">
+              {value}
+            </dd>
           </div>
         ))}
       </dl>

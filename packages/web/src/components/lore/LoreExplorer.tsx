@@ -325,9 +325,14 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
   const insightsNowIso = useMemo(() => new Date().toISOString(), []);
   const rangeKey = JSON.stringify(range);
   const resolvedRange = useMemo(
-    () => resolveRange(range, new Date().toISOString()),
+    // Resolve the LIST's window against the SAME mount clock the insights panel
+    // uses (`insightsNowIso`), not a fresh `new Date()` — otherwise a relative
+    // preset like `24h` bounds the list and the stat header a few milliseconds
+    // apart, reintroducing exactly the header/list disagreement this feature
+    // removes. `rangeKey` is still the only dep: the clock is a stable constant.
+    () => resolveRange(range, insightsNowIso),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rangeKey],
+    [rangeKey, insightsNowIso],
   );
 
   // Day-cell highlighting for the heatmap. Derived from the RESOLVED window, so
