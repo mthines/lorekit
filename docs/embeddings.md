@@ -245,8 +245,10 @@ signal; the outcome is on the child span, which carries `lorekit.memory_id` and
 > agent-written.
 >
 > This is not the staleness problem above, and it is **not** a mirroring problem
-> either: `supabase/functions/mcp/` already imports `../_shared/*.ts` directly in
-> seven files (`otel.ts`, `scope.ts`, `audit.ts`, `lesson-rank.ts` and others), so
+> either: seven files under `supabase/functions/mcp/` already import
+> `../_shared/*.ts` directly — `index.ts`, `mcp-handler.ts`, `tools.ts`,
+> `auth.ts`, `limits.ts`, `webhook.ts` and `installation-sync.ts` — reaching
+> modules such as `otel.ts`, `scope.ts`, `audit.ts` and `lesson-rank.ts`. So
 > `embed-on-write.ts` is reachable from there as-is. The self-contained rule that
 > forbids cross-package imports is about `packages/`, not about the `_shared/`
 > tree beside it. The one place `embed-on-write.ts` reaches into `_shared/api/` —
