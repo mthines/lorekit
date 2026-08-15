@@ -5214,6 +5214,93 @@ begin
 end;
 $$;
 
+-- ── 62b. An embedding write must not restamp `updated_at` (00062) ───────────
+-- `updated_at` is the recency signal search/relevant order by, memory.list
+-- keysets on, and lesson-rank scores. The vector is a DERIVED artefact, so
+-- writing one is not an edit. A whole-store backfill would otherwise restamp
+-- every row in `created_at desc` order and destroy the real ordering, with no
+-- way to recover the old values.
+--
+-- AC-1 pins the preservation, AC-2 pins that a REAL edit still bumps (a trigger
+-- that never stamps would pass AC-1 while breaking every consumer), and AC-3
+-- pins that an edit arriving together with an embedding still counts as an edit.
+insert into memories (id, user_id, scope, key, value, updated_at) values
+  ('00000000-0000-0000-0000-0000000e6220', '00000000-0000-0000-0000-0000000000a1',
+   'global', 'embed-stamp-row', 'original value', '2020-01-01T00:00:00Z');
+
+do $$
+declare
+  v_vec     text := '[' || array_to_string(array_fill(0.001::real, array[1536]), ',') || ']';
+  v_before  timestamptz;
+  v_after   timestamptz;
+  v_ok      boolean;
+begin
+  select updated_at into v_before from memories where id = '00000000-0000-0000-0000-0000000e6220';
+  assert v_before = '2020-01-01T00:00:00Z'::timestamptz,
+    format('00062 AC-1 setup: the seeded updated_at should be untouched, got %s', v_before);
+
+  -- AC-1 — an embedding-only write preserves it.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000a1","role":"authenticated"}', true);
+  select written into v_ok
+    from lorekit_memory_set_embedding(
+           '00000000-0000-0000-0000-0000000e6220', null, v_vec, 'text-embedding-3-small');
+  reset role;
+
+  assert v_ok, '00062 AC-1 setup: the embedding write should have landed';
+
+  select updated_at into v_after from memories where id = '00000000-0000-0000-0000-0000000e6220';
+  assert v_after = v_before,
+    format('00062 AC-1: an embedding-only write must NOT restamp updated_at — was %s, now %s. '
+           'A backfill doing this to every row rewrites the store''s recency ordering irrecoverably',
+           v_before, v_after);
+
+  -- AC-2 — a real edit still bumps it. Without this, a trigger that simply
+  -- never stamped would satisfy AC-1 while silently breaking every consumer.
+  update memories set value = 'edited value' where id = '00000000-0000-0000-0000-0000000e6220';
+  select updated_at into v_after from memories where id = '00000000-0000-0000-0000-0000000e6220';
+  assert v_after > v_before,
+    format('00062 AC-2: editing a memory must still bump updated_at, stayed at %s', v_after);
+
+  -- AC-3 — an edit that ALSO rewrites the vector is still an edit.
+  update memories
+     set updated_at = '2020-01-01T00:00:00Z'
+   where id = '00000000-0000-0000-0000-0000000e6220';
+  update memories
+     set value = 'edited again', embedding_model = 'text-embedding-3-large'
+   where id = '00000000-0000-0000-0000-0000000e6220';
+  select updated_at into v_after from memories where id = '00000000-0000-0000-0000-0000000e6220';
+  assert v_after > '2020-01-01T00:00:00Z'::timestamptz,
+    '00062 AC-3: a change touching both the value and the embedding columns is an edit and must bump';
+end;
+$$;
+
+-- AC-4: the five OTHER tables on the shared `set_updated_at` are untouched —
+-- only the memories trigger was retargeted. Retargeting all of them would be a
+-- behaviour change to tables that have no embedding column and no such problem.
+do $$
+declare
+  v_fn text;
+begin
+  select p.proname into v_fn
+    from pg_trigger t
+    join pg_proc p on p.oid = t.tgfoid
+    join pg_class c on c.oid = t.tgrelid
+   where c.relname = 'memories' and t.tgname = 'memories_updated_at';
+  assert v_fn = 'lorekit_memories_set_updated_at',
+    format('00062 AC-4: the memories trigger must use lorekit_memories_set_updated_at, uses %s', v_fn);
+
+  select p.proname into v_fn
+    from pg_trigger t
+    join pg_proc p on p.oid = t.tgfoid
+    join pg_class c on c.oid = t.tgrelid
+   where c.relname = 'orgs' and t.tgname = 'orgs_updated_at';
+  assert v_fn = 'set_updated_at',
+    format('00062 AC-4: orgs must still use the shared set_updated_at, uses %s', v_fn);
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

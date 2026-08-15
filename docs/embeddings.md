@@ -133,9 +133,13 @@ error on the same span rather than as a separate skip reason.
 
 ### Who may write a vector
 
-The vector is written through the `lorekit_memory_set_embedding` RPC
-(migration `00062`), never by a direct `UPDATE` on `memories`. That is not
-ceremony — the direct update was **silently wrong for org-owned memories**:
+On the **edge write path** the vector is written through the
+`lorekit_memory_set_embedding` RPC (migration `00062`), never by a direct
+`UPDATE` on `memories`. (The backfill still PATCHes the two columns directly: it
+runs as service role across every tenant, which is the one credential `rls_update`
+already admits, and it has no caller identity to authorise against.) That is not
+ceremony — on the request path the direct update was **silently wrong for
+org-owned memories**:
 
 - the READ policies were widened for orgs in `00015`
   (`org_id in (select lorekit_member_org_ids(auth.uid()))`);
@@ -170,6 +174,29 @@ Behaviour is asserted in `supabase/tests/migrations.test.sql` (section 62,
 including that an org viewer is refused and that the old direct update still
 does not land); the edge module is held to the RPC by
 `packages/mcp-core/src/embed-write-authz.spec.ts`.
+
+### Embedding a row does not touch `updated_at`
+
+`memories_updated_at` (`00001`) is a `BEFORE UPDATE` trigger that stamps
+`updated_at = now()`. A vector is a **derived artefact, not an edit**, so
+`00062` retargets that trigger at `lorekit_memories_set_updated_at`, which
+preserves `updated_at` when the only change is the embedding columns and stamps
+it as before for anything else.
+
+This is enforced at the storage layer rather than at each caller, so the edge
+RPC, the backfill's PATCH and any future writer all inherit it. It matters most
+for the backfill: `updated_at` is what `POST /memories/search` and
+`GET /memories/relevant` order by, what `memory.list` keysets on
+(`memories_scope_updated_at_id_idx`), and what `lesson-rank` scores for recency
+— so a whole-store run would otherwise restamp every row in `created_at desc`
+order and collapse the real ordering into the order the backfill happened to
+run in, with the original values unrecoverable.
+
+The shared `set_updated_at` is untouched; the five other tables using it
+(`user_limits`, `orgs`, `org_limits`, `plans`, `user_plans`) have no embedding
+column and keep the plain behaviour. Asserted in `migrations.test.sql`
+section 62b, including that a real edit still bumps and that `orgs` still uses
+the shared function.
 
 Everything after the enqueue lands on the **detached** `lorekit.embedding.write`
 span, not on the request span. It has to: `traceRequest` ends the request span
@@ -326,11 +353,15 @@ Unset `LOREKIT_EMBEDDING_ENABLED`. New writes stop embedding immediately;
 existing vectors are inert because nothing reads the column yet. To clear them:
 
 ```sql
-update memories set embedding = null, embedding_model = null;
+update memories set embedding = null, embedding_model = null
+where embedding is not null;
 ```
 
 Both columns in one statement — the 00060 CHECK requires both-or-neither, so a
-split update is rejected.
+split update is rejected. The `where` clause is not decoration: without it this
+touches every row in the table, and while `00062`'s trigger keeps an
+embedding-only change from restamping `updated_at`, there is no reason to
+rewrite rows that never carried a vector.
 
 ---
 

@@ -72,6 +72,78 @@
 -- is what makes the local run and the hosted run the same run.
 -- ═════════════════════════════════════════════════════════════════════════
 
+-- ═════════════════════════════════════════════════════════════════════════
+-- PART 1 — an embedding write must not disturb `updated_at`.
+--
+-- `memories_updated_at` (00001) is a BEFORE UPDATE trigger that sets
+-- `updated_at = now()` unconditionally. That is right for an edit and WRONG for
+-- an embedding: the vector is a DERIVED artefact, not a change to what the
+-- lesson says. `updated_at` is the recency signal `POST /memories/search` and
+-- `GET /memories/relevant` order by, that `memory.list` keysets on
+-- (`memories_scope_updated_at_id_idx`), and that `lesson-rank` scores.
+--
+-- On the write path the damage is nil — the row was created moments earlier.
+-- A WHOLE-STORE BACKFILL is the problem: it walks `created_at desc` and would
+-- restamp every row in that order, collapsing the store's real recency ordering
+-- into the order the backfill happened to run in. The old values are not
+-- recoverable afterwards, so this is a one-way corruption of the ranking signal
+-- that nothing would report.
+--
+-- FIXED AT THE STORAGE LAYER, not at the two call sites. Both the RPC below and
+-- the backfill's PostgREST PATCH trip the same trigger, and so would any future
+-- writer — a rule each caller has to remember is a rule that gets forgotten
+-- exactly once.
+--
+-- `set_updated_at` itself is LEFT ALONE: five other tables share it
+-- (`user_limits`, `orgs`, `org_limits`, `plans`, `user_plans`), and none of them
+-- has an embedding column or this problem. Only the `memories` trigger is
+-- retargeted.
+--
+-- The predicate is "did anything OTHER than the embedding columns change?",
+-- asked by masking those columns plus `updated_at` and comparing the whole rows.
+-- Column-complete by construction: a column added to `memories` later is
+-- included automatically, where an explicit list would silently stop covering it.
+-- ═════════════════════════════════════════════════════════════════════════
+
+create or replace function lorekit_memories_set_updated_at()
+returns trigger
+language plpgsql
+set search_path = public, extensions
+as $$
+declare
+  v_new memories := new;
+  v_old memories := old;
+begin
+  -- Mask the derived columns and the one being decided.
+  v_new.embedding := null; v_new.embedding_model := null; v_new.updated_at := null;
+  v_old.embedding := null; v_old.embedding_model := null; v_old.updated_at := null;
+
+  if v_new is not distinct from v_old then
+    -- Nothing the user can see changed: an embedding-only write (or a no-op).
+    -- Preserve the row's real recency rather than restamping it.
+    new.updated_at := old.updated_at;
+  else
+    new.updated_at := now();
+  end if;
+
+  return new;
+end;
+$$;
+
+create or replace trigger memories_updated_at
+  before update on memories
+  for each row execute function lorekit_memories_set_updated_at();
+
+comment on function lorekit_memories_set_updated_at() is
+  'BEFORE UPDATE on memories: bumps updated_at like set_updated_at, EXCEPT when the only change is '
+  'the embedding columns — a derived artefact must not rewrite the recency signal that search, '
+  'relevant, the keyset index and lesson-rank all read. A whole-store backfill would otherwise '
+  'restamp every row in created_at desc order, irrecoverably.';
+
+-- ═════════════════════════════════════════════════════════════════════════
+-- PART 2 — the authorised write path itself.
+-- ═════════════════════════════════════════════════════════════════════════
+
 -- Dropped first for the reason 00019/00009 give: `create or replace` cannot
 -- change a function's RETURN TYPE, so amending this later (a third output
 -- column, say) would fail against a database that already has it. Forward-only.

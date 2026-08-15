@@ -150,20 +150,47 @@ async function main() {
     // together, against the real database rather than a migration file.
     const writeKey = mint('write');
     if (Array.isArray(vector) && vector.length === EMBEDDING_DIMENSIONS) {
-      await rest(base, key, '/memories', {
+      // The row is created WITHOUT a vector, then embedded through
+      // `lorekit_memory_set_embedding` — the same RPC the edge write path uses.
+      // Writing the vector inline on the INSERT (as this did) proved only that
+      // the column accepts one; it never touched the authorisation path, so the
+      // org-owned zero-row bug 00062 exists to fix would have passed here.
+      const [created] = await rest(base, key, '/memories', {
         method: 'POST',
         headers: { prefer: 'return=representation' },
         body: JSON.stringify({
           scope: SCOPE, key: writeKey, value: 'A lesson written by the live embedding smoke.',
-          embedding: `[${vector.join(',')}]`, embedding_model: config.model,
         }),
       });
+
+      // Service role with no actor: the row is service-owned (`user_id` null),
+      // which is the branch this credential is entitled to. A personal or
+      // org-owned row goes through the actor and capability checks instead —
+      // those are asserted in `migrations.test.sql` section 62, where a test can
+      // mint the identities this script has no way to impersonate.
+      const [wrote] = await rest(base, key, '/rpc/lorekit_memory_set_embedding', {
+        method: 'POST',
+        body: JSON.stringify({
+          p_memory_id: created?.id,
+          p_actor_user_id: null,
+          p_embedding: `[${vector.join(',')}]`,
+          p_model: config.model,
+        }),
+      }) ?? [];
+      check(wrote?.written === true, 'lorekit_memory_set_embedding reports the write landed');
+
       const [row] = await rest(
         base, key,
-        `/memories?select=id,embedding_model&key=eq.${encodeURIComponent(writeKey)}&embedding=not.is.null`,
+        `/memories?select=id,embedding_model,updated_at&key=eq.${encodeURIComponent(writeKey)}&embedding=not.is.null`,
       );
       check(Boolean(row), 'a real vector round-trips through the column');
       check(row?.embedding_model === config.model, 'embedding_model is stored alongside it');
+      // The recency signal search and lesson-rank read must survive an embed.
+      check(
+        row?.updated_at === created?.updated_at,
+        'embedding the row leaves updated_at alone',
+        row?.updated_at === created?.updated_at ? '' : `was ${created?.updated_at}, now ${row?.updated_at}`,
+      );
     }
 
     // ── 3. the both-or-neither CHECK is live, not just in the migration ─────
