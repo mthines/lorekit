@@ -46,6 +46,10 @@ Do **not** add a loop to:
   must not be biased by prior runs; that is the whole point of a fresh pass.
 - **Steps that handle secrets or credentials** — routing them through lesson
   extraction is a leak risk.
+- **Deterministic jobs** (a CI workflow, a cron script, a release pipeline) — they
+  do not draft prose lessons or need a promotion gate; what they want is a JSON
+  **state record** of their last run. That is a different shape with different
+  guards: see [ci-state-records.md](./ci-state-records.md).
 
 When unsure, default to **no**. A loop can be added later; unwinding an
 entrenched-bias loop is harder.
