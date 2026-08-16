@@ -5911,6 +5911,69 @@ begin
   assert v_failed,
     'set_scoping AC-5: a non-member org must get the permission refusal (42501)';
 
+  -- The RPC RE-STATES the table's five CHECKs so a bad argument comes back as a
+  -- legible LK004 instead of a raw constraint-violation string. Duplicated logic
+  -- drifts from its original unless something asserts it, and AC-4 only proves
+  -- the CHECKs themselves — it writes as the migration owner and never enters
+  -- this function. Each case therefore feeds ONE bad argument with the other
+  -- three valid, and catches the RPC's own sqlstate (22023 =
+  -- `invalid_parameter_value`) rather than `others`, for the same reason the
+  -- refusals above catch theirs by code.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(
+      v_token, array_fill('global'::text, array[51]), 'all', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a 51-pattern allowlist must be refused with LK004';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(
+      v_token, array['a,value.not.is.null'], 'all', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a malformed scope pattern must be refused with LK004';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(
+      v_token, '{}'::text[], 'selected', array_fill(v_org_a, array[51]));
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a 51-org list must be refused with LK004';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'everything', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: an unknown org_access must be refused with LK004';
+
+  -- Both directions of the equality, because a one-sided implication would let
+  -- one of them through: `selected` with no orgs, and a non-`selected` tenancy
+  -- carrying orgs. The second uses v_org_a, an org the actor IS a member of, so
+  -- it is the mismatch that refuses it and not the membership check below it.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'selected', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: `selected` with no org ids must be refused with LK004';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'personal', array[v_org_a]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: org ids under a tenancy that does not use them must be refused with LK004';
+
   -- And the happy path returns the row it wrote.
   select t.scopes, t.org_access, t.org_ids into v_scopes, v_access, v_ids
   from lorekit_api_token_set_scoping(v_token, array['global'], 'selected', array[v_org_a]) t;
