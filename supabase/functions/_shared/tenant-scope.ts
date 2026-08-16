@@ -8,11 +8,13 @@
  * re-derives membership itself, so the predicate can never drift from the
  * SQL side (Requirement R2: exactly one enforced place).
  *
- * Mirrored (self-contained, no cross-package import) in
- * supabase/functions/_shared/tenant-scope.ts for the Deno edge functions (BOTH
- * the MCP and REST surfaces import that one copy) — the
- * same pattern used for created-at.ts / webhook-secret-select.ts. Keep the
- * two in sync when either changes (guarded by edge-parity.spec.ts).
+ * THIS FILE is the edge mirror: a self-contained copy of
+ * packages/mcp-core/src/tenant-scope.ts, which the Deno edge functions cannot
+ * cross-import. It lives in _shared/ rather than mcp/ because BOTH the MCP and
+ * REST surfaces import it — the same pattern used for created-at.ts /
+ * webhook-secret-select.ts. Keep the two in sync when either changes;
+ * edge-parity.spec.ts fails when they drift (it strips comments, so this header
+ * is free to describe the mirror rather than repeat the source's).
  */
 
 /**

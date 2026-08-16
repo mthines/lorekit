@@ -66,3 +66,10 @@ export function tokenPrefixFor(permissions: readonly Permission[]): 'rw' | 'ro' 
   if (hasRead) return 'ro';
   throw new Error('tokenPrefixFor: permissions must include at least "read" or "write"');
 }
+
+// `ACCOUNT_WIDE_TOOLS` / `isRefusedForScopedKey` used to live here. They moved
+// to `account-wide-tools.ts` when the REST purge endpoints needed the same
+// decision: the REST tree cannot cross-import `supabase/functions/mcp/`, so a
+// rule kept in this file could only ever be copied, and the copy is what let
+// `POST /memories/purge` ship with no key gate while the docs said it was
+// refused.

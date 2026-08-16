@@ -4736,7 +4736,11 @@ $$;
 -- reads the whole usage ledger.
 do $$
 declare
-  v_sig text := 'lorekit_read_activity(uuid, text, timestamptz, timestamptz, text)';
+  -- 00068 appended `p_key_scopes text[]`, so the live signature is the 6-arg
+  -- one. Asserted against the CURRENT signature rather than 00058's: a
+  -- privilege probe against a signature that no longer exists errors out, and
+  -- the overload count below is what pins that only one form is live.
+  v_sig text := 'lorekit_read_activity(uuid, text, timestamptz, timestamptz, text, text[])';
   v_overloads int;
 begin
   assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
@@ -5806,6 +5810,27 @@ begin
   assert lorekit_api_token_scope_allowed('{}'::text[], null),
     'scope_allowed AC-2: an unrestricted key still reaches a scopeless operation';
 
+  -- AC-2b (00068): a pattern outside SCOPE_PATTERN's shape is DROPPED, not
+  -- honoured as a prefix. `*` is a wildcard only directly after `/` or `::`, so
+  -- a stored `repo::mthines/lore*` must not reach every repo starting with
+  -- those letters — that would WIDEN the key, the one direction these
+  -- predicates may never move. Pins the shape test itself: without this,
+  -- deleting the `pattern ~ …` line leaves the suite green, while the two TS
+  -- twins are pinned by tenant-scope.spec.ts and api-key.spec.ts.
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/lore*'], 'repo::mthines/lorekit'),
+    'scope_allowed AC-2b: a mid-token wildcard must not prefix-match';
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/lore*'], 'repo::mthines/lore-other'),
+    'scope_allowed AC-2b: a dropped pattern must not match anything beneath it';
+  -- A key whose patterns ALL fail the shape test matches nothing — fail closed,
+  -- never "no restriction".
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/lore*'], 'global'),
+    'scope_allowed AC-2b: an all-malformed allowlist must reach nothing';
+  -- …and the two LEGAL wildcard positions are untouched.
+  assert lorekit_api_token_scope_allowed(array['repo::mthines/*'], 'repo::mthines/lorekit'),
+    'scope_allowed AC-2b: an owner wildcard still expands';
+  assert lorekit_api_token_scope_allowed(array['project::*'], 'project::alpha'),
+    'scope_allowed AC-2b: a prefix wildcard after `::` still expands';
+
   -- ── AC-3: the tenancy predicate ───────────────────────────────────────────
   assert lorekit_api_token_org_allowed('personal', '{}'::uuid[], null),
     'org_allowed AC-3: a personal row is reachable under every tenancy';
@@ -6109,6 +6134,291 @@ begin
   from api_tokens where id = v_token;
   assert v_scopes = '{}'::text[] and v_access = 'all' and v_ids = '{}'::uuid[],
     'set_scoping AC-5: clearing the scoping must restore the unrestricted default';
+end;
+$$;
+
+-- ── 82. api_token scoping ENFORCEMENT — the seven functions 00068 teaches ───
+--
+-- §81 proved the predicates answer correctly in isolation. This proves the
+-- functions that CONSUME them actually changed behaviour: the two mutation
+-- gates (memory_write, memory_delete), which are the last unbypassable checks
+-- on their paths, and the five per-scope aggregates (lorekit_memory_scopes,
+-- _activity, lorekit_read_activity, _tags, _facets), each of which would
+-- otherwise leak the very names scoping hides.
+do $$
+declare
+  v_owner    uuid := gen_random_uuid();
+  v_org      uuid;
+  v_org_slug text := 'keyenf-org';
+  v_scopes   text[];
+  v_routed   boolean;
+  v_binding  text;
+  v_count    integer;
+  v_failed   boolean;
+begin
+  insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
+  values ('00000000-0000-0000-0000-000000000000', v_owner, 'authenticated', 'authenticated',
+          'lk-mig-keyenf@test.local', now(), now());
+
+  insert into orgs (slug, name, created_by) values (v_org_slug, 'Key Enforcement', v_owner)
+    returning id into v_org;
+  insert into org_members (org_id, user_id, role) values (v_org, v_owner, 'owner');
+
+  -- ── AC-1: an unscoped caller is completely unaffected ─────────────────────
+  -- The defaults must reproduce the pre-00068 behaviour exactly, or this
+  -- migration is a regression for every existing key, JWT session and CI run.
+  select w.org_routed into v_routed
+  from memory_write(
+    p_user_id => v_owner, p_scope => 'repo::mthines/lorekit', p_key => 'k-default',
+    p_value => 'v', p_org_slug => v_org_slug
+  ) w;
+  assert v_routed,
+    'enforcement AC-1: an explicit org write must still route to the org by default';
+
+  -- ── AC-2: the explicit-org branch refuses a key outside its tenancy ───────
+  v_failed := false;
+  begin
+    perform memory_write(
+      p_user_id => v_owner, p_scope => 'repo::mthines/lorekit', p_key => 'k-denied',
+      p_value => 'v', p_org_slug => v_org_slug,
+      p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
+    );
+  exception when sqlstate 'LK002' then v_failed := true;
+  end;
+  assert v_failed,
+    'enforcement AC-2: a personal-only key must not write into a named org';
+
+  -- ── AC-2b: the SCOPE allowlist is enforced on the write path too ──────────
+  -- Both dispatchers already refuse a named scope outside the allowlist, but
+  -- both run on the service-role client, so this RPC is the only gate a write
+  -- cannot route around. Without it the allowlist half had no unbypassable
+  -- enforcement at all, unlike the tenancy half AC-2 covers.
+  v_failed := false;
+  begin
+    perform memory_write(
+      p_user_id => v_owner, p_scope => 'repo::other/repo', p_key => 'k-scope-denied',
+      p_value => 'v', p_key_scopes => array['repo::mthines/*']
+    );
+  exception when sqlstate 'LK002' then v_failed := true;
+  end;
+  assert v_failed,
+    'enforcement AC-2b: a key allowlisted elsewhere must not write under repo::other/repo';
+
+  -- …and the same key writing INSIDE its allowlist still succeeds, so AC-2b
+  -- denies on the allowlist and not on some unrelated failure.
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'repo::mthines/allowed', p_key => 'k-scope-allowed',
+    p_value => 'v', p_key_scopes => array['repo::mthines/*']
+  );
+  select count(*) into v_count from memories m
+   where m.user_id = v_owner and m.scope = 'repo::mthines/allowed';
+  assert v_count = 1,
+    'enforcement AC-2b: a write INSIDE the allowlist must still land';
+
+  -- ── AC-3: the binding branch — THE KEY WINS (00067 decision 4) ────────────
+  -- Bind the scope to the org, then write with NO explicit org. A default
+  -- caller is auto-routed; a personal-only key must fall back to a PERSONAL
+  -- write instead — never rejected, and still told which org the scope belongs
+  -- to, exactly as a non-member already is.
+  -- Inserted directly rather than through `lorekit_scope_bind`, which resolves
+  -- its actor from auth.uid() — null in this superuser block. The binding ROW is
+  -- what memory_write reads; how it got there is 00026's concern, not this one.
+  insert into org_scope_bindings (org_id, scope, created_by) values (v_org, 'repo::bound/repo', v_owner);
+
+  select w.org_routed into v_routed
+  from memory_write(
+    p_user_id => v_owner, p_scope => 'repo::bound/repo', p_key => 'k-bound-default', p_value => 'v'
+  ) w;
+  assert v_routed,
+    'enforcement AC-3: an unrestricted caller must still be auto-routed by the binding';
+
+  select w.org_routed, w.binding_org_slug into v_routed, v_binding
+  from memory_write(
+    p_user_id => v_owner, p_scope => 'repo::bound/repo', p_key => 'k-bound-personal',
+    p_value => 'v', p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
+  ) w;
+  assert not v_routed,
+    'enforcement AC-3: a personal-only key must NOT be auto-routed into the bound org';
+  assert v_binding = v_org_slug,
+    'enforcement AC-3: the fallback must still report the bound org so the caller can be told';
+
+  -- The same key pointed AT that org is routed — proving AC-3 denies on the
+  -- tenancy and not on some unrelated failure.
+  select w.org_routed into v_routed
+  from memory_write(
+    p_user_id => v_owner, p_scope => 'repo::bound/repo', p_key => 'k-bound-selected',
+    p_value => 'v', p_key_org_access => 'selected', p_key_org_ids => array[v_org]
+  ) w;
+  assert v_routed,
+    'enforcement AC-3: a key that DOES include the bound org must still be routed';
+
+  -- ── AC-4: lorekit_memory_scopes honours the key's allowlist ───────────────
+  -- Two personal scopes exist by now (repo::mthines/lorekit from AC-1 landed in
+  -- the org, so seed a personal one explicitly) plus the bound-repo rows.
+  perform memory_write(p_user_id => v_owner, p_scope => 'project::alpha', p_key => 'k-alpha', p_value => 'v');
+  perform memory_write(p_user_id => v_owner, p_scope => 'project::beta',  p_key => 'k-beta',  p_value => 'v');
+
+  select array_agg(s.scope order by s.scope) into v_scopes
+  from lorekit_memory_scopes(v_owner) s;
+  assert 'project::alpha' = any(v_scopes) and 'project::beta' = any(v_scopes),
+    'enforcement AC-4: an unrestricted caller must still see every scope';
+
+  select array_agg(s.scope order by s.scope) into v_scopes
+  from lorekit_memory_scopes(v_owner, array['project::alpha']) s;
+  assert v_scopes = array['project::alpha'],
+    'enforcement AC-4: an allowlisted key must see ONLY its allowlisted scopes';
+
+  select array_agg(s.scope order by s.scope) into v_scopes
+  from lorekit_memory_scopes(v_owner, array['project::*']) s;
+  assert 'project::alpha' = any(v_scopes) and 'project::beta' = any(v_scopes),
+    'enforcement AC-4: a wildcard pattern must match every scope beneath it';
+  assert not ('repo::bound/repo' = any(v_scopes)),
+    'enforcement AC-4: a wildcard must not leak a scope outside its prefix';
+
+  -- And the tenancy narrows the catalog too — otherwise a personal-only key
+  -- still enumerates the org's repo names, which is the leak this closes.
+  select count(*) into v_count
+  from lorekit_memory_scopes(v_owner, '{}'::text[], 'personal', '{}'::uuid[]) s
+  where s.scope = 'repo::bound/repo';
+  assert v_count = 0,
+    'enforcement AC-4: a personal-only key must not enumerate an org-owned scope';
+
+  -- A personal-only key still sees its OWN scopes: `personal` narrows which
+  -- ORGS are reachable, it never revokes the owner's own memories.
+  select count(*) into v_count
+  from lorekit_memory_scopes(v_owner, '{}'::text[], 'personal', '{}'::uuid[]) s
+  where s.scope = 'project::alpha';
+  assert v_count = 1,
+    'enforcement AC-4: a personal-only key must still see its own personal scopes';
+
+  -- ── AC-4b: memory_delete is gated on BOTH axes ────────────────────────────
+  -- The org branch chooses its rows inside the function, so no transport-side
+  -- filter reaches them. Without these guards it enforced the OWNER's role and
+  -- nothing about the key: a personal-only key could hard-delete an org row.
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'repo::deltest/repo', p_key => 'k-del',
+    p_value => 'v', p_org_slug => v_org_slug
+  );
+
+  v_failed := false;
+  begin
+    perform memory_delete(
+      p_user_id => v_owner, p_org_slug => v_org_slug, p_scope => 'repo::deltest/repo',
+      p_key => 'k-del', p_force => true,
+      p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
+    );
+  exception when sqlstate 'LK002' then v_failed := true;
+  end;
+  assert v_failed,
+    'enforcement AC-4b: a personal-only key must not delete an org-owned memory';
+
+  v_failed := false;
+  begin
+    perform memory_delete(
+      p_user_id => v_owner, p_org_slug => v_org_slug, p_scope => 'repo::deltest/repo',
+      p_key => 'k-del', p_force => true, p_key_scopes => array['repo::other/*']
+    );
+  exception when sqlstate 'LK002' then v_failed := true;
+  end;
+  assert v_failed,
+    'enforcement AC-4b: a key allowlisted elsewhere must not delete this scope';
+
+  -- The unrestricted default still deletes, so AC-4b denies on the key and not
+  -- on some unrelated failure.
+  select count(*) into v_count
+  from memory_delete(
+    p_user_id => v_owner, p_org_slug => v_org_slug, p_scope => 'repo::deltest/repo',
+    p_key => 'k-del', p_force => true
+  ) d where d.deleted;
+  assert v_count = 1,
+    'enforcement AC-4b: an unrestricted caller must still delete the org-owned memory';
+
+  -- ── AC-5: the two ACTIVITY series are narrowed the same way ───────────────
+  -- `lorekit_memory_scopes` is not the only per-scope catalog: GET
+  -- /memories/activity and /read-activity also return one row per scope NAME,
+  -- so narrowing only the catalog would move the leak rather than close it.
+  select array_agg(distinct a.scope order by a.scope) into v_scopes
+  from lorekit_memory_activity(p_user_id => v_owner) a;
+  assert 'project::alpha' = any(v_scopes) and 'project::beta' = any(v_scopes),
+    'enforcement AC-5: an unrestricted caller must still see every scope in the activity series';
+
+  select array_agg(distinct a.scope order by a.scope) into v_scopes
+  from lorekit_memory_activity(p_user_id => v_owner, p_key_scopes => array['project::alpha']) a;
+  assert v_scopes = array['project::alpha'],
+    'enforcement AC-5: an allowlisted key must see ONLY its allowlisted scopes in the activity series';
+
+  select count(*) into v_count
+  from lorekit_memory_activity(
+    p_user_id => v_owner, p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
+  ) a
+  where a.scope = 'repo::bound/repo';
+  assert v_count = 0,
+    'enforcement AC-5: a personal-only key must not see an org-owned scope in the activity series';
+
+  -- The read series, over its own ledger. `scope` is NULLABLE there — an
+  -- unattributable read names nothing, so it must survive the allowlist rather
+  -- than being dropped, or a scoped key's chart silently loses every event
+  -- written before 00058.
+  insert into usage_events (user_id, plan_name, tool_name, scope_type, auth_type, outcome,
+                            duration_ms, result_count, scope, created_at) values
+    (v_owner, 'free', 'memory.read', 'project', 'api_key', 'ok', 10, 5, 'project::alpha',
+     timestamptz '2026-05-01 01:00:00+00'),
+    (v_owner, 'free', 'memory.read', 'project', 'api_key', 'ok', 10, 7, 'project::beta',
+     timestamptz '2026-05-01 02:00:00+00'),
+    (v_owner, 'free', 'memory.read', 'unknown', 'api_key', 'ok', 10, 3, null,
+     timestamptz '2026-05-01 03:00:00+00');
+
+  select array_agg(distinct r.scope order by r.scope) into v_scopes
+  from lorekit_read_activity(v_owner, 'day', timestamptz '2026-05-01 00:00:00+00',
+                             timestamptz '2026-05-02 00:00:00+00', null,
+                             array['project::alpha']) r
+  where r.scope is not null;
+  assert v_scopes = array['project::alpha'],
+    'enforcement AC-5: an allowlisted key must not see another scope NAME in the read series';
+
+  select count(*) into v_count
+  from lorekit_read_activity(v_owner, 'day', timestamptz '2026-05-01 00:00:00+00',
+                             timestamptz '2026-05-02 00:00:00+00', null,
+                             array['project::alpha']) r
+  where r.scope is null;
+  assert v_count = 1,
+    'enforcement AC-5: an unattributable read names nothing and must survive the allowlist';
+
+  -- ── AC-6: the tag and facet catalogs are narrowed too ─────────────────────
+  -- `origin_repo` is a repository name by construction, so the facet list is a
+  -- scope-name catalog wearing a different hat. Narrowing four of six aggregate
+  -- endpoints moves the leak rather than closing it.
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'project::alpha', p_key => 'k-facet-a',
+    p_value => 'v', p_tags => array['tag-alpha'], p_origin_repo => 'mthines/alpha'
+  );
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'project::beta', p_key => 'k-facet-b',
+    p_value => 'v', p_tags => array['tag-beta'], p_origin_repo => 'mthines/beta'
+  );
+
+  select count(*) into v_count
+  from lorekit_memory_facets(p_user_id => v_owner, p_key_scopes => array['project::alpha']) f
+  where f.facet = 'origin_repo' and f.value = 'mthines/beta';
+  assert v_count = 0,
+    'enforcement AC-6: an allowlisted key must not see a repo name from outside its allowlist';
+
+  select count(*) into v_count
+  from lorekit_memory_facets(p_user_id => v_owner, p_key_scopes => array['project::alpha']) f
+  where f.facet = 'origin_repo' and f.value = 'mthines/alpha';
+  assert v_count = 1,
+    'enforcement AC-6: the facet inside the allowlist must still be listed';
+
+  select count(*) into v_count
+  from lorekit_memory_tags(p_user_id => v_owner, p_key_scopes => array['project::alpha']) t
+  where t.tag = 'tag-beta';
+  assert v_count = 0,
+    'enforcement AC-6: an allowlisted key must not see a label from outside its allowlist';
+
+  select count(*) into v_count
+  from lorekit_memory_tags(p_user_id => v_owner) t where t.tag = 'tag-beta';
+  assert v_count = 1,
+    'enforcement AC-6: an unrestricted caller must still see every label';
 end;
 $$;
 

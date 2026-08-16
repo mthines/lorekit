@@ -1,7 +1,8 @@
+import { applyKeyScopeFilter, firstDeniedScope } from '../../_shared/api/tenant.ts';
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { auditUserId } from '../../_shared/api/auth.ts';
+import { auditUserId, keyRestriction } from '../../_shared/api/auth.ts';
 import { recordAudit } from '../../_shared/audit.ts';
-import { noContent, notFound, badRequest, dryRun } from '../../_shared/api/respond.ts';
+import { noContent, notFound, badRequest, dryRun, forbidden } from '../../_shared/api/respond.ts';
 import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
 import { validateUuid, validateQuery } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
@@ -58,6 +59,26 @@ export async function handleRemove(
     ...(orgParam ? { 'lorekit.org': orgParam } : {}),
   });
 
+  // Early refusal for a NAMED scope outside the key's allowlist (00067), hoisted
+  // ABOVE the `?org=` dispatch on purpose. `applyKeyScopeFilter` below is a query
+  // filter, and the org branch has no query to filter — it returns through
+  // `removeOrgOwned`, whose `memory_delete` RPC chooses the rows itself — so a
+  // gate placed further down covers only the personal branch and leaves
+  // `DELETE /memories?scope=…&key=…&org=…` with no key gate at all.
+  //
+  // Here it also upgrades the personal scope+key form from an empty match (404)
+  // to the plain 403 `handleCreate` already returns for the same situation: when
+  // the request NAMES a scope, "your token may not use it" is the honest answer,
+  // where "not found" sends the caller hunting a data bug.
+  const deniedScope = firstDeniedScope(auth, [scopeParam]);
+  if (deniedScope !== null) {
+    span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+    return forbidden(
+      `This token is not allowed to use the scope "${deniedScope}". It is restricted to specific scopes.`,
+      cors,
+    );
+  }
+
   if (orgParam) {
     return await removeOrgOwned(
       { tracedDb, db, auth, span, cors },
@@ -87,6 +108,9 @@ export async function handleRemove(
   // api_key auth uses service-role client — restrict to caller's own rows.
   // JWT auth uses RLS-scoped client — RLS handles access control.
   if (auth.type === 'api_key' && auth.userId) q = q.eq('user_id', auth.userId);
+  // The allowlist half. `user_id` alone let a scoped key delete a memory outside
+  // its allowlist by id.
+  q = applyKeyScopeFilter(q, auth);
 
   // Dry-run: everything above validated + authorized; stop before any write.
   if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
@@ -169,6 +193,13 @@ async function removeOrgOwned(
       p_scope: scope,
       p_key: key,
       p_force: force,
+      // The calling key's restriction (00067/00068). The scope refusal above
+      // this dispatch is advisory — the edge holds the service-role key — and
+      // the TENANCY half has nowhere else to live at all: this RPC chooses its
+      // rows, so `applyKeyScopeFilter` never sees them.
+      p_key_scopes: keyRestriction(auth)?.scopes ?? [],
+      p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
+      p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
     })
     .single();
 

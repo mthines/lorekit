@@ -1,5 +1,7 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { ok } from '../../_shared/api/respond.ts';
+import { keyRestriction } from '../../_shared/api/auth.ts';
+import { firstDeniedScope } from '../../_shared/api/tenant.ts';
+import { forbidden, ok } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { Span } from '../../_shared/otel.ts';
@@ -56,6 +58,19 @@ export async function handleActivity(
     ...(params.scope ? { 'lorekit.scope': params.scope } : {}),
   });
 
+  // `?scope=` NAMES a scope, so it gets the refusal every other named-scope
+  // request gets. The RPC-side narrowing below is for the request that names
+  // none; a named scope outside the allowlist must not come back as an empty
+  // series, which reads as "there was no activity".
+  const denied = firstDeniedScope(auth, [params.scope]);
+  if (denied !== null) {
+    span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+    return forbidden(
+      `This token is not allowed to use the scope "${denied}". It is restricted to specific scopes.`,
+      cors,
+    );
+  }
+
   // Parse the caller's active filters — same names/shapes as GET /memories and
   // /facets — so the RPC narrows the written/scopes counts to the list's set.
   // Empty → null = "not filtered". `origin_pr` is digits-only (a non-numeric
@@ -93,6 +108,15 @@ export async function handleActivity(
     // against the caller's member orgs, so the header narrows with the list.
     p_owner: list(params.owner),
     p_owner_mode: params.owner_mode,
+    // The calling key's restriction (00067/00068). Narrowed inside the RPC for
+    // the same reason `handleScopes` passes it: this series returns one row per
+    // scope NAME, and a scope string IS a repo or project name, so a key
+    // restricted to one repo could otherwise enumerate every repo on the
+    // account through the activity chart instead of through the catalog.
+    // Post-filtering out here is not an option — the rows are aggregates.
+    p_key_scopes: keyRestriction(auth)?.scopes ?? [],
+    p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
+    p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
