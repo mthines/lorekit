@@ -101,7 +101,16 @@ export interface ComboboxBaseProps<T extends string> {
   searchPlaceholder?: string;
   /** Extra classes on the trigger. */
   className?: string;
-  /** Hide the trigger's text, leaving the icon — for a dense toolbar. */
+  /**
+   * Hide the trigger's text, leaving the icon — for a dense toolbar.
+   *
+   * The icon is the SELECTED option's, so `compact` only carries a selection
+   * while exactly one option is picked. In `multiple` mode past one pick there
+   * is no single icon to show ("3 selected" has none), so a compact trigger
+   * falls back to the chevron alone and the selection is announced but not
+   * drawn — `aria-label` still reads "<label>: 3 selected". Give a multi-select
+   * in a toolbar a `triggerLabel`, or leave `compact` off.
+   */
   compact?: boolean;
 }
 
