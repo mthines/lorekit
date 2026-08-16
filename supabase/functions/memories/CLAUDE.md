@@ -192,21 +192,26 @@ its own `<column>_mode` of `in` (default) or `nin`.
 - **The dimensions AND together, the values within one OR together.** Each is its own
   conjunct, which is what a flat filter bar can render; cross-dimension OR and nested groups
   belong in `POST /search`'s `filter` tree, which already expresses them.
-- **The negation is `not.in`, never a chain of `neq`s.** They agree only while the column is
-  NOT NULL and all five are nullable, so keeping the negation inside one operator is what
-  stops the SQL disagreeing with the filter pill the user is reading.
-- **One encoding, shared with `?q=`.** Both directions go through `.or()` with a single
-  clause whose operand is built by `inListLiteral`, which quotes each value with the same
-  `quoteFilterValue` the substring filter and the `filter` tree use. These columns are free
-  text written by agents, so a value containing a `.`, a `()` or a double quote is reachable —
-  each of which would otherwise terminate the `in.()` operand or break the quoting, and
-  postgrest-js's own `.in()` quoting does not escape an embedded double quote. A COMMA is the
-  one reserved character these params cannot carry: `parseTagsParam` splits on it first, so a
-  comma-bearing value arrives as two values. `POST /search`'s `filter` tree is the way to
+- **The negation is one operator, never a chain of `neq`s.** They agree only while the column
+  is NOT NULL and all five are nullable, so keeping the negation inside one operator is what
+  stops the SQL disagreeing with the filter pill the user is reading. `lorekit_match_text` /
+  `lorekit_match_int` (00066) are where that now lives; `nin` there excludes a NULL row for
+  the same reason.
+- **No PostgREST operand is composed for these dimensions any more.** Both directions used to
+  go through `.or()` with a single clause built by `inListLiteral`, quoting each value with
+  the same `quoteFilterValue` the substring filter and the `filter` tree use — because these
+  columns are free text written by agents, so a value containing a `.`, a `()` or a double
+  quote is reachable, each of which would otherwise terminate the `in.()` operand or break
+  the quoting. 00067 moved the whole read into `lorekit_memory_list`, which takes the values
+  as real `text[]` parameters, so there is no operand to quote and **`inListLiteral` has no
+  callers left**. A COMMA remains the one reserved character the QUERY form cannot carry:
+  `parseTagsParam` splits on it first, so a comma-bearing value arrives over `GET /` as two
+  values — the body form (`POST /list`) carries it intact, and `POST /search`'s tree is the
   express one.
-- `origin_pr` is an `integer` column, so its values are filtered to digits (a non-numeric
-  entry is DROPPED, not 400'd — the list arrives from a hand-editable URL and one bad entry
-  should narrow the filter, not break the page) and emitted unquoted.
+- `origin_pr` is an `integer` column, so its values are filtered to a BOUNDED run of digits —
+  a non-numeric entry is DROPPED, not 400'd (the list arrives from a hand-editable URL and one
+  bad entry should narrow the filter, not break the page), and so is an all-digit entry too
+  wide for int4, which would otherwise raise 22003 instead of dropping.
 - `tags_mode` gained `none` — the negation of `any`, so `not.ov` and deliberately not
   `not.cs`: "carries none of these" is NOT(carries any), while NOT(carries all) would also
   admit a row carrying all but one.
@@ -283,13 +288,14 @@ consequences to know before reading a number:
 
 The eight text/tags/int dimension predicates are the shared inlinable SQL helpers
 `lorekit_match_text` / `lorekit_match_tags` / `lorekit_match_int` (migration 00066), so the
-catalog's per-dimension flags cannot drift from the series `GET /activity` counts: **both
-`lorekit_memory_facets` and `lorekit_memory_activity` compose the same helpers**, so the
-load-bearing `nin` null test (an unattributed row is EXCLUDED from a negated filter, not
-silently dropped) lives in ONE place for the two RPCs. `GET /` (`list.ts`) is a **separate**
-implementation — it builds a PostgREST `not.in` predicate (`inListLiteral`), not these SQL
-helpers; it agrees by construction (Postgres `NOT (col IN (…))` is also NULL, hence excludes,
-for a null column) but is not unified with them. `owner` is the one dimension that stays
+catalog's per-dimension flags cannot drift from the series `GET /activity` counts: **all three
+of `lorekit_memory_facets`, `lorekit_memory_activity` and `lorekit_memory_list` compose the
+same helpers**, so the load-bearing `nin` null test (an unattributed row is EXCLUDED from a
+negated filter, not silently dropped) lives in ONE place for every dimension reader. `GET /`
+and `POST /list` (`list.ts`) used to be a **separate** implementation building a PostgREST
+`not.in` predicate (`inListLiteral`); 00067 folded them onto `lorekit_memory_list`, so they
+are unified with the other two rather than merely agreeing by construction, and both
+transports share that one predicate. `owner` is the one dimension that stays
 inline in the RPCs: it is a LEFT JOIN-computed identity (`personal` / org slug), not a scalar
 column.
 
