@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.52.1](https://github.com/mthines/lorekit/compare/cli-v1.52.0...cli-v1.52.1) (2026-08-16)
+
+
+### Documentation
+
+* document lorekit migrate --to remote ([05786e9](https://github.com/mthines/lorekit/commit/05786e9a0d2baf8dc35b5437acf266de1ca28f3e))
+* document lorekit migrate --to remote ([d5b272f](https://github.com/mthines/lorekit/commit/d5b272f861527d2caa844e33658e738b5bfea138))
+
 ## [1.52.0](https://github.com/mthines/lorekit/compare/cli-v1.51.0...cli-v1.52.0) (2026-08-16)
 
 
