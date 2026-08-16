@@ -9,6 +9,9 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 | GET | / | list.ts | read |
 | POST | / | create.ts | write |
 | DELETE | / | remove.ts | write |
+| POST | /list | list.ts | read |
+| POST | /facets | facets.ts | read |
+| POST | /activity | activity.ts | read |
 | POST | /search | search.ts | read |
 | POST | /restore | restore.ts | write |
 | POST | /purge | purge.ts | write |
@@ -26,10 +29,59 @@ Handles all memory operations via HTTP. Auth is managed by the shared `resolveRe
 
 **Route order is load-bearing.** `matchPath` (`_shared/api/router.ts`) matches on segment
 count and returns *every* path match, then picks the first whose method matches — so
-`/search`, `/restore`, `/purge`, `/purge-expired`, `/scopes`, `/tags`, `/facets`, `/activity`
-and `/read-activity` all collide with `/:id`.
+`/list`, `/search`, `/restore`, `/purge`, `/purge-expired`, `/scopes`, `/tags`, `/facets`,
+`/activity` and `/read-activity` all collide with `/:id`.
 The literal routes are registered before the `/:id` routes in `index.ts` so a future
 `POST /:id` cannot silently swallow them.
+
+**A POST here does not imply a write.** `POST /list`, `POST /facets`, `POST /activity` and
+`POST /search` are all `requires: 'read'` and none of them records an audit event — the verb
+says "the request does not fit in a URL", not "this changes something". `audit-coverage.spec.ts`
+pins that exact list, so a fifth read-only POST is a deliberate edit rather than a silent one.
+
+## The body transport — `POST /list`, `POST /facets`, `POST /activity`
+
+Each is the SAME read as the identically-named `GET`, decoded from a JSON body instead of a
+query string. They exist because a query string is not a transport that carries an unbounded
+filter bar:
+
+- **Per dimension, 2048 characters.** `ValueListSchema` caps each comma-joined dimension, so
+  how many values a dimension can hold depends on how long the values happen to be — with
+  realistic ~28-character host names the wall lands between 50 and 75 selected values, and
+  the UI can only render the resulting 400 as "Failed to load memories. Please refresh."
+- **Per request, whatever the gateway allows.** Eight dimensions at 60 values each keeps
+  every individual param legal and still builds an ~8 KB URL. That one fails with no LoreKit
+  error envelope at all, which is the harder half to diagnose.
+
+Raising the first cap only moves it and makes the second arrive first, which is why this is a
+transport change and not a bigger number.
+
+**The two transports cannot diverge, by construction.** Neither handler decides anything
+about filtering: `dimensionsFromQuery` and `dimensionsFromBody` (`_shared/schemas/dimensions.ts`)
+both produce one `MemoryDimensions`, and a single predicate function turns THAT into SQL. The
+decoders differ in exactly one thing — the query form splits on commas, the body form does not —
+and share the trim / drop-empty / dedupe rule and `origin_pr`'s digits-only filter. Adding a
+dimension is one field in `MemoryDimensions` and one line in the predicate, not two of each.
+
+Body shape, versus the query form:
+
+- Every dimension is a real **array** (`{"host": ["reviewer", "aw"], "host_mode": "in"}`),
+  bounded at `DIMENSION_VALUES_MAX` (1000) values of `DIMENSION_VALUE_MAX` (512) characters.
+  The bound is explicit so it is a documented limit rather than an emergent one.
+- **A value containing a comma is reachable here** and is not over `GET /` — the splitting is
+  a property of the query wire format, and the whole reason the array form exists.
+- `archived` is a real **boolean**, not the query form's `'true'`/`'false'` string enum.
+- Everything else — `sort`, `limit` (still max 100), `cursor`, `q`, `key`, `key_prefix`,
+  `created_since`/`created_until`, `expiring_within_days` — is identical, including defaults.
+- The body is **optional**: a bodiless `POST /list` is the unfiltered first page, not a 400.
+
+`GET /` stays fully supported and unchanged — the CLI, the MCP surface and every API-token
+caller use it, and a link carrying a handful of filters is genuinely better as a URL. Only
+the dashboard, whose filter bar is unbounded, reads over the body form.
+
+Both forms report under the same `usage_events.tool_name` (`memory.list`, `memory.facets`,
+`memory.activity`): one operation over two transports, so splitting the name would have
+collapsed the existing series the day the dashboard switched.
 
 ## Archiving, restoring and deleting
 
