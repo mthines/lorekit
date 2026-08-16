@@ -5761,6 +5761,10 @@ declare
   v_wide   text[];
   v_ts     timestamptz;
   v_id     uuid;
+  v_key    text;
+  v_ts2    timestamptz;
+  v_id2    uuid;
+  v_i      int;
 begin
   set local role service_role;
   perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
@@ -5806,6 +5810,34 @@ begin
       p_cursor_ts => v_ts, p_cursor_id => v_id, p_limit => 1);
   assert v_keys is null or not ('lr-2' = any(v_keys)),
     format('list rpc AC-2c: a cursor must never return its own row again, got %s', v_keys);
+
+  -- AC-2d: AC-2c on its own does not pin the tie-break. Delete `m.id < $30` and
+  -- the keyset degrades to `m.updated_at < $29`, which from lr-2's cursor lands
+  -- on lr-1 — still "not lr-2", so AC-2c stays green while the sibling sharing
+  -- lr-2's timestamp has been SKIPPED. Walking every page one row at a time is
+  -- what sees that: with the tie-break the walk visits all five rows exactly
+  -- once; without it lr-3 never appears and the walk returns four.
+  v_keys := '{}'::text[];
+  v_ts   := null;
+  v_id   := null;
+  for v_i in 1..10 loop
+    v_key := null;
+    select r.key, r.updated_at, r.id into v_key, v_ts2, v_id2
+      from lorekit_memory_list(
+        '00000000-0000-0000-0000-0000000000a1'::uuid,
+        p_scope => 'project::list-rpc', p_sort => 'updated_at',
+        p_cursor_ts => v_ts, p_cursor_id => v_id, p_limit => 1) r;
+    exit when v_key is null;
+    v_keys := v_keys || v_key;
+    v_ts := v_ts2;
+    v_id := v_id2;
+  end loop;
+  assert array_length(v_keys, 1) = 5,
+    format('list rpc AC-2d: a one-row-at-a-time walk must visit all five active rows, got %s', v_keys);
+  assert (select count(distinct k) from unnest(v_keys) k) = 5,
+    format('list rpc AC-2d2: the walk must not repeat a row, got %s', v_keys);
+  assert v_keys @> array['lr-2','lr-3'],
+    format('list rpc AC-2d3: BOTH rows sharing an updated_at must be paged, which is what the id tie-break buys, got %s', v_keys);
 
   -- AC-3: THE case the URL transport could not carry. 1000 values, one real.
   select array_agg('filler-host-' || g) into v_wide from generate_series(1, 999) g;
