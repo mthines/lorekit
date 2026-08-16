@@ -2850,7 +2850,11 @@ declare
     'restore_memory(uuid, text, text)',
     'purge_archived_memories(uuid, integer)',
     'purge_expired_memories(uuid)',
-    'memory_delete(uuid, text, text, text, boolean)'
+    -- 00068 appended the calling key's restriction (p_key_scopes, p_key_org_access,
+    -- p_key_org_ids → 8 args). The grant guard names a signature, so a recreate
+    -- that changes the parameter list leaves this pointing at a function that no
+    -- longer exists and `has_function_privilege` ERRORS rather than failing.
+    'memory_delete(uuid, text, text, text, boolean, text[], text, uuid[])'
   ];
 begin
   assert array_length(v_sigs, 1) = 5,
@@ -3191,7 +3195,8 @@ declare
   v_sig  text;
   -- Reads: authenticated + service_role, never anon.
   v_read text[] := array[
-    'lorekit_memory_scopes(uuid)',
+    -- 00068 appended the key restriction (4 args) — see the note in 60d.
+    'lorekit_memory_scopes(uuid, text[], text, uuid[])',
     'lorekit_memory_count(uuid)'
   ];
   -- Service-role-only: never anon, never authenticated.
@@ -3425,7 +3430,9 @@ $$;
 -- with p_kind + p_host (17 args) ────────────────────────────────────────────
 do $$
 declare
-  v_sig text := 'memory_write(uuid, text, text, text, text[], text, text, timestamp with time zone, text, integer, boolean, text, text, text, integer, text, text)';
+  -- 00068 appended the key restriction (p_key_scopes, p_key_org_access,
+  -- p_key_org_ids → 20 args).
+  v_sig text := 'memory_write(uuid, text, text, text, text[], text, text, timestamp with time zone, text, integer, boolean, text, text, text, integer, text, text, text[], text, uuid[])';
 begin
   assert has_function_privilege('anon', v_sig, 'EXECUTE'),
     'origin: anon must have EXECUTE on the widened memory_write';
@@ -4117,7 +4124,9 @@ do $$
 declare
   -- 00057 widened the signature with the drill-down filter params (19 args);
   -- 00064 appended the owner dimension (p_owner, p_owner_mode → 21 args).
-  v_sig text := 'lorekit_memory_facets(uuid, boolean, text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text)';
+  -- 00068 appended the key restriction (p_key_scopes, p_key_org_access,
+  -- p_key_org_ids → 24 args).
+  v_sig text := 'lorekit_memory_facets(uuid, boolean, text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, uuid[])';
 begin
   assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
     'memory facets: anon must NOT have EXECUTE';
