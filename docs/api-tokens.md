@@ -75,6 +75,16 @@ Tenancy is authoritative over
 scope from a `personal` token falls back to a personal memory rather than being
 routed into an org the token was never granted.
 
+### What a scoped token sees
+
+| Situation | Behaviour |
+|-----------|-----------|
+| The request NAMES a scope outside the allowlist | Refused — MCP returns the `-32003` forbidden error, REST returns `403`. A named scope gets a plain refusal rather than an empty page, which would read as "there is nothing there". |
+| The request names NO scope (`memory.list` unfiltered, `GET /memories`) | Narrowed. Only rows inside the allowlist and the tenancy come back. |
+| `memory.scopes` / `GET /memories/scopes` | Narrowed the same way. A scope string is a repo or project name, so an unfiltered catalog would leak exactly what scoping hides. |
+| An operation that carries no scope at all (`memory.purge_expired`) | Refused for a token WITH a scope allowlist; unaffected for one without. A token narrowed to one repo has no business sweeping the account. |
+| The token is unscoped (the default) | Nothing changes, on any path. |
+
 ## Permission matrix
 
 | Tool | Read + Write (`lk_rw_`) | Read only (`lk_ro_`) | Write only (`lk_wo_`) |

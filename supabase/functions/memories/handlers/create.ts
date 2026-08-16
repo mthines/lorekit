@@ -1,6 +1,7 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { actorUserId, auditUserId } from '../../_shared/api/auth.ts';
-import { created, tooManyRequests, badRequest, dryRun } from '../../_shared/api/respond.ts';
+import { actorUserId, auditUserId, keyRestriction } from '../../_shared/api/auth.ts';
+import { created, tooManyRequests, badRequest, dryRun, forbidden } from '../../_shared/api/respond.ts';
+import { firstDeniedScope } from '../../_shared/api/tenant.ts';
 import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
 import { validateBody } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
@@ -87,6 +88,17 @@ export async function handleCreate(
   // Dry-run: validated + rate-limited above; stop before any write.
   if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
 
+  // Early refusal for a NAMED scope outside the key's allowlist (00067): a
+  // plain 403 beats an empty page, which reads as "there is nothing there".
+  const deniedScope = firstDeniedScope(auth, [body.scope]);
+  if (deniedScope !== null) {
+    span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+    return forbidden(
+      `This token is not allowed to use the scope "${deniedScope}". It is restricted to specific scopes.`,
+      cors,
+    );
+  }
+
   // Use memory_write RPC rather than raw .upsert() — the memories table uses
   // partial unique indexes (WHERE archived_at IS NULL) introduced in migration
   // 00003, which PostgREST's upsert(onConflict) cannot target. The RPC handles
@@ -116,6 +128,12 @@ export async function handleCreate(
     p_origin_pr: origin.pr,
     p_kind: kind,
     p_host: host,
+    // The calling key's tenancy (00067/00068). The RPC is the last gate the
+    // edge cannot bypass — it runs on the service-role client — and the only
+    // place that can see the scope→org binding a restricted key must not be
+    // auto-routed through.
+    p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
+    p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
     // `.single()` because memory_write RETURNS TABLE — without it the traced
     // client resolves an array and the `row?.id` guard below always throws.
   }).single();

@@ -6,6 +6,7 @@ import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
 import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';
+import { keyRestriction } from '../../_shared/api/auth.ts';
 import {
   RelevantQuerySchema,
   RELEVANT_SELECT,
@@ -118,7 +119,7 @@ export async function handleRelevant(
   // read route; there is no second predicate here to drift from them.
   if (auth.type === 'api_key' && auth.userId) {
     const orgIds = await getMemberOrgIds(db, auth.userId, span);
-    q = applyRestTenantScope(q, auth.userId, orgIds);
+    q = applyRestTenantScope(q, auth.userId, orgIds, keyRestriction(auth));
   }
 
   if (params.q) q = q.textSearch('fts', params.q, { type: 'websearch', config: 'english' });

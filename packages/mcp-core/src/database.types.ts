@@ -703,7 +703,12 @@ export type Database = {
         }[]
       }
       lorekit_memory_scopes: {
-        Args: { p_user_id: string }
+        Args: {
+          p_key_org_access?: string
+          p_key_org_ids?: string[]
+          p_key_scopes?: string[]
+          p_user_id: string
+        }
         Returns: {
           count: number
           last_activity: string | null
@@ -791,6 +796,8 @@ export type Database = {
           p_correlation_id?: string
           p_duration_ms?: number
           p_host?: string
+          p_key_org_access?: string
+          p_key_org_ids?: string[]
           p_kind?: string
           p_memory_count?: number
           p_org_id?: string
@@ -830,6 +837,8 @@ export type Database = {
           p_clear_ttl?: boolean
           p_created_at?: string
           p_key: string
+          p_key_org_access?: string
+          p_key_org_ids?: string[]
           p_org_slug?: string
           p_origin_branch?: string
           p_origin_commit?: string

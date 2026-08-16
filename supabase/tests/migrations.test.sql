@@ -5930,6 +5930,133 @@ begin
 end;
 $$;
 
+-- ── 82. api_token scoping ENFORCEMENT — memory_write + memory_scopes (00068) ─
+--
+-- §81 proved the predicates answer correctly in isolation. This proves the two
+-- functions that CONSUME them actually changed behaviour — the write path's
+-- last unbypassable gate, and the scope catalog that would otherwise leak the
+-- very names scoping hides.
+do $$
+declare
+  v_owner    uuid := gen_random_uuid();
+  v_org      uuid;
+  v_org_slug text := 'keyenf-org';
+  v_scopes   text[];
+  v_routed   boolean;
+  v_binding  text;
+  v_count    integer;
+  v_failed   boolean;
+begin
+  insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
+  values ('00000000-0000-0000-0000-000000000000', v_owner, 'authenticated', 'authenticated',
+          'lk-mig-keyenf@test.local', now(), now());
+
+  insert into orgs (slug, name, created_by) values (v_org_slug, 'Key Enforcement', v_owner)
+    returning id into v_org;
+  insert into org_members (org_id, user_id, role) values (v_org, v_owner, 'owner');
+
+  -- ── AC-1: an unscoped caller is completely unaffected ─────────────────────
+  -- The defaults must reproduce the pre-00068 behaviour exactly, or this
+  -- migration is a regression for every existing key, JWT session and CI run.
+  select w.org_routed into v_routed
+  from memory_write(
+    p_user_id => v_owner, p_scope => 'repo::mthines/lorekit', p_key => 'k-default',
+    p_value => 'v', p_org_slug => v_org_slug
+  ) w;
+  assert v_routed,
+    'enforcement AC-1: an explicit org write must still route to the org by default';
+
+  -- ── AC-2: the explicit-org branch refuses a key outside its tenancy ───────
+  v_failed := false;
+  begin
+    perform memory_write(
+      p_user_id => v_owner, p_scope => 'repo::mthines/lorekit', p_key => 'k-denied',
+      p_value => 'v', p_org_slug => v_org_slug,
+      p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
+    );
+  exception when others then v_failed := true;
+  end;
+  assert v_failed,
+    'enforcement AC-2: a personal-only key must not write into a named org';
+
+  -- ── AC-3: the binding branch — THE KEY WINS (00067 decision 4) ────────────
+  -- Bind the scope to the org, then write with NO explicit org. A default
+  -- caller is auto-routed; a personal-only key must fall back to a PERSONAL
+  -- write instead — never rejected, and still told which org the scope belongs
+  -- to, exactly as a non-member already is.
+  -- Inserted directly rather than through `lorekit_scope_bind`, which resolves
+  -- its actor from auth.uid() — null in this superuser block. The binding ROW is
+  -- what memory_write reads; how it got there is 00026's concern, not this one.
+  insert into org_scope_bindings (org_id, scope, created_by) values (v_org, 'repo::bound/repo', v_owner);
+
+  select w.org_routed into v_routed
+  from memory_write(
+    p_user_id => v_owner, p_scope => 'repo::bound/repo', p_key => 'k-bound-default', p_value => 'v'
+  ) w;
+  assert v_routed,
+    'enforcement AC-3: an unrestricted caller must still be auto-routed by the binding';
+
+  select w.org_routed, w.binding_org_slug into v_routed, v_binding
+  from memory_write(
+    p_user_id => v_owner, p_scope => 'repo::bound/repo', p_key => 'k-bound-personal',
+    p_value => 'v', p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
+  ) w;
+  assert not v_routed,
+    'enforcement AC-3: a personal-only key must NOT be auto-routed into the bound org';
+  assert v_binding = v_org_slug,
+    'enforcement AC-3: the fallback must still report the bound org so the caller can be told';
+
+  -- The same key pointed AT that org is routed — proving AC-3 denies on the
+  -- tenancy and not on some unrelated failure.
+  select w.org_routed into v_routed
+  from memory_write(
+    p_user_id => v_owner, p_scope => 'repo::bound/repo', p_key => 'k-bound-selected',
+    p_value => 'v', p_key_org_access => 'selected', p_key_org_ids => array[v_org]
+  ) w;
+  assert v_routed,
+    'enforcement AC-3: a key that DOES include the bound org must still be routed';
+
+  -- ── AC-4: lorekit_memory_scopes honours the key's allowlist ───────────────
+  -- Two personal scopes exist by now (repo::mthines/lorekit from AC-1 landed in
+  -- the org, so seed a personal one explicitly) plus the bound-repo rows.
+  perform memory_write(p_user_id => v_owner, p_scope => 'project::alpha', p_key => 'k-alpha', p_value => 'v');
+  perform memory_write(p_user_id => v_owner, p_scope => 'project::beta',  p_key => 'k-beta',  p_value => 'v');
+
+  select array_agg(s.scope order by s.scope) into v_scopes
+  from lorekit_memory_scopes(v_owner) s;
+  assert 'project::alpha' = any(v_scopes) and 'project::beta' = any(v_scopes),
+    'enforcement AC-4: an unrestricted caller must still see every scope';
+
+  select array_agg(s.scope order by s.scope) into v_scopes
+  from lorekit_memory_scopes(v_owner, array['project::alpha']) s;
+  assert v_scopes = array['project::alpha'],
+    'enforcement AC-4: an allowlisted key must see ONLY its allowlisted scopes';
+
+  select array_agg(s.scope order by s.scope) into v_scopes
+  from lorekit_memory_scopes(v_owner, array['project::*']) s;
+  assert 'project::alpha' = any(v_scopes) and 'project::beta' = any(v_scopes),
+    'enforcement AC-4: a wildcard pattern must match every scope beneath it';
+  assert not ('repo::bound/repo' = any(v_scopes)),
+    'enforcement AC-4: a wildcard must not leak a scope outside its prefix';
+
+  -- And the tenancy narrows the catalog too — otherwise a personal-only key
+  -- still enumerates the org's repo names, which is the leak this closes.
+  select count(*) into v_count
+  from lorekit_memory_scopes(v_owner, '{}'::text[], 'personal', '{}'::uuid[]) s
+  where s.scope = 'repo::bound/repo';
+  assert v_count = 0,
+    'enforcement AC-4: a personal-only key must not enumerate an org-owned scope';
+
+  -- A personal-only key still sees its OWN scopes: `personal` narrows which
+  -- ORGS are reachable, it never revokes the owner's own memories.
+  select count(*) into v_count
+  from lorekit_memory_scopes(v_owner, '{}'::text[], 'personal', '{}'::uuid[]) s
+  where s.scope = 'project::alpha';
+  assert v_count = 1,
+    'enforcement AC-4: a personal-only key must still see its own personal scopes';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'

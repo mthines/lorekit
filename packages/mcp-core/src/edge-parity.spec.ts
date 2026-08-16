@@ -70,7 +70,7 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   ['ttl-defaults.ts', 'mcp/ttl-defaults.ts'],
   ['origin.ts', '_shared/origin.ts'],
   ['webhook-secret-select.ts', 'mcp/webhook-secret-select.ts'],
-  ['tenant-scope.ts', 'mcp/tenant-scope.ts'],
+  ['tenant-scope.ts', '_shared/tenant-scope.ts'],
   ['org-permissions.ts', 'mcp/org-permissions.ts'],
   ['webhook-installation.ts', 'mcp/webhook-installation.ts'],
   ['github-app-jwt.ts', 'mcp/github-app-jwt.ts'],

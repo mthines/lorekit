@@ -70,12 +70,28 @@ function extractFunctionBody(src: string, fnName: string): string {
 
 describe('tenant-scope usage guard (edge read handlers)', () => {
   it('imports applyTenantScope from the shared tenant-scope module', () => {
-    expect(source).toMatch(/import\s*\{\s*applyTenantScope\s*\}\s*from\s*['"]\.\/tenant-scope\.(ts|js)['"]/);
+    // The mirror moved from `mcp/tenant-scope.ts` to `_shared/tenant-scope.ts`
+    // when the REST surface started needing the same module: two edge copies of
+    // one predicate is the drift this guard exists to prevent, so there is now
+    // one, importable by every function. The import list is matched loosely
+    // because it also carries the `KeyRestriction` type.
+    expect(source).toMatch(
+      /import\s*\{[^}]*\bapplyTenantScope\b[^}]*\}\s*from\s*['"]\.\.\/_shared\/tenant-scope\.(ts|js)['"]/,
+    );
   });
 
   it.each(READ_HANDLERS)('%s routes its memories read through applyTenantScope', (fnName) => {
     const body = extractFunctionBody(source, fnName);
     expect(body).toContain('applyTenantScope(');
     expect(body).not.toMatch(/\.eq\(\s*['"]user_id['"]/);
+  });
+
+  it.each(READ_HANDLERS)('%s passes the calling key restriction to applyTenantScope', (fnName) => {
+    // The tenant predicate is also where the KEY's scope allowlist and tenancy
+    // are applied (00067), because a scoped key must not see an out-of-allowlist
+    // row on a read that names no scope at all. A handler that keeps calling the
+    // 3-argument form silently opts out of that half of the boundary.
+    const body = extractFunctionBody(source, fnName);
+    expect(body).toMatch(/applyTenantScope\([\s\S]*?,\s*keyScoping\s*\)/);
   });
 });

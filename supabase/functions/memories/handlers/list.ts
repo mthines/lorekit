@@ -1,5 +1,5 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { ok } from '../../_shared/api/respond.ts';
+import { ok, forbidden } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
 import { buildPage, decodeCursor } from '../../_shared/api/paginate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
@@ -11,7 +11,8 @@ import { expiringWindow } from '../../_shared/expiring-window.ts';
 import type { ScalarFilterMode } from '../../_shared/schemas/memory.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
-import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';
+import { getMemberOrgIds, applyRestTenantScope, firstDeniedScope } from '../../_shared/api/tenant.ts';
+import { keyRestriction } from '../../_shared/api/auth.ts';
 
 type MemoryRow = Tables<'memories'>;
 
@@ -162,6 +163,17 @@ export async function handleList(
   if (isArchived) q = q.not('archived_at', 'is', null);
   else q = q.is('archived_at', null).or('expires_at.is.null,expires_at.gt.now()');
 
+  // Early refusal for a NAMED scope outside the key's allowlist (00067): a
+  // plain 403 beats an empty page, which reads as "there is nothing there".
+  const deniedScope = firstDeniedScope(auth, [params.scope]);
+  if (deniedScope !== null) {
+    span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+    return forbidden(
+      `This token is not allowed to use the scope "${deniedScope}". It is restricted to specific scopes.`,
+      cors,
+    );
+  }
+
   if (params.scope) q = q.eq('scope', params.scope);
   if (params.key) q = q.eq('key', params.key);
 
@@ -280,7 +292,7 @@ export async function handleList(
   // reusing the member org ids resolved once above. JWT auth uses an RLS-scoped
   // client — RLS handles visibility automatically (memberOrgIds stays null).
   if (auth.type === 'api_key' && auth.userId) {
-    q = applyRestTenantScope(q, auth.userId, memberOrgIds ?? []);
+    q = applyRestTenantScope(q, auth.userId, memberOrgIds ?? [], keyRestriction(auth));
   }
 
   if (params.cursor) {

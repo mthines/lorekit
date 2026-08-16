@@ -15,6 +15,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { extractToken } from './auth-token.ts';
 import { SPAN_KIND_CLIENT, type Span } from '../_shared/otel.ts';
+import { normalizeKeyRestriction, type KeyRestriction } from '../_shared/tenant-scope.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
@@ -26,6 +27,15 @@ export interface AuthContext {
   jwt?: string;
   /** api_key only: ['read'], ['write'], or ['read', 'write'] */
   permissions?: string[];
+  /**
+   * api_key only: the key's scope/org restriction (migration 00067).
+   *
+   * Absent for every other tier, and absent is NOT "restricted to nothing" — a
+   * JWT or service-role caller has no key to restrict. `keyRestriction(auth)`
+   * below is the one place that distinction is read, so no call site has to
+   * remember it.
+   */
+  keyScoping?: KeyRestriction;
 }
 
 async function sha256hex(text: string): Promise<string> {
@@ -110,7 +120,7 @@ async function resolveAuthTiers(
     // span name and `db.query.text` (`buildSql` interpolates `eq()` arguments),
     // and the filter here is the token hash — the stored credential. The query
     // therefore runs on the raw client and only the timing is spanned.
-    const lookupSpan = authSpan?.child('SELECT user_id,permissions FROM api_tokens', {
+    const lookupSpan = authSpan?.child('SELECT user_id,permissions,scoping FROM api_tokens', {
       'db.system': 'postgresql',
       'db.operation.name': 'SELECT',
       'db.collection.name': 'api_tokens',
@@ -135,7 +145,7 @@ async function resolveAuthTiers(
     try {
       const result = await serviceDb
         .from('api_tokens')
-        .select('user_id, permissions')
+        .select('user_id, permissions, scopes, org_access, org_ids')
         .eq('token_hash', hash)
         .maybeSingle();
       data = result.data;
@@ -191,6 +201,7 @@ async function resolveAuthTiers(
       type: 'api_key',
       userId: data.user_id as string,
       permissions: data.permissions as string[],
+      keyScoping: normalizeKeyRestriction(data),
     };
   }
 
@@ -246,6 +257,17 @@ export function canRead(auth: AuthContext): boolean {
 /** userId to pass to tool handlers — null means RLS handles scoping. */
 export function getUserId(auth: AuthContext): string | null {
   return auth.type === 'api_key' ? (auth.userId ?? null) : null;
+}
+
+/**
+ * The calling key's restriction, or `undefined` when there is no key.
+ *
+ * The mirror of `getUserId`, and the ONE place "a JWT caller has no key
+ * restriction" is expressed — so no call site can accidentally read a missing
+ * restriction as an empty one and start denying a dashboard session.
+ */
+export function keyRestriction(auth: AuthContext): KeyRestriction | undefined {
+  return auth.type === 'api_key' ? auth.keyScoping : undefined;
 }
 
 /**

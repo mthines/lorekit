@@ -3,7 +3,8 @@
  * Handles initialize, tools/list, and tools/call.
  */
 
-import { type AuthContext, getDb, canWrite, canRead, getUserId, isJwtAuth } from './auth.ts';
+import { type AuthContext, getDb, canWrite, canRead, getUserId, isJwtAuth, keyRestriction } from './auth.ts';
+import { scopeAllowedByKey } from '../_shared/schemas/api-key.ts';
 import { type StorageAdapter } from './storage-adapter.ts';
 import { UserInputError, safeValidateScope } from '../_shared/scope.ts';
 import { scopeTypeAttribute } from '../_shared/scope-type-attribute.ts';
@@ -217,6 +218,42 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
           .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'read_permission_missing' });
         return jsonrpcError(id, JSONRPC_FORBIDDEN, 'This token does not have read permission. Use a read+write (lk_rw_) or read-only (lk_ro_) token.');
       }
+
+      // Scope allowlist (migration 00067). Same class of denial as the two
+      // above — authenticated, insufficient scope — so the same
+      // JSONRPC_FORBIDDEN (HTTP 200), never -32001.
+      //
+      // This is the EARLY refusal, and it is deliberately not the only one: a
+      // tool that names a scope is told plainly that its key may not reach it,
+      // instead of getting a confusingly empty result set. Reads that name NO
+      // scope are narrowed instead, inside `applyTenantScope`, because there is
+      // nothing here to refuse. Writes are additionally gated inside
+      // `memory_write`, the only place the edge cannot bypass.
+      const restriction = keyRestriction(auth);
+      if (restriction && restriction.scopes.length > 0) {
+        // `scopes` (plural) is `memory.search`'s array argument. EVERY named
+        // scope must be allowed: refusing the whole call is honest, where
+        // silently searching the allowed subset would answer a different
+        // question than the one asked.
+        const named = [
+          ...(typeof toolArgs['scope'] === 'string' ? [toolArgs['scope'] as string] : []),
+          ...(Array.isArray(toolArgs['scopes'])
+            ? (toolArgs['scopes'] as unknown[]).filter((s): s is string => typeof s === 'string')
+            : []),
+        ];
+        const denied = named.find((s) => !scopeAllowedByKey(restriction.scopes, s.toLowerCase().trim()));
+        if (denied !== undefined) {
+          span
+            .clientError('PermissionDenied: scope outside the key allowlist')
+            .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+          return jsonrpcError(
+            id,
+            JSONRPC_FORBIDDEN,
+            `This token is not allowed to use the scope "${denied}". ` +
+              'It is restricted to specific scopes — widen it in the dashboard under Settings → API keys.',
+          );
+        }
+      }
     }
 
     const rawScope = toolArgs['scope'] as string | undefined;
@@ -300,7 +337,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
         // memory.* tools: (db, args, toolUserId, span)
         // toolUserId is null for JWT auth — RLS handles scoping on the DB side.
         result = await MEMORY_TOOLS[toolName as keyof typeof MEMORY_TOOLS](
-          db, toolArgs, toolUserId, toolSpan,
+          db, toolArgs, toolUserId, toolSpan, keyRestriction(auth),
         );
       }
 
