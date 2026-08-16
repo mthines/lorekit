@@ -204,7 +204,19 @@ function ScopingFields({
 }) {
   const [open, setOpen] = useState(defaultOpen);
 
-  const scopeOptions: ComboboxItem[] = scopePatternOptions(scopeCatalog).map((value) => ({
+  // The CURRENT selection is merged into the offered set, not just the catalog.
+  // `scopeCatalog` holds scopes that have a memory; a pattern already saved on
+  // the key — or one just added through `creatable` — need not be one of them,
+  // and an option-less selected value has no row to untick. (`creatable` cannot
+  // stand in for that: at an empty query it returns null, so the only way back
+  // out would be to retype the pattern exactly.) Selected-but-uncatalogued
+  // patterns are appended after the catalog's own, so the offered order the
+  // reader learned does not shuffle as they pick.
+  const offered = scopePatternOptions(scopeCatalog);
+  const scopeOptions: ComboboxItem[] = [
+    ...offered,
+    ...scoping.scopes.filter((s) => !offered.includes(s)),
+  ].map((value) => ({
     value,
     label: value,
     // A wildcard is the option a reader most needs explained — it is the only
