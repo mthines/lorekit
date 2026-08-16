@@ -1,11 +1,11 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { ok } from '../../_shared/api/respond.ts';
+import { forbidden, ok } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
 import type { TracedQuery, Span } from '../../_shared/otel.ts';
 import type { DbClient } from '../../_shared/api/auth.ts';
 import type { Tables } from '../../_shared/database.types.ts';
-import { getMemberOrgIds, applyRestTenantScope } from '../../_shared/api/tenant.ts';
+import { getMemberOrgIds, applyRestTenantScope, firstDeniedScope } from '../../_shared/api/tenant.ts';
 import { keyRestriction } from '../../_shared/api/auth.ts';
 import {
   RelevantQuerySchema,
@@ -96,6 +96,20 @@ export async function handleRelevant(
     'lorekit.limit': params.limit,
     'lorekit.scope_count': scopes.length,
   });
+
+  // `?scopes=` NAMES scopes, so it is refused rather than narrowed — the same
+  // call `handleSearch` makes on the same list, and EVERY named scope must be
+  // allowed: quietly ranking over the allowed subset would answer a different
+  // question than the one asked. The `applyRestTenantScope` narrowing below
+  // stays for the request that names none.
+  const denied = firstDeniedScope(auth, scopes);
+  if (denied !== null) {
+    span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+    return forbidden(
+      `This token is not allowed to use the scope "${denied}". It is restricted to specific scopes.`,
+      cors,
+    );
+  }
 
   const tracedDb = createTracedClient(db, span);
 
