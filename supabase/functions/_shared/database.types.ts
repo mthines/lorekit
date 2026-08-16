@@ -859,6 +859,21 @@ export type Database = {
         Args: { p_older_than?: string }
         Returns: number
       }
+      lorekit_read_activity: {
+        Args: {
+          p_bucket?: string
+          p_key_scopes?: string[]
+          p_scope?: string
+          p_since?: string
+          p_until?: string
+          p_user_id: string
+        }
+        Returns: {
+          bucket: string
+          count: number
+          scope: string | null
+        }[]
+      }
       lorekit_record_usage_event: {
         Args: {
           p_auth_type?: string
@@ -866,8 +881,6 @@ export type Database = {
           p_correlation_id?: string
           p_duration_ms?: number
           p_host?: string
-          p_key_org_access?: string
-          p_key_org_ids?: string[]
           p_kind?: string
           p_memory_count?: number
           p_org_id?: string
