@@ -61,21 +61,33 @@ function scoping(over: Partial<TokenScoping> = {}): TokenScoping {
   return { ...UNSCOPED, ...over };
 }
 
-/** The picker is controlled; a story still needs somewhere to put the value. */
+/**
+ * The picker is controlled; a story still needs somewhere to put the value.
+ *
+ * A real component — the same `Harness` shape `TokenScoping.test.stories.tsx`
+ * uses — rather than a `useState` inside a `render` callback, because a render
+ * callback is not a component and the hook call there is only legal behind an
+ * `eslint-disable`. The catalog and org list are overridable so `Playground`'s
+ * controls drive this same harness instead of needing a second one.
+ */
 function ControlledFields({
   initial,
   defaultOpen = false,
+  scopeCatalog = SCOPE_CATALOG,
+  orgs = ORGS,
 }: {
   initial: TokenScoping;
   defaultOpen?: boolean;
+  scopeCatalog?: string[];
+  orgs?: { id: string; name: string }[];
 }) {
   const [value, setValue] = useState(initial);
   return (
     <ScopingFields
       scoping={value}
       onChange={setValue}
-      scopeCatalog={SCOPE_CATALOG}
-      orgs={ORGS}
+      scopeCatalog={scopeCatalog}
+      orgs={orgs}
       defaultOpen={defaultOpen}
     />
   );
@@ -163,11 +175,7 @@ export const Playground: Story = {
       description: 'The orgs the signed-in user belongs to.',
     },
   },
-  render: (args) => {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    const [value, setValue] = useState<TokenScoping>(UNSCOPED);
-    return <ScopingFields {...args} scoping={value} onChange={setValue} />;
-  },
+  render: (args) => <ControlledFields {...args} initial={UNSCOPED} />,
 };
 
 /** One labelled badge row, so the grouped snapshot says which case is which. */
