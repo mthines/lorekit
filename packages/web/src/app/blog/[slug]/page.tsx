@@ -11,6 +11,7 @@ import { TableOfContents } from '@/components/blog/TableOfContents';
 import { MobileTableOfContents } from '@/components/blog/MobileTableOfContents';
 import { ReadingProgress } from '@/components/blog/ReadingProgress';
 import { PostLikes } from '@/components/blog/PostLikes';
+import { BlogPostCta } from '@/components/blog/BlogPostCta';
 import { formatPostDate, readingLabel } from '@/lib/blog/format';
 
 // Statically generate one page per known post slug; reject anything else (404).
@@ -89,6 +90,8 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
           </BlogProse>
 
           <PostLikes slug={post.slug} />
+
+          <BlogPostCta />
         </article>
 
         {post.toc.length > 0 && (

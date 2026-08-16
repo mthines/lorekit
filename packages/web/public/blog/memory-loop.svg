@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 320" role="img" aria-label="A three-panel loop. Panel one, install: npx at-lorekit-slash-cli install creates a folder of plain markdown files on your own disk, with no signup and no network. Panel two, fail: a test command fails with ECONNREFUSED 5432 and the agent writes a lesson with memory.write. Panel three, remember: at the next session start LoreKit injects the line one memory loaded, tests-need-local-postgres, so the next task begins already knowing. An arrow runs back from panel three to panel two, closing the loop.">
+  <style>
+    text{font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;fill:#e7ebf2}
+    .lbl{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;fill:#8892a4;letter-spacing:.02em}
+    .k{font-family:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace}
+  </style>
+  <defs>
+    <marker id="arL" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8892a4"/></marker>
+    <marker id="arI" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#7c8cf8"/></marker>
+  </defs>
+  <rect x="0" y="0" width="720" height="320" fill="#0d0e11"/>
+
+  <text x="24" y="28" class="lbl" font-size="11.5">THE WHOLE LOOP, ON YOUR OWN DISK</text>
+
+  <!-- Panel 1 — install -->
+  <rect x="24" y="44" width="200" height="196" rx="10" fill="#1a1d24" stroke="#2a2d38"/>
+  <text x="40" y="68" class="lbl" font-size="10.5" fill="#f5a623">1 · INSTALL</text>
+  <rect x="40" y="80" width="168" height="22" rx="4" fill="#13151a" stroke="#2a2d38"/>
+  <text x="49" y="95" class="k" font-size="9.5" fill="#e7ebf2">npx @lorekit/cli install</text>
+  <text x="40" y="124" class="lbl" font-size="10">creates</text>
+  <rect x="40" y="132" width="168" height="66" rx="6" fill="#13151a" stroke="#f5a623" stroke-opacity="0.45"/>
+  <text x="52" y="150" class="k" font-size="10" fill="#f5a623">~/.lorekit/</text>
+  <rect x="60" y="158" width="136" height="12" rx="3" fill="#f5a623" fill-opacity="0.14" stroke="#f5a623" stroke-opacity="0.35"/>
+  <text x="66" y="167" class="k" font-size="8" fill="#8892a4">repo/acme/checkout/…md</text>
+  <rect x="60" y="176" width="136" height="12" rx="3" fill="#f5a623" fill-opacity="0.14" stroke="#f5a623" stroke-opacity="0.35"/>
+  <text x="66" y="185" class="k" font-size="8" fill="#8892a4">global/…md</text>
+  <text x="40" y="220" class="lbl" font-size="10">no signup · no account</text>
+  <text x="40" y="233" class="lbl" font-size="10">plain files you can grep</text>
+
+  <path d="M232,142 L252,142" stroke="#8892a4" stroke-width="1.4" marker-end="url(#arL)"/>
+
+  <!-- Panel 2 — fail -->
+  <rect x="260" y="44" width="200" height="196" rx="10" fill="#1a1d24" stroke="#2a2d38"/>
+  <text x="276" y="68" class="lbl" font-size="10.5" fill="#f5a623">2 · FAIL</text>
+  <rect x="276" y="80" width="168" height="22" rx="4" fill="#13151a" stroke="#2a2d38"/>
+  <text x="285" y="95" class="k" font-size="9.5" fill="#e7ebf2">pnpm test</text>
+  <rect x="276" y="108" width="168" height="24" rx="4" fill="#f5a623" fill-opacity="0.12" stroke="#f5a623" stroke-opacity="0.5"/>
+  <text x="285" y="124" class="k" font-size="9" fill="#f5a623">ECONNREFUSED 5432</text>
+  <path d="M360,136 L360,152" stroke="#7c8cf8" stroke-width="1.4" marker-end="url(#arI)"/>
+  <rect x="276" y="156" width="168" height="42" rx="6" fill="#13151a" stroke="#7c8cf8" stroke-opacity="0.55"/>
+  <text x="288" y="172" class="k" font-size="9.5" fill="#7c8cf8">memory.write</text>
+  <text x="288" y="188" class="lbl" font-size="8.5">tests-need-local-postgres</text>
+  <text x="276" y="220" class="lbl" font-size="10">the hook nudges,</text>
+  <text x="276" y="233" class="lbl" font-size="10">the agent writes the lesson</text>
+
+  <path d="M468,142 L488,142" stroke="#8892a4" stroke-width="1.4" marker-end="url(#arL)"/>
+
+  <!-- Panel 3 — remember -->
+  <rect x="496" y="44" width="200" height="196" rx="10" fill="#1a1d24" stroke="#2a2d38"/>
+  <text x="512" y="68" class="lbl" font-size="10.5" fill="#34d399">3 · REMEMBER</text>
+  <rect x="512" y="80" width="168" height="22" rx="4" fill="#13151a" stroke="#34d399" stroke-opacity="0.5"/>
+  <text x="521" y="95" class="k" font-size="9.5" fill="#34d399">SessionStart</text>
+  <rect x="512" y="112" width="168" height="86" rx="6" fill="#13151a" stroke="#2a2d38"/>
+  <text x="522" y="130" class="k" font-size="8.5" fill="#e7ebf2">LoreKit: 1 memory loaded</text>
+  <rect x="522" y="138" width="148" height="13" rx="3" fill="#34d399" fill-opacity="0.16" stroke="#34d399" stroke-opacity="0.45"/>
+  <text x="528" y="148" class="k" font-size="8" fill="#8892a4">tests-need-local-postgres</text>
+  <text x="522" y="168" class="lbl" font-size="8.5">docker compose up -d db</text>
+  <text x="522" y="184" class="lbl" font-size="8.5">considerations, not rules</text>
+  <text x="512" y="220" class="lbl" font-size="10">the next task starts</text>
+  <text x="512" y="233" class="lbl" font-size="10">already knowing</text>
+
+  <!-- loop back -->
+  <path d="M596,252 L596,278 L360,278 L360,254" fill="none" stroke="#7c8cf8" stroke-width="1.4" stroke-dasharray="4 4" marker-end="url(#arI)"/>
+  <text x="478" y="298" text-anchor="middle" class="lbl" font-size="10" fill="#7c8cf8">every session, a little less re-solving</text>
+</svg>
