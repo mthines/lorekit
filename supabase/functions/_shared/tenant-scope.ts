@@ -97,6 +97,14 @@ export function effectiveOrgIds(memberOrgIds: string[], key?: KeyRestriction): s
  * `repo::my_org/*` stays owner-exact rather than also matching `repo::myXorg/…`
  * — the same escape `expandScopeForSearch` applies, for the same reason.
  *
+ * The shape test is `SCOPE_PATTERN` from `schemas/api-key.ts` — the authority
+ * that guards the column at write time — and not a looser approximation of it.
+ * A `*` is a wildcard only directly after `/` or `::`, so `repo::mthines/lore*`
+ * is a MALFORMED pattern and is dropped rather than admitted as a `lore%` prefix
+ * that reaches every repo starting with those letters. Admitting it would widen
+ * the key, which is the one direction this filter must never move, and the
+ * stored-bad-pattern case is precisely what it exists for.
+ *
  * SECURITY: the fragment is interpolated into a filter string where `,` `(` `)`
  * are grammar, so a pattern outside the canonical charset would inject extra OR
  * predicates into the filter tree. `api_tokens_scopes_shape` already rejects
@@ -106,7 +114,7 @@ export function effectiveOrgIds(memberOrgIds: string[], key?: KeyRestriction): s
  */
 export function keyScopeFilter(key?: KeyRestriction): string | null {
   if (!key || key.scopes.length === 0) return null;
-  const safe = key.scopes.filter((p) => /^[a-z0-9._:/-]+\*?$/.test(p));
+  const safe = key.scopes.filter((p) => /^[a-z0-9._:/-]+(?:(?:\/|::)\*)?$/.test(p));
   if (safe.length === 0) {
     // Every pattern was malformed. The key IS restricted, so matching nothing
     // is the only honest answer — an impossible predicate rather than none.

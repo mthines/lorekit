@@ -147,6 +147,28 @@ describe('keyScopeFilter', () => {
     ).toBe('scope.eq.global');
   });
 
+  it('drops a MID-TOKEN wildcard rather than widening the key', () => {
+    // `SCOPE_PATTERN` in `schemas/api-key.ts` is the authority and allows `*`
+    // only directly after `/` or `::`. A stored `repo::mthines/lore*` is
+    // therefore malformed, and admitting it would become the LIKE prefix
+    // `repo::mthines/lore%` — reaching every repo starting with those letters.
+    // Dropping is the only direction this filter may move.
+    expect(
+      keyScopeFilter({
+        scopes: ['repo::mthines/lore*', 'project::alpha'],
+        orgAccess: 'all',
+        orgIds: [],
+      }),
+    ).toBe('scope.eq.project::alpha');
+    // The two legal wildcard positions still work.
+    expect(
+      keyScopeFilter({ scopes: ['repo::mthines/*'], orgAccess: 'all', orgIds: [] }),
+    ).toBe('scope.like.repo::mthines/%');
+    expect(
+      keyScopeFilter({ scopes: ['project::*'], orgAccess: 'all', orgIds: [] }),
+    ).toBe('scope.like.project::%');
+  });
+
   it('matches NOTHING when every pattern was malformed', () => {
     // The key IS restricted, so an impossible predicate is the only honest
     // answer — falling back to "no filter" would widen a restricted key.

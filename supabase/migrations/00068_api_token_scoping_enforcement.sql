@@ -1017,3 +1017,65 @@ comment on function lorekit_memory_facets(
    for org_id-null rows, else the org slug. Counts are DRILL-DOWN (00057). The
    key parameters default to unrestricted, so a non-key caller sees
    byte-for-byte 00066''s result.';
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 8. lorekit_api_token_scope_allowed — the same shape test as the edge
+--
+-- 00067 treated any pattern ending in `*` as a prefix wildcard. The authority
+-- on what a pattern may look like is `SCOPE_PATTERN` in `schemas/api-key.ts`
+-- (and `api_tokens_scopes_shape`, which mirrors it): a `*` is a wildcard only
+-- directly after `/` or `::`. Under the looser rule a stored `repo::mthines/lore*`
+-- became the LIKE prefix `repo::mthines/lore%` and reached every repo starting
+-- with those letters — a pattern that WIDENS the key, which is the one direction
+-- these predicates must never move.
+--
+-- Both guards exist because the column can hold a value the CHECK never saw: a
+-- BYOD install bootstrapped before 00067, or a constraint dropped by hand. A
+-- non-conforming pattern now contributes nothing, exactly as the edge's
+-- `keyScopeFilter` drops it — and a key whose patterns ALL fail the shape test
+-- matches no row, which is the fail-closed answer for "restricted, with no
+-- usable patterns".
+--
+-- `create or replace` with an unchanged signature, so the 00067 grants stand.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+create or replace function lorekit_api_token_scope_allowed(
+  p_patterns text[],
+  p_scope text
+)
+returns boolean
+language sql
+immutable
+as $$
+  select case
+    -- Decision 1: an unrestricted key is the default and the common case, so it
+    -- is the first branch and costs no array walk.
+    when p_patterns is null or cardinality(p_patterns) = 0 then true
+    -- A scopeless operation (memory.purge_expired, the account-wide reads)
+    -- cannot be matched against an allowlist. Refusing it is the fail-closed
+    -- answer: a key narrowed to one repo has no business sweeping the account.
+    when p_scope is null then false
+    else exists (
+      select 1
+      from unnest(p_patterns) as pattern
+      -- SCOPE_PATTERN's shape, verbatim. A pattern that fails it is dropped
+      -- rather than matched literally, so it can only ever narrow.
+      where pattern ~ '^[a-z0-9._:/-]+((/|::)\*)?$'
+        and case
+          when right(pattern, 1) = '*'
+            -- Escape LIKE's single-character wildcard in the literal prefix so
+            -- `repo::my_org/*` stays owner-exact instead of also matching
+            -- `repo::myXorg/...`. `%` and `\` cannot occur — the CHECK's charset
+            -- excludes them. Same reasoning, same escape, as expandScopeForSearch.
+            then p_scope like replace(left(pattern, -1), '_', '\_') || '%'
+          else p_scope = pattern
+        end
+    )
+  end;
+$$;
+
+comment on function lorekit_api_token_scope_allowed(text[], text) is
+  'May a key whose api_tokens.scopes is p_patterns touch p_scope? Empty '
+  'allowlist = yes (unrestricted). NULL scope = no (fail closed). A pattern '
+  'outside SCOPE_PATTERN''s shape is DROPPED, not matched, so a stored '
+  'mid-token wildcard cannot widen the key (00068).';
