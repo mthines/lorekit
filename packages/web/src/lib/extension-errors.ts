@@ -106,8 +106,12 @@ function isExtensionFrame(line: string): boolean {
  *
  * @param stack the `Error.prototype.stack` string, in any browser's format —
  *   V8's `at Z (chrome-extension://id/x.js:1:761)` and SpiderMonkey/JSC's
- *   `Z@moz-extension://id/x.js:1:761` are both handled, because the test is
- *   substring-based and never parses the frame syntax.
+ *   `Z@moz-extension://id/x.js:1:761` are both handled. Frame syntax is
+ *   recognised only far enough to tell a frame from the message line and to
+ *   find where a source URL may start (`STACK_FRAME_PATTERN` and
+ *   `EXTENSION_FRAME_PATTERN`); nothing parses a frame into function, file,
+ *   line, and column, so an unfamiliar dialect degrades to "not a frame" —
+ *   which keeps the error.
  */
 export function isExtensionOnlyStack(stack: string | undefined | null): boolean {
   if (!stack) return false;
