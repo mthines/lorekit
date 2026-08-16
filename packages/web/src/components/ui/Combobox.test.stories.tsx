@@ -493,6 +493,27 @@ export const SearchSurvivesATickSoASetCanBeBuiltFromOneQuery: Story = {
       });
     });
 
+    await step('Space types a space here rather than ticking a row', async () => {
+      // The other arm of `if (searchable) break` — the half
+      // `SpaceTogglesWhenThereIsNoSearchBox` cannot reach. Without the guard,
+      // Space would activate the highlighted row and multi-word queries would
+      // be untypeable; the highlight is on a row throughout, so a regression
+      // shows up as a selection appearing out of nowhere.
+      await userEvent.keyboard(' ');
+      await expect(menu.getByRole('combobox', { name: /search statuses/i })).toHaveValue(
+        'memories ',
+      );
+      await expect(canvas.getByTestId('values')).toHaveTextContent('');
+    });
+
+    await step('and backing the space out restores the three rows', async () => {
+      // So the rest of the story runs against the query it documents.
+      await userEvent.keyboard('{Backspace}');
+      await waitFor(async () => {
+        await expect(menu.getAllByRole('option')).toHaveLength(3);
+      });
+    });
+
     await step('ticking one leaves the query in place', async () => {
       // Clearing it on every tick would send the user back to the full list
       // between each pick — the exact friction the mode exists to remove.
