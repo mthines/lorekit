@@ -216,10 +216,53 @@ describe('installExtensionErrorFilter', () => {
     '    at LoreList (https://www.lorekit.io/_next/static/chunks/page.js:1:761)',
   ].join('\n');
 
+  /**
+   * An `EventTarget` that reproduces the `onerror` event-handler IDL attribute,
+   * which node's bare `EventTarget` does not have.
+   *
+   * Two spec rules are modelled, and both are what the filter's ordering depends
+   * on: the listener is added at the FIRST non-null assignment and keeps that
+   * position for every later assignment, and assigning `null` removes it. This
+   * is the path sdk-web 0.23.0 actually takes for uncaught errors — it ASSIGNS
+   * `window.onerror` rather than adding an `error` listener — so a stand-in
+   * built on `addEventListener` alone would prove nothing about the ordering.
+   */
+  class OnErrorEventTarget extends EventTarget {
+    #handler: ((event: Event) => unknown) | null = null;
+    #slot: ((event: Event) => void) | null = null;
+
+    get onerror(): ((event: Event) => unknown) | null {
+      return this.#handler;
+    }
+
+    set onerror(handler: ((event: Event) => unknown) | null) {
+      this.#handler = handler;
+      if (handler === null) {
+        if (this.#slot) this.removeEventListener('error', this.#slot);
+        this.#slot = null;
+        return;
+      }
+      if (!this.#slot) {
+        this.#slot = (event: Event) => this.#handler?.(event);
+        this.addEventListener('error', this.#slot);
+      }
+    }
+  }
+
   /** Subscribe a stand-in for the SDK, AFTER the filter, as `init()` does. */
   const attachSdkListener = (target: EventTarget, type: string) => {
     const listener = vi.fn();
     target.addEventListener(type, listener);
+    return listener;
+  };
+
+  /**
+   * Subscribe the SDK's uncaught-error path the way `init()` does — by ASSIGNING
+   * `onerror`, after the filter is installed.
+   */
+  const attachSdkOnError = (target: OnErrorEventTarget) => {
+    const listener = vi.fn();
+    target.onerror = listener;
     return listener;
   };
 
@@ -276,6 +319,51 @@ describe('installExtensionErrorFilter', () => {
     });
 
     expect(sdk).toHaveBeenCalledOnce();
+    teardown();
+  });
+
+  it('hides an extension-only uncaught error from an SDK using window.onerror', () => {
+    const target = new OnErrorEventTarget();
+    const teardown = installExtensionErrorFilter(target);
+    const sdk = attachSdkOnError(target);
+
+    dispatch(target, 'error', { error: { stack: EXTENSION_STACK } });
+
+    expect(sdk).not.toHaveBeenCalled();
+    teardown();
+  });
+
+  it('lets a first-party uncaught error reach an SDK using window.onerror', () => {
+    const target = new OnErrorEventTarget();
+    const teardown = installExtensionErrorFilter(target);
+    const sdk = attachSdkOnError(target);
+
+    dispatch(target, 'error', { error: { stack: FIRST_PARTY_STACK } });
+
+    expect(sdk).toHaveBeenCalledOnce();
+    teardown();
+  });
+
+  it('outranks an onerror handler that was already set before the filter', () => {
+    // The attribute's listener slot belongs to whoever assigned it first, so an
+    // SDK assigning onerror AFTER us still inherits that earlier slot. The
+    // filter re-seats the incumbent behind itself; without that, this is where
+    // the uncaught-error half silently stops working.
+    const target = new OnErrorEventTarget();
+    const incumbent = vi.fn();
+    target.onerror = incumbent;
+
+    const teardown = installExtensionErrorFilter(target);
+    const sdk = attachSdkOnError(target); // replaces the handler in the re-seated slot
+
+    dispatch(target, 'error', { error: { stack: EXTENSION_STACK } });
+
+    expect(sdk).not.toHaveBeenCalled();
+    expect(incumbent).not.toHaveBeenCalled();
+
+    dispatch(target, 'error', { error: { stack: FIRST_PARTY_STACK } });
+    expect(sdk).toHaveBeenCalledOnce();
+
     teardown();
   });
 
