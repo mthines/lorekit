@@ -9,7 +9,7 @@ import { LIST_PREVIEW_CHARS as CORE_PREVIEW_CHARS } from './tools/list.js';
  * that cannot import each other:
  *
  *   1. `packages/schemas/src/memory.ts`      — the authoritative declaration.
- *   2. `packages/mcp-core/src/tools/list.ts` — the Node/Fly + CLI stdio path.
+ *   2. `packages/mcp-core/src/tools/list.ts` — the shared library path.
  *   3. `supabase/functions/mcp/tools.ts`     — self-contained Deno, the
  *      production path. It cannot cross-import a package, the same constraint
  *      that already forces `MAX_VALUE_BYTES` and `PURGE_RETENTION_DAYS_DEFAULT`
@@ -18,7 +18,7 @@ import { LIST_PREVIEW_CHARS as CORE_PREVIEW_CHARS } from './tools/list.js';
  *      which is zero-dependency by design and cannot import `@lorekit/schemas`.
  *
  * A drift here is silent and asymmetric: the same call against the hosted edge
- * function and against a BYOD Fly deployment would return previews of different
+ * function and against a BYOD deployment would return previews of different
  * lengths, and nothing would fail. Assert all four agree, following the
  * `usage-client-parity.spec.ts` precedent for exactly this shape of problem.
  */

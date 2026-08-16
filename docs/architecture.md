@@ -54,11 +54,10 @@ LoreKit is a shared memory layer for AI coding agents. Agents write lessons they
 | Package | Path | Runtime | Role |
 |---------|------|---------|------|
 | `@lorekit/core` | `packages/mcp-core/` | Node.js | Scope validator, DB client wrappers, 10 tool handlers, OTel tracer/meter |
-| `@lorekit/server` | `packages/mcp-server/` | Node.js | HTTP entry point, auth middleware, GitHub webhook, OTel SDK init (for Fly.io deployment) |
 | `@lorekit/web` | `packages/web/` | Vercel / Next.js 15 | Dashboard: login, lore explorer, activity feed, overview + onboarding |
-| `supabase` | `supabase/` | Deno (Edge Functions) | Self-contained MCP server + health check + migrations |
+| `supabase` | `supabase/` | Deno (Edge Functions) | Self-contained MCP server + health check + migrations + the live smoke suites (`tests/`) |
 
-> The Edge Functions (`supabase/functions/mcp/`, `supabase/functions/health/`) are the **production MCP server**. `packages/mcp-server/` is the Node.js variant for deployments where full OTel instrumentation matters (Fly.io).
+> The Edge Functions (`supabase/functions/mcp/`, `supabase/functions/health/`) are the **production MCP server** — and the only one. A Node.js variant (`packages/mcp-server/`, nominally for Fly.io) existed but was never deployed; it was removed rather than maintained as a second, silently drifting implementation. Its live smoke suites, which have always tested the EDGE deployment, live in `supabase/tests/`.
 
 ---
 

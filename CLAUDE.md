@@ -14,15 +14,14 @@ lets humans browse, search, and manage those lessons.
 | Package | Path | Role |
 |---------|------|------|
 | `@lorekit/core` | `packages/mcp-core/` | Scope validator, DB client, 10 tool handlers, OTel tracer/meter |
-| `@lorekit/server` | `packages/mcp-server/` | Node.js HTTP server for Fly.io (OTel SDK init, auth, webhook) |
 | `@lorekit/web` | `packages/web/` | Next.js 15 dashboard (Vercel) |
 | `@lorekit/cli` | `packages/cli/` | Zero-dep Node CLI. `install`/`uninstall`/`doctor` (scaffold the `lorekit-memory`/`lorekit-setup`/`lorekit-groom` skills + MCP server + lifecycle hooks into `.claude`; connectivity/token/scope health checks); read commands `list`/`search`/`show`/`stats`/`scopes`/`diff`/`tree`/`lint`/`dedupe`/`link` (Offline + Remote split, `--json`/`--scope`); `hook` (the shared hook engine behind the plugins); `mcp` (local stdio MCP server); `migrate`. Self-contained OTLP telemetry (`service.name=cli`). Full command reference: [`docs/cli.md`](./docs/cli.md) |
 
 | `plugins/` | `plugins/` | Per-framework deterministic bundles: `lorekit-claude` (marketplace plugin: skill + hooks + MCP), `lorekit-cursor` (rule + `stop` hook), `lorekit-codex` (feature-flagged hooks + `AGENTS.md` fallback, experimental). Root `.claude-plugin/marketplace.json` lists the Claude plugin. |
-| `supabase` | `supabase/` | Edge Functions (production MCP server), migrations, NX targets |
+| `supabase` | `supabase/` | Edge Functions (production MCP server), migrations, NX targets, and the live smoke suites in `tests/` |
 
-The **production MCP server** is `supabase/functions/mcp/index.ts` (Deno, self-contained).
-`packages/mcp-server/` is the Node.js variant for Fly.io with full OTel.
+The **production MCP server** is `supabase/functions/mcp/index.ts` (Deno, self-contained) — the
+ONLY MCP server deployment. Its live smoke suites are `supabase/tests/` (`pnpm nx test supabase`).
 
 **Shared hook engine:** `lorekit hook --adapter <claude|cursor|codex> --event <name>` reads the host's
 JSON on stdin and injects lessons / a retrospective nudge on stdout, always exiting 0. Logic lives once
@@ -321,8 +320,7 @@ permission (`lk_rw_*` / `lk_ro_*`). `lk_ro_*` is denied on write tools; `lk_wo_*
 on read tools — both with the standard `-32001` permission-denied error. The gating logic
 (`READ_TOOLS`/`WRITE_TOOLS`/`toolRequires`/`tokenPrefixFor`) is a shared pure module,
 `packages/mcp-core/src/permissions.ts`, mirrored self-contained into
-`supabase/functions/mcp/permissions.ts` (the `limits.ts` pattern) — the Node.js
-`mcp-server` has no API-token auth path today and is out of scope for this gating.
+`supabase/functions/mcp/permissions.ts` (the `limits.ts` pattern).
 
 ---
 
@@ -425,6 +423,7 @@ their rationale inline. **Do not relitigate these.**
 - **`OTEL_SERVICE_NAME` must never decide a component's name** — `register()` overwrites it with the code-declared name and warns on conflict. [rationale](./docs/decisions.md#otel_service_name-must-never-decide-a-components-name)
 - **Caller identity belongs on the ROOT request span** — `createRouter` sets `auth.type`/`auth.user_id` on the REST root span (as MCP does); enables web↔CLI↔MCP correlation by account, no fingerprinting. [rationale](./docs/decisions.md#caller-identity-belongs-on-the-root-request-span)
 - **Edge Function is self-contained Deno** — no cross-package/bare imports; schemas mirrored into `_shared/schemas/`, `npm:` specifiers only; never re-add an import map. [rationale](./docs/decisions.md#edge-function-is-self-contained-deno-no-import-map)
+- **No Node MCP server, no Fly.io** — the Deno Edge Function is the ONLY MCP server; `packages/mcp-server/` was never deployed and is deleted. The live smoke suites moved to `supabase/tests/` (`pnpm nx test supabase`); `signal-filter.ts` moved to `mcp-core`. A `service.name=mcp` in Dash0 is a stray `SERVICE_NAME` secret renaming the edge, never a second deployment. [rationale](./docs/decisions.md#no-node-mcp-server-no-flyio)
 - NX 22.4.0 — matches `gw-tools` exactly; bump both together
 - **Memory cap enforced by a DB trigger** (`NEW.user_id`-keyed, auth-agnostic, unbypassable) — not app-side counting. [rationale](./docs/decisions.md#memory-cap-enforced-by-a-db-trigger)
 - Rate limiting is a Postgres-backed fixed-window counter (not in-memory/Redis) — edge isolates are stateless; no new infra

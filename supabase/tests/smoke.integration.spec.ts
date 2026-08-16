@@ -9,11 +9,11 @@
  *   LOREKIT_SMOKE_TOKEN   Bearer token (service-role key or user JWT)
  *   LOREKIT_SMOKE_URL     Full MCP endpoint URL
  *                         e.g. https://<ref>.supabase.co/functions/v1/mcp
- *                         Defaults to http://localhost:3000/mcp
+ *                         Defaults to http://localhost:54321/functions/v1/mcp
  *
  * Run standalone:
  *   LOREKIT_SMOKE_TOKEN=<token> LOREKIT_SMOKE_URL=<url> \
- *     pnpm nx test mcp-server -- --reporter=verbose --testPathPattern=smoke.integration
+ *     pnpm nx test supabase -- --reporter=verbose --testPathPattern=smoke.integration
  */
 
 import { describe, it, expect, afterAll } from 'vitest';
@@ -25,7 +25,7 @@ import {
 } from './smoke-cleanup.js';
 import { testRunHeaders } from './smoke-telemetry.js';
 
-const BASE_URL = (process.env['LOREKIT_SMOKE_URL'] ?? 'http://localhost:3000/mcp').replace(/\/$/, '');
+const BASE_URL = (process.env['LOREKIT_SMOKE_URL'] ?? 'http://localhost:54321/functions/v1/mcp').replace(/\/$/, '');
 const TOKEN = process.env['LOREKIT_SMOKE_TOKEN'];
 
 const SKIP = !TOKEN;

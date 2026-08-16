@@ -95,7 +95,7 @@ cover here and `smoke-preview` exercises end-to-end against current PostgREST.
 
 Booting a local Supabase is expensive, so a `changes` job diffs the PR and the
 `integration` job only runs when API/backend paths change — `packages/mcp-core/`,
-`packages/mcp-server/`, `supabase/functions/`, `supabase/migrations/`,
+`supabase/functions/`, `supabase/migrations/`, `supabase/tests/`,
 `supabase/config.toml`, `package.json`, `pnpm-lock.yaml`, or `ci.yml` itself. A
 docs- or web-only PR skips it. Unit typecheck/test/lint (`check`) is not gated
 this way — `nx affected` already scopes itself to the changed packages. A
@@ -525,7 +525,7 @@ modes:
 
 | Layer | Covers | Where |
 |-------|--------|-------|
-| **Self-cleanup** — each suite hard-deletes everything it minted in `afterAll` | a suite that FAILED partway through | `packages/mcp-server/src/smoke-cleanup.ts` + each `*.integration.spec.ts` |
+| **Self-cleanup** — each suite hard-deletes everything it minted in `afterAll` | a suite that FAILED partway through | `supabase/tests/smoke-cleanup.ts` + each `*.integration.spec.ts` |
 | **Orphan sweep** — deletes leftovers from earlier runs, matched by name pattern and age | a run that never reached `afterAll` (crash, OOM, cancelled workflow, job timeout) | `scripts/smoke-cleanup.mjs`, run as an `if: always()` step after every smoke job |
 
 Two rules make the difference between "cleaned up" and "looks cleaned up":
@@ -631,6 +631,50 @@ LOREKIT_SWEEP_SERVICE_ROLE_KEY="<service-role key>" \
 ```
 
 This is a one-off cleanup — the suites no longer create them.
+
+#### Retargeting the smoke gates after the mcp-server removal (BLOCKING, must be committed by a human)
+
+The live smoke suites moved from `packages/mcp-server/src/` to `supabase/tests/`
+when the undeployed Node MCP server was deleted (see
+[decisions.md → "No Node MCP server, no Fly.io"](./decisions.md#no-node-mcp-server-no-flyio)).
+`pnpm nx test mcp-server` therefore no longer resolves to a project. As above,
+the GitHub App that opened that PR cannot modify `.github/workflows/**`, so the
+edits below are **not** in it.
+
+**Unlike the sweeper wiring above, these are not optional.** Until they are
+applied, `smoke-preview`, `smoke-production` and the preview smoke step fail
+with `Cannot find project 'mcp-server'` — a deploy loses its post-deploy
+verification and `rollback-production` trips. Apply them in the same merge.
+
+**1. Four `nx test` invocations.** Replace `mcp-server` with `supabase`; the
+suite filters and flags are unchanged.
+
+| File | Line (approx.) | New command |
+|---|---|---|
+| `deploy.yml` | 449 | `pnpm nx test supabase -- smoke.integration && break` |
+| `deploy.yml` | 470 | `pnpm nx test supabase -- byod-smoke.integration --passWithNoTests` |
+| `deploy.yml` | 807 | `pnpm nx test supabase -- byod-smoke.integration --passWithNoTests` |
+| `preview.yml` | 250 | `pnpm nx test supabase -- smoke.integration && break` |
+| `preview.yml` | 273 | `pnpm nx test supabase -- byod-smoke.integration --passWithNoTests` |
+
+**2. Two API path filters.** Drop the now-nonexistent `packages/mcp-server/`
+and add the smoke runner's own config, so a change to `vitest.config.ts` still
+triggers the gate it drives. `supabase/tests/` is already listed in both.
+
+`ci.yml` → `changes` job, the `api=` filter:
+
+```yaml
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/mcp-core/|supabase/functions/|supabase/migrations/|supabase/tests/|supabase/config\.toml|supabase/vitest\.config\.ts|supabase/tsconfig|package\.json|pnpm-lock\.yaml|scripts/smoke-mcp-stdio\.mjs|\.github/workflows/ci\.yml)'; then
+```
+
+`deploy.yml` → the equivalent filter:
+
+```yaml
+          if printf '%s\n' "$CHANGED" | grep -qE '^(packages/mcp-core/|packages/schemas/|supabase/functions/|supabase/migrations/|supabase/tests/|supabase/config\.toml|supabase/vitest\.config\.ts|supabase/tsconfig|package\.json|pnpm-lock\.yaml|nx\.json|\.github/workflows/deploy\.yml)'; then
+```
+
+Verify locally with `pnpm nx test supabase` (182 tests; the 135 live ones
+self-skip without `LOREKIT_SMOKE_TOKEN`).
 
 ### Environments and secrets
 

@@ -5,6 +5,7 @@ import {
   webhookTtlDays,
 } from './ttl-defaults.js';
 import { TTL_MAX_DAYS, TTL_MIN_DAYS } from './ttl.js';
+import { classifyWebhookAction } from './signal-filter.js';
 
 describe('webhookSignalTier', () => {
   it('grades a resolved review thread as high — the author acted on the finding', () => {
@@ -81,8 +82,7 @@ describe('webhookTtlDays', () => {
 describe('tier coverage vs the action gate', () => {
   // Every pair classifyWebhookAction accepts must be graded by NAME here, not by
   // the `low` fallback — otherwise a newly accepted event silently gets the
-  // shortest retention. That the list below matches the gate exactly is asserted
-  // where both modules are importable: packages/mcp-server/src/webhooks/github.spec.ts.
+  // shortest retention.
   const ACCEPTED: ReadonlyArray<readonly [string, string, number]> = [
     ['pull_request_review_thread', 'resolved', 90],
     ['pull_request_review', 'submitted', 30],
@@ -93,4 +93,39 @@ describe('tier coverage vs the action gate', () => {
   it.each(ACCEPTED)('%s/%s retains for %i days', (event, action, days) => {
     expect(webhookTtlDays(event, action)).toBe(days);
   });
+
+  // That ACCEPTED matches the gate EXACTLY used to be asserted in the Node MCP
+  // server's webhook spec, the one place both modules were importable. That
+  // server is gone and `signal-filter.ts` now lives beside this file, so the
+  // assertion moves here — where it no longer depends on an undeployed runtime
+  // to stay alive.
+  it('grades every pair the action gate accepts, and nothing it rejects', () => {
+    const gated = CANDIDATE_PAIRS.filter(
+      ([event, action]) => classifyWebhookAction(event, action) === 'WRITE',
+    );
+    expect(gated.map(([event, action]) => `${event}.${action}`).sort()).toEqual(
+      ACCEPTED.map(([event, action]) => `${event}.${action}`).sort(),
+    );
+  });
 });
+
+/**
+ * The cross-product of interest for the gate check above: every pair the gate
+ * accepts, plus near-miss actions on the same events. Deliberately NOT derived
+ * from ACCEPTED — a list that copied it could not detect the gate widening.
+ */
+const CANDIDATE_PAIRS: ReadonlyArray<readonly [string, string]> = [
+  ['pull_request_review_thread', 'resolved'],
+  ['pull_request_review_thread', 'unresolved'],
+  ['pull_request_review', 'submitted'],
+  ['pull_request_review', 'dismissed'],
+  ['pull_request_review', 'edited'],
+  ['pull_request_review_comment', 'created'],
+  ['pull_request_review_comment', 'edited'],
+  ['pull_request_review_comment', 'deleted'],
+  ['issue_comment', 'created'],
+  ['issue_comment', 'edited'],
+  ['issue_comment', 'deleted'],
+  ['pull_request', 'synchronize'],
+  ['pull_request', 'labeled'],
+];

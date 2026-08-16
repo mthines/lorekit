@@ -122,7 +122,7 @@ export function createSmokeNamespace(label: string, now: number = Date.now()): S
     throw new Error(
       `smoke label "${label}" produces "${prefix}", which SMOKE_ARTEFACT_PATTERN does not match — ` +
         'the orphan sweeper would never clean it up. Add the label to the pattern ' +
-        '(packages/mcp-server/src/smoke-cleanup.ts AND scripts/smoke-cleanup.mjs) first.',
+        '(supabase/tests/smoke-cleanup.ts AND scripts/smoke-cleanup.mjs) first.',
     );
   }
   const minted: string[] = [];

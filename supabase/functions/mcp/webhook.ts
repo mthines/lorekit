@@ -5,7 +5,7 @@
  * candidate memory entries tagged source::pr-webhook.
  *
  * Two signal-quality gates applied before every write (mirrored from
- * packages/mcp-server/src/webhooks/signal-filter.ts — keep in sync):
+ * packages/mcp-core/src/signal-filter.ts — keep in sync):
  *   1. classifyWebhookAction — only 'created', 'submitted', and 'resolved'
  *      actions carry durable signal; edits, deletes, dismissals are skipped.
  *   2. isSignalWorthy — rejects short bodies, bot noise, and code-only blocks.
@@ -90,7 +90,7 @@ const SUPPORTED_EVENTS = new Set([
 ]);
 
 // ── Signal-quality helpers (inlined — Deno edge functions are self-contained) ─
-// Keep in sync with packages/mcp-server/src/webhooks/signal-filter.ts
+// Keep in sync with packages/mcp-core/src/signal-filter.ts
 
 type WebhookTier = 'WRITE' | 'SKIP';
 
