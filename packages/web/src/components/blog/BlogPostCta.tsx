@@ -34,13 +34,13 @@ export function BlogPostCta() {
 
       <p className="mt-4 text-sm text-[var(--color-content-secondary)]">
         Sharing with a team?{' '}
-        <a
-          href="https://lorekit.io"
+        <Link
+          href="/login"
           className="inline-flex items-center gap-1 font-medium text-[var(--color-accent)] underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]"
         >
           Create a free account
           <ArrowRight className="size-3.5" aria-hidden />
-        </a>
+        </Link>
       </p>
 
       <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-[var(--color-border-subtle)] pt-4 text-xs text-[var(--color-content-tertiary)]">

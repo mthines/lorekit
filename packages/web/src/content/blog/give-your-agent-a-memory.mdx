@@ -37,7 +37,7 @@ Two small files finish the job. First a `.lorekit.json` at your repo root — sa
 
 Then point the MCP server at your own machine instead of the hosted one. `install` merges a `lorekit` entry into your `.mcp.json` — leaving any other servers alone — and by default that entry points at the hosted endpoint. Replace **that entry only** with the CLI's local stdio server:
 
-```json
+```jsonc
 // .mcp.json → mcpServers — edit this entry, leave your others alone
 "lorekit": { "command": "npx", "args": ["-y", "@lorekit/cli", "mcp"] }
 ```
@@ -97,7 +97,7 @@ Lessons are **advisory observations, not rules**. That's not marketing softness 
 
 Which is exactly why this doesn't compete with your `CLAUDE.md`. `CLAUDE.md` is where you put the rules you've decided on — reviewed, deliberate, in version control. Lore is the layer underneath: the accumulating pile of "huh, that bit again" that hasn't earned a rule yet. Some of it eventually should, and promoting it is a human edit. Most of it never will, and that's fine — it's still worth not re-learning.
 
-## What you'd actually use it for
+## Three real cases where it earns its keep
 
 **The gotcha it keeps rediscovering.** The Postgres one above is real, and it's the entire solo case. Any recurring environmental fact — a service that must be running, a flag the build needs, a package manager that isn't the one in the README — gets written once and read every task after. `seen_count` goes up each time the same lesson is re-learned, and recurring lessons rank higher in the block.
 

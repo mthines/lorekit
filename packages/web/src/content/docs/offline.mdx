@@ -53,7 +53,7 @@ npx @lorekit/cli mcp
 
 This starts the local stdio MCP server. Point your agent at it instead of the hosted endpoint. This is half of an offline setup — it decides *which server* your agent talks to; Step 6 decides *which store* that server resolves, and you need both. `install` merges its `lorekit` entry into `.mcp.json` alongside any other servers you have, so edit **that entry only** rather than replacing the file:
 
-```json
+```jsonc
 // .mcp.json → mcpServers — the local store, no endpoint and no token.
 // Edit this entry in place; your other servers stay as they are.
 "lorekit": { "command": "npx", "args": ["-y", "@lorekit/cli", "mcp"] }
@@ -101,9 +101,9 @@ Matches a literal, case-insensitive substring against the memory key or value. W
 
 <TutorialStep number={6} title="Pin the mode with a project config file">
 
-**This is what makes the setup offline.** The built-in default mode is `remote`, so until something selects `local`, the CLI, the hooks and `lorekit mcp` all resolve to the hosted path — the local MCP entry from Step 3 included. Drop a `.lorekit.json` at the repo root and every machine on the team is offline, with no per-machine env var:
+**This is what makes the setup offline.** The built-in default mode is `remote`, so until something selects `local`, the CLI, the hooks and `lorekit mcp` all resolve to the hosted path — the local MCP entry from Step 3 included. Drop a `.lorekit.json` at the repo root to set the repo's default to local, with no per-machine env var:
 
-```json
+```jsonc
 // .lorekit.json  (safe to commit)
 {
   "mode": "local"
@@ -112,13 +112,15 @@ Matches a literal, case-insensitive substring against the memory key or value. W
 
 The same file also controls the local store path and deny constraints:
 
-```json
+```jsonc
 {
   "mode": "local",
   "store": ".lorekit",      // path to the project-tier store (default: .lorekit)
   "deny": ["remote"]        // prevent remote mode in this repo (e.g. for air-gapped CI)
 }
 ```
+
+The two keys differ in force. Repo `mode` is only a *default*: a teammate whose `~/.lorekit/config.json` sets its own `mode` overrides it, because precedence runs env var → user config → repo config → the built-in default. `deny: ["remote"]` is the team-wide guarantee — a deny can't be lifted by any personal config or env var, so it's what actually keeps an air-gapped repo offline for everyone, not the `mode` line alone.
 
 A user-level version of the same file lives at `~/.lorekit/config.json` and applies across all repos. User-level deny constraints are a ceiling the repo config can never lift — a user who sets `"deny": ["remote"]` is always offline, regardless of the repo default.
 
