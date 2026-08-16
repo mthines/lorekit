@@ -5721,6 +5721,10 @@ $$;
 --       transport by construction, and the reason the array form exists.
 -- AC-6: the tenant boundary holds: another user's rows are never returned,
 --       and the function is the ONLY predicate (no applyRestTenantScope).
+--       BOTH actor branches are covered: service_role (v_actor = p_user_id)
+--       and the `authenticated` JWT branch (v_actor = auth.uid()), where a
+--       caller-supplied p_user_id must be ignored — that is the branch this
+--       read has instead of RLS.
 -- AC-7: `p_q` and `p_key_prefix` arrive already LIKE-escaped, so a literal `%`
 --       stays data instead of widening to a wildcard.
 -- AC-8: the archived / expired partition rule matches GET /memories'.
@@ -5837,6 +5841,32 @@ begin
     from lorekit_memory_list('00000000-0000-0000-0000-0000000000a1'::uuid, p_limit => 1000)
    where key = 'lr-b-1';
   assert v_rows = 0, 'list rpc AC-6: another user''s row must never be returned';
+
+  -- AC-6b: the OTHER actor branch. AC-6 runs as service_role, where v_actor
+  -- comes from p_user_id; a JWT caller takes `v_actor := auth.uid()` instead,
+  -- and that branch is what replaced RLS on this read — the function is
+  -- SECURITY DEFINER, so nothing else narrows it. Adopt B's identity and pass
+  -- A's id: the p_user_id must be IGNORED, so A's rows stay invisible and B
+  -- sees only its own.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-0000000000b2","role":"authenticated","email":"lk-list-b@test.local"}', true);
+  select count(*) into v_rows
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_limit => 100);
+  assert v_rows = 0,
+    format('list rpc AC-6b: a JWT caller must act as auth.uid(), never the p_user_id it passes, got %s rows', v_rows);
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc-b', p_limit => 100);
+  assert v_keys = array['lr-b-1'],
+    format('list rpc AC-6b: the JWT branch must still return the caller''s OWN rows, got %s', v_keys);
+
+  -- Back to service_role for the remaining assertions, which act as A.
+  set local role service_role;
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
 
   -- AC-7: a literal `%` in the needle is DATA. The escaped form matches only
   -- the row that really contains it; an unescaped `%` would match everything.
