@@ -843,11 +843,19 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
 
     /** A dimension wide enough that the query form cannot carry it. */
     const WIDE = Array.from({ length: 200 }, (_, i) => `${KEY_PREFIX}-filler-host-${i}`);
+    /**
+     * KEY_BODY's own host, deliberately OUTSIDE `WIDE`. It has to be set rather
+     * than left null: `lorekit_match_text`'s `nin` EXCLUDES a null column — the
+     * rule `migrations.test.sql` AC-4b pins — so a hostless row is filtered out
+     * by any `host_mode: 'nin'`, and "a `nin` over 200 unrelated hosts excludes
+     * nothing" would be asserting the opposite of the documented semantics.
+     */
+    const HOST_BODY = `${KEY_PREFIX}-body-host`;
 
     beforeAll(async () => {
       if (SKIP) return;
       const { status } = await api('POST', '/', {
-        scope: SCOPE, key: KEY_BODY, value: 'body transport', source_agent: AGENT,
+        scope: SCOPE, key: KEY_BODY, value: 'body transport', source_agent: AGENT, host: HOST_BODY,
       });
       expect(status).toBe(201);
       const created = await api('POST', '/', {
@@ -891,7 +899,8 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
       });
       expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
       const keys = ((data as JsonObj).entries as JsonObj[]).map((e) => String(e.key));
-      expect(keys, 'a `nin` over 200 unrelated hosts excludes nothing').toContain(KEY_BODY);
+      expect(keys, 'a `nin` over 200 unrelated hosts must not exclude a row whose host is none of them')
+        .toContain(KEY_BODY);
     });
 
     it('POST /memories/list returns exactly what the equivalent GET returns', async () => {
