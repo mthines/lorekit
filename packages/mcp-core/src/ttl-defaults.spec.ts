@@ -107,12 +107,47 @@ describe('tier coverage vs the action gate', () => {
       ACCEPTED.map(([event, action]) => `${event}.${action}`).sort(),
     );
   });
+
+  // The check above proves the two modules agree on WHAT is admitted. This one
+  // proves the candidate list is still able to detect a widening at all: if
+  // every candidate sat on an already-accepted event, a gate that grew a new
+  // event name would pass silently while `webhookSignalTier` handed it the
+  // `low` 14-day fallback. Anti-vacuity floor, in the same spirit as the
+  // repo's other source-scan guards.
+  it('keeps off-roster event names in the candidate list, so a new-event widening is detectable', () => {
+    const acceptedEvents = new Set(ACCEPTED.map(([event]) => event));
+    const offRoster = CANDIDATE_PAIRS.filter(([event]) => !acceptedEvents.has(event));
+
+    expect(offRoster.length).toBeGreaterThanOrEqual(4);
+    // And they must currently be rejected — an off-roster pair that the gate
+    // accepts is the very drift this suite exists to catch.
+    for (const [event, action] of offRoster) {
+      expect(classifyWebhookAction(event, action)).toBe('SKIP');
+    }
+  });
 });
 
 /**
  * The cross-product of interest for the gate check above: every pair the gate
- * accepts, plus near-miss actions on the same events. Deliberately NOT derived
- * from ACCEPTED — a list that copied it could not detect the gate widening.
+ * accepts, plus near-miss actions on the same events, plus OFF-ROSTER EVENT
+ * NAMES the gate has never accepted. Deliberately NOT derived from ACCEPTED —
+ * a list that copied it could not detect the gate widening.
+ *
+ * The off-roster block is load-bearing and easy to lose. Near-miss ACTIONS only
+ * catch a gate widened on an event it already knows (`pull_request_review` also
+ * accepting `edited`). A gate widened to a whole NEW EVENT is invisible to this
+ * check unless that event name is listed here — and it is the more dangerous
+ * widening, because `webhookSignalTier` falls through to `low` for anything it
+ * does not recognise, so the new event would start being STORED with a silent
+ * 14-day TTL that nobody chose. Grading is decided in `ttl-defaults.ts` and
+ * admission in `signal-filter.ts`, so widening one without the other produces no
+ * error anywhere.
+ *
+ * Caveat, stated so nobody reads more assurance into this than it gives: an
+ * enumerated list can only catch a widening to a name it enumerates. It is a
+ * tripwire on the event families GitHub would plausibly deliver next, not a
+ * proof. Adding a genuinely novel event to the gate still requires adding its
+ * tier here by hand.
  */
 const CANDIDATE_PAIRS: ReadonlyArray<readonly [string, string]> = [
   ['pull_request_review_thread', 'resolved'],
@@ -128,4 +163,10 @@ const CANDIDATE_PAIRS: ReadonlyArray<readonly [string, string]> = [
   ['issue_comment', 'deleted'],
   ['pull_request', 'synchronize'],
   ['pull_request', 'labeled'],
+  // Off-roster EVENT names — none has ever been accepted. Each is a webhook
+  // GitHub really delivers and a plausible "let's also ingest these" widening.
+  ['discussion_comment', 'created'],
+  ['commit_comment', 'created'],
+  ['issues', 'opened'],
+  ['pull_request_review_thread', 'closed'],
 ];
