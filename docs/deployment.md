@@ -641,6 +641,12 @@ when the undeployed Node MCP server was deleted (see
 the GitHub App that opened that PR cannot modify `.github/workflows/**`, so the
 edits below are **not** in it.
 
+**Scope: `.github/workflows/**` only.** The two call sites that live in
+committable files — `scripts/smoke-rest.mjs` (which `ci.yml`'s "Smoke — REST API"
+step invokes unconditionally) and `scripts/smoke-embeddings.mjs`'s dynamic import
+of the rehomed `smoke-cleanup` module — were retargeted in the removal PR itself.
+Nothing outside `.github/workflows/**` is left for a human here.
+
 **Unlike the sweeper wiring above, these are not optional.** Until they are
 applied, `smoke-preview`, `smoke-production` and the preview smoke step fail
 with `Cannot find project 'mcp-server'` — a deploy loses its post-deploy

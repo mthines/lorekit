@@ -61,7 +61,11 @@ if (jwt) {
 
 console.log(`REST smoke → ${baseUrl} (${suites.join(', ')})`);
 
-const result = spawnSync('pnpm', ['nx', 'test', 'mcp-server', '--', '--run', ...suites], {
+// The suites live in `supabase/tests/` and are run by the `supabase` project
+// (the `test` target is inferred by the `@nx/vitest` plugin from
+// `supabase/vitest.config.ts`). They used to be run by `mcp-server`, which no
+// longer exists — see docs/decisions.md → "No Node MCP server, no Fly.io".
+const result = spawnSync('pnpm', ['nx', 'test', 'supabase', '--', '--run', ...suites], {
   stdio: 'inherit',
   env: {
     ...process.env,
