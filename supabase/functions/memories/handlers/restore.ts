@@ -1,7 +1,8 @@
+import { applyKeyScopeFilter, firstDeniedScope } from '../../_shared/api/tenant.ts';
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { auditUserId } from '../../_shared/api/auth.ts';
 import { recordAudit } from '../../_shared/audit.ts';
-import { ok, notFound, dryRun } from '../../_shared/api/respond.ts';
+import { ok, notFound, dryRun, forbidden } from '../../_shared/api/respond.ts';
 import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
 import { validateBody, validateUuid } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
@@ -56,12 +57,26 @@ export async function handleRestore(
     if (!validated.ok) return validated.response;
     const { scope, key } = validated.data;
     span.setAttributes({ 'lorekit.scope': scope, 'lorekit.key': key });
+    // The body form NAMES a scope, so it gets the same plain 403 `handleCreate`
+    // and `handleRemove` return rather than the empty match `applyKeyScopeFilter`
+    // would turn into a 404. The `/:id` form names nothing and is narrowed below.
+    const denied = firstDeniedScope(auth, [scope]);
+    if (denied !== null) {
+      span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+      return forbidden(
+        `This token is not allowed to use the scope "${denied}". It is restricted to specific scopes.`,
+        cors,
+      );
+    }
     q = q.eq('scope', scope).eq('key', key);
   }
 
   // api_key auth uses service-role client — restrict to caller's own rows.
   // JWT auth uses RLS-scoped client — RLS handles access control.
   if (auth.type === 'api_key' && auth.userId) q = q.eq('user_id', auth.userId);
+  // The allowlist half. `user_id` alone let a scoped key restore a memory
+  // outside its allowlist by id.
+  q = applyKeyScopeFilter(q, auth);
 
   // Dry-run: everything above validated + authorized; stop before any write.
   if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);

@@ -1,3 +1,4 @@
+import { applyKeyScopeFilter } from '../../_shared/api/tenant.ts';
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { auditUserId } from '../../_shared/api/auth.ts';
 import { recordAudit } from '../../_shared/audit.ts';
@@ -53,6 +54,9 @@ export async function handleUpdate(
   // api_key auth uses service-role client — restrict to caller's own rows.
   // JWT auth uses RLS-scoped client — RLS handles access control (org-owned rows included).
   if (auth.type === 'api_key' && auth.userId) q = q.eq('user_id', auth.userId);
+  // The allowlist half. `user_id` alone let a scoped key patch a memory outside
+  // its allowlist by id.
+  q = applyKeyScopeFilter(q, auth);
 
   // Dry-run: everything above validated + authorized; stop before any write.
   if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);

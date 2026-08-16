@@ -21,7 +21,7 @@ import { parseCreatedAt } from '../_shared/created-at.ts';
 import { parseTtl } from './ttl.ts';
 import { parseOrigin } from '../_shared/origin.ts';
 import { recordAudit } from '../_shared/audit.ts';
-import { applyTenantScope } from './tenant-scope.ts';
+import { applyTenantScope, type KeyRestriction } from '../_shared/tenant-scope.ts';
 import { decodeCursor, buildPage } from './cursor.ts';
 import { resolveKindHost } from '../_shared/schemas/tags.ts';
 import { rankLessons, selectDiverse } from '../_shared/lesson-rank.ts';
@@ -132,6 +132,7 @@ export async function toolWrite(
   params: Params,
   userId: string | null,
   span: Span,
+  keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key, value, tags = [], source_agent, trigger, created_at, org, ttl_days, ttl_minutes, ttl_seconds, clear_ttl = false, origin_repo, origin_branch, origin_commit, origin_pr, kind, host } = params;
   if (!rawScope || !key || !value) throw new Error('scope, key, and value are required');
@@ -193,6 +194,14 @@ export async function toolWrite(
       p_origin_pr: origin.pr,
       p_kind: resolvedKind,
       p_host: resolvedHost,
+      // The calling key's restriction, BOTH axes (00067/00068). The RPC is the
+      // LAST gate on the write path — the edge runs on the service-role client,
+      // so the dispatcher's check above it is advisory — and it is also the only
+      // place that can see the scope→org BINDING, which must not route a
+      // restricted key's write into an org it was never granted.
+      p_key_scopes: keyScoping?.scopes ?? [],
+      p_key_org_access: keyScoping?.orgAccess ?? 'all',
+      p_key_org_ids: keyScoping?.orgIds ?? [],
     })
     .single();
   if (error) {
@@ -243,6 +252,7 @@ export async function toolRead(
   params: Params,
   userId: string | null,
   span: Span,
+  keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
@@ -253,7 +263,7 @@ export async function toolRead(
   const tracedDb = createTracedClient(db, span);
   let query = tracedDb.from('memories').select('value,updated_at').eq('scope', scope).eq('key', key).is('archived_at', null)
     .or('expires_at.is.null,expires_at.gt.now()');
-  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
+  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
   const { data, error } = await query.maybeSingle();
   if (error) throw new Error(error.message);
   return data ?? null;
@@ -264,6 +274,7 @@ export async function toolList(
   params: Params,
   userId: string | null,
   span: Span,
+  keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, tags, limit = 50, cursor: cursorParam, kind, host } = params;
   if (!rawScope) throw new Error('scope is required');
@@ -320,7 +331,7 @@ export async function toolList(
       .order('updated_at', { ascending: false })
       .order('id', { ascending: false })
       .limit(CANDIDATE_LIMIT);
-    if (userId) rankQuery = applyTenantScope(rankQuery, userId, await memberOrgIds(db, userId));
+    if (userId) rankQuery = applyTenantScope(rankQuery, userId, await memberOrgIds(db, userId), keyScoping);
     if (tags?.length) rankQuery = rankQuery.overlaps('tags', tags);
     // Taxonomy filters are applied BEFORE ranking, not after: the candidate
     // window is bounded at CANDIDATE_LIMIT, so filtering afterwards would rank
@@ -394,7 +405,7 @@ export async function toolList(
     .order('updated_at', { ascending: false })
     .order('id', { ascending: false })
     .limit(pageLimit + 1);
-  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
+  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
   if (tags?.length) query = query.overlaps('tags', tags);
   if (kind) query = query.eq('kind', kind);
   if (host) query = query.eq('host', host);
@@ -430,6 +441,7 @@ export async function toolDelete(
   params: Params,
   userId: string | null,
   span: Span,
+  keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key, force = false, org } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
@@ -455,6 +467,14 @@ export async function toolDelete(
         p_scope: scope,
         p_key: key,
         p_force: force,
+        // The calling key's restriction (00067/00068). This RPC picks its own
+        // rows, so there is no query for the transport to filter, and the
+        // dispatcher's refusal runs on the service-role client and is advisory
+        // — without these the org branch enforced the owner's ROLE and nothing
+        // about the key.
+        p_key_scopes: keyScoping?.scopes ?? [],
+        p_key_org_access: keyScoping?.orgAccess ?? 'all',
+        p_key_org_ids: keyScoping?.orgIds ?? [],
       })
       .single();
     if (error) {
@@ -521,6 +541,7 @@ export async function toolSearch(
   params: Params,
   userId: string | null,
   span: Span,
+  keyScoping?: KeyRestriction,
 ) {
   const { q, scopes, tags, limit = 20, cursor: cursorParam } = params;
   if (!q) throw new Error('q is required');
@@ -541,7 +562,7 @@ export async function toolSearch(
   // Tenant .or() and the scope-glob .or() below are applied as two separate
   // .or() calls, which PostgREST ANDs together — never merged into one
   // filter (see tenant-scope.ts and the Edge Cases note in plan.md).
-  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
+  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
   if (tags?.length) query = query.overlaps('tags', tags);
   if (scopes?.length) {
     const exactScopes: string[] = [];
@@ -586,6 +607,14 @@ export async function toolArchive(
   params: Params,
   userId: string | null,
   span: Span,
+  // Unused, and that is a decision rather than an oversight — marked the way
+  // toolPurge marks its own. This tool and toolRestore address a memory by a
+  // NAMED scope, so the dispatcher's early refusal is the whole key gate: a
+  // scope outside the allowlist never reaches here. Unlike the reads there is
+  // no result set to narrow, and unlike memory_write / memory_delete there is
+  // no RPC underneath to hand the restriction to — the mutation is a direct
+  // query keyed on the scope that was already checked.
+  _keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
@@ -621,6 +650,7 @@ export async function toolListArchived(
   params: Params,
   userId: string | null,
   span: Span,
+  keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, limit = 50 } = params;
   if (!rawScope) throw new Error('scope is required');
@@ -636,7 +666,7 @@ export async function toolListArchived(
     .not('archived_at', 'is', null)
     .order('archived_at', { ascending: false })
     .limit(Math.min(limit, 100));
-  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId));
+  if (userId) query = applyTenantScope(query, userId, await memberOrgIds(db, userId), keyScoping);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
   const entries = data ?? [];
@@ -650,6 +680,9 @@ export async function toolRestore(
   params: Params,
   userId: string | null,
   span: Span,
+  // Named-scope mutation with no result set and no RPC underneath — the same
+  // recorded decision as toolArchive above. The dispatcher's refusal is the gate.
+  _keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
@@ -688,6 +721,10 @@ export async function toolPurge(
   params: Params,
   userId: string | null,
   span: Span,
+  // Refused for a scoped key at the dispatcher (ACCOUNT_WIDE_TOOLS), so the
+  // restriction is never consulted here — the parameter exists only because
+  // every memory tool shares one call signature.
+  _keyScoping?: KeyRestriction,
 ) {
   const retentionDays = Math.min(Math.max(Number(params.retention_days ?? PURGE_RETENTION_DAYS_DEFAULT), 1), 365);
   if (!userId) throw new Error('memory.purge requires a user_id');
@@ -884,6 +921,10 @@ export async function toolPurgeExpired(
   _params: Params,
   userId: string | null,
   span: Span,
+  // Refused for a scoped key at the dispatcher (ACCOUNT_WIDE_TOOLS), so the
+  // restriction is never consulted here — the parameter exists only because
+  // every memory tool shares one call signature.
+  _keyScoping?: KeyRestriction,
 ) {
   if (!userId) {
     throw new Error('memory.purge_expired requires a user_id');
@@ -945,12 +986,21 @@ export async function toolScopes(
   _params: Params,
   userId: string | null,
   span: Span,
+  keyScoping?: KeyRestriction,
 ) {
   const tracedDb = createTracedClient(db, span);
   // A service-role caller has no user id; the RPC reads a null `p_user_id` on a
   // service_role connection as "no tenant filter", matching every other read.
   const { data, error } = await tracedDb.rpc('lorekit_memory_scopes', {
     p_user_id: userId ?? null,
+    // Narrowed inside the RPC for the same reason the tenant filter is: there
+    // is no query here to post-filter, and a second predicate out here would be
+    // a place for the two to drift. Without this a key restricted to one repo
+    // could still enumerate every scope name on the account — and a scope
+    // string IS a repo or project name, so scoping would leak what it hides.
+    p_key_scopes: keyScoping?.scopes ?? [],
+    p_key_org_access: keyScoping?.orgAccess ?? 'all',
+    p_key_org_ids: keyScoping?.orgIds ?? [],
   });
   if (error) throw new Error((error as { message: string }).message);
 

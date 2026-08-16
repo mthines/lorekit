@@ -11,6 +11,20 @@ import {
 } from './api-key.ts';
 
 describe('scopeAllowedByKey', () => {
+  it('does not honour a MID-TOKEN wildcard as a prefix', () => {
+    // `SCOPE_PATTERN` puts `*` directly after `/` or `::` and nowhere else, so
+    // `repo::mthines/lore*` is malformed. Honouring it as a prefix would widen
+    // the key to every repo starting with those letters — the one direction
+    // this predicate must never move. It matches only itself instead, which is
+    // the same non-widening answer `keyScopeFilter` and the SQL twin give.
+    const patterns = ['repo::mthines/lore*'];
+    expect(scopeAllowedByKey(patterns, 'repo::mthines/lorekit')).toBe(false);
+    expect(scopeAllowedByKey(patterns, 'repo::mthines/lore-other')).toBe(false);
+    // The two legal wildcard positions still expand.
+    expect(scopeAllowedByKey(['repo::mthines/*'], 'repo::mthines/lorekit')).toBe(true);
+    expect(scopeAllowedByKey(['project::*'], 'project::alpha')).toBe(true);
+  });
+
   it('allows everything when the allowlist is empty', () => {
     // Migration 00067 decision 1: empty = unrestricted, so every key that
     // existed before scoping keeps working untouched.

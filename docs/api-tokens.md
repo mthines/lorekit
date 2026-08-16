@@ -25,7 +25,11 @@ Tokens are stored as **SHA-256 hashes** in the database. The full token is shown
 3. Click **Generate new token**
 4. Enter a name (e.g. `aw-executor`, `ci-github-actions`, `local-dev`)
 5. Choose **Read + Write**, **Read only**, or **Write only**
-6. Copy the token from the amber banner — it won't be shown again
+6. Optionally expand **Scoping** to pick an allowlist of scopes and an organisation access level (see below)
+7. Copy the token from the amber banner — it won't be shown again
+
+Scoping can be changed after creation; the permission tier cannot (it is encoded
+in the token prefix, which is fixed at generation).
 
 ## Scoping a token
 
@@ -97,6 +101,17 @@ Tenancy is authoritative over
 [scope→org binding](./decisions.md#scopeorg-binding): a write under a bound
 scope from a `personal` token falls back to a personal memory rather than being
 routed into an org the token was never granted.
+
+### What a scoped token sees
+
+| Situation | Behaviour |
+|-----------|-----------|
+| The request NAMES a scope outside the allowlist | Refused — MCP returns the `-32003` forbidden error, REST returns `403`. A named scope gets a plain refusal rather than an empty page, which would read as "there is nothing there". |
+| The request names NO scope (`memory.list` unfiltered, `GET /memories`) | Narrowed. Only rows inside the allowlist and the tenancy come back. |
+| The per-scope aggregates — `memory.scopes` / `GET /memories/scopes`, the `GET /memories/activity` and `/read-activity` series, and `GET /memories/tags` and `/facets` | Narrowed the same way, inside their RPCs. A scope string is a repo or project name, and the `origin_repo` facet is one outright, so an unfiltered catalog would leak exactly what scoping hides — and narrowing only some of these would move the leak rather than close it. A read whose scope could not be attributed names nothing and still counts toward the total. `GET /memories/usage` is not in this list: it rolls up by `scope_type` (`repo`, `project`, `global`), never a name. |
+| An account-wide sweep (`memory.purge`, `memory.purge_expired`, and their REST twins `POST /memories/purge` and `/purge-expired`) | Refused for a token WITH a scope allowlist, on both surfaces; unaffected for one without. There is no scope to check and no result set to narrow — the rows are chosen inside the RPC — so the only available answer is to refuse the call. Use an unscoped token for maintenance sweeps. |
+| A write addressed BY ID (`PATCH`/`DELETE`/restore) | Filtered by the allowlist. These are personal-only and never widen to org rows, so they narrow on the allowlist alone rather than through the tenant predicate. The forms that NAME a scope (`DELETE ?scope=…&key=…`, with or without `&org=`, and the `POST /memories/restore` body form) are refused with a `403` instead, like any other named scope. |
+| The token is unscoped (the default) | Nothing changes, on any path. |
 
 ## Permission matrix
 

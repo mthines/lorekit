@@ -44,6 +44,7 @@ import {
 export const AUDIT_ACTIONS = [
   'api_key.create',
   'api_key.revoke',
+  'api_key.scope_change',
   'webhook_secret.create',
   'webhook_secret.rotate',
   'webhook_secret.deactivate',
@@ -82,6 +83,7 @@ export interface AuditActionMeta {
 export const AUDIT_ACTION_META: Record<AuditAction, AuditActionMeta> = {
   'api_key.create': { label: 'API key created', badgeColor: 'green', icon: KeyRound },
   'api_key.revoke': { label: 'API key revoked', badgeColor: 'red', icon: KeySquare },
+  'api_key.scope_change': { label: 'API key scoping changed', badgeColor: 'blue', icon: KeyRound },
   'webhook_secret.create': { label: 'Webhook secret created', badgeColor: 'green', icon: Webhook },
   'webhook_secret.rotate': { label: 'Webhook secret rotated', badgeColor: 'blue', icon: RefreshCw },
   'webhook_secret.deactivate': { label: 'Webhook secret deactivated', badgeColor: 'red', icon: WebhookOff },

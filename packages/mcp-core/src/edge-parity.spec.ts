@@ -70,7 +70,7 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   ['ttl-defaults.ts', 'mcp/ttl-defaults.ts'],
   ['origin.ts', '_shared/origin.ts'],
   ['webhook-secret-select.ts', 'mcp/webhook-secret-select.ts'],
-  ['tenant-scope.ts', 'mcp/tenant-scope.ts'],
+  ['tenant-scope.ts', '_shared/tenant-scope.ts'],
   ['org-permissions.ts', 'mcp/org-permissions.ts'],
   ['webhook-installation.ts', 'mcp/webhook-installation.ts'],
   ['github-app-jwt.ts', 'mcp/github-app-jwt.ts'],
@@ -114,6 +114,13 @@ const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   // arguments, api/router.ts from the query string — and neither can
   // cross-import mcp-core.
   ['scope-type-attribute.ts', '_shared/scope-type-attribute.ts'],
+  // Which operations sweep the whole account, and the refusal a scoped key
+  // meets. Mirrored into `_shared/` rather than left in `mcp/permissions.ts`
+  // because BOTH transports enforce it — the MCP dispatcher and the REST
+  // `POST /memories/purge` handlers — and the REST tree cannot cross-import the
+  // `mcp/` directory. A second copy is exactly how the REST half shipped
+  // ungated while the docs claimed it was refused.
+  ['account-wide-tools.ts', '_shared/account-wide-tools.ts'],
 ];
 
 describe('edge-function mirror parity', () => {

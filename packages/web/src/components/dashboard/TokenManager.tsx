@@ -4,10 +4,21 @@ import { useState, useTransition, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Key, Plus, Trash2, Copy, CheckCheck, Eye, EyeOff,
-  ShieldCheck, ShieldAlert, Pencil, Clock, Loader2
+  ShieldCheck, ShieldAlert, Pencil, Clock, Loader2, Filter, Building2, SlidersHorizontal
 } from 'lucide-react';
-import { generateToken, revokeToken, type ApiToken, type TokenPermission } from '@/lib/tokens';
+import { generateToken, revokeToken, setTokenScoping, type ApiToken, type TokenPermission } from '@/lib/tokens';
 import { PERMISSION_TIERS, tierFor, type PermissionTierValue } from '@/lib/token-permission';
+import {
+  ORG_ACCESS_TIERS,
+  describeScoping,
+  isScoped,
+  orgBadgeLabel,
+  scopeBadgeLabel,
+  scopePatternOptions,
+  type OrgAccess,
+  type TokenScoping,
+} from '@/lib/token-scoping';
+import { Combobox, type ComboboxItem } from '@/components/ui/Combobox';
 
 const TIER_ICONS: Record<PermissionTierValue, typeof ShieldCheck> = {
   rw: ShieldCheck,
@@ -123,26 +134,219 @@ function NewTokenDisplay({
   );
 }
 
+/**
+ * The scoping badges — rendered only when the key IS scoped.
+ *
+ * Counts rather than the patterns themselves: a token row is one line, and
+ * three repo paths do not fit it. The exact patterns live in the row's `title`,
+ * where there is room to be precise, so the badge answers "is this key
+ * narrowed, and roughly how much" at a glance and the detail is one hover away.
+ */
+function ScopingBadges({ scoping, orgNames }: { scoping: TokenScoping; orgNames: Record<string, string> }) {
+  const scopeLabel = scopeBadgeLabel(scoping.scopes);
+  const orgLabel = orgBadgeLabel(scoping);
+  if (!scopeLabel && !orgLabel) return null;
+  const title = describeScoping(scoping, orgNames);
+  return (
+    <>
+      {scopeLabel && (
+        <span
+          title={title}
+          className="inline-flex items-center gap-1 rounded-md bg-[#60a5fa1a] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-scope-repo)]"
+        >
+          <Filter className="size-2.5" aria-hidden />
+          {scopeLabel}
+        </span>
+      )}
+      {orgLabel && (
+        <span
+          title={title}
+          className="inline-flex items-center gap-1 rounded-md bg-[#a78bfa1a] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-scope-global)]"
+        >
+          <Building2 className="size-2.5" aria-hidden />
+          {orgLabel}
+        </span>
+      )}
+    </>
+  );
+}
+
+/**
+ * The scoping half of the create form: which scopes, and which tenancy.
+ *
+ * Both controls are the shared `Combobox` in `multiple` mode, so they are an
+ * anchored popover at `md`+ and a `BottomSheet` on the phone — the repo-wide
+ * rule for a transient selection surface, inherited rather than re-implemented.
+ *
+ * Collapsed behind a disclosure and OFF by default, because unrestricted is the
+ * right answer for most keys and a form that asks every question up front makes
+ * the common path longer. The summary line states the current answer so the
+ * collapsed state is never ambiguous about what it is hiding.
+ */
+function ScopingFields({
+  scoping,
+  onChange,
+  scopeCatalog,
+  orgs,
+  defaultOpen = false,
+}: {
+  scoping: TokenScoping;
+  onChange: (next: TokenScoping) => void;
+  scopeCatalog: readonly string[];
+  orgs: readonly { id: string; name: string }[];
+  /**
+   * Start expanded. The create form collapses (unrestricted is the right answer
+   * for most keys, so the common path should be short); the row editor does
+   * not, because expanding it IS the thing the user just clicked.
+   */
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  const scopeOptions: ComboboxItem[] = scopePatternOptions(scopeCatalog).map((value) => ({
+    value,
+    label: value,
+    // A wildcard is the option a reader most needs explained — it is the only
+    // one whose meaning is not literally its own text.
+    ...(value.endsWith('*') ? { hint: 'every scope under this owner' } : {}),
+  }));
+  const orgOptions: ComboboxItem[] = orgs.map((o) => ({ value: o.id, label: o.name }));
+  const orgNames = Object.fromEntries(orgs.map((o) => [o.id, o.name]));
+
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex min-h-11 w-full items-center justify-between gap-2 px-3 py-2 text-left"
+      >
+        <span className="text-xs font-medium text-[var(--color-content-secondary)]">
+          Scoping
+        </span>
+        <span className="truncate text-[10px] text-[var(--color-content-tertiary)]">
+          {isScoped(scoping) ? describeScoping(scoping, orgNames) : 'Unrestricted'}
+        </span>
+      </button>
+
+      {open && (
+        <div className="flex flex-col gap-3 border-t border-[var(--color-border)] p-3">
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[10px] uppercase tracking-wide text-[var(--color-content-tertiary)]">
+              Scopes
+            </span>
+            <Combobox
+              multiple
+              options={scopeOptions}
+              value={scoping.scopes}
+              onChange={(scopes) => onChange({ ...scoping, scopes })}
+              label="Scopes"
+              countNoun="scopes"
+              searchable
+              searchPlaceholder="Search scopes…"
+              triggerLabel={scoping.scopes.length === 0 ? 'Any scope' : undefined}
+            />
+            <p className="text-[10px] text-[var(--color-content-tertiary)]">
+              Leave empty for any scope. A <code>*</code> option covers every scope under that owner,
+              including ones created later.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[10px] uppercase tracking-wide text-[var(--color-content-tertiary)]">
+              Organisations
+            </span>
+            <div className="flex flex-wrap gap-2">
+              {ORG_ACCESS_TIERS.map(({ value, label, desc }) => (
+                <button
+                  key={value}
+                  type="button"
+                  // Choosing a tenancy other than `selected` DROPS any orgs
+                  // already picked. The database rejects the pair outright
+                  // (`api_tokens_org_ids_match_access`), and carrying a hidden
+                  // list that the next save would reject is worse than losing
+                  // two clicks.
+                  onClick={() =>
+                    onChange({
+                      ...scoping,
+                      org_access: value as OrgAccess,
+                      org_ids: value === 'selected' ? scoping.org_ids : [],
+                    })
+                  }
+                  className={[
+                    'flex flex-1 items-start rounded-lg border p-2.5 text-left transition-all duration-150',
+                    scoping.org_access === value
+                      ? 'border-[var(--color-accent)] bg-[var(--color-bg-raised)] text-[var(--color-accent)]'
+                      : 'border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-content-secondary)] hover:bg-[var(--color-bg-raised)]',
+                  ].join(' ')}
+                >
+                  <span>
+                    <span className="block text-xs font-medium">{label}</span>
+                    <span className="block text-[10px] text-[var(--color-content-tertiary)]">{desc}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {scoping.org_access === 'selected' && (
+              <Combobox
+                multiple
+                options={orgOptions}
+                value={scoping.org_ids}
+                onChange={(org_ids) => onChange({ ...scoping, org_ids })}
+                label="Organisations"
+                countNoun="orgs"
+                searchable
+                searchPlaceholder="Search organisations…"
+                triggerLabel={scoping.org_ids.length === 0 ? 'Pick at least one' : undefined}
+              />
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Generate form ─────────────────────────────────────────────────────────────
 
-function GenerateForm({ onGenerated }: { onGenerated: (token: string, record: ApiToken) => void }) {
+function GenerateForm({
+  onGenerated,
+  scopeCatalog,
+  orgs,
+}: {
+  onGenerated: (token: string, record: ApiToken) => void;
+  scopeCatalog: readonly string[];
+  orgs: readonly { id: string; name: string }[];
+}) {
   const [name, setName] = useState('');
   const [permission, setPermission] = useState<PermissionTierValue>('rw');
+  const [scoping, setScoping] = useState<TokenScoping>({
+    scopes: [],
+    org_access: 'all',
+    org_ids: [],
+  });
   const [error, setError] = useState('');
   const [pending, startTransition] = useTransition();
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
 
+  // Caught here rather than left to the server round-trip: the database rejects
+  // it (`api_tokens_org_ids_match_access`) and so does the RPC, but a form that
+  // lets you press the button and then tells you no is a worse form.
+  const incompleteOrgs = scoping.org_access === 'selected' && scoping.org_ids.length === 0;
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
     startTransition(async () => {
       const tier = PERMISSION_TIERS.find((t) => t.value === permission)!;
-      const result = await generateToken(name, tier.perms);
+      const result = await generateToken(name, tier.perms, scoping);
       if ('error' in result) { setError(result.error); return; }
       onGenerated(result.token, result.record);
       setName('');
+      setScoping({ scopes: [], org_access: 'all', org_ids: [] });
     });
   }
 
@@ -188,12 +392,24 @@ function GenerateForm({ onGenerated }: { onGenerated: (token: string, record: Ap
         })}
       </div>
 
+      <ScopingFields
+        scoping={scoping}
+        onChange={setScoping}
+        scopeCatalog={scopeCatalog}
+        orgs={orgs}
+      />
+
+      {incompleteOrgs && (
+        <p className="text-xs text-[var(--color-content-tertiary)]">
+          Pick at least one organisation, or choose a different organisation access.
+        </p>
+      )}
       {error && <p className="text-xs text-[var(--color-error)]">{error}</p>}
 
       <div className="flex gap-2">
         <button
           type="submit"
-          disabled={pending || !name.trim()}
+          disabled={pending || !name.trim() || incompleteOrgs}
           className="flex items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[#000] transition-opacity duration-150 disabled:opacity-50"
         >
           {pending ? <Loader2 className="size-4 animate-spin" /> : <Key className="size-4" />}
@@ -206,9 +422,58 @@ function GenerateForm({ onGenerated }: { onGenerated: (token: string, record: Ap
 
 // ── Token row ─────────────────────────────────────────────────────────────────
 
-function TokenRow({ token, onRevoke }: { token: ApiToken; onRevoke: (id: string) => void }) {
+function TokenRow({
+  token,
+  onRevoke,
+  onScopingChange,
+  orgNames,
+  scopeCatalog,
+  orgs,
+}: {
+  token: ApiToken;
+  onRevoke: (id: string) => void;
+  onScopingChange: (id: string, scoping: TokenScoping) => void;
+  orgNames: Record<string, string>;
+  scopeCatalog: readonly string[];
+  orgs: readonly { id: string; name: string }[];
+}) {
   const [confirming, setConfirming] = useState(false);
   const [pending, startTransition] = useTransition();
+  // Scoping is the ONE part of a key that can change after creation. The
+  // permission tier cannot — it is encoded in the token prefix, which is fixed
+  // at generation — which is why this is an edit affordance for scoping alone
+  // and not a general "edit token" panel.
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<TokenScoping>({
+    scopes: token.scopes,
+    org_access: token.org_access,
+    org_ids: token.org_ids,
+  });
+  const [saveError, setSaveError] = useState('');
+  const [saving, startSaving] = useTransition();
+
+  const draftIncomplete = draft.org_access === 'selected' && draft.org_ids.length === 0;
+
+  function openEditor() {
+    // Re-seed from the row on every open, so a cancelled edit cannot leave a
+    // stale draft to be picked up by the next one.
+    setDraft({ scopes: token.scopes, org_access: token.org_access, org_ids: token.org_ids });
+    setSaveError('');
+    setEditing(true);
+  }
+
+  function handleSaveScoping() {
+    setSaveError('');
+    startSaving(async () => {
+      const result = await setTokenScoping(token.id, draft);
+      if ('error' in result) { setSaveError(result.error); return; }
+      // Trust the RETURNED scoping, not the draft: the RPC is the authority and
+      // normalises what it stored, so echoing the draft back would show the
+      // user their request rather than the result.
+      onScopingChange(token.id, result.scoping);
+      setEditing(false);
+    });
+  }
 
   function handleRevoke() {
     startTransition(async () => {
@@ -222,14 +487,23 @@ function TokenRow({ token, onRevoke }: { token: ApiToken; onRevoke: (id: string)
       layout
       exit={{ opacity: 0, x: 20 }}
       transition={{ duration: 0.2 }}
-      className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)] px-3 py-2.5"
+      className="flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-raised)]"
     >
+      <div className="flex items-center gap-3 px-3 py-2.5">
       <Key className="size-4 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
 
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium text-[var(--color-content-primary)]">{token.name}</span>
           <PermBadge permissions={token.permissions} />
+          <ScopingBadges
+            scoping={{
+              scopes: token.scopes,
+              org_access: token.org_access,
+              org_ids: token.org_ids,
+            }}
+            orgNames={orgNames}
+          />
           <code className="font-mono text-xs text-[var(--color-content-tertiary)]">{token.token_prefix}</code>
         </div>
         <div className="mt-0.5 flex items-center gap-1 text-[10px] text-[var(--color-content-tertiary)]">
@@ -257,13 +531,60 @@ function TokenRow({ token, onRevoke }: { token: ApiToken; onRevoke: (id: string)
           </button>
         </div>
       ) : (
-        <button
-          onClick={() => setConfirming(true)}
-          aria-label={`Revoke token ${token.name}`}
-          className="flex size-11 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-error)]"
-        >
-          <Trash2 className="size-3.5" aria-hidden />
-        </button>
+        <>
+          <button
+            onClick={() => (editing ? setEditing(false) : openEditor())}
+            aria-expanded={editing}
+            aria-label={`Edit scoping for token ${token.name}`}
+            className="flex size-11 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-content-primary)]"
+          >
+            <SlidersHorizontal className="size-3.5" aria-hidden />
+          </button>
+          <button
+            onClick={() => setConfirming(true)}
+            aria-label={`Revoke token ${token.name}`}
+            className="flex size-11 shrink-0 items-center justify-center rounded-lg text-[var(--color-content-tertiary)] transition-colors duration-150 hover:bg-[var(--color-bg-elevated)] hover:text-[var(--color-error)]"
+          >
+            <Trash2 className="size-3.5" aria-hidden />
+          </button>
+        </>
+      )}
+      </div>
+
+      {editing && (
+        <div className="flex flex-col gap-3 border-t border-[var(--color-border)] p-3">
+          <ScopingFields
+            scoping={draft}
+            onChange={setDraft}
+            scopeCatalog={scopeCatalog}
+            orgs={orgs}
+            defaultOpen
+          />
+          {draftIncomplete && (
+            <p className="text-xs text-[var(--color-content-tertiary)]">
+              Pick at least one organisation, or choose a different organisation access.
+            </p>
+          )}
+          {saveError && <p className="text-xs text-[var(--color-error)]">{saveError}</p>}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={handleSaveScoping}
+              disabled={saving || draftIncomplete}
+              className="flex min-h-9 items-center gap-1.5 rounded-lg bg-[var(--color-accent)] px-3 text-xs font-medium text-[#000] transition-opacity duration-150 disabled:opacity-50"
+            >
+              {saving && <Loader2 className="size-3.5 animate-spin" aria-hidden />}
+              Save scoping
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditing(false)}
+              className="min-h-9 rounded-lg border border-[var(--color-border)] px-3 text-xs text-[var(--color-content-tertiary)] transition-colors hover:text-[var(--color-content-primary)]"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
     </motion.div>
   );
@@ -281,9 +602,25 @@ interface TokenManagerProps {
    * user sees their ready-to-use token without any extra clicks.
    */
   initialNewToken?: string;
+  /**
+   * The account's existing scope strings, from `GET /memories/scopes`. Only
+   * used to POPULATE the picker — a key may legitimately be scoped to a scope
+   * with no memories yet, and the allowlist is validated by the database, not
+   * by this list.
+   */
+  scopeCatalog?: readonly string[];
+  /** The orgs the signed-in user belongs to, for the "specific orgs" picker. */
+  orgs?: readonly { id: string; name: string }[];
 }
 
-export function TokenManager({ initialTokens, onNewToken, initialNewToken }: TokenManagerProps) {
+export function TokenManager({
+  initialTokens,
+  onNewToken,
+  initialNewToken,
+  scopeCatalog = [],
+  orgs = [],
+}: TokenManagerProps) {
+  const orgNames = Object.fromEntries(orgs.map((o) => [o.id, o.name]));
   const [tokens, setTokens] = useState<ApiToken[]>(initialTokens);
   const [showForm, setShowForm] = useState(false);
   // If a token was auto-generated server-side, open the amber banner immediately.
@@ -292,6 +629,12 @@ export function TokenManager({ initialTokens, onNewToken, initialNewToken }: Tok
     // The auto-generated token maps to the first entry in initialTokens
     initialNewToken && initialTokens.length > 0 ? (initialTokens[0] ?? null) : null,
   );
+
+  function handleScopingChange(id: string, scoping: TokenScoping) {
+    setTokens((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, ...scoping } : t)),
+    );
+  }
 
   function handleGenerated(token: string, record: ApiToken) {
     setTokens((prev) => [record, ...prev]);
@@ -338,7 +681,7 @@ export function TokenManager({ initialTokens, onNewToken, initialNewToken }: Tok
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
             className="overflow-hidden"
           >
-            <GenerateForm onGenerated={handleGenerated} />
+            <GenerateForm onGenerated={handleGenerated} scopeCatalog={scopeCatalog} orgs={orgs} />
           </motion.div>
         )}
       </AnimatePresence>
@@ -351,7 +694,15 @@ export function TokenManager({ initialTokens, onNewToken, initialNewToken }: Tok
           </p>
           <AnimatePresence>
             {tokens.map((t) => (
-              <TokenRow key={t.id} token={t} onRevoke={handleRevoke} />
+              <TokenRow
+                key={t.id}
+                token={t}
+                onRevoke={handleRevoke}
+                onScopingChange={handleScopingChange}
+                orgNames={orgNames}
+                scopeCatalog={scopeCatalog}
+                orgs={orgs}
+              />
             ))}
           </AnimatePresence>
         </div>

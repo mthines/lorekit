@@ -2,7 +2,7 @@
 title: "Remote storage"
 description: "Sync lore to the hosted LoreKit MCP server so your memories are available on every machine, from every agent, without any extra setup on each device."
 order: 3
-keywords: ["remote", "hosted", "mcp server", "api token", "lk_rw", "lk_ro", "lk_wo", "doctor", "ci", "github actions", "webhook", "memory.write", "memory.read", "migrate"]
+keywords: ["remote", "hosted", "mcp server", "api token", "lk_rw", "lk_ro", "lk_wo", "token scoping", "scoped token", "doctor", "ci", "github actions", "webhook", "memory.write", "memory.read", "migrate"]
 ---
 
 <TutorialCallout variant="tip">
@@ -20,6 +20,20 @@ Go to [Settings → API keys](/settings/api-keys) and click **Generate new token
 - `lk_wo_…` — write only (one-way memory feeders)
 
 The token is shown **once only** — copy it before closing the modal.
+
+Optionally open **Scoping** to narrow what the token can reach — an allowlist of
+scopes, and whether it may touch your organisations at all:
+
+- **Scopes** — pick specific scopes, or an owner wildcard like `repo::mthines/*`
+  that keeps covering new repos under that owner as they appear. Leave it empty
+  for any scope.
+- **Organisations** — *All my orgs* (the default), *Personal only*, or a
+  specific list. Your own memories stay reachable under all three.
+
+A scoped token that names a scope outside its allowlist is refused outright
+rather than answering with an empty list, and it cannot enumerate scope names it
+is not allowed to read. Scoping is optional: a token you never scope behaves
+exactly as before.
 
 </TutorialStep>
 

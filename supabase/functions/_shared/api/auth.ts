@@ -1,11 +1,19 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import type { Span } from '../otel.ts';
+import { normalizeKeyRestriction, type KeyRestriction } from '../tenant-scope.ts';
 
 export interface AuthContext {
   type: 'user' | 'service' | 'api_key';
   userId?: string;
   jwt?: string;
   permissions?: string[];
+  /**
+   * api_key only: the scope/org restriction on the calling key (00067). Absent
+   * for every other tier — a JWT or service-role caller has no key to restrict,
+   * and absent is NOT "restricted to nothing". Read it through
+   * `keyRestriction()` so no call site has to remember that.
+   */
+  keyScoping?: KeyRestriction;
 }
 
 export type DbClient = ReturnType<typeof createClient>;
@@ -48,10 +56,18 @@ export async function resolveRestAuth(req: Request, parentSpan: Span): Promise<R
     // Create one service-role client and reuse it for both the token lookup and
     // subsequent business queries — avoids a second client allocation per request.
     const db = svcClient();
-    const { data, error } = await db.from('api_tokens').select('user_id,permissions').eq('token_hash', hash).maybeSingle();
+    const { data, error } = await db.from('api_tokens').select('user_id,permissions,scopes,org_access,org_ids').eq('token_hash', hash).maybeSingle();
     if (error || !data) { span.clientError('invalid_api_key').end(); return null; }
     span.setAttributes({ 'auth.type': 'api_key', 'auth.outcome': 'ok', 'auth.user_id': data.user_id }).end();
-    return { auth: { type: 'api_key', userId: data.user_id, permissions: data.permissions ?? [] }, db };
+    return {
+      auth: {
+        type: 'api_key',
+        userId: data.user_id,
+        permissions: data.permissions ?? [],
+        keyScoping: normalizeKeyRestriction(data),
+      },
+      db,
+    };
   }
 
   const anonDb = createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -64,6 +80,16 @@ export async function resolveRestAuth(req: Request, parentSpan: Span): Promise<R
 export function hasPermission(auth: AuthContext, required: 'read' | 'write'): boolean {
   if (auth.type === 'service' || auth.type === 'user') return true;
   return auth.permissions?.includes(required) ?? false;
+}
+
+/**
+ * The calling key's restriction, or `undefined` when there is no key.
+ *
+ * The REST twin of the helper in `mcp/auth.ts`, and the ONE place on this
+ * surface where "a JWT caller has no key restriction" is expressed.
+ */
+export function keyRestriction(auth: AuthContext): KeyRestriction | undefined {
+  return auth.type === 'api_key' ? auth.keyScoping : undefined;
 }
 
 export function isJwtAuth(auth: AuthContext): boolean {

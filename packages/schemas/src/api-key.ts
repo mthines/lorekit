@@ -132,12 +132,21 @@ export const UNSCOPED_API_KEY: ApiKeyScoping = {
  * A `null` scope is an operation that carries none (`memory.purge_expired`, the
  * account-wide reads). Refusing it is the fail-closed answer: a key narrowed to
  * one repo has no business sweeping the account.
+ *
+ * A pattern is only treated as a wildcard when it satisfies `SCOPE_PATTERN`
+ * above — the authority this module owns — which puts `*` directly after `/` or
+ * `::` and nowhere else. A stored `repo::mthines/lore*` is malformed, and
+ * honouring it as a `repo::mthines/lore` prefix would WIDEN the key to every
+ * repo starting with those letters. A non-conforming pattern therefore matches
+ * only itself, which can only narrow. `keyScopeFilter` drops such a pattern and
+ * `lorekit_api_token_scope_allowed` skips it; all three agree that it never
+ * expands.
  */
 export function scopeAllowedByKey(patterns: readonly string[], scope: string | null): boolean {
   if (patterns.length === 0) return true;
   if (scope === null) return false;
   return patterns.some((pattern) => {
-    if (!pattern.endsWith('*')) return scope === pattern;
+    if (!pattern.endsWith('*') || !SCOPE_PATTERN.test(pattern)) return scope === pattern;
     return scope.startsWith(pattern.slice(0, -1));
   });
 }

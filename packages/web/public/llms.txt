@@ -104,7 +104,24 @@ lk_wo_<32 chars>   # write only
 ```
 
 Tokens never expire unless revoked. Stored as SHA-256 hashes — shown once on creation.
-Maximum 20 tokens per account. Generate and revoke at lorekit.io.
+Maximum 20 tokens per account. Generate, scope, and revoke at lorekit.io.
+
+### Scoping
+
+Beyond the read/write tier, a token can be narrowed to an allowlist of scope
+patterns and to a tenancy. Both default to unrestricted; an unscoped token
+behaves exactly as it always has.
+
+- **Scopes** — exact scopes, or an owner wildcard (`repo::owner/*`). Empty = any
+  scope. Max 50 patterns.
+- **Organisations** — `all` (default) | `personal` (no org memories) | `selected`.
+  Personal memories are reachable under all three.
+
+A request that NAMES a scope outside the allowlist is refused (`-32003` on MCP,
+`403` on REST) rather than answered with an empty list. A request that names no
+scope is narrowed instead. `memory.scopes` is narrowed too, so a scoped token
+cannot enumerate scope names it may not read. An operation that carries no scope
+at all (`memory.purge_expired`) is refused for a token that has an allowlist.
 
 A revoked token is rejected with HTTP 401 (`{"error":"Authentication required","code":"unauthorized"}`)
 on REST and `-32001` on MCP. `npx @lorekit/cli doctor` verifies this directly: its
