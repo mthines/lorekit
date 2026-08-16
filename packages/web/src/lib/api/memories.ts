@@ -105,9 +105,14 @@ export function listScopesRequest(accessToken: string, signal?: AbortSignal): Pr
  * half-loaded catalog.
  *
  * `params` carries `archived` plus the caller's active DIMENSION filters (see
- * {@link filtersToFacetParams}). When filters are present the counts drill down
+ * `filtersToFacetParams`). When filters are present the counts drill down
  * — each dimension is counted with every OTHER filter applied but not its own —
  * so a value's count is what selecting it would actually yield.
+ *
+ * The Explorer no longer calls this: it reads the catalog over
+ * {@link listFacetsPostRequest} since the body transport landed, so the only
+ * consumers left are specs. Kept because `GET /memories/facets` stays supported
+ * for query-string callers outside this package.
  */
 export function listFacetsRequest(
   accessToken: string,

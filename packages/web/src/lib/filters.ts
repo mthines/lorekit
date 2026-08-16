@@ -22,8 +22,19 @@
  * menu), `components/lore/FilterPill.tsx` (the pills) and the `useMemories`
  * query that consumes {@link filtersToBody} — the BODY transport, because a
  * filter bar's value sets are unbounded and a query string caps each dimension
- * at 2048 characters. {@link filtersToQueryParams} is the equivalent GET
- * encoding, still exported for the query-string callers.
+ * at 2048 characters.
+ *
+ * {@link filtersToQueryParams} and {@link filtersToFacetParams} are the
+ * equivalent GET encodings. **No caller in this package reaches them any more**
+ * — the Explorer is body-only since the transport move, so their only consumers
+ * are `filters.spec.ts` and `filters-transport.spec.ts`. They are kept, not
+ * dead: `GET /memories` and `GET /memories/facets` remain fully supported for
+ * the CLI, MCP and API-token callers, a link carrying a few filters is still
+ * better as a URL, and these functions are where the UI vocabulary → query
+ * mapping is pinned against `ListMemoriesQuerySchema` / `ListFacetsQuerySchema`
+ * (the `as`-cast in `filtersToFacetParams` is sound only because a spec asserts
+ * every key it emits exists in the facets schema). Delete them and that
+ * contract check goes with them.
  */
 
 import { normalizeTagList } from '@lorekit/schemas/tags';
