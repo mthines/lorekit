@@ -703,7 +703,10 @@ export async function toolPurge(
   params: Params,
   userId: string | null,
   span: Span,
-  keyScoping?: KeyRestriction,
+  // Refused for a scoped key at the dispatcher (ACCOUNT_WIDE_TOOLS), so the
+  // restriction is never consulted here — the parameter exists only because
+  // every memory tool shares one call signature.
+  _keyScoping?: KeyRestriction,
 ) {
   const retentionDays = Math.min(Math.max(Number(params.retention_days ?? PURGE_RETENTION_DAYS_DEFAULT), 1), 365);
   if (!userId) throw new Error('memory.purge requires a user_id');
@@ -900,7 +903,10 @@ export async function toolPurgeExpired(
   _params: Params,
   userId: string | null,
   span: Span,
-  keyScoping?: KeyRestriction,
+  // Refused for a scoped key at the dispatcher (ACCOUNT_WIDE_TOOLS), so the
+  // restriction is never consulted here — the parameter exists only because
+  // every memory tool shares one call signature.
+  _keyScoping?: KeyRestriction,
 ) {
   if (!userId) {
     throw new Error('memory.purge_expired requires a user_id');

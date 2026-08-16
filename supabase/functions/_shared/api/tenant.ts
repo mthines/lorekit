@@ -60,14 +60,36 @@ export function applyRestTenantScope<Q extends TracedQuery<unknown>>(
   key?: KeyRestriction,
 ): Q {
   const visibleOrgIds = effectiveOrgIds(orgIds, key);
+  // Each id QUOTED, matching the MCP-side `applyTenantScope` exactly. An
+  // unquoted PostgREST `in.()` list breaks on any member containing a comma or
+  // a parenthesis; a uuid never does, but the two surfaces answering the same
+  // question with two different fragments is the drift this module is supposed
+  // to have removed.
   let out = visibleOrgIds.length === 0
     ? (q.eq('user_id', userId) as Q)
-    : (q.or(`user_id.eq.${userId},org_id.in.(${visibleOrgIds.join(',')})`) as Q);
+    : (q.or(`user_id.eq.${userId},org_id.in.(${visibleOrgIds.map((id) => `"${id}"`).join(',')})`) as Q);
   const scopeFilter = keyScopeFilter(key);
   // A second `.or()` — PostgREST ANDs top-level filters, so this reads as
   // "(mine or my orgs') AND (in the key's allowlist)".
   if (scopeFilter) out = out.or(scopeFilter) as Q;
   return out;
+}
+
+/**
+ * Narrow a query to the calling key's scope allowlist, and nothing else.
+ *
+ * The write family (`PATCH`, `DELETE`, `POST /restore`) is personal-only — it
+ * never widens to org rows — so it does not call `applyRestTenantScope` and was
+ * therefore missing the allowlist half of the boundary entirely: a scoped key
+ * could PATCH or DELETE a memory outside its allowlist BY ID, because `user_id`
+ * alone was the whole filter. This adds the missing half without pulling those
+ * handlers into a tenancy widening they deliberately do not want.
+ *
+ * A no-op for a JWT/service caller and for an unrestricted key.
+ */
+export function applyKeyScopeFilter<Q extends TracedQuery<unknown>>(q: Q, auth: AuthContext): Q {
+  const filter = keyScopeFilter(keyRestriction(auth));
+  return filter ? (q.or(filter) as Q) : q;
 }
 
 /**

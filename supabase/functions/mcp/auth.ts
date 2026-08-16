@@ -120,7 +120,7 @@ async function resolveAuthTiers(
     // span name and `db.query.text` (`buildSql` interpolates `eq()` arguments),
     // and the filter here is the token hash — the stored credential. The query
     // therefore runs on the raw client and only the timing is spanned.
-    const lookupSpan = authSpan?.child('SELECT user_id,permissions,scoping FROM api_tokens', {
+    const lookupSpan = authSpan?.child('SELECT user_id,permissions,scopes,org_access,org_ids FROM api_tokens', {
       'db.system': 'postgresql',
       'db.operation.name': 'SELECT',
       'db.collection.name': 'api_tokens',

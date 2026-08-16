@@ -95,3 +95,64 @@ describe('tenant-scope usage guard (edge read handlers)', () => {
     expect(body).toMatch(/applyTenantScope\([\s\S]*?,\s*keyScoping\s*\)/);
   });
 });
+
+/**
+ * Drift guard: the REST WRITE family must apply the key's scope allowlist.
+ *
+ * `PATCH /memories/:id`, `DELETE /memories` and `POST /memories/restore` are
+ * personal-only — they never widen to org rows, so they deliberately do NOT
+ * call `applyRestTenantScope`. That is exactly how they shipped without the
+ * allowlist half of the boundary: `user_id` alone was the whole filter, so a
+ * scoped key could patch or delete a memory outside its allowlist BY ID.
+ * `applyKeyScopeFilter` is the narrow helper that adds it, and this pins that
+ * every one of them calls it.
+ */
+const REST_WRITE_HANDLERS = ['update', 'remove', 'restore'] as const;
+
+describe('key-scope usage guard (REST write family)', () => {
+  it.each(REST_WRITE_HANDLERS)('%s applies the key scope allowlist', (name) => {
+    const src = readFileSync(
+      path.resolve(here, `../../../supabase/functions/memories/handlers/${name}.ts`),
+      'utf8',
+    );
+    expect(src).toContain('applyKeyScopeFilter(');
+  });
+});
+
+/**
+ * Drift guard: an account-wide sweep is REFUSED for a scoped key.
+ *
+ * `memory.purge` / `memory.purge_expired` carry no scope and choose their row
+ * set inside the RPC, so there is nothing to narrow — the only available answer
+ * is to refuse the call. This shipped documented-but-unimplemented once; the
+ * pin is here so the docs table and the dispatcher cannot disagree again.
+ */
+describe('account-wide tool guard', () => {
+  const handler = readFileSync(
+    path.resolve(here, '../../../supabase/functions/mcp/mcp-handler.ts'),
+    'utf8',
+  );
+
+  it('the dispatcher consults isRefusedForScopedKey before dispatching a tool', () => {
+    expect(handler).toContain('isRefusedForScopedKey(toolName');
+  });
+
+  it('names exactly the two sweeps, in both copies of the pure module', async () => {
+    const { ACCOUNT_WIDE_TOOLS, isRefusedForScopedKey } = await import('./permissions.js');
+    expect([...ACCOUNT_WIDE_TOOLS].sort()).toEqual(['memory.purge', 'memory.purge_expired']);
+    // An unrestricted key is untouched — scoping must not change behaviour for
+    // a token nobody scoped.
+    expect(isRefusedForScopedKey('memory.purge', false)).toBe(false);
+    expect(isRefusedForScopedKey('memory.purge', true)).toBe(true);
+    // `memory.scopes` is NARROWED, not refused: it returns a catalog, and an
+    // empty catalog is a truthful answer.
+    expect(isRefusedForScopedKey('memory.scopes', true)).toBe(false);
+
+    const edge = readFileSync(
+      path.resolve(here, '../../../supabase/functions/mcp/permissions.ts'),
+      'utf8',
+    );
+    expect(edge).toContain("'memory.purge',");
+    expect(edge).toContain("'memory.purge_expired',");
+  });
+});

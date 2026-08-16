@@ -82,7 +82,8 @@ routed into an org the token was never granted.
 | The request NAMES a scope outside the allowlist | Refused — MCP returns the `-32003` forbidden error, REST returns `403`. A named scope gets a plain refusal rather than an empty page, which would read as "there is nothing there". |
 | The request names NO scope (`memory.list` unfiltered, `GET /memories`) | Narrowed. Only rows inside the allowlist and the tenancy come back. |
 | `memory.scopes` / `GET /memories/scopes` | Narrowed the same way. A scope string is a repo or project name, so an unfiltered catalog would leak exactly what scoping hides. |
-| An operation that carries no scope at all (`memory.purge_expired`) | Refused for a token WITH a scope allowlist; unaffected for one without. A token narrowed to one repo has no business sweeping the account. |
+| An account-wide sweep (`memory.purge`, `memory.purge_expired`) | Refused for a token WITH a scope allowlist; unaffected for one without. There is no scope to check and no result set to narrow — the rows are chosen inside the RPC — so the only available answer is to refuse the call. Use an unscoped token for maintenance sweeps. |
+| A write addressed BY ID (`PATCH`/`DELETE`/restore) | Filtered by the allowlist. These are personal-only and never widen to org rows, so they narrow on the allowlist alone rather than through the tenant predicate. |
 | The token is unscoped (the default) | Nothing changes, on any path. |
 
 ## Permission matrix

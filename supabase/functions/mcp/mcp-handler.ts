@@ -29,7 +29,7 @@ import {
 } from './tools.ts';
 import { type Span } from '../_shared/otel.ts';
 import { LimitError, recordUsageEvent, getUserPlanName } from './limits.ts';
-import { toolRequires } from './permissions.ts';
+import { toolRequires, isRefusedForScopedKey } from './permissions.ts';
 import { wireTools } from '../_shared/schemas/tool-catalog.ts';
 import { countRecords, parseCorrelationId, parseUsageClient, usageToolKind } from '../_shared/usage-stats.ts';
 import { resolveKindHost } from '../_shared/schemas/tags.ts';
@@ -230,6 +230,20 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
       // nothing here to refuse. Writes are additionally gated inside
       // `memory_write`, the only place the edge cannot bypass.
       const restriction = keyRestriction(auth);
+      // An account-wide sweep has no scope to check and no result set to
+      // narrow, so a restricted key is refused outright — otherwise a key
+      // scoped to one repo could hard-delete across every scope its owner has.
+      if (isRefusedForScopedKey(toolName, (restriction?.scopes.length ?? 0) > 0)) {
+        span
+          .clientError('PermissionDenied: account-wide tool on a scoped token')
+          .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_account_wide' });
+        return jsonrpcError(
+          id,
+          JSONRPC_FORBIDDEN,
+          `"${toolName}" operates across your whole account, so it is not available to a ` +
+            'token restricted to specific scopes. Use an unscoped token for maintenance sweeps.',
+        );
+      }
       if (restriction && restriction.scopes.length > 0) {
         // `scopes` (plural) is `memory.search`'s array argument. EVERY named
         // scope must be allowed: refusing the whole call is honest, where

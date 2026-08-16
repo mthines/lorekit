@@ -86,8 +86,6 @@ export async function handleCreate(
   }
 
   // Dry-run: validated + rate-limited above; stop before any write.
-  if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
-
   // Early refusal for a NAMED scope outside the key's allowlist (00067): a
   // plain 403 beats an empty page, which reads as "there is nothing there".
   const deniedScope = firstDeniedScope(auth, [body.scope]);
@@ -98,6 +96,11 @@ export async function handleCreate(
       cors,
     );
   }
+
+  // AFTER the refusal, deliberately: a dry run reports what a real write would
+  // do, so answering 200 for a scope the key may not write would be a dry run
+  // that lies about the very thing it is asked to predict.
+  if (isDryRunHeader(req.headers.get(DRY_RUN_HEADER))) return dryRun(cors);
 
   // Use memory_write RPC rather than raw .upsert() — the memories table uses
   // partial unique indexes (WHERE archived_at IS NULL) introduced in migration
