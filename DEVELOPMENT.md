@@ -52,6 +52,7 @@ pnpm nx affected -t typecheck,test,lint
 # A single project
 pnpm nx test mcp-core          # needs a local Supabase (see below)
 pnpm nx test cli               # the CLI's node:test suite
+pnpm nx test supabase          # the live smoke suites (see Backend, below)
 pnpm nx typecheck web
 ```
 
@@ -128,7 +129,19 @@ node scripts/sync-plugin-skill.mjs --check   # verify (what CI does)
 pnpm nx start supabase     # start the local stack (Postgres + functions)
 pnpm nx test mcp-core      # now the DB-backed tests can run
 pnpm nx fn:dev supabase    # serve the Edge Functions locally
+pnpm nx test supabase      # the live smoke suites in supabase/tests/
 ```
+
+`pnpm nx test supabase` runs the live smoke suites — HTTP clients of the deployed
+Edge Functions, which is why they live beside `supabase/` rather than in a Node
+package. Each **self-skips without its own credential**, so the command is safe
+(and mostly green-but-skipped) with none of them set:
+
+| Suite | Credential |
+|---|---|
+| `smoke.integration`, `memories-api.integration` | `LOREKIT_SMOKE_TOKEN` |
+| `orgs-api.integration` | `LOREKIT_SMOKE_JWT` (a user JWT — `lk_*` tokens are rejected by the org endpoints) |
+| `byod-smoke.integration` | `LOREKIT_BYOD_URL` + `LOREKIT_BYOD_TOKEN` |
 
 Migrations live in `supabase/migrations/` and are forward-only. Deployment is
 automated on merge to `main` — see [docs/deployment.md](./docs/deployment.md).
