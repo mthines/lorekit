@@ -380,6 +380,44 @@ export const TheMultiTriggerCountsPastOne: Story = {
   },
 };
 
+/**
+ * `Space` reaches the same activation as `Enter` in BOTH modes — the `case ' '`
+ * falls through — so single-select gained a key it previously ignored. What is
+ * asserted here is the half that differs from
+ * `SpaceTogglesWhenThereIsNoSearchBox`: single-select COMMITS AND CLOSES, where
+ * multi ticks and stays open. Asserting only the new value would pass in either
+ * mode and prove nothing about which one ran.
+ */
+export const SpaceCommitsAndClosesInSingleSelect: Story = {
+  args: { initial: 'active' },
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    const trigger = canvas.getByRole('button', { name: /^Status:/ });
+
+    await step('ArrowDown opens on the current value', async () => {
+      trigger.focus();
+      await userEvent.keyboard('{ArrowDown}');
+      await within(document.body).findByRole('listbox', { name: /status/i });
+    });
+
+    await step('ArrowDown again moves off it', async () => {
+      // Space on the value already selected would commit the same value, and
+      // the assertion below could not tell a commit from a no-op.
+      await userEvent.keyboard('{ArrowDown}');
+    });
+
+    await step('Space commits the highlighted row AND closes', async () => {
+      await userEvent.keyboard(' ');
+      await waitFor(async () => {
+        await expect(canvas.getByTestId('value')).toHaveTextContent('archived');
+      });
+      await waitFor(async () => {
+        await expect(within(document.body).queryByRole('listbox', { name: /status/i })).toBeNull();
+      });
+    });
+  },
+};
+
 export const SpaceTogglesWhenThereIsNoSearchBox: Story = {
   render: () => <MultiHarness />,
   play: async ({ canvasElement, step }) => {
