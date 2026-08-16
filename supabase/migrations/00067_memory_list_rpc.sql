@@ -3,10 +3,15 @@
 --
 -- WHY THIS EXISTS
 --
--- 00066 moved the Explorer's filters off the query string and into a JSON body
--- (`POST /memories/list`), because a comma-joined dimension is capped at 2048
--- characters and several dimensions compose a URL the gateway refuses outright
--- (`414 URI too long`, with no LoreKit error envelope at all).
+-- This PR's edge handlers moved the Explorer's filters off the query string and
+-- into a JSON body (`POST /memories/list` / `/facets` / `/activity`), because a
+-- comma-joined dimension is capped at 2048 characters and several dimensions
+-- compose a URL the gateway refuses outright (`414 URI too long`, with no
+-- LoreKit error envelope at all). That transport change needed no migration —
+-- it is a decoder (`dimensionsFromBody`) beside the one the query form already
+-- used. 00066 is a different thing: the shared `lorekit_match_text` /
+-- `lorekit_match_tags` / `lorekit_match_int` dimension predicates this function
+-- composes below.
 --
 -- That fixed the CLIENT → EDGE hop and left the EDGE → POSTGREST hop exactly as
 -- it was. `handleList` built its predicates with postgrest-js, whose `.or()` is
