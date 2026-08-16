@@ -27,6 +27,54 @@ Tokens are stored as **SHA-256 hashes** in the database. The full token is shown
 5. Choose **Read + Write**, **Read only**, or **Write only**
 6. Copy the token from the amber banner — it won't be shown again
 
+## Scoping a token
+
+Beyond read/write, a token can be narrowed to **specific scopes** and to a
+**specific tenancy**. Both are optional and both default to unrestricted, so a
+token you never scope behaves exactly as it always has.
+
+| Axis | Column | Default | Meaning |
+|------|--------|---------|---------|
+| Scopes | `api_tokens.scopes` | `{}` — **unrestricted** | Allowlist of scope patterns the token may touch |
+| Tenancy | `api_tokens.org_access` | `all` | `all` \| `personal` \| `selected` |
+| Orgs | `api_tokens.org_ids` | `{}` | The orgs a `selected` token may reach |
+
+### Scope patterns
+
+A pattern is either a canonical scope or an **owner wildcard** ending in `*` —
+the same shape the `?scope=` search filter accepts:
+
+```
+repo::mthines/lorekit      exactly that repo
+repo::mthines/*            every repo under that owner
+global                     the global scope
+```
+
+Patterns are OR-ed: a token allowing `["global", "repo::mthines/*"]` reaches
+either. An **empty** allowlist reaches everything the owner can see. At most 50
+patterns per token, each at most 200 characters, over the charset
+`[a-z0-9._:/-]` with an optional trailing `*`.
+
+An **interior** wildcard (`repo::*/lorekit`) is not supported.
+
+### Tenancy
+
+| `org_access` | Personal memories | Org memories |
+|--------------|-------------------|--------------|
+| `all` (default) | ✓ | Every org the owner belongs to |
+| `personal` | ✓ | None |
+| `selected` | ✓ | Only the orgs in `org_ids` |
+
+Personal memories are reachable under every tenancy — `personal` narrows which
+*orgs* a token reaches, it never revokes the owner's own memories. A token can
+only be pointed at an org its **owner** is a member of; asking for any other org
+is rejected when the scoping is saved, not silently ignored.
+
+Tenancy is authoritative over
+[scope→org binding](./decisions.md#scopeorg-binding): a write under a bound
+scope from a `personal` token falls back to a personal memory rather than being
+routed into an org the token was never granted.
+
 ## Permission matrix
 
 | Tool | Read + Write (`lk_rw_`) | Read only (`lk_ro_`) | Write only (`lk_wo_`) |
@@ -91,5 +139,6 @@ In the dashboard → Overview → Step 2 → your token list → click the trash
 ## Limits
 
 - Maximum 20 tokens per user account.
+- Maximum 50 scope patterns and 50 orgs per token.
 - No expiry — tokens are valid until revoked.
 - `last_used_at` is updated on every successful authentication.

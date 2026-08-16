@@ -160,12 +160,110 @@ create table if not exists api_tokens (
   token_hash   text not null unique,
   -- Array of granted permissions: 'read' | 'write'.
   permissions  text[] not null default '{"read","write"}',
+  -- Scoping (migration 00067). EMPTY scopes = unrestricted; org_access is a
+  -- tri-state and org_ids is non-empty iff org_access = 'selected'.
+  scopes       text[] not null default '{}',
+  org_access   text   not null default 'all',
+  org_ids      uuid[] not null default '{}',
   last_used_at timestamptz,
   created_at   timestamptz not null default now()
 );
 
+-- `create table if not exists` above is a no-op on an install that predates
+-- 00067, so the columns are added separately for that case.
+alter table api_tokens
+  add column if not exists scopes     text[] not null default '{}',
+  add column if not exists org_access text   not null default 'all',
+  add column if not exists org_ids    uuid[] not null default '{}';
+
 create index if not exists api_tokens_user_idx on api_tokens(user_id);
 create index if not exists api_tokens_hash_idx on api_tokens(token_hash);
+
+-- Shape gate for the scope allowlist. A CHECK cannot hold a subquery, and
+-- "every element satisfies P" needs one — hence the immutable helper.
+create or replace function lorekit_api_token_scopes_valid(p_patterns text[])
+returns boolean
+language sql
+immutable
+as $$
+  select p_patterns is null or not exists (
+    select 1
+    from unnest(p_patterns) as t(pattern)
+    where t.pattern !~ '^[a-z0-9._:/-]+\*?$'
+       or length(t.pattern) > 200
+  );
+$$;
+
+alter table api_tokens drop constraint if exists api_tokens_scopes_len;
+alter table api_tokens add constraint api_tokens_scopes_len
+  check (cardinality(scopes) <= 50);
+
+alter table api_tokens drop constraint if exists api_tokens_scopes_shape;
+alter table api_tokens add constraint api_tokens_scopes_shape
+  check (lorekit_api_token_scopes_valid(scopes));
+
+alter table api_tokens drop constraint if exists api_tokens_org_access_valid;
+alter table api_tokens add constraint api_tokens_org_access_valid
+  check (org_access in ('all', 'personal', 'selected'));
+
+alter table api_tokens drop constraint if exists api_tokens_org_ids_match_access;
+alter table api_tokens add constraint api_tokens_org_ids_match_access
+  check ((org_access = 'selected') = (cardinality(org_ids) > 0));
+
+alter table api_tokens drop constraint if exists api_tokens_org_ids_len;
+alter table api_tokens add constraint api_tokens_org_ids_len
+  check (cardinality(org_ids) <= 50);
+
+-- The two request-time predicates. Kept byte-identical to 00067 — a BYOD
+-- install that answers these differently is a BYOD install with a different
+-- authorization boundary.
+--
+-- `lorekit_api_token_set_scoping` is deliberately NOT mirrored: it validates
+-- org ids against `lorekit_member_org_ids`, and this file has no orgs by design
+-- (see the header). The org columns are still created so the row shape the
+-- transports select is identical on both deployments — with no orgs, every row
+-- is personal and `lorekit_api_token_org_allowed` returns true regardless of
+-- the tenancy, so the tri-state is inert rather than wrong.
+create or replace function lorekit_api_token_scope_allowed(
+  p_patterns text[],
+  p_scope text
+)
+returns boolean
+language sql
+immutable
+as $$
+  select case
+    when p_patterns is null or cardinality(p_patterns) = 0 then true
+    when p_scope is null then false
+    else exists (
+      select 1
+      from unnest(p_patterns) as pattern
+      where case
+        when right(pattern, 1) = '*'
+          then p_scope like replace(left(pattern, -1), '_', '\_') || '%'
+        else p_scope = pattern
+      end
+    )
+  end;
+$$;
+
+create or replace function lorekit_api_token_org_allowed(
+  p_org_access text,
+  p_org_ids uuid[],
+  p_org_id uuid
+)
+returns boolean
+language sql
+immutable
+as $$
+  select case
+    when p_org_id is null then true
+    when p_org_access = 'all' then true
+    when p_org_access = 'personal' then false
+    when p_org_access = 'selected' then p_org_id = any(coalesce(p_org_ids, '{}'::uuid[]))
+    else false
+  end;
+$$;
 
 alter table api_tokens enable row level security;
 
