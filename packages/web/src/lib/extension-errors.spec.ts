@@ -92,6 +92,34 @@ describe('isExtensionOnlyStack', () => {
     expect(isExtensionOnlyStack('at r (webkit-masked-url://hidden/:1:1)')).toBe(false);
   });
 
+  it('does not let a message line quoting a URL vote on origin', () => {
+    // `Failed to fetch https://…` is a message, not a frame: counting it as a
+    // source-bearing frame would make it vote first-party and keep an error
+    // whose only real frames are the extension's.
+    const stack = [
+      'TypeError: Failed to fetch https://api.lorekit.io/v1/lore',
+      '    at Z (chrome-extension://eppiocemhmnlbhjplcgkofciiegomcon/executors/200.js:1:761)',
+    ].join('\n');
+    expect(isExtensionOnlyStack(stack)).toBe(true);
+  });
+
+  it('does not let a message line quoting an EXTENSION url vote either', () => {
+    // The dangerous direction: the text mentions an extension, every real frame
+    // is ours, so the error is ours and must survive.
+    const stack = [
+      'Error: Failed to load chrome-extension://abcdefghijklmnop/inject.js',
+      '    at boot (https://www.lorekit.io/_next/static/chunks/main-abc.js:1:761)',
+    ].join('\n');
+    expect(isExtensionOnlyStack(stack)).toBe(false);
+  });
+
+  it('keeps an error whose only URL lives in the message line', () => {
+    // No frame names a source, so nothing proves extension origin.
+    expect(
+      isExtensionOnlyStack('Error: Failed to load chrome-extension://abcdefghijklmnop/inject.js'),
+    ).toBe(false);
+  });
+
   it('is not fooled by an extension scheme appearing inside a page URL', () => {
     // A first-party frame stays first-party even when the URL mentions the
     // scheme in a query string.

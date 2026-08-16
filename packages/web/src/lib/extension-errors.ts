@@ -61,13 +61,30 @@ const EXTENSION_FRAME_PATTERN = new RegExp(
 );
 
 /**
- * A stack line only votes on origin when it names a source URL. `at <anonymous>`,
- * `at Array.forEach (native)`, and the leading `TypeError: …` message line carry
- * no origin, so they are counted as neither first-party nor extension rather
- * than being guessed at in either direction.
+ * Matches the two frame shapes every engine emits: V8's `    at name (url)` and
+ * SpiderMonkey/JSC's `name@url` (the name may be empty, as in `@moz-extension://…`).
+ *
+ * The leading `TypeError: …` message line matches NEITHER — its first token
+ * carries no `@`, and it does not start with `at `. That is the point: a message
+ * is free-form text and may quote a URL (`Failed to fetch https://…`), so
+ * treating it as a frame would let the *message* vote on origin.
+ */
+const STACK_FRAME_PATTERN = /^\s*(?:at\s|\S*@)/;
+
+/**
+ * A stack line only votes on origin when it is a FRAME that names a source URL.
+ * `at <anonymous>`, `at Array.forEach (native)`, and the leading `TypeError: …`
+ * message line carry no origin, so they are counted as neither first-party nor
+ * extension rather than being guessed at in either direction.
+ *
+ * Both halves of the test are load-bearing. Requiring a URL alone would let a
+ * message line embedding one decide: `TypeError: Failed to fetch https://api/x`
+ * would vote first-party and keep an otherwise extension-only error, while
+ * `Failed to load chrome-extension://…` would vote extension and drop an error
+ * whose only extension mention is in its text — the dangerous direction.
  */
 function isSourceBearingFrame(line: string): boolean {
-  return line.includes('://');
+  return STACK_FRAME_PATTERN.test(line) && line.includes('://');
 }
 
 function isExtensionFrame(line: string): boolean {
