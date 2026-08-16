@@ -721,6 +721,9 @@ export type Database = {
           p_archived?: boolean
           p_host?: string[]
           p_host_mode?: string
+          p_key_org_access?: string
+          p_key_org_ids?: string[]
+          p_key_scopes?: string[]
           p_kind?: string[]
           p_kind_mode?: string
           p_origin_branch?: string[]
@@ -760,7 +763,13 @@ export type Database = {
         }[]
       }
       lorekit_memory_tags: {
-        Args: { p_archived?: boolean; p_user_id: string }
+        Args: {
+          p_archived?: boolean
+          p_key_org_access?: string
+          p_key_org_ids?: string[]
+          p_key_scopes?: string[]
+          p_user_id: string
+        }
         Returns: {
           count: number
           tag: string

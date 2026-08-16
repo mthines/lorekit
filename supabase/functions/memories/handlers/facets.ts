@@ -1,4 +1,5 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
+import { keyRestriction } from '../../_shared/api/auth.ts';
 import { ok } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
@@ -112,6 +113,13 @@ export async function handleFacets(
     // inside the RPC. A plain value list like the other dimensions.
     p_owner: list(q.owner),
     p_owner_mode: q.owner_mode,
+    // The calling key's restriction (00067/00068). The `origin_repo` facet is a
+    // repository name by construction, so an unnarrowed facet list would leak
+    // exactly what the scope catalog hides. Applied in the RPC's row-visibility
+    // predicate, which every emitted facet value derives from.
+    p_key_scopes: keyRestriction(auth)?.scopes ?? [],
+    p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
+    p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 

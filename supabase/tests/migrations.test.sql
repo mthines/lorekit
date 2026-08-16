@@ -6178,6 +6178,42 @@ begin
   where r.scope is null;
   assert v_count = 1,
     'enforcement AC-5: an unattributable read names nothing and must survive the allowlist';
+
+  -- ── AC-6: the tag and facet catalogs are narrowed too ─────────────────────
+  -- `origin_repo` is a repository name by construction, so the facet list is a
+  -- scope-name catalog wearing a different hat. Narrowing four of six aggregate
+  -- endpoints moves the leak rather than closing it.
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'project::alpha', p_key => 'k-facet-a',
+    p_value => 'v', p_tags => array['tag-alpha'], p_origin_repo => 'mthines/alpha'
+  );
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'project::beta', p_key => 'k-facet-b',
+    p_value => 'v', p_tags => array['tag-beta'], p_origin_repo => 'mthines/beta'
+  );
+
+  select count(*) into v_count
+  from lorekit_memory_facets(p_user_id => v_owner, p_key_scopes => array['project::alpha']) f
+  where f.facet = 'origin_repo' and f.value = 'mthines/beta';
+  assert v_count = 0,
+    'enforcement AC-6: an allowlisted key must not see a repo name from outside its allowlist';
+
+  select count(*) into v_count
+  from lorekit_memory_facets(p_user_id => v_owner, p_key_scopes => array['project::alpha']) f
+  where f.facet = 'origin_repo' and f.value = 'mthines/alpha';
+  assert v_count = 1,
+    'enforcement AC-6: the facet inside the allowlist must still be listed';
+
+  select count(*) into v_count
+  from lorekit_memory_tags(p_user_id => v_owner, p_key_scopes => array['project::alpha']) t
+  where t.tag = 'tag-beta';
+  assert v_count = 0,
+    'enforcement AC-6: an allowlisted key must not see a label from outside its allowlist';
+
+  select count(*) into v_count
+  from lorekit_memory_tags(p_user_id => v_owner) t where t.tag = 'tag-beta';
+  assert v_count = 1,
+    'enforcement AC-6: an unrestricted caller must still see every label';
 end;
 $$;
 
