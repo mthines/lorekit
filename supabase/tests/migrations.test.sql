@@ -5731,10 +5731,12 @@ $$;
 -- AC-9: an `origin_pr` entry that is all digits but too wide for int4 is
 --       DROPPED like any other unusable entry — never a 22003 raised out of a
 --       hand-editable filter value — while the zero-padded form still resolves.
+--       A list whose every entry drops degrades to UNFILTERED, the same way an
+--       all-non-numeric list already does on the facet catalog.
 -- AC-9 needs one row carrying a real `origin_pr`, so the zero-padded half of a
 -- mixed filter has something to match; every other row leaves it null.
 insert into memories (user_id, scope, key, value, tags, source_agent, host, kind, origin_pr, created_at, updated_at) values
-  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-1', 'alpha',   array['x'], 'aw',    'reviewer', 'lesson', 7,    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-1', 'alpha',   array['x'], 'aw',    'reviewer', 'lesson', 7,    '2026-01-09T00:00:00Z', '2026-01-01T00:00:00Z'),
   ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-2', 'beta',    array['y'], 'aw',    'aw',       'lesson', null, '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z'),
   -- Same updated_at as lr-2 on purpose: AC-2's id tie-break needs a real tie.
   ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-3', 'gamma',   array['y'], 'other', null,       null,     null, '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z'),
@@ -5751,6 +5753,7 @@ do $$
 declare
   v_keys   text[];
   v_rows   int;
+  v_rows2  int;
   v_wide   text[];
   v_ts     timestamptz;
   v_id     uuid;
@@ -5898,27 +5901,48 @@ begin
     format('list rpc AC-8: the archived partition must hold exactly the archived row, got %s', v_keys);
 
   -- AC-8b: created_at is a real second sort order, not an alias of the first.
+  -- lr-1 is the OLDEST by updated_at and the NEWEST by created_at, so the two
+  -- orders disagree at the head — a regression collapsing v_sort back to
+  -- updated_at leads with lr-5 and fails here. Without that skew in the fixture
+  -- this assertion holds for both columns and proves nothing.
   select array_agg(key order by ord) into v_keys from (
     select key, row_number() over () as ord
       from lorekit_memory_list(
         '00000000-0000-0000-0000-0000000000a1'::uuid,
         p_scope => 'project::list-rpc', p_sort => 'created_at', p_limit => 2)
   ) t;
-  assert v_keys[1] = 'lr-5',
-    format('list rpc AC-8b: created_at desc must lead with lr-5, got %s', v_keys);
+  assert v_keys[1] = 'lr-1',
+    format('list rpc AC-8b: created_at desc must lead with lr-1, not the updated_at leader, got %s', v_keys);
+  assert v_keys[2] = 'lr-5',
+    format('list rpc AC-8b2: created_at desc must continue with lr-5, got %s', v_keys);
   assert array_length(v_keys, 1) = 2,
     format('list rpc AC-8c: p_limit must bound the page, got %s', v_keys);
 
   -- AC-9: an origin_pr entry that is all digits but wider than int4 is DROPPED
   -- like any other unusable entry, never raised. `^[0-9]+$` alone admits it and
   -- `x::integer` then raises 22003 — a 500 out of a hand-editable filter value.
+  --
+  -- When EVERY entry drops, `array_agg` over the empty set yields NULL, and a
+  -- null filter is "not filtered" in lorekit_match_int — so the dimension
+  -- degrades to unfiltered, exactly as an all-non-numeric list already does on
+  -- lorekit_memory_facets. That degradation is the contract; what this pins is
+  -- that reaching it does not RAISE.
   select count(*) into v_rows
     from lorekit_memory_list(
       '00000000-0000-0000-0000-0000000000a1'::uuid,
       p_scope => 'project::list-rpc',
       p_origin_pr => array['99999999999'], p_limit => 100);
-  assert v_rows = 0,
-    format('list rpc AC-9: an out-of-int4 origin_pr must drop to "filters nothing", got %s rows', v_rows);
+  assert v_rows = 5,
+    format('list rpc AC-9: an out-of-int4 origin_pr must drop without raising, leaving the dimension unfiltered, got %s rows', v_rows);
+  -- The same degradation an all-non-numeric list produces, asserted side by
+  -- side so the two cannot drift apart.
+  select count(*) into v_rows2
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc',
+      p_origin_pr => array['not-a-number'], p_limit => 100);
+  assert v_rows2 = v_rows,
+    format('list rpc AC-9a: an over-wide entry must degrade exactly like a non-numeric one, got %s vs %s', v_rows2, v_rows);
 
   -- AC-9b: the drop is per ENTRY, and the bound keeps the zero-padded form
   -- resolving numerically, so a list mixing the two still filters on its
@@ -5930,6 +5954,7 @@ begin
       p_origin_pr => array['99999999999', '0000000007'], p_limit => 100);
   assert v_keys = array['lr-1'],
     format('list rpc AC-9b: the over-wide entry must drop while `0000000007` still matches PR 7, got %s', v_keys);
+
 end;
 $$;
 
