@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react';
-import { useState } from 'react';
+import { useState, type ComponentProps } from 'react';
 
 import { ScopingBadges, ScopingFields } from './TokenScoping';
 import { UNSCOPED, type TokenScoping } from '@/lib/token-scoping';
@@ -78,9 +78,11 @@ function ControlledFields({
 }: {
   initial: TokenScoping;
   defaultOpen?: boolean;
-  scopeCatalog?: string[];
-  orgs?: { id: string; name: string }[];
-}) {
+  // Picked off `ScopingFields` rather than re-declared: it types both as
+  // `readonly`, and a hand-written mutable twin is not assignable from the
+  // story `args` this harness is spread with — which is a `web:typecheck`
+  // failure, not a story-only one.
+} & Partial<Pick<ComponentProps<typeof ScopingFields>, 'scopeCatalog' | 'orgs'>>) {
   const [value, setValue] = useState(initial);
   return (
     <ScopingFields
