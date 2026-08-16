@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition, useRef, useEffect } from 'react';
+import { useState, useTransition, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Key, Plus, Trash2, Copy, CheckCheck, Eye, EyeOff,
@@ -10,6 +10,7 @@ import { generateToken, revokeToken, setTokenScoping, type ApiToken, type TokenP
 import { PERMISSION_TIERS, tierFor, type PermissionTierValue } from '@/lib/token-permission';
 import {
   ORG_ACCESS_TIERS,
+  creatableScopePattern,
   describeScoping,
   isScoped,
   orgBadgeLabel,
@@ -210,6 +211,15 @@ function ScopingFields({
     // one whose meaning is not literally its own text.
     ...(value.endsWith('*') ? { hint: 'every scope under this owner' } : {}),
   }));
+  // The escape hatch the catalog cannot provide: `scopeCatalog` only holds
+  // scopes that already have a memory, and scoping a key to a scope BEFORE its
+  // first write is normal. `creatableScopePattern` validates against the one
+  // shared schema, so a value the database would reject is never offered.
+  const createScopeOption = useCallback((query: string): ComboboxItem | null => {
+    const value = creatableScopePattern(query);
+    if (value === null) return null;
+    return { value, label: value, hint: 'use this scope' };
+  }, []);
   const orgOptions: ComboboxItem[] = orgs.map((o) => ({ value: o.id, label: o.name }));
   const orgNames = Object.fromEntries(orgs.map((o) => [o.id, o.name]));
 
@@ -243,12 +253,14 @@ function ScopingFields({
               label="Scopes"
               countNoun="scopes"
               searchable
-              searchPlaceholder="Search scopes…"
+              searchPlaceholder="Search or type a scope…"
+              creatable={createScopeOption}
               triggerLabel={scoping.scopes.length === 0 ? 'Any scope' : undefined}
             />
             <p className="text-[10px] text-[var(--color-content-tertiary)]">
               Leave empty for any scope. A <code>*</code> option covers every scope under that owner,
-              including ones created later.
+              including ones created later. A scope with no memories yet is not on the list — type it
+              and pick the <em>use this scope</em> row.
             </p>
           </div>
 

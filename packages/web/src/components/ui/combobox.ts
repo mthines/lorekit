@@ -196,6 +196,39 @@ export function filterOptions<O extends ComboboxOption>(
 }
 
 /**
+ * Append a "use what you typed" row to the visible list, when there is one.
+ *
+ * A `Combobox` picks from `options` and nothing else, so a control whose option
+ * set is DERIVED from existing data (the token scope picker's catalog is
+ * whatever `GET /memories/scopes` returned) cannot express a legitimate value
+ * that does not exist yet. This is the escape hatch: the caller supplies a
+ * `create` candidate for the current query and it is offered as one more row.
+ *
+ * Three rules, all of them about not offering a lie:
+ *
+ * 1. **`null` offers nothing.** The caller decides what a valid value looks
+ *    like — a scope pattern that fails `SCOPE_PATTERN` would be rejected by the
+ *    database on save, and offering a row that cannot be saved is worse than
+ *    offering none.
+ * 2. **A value already in `options` is not re-offered**, whether or not the
+ *    current filter shows it. Two rows that add the same value is a control
+ *    that looks broken, and the existing row carries the real label and hint.
+ * 3. **It is APPENDED, never prepended.** The highlight travels by index over
+ *    this array, so adding a row at the front would move every existing option
+ *    under the user's highlight on the keystroke that made the candidate valid.
+ */
+export function withCreatableOption<O extends ComboboxOption>(
+  visible: readonly O[],
+  options: readonly O[],
+  candidate: O | null,
+): readonly O[] {
+  if (candidate === null) return visible;
+  if (options.some((o) => o.value === candidate.value)) return visible;
+  if (visible.some((o) => o.value === candidate.value)) return visible;
+  return [...visible, candidate];
+}
+
+/**
  * Clamp a highlight index onto a (possibly re-filtered) list.
  *
  * Typing narrows the list under the highlight, so the index it held can point

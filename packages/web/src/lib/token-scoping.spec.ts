@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   ORG_ACCESS_TIERS,
+  creatableScopePattern,
   UNSCOPED,
   describeScoping,
   isScoped,
@@ -175,5 +176,45 @@ describe('ORG_ACCESS_TIERS', () => {
     // The form renders from this list, so a value missing here is a tenancy the
     // user cannot choose and a badge with no card behind it.
     expect(ORG_ACCESS_TIERS.map((t) => t.value)).toEqual(['all', 'personal', 'selected']);
+  });
+});
+
+describe('creatableScopePattern', () => {
+  it('accepts a scope the catalog does not have yet', () => {
+    // The whole point: a key scoped to a scope before its first memory.
+    expect(creatableScopePattern('repo::mthines/brand-new')).toBe('repo::mthines/brand-new');
+  });
+
+  it('accepts an owner wildcard', () => {
+    expect(creatableScopePattern('repo::mthines/*')).toBe('repo::mthines/*');
+    expect(creatableScopePattern('project::*')).toBe('project::*');
+  });
+
+  it('normalises casing and surrounding whitespace', () => {
+    // The schema lowercases and trims, so the row offered is the value that
+    // would actually be stored — not the raw keystrokes.
+    expect(creatableScopePattern('  REPO::Mthines/Lorekit  ')).toBe('repo::mthines/lorekit');
+  });
+
+  it('refuses a MID-TOKEN wildcard', () => {
+    // `repo::mthines/lore*` is the shape the enforcement layer drops rather
+    // than honours, so offering it would offer a pattern that reaches nothing.
+    expect(creatableScopePattern('repo::mthines/lore*')).toBeNull();
+  });
+
+  it('refuses an empty or whitespace-only query', () => {
+    expect(creatableScopePattern('')).toBeNull();
+    expect(creatableScopePattern('   ')).toBeNull();
+  });
+
+  it('refuses a character outside the pattern charset', () => {
+    expect(creatableScopePattern('repo::mthines/lore kit')).toBeNull();
+    expect(creatableScopePattern('repo::mthines/lore%kit')).toBeNull();
+  });
+
+  it('refuses a pattern past the 200-character cap', () => {
+    // The `api_tokens_scopes_shape` CHECK enforces the same bound, so a longer
+    // value would be offered and then rejected on save.
+    expect(creatableScopePattern(`repo::mthines/${'a'.repeat(200)}`)).toBeNull();
   });
 });

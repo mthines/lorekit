@@ -15,6 +15,7 @@
  * (`@lorekit/schemas/api-key`'s `scopeAllowedByKey`). Nothing here decides
  * access; it decides wording. Do not add a third matcher.
  */
+import { ApiKeyScopePatternSchema } from '@lorekit/schemas/api-key';
 
 export type OrgAccess = 'all' | 'personal' | 'selected';
 
@@ -148,8 +149,10 @@ export function describeScoping(
  *
  * The catalog is whatever `GET /memories/scopes` returned, so it only ever
  * contains scopes that exist. A key can be scoped to a scope with no memories
- * yet — that is legitimate, and typing it is the escape hatch; this function
- * only decides what is OFFERED.
+ * yet — that is legitimate, and typing it is the escape hatch, which the picker
+ * really does offer: `Combobox`'s `creatable` prop, wired to
+ * {@link creatableScopePattern} below. This function only decides what is
+ * OFFERED from the catalog.
  */
 export function scopePatternOptions(catalog: readonly string[]): string[] {
   const exact = [...new Set(catalog)].sort();
@@ -183,4 +186,30 @@ function ownerPrefixOf(scope: string): string | null {
   const slash = rest.indexOf('/');
   if (slash === -1) return null;
   return `${prefix}::${rest.slice(0, slash + 1)}`;
+}
+
+/**
+ * The pattern the picker would ADD for what the user typed, or `null`.
+ *
+ * `scopePatternOptions` above only decides what is OFFERED from the catalog,
+ * and the catalog only ever contains scopes that already hold a memory. A key
+ * scoped to a scope with no memories in it yet is legitimate and common — the
+ * CI token you issue before the first run — so the picker needs a way to accept
+ * a value that is not on the list. This is that way; `Combobox`'s `creatable`
+ * prop calls it with the search query.
+ *
+ * Validation is DELEGATED to `ApiKeyScopePatternSchema`, which is the same
+ * schema the edge and the `api_tokens_scopes_shape` CHECK are mirrored from —
+ * casing, trimming, the 200-character cap, and the rule that a `*` is a
+ * wildcard only directly after a `/` or a `::`. A second copy of that grammar
+ * here is exactly the third matcher this module's header forbids.
+ *
+ * `null` for anything the database would reject, so the picker never offers a
+ * row that cannot be saved: a mid-token `repo::mthines/lore*`, an uppercase or
+ * space-bearing entry that survives normalisation as something else, an empty
+ * query.
+ */
+export function creatableScopePattern(query: string): string | null {
+  const parsed = ApiKeyScopePatternSchema.safeParse(query);
+  return parsed.success ? parsed.data : null;
 }
