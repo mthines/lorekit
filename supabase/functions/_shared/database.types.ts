@@ -884,6 +884,9 @@ export type Database = {
         Args: {
           p_force?: boolean
           p_key?: string
+          p_key_org_access?: string
+          p_key_org_ids?: string[]
+          p_key_scopes?: string[]
           p_org_slug?: string
           p_scope?: string
           p_user_id: string

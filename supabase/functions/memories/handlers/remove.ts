@@ -1,6 +1,6 @@
 import { applyKeyScopeFilter, firstDeniedScope } from '../../_shared/api/tenant.ts';
 import type { AuthContext } from '../../_shared/api/auth.ts';
-import { auditUserId } from '../../_shared/api/auth.ts';
+import { auditUserId, keyRestriction } from '../../_shared/api/auth.ts';
 import { recordAudit } from '../../_shared/audit.ts';
 import { noContent, notFound, badRequest, dryRun, forbidden } from '../../_shared/api/respond.ts';
 import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
@@ -193,6 +193,13 @@ async function removeOrgOwned(
       p_scope: scope,
       p_key: key,
       p_force: force,
+      // The calling key's restriction (00067/00068). The scope refusal above
+      // this dispatch is advisory — the edge holds the service-role key — and
+      // the TENANCY half has nowhere else to live at all: this RPC chooses its
+      // rows, so `applyKeyScopeFilter` never sees them.
+      p_key_scopes: keyRestriction(auth)?.scopes ?? [],
+      p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
+      p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
     })
     .single();
 

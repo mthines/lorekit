@@ -6086,6 +6086,48 @@ begin
   assert v_count = 1,
     'enforcement AC-4: a personal-only key must still see its own personal scopes';
 
+  -- ── AC-4b: memory_delete is gated on BOTH axes ────────────────────────────
+  -- The org branch chooses its rows inside the function, so no transport-side
+  -- filter reaches them. Without these guards it enforced the OWNER's role and
+  -- nothing about the key: a personal-only key could hard-delete an org row.
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'repo::deltest/repo', p_key => 'k-del',
+    p_value => 'v', p_org_slug => v_org_slug
+  );
+
+  v_failed := false;
+  begin
+    perform memory_delete(
+      p_user_id => v_owner, p_org_slug => v_org_slug, p_scope => 'repo::deltest/repo',
+      p_key => 'k-del', p_force => true,
+      p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
+    );
+  exception when others then v_failed := true;
+  end;
+  assert v_failed,
+    'enforcement AC-4b: a personal-only key must not delete an org-owned memory';
+
+  v_failed := false;
+  begin
+    perform memory_delete(
+      p_user_id => v_owner, p_org_slug => v_org_slug, p_scope => 'repo::deltest/repo',
+      p_key => 'k-del', p_force => true, p_key_scopes => array['repo::other/*']
+    );
+  exception when others then v_failed := true;
+  end;
+  assert v_failed,
+    'enforcement AC-4b: a key allowlisted elsewhere must not delete this scope';
+
+  -- The unrestricted default still deletes, so AC-4b denies on the key and not
+  -- on some unrelated failure.
+  select count(*) into v_count
+  from memory_delete(
+    p_user_id => v_owner, p_org_slug => v_org_slug, p_scope => 'repo::deltest/repo',
+    p_key => 'k-del', p_force => true
+  ) d where d.deleted;
+  assert v_count = 1,
+    'enforcement AC-4b: an unrestricted caller must still delete the org-owned memory';
+
   -- ── AC-5: the two ACTIVITY series are narrowed the same way ───────────────
   -- `lorekit_memory_scopes` is not the only per-scope catalog: GET
   -- /memories/activity and /read-activity also return one row per scope NAME,

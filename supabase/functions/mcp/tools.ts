@@ -467,6 +467,14 @@ export async function toolDelete(
         p_scope: scope,
         p_key: key,
         p_force: force,
+        // The calling key's restriction (00067/00068). This RPC picks its own
+        // rows, so there is no query for the transport to filter, and the
+        // dispatcher's refusal runs on the service-role client and is advisory
+        // — without these the org branch enforced the owner's ROLE and nothing
+        // about the key.
+        p_key_scopes: keyScoping?.scopes ?? [],
+        p_key_org_access: keyScoping?.orgAccess ?? 'all',
+        p_key_org_ids: keyScoping?.orgIds ?? [],
       })
       .single();
     if (error) {

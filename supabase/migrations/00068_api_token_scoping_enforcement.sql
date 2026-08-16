@@ -614,3 +614,139 @@ comment on function lorekit_read_activity(uuid, text, timestamptz, timestamptz, 
    account total stays complete. No org parameters — usage_events is a per-user
    ledger with no org axis. The key parameter defaults to unrestricted, so a
    non-key caller sees byte-for-byte 00058''s result.';
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 5. memory_delete
+--
+-- The delete twin of `memory_write`, and the last gate on the other mutation
+-- path the transports cannot stand in front of. `DELETE /memories?…&org=` and
+-- the MCP `memory.delete` tool both route their org form through this function,
+-- which chooses the rows itself — so there is no query left for the edge to
+-- filter, and a transport-side check is advisory anyway (service-role client).
+--
+-- Without the key parameters the org branch enforced `lorekit_org_can` and
+-- nothing else: a key whose tenancy is `personal`, or `selected` over a
+-- different org, could still hard-delete an org-owned memory as long as its
+-- OWNER held the capability. The scope axis is added for the same
+-- defence-in-depth reason it was added to `memory_write` — both dispatchers
+-- refuse a named scope outside the allowlist, and both are advisory.
+--
+-- Actor resolution, the capability gates and the personal branch are 00046
+-- verbatim; only the two guards and the three defaulted parameters are new.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+drop function if exists memory_delete(uuid, text, text, text, boolean);
+
+create or replace function memory_delete(
+  p_user_id  uuid,
+  p_org_slug text default null,
+  p_scope    text default null,
+  p_key      text default null,
+  p_force    boolean default false,
+  -- The CALLING KEY's restriction (00067), defaulted to unrestricted so every
+  -- existing caller — dashboard JWT, the Node path, CI on the service role —
+  -- keeps the pre-00068 behaviour with no call-site change.
+  p_key_scopes     text[] default '{}',
+  p_key_org_access text   default 'all',
+  p_key_org_ids    uuid[] default '{}'
+)
+returns table (deleted boolean, archived boolean)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_org_id uuid;
+  v_count  integer;
+  v_actor  uuid := case
+    when auth.role() = 'service_role' then coalesce(p_user_id, auth.uid())
+    else auth.uid()
+  end;
+begin
+  -- The scope allowlist, before either branch. LK002 for the same reason
+  -- `memory_write` uses it: `translateDbError` already maps it to a 403, so no
+  -- second mapping is needed on either surface.
+  if not lorekit_api_token_scope_allowed(p_key_scopes, p_scope) then
+    raise exception using errcode = 'LK002',
+      message = format('key_scope_denied: scope=%s', p_scope);
+  end if;
+
+  if p_org_slug is not null then
+    select o.id into v_org_id from orgs o where o.slug = p_org_slug;
+    if v_org_id is null then
+      raise exception using
+        errcode = 'P0001',
+        message = format('unknown_org: %s', p_org_slug);
+    end if;
+
+    -- The tenancy half. Checked BEFORE the capability gates so a key that may
+    -- not reach this org is refused on the key, not on its owner's role — the
+    -- two denials are different facts and `key_org_denied` is the true one.
+    if not lorekit_api_token_org_allowed(p_key_org_access, p_key_org_ids, v_org_id) then
+      raise exception using errcode = 'LK002',
+        message = format('key_org_denied: org=%s', p_org_slug);
+    end if;
+
+    if p_force then
+      if not lorekit_org_can(v_actor, v_org_id, 'hard_delete') then
+        raise exception using
+          errcode = 'LK002',
+          message = format('org_permission_denied: org=%s capability=hard_delete', p_org_slug);
+      end if;
+
+      delete from memories
+       where org_id = v_org_id and scope = p_scope and key = p_key;
+      get diagnostics v_count = row_count;
+
+      return query select (v_count > 0), false;
+    else
+      if not lorekit_org_can(v_actor, v_org_id, 'archive') then
+        raise exception using
+          errcode = 'LK002',
+          message = format('org_permission_denied: org=%s capability=archive', p_org_slug);
+      end if;
+
+      update memories
+         set archived_at = now()
+       where org_id = v_org_id and scope = p_scope and key = p_key and archived_at is null;
+      get diagnostics v_count = row_count;
+
+      return query select false, (v_count > 0);
+    end if;
+  else
+    -- Personal delete: scoped to the RESOLVED actor, never a named p_user_id.
+    if p_force then
+      delete from memories
+       where user_id = v_actor and scope = p_scope and key = p_key;
+      get diagnostics v_count = row_count;
+
+      return query select (v_count > 0), false;
+    else
+      update memories
+         set archived_at = now()
+       where user_id = v_actor and scope = p_scope and key = p_key and archived_at is null;
+      get diagnostics v_count = row_count;
+
+      return query select false, (v_count > 0);
+    end if;
+  end if;
+end;
+$$;
+
+-- 00046's revoke is carried over verbatim against the NEW signature: 00020
+-- granted `anon` EXPLICITLY, and `revoke … from public` does not remove a
+-- per-role grant, so anon must be named again here or a re-created function
+-- silently comes back reachable.
+revoke execute on function memory_delete(uuid, text, text, text, boolean, text[], text, uuid[])
+  from public, anon;
+grant execute on function memory_delete(uuid, text, text, text, boolean, text[], text, uuid[])
+  to authenticated, service_role;
+
+comment on function memory_delete(uuid, text, text, text, boolean, text[], text, uuid[]) is
+  'Archives (p_force=false) or hard-deletes (p_force=true) the effective
+   caller''s own memory, or an org''s memory when p_org_slug is given and the
+   actor holds the archive / hard_delete capability. Further gated by the
+   CALLING KEY''s scope allowlist and tenancy (00067): the org branch chooses
+   its rows inside this function, so no transport-side filter can cover it, and
+   both dispatchers run on the service-role client and are advisory. The key
+   parameters default to unrestricted, so a non-key caller is unaffected.';
