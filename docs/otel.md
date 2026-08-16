@@ -652,8 +652,9 @@ Four things not to "simplify":
   to catch it would also silence our own bugs.
 - **It drops only when EVERY source-bearing frame is an extension URL.** When an
   extension breaks our code the stack interleaves their frames with ours, and
-  that error is our bug — it stays. Anything unattributable (no stack, no frame
-  naming a source) is kept.
+  that error is our bug — it stays. When the stack proves nothing (no stack, or
+  no line naming a source) the event's `filename` is consulted instead, and the
+  error is kept unless that names an extension script.
 
 `preventDefault()` is deliberately not called, so the browser still logs the
 error to the console.

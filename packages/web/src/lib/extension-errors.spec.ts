@@ -160,6 +160,29 @@ describe('shouldIgnoreErrorFromExtension', () => {
     ).toBe(false);
   });
 
+  it('falls back to filename when the stack names no source at all', () => {
+    // A stack of `at <anonymous>` frames proves nothing, so it must not
+    // short-circuit the evidence the host DID give us.
+    expect(
+      shouldIgnoreErrorFromExtension({
+        stack: 'Error: boom\n    at <anonymous>\n    at Array.forEach (native)',
+        filename: 'chrome-extension://abcdefghijklmnop/inject.js',
+      }),
+    ).toBe(true);
+    expect(
+      shouldIgnoreErrorFromExtension({
+        stack: 'Error: boom\n    at <anonymous>',
+        filename: 'https://www.lorekit.io/app.js',
+      }),
+    ).toBe(false);
+  });
+
+  it('still keeps a frameless stack when filename names no extension either', () => {
+    expect(shouldIgnoreErrorFromExtension({ stack: 'Error: boom\n    at <anonymous>' })).toBe(
+      false,
+    );
+  });
+
   it('keeps anything it cannot attribute', () => {
     expect(shouldIgnoreErrorFromExtension(undefined)).toBe(false);
     expect(shouldIgnoreErrorFromExtension(null)).toBe(false);

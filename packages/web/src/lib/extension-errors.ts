@@ -115,11 +115,24 @@ function isExtensionFrame(line: string): boolean {
  */
 export function isExtensionOnlyStack(stack: string | undefined | null): boolean {
   if (!stack) return false;
+  return verdictOfStack(stack) === 'extension';
+}
 
+/**
+ * What a stack proves about origin.
+ *
+ * `unattributable` is the third state the boolean above collapses away: a stack
+ * exists but no line in it names a source (`at <anonymous>`, `at Array.forEach
+ * (native)`), so it is evidence of nothing — as distinct from `first-party`,
+ * where a frame of ours is positive proof the error is ours to keep. Callers
+ * with a second source of evidence need to tell those two apart.
+ */
+type StackVerdict = 'extension' | 'first-party' | 'unattributable';
+
+function verdictOfStack(stack: string): StackVerdict {
   const sourceFrames = stack.split('\n').filter(isSourceBearingFrame);
-  if (sourceFrames.length === 0) return false;
-
-  return sourceFrames.every(isExtensionFrame);
+  if (sourceFrames.length === 0) return 'unattributable';
+  return sourceFrames.every(isExtensionFrame) ? 'extension' : 'first-party';
 }
 
 /**
@@ -139,14 +152,25 @@ export type ErrorOrigin = {
 /**
  * Whether an error should be dropped before it reaches the SDK.
  *
- * The stack decides whenever there is one. `filename` is only consulted as a
- * fallback for a thrown non-`Error` value (`throw 'boom'`, `Promise.reject(x)`),
- * where there is no stack to read but the host still reports the script that
- * raised the event.
+ * The stack decides whenever it proves anything — an extension-only stack drops
+ * the error, and a single frame of ours keeps it, outranking `filename` in both
+ * directions.
+ *
+ * `filename` is consulted in the two cases where the stack does not: a thrown
+ * non-`Error` value (`throw 'boom'`, `Promise.reject(x)`) that has no stack at
+ * all, and a stack whose lines name no source (`at <anonymous>` and friends).
+ * Those two are the same situation — no evidence from the stack — so they take
+ * the same path; short-circuiting on the mere PRESENCE of a stack would keep an
+ * error the host had already told us came from `chrome-extension://…`.
  */
 export function shouldIgnoreErrorFromExtension(origin: ErrorOrigin | undefined | null): boolean {
   if (!origin) return false;
-  if (origin.stack) return isExtensionOnlyStack(origin.stack);
+
+  if (origin.stack) {
+    const verdict = verdictOfStack(origin.stack);
+    if (verdict !== 'unattributable') return verdict === 'extension';
+  }
+
   if (origin.filename) return isExtensionFrame(origin.filename);
   return false;
 }
