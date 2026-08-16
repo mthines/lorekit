@@ -84,6 +84,18 @@ export const OpensOnTheCurrentValue: Story = {
       const active = trigger.getAttribute('aria-activedescendant');
       await expect(document.getElementById(active ?? '')).toHaveTextContent('Expiring');
     });
+
+    await step('the listbox OMITS aria-multiselectable in this mode', async () => {
+      // The half `Combobox.tsx` argues for, and the counterpart of
+      // `MultiplePicksAccumulateWithoutClosing`'s `'true'` assertion: absent,
+      // not present-and-`false`. A `false` reads as a control that COULD take
+      // several and does not, which is the noise the conditional spread exists
+      // to remove — and asserting a value cannot tell absent from `false`, so
+      // assert absence.
+      await expect(menu.getByRole('listbox', { name: /status/i })).not.toHaveAttribute(
+        'aria-multiselectable',
+      );
+    });
   },
 };
 
