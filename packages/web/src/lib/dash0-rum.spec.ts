@@ -35,6 +35,7 @@ const {
   initDash0Rum,
   identifyDash0User,
   resetDash0Identity,
+  installExtensionErrorFilter,
 } = await import('./dash0-rum');
 
 const { __signalAttributes: signalAttributes } = (await import('@dash0/sdk-web')) as unknown as {
@@ -191,5 +192,130 @@ describe('signal identity attributes', () => {
 
   it('never writes its own page.url.path — the SDK derives one per signal', () => {
     expect(valuesOf('page.url.path')).toEqual([]);
+  });
+});
+
+/**
+ * The filter's job is to stop an extension's error before the SDK's own
+ * listener sees it, so what is asserted here is exactly that: a second listener
+ * — standing in for `@dash0/sdk-web`'s, registered after ours the way `init()`
+ * registers it after `installExtensionErrorFilter()` — must not run for an
+ * extension error, and must still run for one of ours.
+ *
+ * Origin classification itself lives in `extension-errors.spec.ts`; these specs
+ * only prove the wiring.
+ */
+describe('installExtensionErrorFilter', () => {
+  const EXTENSION_STACK = [
+    "TypeError: Cannot read properties of undefined (reading 'M_ID')",
+    '    at Z (chrome-extension://eppiocemhmnlbhjplcgkofciiegomcon/executors/200.js:1:761)',
+  ].join('\n');
+
+  const FIRST_PARTY_STACK = [
+    'TypeError: cannot read scope of null',
+    '    at LoreList (https://www.lorekit.io/_next/static/chunks/page.js:1:761)',
+  ].join('\n');
+
+  /** Subscribe a stand-in for the SDK, AFTER the filter, as `init()` does. */
+  const attachSdkListener = (target: EventTarget, type: string) => {
+    const listener = vi.fn();
+    target.addEventListener(type, listener);
+    return listener;
+  };
+
+  const dispatch = (target: EventTarget, type: string, props: Record<string, unknown>) => {
+    const event = new Event(type, { cancelable: true });
+    Object.assign(event, props);
+    target.dispatchEvent(event);
+  };
+
+  it('hides an extension-only unhandled rejection from the SDK', () => {
+    const target = new EventTarget();
+    const teardown = installExtensionErrorFilter(target);
+    const sdk = attachSdkListener(target, 'unhandledrejection');
+
+    dispatch(target, 'unhandledrejection', { reason: { stack: EXTENSION_STACK } });
+
+    expect(sdk).not.toHaveBeenCalled();
+    teardown();
+  });
+
+  it('lets a first-party unhandled rejection through', () => {
+    const target = new EventTarget();
+    const teardown = installExtensionErrorFilter(target);
+    const sdk = attachSdkListener(target, 'unhandledrejection');
+
+    dispatch(target, 'unhandledrejection', { reason: { stack: FIRST_PARTY_STACK } });
+
+    expect(sdk).toHaveBeenCalledOnce();
+    teardown();
+  });
+
+  it('hides an extension-only uncaught error from the SDK', () => {
+    const target = new EventTarget();
+    const teardown = installExtensionErrorFilter(target);
+    const sdk = attachSdkListener(target, 'error');
+
+    dispatch(target, 'error', {
+      error: { stack: EXTENSION_STACK },
+      filename: 'chrome-extension://eppiocemhmnlbhjplcgkofciiegomcon/executors/200.js',
+    });
+
+    expect(sdk).not.toHaveBeenCalled();
+    teardown();
+  });
+
+  it('lets a first-party uncaught error through', () => {
+    const target = new EventTarget();
+    const teardown = installExtensionErrorFilter(target);
+    const sdk = attachSdkListener(target, 'error');
+
+    dispatch(target, 'error', {
+      error: { stack: FIRST_PARTY_STACK },
+      filename: 'https://www.lorekit.io/_next/static/chunks/page.js',
+    });
+
+    expect(sdk).toHaveBeenCalledOnce();
+    teardown();
+  });
+
+  it('keeps an error it cannot attribute — a rejection with no stack at all', () => {
+    const target = new EventTarget();
+    const teardown = installExtensionErrorFilter(target);
+    const sdk = attachSdkListener(target, 'unhandledrejection');
+
+    dispatch(target, 'unhandledrejection', { reason: 'boom' });
+
+    expect(sdk).toHaveBeenCalledOnce();
+    teardown();
+  });
+
+  it('does not cancel the event — the browser still logs it to the console', () => {
+    const target = new EventTarget();
+    const teardown = installExtensionErrorFilter(target);
+
+    const event = new Event('unhandledrejection', { cancelable: true });
+    Object.assign(event, { reason: { stack: EXTENSION_STACK } });
+    target.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
+    teardown();
+  });
+
+  it('stops filtering once torn down', () => {
+    const target = new EventTarget();
+    const teardown = installExtensionErrorFilter(target);
+    teardown();
+    const sdk = attachSdkListener(target, 'unhandledrejection');
+
+    dispatch(target, 'unhandledrejection', { reason: { stack: EXTENSION_STACK } });
+
+    expect(sdk).toHaveBeenCalledOnce();
+  });
+
+  it('is a no-op outside the browser rather than throwing', () => {
+    // `instrumentation-client.ts` is evaluated server-side during static
+    // prerendering, where there is no `window` to subscribe on.
+    expect(() => installExtensionErrorFilter()()).not.toThrow();
   });
 });

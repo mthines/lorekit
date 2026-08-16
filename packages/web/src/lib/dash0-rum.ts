@@ -32,6 +32,7 @@
 import { init, identify } from '@dash0/sdk-web';
 
 import { resolveAnonymousId } from './anonymous-id';
+import { shouldIgnoreErrorFromExtension, stackOfUnknown } from './extension-errors';
 import { supabaseOriginPattern } from './otel-origins';
 
 /** OTel `service.name` for the browser bundle. Matches the server runtime. */
@@ -127,6 +128,69 @@ export function buildVcsSignalAttributes(): Record<string, string> {
 }
 
 /**
+ * Stop browser-extension errors from reaching the SDK's error instrumentation.
+ *
+ * ## Why this is a listener and not SDK config
+ *
+ * sdk-web 0.23.0 filters errors by MESSAGE only (`ignoreErrorMessages`), and
+ * the extension messages we see are indistinguishable from real first-party
+ * ones — see `extension-errors.ts` for the measurements. The stack is the only
+ * reliable discriminator, and the sole point where we can act on it before the
+ * SDK records the event is the DOM event itself.
+ *
+ * ## Why it must run before `init()`
+ *
+ * The SDK subscribes at `init()`: `window.addEventListener('unhandledrejection', …)`
+ * for rejections, and an override of `window.onerror` for uncaught errors. Both
+ * are listeners on `window`, which fire in registration order, so registering
+ * FIRST is what lets `stopImmediatePropagation()` preempt them. Registering
+ * after `init()` would be a silent no-op — the SDK would already have recorded
+ * the event by the time we ran.
+ *
+ * `stopImmediatePropagation()` also hides these events from any other listener
+ * on `window` (a dev overlay, say). That is intended: an error with no frame of
+ * ours in it is not ours to surface. `preventDefault()` is deliberately NOT
+ * called, so the browser still logs it to the console and the extension's own
+ * error handling is untouched.
+ *
+ * @param target the event target to subscribe on; defaults to `window`.
+ * @returns a teardown function removing both listeners, for tests.
+ */
+export function installExtensionErrorFilter(target?: EventTarget): () => void {
+  const eventTarget = target ?? (typeof window === 'undefined' ? undefined : window);
+  if (!eventTarget) return () => undefined;
+
+  const onError = (event: Event) => {
+    const { error, filename } = event as ErrorEvent;
+    if (shouldIgnoreErrorFromExtension({ stack: stackOfUnknown(error), filename })) {
+      event.stopImmediatePropagation();
+    }
+  };
+
+  const onRejection = (event: Event) => {
+    const { reason } = event as PromiseRejectionEvent;
+    if (shouldIgnoreErrorFromExtension({ stack: stackOfUnknown(reason) })) {
+      event.stopImmediatePropagation();
+    }
+  };
+
+  // Capture phase, so the listener is in place for events dispatched at
+  // descendants of `window` as well as at `window` itself. Passed as an options
+  // OBJECT rather than the legacy boolean: node's `EventTarget` — which the
+  // specs run against — ignores a boolean `capture` on `removeEventListener`,
+  // so the boolean form would leak the listener there.
+  const capture = { capture: true } as const;
+
+  eventTarget.addEventListener('error', onError, capture);
+  eventTarget.addEventListener('unhandledrejection', onRejection, capture);
+
+  return () => {
+    eventTarget.removeEventListener('error', onError, capture);
+    eventTarget.removeEventListener('unhandledrejection', onRejection, capture);
+  };
+}
+
+/**
  * Initialise the Dash0 Web SDK exactly once per page load and identify the
  * visitor anonymously.
  *
@@ -144,6 +208,10 @@ export function initDash0Rum(): boolean {
   if (!isValidOtlpEndpoint(endpoint) || !authToken) return false;
 
   initialized = true;
+
+  // BEFORE init(): the SDK subscribes to `unhandledrejection` and takes over
+  // `window.onerror` inside init(), and listener order is registration order.
+  installExtensionErrorFilter();
 
   init({
     serviceName: SERVICE_NAME,
