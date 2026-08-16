@@ -826,6 +826,106 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
     });
   });
 
+  // ── The body transport (POST /list, /facets, /activity) ─────────────────────
+  // The scalability half of the filter bar, against a live stack. The unit specs
+  // prove the SERIALISER and the SCHEMA disagree with the query string past
+  // ~50-75 values in one dimension; only this suite can prove the deployed
+  // handler answers 400 there and 200 over the body — and, crucially, that the
+  // two transports return the SAME rows, which is the whole point of routing
+  // both through one predicate function.
+  describe('the body transport scales where the query string does not', () => {
+    const AGENT = `${KEY_PREFIX}-body-agent`;
+    const KEY_BODY = NS.name('body-a');
+    const KEY_BODY_COMMA = NS.name('body-comma');
+    // Reachable ONLY over the body: `?origin_branch=` splits on the comma
+    // before the value is ever quoted, so this arrives as two values there.
+    const BRANCH_COMMA = `${KEY_PREFIX}/br,anch`;
+
+    /** A dimension wide enough that the query form cannot carry it. */
+    const WIDE = Array.from({ length: 200 }, (_, i) => `${KEY_PREFIX}-filler-host-${i}`);
+
+    beforeAll(async () => {
+      if (SKIP) return;
+      const { status } = await api('POST', '/', {
+        scope: SCOPE, key: KEY_BODY, value: 'body transport', source_agent: AGENT,
+      });
+      expect(status).toBe(201);
+      const created = await api('POST', '/', {
+        scope: SCOPE, key: KEY_BODY_COMMA, value: 'comma branch', origin_branch: BRANCH_COMMA,
+      });
+      expect(created.status).toBe(201);
+    }, REMOTE_TEST_TIMEOUT);
+
+    it('GET /memories rejects a dimension past the 2048-character cap', async () => {
+      const { status, data } = await api(
+        'GET', `/?scope=${SCOPE}&limit=100&host=${encodeURIComponent(WIDE.join(','))}`,
+      );
+      expect(status, `expected 400; got ${status}: ${JSON.stringify(data)}`).toBe(400);
+    });
+
+    it('POST /memories/list accepts the same dimension and answers 200', async () => {
+      const { status, data } = await api('POST', '/list', {
+        scope: SCOPE, limit: 100, source_agent: [AGENT], host: WIDE, host_mode: 'nin',
+      });
+      expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+      const keys = ((data as JsonObj).entries as JsonObj[]).map((e) => String(e.key));
+      expect(keys, 'a `nin` over 200 unrelated hosts excludes nothing').toContain(KEY_BODY);
+    });
+
+    it('POST /memories/list returns exactly what the equivalent GET returns', async () => {
+      const query = await api('GET', `/?scope=${SCOPE}&limit=100&source_agent=${encodeURIComponent(AGENT)}`);
+      const body = await api('POST', '/list', { scope: SCOPE, limit: 100, source_agent: [AGENT] });
+      expect(query.status).toBe(200);
+      expect(body.status).toBe(200);
+      const keysOf = (r: { data: unknown }) =>
+        ((r.data as JsonObj).entries as JsonObj[]).map((e) => String(e.key));
+      // ONE predicate function behind both decoders — so this is an identity,
+      // not a coincidence worth tolerating a small difference in.
+      expect(keysOf(body)).toEqual(keysOf(query));
+    });
+
+    it('POST /memories/list matches a value containing a comma, which the query form cannot', async () => {
+      const { status, data } = await api('POST', '/list', {
+        scope: SCOPE, limit: 100, origin_branch: [BRANCH_COMMA],
+      });
+      expect(status, `expected 200; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+      const keys = ((data as JsonObj).entries as JsonObj[]).map((e) => String(e.key));
+      expect(keys).toContain(KEY_BODY_COMMA);
+      expect(keys).not.toContain(KEY_BODY);
+    });
+
+    it('POST /memories/list rejects a dimension past the documented value bound', async () => {
+      const { status } = await api('POST', '/list', {
+        scope: SCOPE, host: Array.from({ length: 1001 }, (_, i) => `h${i}`),
+      });
+      expect(status, 'the bound is a safety limit, and it is enforced').toBe(400);
+    });
+
+    it('POST /memories/facets and /activity take the same wide filter', async () => {
+      const facets = await api('POST', '/facets', { scope: SCOPE, host: WIDE, host_mode: 'nin' });
+      expect(facets.status, `facets: ${JSON.stringify(facets.data)}`).toBe(200);
+      expect(Array.isArray((facets.data as JsonObj).facets)).toBe(true);
+
+      const activity = await api('POST', '/activity', {
+        scope: SCOPE, bucket: 'day', host: WIDE, host_mode: 'nin',
+      });
+      expect(activity.status, `activity: ${JSON.stringify(activity.data)}`).toBe(200);
+      expect(Array.isArray((activity.data as JsonObj).buckets)).toBe(true);
+    });
+
+    it('POST /memories/list paginates with the same cursor contract as the GET form', async () => {
+      const first = await api('POST', '/list', { scope: SCOPE, limit: 1 });
+      expect(first.status).toBe(200);
+      const page = first.data as JsonObj;
+      if (!page.hasMore) return;
+      const next = await api('POST', '/list', { scope: SCOPE, limit: 1, cursor: page.nextCursor });
+      expect(next.status, `expected 200; got ${JSON.stringify(next.data)}`).toBe(200);
+      const firstKey = ((page.entries as JsonObj[])[0] as JsonObj).key;
+      const nextKey = (((next.data as JsonObj).entries as JsonObj[])[0] as JsonObj)?.key;
+      expect(nextKey, 'the second page must not repeat the first row').not.toBe(firstKey);
+    });
+  });
+
   // ── "Expiring soon" (?expiring_within_days=) ────────────────────────────────
   // The half of the feature `migrations.test.sql` §75 cannot reach. That section
   // asserts the PREDICATE over seeded rows (including boundary rows a live suite
