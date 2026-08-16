@@ -2,8 +2,9 @@
 -- API token scoping, part 2 of 2: the SQL-side enforcement.
 --
 -- 00067 added the data model (`api_tokens.scopes` / `org_access` / `org_ids`)
--- and the two predicates, and enforced nothing. This migration teaches the four
--- functions that the transports CANNOT stand in front of:
+-- and the two predicates, and enforced nothing. This migration teaches the SEVEN
+-- functions that the transports CANNOT stand in front of — two mutation gates
+-- and five per-scope aggregates — and re-issues one of 00067's own predicates:
 --
 --   1. `memory_write` — the last unbypassable gate on the write path, on BOTH
 --      axes. The edge holds the service-role key, so every check above this
@@ -17,12 +18,22 @@
 --      scope string IS a repo or project name, so a key narrowed to one repo
 --      could still enumerate every repo on the account.
 --
---   3. `lorekit_memory_activity` and 4. `lorekit_read_activity` — the other two
---      per-scope catalogs. They return one row per scope NAME too, so narrowing
---      only `lorekit_memory_scopes` would move the leak from the catalog to the
---      charts rather than close it.
+--   3. `lorekit_memory_activity`, 4. `lorekit_read_activity`, 5. `lorekit_memory_tags`
+--      and 6. `lorekit_memory_facets` — the other four per-scope aggregates. Each
+--      returns one row per scope, label or repo NAME, and `_facets`'s
+--      `origin_repo` is a repository name outright — so narrowing only
+--      `lorekit_memory_scopes` would move the leak to the charts and the filter
+--      pills rather than close it. `lorekit_usage_stats` is deliberately NOT in
+--      this list: it rolls up by the bounded `scope_type`, never a name.
 --
--- Both take the calling key's restriction as DEFAULTED trailing parameters, so
+--   7. `memory_delete` — the delete twin of `memory_write`. Its org branch picks
+--      its own rows, so no transport-side filter can reach them.
+--
+-- And `lorekit_api_token_scope_allowed` itself is re-issued (section 8) so a
+-- stored pattern outside `SCOPE_PATTERN`'s shape is dropped rather than widening
+-- the key.
+--
+-- All of them take the calling key's restriction as DEFAULTED trailing parameters, so
 -- every existing caller — a dashboard JWT, the Node `mcp-server`, CI on the
 -- service role — keeps the pre-00068 behaviour with no call-site change, and an
 -- unscoped key is byte-for-byte unaffected.
@@ -38,7 +49,7 @@
 -- the default — passing `('all', '{}')` is what every non-key caller already
 -- does. The failure mode of a forged value is therefore self-denial.
 --
--- ── Why both functions are DROPped first ──────────────────────────────────
+-- ── Why the changed signatures are DROPped first ──────────────────────────
 --
 -- Adding a defaulted parameter does not replace the old signature, it creates
 -- an OVERLOAD — and then every existing call becomes ambiguous. Forward-only,
