@@ -65,30 +65,9 @@ export function tokenPrefixFor(permissions: readonly Permission[]): 'rw' | 'ro' 
   throw new Error('tokenPrefixFor: permissions must include at least "read" or "write"');
 }
 
-/**
- * Tools that operate over the caller's WHOLE account and carry no scope.
- *
- * A scoped key must not reach them: `memory.purge` and `memory.purge_expired`
- * hard-delete rows across every scope the owner has, and a key narrowed to one
- * repo has no business sweeping the account. There is no scope argument to
- * refuse and no query to narrow — the row set is chosen inside the RPC — so the
- * only available answer is to refuse the CALL.
- *
- * Named explicitly rather than derived from "takes no scope argument": that
- * would also catch `memory.scopes`, which is narrowed rather than refused
- * because it returns a catalog and an empty catalog is a truthful answer.
- */
-export const ACCOUNT_WIDE_TOOLS: ReadonlySet<string> = new Set([
-  'memory.purge',
-  'memory.purge_expired',
-]);
-
-/**
- * Is this tool refused outright for a key carrying a scope allowlist?
- *
- * Total, and false for an unrestricted key — scoping must not change behaviour
- * for a token nobody scoped.
- */
-export function isRefusedForScopedKey(toolName: string, hasScopeAllowlist: boolean): boolean {
-  return hasScopeAllowlist && ACCOUNT_WIDE_TOOLS.has(toolName);
-}
+// `ACCOUNT_WIDE_TOOLS` / `isRefusedForScopedKey` used to live here. They moved
+// to `../_shared/account-wide-tools.ts` when the REST purge endpoints needed the
+// same decision: the REST tree cannot cross-import this directory, so a rule
+// kept in this file could only ever be copied, and the copy is what let
+// `POST /memories/purge` ship with no key gate while the docs said it was
+// refused.

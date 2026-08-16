@@ -137,8 +137,26 @@ describe('account-wide tool guard', () => {
     expect(handler).toContain('isRefusedForScopedKey(toolName');
   });
 
+  // The REST twins of the two MCP sweeps. They shipped ungated while
+  // `docs/api-tokens.md` said they were refused, which is the same
+  // documented-but-unimplemented shape this whole describe block exists for —
+  // one surface down.
+  it('both REST purge handlers refuse an account-wide sweep on a scoped key', () => {
+    const src = readFileSync(
+      path.resolve(here, '../../../supabase/functions/memories/handlers/purge.ts'),
+      'utf8',
+    );
+    expect(src).toContain("refuseAccountWideSweep(auth, 'memory.purge',");
+    expect(src).toContain("refuseAccountWideSweep(auth, 'memory.purge_expired',");
+    // The decision itself must be IMPORTED, never restated: a third copy of
+    // "which operations are account-wide" is how these two drifted apart.
+    expect(src).toMatch(
+      /import\s*\{[^}]*\bisRefusedForScopedKey\b[^}]*\}\s*from\s*['"]\.\.\/\.\.\/_shared\/account-wide-tools\.(ts|js)['"]/,
+    );
+  });
+
   it('names exactly the two sweeps, in both copies of the pure module', async () => {
-    const { ACCOUNT_WIDE_TOOLS, isRefusedForScopedKey } = await import('./permissions.js');
+    const { ACCOUNT_WIDE_TOOLS, isRefusedForScopedKey } = await import('./account-wide-tools.js');
     expect([...ACCOUNT_WIDE_TOOLS].sort()).toEqual(['memory.purge', 'memory.purge_expired']);
     // An unrestricted key is untouched — scoping must not change behaviour for
     // a token nobody scoped.
@@ -149,7 +167,7 @@ describe('account-wide tool guard', () => {
     expect(isRefusedForScopedKey('memory.scopes', true)).toBe(false);
 
     const edge = readFileSync(
-      path.resolve(here, '../../../supabase/functions/mcp/permissions.ts'),
+      path.resolve(here, '../../../supabase/functions/_shared/account-wide-tools.ts'),
       'utf8',
     );
     expect(edge).toContain("'memory.purge',");

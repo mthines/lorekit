@@ -29,7 +29,8 @@ import {
 } from './tools.ts';
 import { type Span } from '../_shared/otel.ts';
 import { LimitError, recordUsageEvent, getUserPlanName } from './limits.ts';
-import { toolRequires, isRefusedForScopedKey } from './permissions.ts';
+import { toolRequires } from './permissions.ts';
+import { isRefusedForScopedKey, accountWideRefusalMessage } from '../_shared/account-wide-tools.ts';
 import { wireTools } from '../_shared/schemas/tool-catalog.ts';
 import { countRecords, parseCorrelationId, parseUsageClient, usageToolKind } from '../_shared/usage-stats.ts';
 import { resolveKindHost } from '../_shared/schemas/tags.ts';
@@ -237,12 +238,7 @@ export async function handleMcp(req: Request, auth: AuthContext, span: Span, ada
         span
           .clientError('PermissionDenied: account-wide tool on a scoped token')
           .setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_account_wide' });
-        return jsonrpcError(
-          id,
-          JSONRPC_FORBIDDEN,
-          `"${toolName}" operates across your whole account, so it is not available to a ` +
-            'token restricted to specific scopes. Use an unscoped token for maintenance sweeps.',
-        );
+        return jsonrpcError(id, JSONRPC_FORBIDDEN, accountWideRefusalMessage(toolName));
       }
       if (restriction && restriction.scopes.length > 0) {
         // `scopes` (plural) is `memory.search`'s array argument. EVERY named
