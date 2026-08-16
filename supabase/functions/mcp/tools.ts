@@ -607,7 +607,14 @@ export async function toolArchive(
   params: Params,
   userId: string | null,
   span: Span,
-  keyScoping?: KeyRestriction,
+  // Unused, and that is a decision rather than an oversight — marked the way
+  // toolPurge marks its own. This tool and toolRestore address a memory by a
+  // NAMED scope, so the dispatcher's early refusal is the whole key gate: a
+  // scope outside the allowlist never reaches here. Unlike the reads there is
+  // no result set to narrow, and unlike memory_write / memory_delete there is
+  // no RPC underneath to hand the restriction to — the mutation is a direct
+  // query keyed on the scope that was already checked.
+  _keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
@@ -673,7 +680,9 @@ export async function toolRestore(
   params: Params,
   userId: string | null,
   span: Span,
-  keyScoping?: KeyRestriction,
+  // Named-scope mutation with no result set and no RPC underneath — the same
+  // recorded decision as toolArchive above. The dispatcher's refusal is the gate.
+  _keyScoping?: KeyRestriction,
 ) {
   const { scope: rawScope, key } = params;
   if (!rawScope || !key) throw new Error('scope and key are required');
