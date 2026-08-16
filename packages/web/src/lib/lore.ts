@@ -24,13 +24,14 @@ import { clampPageSize } from '@/lib/pagination/keyset';
 import { dateRangeBounds, type DateRangeInput } from '@/lib/pagination/filters';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { normalizeTags } from '@/lib/tag-filter';
-import { filtersToQueryParams, normalizeFilters, type Filter } from '@/lib/filters';
+import { filtersToBody, normalizeFilters, type Filter } from '@/lib/filters';
 import { lessonFromMemoryEntry } from '@/lib/lesson-entry';
 import { serverAccessToken } from '@/lib/api/session-server';
 import { RestApiError } from '@/lib/api/rest';
 import {
   archiveMemoryRequest,
   listMemoriesRequest,
+  listMemoriesPostRequest,
   purgeMemoriesRequest,
   restoreMemoryRequest,
   updateMemoryRequest,
@@ -178,8 +179,8 @@ export interface MemoryFilters {
   /**
    * The Explorer's filter bar: one condition per dimension (label / agent /
    * trigger / repo / branch / pull request), OR within a dimension and AND
-   * across them. Translated by the pure `filtersToQueryParams`, which is the
-   * single place the UI vocabulary meets the query-param vocabulary.
+   * across them. Translated by the pure `filtersToBody`, which is the
+   * single place the UI vocabulary meets the wire vocabulary.
    */
   filters?: Filter[];
   /** Page size, default 50, hard max 100. */
@@ -212,10 +213,21 @@ const EMPTY_PAGE: MemoryPage = { rows: [], nextCursor: null, hasMore: false };
  * List a keyset page of the memories the caller can see, newest first, with
  * optional combinable filters (scope / substring / date interval / labels).
  *
- * Ordering is `created_at desc` — `?sort=created_at` — not the route's
- * `updated_at` default: a memory migrated with a backdated `created_at` belongs
- * at its original position in the Explorer, which is the order the list has
- * always been in.
+ * Ordering is `updated_at desc` — the route's default, and now the Explorer's.
+ * It used to be `created_at desc`, on the argument that a memory migrated with
+ * a backdated `created_at` belongs at its original position. That argument
+ * describes the IMPORT, not the reading: a lesson written twice is a lesson
+ * that still matters, and under `created_at` it sank to wherever it first
+ * appeared while an untouched row from the same week sat above it. Every other
+ * read in the product — `GET /memories`, the MCP `memory.list`, the CLI —
+ * already ordered by `updated_at`, so the Explorer was the one surface
+ * answering "newest" differently from everything else.
+ *
+ * The cursor encodes which order minted it (`_shared/api/paginate.ts`), so a
+ * link paginated under the old order restarts cleanly rather than mis-paging.
+ *
+ * Sent over `POST /memories/list`: the filter bar's dimensions are unbounded,
+ * and the query transport caps each at 2048 characters.
  *
  * Fails closed to an empty page on auth failure or API error — read-only, so
  * failing closed is safe.
@@ -238,10 +250,10 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
       : normalizeFilters([...explicit, { field: 'label', operator: 'all', values: legacyTags }]);
 
   try {
-    const page = await listMemoriesRequest(token, {
+    const page = await listMemoriesPostRequest(token, {
       limit: pageSize,
-      sort: 'created_at',
-      archived: filters.showArchived ? 'true' : 'false',
+      sort: 'updated_at',
+      archived: filters.showArchived ?? false,
       ...(filters.expiringWithinDays !== undefined
         ? { expiring_within_days: filters.expiringWithinDays }
         : {}),
@@ -249,8 +261,8 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
       ...(filters.search ? { q: filters.search } : {}),
       ...(bounds.gte ? { created_since: bounds.gte } : {}),
       ...(bounds.lt ? { created_until: bounds.lt } : {}),
-      // OR within a dimension, AND across dimensions — see `filtersToQueryParams`.
-      ...filtersToQueryParams(bar),
+      // OR within a dimension, AND across dimensions — see `filtersToBody`.
+      ...filtersToBody(bar),
       ...(filters.cursor ? { cursor: filters.cursor } : {}),
     });
 

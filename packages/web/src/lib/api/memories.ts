@@ -11,10 +11,13 @@
  */
 
 import type {
+  ActivityBody,
   ActivityQuery,
   ActivityResponse,
   FacetsResponse,
+  ListFacetsBody,
   ListFacetsQuery,
+  ListMemoriesBody,
   ListMemoriesQuery,
   MemoryEntry,
   MemoryPageResponse,
@@ -38,6 +41,30 @@ export function listMemoriesRequest(
   return restFetch<MemoryPageResponse>('/memories', {
     accessToken,
     query: { ...params },
+    ...(signal ? { signal } : {}),
+  });
+}
+
+/**
+ * `POST /memories/list` — the same read as {@link listMemoriesRequest}, with the
+ * filters in a JSON body.
+ *
+ * The transport the dashboard uses, and the reason there are two: the query
+ * form caps each dimension at 2048 characters, so a filter bar with enough
+ * values is a 400 the Explorer can only render as "Failed to load memories",
+ * and even under that cap a wide bar composes a URL past what the gateway
+ * carries. Both routes run the same predicate function server-side, so this is
+ * a transport choice and nothing else.
+ */
+export function listMemoriesPostRequest(
+  accessToken: string,
+  body: Partial<ListMemoriesBody>,
+  signal?: AbortSignal,
+): Promise<MemoryPageResponse> {
+  return restFetch<MemoryPageResponse>('/memories/list', {
+    accessToken,
+    method: 'POST',
+    body,
     ...(signal ? { signal } : {}),
   });
 }
@@ -94,6 +121,27 @@ export function listFacetsRequest(
   });
 }
 
+/**
+ * `POST /memories/facets` — the drill-down catalog, over a body.
+ *
+ * The menu passes the whole active filter bar so its counts drill down, which
+ * means it meets the query string's per-dimension cap at exactly the width the
+ * list does. Switching the list alone would leave the Explorer rendering rows
+ * with a 400 where the counts should be.
+ */
+export function listFacetsPostRequest(
+  accessToken: string,
+  body: Partial<ListFacetsBody>,
+  signal?: AbortSignal,
+): Promise<FacetsResponse> {
+  return restFetch<FacetsResponse>('/memories/facets', {
+    accessToken,
+    method: 'POST',
+    body,
+    ...(signal ? { signal } : {}),
+  });
+}
+
 export function activityRequest(
   accessToken: string,
   params: Partial<ActivityQuery>,
@@ -102,6 +150,25 @@ export function activityRequest(
   return restFetch<ActivityResponse>('/memories/activity', {
     accessToken,
     query: { ...params },
+    ...(signal ? { signal } : {}),
+  });
+}
+
+/**
+ * `POST /memories/activity` — the written-volume series, over a body.
+ *
+ * The Explorer's stat header sends the same filter bar the list does, so it
+ * shares the list's ceiling and needs the same transport.
+ */
+export function activityPostRequest(
+  accessToken: string,
+  body: Partial<ActivityBody>,
+  signal?: AbortSignal,
+): Promise<ActivityResponse> {
+  return restFetch<ActivityResponse>('/memories/activity', {
+    accessToken,
+    method: 'POST',
+    body,
     ...(signal ? { signal } : {}),
   });
 }

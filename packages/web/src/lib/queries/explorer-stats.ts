@@ -32,9 +32,9 @@
 
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { browserAccessToken } from '@/lib/api/session-browser';
-import { activityRequest, readActivityRequest, usageRequest } from '@/lib/api/memories';
+import { activityPostRequest, readActivityRequest, usageRequest } from '@/lib/api/memories';
 import { trendRowsFromActivity, type CountBucketRow, type TrendRow } from '@/lib/aggregations';
-import type { ActivityQuery } from '@lorekit/schemas/memory';
+import type { ActivityBody } from '@lorekit/schemas/memory';
 import { resolveRange, type BucketUnit, type TimeRange } from '@/lib/time-range';
 
 export interface ExplorerStatsData {
@@ -107,7 +107,7 @@ export function statsWindow(
 
 async function fetchExplorerStats(
   scope: string | null,
-  filters: Partial<ActivityQuery>,
+  filters: Partial<ActivityBody>,
   bucket: BucketUnit,
   since: string,
   until: string,
@@ -121,7 +121,7 @@ async function fetchExplorerStats(
     // the response is aggregated per (bucket, scope) and carries no per-memory
     // tag/agent/repo, so a dimension filter CANNOT be applied client-side — the
     // written/scopes counts have to be narrowed in the RPC to agree with the list.
-    activityRequest(token, { bucket, since, until, ...(scope ? { scope } : {}), ...filters }, signal),
+    activityPostRequest(token, { bucket, since, until, ...(scope ? { scope } : {}), ...filters }, signal),
     // Read follows scope + range ONLY: usage_events has no per-memory dimension,
     // so a label/repo filter is unanswerable for reads (the Read card is
     // scope-level by design). `scope` still goes server-side (00058) because the
@@ -151,7 +151,7 @@ async function fetchExplorerStats(
  */
 export function useExplorerStats(
   scope: string | null,
-  filters: Partial<ActivityQuery>,
+  filters: Partial<ActivityBody>,
   bucket: BucketUnit,
   since: string,
   until: string,

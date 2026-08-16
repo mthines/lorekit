@@ -15,7 +15,7 @@
  * ## What follows the filter, and what cannot
  *
  * **Written and Scopes follow the scope, range, and every DIMENSION filter** —
- * `ExplorerStats` sends the filter bar to `/activity` via `filtersToQueryParams`
+ * `ExplorerStats` sends the filter bar to `/activity` via `filtersToActivityBody`
  * (the same translation the list uses), and migration 00063 applies it in the
  * RPC, so these two cards count exactly the list's set for that slice.
  *
@@ -60,7 +60,7 @@ import {
   rangeLabel,
   type TimeRange,
 } from '@/lib/time-range';
-import { filtersToQueryParams, requireField, type Filter } from '@/lib/filters';
+import { filtersToActivityBody, requireField, type Filter } from '@/lib/filters';
 
 /**
  * Shorter labels for the collapsed strip.
@@ -136,9 +136,9 @@ export function ExplorerStats({
   const queryWindow = useMemo(() => statsWindow(shown, nowIso), [shown, nowIso]);
 
   // The dimension filters as `/activity` query params — the SAME translation the
-  // list uses (`filtersToQueryParams`), so the header counts the list's set. Read
+  // list uses (`filtersToActivityBody`), so the header counts the list's set. Read
   // ignores them (scope-level), applied inside the query for Written/Scopes only.
-  const activityFilters = useMemo(() => filtersToQueryParams(filters), [filters]);
+  const activityFilters = useMemo(() => filtersToActivityBody(filters), [filters]);
 
   const { data, isLoading, isError, isFetching } = useExplorerStats(
     scope,
