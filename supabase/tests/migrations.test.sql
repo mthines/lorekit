@@ -6173,6 +6173,18 @@ begin
     returning id into v_org;
   insert into org_members (org_id, user_id, role) values (v_org, v_owner, 'owner');
 
+  -- Adopt the service-role claim BEFORE any assertion, exactly as §80 does for
+  -- lorekit_memory_scopes. Every aggregate 00068 re-issues resolves its actor
+  -- with `case when auth.role() = 'service_role' then coalesce(p_user_id,
+  -- auth.uid()) else auth.uid() end`, and memory_delete resolves its actor the
+  -- same way. Without the claim `auth.role()` is NULL, so v_actor collapses to a
+  -- NULL auth.uid(): the aggregates return NO rows and the AC-4/5/6 "must see"
+  -- asserts fail while every "must not see" assert passes VACUOUSLY — the worst
+  -- of both, since the narrowing this section exists to prove would be untested.
+  -- Only the claim is set (no `set local role`), because auth.role() reads
+  -- request.jwt.claims and the inserts above need the harness's own privileges.
+  perform set_config('request.jwt.claims', '{"role":"service_role"}', true);
+
   -- ── AC-1: an unscoped caller is completely unaffected ─────────────────────
   -- The defaults must reproduce the pre-00068 behaviour exactly, or this
   -- migration is a regression for every existing key, JWT session and CI run.
@@ -6428,6 +6440,11 @@ begin
   from lorekit_memory_tags(p_user_id => v_owner) t where t.tag = 'tag-beta';
   assert v_count = 1,
     'enforcement AC-6: an unrestricted caller must still see every label';
+
+  -- Leave the session as this block found it, so a section appended after this
+  -- one does not silently inherit a service-role actor (§80's `reset role` +
+  -- empty-claims pairing, minus the role it never set).
+  perform set_config('request.jwt.claims', '', true);
 end;
 $$;
 
