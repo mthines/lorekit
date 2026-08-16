@@ -27,6 +27,77 @@ Tokens are stored as **SHA-256 hashes** in the database. The full token is shown
 5. Choose **Read + Write**, **Read only**, or **Write only**
 6. Copy the token from the amber banner — it won't be shown again
 
+## Scoping a token
+
+> **Not enforced yet.** This section describes the data model and the two
+> request-time predicates, which is all that ships today: nothing reads
+> `api_tokens.scopes` / `org_access` / `org_ids` on a request, and there is no
+> dashboard or REST path to set them. Enforcement arrives with the transports
+> (`mcp/auth.ts`, `_shared/api/auth.ts`, `mcp-handler.ts`, `router.ts`,
+> `applyTenantScope`) and the management UI, in the two PRs that follow
+> `00067_api_token_scoping.sql`. Until then every existing token behaves exactly
+> as it always has — the columns default to unrestricted and nothing consults
+> them.
+
+Beyond read/write, a token can be narrowed to **specific scopes** and to a
+**specific tenancy**. Both are optional and both default to unrestricted, so a
+token you never scope behaves exactly as it always has.
+
+| Axis | Column | Default | Meaning |
+|------|--------|---------|---------|
+| Scopes | `api_tokens.scopes` | `{}` — **unrestricted** | Allowlist of scope patterns the token may touch |
+| Tenancy | `api_tokens.org_access` | `all` | `all` \| `personal` \| `selected` |
+| Orgs | `api_tokens.org_ids` | `{}` | The orgs a `selected` token may reach |
+
+### Scope patterns
+
+A pattern is either a canonical scope or an **owner wildcard** — the same shape
+the `?scope=` search filter accepts:
+
+```
+repo::mthines/lorekit      exactly that repo
+repo::mthines/*            every repo under that owner
+project::*                 every project scope
+global                     the global scope
+```
+
+Patterns are OR-ed: a token allowing `["global", "repo::mthines/*"]` reaches
+either. An **empty** allowlist reaches everything the owner can see. At most 50
+patterns per token, each at most 200 characters, over the charset
+`[a-z0-9._:/-]`.
+
+The `*` is a wildcard **only as the last character and only directly after a
+`/` or a `::`** — the wildcard may replace a whole segment, never part of one.
+Both of these are rejected:
+
+```
+repo::*/lorekit            an INTERIOR wildcard
+repo::mthines/lore*        a trailing `*` off a segment boundary
+```
+
+`repo::mthines/lore*` is refused for the same reason `expandScopeForSearch`
+refuses it as a search filter: an "any trailing star" rule would let it
+allowlist `repo::mthines/lorekit-private`, so the allowlist grammar and the
+search grammar would disagree while wearing the same syntax.
+
+### Tenancy
+
+| `org_access` | Personal memories | Org memories |
+|--------------|-------------------|--------------|
+| `all` (default) | ✓ | Every org the owner belongs to |
+| `personal` | ✓ | None |
+| `selected` | ✓ | Only the orgs in `org_ids` |
+
+Personal memories are reachable under every tenancy — `personal` narrows which
+*orgs* a token reaches, it never revokes the owner's own memories. A token can
+only be pointed at an org its **owner** is a member of; asking for any other org
+is rejected when the scoping is saved, not silently ignored.
+
+Tenancy is authoritative over
+[scope→org binding](./decisions.md#scopeorg-binding): a write under a bound
+scope from a `personal` token falls back to a personal memory rather than being
+routed into an org the token was never granted.
+
 ## Permission matrix
 
 | Tool | Read + Write (`lk_rw_`) | Read only (`lk_ro_`) | Write only (`lk_wo_`) |
@@ -91,5 +162,6 @@ In the dashboard → Overview → Step 2 → your token list → click the trash
 ## Limits
 
 - Maximum 20 tokens per user account.
+- Maximum 50 scope patterns and 50 orgs per token.
 - No expiry — tokens are valid until revoked.
 - `last_used_at` is updated on every successful authentication.

@@ -20,7 +20,10 @@ export type Database = {
           id: string
           last_used_at: string | null
           name: string
+          org_access: string
+          org_ids: string[]
           permissions: string[]
+          scopes: string[]
           token_hash: string
           token_prefix: string
           user_id: string
@@ -30,7 +33,10 @@ export type Database = {
           id?: string
           last_used_at?: string | null
           name: string
+          org_access?: string
+          org_ids?: string[]
           permissions?: string[]
+          scopes?: string[]
           token_hash: string
           token_prefix: string
           user_id: string
@@ -40,7 +46,10 @@ export type Database = {
           id?: string
           last_used_at?: string | null
           name?: string
+          org_access?: string
+          org_ids?: string[]
           permissions?: string[]
+          scopes?: string[]
           token_hash?: string
           token_prefix?: string
           user_id?: string
@@ -645,6 +654,29 @@ export type Database = {
           org_created_at: string
           org_name: string
           org_slug: string
+        }[]
+      }
+      lorekit_api_token_org_allowed: {
+        Args: { p_org_access: string; p_org_id: string; p_org_ids: string[] }
+        Returns: boolean
+      }
+      lorekit_api_token_scope_allowed: {
+        Args: { p_patterns: string[]; p_scope: string }
+        Returns: boolean
+      }
+      lorekit_api_token_scopes_valid: { Args: { p_patterns: string[] }; Returns: boolean }
+      lorekit_api_token_set_scoping: {
+        Args: {
+          p_org_access: string
+          p_org_ids: string[]
+          p_scopes: string[]
+          p_token_id: string
+        }
+        Returns: {
+          id: string
+          org_access: string
+          org_ids: string[]
+          scopes: string[]
         }[]
       }
       lorekit_member_org_ids: { Args: { p_user_id: string }; Returns: string[] }

@@ -5700,6 +5700,418 @@ begin
 end;
 $$;
 
+-- ── 81. api_tokens scoping — columns, CHECKs, predicates, RPC (00067) ───────
+--
+-- The FIRST assertions this file has ever carried about `api_tokens`. The table
+-- has held an authorization record since 00002 with no DB-level proof of its
+-- constraints; 00067 puts a second authorization decision on it, so the gap is
+-- closed here rather than deferred again.
+do $$
+declare
+  v_owner   uuid := gen_random_uuid();
+  v_other   uuid := gen_random_uuid();
+  v_org_a   uuid;
+  v_org_b   uuid;
+  v_token   uuid;
+  v_scopes  text[];
+  v_access  text;
+  v_ids     uuid[];
+  v_failed  boolean;
+begin
+  -- Two orgs, the owner a member of only the first. `api_tokens.user_id`
+  -- references `auth.users`, so the fixtures go in there first.
+  insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at)
+  values
+    ('00000000-0000-0000-0000-000000000000', v_owner, 'authenticated', 'authenticated',
+     'lk-mig-keyscope-owner@test.local', now(), now()),
+    ('00000000-0000-0000-0000-000000000000', v_other, 'authenticated', 'authenticated',
+     'lk-mig-keyscope-other@test.local', now(), now());
+
+  insert into orgs (slug, name, created_by) values ('scoping-org-a', 'A', v_owner)
+    returning id into v_org_a;
+  insert into orgs (slug, name, created_by) values ('scoping-org-b', 'B', v_other)
+    returning id into v_org_b;
+  insert into org_members (org_id, user_id, role) values (v_org_a, v_owner, 'owner');
+  insert into org_members (org_id, user_id, role) values (v_org_b, v_other, 'owner');
+
+  -- ── AC-1: a new key is unrestricted by default ────────────────────────────
+  -- The load-bearing backwards-compatibility claim of 00067 decision 1: adding
+  -- the columns must not narrow a single key that already exists.
+  insert into api_tokens (user_id, name, token_prefix, token_hash)
+  values (v_owner, 'scoping fixture', 'lk_rw_aaaa...', 'hash-scoping-fixture-0001')
+  returning id into v_token;
+
+  select scopes, org_access, org_ids into v_scopes, v_access, v_ids
+  from api_tokens where id = v_token;
+
+  assert v_scopes = '{}'::text[],
+    'api_tokens AC-1: a new key must default to an EMPTY scope allowlist';
+  assert v_access = 'all',
+    'api_tokens AC-1: a new key must default to org_access = all';
+  assert v_ids = '{}'::uuid[],
+    'api_tokens AC-1: a new key must default to no org ids';
+  assert lorekit_api_token_scope_allowed(v_scopes, 'repo::mthines/lorekit'),
+    'api_tokens AC-1: an empty allowlist must permit every scope';
+  assert lorekit_api_token_org_allowed(v_access, v_ids, v_org_a),
+    'api_tokens AC-1: the default tenancy must permit every org';
+
+  -- ── AC-2: the scope predicate ─────────────────────────────────────────────
+  assert lorekit_api_token_scope_allowed(array['repo::mthines/lorekit'], 'repo::mthines/lorekit'),
+    'scope_allowed AC-2: an exact pattern matches its own scope';
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/lorekit'], 'repo::mthines/gw-tools'),
+    'scope_allowed AC-2: an exact pattern matches nothing else';
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/lorekit'], 'repo::mthines'),
+    'scope_allowed AC-2: an exact pattern must not widen to its own prefix';
+  assert lorekit_api_token_scope_allowed(array['repo::mthines/*'], 'repo::mthines/anything'),
+    'scope_allowed AC-2: an owner wildcard matches by prefix';
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/*'], 'repo::someone/lorekit'),
+    'scope_allowed AC-2: an owner wildcard must not cross the owner boundary';
+  assert lorekit_api_token_scope_allowed(array['global', 'repo::mthines/*'], 'global'),
+    'scope_allowed AC-2: patterns are OR-ed';
+
+  -- The `::` half of the CHECK's `(/|::)` alternation. Everything above exercises
+  -- the `/` branch only, and the two are different literal prefixes both in the
+  -- regex and at match time — proving one says nothing about the other. The TS
+  -- twin pins `project::*` and the docs advertise it, so SQL was the gap.
+  assert lorekit_api_token_scope_allowed(array['project::*'], 'project::agent-skills'),
+    'scope_allowed AC-2: a `::`-boundary wildcard matches by prefix';
+  assert not lorekit_api_token_scope_allowed(array['project::*'], 'projectx::agent-skills'),
+    'scope_allowed AC-2: a `::`-boundary wildcard must not cross the prefix boundary';
+
+  -- The discriminating case for the LIKE escape. Without `replace(_, '\_')`,
+  -- `_` is LIKE's single-character wildcard and the second assertion fails —
+  -- which would silently widen every allowlist containing an underscore.
+  assert lorekit_api_token_scope_allowed(array['repo::my_org/*'], 'repo::my_org/lorekit'),
+    'scope_allowed AC-2: an underscore in the prefix still matches itself';
+  assert not lorekit_api_token_scope_allowed(array['repo::my_org/*'], 'repo::myxorg/lorekit'),
+    'scope_allowed AC-2: an underscore must stay LITERAL, not act as a LIKE wildcard';
+
+  -- The scope-side twin of AC-3's NULL-element case, and it gets there by a
+  -- different mechanism: `org_allowed` needed an explicit `coalesce(…, false)`
+  -- because `= any(array[null])` is a scalar NULL, whereas here `right(null,1)`
+  -- makes the CASE yield NULL, the WHERE drops the row, and `exists` is false by
+  -- construction. Correct, but INCIDENTALLY correct — adding an `else` to that
+  -- CASE would flip it to NULL with nothing failing. `is false`, not `not`,
+  -- because `assert not NULL` also fails and would not discriminate.
+  assert lorekit_api_token_scope_allowed(array[null]::text[], 'global') is false,
+    'scope_allowed AC-2: a NULL pattern element must yield FALSE, never NULL';
+  -- And it must not POISON the list: a good pattern alongside a NULL one still
+  -- matches. This is the case a cargo-culted `coalesce` wrapper would break.
+  assert lorekit_api_token_scope_allowed(array['global', null]::text[], 'global'),
+    'scope_allowed AC-2: a NULL element must not suppress a sibling pattern that matches';
+
+  -- Fail closed on a scopeless operation, but only for a RESTRICTED key.
+  assert not lorekit_api_token_scope_allowed(array['repo::mthines/*'], null),
+    'scope_allowed AC-2: a restricted key must not reach a scopeless operation';
+  assert lorekit_api_token_scope_allowed('{}'::text[], null),
+    'scope_allowed AC-2: an unrestricted key still reaches a scopeless operation';
+
+  -- ── AC-3: the tenancy predicate ───────────────────────────────────────────
+  assert lorekit_api_token_org_allowed('personal', '{}'::uuid[], null),
+    'org_allowed AC-3: a personal row is reachable under every tenancy';
+  assert not lorekit_api_token_org_allowed('personal', '{}'::uuid[], v_org_a),
+    'org_allowed AC-3: `personal` must refuse every org';
+  assert lorekit_api_token_org_allowed('selected', array[v_org_a], v_org_a),
+    'org_allowed AC-3: `selected` admits a listed org';
+  assert not lorekit_api_token_org_allowed('selected', array[v_org_a], v_org_b),
+    'org_allowed AC-3: `selected` refuses an unlisted org';
+  assert not lorekit_api_token_org_allowed('nonsense', '{}'::uuid[], v_org_a),
+    'org_allowed AC-3: an unknown tenancy must fail CLOSED';
+
+  -- `= any(array[null])` is NULL, so without the outer coalesce this predicate
+  -- returns NULL — neither true nor false — out of an authorization check.
+  -- `assert not` is the discriminating form: `assert` on a NULL fails, but so
+  -- does `assert not NULL`, and only `is false` distinguishes the two. Written
+  -- explicitly so a regression cannot pass as "not true".
+  assert lorekit_api_token_org_allowed('selected', array[null]::uuid[], v_org_a) is false,
+    'org_allowed AC-3: a NULL element must yield FALSE, never NULL, from the predicate';
+
+  -- ── AC-4: the CHECKs actually reject ──────────────────────────────────────
+  -- Each is asserted by attempting the write and catching, because a CHECK that
+  -- exists but does not fire is indistinguishable from no CHECK at all.
+  v_failed := false;
+  begin
+    update api_tokens set scopes = array['a,value.not.is.null'] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed,
+    'api_tokens AC-4: a pattern outside the injection-guard charset must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set scopes = array['repo::*/lorekit'] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: an INTERIOR wildcard must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set org_access = 'everything' where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: an unknown org_access must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set org_access = 'selected', org_ids = '{}'::uuid[] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: `selected` with no org ids must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set org_access = 'personal', org_ids = array[v_org_a] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed,
+    'api_tokens AC-4: org ids under a tenancy that does not use them must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens
+       set scopes = (select array_agg('project::p' || i) from generate_series(1, 51) as i)
+     where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: a 51-pattern allowlist must be rejected (cardinality cap)';
+
+  -- The org-list twin of the cap above. `org_access` is set to 'selected' in the
+  -- SAME statement on purpose: with the tenancy left at 'all', a non-empty
+  -- org_ids also violates api_tokens_org_ids_match_access, and BOTH constraints
+  -- raise check_violation — so the assertion would pass while proving the wrong
+  -- one. Under 'selected' the match constraint is satisfied (selected = true,
+  -- cardinality > 0 = true), leaving api_tokens_org_ids_len as the only
+  -- constraint the row can violate.
+  v_failed := false;
+  begin
+    update api_tokens
+       set org_access = 'selected', org_ids = array_fill(v_org_a, array[51])
+     where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: a 51-org list must be rejected (cardinality cap)';
+
+  -- The org-list twin of the NULL-element case below. `{null}` has cardinality
+  -- 1, so api_tokens_org_ids_len and api_tokens_org_ids_match_access are both
+  -- satisfied under 'selected' — api_tokens_org_ids_not_null is the only
+  -- constraint that can fire, which is what makes this assertion specific.
+  v_failed := false;
+  begin
+    update api_tokens
+       set org_access = 'selected', org_ids = array[null]::uuid[]
+     where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed,
+    'api_tokens AC-4: a NULL org id must be rejected, not read as an empty list';
+
+  v_failed := false;
+  begin
+    update api_tokens set scopes = array['project::' || repeat('a', 200)] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed, 'api_tokens AC-4: a pattern over 200 chars must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set scopes = array['repo::mthines/lore*'] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed,
+    'api_tokens AC-4: a trailing wildcard off a segment boundary must be rejected';
+
+  v_failed := false;
+  begin
+    update api_tokens set scopes = array[null]::text[] where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed,
+    'api_tokens AC-4: a NULL element must be INVALID, not unknown-therefore-fine';
+
+  -- The accept side of the same alternation: the CHECK must admit a
+  -- `::`-boundary wildcard, not only a `/` one. Without this the regex could be
+  -- narrowed to `/` alone and every assertion above would still pass, while the
+  -- TS twin and the docs kept advertising `project::*`.
+  update api_tokens set scopes = array['project::*'] where id = v_token;
+  select scopes into v_scopes from api_tokens where id = v_token;
+  assert v_scopes = array['project::*'],
+    'api_tokens AC-4: a `::`-boundary wildcard must be accepted';
+
+  -- A valid pair still lands — the CHECKs must not be so tight that the
+  -- feature is unusable.
+  update api_tokens
+     set scopes = array['repo::mthines/*'], org_access = 'selected', org_ids = array[v_org_a]
+   where id = v_token;
+  select scopes, org_access into v_scopes, v_access from api_tokens where id = v_token;
+  assert v_scopes = array['repo::mthines/*'] and v_access = 'selected',
+    'api_tokens AC-4: a valid scoping must be accepted';
+
+  -- ── AC-5: the RPC is owner-only and membership-checked ────────────────────
+  -- The AC-4 block above wrote as the migration owner (superuser, RLS bypassed)
+  -- because `api_tokens` deliberately has no UPDATE policy. From here the actor
+  -- matters, so the session becomes a real `authenticated` JWT — the same shape
+  -- sections 4–12 use for the org RPCs.
+  --
+  -- Acting as the OTHER user: the key is not theirs, so the call must RAISE
+  -- rather than silently match zero rows and report success.
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', v_other), true);
+
+  -- The RPC raises DISTINCT sqlstates, so each refusal is caught by code rather
+  -- than by `when others` — which would also pass on a typo, a missing function
+  -- or a permissions error, i.e. on the test being wrong.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'all', '{}'::uuid[]);
+  exception when no_data_found then v_failed := true;
+  end;
+  assert v_failed, 'set_scoping AC-5: a non-owner must get the not-found refusal (P0002)';
+
+  -- Back as the owner: pointing the key at an org the OWNER is not in must be
+  -- refused, or the row would record access that does not exist.
+  perform set_config('request.jwt.claims',
+    format('{"sub":"%s","role":"authenticated"}', v_owner), true);
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'selected', array[v_org_b]);
+  exception when insufficient_privilege then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a non-member org must get the permission refusal (42501)';
+
+  -- The RPC RE-STATES the table's five CHECKs so a bad argument comes back as a
+  -- legible LK004 instead of a raw constraint-violation string. Duplicated logic
+  -- drifts from its original unless something asserts it, and AC-4 only proves
+  -- the CHECKs themselves — it writes as the migration owner and never enters
+  -- this function. Each case therefore feeds ONE bad argument with the other
+  -- three valid, and catches the RPC's own sqlstate (22023 =
+  -- `invalid_parameter_value`) rather than `others`, for the same reason the
+  -- refusals above catch theirs by code.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(
+      v_token, array_fill('global'::text, array[51]), 'all', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a 51-pattern allowlist must be refused with LK004';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(
+      v_token, array['a,value.not.is.null'], 'all', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a malformed scope pattern must be refused with LK004';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(
+      v_token, '{}'::text[], 'selected', array_fill(v_org_a, array[51]));
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a 51-org list must be refused with LK004';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'everything', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: an unknown org_access must be refused with LK004';
+
+  -- NULL is a THIRD case, not a variant of the one above: `null not in (…)` is
+  -- NULL, so without the explicit `is null` the guard does not fire, and neither
+  -- does the equality guard after it. The tenancy would reach the UPDATE and come
+  -- back as a raw 23502 from the column's NOT NULL — an internal constraint name
+  -- instead of an LK004. `invalid_parameter_value` here is therefore asserting
+  -- that the re-statement is TOTAL, not merely present.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], null, '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a NULL org_access must be refused with LK004, not a raw NOT NULL violation';
+
+  -- A NULL ARGUMENT is not the same as an empty array, and for `scopes` the
+  -- difference is a widening: '{}' means UNRESTRICTED, so a coalesce here would
+  -- turn `null` into "every scope the owner can see". Giving the arguments no
+  -- DEFAULT only stops them being OMITTED; these two cases pin that an explicit
+  -- null is refused as well.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, null, 'all', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a NULL scopes argument must be refused, never coalesced to the unrestricted default';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'all', null);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a NULL org_ids argument must be refused, never coalesced';
+
+  -- The RPC's own re-statement of api_tokens_org_ids_not_null. It has to run
+  -- BEFORE the membership guard, because that guard cannot see a NULL: the row
+  -- IS selected into v_stray (`m.org_id = null` is NULL, so `not exists` holds)
+  -- and `v_stray is not null` is then false. Catching LK004's 22023 rather than
+  -- LK002's 42501 is what proves the ordering.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(
+      v_token, '{}'::text[], 'selected', array[null]::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a NULL org id must be refused with LK004, ahead of the membership guard';
+
+  -- Both directions of the equality, because a one-sided implication would let
+  -- one of them through: `selected` with no orgs, and a non-`selected` tenancy
+  -- carrying orgs. The second uses v_org_a, an org the actor IS a member of, so
+  -- it is the mismatch that refuses it and not the membership check below it.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'selected', '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: `selected` with no org ids must be refused with LK004';
+
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'personal', array[v_org_a]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: org ids under a tenancy that does not use them must be refused with LK004';
+
+  -- And the happy path returns the row it wrote.
+  select t.scopes, t.org_access, t.org_ids into v_scopes, v_access, v_ids
+  from lorekit_api_token_set_scoping(v_token, array['global'], 'selected', array[v_org_a]) t;
+  assert v_scopes = array['global'] and v_access = 'selected' and v_ids = array[v_org_a],
+    'set_scoping AC-5: the RPC must return the scoping it persisted';
+
+  -- Clearing it is how a key is un-scoped again (decision 1's other direction).
+  perform lorekit_api_token_set_scoping(v_token, '{}'::text[], 'all', '{}'::uuid[]);
+
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+
+  select scopes, org_access, org_ids into v_scopes, v_access, v_ids
+  from api_tokens where id = v_token;
+  assert v_scopes = '{}'::text[] and v_access = 'all' and v_ids = '{}'::uuid[],
+    'set_scoping AC-5: clearing the scoping must restore the unrestricted default';
+end;
+$$;
+
 rollback;
 
 \echo 'migrations.test.sql: all assertions passed'
