@@ -47,9 +47,17 @@ agent ─traceparent→ mcp-node ─traceparent→ api (edge) ─→ Postgres
 | `packages/cli/test/telemetry.test.mjs` (extended) | `os.type` / `host.arch` emit OTel-registry values, incl. `ppc`→`ppc32` (see bug below); `deployment.environment.name` is omitted by default and emitted only under an explicit `DEPLOYMENT_ENVIRONMENT` override. |
 
 These complement the pre-existing suites: `trace-context.spec.ts` (strict W3C
-parse/format), `edge-parity.spec.ts` (the CLI/edge mirror can't drift),
-`packages/mcp-server/src/otel-propagation.spec.ts` (OTel context API — removed with the
-undeployed Node MCP server; see docs/decisions.md), and the existing `telemetry.test.mjs` (config, opt-out, payload shape, PII posture).
+parse/format), `edge-parity.spec.ts` (the CLI/edge mirror can't drift), and the
+existing `telemetry.test.mjs` (config, opt-out, payload shape, PII posture).
+
+**Coverage lost, not rehomed.** `packages/mcp-server/src/otel-propagation.spec.ts`
+covered the OTel **context API** (`context.with`/`context.active` parent-child
+attachment) and was deleted with the undeployed Node MCP server rather than moved
+(see [decisions.md → "No Node MCP server, no Fly.io"](./decisions.md#no-node-mcp-server-no-flyio)).
+Nothing replaces it: the surviving `otel-*.spec.ts` suites cover conventions,
+cross-service correlation, detached children and the harness, none of which
+exercises the context API directly. Re-establishing that coverage against the edge
+runtime is open work.
 
 ---
 
