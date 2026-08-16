@@ -135,9 +135,10 @@ export function ExplorerStats({
   const plan = useMemo(() => bucketPlanForRange(shown, nowIso) ?? FALLBACK_PLAN, [shown, nowIso]);
   const queryWindow = useMemo(() => statsWindow(shown, nowIso), [shown, nowIso]);
 
-  // The dimension filters as `/activity` query params — the SAME translation the
-  // list uses (`filtersToActivityBody`), so the header counts the list's set. Read
-  // ignores them (scope-level), applied inside the query for Written/Scopes only.
+  // The dimension filters as the `POST /activity` request BODY — the SAME
+  // translation the list uses (`filtersToActivityBody`), so the header counts the
+  // list's set. Read ignores them (scope-level), applied inside the query for
+  // Written/Scopes only.
   const activityFilters = useMemo(() => filtersToActivityBody(filters), [filters]);
 
   const { data, isLoading, isError, isFetching } = useExplorerStats(
