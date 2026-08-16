@@ -199,8 +199,21 @@ not special-case it into a filter).
 - `getMemberOrgIds(db, userId, span)` — resolves the caller's org memberships via
   `lorekit_member_org_ids`, the single tenant-visibility predicate. Fails closed to `[]`.
 - `needsExplicitTenantFilter(auth)` — the one place the "is this the api_key tier?" test lives.
-- `applyRestTenantScope(query, userId, orgIds)` — the widened tenant-visibility predicate for
-  `memories` reads. Never inline `.eq('user_id', …)` instead.
+- `applyRestTenantScope(query, userId, orgIds, key?)` — the widened tenant-visibility predicate for
+  `memories` reads. Never inline `.eq('user_id', …)` instead. The optional `key` is the calling API
+  key's own restriction (00067/00068); the narrowing arithmetic is imported from the mirrored
+  `_shared/tenant-scope.ts`, never re-implemented here, so the MCP and REST surfaces cannot disagree
+  about what a key reaches.
+- `applyKeyScopeFilter(query, auth)` — the allowlist half ALONE, for the personal-only write family
+  (`PATCH`, `DELETE`, `POST /restore`). Those handlers deliberately never widen to org rows, so they
+  do not call `applyRestTenantScope` — and without this they had no allowlist gate at all, letting a
+  scoped key mutate an out-of-allowlist memory BY ID. A no-op for JWT/service and for an unrestricted
+  key.
+- `firstDeniedScope(auth, named)` — the first NAMED scope the calling key may not reach, or `null`.
+  Use it when a request names a scope: a 403 is a better answer than an empty page, which reads as
+  "there is nothing there". Reads that name no scope are narrowed by `applyRestTenantScope` instead.
+  Every named scope must be allowed — answering over the allowed subset would answer a different
+  question. Returns `null` for JWT/service callers and for an unrestricted key.
 - `applyOwnMembershipFilter(query, auth)` — narrows an `org_members` query to the caller's own
   rows. `GET /orgs` is an unfiltered `from('org_members')` select; without this it returns every
   membership row in the database.
