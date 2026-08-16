@@ -21,12 +21,32 @@ export const sym = {
   info: useColor ? c.cyan('•') : '-',
 };
 
+// Where `log` and `err` send their output. Indirected through a mutable pair
+// so a test can capture a command's output WITHOUT hijacking
+// `process.stdout.write` — which is not a private channel: `node --test` runs
+// each file in a child process and reports results over that same stdout, so a
+// global hijack silently swallows the runner's own result lines and a failing
+// test can go unreported. Production behaviour is unchanged; the default
+// writers are the streams themselves.
+let writers = {
+  out: (s) => process.stdout.write(s),
+  err: (s) => process.stderr.write(s),
+};
+
+// Redirect `log`/`err` (and therefore `heading`/`status`, which build on them).
+// Returns the restore function, so a caller cannot forget what it replaced.
+export function setWriters(next = {}) {
+  const previous = writers;
+  writers = { ...writers, ...next };
+  return () => { writers = previous; };
+}
+
 export function log(msg = '') {
-  process.stdout.write(`${msg}\n`);
+  writers.out(`${msg}\n`);
 }
 
 export function err(msg = '') {
-  process.stderr.write(`${msg}\n`);
+  writers.err(`${msg}\n`);
 }
 
 export function heading(title) {
