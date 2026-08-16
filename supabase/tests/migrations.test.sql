@@ -5983,6 +5983,33 @@ begin
   assert v_failed,
     'enforcement AC-2: a personal-only key must not write into a named org';
 
+  -- ── AC-2b: the SCOPE allowlist is enforced on the write path too ──────────
+  -- Both dispatchers already refuse a named scope outside the allowlist, but
+  -- both run on the service-role client, so this RPC is the only gate a write
+  -- cannot route around. Without it the allowlist half had no unbypassable
+  -- enforcement at all, unlike the tenancy half AC-2 covers.
+  v_failed := false;
+  begin
+    perform memory_write(
+      p_user_id => v_owner, p_scope => 'repo::other/repo', p_key => 'k-scope-denied',
+      p_value => 'v', p_key_scopes => array['repo::mthines/*']
+    );
+  exception when others then v_failed := true;
+  end;
+  assert v_failed,
+    'enforcement AC-2b: a key allowlisted elsewhere must not write under repo::other/repo';
+
+  -- …and the same key writing INSIDE its allowlist still succeeds, so AC-2b
+  -- denies on the allowlist and not on some unrelated failure.
+  perform memory_write(
+    p_user_id => v_owner, p_scope => 'repo::mthines/allowed', p_key => 'k-scope-allowed',
+    p_value => 'v', p_key_scopes => array['repo::mthines/*']
+  );
+  select count(*) into v_count from memories m
+   where m.user_id = v_owner and m.scope = 'repo::mthines/allowed';
+  assert v_count = 1,
+    'enforcement AC-2b: a write INSIDE the allowlist must still land';
+
   -- ── AC-3: the binding branch — THE KEY WINS (00067 decision 4) ────────────
   -- Bind the scope to the org, then write with NO explicit org. A default
   -- caller is auto-routed; a personal-only key must fall back to a PERSONAL

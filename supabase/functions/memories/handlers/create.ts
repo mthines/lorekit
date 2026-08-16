@@ -131,10 +131,12 @@ export async function handleCreate(
     p_origin_pr: origin.pr,
     p_kind: kind,
     p_host: host,
-    // The calling key's tenancy (00067/00068). The RPC is the last gate the
-    // edge cannot bypass — it runs on the service-role client — and the only
-    // place that can see the scope→org binding a restricted key must not be
-    // auto-routed through.
+    // The calling key's restriction, BOTH axes (00067/00068). The RPC is the
+    // last gate the edge cannot bypass — it runs on the service-role client, so
+    // the `firstDeniedScope` refusal above is advisory — and the only place that
+    // can see the scope→org binding a restricted key must not be auto-routed
+    // through.
+    p_key_scopes: keyRestriction(auth)?.scopes ?? [],
     p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
     p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
     // `.single()` because memory_write RETURNS TABLE — without it the traced

@@ -839,6 +839,7 @@ export type Database = {
           p_key: string
           p_key_org_access?: string
           p_key_org_ids?: string[]
+          p_key_scopes?: string[]
           p_org_slug?: string
           p_origin_branch?: string
           p_origin_commit?: string

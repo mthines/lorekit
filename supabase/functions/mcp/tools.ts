@@ -194,11 +194,12 @@ export async function toolWrite(
       p_origin_pr: origin.pr,
       p_kind: resolvedKind,
       p_host: resolvedHost,
-      // The calling key's tenancy (00067/00068). The RPC is the LAST gate on
-      // the write path — the edge runs on the service-role client, so the
-      // dispatcher's check above it is advisory — and it is also the only place
-      // that can see the scope→org BINDING, which must not route a restricted
-      // key's write into an org it was never granted.
+      // The calling key's restriction, BOTH axes (00067/00068). The RPC is the
+      // LAST gate on the write path — the edge runs on the service-role client,
+      // so the dispatcher's check above it is advisory — and it is also the only
+      // place that can see the scope→org BINDING, which must not route a
+      // restricted key's write into an org it was never granted.
+      p_key_scopes: keyScoping?.scopes ?? [],
       p_key_org_access: keyScoping?.orgAccess ?? 'all',
       p_key_org_ids: keyScoping?.orgIds ?? [],
     })

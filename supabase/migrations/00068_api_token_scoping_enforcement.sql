@@ -2,19 +2,25 @@
 -- API token scoping, part 2 of 2: the SQL-side enforcement.
 --
 -- 00067 added the data model (`api_tokens.scopes` / `org_access` / `org_ids`)
--- and the two predicates, and enforced nothing. This migration teaches the two
+-- and the two predicates, and enforced nothing. This migration teaches the four
 -- functions that the transports CANNOT stand in front of:
 --
---   1. `memory_write` — the last unbypassable gate on the write path. The edge
---      holds the service-role key, so every check above this function is
---      advisory by construction; and the scope→org BINDING lives in here, where
---      no transport can see it. 00067 decision 4 says the key restriction beats
---      the binding, and this is the only place that sentence can be true.
+--   1. `memory_write` — the last unbypassable gate on the write path, on BOTH
+--      axes. The edge holds the service-role key, so every check above this
+--      function is advisory by construction; and the scope→org BINDING lives in
+--      here, where no transport can see it. 00067 decision 4 says the key
+--      restriction beats the binding, and this is the only place that sentence
+--      can be true.
 --
 --   2. `lorekit_memory_scopes` — the scope catalog. Filtering reads without
 --      filtering this one would leave scoping leaking exactly what it hides: a
 --      scope string IS a repo or project name, so a key narrowed to one repo
 --      could still enumerate every repo on the account.
+--
+--   3. `lorekit_memory_activity` and 4. `lorekit_read_activity` — the other two
+--      per-scope catalogs. They return one row per scope NAME too, so narrowing
+--      only `lorekit_memory_scopes` would move the leak from the catalog to the
+--      charts rather than close it.
 --
 -- Both take the calling key's restriction as DEFAULTED trailing parameters, so
 -- every existing caller — a dashboard JWT, the Node `mcp-server`, CI on the
@@ -70,8 +76,12 @@ create or replace function memory_write(
   p_origin_pr     integer     default null,
   p_kind          text        default null,
   p_host          text        default null,
-  -- The CALLING KEYs tenancy, defaulted so every existing caller (JWT, the
-  -- Node path, CI service-role) keeps the pre-00068 behaviour untouched.
+  -- The CALLING KEYs restriction — BOTH axes, defaulted so every existing
+  -- caller (JWT, the Node path, CI service-role) keeps the pre-00068 behaviour
+  -- untouched. The scope allowlist is here for the same reason the tenancy is:
+  -- the edge holds the service-role key, so the dispatchers refusal is
+  -- advisory, and this is the last gate a write cannot go around.
+  p_key_scopes     text[]     default '{}',
   p_key_org_access text       default 'all',
   p_key_org_ids    uuid[]     default '{}'
 )
@@ -93,6 +103,18 @@ declare
   v_expires_at   timestamptz;
   v_ttl_action   text := 'keep';
 begin
+  -- The scope allowlist, checked FIRST and for every branch. Both transports
+  -- already refuse a named scope outside the allowlist, but both run on the
+  -- service-role client, so those refusals are advisory by construction — this
+  -- is the one place on the write path that a caller cannot route around.
+  -- LK002, the same code the org denial raises, so `translateDbError` answers
+  -- the REST caller a 403 and the MCP caller a forbidden error without a second
+  -- mapping.
+  if not lorekit_api_token_scope_allowed(p_key_scopes, p_scope) then
+    raise exception using errcode = 'LK002',
+      message = format('key_scope_denied: scope=%s', p_scope);
+  end if;
+
   if p_clear_ttl then
     v_ttl_action := 'clear';
   elsif p_ttl_seconds is not null then
@@ -262,7 +284,7 @@ $$;
 -- own change.
 grant execute on function memory_write(
   uuid, text, text, text, text[], text, text, timestamptz, text,
-  integer, boolean, text, text, text, integer, text, text, text, uuid[]
+  integer, boolean, text, text, text, integer, text, text, text[], text, uuid[]
 ) to anon, authenticated, service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────────
