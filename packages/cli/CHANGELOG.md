@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.52.0](https://github.com/mthines/lorekit/compare/cli-v1.51.0...cli-v1.52.0) (2026-08-16)
+
+
+### Features
+
+* **cli:** add lorekit migrate --to remote ([#477](https://github.com/mthines/lorekit/issues/477)) ([459fcfe](https://github.com/mthines/lorekit/commit/459fcfe9aa1f044ae3cb579dddd02f18894895f4))
+
 ## [1.51.0](https://github.com/mthines/lorekit/compare/cli-v1.50.0...cli-v1.51.0) (2026-08-15)
 
 
