@@ -25,7 +25,11 @@ Tokens are stored as **SHA-256 hashes** in the database. The full token is shown
 3. Click **Generate new token**
 4. Enter a name (e.g. `aw-executor`, `ci-github-actions`, `local-dev`)
 5. Choose **Read + Write**, **Read only**, or **Write only**
-6. Copy the token from the amber banner — it won't be shown again
+6. Optionally expand **Scoping** to pick an allowlist of scopes and an organisation access level (see below)
+7. Copy the token from the amber banner — it won't be shown again
+
+Scoping can be changed after creation; the permission tier cannot (it is encoded
+in the token prefix, which is fixed at generation).
 
 ## Scoping a token
 
