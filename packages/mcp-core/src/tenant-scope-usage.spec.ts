@@ -106,16 +106,56 @@ describe('tenant-scope usage guard (edge read handlers)', () => {
  * scoped key could patch or delete a memory outside its allowlist BY ID.
  * `applyKeyScopeFilter` is the narrow helper that adds it, and this pins that
  * every one of them calls it.
+ *
+ * PRESENCE IS NOT ENOUGH, and that is the second half of this guard. A
+ * `toContain` on the call site stays green while the hole it pins is open:
+ * `remove.ts` held `applyKeyScopeFilter(` and still let a scoped key delete an
+ * org-owned memory, because the `?org=` branch returned through
+ * `removeOrgOwned` several lines ABOVE the call. So each handler is also
+ * checked for REACHABILITY — the gate must sit on the path before the write,
+ * and no mutation path may return around it.
  */
 const REST_WRITE_HANDLERS = ['update', 'remove', 'restore'] as const;
 
+/** The gates that count as applying the key's allowlist, in either form. */
+const KEY_GATE = /applyKeyScopeFilter\(|firstDeniedScope\(/g;
+
+function firstIndexOf(src: string, needle: RegExp | string): number {
+  if (typeof needle === 'string') return src.indexOf(needle);
+  return src.search(needle);
+}
+
 describe('key-scope usage guard (REST write family)', () => {
+  const read = (name: string) =>
+    readFileSync(path.resolve(here, `../../../supabase/functions/memories/handlers/${name}.ts`), 'utf8');
+
   it.each(REST_WRITE_HANDLERS)('%s applies the key scope allowlist', (name) => {
-    const src = readFileSync(
-      path.resolve(here, `../../../supabase/functions/memories/handlers/${name}.ts`),
-      'utf8',
-    );
-    expect(src).toContain('applyKeyScopeFilter(');
+    expect(read(name)).toContain('applyKeyScopeFilter(');
+  });
+
+  it.each(REST_WRITE_HANDLERS)('%s gates BEFORE it commits the mutation', (name) => {
+    // `isDryRunHeader` is the last thing every one of these handlers does before
+    // the write goes out, and each file has exactly one. A key gate after it
+    // would be a gate the write has already passed.
+    const src = read(name);
+    const gate = firstIndexOf(src, KEY_GATE);
+    const commit = firstIndexOf(src, 'isDryRunHeader(');
+    expect(gate).toBeGreaterThan(-1);
+    expect(commit).toBeGreaterThan(-1);
+    expect(gate).toBeLessThan(commit);
+  });
+
+  it('remove gates BEFORE the ?org= branch returns through its own RPC', () => {
+    // The concrete reachability failure this guard was rewritten for.
+    // `removeOrgOwned` calls `memory_delete`, which chooses its rows inside the
+    // RPC — there is no query left to filter — so a gate below the dispatch
+    // covers the personal branch only and the org branch has none at all.
+    const src = read('remove');
+    const gate = src.indexOf('firstDeniedScope(');
+    const dispatch = src.indexOf('return await removeOrgOwned(');
+    expect(gate).toBeGreaterThan(-1);
+    expect(dispatch).toBeGreaterThan(-1);
+    expect(gate).toBeLessThan(dispatch);
   });
 });
 
