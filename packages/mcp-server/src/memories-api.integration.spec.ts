@@ -856,9 +856,31 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
       expect(created.status).toBe(201);
     }, REMOTE_TEST_TIMEOUT);
 
-    it('GET /memories rejects a dimension past the 2048-character cap', async () => {
+    // TWO walls stand between a wide dimension and the query form, and which one
+    // fires first is a property of the DEPLOYMENT, not of this repo: at 200
+    // ~28-character hosts the composed URL is ~5.6 KB, so the gateway's URI limit
+    // (`414 URI too long`, no LoreKit error envelope at all) answers before
+    // `ValueListSchema`'s 2048-character cap ever runs and returns `400`. Pinning
+    // either number alone pins the wrong wall on the other deployment; what the
+    // body transport actually fixes is that the query form REFUSES the request,
+    // so that is what this asserts.
+    it('GET /memories cannot carry a dimension this wide — 400 (schema cap) or 414 (URI limit)', async () => {
       const { status, data } = await api(
         'GET', `/?scope=${SCOPE}&limit=100&host=${encodeURIComponent(WIDE.join(','))}`,
+      );
+      expect([400, 414], `expected the query form to refuse; got ${status}: ${JSON.stringify(data)}`)
+        .toContain(status);
+    });
+
+    // The schema cap on its own, WELL below the URI wall so it is the bound that
+    // fires: 5 values of 512 characters is 2564 characters of dimension — past
+    // `ValueListSchema`'s 2048 — in a URL an order of magnitude smaller than the
+    // ~9 KB one above. Without this case the assertion above would pass on a
+    // deployment where the schema cap never gets a chance to run.
+    it('GET /memories rejects a dimension past the 2048-character cap with a 400', async () => {
+      const long = Array.from({ length: 5 }, (_, i) => `${String(i)}${'x'.repeat(511)}`);
+      const { status, data } = await api(
+        'GET', `/?scope=${SCOPE}&limit=100&host=${encodeURIComponent(long.join(','))}`,
       );
       expect(status, `expected 400; got ${status}: ${JSON.stringify(data)}`).toBe(400);
     });
