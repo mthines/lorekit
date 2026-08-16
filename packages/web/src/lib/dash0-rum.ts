@@ -127,6 +127,39 @@ export function buildVcsSignalAttributes(): Record<string, string> {
   return attrs;
 }
 
+/** The `onerror` event-handler IDL attribute, on whatever we subscribe to. */
+type OnErrorHost = { onerror?: unknown };
+
+/**
+ * Run `register` with any pre-existing `onerror` attribute handler temporarily
+ * detached, then put it back — so it ends up registered AFTER `register`'s
+ * listeners.
+ *
+ * `window.onerror` is an event-handler IDL attribute: its listener is added at
+ * the FIRST non-null assignment and keeps that position forever, so a later
+ * assignment (sdk-web 0.23.0 takes the uncaught-error path by ASSIGNING
+ * `window.onerror`, not by adding a listener) reuses the slot the first setter
+ * created. If anything on the page — a dev overlay, an analytics snippet — set
+ * `onerror` before us, the SDK inherits that earlier slot and runs BEFORE our
+ * filter, making the uncaught-error half of the filter a no-op.
+ *
+ * Assigning `null` removes that listener, and re-assigning the same function
+ * registers it fresh at the end of the list. The handler identity is preserved,
+ * so nothing that holds a reference to it notices; only the ordering moves.
+ *
+ * A host with no `onerror` property (a plain `EventTarget`, as in the specs) is
+ * left untouched.
+ */
+function withOnErrorRegisteredLast(host: OnErrorHost, register: () => void): void {
+  const existing = typeof host.onerror === 'function' ? host.onerror : null;
+  if (existing) host.onerror = null;
+  try {
+    register();
+  } finally {
+    if (existing) host.onerror = existing;
+  }
+}
+
 /**
  * Stop browser-extension errors from reaching the SDK's error instrumentation.
  *
@@ -146,6 +179,11 @@ export function buildVcsSignalAttributes(): Record<string, string> {
  * FIRST is what lets `stopImmediatePropagation()` preempt them. Registering
  * after `init()` would be a silent no-op — the SDK would already have recorded
  * the event by the time we ran.
+ *
+ * Running first is necessary but not sufficient for the `onerror` half: that
+ * attribute's slot belongs to whoever assigned it FIRST, so a pre-existing
+ * `window.onerror` would still outrank us. `withOnErrorRegisteredLast` re-seats
+ * it behind our listeners.
  *
  * `stopImmediatePropagation()` also hides these events from any other listener
  * on `window` (a dev overlay, say). That is intended: an error with no frame of
@@ -181,8 +219,14 @@ export function installExtensionErrorFilter(target?: EventTarget): () => void {
   // so the boolean form would leak the listener there.
   const capture = { capture: true } as const;
 
-  eventTarget.addEventListener('error', onError, capture);
-  eventTarget.addEventListener('unhandledrejection', onRejection, capture);
+  // An `onerror` attribute handler that was already set holds a listener slot
+  // ahead of anything we add now, and sdk-web's `init()` will reuse that slot
+  // rather than appending — so re-register it behind us. See
+  // `withOnErrorRegisteredLast`.
+  withOnErrorRegisteredLast(eventTarget as OnErrorHost, () => {
+    eventTarget.addEventListener('error', onError, capture);
+    eventTarget.addEventListener('unhandledrejection', onRejection, capture);
+  });
 
   return () => {
     eventTarget.removeEventListener('error', onError, capture);
