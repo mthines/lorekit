@@ -45,6 +45,10 @@ import { ContributionHeatmap } from '@/components/activity/ContributionHeatmap';
 import { ExplorerStats } from '@/components/lore/ExplorerStats';
 import { RangePicker } from '@/components/ui/RangePicker';
 import type { DateRange } from '@/components/ui/DateRangePicker';
+import { useIsMobile } from '@/lib/hooks/useMediaQuery';
+// The span and the fetch window that must cover it live together — see the
+// module for why they cannot be two numbers in two files.
+import { HEATMAP_WEEKS } from '@/lib/heatmap-window';
 import type { RangePreset, TimeRange } from '@/lib/time-range';
 import type { Filter } from '@/lib/filters';
 
@@ -57,6 +61,27 @@ import type { Filter } from '@/lib/filters';
  * away from a default that deliberately is not.
  */
 const EXPLORER_PRESETS: readonly RangePreset[] = ['24h', '7d', '30d', 'all'];
+
+/**
+ * What this panel describes when `?range=` is ABSENT.
+ *
+ * The Explorer's LIST opens on all time — that is what a list is for, and what
+ * every existing `/lore` deep link (and `lorekit link` URL) has always meant by
+ * an absent param. But "all time" is a poor opening question for an ACTIVITY
+ * panel: a lifetime total moves so slowly that the four numbers read as
+ * constants, and the trend chip and sparkbars have no window to compare.
+ * So the panel opens on the last 24 hours instead — recent activity, which is
+ * what someone glancing at a header labelled "Activity" is asking about.
+ *
+ * **This is a display default, not a filter.** It is applied HERE, to what the
+ * picker and the cards are handed, and never written to `?range=` — so the list
+ * below is untouched until the reader actually picks a range, at which point
+ * the selection means what it has always meant and narrows both. The two states
+ * are distinguishable because the picker writes `{preset:'all'}` for All rather
+ * than clearing the param (see `RangePicker`): an ABSENT param is "untouched",
+ * an explicit `all` is a choice, and only the first one gets substituted.
+ */
+const DEFAULT_STATS_RANGE: TimeRange = { preset: '24h' };
 
 interface ExplorerInsightsProps {
   scope: string | null;
@@ -71,7 +96,18 @@ interface ExplorerInsightsProps {
   filters: Filter[];
   /** Per-day write counts for the heatmap. */
   heatmapData: { date: string; count: number }[];
-  /** The selection to highlight on the heatmap, as inclusive day strings. */
+  /**
+   * The selection to highlight on the heatmap, as inclusive day strings.
+   *
+   * Derived from the caller's raw `range`, NOT from this panel's
+   * {@link DEFAULT_STATS_RANGE} substitution — so on an untouched `?range=` the
+   * picker reads 24h while the heatmap highlights nothing. That asymmetry is
+   * correct, not an oversight: the highlight says *what the list below is
+   * filtered to*, and on an untouched range the list is unfiltered. Lighting up
+   * today's cell would assert a filter that is not applied, which is the one
+   * thing a highlight must never do. Once a range is actually picked the two
+   * agree again, because picking one narrows both.
+   */
   highlightRange: DateRange | null;
   onSelectDate: (day: string) => void;
   /** One clock for the panel, so the picker and the cards describe one instant. */
@@ -95,6 +131,12 @@ export function ExplorerInsights({
   // how tall you left a panel.
   const [open, setOpen] = useState(false);
   const reduceMotion = useReducedMotion();
+  const isMobile = useIsMobile();
+  const heatmapWeeks = isMobile ? HEATMAP_WEEKS.mobile : HEATMAP_WEEKS.desktop;
+  // The one substitution: an untouched `?range=` shows 24h HERE without
+  // narrowing the list. Everything below reads `shownRange`, never `range`, so
+  // the picker's highlight and the cards' window can never disagree.
+  const shownRange = range ?? DEFAULT_STATS_RANGE;
 
   return (
     <section
@@ -107,12 +149,15 @@ export function ExplorerInsights({
           wrapping row overlapped them. */}
       <div className="flex flex-col gap-2 px-4 py-3">
         <div className="flex items-center gap-3">
-          <p className="text-xs font-medium text-[var(--color-content-tertiary)]">
+          {/* Truncates rather than wrapping: a long scope name on a phone used
+              to push the header to two lines and shove the picker down with
+              it. The full name is one line below, on every card's caption. */}
+          <p className="min-w-0 truncate text-xs font-medium text-[var(--color-content-tertiary)]">
             {scope ? `Activity · ${scopeLabel}` : 'Activity · all scopes'}
           </p>
           <div className="ml-auto flex items-center gap-2">
             <RangePicker
-              value={range}
+              value={shownRange}
               onChange={onRangeChange}
               presets={EXPLORER_PRESETS}
               nowIso={nowIso}
@@ -157,7 +202,7 @@ export function ExplorerInsights({
               <ExplorerStats
                 scope={scope}
                 filters={filters}
-                range={range}
+                range={shownRange}
                 scopeLabel={scopeLabel}
                 variant="strip"
                 nowIso={nowIso}
@@ -184,13 +229,13 @@ export function ExplorerInsights({
               <ExplorerStats
                 scope={scope}
                 filters={filters}
-                range={range}
+                range={shownRange}
                 scopeLabel={scopeLabel}
                 variant="cards"
                 nowIso={nowIso}
               />
 
-              {/* The heatmap keeps its own 26-week span deliberately: it is a
+              {/* The heatmap keeps its own span deliberately: it is a
                   range SELECTOR, not a reading of the selected range, so
                   shrinking it to the current window would remove the very
                   context you use to pick a different one. It highlights the
@@ -198,13 +243,16 @@ export function ExplorerInsights({
                   (`heatmapData` comes from `useLoreData`, not the scoped stats
                   query), so its caption says so rather than implying the cards'
                   selection narrows it. */}
-              <div className="overflow-x-auto border-t border-[var(--color-border)] pt-4">
+              {/* No `overflow-x-auto` any more: the chart sizes itself to this
+                  box rather than to a fixed cell pitch, so there is nothing left
+                  to scroll — it fills the panel on a desktop and fits a phone. */}
+              <div className="border-t border-[var(--color-border)] pt-4">
                 <p className="mb-3 text-xs font-medium text-[var(--color-content-tertiary)]">
-                  Memories written — last 26 weeks · across every scope
+                  Memories written — last {heatmapWeeks} weeks · across every scope
                 </p>
                 <ContributionHeatmap
                   data={heatmapData}
-                  weeks={26}
+                  weeks={heatmapWeeks}
                   selectedRange={highlightRange}
                   onSelectDate={onSelectDate}
                 />

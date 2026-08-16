@@ -41,6 +41,8 @@
 import { useMemo } from 'react';
 import { BookOpen, BookOpenCheck, Hourglass, Layers } from 'lucide-react';
 import { StatCard } from '@/components/dashboard/StatCard';
+import { AnimatedNumber } from '@/components/ui/AnimatedNumber';
+import { formatCompact } from '@/lib/format-number';
 import {
   effectiveStatsRange,
   statsWindow,
@@ -258,23 +260,42 @@ export function ExplorerStats({
   // (trends, bars, the heatmap) folds away.
   if (variant === 'strip') {
     return (
+      // FOUR EQUAL COLUMNS at every width, not a wrapping row. The row version
+      // packed the numbers against the left edge and left the rest of the panel
+      // empty on a desktop, then wrapped into two ragged lines on a phone —
+      // two different shapes, neither of which lined up with the four cards the
+      // strip cross-fades into. A fixed 4-column grid is the same shape as the
+      // expanded row, so expanding reads as the evidence unfolding UNDER each
+      // number rather than as the panel relaying itself.
+      //
+      // `grid-cols-4` is unconditional: four short labels at 10px fit a 320px
+      // phone once each column owns a quarter of the width and the label can
+      // truncate, and one row of four is what makes the summary readable in a
+      // single glance instead of two.
       <dl
-        className={`flex flex-wrap items-center gap-x-4 gap-y-1 transition-opacity duration-150 ${dim}`}
+        className={`grid grid-cols-4 gap-x-2 transition-opacity duration-150 ${dim}`}
         aria-busy={isFetching || isLoading}
       >
         {cards.map(({ id, label, value, icon: Icon }) => (
-          <div key={id} className="flex items-center gap-1.5">
-            {/* A subtle icon per metric makes the strip scannable — the eye
-                finds "written" by its glyph before reading the word. */}
-            <Icon className="size-3.5 shrink-0 text-[var(--color-content-tertiary)]" aria-hidden />
+          <div key={id} className="flex min-w-0 flex-col">
             {/* `dt` precedes `dd` in the DOM (valid description-list ordering, so
-                assistive tech pairs term→value); `order` keeps the number visually
-                first. */}
-            <dt className="order-3 text-[11px] text-[var(--color-content-tertiary)]">
-              {STRIP_LABELS[id] ?? label}
+                assistive tech pairs term→value); `order` stacks the number on
+                top, where the eye lands first. */}
+            <dt className="order-2 flex min-w-0 items-center gap-1 text-[10px] text-[var(--color-content-tertiary)] sm:text-[11px]">
+              {/* A subtle icon per metric makes the strip scannable — the eye
+                  finds "written" by its glyph before reading the word. */}
+              <Icon className="size-3 shrink-0" aria-hidden />
+              <span className="truncate">{STRIP_LABELS[id] ?? label}</span>
             </dt>
-            <dd className="order-2 text-sm font-semibold tabular-nums text-[var(--color-content-primary)]">
-              {value}
+            {/* Sized to match the expanded card's headline, so the number does
+                not visibly grow or shrink through the cross-fade — the answer
+                appears to stay put while only the evidence moves. */}
+            {/* Compact above 10k: four equal columns leave ~58px each on a
+                320px phone, and an ungrouped six-digit figure at this size
+                would overflow into its neighbour. The exact value stays one
+                click away in the expanded card — and is what gets announced. */}
+            <dd className="order-1 text-xl font-semibold leading-tight tabular-nums text-[var(--color-content-primary)] sm:text-2xl">
+              <AnimatedNumber value={value} format={formatCompact} />
             </dd>
           </div>
         ))}

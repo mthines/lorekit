@@ -63,6 +63,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { useUrlState } from '@/lib/hooks/useUrlState';
 import { useDebouncedUrlState } from '@/lib/hooks/useDebouncedUrlState';
 import { useIsMobile } from '@/lib/hooks/useMediaQuery';
+import { resolveScopeParam } from '@/lib/scope';
 import { useMemorySidebar } from '@/components/providers/MemorySidebarProvider';
 import { DateRangePicker, type DateRange } from '@/components/ui/DateRangePicker';
 import { StatusControl } from './StatusControl';
@@ -105,12 +106,17 @@ const NO_TAGS: string[] = [];
 const NO_FILTERS: Filter[] = [];
 
 /**
- * The Explorer opens on ALL time — a list's job is to show everything, and that
- * is the horizon every existing `/lore` deep link (and `lorekit link` URL) has
- * always meant by an absent `range`. The stat header does NOT need the list
- * narrowed to stay legible: an unbounded selection charts the last 90 days on
- * its own (`effectiveStatsRange`), so the two can share one range param without
- * a 24h default that would silently re-scope every shared link.
+ * The Explorer's LIST opens on ALL time — a list's job is to show everything,
+ * and that is the horizon every existing `/lore` deep link (and `lorekit link`
+ * URL) has always meant by an absent `range`. Narrowing this default would
+ * silently re-scope every shared link.
+ *
+ * The Activity panel above the list does NOT open on all time: it substitutes a
+ * 24h DISPLAY default for exactly this "untouched" value, without writing it
+ * (`DEFAULT_STATS_RANGE` in `ExplorerInsights`). That is why `null` here has to
+ * stay distinguishable from an explicit `All`, and why the picker now writes
+ * `{preset:'all'}` instead of clearing the param — both resolve to an unbounded
+ * window, but only the absent one is a reader who has not chosen yet.
  *
  * Module-level `null` for the reference-stability reason `useUrlState` documents:
  * the default sits in the setter's `useCallback` deps, so a fresh literal each
@@ -205,9 +211,27 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
 
   // URL-backed: null means "all scopes" (the new default). A discrete click
   // writes the URL immediately (no debounce). Scoped to /lore.
-  const [selectedScope, setSelectedScope] = useUrlState<string | null>('scope', null, {
+  const [scopeParam, setSelectedScope] = useUrlState<string | null>('scope', null, {
     cleanOnPathname: '/lore',
   });
+
+  // The `?scope=` param is the ONE value on this page that arrives from outside
+  // the app — a shared link, a hand-edited URL, a stale bookmark — and it fans
+  // out unchanged to five endpoints on every render. Four of them treat an
+  // ungrammatical scope as an exact-match filter that matches nothing;
+  // `GET /memories/read-activity` validates it and returns 400 (deliberately —
+  // a filter is the question itself). So a single bad param used to render four
+  // empty-but-fine panels next to one failed request, which reads as the page
+  // being broken rather than as the link being wrong.
+  //
+  // Reject it here, once, at the seam it enters through — and keep the rejected
+  // value so the page can SAY it ignored the filter. Silently widening to "all
+  // scopes" without saying so would answer a different question than the link
+  // asked, which is the same trap the endpoint's 400 exists to avoid.
+  const { scope: selectedScope, rejected: rejectedScope } = useMemo(
+    () => resolveScopeParam(scopeParam),
+    [scopeParam],
+  );
 
   // Search is high-frequency input — the returned `search` is instantly
   // responsive (local state) while the URL param is written on a trailing
@@ -490,6 +514,15 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
     }
   }
 
+  // Clearing the calendar means "no date restriction" — which is the EXPLICIT
+  // `all` selection, not the untouched state. The two are different values now
+  // (see RangePicker): clearing back to `null` would re-arm the Activity
+  // panel's 24h display default, so the control row would say "no dates" while
+  // the panel above it started describing yesterday.
+  function handleDatePickerChange(next: DateRange | null) {
+    setRange(next ?? { preset: 'all' });
+  }
+
   const selectedScopeLabel =
     selectedScope === null
       ? 'All scopes'
@@ -570,7 +603,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           // range actually bounds something, regardless of which title branch
           // wins below.
           {...(rangeIsNarrowing
-            ? { action: { label: 'View all time', onClick: () => setRange(null) } }
+            ? { action: { label: 'View all time', onClick: () => setRange({ preset: 'all' }) } }
             : {})}
           title={
             // Within-view narrowing is checked FIRST — a search or filter that
@@ -656,6 +689,20 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
         totalCount={totalCount}
       />
 
+      {/* The link carried a scope the API cannot filter by, so the page is
+          showing ALL scopes. Say it rather than let the reader believe the
+          filter applied — an unannounced widening is the failure mode the
+          endpoint's own 400 exists to prevent. */}
+      {rejectedScope !== null && (
+        <p
+          role="status"
+          className="rounded-lg border border-[var(--color-warning)] bg-[var(--color-bg-raised)] px-3 py-2 text-xs text-[var(--color-content-secondary)]"
+        >
+          Ignored the scope <code className="font-mono">{rejectedScope}</code> from this link —
+          it is not a valid scope. Showing all scopes instead.
+        </p>
+      )}
+
       {/* ── Insights ────────────────────────────────────────────────────────
           ONE panel for everything the page says ABOUT the memories — the stat
           cards, the range picker and the heatmap — above the list of the
@@ -696,7 +743,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           editingField={isMobile ? null : editingField}
           onEditField={setEditingField}
           range={pickerRange}
-          onRangeChange={setRange}
+          onRangeChange={handleDatePickerChange}
           status={status}
           onStatusChange={handleStatusChange}
         />
@@ -725,7 +772,7 @@ export function LoreExplorer({ scopes, heatmapData }: LoreExplorerProps) {
           editingField={isMobile ? editingField : null}
           onEditField={setEditingField}
           range={pickerRange}
-          onRangeChange={setRange}
+          onRangeChange={handleDatePickerChange}
           status={status}
           onStatusChange={handleStatusChange}
         />

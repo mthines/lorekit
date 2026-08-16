@@ -20,7 +20,7 @@
  * `created_at` values are fixed offsets *before* {@link FROZEN_NOW}. Combined
  * with the `withFrozenClock` story decorator (which pins `Date` to
  * `FROZEN_NOW`), every time-relative render — the "Nd ago" freshness labels, the
- * period-over-period trend chips, the 26-week contribution heatmap — is stable
+ * period-over-period trend chips, the contribution heatmap — is stable
  * across runs. Never introduce a live `Date.now()` offset here: that is the
  * classic visual-regression flake source this module deliberately avoids.
  */

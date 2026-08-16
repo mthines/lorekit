@@ -9,7 +9,7 @@ export default function LorePage() {
   // the lesson list streams in separately via useMemories inside LoreExplorer.
   const { data: scopes, isLoading: scopesLoading, isError: scopesError, error: scopesErr } = useScopeTree();
   // useLoreData: the legacy combined fetch, kept only for heatmapData (the
-  // 26-week contribution graph), which now comes from `GET /memories/activity`
+  // contribution graph), which now comes from `GET /memories/activity`
   // — bucketed in Postgres, so it is not bounded by the page it ships with
   // (`LEGACY_PAGE_SIZE` in queries/lore.ts owns that size). Runs in parallel —
   // the heatmap can load after the scope tree; the lesson list + feed stream in

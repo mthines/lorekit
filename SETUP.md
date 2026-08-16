@@ -89,11 +89,18 @@ pnpm nx db:reset supabase   # reset local DB (dev only)
 ### NX dev & CI
 
 ```bash
-pnpm nx run-many -t typecheck,test,lint --all    # full CI gate
+pnpm nx run-many -t typecheck,test,lint --all    # full CI gate (CI only — see below)
+pnpm nx affected -t typecheck,test,lint          # sandbox-safe equivalent
 pnpm nx typecheck web                            # web app
 pnpm nx serve web                                # Next.js dev server
 pnpm nx test mcp-core                            # needs supabase start
 ```
+
+> **Agents / cloud sandboxes: do not run `run-many … --all`.** The whole-repo
+> fan-out saturates a container's CPU/memory allowance and the session freezes or
+> stalls instead of failing cleanly. Use `nx affected` or name the projects
+> explicitly. See
+> [CLAUDE.md](./CLAUDE.md#never-run-whole-repo-nx-fan-outs-in-a-cloud-sandbox).
 
 ---
 

@@ -65,9 +65,66 @@ Harvest real fixtures with `LOREKIT_HOOK_RECORD=<dir>` set on the hook command (
 
 ## NX commands
 
+### Never run whole-repo Nx fan-outs in a cloud sandbox
+
+**Agents must NOT run `pnpm nx run-many -t … --all` (or `npx nx run-many --all`,
+or any other whole-repo fan-out) in a cloud or container environment.** It
+saturates the box — every project's target starts at once, the Nx daemon and the
+spawned workers contend for the small CPU/memory allowance — and the session
+freezes or stalls indefinitely rather than failing cleanly. Recovering costs a
+whole session.
+
+Run the narrow equivalent instead:
+
 ```bash
-# CI gate
+# What CI actually runs on a PR — only the projects your change affects
+pnpm nx affected -t typecheck,test,lint
+
+# Or name the projects explicitly, one target at a time
+pnpm nx typecheck mcp-core
+pnpm nx test cli
+```
+
+If you genuinely need whole-repo coverage, cap the fan-out and scope the targets
+(`pnpm nx run-many -t typecheck --all --parallel=1`) and run one target per
+invocation — never `typecheck,test,lint` together across every project. The
+unqualified `--all` form below is documented as the CI gate; **CI is where it
+belongs**, not a sandbox.
+
+### Sandbox baseline — read before trusting a red gate
+
+Three facts about a fresh sandbox/container, each confirmed across three or more
+runs. They cost time every time they are rediscovered:
+
+1. **Run `pnpm install` before the first `pnpm nx` command.** A fresh container's
+   install is incomplete or absent. The signature is a cryptic
+   `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL Command "nx" not found` (no
+   `node_modules/.bin/nx`) or a `Cannot find module 'zod'` cascade through
+   `packages/schemas/**`. Both are the same missing install, not a broken nx
+   config — `pnpm install --frozen-lockfile` at the root fixes both in ~15s.
+   `pnpm` itself may or may not be on PATH; probe, and `corepack enable` only if
+   it is missing.
+2. **`cli:test` is red on a clean tree, so `run-many -t … --all` exits non-zero
+   even with no changes.** The failures are all loopback-HTTP-shaped: the tests
+   stand up a mock server on `127.0.0.1:0` and the spawned CLI child's `fetch`
+   never arrives. The failing SET GROWS as new tests land on that surface, so
+   **never pattern-match on a remembered count** — see point 3. (Writing a new
+   test for this surface? Target the local on-disk store via `LOREKIT_HOME` +
+   `LOREKIT_MODE=local` instead of a mock REST server.) Web lint is separately
+   ~47 pre-existing `no-non-null-assertion` **warnings, 0 errors** — not yours.
+3. **Prove a failure pre-existing with `git stash -u`, not from memory.** Stash,
+   re-run the same command, compare. The assertion that holds is "N failures
+   before == N failures after"; any specific N goes stale. This takes ~40s and is
+   the difference between reporting an inherited red and "fixing" something that
+   was never broken.
+
+```bash
+# CI gate — CI ONLY. Do not run this in a cloud/sandbox session; it stalls the
+# box (see "Never run whole-repo Nx fan-outs in a cloud sandbox" above).
 pnpm nx run-many -t typecheck,test,lint --all
+
+# The sandbox-safe equivalent
+pnpm nx affected -t typecheck,test,lint
 
 # Individual packages
 pnpm nx typecheck mcp-core
@@ -414,6 +471,8 @@ their rationale inline. **Do not relitigate these.**
 - **Dashboard is a CLIENT of LoreKit's REST API** — memory reads/writes go through the `memories` edge function (user JWT), never a direct PostgREST/supabase-js query; every new data surface becomes part of the PUBLIC contract (schema + handler + OpenAPI + `migrations.test.sql`). [rationale](./docs/decisions.md#dashboard-is-a-client-of-lorekits-rest-api)
 - **MCP server endpoint is a static production URL** — always write `https://pqokxlhvnosogizsjztg.supabase.co/functions/v1/mcp` in user-facing content, never a `<ref>` / `<project-ref>` placeholder. [rationale](./docs/decisions.md#mcp-server-endpoint-is-a-static-production-url)
 - **Lore Explorer filters through ONE two-level command menu + pills** — never one picker per dimension, never client-side narrowing; OR within a dimension, AND across; all dimensions filtered server-side; facets are their own drill-down query. [rationale](./docs/decisions.md#lore-explorer-filters-through-one-two-level-command-menu)
+- **The Explorer's Activity panel has a DISPLAY default (24h), separate from the list's (all time)** — substituted for an absent `?range=`, never written back; `RangePicker` emits `{preset:'all'}` (not `null`) so "chose All" and "has not chosen" stay two values. [rationale](./docs/decisions.md#the-explorers-activity-panel-has-a-display-default-separate-from-the-lists)
+- **Dashboard figures COUNT to a new value** (`AnimatedNumber`) — a change indicator, not decoration; two nodes (visible + `sr-only`), so read the `.sr-only` half, never `textContent`; honours `MotionConfig reducedMotion="always"` on top of the device preference, which is what makes the visual baselines deterministic. [rationale](./docs/decisions.md#dashboard-figures-count-to-a-new-value)
 - **Mobile transient selection surfaces use the `BottomSheet` primitive** — never an anchored popover on the phone breakpoint; share ONE body between desktop popover and sheet (`FilterMenu` is the reference). [rationale](./docs/decisions.md#mobile-transient-selection-surfaces-use-the-bottomsheet-primitive)
 - `::` separator avoids collision with `/` in repo paths and `:` in branch names
 - `lk_rw_` prefix encodes permission visibly in config files
