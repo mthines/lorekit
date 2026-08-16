@@ -101,7 +101,9 @@
           "projects": ["mcp-core", "web"],
           "target": "typecheck"
         },
-        { "projects": ["mcp-core"], "target": "test" }
+        { "projects": ["mcp-core"], "target": "test" },
+        "typecheck",
+        "test"
       ],
       "options": {
         "commands": [
