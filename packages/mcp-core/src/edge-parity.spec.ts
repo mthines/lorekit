@@ -63,6 +63,19 @@ function executableSource(file: string): string {
 // executable difference, but they are a real one, so a whole-file comparison
 // does not apply. buildAuditEntry/recordAudit are covered by audit.spec.ts on
 // the mcp-core copy.
+//
+// `signal-filter.ts` is likewise deliberately ABSENT, for a different reason:
+// its edge copy is not a FILE at all. classifyWebhookAction/isSignalWorthy are
+// inlined as plain functions in the middle of
+// supabase/functions/mcp/webhook.ts, so there is nothing to compare whole-file
+// against — adding it here would just fail on a missing path. Its headers on
+// both sides say "keep in sync", and that instruction is currently enforced by
+// review alone; the mcp-core copy's behaviour is covered by
+// signal-filter.spec.ts and the accepted-pair cross-check in
+// ttl-defaults.spec.ts. Extracting the edge copy into its own import-free
+// `mcp/signal-filter.ts` would make it a normal MIRRORS entry and is the
+// obvious way to close this gap, but it changes the deployed function and is
+// out of scope here.
 const MIRRORS: ReadonlyArray<readonly [string, string]> = [
   ['auth-token.ts', 'mcp/auth-token.ts'],
   ['created-at.ts', '_shared/created-at.ts'],
