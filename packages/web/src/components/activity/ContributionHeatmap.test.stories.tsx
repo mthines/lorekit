@@ -128,6 +128,69 @@ export const CellsGrowWithTheContainer: Story = {
   },
 };
 
+/**
+ * No month label may span past the last week column.
+ *
+ * A label that does makes CSS grid mint IMPLICIT columns, which take their
+ * width out of the same fixed box — so every `1fr` cell column narrows and the
+ * labels drift off the weeks they name, silently and without an error.
+ *
+ * **This is a partial repro, deliberately stated as one.** The grid is anchored
+ * on the real clock (`new Date()` inside the component), and a label only lands
+ * near the final column when today falls in the first two weeks of a month —
+ * about half of all dates. The story's frozen-clock decorator cannot pin this
+ * one, because `withFrozenClock` installs once per worker and an earlier story
+ * may have claimed it. So the assertions below are written to be clock-INDEPENDENT
+ * and correct on every date: they never false-fail, and on the dates that can
+ * produce the bug they catch it.
+ */
+export const MonthLabelsNeverOverflowTheGrid: Story = {
+  play: async ({ canvasElement, step }) => {
+    const labelGrid = canvasElement.querySelectorAll('[style*="grid-template-columns"]')[0]!;
+
+    await step('every label ends on or before the last column', async () => {
+      const labels = Array.from(labelGrid.querySelectorAll('span')) as HTMLElement[];
+      // Anti-vacuity: a selector that matched nothing would pass this loop
+      // silently, which is the failure mode a DOM invariant test most often has.
+      await expect(labels.length).toBeGreaterThan(0);
+
+      for (const label of labels) {
+        // `gridColumnStart` is "<n>" and `gridColumnEnd` is "span <n>" — read as
+        // the two longhands rather than parsing the `gridColumn` shorthand,
+        // whose serialisation ("1 / span 3") is easy to mis-split.
+        const start = Number(label.style.gridColumnStart);
+        const span = Number(label.style.gridColumnEnd.replace('span', '').trim());
+        await expect(start - 1 + span).toBeLessThanOrEqual(WEEKS);
+      }
+    });
+
+    await step('so the browser mints no implicit columns', async () => {
+      // The consequence, measured rather than inferred: `grid-template-columns`
+      // computes to the USED track list, so an overflowing label shows up here
+      // as more tracks than were asked for.
+      const tracks = getComputedStyle(labelGrid).gridTemplateColumns.split(/\s+/);
+      await expect(tracks).toHaveLength(WEEKS);
+    });
+
+    await step('and the label grid shares the cell grid’s pitch', async () => {
+      const cellGrid = canvasElement.querySelectorAll('[style*="grid-template-columns"]')[1]!;
+      const pitch = (el: Element) =>
+        getComputedStyle(el).gridTemplateColumns.split(/\s+/).map(parseFloat);
+      const labels = pitch(labelGrid);
+      const cells = pitch(cellGrid);
+      await expect(labels).toHaveLength(cells.length);
+      // Compared per track with a sub-pixel tolerance rather than by string
+      // equality: the two grids are separate flex children, so their tracks can
+      // round differently in the last fractional pixel while still being the
+      // same pitch. A real misalignment — the implicit-column bug — moves a
+      // track by whole pixels, not by a rounding step.
+      for (let i = 0; i < cells.length; i++) {
+        await expect(Math.abs(labels[i]! - cells[i]!)).toBeLessThan(1);
+      }
+    });
+  },
+};
+
 export const ClickingADaySelectsIt: Story = {
   play: async ({ canvasElement, args, step }) => {
     await step('each cell is a button naming its date and count', async () => {

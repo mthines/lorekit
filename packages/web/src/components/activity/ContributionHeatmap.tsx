@@ -90,6 +90,21 @@ const MIN_LABEL_GAP = 3;
  */
 const LABEL_SPAN = MIN_LABEL_GAP;
 
+/**
+ * How far a label at `col` may span without running off the explicit grid.
+ *
+ * The clamp is load-bearing, not defensive. A label on one of the final columns
+ * — which happens whenever today falls in the first two weeks of a month, so
+ * roughly half the time — would otherwise span past the last track, and CSS
+ * grid answers that by creating IMPLICIT columns. Those are `auto`-sized and
+ * take their width out of the same fixed box, so every `1fr` cell column
+ * silently narrows and each month label drifts off the week it names. Nothing
+ * errors; the chart just quietly stops lining up.
+ */
+function labelSpan(col: number, weeks: number): number {
+  return Math.min(LABEL_SPAN, weeks - col);
+}
+
 const DAYS = ['', 'Mon', '', 'Wed', '', 'Fri', ''];
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -198,7 +213,7 @@ export function ContributionHeatmap({
             <span
               key={`${label}-${col}`}
               className="whitespace-nowrap text-[11px] leading-4 text-[var(--color-content-tertiary)]"
-              style={{ gridColumn: `${col + 1} / span ${LABEL_SPAN}` }}
+              style={{ gridColumn: `${col + 1} / span ${labelSpan(col, weeks)}` }}
             >
               {label}
             </span>
