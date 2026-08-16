@@ -8,6 +8,14 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 // so a stubbed `vi.fn()` would assert nothing about it. The append-only pair is
 // kept in the stand-in even though the module no longer calls it, so a spec can
 // still catch a regression that reintroduces an appended attribute.
+// Records what `initDash0Rum` did, in order, across the module boundary — the
+// mock factory is hoisted above every other statement, so this is the only way
+// it can share state with the specs. `init` is a recording function rather than
+// a bare arrow because the ORDER of the filter registration relative to `init()`
+// is a correctness property (see `installExtensionErrorFilter`), and a stub that
+// records nothing lets that line be deleted with every spec still green.
+const boot = vi.hoisted(() => ({ order: [] as string[] }));
+
 vi.mock('@dash0/sdk-web', () => {
   const signalAttributes: Array<{ key: string; value: unknown }> = [];
   const remove = (key: string) => {
@@ -15,7 +23,9 @@ vi.mock('@dash0/sdk-web', () => {
     if (index !== -1) signalAttributes.splice(index, 1);
   };
   return {
-    init: () => undefined,
+    init: () => {
+      boot.order.push('sdk.init');
+    },
     addSignalAttribute: (key: string, value: unknown) => {
       signalAttributes.push({ key, value });
     },
@@ -48,7 +58,27 @@ const ORIGINAL_ENV = { ...process.env };
 // leaves behind is captured here and each identity spec restores it.
 process.env['NEXT_PUBLIC_DASH0_OTLP_ENDPOINT'] = 'https://ingress.example.com';
 process.env['NEXT_PUBLIC_DASH0_AUTH_TOKEN'] = 'auth-token';
+
+// These specs run in the `node` environment, where `installExtensionErrorFilter`
+// finds no `window` and no-ops — which would make the registration invisible to
+// the one-shot boot below. Stand a recording `window` up for the duration of
+// that single call, then take it away again so the rest of the file still runs
+// server-side, as its own "no-op outside the browser" spec asserts.
+const bootWindow = new EventTarget();
+const subscribe = bootWindow.addEventListener.bind(bootWindow);
+bootWindow.addEventListener = ((type: string, listener: EventListener, options?: unknown) => {
+  boot.order.push(`listener:${type}`);
+  subscribe(type, listener, options as AddEventListenerOptions);
+}) as EventTarget['addEventListener'];
+// `isValidOtlpEndpoint` reads `window.location.origin` when it is not given one,
+// so the stand-in needs an origin or the boot short-circuits before `init()`.
+Object.assign(bootWindow, { location: { origin: 'https://www.lorekit.io' } });
+(globalThis as { window?: unknown }).window = bootWindow;
+
 const INITIALISED = initDash0Rum();
+
+delete (globalThis as { window?: unknown }).window;
+const BOOT_ORDER = [...boot.order];
 const AFTER_INIT = [...signalAttributes];
 
 const valuesOf = (key: string) =>
@@ -163,6 +193,14 @@ describe('signal identity attributes', () => {
   it('initialises once and identifies the visitor anonymously', () => {
     expect(INITIALISED).toBe(true);
     expect(initDash0Rum()).toBe(false);
+  });
+
+  it('registers the extension filter BEFORE calling the SDK init', () => {
+    // Listener order is registration order, so this sequence is the whole
+    // reason `stopImmediatePropagation()` can preempt the SDK. Asserting the
+    // recorded boot order — rather than merely that both happened — is what
+    // makes deleting the `installExtensionErrorFilter()` call fail a spec.
+    expect(BOOT_ORDER).toEqual(['listener:error', 'listener:unhandledrejection', 'sdk.init']);
   });
 
   it('carries exactly one user.id after init — identify() must not be paired with an append', () => {
