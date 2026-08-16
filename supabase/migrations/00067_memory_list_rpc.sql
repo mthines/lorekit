@@ -191,8 +191,11 @@ begin
            )
        and ($3 is null or m.scope = $3)
        and ($4 is null or m.key = $4)
-       -- Prefix match on key. The needle arrives LIKE-escaped, so the `%`
-       -- appended here is the only active wildcard.
+       -- Prefix match on key. The needle arrives LIKE-escaped, so the `%%`
+       -- appended here is the only active wildcard. Doubled because this
+       -- comment is inside the format() template: an undoubled percent there
+       -- is read as a type specifier and raises, exactly like the predicates
+       -- below.
        and ($5 is null or m.key ilike $5 || '%%')
        -- Substring over key OR value, the `q` filter. Same escaped-needle
        -- contract; both wildcards are added here.
