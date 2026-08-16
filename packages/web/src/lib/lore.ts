@@ -213,21 +213,16 @@ const EMPTY_PAGE: MemoryPage = { rows: [], nextCursor: null, hasMore: false };
  * List a keyset page of the memories the caller can see, newest first, with
  * optional combinable filters (scope / substring / date interval / labels).
  *
- * Ordering is `updated_at desc` — the route's default, and now the Explorer's.
- * It used to be `created_at desc`, on the argument that a memory migrated with
- * a backdated `created_at` belongs at its original position. That argument
- * describes the IMPORT, not the reading: a lesson written twice is a lesson
- * that still matters, and under `created_at` it sank to wherever it first
- * appeared while an untouched row from the same week sat above it. Every other
- * read in the product — `GET /memories`, the MCP `memory.list`, the CLI —
- * already ordered by `updated_at`, so the Explorer was the one surface
- * answering "newest" differently from everything else.
+ * Ordering is `created_at desc` — `sort: 'created_at'` — not the route's
+ * `updated_at` default: a memory migrated with a backdated `created_at` belongs
+ * at its original position in the Explorer, which is the order the list has
+ * always been in.
  *
- * The cursor encodes which order minted it (`_shared/api/paginate.ts`), so a
- * link paginated under the old order restarts cleanly rather than mis-paging.
- *
- * Sent over `POST /memories/list`: the filter bar's dimensions are unbounded,
- * and the query transport caps each at 2048 characters.
+ * Sent over `POST /memories/list` rather than `GET /memories`: the filter bar's
+ * dimensions are unbounded, and the query transport caps each one at 2048
+ * characters — the ceiling that made the Explorer stop loading past ~50-75
+ * selected values in a dimension. The BODY carries the filters; the ordering,
+ * the page size and the cursor are unchanged.
  *
  * Fails closed to an empty page on auth failure or API error — read-only, so
  * failing closed is safe.
@@ -252,7 +247,7 @@ export async function listMemories(filters: MemoryFilters = {}): Promise<MemoryP
   try {
     const page = await listMemoriesPostRequest(token, {
       limit: pageSize,
-      sort: 'updated_at',
+      sort: 'created_at',
       archived: filters.showArchived ?? false,
       ...(filters.expiringWithinDays !== undefined
         ? { expiring_within_days: filters.expiringWithinDays }
