@@ -110,14 +110,14 @@ jq -nc --argjson flaky "$FLAKY" \
 | npx @lorekit/cli write \
     --scope "repo::${GITHUB_REPOSITORY}" --key 'ci-state::flaky-tests' \
     --tags 'ci::test-state' --kind bus --host ci \
-    --clear-ttl --remote --json \
+    --ttl-days 7 --remote --json \
 | tee lorekit-write.log \
 || echo "LoreKit write failed (exit $?) — not failing the build."
 ```
 
 Four things worth copying from this snippet:
 
-- **`--clear-ttl` is not optional.** A write that passes neither `--ttl-days` nor `--clear-ttl` inherits the repo's configured default TTL. State that silently expires makes the next run believe it is the first run.
+- **Keep the TTL short — about a week — and always pass it.** `expires_at` is recomputed as `now() + ttl_days` on *every* write, so a record the job rewrites each run never expires while the job keeps running. The TTL measures how long the job has been *silent*, which is exactly when its contents stopped being true: 7 days for anything running at least daily, 14 for nightly, 30 for weekly. It also caps the damage if someone keys on the run id by mistake — the store drains instead of climbing to the memory cap. Reserve `clear_ttl` for a record whose absence is worse than its staleness. Never omit both, or the write silently inherits whatever default the repo configured for lessons.
 - **A write-only `lk_wo_…` token** in `LOREKIT_TOKEN` is enough for a job that only records. It cannot read anything back, so a leaked CI token cannot exfiltrate the team's lore. Use `lk_ro_…` for a read-only job.
 - **`v` is a required version stamp.** A reader that sees an unrecognised version falls back to its first-run path instead of mis-parsing.
 - **Never on the critical path.** A LoreKit outage falls back to the first-run path and logs it; it never turns a green build red.

@@ -20,6 +20,7 @@ different, smaller set of guards applies instead.
 - [The record shape](#the-record-shape)
 - [Read step](#read-step)
 - [Write step](#write-step)
+- [TTL is a liveness guard](#ttl-is-a-liveness-guard)
 - [Worked example — GitHub Actions flaky-test tracker](#worked-example--github-actions-flaky-test-tracker)
 - [Guards (do not skip these)](#guards-do-not-skip-these)
 - [The payoff — CI and agents share one store](#the-payoff--ci-and-agents-share-one-store)
@@ -199,18 +200,19 @@ jq -nc \
     --key 'ci-state::flaky-tests' \
     --tags 'ci::test-state' \
     --kind bus --host ci \
-    --clear-ttl \
+    --ttl-days 7 \
     --remote --json \
 | tee write-result.json
 ```
 
 Notes on each flag that is not obvious:
 
-- **`--clear-ttl` is not optional.** A write that passes neither `--ttl-days` nor
-  `--clear-ttl` inherits whatever `ttl.default` / `scope.defaults.<prefix>.ttl_days`
-  the repo config sets. State that silently expires makes the next run believe it is
-  the first run — a slow, confusing failure. Say "permanent" explicitly, or pass a
-  deliberate `--ttl-days` for branch-scoped state you *want* to decay.
+- **`--ttl-days` is not optional, and it should be short.** See
+  [TTL is a liveness guard](#ttl-is-a-liveness-guard) — the countdown refreshes on
+  every write, so a short TTL expires the record only when the *job* stops running.
+  Never omit it: a write passing neither `--ttl-days` nor `--clear-ttl` inherits
+  whatever `ttl.default` / `scope.defaults.<prefix>.ttl_days` the repo config
+  happens to set for lessons, which is a number nobody chose for this record.
 - **No value argument** — `lorekit write` reads stdin when none is given, which is
   what makes the `jq | lorekit write` pipe work.
 - **`--remote`** — be explicit. A CI checkout has no offline store, and picking the
@@ -228,6 +230,53 @@ Over REST instead of the CLI, the equivalents are `POST /memories` (write) and
 because it derives `origin` (repo / branch / commit / PR) from the GitHub Actions
 environment automatically, which is what makes each record traceable back to the
 run that wrote it in the dashboard.
+
+---
+
+## TTL is a liveness guard
+
+**Default to a short TTL — roughly a week — not a permanent record.** This is the
+opposite of the instinct that "state must persist", and it follows from one detail
+of the write path.
+
+`memory_write` computes `expires_at = now() + ttl_days` on **every** write, insert
+or update (`supabase/migrations/00030_memory_ttl.sql`: `expires_at = case when
+p_ttl_days is not null then v_expires_at else memories.expires_at end`). The job
+rewrites its record on every run and passes `--ttl-days` every time, so the
+countdown restarts every run.
+
+That makes the TTL measure **how long the job has been silent**, not how old the
+record is. A record expires when — and only when — the job stopped running for that
+long, which is exactly when its contents stopped being true. A daily job with a
+7-day TTL keeps its state indefinitely while it runs daily, and drops it a week
+after someone deletes the workflow.
+
+| Job cadence | TTL | Why |
+| ----------- | --- | --- |
+| Every push / per-PR | **7 days** | Survives a feature freeze or a quiet holiday week; an abandoned job self-cleans |
+| Nightly | **14 days** | Tolerates a fortnight of red or paused schedules |
+| Weekly (release, audit) | **30 days** | ~4 missed runs of slack |
+| Branch-scoped, any cadence | **7 days or less** | The branch outlives the state; let it decay with the PR |
+
+Pick the number so a *normal* quiet spell does not expire the record, and an
+abandoned job does. Do not reach for 365 to be safe — that is just "permanent" with
+extra steps, and it re-creates the failure below.
+
+Two things this buys beyond freshness:
+
+- **A stale record is worse than a missing one.** Falling back to the first-run path
+  is a defined, tested code path. Acting on a flaky-test set from four months ago is
+  not — it is silently wrong, and nothing surfaces that.
+- **It bounds the blast radius of a cardinality mistake.** [The cardinality
+  rule](#the-cardinality-rule) is a discipline, and disciplines get violated. If
+  someone keys on `github.run_id` anyway, a 7-day TTL turns unbounded growth into a
+  bounded steady state that drains itself — the store stops filling instead of
+  climbing to the 5 000-memory cap.
+
+**`--clear-ttl` is the rare exception, not the default.** Reserve it for a record
+whose *absence* is more dangerous than its staleness — a migration watermark, say.
+If you find yourself there, ask first whether the fact belongs in a best-effort
+memory store at all rather than in the datastore that owns it.
 
 ---
 
@@ -312,7 +361,7 @@ jobs:
           | npx --yes @lorekit/cli@latest write \
               --scope "repo::${REPO}" --key 'ci-state::flaky-tests' \
               --tags 'ci::test-state' --kind bus --host ci \
-              --clear-ttl --remote --json \
+              --ttl-days 7 --remote --json \
           | tee lorekit-write.log \
           || echo "LoreKit write failed (exit $?) — not failing the build; see the output above."
 ```
@@ -337,8 +386,12 @@ do:
    mechanically from a CI environment that is *full* of tokens. Never
    `env | jq -R`, never a raw log body, never an error string that might carry a
    connection URL. Build the payload from an explicit allow-list of fields.
-3. **Expiry is explicit.** Pass `--clear-ttl` for durable state or a deliberate
-   `--ttl-days` for branch state. Never inherit the config default by accident.
+3. **Expiry is explicit, and short by default.** Pass `--ttl-days` sized to the
+   job's cadence (~7 days for anything running at least daily). It refreshes on
+   every write, so it expires only when the job goes silent — see
+   [TTL is a liveness guard](#ttl-is-a-liveness-guard). Never inherit the config
+   default by accident, and reserve `--clear-ttl` for the rare record whose absence
+   is worse than its staleness.
 4. **The store is never on the critical path.** A read miss falls back to the
    first-run path; a write failure is logged and swallowed. A LoreKit outage must
    not fail a build — but it must be *visible* in the log, never `|| true`-d away.
@@ -382,14 +435,15 @@ To add CI state to a job called `<job>`:
       run — otherwise use `actions/cache`.
 - [ ] Pick the bucket: tag `ci::<job>-state`, key `ci-state::<slug>`, one slug per
       fact, `--kind bus --host ci`.
-- [ ] Pick the scope: `repo::` for trunk state, `branch::` + `--ttl-days` for
-      per-PR state.
+- [ ] Pick the scope: `repo::` for trunk state, `branch::` for per-PR state.
+- [ ] Pick the TTL from the job's cadence (7 / 14 / 30 days — see the table). Short
+      by default; `--clear-ttl` only with a reason.
 - [ ] Define the JSON envelope with a `v` stamp, and the reader's unknown-version
       fallback.
 - [ ] Add the **read step** early in the job (`--scope`/`--key` flags, exit-1-is-a-miss
       branch, output echoed).
 - [ ] Add the **write step** at the end (`if: always()` if the state should survive a
-      failing run), `--clear-ttl`, failure swallowed but logged.
+      failing run), `--ttl-days` passed on EVERY write, failure swallowed but logged.
 - [ ] Provision tokens: `lk_wo_*` for a write-only job, `lk_ro_*` for a read-only
       one, `lk_rw_*` only where one job genuinely needs both.
 - [ ] Verify the payload is built from an explicit allow-list of fields, with no
