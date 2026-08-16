@@ -83,14 +83,25 @@ const DEFAULT_STATS_RANGE: TimeRange = { preset: '24h' };
 /**
  * How many week columns the heatmap draws, per breakpoint.
  *
- * The cells are fluid now (`ContributionHeatmap`), so the column COUNT is what
- * decides how big each one ends up: the same 26 weeks that give a comfortable
- * cell on a phone collapse the desktop chart into a quarter of its panel, and
- * the same 52 that fill a desktop would be 4px specks on a phone. A year on a
- * desktop and a quarter on a phone both land near a 15–20px cell — large enough
- * to aim a finger at, which the old fixed 9px cell never was.
+ * The cells are fluid now (`ContributionHeatmap`), so the column COUNT is the
+ * only thing deciding how big each one ends up. One value cannot serve both
+ * ends: 52 columns on a phone are ~4px specks, and the 13 that read well there
+ * would blow a desktop cell up to ~70px — a calendar, not a heatmap. So a
+ * quarter on a phone and a year on a desktop, landing at roughly 15–21px and
+ * ~19px respectively.
  *
- * The data supports either: `useLoreData` fetches `GET /memories/activity`
+ * **These cells sit below this package's ≥24px hit-target floor, deliberately.**
+ * Clearing it would mean ~8 columns on a phone — under two months, which guts
+ * the only thing the chart is for — and padding the hit area instead would
+ * overlap neighbouring cells, making them mis-tappable rather than easier to
+ * hit. It rests on WCAG 2.2 SC 2.5.8's *Equivalent* exception: a cell's only
+ * function is setting the date range, and the same range is settable from the
+ * full-size `DateRangePicker` in the control row directly below. The cells are
+ * still more than twice the fixed 9px they replaced. Revisit by lowering
+ * `mobile` if the exception ever stops holding — i.e. if the heatmap becomes
+ * the only way to set a range.
+ *
+ * The data supports either span: `useLoreData` fetches `GET /memories/activity`
  * unbounded, so there is no window to widen.
  */
 const HEATMAP_WEEKS = { mobile: 13, desktop: 52 } as const;
