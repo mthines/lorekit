@@ -5728,15 +5728,20 @@ $$;
 -- AC-7: `p_q` and `p_key_prefix` arrive already LIKE-escaped, so a literal `%`
 --       stays data instead of widening to a wildcard.
 -- AC-8: the archived / expired partition rule matches GET /memories'.
-insert into memories (user_id, scope, key, value, tags, source_agent, host, kind, created_at, updated_at) values
-  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-1', 'alpha',   array['x'], 'aw',    'reviewer', 'lesson', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-2', 'beta',    array['y'], 'aw',    'aw',       'lesson', '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z'),
+-- AC-9: an `origin_pr` entry that is all digits but too wide for int4 is
+--       DROPPED like any other unusable entry — never a 22003 raised out of a
+--       hand-editable filter value — while the zero-padded form still resolves.
+-- AC-9 needs one row carrying a real `origin_pr`, so the zero-padded half of a
+-- mixed filter has something to match; every other row leaves it null.
+insert into memories (user_id, scope, key, value, tags, source_agent, host, kind, origin_pr, created_at, updated_at) values
+  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-1', 'alpha',   array['x'], 'aw',    'reviewer', 'lesson', 7,    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-2', 'beta',    array['y'], 'aw',    'aw',       'lesson', null, '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z'),
   -- Same updated_at as lr-2 on purpose: AC-2's id tie-break needs a real tie.
-  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-3', 'gamma',   array['y'], 'other', null,       null,     '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z'),
+  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-3', 'gamma',   array['y'], 'other', null,       null,     null, '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z'),
   -- A comma-bearing host: AC-5.
-  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-4', 'delta',   array['z'], 'aw',    'a,b',      'bus',    '2026-01-03T00:00:00Z', '2026-01-03T00:00:00Z'),
+  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-4', 'delta',   array['z'], 'aw',    'a,b',      'bus',    null, '2026-01-03T00:00:00Z', '2026-01-03T00:00:00Z'),
   -- A literal percent in the value: AC-7.
-  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-5', '100%pure',array['z'], 'aw',    'reviewer', 'bus',    '2026-01-04T00:00:00Z', '2026-01-04T00:00:00Z');
+  ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-5', '100%pure',array['z'], 'aw',    'reviewer', 'bus',    null, '2026-01-04T00:00:00Z', '2026-01-04T00:00:00Z');
 insert into memories (user_id, scope, key, value, source_agent, archived_at) values
   ('00000000-0000-0000-0000-0000000000a1', 'project::list-rpc', 'lr-archived', 'v', 'aw', now());
 insert into memories (user_id, scope, key, value, source_agent) values
@@ -5903,6 +5908,28 @@ begin
     format('list rpc AC-8b: created_at desc must lead with lr-5, got %s', v_keys);
   assert array_length(v_keys, 1) = 2,
     format('list rpc AC-8c: p_limit must bound the page, got %s', v_keys);
+
+  -- AC-9: an origin_pr entry that is all digits but wider than int4 is DROPPED
+  -- like any other unusable entry, never raised. `^[0-9]+$` alone admits it and
+  -- `x::integer` then raises 22003 — a 500 out of a hand-editable filter value.
+  select count(*) into v_rows
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc',
+      p_origin_pr => array['99999999999'], p_limit => 100);
+  assert v_rows = 0,
+    format('list rpc AC-9: an out-of-int4 origin_pr must drop to "filters nothing", got %s rows', v_rows);
+
+  -- AC-9b: the drop is per ENTRY, and the bound keeps the zero-padded form
+  -- resolving numerically, so a list mixing the two still filters on its
+  -- usable half rather than erroring or matching nothing.
+  select array_agg(key) into v_keys
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc',
+      p_origin_pr => array['99999999999', '0000000007'], p_limit => 100);
+  assert v_keys = array['lr-1'],
+    format('list rpc AC-9b: the over-wide entry must drop while `0000000007` still matches PR 7, got %s', v_keys);
 end;
 $$;
 

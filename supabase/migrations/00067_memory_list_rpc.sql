@@ -151,11 +151,21 @@ declare
   -- `origin_pr` is an integer column and the wire form is text. A non-numeric
   -- entry is DROPPED, never an error: the filter can be built from a
   -- hand-editable URL, and one bad entry should narrow the filter rather than
-  -- break the page. Identical to 00066's coercion in the other two readers.
+  -- break the page.
+  --
+  -- The digit count is BOUNDED, which a bare `^[0-9]+$` is not: `99999999999`
+  -- is all digits and still overflows int4, so `x::integer` would raise 22003
+  -- and turn a hand-editable filter value into a 500 — the exact opposite of
+  -- the drop this comment promises. Nine significant digits is the widest run
+  -- that cannot overflow, and the leading `0*` keeps the zero-padded form
+  -- working (`007` → 7, as GET /memories has always resolved it). The guard is
+  -- a regex rather than a `x::numeric <= 2147483647` conjunct because WHERE
+  -- conjuncts have no guaranteed evaluation order, so a cast there could still
+  -- see a non-numeric value and raise 22P02.
   v_origin_pr integer[] := (
     select array_agg(x::integer)
       from unnest(coalesce(p_origin_pr, '{}'::text[])) as x
-     where x ~ '^[0-9]+$'
+     where x ~ '^0*[0-9]{1,9}$'
   );
   -- Whitelisted identifier — see the header. Anything unrecognised degrades to
   -- the route's default order instead of raising.
