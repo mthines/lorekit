@@ -65,6 +65,33 @@ Harvest real fixtures with `LOREKIT_HOOK_RECORD=<dir>` set on the hook command (
 
 ## NX commands
 
+### Sandbox baseline — read before trusting a red gate
+
+Three facts about a fresh sandbox/container, each confirmed across three or more
+runs. They cost time every time they are rediscovered:
+
+1. **Run `pnpm install` before the first `pnpm nx` command.** A fresh container's
+   install is incomplete or absent. The signature is a cryptic
+   `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL Command "nx" not found` (no
+   `node_modules/.bin/nx`) or a `Cannot find module 'zod'` cascade through
+   `packages/schemas/**`. Both are the same missing install, not a broken nx
+   config — `pnpm install --frozen-lockfile` at the root fixes both in ~15s.
+   `pnpm` itself may or may not be on PATH; probe, and `corepack enable` only if
+   it is missing.
+2. **`cli:test` is red on a clean tree, so `run-many -t … --all` exits non-zero
+   even with no changes.** The failures are all loopback-HTTP-shaped: the tests
+   stand up a mock server on `127.0.0.1:0` and the spawned CLI child's `fetch`
+   never arrives. The failing SET GROWS as new tests land on that surface, so
+   **never pattern-match on a remembered count** — see point 3. (Writing a new
+   test for this surface? Target the local on-disk store via `LOREKIT_HOME` +
+   `LOREKIT_MODE=local` instead of a mock REST server.) Web lint is separately
+   ~47 pre-existing `no-non-null-assertion` **warnings, 0 errors** — not yours.
+3. **Prove a failure pre-existing with `git stash -u`, not from memory.** Stash,
+   re-run the same command, compare. The assertion that holds is "N failures
+   before == N failures after"; any specific N goes stale. This takes ~40s and is
+   the difference between reporting an inherited red and "fixing" something that
+   was never broken.
+
 ```bash
 # CI gate
 pnpm nx run-many -t typecheck,test,lint --all
