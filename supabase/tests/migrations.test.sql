@@ -6192,7 +6192,7 @@ begin
       p_value => 'v', p_org_slug => v_org_slug,
       p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
     );
-  exception when others then v_failed := true;
+  exception when sqlstate 'LK002' then v_failed := true;
   end;
   assert v_failed,
     'enforcement AC-2: a personal-only key must not write into a named org';
@@ -6208,7 +6208,7 @@ begin
       p_user_id => v_owner, p_scope => 'repo::other/repo', p_key => 'k-scope-denied',
       p_value => 'v', p_key_scopes => array['repo::mthines/*']
     );
-  exception when others then v_failed := true;
+  exception when sqlstate 'LK002' then v_failed := true;
   end;
   assert v_failed,
     'enforcement AC-2b: a key allowlisted elsewhere must not write under repo::other/repo';
@@ -6316,7 +6316,7 @@ begin
       p_key => 'k-del', p_force => true,
       p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
     );
-  exception when others then v_failed := true;
+  exception when sqlstate 'LK002' then v_failed := true;
   end;
   assert v_failed,
     'enforcement AC-4b: a personal-only key must not delete an org-owned memory';
@@ -6327,7 +6327,7 @@ begin
       p_user_id => v_owner, p_org_slug => v_org_slug, p_scope => 'repo::deltest/repo',
       p_key => 'k-del', p_force => true, p_key_scopes => array['repo::other/*']
     );
-  exception when others then v_failed := true;
+  exception when sqlstate 'LK002' then v_failed := true;
   end;
   assert v_failed,
     'enforcement AC-4b: a key allowlisted elsewhere must not delete this scope';
