@@ -652,7 +652,7 @@ applied, `smoke-preview`, `smoke-production` and the preview smoke step fail
 with `Cannot find project 'mcp-server'` — a deploy loses its post-deploy
 verification and `rollback-production` trips. Apply them in the same merge.
 
-**1. Four `nx test` invocations.** Replace `mcp-server` with `supabase`; the
+**1. Five `nx test` invocations.** Replace `mcp-server` with `supabase`; the
 suite filters and flags are unchanged.
 
 | File | Line (approx.) | New command |
