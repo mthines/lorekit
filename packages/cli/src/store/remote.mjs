@@ -46,6 +46,41 @@ export class StoreReadError extends Error {
   }
 }
 
+/**
+ * What a remote write of `entry` would lose, without performing it.
+ *
+ * Exported because a DRY RUN has to be able to say the same thing the apply
+ * will: a preview that omits "this entry's expiry will be shortened" is a
+ * preview of a different operation. `putEntry` calls it too, so the two
+ * cannot drift.
+ *
+ *   `ttlClamped`        the entry's TTL exceeds the API's 365-day maximum and
+ *                       will land shortened.
+ *   `createdAtDropped`  the entry's `created` is unusable (unparseable or
+ *                       future-dated), so the override is dropped and the
+ *                       server stamps the write instant instead.
+ *
+ * Total over any input: a malformed entry reports no losses rather than
+ * throwing, because this runs on the preview path where an exception would
+ * cost the user the whole plan.
+ */
+export function remoteWriteLosses(entry, now = new Date()) {
+  const exact = remoteTtlDaysExact(entry?.expires_at, now);
+  return {
+    ttlClamped: typeof exact === 'number' && exact > 365,
+    createdAtDropped: Boolean(entry?.created) && safeCreatedAt(entry?.created, now) === null,
+  };
+}
+
+// `normalizeCreatedAt`, but an invalid value yields null instead of throwing.
+function safeCreatedAt(created, now) {
+  try {
+    return normalizeCreatedAt(created ?? null, now);
+  } catch {
+    return null;
+  }
+}
+
 // An absolute `expires_at` expressed as the hosted write's relative `ttl_days`.
 //
 // Three outcomes, and the third exists because "no expiry" and "I cannot tell"
@@ -423,20 +458,11 @@ class RemoteStore {
     if (ttl === 'expired') {
       return refuse('expired', 'expired entries cannot be written remotely — any TTL would re-date them into the future');
     }
-    // The same validation the server applies (`_shared/created-at.ts`, mirrored
-    // here), run BEFORE the request rather than discovered as a 400. A local
-    // file can hold a hand-edited or clock-skewed `created`, and losing the
-    // whole lesson over its creation date is the wrong trade: drop the
-    // override, let the server stamp now, and report the loss so the caller
-    // can say which entries were re-dated.
-    let createdAt;
-    let createdAtDropped = false;
-    try {
-      createdAt = normalizeCreatedAt(entry?.created ?? null, now) ?? undefined;
-    } catch {
-      createdAt = undefined;
-      createdAtDropped = Boolean(entry?.created);
-    }
+    // What this write will lose, decided by the same pure function a DRY RUN
+    // calls — so a preview cannot promise something the apply then silently
+    // does differently.
+    const { ttlClamped, createdAtDropped } = remoteWriteLosses(entry, now);
+    const createdAt = createdAtDropped ? undefined : (safeCreatedAt(entry?.created, now) ?? undefined);
     const result = await this.write(stripUndefined({
       scope: entry.scope,
       key: entry.key,
@@ -462,7 +488,7 @@ class RemoteStore {
     return {
       ...result,
       unsupported: null,
-      ttlClamped: Boolean(result.ok) && ttl === 365 && remoteTtlDaysExact(entry?.expires_at, now) > 365,
+      ttlClamped: Boolean(result.ok) && ttlClamped,
       createdAtDropped: Boolean(result.ok) && createdAtDropped,
     };
   }
