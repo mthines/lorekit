@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 // Dependency-free pure module — safe to pull into the edge middleware bundle.
 // Shared with /api/auth/callback and the client-side password sign-in so all
 // three enforce one definition of a safe `?next=` target.
-import { safeNextPath } from '@/lib/auth-redirect';
+import { safeNextPath, boundedReturnTo } from '@/lib/auth-redirect';
 
 /** 24 hours — matches the Supabase project jwt_expiry so the cookie
  *  outlives the access token and the refresh token can be used. */
@@ -42,12 +42,23 @@ export async function middleware(request: NextRequest) {
   // can read the full URL without accessing the raw Request object.
   // Used by the dashboard layout to preserve shared URLs (e.g. ?lesson=…)
   // through the unauthenticated → login → callback → original URL flow.
+  //
+  // BOUNDED, because this turns URL length into HEADER length on every matched
+  // request. The Explorer's filter bar lives in ?filters= by design, and a wide
+  // bar is kilobytes of percent-encoded JSON; copied here and then re-encoded
+  // into ?next= by the layout, it is what takes the round trip past the header
+  // limit and returns a 431 the user cannot act on. Past the budget the header
+  // carries the pathname alone — the return trip loses the bar, never the page.
+  // The address bar itself is untouched: a pasted link must keep working, and
+  // the client that reads it has no header limit.
+  const forwardedTarget = boundedReturnTo(request.nextUrl.pathname, request.nextUrl.search);
+  const forwardedSearch = forwardedTarget.slice(request.nextUrl.pathname.length);
   let response = NextResponse.next({
     request: {
       headers: new Headers({
         ...Object.fromEntries(request.headers),
         'x-pathname': request.nextUrl.pathname,
-        'x-search': request.nextUrl.search,
+        'x-search': forwardedSearch,
       }),
     },
   });
@@ -69,7 +80,7 @@ export async function middleware(request: NextRequest) {
               headers: new Headers({
                 ...Object.fromEntries(request.headers),
                 'x-pathname': request.nextUrl.pathname,
-                'x-search': request.nextUrl.search,
+                'x-search': forwardedSearch,
               }),
             },
           });
