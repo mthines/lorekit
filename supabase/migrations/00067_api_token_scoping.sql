@@ -353,13 +353,15 @@ begin
   -- the same reason — so a NULL tenancy would fall through BOTH re-statements
   -- and reach the UPDATE, where the column's NOT NULL rejects it as a raw 23502
   -- naming an internal constraint. That is the exact unreadable failure these
-  -- re-statements exist to prevent. `v_scopes` and `v_org_ids` are coalesced
-  -- above and so are already total; this argument is read raw and is not.
+  -- re-statements exist to prevent. All three scoping arguments are now read
+  -- raw and each carries its own explicit NULL refusal — `p_scopes` and
+  -- `p_org_ids` above, this one here.
   --
   -- Refusing rather than coalescing to 'all' is deliberate: 'all' is the WIDEST
   -- tenancy, so defaulting a missing one would let an under-specified call widen
   -- the key — the same fail-open shape decision 5 refuses by giving the
-  -- arguments no DEFAULT in the first place.
+  -- arguments no DEFAULT in the first place. That is also why the two arguments
+  -- above are no longer coalesced: their default, '{}', means UNRESTRICTED.
   if p_org_access is null or p_org_access not in ('all', 'personal', 'selected') then
     raise exception 'LK004: org_access must be all, personal or selected'
       using errcode = '22023';
