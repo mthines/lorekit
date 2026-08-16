@@ -968,7 +968,12 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
       const next = await api('POST', '/list', { scope: SCOPE, limit: 1, cursor: page.nextCursor });
       expect(next.status, `expected 200; got ${JSON.stringify(next.data)}`).toBe(200);
       const firstKey = ((page.entries as JsonObj[])[0] as JsonObj).key;
-      const nextKey = (((next.data as JsonObj).entries as JsonObj[])[0] as JsonObj)?.key;
+      const nextEntries = (next.data as JsonObj).entries as JsonObj[];
+      // `hasMore` promised a row, so an EMPTY second page is a pagination bug —
+      // assert it before reading [0], otherwise `undefined !== firstKey` passes
+      // and the broken case reads as the contract being honoured.
+      expect(nextEntries.length, 'hasMore promised a second page, so it must carry a row').toBeGreaterThan(0);
+      const nextKey = (nextEntries[0] as JsonObj).key;
       expect(nextKey, 'the second page must not repeat the first row').not.toBe(firstKey);
     });
   });
