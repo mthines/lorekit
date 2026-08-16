@@ -198,6 +198,19 @@ export function installExtensionErrorFilter(target?: EventTarget): () => void {
   const eventTarget = target ?? (typeof window === 'undefined' ? undefined : window);
   if (!eventTarget) return () => undefined;
 
+  // Best-effort by design, and the SMALLER half of the win. A script served
+  // from another origin — which every `chrome-extension://` script is — has its
+  // uncaught errors MUTED by the browser: the page sees `message: "Script
+  // error."` with `error: null` and `filename: ""`, and no `crossorigin`
+  // attribute we control can un-mute an extension's own script tag. With
+  // neither a stack nor a filename there is nothing to attribute, so those
+  // events fall through to the fail-safe and are kept.
+  //
+  // Both production fingerprints (`M_ID`, MetaMask `inpage.js`) arrive as
+  // unhandled REJECTIONS, whose `reason` is a real `Error` object with a full
+  // stack and is not subject to the muting — that path is what removes the
+  // 102/105. This branch stays for the hosts and cases that do report an
+  // attributable uncaught error; it is never the thing to measure the filter by.
   const onError = (event: Event) => {
     const { error, filename } = event as ErrorEvent;
     if (shouldIgnoreErrorFromExtension({ stack: stackOfUnknown(error), filename })) {
