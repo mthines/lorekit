@@ -176,9 +176,17 @@ export function orgAllowedByKey(
 /**
  * Is this key restricted at all?
  *
- * No consumer yet — this PR is the data model and the pure predicates only. The
- * dashboard badge and the OTel attribute that will read it arrive with the
- * management surface, so today the only caller is `api-key.spec.ts`.
+ * Still spec-only, and NOT because the management surface is pending — it
+ * shipped. The dashboard answers the same question over its OWN type:
+ * `token-scoping.ts`'s `isScoped` reads a `TokenScoping`, whose fields are the
+ * database's snake_case (`org_access`, `org_ids`) because it is built straight
+ * from an `api_tokens` row, where this one reads the camelCase `ApiKeyScoping`
+ * the transports parse. Converting at the boundary just to share a two-clause
+ * predicate would buy nothing and add a shape to keep in step.
+ *
+ * So the caller this is waiting for is a TRANSPORT-side one — the OTel
+ * attribute that marks a request as made by a restricted key — and until that
+ * lands the only caller is `api-key.spec.ts`.
  */
 export function isScopedKey(scoping: ApiKeyScoping): boolean {
   return scoping.scopes.length > 0 || scoping.orgAccess !== 'all';
