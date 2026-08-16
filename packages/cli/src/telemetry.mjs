@@ -217,8 +217,8 @@ export function normalizeHostArch(arch) {
 
 /**
  * Resolve the `deployment.environment.name` resource value, or `undefined` when
- * none is set. The CLI runs on end-users' machines, so — unlike the edge/web/
- * mcp-node deployments — it has no ambient environment and deliberately OMITS
+ * none is set. The CLI runs on end-users' machines, so — unlike the edge and web
+ * deployments — it has no ambient environment and deliberately OMITS
  * the attribute by default. It is emitted ONLY when explicitly overridden via
  * `DEPLOYMENT_ENVIRONMENT` (falling back to `OTEL_DEPLOYMENT_ENVIRONMENT`) — the
  * same single, env-driven knob the edge honours, which the correlated-trace

@@ -1,7 +1,8 @@
 # Telemetry quality & cross-service correlation review
 
 _Reviewed: 2026-07 · Scope: traces, metrics, and W3C context propagation across
-`cli`, `api` (edge), `mcp-node`, and `web`._
+`cli`, `api` (edge), and `web` — plus the synthetic `mcp-node` identity the
+correlated-trace harness emits._
 
 This review answers two questions: **(1) is LoreKit's telemetry actually
 generated correctly and correlated across services?** and **(2) does it meet
@@ -23,10 +24,20 @@ edge function (`supabase/functions/_shared/trace-context.ts`). The zero-dep CLI
 re-implements the same header format in `packages/cli/src/telemetry.mjs`.
 
 ```
-agent ─traceparent→ mcp-node ─traceparent→ api (edge) ─→ Postgres
+agent ─traceparent→ api (edge, faas.name=mcp) ─→ Postgres
   cli ─traceparent→ api (edge)
   web ─traceparent→ api (edge)          (browser + server, via @vercel/otel)
 ```
+
+An agent reaches the MCP server in ONE hop: the edge function, which reports
+`service.name=api` with `faas.name=mcp`. The intermediate `mcp-node` hop this
+diagram used to show was the undeployed Node MCP server, deleted with
+`packages/mcp-server/` (see
+[decisions.md → "No Node MCP server, no Fly.io"](./decisions.md#no-node-mcp-server-no-flyio)).
+`mcp-node` survives ONLY as a synthetic service name inside
+`scripts/emit-correlated-trace.mts`, the on-demand harness described below, which
+is why it still appears in the harness rows of the test table — it is a fabricated
+multi-hop chain for exercising propagation, never a real deployment.
 
 - **CLI → api / MCP → api**: the receiver continues the inbound trace (same
   `trace_id`, fresh `span_id`, `parent_span_id` = caller's span) or, if the
