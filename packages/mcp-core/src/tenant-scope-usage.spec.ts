@@ -109,25 +109,61 @@ describe('tenant-scope usage guard (edge read handlers)', () => {
  * argument present, the same way the MCP assertion is.
  *
  * A future REST read handler that builds a `memories` query belongs in this
- * list. Handlers with no query to scope (`scopes`, `tags`, `usage`, the two
- * activity series, `facets`) are deliberately absent for the reason their own
- * docblocks give: the tenant predicate is applied one layer down, inside the
- * RPC, and a second copy up here is a place for the two to drift.
+ * list. The RPC-BACKED reads have no query to scope and so cannot appear here —
+ * they get their own guard immediately below, because "the RPC narrows it" is
+ * not on its own a safety property.
  */
 const REST_READ_HANDLERS = ['get', 'list', 'relevant', 'search'] as const;
 
-describe('key-scope usage guard (REST read family)', () => {
-  const read = (name: string) =>
-    readFileSync(path.resolve(here, `../../../supabase/functions/memories/handlers/${name}.ts`), 'utf8');
+const readHandlerSource = (name: string) =>
+  readFileSync(path.resolve(here, `../../../supabase/functions/memories/handlers/${name}.ts`), 'utf8');
 
+describe('key-scope usage guard (REST read family)', () => {
   it.each(REST_READ_HANDLERS)('%s routes its memories read through applyRestTenantScope', (name) => {
-    expect(read(name)).toContain('applyRestTenantScope(');
+    expect(readHandlerSource(name)).toContain('applyRestTenantScope(');
   });
 
   it.each(REST_READ_HANDLERS)('%s passes the calling key restriction to applyRestTenantScope', (name) => {
     // The fourth argument, not merely the call. `keyRestriction(auth)` is the
     // only way a handler produces one, so it is matched by name.
-    expect(read(name)).toMatch(/applyRestTenantScope\([\s\S]*?,\s*keyRestriction\(auth\)\s*\)/);
+    expect(readHandlerSource(name)).toMatch(/applyRestTenantScope\([\s\S]*?,\s*keyRestriction\(auth\)\s*\)/);
+  });
+});
+
+/**
+ * Drift guard: the RPC-BACKED per-scope reads must PASS `p_key_scopes`.
+ *
+ * These handlers are excluded from the list above for a real reason — they
+ * build no `memories` query, so there is nothing for `applyRestTenantScope` to
+ * narrow and a second app-layer predicate would only be somewhere for the two
+ * to drift. But "the RPC narrows it one layer down" is a claim about the RPC's
+ * parameters, and 00068 defaults `p_key_scopes` to `'{}'` — the UNRESTRICTED
+ * value — so the narrowing only happens if the handler actually sends it. A
+ * handler that simply omits the parameter compiles, runs, and hands a scoped
+ * key the whole account's catalog: precisely the fail-open shape the optional
+ * fourth argument of `applyRestTenantScope` has, one layer down.
+ *
+ * `usage` is the one deliberate absence, and it is absent by SHAPE rather than
+ * by trust: `GET /memories/usage` rolls up by `scope_type` (`repo`, `project`,
+ * `global`), never a scope name, so there is no name to withhold. Adding a
+ * name-bearing dimension to it puts it in this list.
+ */
+const RPC_BACKED_SCOPE_READS = ['scopes', 'tags', 'activity', 'read-activity', 'facets'] as const;
+
+describe('key-scope usage guard (RPC-backed per-scope reads)', () => {
+  it.each(RPC_BACKED_SCOPE_READS)('%s passes p_key_scopes to its RPC', (name) => {
+    // The key's allowlist, not merely a mention of it in a comment: matched as
+    // an object property with a value, which is the only form that reaches
+    // Postgres.
+    expect(readHandlerSource(name)).toMatch(/p_key_scopes:\s*keyRestriction\(auth\)\?\.scopes\s*\?\?\s*\[\]/);
+  });
+
+  it('usage is excluded because it emits no scope NAME', () => {
+    // If this ever fails, `usage` grew a name-bearing dimension and belongs in
+    // the list above — the assertion is the tripwire for that, not a decoration.
+    const src = readHandlerSource('usage');
+    expect(src).not.toContain('p_scope');
+    expect(src).toContain('scope_type');
   });
 });
 
