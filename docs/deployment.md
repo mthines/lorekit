@@ -680,7 +680,10 @@ triggers the gate it drives. `supabase/tests/` is already listed in both.
 ```
 
 Verify locally with `pnpm nx test supabase` (182 tests; the 135 live ones
-self-skip without `LOREKIT_SMOKE_TOKEN`).
+self-skip without their credential — `smoke.integration` and `memories-api` need
+`LOREKIT_SMOKE_TOKEN`, `orgs-api` needs `LOREKIT_SMOKE_JWT`, and `byod-smoke`
+needs `LOREKIT_BYOD_URL` + `LOREKIT_BYOD_TOKEN`, so with none of them set all 135
+skip).
 
 ### Environments and secrets
 
