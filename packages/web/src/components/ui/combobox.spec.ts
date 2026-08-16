@@ -113,6 +113,25 @@ describe('initialHighlight', () => {
     expect(initialHighlight(WITH_DISABLED, 'b')).toBe(0);
   });
 
+  it('opens on the FIRST selected option in OPTION order, not click order', () => {
+    // The docblock's multi-select promise, and the only case that distinguishes
+    // `isSelected(value, o.value)` from a scalar `o.value === value`: with the
+    // list built as ['c', 'a'] the answer is 'a' at index 0, because the option
+    // order decides, not the order the user ticked them in.
+    expect(initialHighlight(OPTIONS, ['c', 'a'])).toBe(0);
+    expect(initialHighlight(OPTIONS, ['c'])).toBe(2);
+  });
+
+  it('falls back to the first option for an EMPTY multi selection', () => {
+    // Empty rather than null is the multi shape's "nothing picked", so it must
+    // reach the same fallback the scalar `null` does.
+    expect(initialHighlight(OPTIONS, [])).toBe(0);
+  });
+
+  it('skips a disabled option a multi selection names', () => {
+    expect(initialHighlight(WITH_DISABLED, ['b'])).toBe(0);
+  });
+
   it('reports -1 when nothing is selectable', () => {
     expect(initialHighlight([], 'a')).toBe(-1);
   });
