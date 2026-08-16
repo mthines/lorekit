@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { describe, it, expect, vi } from 'vitest';
 import {
   applyTenantScope,
@@ -10,6 +13,8 @@ interface FakeQuery {
   eq: ReturnType<typeof vi.fn>;
   or: ReturnType<typeof vi.fn>;
 }
+
+const here = path.dirname(fileURLToPath(import.meta.url));
 
 function fakeQuery(): FakeQuery {
   const query = {} as FakeQuery;
@@ -220,5 +225,58 @@ describe('applyTenantScope with a key restriction', () => {
     });
     expect(query.eq).toHaveBeenCalledWith('user_id', 'user-1');
     expect(query.or).toHaveBeenCalledWith('scope.eq.global');
+  });
+});
+
+/**
+ * Parity guard: every copy of `SCOPE_PATTERN` in the repo says the same thing.
+ *
+ * `tenant-scope.ts` is deliberately import-free — it is mirrored verbatim into
+ * the Deno edge tree, which cannot cross-import this package — so it RESTATES
+ * `SCOPE_PATTERN` rather than importing it. That is the right trade for the
+ * mirror, but it means the shape test now lives in five places: the schema
+ * (the authority), this module, and three SQL copies. Nothing structurally
+ * stops one from being tightened while the others stay loose, and a LOOSER copy
+ * silently WIDENS a scoped key — the one direction these predicates must never
+ * move.
+ *
+ * This is that pin. It compares the pattern SOURCE, not behaviour on a sample,
+ * because a sample can agree by accident on every string anybody thought to
+ * write down.
+ */
+describe('SCOPE_PATTERN parity across every copy', () => {
+  const repoRoot = path.resolve(here, '../../..');
+  const read = (rel: string) => readFileSync(path.resolve(repoRoot, rel), 'utf8');
+
+  // The authority, as written in `packages/schemas/src/api-key.ts`.
+  const AUTHORITY = String.raw`^[a-z0-9._:/-]+(?:(?:\/|::)\*)?$`;
+  // The same shape in POSIX regex, as the SQL copies must spell it: Postgres
+  // `~` has no non-capturing-group syntax and needs no `/` escape.
+  const AUTHORITY_SQL = String.raw`^[a-z0-9._:/-]+((/|::)\*)?$`;
+
+  it('the schema still says what this guard thinks it says (anti-vacuity)', () => {
+    expect(read('packages/schemas/src/api-key.ts')).toContain(`/${AUTHORITY}/`);
+  });
+
+  it.each([
+    ['packages/mcp-core/src/tenant-scope.ts', AUTHORITY],
+    ['supabase/functions/_shared/tenant-scope.ts', AUTHORITY],
+  ])('%s restates the authority verbatim', (file, expected) => {
+    expect(read(file)).toContain(expected);
+  });
+
+  it.each([
+    ['supabase/migrations/00068_api_token_scoping_enforcement.sql', AUTHORITY_SQL],
+    ['supabase/byod/bootstrap.sql', AUTHORITY_SQL],
+  ])('%s carries the POSIX spelling of the same shape', (file, expected) => {
+    expect(read(file)).toContain(expected);
+  });
+
+  it('no copy admits a MID-TOKEN wildcard, which is the widening this pins', () => {
+    // The concrete regression: `repo::mthines/lore*` must not be a pattern in
+    // any copy. Asserted through the one exported consumer as well as the
+    // source comparison above, so the pin fails on behaviour too.
+    expect(keyScopeFilter({ scopes: ['repo::mthines/lore*'], orgAccess: 'all', orgIds: [] }))
+      .toBe('scope.is.null');
   });
 });
