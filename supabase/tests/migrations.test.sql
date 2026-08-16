@@ -5954,6 +5954,20 @@ begin
   assert v_failed,
     'set_scoping AC-5: an unknown org_access must be refused with LK004';
 
+  -- NULL is a THIRD case, not a variant of the one above: `null not in (…)` is
+  -- NULL, so without the explicit `is null` the guard does not fire, and neither
+  -- does the equality guard after it. The tenancy would reach the UPDATE and come
+  -- back as a raw 23502 from the column's NOT NULL — an internal constraint name
+  -- instead of an LK004. `invalid_parameter_value` here is therefore asserting
+  -- that the re-statement is TOTAL, not merely present.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(v_token, '{}'::text[], null, '{}'::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a NULL org_access must be refused with LK004, not a raw NOT NULL violation';
+
   -- Both directions of the equality, because a one-sided implication would let
   -- one of them through: `selected` with no orgs, and a non-`selected` tenancy
   -- carrying orgs. The second uses v_org_a, an org the actor IS a member of, so

@@ -301,7 +301,19 @@ begin
     raise exception 'LK004: at most 50 orgs per key' using errcode = '22023';
   end if;
 
-  if p_org_access not in ('all', 'personal', 'selected') then
+  -- `is null or` is load-bearing, not defensive noise. `null not in (…)` is
+  -- NULL, `if NULL` takes the false branch, and the `<>` guard below is NULL for
+  -- the same reason — so a NULL tenancy would fall through BOTH re-statements
+  -- and reach the UPDATE, where the column's NOT NULL rejects it as a raw 23502
+  -- naming an internal constraint. That is the exact unreadable failure these
+  -- re-statements exist to prevent. `v_scopes` and `v_org_ids` are coalesced
+  -- above and so are already total; this argument is read raw and is not.
+  --
+  -- Refusing rather than coalescing to 'all' is deliberate: 'all' is the WIDEST
+  -- tenancy, so defaulting a missing one would let an under-specified call widen
+  -- the key — the same fail-open shape decision 5 refuses by giving the
+  -- arguments no DEFAULT in the first place.
+  if p_org_access is null or p_org_access not in ('all', 'personal', 'selected') then
     raise exception 'LK004: org_access must be all, personal or selected'
       using errcode = '22023';
   end if;
