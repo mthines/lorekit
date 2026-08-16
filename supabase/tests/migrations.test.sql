@@ -4736,7 +4736,11 @@ $$;
 -- reads the whole usage ledger.
 do $$
 declare
-  v_sig text := 'lorekit_read_activity(uuid, text, timestamptz, timestamptz, text)';
+  -- 00068 appended `p_key_scopes text[]`, so the live signature is the 6-arg
+  -- one. Asserted against the CURRENT signature rather than 00058's: a
+  -- privilege probe against a signature that no longer exists errors out, and
+  -- the overload count below is what pins that only one form is live.
+  v_sig text := 'lorekit_read_activity(uuid, text, timestamptz, timestamptz, text, text[])';
   v_overloads int;
 begin
   assert not has_function_privilege('anon', v_sig, 'EXECUTE'),
@@ -6054,6 +6058,57 @@ begin
   where s.scope = 'project::alpha';
   assert v_count = 1,
     'enforcement AC-4: a personal-only key must still see its own personal scopes';
+
+  -- ── AC-5: the two ACTIVITY series are narrowed the same way ───────────────
+  -- `lorekit_memory_scopes` is not the only per-scope catalog: GET
+  -- /memories/activity and /read-activity also return one row per scope NAME,
+  -- so narrowing only the catalog would move the leak rather than close it.
+  select array_agg(distinct a.scope order by a.scope) into v_scopes
+  from lorekit_memory_activity(p_user_id => v_owner) a;
+  assert 'project::alpha' = any(v_scopes) and 'project::beta' = any(v_scopes),
+    'enforcement AC-5: an unrestricted caller must still see every scope in the activity series';
+
+  select array_agg(distinct a.scope order by a.scope) into v_scopes
+  from lorekit_memory_activity(p_user_id => v_owner, p_key_scopes => array['project::alpha']) a;
+  assert v_scopes = array['project::alpha'],
+    'enforcement AC-5: an allowlisted key must see ONLY its allowlisted scopes in the activity series';
+
+  select count(*) into v_count
+  from lorekit_memory_activity(
+    p_user_id => v_owner, p_key_org_access => 'personal', p_key_org_ids => '{}'::uuid[]
+  ) a
+  where a.scope = 'repo::bound/repo';
+  assert v_count = 0,
+    'enforcement AC-5: a personal-only key must not see an org-owned scope in the activity series';
+
+  -- The read series, over its own ledger. `scope` is NULLABLE there — an
+  -- unattributable read names nothing, so it must survive the allowlist rather
+  -- than being dropped, or a scoped key's chart silently loses every event
+  -- written before 00058.
+  insert into usage_events (user_id, plan_name, tool_name, scope_type, auth_type, outcome,
+                            duration_ms, result_count, scope, created_at) values
+    (v_owner, 'free', 'memory.read', 'project', 'api_key', 'ok', 10, 5, 'project::alpha',
+     timestamptz '2026-05-01 01:00:00+00'),
+    (v_owner, 'free', 'memory.read', 'project', 'api_key', 'ok', 10, 7, 'project::beta',
+     timestamptz '2026-05-01 02:00:00+00'),
+    (v_owner, 'free', 'memory.read', 'unknown', 'api_key', 'ok', 10, 3, null,
+     timestamptz '2026-05-01 03:00:00+00');
+
+  select array_agg(distinct r.scope order by r.scope) into v_scopes
+  from lorekit_read_activity(v_owner, 'day', timestamptz '2026-05-01 00:00:00+00',
+                             timestamptz '2026-05-02 00:00:00+00', null,
+                             array['project::alpha']) r
+  where r.scope is not null;
+  assert v_scopes = array['project::alpha'],
+    'enforcement AC-5: an allowlisted key must not see another scope NAME in the read series';
+
+  select count(*) into v_count
+  from lorekit_read_activity(v_owner, 'day', timestamptz '2026-05-01 00:00:00+00',
+                             timestamptz '2026-05-02 00:00:00+00', null,
+                             array['project::alpha']) r
+  where r.scope is null;
+  assert v_count = 1,
+    'enforcement AC-5: an unattributable read names nothing and must survive the allowlist';
 end;
 $$;
 

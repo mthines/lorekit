@@ -1,4 +1,5 @@
 import type { AuthContext, DbClient } from '../../_shared/api/auth.ts';
+import { keyRestriction } from '../../_shared/api/auth.ts';
 import { badRequest, ok } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
 import { validateScope } from '../../_shared/scope.ts';
@@ -83,6 +84,11 @@ export async function handleReadActivity(
     p_since: since,
     p_until: until,
     p_scope: scopeFilter,
+    // The calling key's scope allowlist (00067/00068), narrowed inside the RPC
+    // exactly as `GET /memories/activity` and `/scopes` are: this series also
+    // returns one row per scope NAME. No org parameters — `usage_events` is a
+    // per-user ledger with no org axis to narrow.
+    p_key_scopes: keyRestriction(auth)?.scopes ?? [],
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 

@@ -342,3 +342,253 @@ comment on function lorekit_memory_scopes(uuid, text[], text, uuid[]) is
    under service-role is the CI escape hatch. The key parameters default to
    unrestricted, so a non-key caller is unaffected. last_activity is
    max(created_at) over the same counted rows.';
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 3. lorekit_memory_activity
+-- 4. lorekit_read_activity
+--
+-- The two remaining per-scope catalogs. `lorekit_memory_scopes` above is not
+-- the only endpoint that returns one row per scope name: `GET /memories/activity`
+-- and `GET /memories/read-activity` do too, and a scope string IS a repo or
+-- project name — so narrowing the catalog while leaving the two activity series
+-- unnarrowed would let a key restricted to one repo enumerate every repo on the
+-- account through the charts instead of through the catalog.
+--
+-- Same shape as `lorekit_memory_scopes`: defaulted trailing parameters, the two
+-- 00067 predicates ANDed on top of the caller's own visibility (never instead
+-- of it), and an unscoped key byte-for-byte unaffected. Narrowed HERE rather
+-- than post-filtered in the edge for the reason the catalog is: the rows are
+-- aggregates, so dropping rows afterwards would report counts that do not add
+-- up, and a truncated response would under-report silently.
+--
+-- `lorekit_read_activity` reads `usage_events`, which has no `org_id`, so it
+-- takes the scope allowlist only — its visibility is already self-only (usage
+-- is a per-user ledger, never org-shared) and there is no org axis to narrow.
+-- Its `scope` column is NULLABLE (an unattributable read); a NULL scope names
+-- nothing and so leaks nothing, and `lorekit_api_token_scope_allowed` is given
+-- the explicit NULL pass below so the account total stays complete rather than
+-- silently dropping every pre-00058 row for a scoped key.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+drop function if exists lorekit_memory_activity(
+  uuid, text, timestamptz, timestamptz, text, text[], text, text[], text,
+  text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text
+);
+
+create or replace function lorekit_memory_activity(
+  p_user_id uuid,
+  p_bucket  text        default 'day',
+  p_since   timestamptz default null,
+  p_until   timestamptz default null,
+  p_scope              text   default null,
+  p_tags               text[] default null,
+  p_tags_mode          text   default 'any',
+  p_source_agent       text[] default null,
+  p_source_agent_mode  text   default 'in',
+  p_trigger            text[] default null,
+  p_trigger_mode       text   default 'in',
+  p_kind               text[] default null,
+  p_kind_mode          text   default 'in',
+  p_host               text[] default null,
+  p_host_mode          text   default 'in',
+  p_origin_repo        text[] default null,
+  p_origin_repo_mode   text   default 'in',
+  p_origin_branch      text[] default null,
+  p_origin_branch_mode text   default 'in',
+  p_origin_pr          text[] default null,
+  p_origin_pr_mode     text   default 'in',
+  p_owner              text[] default null,
+  p_owner_mode         text   default 'in',
+  -- The CALLING KEY's restriction (00067), defaulted to unrestricted.
+  p_key_scopes         text[] default '{}',
+  p_key_org_access     text   default 'all',
+  p_key_org_ids        uuid[] default '{}'
+)
+returns table (bucket timestamptz, scope text, count bigint)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+#variable_conflict use_column
+declare
+  v_actor uuid := case
+    when auth.role() = 'service_role' then coalesce(p_user_id, auth.uid())
+    else auth.uid()
+  end;
+  -- `origin_pr` is an INTEGER column: coerce the digits-only list numerically so
+  -- this route matches GET /memories on the same input (00057's rationale). A
+  -- non-numeric entry is dropped; a list reducing to empty applies no filter.
+  v_origin_pr integer[] := (
+    select array_agg(x::integer)
+      from unnest(coalesce(p_origin_pr, '{}'::text[])) as x
+     where x ~ '^[0-9]+$'
+  );
+begin
+  if p_bucket is null or p_bucket not in ('hour', 'day') then
+    raise exception 'invalid bucket %, expected hour or day', p_bucket
+      using errcode = '22023';
+  end if;
+
+  return query
+    select date_trunc(p_bucket, m.created_at at time zone 'UTC') at time zone 'UTC' as bucket,
+           m.scope,
+           count(*) as count
+      from memories m
+      -- LEFT join for the owner predicate — a personal row has no org (00064).
+      left join orgs o on o.id = m.org_id
+     where (
+             (v_actor is null and auth.role() = 'service_role')
+             or m.user_id = v_actor
+             or m.org_id in (select lorekit_member_org_ids(v_actor))
+           )
+       -- The calling key's own restriction, ANDed on top of the caller's
+       -- visibility and never instead of it (the lorekit_memory_scopes rule).
+       and lorekit_api_token_scope_allowed(p_key_scopes, m.scope)
+       and lorekit_api_token_org_allowed(p_key_org_access, p_key_org_ids, m.org_id)
+       and m.archived_at is null
+       and (m.expires_at is null or m.expires_at > now())
+       and (p_since is null or m.created_at >= p_since)
+       and (p_until is null or m.created_at <  p_until)
+       -- Scope is a hard filter, always applied (00057's treatment).
+       and (p_scope is null or m.scope = p_scope)
+       -- Dimension filters — AND across, OR within, from the shared predicates
+       -- (00066) so the semantics cannot drift from lorekit_memory_facets. No
+       -- self-exclusion here: a straight count applies every one directly.
+       and lorekit_match_tags(m.tags,          p_tags,          p_tags_mode)
+       and lorekit_match_text(m.source_agent,  p_source_agent,  p_source_agent_mode)
+       and lorekit_match_text(m.trigger,       p_trigger,       p_trigger_mode)
+       and lorekit_match_text(m.kind,          p_kind,          p_kind_mode)
+       and lorekit_match_text(m.host,          p_host,          p_host_mode)
+       and lorekit_match_text(m.origin_repo,   p_origin_repo,   p_origin_repo_mode)
+       and lorekit_match_text(m.origin_branch, p_origin_branch, p_origin_branch_mode)
+       and lorekit_match_int (m.origin_pr,     v_origin_pr,     p_origin_pr_mode)
+       -- Owner: `personal` for org_id-null rows, else the org slug (00064).
+       and (p_owner is null or case coalesce(p_owner_mode, 'in')
+             when 'nin' then (
+               (case when m.org_id is null then 'personal' else o.slug end) is not null
+               and (case when m.org_id is null then 'personal' else o.slug end) <> all(p_owner)
+             )
+             else (
+               ('personal' = any(p_owner) and m.org_id is null)
+               or (m.org_id is not null and o.slug = any(p_owner))
+             )
+           end)
+     group by 1, m.scope
+     order by 1 asc, m.scope asc;
+end;
+$$;
+
+revoke execute on function lorekit_memory_activity(
+  uuid, text, timestamptz, timestamptz, text, text[], text, text[], text,
+  text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text,
+  text[], text, uuid[]
+) from public, anon;
+grant execute on function lorekit_memory_activity(
+  uuid, text, timestamptz, timestamptz, text, text[], text, text[], text,
+  text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text,
+  text[], text, uuid[]
+) to authenticated, service_role;
+
+comment on function lorekit_memory_activity(
+  uuid, text, timestamptz, timestamptz, text, text[], text, text[], text,
+  text[], text, text[], text, text[], text, text[], text, text[], text, text[], text, text[], text,
+  text[], text, uuid[]
+) is
+  'Memories created per UTC hour/day per scope over the half-open
+   [p_since, p_until) window, visible to the EFFECTIVE caller, narrowed by the
+   optional scope + dimension filters (00063) plus the owner dimension (00064,
+   `personal` / org slug), and further narrowed by the CALLING KEY''s scope
+   allowlist and tenancy (00067) — this series returns one row per scope NAME,
+   so leaving it unnarrowed would leak exactly what lorekit_memory_scopes hides.
+   The eight text/tags/int dimension predicates come from lorekit_match_text /
+   _tags / _int (00066). The key parameters default to unrestricted, so a
+   non-key caller is unaffected and the result stays byte-for-byte 00066''s.';
+
+drop function if exists lorekit_read_activity(uuid, text, timestamptz, timestamptz, text);
+
+create or replace function lorekit_read_activity(
+  p_user_id uuid,
+  p_bucket  text        default 'day',
+  p_since   timestamptz default null,
+  p_until   timestamptz default null,
+  p_scope   text        default null,
+  -- The CALLING KEY's scope allowlist (00067). No org parameters: `usage_events`
+  -- is a per-user ledger with no org_id, so there is no tenancy axis to narrow.
+  p_key_scopes text[] default '{}'
+)
+returns table (bucket timestamptz, scope text, count bigint)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+#variable_conflict use_column
+declare
+  v_actor uuid := case
+    when auth.role() = 'service_role' then coalesce(p_user_id, auth.uid())
+    else auth.uid()
+  end;
+begin
+  if p_bucket is null or p_bucket not in ('hour', 'day') then
+    raise exception 'invalid bucket %, expected hour or day', p_bucket
+      using errcode = '22023';
+  end if;
+
+  return query
+    select date_trunc(p_bucket, ue.created_at at time zone 'UTC') at time zone 'UTC' as bucket,
+           ue.scope as scope,
+           sum(coalesce(ue.result_count, 0))::bigint as count
+      from usage_events ue
+     where (
+             (v_actor is null and auth.role() = 'service_role')
+             or ue.user_id = v_actor
+           )
+       and ue.tool_name in ('memory.read', 'memory.list', 'memory.search',
+                            'memory.list_archived')
+       -- The dashboard reading lore in order to DRAW this chart is not a read
+       -- the chart should report. `is distinct from` (not `<>`) because the
+       -- column is nullable and `null <> 'dashboard'` is null, which would
+       -- silently drop every unattributed event — including every row written
+       -- before this migration.
+       and ue.client is distinct from 'dashboard'
+       -- The calling key's scope allowlist (00067). A NULL scope is an
+       -- unattributable read: it names nothing, so it leaks nothing, and it is
+       -- passed through rather than dropped so the account total a scoped key
+       -- sees stays the sum of the rows it is allowed to attribute plus the
+       -- ones nobody could. Dropping them would silently erase every event
+       -- written before 00058 from a scoped key's chart.
+       and (ue.scope is null or lorekit_api_token_scope_allowed(p_key_scopes, ue.scope))
+       -- The optional per-scope filter. `=`, not `is not distinct from`: a
+       -- caller asking for a named scope wants events attributed to it, never
+       -- the unattributable NULL-scope remainder. Omitting the parameter
+       -- returns every scope INCLUDING those NULL rows, so the unfiltered
+       -- account total stays complete.
+       and (p_scope is null or ue.scope = p_scope)
+       and (p_since is null or ue.created_at >= p_since)
+       and (p_until is null or ue.created_at <  p_until)
+     group by 1, ue.scope
+    having sum(coalesce(ue.result_count, 0)) > 0
+     -- The scope tiebreak is 00051's verbatim (`order by 1 asc, m.scope asc`).
+     -- Bucket alone stopped being a total order the moment a bucket could hold
+     -- several scopes, and this function's header claims it mirrors that shape,
+     -- so intra-bucket row order must be deterministic here too.
+     order by 1 asc, ue.scope asc;
+end;
+$$;
+
+revoke execute on function lorekit_read_activity(uuid, text, timestamptz, timestamptz, text, text[])
+  from public, anon;
+grant  execute on function lorekit_read_activity(uuid, text, timestamptz, timestamptz, text, text[])
+  to authenticated, service_role;
+
+comment on function lorekit_read_activity(uuid, text, timestamptz, timestamptz, text, text[]) is
+  'Memory RECORDS read per UTC hour/day per scope over the half-open
+   [p_since, p_until) window, summed from usage_events.result_count over the
+   read tools, excluding dashboard-originated reads. Further narrowed by the
+   CALLING KEY''s scope allowlist (00067): this series returns one row per scope
+   NAME, so leaving it unnarrowed would leak what lorekit_memory_scopes hides.
+   A NULL scope is unattributable, names nothing and is passed through, so the
+   account total stays complete. No org parameters — usage_events is a per-user
+   ledger with no org axis. The key parameter defaults to unrestricted, so a
+   non-key caller sees byte-for-byte 00058''s result.';

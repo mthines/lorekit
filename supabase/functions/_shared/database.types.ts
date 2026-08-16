@@ -686,6 +686,9 @@ export type Database = {
           p_bucket?: string
           p_host?: string[]
           p_host_mode?: string
+          p_key_org_access?: string
+          p_key_org_ids?: string[]
+          p_key_scopes?: string[]
           p_kind?: string[]
           p_kind_mode?: string
           p_origin_branch?: string[]

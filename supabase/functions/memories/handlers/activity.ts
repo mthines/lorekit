@@ -1,4 +1,5 @@
 import type { AuthContext } from '../../_shared/api/auth.ts';
+import { keyRestriction } from '../../_shared/api/auth.ts';
 import { ok } from '../../_shared/api/respond.ts';
 import { validateQuery } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
@@ -93,6 +94,15 @@ export async function handleActivity(
     // against the caller's member orgs, so the header narrows with the list.
     p_owner: list(params.owner),
     p_owner_mode: params.owner_mode,
+    // The calling key's restriction (00067/00068). Narrowed inside the RPC for
+    // the same reason `handleScopes` passes it: this series returns one row per
+    // scope NAME, and a scope string IS a repo or project name, so a key
+    // restricted to one repo could otherwise enumerate every repo on the
+    // account through the activity chart instead of through the catalog.
+    // Post-filtering out here is not an option — the rows are aggregates.
+    p_key_scopes: keyRestriction(auth)?.scopes ?? [],
+    p_key_org_access: keyRestriction(auth)?.orgAccess ?? 'all',
+    p_key_org_ids: keyRestriction(auth)?.orgIds ?? [],
   });
   if (error) { span.error(`DB: ${error.message}`); throw error; }
 
