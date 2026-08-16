@@ -44,7 +44,8 @@ See [CLAUDE.md](./CLAUDE.md) for the full package map and key decisions.
 ## Everyday commands
 
 ```bash
-# The full CI gate (what must pass before merge)
+# The full CI gate (what must pass before merge) — CI and beefy local machines
+# only; see the warning below before running this in a container.
 pnpm nx run-many -t typecheck,test,lint --all
 
 # Only what your change affects (fast; what CI actually runs on a PR)
@@ -55,6 +56,13 @@ pnpm nx test mcp-core          # needs a local Supabase (see below)
 pnpm nx test cli               # the CLI's node:test suite
 pnpm nx typecheck web
 ```
+
+> **Agents / cloud sandboxes: do not run `run-many … --all`.** The whole-repo
+> fan-out saturates a container's CPU/memory allowance and the session freezes or
+> stalls instead of failing cleanly. Use `pnpm nx affected -t typecheck,test,lint`
+> or name the projects explicitly; if you truly need everything, run one target
+> per invocation with `--parallel=1`. See
+> [CLAUDE.md](./CLAUDE.md#never-run-whole-repo-nx-fan-outs-in-a-cloud-sandbox).
 
 ## Developing the CLI (`@lorekit/cli`)
 

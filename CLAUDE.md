@@ -65,6 +65,32 @@ Harvest real fixtures with `LOREKIT_HOOK_RECORD=<dir>` set on the hook command (
 
 ## NX commands
 
+### Never run whole-repo Nx fan-outs in a cloud sandbox
+
+**Agents must NOT run `pnpm nx run-many -t … --all` (or `npx nx run-many --all`,
+or any other whole-repo fan-out) in a cloud or container environment.** It
+saturates the box — every project's target starts at once, the Nx daemon and the
+spawned workers contend for the small CPU/memory allowance — and the session
+freezes or stalls indefinitely rather than failing cleanly. Recovering costs a
+whole session.
+
+Run the narrow equivalent instead:
+
+```bash
+# What CI actually runs on a PR — only the projects your change affects
+pnpm nx affected -t typecheck,test,lint
+
+# Or name the projects explicitly, one target at a time
+pnpm nx typecheck mcp-core
+pnpm nx test cli
+```
+
+If you genuinely need whole-repo coverage, cap the fan-out and scope the targets
+(`pnpm nx run-many -t typecheck --all --parallel=1`) and run one target per
+invocation — never `typecheck,test,lint` together across every project. The
+unqualified `--all` form below is documented as the CI gate; **CI is where it
+belongs**, not a sandbox.
+
 ### Sandbox baseline — read before trusting a red gate
 
 Three facts about a fresh sandbox/container, each confirmed across three or more
@@ -93,8 +119,12 @@ runs. They cost time every time they are rediscovered:
    was never broken.
 
 ```bash
-# CI gate
+# CI gate — CI ONLY. Do not run this in a cloud/sandbox session; it stalls the
+# box (see "Never run whole-repo Nx fan-outs in a cloud sandbox" above).
 pnpm nx run-many -t typecheck,test,lint --all
+
+# The sandbox-safe equivalent
+pnpm nx affected -t typecheck,test,lint
 
 # Individual packages
 pnpm nx typecheck mcp-core
