@@ -1,6 +1,6 @@
 ---
 title: "Give your coding agent a memory in one command — no signup, just a folder"
-description: "Your agent re-solves yesterday's problem because nothing wrote it down. The fix isn't a platform you adopt — it's one command, a folder you own, and a loop that closes on your own disk. And when a team needs the same lore, it's a free account and one install with your key: the same read path, handed a hosted store instead of a folder. Nothing to export, nothing to migrate."
+description: "Your agent re-solves yesterday's problem because nothing wrote it down. The fix isn't a platform you adopt — it's one command, a folder you own, and a loop that closes on your own disk. And when a team needs the same lore, it's a free account, one install with your key, and one command to bring everything you've already learned along."
 date: "2026-08-15"
 author: "Mads Thines"
 readingMinutes: 6
@@ -141,10 +141,19 @@ Paste the key when it asks. That's the whole switch. `install` repoints the `lor
 
 Your files never move. `npx @lorekit/cli list` now reads **both** stores and prints them side by side — an **Offline** section from your local files, a **Remote** section from the hosted one — so nothing you wrote before the switch falls off the edge.
 
+That side-by-side view is for you. To put the lessons you already have into the hosted store itself — where a teammate's agent or a CI run will read them — push them up once:
+
+```bash
+npx @lorekit/cli migrate --from ~/.lorekit --to remote         # preview
+npx @lorekit/cli migrate --from ~/.lorekit --to remote --yes   # push it
+```
+
+It's a dry run until you add `--yes`. It checks your token first (a read-only key is refused, not left half-done), and it's idempotent — run it again whenever you've learned more offline. Creation dates come along, so recency ranking still works. Last-updated and times-seen get re-derived server-side. Anything you'd archived or expired is skipped, not revived.
+
 That's the load-bearing bit, so let me be exact about it: the read *path* — precedence across scopes, ranking, de-duplication, the character budget — is one piece of code that takes a store as an argument. Point it at a directory of markdown files or at a hosted Postgres and nothing above the store changes. So `remote` isn't a different product you graduate to. It's the same read, handed a bigger pile.
 
 <figure>
-  <img src="/blog/local-to-shared.svg" alt="A scaling strip in three stages. Today: a local store of plain markdown files in a folder you own. Then: you connect the hosted store by running lorekit install and pasting your read-write API key; remote is the default mode, so there's nothing else to set. Result: one unchanged read path that can be handed either store — the local folder in local mode, a hosted Postgres in remote mode — with lorekit list showing both side by side. No export, no import, no sync process." width="720" height="300" />
+  <img src="/blog/local-to-shared.svg" alt="A scaling strip in three stages. Today: a local store of plain markdown files in a folder you own. Then: you connect the hosted store by running lorekit install and pasting your read-write API key; remote is the default mode, so there's nothing else to set. Result: one unchanged read path that can be handed either store — the local folder in local mode, a hosted Postgres in remote mode — with lorekit list showing both side by side. Your files never move; no sync process." width="720" height="300" />
   <figcaption>The read path never changed — only which store it's handed. Local was never a toy; it's the base layer everything else stacks on.</figcaption>
 </figure>
 
