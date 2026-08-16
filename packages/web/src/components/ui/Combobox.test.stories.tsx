@@ -6,7 +6,7 @@ import { Archive, BookOpen, Clock } from 'lucide-react';
 import { Combobox, type ComboboxItem } from './Combobox';
 
 /**
- * Interaction tests for the shared single-select popup list.
+ * Interaction tests for the shared popup selection list, both modes.
  *
  * These cover the parts a screenshot cannot: the keyboard model, the fact that
  * the list opens ON the current value, filtering, and the two dismissal paths.
@@ -243,6 +243,215 @@ export const EscapeAndClickOutsideBothDismiss: Story = {
       await userEvent.click(menu.getByRole('option', { name: /Archived/ }));
       await waitFor(async () => {
         await expect(canvas.getByTestId('value')).toHaveTextContent('archived');
+      });
+    });
+  },
+};
+
+/**
+ * The multi-select mode's own harness.
+ *
+ * A second component rather than a flag on `Harness`: the two modes have
+ * different `value` types, and threading a union through the harness would put
+ * a cast in the test file — exactly where a cast can hide the bug being tested.
+ */
+function MultiHarness({
+  initial = [] as string[],
+  searchable = false,
+}: {
+  initial?: string[];
+  searchable?: boolean;
+}) {
+  const [values, setValues] = useState(initial);
+  return (
+    <div style={{ width: 420, padding: '1rem' }}>
+      <Combobox
+        multiple
+        options={OPTIONS}
+        value={values}
+        onChange={setValues}
+        label="Statuses"
+        countNoun="statuses"
+        searchable={searchable}
+      />
+      <output data-testid="values" style={{ display: 'block', marginTop: '0.75rem' }}>
+        {values.join(',')}
+      </output>
+    </div>
+  );
+}
+
+async function openMulti(canvasElement: HTMLElement) {
+  await userEvent.click(await within(canvasElement).findByRole('button', { name: /^Statuses:/ }));
+  const screen = within(document.body);
+  await screen.findByRole('listbox', { name: /statuses/i });
+  return screen;
+}
+
+export const MultiplePicksAccumulateWithoutClosing: Story = {
+  render: () => <MultiHarness />,
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    const menu = await openMulti(canvasElement);
+
+    await step('the first pick lands and the list stays open', async () => {
+      // The whole point of the mode: building a set of three must not cost
+      // three trips to the trigger.
+      await userEvent.click(menu.getByRole('option', { name: /Active/ }));
+      await waitFor(async () => {
+        await expect(canvas.getByTestId('values')).toHaveTextContent('active');
+      });
+      await expect(menu.getByRole('listbox', { name: /statuses/i })).toBeInTheDocument();
+    });
+
+    await step('a second pick ADDS rather than replaces', async () => {
+      await userEvent.click(menu.getByRole('option', { name: /Archived/ }));
+      await waitFor(async () => {
+        await expect(canvas.getByTestId('values')).toHaveTextContent('active,archived');
+      });
+    });
+
+    await step('both rows read as selected', async () => {
+      await expect(menu.getByRole('option', { name: /Active/ })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      );
+      await expect(menu.getByRole('option', { name: /Archived/ })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      );
+    });
+
+    await step('clicking a selected row removes it', async () => {
+      await userEvent.click(menu.getByRole('option', { name: /Active/ }));
+      await waitFor(async () => {
+        await expect(canvas.getByTestId('values')).toHaveTextContent('archived');
+      });
+    });
+
+    await step('the listbox announces that it takes several', async () => {
+      await expect(menu.getByRole('listbox', { name: /statuses/i })).toHaveAttribute(
+        'aria-multiselectable',
+        'true',
+      );
+    });
+
+    await step('and dismissal is the explicit act', async () => {
+      await userEvent.keyboard('{Escape}');
+      await waitFor(async () => {
+        await expect(menu.queryByRole('listbox', { name: /statuses/i })).toBeNull();
+      });
+      // Escape dismisses the SURFACE, not the picks — they were committed as
+      // they were made, so there is nothing to roll back.
+      await expect(canvas.getByTestId('values')).toHaveTextContent('archived');
+    });
+  },
+};
+
+export const TheMultiTriggerCountsPastOne: Story = {
+  render: () => <MultiHarness initial={['active']} />,
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+
+    await step('one selection shows the option label', async () => {
+      await expect(canvas.getByRole('button', { name: /^Statuses: Active/ })).toBeInTheDocument();
+    });
+
+    const menu = await openMulti(canvasElement);
+
+    await step('two shows a count with the caller noun', async () => {
+      // Two labels do not fit a 240px trigger; truncating them is worse than
+      // counting them.
+      await userEvent.click(menu.getByRole('option', { name: /Archived/ }));
+      await waitFor(async () => {
+        await expect(
+          canvas.getByRole('button', { name: /^Statuses: 2 statuses/ }),
+        ).toBeInTheDocument();
+      });
+    });
+
+    await step('and emptying it falls back to the control name', async () => {
+      await userEvent.click(menu.getByRole('option', { name: /Active/ }));
+      await userEvent.click(menu.getByRole('option', { name: /Archived/ }));
+      await waitFor(async () => {
+        await expect(canvas.getByRole('button', { name: /^Statuses: none/ })).toBeInTheDocument();
+      });
+    });
+  },
+};
+
+export const SpaceTogglesWhenThereIsNoSearchBox: Story = {
+  render: () => <MultiHarness />,
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    const trigger = canvas.getByRole('button', { name: /^Statuses:/ });
+
+    await step('ArrowDown opens on the first selectable option', async () => {
+      trigger.focus();
+      await userEvent.keyboard('{ArrowDown}');
+      await within(document.body).findByRole('listbox', { name: /statuses/i });
+    });
+
+    await step('Space ticks it and the list stays open', async () => {
+      await userEvent.keyboard(' ');
+      await waitFor(async () => {
+        await expect(canvas.getByTestId('values')).toHaveTextContent('active');
+      });
+      await expect(
+        within(document.body).getByRole('listbox', { name: /statuses/i }),
+      ).toBeInTheDocument();
+    });
+
+    await step('Enter ticks the next one WITHOUT closing', async () => {
+      // The single-select contract is "Enter commits and closes". Multi-select
+      // deliberately breaks it — closing after every tick would defeat the mode.
+      await userEvent.keyboard('{ArrowDown}');
+      await userEvent.keyboard('{Enter}');
+      await waitFor(async () => {
+        await expect(canvas.getByTestId('values')).toHaveTextContent('active,archived');
+      });
+      await expect(
+        within(document.body).getByRole('listbox', { name: /statuses/i }),
+      ).toBeInTheDocument();
+    });
+  },
+};
+
+export const SearchSurvivesATickSoASetCanBeBuiltFromOneQuery: Story = {
+  render: () => <MultiHarness searchable />,
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    const menu = await openMulti(canvasElement);
+
+    await step('narrow to the two memory-shaped rows', async () => {
+      await waitFor(async () => {
+        await expect(document.activeElement).toBe(
+          menu.getByRole('combobox', { name: /search statuses/i }),
+        );
+      });
+      await userEvent.keyboard('memories');
+      await waitFor(async () => {
+        await expect(menu.getAllByRole('option')).toHaveLength(3);
+      });
+    });
+
+    await step('ticking one leaves the query in place', async () => {
+      // Clearing it on every tick would send the user back to the full list
+      // between each pick — the exact friction the mode exists to remove.
+      await userEvent.click(menu.getByRole('option', { name: /Archived/ }));
+      await waitFor(async () => {
+        await expect(canvas.getByTestId('values')).toHaveTextContent('archived');
+      });
+      await expect(menu.getByRole('combobox', { name: /search statuses/i })).toHaveValue(
+        'memories',
+      );
+      await expect(menu.getAllByRole('option')).toHaveLength(3);
+    });
+
+    await step('so the second pick is one click away', async () => {
+      await userEvent.click(menu.getByRole('option', { name: /Active/ }));
+      await waitFor(async () => {
+        await expect(canvas.getByTestId('values')).toHaveTextContent('archived,active');
       });
     });
   },
