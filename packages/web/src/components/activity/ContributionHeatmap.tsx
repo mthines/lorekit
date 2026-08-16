@@ -59,14 +59,36 @@ interface ContributionHeatmapProps {
 const GUTTER = 'w-7';
 
 /**
+ * The gap between cells, shared by all THREE grids — month labels, day gutter,
+ * and the cells themselves.
+ *
+ * One constant because the three are only aligned while they agree: the gutter
+ * divides the cell grid's height into 7 rows minus its gaps, and the month
+ * labels sit on tracks that must match the cells' pitch. Three separate
+ * literals would let one drift and knock the labels off their rows.
+ */
+const CELL_GAP = 'gap-[2px]';
+
+/**
+ * The minimum column distance between two month labels.
+ *
+ * A grid that starts or ends mid-month produces a sliver — e.g. one week of
+ * January directly under February's label — and at a narrow cell size the two
+ * overlap. Labels closer together than this are dropped, keeping the later,
+ * more representative one.
+ */
+const MIN_LABEL_GAP = 3;
+
+/**
  * How many columns a month label may span before it is allowed to overflow.
  *
  * Labels are placed on the SAME grid as the cells (rather than at a percentage
- * offset) so a label sits over its week column exactly, gaps included. Three
- * columns is `MIN_LABEL_GAP`, so a span of 3 can never push into the next
- * label's start.
+ * offset) so a label sits over its week column exactly, gaps included. Spanning
+ * exactly {@link MIN_LABEL_GAP} is what guarantees a label can never push into
+ * the next one's start — which is why this is derived from it rather than
+ * being a second `3` that has to be kept in step by hand.
  */
-const LABEL_SPAN = 3;
+const LABEL_SPAN = MIN_LABEL_GAP;
 
 const DAYS = ['', 'Mon', '', 'Wed', '', 'Fri', ''];
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -144,12 +166,8 @@ export function ContributionHeatmap({
       cols.push(week);
     }
 
-    // Drop a month label when the next one is within MIN_LABEL_GAP columns.
-    // This happens when the grid starts (or ends) mid-month — e.g. a 1-week
-    // sliver of January sitting directly under February's label, which then
-    // overlap since each column is only ~13px wide. We keep the later, more
-    // representative label (Feb over the January sliver).
-    const MIN_LABEL_GAP = 3;
+    // See MIN_LABEL_GAP — a sliver month would otherwise sit under its
+    // neighbour's label and overlap it.
     const monthLabels = months.filter((m, i) => {
       const next = months[i + 1];
       return !next || next.col - m.col >= MIN_LABEL_GAP;
@@ -173,7 +191,7 @@ export function ContributionHeatmap({
       <div className="mb-1 flex w-full items-end gap-1" aria-hidden>
         <div className={`${GUTTER} shrink-0`} />
         <div
-          className="grid min-w-0 flex-1 gap-[2px]"
+          className={`grid min-w-0 flex-1 ${CELL_GAP}`}
           style={{ gridTemplateColumns: `repeat(${weeks}, minmax(0, 1fr))` }}
         >
           {monthLabels.map(({ label, col }) => (
@@ -193,7 +211,7 @@ export function ContributionHeatmap({
           rows divide into exactly the cell rows they label. */}
       <div className="flex w-full items-stretch gap-1">
         <div
-          className={`grid ${GUTTER} shrink-0 gap-[2px]`}
+          className={`grid ${GUTTER} shrink-0 ${CELL_GAP}`}
           style={{ gridTemplateRows: 'repeat(7, minmax(0, 1fr))' }}
           aria-hidden
         >
@@ -210,7 +228,7 @@ export function ContributionHeatmap({
         {/* Grid — `1fr` tracks, so the cells are as large as the container
             allows and the whole chart uses its full width. */}
         <div
-          className="grid min-w-0 flex-1 gap-[2px]"
+          className={`grid min-w-0 flex-1 ${CELL_GAP}`}
           style={{
             gridTemplateColumns: `repeat(${weeks}, minmax(0, 1fr))`,
             gridTemplateRows: 'repeat(7, auto)',
