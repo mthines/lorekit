@@ -180,6 +180,13 @@ export function ScopingFields({
                 <button
                   key={value}
                   type="button"
+                  // The selected tier is signalled by COLOUR alone, which a
+                  // screen reader cannot see — all three would otherwise be
+                  // announced identically. `aria-pressed` is the right role
+                  // here rather than a radiogroup: these stay buttons, so the
+                  // arrow-key roving focus a radiogroup promises is not
+                  // implemented and claiming it would be worse than not.
+                  aria-pressed={scoping.org_access === value}
                   // Choosing a tenancy other than `selected` DROPS any orgs
                   // already picked. The database rejects the pair outright
                   // (`api_tokens_org_ids_match_access`), and carrying a hidden
