@@ -461,7 +461,11 @@ export const SearchSurvivesATickSoASetCanBeBuiltFromOneQuery: Story = {
     const canvas = within(canvasElement);
     const menu = await openMulti(canvasElement);
 
-    await step('narrow to the two memory-shaped rows', async () => {
+    // Three, not two: `memories` matches Active ("Live memories"), Archived
+    // ("Archived memories") and Expiring ("Live memories expiring within 7
+    // days") by hint. Only the disabled Purged row ("Not available yet") drops
+    // out, which is what makes this query a real narrowing.
+    await step('narrow to the three memory-shaped rows', async () => {
       await waitFor(async () => {
         await expect(document.activeElement).toBe(
           menu.getByRole('combobox', { name: /search statuses/i }),
