@@ -29,6 +29,16 @@ Tokens are stored as **SHA-256 hashes** in the database. The full token is shown
 
 ## Scoping a token
 
+> **Not enforced yet.** This section describes the data model and the two
+> request-time predicates, which is all that ships today: nothing reads
+> `api_tokens.scopes` / `org_access` / `org_ids` on a request, and there is no
+> dashboard or REST path to set them. Enforcement arrives with the transports
+> (`mcp/auth.ts`, `_shared/api/auth.ts`, `mcp-handler.ts`, `router.ts`,
+> `applyTenantScope`) and the management UI, in the two PRs that follow
+> `00067_api_token_scoping.sql`. Until then every existing token behaves exactly
+> as it always has — the columns default to unrestricted and nothing consults
+> them.
+
 Beyond read/write, a token can be narrowed to **specific scopes** and to a
 **specific tenancy**. Both are optional and both default to unrestricted, so a
 token you never scope behaves exactly as it always has.
