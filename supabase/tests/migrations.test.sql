@@ -5769,6 +5769,15 @@ begin
   assert lorekit_api_token_scope_allowed(array['global', 'repo::mthines/*'], 'global'),
     'scope_allowed AC-2: patterns are OR-ed';
 
+  -- The `::` half of the CHECK's `(/|::)` alternation. Everything above exercises
+  -- the `/` branch only, and the two are different literal prefixes both in the
+  -- regex and at match time — proving one says nothing about the other. The TS
+  -- twin pins `project::*` and the docs advertise it, so SQL was the gap.
+  assert lorekit_api_token_scope_allowed(array['project::*'], 'project::agent-skills'),
+    'scope_allowed AC-2: a `::`-boundary wildcard matches by prefix';
+  assert not lorekit_api_token_scope_allowed(array['project::*'], 'projectx::agent-skills'),
+    'scope_allowed AC-2: a `::`-boundary wildcard must not cross the prefix boundary';
+
   -- The discriminating case for the LIKE escape. Without `replace(_, '\_')`,
   -- `_` is LIKE's single-character wildcard and the second assertion fails —
   -- which would silently widen every allowlist containing an underscore.
@@ -5882,6 +5891,15 @@ begin
   end;
   assert v_failed,
     'api_tokens AC-4: a NULL element must be INVALID, not unknown-therefore-fine';
+
+  -- The accept side of the same alternation: the CHECK must admit a
+  -- `::`-boundary wildcard, not only a `/` one. Without this the regex could be
+  -- narrowed to `/` alone and every assertion above would still pass, while the
+  -- TS twin and the docs kept advertising `project::*`.
+  update api_tokens set scopes = array['project::*'] where id = v_token;
+  select scopes into v_scopes from api_tokens where id = v_token;
+  assert v_scopes = array['project::*'],
+    'api_tokens AC-4: a `::`-boundary wildcard must be accepted';
 
   -- A valid pair still lands — the CHECKs must not be so tight that the
   -- feature is unusable.
