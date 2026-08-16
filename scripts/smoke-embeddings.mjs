@@ -42,6 +42,15 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const {
   resolveEmbeddingConfig, embeddingInput, buildEmbeddingRequest, EMBEDDING_DIMENSIONS, redactKey,
 } = await import(path.join(HERE, '..', 'packages', 'mcp-core', 'src', 'embedding.ts'));
+// `supabase/` has no package.json, so this `.ts` resolves under the typeless
+// repo root: Node emits a MODULE_TYPELESS_PACKAGE_JSON warning and reparses the
+// file as ESM. It loads correctly — the warning is noise, not a failure — and it
+// is the price of the suites living beside what they exercise rather than in a
+// Node package (the old `packages/mcp-server/` home declared `type: module`).
+// Do NOT silence it by dropping a package.json into `supabase/` or
+// `supabase/tests/`: Nx infers projects from package.json, so either one adds a
+// phantom project to `nx show projects` (verified) — a worse trade than a
+// warning line on a manual, on-demand script.
 const {
   createSmokeNamespace, sweepSmokeArtefacts, describeSweepFailures,
 } = await import(path.join(HERE, '..', 'supabase', 'tests', 'smoke-cleanup.ts'));
