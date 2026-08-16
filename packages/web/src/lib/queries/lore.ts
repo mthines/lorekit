@@ -10,6 +10,7 @@ import {
 } from '@tanstack/react-query';
 import { scopeType } from '@/lib/scope';
 import { dayCountsFromActivity } from '@/lib/aggregations';
+import { heatmapSince } from '@/lib/heatmap-window';
 import type { ScopeNode } from '@/components/lore/ScopeTree';
 import type { LessonEntry } from '@/components/lore/LessonCard';
 import { listMemories, archiveLesson, restoreLesson, type MemoryFilters, type MemoryPage } from '@/lib/lore';
@@ -247,7 +248,13 @@ async function fetchLoreData(signal?: AbortSignal): Promise<LoreData> {
   const [scopesRes, page, activity] = await Promise.all([
     listScopesRequest(token, signal),
     listMemoriesRequest(token, { limit: LEGACY_PAGE_SIZE, sort: 'created_at' }, signal),
-    activityRequest(token, { bucket: 'day' }, signal),
+    // `since` is EXPLICIT, not left to the endpoint's default. That default is
+    // 200 days, sized when the heatmap was a fixed 26 weeks; the desktop grid
+    // is a year now, so a bare call would return nothing for its oldest ~164
+    // days and the chart would draw them as empty — reading as "no memories",
+    // not as "not fetched". `heatmapSince` derives the bound from the same
+    // constant the grid renders, so the two cannot drift apart again.
+    activityRequest(token, { bucket: 'day', since: heatmapSince(new Date().toISOString()) }, signal),
   ]);
 
   const scopes: ScopeNode[] = scopesRes.scopes.map(({ scope, count }) => {

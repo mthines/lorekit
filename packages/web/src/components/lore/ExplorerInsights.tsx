@@ -46,6 +46,9 @@ import { ExplorerStats } from '@/components/lore/ExplorerStats';
 import { RangePicker } from '@/components/ui/RangePicker';
 import type { DateRange } from '@/components/ui/DateRangePicker';
 import { useIsMobile } from '@/lib/hooks/useMediaQuery';
+// The span and the fetch window that must cover it live together — see the
+// module for why they cannot be two numbers in two files.
+import { HEATMAP_WEEKS } from '@/lib/heatmap-window';
 import type { RangePreset, TimeRange } from '@/lib/time-range';
 import type { Filter } from '@/lib/filters';
 
@@ -79,32 +82,6 @@ const EXPLORER_PRESETS: readonly RangePreset[] = ['24h', '7d', '30d', 'all'];
  * an explicit `all` is a choice, and only the first one gets substituted.
  */
 const DEFAULT_STATS_RANGE: TimeRange = { preset: '24h' };
-
-/**
- * How many week columns the heatmap draws, per breakpoint.
- *
- * The cells are fluid now (`ContributionHeatmap`), so the column COUNT is the
- * only thing deciding how big each one ends up. One value cannot serve both
- * ends: 52 columns on a phone are ~4px specks, and the 13 that read well there
- * would blow a desktop cell up to ~70px — a calendar, not a heatmap. So a
- * quarter on a phone and a year on a desktop, landing at roughly 15–21px and
- * ~19px respectively.
- *
- * **These cells sit below this package's ≥24px hit-target floor, deliberately.**
- * Clearing it would mean ~8 columns on a phone — under two months, which guts
- * the only thing the chart is for — and padding the hit area instead would
- * overlap neighbouring cells, making them mis-tappable rather than easier to
- * hit. It rests on WCAG 2.2 SC 2.5.8's *Equivalent* exception: a cell's only
- * function is setting the date range, and the same range is settable from the
- * full-size `DateRangePicker` in the control row directly below. The cells are
- * still more than twice the fixed 9px they replaced. Revisit by lowering
- * `mobile` if the exception ever stops holding — i.e. if the heatmap becomes
- * the only way to set a range.
- *
- * The data supports either span: `useLoreData` fetches `GET /memories/activity`
- * unbounded, so there is no window to widen.
- */
-const HEATMAP_WEEKS = { mobile: 13, desktop: 52 } as const;
 
 interface ExplorerInsightsProps {
   scope: string | null;

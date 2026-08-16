@@ -13,10 +13,18 @@ type ActivityRow = Database['public']['Functions']['lorekit_memory_activity']['R
 /**
  * How far back a bare call looks. Long enough to cover the dashboard's widest
  * chart (30 daily buckets plus the 30 preceding it, for the period-over-period
- * comparison) and the contribution heatmap's 26 weeks, with headroom.
+ * comparison), with headroom.
  *
  * The window is bounded by default on purpose: an unbounded aggregate over
  * `memories` grows with account age, and no caller today wants "all time".
+ *
+ * **A caller whose chart is wider than this must pass `since` explicitly** —
+ * the default cannot grow to fit every future chart, and a chart that outruns
+ * it renders its uncovered days as EMPTY rather than as absent, which reads as
+ * "nothing was written". The contribution heatmap does exactly that now that
+ * its desktop span is a year (`lib/heatmap-window.ts` in `@lorekit/web`); this
+ * default was originally sized for that heatmap back when it was a fixed 26
+ * weeks, which is how the two drifted.
  */
 const DEFAULT_WINDOW_DAYS = 200;
 const DAY_MS = 86_400_000;
