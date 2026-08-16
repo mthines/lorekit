@@ -174,9 +174,11 @@ Then select local mode — set `LOREKIT_MODE=local`, or add `{ "mode": "local" }
 to a `.lorekit.json` at your repo root — and create `<repo>/.lorekit/` when you
 want repo-scoped lessons to persist in the project.
 
-> **Not committed to one?** Start local and move to remote later (or the
-> reverse) with `lorekit migrate` — lessons are never stranded. You can also
-> hard-deny a mode for privacy or CI (e.g. `LOREKIT_DENY=remote`).
+> **Not committed to one?** Start local and move up to the hosted store later
+> with one command — `lorekit migrate --from ~/.lorekit --to remote` previews
+> the plan, `--yes` applies it — so lessons are never stranded. `lorekit migrate` also relocates a store between
+> the local tiers (`--to home|project`). You can also hard-deny a mode for
+> privacy or CI (e.g. `LOREKIT_DENY=remote`).
 
 Full details — the two-tier layout, write routing, the control model, and
 migration — are in
