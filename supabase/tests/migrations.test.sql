@@ -5733,6 +5733,9 @@ $$;
 --       hand-editable filter value — while the zero-padded form still resolves.
 --       A list whose every entry drops degrades to UNFILTERED, the same way an
 --       all-non-numeric list already does on the facet catalog.
+-- AC-10: `owner`, the one dimension restated inline rather than delegated to
+--       00066's helpers, so it is the only one that can drift from
+--       lorekit_memory_facets unnoticed — AC-10d asserts the two agree.
 -- AC-9 needs one row carrying a real `origin_pr`, so the zero-padded half of a
 -- mixed filter has something to match; every other row leaves it null.
 insert into memories (user_id, scope, key, value, tags, source_agent, host, kind, origin_pr, created_at, updated_at) values
@@ -5754,6 +5757,7 @@ declare
   v_keys   text[];
   v_rows   int;
   v_rows2  int;
+  v_facet  bigint;
   v_wide   text[];
   v_ts     timestamptz;
   v_id     uuid;
@@ -5954,6 +5958,50 @@ begin
       p_origin_pr => array['99999999999', '0000000007'], p_limit => 100);
   assert v_keys = array['lr-1'],
     format('list rpc AC-9b: the over-wide entry must drop while `0000000007` still matches PR 7, got %s', v_keys);
+
+  -- AC-10: `owner`. It is the ONE dimension 00067 restates inline instead of
+  -- delegating to 00066's lorekit_match_* helpers — it is a LEFT JOIN-computed
+  -- identity (`personal` / org slug), not a scalar column — so it is the only
+  -- one that can drift from lorekit_memory_facets without a shared helper
+  -- catching it. Every fixture row here is personal (org_id null).
+  select count(*) into v_rows
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_owner => array['personal'], p_limit => 100);
+  assert v_rows = 5,
+    format('list rpc AC-10: `personal` must admit every org-less row, got %s', v_rows);
+
+  -- The negation is the half that disagrees if the inline expression is
+  -- rewritten as a plain `<> all(...)` over a nullable identity.
+  select count(*) into v_rows2
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc',
+      p_owner => array['personal'], p_owner_mode => 'nin', p_limit => 100);
+  assert v_rows2 = 0,
+    format('list rpc AC-10b: `nin personal` must exclude every org-less row, got %s', v_rows2);
+
+  -- A slug the caller cannot see resolves to nothing rather than widening the
+  -- page: slugs are matched against the LEFT JOIN of VISIBLE orgs only.
+  select count(*) into v_rows2
+    from lorekit_memory_list(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc', p_owner => array['no-such-org'], p_limit => 100);
+  assert v_rows2 = 0,
+    format('list rpc AC-10c: an unknown owner slug must match nothing, got %s', v_rows2);
+
+  -- AC-10d: the anti-drift assertion the inline restatement actually needs —
+  -- the list's `personal` count must equal the facet catalog's `owner`/`personal`
+  -- cell for the same caller and scope. If the two implementations of the owner
+  -- identity ever disagree, this fails rather than the menu quietly showing a
+  -- count the list does not honour.
+  select f.count into v_facet
+    from lorekit_memory_facets(
+      '00000000-0000-0000-0000-0000000000a1'::uuid,
+      p_scope => 'project::list-rpc') f
+   where f.facet = 'owner' and f.value = 'personal';
+  assert v_facet = v_rows,
+    format('list rpc AC-10d: the owner count must agree with lorekit_memory_facets, list=%s facets=%s', v_rows, v_facet);
 
 end;
 $$;
