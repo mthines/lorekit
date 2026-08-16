@@ -602,8 +602,22 @@ $$;
 --    management RPCs and orgs table. Writes always land in the personal
 --    (user-scoped) partition. A comment in the return is added for callers that
 --    inspect org_routed.
+--
+--    The three key-restriction parameters (00067/00068) are NOT optional
+--    cosmetics. PostgREST resolves an RPC by argument NAME, so `create.ts`
+--    sending p_key_scopes / p_key_org_access / p_key_org_ids at a BYOD install
+--    whose function lacks them misses the function entirely (PGRST202) and
+--    surfaces as an opaque 500. And the scope allowlist is the LAST gate on the
+--    write path a caller cannot route around — the edge holds the service-role
+--    key, so the dispatcher's refusal is advisory by construction. Without it a
+--    BYOD install got the columns and the CHECKs with no SQL-layer enforcement
+--    at all. Guard kept byte-identical to 00068 §1.
 -- ─────────────────────────────────────────────────────────────────────────────
 
+-- Every earlier signature is dropped, newest first: `create or replace` keys on
+-- the argument list, so growing the parameter list leaves the previous one
+-- behind as an overload that PostgREST would still resolve for a caller sending
+-- the old argument names.
 drop function if exists memory_write(uuid, text, text, text, text[], text, text, timestamptz, text, integer, boolean);
 drop function if exists memory_write(uuid, text, text, text, text[], text, text, timestamptz, text, integer);
 drop function if exists memory_write(uuid, text, text, text, text[], text, text, timestamptz);
@@ -620,7 +634,17 @@ create or replace function memory_write(
   p_created_at   timestamptz default null,
   p_org_slug     text        default null,  -- accepted but ignored in BYOD (no orgs table)
   p_ttl_days     integer     default null,
-  p_clear_ttl    boolean     default false
+  p_clear_ttl    boolean     default false,
+  -- The CALLING KEY's restriction (00067/00068), defaulted to unrestricted so
+  -- every existing BYOD caller keeps its behaviour with no call-site change.
+  p_key_scopes     text[] default '{}',
+  -- The tenancy pair is accepted for signature compatibility and is INERT here:
+  -- BYOD has no orgs, so every row is personal and
+  -- `lorekit_api_token_org_allowed` returns true regardless of the tenancy.
+  -- Accepting it is what stops PostgREST's by-name resolution from missing this
+  -- function; ignoring it is correct rather than lax.
+  p_key_org_access text   default 'all',
+  p_key_org_ids    uuid[] default '{}'
 )
 returns table (
   id               uuid,
@@ -643,6 +667,14 @@ declare
 begin
   -- p_org_slug is intentionally ignored in BYOD.
   -- Org-owned writes require the hosted LoreKit product.
+
+  -- The scope allowlist, checked FIRST and for every branch — 00068 §1
+  -- verbatim. LK002 is the code `translateDbError` already maps to a 403 on
+  -- REST and a forbidden error on MCP, so no second mapping is needed.
+  if not lorekit_api_token_scope_allowed(p_key_scopes, p_scope) then
+    raise exception using errcode = 'LK002',
+      message = format('key_scope_denied: scope=%s', p_scope);
+  end if;
 
   if p_clear_ttl then
     v_ttl_action := 'clear';
@@ -715,7 +747,7 @@ begin
 end;
 $$;
 
-grant execute on function memory_write(uuid, text, text, text, text[], text, text, timestamptz, text, integer, boolean)
+grant execute on function memory_write(uuid, text, text, text, text[], text, text, timestamptz, text, integer, boolean, text[], text, uuid[])
   to anon, authenticated, service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -725,12 +757,24 @@ grant execute on function memory_write(uuid, text, text, text, text[], text, tex
 --    p_org_slug is accepted for signature compatibility but ignored.
 -- ─────────────────────────────────────────────────────────────────────────────
 
+-- The pre-00068 signature is DROPPED rather than replaced: `create or replace`
+-- keys on the argument list, so adding parameters would leave two overloads and
+-- PostgREST would resolve the old one for a caller that omits them.
+drop function if exists memory_delete(uuid, text, text, text, boolean);
+
 create or replace function memory_delete(
   p_user_id  uuid,
   p_org_slug text    default null,  -- accepted but ignored in BYOD
   p_scope    text    default null,
   p_key      text    default null,
-  p_force    boolean default false
+  p_force    boolean default false,
+  -- Same three as memory_write, for the same two reasons: PostgREST resolves by
+  -- argument NAME (remove.ts sends all three), and this RPC chooses its own
+  -- rows, so `applyKeyScopeFilter` never sees them and the allowlist has
+  -- nowhere else to be enforced.
+  p_key_scopes     text[] default '{}',
+  p_key_org_access text   default 'all',   -- inert in BYOD (no orgs)
+  p_key_org_ids    uuid[] default '{}'     -- inert in BYOD (no orgs)
 )
 returns table (deleted boolean, archived boolean)
 language plpgsql
@@ -742,6 +786,12 @@ declare
 begin
   -- p_org_slug is intentionally ignored in BYOD.
   -- Org-gated deletes require the hosted LoreKit product.
+
+  -- 00068 §7 verbatim: the allowlist, before either branch.
+  if not lorekit_api_token_scope_allowed(p_key_scopes, p_scope) then
+    raise exception using errcode = 'LK002',
+      message = format('key_scope_denied: scope=%s', p_scope);
+  end if;
 
   if p_force then
     delete from memories
@@ -760,7 +810,7 @@ begin
 end;
 $$;
 
-grant execute on function memory_delete(uuid, text, text, text, boolean) to anon, authenticated, service_role;
+grant execute on function memory_delete(uuid, text, text, text, boolean, text[], text, uuid[]) to anon, authenticated, service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 9. Grants
