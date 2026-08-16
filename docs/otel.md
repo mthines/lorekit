@@ -632,12 +632,20 @@ classification) and is installed by `installExtensionErrorFilter()` in
 `lib/dash0-rum.ts`, which subscribes to `error` and `unhandledrejection` in the
 capture phase and calls `stopImmediatePropagation()` on an extension-only error.
 
-Three things not to "simplify":
+Four things not to "simplify":
 
 - **It must run BEFORE `init()`.** The SDK subscribes inside `init()`
   (`addEventListener('unhandledrejection', …)` plus an override of
   `window.onerror`); window listeners fire in registration order, so
-  registering first is the only reason `stopImmediatePropagation()` preempts it.
+  registering first is what lets `stopImmediatePropagation()` preempt it.
+- **Running first is not enough for the `onerror` half.** `window.onerror` is an
+  event-handler IDL attribute: its listener slot is created at the FIRST
+  non-null assignment and never moves, so the SDK's later assignment inherits
+  the slot of anything that set `onerror` before us and runs ahead of the
+  filter. `withOnErrorRegisteredLast()` in `lib/dash0-rum.ts` detaches the
+  incumbent handler, registers our listeners, then re-assigns it — which moves
+  it behind us. Deleting that re-seating makes the uncaught-error half a
+  silent no-op on any page that touches `window.onerror` first.
 - **It cannot be `ignoreErrorMessages`.** sdk-web 0.23.0's only error filter
   matches its regexes against the error MESSAGE. The extension message above is
   the commonest shape of a real first-party `TypeError`, so a regex wide enough
@@ -649,6 +657,14 @@ Three things not to "simplify":
 
 `preventDefault()` is deliberately not called, so the browser still logs the
 error to the console.
+
+**What the filter does NOT reach.** Uncaught errors from a cross-origin script —
+which every `chrome-extension://` script is — are muted by the browser: the page
+gets `Script error.` with `error: null` and `filename: ""`, so there is nothing
+to attribute and the event is kept (fail-safe). That is acceptable because both
+production fingerprints arrive on the `unhandledrejection` path, where the
+`reason` is a real `Error` carrying a full stack. Judge the filter by the
+rejection path; the `error` path is a bonus for the cases that do report.
 
 ### Quick console check (browser)
 ```js
