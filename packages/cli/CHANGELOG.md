@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.52.2](https://github.com/mthines/lorekit/compare/cli-v1.52.1...cli-v1.52.2) (2026-08-16)
+
+
+### Documentation
+
+* **lorekit-setup:** CI state records default to a short TTL, not permanent ([0047a55](https://github.com/mthines/lorekit/commit/0047a5529c48a31f9c6ba92e6416a6bc83c49d51))
+* **lorekit-setup:** teach the skill programmatic CI state records ([3cea98e](https://github.com/mthines/lorekit/commit/3cea98e768a8f887ddce54aa526f57bd1fbbc302))
+* **lorekit-setup:** teach the skill programmatic CI state records ([79c0fa0](https://github.com/mthines/lorekit/commit/79c0fa055bdd591b1572b2c6d64ee455e37cf203))
+
 ## [1.52.1](https://github.com/mthines/lorekit/compare/cli-v1.52.0...cli-v1.52.1) (2026-08-16)
 
 
