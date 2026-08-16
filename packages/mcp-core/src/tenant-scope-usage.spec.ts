@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -164,6 +164,69 @@ describe('key-scope usage guard (RPC-backed per-scope reads)', () => {
     const src = readHandlerSource('usage');
     expect(src).not.toContain('p_scope');
     expect(src).toContain('scope_type');
+  });
+});
+
+/**
+ * Drift guard: the RPC-backed WRITES, and the MCP surface's own RPC calls.
+ *
+ * `p_key_scopes` fails open wherever it appears, not only on the reads the guard
+ * above covers — 00068 defaults it to `'{}'` on `memory_write` and
+ * `memory_delete` too, and those are the two gates that cannot be stood in front
+ * of, because the edge holds the service-role key. So this pins the WHOLE
+ * `p_key_scopes` surface rather than the half that happened to be flagged: both
+ * REST writes, and the three MCP call sites (which read the restriction from
+ * `keyScoping` rather than `keyRestriction(auth)`, hence the second regex).
+ *
+ * The exhaustiveness assertion below is the part that matters. Naming five call
+ * sites is worth little if a sixth can appear unpinned; the count is derived
+ * from the sources so a new `p_key_scopes:` anywhere in the edge tree fails here
+ * until it is added to a list.
+ */
+const REST_RPC_WRITES = ['create', 'remove'] as const;
+
+describe('key-scope usage guard (RPC-backed writes + MCP surface)', () => {
+  it.each(REST_RPC_WRITES)('%s passes p_key_scopes to its RPC', (name) => {
+    expect(readHandlerSource(name)).toMatch(/p_key_scopes:\s*keyRestriction\(auth\)\?\.scopes\s*\?\?\s*\[\]/);
+  });
+
+  it('every MCP RPC call that takes p_key_scopes passes the calling key scoping', () => {
+    // `tools.ts` calls three of these RPCs — memory_write, memory_delete and
+    // lorekit_memory_scopes. Each must send the restriction, not rely on the
+    // default.
+    const matches = source.match(/p_key_scopes:\s*keyScoping\?\.scopes\s*\?\?\s*\[\]/g) ?? [];
+    expect(matches.length).toBe(3);
+    // Anti-vacuity in the other direction: no bare `p_key_scopes` that is not
+    // one of those three.
+    expect((source.match(/p_key_scopes:/g) ?? []).length).toBe(3);
+  });
+
+  it('no p_key_scopes call site in the edge tree is left unpinned', () => {
+    // The exhaustiveness check. Every occurrence across the edge functions must
+    // live in a file one of the three guards above names — a new RPC-backed
+    // handler cannot ship with the fail-open default unnoticed.
+    const pinned = new Set<string>([
+      ...RPC_BACKED_SCOPE_READS.map((n) => `memories/handlers/${n}.ts`),
+      ...REST_RPC_WRITES.map((n) => `memories/handlers/${n}.ts`),
+      'mcp/tools.ts',
+    ]);
+    const functionsDir = path.resolve(here, '../../../supabase/functions');
+    const found = new Set<string>();
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) { walk(full); continue; }
+        if (!entry.name.endsWith('.ts')) continue;
+        // `database.types.ts` is generated and only DECLARES the parameter.
+        if (entry.name === 'database.types.ts') continue;
+        if (/p_key_scopes:/.test(readFileSync(full, 'utf8'))) {
+          found.add(path.relative(functionsDir, full));
+        }
+      }
+    };
+    walk(functionsDir);
+    expect(found.size).toBeGreaterThan(0);
+    expect([...found].filter((f) => !pinned.has(f))).toEqual([]);
   });
 });
 
