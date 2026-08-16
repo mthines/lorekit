@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { unstable_rethrow } from 'next/navigation';
+
 import { serverAccessToken } from '@/lib/api/session-server';
 import { listScopesRequest } from '@/lib/api/memories';
 import { listMyOrgs } from '@/lib/orgs';
@@ -25,7 +27,10 @@ import { logger } from '@/lib/telemetry';
  * decide access. An empty scope list costs the user a convenience — they can
  * still create an unscoped key, and the allowlist is validated by the database
  * either way — whereas a thrown error here would take down the whole API-keys
- * page over a catalog read.
+ * page over a catalog read. The one exception is Next's own control-flow errors
+ * (`DynamicServerError` from `cookies()`, redirect, not-found): those are not
+ * failures at all, so they are re-thrown via `unstable_rethrow` rather than
+ * absorbed into an empty catalog.
  */
 export interface KeyScopeCatalog {
   scopes: string[];
@@ -44,6 +49,13 @@ async function fetchScopeStrings(): Promise<string[]> {
     const response = await listScopesRequest(token);
     return response.scopes.map((s) => s.scope);
   } catch (error) {
+    // Next's own control-flow errors are NOT catalog failures. `serverAccessToken`
+    // reads `cookies()`, which throws `DynamicServerError` during a static render
+    // to bail out to dynamic rendering; swallowing it suppresses the bailout and
+    // logs a false `ScopeCatalogError` in the build output. `unstable_rethrow`
+    // is Next 15's supported way to re-throw that class (it also covers
+    // NEXT_REDIRECT / NEXT_NOT_FOUND) without matching on an internal name.
+    unstable_rethrow(error);
     logger.error('lorekit.api_token.scope_catalog.failed', {
       'exception.type': 'ScopeCatalogError',
       'exception.message': error instanceof Error ? error.message : String(error),
