@@ -214,6 +214,13 @@ alter table api_tokens drop constraint if exists api_tokens_org_ids_len;
 alter table api_tokens add constraint api_tokens_org_ids_len
   check (cardinality(org_ids) <= 50);
 
+-- `{null}` has cardinality 1, so neither CHECK above catches a NULL element,
+-- and a NULL org id on an authorization column is "unknown", not "none".
+-- Mirrored from 00067.
+alter table api_tokens drop constraint if exists api_tokens_org_ids_not_null;
+alter table api_tokens add constraint api_tokens_org_ids_not_null
+  check (array_position(org_ids, null) is null);
+
 -- The two request-time predicates. Kept byte-identical to 00067 — a BYOD
 -- install that answers these differently is a BYOD install with a different
 -- authorization boundary.
@@ -260,7 +267,11 @@ as $$
     when p_org_id is null then true
     when p_org_access = 'all' then true
     when p_org_access = 'personal' then false
-    when p_org_access = 'selected' then p_org_id = any(coalesce(p_org_ids, '{}'::uuid[]))
+    -- `coalesce(…, false)`: a NULL element in p_org_ids makes `= any(…)` NULL,
+    -- and an authorization predicate must never return NULL. Kept identical to
+    -- 00067 — see the rationale there.
+    when p_org_access = 'selected'
+      then coalesce(p_org_id = any(coalesce(p_org_ids, '{}'::uuid[])), false)
     else false
   end;
 $$;

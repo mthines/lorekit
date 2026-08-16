@@ -155,6 +155,21 @@ alter table api_tokens
   add constraint api_tokens_org_ids_len
   check (cardinality(org_ids) <= 50);
 
+-- The org-list twin of the NULL-element rule `lorekit_api_token_scopes_valid`
+-- enforces for `scopes`. Nothing above catches it: `{null}` has cardinality 1,
+-- so both the length cap and the tenancy-match CHECK are satisfied, and a NULL
+-- element is not a "no orgs" list — it is an unknown one, which on an
+-- authorization column is the worst of the three answers.
+--
+-- `array_position` rather than a subquery because a CHECK cannot contain one,
+-- and it is the subquery-free form: it compares with IS NOT DISTINCT FROM, so
+-- it finds NULLs, and returns NULL (not 0) when there is no match.
+alter table api_tokens
+  drop constraint if exists api_tokens_org_ids_not_null;
+alter table api_tokens
+  add constraint api_tokens_org_ids_not_null
+  check (array_position(org_ids, null) is null);
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 2. The predicates
 --
@@ -217,7 +232,14 @@ as $$
     when p_org_id is null then true
     when p_org_access = 'all' then true
     when p_org_access = 'personal' then false
-    when p_org_access = 'selected' then p_org_id = any(coalesce(p_org_ids, '{}'::uuid[]))
+    -- `coalesce(…, false)` is load-bearing: a NULL ELEMENT in p_org_ids makes
+    -- `= any(…)` evaluate to NULL, and this function would then hand its caller
+    -- NULL from an authorization predicate — neither true nor false. The
+    -- api_tokens_org_ids_not_null CHECK stops such a row being written here, but
+    -- this is precisely the function the comment below says is also fed rows
+    -- from a BYOD install that may predate the CHECK, so it cannot rely on it.
+    when p_org_access = 'selected'
+      then coalesce(p_org_id = any(coalesce(p_org_ids, '{}'::uuid[])), false)
     -- Unreachable while api_tokens_org_access_valid holds; fail closed anyway,
     -- because this function is also called with values read back from a BYOD
     -- install whose bootstrap may predate the CHECK.
@@ -353,6 +375,17 @@ begin
   -- intersects with the owner's real membership anyway, so an unreachable org id
   -- would sit in the row looking like access that was granted. Rejecting it here
   -- keeps the row honest and the failure legible.
+  -- A NULL ELEMENT has to go first, because the membership guard below cannot
+  -- see it: a NULL org id IS selected into v_stray (`m.org_id = null` is NULL,
+  -- so `not exists` is true), but then `v_stray is not null` is false and the
+  -- raise never fires. Two layers of three-valued logic cancelling out into
+  -- "looks like a member". The CHECK is the authority; this is the legible
+  -- LK004, same division of labour as the other re-statements above.
+  if array_position(v_org_ids, null) is not null then
+    raise exception 'LK004: org_ids must not contain a null element'
+      using errcode = '22023';
+  end if;
+
   select t.org_id into v_stray
   from unnest(v_org_ids) as t(org_id)
   where not exists (

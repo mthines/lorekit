@@ -5804,6 +5804,14 @@ begin
   assert not lorekit_api_token_org_allowed('nonsense', '{}'::uuid[], v_org_a),
     'org_allowed AC-3: an unknown tenancy must fail CLOSED';
 
+  -- `= any(array[null])` is NULL, so without the outer coalesce this predicate
+  -- returns NULL — neither true nor false — out of an authorization check.
+  -- `assert not` is the discriminating form: `assert` on a NULL fails, but so
+  -- does `assert not NULL`, and only `is false` distinguishes the two. Written
+  -- explicitly so a regression cannot pass as "not true".
+  assert lorekit_api_token_org_allowed('selected', array[null]::uuid[], v_org_a) is false,
+    'org_allowed AC-3: a NULL element must yield FALSE, never NULL, from the predicate';
+
   -- ── AC-4: the CHECKs actually reject ──────────────────────────────────────
   -- Each is asserted by attempting the write and catching, because a CHECK that
   -- exists but does not fire is indistinguishable from no CHECK at all.
@@ -5868,6 +5876,20 @@ begin
   exception when check_violation then v_failed := true;
   end;
   assert v_failed, 'api_tokens AC-4: a 51-org list must be rejected (cardinality cap)';
+
+  -- The org-list twin of the NULL-element case below. `{null}` has cardinality
+  -- 1, so api_tokens_org_ids_len and api_tokens_org_ids_match_access are both
+  -- satisfied under 'selected' — api_tokens_org_ids_not_null is the only
+  -- constraint that can fire, which is what makes this assertion specific.
+  v_failed := false;
+  begin
+    update api_tokens
+       set org_access = 'selected', org_ids = array[null]::uuid[]
+     where id = v_token;
+  exception when check_violation then v_failed := true;
+  end;
+  assert v_failed,
+    'api_tokens AC-4: a NULL org id must be rejected, not read as an empty list';
 
   v_failed := false;
   begin
@@ -6022,6 +6044,20 @@ begin
   end;
   assert v_failed,
     'set_scoping AC-5: a NULL org_ids argument must be refused, never coalesced';
+
+  -- The RPC's own re-statement of api_tokens_org_ids_not_null. It has to run
+  -- BEFORE the membership guard, because that guard cannot see a NULL: the row
+  -- IS selected into v_stray (`m.org_id = null` is NULL, so `not exists` holds)
+  -- and `v_stray is not null` is then false. Catching LK004's 22023 rather than
+  -- LK002's 42501 is what proves the ordering.
+  v_failed := false;
+  begin
+    perform lorekit_api_token_set_scoping(
+      v_token, '{}'::text[], 'selected', array[null]::uuid[]);
+  exception when invalid_parameter_value then v_failed := true;
+  end;
+  assert v_failed,
+    'set_scoping AC-5: a NULL org id must be refused with LK004, ahead of the membership guard';
 
   -- Both directions of the equality, because a one-sided implication would let
   -- one of them through: `selected` with no orgs, and a non-`selected` tenancy
