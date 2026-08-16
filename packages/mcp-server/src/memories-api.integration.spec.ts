@@ -923,6 +923,31 @@ describe.skipIf(SKIP)('LoreKit memories API — smoke tests (integration)', { ti
       expect(status, 'the bound is a safety limit, and it is enforced').toBe(400);
     });
 
+    // The ACCEPTED maximum, end to end — the number the schema advertises,
+    // executed rather than asserted. The rejection case above only proves the
+    // bound is enforced; without this one, nothing showed that the largest
+    // ALLOWED filter actually survives the whole path. It did not, before
+    // migration 00067: the edge composed the dimension into a PostgREST
+    // `or=` QUERY PARAM, so 200 values already built an internal URL the
+    // gateway refused and the caller saw a 500. Reading through
+    // `lorekit_memory_list` passes the values as a `text[]` over a POST body,
+    // so no URL is involved on either hop.
+    //
+    // The one real value is buried in the middle so a truncating regression
+    // fails here instead of passing by luck.
+    it('POST /memories/list carries the documented MAXIMUM dimension and still finds the row', async () => {
+      const filler = Array.from({ length: 999 }, (_, i) => `${KEY_PREFIX}-max-filler-${i}`);
+      const source_agent = [...filler.slice(0, 500), AGENT, ...filler.slice(500)];
+      expect(source_agent).toHaveLength(1000);
+
+      const { status, data } = await api('POST', '/list', {
+        scope: SCOPE, limit: 100, source_agent, source_agent_mode: 'in',
+      });
+      expect(status, `the advertised maximum must be usable; got ${status}: ${JSON.stringify(data)}`).toBe(200);
+      const keys = ((data as JsonObj).entries as JsonObj[]).map((e) => String(e.key));
+      expect(keys).toContain(KEY_BODY);
+    });
+
     it('POST /memories/facets and /activity take the same wide filter', async () => {
       const facets = await api('POST', '/facets', { scope: SCOPE, host: WIDE, host_mode: 'nin' });
       expect(facets.status, `facets: ${JSON.stringify(facets.data)}`).toBe(200);

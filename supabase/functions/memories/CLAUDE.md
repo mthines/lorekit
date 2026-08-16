@@ -56,8 +56,17 @@ filter bar:
 Raising the first cap only moves it and makes the second arrive first, which is why this is a
 transport change and not a bigger number.
 
+**The same wall existed one hop downstream, and 00067 is what removed it.** Moving the client
+hop to a body was necessary and not sufficient: `handleList` still composed its predicates with
+postgrest-js, whose `.or()` is a query param and whose `.select()` is a GET, so a dimension
+carrying 200 values built a ~7 KB internal URL and the same gateway refused it — surfacing as a
+`500` with nothing pointing at the filter that caused it. Both routes now read through the
+`lorekit_memory_list` SQL function, which takes `text[]` parameters over a POST body, so the
+value set never reaches a URL on either hop. `/facets` and `/activity` never had this problem:
+they were already RPCs.
+
 **The two transports cannot diverge, by construction.** Neither handler decides anything
-about filtering: `dimensionsFromQuery` and `dimensionsFromBody` (`_shared/schemas/dimensions.ts`)
+about filtering, and since 00067 neither builds a query at all — both call `lorekit_memory_list`: `dimensionsFromQuery` and `dimensionsFromBody` (`_shared/schemas/dimensions.ts`)
 both produce one `MemoryDimensions`, and a single predicate function turns THAT into SQL. The
 decoders differ in exactly one thing — the query form splits on commas, the body form does not —
 and share the trim / drop-empty / dedupe rule and `origin_pr`'s digits-only filter. Adding a
