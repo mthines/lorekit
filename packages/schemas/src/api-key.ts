@@ -26,7 +26,8 @@ export const API_KEY_MAX_SCOPES = 50;
 export const API_KEY_MAX_ORGS = 50;
 
 /**
- * The charset a scope pattern may use, with an optional trailing `*`.
+ * The charset a scope pattern may use, plus an optional segment wildcard: a
+ * trailing `*` directly after a `/` or a `::`.
  *
  * Byte-identical to `expandScopeForSearch`'s PostgREST injection guard, because
  * an allowlisted pattern ends up in the same kind of predicate as a searched
@@ -48,7 +49,8 @@ export const ApiKeyScopePatternSchema = z
   .refine((val) => SCOPE_PATTERN.test(val), {
     message:
       'a scope pattern may contain only [a-z0-9._:/-], with an optional trailing "*" ' +
-      '(e.g. "repo::mthines/lorekit", "repo::mthines/*" or "project::*")',
+      'directly after a "/" or a "::" (e.g. "repo::mthines/lorekit", ' +
+      '"repo::mthines/*" or "project::*"; "repo::mthines/lore*" is not a pattern)',
   });
 
 /**

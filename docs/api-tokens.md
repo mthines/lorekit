@@ -41,21 +41,34 @@ token you never scope behaves exactly as it always has.
 
 ### Scope patterns
 
-A pattern is either a canonical scope or an **owner wildcard** ending in `*` —
-the same shape the `?scope=` search filter accepts:
+A pattern is either a canonical scope or an **owner wildcard** — the same shape
+the `?scope=` search filter accepts:
 
 ```
 repo::mthines/lorekit      exactly that repo
 repo::mthines/*            every repo under that owner
+project::*                 every project scope
 global                     the global scope
 ```
 
 Patterns are OR-ed: a token allowing `["global", "repo::mthines/*"]` reaches
 either. An **empty** allowlist reaches everything the owner can see. At most 50
 patterns per token, each at most 200 characters, over the charset
-`[a-z0-9._:/-]` with an optional trailing `*`.
+`[a-z0-9._:/-]`.
 
-An **interior** wildcard (`repo::*/lorekit`) is not supported.
+The `*` is a wildcard **only as the last character and only directly after a
+`/` or a `::`** — the wildcard may replace a whole segment, never part of one.
+Both of these are rejected:
+
+```
+repo::*/lorekit            an INTERIOR wildcard
+repo::mthines/lore*        a trailing `*` off a segment boundary
+```
+
+`repo::mthines/lore*` is refused for the same reason `expandScopeForSearch`
+refuses it as a search filter: an "any trailing star" rule would let it
+allowlist `repo::mthines/lorekit-private`, so the allowlist grammar and the
+search grammar would disagree while wearing the same syntax.
 
 ### Tenancy
 

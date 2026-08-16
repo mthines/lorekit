@@ -71,8 +71,9 @@ alter table api_tokens
 
 comment on column api_tokens.scopes is
   'Allowlist of scope patterns this key may touch. EMPTY = unrestricted. A '
-  'pattern is a canonical scope, or an owner wildcard ending in "*" '
-  '(repo::mthines/*), matched by lorekit_api_token_scope_allowed().';
+  'pattern is a canonical scope, or an owner wildcard whose trailing "*" comes '
+  'directly after a "/" or a "::" (repo::mthines/*), matched by '
+  'lorekit_api_token_scope_allowed().';
 
 comment on column api_tokens.org_access is
   'Tenancy this key may reach: all (every org the owner belongs to, plus '
@@ -292,7 +293,7 @@ begin
   end if;
 
   if not lorekit_api_token_scopes_valid(v_scopes) then
-    raise exception 'LK004: a scope pattern may contain only [a-z0-9._:/-], with an optional trailing "*"'
+    raise exception 'LK004: a scope pattern may contain only [a-z0-9._:/-], with an optional trailing "*" directly after a "/" or a "::"'
       using errcode = '22023';
   end if;
 
