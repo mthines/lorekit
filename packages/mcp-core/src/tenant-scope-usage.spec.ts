@@ -97,6 +97,41 @@ describe('tenant-scope usage guard (edge read handlers)', () => {
 });
 
 /**
+ * Drift guard: the REST READ family must pass the key restriction too.
+ *
+ * The MCP twin of this guard is above. It is repeated on the REST side because
+ * the two helpers are NOT symmetric in their signatures: `key` is the fourth
+ * and OPTIONAL parameter of `applyRestTenantScope`, so a handler calling the
+ * 3-argument form still type-checks and still applies the tenant half — it just
+ * silently opts out of the key's scope allowlist, which is exactly the hole the
+ * MCP-side `keyScoping` assertion closes. A `toContain('applyRestTenantScope(')`
+ * would stay green through that, so the call is matched with the fourth
+ * argument present, the same way the MCP assertion is.
+ *
+ * A future REST read handler that builds a `memories` query belongs in this
+ * list. Handlers with no query to scope (`scopes`, `tags`, `usage`, the two
+ * activity series, `facets`) are deliberately absent for the reason their own
+ * docblocks give: the tenant predicate is applied one layer down, inside the
+ * RPC, and a second copy up here is a place for the two to drift.
+ */
+const REST_READ_HANDLERS = ['get', 'list', 'relevant', 'search'] as const;
+
+describe('key-scope usage guard (REST read family)', () => {
+  const read = (name: string) =>
+    readFileSync(path.resolve(here, `../../../supabase/functions/memories/handlers/${name}.ts`), 'utf8');
+
+  it.each(REST_READ_HANDLERS)('%s routes its memories read through applyRestTenantScope', (name) => {
+    expect(read(name)).toContain('applyRestTenantScope(');
+  });
+
+  it.each(REST_READ_HANDLERS)('%s passes the calling key restriction to applyRestTenantScope', (name) => {
+    // The fourth argument, not merely the call. `keyRestriction(auth)` is the
+    // only way a handler produces one, so it is matched by name.
+    expect(read(name)).toMatch(/applyRestTenantScope\([\s\S]*?,\s*keyRestriction\(auth\)\s*\)/);
+  });
+});
+
+/**
  * Drift guard: the REST WRITE family must apply the key's scope allowlist.
  *
  * `PATCH /memories/:id`, `DELETE /memories` and `POST /memories/restore` are
