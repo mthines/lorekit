@@ -1,8 +1,8 @@
-import { applyKeyScopeFilter } from '../../_shared/api/tenant.ts';
+import { applyKeyScopeFilter, firstDeniedScope } from '../../_shared/api/tenant.ts';
 import type { AuthContext } from '../../_shared/api/auth.ts';
 import { auditUserId } from '../../_shared/api/auth.ts';
 import { recordAudit } from '../../_shared/audit.ts';
-import { noContent, notFound, badRequest, dryRun } from '../../_shared/api/respond.ts';
+import { noContent, notFound, badRequest, dryRun, forbidden } from '../../_shared/api/respond.ts';
 import { DRY_RUN_HEADER, isDryRunHeader } from '../../_shared/dry-run.ts';
 import { validateUuid, validateQuery } from '../../_shared/api/validate.ts';
 import { createTracedClient } from '../../_shared/otel.ts';
@@ -58,6 +58,26 @@ export async function handleRemove(
     'lorekit.delete.force': force,
     ...(orgParam ? { 'lorekit.org': orgParam } : {}),
   });
+
+  // Early refusal for a NAMED scope outside the key's allowlist (00067), hoisted
+  // ABOVE the `?org=` dispatch on purpose. `applyKeyScopeFilter` below is a query
+  // filter, and the org branch has no query to filter — it returns through
+  // `removeOrgOwned`, whose `memory_delete` RPC chooses the rows itself — so a
+  // gate placed further down covers only the personal branch and leaves
+  // `DELETE /memories?scope=…&key=…&org=…` with no key gate at all.
+  //
+  // Here it also upgrades the personal scope+key form from an empty match (404)
+  // to the plain 403 `handleCreate` already returns for the same situation: when
+  // the request NAMES a scope, "your token may not use it" is the honest answer,
+  // where "not found" sends the caller hunting a data bug.
+  const deniedScope = firstDeniedScope(auth, [scopeParam]);
+  if (deniedScope !== null) {
+    span.setAttributes({ 'authz.result': 'denied', 'authz.reason': 'key_scope_denied' });
+    return forbidden(
+      `This token is not allowed to use the scope "${deniedScope}". It is restricted to specific scopes.`,
+      cors,
+    );
+  }
 
   if (orgParam) {
     return await removeOrgOwned(
